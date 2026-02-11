@@ -1,0 +1,55 @@
+[workspace]
+members = [".", "derive"]
+resolver = "2"
+
+[package]
+name = "hachi-pcs"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = [
+    "Markos Georghiades <mgeorghiades@a16z.com>",
+]
+license = "Apache-2.0 OR MIT"
+description = "A high performance and modular implementation of the Hachi polynomial commitment scheme."
+repository = "https://github.com/a16z/hachi"
+documentation = "https://docs.rs/hachi"
+readme = "README.md"
+keywords = ["cryptography", "zkp", "commitment", "polynomial", "pcs", "lattice", "post-quantum"]
+categories = ["cryptography", "algorithms"]
+include = [
+    "src/**",
+    "examples/**",
+    "benches/**",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+    "Cargo.toml",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = []
+parallel = ["dep:rayon"]
+
+[dependencies]
+thiserror = "2.0"
+rand_core = "0.6"
+hachi-derive = { version = "0.1.0", path = "derive" }
+tracing = "0.1"
+rayon = { version = "1.10", optional = true }
+
+[dev-dependencies]
+rand = "0.8"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[lints.rust]
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
