@@ -46,6 +46,10 @@ rayon = { version = "1.10", optional = true }
 rand = "0.8"
 criterion = { version = "0.5", features = ["html_reports"] }
 
+[[bench]]
+name = "ring_ntt"
+harness = false
+
 [lints.rust]
 missing_docs = "warn"
 unreachable_pub = "warn"

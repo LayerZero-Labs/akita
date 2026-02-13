@@ -69,7 +69,9 @@ This file is the **single source of truth** for implementation status and near-t
 - [x] Prime field `Fp64` (u64 storage; u128 mul) implementing `Field` (`src/algebra/fields/fp64.rs`)
 - [x] Prime field `Fp128` (u128 storage; 256-bit intermediate) implementing `Field` (`src/algebra/fields/fp128.rs`, `src/algebra/fields/u256.rs`)
 - [x] Branchless constant-time `add_raw`, `sub_raw`, `neg` for all field types
+- [x] Division-free fixed-iteration reduction for `Fp32/Fp64` multiplication paths
 - [x] Rejection-sampled `random()` for all field types (no modular bias)
+- [x] Constant-time review notes for current algebra/ring paths (`CONSTANT_TIME_NOTES.md`)
 - [ ] Deterministic parameter presets
   - [x] `q = 2^32 - 99` constants scaffold (`src/algebra/ntt/tables.rs`)
   - [ ] 64-bit and 128-bit example prime presets
@@ -82,19 +84,24 @@ This file is the **single source of truth** for implementation status and near-t
 - [x] Serialization for algebra types (`HachiSerialize` / `HachiDeserialize`) (+ `u128/i128` primitives in `src/primitives/serialization.rs`)
 - [x] NTT small-prime arithmetic: Montgomery-like `fpmul`, Barrett-like `fpred`, branchless `csubq`/`caddq`/`center` (`src/algebra/ntt/prime.rs`)
 - [x] CRT limb arithmetic: `LimbQ`, `QData` (`src/algebra/ntt/crt.rs`)
-- [x] Tests (24 total in `tests/algebra.rs`):
+- [x] Tests (43 total in `tests/algebra.rs`):
   - [x] field arithmetic, identities, distributivity (Fp32/Fp64/Fp128)
   - [x] zero inversion returns None
-  - [x] serialization round-trips (all field types, extensions, VectorModule)
+  - [x] serialization round-trips (all field types, extensions, Poly, VectorModule)
   - [x] Fp2 conjugate, norm, distributivity
   - [x] U256 wide multiply and bit access
   - [x] LimbQ round-trip, add/sub inverse, QData consistency
   - [x] NTT normalize range, fpmul commutativity
   - [x] Poly add/sub/neg
+  - [x] Cyclotomic ring identities and serialization (D=4, D=64)
+  - [x] NTT forward/inverse round-trips (single prime and all Q32 primes)
+  - [x] Cyclotomic NTT full CRT round-trip (`from_ring` -> `to_ring`)
+  - [x] Checked deserialization rejects non-canonical field encodings
 
 #### Phase 1 — Ring + gadgets (next)
 
-- [ ] Cyclotomic ring `Rq<F, D>` with `X^D = -1`
+- [x] Cyclotomic ring `Rq<F, D>` with `X^D = -1` (`src/algebra/ring/cyclotomic.rs`)
+- [x] NTT-domain ring representation + CRT conversion (`src/algebra/ring/ntt_repr.rs`)
 - [ ] Galois automorphisms `sigma_i: X ↦ X^i` (odd `i`)
 - [ ] gadget matrices `G_{b,n}` + decomposition `G^{-1}` for base-`b` digits
 - [ ] sparse short challenges (paper: `||c||_1 ≤ ω`, sparse ±1)
@@ -118,9 +125,10 @@ This file is the **single source of truth** for implementation status and near-t
 ```
 src/algebra/
 ├── fields/         Prime fields (fp32, fp64, fp128, u256) and extensions (ext)
-├── ntt/            NTT small-prime kernels (prime), CRT helpers (crt), presets (tables)
+├── ntt/            NTT kernels (butterfly), prime kernels (prime), CRT helpers (crt), presets (tables)
 ├── module.rs       VectorModule
-└── poly.rs         Poly container
+├── poly.rs         Poly container
+└── ring/           Cyclotomic ring and NTT-domain representation
 ```
 
 ### References
