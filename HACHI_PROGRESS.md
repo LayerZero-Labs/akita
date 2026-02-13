@@ -69,7 +69,7 @@ This file is the **single source of truth** for implementation status and near-t
   - Ring/gadget components listed in Phase 1 are implemented and currently checked off.
   - Conversion and arithmetic paths in coefficient and CRT+NTT domains are exercised by passing tests.
 - **Not yet "production-ready" despite functional completion**
-  - Constant-time hardening follow-ups narrowed: secret-bearing call-sites still need to migrate from `FieldCore::inv()` to `CtInvertible::inv_or_zero_ct()` as protocol code lands (see `CONSTANT_TIME_NOTES.md`).
+  - Constant-time hardening follow-ups narrowed: secret-bearing call-sites still need to migrate from `FieldCore::inv()` to `Invertible::inv_or_zero()` as protocol code lands (see `CONSTANT_TIME_NOTES.md`).
   - Current ring multiplication in coefficient form remains `O(D^2)` schoolbook (`src/algebra/ring/cyclotomic.rs`), with CRT+NTT available as the faster domain path.
 - **Tooling/quality gate status (current branch snapshot)**
   - `cargo test` passes, including protocol transcript/label/commitment contract tests and new ring-commitment core/config/stub tests.
@@ -95,7 +95,7 @@ This file is the **single source of truth** for implementation status and near-t
 - [x] Prime field `Fp64` (u64 storage; u128 mul) implementing `FieldCore + CanonicalField` (`src/algebra/fields/fp64.rs`)
 - [x] Prime field `Fp128` (u128 storage; 256-bit intermediate) implementing `FieldCore + CanonicalField` (`src/algebra/fields/fp128.rs`, `src/algebra/fields/u256.rs`)
 - [x] Branchless constant-time `add_raw`, `sub_raw`, `neg` for all field types
-- [x] Constant-time inversion helper for prime fields: `CtInvertible::inv_or_zero_ct()` (`src/primitives/arithmetic.rs`, `src/algebra/fields/fp*.rs`)
+- [x] Constant-time inversion helper for prime fields: `Invertible::inv_or_zero()` (`src/primitives/arithmetic.rs`, `src/algebra/fields/fp*.rs`)
 - [x] Division-free fixed-iteration reduction for `Fp32/Fp64` multiplication paths
 - [x] Division-free fixed-iteration CRT final projection (replaced `% q` in scalar reconstruction path)
 - [x] Rejection-sampled `FieldSampling::sample()` for all field types (no modular bias)

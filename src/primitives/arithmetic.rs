@@ -42,7 +42,7 @@ pub trait FieldCore:
     /// Field inversion.
     ///
     /// This API may branch on zero-check and is intended for public/non-secret
-    /// values. For secret-bearing paths, use [`CtInvertible::inv_or_zero_ct`].
+    /// values. For secret-bearing paths, use [`Invertible::inv_or_zero`].
     fn inv(self) -> Option<Self>;
 }
 
@@ -50,9 +50,9 @@ pub trait FieldCore:
 ///
 /// Implementations return `0` when the input is `0`, and `x^{-1}` otherwise,
 /// without branching on the input value.
-pub trait CtInvertible: FieldCore {
+pub trait Invertible: FieldCore {
     /// Constant-time inversion with zero-mapping behavior.
-    fn inv_or_zero_ct(self) -> Self;
+    fn inv_or_zero(self) -> Self;
 }
 
 /// Canonical conversion operations for field elements.

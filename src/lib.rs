@@ -43,7 +43,7 @@ pub mod protocol;
 
 pub use error::HachiError;
 pub use primitives::arithmetic::{
-    CanonicalField, CtInvertible, FieldCore, FieldSampling, HachiRoutines, Module,
+    CanonicalField, FieldCore, FieldSampling, HachiRoutines, Invertible, Module,
     PseudoMersenneField,
 };
 pub use primitives::poly::{MultilinearLagrange, Polynomial};

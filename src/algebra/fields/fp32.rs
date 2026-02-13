@@ -6,7 +6,7 @@
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::{CanonicalField, CtInvertible, FieldCore, FieldSampling};
+use crate::{CanonicalField, FieldCore, FieldSampling, Invertible};
 use rand_core::RngCore;
 use std::io::{Read, Write};
 
@@ -207,7 +207,7 @@ impl<const MODULUS: u32> FieldCore for Fp32<MODULUS> {
     }
 
     fn inv(self) -> Option<Self> {
-        let inv = self.inv_or_zero_ct();
+        let inv = self.inv_or_zero();
         if self.is_zero() {
             None
         } else {
@@ -216,8 +216,8 @@ impl<const MODULUS: u32> FieldCore for Fp32<MODULUS> {
     }
 }
 
-impl<const MODULUS: u32> CtInvertible for Fp32<MODULUS> {
-    fn inv_or_zero_ct(self) -> Self {
+impl<const MODULUS: u32> Invertible for Fp32<MODULUS> {
+    fn inv_or_zero(self) -> Self {
         // Fermat inversion: a^(p-2) mod p (MODULUS should be prime).
         let candidate = self.pow((MODULUS as u64).wrapping_sub(2));
         let mask = nonzero_mask_u32(self.0);
