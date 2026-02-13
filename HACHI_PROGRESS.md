@@ -60,7 +60,7 @@ This file is the **single source of truth** for implementation status and near-t
 ### Scope (current)
 
 - **Implemented so far (Phase 0 + Phase 1 functional core)**: prime fields (32/64/128-bit representations), extension fields, cyclotomic `R_q = Z_q[X]/(X^d + 1)`, CRT+NTT representation, backend/domain layering, ring automorphisms, and functional gadget decomposition.
-- **Phase 2+ protocol status**: interface-level scaffold is now present (`Transcript`, Blake2b/Keccak backends, phase-grounded transcript labels, commitment trait surface, and protocol contract tests). Paper-level cryptographic protocol algorithms are still pending.
+- **Phase 2+ protocol status**: interface scaffold plus ring-native §4.1 commitment core are present (`Transcript`, Blake2b/Keccak backends, phase-grounded labels, `RingCommitmentScheme`, config layer, and setup/commit implementation). Open-check prover/verifier paths remain stubbed.
 - **Deferred future phase**: integration into Jolt (replacement of Dory with Hachi) is intentionally out of current execution scope; cross-repo analysis is design input only.
 
 ### Critical review snapshot (2026-02-13)
@@ -72,17 +72,19 @@ This file is the **single source of truth** for implementation status and near-t
   - Constant-time hardening follow-ups remain in inversion and final CRT projection paths (see `CONSTANT_TIME_NOTES.md`).
   - Current ring multiplication in coefficient form remains `O(D^2)` schoolbook (`src/algebra/ring/cyclotomic.rs`), with CRT+NTT available as the faster domain path.
 - **Tooling/quality gate status (current branch snapshot)**
-  - `cargo test` passes, including protocol transcript/label/commitment contract tests.
+  - `cargo test` passes, including protocol transcript/label/commitment contract tests and new ring-commitment core/config/stub tests.
   - `cargo fmt --all --check` passes.
   - `cargo clippy --all --all-targets --all-features` passes.
-- **Phase 2 scaffold landed; core cryptography still pending**
+- **Phase 2 scaffold + commitment core landed; proof-system work still pending**
   - `src/protocol/*` now provides transcript + commitment abstraction boundaries with `Transcript` naming.
   - Two transcript backends are wired (`Blake2bTranscript`, `KeccakTranscript`) with deterministic replay/order/reset tests.
   - Hachi-native labels are now calibrated to paper-stage phases (§4.1, §4.2, §4.3, §4.5).
   - Commitment absorption is label-directed at call sites (`AppendToTranscript` no longer hardcodes commitment labels).
+  - Ring-native commitment setup/commit flow for §4.1 is implemented in `src/protocol/commitment/commit.rs` behind `RingCommitmentScheme`.
+  - Prover/verifier split folders are wired with explicit stubs (`src/protocol/prover/stub.rs`, `src/protocol/verifier/stub.rs`) for future open-check implementation.
 - **Conclusion**
   - Treat **Phase 1 as functionally complete**.
-  - Treat **Phase 2 as scaffold-in-progress** (interfaces/tests in place; cryptographic prove/verify protocol logic still open).
+  - Treat **Phase 2 as active/in-progress** (commitment core implemented; prove/verify and later reductions still open).
   - Remaining strict CT follow-ups stay tracked in `CONSTANT_TIME_NOTES.md`.
 
 ### Status board
@@ -151,7 +153,10 @@ This file is the **single source of truth** for implementation status and near-t
 - [x] Hachi-native transcript label schedule aligned to paper phases (§4.1/§4.2/§4.3/§4.5)
 - [x] Commitment trait surface + streaming trait surface + contract tests
 - [x] Label-directed transcript absorption for commitments (`AppendToTranscript` takes label at call site)
-- [ ] commitment(s) (paper §4.1)
+- [x] ring-native commitment core (`RingCommitmentScheme`, `commit.rs`, config wiring) for §4.1 setup/commit
+- [x] protocol prover/verifier folder split with explicit stubs (`prover/stub.rs`, `verifier/stub.rs`)
+- [x] ring-commitment tests (`ring_commitment_core`, `ring_commitment_config`, `prover_verifier_stub_contract`)
+- [ ] commitment open-check prove/verify implementation (currently stubs)
 - [ ] evaluation → linear relation (paper §4.2)
 - [ ] ring-switching + sumcheck (paper §4.3, Fig. 4–7)
 - [ ] recursion / “stop condition” + optional Greyhound composition (§4.5)
