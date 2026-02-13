@@ -3,12 +3,12 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use hachi_pcs::algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
 use hachi_pcs::algebra::tables::{Q32_DATA, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES};
-use hachi_pcs::algebra::{CyclotomicNtt, CyclotomicRing, Fp64, MontCoeff};
-use hachi_pcs::Field;
+use hachi_pcs::algebra::{CyclotomicCrtNtt, CyclotomicRing, Fp64, MontCoeff};
+use hachi_pcs::CanonicalField;
 
 type F = Fp64<{ Q32_MODULUS }>;
 type R = CyclotomicRing<F, 64>;
-type N = CyclotomicNtt<Q32_NUM_PRIMES, 64>;
+type N = CyclotomicCrtNtt<Q32_NUM_PRIMES, 64>;
 
 fn sample_ring(seed: u64) -> R {
     let coeffs = std::array::from_fn(|i| {
