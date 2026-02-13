@@ -30,7 +30,18 @@ impl<const MODULUS: u32> Fp32<MODULUS> {
 
     #[inline]
     fn reduce_u64(x: u64) -> u32 {
-        (x % (MODULUS as u64)) as u32
+        let m = MODULUS as u64;
+        let mut rem = 0u64;
+
+        // Division-free fixed-iteration reduction.
+        for i in (0..64).rev() {
+            rem = (rem << 1) | ((x >> i) & 1);
+            let (candidate, borrow) = rem.overflowing_sub(m);
+            let mask = 0u64.wrapping_sub((!borrow) as u64);
+            rem = (candidate & mask) | (rem & !mask);
+        }
+
+        rem as u32
     }
 
     #[inline]
@@ -156,10 +167,16 @@ impl<const MODULUS: u32> HachiDeserialize for Fp32<MODULUS> {
         validate: Validate,
     ) -> Result<Self, SerializationError> {
         let x = u32::deserialize_with_mode(&mut reader, Compress::No, validate)?;
-        let out = Self(x % MODULUS);
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
+        if matches!(validate, Validate::Yes) && x >= MODULUS {
+            return Err(SerializationError::InvalidData(
+                "Fp32 out of range".to_string(),
+            ));
         }
+        let out = if matches!(validate, Validate::Yes) {
+            Self(x)
+        } else {
+            Self(x % MODULUS)
+        };
         Ok(out)
     }
 }

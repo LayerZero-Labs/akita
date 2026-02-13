@@ -1,10 +1,10 @@
 //! NTT-domain representation of cyclotomic ring elements.
 
+use crate::algebra::fields::{Fp32, Fp64};
 use crate::algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
 use crate::algebra::ntt::crt::QData;
 use crate::algebra::ntt::prime::{MontCoeff, NttPrime};
 use crate::Field;
-use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
 use super::cyclotomic::CyclotomicRing;
 
@@ -18,6 +18,45 @@ use super::cyclotomic::CyclotomicRing;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CyclotomicNtt<const K: usize, const D: usize> {
     pub(crate) limbs: [[MontCoeff; D]; K],
+}
+
+/// Field types that can safely convert to and from the CRT/NTT representation.
+///
+/// This trait is intentionally narrower than [`Field`]: NTT conversion needs a
+/// canonical integer representative so we can reduce coefficients mod small CRT
+/// primes without going through serialization hacks.
+pub trait NttConvertibleField: Field {
+    /// Reduce this field element modulo a small prime `p`.
+    fn mod_small_prime(self, p: i16) -> i16;
+
+    /// Reconstruct from a residue in `[0, q)` after CRT combination.
+    fn from_q_residue_u128(x: u128) -> Self;
+}
+
+impl<const MODULUS: u32> NttConvertibleField for Fp32<MODULUS> {
+    #[inline]
+    fn mod_small_prime(self, p: i16) -> i16 {
+        (self.to_canonical_u32() % (p as u32)) as i16
+    }
+
+    #[inline]
+    fn from_q_residue_u128(x: u128) -> Self {
+        let narrowed = u32::try_from(x).expect("CRT residue does not fit in u32");
+        Self::from_u64(narrowed as u64)
+    }
+}
+
+impl<const MODULUS: u64> NttConvertibleField for Fp64<MODULUS> {
+    #[inline]
+    fn mod_small_prime(self, p: i16) -> i16 {
+        (self.to_canonical_u64() % (p as u64)) as i16
+    }
+
+    #[inline]
+    fn from_q_residue_u128(x: u128) -> Self {
+        let narrowed = u64::try_from(x).expect("CRT residue does not fit in u64");
+        Self::from_u64(narrowed)
+    }
 }
 
 impl<const K: usize, const D: usize> CyclotomicNtt<K, D> {
@@ -34,26 +73,16 @@ impl<const K: usize, const D: usize> CyclotomicNtt<K, D> {
     /// 1. Reduce each ring coefficient mod the prime.
     /// 2. Convert to Montgomery form.
     /// 3. Apply the forward NTT butterfly.
-    pub fn from_ring<F: Field>(
+    pub fn from_ring<F: NttConvertibleField>(
         ring: &CyclotomicRing<F, D>,
         primes: &[NttPrime; K],
         twiddles: &[NttTwiddles<D>; K],
     ) -> Self {
         let mut limbs = [[MontCoeff::from_raw(0); D]; K];
-        for (k, ((limb, prime), tw)) in limbs
-            .iter_mut()
-            .zip(primes.iter())
-            .zip(twiddles.iter())
-            .enumerate()
-        {
-            let _ = k;
+        for ((limb, prime), tw) in limbs.iter_mut().zip(primes.iter()).zip(twiddles.iter()) {
             // Reduce each coefficient mod p and convert to Montgomery form.
             for (dst, src) in limb.iter_mut().zip(ring.coeffs.iter()) {
-                // Extract canonical value via from_u64 → to_canonical_u* → mod p.
-                // For generality, use from_i64 with the field element.
-                // We need to get an i16 value mod p from the field element.
-                // The field element's canonical value mod p:
-                let val = coeff_to_i16(*src, prime.p);
+                let val = src.mod_small_prime(prime.p);
                 *dst = prime.from_canonical(val);
             }
             forward_ntt(limb, *prime, tw);
@@ -72,7 +101,7 @@ impl<const K: usize, const D: usize> CyclotomicNtt<K, D> {
     /// # Panics
     ///
     /// Panics if `q` or CRT limb constants do not fit in `u128`.
-    pub fn to_ring<F: Field, const L: usize>(
+    pub fn to_ring<F: NttConvertibleField, const L: usize>(
         &self,
         primes: &[NttPrime; K],
         twiddles: &[NttTwiddles<D>; K],
@@ -86,7 +115,6 @@ impl<const K: usize, const D: usize> CyclotomicNtt<K, D> {
             .zip(twiddles.iter())
             .enumerate()
         {
-            let _ = k;
             let mut limb = self.limbs[k];
             inverse_ntt(&mut limb, *prime, tw);
             for (dst, src) in can.iter_mut().zip(limb.iter()) {
@@ -94,122 +122,78 @@ impl<const K: usize, const D: usize> CyclotomicNtt<K, D> {
             }
         }
 
-        // CRT reconstruction: combine the per-prime canonical values into
-        // a single value mod q for each coefficient position.
+        // CRT reconstruction: first lift from residues mod p_i to an integer mod P
+        // (P = product p_i), then reduce that lift mod q.
         let q = qdata.q_u128().expect("q must fit in u128");
+        let q_i128 = i128::try_from(q).expect("q must fit in i128");
+        let prime_moduli: [i128; K] = std::array::from_fn(|k| primes[k].p as i128);
+        let big_p = prime_moduli.iter().fold(1i128, |acc, p| {
+            acc.checked_mul(*p)
+                .expect("product of CRT primes must fit i128")
+        });
+        let crt_m: [i128; K] = std::array::from_fn(|k| big_p / prime_moduli[k]);
+        let crt_inv: [i128; K] =
+            std::array::from_fn(|k| mod_inverse(crt_m[k] % prime_moduli[k], prime_moduli[k]));
+
         let mut coeffs = [F::zero(); D];
         for (d, coeff) in coeffs.iter_mut().enumerate() {
             let mut acc: i128 = 0;
             for k in 0..K {
-                // CRT formula: coeff = sum_k (x_k * t_k * canonical_k) mod q
-                // where x_k = P/p_k mod q and t_k is the CRT reconstruction constant.
-                // For simplicity, use the direct formula with the precomputed xvec.
-                let xk = u128::try_from(qdata.xvec[k]).expect("xvec limb must fit in u128") as i128;
-                let tk = primes[k].t as i128;
                 let ck = canonical[k][d] as i128;
-                // The CRT helper: canonical_k * t_k gives the partial
-                // contribution in Montgomery form; multiply by xvec to lift.
-                // Actually, t_k is already the CRT coefficient: val_k * t_k mod p_k
-                // gives the weight, then multiply by x_k (= P/p_k mod q).
-                let pk = primes[k].p as i128;
-                // val_k * t_k mod p_k:
-                let weighted = ((ck * tk) % pk + pk) % pk;
-                acc += weighted * xk;
+                acc = (acc + ck * crt_m[k] * crt_inv[k]) % big_p;
             }
-            // Add pmq correction and reduce mod q.
-            let pmq = u128::try_from(qdata.pmq).expect("pmq must fit in u128") as i128;
-            acc = ((acc + pmq) % q as i128 + q as i128) % q as i128;
-            *coeff = F::from_u64(acc as u64);
+            let lifted = (acc % big_p + big_p) % big_p;
+            let residue = ((lifted % q_i128) + q_i128) % q_i128;
+            *coeff = F::from_q_residue_u128(residue as u128);
         }
 
         CyclotomicRing::from_coefficients(coeffs)
     }
-}
-
-/// Extract an `i16` value from a field element reduced mod a small prime `p`.
-///
-/// Uses `from_u64(0)` as a baseline to detect the field's zero, then
-/// reconstructs via the `from_u64` / arithmetic path.
-fn coeff_to_i16<F: Field>(val: F, p: i16) -> i16 {
-    // Strategy: probe by constructing F::from_u64(k) for k = 0..p-1.
-    // This is O(p) which is fine for small NTT primes (< 2^14).
-    // A faster approach would require F to expose a canonical integer,
-    // but our Field trait doesn't have that yet.
-    //
-    // Optimization: use the field's arithmetic to compute val mod p directly.
-    // val mod p = val - floor(val / p) * p, but we don't have integer division.
-    //
-    // Practical approach for small p: convert field element to an integer
-    // by testing against F::from_u64. But this is too slow for p ~ 13000.
-    //
-    // Better: use the fact that our field types (Fp32, Fp64, Fp128) all
-    // have a canonical u32/u64/u128 representative. We extract it via
-    // serialization.
-    let mut buf = [0u8; 16]; // enough for u128
-    let _ = val.serialize_with_mode(&mut buf[..], crate::primitives::serialization::Compress::No);
-    // Read as little-endian u64 (works for Fp32, Fp64; Fp128 needs u128 but
-    // the mod-p result fits in u64 for our small primes).
-    let le_val = u64::from_le_bytes([
-        buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
-    ]);
-    (le_val % (p as u64)) as i16
-}
-
-impl<const K: usize, const D: usize> AddAssign for CyclotomicNtt<K, D> {
-    fn add_assign(&mut self, rhs: Self) {
-        for (limb, rhs_limb) in self.limbs.iter_mut().zip(rhs.limbs.iter()) {
+    /// Add another NTT element and reduce each coefficient with the matching
+    /// prime to maintain valid Montgomery ranges.
+    pub fn add_reduced(&self, rhs: &Self, primes: &[NttPrime; K]) -> Self {
+        let mut out = self.clone();
+        for (k, (limb, rhs_limb)) in out.limbs.iter_mut().zip(rhs.limbs.iter()).enumerate() {
+            let prime = primes[k];
             for (a, b) in limb.iter_mut().zip(rhs_limb.iter()) {
-                *a = MontCoeff::from_raw(a.raw().wrapping_add(b.raw()));
+                let sum = MontCoeff::from_raw(a.raw().wrapping_add(b.raw()));
+                *a = prime.reduce(sum);
             }
         }
+        out
     }
-}
 
-impl<const K: usize, const D: usize> SubAssign for CyclotomicNtt<K, D> {
-    fn sub_assign(&mut self, rhs: Self) {
-        for (limb, rhs_limb) in self.limbs.iter_mut().zip(rhs.limbs.iter()) {
+    /// Subtract another NTT element and reduce each coefficient with the
+    /// matching prime to maintain valid Montgomery ranges.
+    pub fn sub_reduced(&self, rhs: &Self, primes: &[NttPrime; K]) -> Self {
+        let mut out = self.clone();
+        for (k, (limb, rhs_limb)) in out.limbs.iter_mut().zip(rhs.limbs.iter()).enumerate() {
+            let prime = primes[k];
             for (a, b) in limb.iter_mut().zip(rhs_limb.iter()) {
-                *a = MontCoeff::from_raw(a.raw().wrapping_sub(b.raw()));
+                let diff = MontCoeff::from_raw(a.raw().wrapping_sub(b.raw()));
+                *a = prime.reduce(diff);
             }
         }
+        out
     }
-}
 
-impl<const K: usize, const D: usize> Add for CyclotomicNtt<K, D> {
-    type Output = Self;
-    fn add(mut self, rhs: Self) -> Self {
-        self += rhs;
-        self
-    }
-}
-
-impl<const K: usize, const D: usize> Sub for CyclotomicNtt<K, D> {
-    type Output = Self;
-    fn sub(mut self, rhs: Self) -> Self {
-        self -= rhs;
-        self
-    }
-}
-
-impl<const K: usize, const D: usize> Neg for CyclotomicNtt<K, D> {
-    type Output = Self;
-    fn neg(self) -> Self {
-        let mut out = self.limbs;
-        for limb in out.iter_mut() {
+    /// Negate each NTT coefficient and reduce with the matching prime.
+    pub fn neg_reduced(&self, primes: &[NttPrime; K]) -> Self {
+        let mut out = self.clone();
+        for (k, limb) in out.limbs.iter_mut().enumerate() {
+            let prime = primes[k];
             for a in limb.iter_mut() {
-                *a = MontCoeff::from_raw(a.raw().wrapping_neg());
+                let neg = MontCoeff::from_raw(a.raw().wrapping_neg());
+                *a = prime.reduce(neg);
             }
         }
-        Self { limbs: out }
+        out
     }
-}
 
-/// Pointwise multiplication in NTT domain.
-///
-/// Each limb is multiplied pointwise using the corresponding prime's
-/// Montgomery multiplication.
-impl<const K: usize, const D: usize> CyclotomicNtt<K, D> {
-    /// Pointwise multiplication using the given primes.
+    /// Pointwise multiplication in NTT domain.
+    ///
+    /// Each limb is multiplied pointwise using the corresponding prime's
+    /// Montgomery multiplication.
     pub fn pointwise_mul(&self, rhs: &Self, primes: &[NttPrime; K]) -> Self {
         let mut out = [[MontCoeff::from_raw(0); D]; K];
         for (k, ((o, a), b)) in out
@@ -222,4 +206,18 @@ impl<const K: usize, const D: usize> CyclotomicNtt<K, D> {
         }
         Self { limbs: out }
     }
+}
+
+fn mod_inverse(a: i128, modulus: i128) -> i128 {
+    let (mut t, mut new_t) = (0i128, 1i128);
+    let (mut r, mut new_r) = (modulus, ((a % modulus) + modulus) % modulus);
+
+    while new_r != 0 {
+        let q = r / new_r;
+        (t, new_t) = (new_t, t - q * new_t);
+        (r, new_r) = (new_r, r - q * new_r);
+    }
+
+    assert_eq!(r, 1, "CRT inverse does not exist");
+    (t % modulus + modulus) % modulus
 }

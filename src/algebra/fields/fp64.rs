@@ -30,7 +30,18 @@ impl<const MODULUS: u64> Fp64<MODULUS> {
 
     #[inline]
     fn reduce_u128(x: u128) -> u64 {
-        (x % (MODULUS as u128)) as u64
+        let m = MODULUS as u128;
+        let mut rem = 0u128;
+
+        // Division-free fixed-iteration reduction.
+        for i in (0..128).rev() {
+            rem = (rem << 1) | ((x >> i) & 1);
+            let (candidate, borrow) = rem.overflowing_sub(m);
+            let mask = 0u128.wrapping_sub((!borrow) as u128);
+            rem = (candidate & mask) | (rem & !mask);
+        }
+
+        rem as u64
     }
 
     #[inline]
@@ -153,10 +164,16 @@ impl<const MODULUS: u64> HachiDeserialize for Fp64<MODULUS> {
         validate: Validate,
     ) -> Result<Self, SerializationError> {
         let x = u64::deserialize_with_mode(&mut reader, Compress::No, validate)?;
-        let out = Self(x % MODULUS);
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
+        if matches!(validate, Validate::Yes) && x >= MODULUS {
+            return Err(SerializationError::InvalidData(
+                "Fp64 out of range".to_string(),
+            ));
         }
+        let out = if matches!(validate, Validate::Yes) {
+            Self(x)
+        } else {
+            Self(x % MODULUS)
+        };
         Ok(out)
     }
 }
@@ -209,7 +226,7 @@ impl<const MODULUS: u64> Field for Fp64<MODULUS> {
     }
 
     fn from_u64(val: u64) -> Self {
-        Self(val % MODULUS)
+        Self(Self::reduce_u128(val as u128))
     }
 
     fn from_i64(val: i64) -> Self {

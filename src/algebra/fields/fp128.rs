@@ -181,11 +181,17 @@ impl<const MODULUS: u128> HachiDeserialize for Fp128<MODULUS> {
         _compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        let x = u128::deserialize_with_mode(&mut reader, Compress::No, validate)? % MODULUS;
-        let out = Self(x);
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
+        let x = u128::deserialize_with_mode(&mut reader, Compress::No, validate)?;
+        if matches!(validate, Validate::Yes) && x >= MODULUS {
+            return Err(SerializationError::InvalidData(
+                "Fp128 out of range".to_string(),
+            ));
         }
+        let out = if matches!(validate, Validate::Yes) {
+            Self(x)
+        } else {
+            Self(x % MODULUS)
+        };
         Ok(out)
     }
 }

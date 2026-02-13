@@ -4,4 +4,4 @@ pub mod cyclotomic;
 pub mod ntt_repr;
 
 pub use cyclotomic::CyclotomicRing;
-pub use ntt_repr::CyclotomicNtt;
+pub use ntt_repr::{CyclotomicNtt, NttConvertibleField};
