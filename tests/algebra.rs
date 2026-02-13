@@ -254,37 +254,53 @@ fn u256_bit_access() {
 fn limbq_from_to_u128_round_trip() {
     use hachi_pcs::algebra::LimbQ;
     for &val in &[0u128, 1, 12345, 123456789, (1u128 << 28) - 1] {
-        let limb: LimbQ<3> = LimbQ::from_u128(val);
-        assert_eq!(limb.to_u128(), Some(val), "round-trip failed for {val}");
+        let limb: LimbQ<3> = LimbQ::from(val);
+        assert_eq!(
+            u128::try_from(limb).unwrap(),
+            val,
+            "round-trip failed for {val}"
+        );
     }
 }
 
 #[test]
 fn limbq_add_sub_inverse() {
     use hachi_pcs::algebra::LimbQ;
-    let a: LimbQ<3> = LimbQ::from_u128(12345);
-    let b: LimbQ<3> = LimbQ::from_u128(6789);
-    let sum = a.add_limbs(b);
-    let diff = sum.sub_limbs(b);
+    let a: LimbQ<3> = LimbQ::from(12345u128);
+    let b: LimbQ<3> = LimbQ::from(6789u128);
+    let sum = a + b;
+    let diff = sum - b;
     assert_eq!(diff, a);
 }
 
 #[test]
+fn limbq_ordering() {
+    use hachi_pcs::algebra::LimbQ;
+    let a: LimbQ<3> = LimbQ::from(100u128);
+    let b: LimbQ<3> = LimbQ::from(200u128);
+    assert!(a < b);
+    assert!(b > a);
+    assert_eq!(a, a);
+}
+
+#[test]
 fn qdata_q_matches_const() {
-    use hachi_pcs::algebra::tables::{labrador32_q_u64, LABRADOR32_QDATA};
-    let q_from_data = LABRADOR32_QDATA.q_u128().unwrap();
-    assert_eq!(q_from_data, labrador32_q_u64() as u128);
+    use hachi_pcs::algebra::tables::{Q32_DATA, Q32_MODULUS};
+    let q_from_data = Q32_DATA.q_u128().unwrap();
+    assert_eq!(q_from_data, Q32_MODULUS as u128);
 }
 
 #[test]
 fn ntt_normalize_in_range() {
-    use hachi_pcs::algebra::tables::LABRADOR32_PRIMES;
-    for prime in &LABRADOR32_PRIMES {
+    use hachi_pcs::algebra::tables::Q32_PRIMES;
+    use hachi_pcs::algebra::MontCoeff;
+    for prime in &Q32_PRIMES {
         for &a in &[0i16, 1, -1, 100, -100, prime.p - 1, -(prime.p - 1)] {
-            let n = prime.normalize(a);
+            let n = prime.normalize(MontCoeff::from_raw(a));
             assert!(
-                n >= 0 && n < prime.p,
-                "normalize({a}) = {n} for p={}",
+                n.raw() >= 0 && n.raw() < prime.p,
+                "normalize({a}) = {} for p={}",
+                n.raw(),
                 prime.p
             );
         }
@@ -292,10 +308,25 @@ fn ntt_normalize_in_range() {
 }
 
 #[test]
-fn ntt_fpmul_commutative() {
-    use hachi_pcs::algebra::tables::LABRADOR32_PRIMES;
-    let prime = LABRADOR32_PRIMES[0];
-    assert_eq!(prime.fpmul(1234, 5678), prime.fpmul(5678, 1234));
+fn ntt_mul_commutative() {
+    use hachi_pcs::algebra::tables::Q32_PRIMES;
+    use hachi_pcs::algebra::MontCoeff;
+    let prime = Q32_PRIMES[0];
+    let a = MontCoeff::from_raw(1234);
+    let b = MontCoeff::from_raw(5678);
+    assert_eq!(prime.mul(a, b), prime.mul(b, a));
+}
+
+#[test]
+fn mont_coeff_round_trip() {
+    use hachi_pcs::algebra::tables::Q32_PRIMES;
+    for prime in &Q32_PRIMES {
+        for &val in &[0i16, 1, 2, 100, prime.p - 1] {
+            let mont = prime.from_canonical(val);
+            let back = prime.to_canonical(mont);
+            assert_eq!(back, val, "round-trip failed for val={val}, p={}", prime.p);
+        }
+    }
 }
 
 #[test]

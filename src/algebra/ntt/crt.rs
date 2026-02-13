@@ -3,7 +3,11 @@
 //! Big-`q` coefficients are stored in radix `2^14` limbs.
 //! This module provides a portable scalar representation with the same limb layout.
 
-/// Limb radix bit-width used by Labrador (`2^14`).
+use std::cmp::Ordering;
+use std::fmt;
+use std::ops::{Add, Sub};
+
+/// Limb radix bit-width (`2^14`).
 pub const RADIX_BITS: u32 = 14;
 const RADIX: i32 = 1 << RADIX_BITS;
 const RADIX_MASK: i32 = RADIX - 1;
@@ -37,9 +41,36 @@ impl<const L: usize> LimbQ<L> {
         Self { limbs }
     }
 
-    /// Build from an unsigned integer.
+    /// Conditional subtraction: if `self >= modulus`, return `self - modulus` (branchless).
     #[inline]
-    pub fn from_u128(mut x: u128) -> Self {
+    pub fn csub_mod(self, modulus: Self) -> Self {
+        // Compute self - modulus, tracking the final borrow.
+        let mut diff = [0u16; L];
+        let mut borrow = 0i32;
+        for (i, df) in diff.iter_mut().enumerate() {
+            let d = self.limbs[i] as i32 - modulus.limbs[i] as i32 + borrow;
+            borrow = d >> 31;
+            if i + 1 < L {
+                *df = (d - borrow * RADIX) as u16;
+            } else {
+                *df = d as u16;
+            }
+        }
+        // borrow = -1 if self < modulus (underflowed), 0 otherwise.
+        // Branchless select: mask = 0xFFFF if underflow (keep self), 0 if not (keep diff).
+        let mask = borrow as u16;
+        let mut result = [0u16; L];
+        for (i, r) in result.iter_mut().enumerate() {
+            *r = (self.limbs[i] & mask) | (diff[i] & !mask);
+        }
+        Self { limbs: result }
+    }
+}
+
+// ---- Standard conversions ----
+
+impl<const L: usize> From<u128> for LimbQ<L> {
+    fn from(mut x: u128) -> Self {
         let mut out = [0u16; L];
         for (i, limb) in out.iter_mut().enumerate() {
             if i + 1 < L {
@@ -51,81 +82,98 @@ impl<const L: usize> LimbQ<L> {
         }
         Self { limbs: out }
     }
+}
 
-    /// Convert to `u128` when the limb width fits.
-    #[inline]
-    pub fn to_u128(self) -> Option<u128> {
+impl<const L: usize> TryFrom<LimbQ<L>> for u128 {
+    type Error = &'static str;
+
+    fn try_from(limb: LimbQ<L>) -> Result<Self, Self::Error> {
         if (L as u32) * RADIX_BITS > 128 {
-            return None;
+            return Err("LimbQ too wide for u128");
         }
         let mut acc = 0u128;
         for i in (0..L).rev() {
             acc <<= RADIX_BITS;
-            acc |= self.limbs[i] as u128;
+            acc |= limb.limbs[i] as u128;
         }
-        Some(acc)
+        Ok(acc)
     }
+}
 
-    /// Lexicographic comparison over limbs (most-significant first).
+// ---- Ordering ----
+
+impl<const L: usize> PartialOrd for LimbQ<L> {
     #[inline]
-    pub fn less_than(&self, other: &Self) -> bool {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<const L: usize> Ord for LimbQ<L> {
+    fn cmp(&self, other: &Self) -> Ordering {
         for i in (0..L).rev() {
-            if self.limbs[i] < other.limbs[i] {
-                return true;
-            }
-            if self.limbs[i] > other.limbs[i] {
-                return false;
+            match self.limbs[i].cmp(&other.limbs[i]) {
+                Ordering::Equal => continue,
+                ord => return ord,
             }
         }
-        false
+        Ordering::Equal
     }
+}
 
-    /// Limb-wise addition with radix carry propagation.
-    #[inline]
-    pub fn add_limbs(self, rhs: Self) -> Self {
+// ---- Arithmetic ----
+
+impl<const L: usize> Add for LimbQ<L> {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self {
         let mut out = [0u16; L];
         let mut carry = 0i32;
         for (i, out_limb) in out.iter_mut().enumerate() {
-            let mut s = self.limbs[i] as i32 + rhs.limbs[i] as i32 + carry;
+            let s = self.limbs[i] as i32 + rhs.limbs[i] as i32 + carry;
             if i + 1 < L {
                 carry = s >> RADIX_BITS;
-                s &= RADIX_MASK;
+                *out_limb = (s & RADIX_MASK) as u16;
+            } else {
+                *out_limb = s as u16;
             }
-            *out_limb = s as u16;
         }
         Self { limbs: out }
     }
+}
 
-    /// Limb-wise subtraction with radix borrow propagation.
-    #[inline]
-    pub fn sub_limbs(self, rhs: Self) -> Self {
+impl<const L: usize> Sub for LimbQ<L> {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self {
         let mut out = [0u16; L];
         let mut borrow = 0i32;
         for (i, out_limb) in out.iter_mut().enumerate() {
-            let mut d = self.limbs[i] as i32 - rhs.limbs[i] as i32 + borrow;
+            let d = self.limbs[i] as i32 - rhs.limbs[i] as i32 + borrow;
             if i + 1 < L {
-                if d < 0 {
-                    d += RADIX;
-                    borrow = -1;
-                } else {
-                    borrow = 0;
-                }
+                borrow = d >> 31;
+                *out_limb = (d - borrow * RADIX) as u16;
+            } else {
+                *out_limb = d as u16;
             }
-            *out_limb = d as u16;
         }
         Self { limbs: out }
     }
+}
 
-    /// Conditional subtraction: if `self >= modulus`, return `self - modulus`.
-    #[inline]
-    pub fn csub_mod(self, modulus: Self) -> Self {
-        if !self.less_than(&modulus) {
-            self.sub_limbs(modulus)
+// ---- Display ----
+
+impl<const L: usize> fmt::Display for LimbQ<L> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Ok(val) = u128::try_from(*self) {
+            write!(f, "{val}")
         } else {
-            self
+            write!(f, "LimbQ{:?}", self.limbs)
         }
     }
 }
+
+// ---- CRT data ----
 
 /// CRT/q constants for a given parameter set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +194,6 @@ impl<const K: usize, const L: usize> QData<K, L> {
     /// `q` as `u128` when representable.
     #[inline]
     pub fn q_u128(self) -> Option<u128> {
-        self.q.to_u128()
+        u128::try_from(self.q).ok()
     }
 }

@@ -5,4 +5,4 @@ pub mod prime;
 pub mod tables;
 
 pub use crt::{LimbQ, QData, RADIX_BITS};
-pub use prime::NttPrime;
+pub use prime::{MontCoeff, NttPrime};
