@@ -39,6 +39,8 @@ pub mod primitives;
 pub mod algebra;
 
 pub use error::HachiError;
-pub use primitives::arithmetic::{Field, HachiRoutines, Module};
+pub use primitives::arithmetic::{
+    CanonicalField, FieldCore, FieldSampling, HachiRoutines, Module, PseudoMersenneField,
+};
 pub use primitives::poly::{MultilinearLagrange, Polynomial};
 pub use primitives::serialization::{HachiDeserialize, HachiSerialize};

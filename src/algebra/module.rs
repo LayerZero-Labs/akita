@@ -4,16 +4,16 @@ use super::fields::{Fp128, Fp32, Fp64};
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::{Field, Module};
+use crate::{CanonicalField, FieldCore, FieldSampling, Module};
 use rand_core::RngCore;
 use std::io::{Read, Write};
 use std::ops::{Add, Mul, Neg, Sub};
 
 /// Fixed-length vector module over a scalar type `F`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct VectorModule<F: Field, const N: usize>(pub [F; N]);
+pub struct VectorModule<F: FieldCore, const N: usize>(pub [F; N]);
 
-impl<F: Field, const N: usize> VectorModule<F, N> {
+impl<F: FieldCore, const N: usize> VectorModule<F, N> {
     /// Construct the zero vector.
     #[inline]
     pub fn zero_vec() -> Self {
@@ -21,7 +21,7 @@ impl<F: Field, const N: usize> VectorModule<F, N> {
     }
 }
 
-impl<F: Field, const N: usize> Add for VectorModule<F, N> {
+impl<F: FieldCore, const N: usize> Add for VectorModule<F, N> {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
         let mut out = self.0;
@@ -32,7 +32,7 @@ impl<F: Field, const N: usize> Add for VectorModule<F, N> {
     }
 }
 
-impl<F: Field, const N: usize> Sub for VectorModule<F, N> {
+impl<F: FieldCore, const N: usize> Sub for VectorModule<F, N> {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self::Output {
         let mut out = self.0;
@@ -43,7 +43,7 @@ impl<F: Field, const N: usize> Sub for VectorModule<F, N> {
     }
 }
 
-impl<F: Field, const N: usize> Neg for VectorModule<F, N> {
+impl<F: FieldCore, const N: usize> Neg for VectorModule<F, N> {
     type Output = Self;
     fn neg(self) -> Self::Output {
         let mut out = self.0;
@@ -54,21 +54,21 @@ impl<F: Field, const N: usize> Neg for VectorModule<F, N> {
     }
 }
 
-impl<'a, F: Field, const N: usize> Add<&'a Self> for VectorModule<F, N> {
+impl<'a, F: FieldCore, const N: usize> Add<&'a Self> for VectorModule<F, N> {
     type Output = Self;
     fn add(self, rhs: &'a Self) -> Self::Output {
         self + *rhs
     }
 }
 
-impl<'a, F: Field, const N: usize> Sub<&'a Self> for VectorModule<F, N> {
+impl<'a, F: FieldCore, const N: usize> Sub<&'a Self> for VectorModule<F, N> {
     type Output = Self;
     fn sub(self, rhs: &'a Self) -> Self::Output {
         self - *rhs
     }
 }
 
-impl<F: Field + Valid, const N: usize> Valid for VectorModule<F, N> {
+impl<F: FieldCore + Valid, const N: usize> Valid for VectorModule<F, N> {
     fn check(&self) -> Result<(), SerializationError> {
         for x in self.0.iter() {
             x.check()?;
@@ -77,7 +77,7 @@ impl<F: Field + Valid, const N: usize> Valid for VectorModule<F, N> {
     }
 }
 
-impl<F: Field, const N: usize> HachiSerialize for VectorModule<F, N> {
+impl<F: FieldCore, const N: usize> HachiSerialize for VectorModule<F, N> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -94,7 +94,7 @@ impl<F: Field, const N: usize> HachiSerialize for VectorModule<F, N> {
     }
 }
 
-impl<F: Field + Valid, const N: usize> HachiDeserialize for VectorModule<F, N> {
+impl<F: FieldCore + Valid, const N: usize> HachiDeserialize for VectorModule<F, N> {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
@@ -114,7 +114,9 @@ impl<F: Field + Valid, const N: usize> HachiDeserialize for VectorModule<F, N> {
 
 impl<F, const N: usize> Module for VectorModule<F, N>
 where
-    F: Field
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
         + Valid
         + Mul<VectorModule<F, N>, Output = VectorModule<F, N>>
         + for<'a> Mul<&'a VectorModule<F, N>, Output = VectorModule<F, N>>,
@@ -139,7 +141,7 @@ where
     }
 
     fn random<R: RngCore>(rng: &mut R) -> Self {
-        Self(std::array::from_fn(|_| F::random(rng)))
+        Self(std::array::from_fn(|_| F::sample(rng)))
     }
 }
 

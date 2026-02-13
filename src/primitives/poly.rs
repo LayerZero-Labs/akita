@@ -1,9 +1,9 @@
-//! Polynomial trait for multilinear polynomials
+//! Polynomial trait for multilinear polynomials.
 
-use super::arithmetic::Field;
+use super::arithmetic::FieldCore;
 
 /// Trait for multilinear Lagrange polynomial operations
-pub trait MultilinearLagrange<F: Field>: Polynomial<F> {
+pub trait MultilinearLagrange<F: FieldCore>: Polynomial<F> {
     /// Compute multilinear Lagrange basis evaluations at a point
     ///
     /// For variables (r₀, r₁, ..., r_{n-1}), computes all 2^n basis polynomial evaluations.
@@ -30,7 +30,7 @@ pub trait MultilinearLagrange<F: Field>: Polynomial<F> {
 /// Trait for multilinear polynomials
 ///
 /// Represents a polynomial in evaluation form (coefficients at hypercube points).
-pub trait Polynomial<F: Field> {
+pub trait Polynomial<F: FieldCore> {
     /// Number of variables
     fn num_vars(&self) -> usize;
 
@@ -62,7 +62,7 @@ pub trait Polynomial<F: Field> {
 /// Uses an iterative doubling approach:
 /// - Start with [1-r₀, r₀]
 /// - For each variable rᵢ, split each value v into [v*(1-rᵢ), v*rᵢ]
-pub(crate) fn multilinear_lagrange_basis<F: Field>(output: &mut [F], point: &[F]) {
+pub(crate) fn multilinear_lagrange_basis<F: FieldCore>(output: &mut [F], point: &[F]) {
     assert!(
         output.len() <= (1 << point.len()),
         "Output length must be at most 2^point.len()"
@@ -115,7 +115,7 @@ pub(crate) fn multilinear_lagrange_basis<F: Field>(output: &mut [F], point: &[F]
 /// polynomial_evaluation(point) = L^T × M × R
 ///
 /// Splits variables between rows and columns based on sigma and nu.
-pub fn compute_left_right_vectors<F: Field>(
+pub fn compute_left_right_vectors<F: FieldCore>(
     point: &[F],
     nu: usize,
     sigma: usize,

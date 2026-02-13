@@ -3,7 +3,7 @@
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::Field;
+use crate::{FieldCore, FieldSampling};
 use rand_core::RngCore;
 use std::io::{Read, Write};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
@@ -16,11 +16,11 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 /// Multiplication is negacyclic convolution: `X^D = -1`, so a product
 /// term at index `i + j >= D` wraps to index `(i + j) - D` with a sign flip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CyclotomicRing<F: Field, const D: usize> {
+pub struct CyclotomicRing<F: FieldCore, const D: usize> {
     pub(crate) coeffs: [F; D],
 }
 
-impl<F: Field, const D: usize> CyclotomicRing<F, D> {
+impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     /// Construct from a coefficient array.
     #[inline]
     pub fn from_coefficients(coeffs: [F; D]) -> Self {
@@ -71,16 +71,18 @@ impl<F: Field, const D: usize> CyclotomicRing<F, D> {
         }
         Self { coeffs: out }
     }
+}
 
+impl<F: FieldCore + FieldSampling, const D: usize> CyclotomicRing<F, D> {
     /// Generate a random ring element.
     pub fn random<R: RngCore>(rng: &mut R) -> Self {
         Self {
-            coeffs: std::array::from_fn(|_| F::random(rng)),
+            coeffs: std::array::from_fn(|_| F::sample(rng)),
         }
     }
 }
 
-impl<F: Field, const D: usize> AddAssign for CyclotomicRing<F, D> {
+impl<F: FieldCore, const D: usize> AddAssign for CyclotomicRing<F, D> {
     fn add_assign(&mut self, rhs: Self) {
         for (dst, src) in self.coeffs.iter_mut().zip(rhs.coeffs.iter()) {
             *dst = *dst + *src;
@@ -88,7 +90,7 @@ impl<F: Field, const D: usize> AddAssign for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: Field, const D: usize> SubAssign for CyclotomicRing<F, D> {
+impl<F: FieldCore, const D: usize> SubAssign for CyclotomicRing<F, D> {
     fn sub_assign(&mut self, rhs: Self) {
         for (dst, src) in self.coeffs.iter_mut().zip(rhs.coeffs.iter()) {
             *dst = *dst - *src;
@@ -96,7 +98,7 @@ impl<F: Field, const D: usize> SubAssign for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: Field, const D: usize> Add for CyclotomicRing<F, D> {
+impl<F: FieldCore, const D: usize> Add for CyclotomicRing<F, D> {
     type Output = Self;
     fn add(mut self, rhs: Self) -> Self {
         self += rhs;
@@ -104,7 +106,7 @@ impl<F: Field, const D: usize> Add for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: Field, const D: usize> Sub for CyclotomicRing<F, D> {
+impl<F: FieldCore, const D: usize> Sub for CyclotomicRing<F, D> {
     type Output = Self;
     fn sub(mut self, rhs: Self) -> Self {
         self -= rhs;
@@ -112,7 +114,7 @@ impl<F: Field, const D: usize> Sub for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: Field, const D: usize> Neg for CyclotomicRing<F, D> {
+impl<F: FieldCore, const D: usize> Neg for CyclotomicRing<F, D> {
     type Output = Self;
     fn neg(self) -> Self {
         let mut out = self.coeffs;
@@ -123,27 +125,27 @@ impl<F: Field, const D: usize> Neg for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: Field, const D: usize> MulAssign for CyclotomicRing<F, D> {
+impl<F: FieldCore, const D: usize> MulAssign for CyclotomicRing<F, D> {
     fn mul_assign(&mut self, rhs: Self) {
         *self = *self * rhs;
     }
 }
 
-impl<'a, F: Field, const D: usize> Add<&'a Self> for CyclotomicRing<F, D> {
+impl<'a, F: FieldCore, const D: usize> Add<&'a Self> for CyclotomicRing<F, D> {
     type Output = Self;
     fn add(self, rhs: &'a Self) -> Self {
         self + *rhs
     }
 }
 
-impl<'a, F: Field, const D: usize> Sub<&'a Self> for CyclotomicRing<F, D> {
+impl<'a, F: FieldCore, const D: usize> Sub<&'a Self> for CyclotomicRing<F, D> {
     type Output = Self;
     fn sub(self, rhs: &'a Self) -> Self {
         self - *rhs
     }
 }
 
-impl<'a, F: Field, const D: usize> Mul<&'a Self> for CyclotomicRing<F, D> {
+impl<'a, F: FieldCore, const D: usize> Mul<&'a Self> for CyclotomicRing<F, D> {
     type Output = Self;
     fn mul(self, rhs: &'a Self) -> Self {
         self * *rhs
@@ -155,7 +157,7 @@ impl<'a, F: Field, const D: usize> Mul<&'a Self> for CyclotomicRing<F, D> {
 /// For each pair `(i, j)`:
 /// - If `i + j < D`: accumulate `a_i * b_j` at index `i + j`.
 /// - If `i + j >= D`: accumulate `-(a_i * b_j)` at index `(i + j) - D`.
-impl<F: Field, const D: usize> Mul for CyclotomicRing<F, D> {
+impl<F: FieldCore, const D: usize> Mul for CyclotomicRing<F, D> {
     type Output = Self;
     fn mul(self, rhs: Self) -> Self {
         let mut out = [F::zero(); D];
@@ -174,7 +176,7 @@ impl<F: Field, const D: usize> Mul for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: Field + Valid, const D: usize> Valid for CyclotomicRing<F, D> {
+impl<F: FieldCore + Valid, const D: usize> Valid for CyclotomicRing<F, D> {
     fn check(&self) -> Result<(), SerializationError> {
         for x in self.coeffs.iter() {
             x.check()?;
@@ -183,7 +185,7 @@ impl<F: Field + Valid, const D: usize> Valid for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: Field, const D: usize> HachiSerialize for CyclotomicRing<F, D> {
+impl<F: FieldCore, const D: usize> HachiSerialize for CyclotomicRing<F, D> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -203,7 +205,7 @@ impl<F: Field, const D: usize> HachiSerialize for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: Field + Valid, const D: usize> HachiDeserialize for CyclotomicRing<F, D> {
+impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for CyclotomicRing<F, D> {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
@@ -221,7 +223,7 @@ impl<F: Field + Valid, const D: usize> HachiDeserialize for CyclotomicRing<F, D>
     }
 }
 
-impl<F: Field, const D: usize> Default for CyclotomicRing<F, D> {
+impl<F: FieldCore, const D: usize> Default for CyclotomicRing<F, D> {
     fn default() -> Self {
         Self::zero()
     }

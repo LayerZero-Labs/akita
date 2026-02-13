@@ -3,8 +3,8 @@
 use super::{HachiDeserialize, HachiSerialize};
 use rand_core::RngCore;
 
-/// Field trait for lattice-based arithmetic
-pub trait Field:
+/// Core field operations required across algebra backends.
+pub trait FieldCore:
     Sized
     + Clone
     + Copy
@@ -39,17 +39,43 @@ pub trait Field:
     /// Field multiplication
     fn mul(&self, rhs: &Self) -> Self;
 
-    /// Field inversion
+    /// Field inversion.
     fn inv(self) -> Option<Self>;
+}
 
-    /// Generate random field element
-    fn random<R: RngCore>(rng: &mut R) -> Self;
-
-    /// Convert from u64
+/// Canonical conversion operations for field elements.
+pub trait CanonicalField: FieldCore {
+    /// Convert from `u64`.
     fn from_u64(val: u64) -> Self;
 
-    /// Convert from i64
+    /// Convert from `i64`.
     fn from_i64(val: i64) -> Self;
+
+    /// Return canonical integer representation as `u128`.
+    fn to_canonical_u128(self) -> u128;
+
+    /// Construct from canonical value if it is in range.
+    fn from_canonical_u128_checked(val: u128) -> Option<Self>;
+
+    /// Construct from canonical value reduced modulo the field modulus.
+    fn from_canonical_u128_reduced(val: u128) -> Self;
+}
+
+/// Optional sampling support for field elements.
+///
+/// This is intentionally separate from core field algebra and may evolve.
+pub trait FieldSampling: FieldCore {
+    /// Generate a sampled field element.
+    fn sample<R: RngCore>(rng: &mut R) -> Self;
+}
+
+/// Metadata for pseudo-Mersenne style moduli (`2^k - c`).
+pub trait PseudoMersenneField: CanonicalField {
+    /// Exponent `k` in `2^k - c`.
+    const MODULUS_BITS: u32;
+
+    /// Offset `c` in `2^k - c`.
+    const MODULUS_OFFSET: u128;
 }
 
 /// Module trait for lattice-based algebraic structures
@@ -73,7 +99,9 @@ pub trait Module:
     + for<'a> std::ops::Sub<&'a Self, Output = Self>
 {
     /// Scalar type (field/ring elements)
-    type Scalar: Field
+    type Scalar: FieldCore
+        + CanonicalField
+        + FieldSampling
         + std::ops::Mul<Self, Output = Self>
         + for<'a> std::ops::Mul<&'a Self, Output = Self>;
 

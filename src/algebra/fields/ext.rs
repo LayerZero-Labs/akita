@@ -4,20 +4,20 @@ use crate::algebra::module::VectorModule;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::Field;
+use crate::{FieldCore, FieldSampling};
 use rand_core::RngCore;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::ops::{Add, Mul, Neg, Sub};
 
 /// Parameters for an `Fp2` quadratic extension over base field `F`.
-pub trait Fp2Config<F: Field> {
+pub trait Fp2Config<F: FieldCore> {
     /// Non-residue `NR` such that `u^2 = NR`.
     fn non_residue() -> F;
 }
 
 /// Quadratic extension element `c0 + c1 * u` with `u^2 = NR`.
-pub struct Fp2<F: Field, C: Fp2Config<F>> {
+pub struct Fp2<F: FieldCore, C: Fp2Config<F>> {
     /// Constant term.
     pub c0: F,
     /// Coefficient of `u`.
@@ -25,7 +25,7 @@ pub struct Fp2<F: Field, C: Fp2Config<F>> {
     _cfg: PhantomData<fn() -> C>,
 }
 
-impl<F: Field, C: Fp2Config<F>> Fp2<F, C> {
+impl<F: FieldCore, C: Fp2Config<F>> Fp2<F, C> {
     /// Construct `c0 + c1 * u`.
     #[inline]
     pub fn new(c0: F, c1: F) -> Self {
@@ -50,45 +50,45 @@ impl<F: Field, C: Fp2Config<F>> Fp2<F, C> {
     }
 }
 
-impl<F: Field, C: Fp2Config<F>> Clone for Fp2<F, C> {
+impl<F: FieldCore, C: Fp2Config<F>> Clone for Fp2<F, C> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<F: Field, C: Fp2Config<F>> Copy for Fp2<F, C> {}
+impl<F: FieldCore, C: Fp2Config<F>> Copy for Fp2<F, C> {}
 
-impl<F: Field, C: Fp2Config<F>> Default for Fp2<F, C> {
+impl<F: FieldCore, C: Fp2Config<F>> Default for Fp2<F, C> {
     fn default() -> Self {
         Self::new(F::zero(), F::zero())
     }
 }
 
-impl<F: Field, C: Fp2Config<F>> PartialEq for Fp2<F, C> {
+impl<F: FieldCore, C: Fp2Config<F>> PartialEq for Fp2<F, C> {
     fn eq(&self, other: &Self) -> bool {
         self.c0 == other.c0 && self.c1 == other.c1
     }
 }
 
-impl<F: Field, C: Fp2Config<F>> Add for Fp2<F, C> {
+impl<F: FieldCore, C: Fp2Config<F>> Add for Fp2<F, C> {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
         Self::new(self.c0 + rhs.c0, self.c1 + rhs.c1)
     }
 }
-impl<F: Field, C: Fp2Config<F>> Sub for Fp2<F, C> {
+impl<F: FieldCore, C: Fp2Config<F>> Sub for Fp2<F, C> {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self::Output {
         Self::new(self.c0 - rhs.c0, self.c1 - rhs.c1)
     }
 }
-impl<F: Field, C: Fp2Config<F>> Neg for Fp2<F, C> {
+impl<F: FieldCore, C: Fp2Config<F>> Neg for Fp2<F, C> {
     type Output = Self;
     fn neg(self) -> Self::Output {
         Self::new(-self.c0, -self.c1)
     }
 }
-impl<F: Field, C: Fp2Config<F>> Mul for Fp2<F, C> {
+impl<F: FieldCore, C: Fp2Config<F>> Mul for Fp2<F, C> {
     type Output = Self;
     fn mul(self, rhs: Self) -> Self::Output {
         let nr = C::non_residue();
@@ -100,26 +100,26 @@ impl<F: Field, C: Fp2Config<F>> Mul for Fp2<F, C> {
     }
 }
 
-impl<'a, F: Field, C: Fp2Config<F>> Add<&'a Self> for Fp2<F, C> {
+impl<'a, F: FieldCore, C: Fp2Config<F>> Add<&'a Self> for Fp2<F, C> {
     type Output = Self;
     fn add(self, rhs: &'a Self) -> Self::Output {
         self + *rhs
     }
 }
-impl<'a, F: Field, C: Fp2Config<F>> Sub<&'a Self> for Fp2<F, C> {
+impl<'a, F: FieldCore, C: Fp2Config<F>> Sub<&'a Self> for Fp2<F, C> {
     type Output = Self;
     fn sub(self, rhs: &'a Self) -> Self::Output {
         self - *rhs
     }
 }
-impl<'a, F: Field, C: Fp2Config<F>> Mul<&'a Self> for Fp2<F, C> {
+impl<'a, F: FieldCore, C: Fp2Config<F>> Mul<&'a Self> for Fp2<F, C> {
     type Output = Self;
     fn mul(self, rhs: &'a Self) -> Self::Output {
         self * *rhs
     }
 }
 
-impl<F: Field + Valid, C: Fp2Config<F>> Valid for Fp2<F, C> {
+impl<F: FieldCore + Valid, C: Fp2Config<F>> Valid for Fp2<F, C> {
     fn check(&self) -> Result<(), SerializationError> {
         self.c0.check()?;
         self.c1.check()?;
@@ -127,7 +127,7 @@ impl<F: Field + Valid, C: Fp2Config<F>> Valid for Fp2<F, C> {
     }
 }
 
-impl<F: Field, C: Fp2Config<F>> HachiSerialize for Fp2<F, C> {
+impl<F: FieldCore, C: Fp2Config<F>> HachiSerialize for Fp2<F, C> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -143,7 +143,7 @@ impl<F: Field, C: Fp2Config<F>> HachiSerialize for Fp2<F, C> {
     }
 }
 
-impl<F: Field + Valid, C: Fp2Config<F>> HachiDeserialize for Fp2<F, C> {
+impl<F: FieldCore + Valid, C: Fp2Config<F>> HachiDeserialize for Fp2<F, C> {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
@@ -159,7 +159,7 @@ impl<F: Field + Valid, C: Fp2Config<F>> HachiDeserialize for Fp2<F, C> {
     }
 }
 
-impl<F: Field + Valid, C: Fp2Config<F>> Field for Fp2<F, C> {
+impl<F: FieldCore + Valid, C: Fp2Config<F>> FieldCore for Fp2<F, C> {
     fn zero() -> Self {
         Self::new(F::zero(), F::zero())
     }
@@ -191,28 +191,22 @@ impl<F: Field + Valid, C: Fp2Config<F>> Field for Fp2<F, C> {
         let inv_n = self.norm().inv()?;
         Some(Self::new(self.c0 * inv_n, (-self.c1) * inv_n))
     }
+}
 
-    fn random<R: RngCore>(rng: &mut R) -> Self {
-        Self::new(F::random(rng), F::random(rng))
-    }
-
-    fn from_u64(val: u64) -> Self {
-        Self::new(F::from_u64(val), F::zero())
-    }
-
-    fn from_i64(val: i64) -> Self {
-        Self::new(F::from_i64(val), F::zero())
+impl<F: FieldCore + FieldSampling + Valid, C: Fp2Config<F>> FieldSampling for Fp2<F, C> {
+    fn sample<R: RngCore>(rng: &mut R) -> Self {
+        Self::new(F::sample(rng), F::sample(rng))
     }
 }
 
 /// Parameters for an `Fp4` quadratic extension over `Fp2<F, C2>`.
-pub trait Fp4Config<F: Field, C2: Fp2Config<F>> {
+pub trait Fp4Config<F: FieldCore, C2: Fp2Config<F>> {
     /// Non-residue `NR2` in `Fp2` such that `v^2 = NR2`.
     fn non_residue() -> Fp2<F, C2>;
 }
 
 /// Quartic extension element `c0 + c1 * v` over `Fp2`, where `v^2 = NR2`.
-pub struct Fp4<F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> {
+pub struct Fp4<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> {
     /// Constant term.
     pub c0: Fp2<F, C2>,
     /// Coefficient of `v`.
@@ -220,7 +214,7 @@ pub struct Fp4<F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> {
     _cfg: PhantomData<fn() -> C4>,
 }
 
-impl<F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Fp4<F, C2, C4> {
+impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Fp4<F, C2, C4> {
     /// Construct `c0 + c1 * v`.
     #[inline]
     pub fn new(c0: Fp2<F, C2>, c1: Fp2<F, C2>) -> Self {
@@ -239,15 +233,15 @@ impl<F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Fp4<F, C2, C4> {
     }
 }
 
-impl<F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Clone for Fp4<F, C2, C4> {
+impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Clone for Fp4<F, C2, C4> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Copy for Fp4<F, C2, C4> {}
+impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Copy for Fp4<F, C2, C4> {}
 
-impl<F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Default for Fp4<F, C2, C4> {
+impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Default for Fp4<F, C2, C4> {
     fn default() -> Self {
         Self::new(
             Fp2::new(F::zero(), F::zero()),
@@ -256,31 +250,31 @@ impl<F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Default for Fp4<F, C2, C4
     }
 }
 
-impl<F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> PartialEq for Fp4<F, C2, C4> {
+impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> PartialEq for Fp4<F, C2, C4> {
     fn eq(&self, other: &Self) -> bool {
         self.c0 == other.c0 && self.c1 == other.c1
     }
 }
 
-impl<F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Add for Fp4<F, C2, C4> {
+impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Add for Fp4<F, C2, C4> {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
         Self::new(self.c0 + rhs.c0, self.c1 + rhs.c1)
     }
 }
-impl<F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Sub for Fp4<F, C2, C4> {
+impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Sub for Fp4<F, C2, C4> {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self::Output {
         Self::new(self.c0 - rhs.c0, self.c1 - rhs.c1)
     }
 }
-impl<F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Neg for Fp4<F, C2, C4> {
+impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Neg for Fp4<F, C2, C4> {
     type Output = Self;
     fn neg(self) -> Self::Output {
         Self::new(-self.c0, -self.c1)
     }
 }
-impl<F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Mul for Fp4<F, C2, C4> {
+impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Mul for Fp4<F, C2, C4> {
     type Output = Self;
     fn mul(self, rhs: Self) -> Self::Output {
         let nr2 = C4::non_residue();
@@ -292,26 +286,26 @@ impl<F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Mul for Fp4<F, C2, C4> {
     }
 }
 
-impl<'a, F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Add<&'a Self> for Fp4<F, C2, C4> {
+impl<'a, F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Add<&'a Self> for Fp4<F, C2, C4> {
     type Output = Self;
     fn add(self, rhs: &'a Self) -> Self::Output {
         self + *rhs
     }
 }
-impl<'a, F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Sub<&'a Self> for Fp4<F, C2, C4> {
+impl<'a, F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Sub<&'a Self> for Fp4<F, C2, C4> {
     type Output = Self;
     fn sub(self, rhs: &'a Self) -> Self::Output {
         self - *rhs
     }
 }
-impl<'a, F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Mul<&'a Self> for Fp4<F, C2, C4> {
+impl<'a, F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Mul<&'a Self> for Fp4<F, C2, C4> {
     type Output = Self;
     fn mul(self, rhs: &'a Self) -> Self::Output {
         self * *rhs
     }
 }
 
-impl<F: Field + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Valid for Fp4<F, C2, C4> {
+impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Valid for Fp4<F, C2, C4> {
     fn check(&self) -> Result<(), SerializationError> {
         self.c0.check()?;
         self.c1.check()?;
@@ -319,7 +313,7 @@ impl<F: Field + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Valid for Fp4<F, 
     }
 }
 
-impl<F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> HachiSerialize for Fp4<F, C2, C4> {
+impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> HachiSerialize for Fp4<F, C2, C4> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -335,7 +329,9 @@ impl<F: Field, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> HachiSerialize for Fp4<F,
     }
 }
 
-impl<F: Field + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> HachiDeserialize for Fp4<F, C2, C4> {
+impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> HachiDeserialize
+    for Fp4<F, C2, C4>
+{
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
@@ -351,7 +347,7 @@ impl<F: Field + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> HachiDeserialize 
     }
 }
 
-impl<F: Field + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Field for Fp4<F, C2, C4> {
+impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> FieldCore for Fp4<F, C2, C4> {
     fn zero() -> Self {
         Self::new(Fp2::zero(), Fp2::zero())
     }
@@ -383,17 +379,13 @@ impl<F: Field + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Field for Fp4<F, 
         let inv_n = self.norm().inv()?;
         Some(Self::new(self.c0 * inv_n, (-self.c1) * inv_n))
     }
+}
 
-    fn random<R: RngCore>(rng: &mut R) -> Self {
-        Self::new(Fp2::random(rng), Fp2::random(rng))
-    }
-
-    fn from_u64(val: u64) -> Self {
-        Self::new(Fp2::from_u64(val), Fp2::zero())
-    }
-
-    fn from_i64(val: i64) -> Self {
-        Self::new(Fp2::from_i64(val), Fp2::zero())
+impl<F: FieldCore + FieldSampling + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> FieldSampling
+    for Fp4<F, C2, C4>
+{
+    fn sample<R: RngCore>(rng: &mut R) -> Self {
+        Self::new(Fp2::sample(rng), Fp2::sample(rng))
     }
 }
 
@@ -401,7 +393,7 @@ impl<F: Field + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Field for Fp4<F, 
 
 impl<F, C, const N: usize> Mul<VectorModule<Fp2<F, C>, N>> for Fp2<F, C>
 where
-    F: Field + Valid,
+    F: FieldCore + Valid,
     C: Fp2Config<F>,
 {
     type Output = VectorModule<Fp2<F, C>, N>;
@@ -416,7 +408,7 @@ where
 
 impl<'a, F, C, const N: usize> Mul<&'a VectorModule<Fp2<F, C>, N>> for Fp2<F, C>
 where
-    F: Field + Valid,
+    F: FieldCore + Valid,
     C: Fp2Config<F>,
 {
     type Output = VectorModule<Fp2<F, C>, N>;
@@ -427,7 +419,7 @@ where
 
 impl<F, C2, C4, const N: usize> Mul<VectorModule<Fp4<F, C2, C4>, N>> for Fp4<F, C2, C4>
 where
-    F: Field + Valid,
+    F: FieldCore + Valid,
     C2: Fp2Config<F>,
     C4: Fp4Config<F, C2>,
 {
@@ -443,7 +435,7 @@ where
 
 impl<'a, F, C2, C4, const N: usize> Mul<&'a VectorModule<Fp4<F, C2, C4>, N>> for Fp4<F, C2, C4>
 where
-    F: Field + Valid,
+    F: FieldCore + Valid,
     C2: Fp2Config<F>,
     C4: Fp4Config<F, C2>,
 {

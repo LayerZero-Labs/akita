@@ -6,7 +6,7 @@
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::Field;
+use crate::{CanonicalField, FieldCore, FieldSampling};
 use rand_core::RngCore;
 use std::io::{Read, Write};
 
@@ -178,7 +178,7 @@ impl<const MODULUS: u64> HachiDeserialize for Fp64<MODULUS> {
     }
 }
 
-impl<const MODULUS: u64> Field for Fp64<MODULUS> {
+impl<const MODULUS: u64> FieldCore for Fp64<MODULUS> {
     fn zero() -> Self {
         Self(0)
     }
@@ -211,8 +211,10 @@ impl<const MODULUS: u64> Field for Fp64<MODULUS> {
             Some(self.pow(MODULUS.wrapping_sub(2)))
         }
     }
+}
 
-    fn random<R: RngCore>(rng: &mut R) -> Self {
+impl<const MODULUS: u64> FieldSampling for Fp64<MODULUS> {
+    fn sample<R: RngCore>(rng: &mut R) -> Self {
         // rejection-sample to reduce bias for odd moduli
         loop {
             let x = rng.next_u64();
@@ -224,7 +226,9 @@ impl<const MODULUS: u64> Field for Fp64<MODULUS> {
             }
         }
     }
+}
 
+impl<const MODULUS: u64> CanonicalField for Fp64<MODULUS> {
     fn from_u64(val: u64) -> Self {
         Self(Self::reduce_u128(val as u128))
     }
@@ -235,5 +239,21 @@ impl<const MODULUS: u64> Field for Fp64<MODULUS> {
         } else {
             -Self::from_u64((-val) as u64)
         }
+    }
+
+    fn to_canonical_u128(self) -> u128 {
+        self.0 as u128
+    }
+
+    fn from_canonical_u128_checked(val: u128) -> Option<Self> {
+        if val < MODULUS as u128 {
+            Some(Self(val as u64))
+        } else {
+            None
+        }
+    }
+
+    fn from_canonical_u128_reduced(val: u128) -> Self {
+        Self((val % (MODULUS as u128)) as u64)
     }
 }

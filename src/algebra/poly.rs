@@ -3,21 +3,21 @@
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::Field;
+use crate::FieldCore;
 use std::io::{Read, Write};
 
 /// A degree-<D polynomial over `F`, stored as coefficients `[a0, a1, ..., a_{D-1}]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Poly<F: Field, const D: usize>(pub [F; D]);
+pub struct Poly<F: FieldCore, const D: usize>(pub [F; D]);
 
-impl<F: Field, const D: usize> Poly<F, D> {
+impl<F: FieldCore, const D: usize> Poly<F, D> {
     /// Construct the zero polynomial.
     pub fn zero() -> Self {
         Self([F::zero(); D])
     }
 }
 
-impl<F: Field, const D: usize> std::ops::Add for Poly<F, D> {
+impl<F: FieldCore, const D: usize> std::ops::Add for Poly<F, D> {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
         let mut out = self.0;
@@ -28,7 +28,7 @@ impl<F: Field, const D: usize> std::ops::Add for Poly<F, D> {
     }
 }
 
-impl<F: Field, const D: usize> std::ops::Sub for Poly<F, D> {
+impl<F: FieldCore, const D: usize> std::ops::Sub for Poly<F, D> {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self::Output {
         let mut out = self.0;
@@ -39,7 +39,7 @@ impl<F: Field, const D: usize> std::ops::Sub for Poly<F, D> {
     }
 }
 
-impl<F: Field, const D: usize> std::ops::Neg for Poly<F, D> {
+impl<F: FieldCore, const D: usize> std::ops::Neg for Poly<F, D> {
     type Output = Self;
     fn neg(self) -> Self::Output {
         let mut out = self.0;
@@ -50,7 +50,7 @@ impl<F: Field, const D: usize> std::ops::Neg for Poly<F, D> {
     }
 }
 
-impl<F: Field + Valid, const D: usize> Valid for Poly<F, D> {
+impl<F: FieldCore + Valid, const D: usize> Valid for Poly<F, D> {
     fn check(&self) -> Result<(), SerializationError> {
         for x in self.0.iter() {
             x.check()?;
@@ -59,7 +59,7 @@ impl<F: Field + Valid, const D: usize> Valid for Poly<F, D> {
     }
 }
 
-impl<F: Field, const D: usize> HachiSerialize for Poly<F, D> {
+impl<F: FieldCore, const D: usize> HachiSerialize for Poly<F, D> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -76,7 +76,7 @@ impl<F: Field, const D: usize> HachiSerialize for Poly<F, D> {
     }
 }
 
-impl<F: Field + Valid, const D: usize> HachiDeserialize for Poly<F, D> {
+impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for Poly<F, D> {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,

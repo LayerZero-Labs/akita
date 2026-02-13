@@ -2,13 +2,13 @@
 
 #![allow(missing_docs)]
 
-use crate::primitives::arithmetic::{Field, Module};
+use crate::primitives::arithmetic::{CanonicalField, FieldCore, Module};
 use crate::primitives::HachiSerialize;
 
 /// Transcript for Fiat-Shamir transformations
 pub trait Transcript {
     /// Field type for challenges
-    type Field: Field;
+    type Field: FieldCore + CanonicalField;
 
     /// Append raw bytes to the transcript
     fn append_bytes(&mut self, label: &[u8], bytes: &[u8]);
