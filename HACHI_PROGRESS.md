@@ -60,7 +60,8 @@ This file is the **single source of truth** for implementation status and near-t
 ### Scope (current)
 
 - **Implemented so far (Phase 0 + Phase 1 functional core)**: prime fields (32/64/128-bit representations), extension fields, cyclotomic `R_q = Z_q[X]/(X^d + 1)`, CRT+NTT representation, backend/domain layering, ring automorphisms, and functional gadget decomposition.
-- **Not started yet (Phase 2+ protocol)**: commitments, evaluation-to-relation reduction, ring-switching, sumcheck, recursion/stop-condition logic.
+- **Phase 2+ protocol status**: interface-level scaffold is now present (`Transcript`, Blake2b/Keccak backends, phase-grounded transcript labels, commitment trait surface, and protocol contract tests). Paper-level cryptographic protocol algorithms are still pending.
+- **Deferred future phase**: integration into Jolt (replacement of Dory with Hachi) is intentionally out of current execution scope; cross-repo analysis is design input only.
 
 ### Critical review snapshot (2026-02-13)
 
@@ -71,12 +72,18 @@ This file is the **single source of truth** for implementation status and near-t
   - Constant-time hardening follow-ups remain in inversion and final CRT projection paths (see `CONSTANT_TIME_NOTES.md`).
   - Current ring multiplication in coefficient form remains `O(D^2)` schoolbook (`src/algebra/ring/cyclotomic.rs`), with CRT+NTT available as the faster domain path.
 - **Tooling/quality gate status (current branch snapshot)**
-  - `cargo test` passes (55 tests total: 4 lib + 49 algebra + 2 primality).
+  - `cargo test` passes, including protocol transcript/label/commitment contract tests.
   - `cargo fmt --all --check` passes.
   - `cargo clippy --all --all-targets --all-features` passes.
+- **Phase 2 scaffold landed; core cryptography still pending**
+  - `src/protocol/*` now provides transcript + commitment abstraction boundaries with `Transcript` naming.
+  - Two transcript backends are wired (`Blake2bTranscript`, `KeccakTranscript`) with deterministic replay/order/reset tests.
+  - Hachi-native labels are now calibrated to paper-stage phases (§4.1, §4.2, §4.3, §4.5).
+  - Commitment absorption is label-directed at call sites (`AppendToTranscript` no longer hardcodes commitment labels).
 - **Conclusion**
   - Treat **Phase 1 as functionally complete**.
-  - Recent hardening/cleanup pass completed; remaining strict CT follow-ups stay tracked in `CONSTANT_TIME_NOTES.md`.
+  - Treat **Phase 2 as scaffold-in-progress** (interfaces/tests in place; cryptographic prove/verify protocol logic still open).
+  - Remaining strict CT follow-ups stay tracked in `CONSTANT_TIME_NOTES.md`.
 
 ### Status board
 
@@ -139,10 +146,22 @@ This file is the **single source of truth** for implementation status and near-t
 
 #### Phase 2+ — Protocol (later)
 
-- [ ] inner/outer commitments (paper §4.1)
+- [x] Protocol module scaffold (`src/protocol/*`) and top-level re-exports
+- [x] Transcript interface (`Transcript`) plus Blake2b/Keccak implementations
+- [x] Hachi-native transcript label schedule aligned to paper phases (§4.1/§4.2/§4.3/§4.5)
+- [x] Commitment trait surface + streaming trait surface + contract tests
+- [x] Label-directed transcript absorption for commitments (`AppendToTranscript` takes label at call site)
+- [ ] commitment(s) (paper §4.1)
 - [ ] evaluation → linear relation (paper §4.2)
 - [ ] ring-switching + sumcheck (paper §4.3, Fig. 4–7)
 - [ ] recursion / “stop condition” + optional Greyhound composition (§4.5)
+
+#### Phase 3 — Integration into Jolt (deferred; not active now)
+
+- [ ] Define compatibility boundary document (what must match Jolt/Dory behavior vs what can remain Hachi-native)
+- [ ] Provide Jolt-facing transcript adapter design (`Jolt` transcript pattern ↔ Hachi transcript object)
+- [ ] Provide Jolt-facing PCS shim design (`CommitmentScheme`/`StreamingCommitmentScheme` mapping)
+- [ ] Add transcript/commitment compatibility tests for integration-readiness (without wiring into Jolt yet)
 
 ### Conventions
 
