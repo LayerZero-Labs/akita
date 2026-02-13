@@ -9,7 +9,7 @@ use super::u256::U256;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::{CanonicalField, FieldCore, FieldSampling};
+use crate::{CanonicalField, CtInvertible, FieldCore, FieldSampling};
 use rand_core::RngCore;
 use std::io::{Read, Write};
 
@@ -225,11 +225,20 @@ impl<const MODULUS: u128> FieldCore for Fp128<MODULUS> {
     }
 
     fn inv(self) -> Option<Self> {
+        let inv = self.inv_or_zero_ct();
         if self.is_zero() {
             None
         } else {
-            Some(self.pow_u128(MODULUS.wrapping_sub(2)))
+            Some(inv)
         }
+    }
+}
+
+impl<const MODULUS: u128> CtInvertible for Fp128<MODULUS> {
+    fn inv_or_zero_ct(self) -> Self {
+        let candidate = self.pow_u128(MODULUS.wrapping_sub(2));
+        let mask = nonzero_mask_u128(self.0);
+        Self(candidate.0 & mask)
     }
 }
 
@@ -277,4 +286,10 @@ impl<const MODULUS: u128> CanonicalField for Fp128<MODULUS> {
     fn from_canonical_u128_reduced(val: u128) -> Self {
         Self(val % MODULUS)
     }
+}
+
+#[inline]
+fn nonzero_mask_u128(x: u128) -> u128 {
+    let nz = ((x | x.wrapping_neg()) >> 127) & 1;
+    0u128.wrapping_sub(nz)
 }

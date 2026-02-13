@@ -40,7 +40,19 @@ pub trait FieldCore:
     fn mul(&self, rhs: &Self) -> Self;
 
     /// Field inversion.
+    ///
+    /// This API may branch on zero-check and is intended for public/non-secret
+    /// values. For secret-bearing paths, use [`CtInvertible::inv_or_zero_ct`].
     fn inv(self) -> Option<Self>;
+}
+
+/// Constant-time inversion helper for secret-bearing code paths.
+///
+/// Implementations return `0` when the input is `0`, and `x^{-1}` otherwise,
+/// without branching on the input value.
+pub trait CtInvertible: FieldCore {
+    /// Constant-time inversion with zero-mapping behavior.
+    fn inv_or_zero_ct(self) -> Self;
 }
 
 /// Canonical conversion operations for field elements.

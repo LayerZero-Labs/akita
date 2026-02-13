@@ -6,7 +6,7 @@
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::{CanonicalField, FieldCore, FieldSampling};
+use crate::{CanonicalField, CtInvertible, FieldCore, FieldSampling};
 use rand_core::RngCore;
 use std::io::{Read, Write};
 
@@ -207,12 +207,21 @@ impl<const MODULUS: u32> FieldCore for Fp32<MODULUS> {
     }
 
     fn inv(self) -> Option<Self> {
+        let inv = self.inv_or_zero_ct();
         if self.is_zero() {
             None
         } else {
-            // Fermat inversion: a^(p-2) mod p (MODULUS should be prime).
-            Some(self.pow((MODULUS as u64).wrapping_sub(2)))
+            Some(inv)
         }
+    }
+}
+
+impl<const MODULUS: u32> CtInvertible for Fp32<MODULUS> {
+    fn inv_or_zero_ct(self) -> Self {
+        // Fermat inversion: a^(p-2) mod p (MODULUS should be prime).
+        let candidate = self.pow((MODULUS as u64).wrapping_sub(2));
+        let mask = nonzero_mask_u32(self.0);
+        Self(candidate.0 & mask)
     }
 }
 
@@ -258,4 +267,10 @@ impl<const MODULUS: u32> CanonicalField for Fp32<MODULUS> {
     fn from_canonical_u128_reduced(val: u128) -> Self {
         Self((val % (MODULUS as u128)) as u32)
     }
+}
+
+#[inline]
+fn nonzero_mask_u32(x: u32) -> u32 {
+    let nz = ((x | x.wrapping_neg()) >> 31) & 1;
+    0u32.wrapping_sub(nz)
 }

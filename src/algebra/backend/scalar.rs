@@ -87,8 +87,9 @@ impl<const K: usize, const D: usize, const L: usize> CrtReconstruct<K, D, L> for
                 acc = add_mod_u128(acc, term, big_p);
             }
 
-            // Final projection into [0, q).
-            *coeff = F::from_q_residue_u128(acc % q);
+            // Final projection into [0, q) without variable-latency division.
+            let reduced = reduce_u128_divfree(acc, q);
+            *coeff = F::from_q_residue_u128(reduced);
         }
 
         coeffs
@@ -138,9 +139,22 @@ fn mul_mod_by_small_u16(a: u128, b: u16, modulus: u128) -> u128 {
     acc
 }
 
+#[inline]
+fn reduce_u128_divfree(x: u128, modulus: u128) -> u128 {
+    debug_assert!(modulus > 0);
+    let mut rem = 0u128;
+    for i in (0..128).rev() {
+        rem = (rem << 1) | ((x >> i) & 1);
+        let (candidate, borrow) = rem.overflowing_sub(modulus);
+        let mask = 0u128.wrapping_sub((!borrow) as u128);
+        rem = (candidate & mask) | (rem & !mask);
+    }
+    rem
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{add_mod_u128, mul_mod_by_small_u16};
+    use super::{add_mod_u128, mul_mod_by_small_u16, reduce_u128_divfree};
 
     #[test]
     fn add_mod_matches_native_when_sum_fits_u128() {
@@ -161,6 +175,17 @@ mod tests {
             let b = ((i * 97 + 7) & 0xFFFF) as u16;
             let expected = (a * (b as u128)) % modulus;
             assert_eq!(mul_mod_by_small_u16(a, b, modulus), expected);
+        }
+    }
+
+    #[test]
+    fn reduce_u128_divfree_matches_native_mod() {
+        let modulus = (1u128 << 100) - 159;
+        for i in 0..4096u128 {
+            let x = (i.wrapping_mul(1_146_989_321_207u128))
+                ^ (i.rotate_left(37))
+                ^ 0xA5A5_A5A5_A5A5_A5A5_A5A5_A5A5_A5A5_A5A5u128;
+            assert_eq!(reduce_u128_divfree(x, modulus), x % modulus);
         }
     }
 }

@@ -4,7 +4,7 @@
 mod tests {
     use hachi_pcs::algebra::{Fp128, Fp2, Fp2Config, Fp32, Fp4, Fp4Config, Fp64, VectorModule};
     use hachi_pcs::Module;
-    use hachi_pcs::{CanonicalField, FieldCore};
+    use hachi_pcs::{CanonicalField, CtInvertible, FieldCore};
 
     #[test]
     fn fp32_basic_arith() {
@@ -92,6 +92,28 @@ mod tests {
         assert!(Fp64::<4294967197>::zero().inv().is_none());
         const P128: u128 = 340282366920938463463374607431768211297;
         assert!(Fp128::<P128>::zero().inv().is_none());
+    }
+
+    #[test]
+    fn ct_inv_or_zero_behavior_for_prime_fields() {
+        type F32 = Fp32<103>;
+        assert_eq!(F32::zero().inv_or_zero_ct(), F32::zero());
+        let x32 = F32::from_u64(17);
+        let inv32 = x32.inv_or_zero_ct();
+        assert_eq!(x32 * inv32, F32::one());
+
+        type F64 = Fp64<4294967197>;
+        assert_eq!(F64::zero().inv_or_zero_ct(), F64::zero());
+        let x64 = F64::from_u64(2);
+        let inv64 = x64.inv_or_zero_ct();
+        assert_eq!(x64 * inv64, F64::one());
+
+        const P128: u128 = 340282366920938463463374607431768211297;
+        type F128 = Fp128<P128>;
+        assert_eq!(F128::zero().inv_or_zero_ct(), F128::zero());
+        let x128 = F128::from_u64(12345);
+        let inv128 = x128.inv_or_zero_ct();
+        assert_eq!(x128 * inv128, F128::one());
     }
 
     #[test]
