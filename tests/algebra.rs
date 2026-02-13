@@ -188,6 +188,23 @@ mod tests {
     }
 
     #[test]
+    fn serialization_round_trip_fp4() {
+        use hachi_pcs::{HachiDeserialize, HachiSerialize};
+        type F = Fp32<103>;
+        type F2 = Fp2<F, NR>;
+        type F4 = Fp4<F, NR, NR4>;
+
+        let val = F4::new(
+            F2::new(F::from_u64(5), F::from_u64(1)),
+            F2::new(F::from_u64(2), F::from_u64(9)),
+        );
+        let mut buf = Vec::new();
+        val.serialize_compressed(&mut buf).unwrap();
+        let restored = F4::deserialize_compressed(&buf[..]).unwrap();
+        assert!(val == restored);
+    }
+
+    #[test]
     fn serialization_round_trip_vector_module() {
         use hachi_pcs::{HachiDeserialize, HachiSerialize};
         type F = Fp32<103>;
@@ -196,6 +213,52 @@ mod tests {
         val.serialize_compressed(&mut buf).unwrap();
         let restored = VectorModule::<F, 3>::deserialize_compressed(&buf[..]).unwrap();
         assert_eq!(val, restored);
+    }
+
+    #[test]
+    fn serialization_round_trip_poly() {
+        use hachi_pcs::algebra::poly::Poly;
+        use hachi_pcs::{HachiDeserialize, HachiSerialize};
+        type F = Fp32<103>;
+
+        let val = Poly::<F, 4>([
+            F::from_u64(7),
+            F::from_u64(11),
+            F::from_u64(13),
+            F::from_u64(29),
+        ]);
+        let mut buf = Vec::new();
+        val.serialize_compressed(&mut buf).unwrap();
+        let restored = Poly::<F, 4>::deserialize_compressed(&buf[..]).unwrap();
+        assert_eq!(val, restored);
+    }
+
+    #[test]
+    fn deserialize_checked_rejects_non_canonical_field_elements() {
+        use hachi_pcs::primitives::serialization::SerializationError;
+        use hachi_pcs::HachiDeserialize;
+
+        type F32 = Fp32<103>;
+        let bad32 = 103u32.to_le_bytes();
+        let err32 = F32::deserialize_compressed(&bad32[..]).unwrap_err();
+        assert!(matches!(err32, SerializationError::InvalidData(_)));
+        let unchecked32 = F32::deserialize_compressed_unchecked(&bad32[..]).unwrap();
+        assert_eq!(unchecked32, F32::zero());
+
+        type F64 = Fp64<4294967197>;
+        let bad64 = 4294967197u64.to_le_bytes();
+        let err64 = F64::deserialize_compressed(&bad64[..]).unwrap_err();
+        assert!(matches!(err64, SerializationError::InvalidData(_)));
+        let unchecked64 = F64::deserialize_compressed_unchecked(&bad64[..]).unwrap();
+        assert_eq!(unchecked64, F64::zero());
+
+        const P128: u128 = 340282366920938463463374607431768211297u128;
+        type F128 = Fp128<P128>;
+        let bad128 = P128.to_le_bytes();
+        let err128 = F128::deserialize_compressed(&bad128[..]).unwrap_err();
+        assert!(matches!(err128, SerializationError::InvalidData(_)));
+        let unchecked128 = F128::deserialize_compressed_unchecked(&bad128[..]).unwrap();
+        assert_eq!(unchecked128, F128::zero());
     }
 
     #[test]
@@ -626,5 +689,59 @@ mod tests {
                 "NTT vs schoolbook mismatch at index {i}: NTT={ntt_val}, school={school_val}"
             );
         }
+    }
+
+    #[test]
+    fn cyclotomic_ntt_crt_round_trip_q32() {
+        use hachi_pcs::algebra::ntt::butterfly::NttTwiddles;
+        use hachi_pcs::algebra::tables::{Q32_DATA, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES};
+        use hachi_pcs::algebra::{CyclotomicNtt, CyclotomicRing};
+
+        type F = Fp64<{ Q32_MODULUS }>;
+        type R = CyclotomicRing<F, 64>;
+        type N = CyclotomicNtt<Q32_NUM_PRIMES, 64>;
+
+        let twiddles: [NttTwiddles<64>; Q32_NUM_PRIMES] =
+            std::array::from_fn(|k| NttTwiddles::<64>::compute(Q32_PRIMES[k]));
+
+        let coeffs: [F; 64] =
+            std::array::from_fn(|i| F::from_u64(((i as u64 * 17) + 5) % Q32_MODULUS));
+        let ring = R::from_coefficients(coeffs);
+        let ntt = N::from_ring(&ring, &Q32_PRIMES, &twiddles);
+        let round_trip = ntt.to_ring(&Q32_PRIMES, &twiddles, &Q32_DATA);
+
+        assert_eq!(ring, round_trip);
+    }
+
+    #[test]
+    fn cyclotomic_ntt_reduced_ops_are_stable() {
+        use hachi_pcs::algebra::ntt::butterfly::NttTwiddles;
+        use hachi_pcs::algebra::tables::{Q32_DATA, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES};
+        use hachi_pcs::algebra::{CyclotomicNtt, CyclotomicRing};
+
+        type F = Fp64<{ Q32_MODULUS }>;
+        type R = CyclotomicRing<F, 64>;
+        type N = CyclotomicNtt<Q32_NUM_PRIMES, 64>;
+
+        let twiddles: [NttTwiddles<64>; Q32_NUM_PRIMES] =
+            std::array::from_fn(|k| NttTwiddles::<64>::compute(Q32_PRIMES[k]));
+
+        let a = R::from_coefficients(std::array::from_fn(|i| {
+            F::from_u64(((i as u64 * 3) + 1) % Q32_MODULUS)
+        }));
+        let b = R::from_coefficients(std::array::from_fn(|i| {
+            F::from_u64(((i as u64 * 11) + 7) % Q32_MODULUS)
+        }));
+
+        let ntt_a = N::from_ring(&a, &Q32_PRIMES, &twiddles);
+        let ntt_b = N::from_ring(&b, &Q32_PRIMES, &twiddles);
+
+        let sum = ntt_a.add_reduced(&ntt_b, &Q32_PRIMES);
+        let back = sum.sub_reduced(&ntt_b, &Q32_PRIMES);
+        assert_eq!(back, ntt_a);
+
+        let zero_ntt = ntt_a.add_reduced(&ntt_a.neg_reduced(&Q32_PRIMES), &Q32_PRIMES);
+        let zero_ring = zero_ntt.to_ring(&Q32_PRIMES, &twiddles, &Q32_DATA);
+        assert_eq!(zero_ring, R::zero());
     }
 }
