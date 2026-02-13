@@ -67,8 +67,6 @@ pub struct NttPrime {
 }
 
 impl NttPrime {
-    // ---- Montgomery multiplication ----
-
     /// Montgomery product: `a * b * R^{-1} mod p` where `R = 2^{16}`.
     #[inline]
     pub fn mul(self, a: MontCoeff, b: MontCoeff) -> MontCoeff {
@@ -84,8 +82,6 @@ impl NttPrime {
         let t = (c as i16).wrapping_mul(self.pinv) as i32;
         ((c - t * (self.p as i32)) >> 16) as i16
     }
-
-    // ---- Range reduction ----
 
     /// Barrett-style reduction: tighten a Montgomery coefficient's range
     /// toward `[0, p)` without full normalization.
@@ -118,8 +114,6 @@ impl NttPrime {
         self.csubp(self.caddp(self.reduce(a)))
     }
 
-    // ---- Domain conversions ----
-
     /// Convert a canonical `i16` into Montgomery domain: `a ↦ a * R mod p`.
     #[inline]
     pub fn from_canonical(self, a: i16) -> MontCoeff {
@@ -145,8 +139,6 @@ impl NttPrime {
         let needs_sub = half.wrapping_sub(canonical) >> 15;
         canonical.wrapping_add(needs_sub & self.p.wrapping_neg())
     }
-
-    // ---- Slice operations ----
 
     /// Pointwise Montgomery multiplication of two coefficient slices.
     ///

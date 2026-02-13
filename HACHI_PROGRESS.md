@@ -20,9 +20,12 @@ This file is the **single source of truth** for implementation status and near-t
   - Clear naming, explicit invariants, small cohesive modules, and API docs for public interfaces.
   - No placeholder crypto logic in mainline code (no "temporary" arithmetic shortcuts).
   - Tests are required for correctness-critical arithmetic before dependent protocol code is built.
+  - No section-banner comments (e.g., `// ---- Section ----`, `// === ... ===`). Let the code and doc-comments speak for themselves.
 - **Standalone implementation policy**
   - Do not mention external inspirations/ports in code comments or public docs.
   - Keep terminology and structure internally coherent and project-native.
+- **Git discipline**
+  - Do not commit or push without explicit user approval.
 
 ### Implementation workflow (cautious + approval-driven)
 

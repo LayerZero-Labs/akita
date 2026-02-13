@@ -67,8 +67,6 @@ impl<const L: usize> LimbQ<L> {
     }
 }
 
-// ---- Standard conversions ----
-
 impl<const L: usize> From<u128> for LimbQ<L> {
     fn from(mut x: u128) -> Self {
         let mut out = [0u16; L];
@@ -100,8 +98,6 @@ impl<const L: usize> TryFrom<LimbQ<L>> for u128 {
     }
 }
 
-// ---- Ordering ----
-
 impl<const L: usize> PartialOrd for LimbQ<L> {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -120,8 +116,6 @@ impl<const L: usize> Ord for LimbQ<L> {
         Ordering::Equal
     }
 }
-
-// ---- Arithmetic ----
 
 impl<const L: usize> Add for LimbQ<L> {
     type Output = Self;
@@ -161,8 +155,6 @@ impl<const L: usize> Sub for LimbQ<L> {
     }
 }
 
-// ---- Display ----
-
 impl<const L: usize> fmt::Display for LimbQ<L> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Ok(val) = u128::try_from(*self) {
@@ -172,8 +164,6 @@ impl<const L: usize> fmt::Display for LimbQ<L> {
         }
     }
 }
-
-// ---- CRT data ----
 
 /// CRT/q constants for a given parameter set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
