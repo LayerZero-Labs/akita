@@ -3,8 +3,8 @@
 #[cfg(test)]
 mod tests {
     use hachi_pcs::algebra::{Fp128, Fp2, Fp2Config, Fp32, Fp4, Fp4Config, Fp64, VectorModule};
-    use hachi_pcs::Field;
     use hachi_pcs::Module;
+    use hachi_pcs::{CanonicalField, FieldCore};
 
     #[test]
     fn fp32_basic_arith() {
@@ -695,11 +695,11 @@ mod tests {
     fn cyclotomic_ntt_crt_round_trip_q32() {
         use hachi_pcs::algebra::ntt::butterfly::NttTwiddles;
         use hachi_pcs::algebra::tables::{Q32_DATA, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES};
-        use hachi_pcs::algebra::{CyclotomicNtt, CyclotomicRing};
+        use hachi_pcs::algebra::{CyclotomicCrtNtt, CyclotomicRing};
 
         type F = Fp64<{ Q32_MODULUS }>;
         type R = CyclotomicRing<F, 64>;
-        type N = CyclotomicNtt<Q32_NUM_PRIMES, 64>;
+        type N = CyclotomicCrtNtt<Q32_NUM_PRIMES, 64>;
 
         let twiddles: [NttTwiddles<64>; Q32_NUM_PRIMES] =
             std::array::from_fn(|k| NttTwiddles::<64>::compute(Q32_PRIMES[k]));
@@ -717,11 +717,11 @@ mod tests {
     fn cyclotomic_ntt_reduced_ops_are_stable() {
         use hachi_pcs::algebra::ntt::butterfly::NttTwiddles;
         use hachi_pcs::algebra::tables::{Q32_DATA, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES};
-        use hachi_pcs::algebra::{CyclotomicNtt, CyclotomicRing};
+        use hachi_pcs::algebra::{CyclotomicCrtNtt, CyclotomicRing};
 
         type F = Fp64<{ Q32_MODULUS }>;
         type R = CyclotomicRing<F, 64>;
-        type N = CyclotomicNtt<Q32_NUM_PRIMES, 64>;
+        type N = CyclotomicCrtNtt<Q32_NUM_PRIMES, 64>;
 
         let twiddles: [NttTwiddles<64>; Q32_NUM_PRIMES] =
             std::array::from_fn(|k| NttTwiddles::<64>::compute(Q32_PRIMES[k]));
@@ -743,5 +743,81 @@ mod tests {
         let zero_ntt = ntt_a.add_reduced(&ntt_a.neg_reduced(&Q32_PRIMES), &Q32_PRIMES);
         let zero_ring = zero_ntt.to_ring(&Q32_PRIMES, &twiddles, &Q32_DATA);
         assert_eq!(zero_ring, R::zero());
+    }
+
+    #[test]
+    fn backend_path_matches_default_scalar_path() {
+        use hachi_pcs::algebra::ntt::butterfly::NttTwiddles;
+        use hachi_pcs::algebra::tables::{Q32_DATA, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES};
+        use hachi_pcs::algebra::{CyclotomicCrtNtt, CyclotomicRing, ScalarBackend};
+
+        type F = Fp64<{ Q32_MODULUS }>;
+        type R = CyclotomicRing<F, 64>;
+        type N = CyclotomicCrtNtt<Q32_NUM_PRIMES, 64>;
+
+        let twiddles: [NttTwiddles<64>; Q32_NUM_PRIMES] =
+            std::array::from_fn(|k| NttTwiddles::<64>::compute(Q32_PRIMES[k]));
+        let ring = R::from_coefficients(std::array::from_fn(|i| {
+            F::from_u64(((i as u64 * 13) + 9) % Q32_MODULUS)
+        }));
+
+        let default_ntt = N::from_ring(&ring, &Q32_PRIMES, &twiddles);
+        let backend_ntt =
+            N::from_ring_with_backend::<F, ScalarBackend>(&ring, &Q32_PRIMES, &twiddles);
+        assert_eq!(default_ntt, backend_ntt);
+
+        let default_back = default_ntt.to_ring(&Q32_PRIMES, &twiddles, &Q32_DATA);
+        let backend_back = backend_ntt.to_ring_with_backend::<F, ScalarBackend, 3>(
+            &Q32_PRIMES,
+            &twiddles,
+            &Q32_DATA,
+        );
+        assert_eq!(default_back, backend_back);
+    }
+
+    #[test]
+    fn field_sampling_respects_modulus() {
+        use hachi_pcs::FieldSampling;
+        use rand::{rngs::StdRng, SeedableRng};
+
+        type F = Fp32<103>;
+        let mut rng = StdRng::seed_from_u64(42);
+        for _ in 0..1024 {
+            let x = F::sample(&mut rng);
+            assert!(x.to_canonical_u32() < 103);
+        }
+    }
+
+    #[test]
+    fn pow2_offset_registry_is_consistent() {
+        use hachi_pcs::algebra::{
+            pseudo_mersenne_modulus, Pow2Offset128Field, Pow2OffsetPrimeSpec, POW2_OFFSET_MAX,
+            POW2_OFFSET_PRIMES, POW2_OFFSET_TABLE,
+        };
+        use hachi_pcs::{CanonicalField, PseudoMersenneField};
+
+        fn assert_is_pseudo_mersenne<F: PseudoMersenneField>() {}
+        assert_is_pseudo_mersenne::<Pow2Offset128Field>();
+
+        for Pow2OffsetPrimeSpec {
+            bits,
+            offset,
+            modulus,
+            ..
+        } in POW2_OFFSET_PRIMES
+        {
+            assert!((offset as u128) <= POW2_OFFSET_MAX);
+            assert_eq!(POW2_OFFSET_TABLE[bits as usize], offset as i16);
+            assert_eq!(
+                Some(modulus),
+                pseudo_mersenne_modulus(bits, offset as u128),
+                "2^k-offset modulus mismatch for k={bits}, offset={offset}"
+            );
+            assert_eq!(modulus % 8, 5);
+        }
+
+        let x = Pow2Offset128Field::from_u64(1234567);
+        let inv = x.inv().unwrap();
+        assert_eq!(x * inv, Pow2Offset128Field::one());
     }
 }
