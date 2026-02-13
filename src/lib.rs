@@ -35,6 +35,9 @@ pub mod error;
 /// Primitive traits and operations
 pub mod primitives;
 
+/// Concrete algebra backends (prime fields, extensions, rings)
+pub mod algebra;
+
 pub use error::HachiError;
 pub use primitives::arithmetic::{Field, HachiRoutines, Module};
 pub use primitives::poly::{MultilinearLagrange, Polynomial};
