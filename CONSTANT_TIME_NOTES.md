@@ -11,7 +11,7 @@ algebra and ring stack.
 - `src/algebra/ntt/prime.rs`
 - `src/algebra/ntt/butterfly.rs`
 - `src/algebra/ring/cyclotomic.rs`
-- `src/algebra/ring/ntt_repr.rs`
+- `src/algebra/ring/crt_ntt_repr.rs`
 
 ## Current State
 
@@ -26,7 +26,7 @@ algebra and ring stack.
 
 - `Fp128` reduction (`reduce_u256`) uses data-dependent branches.
 - `Field::inv()` for all current fields branches on zero.
-- CRT reconstruction in `CyclotomicNtt::to_ring` is correctness-first and not
+- CRT reconstruction in `CyclotomicCrtNtt::to_ring` is correctness-first and not
   yet hardened for strict constant-time behavior.
 
 ## Action Items Before Production-Critical Use

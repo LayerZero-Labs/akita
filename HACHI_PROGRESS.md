@@ -5,7 +5,7 @@ This file is the **single source of truth** for implementation status and near-t
 ### Goals (project-level)
 
 - **Production-ready implementation**: correctness, security, maintainability, and performance are first-class goals.
-- **Standalone codebase**: implementation and comments should stand on their own, with no references to where ideas/code came from.
+- **Standalone codebase**: implementation and comments should stand on their own; external acknowledgements live in `README.md`.
 - **Constant-time cryptographic core**: arithmetic and protocol-critical paths must be constant-time with respect to secret data.
 - **No shortcuts / no fallback design**: avoid temporary or degraded code paths in the core implementation.
 
@@ -22,8 +22,9 @@ This file is the **single source of truth** for implementation status and near-t
   - Tests are required for correctness-critical arithmetic before dependent protocol code is built.
   - No section-banner comments (e.g., `// ---- Section ----`, `// === ... ===`). Let the code and doc-comments speak for themselves.
 - **Standalone implementation policy**
-  - Do not mention external inspirations/ports in code comments or public docs.
+  - Do not mention external inspirations/ports in core code comments.
   - Keep terminology and structure internally coherent and project-native.
+  - Keep external attribution limited to dedicated docs (for now: `README.md` acknowledgements).
 - **Git discipline**
   - Do not commit or push without explicit user approval.
 
@@ -65,12 +66,13 @@ This file is the **single source of truth** for implementation status and near-t
 
 #### Phase 0 — Algebra
 
-- [x] Prime field `Fp32` (u32 storage; u64 mul) implementing `Field` (`src/algebra/fields/fp32.rs`)
-- [x] Prime field `Fp64` (u64 storage; u128 mul) implementing `Field` (`src/algebra/fields/fp64.rs`)
-- [x] Prime field `Fp128` (u128 storage; 256-bit intermediate) implementing `Field` (`src/algebra/fields/fp128.rs`, `src/algebra/fields/u256.rs`)
+- [x] Prime field `Fp32` (u32 storage; u64 mul) implementing `FieldCore + CanonicalField` (`src/algebra/fields/fp32.rs`)
+- [x] Prime field `Fp64` (u64 storage; u128 mul) implementing `FieldCore + CanonicalField` (`src/algebra/fields/fp64.rs`)
+- [x] Prime field `Fp128` (u128 storage; 256-bit intermediate) implementing `FieldCore + CanonicalField` (`src/algebra/fields/fp128.rs`, `src/algebra/fields/u256.rs`)
 - [x] Branchless constant-time `add_raw`, `sub_raw`, `neg` for all field types
 - [x] Division-free fixed-iteration reduction for `Fp32/Fp64` multiplication paths
-- [x] Rejection-sampled `random()` for all field types (no modular bias)
+- [x] Rejection-sampled `FieldSampling::sample()` for all field types (no modular bias)
+- [x] Pow2Offset pseudo-Mersenne registry + aliases (`q = 2^k - offset`, bounded `k <= 128`, `q % 8 == 5`) (`src/algebra/fields/pseudo_mersenne.rs`)
 - [x] Constant-time review notes for current algebra/ring paths (`CONSTANT_TIME_NOTES.md`)
 - [ ] Deterministic parameter presets
   - [x] `q = 2^32 - 99` constants scaffold (`src/algebra/ntt/tables.rs`)
@@ -84,7 +86,7 @@ This file is the **single source of truth** for implementation status and near-t
 - [x] Serialization for algebra types (`HachiSerialize` / `HachiDeserialize`) (+ `u128/i128` primitives in `src/primitives/serialization.rs`)
 - [x] NTT small-prime arithmetic: Montgomery-like `fpmul`, Barrett-like `fpred`, branchless `csubq`/`caddq`/`center` (`src/algebra/ntt/prime.rs`)
 - [x] CRT limb arithmetic: `LimbQ`, `QData` (`src/algebra/ntt/crt.rs`)
-- [x] Tests (43 total in `tests/algebra.rs`):
+- [x] Tests (46 total in `tests/algebra.rs`):
   - [x] field arithmetic, identities, distributivity (Fp32/Fp64/Fp128)
   - [x] zero inversion returns None
   - [x] serialization round-trips (all field types, extensions, Poly, VectorModule)
@@ -95,13 +97,17 @@ This file is the **single source of truth** for implementation status and near-t
   - [x] Poly add/sub/neg
   - [x] Cyclotomic ring identities and serialization (D=4, D=64)
   - [x] NTT forward/inverse round-trips (single prime and all Q32 primes)
-  - [x] Cyclotomic NTT full CRT round-trip (`from_ring` -> `to_ring`)
+  - [x] Cyclotomic CRT+NTT full round-trip (`from_ring` -> `to_ring`)
+  - [x] Scalar backend path equivalence (`*_with_backend` vs default path)
+  - [x] Pow2Offset profile invariants (`q = 2^k - offset`, `q % 8 == 5`)
+  - [x] `FieldSampling::sample()` output bound checks
   - [x] Checked deserialization rejects non-canonical field encodings
 
 #### Phase 1 — Ring + gadgets (next)
 
 - [x] Cyclotomic ring `Rq<F, D>` with `X^D = -1` (`src/algebra/ring/cyclotomic.rs`)
-- [x] NTT-domain ring representation + CRT conversion (`src/algebra/ring/ntt_repr.rs`)
+- [x] CRT+NTT-domain ring representation + CRT conversion (`src/algebra/ring/crt_ntt_repr.rs`)
+- [x] Backend/domain layering for ring execution (`src/algebra/backend/*`, `src/algebra/domains/*`)
 - [ ] Galois automorphisms `sigma_i: X ↦ X^i` (odd `i`)
 - [ ] gadget matrices `G_{b,n}` + decomposition `G^{-1}` for base-`b` digits
 - [ ] sparse short challenges (paper: `||c||_1 ≤ ω`, sparse ±1)
@@ -124,7 +130,9 @@ This file is the **single source of truth** for implementation status and near-t
 
 ```
 src/algebra/
-├── fields/         Prime fields (fp32, fp64, fp128, u256) and extensions (ext)
+├── backend/        Backend execution traits + scalar backend
+├── domains/        Domain-level aliases (coefficient / CRT+NTT)
+├── fields/         Prime fields, pseudo-mersenne registry, u256, and extensions
 ├── ntt/            NTT kernels (butterfly), prime kernels (prime), CRT helpers (crt), presets (tables)
 ├── module.rs       VectorModule
 ├── poly.rs         Poly container
