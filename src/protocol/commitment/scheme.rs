@@ -1,6 +1,8 @@
 //! Commitment-scheme trait surface for Hachi protocol code.
 
+use super::config::CommitmentConfig;
 use super::transcript_append::AppendToTranscript;
+use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, Polynomial};
@@ -113,4 +115,37 @@ where
         onehot_k: Option<usize>,
         chunks: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint);
+}
+
+/// Ring-native commitment interface for §4.1 implementation work.
+pub trait RingCommitmentScheme<F, const D: usize, Cfg>: Clone + Send + Sync + 'static
+where
+    F: FieldCore + CanonicalField,
+    Cfg: CommitmentConfig,
+{
+    /// Prover setup parameters.
+    type ProverSetup: Clone + Send + Sync;
+    /// Verifier setup parameters.
+    type VerifierSetup: Clone + Send + Sync;
+    /// Ring-native commitment type.
+    type Commitment: Clone + PartialEq + Send + Sync;
+    /// Opening witness type returned by `commit_ring_blocks`.
+    type Opening: Clone + Send + Sync;
+
+    /// Construct commitment setup for at most `max_num_vars` variables.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if dimensions are inconsistent with `Cfg`.
+    fn setup(max_num_vars: usize) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError>;
+
+    /// Commit to ring blocks arranged as `2^R` vectors of length `2^M`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if block layout mismatches config or commitment fails.
+    fn commit_ring_blocks(
+        f_blocks: &[Vec<CyclotomicRing<F, D>>],
+        setup: &Self::ProverSetup,
+    ) -> Result<(Self::Commitment, Self::Opening), HachiError>;
 }

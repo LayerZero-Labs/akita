@@ -5,10 +5,16 @@
 //! details (for example, Jolt wiring).
 
 pub mod commitment;
+pub mod prover;
 pub mod transcript;
+pub mod verifier;
 
 pub use commitment::{
-    AppendToTranscript, CommitmentScheme, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint,
-    HachiProof, StreamingCommitmentScheme,
+    AppendToTranscript, CommitmentConfig, CommitmentScheme, DefaultCommitmentConfig,
+    HachiCommitment, HachiCommitmentCore, HachiOpeningClaim, HachiOpeningPoint, HachiProof,
+    RingCommitment, RingCommitmentScheme, RingCommitmentSetup, RingOpenProof, RingOpening,
+    StreamingCommitmentScheme,
 };
+pub use prover::prove_opening_stub;
 pub use transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
+pub use verifier::verify_opening_stub;
