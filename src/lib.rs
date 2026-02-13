@@ -38,9 +38,13 @@ pub mod primitives;
 /// Concrete algebra backends (prime fields, extensions, rings)
 pub mod algebra;
 
+/// Protocol-layer transcript and commitment abstractions
+pub mod protocol;
+
 pub use error::HachiError;
 pub use primitives::arithmetic::{
     CanonicalField, FieldCore, FieldSampling, HachiRoutines, Module, PseudoMersenneField,
 };
 pub use primitives::poly::{MultilinearLagrange, Polynomial};
 pub use primitives::serialization::{HachiDeserialize, HachiSerialize};
+pub use protocol::{CommitmentScheme, StreamingCommitmentScheme, Transcript};

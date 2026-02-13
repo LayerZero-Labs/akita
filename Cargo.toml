@@ -41,6 +41,8 @@ rand_core = "0.6"
 hachi-derive = { version = "0.1.0", path = "derive" }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
+blake2 = "0.10.6"
+sha3 = "0.10.8"
 
 [dev-dependencies]
 rand = "0.8"
