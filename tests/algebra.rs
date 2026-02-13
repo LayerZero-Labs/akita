@@ -820,4 +820,61 @@ mod tests {
         let inv = x.inv().unwrap();
         assert_eq!(x * inv, Pow2Offset128Field::one());
     }
+
+    #[test]
+    fn cyclotomic_sigma_is_ring_automorphism() {
+        use hachi_pcs::algebra::CyclotomicRing;
+
+        type F = Fp32<103>;
+        type R = CyclotomicRing<F, 8>;
+        let a = R::from_coefficients(std::array::from_fn(|i| F::from_u64((3 * i + 1) as u64)));
+        let b = R::from_coefficients(std::array::from_fn(|i| F::from_u64((5 * i + 2) as u64)));
+
+        let k1 = 3usize;
+        let k2 = 5usize;
+        let two_d = 16usize;
+
+        assert_eq!(a.sigma(1), a);
+        assert_eq!(a.sigma_m1().sigma_m1(), a);
+        assert_eq!(a.sigma(k1).sigma(k2), a.sigma((k1 * k2) % two_d));
+        assert_eq!((a * b).sigma(k1), a.sigma(k1) * b.sigma(k1));
+    }
+
+    #[test]
+    fn cyclotomic_gadget_pow2_decompose_recompose_round_trip() {
+        use hachi_pcs::algebra::tables::Q32_MODULUS;
+        use hachi_pcs::algebra::CyclotomicRing;
+
+        type F = Fp64<{ Q32_MODULUS }>;
+        type R = CyclotomicRing<F, 64>;
+
+        let ring = R::from_coefficients(std::array::from_fn(|i| {
+            F::from_u64(((i as u64 * 73) + 17) % Q32_MODULUS)
+        }));
+
+        // Q32 fits in 32 bits, so 8 base-16 digits are sufficient.
+        let digits = ring.gadget_decompose_pow2(8, 4);
+        let round_trip = R::gadget_recompose_pow2(&digits, 4);
+        assert_eq!(round_trip, ring);
+    }
+
+    #[test]
+    fn sparse_pm1_challenge_has_expected_weight() {
+        use hachi_pcs::algebra::CyclotomicRing;
+        use rand::{rngs::StdRng, SeedableRng};
+
+        type F = Fp32<103>;
+        type R = CyclotomicRing<F, 64>;
+
+        let mut rng = StdRng::seed_from_u64(123);
+        let challenge = R::sample_sparse_pm1(&mut rng, 11);
+        assert_eq!(challenge.hamming_weight(), 11);
+
+        for c in challenge.coefficients() {
+            let x = c.to_canonical_u32();
+            if x != 0 {
+                assert!(x == 1 || x == 102, "nonzero coefficient must be +/-1");
+            }
+        }
+    }
 }

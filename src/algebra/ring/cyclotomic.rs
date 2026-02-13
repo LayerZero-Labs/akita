@@ -3,7 +3,7 @@
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::{FieldCore, FieldSampling};
+use crate::{CanonicalField, FieldCore, FieldSampling};
 use rand_core::RngCore;
 use std::io::{Read, Write};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
@@ -70,6 +70,140 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
             *c = *c * *k;
         }
         Self { coeffs: out }
+    }
+
+    /// Apply the cyclotomic automorphism `sigma_k: X -> X^k` for odd `k`.
+    ///
+    /// In `Z_q[X]/(X^D + 1)`, this permutes/sign-flips coefficients using
+    /// exponent reduction modulo `2D`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D == 0` or `k` is not odd modulo `2D`.
+    pub fn sigma(&self, k: usize) -> Self {
+        assert!(D > 0, "ring degree must be non-zero");
+        let two_d = 2 * D;
+        let k_mod = k % two_d;
+        assert!(k_mod % 2 == 1, "sigma_k requires odd k in Z_q[X]/(X^D + 1)");
+
+        let mut out = [F::zero(); D];
+        for (j, coeff) in self.coeffs.iter().copied().enumerate() {
+            let idx = (j * k_mod) % two_d;
+            if idx < D {
+                out[idx] = out[idx] + coeff;
+            } else {
+                out[idx - D] = out[idx - D] - coeff;
+            }
+        }
+        Self { coeffs: out }
+    }
+
+    /// Apply `sigma_{-1}` (`X -> X^{-1} = X^{2D-1}` in this ring).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D == 0`.
+    pub fn sigma_m1(&self) -> Self {
+        assert!(D > 0, "ring degree must be non-zero");
+        self.sigma(2 * D - 1)
+    }
+
+    /// Count non-zero coefficients.
+    #[inline]
+    pub fn hamming_weight(&self) -> usize {
+        self.coeffs.iter().filter(|c| !c.is_zero()).count()
+    }
+
+    /// Sample a sparse challenge with exactly `omega` non-zeros in `{+1, -1}`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `omega > D` or `D == 0` with non-zero `omega`.
+    pub fn sample_sparse_pm1<R: RngCore>(rng: &mut R, omega: usize) -> Self {
+        assert!(omega <= D, "omega must be <= ring degree");
+        assert!(D > 0 || omega == 0, "ring degree must be non-zero");
+
+        let mut coeffs = [F::zero(); D];
+        let mut placed = 0usize;
+        while placed < omega {
+            let idx = (rng.next_u64() % (D as u64)) as usize;
+            if coeffs[idx].is_zero() {
+                coeffs[idx] = if (rng.next_u32() & 1) == 0 {
+                    F::one()
+                } else {
+                    -F::one()
+                };
+                placed += 1;
+            }
+        }
+        Self { coeffs }
+    }
+}
+
+impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
+    /// Functional `G^{-1}`-style base-`2^log_basis` decomposition.
+    ///
+    /// This returns `levels` ring elements whose coefficients are the low-to-high
+    /// digits of each coefficient in canonical representation. This mirrors the
+    /// effect of gadget decomposition without materializing a gadget matrix.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `log_basis == 0`, `log_basis >= 128`, or `levels * log_basis > 128`.
+    pub fn gadget_decompose_pow2(&self, levels: usize, log_basis: u32) -> Vec<Self> {
+        assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
+        assert!(
+            (levels as u32).saturating_mul(log_basis) <= 128,
+            "levels * log_basis must be <= 128"
+        );
+
+        let mask = (1u128 << log_basis) - 1;
+        let mut out = Vec::with_capacity(levels);
+        for level in 0..levels {
+            let shift = (level as u32) * log_basis;
+            let coeffs = std::array::from_fn(|i| {
+                let canonical = self.coeffs[i].to_canonical_u128();
+                let digit = (canonical >> shift) & mask;
+                F::from_canonical_u128_reduced(digit)
+            });
+            out.push(Self { coeffs });
+        }
+        out
+    }
+
+    /// Functional gadget recomposition (`G * digits`) for base `2^log_basis`.
+    ///
+    /// Coefficients from each part are interpreted as one digit plane and
+    /// recombined back into canonical integers (then reduced into the field).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `log_basis == 0`, `log_basis >= 128`, or `parts.len() * log_basis > 128`.
+    pub fn gadget_recompose_pow2(parts: &[Self], log_basis: u32) -> Self {
+        if parts.is_empty() {
+            return Self::zero();
+        }
+
+        assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
+        assert!(
+            (parts.len() as u32).saturating_mul(log_basis) <= 128,
+            "parts.len() * log_basis must be <= 128"
+        );
+
+        let mask = (1u128 << log_basis) - 1;
+        let coeffs = std::array::from_fn(|i| {
+            let mut acc = 0u128;
+            for (level, part) in parts.iter().enumerate() {
+                let shift = (level as u32) * log_basis;
+                let digit = part.coeffs[i].to_canonical_u128() & mask;
+                let contrib = digit
+                    .checked_shl(shift)
+                    .expect("shift must be < 128 by precondition");
+                acc = acc.wrapping_add(contrib);
+            }
+            F::from_canonical_u128_reduced(acc)
+        });
+        Self { coeffs }
     }
 }
 

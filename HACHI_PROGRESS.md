@@ -59,8 +59,24 @@ This file is the **single source of truth** for implementation status and near-t
 
 ### Scope (current)
 
-- **Phase 0 (algebra)**: prime fields (32/64/128-bit representations), modules over them, and extension fields over them.
-- Later: `R_q = Z_q[X]/(X^d + 1)` cyclotomic ring arithmetic, gadget decompositions, commitments, ring-switching, sumcheck, recursive PCS.
+- **Implemented so far (Phase 0 + Phase 1 functional core)**: prime fields (32/64/128-bit representations), extension fields, cyclotomic `R_q = Z_q[X]/(X^d + 1)`, CRT+NTT representation, backend/domain layering, ring automorphisms, and functional gadget decomposition.
+- **Not started yet (Phase 2+ protocol)**: commitments, evaluation-to-relation reduction, ring-switching, sumcheck, recursion/stop-condition logic.
+
+### Critical review snapshot (2026-02-13)
+
+- **Phase 1 functional milestone appears complete**
+  - Ring/gadget components listed in Phase 1 are implemented and currently checked off.
+  - Conversion and arithmetic paths in coefficient and CRT+NTT domains are exercised by passing tests.
+- **Not yet "production-ready" despite functional completion**
+  - Constant-time hardening follow-ups remain in inversion and final CRT projection paths (see `CONSTANT_TIME_NOTES.md`).
+  - Current ring multiplication in coefficient form remains `O(D^2)` schoolbook (`src/algebra/ring/cyclotomic.rs`), with CRT+NTT available as the faster domain path.
+- **Tooling/quality gate status (current branch snapshot)**
+  - `cargo test` passes (55 tests total: 4 lib + 49 algebra + 2 primality).
+  - `cargo fmt --all --check` passes.
+  - `cargo clippy --all --all-targets --all-features` passes.
+- **Conclusion**
+  - Treat **Phase 1 as functionally complete**.
+  - Recent hardening/cleanup pass completed; remaining strict CT follow-ups stay tracked in `CONSTANT_TIME_NOTES.md`.
 
 ### Status board
 
@@ -74,19 +90,22 @@ This file is the **single source of truth** for implementation status and near-t
 - [x] Rejection-sampled `FieldSampling::sample()` for all field types (no modular bias)
 - [x] Pow2Offset pseudo-Mersenne registry + aliases (`q = 2^k - offset`, bounded `k <= 128`, `q % 8 == 5`) (`src/algebra/fields/pseudo_mersenne.rs`)
 - [x] Constant-time review notes for current algebra/ring paths (`CONSTANT_TIME_NOTES.md`)
-- [ ] Deterministic parameter presets
+- [x] Deterministic parameter presets
   - [x] `q = 2^32 - 99` constants scaffold (`src/algebra/ntt/tables.rs`)
-  - [ ] 64-bit and 128-bit example prime presets
-- [ ] `Module` implementations:
+  - [x] `Pow2Offset` presets selected for 64/128-bit path:
+    - `q = 2^64 - 59` (`POW2_OFFSET_MODULUS_64`)
+    - `q = 2^128 - 275` (`POW2_OFFSET_MODULUS_128`)
+    - source: `src/algebra/fields/pseudo_mersenne.rs`
+- [x] `Module` implementations:
   - [x] `VectorModule<F, N>` (fixed-length vectors; `Module` via scalar*vector mul) (`src/algebra/module.rs`)
-  - [ ] `PolyModule<F, D>` (polynomials as a module over base field)
+  - [x] `PolyModule<F, D>` removed from current scope (not needed for near-term Hachi milestones)
 - [ ] Extension fields:
   - [x] `Fp2<F, NR>` quadratic extension (`src/algebra/fields/ext.rs`)
   - [x] `Fp4<F, NR, XI0, XI1>` tower extension (`src/algebra/fields/ext.rs`)
 - [x] Serialization for algebra types (`HachiSerialize` / `HachiDeserialize`) (+ `u128/i128` primitives in `src/primitives/serialization.rs`)
 - [x] NTT small-prime arithmetic: Montgomery-like `fpmul`, Barrett-like `fpred`, branchless `csubq`/`caddq`/`center` (`src/algebra/ntt/prime.rs`)
 - [x] CRT limb arithmetic: `LimbQ`, `QData` (`src/algebra/ntt/crt.rs`)
-- [x] Tests (46 total in `tests/algebra.rs`):
+- [x] Tests (49 total in `tests/algebra.rs`):
   - [x] field arithmetic, identities, distributivity (Fp32/Fp64/Fp128)
   - [x] zero inversion returns None
   - [x] serialization round-trips (all field types, extensions, Poly, VectorModule)
@@ -102,15 +121,21 @@ This file is the **single source of truth** for implementation status and near-t
   - [x] Pow2Offset profile invariants (`q = 2^k - offset`, `q % 8 == 5`)
   - [x] `FieldSampling::sample()` output bound checks
   - [x] Checked deserialization rejects non-canonical field encodings
+  - [x] Galois automorphism checks (`sigma` composition + multiplicativity)
+  - [x] Functional gadget decompose/recompose round-trip checks
+  - [x] Sparse `+/-1` challenge support checks (`hamming_weight = omega`)
+- [x] Dedicated Pow2Offset primality regression tests (`tests/primality.rs`)
+  - [x] Miller-Rabin probable-prime checks for all registered Pow2Offset moduli
+  - [x] Composite sanity rejection checks
 
-#### Phase 1 — Ring + gadgets (next)
+#### Phase 1 — Ring + gadgets (functional core)
 
 - [x] Cyclotomic ring `Rq<F, D>` with `X^D = -1` (`src/algebra/ring/cyclotomic.rs`)
 - [x] CRT+NTT-domain ring representation + CRT conversion (`src/algebra/ring/crt_ntt_repr.rs`)
 - [x] Backend/domain layering for ring execution (`src/algebra/backend/*`, `src/algebra/domains/*`)
-- [ ] Galois automorphisms `sigma_i: X ↦ X^i` (odd `i`)
-- [ ] gadget matrices `G_{b,n}` + decomposition `G^{-1}` for base-`b` digits
-- [ ] sparse short challenges (paper: `||c||_1 ≤ ω`, sparse ±1)
+- [x] Galois automorphisms `sigma_i: X ↦ X^i` (odd `i`)
+- [x] Functional gadget decomposition/recomposition (`G^{-1}` / `G` behavior) for base-`2^d` digits, without materializing dense gadget matrices
+- [x] sparse short challenges (paper: `||c||_1 ≤ ω`, sparse ±1)
 
 #### Phase 2+ — Protocol (later)
 
@@ -136,7 +161,7 @@ src/algebra/
 ├── ntt/            NTT kernels (butterfly), prime kernels (prime), CRT helpers (crt), presets (tables)
 ├── module.rs       VectorModule
 ├── poly.rs         Poly container
-└── ring/           Cyclotomic ring and NTT-domain representation
+└── ring/           Cyclotomic ring and CRT+NTT representation
 ```
 
 ### References

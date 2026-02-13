@@ -54,21 +54,24 @@ impl<const MODULUS: u128> Fp128<MODULUS> {
         // Binary long division remainder, maintaining remainder in 129 bits (hi:0/1, lo:u128).
         // Invariant: before each step, remainder < MODULUS.
         let m = MODULUS;
-        let mut hi: u8 = 0;
+        let mut hi: u128 = 0;
         let mut lo: u128 = 0;
 
         for i in (0..256).rev() {
             // rem = rem*2 + bit
-            let new_hi = (lo >> 127) as u8;
+            let new_hi = lo >> 127;
             lo <<= 1;
             lo |= n.bit(i) as u128;
             hi = new_hi;
 
             // Since rem < 2m after update, subtract at most once.
-            if hi == 1 || lo >= m {
-                lo = lo.wrapping_sub(m);
-                hi = 0;
-            }
+            // Select between `lo` and `lo - m` without secret-dependent branching.
+            let (sub_lo, borrow) = lo.overflowing_sub(m);
+            let lo_ge_m = (!borrow) as u128; // 1 iff lo >= m
+            let should_sub = hi | lo_ge_m; // 1 iff (hi == 1) || (lo >= m)
+            let mask = should_sub.wrapping_neg();
+            lo = (lo & !mask) | (sub_lo & mask);
+            hi &= 1u128.wrapping_sub(should_sub);
         }
 
         debug_assert_eq!(hi, 0);
