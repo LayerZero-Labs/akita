@@ -60,7 +60,7 @@ This file is the **single source of truth** for implementation status and near-t
 ### Scope (current)
 
 - **Implemented so far (Phase 0 + Phase 1 functional core)**: prime fields (32/64/128-bit representations), extension fields, cyclotomic `R_q = Z_q[X]/(X^d + 1)`, CRT+NTT representation, backend/domain layering, ring automorphisms, and functional gadget decomposition.
-- **Phase 2+ protocol status**: interface scaffold plus ring-native §4.1 commitment core are present (`Transcript`, Blake2b/Keccak backends, phase-grounded labels, `RingCommitmentScheme`, config layer, and setup/commit implementation). Open-check prover/verifier paths remain stubbed.
+- **Phase 2+ protocol status**: interface scaffold plus ring-native §4.1 commitment core are present (`Transcript`, Blake2b/Keccak backends, phase-grounded labels, `RingCommitmentScheme`, config layer, and setup/commit implementation). Sumcheck core building blocks (univariate messages + transcript-driving prover/verifier driver) are now implemented, with tests. Open-check prover/verifier paths remain stubbed.
 - **Deferred future phase**: integration into Jolt (replacement of Dory with Hachi) is intentionally out of current execution scope; cross-repo analysis is design input only.
 
 ### Critical review snapshot (2026-02-13)
@@ -81,6 +81,7 @@ This file is the **single source of truth** for implementation status and near-t
   - Hachi-native labels are now calibrated to paper-stage phases (§4.1, §4.2, §4.3, §4.5).
   - Commitment absorption is label-directed at call sites (`AppendToTranscript` no longer hardcodes commitment labels).
   - Ring-native commitment setup/commit flow for §4.1 is implemented in `src/protocol/commitment/commit.rs` behind `RingCommitmentScheme`.
+  - Sumcheck core module landed (`src/protocol/sumcheck.rs`) with unit/integration tests (`tests/sumcheck_core.rs`, `tests/sumcheck_prover_driver.rs`).
   - Prover/verifier split folders are wired with explicit stubs (`src/protocol/prover/stub.rs`, `src/protocol/verifier/stub.rs`) for future open-check implementation.
 - **Conclusion**
   - Treat **Phase 1 as functionally complete**.
@@ -158,9 +159,11 @@ This file is the **single source of truth** for implementation status and near-t
 - [x] ring-native commitment core (`RingCommitmentScheme`, `commit.rs`, config wiring) for §4.1 setup/commit
 - [x] protocol prover/verifier folder split with explicit stubs (`prover/stub.rs`, `verifier/stub.rs`)
 - [x] ring-commitment tests (`ring_commitment_core`, `ring_commitment_config`, `prover_verifier_stub_contract`)
+- [x] sumcheck core building blocks (univariate messages + transcript-driving prover/verifier driver) (`src/protocol/sumcheck.rs`)
+- [x] sumcheck core tests (`tests/sumcheck_core.rs`, `tests/sumcheck_prover_driver.rs`)
 - [ ] commitment open-check prove/verify implementation (currently stubs)
 - [ ] evaluation → linear relation (paper §4.2)
-- [ ] ring-switching + sumcheck (paper §4.3, Fig. 4–7)
+- [ ] ring-switching constraints as sumcheck instances (paper §4.3, Fig. 4–7)
 - [ ] recursion / “stop condition” + optional Greyhound composition (§4.5)
 
 #### Phase 3 — Integration into Jolt (deferred; not active now)

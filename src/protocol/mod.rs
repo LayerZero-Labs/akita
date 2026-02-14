@@ -6,6 +6,7 @@
 
 pub mod commitment;
 pub mod prover;
+pub mod sumcheck;
 pub mod transcript;
 pub mod verifier;
 
@@ -16,5 +17,6 @@ pub use commitment::{
     StreamingCommitmentScheme,
 };
 pub use prover::prove_opening_stub;
+pub use sumcheck::{prove_sumcheck, CompressedUniPoly, SumcheckInstanceProver, SumcheckProof, UniPoly};
 pub use transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 pub use verifier::verify_opening_stub;
