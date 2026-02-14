@@ -95,7 +95,7 @@ mod tests {
     }
 
     #[test]
-    fn ct_inv_or_zero_behavior_for_prime_fields() {
+    fn inv_or_zero_behavior_for_prime_fields() {
         type F32 = Fp32<103>;
         assert_eq!(F32::zero().inv_or_zero(), F32::zero());
         let x32 = F32::from_u64(17);

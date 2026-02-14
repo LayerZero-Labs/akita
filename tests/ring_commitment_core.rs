@@ -194,9 +194,8 @@ fn setup_rejects_mismatched_degree() {
 
 #[test]
 fn setup_rejects_invalid_digit_budget() {
-    let err =
-        <HachiCommitmentCore as RingCommitmentScheme<F, D, BadDigitBudgetConfig>>::setup(16)
-            .unwrap_err();
+    let err = <HachiCommitmentCore as RingCommitmentScheme<F, D, BadDigitBudgetConfig>>::setup(16)
+        .unwrap_err();
     match err {
         HachiError::InvalidSetup(msg) => assert!(msg.contains("DELTA * LOG_BASIS")),
         other => panic!("unexpected error: {other:?}"),
