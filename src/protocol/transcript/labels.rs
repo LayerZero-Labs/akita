@@ -17,6 +17,10 @@ pub const CHALLENGE_LINEAR_RELATION: &[u8] = b"hachi/challenge/linear-relation";
 pub const ABSORB_RING_SWITCH_MESSAGE: &[u8] = b"hachi/absorb/ring-switch-message";
 /// Challenge used by ring-switching relation checks (paper §4.3).
 pub const CHALLENGE_RING_SWITCH: &[u8] = b"hachi/challenge/ring-switch";
+/// Absorb sparse-challenge sampling context (e.g. for short/sparse ring `c`).
+pub const ABSORB_SPARSE_CHALLENGE: &[u8] = b"hachi/absorb/sparse-challenge";
+/// Challenge bytes used to sample sparse challenges (e.g. ring `c` with weight ω).
+pub const CHALLENGE_SPARSE_CHALLENGE: &[u8] = b"hachi/challenge/sparse-challenge";
 /// Absorb per-round sumcheck messages (paper §4.3).
 pub const ABSORB_SUMCHECK_ROUND: &[u8] = b"hachi/absorb/sumcheck-round";
 /// Challenge sampled per sumcheck round (paper §4.3).
@@ -35,6 +39,8 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         CHALLENGE_LINEAR_RELATION,
         ABSORB_RING_SWITCH_MESSAGE,
         CHALLENGE_RING_SWITCH,
+        ABSORB_SPARSE_CHALLENGE,
+        CHALLENGE_SPARSE_CHALLENGE,
         ABSORB_SUMCHECK_ROUND,
         CHALLENGE_SUMCHECK_ROUND,
         ABSORB_STOP_CONDITION,

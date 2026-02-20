@@ -5,6 +5,7 @@
 //! details (for example, Jolt wiring).
 
 pub mod commitment;
+pub mod challenges;
 pub mod prover;
 pub mod sumcheck;
 pub mod transcript;
