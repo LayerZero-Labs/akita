@@ -1,5 +1,5 @@
 //! Verifier-side protocol entry points.
 
-pub mod stub;
+pub mod verify;
 
-pub use stub::verify_opening_stub;
+pub use verify::verify_opening_stub;
