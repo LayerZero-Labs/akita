@@ -19,6 +19,7 @@ impl CommitmentConfig for TinyConfig {
     const R: usize = 1;
     const N_A: usize = 2;
     const N_B: usize = 2;
+    const N_D: usize = 2;
     const LOG_BASIS: u32 = 4;
     const DELTA: usize = 8;
 }
@@ -32,6 +33,7 @@ impl CommitmentConfig for BadDegreeConfig {
     const R: usize = 2;
     const N_A: usize = 8;
     const N_B: usize = 4;
+    const N_D: usize = 4;
     const LOG_BASIS: u32 = 4;
     const DELTA: usize = 8;
 }
@@ -45,6 +47,7 @@ impl CommitmentConfig for BadDigitBudgetConfig {
     const R: usize = 2;
     const N_A: usize = 8;
     const N_B: usize = 4;
+    const N_D: usize = 4;
     const LOG_BASIS: u32 = 32;
     const DELTA: usize = 5; // 160 > 128
 }

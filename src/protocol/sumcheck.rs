@@ -272,11 +272,8 @@ impl<E: FieldCore + Valid> HachiDeserialize for SumcheckProof<E> {
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        let round_polys = Vec::<CompressedUniPoly<E>>::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-        )?;
+        let round_polys =
+            Vec::<CompressedUniPoly<E>>::deserialize_with_mode(&mut reader, compress, validate)?;
         let out = Self { round_polys };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -426,4 +423,3 @@ where
     let proof = SumcheckProof { round_polys };
     Ok((proof, r, claim))
 }
-

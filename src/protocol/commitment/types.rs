@@ -29,9 +29,9 @@ pub struct HachiOpeningClaim<F: FieldCore> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct HachiCommitment(pub u128);
 
-/// Minimal proof wrapper used by protocol traits/tests.
+/// Minimal proof wrapper used by protocol trait stubs and tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct HachiProof(pub u128);
+pub struct DummyProof(pub u128);
 
 impl Valid for HachiCommitment {
     fn check(&self) -> Result<(), SerializationError> {
@@ -64,13 +64,13 @@ impl HachiDeserialize for HachiCommitment {
     }
 }
 
-impl Valid for HachiProof {
+impl Valid for DummyProof {
     fn check(&self) -> Result<(), SerializationError> {
         Ok(())
     }
 }
 
-impl HachiSerialize for HachiProof {
+impl HachiSerialize for DummyProof {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -84,7 +84,7 @@ impl HachiSerialize for HachiProof {
     }
 }
 
-impl HachiDeserialize for HachiProof {
+impl HachiDeserialize for DummyProof {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         _compress: Compress,

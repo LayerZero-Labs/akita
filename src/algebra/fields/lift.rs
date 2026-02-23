@@ -2,7 +2,7 @@
 
 use crate::algebra::fields::ext::{Fp2, Fp2Config, Fp4, Fp4Config};
 use crate::primitives::serialization::Valid;
-use crate::{FieldCore};
+use crate::FieldCore;
 
 /// Lift a base-field element into an extension field.
 ///
@@ -41,4 +41,3 @@ where
         Self::new(Fp2::new(x, F::zero()), Fp2::new(F::zero(), F::zero()))
     }
 }
-

@@ -67,4 +67,3 @@ where
 
     Ok(SparseChallenge { positions, coeffs })
 }
-

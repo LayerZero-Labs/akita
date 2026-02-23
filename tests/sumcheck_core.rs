@@ -2,10 +2,12 @@
 
 use hachi_pcs::algebra::Fp64;
 use hachi_pcs::protocol::transcript::labels;
-use hachi_pcs::protocol::{Blake2bTranscript, CompressedUniPoly, SumcheckProof, Transcript, UniPoly};
+use hachi_pcs::protocol::{
+    Blake2bTranscript, CompressedUniPoly, SumcheckProof, Transcript, UniPoly,
+};
 use hachi_pcs::{CanonicalField, FieldCore, FieldSampling};
-use rand::RngCore;
 use rand::rngs::StdRng;
+use rand::RngCore;
 use rand::SeedableRng;
 
 type F = Fp64<4294967197>;
@@ -61,13 +63,9 @@ fn sumcheck_proof_verifier_driver_is_transcript_deterministic() {
     // Verifier run.
     let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
     let (final_claim_1, r_1) = proof
-        .verify::<F, _, _>(
-            claim0,
-            num_rounds,
-            degree_bound,
-            &mut t1,
-            |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
-        )
+        .verify::<F, _, _>(claim0, num_rounds, degree_bound, &mut t1, |tr| {
+            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+        })
         .unwrap();
 
     // Manual replay with a fresh transcript (must match).
@@ -84,4 +82,3 @@ fn sumcheck_proof_verifier_driver_is_transcript_deterministic() {
     assert_eq!(r_1, r_manual);
     assert_eq!(final_claim_1, claim);
 }
-

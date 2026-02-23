@@ -4,4 +4,3 @@
 //! the transcript while keeping the low-level representations in the algebra layer.
 
 pub mod sparse;
-

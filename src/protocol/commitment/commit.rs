@@ -12,7 +12,7 @@ use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 
-/// Setup for the ring-native commitment core.
+/// Unified setup for the ring-native commitment (§4.1) and prover (§4.2).
 #[allow(non_snake_case)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RingCommitmentSetup<F: FieldCore, const D: usize> {
@@ -24,6 +24,8 @@ pub struct RingCommitmentSetup<F: FieldCore, const D: usize> {
     pub A: Vec<Vec<CyclotomicRing<F, D>>>,
     /// Outer matrix `B`.
     pub B: Vec<Vec<CyclotomicRing<F, D>>>,
+    /// Prover matrix `D ∈ R_q^{n_D × δ·2^R}` (§4.2).
+    pub D: Vec<Vec<CyclotomicRing<F, D>>>,
 }
 
 /// Concrete §4.1 commitment core.
@@ -48,15 +50,23 @@ where
             derive_public_matrix::<F, D>(Cfg::N_A, layout.inner_width, &public_matrix_seed, b"A");
         let b_matrix =
             derive_public_matrix::<F, D>(Cfg::N_B, layout.outer_width, &public_matrix_seed, b"B");
+        let d_matrix = derive_public_matrix::<F, D>(
+            Cfg::N_D,
+            layout.d_matrix_width,
+            &public_matrix_seed,
+            b"D",
+        );
 
         let setup = RingCommitmentSetup {
             max_num_vars,
             public_matrix_seed,
             A: a_matrix,
             B: b_matrix,
+            D: d_matrix,
         };
         ensure_matrix_shape(&setup.A, Cfg::N_A, layout.inner_width, "A")?;
         ensure_matrix_shape(&setup.B, Cfg::N_B, layout.outer_width, "B")?;
+        ensure_matrix_shape(&setup.D, Cfg::N_D, layout.d_matrix_width, "D")?;
         Ok((setup.clone(), setup))
     }
 

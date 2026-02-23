@@ -72,13 +72,11 @@ fn prover_driver_produces_proof_that_verifier_replays() {
 
     let mut prover_inst = DenseTableSumcheck::new(table.clone());
     let mut prover_t = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    let (proof, r_vec, final_claim) = prove_sumcheck::<F, _, F, _, _>(
-        &mut prover_inst,
-        initial_claim,
-        &mut prover_t,
-        |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
-    )
-    .unwrap();
+    let (proof, r_vec, final_claim) =
+        prove_sumcheck::<F, _, F, _, _>(&mut prover_inst, initial_claim, &mut prover_t, |tr| {
+            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+        })
+        .unwrap();
 
     // After folding all variables, the table should be a single value equal to f(r*).
     assert_eq!(prover_inst.table.len(), 1);
@@ -87,16 +85,11 @@ fn prover_driver_produces_proof_that_verifier_replays() {
     // Verifier replay must derive the same (final_claim, r_vec).
     let mut verifier_t = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
     let (final_claim_v, r_vec_v) = proof
-        .verify::<F, _, _>(
-            initial_claim,
-            num_rounds,
-            1,
-            &mut verifier_t,
-            |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
-        )
+        .verify::<F, _, _>(initial_claim, num_rounds, 1, &mut verifier_t, |tr| {
+            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+        })
         .unwrap();
 
     assert_eq!(r_vec_v, r_vec);
     assert_eq!(final_claim_v, final_claim);
 }
-

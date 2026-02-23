@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use hachi_pcs::algebra::Fp64;
-use hachi_pcs::protocol::commitment::{HachiCommitment, HachiProof};
+use hachi_pcs::protocol::commitment::{DummyProof, HachiCommitment};
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
     AppendToTranscript, Blake2bTranscript, CommitmentScheme, StreamingCommitmentScheme, Transcript,
@@ -42,7 +42,7 @@ impl CommitmentScheme<F> for DummyScheme {
     type ProverSetup = DummySetup;
     type VerifierSetup = DummySetup;
     type Commitment = HachiCommitment;
-    type Proof = HachiProof;
+    type Proof = DummyProof;
     type OpeningProofHint = HachiCommitment;
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
@@ -87,7 +87,7 @@ impl CommitmentScheme<F> for DummyScheme {
 
         let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
         let opening = poly.evaluate(opening_point);
-        Ok(HachiProof(
+        Ok(DummyProof(
             opening.to_canonical_u128() ^ q.to_canonical_u128(),
         ))
     }

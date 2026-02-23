@@ -140,4 +140,3 @@ impl<F: FieldCore> Polynomial<F> for DenseMultilinearEvals<F> {
         self.evaluate_with_order(point, BindingOrder::LowToHigh)
     }
 }
-

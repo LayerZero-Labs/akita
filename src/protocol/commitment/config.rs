@@ -5,7 +5,7 @@ use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 use crate::FieldCore;
 
-/// Parameter bundle for the ring-native §4.1 commitment core.
+/// Parameter bundle for the ring-native commitment core (§4.1–§4.2).
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Ring degree used by `CyclotomicRing<F, D>`.
     const D: usize;
@@ -17,6 +17,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     const N_A: usize;
     /// Outer commitment matrix row count.
     const N_B: usize;
+    /// Prover commitment matrix `D` row count (§4.2).
+    const N_D: usize;
     /// Base-2 logarithm of gadget decomposition base.
     const LOG_BASIS: u32;
     /// Decomposition levels `delta`.
@@ -34,6 +36,8 @@ pub(super) struct CommitmentLayout {
     pub(super) inner_width: usize,
     /// Width of outer matrix `B`.
     pub(super) outer_width: usize,
+    /// Width of prover matrix `D` (`δ · 2^R`).
+    pub(super) d_matrix_width: usize,
     /// Minimum variable count supported by this config.
     pub(super) required_vars: usize,
 }
@@ -69,6 +73,9 @@ pub(super) fn validate_and_derive_layout<Cfg: CommitmentConfig, const D: usize>(
         .checked_mul(Cfg::DELTA)
         .and_then(|x| x.checked_mul(num_blocks))
         .ok_or_else(|| HachiError::InvalidSetup("outer width overflow".to_string()))?;
+    let d_matrix_width = Cfg::DELTA
+        .checked_mul(num_blocks)
+        .ok_or_else(|| HachiError::InvalidSetup("D-matrix width overflow".to_string()))?;
     let required_vars = Cfg::M
         .checked_add(Cfg::R)
         .ok_or_else(|| HachiError::InvalidSetup("variable count overflow".to_string()))?;
@@ -78,6 +85,7 @@ pub(super) fn validate_and_derive_layout<Cfg: CommitmentConfig, const D: usize>(
         block_len,
         inner_width,
         outer_width,
+        d_matrix_width,
         required_vars,
     })
 }
@@ -163,6 +171,7 @@ impl CommitmentConfig for DefaultCommitmentConfig {
     const R: usize = 2;
     const N_A: usize = 8;
     const N_B: usize = 4;
+    const N_D: usize = 4;
     const LOG_BASIS: u32 = 4;
     const DELTA: usize = 8;
 }

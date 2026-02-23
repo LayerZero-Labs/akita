@@ -1,8 +1,8 @@
 #![allow(missing_docs)]
 
-use hachi_pcs::algebra::Fp64;
 use hachi_pcs::algebra::fields::LiftBase;
 use hachi_pcs::algebra::ring::{CyclotomicRing, SparseChallenge, SparseChallengeConfig};
+use hachi_pcs::algebra::Fp64;
 use hachi_pcs::protocol::challenges::sparse::sparse_challenge_from_transcript;
 use hachi_pcs::protocol::transcript::labels::DOMAIN_HACHI_PROTOCOL;
 use hachi_pcs::protocol::transcript::{Blake2bTranscript, Transcript};
@@ -96,4 +96,3 @@ fn sparse_challenge_sampling_is_deterministic_and_exact_weight() {
     let c3 = sparse_challenge_from_transcript::<F, _, D>(&mut t3, b"c", 1, &cfg).unwrap();
     assert_ne!(c1, c3);
 }
-

@@ -37,7 +37,7 @@ parallel = ["dep:rayon"]
 
 [dependencies]
 thiserror = "2.0"
-rand_core = "0.6"
+rand_core = { version = "0.6", features = ["getrandom"] }
 hachi-derive = { version = "0.1.0", path = "derive" }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
