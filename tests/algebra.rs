@@ -863,7 +863,7 @@ mod tests {
     }
 
     #[test]
-    fn cyclotomic_gadget_pow2_decompose_recompose_round_trip() {
+    fn cyclotomic_balanced_pow2_decompose_recompose_round_trip() {
         use hachi_pcs::algebra::tables::Q32_MODULUS;
         use hachi_pcs::algebra::CyclotomicRing;
 
@@ -874,8 +874,8 @@ mod tests {
             F::from_u64(((i as u64 * 73) + 17) % Q32_MODULUS)
         }));
 
-        // Q32 fits in 32 bits, so 8 base-16 digits are sufficient.
-        let digits = ring.gadget_decompose_pow2(8, 4);
+        // Q32 balanced base-16: 9 levels absorb the carry-out near q/2.
+        let digits = ring.balanced_decompose_pow2(9, 4);
         let round_trip = R::gadget_recompose_pow2(&digits, 4);
         assert_eq!(round_trip, ring);
     }

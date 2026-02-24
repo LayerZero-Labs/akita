@@ -67,7 +67,7 @@ where
                 let recomp_j = CyclotomicRing::gadget_recompose_pow2(&s_i[start..end], log_basis);
                 w_i += *a_j * recomp_j;
             }
-            w_i.gadget_decompose_pow2(delta, log_basis)
+            w_i.balanced_decompose_pow2(delta, log_basis)
         })
         .collect()
 }

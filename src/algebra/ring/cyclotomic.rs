@@ -141,36 +141,6 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
 }
 
 impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
-    /// Functional `G^{-1}`-style base-`2^log_basis` decomposition.
-    ///
-    /// This returns `levels` ring elements whose coefficients are the low-to-high
-    /// digits of each coefficient in canonical representation. This mirrors the
-    /// effect of gadget decomposition without materializing a gadget matrix.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `log_basis == 0`, `log_basis >= 128`, or `levels * log_basis > 128`.
-    pub fn gadget_decompose_pow2(&self, levels: usize, log_basis: u32) -> Vec<Self> {
-        assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
-        assert!(
-            (levels as u32).saturating_mul(log_basis) <= 128,
-            "levels * log_basis must be <= 128"
-        );
-
-        let mask = (1u128 << log_basis) - 1;
-        let mut out = Vec::with_capacity(levels);
-        for level in 0..levels {
-            let shift = (level as u32) * log_basis;
-            let coeffs = std::array::from_fn(|i| {
-                let canonical = self.coeffs[i].to_canonical_u128();
-                let digit = (canonical >> shift) & mask;
-                F::from_canonical_u128_reduced(digit)
-            });
-            out.push(Self { coeffs });
-        }
-        out
-    }
-
     /// Functional gadget recomposition (`G * digits`) for base `2^log_basis`.
     ///
     /// Coefficients from each part are interpreted as one digit plane and
@@ -185,36 +155,25 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         }
 
         assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
-        assert!(
-            (parts.len() as u32).saturating_mul(log_basis) <= 128,
-            "parts.len() * log_basis must be <= 128"
-        );
 
-        let mask = (1u128 << log_basis) - 1;
+        let b = F::from_canonical_u128_reduced(1u128 << log_basis);
         let coeffs = std::array::from_fn(|i| {
-            let mut acc = 0u128;
-            for (level, part) in parts.iter().enumerate() {
-                let shift = (level as u32) * log_basis;
-                let digit = part.coeffs[i].to_canonical_u128() & mask;
-                let contrib = digit
-                    .checked_shl(shift)
-                    .expect("shift must be < 128 by precondition");
-                acc = acc.wrapping_add(contrib);
+            let mut acc = F::zero();
+            let mut power = F::one();
+            for part in parts.iter() {
+                acc = acc + part.coeffs[i] * power;
+                power = power * b;
             }
-            F::from_canonical_u128_reduced(acc)
+            acc
         });
         Self { coeffs }
     }
 
-    /// Balanced (centered) base-`2^log_basis` gadget decomposition: `J^{-1}`.
+    /// Balanced (centered) base-`2^log_basis` gadget decomposition: `G^{-1}`.
     ///
     /// Each coefficient `c` (centered into `(-q/2, q/2]`) is decomposed into
     /// `levels` balanced digits `d_k ∈ [-b/2, b/2)` satisfying
     /// `c ≡ Σ_k d_k · b^k  (mod q)`.
-    ///
-    /// Unlike [`gadget_decompose_pow2`](Self::gadget_decompose_pow2) (unsigned
-    /// digits in `[0, b)`), this handles arbitrary coefficient magnitudes in
-    /// fewer levels by using the full `[-b/2, b/2)` range per digit.
     ///
     /// Negative digits are stored as their field representation (`q + d`).
     ///

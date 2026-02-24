@@ -22,7 +22,7 @@ impl CommitmentConfig for TinyConfig {
     const N_B: usize = 2;
     const N_D: usize = 2;
     const LOG_BASIS: u32 = 4;
-    const DELTA: usize = 8;
+    const DELTA: usize = 9;
     const TAU: usize = 4;
     const BETA: u128 = 1_000_000;
     const CHALLENGE_WEIGHT: usize = 3;
@@ -111,7 +111,7 @@ pub fn recompose_z_hat(z_hat: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, 
 pub fn gadget_recompose_vec(x_hat: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
     x_hat
         .chunks(DELTA)
-        .map(|chunk| CyclotomicRing::gadget_recompose_pow2(chunk, LOG_BASIS))
+        .map(|chunk| field_gadget_recompose(chunk, LOG_BASIS))
         .collect()
 }
 

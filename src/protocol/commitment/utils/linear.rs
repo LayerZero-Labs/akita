@@ -26,7 +26,7 @@ pub(crate) fn decompose_block<F: FieldCore + CanonicalField, const D: usize>(
 ) -> Vec<CyclotomicRing<F, D>> {
     let mut out = Vec::with_capacity(block.len() * delta);
     for coeff_vec in block {
-        out.extend(coeff_vec.gadget_decompose_pow2(delta, log_basis));
+        out.extend(coeff_vec.balanced_decompose_pow2(delta, log_basis));
     }
     out
 }
@@ -38,7 +38,7 @@ pub(crate) fn decompose_rows<F: FieldCore + CanonicalField, const D: usize>(
 ) -> Vec<CyclotomicRing<F, D>> {
     let mut out = Vec::with_capacity(rows.len() * delta);
     for row in rows {
-        out.extend(row.gadget_decompose_pow2(delta, log_basis));
+        out.extend(row.balanced_decompose_pow2(delta, log_basis));
     }
     out
 }
