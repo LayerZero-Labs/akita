@@ -23,6 +23,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     const LOG_BASIS: u32;
     /// Decomposition levels `delta`.
     const DELTA: usize;
+    /// Decomposition levels for the folded witness `z` (`τ` in the paper).
+    const TAU: usize;
+    /// L∞ norm bound for `z` (`β` in the paper). Prover aborts if exceeded.
+    const BETA: u128;
+    /// Hamming weight of sparse challenges (`ω` in the paper).
+    const CHALLENGE_WEIGHT: usize;
 }
 
 /// Runtime-derived dimensions from a `CommitmentConfig`.
@@ -174,4 +180,7 @@ impl CommitmentConfig for DefaultCommitmentConfig {
     const N_D: usize = 4;
     const LOG_BASIS: u32 = 4;
     const DELTA: usize = 8;
+    const TAU: usize = 4;
+    const BETA: u128 = 1_000_000;
+    const CHALLENGE_WEIGHT: usize = 3;
 }

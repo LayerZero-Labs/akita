@@ -6,6 +6,8 @@
 
 pub mod challenges;
 pub mod commitment;
+pub mod opening_point;
+pub mod proof;
 pub mod prover;
 pub mod sumcheck;
 pub mod transcript;
@@ -14,12 +16,13 @@ pub mod verifier;
 pub use commitment::{
     AppendToTranscript, CommitmentConfig, CommitmentScheme, DefaultCommitmentConfig, DummyProof,
     HachiCommitment, HachiCommitmentCore, HachiOpeningClaim, HachiOpeningPoint, RingCommitment,
-    RingCommitmentScheme, RingCommitmentSetup, RingOpenProof, RingOpening,
-    StreamingCommitmentScheme,
+    RingCommitmentScheme, RingCommitmentSetup, StreamingCommitmentScheme,
 };
-pub use prover::{prove_opening, HachiProof, ProverStage1Config};
+pub use opening_point::RingOpeningPoint;
+pub use proof::HachiProof;
+pub use prover::HachiProver;
 pub use sumcheck::{
     prove_sumcheck, CompressedUniPoly, SumcheckInstanceProver, SumcheckProof, UniPoly,
 };
 pub use transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
-pub use verifier::verify_opening_stub;
+pub use verifier::verify;

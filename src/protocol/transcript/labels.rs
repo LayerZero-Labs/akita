@@ -30,6 +30,11 @@ pub const ABSORB_STOP_CONDITION: &[u8] = b"hachi/absorb/stop-condition";
 /// Challenge sampled for recursion stop-condition checks (paper §4.5).
 pub const CHALLENGE_STOP_CONDITION: &[u8] = b"hachi/challenge/stop-condition";
 
+/// Absorb the prover's stage-1 message `v = D · ŵ` (paper §4.2, Figure 3).
+pub const ABSORB_PROVER_V: &[u8] = b"hachi/absorb/prover-stage1-v";
+/// Challenge label for stage-1 fold (sampling sparse `c_i`).
+pub const CHALLENGE_STAGE1_FOLD: &[u8] = b"hachi/challenge/stage1-fold";
+
 /// Return all Hachi-core transcript labels.
 pub fn all_labels() -> &'static [&'static [u8]] {
     &[
@@ -45,5 +50,7 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         CHALLENGE_SUMCHECK_ROUND,
         ABSORB_STOP_CONDITION,
         CHALLENGE_STOP_CONDITION,
+        ABSORB_PROVER_V,
+        CHALLENGE_STAGE1_FOLD,
     ]
 }

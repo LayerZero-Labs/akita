@@ -205,6 +205,62 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         });
         Self { coeffs }
     }
+
+    /// Balanced (centered) base-`2^log_basis` gadget decomposition: `J^{-1}`.
+    ///
+    /// Each coefficient `c` (centered into `(-q/2, q/2]`) is decomposed into
+    /// `levels` balanced digits `d_k ∈ [-b/2, b/2)` satisfying
+    /// `c ≡ Σ_k d_k · b^k  (mod q)`.
+    ///
+    /// Unlike [`gadget_decompose_pow2`](Self::gadget_decompose_pow2) (unsigned
+    /// digits in `[0, b)`), this handles arbitrary coefficient magnitudes in
+    /// fewer levels by using the full `[-b/2, b/2)` range per digit.
+    ///
+    /// Negative digits are stored as their field representation (`q + d`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `log_basis == 0`, `log_basis >= 128`, or `levels * log_basis > 128`.
+    pub fn balanced_decompose_pow2(&self, levels: usize, log_basis: u32) -> Vec<Self> {
+        assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
+        assert!(
+            (levels as u32).saturating_mul(log_basis) <= 128,
+            "levels * log_basis must be <= 128"
+        );
+
+        let b = 1i128 << log_basis;
+        let half_b = b / 2;
+        let q = (-F::one()).to_canonical_u128() as i128 + 1;
+        let half_q = q / 2;
+
+        let mut digit_planes: Vec<[F; D]> = (0..levels).map(|_| [F::zero(); D]).collect();
+
+        for i in 0..D {
+            let canonical = self.coeffs[i].to_canonical_u128() as i128;
+            let mut c = if canonical > half_q {
+                canonical - q
+            } else {
+                canonical
+            };
+
+            for plane in digit_planes.iter_mut() {
+                let d = c.rem_euclid(b);
+                let balanced = if d >= half_b { d - b } else { d };
+                c = (c - balanced) / b;
+
+                plane[i] = if balanced >= 0 {
+                    F::from_canonical_u128_reduced(balanced as u128)
+                } else {
+                    F::from_canonical_u128_reduced((q + balanced) as u128)
+                };
+            }
+        }
+
+        digit_planes
+            .into_iter()
+            .map(Self::from_coefficients)
+            .collect()
+    }
 }
 
 impl<F: FieldCore + FieldSampling, const D: usize> CyclotomicRing<F, D> {

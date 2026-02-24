@@ -1,28 +1,11 @@
 #![allow(missing_docs)]
 
-use hachi_pcs::algebra::{CyclotomicRing, Fp64};
+use hachi_pcs::algebra::CyclotomicRing;
 use hachi_pcs::error::HachiError;
 use hachi_pcs::protocol::commitment::{
     CommitmentConfig, DefaultCommitmentConfig, HachiCommitmentCore, RingCommitmentScheme,
 };
-use hachi_pcs::CanonicalField;
-
-type F = Fp64<4294967197>;
-const D: usize = 64;
-
-#[derive(Clone)]
-struct TinyConfig;
-
-impl CommitmentConfig for TinyConfig {
-    const D: usize = 64;
-    const M: usize = 1;
-    const R: usize = 1;
-    const N_A: usize = 2;
-    const N_B: usize = 2;
-    const N_D: usize = 2;
-    const LOG_BASIS: u32 = 4;
-    const DELTA: usize = 8;
-}
+use hachi_pcs::test_utils::*;
 
 #[derive(Clone)]
 struct BadDegreeConfig;
@@ -36,6 +19,9 @@ impl CommitmentConfig for BadDegreeConfig {
     const N_D: usize = 4;
     const LOG_BASIS: u32 = 4;
     const DELTA: usize = 8;
+    const TAU: usize = 4;
+    const BETA: u128 = 1_000_000;
+    const CHALLENGE_WEIGHT: usize = 3;
 }
 
 #[derive(Clone)]
@@ -50,40 +36,9 @@ impl CommitmentConfig for BadDigitBudgetConfig {
     const N_D: usize = 4;
     const LOG_BASIS: u32 = 32;
     const DELTA: usize = 5; // 160 > 128
-}
-
-fn sample_blocks() -> Vec<Vec<CyclotomicRing<F, D>>> {
-    let num_blocks = 1usize << TinyConfig::R;
-    let block_len = 1usize << TinyConfig::M;
-    (0..num_blocks)
-        .map(|bi| {
-            (0..block_len)
-                .map(|bj| {
-                    let coeffs = std::array::from_fn(|k| {
-                        let v = (bi * 1_000 + bj * 100 + k) as u64;
-                        F::from_u64(v)
-                    });
-                    CyclotomicRing::from_coefficients(coeffs)
-                })
-                .collect()
-        })
-        .collect()
-}
-
-fn mat_vec_mul(
-    mat: &[Vec<CyclotomicRing<F, D>>],
-    vec: &[CyclotomicRing<F, D>],
-) -> Vec<CyclotomicRing<F, D>> {
-    mat.iter()
-        .map(|row| {
-            assert_eq!(row.len(), vec.len());
-            row.iter()
-                .zip(vec.iter())
-                .fold(CyclotomicRing::<F, D>::zero(), |acc, (a, x)| {
-                    acc + (*a * *x)
-                })
-        })
-        .collect()
+    const TAU: usize = 4;
+    const BETA: u128 = 1_000_000;
+    const CHALLENGE_WEIGHT: usize = 3;
 }
 
 #[test]
@@ -112,31 +67,28 @@ fn commit_is_deterministic_and_shape_consistent() {
         <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::setup(16).unwrap();
     let blocks = sample_blocks();
 
-    let (c1, o1) =
+    let (c1, s1, t1) =
         <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::commit_ring_blocks(
             &blocks, &psetup,
         )
         .unwrap();
-    let (c2, o2) =
+    let (c2, s2, t2) =
         <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::commit_ring_blocks(
             &blocks, &psetup,
         )
         .unwrap();
 
     assert_eq!(c1, c2);
-    assert_eq!(o1, o2);
+    assert_eq!(s1, s2);
+    assert_eq!(t1, t2);
 
     let num_blocks = 1usize << TinyConfig::R;
     let block_len = 1usize << TinyConfig::M;
     assert_eq!(c1.u.len(), TinyConfig::N_B);
-    assert_eq!(o1.s.len(), num_blocks);
-    assert_eq!(o1.t_hat.len(), num_blocks);
-    assert!(o1
-        .s
-        .iter()
-        .all(|s| s.len() == block_len * TinyConfig::DELTA));
-    assert!(o1
-        .t_hat
+    assert_eq!(s1.len(), num_blocks);
+    assert_eq!(t1.len(), num_blocks);
+    assert!(s1.iter().all(|s| s.len() == block_len * TinyConfig::DELTA));
+    assert!(t1
         .iter()
         .all(|t| t.len() == TinyConfig::N_A * TinyConfig::DELTA));
 }
@@ -146,32 +98,26 @@ fn opening_satisfies_inner_and_outer_equations() {
     let (psetup, _) =
         <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::setup(16).unwrap();
     let blocks = sample_blocks();
-    let (commitment, opening) =
+    let (commitment, s, t_hat) =
         <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::commit_ring_blocks(
             &blocks, &psetup,
         )
         .unwrap();
 
-    for i in 0..opening.s.len() {
-        let lhs = mat_vec_mul(&psetup.A, &opening.s[i]);
+    for i in 0..s.len() {
+        let lhs = mat_vec_mul(&psetup.A, &s[i]);
         let rhs: Vec<CyclotomicRing<F, D>> = (0..TinyConfig::N_A)
             .map(|j| {
                 let start = j * TinyConfig::DELTA;
                 let end = start + TinyConfig::DELTA;
-                CyclotomicRing::gadget_recompose_pow2(
-                    &opening.t_hat[i][start..end],
-                    TinyConfig::LOG_BASIS,
-                )
+                CyclotomicRing::gadget_recompose_pow2(&t_hat[i][start..end], TinyConfig::LOG_BASIS)
             })
             .collect();
         assert_eq!(lhs, rhs);
     }
 
-    let t_hat_flat: Vec<CyclotomicRing<F, D>> = opening
-        .t_hat
-        .iter()
-        .flat_map(|x| x.iter().copied())
-        .collect();
+    let t_hat_flat: Vec<CyclotomicRing<F, D>> =
+        t_hat.iter().flat_map(|x| x.iter().copied()).collect();
     let outer = mat_vec_mul(&psetup.B, &t_hat_flat);
     assert_eq!(outer, commitment.u);
 }

@@ -129,8 +129,6 @@ where
     type VerifierSetup: Clone + Send + Sync;
     /// Ring-native commitment type.
     type Commitment: Clone + PartialEq + Send + Sync;
-    /// Opening witness type returned by `commit_ring_blocks`.
-    type Opening: Clone + Send + Sync;
 
     /// Construct commitment setup for at most `max_num_vars` variables.
     ///
@@ -141,11 +139,22 @@ where
 
     /// Commit to ring blocks arranged as `2^R` vectors of length `2^M`.
     ///
+    /// Returns `(commitment, s, t_hat)` where `s` and `t_hat` are the
+    /// decomposed witness vectors from §4.1.
+    ///
     /// # Errors
     ///
     /// Returns an error if block layout mismatches config or commitment fails.
+    #[allow(clippy::type_complexity)]
     fn commit_ring_blocks(
         f_blocks: &[Vec<CyclotomicRing<F, D>>],
         setup: &Self::ProverSetup,
-    ) -> Result<(Self::Commitment, Self::Opening), HachiError>;
+    ) -> Result<
+        (
+            Self::Commitment,
+            Vec<Vec<CyclotomicRing<F, D>>>,
+            Vec<Vec<CyclotomicRing<F, D>>>,
+        ),
+        HachiError,
+    >;
 }

@@ -13,5 +13,4 @@ pub use scheme::{CommitmentScheme, RingCommitmentScheme, StreamingCommitmentSche
 pub use transcript_append::AppendToTranscript;
 pub use types::{
     DummyProof, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint, RingCommitment,
-    RingOpenProof, RingOpening,
 };

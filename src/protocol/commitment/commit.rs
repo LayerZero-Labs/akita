@@ -4,7 +4,7 @@ use super::config::{
     ensure_block_layout, ensure_matrix_shape, ensure_supported_num_vars, validate_and_derive_layout,
 };
 use super::scheme::RingCommitmentScheme;
-use super::types::{RingCommitment, RingOpening};
+use super::types::RingCommitment;
 use super::utils::linear::{decompose_block, decompose_rows, mat_vec_mul_unchecked};
 use super::utils::matrix::{derive_public_matrix, sample_public_matrix_seed, PublicMatrixSeed};
 use super::CommitmentConfig;
@@ -40,7 +40,6 @@ where
     type ProverSetup = RingCommitmentSetup<F, D>;
     type VerifierSetup = RingCommitmentSetup<F, D>;
     type Commitment = RingCommitment<F, D>;
-    type Opening = RingOpening<F, D>;
 
     fn setup(max_num_vars: usize) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError> {
         let layout = validate_and_derive_layout::<Cfg, D>()?;
@@ -70,10 +69,18 @@ where
         Ok((setup.clone(), setup))
     }
 
+    #[allow(clippy::type_complexity)]
     fn commit_ring_blocks(
         f_blocks: &[Vec<CyclotomicRing<F, D>>],
         setup: &Self::ProverSetup,
-    ) -> Result<(Self::Commitment, Self::Opening), HachiError> {
+    ) -> Result<
+        (
+            Self::Commitment,
+            Vec<Vec<CyclotomicRing<F, D>>>,
+            Vec<Vec<CyclotomicRing<F, D>>>,
+        ),
+        HachiError,
+    > {
         let layout = validate_and_derive_layout::<Cfg, D>()?;
         ensure_supported_num_vars(setup.max_num_vars, layout.required_vars)?;
         ensure_block_layout(f_blocks, layout)?;
@@ -95,12 +102,6 @@ where
         }
 
         let u = mat_vec_mul_unchecked(&setup.B, &t_hat_flat);
-        Ok((
-            RingCommitment { u },
-            RingOpening {
-                s: s_all,
-                t_hat: t_hat_all,
-            },
-        ))
+        Ok((RingCommitment { u }, s_all, t_hat_all))
     }
 }
