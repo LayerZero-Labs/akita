@@ -2,8 +2,7 @@
 
 mod commit;
 mod config;
-#[cfg(test)]
-mod embedding_tmp;
+pub(crate) mod embedding_tmp;
 mod scheme;
 mod transcript_append;
 mod types;

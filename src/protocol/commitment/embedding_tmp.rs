@@ -8,21 +8,39 @@
 //! We adopt LSB-first indexing (the same order used by `DenseMultilinearEvals`):
 //! the lowest index bits correspond to the *first* variables.
 
+#![allow(dead_code, clippy::type_complexity)]
+
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 use crate::{CanonicalField, FieldCore};
 
-/// Pack a multilinear coefficient table into ring coefficients (k = 1).
+type ReduceClaimOutput<F, const D: usize> = (
+    Vec<CyclotomicRing<F, D>>,
+    CyclotomicRing<F, D>,
+    CyclotomicRing<F, D>,
+    F,
+    F,
+);
+
+type ReduceClaimCheckedOutput<F, const D: usize> = (
+    Vec<CyclotomicRing<F, D>>,
+    CyclotomicRing<F, D>,
+    CyclotomicRing<F, D>,
+);
+
+/// Reduce coefficient blocks into ring elements (k = 1).
 ///
 /// - `coeffs` are the monomial-basis coefficients, indexed in LSB-first order.
 /// - The lowest `alpha = log2(D)` bits are packed into one ring element via
 ///   coefficient embedding (the k=1 case of `psi`).
 /// - The output is a flat table of length `2^(num_vars - alpha)` representing
 ///   the ring polynomial's coefficient table (monomial basis).
-pub fn pack_mle_evals_to_ring<F: FieldCore, const D: usize>(
+fn reduce_coeffs_to_ring_elements<F: FieldCore, const D: usize>(
     num_vars: usize,
     coeffs: &[F],
+    k: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
+    assert_eq!(k, 1, "only k=1 is implemented");
     if D == 0 || !D.is_power_of_two() {
         return Err(HachiError::InvalidInput(format!(
             "ring degree D={D} is not a power of two"
@@ -73,10 +91,12 @@ fn monomial_weights<F: FieldCore>(point: &[F]) -> Vec<F> {
     weights
 }
 
-/// Pack the inner-variable monomials into a single ring element (k = 1).
-fn pack_inner_monomials_k1<F: FieldCore, const D: usize>(
+/// Reduce inner openings (monomial vector) into a ring element (k = 1).
+fn reduce_inner_openings_to_ring_elements<F: FieldCore, const D: usize>(
     inner_point: &[F],
+    k: usize,
 ) -> Result<CyclotomicRing<F, D>, HachiError> {
+    assert_eq!(k, 1, "only k=1 is implemented");
     let weights = monomial_weights(inner_point);
     if weights.len() != D {
         return Err(HachiError::InvalidInput(format!(
@@ -89,7 +109,7 @@ fn pack_inner_monomials_k1<F: FieldCore, const D: usize>(
 }
 
 /// Evaluate the packed ring polynomial `F` at the outer point (monomial basis).
-fn evaluate_packed_ring_poly_k1<F: FieldCore, const D: usize>(
+fn evaluate_packed_ring_poly<F: FieldCore, const D: usize>(
     packed_coeffs: &[CyclotomicRing<F, D>],
     outer_point: &[F],
 ) -> CyclotomicRing<F, D> {
@@ -109,6 +129,22 @@ fn trace_k1<F: CanonicalField, const D: usize>(u: &CyclotomicRing<F, D>) -> F {
     u.coefficients()[0] * d
 }
 
+/// Verify the trace identity: `Tr_H(Y · σ_{-1}(v)) = (d/k) · y`.
+fn verify_trace_identity<F: CanonicalField, const D: usize>(
+    y_ring: &CyclotomicRing<F, D>,
+    v: &CyclotomicRing<F, D>,
+    claimed_y: F,
+    k: usize,
+) -> Result<(), HachiError> {
+    assert_eq!(k, 1, "only k=1 is implemented");
+    let trace_lhs = trace_k1::<F, D>(&((*y_ring) * v.sigma_m1()));
+    let trace_rhs = F::from_u64(D as u64) * claimed_y;
+    if trace_lhs != trace_rhs {
+        return Err(HachiError::InvalidProof);
+    }
+    Ok(())
+}
+
 /// End-to-end §3.1 reduction for k=1 (base field), excluding the final PCS proof.
 ///
 /// Returns:
@@ -116,21 +152,14 @@ fn trace_k1<F: CanonicalField, const D: usize>(u: &CyclotomicRing<F, D>) -> F {
 /// - `v` = packed monomial vector for inner variables
 /// - `y_ring` = `Y` (ring element)
 /// - `trace_lhs` / `trace_rhs` = sides of the trace identity check
-pub fn reduce_mle_claim_k1<F: CanonicalField, const D: usize>(
+fn reduce_mle_claim<F: CanonicalField, const D: usize>(
     num_vars: usize,
     coeffs: &[F],
     point: &[F],
     claimed_y: F,
-) -> Result<
-    (
-        Vec<CyclotomicRing<F, D>>,
-        CyclotomicRing<F, D>,
-        CyclotomicRing<F, D>,
-        F,
-        F,
-    ),
-    HachiError,
-> {
+    k: usize,
+) -> Result<ReduceClaimOutput<F, D>, HachiError> {
+    assert_eq!(k, 1, "only k=1 is implemented");
     if point.len() != num_vars {
         return Err(HachiError::InvalidPointDimension {
             expected: num_vars,
@@ -149,13 +178,13 @@ pub fn reduce_mle_claim_k1<F: CanonicalField, const D: usize>(
         )));
     }
 
-    let packed_coeffs = pack_mle_evals_to_ring::<F, D>(num_vars, coeffs)?;
+    let packed_coeffs = reduce_coeffs_to_ring_elements::<F, D>(num_vars, coeffs, k)?;
 
     let inner_point = &point[..alpha];
     let outer_point = &point[alpha..];
 
-    let v = pack_inner_monomials_k1::<F, D>(inner_point)?;
-    let y_ring = evaluate_packed_ring_poly_k1::<F, D>(&packed_coeffs, outer_point);
+    let v = reduce_inner_openings_to_ring_elements::<F, D>(inner_point, k)?;
+    let y_ring = evaluate_packed_ring_poly::<F, D>(&packed_coeffs, outer_point);
 
     let trace_lhs = trace_k1::<F, D>(&(y_ring * v.sigma_m1()));
     let trace_rhs = F::from_u64(D as u64) * claimed_y;
@@ -163,25 +192,17 @@ pub fn reduce_mle_claim_k1<F: CanonicalField, const D: usize>(
     Ok((packed_coeffs, v, y_ring, trace_lhs, trace_rhs))
 }
 
-/// Same as `reduce_mle_claim_k1`, but enforces the trace identity.
-pub fn reduce_mle_claim_k1_checked<F: CanonicalField, const D: usize>(
+/// Same as `reduce_mle_claim`, but enforces the trace identity.
+fn reduce_mle_claim_checked<F: CanonicalField, const D: usize>(
     num_vars: usize,
     coeffs: &[F],
     point: &[F],
     claimed_y: F,
-) -> Result<
-    (
-        Vec<CyclotomicRing<F, D>>,
-        CyclotomicRing<F, D>,
-        CyclotomicRing<F, D>,
-    ),
-    HachiError,
-> {
-    let (packed_coeffs, v, y_ring, trace_lhs, trace_rhs) =
-        reduce_mle_claim_k1::<F, D>(num_vars, coeffs, point, claimed_y)?;
-    if trace_lhs != trace_rhs {
-        return Err(HachiError::InvalidProof);
-    }
+    k: usize,
+) -> Result<ReduceClaimCheckedOutput<F, D>, HachiError> {
+    let (packed_coeffs, v, y_ring, _trace_lhs, _trace_rhs) =
+        reduce_mle_claim::<F, D>(num_vars, coeffs, point, claimed_y, k)?;
+    verify_trace_identity::<F, D>(&y_ring, &v, claimed_y, k)?;
     Ok((packed_coeffs, v, y_ring))
 }
 
@@ -210,14 +231,15 @@ mod tests {
 
         let claimed_y = eval_mle_from_coeffs(&coeffs, &point);
 
+        let k = 1;
         let (packed, _v, _y_ring, trace_lhs, trace_rhs) =
-            reduce_mle_claim_k1::<F, D>(num_vars, &coeffs, &point, claimed_y).unwrap();
+            reduce_mle_claim::<F, D>(num_vars, &coeffs, &point, claimed_y, k).unwrap();
 
         let alpha = D.trailing_zeros() as usize;
         assert_eq!(packed.len(), 1usize << (num_vars - alpha));
         assert_eq!(trace_lhs, trace_rhs);
 
         // The checked variant should pass for a valid claim.
-        assert!(reduce_mle_claim_k1_checked::<F, D>(num_vars, &coeffs, &point, claimed_y).is_ok());
+        assert!(reduce_mle_claim_checked::<F, D>(num_vars, &coeffs, &point, claimed_y, k).is_ok());
     }
 }
