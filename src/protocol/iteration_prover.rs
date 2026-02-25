@@ -40,6 +40,7 @@ impl<F: FieldCore, const D: usize> Default for HachiProver<F, D> {
             hint: HachiCommitmentHint {
                 s: Vec::new(),
                 t_hat: Vec::new(),
+                ring_coeffs: Vec::new(),
             },
             w_hat: Vec::new(),
             z_hat: Vec::new(),
@@ -67,7 +68,10 @@ impl<F: FieldCore + CanonicalField + HachiSerialize, const D: usize> HachiProver
     {
         let mut prover = Self::new();
         let v = prover.prove_stage1::<T, Cfg>(setup, point, transcript, hint)?;
-        Ok(HachiProof { v })
+        Ok(HachiProof {
+            v,
+            y_ring: CyclotomicRing::<F, D>::zero(),
+        })
     }
 
     /// Run §4.2 prover stage 1 (Figure 3, prover side).
@@ -262,7 +266,11 @@ mod tests {
             b: sample_b(),
         };
 
-        let hint = HachiCommitmentHint { s, t_hat };
+        let hint = HachiCommitmentHint {
+            s,
+            t_hat,
+            ring_coeffs: Vec::new(),
+        };
         let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_SEED);
         let mut prover = HachiProver::<F, D>::new();
         let v = prover
@@ -273,7 +281,10 @@ mod tests {
                 &hint,
             )
             .unwrap();
-        let proof = HachiProof { v };
+        let proof = HachiProof {
+            v,
+            y_ring: CyclotomicRing::<F, D>::zero(),
+        };
 
         let challenges = replay_challenges(&proof);
 
