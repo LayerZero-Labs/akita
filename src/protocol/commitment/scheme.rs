@@ -2,6 +2,7 @@
 
 use super::config::CommitmentConfig;
 use super::transcript_append::AppendToTranscript;
+use super::utils::math::checked_pow2;
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::transcript::Transcript;
@@ -157,4 +158,52 @@ where
         ),
         HachiError,
     >;
+
+    /// Commit to a flat coefficient table `(f_i)_{i∈{0,1}^ℓ}` in ring form.
+    ///
+    /// The input is indexed in LSB-first order (same convention as
+    /// `DenseMultilinearEvals`). We split the variables as:
+    /// - outer index `i` for the first `R` variables,
+    /// - inner index `j` for the last `M` variables,
+    /// and form blocks `f_i = (f_{i||j})_{j}` (Eq. (12) in the paper).
+    ///
+    /// This prepares `f_blocks` and delegates to `commit_ring_blocks`.
+    #[allow(clippy::type_complexity)]
+    fn commit_coeffs(
+        f_coeffs: &[CyclotomicRing<F, D>],
+        setup: &Self::ProverSetup,
+    ) -> Result<
+        (
+            Self::Commitment,
+            Vec<Vec<CyclotomicRing<F, D>>>,
+            Vec<Vec<CyclotomicRing<F, D>>>,
+        ),
+        HachiError,
+    > {
+        let num_blocks = checked_pow2(Cfg::R)?;
+        let block_len = checked_pow2(Cfg::M)?;
+        let expected_len = num_blocks
+            .checked_mul(block_len)
+            .ok_or_else(|| HachiError::InvalidSetup("coefficient length overflow".to_string()))?;
+        if f_coeffs.len() != expected_len {
+            return Err(HachiError::InvalidSize {
+                expected: expected_len,
+                actual: f_coeffs.len(),
+            });
+        }
+
+        let mut blocks = Vec::with_capacity(num_blocks);
+        for i in 0..num_blocks {
+            let mut block = Vec::with_capacity(block_len);
+            for j in 0..block_len {
+                let idx = (j << Cfg::R)
+                    .checked_add(i)
+                    .ok_or_else(|| HachiError::InvalidSetup("index overflow".to_string()))?;
+                block.push(f_coeffs[idx]);
+            }
+            blocks.push(block);
+        }
+
+        Self::commit_ring_blocks(&blocks, setup)
+    }
 }

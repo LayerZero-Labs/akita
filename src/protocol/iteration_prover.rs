@@ -1,4 +1,6 @@
-//! Hatchi Prover
+//! Prover for a single Hachi protocol iteration.
+//!
+//! Assumes the input multilinear polynomial is already reduced to ring form.
 
 use crate::algebra::ring::{CyclotomicRing, SparseChallengeConfig};
 use crate::error::HachiError;
@@ -6,24 +8,18 @@ use crate::protocol::challenges::sparse::sample_dense_challenges;
 use crate::protocol::commitment::utils::linear::mat_vec_mul_unchecked;
 use crate::protocol::commitment::utils::norm::{detect_field_modulus, vec_inf_norm};
 use crate::protocol::commitment::{CommitmentConfig, RingCommitmentSetup};
+use crate::protocol::commitment_scheme::HachiCommitmentHint;
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::HachiProof;
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, HachiSerialize};
 
-// @Todo(Omid): We can provide s and t_hat as hint, as they are generated in commitment phase.
-// In case hint is missing, we should re-generate them. This way, Prover is decoupled from commit.
-
 /// Stateful prover accumulating witness data across protocol stages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiProver<F: FieldCore, const D: usize> {
-    /// Decomposed vectors `s_i` from §4.1 commitment opening.
-    pub s: Vec<Vec<CyclotomicRing<F, D>>>,
-    /// Decomposed inner commitments `t̂_i` from §4.1, for `i ∈ [2^r]`.
-    ///
-    /// Each inner `Vec` has length `n_A · δ`.
-    pub t_hat: Vec<Vec<CyclotomicRing<F, D>>>,
+    /// Commitment-phase hint carrying `s_i` and `t̂_i`.
+    pub hint: HachiCommitmentHint<F, D>,
     /// Decomposed `w` vectors: `ŵ_i = G_1^{-1}(w_i)` for `i ∈ [2^r]`.
     ///
     /// Each inner `Vec` has length `δ`.
@@ -35,102 +31,16 @@ pub struct HachiProver<F: FieldCore, const D: usize> {
 }
 
 // ---------------------------------------------------------------------------
-// Step functions
-// ---------------------------------------------------------------------------
-
-/// **Steps 1–3.** Compute `w_i = a^T G_{2^m} s_i` and decompose: `ŵ_i = G_1^{-1}(w_i)`.
-///
-/// For each block `s_i`, recompose each `δ`-chunk back to a ring element,
-/// take the inner product with `a`, then gadget-decompose the result into
-/// `δ` digits.
-pub fn compute_w_hat<F, const D: usize, Cfg>(
-    opening_point: &RingOpeningPoint<F, D>,
-    s: &[Vec<CyclotomicRing<F, D>>],
-) -> Vec<Vec<CyclotomicRing<F, D>>>
-where
-    F: FieldCore + CanonicalField,
-    Cfg: CommitmentConfig,
-{
-    let a = &opening_point.a;
-    let block_len = 1usize << Cfg::M;
-    let delta = Cfg::DELTA;
-    let log_basis = Cfg::LOG_BASIS;
-
-    debug_assert_eq!(a.len(), block_len);
-
-    s.iter()
-        .map(|s_i| {
-            let mut w_i = CyclotomicRing::<F, D>::zero();
-            for (j, a_j) in a.iter().enumerate().take(block_len) {
-                let start = j * delta;
-                let end = start + delta;
-                let recomp_j = CyclotomicRing::gadget_recompose_pow2(&s_i[start..end], log_basis);
-                w_i += *a_j * recomp_j;
-            }
-            w_i.balanced_decompose_pow2(delta, log_basis)
-        })
-        .collect()
-}
-
-/// **Step 4.** Compute `v = D · ŵ` (first prover message).
-#[allow(non_snake_case)]
-pub fn compute_v<F, const D: usize>(
-    d: &[Vec<CyclotomicRing<F, D>>],
-    w_hat: &[Vec<CyclotomicRing<F, D>>],
-) -> Vec<CyclotomicRing<F, D>>
-where
-    F: FieldCore + CanonicalField,
-{
-    let w_hat_flat: Vec<CyclotomicRing<F, D>> =
-        w_hat.iter().flat_map(|v| v.iter().copied()).collect();
-    mat_vec_mul_unchecked(d, &w_hat_flat)
-}
-
-/// **Steps 7–9.** Fold `z = Σ c_i · s_i`, check `‖z‖_∞ ≤ β`, and decompose `ẑ = J^{-1}(z)`.
-///
-/// # Errors
-///
-/// Returns an error if the norm bound is exceeded (prover should abort / retry).
-pub fn compute_z_hat<F, const D: usize, Cfg>(
-    challenges: &[CyclotomicRing<F, D>],
-    s: &[Vec<CyclotomicRing<F, D>>],
-) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
-where
-    F: FieldCore + CanonicalField,
-    Cfg: CommitmentConfig,
-{
-    debug_assert_eq!(challenges.len(), s.len());
-    let len = s[0].len();
-    let mut z = vec![CyclotomicRing::<F, D>::zero(); len];
-    for (c_i, s_i) in challenges.iter().zip(s.iter()) {
-        for (z_j, s_ij) in z.iter_mut().zip(s_i.iter()) {
-            *z_j += *c_i * *s_ij;
-        }
-    }
-
-    let modulus = detect_field_modulus::<F>();
-    let norm = vec_inf_norm(&z, modulus);
-    if norm > Cfg::BETA {
-        return Err(HachiError::InvalidInput(format!(
-            "prover abort: ||z||_inf = {norm} > beta = {}",
-            Cfg::BETA
-        )));
-    }
-
-    Ok(z.iter()
-        .flat_map(|z_j| z_j.balanced_decompose_pow2(Cfg::TAU, Cfg::LOG_BASIS))
-        .collect())
-}
-
-// ---------------------------------------------------------------------------
 // HachiProver implementation
 // ---------------------------------------------------------------------------
 
 impl<F: FieldCore, const D: usize> Default for HachiProver<F, D> {
     fn default() -> Self {
         Self {
-            s: Vec::new(),
-            t_hat: Vec::new(),
+            hint: HachiCommitmentHint {
+                s: Vec::new(),
+                t_hat: Vec::new(),
+            },
             w_hat: Vec::new(),
             z_hat: Vec::new(),
         }
@@ -138,9 +48,26 @@ impl<F: FieldCore, const D: usize> Default for HachiProver<F, D> {
 }
 
 impl<F: FieldCore + CanonicalField + HachiSerialize, const D: usize> HachiProver<F, D> {
-    /// Create a new prover with empty state.
-    pub fn new() -> Self {
-        Self::default()
+    /// Run the Hachi prover protocol for one iteration.
+    ///
+    /// Currently executes stage 1 only. Future stages will be added here.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any stage fails.
+    pub fn prove<T, Cfg>(
+        setup: &RingCommitmentSetup<F, D>,
+        point: &RingOpeningPoint<F, D>,
+        transcript: &mut T,
+        hint: &HachiCommitmentHint<F, D>,
+    ) -> Result<HachiProof<F, D>, HachiError>
+    where
+        T: Transcript<F>,
+        Cfg: CommitmentConfig,
+    {
+        let mut prover = Self::new();
+        let v = prover.prove_stage1::<T, Cfg>(setup, point, transcript, hint)?;
+        Ok(HachiProof { v })
     }
 
     /// Run §4.2 prover stage 1 (Figure 3, prover side).
@@ -157,16 +84,19 @@ impl<F: FieldCore + CanonicalField + HachiSerialize, const D: usize> HachiProver
         setup: &RingCommitmentSetup<F, D>,
         point: &RingOpeningPoint<F, D>,
         transcript: &mut T,
-    ) -> Result<HachiProof<F, D>, HachiError>
+        hint: &HachiCommitmentHint<F, D>,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
     where
         T: Transcript<F>,
         Cfg: CommitmentConfig,
     {
+        self.hint = hint.clone();
+
         // Steps 1–3: w_i = a^T G_{2^m} s_i, then ŵ_i = G_1^{-1}(w_i)
-        self.w_hat = compute_w_hat::<F, D, Cfg>(point, &self.s);
+        self.compute_w_hat::<Cfg>(point);
 
         // Step 4: v = D · ŵ
-        let v = compute_v::<F, D>(&setup.D, &self.w_hat);
+        let v = self.compute_v(&setup.D);
 
         // Step 5: append v to transcript (first prover message)
         transcript.append_serde(ABSORB_PROVER_V, &v);
@@ -184,29 +114,91 @@ impl<F: FieldCore + CanonicalField + HachiSerialize, const D: usize> HachiProver
         )?;
 
         // Steps 7–9: z = Σ c_i · s_i, check ‖z‖_∞ ≤ β, then ẑ = J^{-1}(z)
-        self.z_hat = compute_z_hat::<F, D, Cfg>(&challenges, &self.s)?;
+        self.compute_z_hat::<Cfg>(&challenges)?;
 
-        Ok(HachiProof { v })
+        Ok(v)
     }
 
-    /// Run the full Hachi prover protocol.
+    /// Create a new prover with empty state.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// **Steps 1–3.** Compute `w_i = a^T G_{2^m} s_i` and decompose: `ŵ_i = G_1^{-1}(w_i)`.
     ///
-    /// Currently executes stage 1 only. Future stages will be added here.
+    /// For each block `s_i`, recompose each `δ`-chunk back to a ring element,
+    /// take the inner product with `a`, then gadget-decompose the result into
+    /// `δ` digits.
+    fn compute_w_hat<Cfg>(&mut self, opening_point: &RingOpeningPoint<F, D>)
+    where
+        Cfg: CommitmentConfig,
+    {
+        let a = &opening_point.a;
+        let block_len = 1usize << Cfg::M;
+        let delta = Cfg::DELTA;
+        let log_basis = Cfg::LOG_BASIS;
+
+        debug_assert_eq!(a.len(), block_len);
+
+        self.w_hat = self
+            .hint
+            .s
+            .iter()
+            .map(|s_i| {
+                let mut w_i = CyclotomicRing::<F, D>::zero();
+                for (j, a_j) in a.iter().enumerate().take(block_len) {
+                    let start = j * delta;
+                    let end = start + delta;
+                    let recomp_j =
+                        CyclotomicRing::gadget_recompose_pow2(&s_i[start..end], log_basis);
+                    w_i += *a_j * recomp_j;
+                }
+                w_i.balanced_decompose_pow2(delta, log_basis)
+            })
+            .collect();
+    }
+
+    /// **Step 4.** Compute `v = D · ŵ` (first prover message).
+    #[allow(non_snake_case)]
+    fn compute_v(&self, d: &[Vec<CyclotomicRing<F, D>>]) -> Vec<CyclotomicRing<F, D>> {
+        let w_hat_flat: Vec<CyclotomicRing<F, D>> =
+            self.w_hat.iter().flat_map(|v| v.iter().copied()).collect();
+        mat_vec_mul_unchecked(d, &w_hat_flat)
+    }
+
+    /// **Steps 7–9.** Fold `z = Σ c_i · s_i`, check `‖z‖_∞ ≤ β`, and decompose `ẑ = J^{-1}(z)`.
     ///
     /// # Errors
     ///
-    /// Returns an error if any stage fails.
-    pub fn prove<T, Cfg>(
-        &mut self,
-        setup: &RingCommitmentSetup<F, D>,
-        point: &RingOpeningPoint<F, D>,
-        transcript: &mut T,
-    ) -> Result<HachiProof<F, D>, HachiError>
+    /// Returns an error if the norm bound is exceeded (prover should abort / retry).
+    fn compute_z_hat<Cfg>(&mut self, challenges: &[CyclotomicRing<F, D>]) -> Result<(), HachiError>
     where
-        T: Transcript<F>,
         Cfg: CommitmentConfig,
     {
-        self.prove_stage1::<T, Cfg>(setup, point, transcript)
+        debug_assert_eq!(challenges.len(), self.hint.s.len());
+        let len = self.hint.s[0].len();
+        let mut z = vec![CyclotomicRing::<F, D>::zero(); len];
+        for (c_i, s_i) in challenges.iter().zip(self.hint.s.iter()) {
+            for (z_j, s_ij) in z.iter_mut().zip(s_i.iter()) {
+                *z_j += *c_i * *s_ij;
+            }
+        }
+
+        let modulus = detect_field_modulus::<F>();
+        let norm = vec_inf_norm(&z, modulus);
+        if norm > Cfg::BETA {
+            return Err(HachiError::InvalidInput(format!(
+                "prover abort: ||z||_inf = {norm} > beta = {}",
+                Cfg::BETA
+            )));
+        }
+
+        self.z_hat = z
+            .iter()
+            .flat_map(|z_j| z_j.balanced_decompose_pow2(Cfg::TAU, Cfg::LOG_BASIS))
+            .collect();
+
+        Ok(())
     }
 }
 
@@ -216,6 +208,7 @@ mod tests {
     use crate::algebra::CyclotomicRing;
     use crate::protocol::challenges::sparse::sample_dense_challenges;
     use crate::protocol::commitment::{HachiCommitmentCore, RingCommitmentScheme};
+    use crate::protocol::commitment_scheme::HachiCommitmentHint;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::test_utils::*;
     use crate::Transcript;
@@ -240,7 +233,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Shared fixture — driven entirely by HachiProver::prove()
+    // Shared fixture — driven entirely by HachiProver::prove_stage1()
     // -----------------------------------------------------------------------
 
     struct Fixture {
@@ -269,14 +262,18 @@ mod tests {
             b: sample_b(),
         };
 
-        let mut prover = HachiProver::<F, D>::new();
-        prover.s = s;
-        prover.t_hat = t_hat;
-
+        let hint = HachiCommitmentHint { s, t_hat };
         let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_SEED);
-        let proof = prover
-            .prove::<Blake2bTranscript<F>, TinyConfig>(&setup, &point, &mut transcript)
+        let mut prover = HachiProver::<F, D>::new();
+        let v = prover
+            .prove_stage1::<Blake2bTranscript<F>, TinyConfig>(
+                &setup,
+                &point,
+                &mut transcript,
+                &hint,
+            )
             .unwrap();
+        let proof = HachiProof { v };
 
         let challenges = replay_challenges(&proof);
 
@@ -320,6 +317,7 @@ mod tests {
 
         let t_hat_flat: Vec<CyclotomicRing<F, D>> = f
             .prover
+            .hint
             .t_hat
             .iter()
             .flat_map(|v| v.iter().copied())
@@ -408,7 +406,7 @@ mod tests {
         let f = build_fixture();
 
         let mut lhs = vec![CyclotomicRing::<F, D>::zero(); N_A];
-        for (c_i, t_hat_i) in f.challenges.iter().zip(f.prover.t_hat.iter()) {
+        for (c_i, t_hat_i) in f.challenges.iter().zip(f.prover.hint.t_hat.iter()) {
             let t_i = gadget_recompose_vec(t_hat_i);
             assert_eq!(t_i.len(), N_A);
             for (lhs_j, t_ij) in lhs.iter_mut().zip(t_i.iter()) {
@@ -435,8 +433,8 @@ mod tests {
         assert_eq!(f.prover.w_hat.len(), NUM_BLOCKS);
         assert!(f.prover.w_hat.iter().all(|v| v.len() == DELTA));
 
-        assert_eq!(f.prover.t_hat.len(), NUM_BLOCKS);
-        assert!(f.prover.t_hat.iter().all(|v| v.len() == N_A * DELTA));
+        assert_eq!(f.prover.hint.t_hat.len(), NUM_BLOCKS);
+        assert!(f.prover.hint.t_hat.iter().all(|v| v.len() == N_A * DELTA));
 
         assert_eq!(f.prover.z_hat.len(), BLOCK_LEN * DELTA * TAU);
     }

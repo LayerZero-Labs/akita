@@ -12,6 +12,7 @@
 
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
+use crate::protocol::opening_point::RingOpeningPoint;
 use crate::{CanonicalField, FieldCore};
 
 type ReduceClaimOutput<F, const D: usize> = (
@@ -35,7 +36,7 @@ type ReduceClaimCheckedOutput<F, const D: usize> = (
 ///   coefficient embedding (the k=1 case of `psi`).
 /// - The output is a flat table of length `2^(num_vars - alpha)` representing
 ///   the ring polynomial's coefficient table (monomial basis).
-fn reduce_coeffs_to_ring_elements<F: FieldCore, const D: usize>(
+pub(crate) fn reduce_coeffs_to_ring_elements<F: FieldCore, const D: usize>(
     num_vars: usize,
     coeffs: &[F],
     k: usize,
@@ -78,7 +79,7 @@ fn reduce_coeffs_to_ring_elements<F: FieldCore, const D: usize>(
 }
 
 /// Build the monomial vector `(∏ x_t^{j_t})_j` in LSB-first order.
-fn monomial_weights<F: FieldCore>(point: &[F]) -> Vec<F> {
+pub(crate) fn monomial_weights<F: FieldCore>(point: &[F]) -> Vec<F> {
     let mut weights = vec![F::one()];
     for x in point.iter().copied() {
         let prev_len = weights.len();
@@ -89,6 +90,42 @@ fn monomial_weights<F: FieldCore>(point: &[F]) -> Vec<F> {
         }
     }
     weights
+}
+
+/// Convert a field point into a ring opening point `(a, b)` using constant embedding.
+pub(crate) fn ring_opening_point_from_field<F: FieldCore, const D: usize>(
+    opening_point: &[F],
+    r_vars: usize,
+    m_vars: usize,
+) -> Result<RingOpeningPoint<F, D>, HachiError> {
+    let expected_len = r_vars
+        .checked_add(m_vars)
+        .ok_or_else(|| HachiError::InvalidSetup("opening point length overflow".to_string()))?;
+    if opening_point.len() != expected_len {
+        return Err(HachiError::InvalidPointDimension {
+            expected: expected_len,
+            actual: opening_point.len(),
+        });
+    }
+
+    let b = monomial_vector_from_field::<F, D>(&opening_point[..r_vars]);
+    let a = monomial_vector_from_field::<F, D>(&opening_point[r_vars..]);
+    Ok(RingOpeningPoint { a, b })
+}
+
+fn monomial_vector_from_field<F: FieldCore, const D: usize>(
+    point: &[F],
+) -> Vec<CyclotomicRing<F, D>> {
+    monomial_weights(point)
+        .into_iter()
+        .map(constant_ring::<F, D>)
+        .collect()
+}
+
+fn constant_ring<F: FieldCore, const D: usize>(value: F) -> CyclotomicRing<F, D> {
+    let mut coeffs = [F::zero(); D];
+    coeffs[0] = value;
+    CyclotomicRing::from_coefficients(coeffs)
 }
 
 /// Reduce inner openings (monomial vector) into a ring element (k = 1).
@@ -132,11 +169,12 @@ fn trace_k1<F: CanonicalField, const D: usize>(u: &CyclotomicRing<F, D>) -> F {
 /// Verify the trace identity: `Tr_H(Y · σ_{-1}(v)) = (d/k) · y`.
 fn verify_trace_identity<F: CanonicalField, const D: usize>(
     y_ring: &CyclotomicRing<F, D>,
-    v: &CyclotomicRing<F, D>,
+    inner_point: &[F],
     claimed_y: F,
     k: usize,
 ) -> Result<(), HachiError> {
     assert_eq!(k, 1, "only k=1 is implemented");
+    let v = reduce_inner_openings_to_ring_elements::<F, D>(inner_point, k)?;
     let trace_lhs = trace_k1::<F, D>(&((*y_ring) * v.sigma_m1()));
     let trace_rhs = F::from_u64(D as u64) * claimed_y;
     if trace_lhs != trace_rhs {
@@ -202,7 +240,9 @@ fn reduce_mle_claim_checked<F: CanonicalField, const D: usize>(
 ) -> Result<ReduceClaimCheckedOutput<F, D>, HachiError> {
     let (packed_coeffs, v, y_ring, _trace_lhs, _trace_rhs) =
         reduce_mle_claim::<F, D>(num_vars, coeffs, point, claimed_y, k)?;
-    verify_trace_identity::<F, D>(&y_ring, &v, claimed_y, k)?;
+    let alpha = D.trailing_zeros() as usize;
+    let inner_point = &point[..alpha];
+    verify_trace_identity::<F, D>(&y_ring, inner_point, claimed_y, k)?;
     Ok((packed_coeffs, v, y_ring))
 }
 

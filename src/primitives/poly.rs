@@ -52,6 +52,9 @@ pub trait Polynomial<F: FieldCore> {
     /// # Returns
     /// Polynomial evaluation result
     fn evaluate(&self, point: &[F]) -> F;
+
+    /// Return the coefficient/evaluation table on `{0,1}^n` in LSB-first order.
+    fn coeffs(&self) -> Vec<F>;
 }
 
 /// Compute multilinear Lagrange basis evaluations at a point

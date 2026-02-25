@@ -94,6 +94,38 @@ fn commit_is_deterministic_and_shape_consistent() {
 }
 
 #[test]
+fn commit_ring_coeffs_matches_block_commitment() {
+    let (psetup, _) =
+        <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::setup(16).unwrap();
+    let blocks = sample_blocks();
+
+    let (c_blocks, s_blocks, t_blocks) =
+        <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::commit_ring_blocks(
+            &blocks, &psetup,
+        )
+        .unwrap();
+
+    let num_blocks = 1usize << TinyConfig::R;
+    let block_len = 1usize << TinyConfig::M;
+    let mut f_coeffs = Vec::with_capacity(num_blocks * block_len);
+    for j in 0..block_len {
+        for i in 0..num_blocks {
+            f_coeffs.push(blocks[i][j]);
+        }
+    }
+
+    let (c_coeffs, s_coeffs, t_coeffs) =
+        <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::commit_coeffs(
+            &f_coeffs, &psetup,
+        )
+        .unwrap();
+
+    assert_eq!(c_blocks, c_coeffs);
+    assert_eq!(s_blocks, s_coeffs);
+    assert_eq!(t_blocks, t_coeffs);
+}
+
+#[test]
 fn opening_satisfies_inner_and_outer_equations() {
     let (psetup, _) =
         <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::setup(16).unwrap();

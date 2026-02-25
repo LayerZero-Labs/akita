@@ -28,6 +28,10 @@ impl Polynomial<F> for SimplePoly {
         }
         acc
     }
+
+    fn coeffs(&self) -> Vec<F> {
+        self.coeffs.clone()
+    }
 }
 
 #[derive(Clone)]

@@ -139,4 +139,8 @@ impl<F: FieldCore> Polynomial<F> for DenseMultilinearEvals<F> {
     fn evaluate(&self, point: &[F]) -> F {
         self.evaluate_with_order(point, BindingOrder::LowToHigh)
     }
+
+    fn coeffs(&self) -> Vec<F> {
+        self.evals[..self.len].to_vec()
+    }
 }
