@@ -163,11 +163,19 @@ where
     ///
     /// The input is indexed in LSB-first order (same convention as
     /// `DenseMultilinearEvals`). We split the variables as:
+    ///
     /// - outer index `i` for the first `R` variables,
     /// - inner index `j` for the last `M` variables,
-    /// and form blocks `f_i = (f_{i||j})_{j}` (Eq. (12) in the paper).
+    ///
+    /// We then form blocks `f_i = (f_{i||j})_{j}` (Eq. (12) in the paper).
     ///
     /// This prepares `f_blocks` and delegates to `commit_ring_blocks`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `f_coeffs.len()` does not match the configured block
+    /// layout, if internal index computations overflow, or if the underlying
+    /// commitment routine fails.
     #[allow(clippy::type_complexity)]
     fn commit_coeffs(
         f_coeffs: &[CyclotomicRing<F, D>],

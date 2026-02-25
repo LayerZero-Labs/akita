@@ -31,6 +31,11 @@ pub struct SparseChallengeConfig {
 
 impl SparseChallengeConfig {
     /// Validate basic invariants for a given ring degree `D`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `weight > D`, if `nonzero_coeffs` is empty, or if it
+    /// contains `0`.
     pub fn validate<const D: usize>(&self) -> Result<(), &'static str> {
         if self.weight > D {
             return Err("weight must be <= ring degree D");
@@ -38,7 +43,7 @@ impl SparseChallengeConfig {
         if self.nonzero_coeffs.is_empty() {
             return Err("nonzero_coeffs must be non-empty");
         }
-        if self.nonzero_coeffs.iter().any(|&c| c == 0) {
+        if self.nonzero_coeffs.contains(&0) {
             return Err("nonzero_coeffs must not contain 0");
         }
         Ok(())
@@ -87,6 +92,11 @@ impl SparseChallenge {
     }
 
     /// Validate structural invariants for a ring degree `D`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if lengths mismatch, if any coefficient is zero, if any
+    /// position is out of range, or if positions contain duplicates.
     pub fn validate<const D: usize>(&self) -> Result<(), &'static str> {
         if self.positions.len() != self.coeffs.len() {
             return Err("positions and coeffs must have same length");
@@ -111,6 +121,10 @@ impl SparseChallenge {
 
     /// Convert to a dense ring element by placing coefficients in the canonical
     /// coefficient basis.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the sparse representation violates structural invariants.
     pub fn to_dense<F: FieldCore + CanonicalField, const D: usize>(
         &self,
     ) -> Result<CyclotomicRing<F, D>, &'static str> {
@@ -127,6 +141,10 @@ impl SparseChallenge {
     ///
     /// This is `O(weight)` and is intended to be used for verifier-side oracles
     /// where `D` may be large but `weight` is small.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if structural invariants fail or if `alpha_pows.len() != D`.
     pub fn eval_at_alpha<F, E, const D: usize>(&self, alpha_pows: &[E]) -> Result<E, &'static str>
     where
         F: FieldCore + CanonicalField,

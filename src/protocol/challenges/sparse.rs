@@ -16,6 +16,10 @@ use crate::{CanonicalField, FieldCore};
 /// - Indices are sampled with a simple `mod D` reduction. For the intended
 ///   regimes (small `D`, cryptographic transcript), any bias is negligible.
 /// - Duplicate indices are rejected to enforce exact Hamming weight.
+///
+/// # Errors
+///
+/// Returns an error if the provided config is invalid for degree `D`.
 pub fn sparse_challenge_from_transcript<F, T, const D: usize>(
     transcript: &mut T,
     label: &[u8],
@@ -49,7 +53,7 @@ where
         let r = transcript
             .challenge_scalar(CHALLENGE_SPARSE_CHALLENGE)
             .to_canonical_u128();
-        let lo = (r as u64) as u64;
+        let lo = r as u64;
         let hi = (r >> 64) as u64;
 
         let pos = (lo % (D as u64)) as usize;
