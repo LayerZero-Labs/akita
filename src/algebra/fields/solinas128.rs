@@ -34,10 +34,22 @@ pub trait SolinasParams: 'static + Copy + Send + Sync {
     const C: u128;
 }
 
-#[inline]
-fn nonzero_mask_u128(x: u128) -> u128 {
-    let nz = ((x | x.wrapping_neg()) >> 127) & 1;
-    0u128.wrapping_sub(nz)
+/// Pack two u64 limbs into a `[u64; 2]` (lo, hi).
+#[inline(always)]
+const fn pack(lo: u64, hi: u64) -> [u64; 2] {
+    [lo, hi]
+}
+
+/// Convert u128 to `[u64; 2]` limb representation.
+#[inline(always)]
+const fn from_u128(x: u128) -> [u64; 2] {
+    [x as u64, (x >> 64) as u64]
+}
+
+/// Convert `[u64; 2]` limb representation to u128.
+#[inline(always)]
+const fn to_u128(x: [u64; 2]) -> u128 {
+    x[0] as u128 | (x[1] as u128) << 64
 }
 
 /// `a + b·c + carry` widening to 128 bits; returns `(lo64, hi64)`.
@@ -48,8 +60,11 @@ fn mac(a: u64, b: u64, c: u64, carry: u64) -> (u64, u64) {
 }
 
 /// 128-bit prime field with Solinas-folding reduction for `p = 2^128 - c`.
+///
+/// Internally stored as `[u64; 2]` (lo, hi) for 8-byte alignment and
+/// direct access to individual limbs without shifting.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct SolinasFp128<M: SolinasParams>(pub(crate) u128, PhantomData<M>);
+pub struct SolinasFp128<M: SolinasParams>(pub(crate) [u64; 2], PhantomData<M>);
 
 impl<M: SolinasParams> PartialEq for SolinasFp128<M> {
     fn eq(&self, other: &Self) -> bool {
@@ -60,44 +75,38 @@ impl<M: SolinasParams> PartialEq for SolinasFp128<M> {
 impl<M: SolinasParams> Eq for SolinasFp128<M> {}
 
 impl<M: SolinasParams> SolinasFp128<M> {
+    const C_LO: u64 = M::C as u64;
+
     /// Create an element from a canonical representative in `[0, p)`.
     #[inline]
     pub fn from_canonical_u128(x: u128) -> Self {
         debug_assert!(x < M::P);
-        Self(x, PhantomData)
+        Self(from_u128(x), PhantomData)
     }
 
     /// Return the canonical representative in `[0, p)`.
     #[inline]
     pub fn to_canonical_u128(self) -> u128 {
-        self.0
+        to_u128(self.0)
     }
 
     #[inline(always)]
-    fn add_raw(a: u128, b: u128) -> u128 {
-        let (s, carry) = a.overflowing_add(b);
+    fn add_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        let (s, carry) = to_u128(a).overflowing_add(to_u128(b));
         let (reduced, borrow) = s.overflowing_sub(M::P);
-        if carry | !borrow {
-            reduced
-        } else {
-            reduced.wrapping_add(M::P)
-        }
+        from_u128(if carry | !borrow { reduced } else { reduced.wrapping_add(M::P) })
     }
 
     #[inline(always)]
-    fn sub_raw(a: u128, b: u128) -> u128 {
-        let (diff, borrow) = a.overflowing_sub(b);
-        if borrow {
-            diff.wrapping_add(M::P)
-        } else {
-            diff
-        }
+    fn sub_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        let (diff, borrow) = to_u128(a).overflowing_sub(to_u128(b));
+        from_u128(if borrow { diff.wrapping_add(M::P) } else { diff })
     }
 
     /// Fold 2 + canonicalize: reduce `[t0, t1] + t2·2^128` into `[0, p)`.
     #[inline(always)]
-    fn fold2_canonicalize(t0: u64, t1: u64, t2: u64) -> u128 {
-        let c = M::C as u64;
+    fn fold2_canonicalize(t0: u64, t1: u64, t2: u64) -> [u64; 2] {
+        let c = Self::C_LO;
         let ct2 = (c as u128) * (t2 as u128);
         let base = (t1 as u128) << 64 | t0 as u128;
         let (s, overflow) = base.overflowing_add(ct2);
@@ -105,24 +114,15 @@ impl<M: SolinasParams> SolinasFp128<M> {
         let s = s.wrapping_add((overflow as u128).wrapping_neg() & M::C);
 
         // Canonicalize: since P = 2^128 − C, subtracting P is adding C.
-        // The carry flag from s + C tells us whether s ≥ P.
-        // Compiles to: adds + adcs + csel + csel (4 insns on AArch64),
-        // vs 10 insns for the mask-based approach.
         let (reduced, carry) = s.overflowing_add(M::C);
-        if carry {
-            reduced
-        } else {
-            s
-        }
+        from_u128(if carry { reduced } else { s })
     }
 
     #[inline(always)]
-    fn mul_raw(a: u128, b: u128) -> u128 {
-        let a0 = a as u64;
-        let a1 = (a >> 64) as u64;
-        let b0 = b as u64;
-        let b1 = (b >> 64) as u64;
-        let c = M::C as u64;
+    fn mul_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        let (a0, a1) = (a[0], a[1]);
+        let (b0, b1) = (b[0], b[1]);
+        let c = Self::C_LO;
 
         // Schoolbook 2×2 → 4 u64 limbs.
         let (r0, carry) = mac(0, a0, b0, 0);
@@ -138,7 +138,7 @@ impl<M: SolinasParams> SolinasFp128<M> {
     }
 
     #[inline(always)]
-    fn sqr_raw(a: u128) -> u128 {
+    fn sqr_raw(a: [u64; 2]) -> [u64; 2] {
         Self::mul_raw(a, a)
     }
 
@@ -190,7 +190,8 @@ impl<M: SolinasParams> std::ops::Neg for SolinasFp128<M> {
     type Output = Self;
     #[inline]
     fn neg(self) -> Self::Output {
-        Self(Self::sub_raw(0, self.0), PhantomData)
+        let zero = pack(0, 0);
+        Self(Self::sub_raw(zero, self.0), PhantomData)
     }
 }
 
@@ -220,7 +221,7 @@ impl<'a, M: SolinasParams> std::ops::Mul<&'a Self> for SolinasFp128<M> {
 
 impl<M: SolinasParams> Valid for SolinasFp128<M> {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.0 < M::P {
+        if to_u128(self.0) < M::P {
             Ok(())
         } else {
             Err(SerializationError::InvalidData(
@@ -236,7 +237,7 @@ impl<M: SolinasParams> HachiSerialize for SolinasFp128<M> {
         mut writer: W,
         _compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.0.serialize_with_mode(&mut writer, Compress::No)?;
+        to_u128(self.0).serialize_with_mode(&mut writer, Compress::No)?;
         Ok(())
     }
 
@@ -265,24 +266,23 @@ impl<M: SolinasParams> HachiDeserialize for SolinasFp128<M> {
             x
         } else {
             let (sub, borrow) = x.overflowing_sub(M::P);
-            let mask = (borrow as u128).wrapping_neg();
-            (x & mask) | (sub & !mask)
+            if borrow { x } else { sub }
         };
-        Ok(Self(out, PhantomData))
+        Ok(Self(from_u128(out), PhantomData))
     }
 }
 
 impl<M: SolinasParams> FieldCore for SolinasFp128<M> {
     fn zero() -> Self {
-        Self(0, PhantomData)
+        Self(pack(0, 0), PhantomData)
     }
 
     fn one() -> Self {
-        Self(1 % M::P, PhantomData)
+        Self(pack(1, 0), PhantomData)
     }
 
     fn is_zero(&self) -> bool {
-        self.0 == 0
+        self.0 == [0, 0]
     }
 
     fn add(&self, rhs: &Self) -> Self {
@@ -310,8 +310,11 @@ impl<M: SolinasParams> FieldCore for SolinasFp128<M> {
 impl<M: SolinasParams> Invertible for SolinasFp128<M> {
     fn inv_or_zero(self) -> Self {
         let candidate = self.pow_u128(M::P.wrapping_sub(2));
-        let mask = nonzero_mask_u128(self.0);
-        Self(candidate.0 & mask, PhantomData)
+        let v = to_u128(self.0);
+        let nz = ((v | v.wrapping_neg()) >> 127) & 1;
+        let mask = 0u128.wrapping_sub(nz);
+        let masked = to_u128(candidate.0) & mask;
+        Self(from_u128(masked), PhantomData)
     }
 }
 
@@ -319,11 +322,11 @@ impl<M: SolinasParams> FieldSampling for SolinasFp128<M> {
     fn sample<R: RngCore>(rng: &mut R) -> Self {
         // Rejection sampling without division. Acceptance probability is ~1 - C/2^128.
         loop {
-            let lo = rng.next_u64() as u128;
-            let hi = rng.next_u64() as u128;
-            let x = lo | (hi << 64);
+            let lo = rng.next_u64();
+            let hi = rng.next_u64();
+            let x = lo as u128 | (hi as u128) << 64;
             if x < M::P {
-                return Self(x, PhantomData);
+                return Self(pack(lo, hi), PhantomData);
             }
         }
     }
@@ -343,12 +346,12 @@ impl<M: SolinasParams> CanonicalField for SolinasFp128<M> {
     }
 
     fn to_canonical_u128(self) -> u128 {
-        self.0
+        to_u128(self.0)
     }
 
     fn from_canonical_u128_checked(val: u128) -> Option<Self> {
         if val < M::P {
-            Some(Self(val, PhantomData))
+            Some(Self(from_u128(val), PhantomData))
         } else {
             None
         }
@@ -356,8 +359,7 @@ impl<M: SolinasParams> CanonicalField for SolinasFp128<M> {
 
     fn from_canonical_u128_reduced(val: u128) -> Self {
         let (sub, borrow) = val.overflowing_sub(M::P);
-        let mask = (borrow as u128).wrapping_neg();
-        Self((val & mask) | (sub & !mask), PhantomData)
+        Self(from_u128(if borrow { val } else { sub }), PhantomData)
     }
 }
 
