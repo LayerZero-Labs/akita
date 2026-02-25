@@ -76,6 +76,11 @@ impl<F: FieldCore> DenseMultilinearEvals<F> {
     /// Bind one variable in-place, reducing `len` by a factor of 2.
     ///
     /// After binding, the polynomial has one fewer variable.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current backing length is not a power of two, or if attempting
+    /// to bind a constant (length-1) polynomial.
     pub fn bind_in_place(&mut self, r: F, order: BindingOrder) {
         assert!(self.len.is_power_of_two());
         assert!(self.len >= 2, "cannot bind variable of constant polynomial");
@@ -89,7 +94,7 @@ impl<F: FieldCore> DenseMultilinearEvals<F> {
     fn bind_lsb_in_place(&mut self, r: F) {
         let next_len = self.len / 2;
         for i in 0..next_len {
-            let v0 = self.evals[(i << 1) | 0];
+            let v0 = self.evals[i << 1];
             let v1 = self.evals[(i << 1) | 1];
             // (1-r)*v0 + r*v1 = v0 + r*(v1-v0)
             self.evals[i] = v0 + r * (v1 - v0);
@@ -112,6 +117,10 @@ impl<F: FieldCore> DenseMultilinearEvals<F> {
     }
 
     /// Evaluate without mutating `self`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `point.len() != self.num_vars`.
     pub fn evaluate_with_order(&self, point: &[F], order: BindingOrder) -> F {
         if point.is_empty() {
             return self.evals[0];

@@ -143,10 +143,7 @@ impl<E: FieldCore> CompressedUniPoly<E> {
     ///
     /// For degree `d`, this stores `d` coefficients (all except the linear term).
     pub fn degree(&self) -> usize {
-        self.coeffs_except_linear_term
-            .len()
-            .checked_sub(1)
-            .unwrap_or(0)
+        self.coeffs_except_linear_term.len().saturating_sub(1)
     }
 
     fn recover_linear_term(&self, hint: &E) -> E {
@@ -292,6 +289,11 @@ impl<E: FieldCore> SumcheckProof<E> {
     ///
     /// It does **not** perform the final oracle check `final_claim == f(r*)`.
     /// Callers (e.g. ring-switching) must compute `f(r*)` themselves and compare.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the proof length does not match `num_rounds` or if any
+    /// per-round polynomial exceeds `degree_bound`.
     pub fn verify<F, T, S>(
         &self,
         mut claim: E,
@@ -371,6 +373,10 @@ pub trait SumcheckInstanceProver<E: FieldCore>: Send + Sync {
 /// - updates the running claim using the per-round hint (`g(0)+g(1)`).
 ///
 /// It returns the proof, the derived point `r`, and the final claimed value at `r`.
+///
+/// # Errors
+///
+/// Returns an error if any per-round polynomial exceeds the instance's degree bound.
 pub fn prove_sumcheck<F, T, E, S, Inst>(
     instance: &mut Inst,
     mut claim: E,
