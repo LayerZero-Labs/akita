@@ -1,6 +1,6 @@
 //! Simple module implementations.
 
-use super::fields::{Fp128, Fp32, Fp64};
+use super::fields::{Fp128, Fp32, Fp64, SolinasFp128, SolinasParams};
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
@@ -203,6 +203,26 @@ impl<'a, const MODULUS: u128, const N: usize> Mul<&'a VectorModule<Fp128<MODULUS
 {
     type Output = VectorModule<Fp128<MODULUS>, N>;
     fn mul(self, rhs: &'a VectorModule<Fp128<MODULUS>, N>) -> Self::Output {
+        self * *rhs
+    }
+}
+
+impl<M: SolinasParams, const N: usize> Mul<VectorModule<SolinasFp128<M>, N>> for SolinasFp128<M> {
+    type Output = VectorModule<SolinasFp128<M>, N>;
+    fn mul(self, rhs: VectorModule<SolinasFp128<M>, N>) -> Self::Output {
+        let mut out = rhs.0;
+        for coeff in &mut out {
+            *coeff = self * *coeff;
+        }
+        VectorModule(out)
+    }
+}
+
+impl<'a, M: SolinasParams, const N: usize> Mul<&'a VectorModule<SolinasFp128<M>, N>>
+    for SolinasFp128<M>
+{
+    type Output = VectorModule<SolinasFp128<M>, N>;
+    fn mul(self, rhs: &'a VectorModule<SolinasFp128<M>, N>) -> Self::Output {
         self * *rhs
     }
 }

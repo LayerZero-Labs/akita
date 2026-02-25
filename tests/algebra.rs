@@ -2,9 +2,12 @@
 
 #[cfg(test)]
 mod tests {
-    use hachi_pcs::algebra::{Fp128, Fp2, Fp2Config, Fp32, Fp4, Fp4Config, Fp64, VectorModule};
+    use hachi_pcs::algebra::{
+        Fp128, Fp2, Fp2Config, Fp32, Fp4, Fp4Config, Fp64, Prime128M13M4P0, Prime128M37P3P0,
+        Prime128M52M3P0, Prime128M54P4P0, Prime128M8M4M1M0, VectorModule,
+    };
     use hachi_pcs::Module;
-    use hachi_pcs::{CanonicalField, FieldCore, Invertible};
+    use hachi_pcs::{CanonicalField, FieldCore, Invertible, PseudoMersenneField};
 
     #[test]
     fn fp32_basic_arith() {
@@ -37,6 +40,140 @@ mod tests {
         let c = a * b + a - b;
         let inv = c.inv().unwrap();
         assert_eq!(c * inv, F::one());
+    }
+
+    fn rand_u128<R: rand_core::RngCore>(rng: &mut R) -> u128 {
+        let lo = rng.next_u64() as u128;
+        let hi = rng.next_u64() as u128;
+        lo | (hi << 64)
+    }
+
+    fn biguint_to_u128(x: &num_bigint::BigUint) -> u128 {
+        let mut bytes = x.to_bytes_le();
+        bytes.resize(16, 0);
+        let mut arr = [0u8; 16];
+        arr.copy_from_slice(&bytes[..16]);
+        u128::from_le_bytes(arr)
+    }
+
+    fn big_mul_mod_u128(a: u128, b: u128, p: u128) -> u128 {
+        use num_bigint::BigUint;
+        let n = BigUint::from(a) * BigUint::from(b);
+        let r = n % BigUint::from(p);
+        biguint_to_u128(&r)
+    }
+
+    fn check_solinas_prime<
+        S: CanonicalField + FieldCore + Invertible + PseudoMersenneField + std::fmt::Debug,
+    >(
+        p: u128,
+        iters: usize,
+        seed: u64,
+    ) {
+        use rand::{rngs::StdRng, SeedableRng};
+
+        assert_eq!(<S as PseudoMersenneField>::MODULUS_BITS, 128);
+        assert_eq!(
+            <S as PseudoMersenneField>::MODULUS_OFFSET,
+            0u128.wrapping_sub(p)
+        );
+        assert_eq!(std::mem::size_of::<S>(), 16);
+
+        let mut rng = StdRng::seed_from_u64(seed);
+
+        for _ in 0..iters {
+            let a_raw = rand_u128(&mut rng);
+            let b_raw = rand_u128(&mut rng);
+
+            let a = S::from_canonical_u128_reduced(a_raw);
+            let b = S::from_canonical_u128_reduced(b_raw);
+
+            // Canonical range invariant.
+            assert!(a.to_canonical_u128() < p);
+            assert!(b.to_canonical_u128() < p);
+
+            // Add/sub/neg identities.
+            assert_eq!(a + S::zero(), a);
+            assert_eq!(a - S::zero(), a);
+            assert_eq!(a + (-a), S::zero());
+
+            // Multiplicative identity.
+            assert_eq!(a * S::one(), a);
+
+            // BigUint oracle for mul and sqr (exercises reduction).
+            let aa = a.to_canonical_u128();
+            let bb = b.to_canonical_u128();
+            let got_mul = (a * b).to_canonical_u128();
+            let exp_mul = big_mul_mod_u128(aa, bb, p);
+            assert_eq!(got_mul, exp_mul);
+
+            let got_sqr = (a * a).to_canonical_u128();
+            let exp_sqr = big_mul_mod_u128(aa, aa, p);
+            assert_eq!(got_sqr, exp_sqr);
+
+            // Inversion checks (skip explicit inv on zero).
+            let inv = a.inv_or_zero();
+            if a.is_zero() {
+                assert_eq!(inv, S::zero());
+            } else {
+                assert_eq!(a * inv, S::one());
+                assert_eq!(a.inv().unwrap(), inv);
+            }
+        }
+    }
+
+    #[test]
+    fn solinas128_sparse_primes_match_biguint_oracle() {
+        // These are the five sparse `2^128 - c` primes we care about.
+        const P13: u128 = 0xffffffffffffffffffffffffffffdff1u128;
+        const P37: u128 = 0xffffffffffffffffffffffe000000009u128;
+        const P52: u128 = 0xffffffffffffffffffeffffffffffff9u128;
+        const P54: u128 = 0xffffffffffffffffffc0000000000011u128;
+        const P275: u128 = 0xfffffffffffffffffffffffffffffeedu128;
+
+        check_solinas_prime::<Prime128M13M4P0>(P13, 2_000, 13);
+        check_solinas_prime::<Prime128M37P3P0>(P37, 2_000, 37);
+        check_solinas_prime::<Prime128M52M3P0>(P52, 2_000, 52);
+        check_solinas_prime::<Prime128M54P4P0>(P54, 2_000, 54);
+        check_solinas_prime::<Prime128M8M4M1M0>(P275, 2_000, 275);
+    }
+
+    #[test]
+    fn solinas128_matches_fp128_for_sparse_primes() {
+        use rand::{rngs::StdRng, SeedableRng};
+
+        const P13: u128 = 0xffffffffffffffffffffffffffffdff1u128;
+        type S13 = Prime128M13M4P0;
+        type F13 = Fp128<P13>;
+
+        let mut rng = StdRng::seed_from_u64(123);
+        for _ in 0..5_000 {
+            let a_raw = rand_u128(&mut rng);
+            let b_raw = rand_u128(&mut rng);
+
+            let a_s = S13::from_canonical_u128_reduced(a_raw);
+            let b_s = S13::from_canonical_u128_reduced(b_raw);
+            let a_f = F13::from_canonical_u128_reduced(a_raw);
+            let b_f = F13::from_canonical_u128_reduced(b_raw);
+
+            assert_eq!(
+                (a_s + b_s).to_canonical_u128(),
+                (a_f + b_f).to_canonical_u128()
+            );
+            assert_eq!(
+                (a_s - b_s).to_canonical_u128(),
+                (a_f - b_f).to_canonical_u128()
+            );
+            assert_eq!(
+                (a_s * b_s).to_canonical_u128(),
+                (a_f * b_f).to_canonical_u128()
+            );
+
+            assert_eq!(
+                a_s.inv_or_zero().to_canonical_u128(),
+                a_f.inv_or_zero().to_canonical_u128()
+            );
+        }
     }
 
     struct NR;
@@ -281,6 +418,15 @@ mod tests {
         assert!(matches!(err128, SerializationError::InvalidData(_)));
         let unchecked128 = F128::deserialize_compressed_unchecked(&bad128[..]).unwrap();
         assert_eq!(unchecked128, F128::zero());
+
+        // Solinas-backed sparse 128-bit primes: same checked/unchecked behavior.
+        type S13 = Prime128M13M4P0;
+        const P13: u128 = 0xffffffffffffffffffffffffffffdff1u128;
+        let bad13 = P13.to_le_bytes();
+        let err13 = S13::deserialize_compressed(&bad13[..]).unwrap_err();
+        assert!(matches!(err13, SerializationError::InvalidData(_)));
+        let unchecked13 = S13::deserialize_compressed_unchecked(&bad13[..]).unwrap();
+        assert_eq!(unchecked13, S13::zero());
     }
 
     #[test]
