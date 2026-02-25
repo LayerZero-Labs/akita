@@ -13,7 +13,6 @@
 //! Internally, Solinas reduction uses the offset `c = 2^128 - p`, so the signed
 //! decomposition of `c` is the sign-flipped version of the one encoded in `p`.
 
-use super::u256::U256;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
@@ -27,17 +26,12 @@ use std::marker::PhantomData;
 /// Contract (enforced by the `solinas_prime!` macro for the built-in primes):
 /// - `P` is odd and nonzero
 /// - `C = 2^128 - P` (computed as `0u128.wrapping_sub(P)`)
-/// - `C < 2^64`, sufficient for the two-fold reduction used in [`SolinasFp128::reduce_u256`]
+/// - `C < 2^64`, sufficient for the two-fold Solinas reduction in [`SolinasFp128`]
 pub trait SolinasParams: 'static + Copy + Send + Sync {
     /// Modulus `p`.
     const P: u128;
     /// Offset `c = 2^128 - p`.
     const C: u128;
-
-    /// Compute `c * h` as a 256-bit integer.
-    ///
-    /// Returns `U256 { hi, lo }` representing `(hi << 128) + lo`.
-    fn c_mul(h: u128) -> U256;
 }
 
 #[inline]
@@ -46,32 +40,11 @@ fn nonzero_mask_u128(x: u128) -> u128 {
     0u128.wrapping_sub(nz)
 }
 
-#[inline]
-fn shl_wide_128(x: u128, shift: u32) -> U256 {
-    debug_assert!(shift < 128);
-    if shift == 0 {
-        return U256::new(0, x);
-    }
-    // (x << shift) is a 256-bit value with:
-    // - low limb: x << shift
-    // - high limb: x >> (128 - shift)
-    let lo = x << shift;
-    let hi = x >> (128 - shift);
-    U256::new(hi, lo)
-}
-
-#[inline]
-fn wide_add(a: U256, b: U256) -> U256 {
-    let (lo, carry) = a.lo.overflowing_add(b.lo);
-    let hi = a.hi.wrapping_add(b.hi).wrapping_add(carry as u128);
-    U256::new(hi, lo)
-}
-
-#[inline]
-fn wide_sub(a: U256, b: U256) -> U256 {
-    let (lo, borrow) = a.lo.overflowing_sub(b.lo);
-    let hi = a.hi.wrapping_sub(b.hi).wrapping_sub(borrow as u128);
-    U256::new(hi, lo)
+/// `a + b·c + carry` widening to 128 bits; returns `(lo64, hi64)`.
+#[inline(always)]
+fn mac(a: u64, b: u64, c: u64, carry: u64) -> (u64, u64) {
+    let ret = a as u128 + (b as u128) * (c as u128) + carry as u128;
+    (ret as u64, (ret >> 64) as u64)
 }
 
 /// 128-bit prime field with Solinas-folding reduction for `p = 2^128 - c`.
@@ -100,50 +73,79 @@ impl<M: SolinasParams> SolinasFp128<M> {
         self.0
     }
 
-    #[inline]
+    #[inline(always)]
     fn add_raw(a: u128, b: u128) -> u128 {
         let (s, carry) = a.overflowing_add(b);
         let (reduced, borrow) = s.overflowing_sub(M::P);
-        let need_correction = (!carry & borrow) as u128;
-        reduced.wrapping_add(need_correction.wrapping_neg() & M::P)
+        if carry | !borrow {
+            reduced
+        } else {
+            reduced.wrapping_add(M::P)
+        }
     }
 
-    #[inline]
+    #[inline(always)]
     fn sub_raw(a: u128, b: u128) -> u128 {
         let (diff, borrow) = a.overflowing_sub(b);
-        let correction = (borrow as u128).wrapping_neg() & M::P;
-        diff.wrapping_add(correction)
+        if borrow {
+            diff.wrapping_add(M::P)
+        } else {
+            diff
+        }
     }
 
-    #[inline]
-    fn reduce_u256(n: U256) -> u128 {
-        // First fold: t = lo + c * hi.
-        let prod = M::c_mul(n.hi);
-        let t = wide_add(prod, U256::new(0, n.lo));
+    /// Fold 2 + canonicalize: reduce `[t0, t1] + t2·2^128` into `[0, p)`.
+    #[inline(always)]
+    fn fold2_canonicalize(t0: u64, t1: u64, t2: u64) -> u128 {
+        let c = M::C as u64;
+        let ct2 = (c as u128) * (t2 as u128);
+        let base = (t1 as u128) << 64 | t0 as u128;
+        let (s, overflow) = base.overflowing_add(ct2);
+        // Overflow → true value is s + 2^128 ≡ s + C (mod p).
+        let s = s.wrapping_add((overflow as u128).wrapping_neg() & M::C);
 
-        // Second fold: s = t.lo + c * t.hi (this product fits in u128 under C < 2^64).
-        let cm = M::C.wrapping_mul(t.hi);
-        let (s_lo, carry) = t.lo.overflowing_add(cm);
-
-        // Carry-fix: (s_lo + carry*2^128) ≡ s_lo + carry*c (mod p).
-        let correction = (carry as u128).wrapping_neg() & M::C;
-        let s = s_lo.wrapping_add(correction);
-
-        // Canonicalize with one conditional subtract of p.
-        let (sub, borrow) = s.overflowing_sub(M::P);
-        let ge = (!borrow) as u128;
-        let mask = ge.wrapping_neg();
-        (s & !mask) | (sub & mask)
+        // Canonicalize: since P = 2^128 − C, subtracting P is adding C.
+        // The carry flag from s + C tells us whether s ≥ P.
+        // Compiles to: adds + adcs + csel + csel (4 insns on AArch64),
+        // vs 10 insns for the mask-based approach.
+        let (reduced, carry) = s.overflowing_add(M::C);
+        if carry {
+            reduced
+        } else {
+            s
+        }
     }
 
-    #[inline]
+    #[inline(always)]
     fn mul_raw(a: u128, b: u128) -> u128 {
-        Self::reduce_u256(U256::mul_u128(a, b))
+        let a0 = a as u64;
+        let a1 = (a >> 64) as u64;
+        let b0 = b as u64;
+        let b1 = (b >> 64) as u64;
+        let c = M::C as u64;
+
+        // Schoolbook 2×2 → 4 u64 limbs.
+        let (r0, carry) = mac(0, a0, b0, 0);
+        let (r1, r2) = mac(0, a0, b1, carry);
+        let (r1, carry) = mac(r1, a1, b0, 0);
+        let (r2, r3) = mac(r2, a1, b1, carry);
+
+        // Solinas fold 1: [t0,t1,t2] = [r0,r1] + c·[r2,r3].
+        let (t0, carry) = mac(r0, c, r2, 0);
+        let (t1, t2) = mac(r1, c, r3, carry);
+
+        Self::fold2_canonicalize(t0, t1, t2)
     }
 
-    #[inline]
+    #[inline(always)]
     fn sqr_raw(a: u128) -> u128 {
-        Self::reduce_u256(U256::sqr_u128(a))
+        Self::mul_raw(a, a)
+    }
+
+    /// Squaring, equivalent to `self * self`.
+    #[inline(always)]
+    pub fn square(self) -> Self {
+        Self(Self::sqr_raw(self.0), PhantomData)
     }
 
     fn pow_u128(self, mut exp: u128) -> Self {
@@ -378,33 +380,16 @@ macro_rules! solinas_prime {
         impl SolinasParams for $name {
             const P: u128 = $p;
             const C: u128 = 0u128.wrapping_sub(Self::P);
-
-            #[inline]
-            fn c_mul(h: u128) -> U256 {
-                let mut acc = U256::new(0, 0);
-                $(
-                    let term = shl_wide_128(h, $shift as u32);
-                    acc = solinas_prime!(@acc acc, term, $sign);
-                )+
-                acc
-            }
         }
 
-        // Compile-time assertions for safety/correctness of the two-fold reduction.
         const _: () = {
             const P: u128 = <$name as SolinasParams>::P;
             const C: u128 = <$name as SolinasParams>::C;
-
-            // C must be computed from P by definition.
             assert!(P.wrapping_add(C) == 0);
             assert!(P != 0);
             assert!((P & 1) == 1);
-
-            // Two-fold contract: C < 2^64, so C*C fits in u128.
             assert!(C < (1u128 << 64));
-            assert!(C.checked_mul(C).is_some());
 
-            // Validate that the provided signed term list matches the computed C.
             let mut c_terms: u128 = 0;
             $(
                 assert!($shift < 128);
@@ -414,13 +399,6 @@ macro_rules! solinas_prime {
             assert!(c_terms == C);
         };
     };
-
-    (@acc $acc:expr, $term:expr, +) => {{
-        $crate::algebra::fields::solinas128::wide_add($acc, $term)
-    }};
-    (@acc $acc:expr, $term:expr, -) => {{
-        $crate::algebra::fields::solinas128::wide_sub($acc, $term)
-    }};
 
     (@cterm $acc:expr, $t:expr, +) => {{
         $acc.wrapping_add($t)

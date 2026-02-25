@@ -90,6 +90,70 @@ fn bench_mul(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_mul_only(c: &mut Criterion) {
+    type S13 = Prime128M13M4P0;
+
+    let mut rng = StdRng::seed_from_u64(0x5eed);
+    let inputs: Vec<S13> = (0..2048)
+        .map(|_| S13::from_canonical_u128_reduced(rand_u128(&mut rng)))
+        .collect();
+
+    let mut group = c.benchmark_group("field_mul_only");
+
+    group.bench_function("solinas_mul_chain_2048", |b| {
+        b.iter(|| {
+            let mut acc = S13::one();
+            for x in inputs.iter() {
+                acc = acc * *x;
+            }
+            black_box(acc)
+        })
+    });
+
+    group.bench_function("solinas_mul_parallel_1024", |b| {
+        b.iter(|| {
+            let mut sum = S13::zero();
+            for pair in inputs.chunks_exact(2) {
+                sum = sum + pair[0] * pair[1];
+            }
+            black_box(sum)
+        })
+    });
+
+    group.finish();
+}
+
+fn bench_sqr(c: &mut Criterion) {
+    type S13 = Prime128M13M4P0;
+
+    let mut rng = StdRng::seed_from_u64(0x5eed);
+    let start = S13::from_canonical_u128_reduced(rand_u128(&mut rng));
+
+    let mut group = c.benchmark_group("field_sqr");
+
+    group.bench_function("solinas_sqr_chain_2048", |b| {
+        b.iter(|| {
+            let mut acc = start;
+            for _ in 0..2048 {
+                acc = acc.square();
+            }
+            black_box(acc)
+        })
+    });
+
+    group.bench_function("solinas_mul_self_chain_2048", |b| {
+        b.iter(|| {
+            let mut acc = start;
+            for _ in 0..2048 {
+                acc = acc * acc;
+            }
+            black_box(acc)
+        })
+    });
+
+    group.finish();
+}
+
 fn bench_inv(c: &mut Criterion) {
     type S13 = Prime128M13M4P0;
 
@@ -109,5 +173,5 @@ fn bench_inv(c: &mut Criterion) {
     });
 }
 
-criterion_group!(field_arith, bench_mul, bench_inv);
+criterion_group!(field_arith, bench_mul, bench_mul_only, bench_sqr, bench_inv);
 criterion_main!(field_arith);
