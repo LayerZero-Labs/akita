@@ -104,18 +104,30 @@ impl<M: SolinasParams> SolinasFp128<M> {
     }
 
     /// Fold 2 + canonicalize: reduce `[t0, t1] + t2·2^128` into `[0, p)`.
+    ///
+    /// Correctness argument for the fused overflow+canonicalize:
+    ///
+    /// Let `v = base + C·t2` (mathematical, not mod 2^128).
+    /// From the fold-1 mac chain, `t2 ≤ C`, so `C·t2 ≤ C²`.
+    ///
+    /// - **No overflow** (`v < 2^128`): `s = v`, and the standard
+    ///   canonicalize applies — `s + C` carries iff `s ≥ P`.
+    /// - **Overflow** (`v ≥ 2^128`): `s = v − 2^128`, so `s < C·t2 ≤ C²`.
+    ///   The correct reduced value is `s + C` (since `2^128 ≡ C mod P`).
+    ///   Because `s + C < C² + C = C(C+1)` and `C(C+1) < P` for all
+    ///   `C < 2^64`, the value `s + C` is already in `[0, P)` — no
+    ///   further canonicalization is needed, and `s + C < 2^128` so the
+    ///   add does NOT carry.
+    ///
+    /// Therefore `if (overflow | carry) { s + C } else { s }` is correct
+    /// in both cases, fusing the overflow correction with canonicalization.
     #[inline(always)]
     fn fold2_canonicalize(t0: u64, t1: u64, t2: u64) -> [u64; 2] {
-        let c = Self::C_LO;
-        let ct2 = (c as u128) * (t2 as u128);
+        let ct2 = (Self::C_LO as u128) * (t2 as u128);
         let base = (t1 as u128) << 64 | t0 as u128;
         let (s, overflow) = base.overflowing_add(ct2);
-        // Overflow → true value is s + 2^128 ≡ s + C (mod p).
-        let s = s.wrapping_add((overflow as u128).wrapping_neg() & M::C);
-
-        // Canonicalize: since P = 2^128 − C, subtracting P is adding C.
         let (reduced, carry) = s.overflowing_add(M::C);
-        from_u128(if carry { reduced } else { s })
+        from_u128(if overflow | carry { reduced } else { s })
     }
 
     #[inline(always)]
@@ -391,6 +403,11 @@ macro_rules! solinas_prime {
             assert!(P != 0);
             assert!((P & 1) == 1);
             assert!(C < (1u128 << 64));
+            // Fold-2 fused overflow+canonicalize requires C(C+1) < P.
+            // This is trivially satisfied when C < 2^64, since
+            // C(C+1) < 2^128 and P = 2^128 - C > 2^128 - 2^64.
+            assert!(C.checked_mul(C + 1).is_some());
+            assert!(C * (C + 1) < P);
 
             let mut c_terms: u128 = 0;
             $(
