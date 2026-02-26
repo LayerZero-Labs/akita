@@ -139,6 +139,7 @@ pub mod aarch64_neon {
     use crate::algebra::fields::{Fp128, Fp32, Fp64};
     use crate::FieldCore;
     use core::arch::aarch64::{
+        uint32x2_t,
         uint32x4_t,
         uint64x2_t,
         // u32 arithmetic
@@ -557,49 +558,13 @@ pub mod aarch64_neon {
             (1u64 << Self::BITS) - 1
         };
 
-        const C_SHIFT_KIND: i8 = {
-            let c = Self::C as u64;
-            if c > 1 && is_pow2_u64(c - 1) {
-                1
-            } else if c == u64::MAX || (c > 0 && is_pow2_u64(c + 1)) {
-                -1
-            } else {
-                0
-            }
-        };
-
-        const C_SHIFT: u32 = {
-            let c = Self::C as u64;
-            if Self::C_SHIFT_KIND == 1 {
-                log2_pow2_u64(c - 1)
-            } else if Self::C_SHIFT_KIND == -1 {
-                if c == u64::MAX {
-                    64
-                } else {
-                    log2_pow2_u64(c + 1)
-                }
-            } else {
-                0
-            }
-        };
-
         /// Multiply `hi` (uint64x2_t, each lane < 2^BITS) by C in u64 NEON.
-        ///
-        /// When C = 2^a +/- 1, uses shift+add/sub instead of widening multiply.
         #[inline(always)]
-        fn mul_c_u64(hi: uint64x2_t) -> uint64x2_t {
+        fn mul_c_u64(hi: uint64x2_t, c: uint32x2_t) -> uint64x2_t {
             // SAFETY: module is gated on target_feature = "neon".
             unsafe {
-                if Self::C_SHIFT_KIND == 1 {
-                    let shift = vdupq_n_s64(Self::C_SHIFT as i64);
-                    vaddq_u64(vshlq_u64(hi, shift), hi)
-                } else if Self::C_SHIFT_KIND == -1 {
-                    let shift = vdupq_n_s64(Self::C_SHIFT as i64);
-                    vsubq_u64(vshlq_u64(hi, shift), hi)
-                } else {
-                    let hi_narrow = vmovn_u64(hi);
-                    vmull_u32(hi_narrow, vdup_n_u32(Self::C))
-                }
+                let hi_narrow = vmovn_u64(hi);
+                vmull_u32(hi_narrow, c)
             }
         }
 
@@ -611,25 +576,26 @@ pub mod aarch64_neon {
             unsafe {
                 let mask = vdupq_n_u64(Self::MASK_U64);
                 let neg_bits = vdupq_n_s64(-(Self::BITS as i64));
+                let c = vdup_n_u32(Self::C);
 
                 // Fold 1
                 let f1_lo = vaddq_u64(
                     vandq_u64(prod_lo, mask),
-                    Self::mul_c_u64(vshlq_u64(prod_lo, neg_bits)),
+                    Self::mul_c_u64(vshlq_u64(prod_lo, neg_bits), c),
                 );
                 let f1_hi = vaddq_u64(
                     vandq_u64(prod_hi, mask),
-                    Self::mul_c_u64(vshlq_u64(prod_hi, neg_bits)),
+                    Self::mul_c_u64(vshlq_u64(prod_hi, neg_bits), c),
                 );
 
                 // Fold 2
                 let f2_lo = vaddq_u64(
                     vandq_u64(f1_lo, mask),
-                    Self::mul_c_u64(vshlq_u64(f1_lo, neg_bits)),
+                    Self::mul_c_u64(vshlq_u64(f1_lo, neg_bits), c),
                 );
                 let f2_hi = vaddq_u64(
                     vandq_u64(f1_hi, mask),
-                    Self::mul_c_u64(vshlq_u64(f1_hi, neg_bits)),
+                    Self::mul_c_u64(vshlq_u64(f1_hi, neg_bits), c),
                 );
 
                 // Conditional subtract P and narrow to u32.
@@ -788,8 +754,8 @@ pub mod aarch64_neon {
 
     /// NEON packed `Fp64` backend: 2 lanes in `uint64x2_t`.
     ///
-    /// Add/Sub are vectorized. Mul is scalar per lane (NEON lacks 64x64->128
-    /// multiply, and decomposing into 32x32 products isn't worth it for 2 lanes).
+    /// Add/Sub are vectorized. Mul computes per-lane 64x64 -> 128 products and
+    /// applies packed-local Solinas reduction specialized by modulus shape.
     #[derive(Clone, Copy)]
     pub struct PackedFp64Neon<const P: u64> {
         vals: [u64; 2],
@@ -808,6 +774,51 @@ pub mod aarch64_neon {
             assert!(P & 1 == 1, "modulus must be odd");
             c
         };
+
+        const MASK64: u64 = if Self::BITS < 64 {
+            (1u64 << Self::BITS) - 1
+        } else {
+            u64::MAX
+        };
+
+        const MASK_U128: u128 = if Self::BITS == 64 {
+            u64::MAX as u128
+        } else {
+            (1u128 << Self::BITS) - 1
+        };
+
+        const FOLD_IN_U64: bool =
+            Self::BITS < 64 && (Self::C_LO as u128) < (1u128 << (64 - Self::BITS));
+
+        #[inline(always)]
+        fn mul_c_narrow(x: u64) -> u64 {
+            let c = Self::C_LO as u32;
+            let x_lo = x as u32;
+            let x_hi = (x >> 32) as u32;
+            (c as u64 * x_lo as u64).wrapping_add((c as u64 * x_hi as u64) << 32)
+        }
+
+        #[inline(always)]
+        fn reduce_product(x: u128) -> u64 {
+            if Self::FOLD_IN_U64 {
+                let lo = x as u64;
+                let hi = (x >> 64) as u64;
+                let high = (lo >> Self::BITS) | (hi << (64 - Self::BITS));
+                let f1 = (lo & Self::MASK64).wrapping_add(Self::mul_c_narrow(high));
+                let f2 = (f1 & Self::MASK64).wrapping_add(Self::mul_c_narrow(f1 >> Self::BITS));
+                let reduced = f2.wrapping_sub(P);
+                let borrow = reduced >> 63;
+                reduced.wrapping_add(borrow.wrapping_neg() & P)
+            } else {
+                let f1 = (x & Self::MASK_U128)
+                    + (Self::C_LO as u128) * ((x >> Self::BITS) as u64 as u128);
+                let f2 = (f1 & Self::MASK_U128)
+                    + (Self::C_LO as u128) * ((f1 >> Self::BITS) as u64 as u128);
+                let reduced = f2.wrapping_sub(P as u128);
+                let borrow = reduced >> 127;
+                reduced.wrapping_add(borrow.wrapping_neg() & (P as u128)) as u64
+            }
+        }
     }
 
     impl<const P: u64> Default for PackedFp64Neon<P> {
@@ -888,8 +899,10 @@ pub mod aarch64_neon {
         type Output = Self;
         #[inline]
         fn mul(self, rhs: Self) -> Self {
-            let r0 = (Fp64::<P>(self.vals[0]) * Fp64::<P>(rhs.vals[0])).0;
-            let r1 = (Fp64::<P>(self.vals[1]) * Fp64::<P>(rhs.vals[1])).0;
+            let x0 = (self.vals[0] as u128) * (rhs.vals[0] as u128);
+            let x1 = (self.vals[1] as u128) * (rhs.vals[1] as u128);
+            let r0 = Self::reduce_product(x0);
+            let r1 = Self::reduce_product(x1);
             Self { vals: [r0, r1] }
         }
     }
