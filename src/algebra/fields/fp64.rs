@@ -91,6 +91,28 @@ impl<const P: u64> Fp64<P> {
         (1u128 << Self::BITS) - 1
     };
 
+    /// u64-width mask (only valid when BITS < 64).
+    const MASK64: u64 = if Self::BITS < 64 {
+        (1u64 << Self::BITS) - 1
+    } else {
+        u64::MAX
+    };
+
+    /// Whether Solinas folding of a multiplication product can stay
+    /// entirely in u64.  True when BITS < 64 and C·2^BITS < 2^64.
+    const FOLD_IN_U64: bool = Self::BITS < 64 && (Self::C as u128) < (1u128 << (64 - Self::BITS));
+
+    /// u64 multiply by C, split into u32-wide halves so LLVM emits
+    /// `umull` (32×32→64) instead of promoting to u128.
+    /// Only valid when C fits in u32 (always true: C < sqrt(P) < 2^32).
+    #[inline(always)]
+    fn mul_c_narrow(x: u64) -> u64 {
+        let c = Self::C as u32;
+        let x_lo = x as u32;
+        let x_hi = (x >> 32) as u32;
+        (c as u64 * x_lo as u64).wrapping_add((c as u64 * x_hi as u64) << 32)
+    }
+
     /// Multiply `x` by `C`.  For `C = 2^a ± 1` uses shift+add/sub.
     #[inline(always)]
     fn mul_c(x: u64) -> u128 {
@@ -137,28 +159,55 @@ impl<const P: u64> Fp64<P> {
     ///
     /// Input must be < 2^{2·BITS} (guaranteed for `a*b` where `a,b < P`).
     /// Exactly 2 folds + conditional subtract, no loop.
+    ///
+    /// When `FOLD_IN_U64` is true the entire reduction stays in u64,
+    /// avoiding expensive u128 mask/shift on sub-word primes.
     #[inline(always)]
     fn reduce_product(x: u128) -> u64 {
-        let f1 = (x & Self::MASK) + Self::mul_c((x >> Self::BITS) as u64);
-        let f2 = (f1 & Self::MASK) + Self::mul_c((f1 >> Self::BITS) as u64);
-        let reduced = f2.wrapping_sub(P as u128);
-        let borrow = reduced >> 127;
-        reduced.wrapping_add(borrow.wrapping_neg() & (P as u128)) as u64
+        if Self::FOLD_IN_U64 {
+            let lo = x as u64;
+            let hi = (x >> 64) as u64;
+            let high = (lo >> Self::BITS) | (hi << (64 - Self::BITS));
+            let f1 = (lo & Self::MASK64) + Self::mul_c_narrow(high);
+            let f2 = (f1 & Self::MASK64) + Self::mul_c_narrow(f1 >> Self::BITS);
+            let reduced = f2.wrapping_sub(P);
+            let borrow = reduced >> 63;
+            reduced.wrapping_add(borrow.wrapping_neg() & P)
+        } else {
+            let f1 = (x & Self::MASK) + Self::mul_c((x >> Self::BITS) as u64);
+            let f2 = (f1 & Self::MASK) + Self::mul_c((f1 >> Self::BITS) as u64);
+            let reduced = f2.wrapping_sub(P as u128);
+            let borrow = reduced >> 127;
+            reduced.wrapping_add(borrow.wrapping_neg() & (P as u128)) as u64
+        }
     }
 
     #[inline(always)]
     fn add_raw(a: u64, b: u64) -> u64 {
-        let s = (a as u128) + (b as u128);
-        let reduced = s.wrapping_sub(P as u128);
-        let borrow = reduced >> 127;
-        reduced.wrapping_add(borrow.wrapping_neg() & (P as u128)) as u64
+        if Self::BITS <= 62 {
+            let s = a + b;
+            let reduced = s.wrapping_sub(P);
+            let borrow = reduced >> 63;
+            reduced.wrapping_add(borrow.wrapping_neg() & P)
+        } else {
+            let s = (a as u128) + (b as u128);
+            let reduced = s.wrapping_sub(P as u128);
+            let borrow = reduced >> 127;
+            reduced.wrapping_add(borrow.wrapping_neg() & (P as u128)) as u64
+        }
     }
 
     #[inline(always)]
     fn sub_raw(a: u64, b: u64) -> u64 {
-        let diff = (a as u128).wrapping_sub(b as u128);
-        let borrow = diff >> 127;
-        diff.wrapping_add(borrow.wrapping_neg() & (P as u128)) as u64
+        if Self::BITS <= 62 {
+            let diff = a.wrapping_sub(b);
+            let borrow = diff >> 63;
+            diff.wrapping_add(borrow.wrapping_neg() & P)
+        } else {
+            let diff = (a as u128).wrapping_sub(b as u128);
+            let borrow = diff >> 127;
+            diff.wrapping_add(borrow.wrapping_neg() & (P as u128)) as u64
+        }
     }
 
     #[inline(always)]
