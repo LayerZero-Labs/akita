@@ -2,7 +2,7 @@
 
 use ark_bn254::Fr as BN254Fr;
 use ark_ff::{AdditiveGroup, Field};
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use hachi_pcs::algebra::fields::fp128::{Prime128M18M0, Prime128M54P0};
 use hachi_pcs::algebra::{HasPacking, PackedField, PackedValue, Prime128M13M4P0, Prime128M8M4M1M0};
 use hachi_pcs::{CanonicalField, FieldCore, Invertible};
@@ -410,6 +410,11 @@ fn bench_bn254(c: &mut Criterion) {
 fn bench_packed_fp128_backend(c: &mut Criterion) {
     type F = Prime128M13M4P0;
     type PF = <F as HasPacking>::Packing;
+    const PACKED_STREAMS: usize = 8;
+    const LATENCY_ITERS: usize = 4096;
+    const THROUGHPUT_ITERS: usize = 256;
+    const STREAM_ITERS: usize = 2048;
+    const MULS_PER_STREAM: usize = THROUGHPUT_ITERS + 1;
 
     let backend = if cfg!(all(target_arch = "aarch64", target_feature = "neon")) {
         "aarch64_neon"
@@ -419,17 +424,42 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
     let mut group = c.benchmark_group(format!("field_packed_backend/{backend}/w{}", PF::WIDTH));
 
     let mut rng = StdRng::seed_from_u64(0xd00d_f00d_1122_3344);
-    let len = PF::WIDTH * 2048;
-    let lhs: Vec<F> = (0..len)
+    let scalar_stream_len = PF::WIDTH * STREAM_ITERS;
+    let lhs: Vec<F> = (0..scalar_stream_len)
         .map(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng)))
         .collect();
-    let rhs: Vec<F> = (0..len)
+    let rhs: Vec<F> = (0..scalar_stream_len)
         .map(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng)))
         .collect();
 
-    let packed_lhs: Vec<PF> = PF::pack_slice(&lhs).to_vec();
-    let packed_rhs: Vec<PF> = PF::pack_slice(&rhs).to_vec();
+    let packed_lhs: Vec<PF> = PF::pack_slice(&lhs);
+    let packed_rhs: Vec<PF> = PF::pack_slice(&rhs);
+    let scalar_latency_inputs: [F; LATENCY_ITERS] =
+        std::array::from_fn(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng)));
+    let packed_latency_inputs: [PF; LATENCY_ITERS] = std::array::from_fn(|_| {
+        PF::from_fn(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng)))
+    });
 
+    const fn scalar_stream_count(width: usize) -> usize {
+        PACKED_STREAMS * width
+    }
+    let scalar_streams = scalar_stream_count(PF::WIDTH);
+    let scalar_lanes: Vec<(F, F)> = (0..scalar_streams)
+        .map(|_| {
+            (
+                F::from_canonical_u128_reduced(rand_u128(&mut rng)),
+                F::from_canonical_u128_reduced(rand_u128(&mut rng)),
+            )
+        })
+        .collect();
+    let packed_lanes: [(PF, PF); PACKED_STREAMS] = std::array::from_fn(|_| {
+        (
+            PF::from_fn(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng))),
+            PF::from_fn(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng))),
+        )
+    });
+
+    group.throughput(Throughput::Elements(scalar_stream_len as u64));
     group.bench_function("scalar_add_stream", |b| {
         let mut out = lhs.clone();
         b.iter(|| {
@@ -440,6 +470,7 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
         })
     });
 
+    group.throughput(Throughput::Elements(scalar_stream_len as u64));
     group.bench_function("packed_add_stream", |b| {
         let mut out = packed_lhs.clone();
         b.iter(|| {
@@ -450,95 +481,57 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
         })
     });
 
+    group.throughput(Throughput::Elements(LATENCY_ITERS as u64));
     group.bench_function("scalar_mul_latency_chain", |b| {
         b.iter(|| {
             let mut acc = F::one();
-            for x in lhs.iter() {
+            for x in scalar_latency_inputs.iter() {
                 acc = acc * *x;
             }
             black_box(acc)
         })
     });
 
+    group.throughput(Throughput::Elements((LATENCY_ITERS * PF::WIDTH) as u64));
     group.bench_function("packed_mul_latency_chain", |b| {
         b.iter(|| {
             let mut acc = PF::broadcast(F::one());
-            for x in packed_lhs.iter() {
+            for x in packed_latency_inputs.iter() {
                 acc = acc * *x;
             }
             black_box(acc.extract(0))
         })
     });
 
-    let scalar_lanes: [(F, F); 8] = std::array::from_fn(|_| {
-        (
-            F::from_canonical_u128_reduced(rand_u128(&mut rng)),
-            F::from_canonical_u128_reduced(rand_u128(&mut rng)),
-        )
-    });
-    let packed_lanes: [(PF, PF); 8] = std::array::from_fn(|_| {
-        (
-            PF::from_fn(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng))),
-            PF::from_fn(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng))),
-        )
-    });
-
+    group.throughput(Throughput::Elements(
+        (scalar_streams * MULS_PER_STREAM) as u64,
+    ));
     group.bench_function("scalar_mul_throughput_8way", |b| {
         b.iter(|| {
             let lanes = black_box(&scalar_lanes);
-            let mut a = lanes[0].0 * lanes[0].1;
-            let mut c = lanes[1].0 * lanes[1].1;
-            let mut e = lanes[2].0 * lanes[2].1;
-            let mut g = lanes[3].0 * lanes[3].1;
-            let mut i = lanes[4].0 * lanes[4].1;
-            let mut k = lanes[5].0 * lanes[5].1;
-            let mut m = lanes[6].0 * lanes[6].1;
-            let mut o = lanes[7].0 * lanes[7].1;
-            for _ in 0..256 {
-                a = a * lanes[0].0;
-                c = c * lanes[1].0;
-                e = e * lanes[2].0;
-                g = g * lanes[3].0;
-                i = i * lanes[4].0;
-                k = k * lanes[5].0;
-                m = m * lanes[6].0;
-                o = o * lanes[7].0;
+            let mut acc: Vec<F> = lanes.iter().map(|(a, b)| *a * *b).collect();
+            for _ in 0..THROUGHPUT_ITERS {
+                for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
+                    *acc_i = *acc_i * lane.0;
+                }
             }
-            black_box([a, c, e, g, i, k, m, o])
+            black_box(acc[0])
         })
     });
 
+    group.throughput(Throughput::Elements(
+        (PACKED_STREAMS * MULS_PER_STREAM * PF::WIDTH) as u64,
+    ));
     group.bench_function("packed_mul_throughput_8way", |b| {
         b.iter(|| {
             let lanes = black_box(&packed_lanes);
-            let mut a = lanes[0].0 * lanes[0].1;
-            let mut c = lanes[1].0 * lanes[1].1;
-            let mut e = lanes[2].0 * lanes[2].1;
-            let mut g = lanes[3].0 * lanes[3].1;
-            let mut i = lanes[4].0 * lanes[4].1;
-            let mut k = lanes[5].0 * lanes[5].1;
-            let mut m = lanes[6].0 * lanes[6].1;
-            let mut o = lanes[7].0 * lanes[7].1;
-            for _ in 0..256 {
-                a = a * lanes[0].0;
-                c = c * lanes[1].0;
-                e = e * lanes[2].0;
-                g = g * lanes[3].0;
-                i = i * lanes[4].0;
-                k = k * lanes[5].0;
-                m = m * lanes[6].0;
-                o = o * lanes[7].0;
+            let mut acc: [PF; PACKED_STREAMS] = std::array::from_fn(|i| lanes[i].0 * lanes[i].1);
+            for _ in 0..THROUGHPUT_ITERS {
+                for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
+                    *acc_i = *acc_i * lane.0;
+                }
             }
-            black_box([
-                a.extract(0),
-                c.extract(0),
-                e.extract(0),
-                g.extract(0),
-                i.extract(0),
-                k.extract(0),
-                m.extract(0),
-                o.extract(0),
-            ])
+            black_box(acc[0].extract(0))
         })
     });
 
