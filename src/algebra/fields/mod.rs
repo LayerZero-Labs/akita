@@ -6,11 +6,11 @@ pub mod fp32;
 pub mod fp64;
 pub mod lift;
 pub mod pseudo_mersenne;
-pub mod solinas128;
-pub mod u256;
 
 pub use ext::{Fp2, Fp2Config, Fp4, Fp4Config};
-pub use fp128::Fp128;
+pub use fp128::{
+    Fp128, Prime128M13M4P0, Prime128M37P3P0, Prime128M52M3P0, Prime128M54P4P0, Prime128M8M4M1M0,
+};
 pub use fp32::Fp32;
 pub use fp64::Fp64;
 pub use lift::LiftBase;
@@ -20,9 +20,3 @@ pub use pseudo_mersenne::{
     Pow2OffsetPrimeSpec, POW2_OFFSET_IMPLEMENTED_MAX_BITS, POW2_OFFSET_MAX, POW2_OFFSET_PRIMES,
     POW2_OFFSET_TABLE,
 };
-pub use solinas128::{
-    Prime128M13M4P0, Prime128M13M4P0Params, Prime128M37P3P0, Prime128M37P3P0Params,
-    Prime128M52M3P0, Prime128M52M3P0Params, Prime128M54P4P0, Prime128M54P4P0Params,
-    Prime128M8M4M1M0, Prime128M8M4M1M0Params, SolinasFp128, SolinasParams,
-};
-pub use u256::U256;

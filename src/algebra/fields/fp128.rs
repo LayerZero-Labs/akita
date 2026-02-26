@@ -1,86 +1,174 @@
-//! A prime field implementation backed by `u128` storage.
+//! 128-bit prime field for primes of the form `p = 2^128 − c` with `c < 2^64`.
 //!
-//! - Modulus is a `u128` const generic.
-//! - Multiplication uses a 256-bit intermediate (see [`crate::algebra::u256`]).
+//! Uses Solinas-style two-fold reduction: no Montgomery form, ~23 cycles/mul
+//! on both AArch64 and x86-64.  The offset `c` is computed at compile time
+//! from the const-generic modulus `P`.
 //!
-//! This is correctness-first; we can swap in Montgomery/Barrett later.
+//! ## Naming convention for built-in primes
+//!
+//! The built-in type names encode the **signed terms as they appear in the
+//! modulus `p`** (excluding the leading `+2^128` term).  For example,
+//! `Prime128M13M4P0` denotes `p = 2^128 − 2^13 − 2^4 + 2^0`.
 
-use super::u256::U256;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::{CanonicalField, FieldCore, FieldSampling, Invertible};
+use crate::{CanonicalField, FieldCore, FieldSampling, Invertible, PseudoMersenneField};
 use rand_core::RngCore;
 use std::io::{Read, Write};
 
-/// Prime field element modulo `MODULUS` stored as `u128`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Fp128<const MODULUS: u128>(pub(crate) u128);
+// ---------------------------------------------------------------------------
+// Limb helpers
+// ---------------------------------------------------------------------------
 
-impl<const MODULUS: u128> Fp128<MODULUS> {
-    /// Create an element from a canonical representative in `[0, MODULUS)`.
+/// Pack two u64 limbs into `[lo, hi]`.
+#[inline(always)]
+const fn pack(lo: u64, hi: u64) -> [u64; 2] {
+    [lo, hi]
+}
+
+/// Convert `u128` → `[u64; 2]`.
+#[inline(always)]
+const fn from_u128(x: u128) -> [u64; 2] {
+    [x as u64, (x >> 64) as u64]
+}
+
+/// Convert `[u64; 2]` → `u128`.
+#[inline(always)]
+const fn to_u128(x: [u64; 2]) -> u128 {
+    x[0] as u128 | (x[1] as u128) << 64
+}
+
+/// `a + b·c + carry` widening to 128 bits; returns `(lo64, hi64)`.
+#[inline(always)]
+fn mac(a: u64, b: u64, c: u64, carry: u64) -> (u64, u64) {
+    let ret = a as u128 + (b as u128) * (c as u128) + carry as u128;
+    (ret as u64, (ret >> 64) as u64)
+}
+
+// ---------------------------------------------------------------------------
+// Fp128
+// ---------------------------------------------------------------------------
+
+/// 128-bit prime field element for primes `p = 2^128 − c` with `c < 2^64`.
+///
+/// Stored as `[u64; 2]` (lo, hi) for 8-byte alignment and direct limb access.
+///
+/// The offset `c = 2^128 − p` and all derived constants are computed at
+/// compile time from the const-generic `P`.  Instantiating `Fp128` with a
+/// modulus that is not of this form is a compile-time error.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Fp128<const P: u128>(pub(crate) [u64; 2]);
+
+impl<const P: u128> PartialEq for Fp128<P> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<const P: u128> Eq for Fp128<P> {}
+
+impl<const P: u128> Fp128<P> {
+    /// Offset `c = 2^128 − p`.  Validated at compile time.
+    const C: u128 = {
+        let c = 0u128.wrapping_sub(P);
+        assert!(P != 0, "modulus must be nonzero");
+        assert!(P & 1 == 1, "modulus must be odd");
+        assert!(c < (1u128 << 64), "P must be 2^128 - c with c < 2^64");
+        // Fused overflow+canonicalize requires C(C+1) < P.
+        assert!(
+            c * (c + 1) < P,
+            "C(C+1) < P required for fused canonicalize"
+        );
+        c
+    };
+    const C_LO: u64 = Self::C as u64;
+
+    /// Create from a canonical representative in `[0, p)`.
     #[inline]
     pub fn from_canonical_u128(x: u128) -> Self {
-        debug_assert!(x < MODULUS);
-        Self(x)
+        debug_assert!(x < P);
+        Self(from_u128(x))
     }
 
-    /// Return the canonical representative in `[0, MODULUS)`.
+    /// Return the canonical representative in `[0, p)`.
     #[inline]
     pub fn to_canonical_u128(self) -> u128 {
-        self.0
+        to_u128(self.0)
     }
 
-    #[inline]
-    fn add_raw(a: u128, b: u128) -> u128 {
-        let (s, carry) = a.overflowing_add(b);
-        let (reduced, borrow) = s.overflowing_sub(MODULUS);
-        // Need correction (add MODULUS back) only when !carry && borrow,
-        // i.e. when the true sum is less than MODULUS.
-        let need_correction = (!carry & borrow) as u128;
-        reduced.wrapping_add(need_correction.wrapping_neg() & MODULUS)
+    #[inline(always)]
+    fn add_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        let (s, carry) = to_u128(a).overflowing_add(to_u128(b));
+        let (reduced, borrow) = s.overflowing_sub(P);
+        from_u128(if carry | !borrow {
+            reduced
+        } else {
+            reduced.wrapping_add(P)
+        })
     }
 
-    #[inline]
-    fn sub_raw(a: u128, b: u128) -> u128 {
-        let (diff, borrow) = a.overflowing_sub(b);
-        // If a < b, borrow is set. Add MODULUS to correct.
-        let correction = (borrow as u128).wrapping_neg() & MODULUS;
-        diff.wrapping_add(correction)
+    #[inline(always)]
+    fn sub_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        let (diff, borrow) = to_u128(a).overflowing_sub(to_u128(b));
+        from_u128(if borrow { diff.wrapping_add(P) } else { diff })
     }
 
-    #[inline]
-    fn reduce_u256(n: U256) -> u128 {
-        // Binary long division remainder, maintaining remainder in 129 bits (hi:0/1, lo:u128).
-        // Invariant: before each step, remainder < MODULUS.
-        let m = MODULUS;
-        let mut hi: u128 = 0;
-        let mut lo: u128 = 0;
-
-        for i in (0..256).rev() {
-            // rem = rem*2 + bit
-            let new_hi = lo >> 127;
-            lo <<= 1;
-            lo |= n.bit(i) as u128;
-            hi = new_hi;
-
-            // Since rem < 2m after update, subtract at most once.
-            // Select between `lo` and `lo - m` without secret-dependent branching.
-            let (sub_lo, borrow) = lo.overflowing_sub(m);
-            let lo_ge_m = (!borrow) as u128; // 1 iff lo >= m
-            let should_sub = hi | lo_ge_m; // 1 iff (hi == 1) || (lo >= m)
-            let mask = should_sub.wrapping_neg();
-            lo = (lo & !mask) | (sub_lo & mask);
-            hi &= 1u128.wrapping_sub(should_sub);
-        }
-
-        debug_assert_eq!(hi, 0);
-        lo
+    /// Fold 2 + canonicalize: reduce `[t0, t1] + t2·2^128` into `[0, p)`.
+    ///
+    /// Correctness argument for the fused overflow+canonicalize:
+    ///
+    /// Let `v = base + C·t2` (mathematical, not mod 2^128).
+    /// From the fold-1 mac chain, `t2 ≤ C`, so `C·t2 ≤ C²`.
+    ///
+    /// - **No overflow** (`v < 2^128`): `s = v`, and the standard
+    ///   canonicalize applies — `s + C` carries iff `s ≥ P`.
+    /// - **Overflow** (`v ≥ 2^128`): `s = v − 2^128`, so `s < C·t2 ≤ C²`.
+    ///   The correct reduced value is `s + C` (since `2^128 ≡ C mod P`).
+    ///   Because `s + C < C² + C = C(C+1)` and `C(C+1) < P` for all
+    ///   `C < 2^64`, the value `s + C` is already in `[0, P)` — no
+    ///   further canonicalization is needed, and `s + C < 2^128` so the
+    ///   add does NOT carry.
+    ///
+    /// Therefore `if (overflow | carry) { s + C } else { s }` is correct
+    /// in both cases, fusing the overflow correction with canonicalization.
+    #[inline(always)]
+    fn fold2_canonicalize(t0: u64, t1: u64, t2: u64) -> [u64; 2] {
+        let ct2 = (Self::C_LO as u128) * (t2 as u128);
+        let base = (t1 as u128) << 64 | t0 as u128;
+        let (s, overflow) = base.overflowing_add(ct2);
+        let (reduced, carry) = s.overflowing_add(Self::C);
+        from_u128(if overflow | carry { reduced } else { s })
     }
 
-    #[inline]
-    fn mul_raw(a: u128, b: u128) -> u128 {
-        Self::reduce_u256(U256::mul_u128(a, b))
+    #[inline(always)]
+    fn mul_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        let (a0, a1) = (a[0], a[1]);
+        let (b0, b1) = (b[0], b[1]);
+        let c = Self::C_LO;
+
+        // Schoolbook 2×2 → 4 u64 limbs.
+        let (r0, carry) = mac(0, a0, b0, 0);
+        let (r1, r2) = mac(0, a0, b1, carry);
+        let (r1, carry) = mac(r1, a1, b0, 0);
+        let (r2, r3) = mac(r2, a1, b1, carry);
+
+        // Solinas fold 1: [t0,t1,t2] = [r0,r1] + c·[r2,r3].
+        let (t0, carry) = mac(r0, c, r2, 0);
+        let (t1, t2) = mac(r1, c, r3, carry);
+
+        Self::fold2_canonicalize(t0, t1, t2)
+    }
+
+    #[inline(always)]
+    fn sqr_raw(a: [u64; 2]) -> [u64; 2] {
+        Self::mul_raw(a, a)
+    }
+
+    /// Squaring, equivalent to `self * self`.
+    #[inline(always)]
+    pub fn square(self) -> Self {
+        Self(Self::sqr_raw(self.0))
     }
 
     fn pow_u128(self, mut exp: u128) -> Self {
@@ -90,14 +178,18 @@ impl<const MODULUS: u128> Fp128<MODULUS> {
             if (exp & 1) == 1 {
                 acc = acc * base;
             }
-            base = base * base;
+            base = Self(Self::sqr_raw(base.0));
             exp >>= 1;
         }
         acc
     }
 }
 
-impl<const MODULUS: u128> std::ops::Add for Fp128<MODULUS> {
+// ---------------------------------------------------------------------------
+// Operator impls
+// ---------------------------------------------------------------------------
+
+impl<const P: u128> std::ops::Add for Fp128<P> {
     type Output = Self;
     #[inline]
     fn add(self, rhs: Self) -> Self::Output {
@@ -105,7 +197,7 @@ impl<const MODULUS: u128> std::ops::Add for Fp128<MODULUS> {
     }
 }
 
-impl<const MODULUS: u128> std::ops::Sub for Fp128<MODULUS> {
+impl<const P: u128> std::ops::Sub for Fp128<P> {
     type Output = Self;
     #[inline]
     fn sub(self, rhs: Self) -> Self::Output {
@@ -113,7 +205,7 @@ impl<const MODULUS: u128> std::ops::Sub for Fp128<MODULUS> {
     }
 }
 
-impl<const MODULUS: u128> std::ops::Mul for Fp128<MODULUS> {
+impl<const P: u128> std::ops::Mul for Fp128<P> {
     type Output = Self;
     #[inline]
     fn mul(self, rhs: Self) -> Self::Output {
@@ -121,15 +213,15 @@ impl<const MODULUS: u128> std::ops::Mul for Fp128<MODULUS> {
     }
 }
 
-impl<const MODULUS: u128> std::ops::Neg for Fp128<MODULUS> {
+impl<const P: u128> std::ops::Neg for Fp128<P> {
     type Output = Self;
     #[inline]
     fn neg(self) -> Self::Output {
-        Self(Self::sub_raw(0, self.0))
+        Self(Self::sub_raw(pack(0, 0), self.0))
     }
 }
 
-impl<'a, const MODULUS: u128> std::ops::Add<&'a Self> for Fp128<MODULUS> {
+impl<'a, const P: u128> std::ops::Add<&'a Self> for Fp128<P> {
     type Output = Self;
     #[inline]
     fn add(self, rhs: &'a Self) -> Self::Output {
@@ -137,7 +229,7 @@ impl<'a, const MODULUS: u128> std::ops::Add<&'a Self> for Fp128<MODULUS> {
     }
 }
 
-impl<'a, const MODULUS: u128> std::ops::Sub<&'a Self> for Fp128<MODULUS> {
+impl<'a, const P: u128> std::ops::Sub<&'a Self> for Fp128<P> {
     type Output = Self;
     #[inline]
     fn sub(self, rhs: &'a Self) -> Self::Output {
@@ -145,7 +237,7 @@ impl<'a, const MODULUS: u128> std::ops::Sub<&'a Self> for Fp128<MODULUS> {
     }
 }
 
-impl<'a, const MODULUS: u128> std::ops::Mul<&'a Self> for Fp128<MODULUS> {
+impl<'a, const P: u128> std::ops::Mul<&'a Self> for Fp128<P> {
     type Output = Self;
     #[inline]
     fn mul(self, rhs: &'a Self) -> Self::Output {
@@ -153,9 +245,13 @@ impl<'a, const MODULUS: u128> std::ops::Mul<&'a Self> for Fp128<MODULUS> {
     }
 }
 
-impl<const MODULUS: u128> Valid for Fp128<MODULUS> {
+// ---------------------------------------------------------------------------
+// Serialization
+// ---------------------------------------------------------------------------
+
+impl<const P: u128> Valid for Fp128<P> {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.0 < MODULUS {
+        if to_u128(self.0) < P {
             Ok(())
         } else {
             Err(SerializationError::InvalidData("Fp128 out of range".into()))
@@ -163,13 +259,13 @@ impl<const MODULUS: u128> Valid for Fp128<MODULUS> {
     }
 }
 
-impl<const MODULUS: u128> HachiSerialize for Fp128<MODULUS> {
+impl<const P: u128> HachiSerialize for Fp128<P> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
         _compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.0.serialize_with_mode(&mut writer, Compress::No)?;
+        to_u128(self.0).serialize_with_mode(&mut writer, Compress::No)?;
         Ok(())
     }
 
@@ -178,38 +274,51 @@ impl<const MODULUS: u128> HachiSerialize for Fp128<MODULUS> {
     }
 }
 
-impl<const MODULUS: u128> HachiDeserialize for Fp128<MODULUS> {
+impl<const P: u128> HachiDeserialize for Fp128<P> {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         _compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
         let x = u128::deserialize_with_mode(&mut reader, Compress::No, validate)?;
-        if matches!(validate, Validate::Yes) && x >= MODULUS {
+        if matches!(validate, Validate::Yes) && x >= P {
             return Err(SerializationError::InvalidData(
                 "Fp128 out of range".to_string(),
             ));
         }
+
+        // Without validation, reduce without division.
+        // For `p = 2^128 − c` with `c < 2^64` we have `p > 2^127`,
+        // so any `u128` is in `[0, 2p)` and one conditional subtract suffices.
         let out = if matches!(validate, Validate::Yes) {
-            Self(x)
+            x
         } else {
-            Self(x % MODULUS)
+            let (sub, borrow) = x.overflowing_sub(P);
+            if borrow {
+                x
+            } else {
+                sub
+            }
         };
-        Ok(out)
+        Ok(Self(from_u128(out)))
     }
 }
 
-impl<const MODULUS: u128> FieldCore for Fp128<MODULUS> {
+// ---------------------------------------------------------------------------
+// Core field traits
+// ---------------------------------------------------------------------------
+
+impl<const P: u128> FieldCore for Fp128<P> {
     fn zero() -> Self {
-        Self(0)
+        Self(pack(0, 0))
     }
 
     fn one() -> Self {
-        Self(1 % MODULUS)
+        Self(pack(1, 0))
     }
 
     fn is_zero(&self) -> bool {
-        self.0 == 0
+        self.0 == [0, 0]
     }
 
     fn add(&self, rhs: &Self) -> Self {
@@ -234,33 +343,33 @@ impl<const MODULUS: u128> FieldCore for Fp128<MODULUS> {
     }
 }
 
-impl<const MODULUS: u128> Invertible for Fp128<MODULUS> {
+impl<const P: u128> Invertible for Fp128<P> {
     fn inv_or_zero(self) -> Self {
-        let candidate = self.pow_u128(MODULUS.wrapping_sub(2));
-        let mask = nonzero_mask_u128(self.0);
-        Self(candidate.0 & mask)
+        let candidate = self.pow_u128(P.wrapping_sub(2));
+        let v = to_u128(self.0);
+        let nz = ((v | v.wrapping_neg()) >> 127) & 1;
+        let mask = 0u128.wrapping_sub(nz);
+        let masked = to_u128(candidate.0) & mask;
+        Self(from_u128(masked))
     }
 }
 
-impl<const MODULUS: u128> FieldSampling for Fp128<MODULUS> {
+impl<const P: u128> FieldSampling for Fp128<P> {
     fn sample<R: RngCore>(rng: &mut R) -> Self {
-        // Rejection-sampling for reduced bias.
         loop {
-            let lo = rng.next_u64() as u128;
-            let hi = rng.next_u64() as u128;
-            let x = lo | (hi << 64);
-            let m = MODULUS;
-            let t = x % m;
-            if x.wrapping_sub(t) <= u128::MAX - (m - 1) {
-                return Self(t);
+            let lo = rng.next_u64();
+            let hi = rng.next_u64();
+            let x = lo as u128 | (hi as u128) << 64;
+            if x < P {
+                return Self(pack(lo, hi));
             }
         }
     }
 }
 
-impl<const MODULUS: u128> CanonicalField for Fp128<MODULUS> {
+impl<const P: u128> CanonicalField for Fp128<P> {
     fn from_u64(val: u64) -> Self {
-        Self((val as u128) % MODULUS)
+        Self::from_canonical_u128_reduced(val as u128)
     }
 
     fn from_i64(val: i64) -> Self {
@@ -272,24 +381,39 @@ impl<const MODULUS: u128> CanonicalField for Fp128<MODULUS> {
     }
 
     fn to_canonical_u128(self) -> u128 {
-        self.0
+        to_u128(self.0)
     }
 
     fn from_canonical_u128_checked(val: u128) -> Option<Self> {
-        if val < MODULUS {
-            Some(Self(val))
+        if val < P {
+            Some(Self(from_u128(val)))
         } else {
             None
         }
     }
 
     fn from_canonical_u128_reduced(val: u128) -> Self {
-        Self(val % MODULUS)
+        let (sub, borrow) = val.overflowing_sub(P);
+        Self(from_u128(if borrow { val } else { sub }))
     }
 }
 
-#[inline]
-fn nonzero_mask_u128(x: u128) -> u128 {
-    let nz = ((x | x.wrapping_neg()) >> 127) & 1;
-    0u128.wrapping_sub(nz)
+impl<const P: u128> PseudoMersenneField for Fp128<P> {
+    const MODULUS_BITS: u32 = 128;
+    const MODULUS_OFFSET: u128 = Self::C;
 }
+
+// ---------------------------------------------------------------------------
+// Built-in prime type aliases
+// ---------------------------------------------------------------------------
+
+/// `p = 2^128 − 2^13 − 2^4 + 2^0`  (C = 8207).
+pub type Prime128M13M4P0 = Fp128<0xffffffffffffffffffffffffffffdff1>;
+/// `p = 2^128 − 2^37 + 2^3 + 2^0`  (C = 137438953463).
+pub type Prime128M37P3P0 = Fp128<0xffffffffffffffffffffffe000000009>;
+/// `p = 2^128 − 2^52 − 2^3 + 2^0`  (C = 4503599627370487).
+pub type Prime128M52M3P0 = Fp128<0xffffffffffffffffffeffffffffffff9>;
+/// `p = 2^128 − 2^54 + 2^4 + 2^0`  (C = 18014398509481967).
+pub type Prime128M54P4P0 = Fp128<0xffffffffffffffffffc0000000000011>;
+/// `p = 2^128 − 2^8 − 2^4 − 2^1 − 2^0`  (C = 275).
+pub type Prime128M8M4M1M0 = Fp128<0xfffffffffffffffffffffffffffffeed>;

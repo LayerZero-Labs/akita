@@ -1,7 +1,7 @@
 //! CRT+NTT-domain representation of cyclotomic ring elements.
 
 use crate::algebra::backend::{CrtReconstruct, NttPrimeOps, NttTransform, ScalarBackend};
-use crate::algebra::fields::{Fp128, Fp32, Fp64, SolinasFp128, SolinasParams};
+use crate::algebra::fields::{Fp128, Fp32, Fp64};
 use crate::algebra::ntt::butterfly::NttTwiddles;
 use crate::algebra::ntt::crt::QData;
 use crate::algebra::ntt::prime::{MontCoeff, NttPrime};
@@ -57,18 +57,6 @@ impl<const MODULUS: u64> CrtNttConvertibleField for Fp64<MODULUS> {
 }
 
 impl<const MODULUS: u128> CrtNttConvertibleField for Fp128<MODULUS> {
-    #[inline]
-    fn mod_small_prime(self, p: i16) -> i16 {
-        (self.to_canonical_u128() % (p as u128)) as i16
-    }
-
-    #[inline]
-    fn from_q_residue_u128(x: u128) -> Self {
-        Self::from_canonical_u128_reduced(x)
-    }
-}
-
-impl<M: SolinasParams> CrtNttConvertibleField for SolinasFp128<M> {
     #[inline]
     fn mod_small_prime(self, p: i16) -> i16 {
         (self.to_canonical_u128() % (p as u128)) as i16

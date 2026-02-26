@@ -9,6 +9,8 @@ mod tests {
     use hachi_pcs::Module;
     use hachi_pcs::{CanonicalField, FieldCore, Invertible, PseudoMersenneField};
 
+    const P_159: u128 = 340282366920938463463374607431768211297u128;
+
     #[test]
     fn fp32_basic_arith() {
         type F = Fp32<103>;
@@ -31,9 +33,7 @@ mod tests {
 
     #[test]
     fn fp128_basic_arith() {
-        // 2^128 - 159 (commonly used 128-bit prime)
-        const P: u128 = 340282366920938463463374607431768211297u128;
-        type F = Fp128<P>;
+        type F = Fp128<P_159>;
 
         let a = F::from_u64(123);
         let b = F::from_u64(456);
@@ -123,7 +123,7 @@ mod tests {
     }
 
     #[test]
-    fn solinas128_sparse_primes_match_biguint_oracle() {
+    fn fp128_sparse_primes_match_biguint_oracle() {
         // These are the five sparse `2^128 - c` primes we care about.
         const P13: u128 = 0xffffffffffffffffffffffffffffdff1u128;
         const P37: u128 = 0xffffffffffffffffffffffe000000009u128;
@@ -136,44 +136,6 @@ mod tests {
         check_solinas_prime::<Prime128M52M3P0>(P52, 2_000, 52);
         check_solinas_prime::<Prime128M54P4P0>(P54, 2_000, 54);
         check_solinas_prime::<Prime128M8M4M1M0>(P275, 2_000, 275);
-    }
-
-    #[test]
-    fn solinas128_matches_fp128_for_sparse_primes() {
-        use rand::{rngs::StdRng, SeedableRng};
-
-        const P13: u128 = 0xffffffffffffffffffffffffffffdff1u128;
-        type S13 = Prime128M13M4P0;
-        type F13 = Fp128<P13>;
-
-        let mut rng = StdRng::seed_from_u64(123);
-        for _ in 0..5_000 {
-            let a_raw = rand_u128(&mut rng);
-            let b_raw = rand_u128(&mut rng);
-
-            let a_s = S13::from_canonical_u128_reduced(a_raw);
-            let b_s = S13::from_canonical_u128_reduced(b_raw);
-            let a_f = F13::from_canonical_u128_reduced(a_raw);
-            let b_f = F13::from_canonical_u128_reduced(b_raw);
-
-            assert_eq!(
-                (a_s + b_s).to_canonical_u128(),
-                (a_f + b_f).to_canonical_u128()
-            );
-            assert_eq!(
-                (a_s - b_s).to_canonical_u128(),
-                (a_f - b_f).to_canonical_u128()
-            );
-            assert_eq!(
-                (a_s * b_s).to_canonical_u128(),
-                (a_f * b_f).to_canonical_u128()
-            );
-
-            assert_eq!(
-                a_s.inv_or_zero().to_canonical_u128(),
-                a_f.inv_or_zero().to_canonical_u128()
-            );
-        }
     }
 
     struct NR;
@@ -227,8 +189,7 @@ mod tests {
     fn inv_zero_returns_none() {
         assert!(Fp32::<103>::zero().inv().is_none());
         assert!(Fp64::<4294967197>::zero().inv().is_none());
-        const P128: u128 = 340282366920938463463374607431768211297;
-        assert!(Fp128::<P128>::zero().inv().is_none());
+        assert!(Fp128::<P_159>::zero().inv().is_none());
     }
 
     #[test]
@@ -245,8 +206,7 @@ mod tests {
         let inv64 = x64.inv_or_zero();
         assert_eq!(x64 * inv64, F64::one());
 
-        const P128: u128 = 340282366920938463463374607431768211297;
-        type F128 = Fp128<P128>;
+        type F128 = Fp128<P_159>;
         assert_eq!(F128::zero().inv_or_zero(), F128::zero());
         let x128 = F128::from_u64(12345);
         let inv128 = x128.inv_or_zero();
@@ -288,8 +248,7 @@ mod tests {
 
     #[test]
     fn field_identities_fp128() {
-        const P: u128 = 340282366920938463463374607431768211297;
-        type F = Fp128<P>;
+        type F = Fp128<P_159>;
         let a = F::from_u64(999999);
         let b = F::from_u64(888888);
         let c = F::from_u64(777777);
@@ -325,8 +284,7 @@ mod tests {
     #[test]
     fn serialization_round_trip_fp128() {
         use hachi_pcs::{HachiDeserialize, HachiSerialize};
-        const P: u128 = 340282366920938463463374607431768211297;
-        type F = Fp128<P>;
+        type F = Fp128<P_159>;
         let val = F::from_u64(999999999);
         let mut buf = Vec::new();
         val.serialize_compressed(&mut buf).unwrap();
@@ -411,15 +369,14 @@ mod tests {
         let unchecked64 = F64::deserialize_compressed_unchecked(&bad64[..]).unwrap();
         assert_eq!(unchecked64, F64::zero());
 
-        const P128: u128 = 340282366920938463463374607431768211297u128;
-        type F128 = Fp128<P128>;
-        let bad128 = P128.to_le_bytes();
+        type F128 = Fp128<P_159>;
+        let bad128 = P_159.to_le_bytes();
         let err128 = F128::deserialize_compressed(&bad128[..]).unwrap_err();
         assert!(matches!(err128, SerializationError::InvalidData(_)));
         let unchecked128 = F128::deserialize_compressed_unchecked(&bad128[..]).unwrap();
         assert_eq!(unchecked128, F128::zero());
 
-        // Solinas-backed sparse 128-bit primes: same checked/unchecked behavior.
+        // Sparse 128-bit prime: same checked/unchecked behavior.
         type S13 = Prime128M13M4P0;
         const P13: u128 = 0xffffffffffffffffffffffffffffdff1u128;
         let bad13 = P13.to_le_bytes();
@@ -451,36 +408,6 @@ mod tests {
         let b = F2::new(F::from_u64(11), F::from_u64(5));
         let c = F2::new(F::from_u64(2), F::from_u64(9));
         assert!(a * (b + c) == a * b + a * c);
-    }
-
-    #[test]
-    fn u256_mul_known_values() {
-        use hachi_pcs::algebra::U256;
-        // Small values: 3 * 7 = 21
-        let r = U256::mul_u128(3, 7);
-        assert_eq!(r, U256::new(0, 21));
-
-        // 2^64 * 2^64 = 2^128
-        let r = U256::mul_u128(1u128 << 64, 1u128 << 64);
-        assert_eq!(r, U256::new(1, 0));
-
-        // max * 2 = 2^129 - 2
-        let max = u128::MAX;
-        let r = U256::mul_u128(max, 2);
-        assert_eq!(r, U256::new(1, max - 1));
-    }
-
-    #[test]
-    fn u256_bit_access() {
-        use hachi_pcs::algebra::U256;
-        let v = U256::new(0, 1);
-        assert!(v.bit(0));
-        assert!(!v.bit(1));
-
-        let v = U256::new(1, 0);
-        assert!(v.bit(128));
-        assert!(!v.bit(127));
-        assert!(!v.bit(129));
     }
 
     #[test]

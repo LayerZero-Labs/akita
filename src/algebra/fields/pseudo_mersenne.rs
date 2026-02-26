@@ -192,7 +192,5 @@ impl PseudoMersenneField for Fp64<POW2_OFFSET_MODULUS_64> {
     const MODULUS_OFFSET: u128 = POW2_OFFSET_64 as u128;
 }
 
-impl PseudoMersenneField for Fp128<POW2_OFFSET_MODULUS_128> {
-    const MODULUS_BITS: u32 = 128;
-    const MODULUS_OFFSET: u128 = POW2_OFFSET_128 as u128;
-}
+// Fp128<POW2_OFFSET_MODULUS_128> gets PseudoMersenneField via the
+// blanket impl in fp128.rs (MODULUS_BITS=128, MODULUS_OFFSET=C).

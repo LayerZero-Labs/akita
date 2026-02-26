@@ -59,7 +59,7 @@ pub(crate) fn reduce_coeffs_to_ring_elements<F: FieldCore, const D: usize>(
     let mut out = Vec::with_capacity(outer_len);
     for i in 0..outer_len {
         let coeffs = std::array::from_fn(|j| {
-            let idx = i + ((j as usize) << outer_vars);
+            let idx = i + (j << outer_vars);
             coeffs[idx]
         });
         out.push(CyclotomicRing::from_coefficients(coeffs));

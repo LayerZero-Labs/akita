@@ -48,6 +48,8 @@ sha3 = "0.10.8"
 rand = "0.8"
 criterion = { version = "0.5", features = ["html_reports"] }
 num-bigint = "0.4.6"
+ark-bn254 = { path = "../arkworks-algebra-jolt/curves/bn254", features = ["scalar_field"] }
+ark-ff = { path = "../arkworks-algebra-jolt/ff" }
 
 [[bench]]
 name = "ring_ntt"
