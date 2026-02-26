@@ -792,10 +792,7 @@ pub mod aarch64_neon {
 
         #[inline(always)]
         fn mul_c_narrow(x: u64) -> u64 {
-            let c = Self::C_LO as u32;
-            let x_lo = x as u32;
-            let x_hi = (x >> 32) as u32;
-            (c as u64 * x_lo as u64).wrapping_add((c as u64 * x_hi as u64) << 32)
+            Self::C_LO.wrapping_mul(x)
         }
 
         #[inline(always)]

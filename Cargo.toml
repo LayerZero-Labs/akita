@@ -59,6 +59,10 @@ harness = false
 name = "field_arith"
 harness = false
 
+[[bench]]
+name = "fp64_reduce_probe"
+harness = false
+
 [lints.rust]
 missing_docs = "warn"
 unreachable_pub = "warn"
