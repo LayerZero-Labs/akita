@@ -39,11 +39,11 @@ const fn to_u128(x: [u64; 2]) -> u128 {
     x[0] as u128 | (x[1] as u128) << 64
 }
 
-/// `a + b·c + carry` widening to 128 bits; returns `(lo64, hi64)`.
+/// `a * b` widening to 128 bits; returns `(lo64, hi64)`.
 #[inline(always)]
-fn mac(a: u64, b: u64, c: u64, carry: u64) -> (u64, u64) {
-    let ret = a as u128 + (b as u128) * (c as u128) + carry as u128;
-    (ret as u64, (ret >> 64) as u64)
+fn mul_wide(a: u64, b: u64) -> (u64, u64) {
+    let prod = (a as u128) * (b as u128);
+    (prod as u64, (prod >> 64) as u64)
 }
 
 // ---------------------------------------------------------------------------
@@ -134,11 +134,20 @@ impl<const P: u128> Fp128<P> {
     /// in both cases, fusing the overflow correction with canonicalization.
     #[inline(always)]
     fn fold2_canonicalize(t0: u64, t1: u64, t2: u64) -> [u64; 2] {
-        let ct2 = (Self::C_LO as u128) * (t2 as u128);
-        let base = (t1 as u128) << 64 | t0 as u128;
-        let (s, overflow) = base.overflowing_add(ct2);
-        let (reduced, carry) = s.overflowing_add(Self::C);
-        from_u128(if overflow | carry { reduced } else { s })
+        let (ct2_lo, ct2_hi) = mul_wide(Self::C_LO, t2);
+
+        let (s0, carry0) = t0.overflowing_add(ct2_lo);
+        let (s1a, carry1a) = t1.overflowing_add(ct2_hi);
+        let (s1, carry1b) = s1a.overflowing_add(carry0 as u64);
+        let overflow = carry1a | carry1b;
+
+        let (r0, carry2) = s0.overflowing_add(Self::C_LO);
+        let (r1, carry3) = s1.overflowing_add(carry2 as u64);
+
+        pack(
+            if overflow | carry3 { r0 } else { s0 },
+            if overflow | carry3 { r1 } else { s1 },
+        )
     }
 
     #[inline(always)]
@@ -147,15 +156,40 @@ impl<const P: u128> Fp128<P> {
         let (b0, b1) = (b[0], b[1]);
         let c = Self::C_LO;
 
-        // Schoolbook 2×2 → 4 u64 limbs.
-        let (r0, carry) = mac(0, a0, b0, 0);
-        let (r1, r2) = mac(0, a0, b1, carry);
-        let (r1, carry) = mac(r1, a1, b0, 0);
-        let (r2, r3) = mac(r2, a1, b1, carry);
+        // Schoolbook 2x2 -> 4 u64 limbs, with products materialized first to
+        // increase ILP in generated code.
+        let (p00_lo, p00_hi) = mul_wide(a0, b0);
+        let (p01_lo, p01_hi) = mul_wide(a0, b1);
+        let (p10_lo, p10_hi) = mul_wide(a1, b0);
+        let (p11_lo, p11_hi) = mul_wide(a1, b1);
 
-        // Solinas fold 1: [t0,t1,t2] = [r0,r1] + c·[r2,r3].
-        let (t0, carry) = mac(r0, c, r2, 0);
-        let (t1, t2) = mac(r1, c, r3, carry);
+        let row1 = p00_hi as u128 + p01_lo as u128 + p10_lo as u128;
+        let r0 = p00_lo;
+        let r1 = row1 as u64;
+        let carry1 = (row1 >> 64) as u64;
+
+        let row2 = p01_hi as u128 + p10_hi as u128 + p11_lo as u128 + carry1 as u128;
+        let r2 = row2 as u64;
+        let carry2 = (row2 >> 64) as u64;
+
+        let row3 = p11_hi as u128 + carry2 as u128;
+        let r3 = row3 as u64;
+        debug_assert_eq!(row3 >> 64, 0);
+
+        // Solinas fold 1: [t0,t1,t2] = [r0,r1] + c*[r2,r3].
+        let (cr2_lo, cr2_hi) = mul_wide(c, r2);
+        let (cr3_lo, cr3_hi) = mul_wide(c, r3);
+
+        let t0_sum = r0 as u128 + cr2_lo as u128;
+        let t0 = t0_sum as u64;
+        let carryf = (t0_sum >> 64) as u64;
+
+        let t1_sum = r1 as u128 + cr2_hi as u128 + cr3_lo as u128 + carryf as u128;
+        let t1 = t1_sum as u64;
+
+        let t2_sum = cr3_hi as u128 + (t1_sum >> 64);
+        let t2 = t2_sum as u64;
+        debug_assert_eq!(t2_sum >> 64, 0);
 
         Self::fold2_canonicalize(t0, t1, t2)
     }

@@ -137,8 +137,7 @@ where
             inner_point,
         )?;
         let d = F::from_u64(DefaultCommitmentConfig::D as u64);
-        let trace_lhs =
-            trace::<F, { DefaultCommitmentConfig::D }>(&(proof.y_ring * v.sigma_m1()));
+        let trace_lhs = trace::<F, { DefaultCommitmentConfig::D }>(&(proof.y_ring * v.sigma_m1()));
         let trace_rhs = d * *opening;
         if trace_lhs != trace_rhs {
             return Err(HachiError::InvalidProof);

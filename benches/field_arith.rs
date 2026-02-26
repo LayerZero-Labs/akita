@@ -77,6 +77,18 @@ fn bench_mul_only(c: &mut Criterion) {
         })
     });
 
+    group.bench_function("mul_chain_16384", |b| {
+        b.iter(|| {
+            let mut acc = F13::one();
+            for _ in 0..8 {
+                for x in inputs.iter() {
+                    acc = acc * *x;
+                }
+            }
+            black_box(acc)
+        })
+    });
+
     group.bench_function("mul_parallel_1024", |b| {
         b.iter(|| {
             let mut sum = F13::zero();
@@ -84,6 +96,127 @@ fn bench_mul_only(c: &mut Criterion) {
                 sum = sum + pair[0] * pair[1];
             }
             black_box(sum)
+        })
+    });
+
+    group.finish();
+}
+
+fn bench_mul_isolated(c: &mut Criterion) {
+    use ark_ff::UniformRand;
+
+    type F13 = Prime128M13M4P0;
+
+    let mut rng = StdRng::seed_from_u64(0x5eed);
+    let a_fp128 = F13::from_canonical_u128_reduced(rand_u128(&mut rng));
+    let b_fp128 = F13::from_canonical_u128_reduced(rand_u128(&mut rng));
+    let a_bn254 = BN254Fr::rand(&mut rng);
+    let b_bn254 = BN254Fr::rand(&mut rng);
+
+    let mut group = c.benchmark_group("field_mul_isolated");
+
+    group.bench_function("fp128_black_box_only", |b| b.iter(|| black_box(a_fp128)));
+
+    group.bench_function("bn254_black_box_only", |b| b.iter(|| black_box(a_bn254)));
+
+    group.bench_function("fp128_pair_passthrough", |b| {
+        b.iter(|| {
+            let x = black_box(a_fp128);
+            let y = black_box(b_fp128);
+            black_box((x, y))
+        })
+    });
+
+    group.bench_function("bn254_pair_passthrough", |b| {
+        b.iter(|| {
+            let x = black_box(a_bn254);
+            let y = black_box(b_bn254);
+            black_box((x, y))
+        })
+    });
+
+    group.bench_function("fp128_mul_single", |b| {
+        b.iter(|| {
+            let x = black_box(a_fp128);
+            let y = black_box(b_fp128);
+            black_box(x * y)
+        })
+    });
+
+    group.bench_function("bn254_mul_single", |b| {
+        b.iter(|| {
+            let x = black_box(a_bn254);
+            let y = black_box(b_bn254);
+            black_box(x * y)
+        })
+    });
+
+    let lanes_fp128: [(F13, F13); 8] = std::array::from_fn(|_| {
+        (
+            F13::from_canonical_u128_reduced(rand_u128(&mut rng)),
+            F13::from_canonical_u128_reduced(rand_u128(&mut rng)),
+        )
+    });
+    let lanes_bn254: [(BN254Fr, BN254Fr); 8] =
+        std::array::from_fn(|_| (BN254Fr::rand(&mut rng), BN254Fr::rand(&mut rng)));
+
+    group.bench_function("fp128_mul_8way_independent", |b| {
+        b.iter(|| {
+            let lanes = black_box(&lanes_fp128);
+            let p0 = lanes[0].0 * lanes[0].1;
+            let p1 = lanes[1].0 * lanes[1].1;
+            let p2 = lanes[2].0 * lanes[2].1;
+            let p3 = lanes[3].0 * lanes[3].1;
+            let p4 = lanes[4].0 * lanes[4].1;
+            let p5 = lanes[5].0 * lanes[5].1;
+            let p6 = lanes[6].0 * lanes[6].1;
+            let p7 = lanes[7].0 * lanes[7].1;
+            black_box([p0, p1, p2, p3, p4, p5, p6, p7])
+        })
+    });
+
+    group.bench_function("fp128_8way_passthrough", |b| {
+        b.iter(|| {
+            let lanes = black_box(&lanes_fp128);
+            let p0 = lanes[0].0;
+            let p1 = lanes[1].0;
+            let p2 = lanes[2].0;
+            let p3 = lanes[3].0;
+            let p4 = lanes[4].0;
+            let p5 = lanes[5].0;
+            let p6 = lanes[6].0;
+            let p7 = lanes[7].0;
+            black_box([p0, p1, p2, p3, p4, p5, p6, p7])
+        })
+    });
+
+    group.bench_function("bn254_mul_8way_independent", |b| {
+        b.iter(|| {
+            let lanes = black_box(&lanes_bn254);
+            let p0 = lanes[0].0 * lanes[0].1;
+            let p1 = lanes[1].0 * lanes[1].1;
+            let p2 = lanes[2].0 * lanes[2].1;
+            let p3 = lanes[3].0 * lanes[3].1;
+            let p4 = lanes[4].0 * lanes[4].1;
+            let p5 = lanes[5].0 * lanes[5].1;
+            let p6 = lanes[6].0 * lanes[6].1;
+            let p7 = lanes[7].0 * lanes[7].1;
+            black_box([p0, p1, p2, p3, p4, p5, p6, p7])
+        })
+    });
+
+    group.bench_function("bn254_8way_passthrough", |b| {
+        b.iter(|| {
+            let lanes = black_box(&lanes_bn254);
+            let p0 = lanes[0].0;
+            let p1 = lanes[1].0;
+            let p2 = lanes[2].0;
+            let p3 = lanes[3].0;
+            let p4 = lanes[4].0;
+            let p5 = lanes[5].0;
+            let p6 = lanes[6].0;
+            let p7 = lanes[7].0;
+            black_box([p0, p1, p2, p3, p4, p5, p6, p7])
         })
     });
 
@@ -168,6 +301,18 @@ fn bench_bn254(c: &mut Criterion) {
         })
     });
 
+    group.bench_function("mul_chain_16384", |b| {
+        b.iter(|| {
+            let mut acc = BN254Fr::ONE;
+            for _ in 0..8 {
+                for x in inputs.iter() {
+                    acc *= x;
+                }
+            }
+            black_box(acc)
+        })
+    });
+
     group.bench_function("mul_parallel_1024", |b| {
         b.iter(|| {
             let mut sum = BN254Fr::ZERO;
@@ -205,6 +350,7 @@ criterion_group!(
     field_arith,
     bench_mul,
     bench_mul_only,
+    bench_mul_isolated,
     bench_sqr,
     bench_inv,
     bench_bn254
