@@ -12,6 +12,13 @@ use hachi_pcs::algebra::{
 use hachi_pcs::{CanonicalField, FieldCore, FieldSampling, Invertible};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use std::env;
+#[cfg(feature = "parallel")]
+use std::thread;
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+#[cfg(feature = "parallel")]
+use rayon::ThreadPoolBuilder;
 
 fn rand_u128<R: RngCore>(rng: &mut R) -> u128 {
     let lo = rng.next_u64() as u128;
@@ -687,6 +694,23 @@ fn bench_widening_ops(c: &mut Criterion) {
         bench.iter(|| black_box(black_box(a).mul_wide(black_box(b))))
     });
 
+    // -- New path isolation: mul_wide_limbs (no reduce) ----------------------
+    let limbs3 = [rng.next_u64(), rng.next_u64(), rng.next_u64()];
+    let limbs4 = [rng.next_u64(), rng.next_u64(), rng.next_u64(), rng.next_u64()];
+
+    group.bench_function("mul_wide_limbs_3_to_5_only", |bench| {
+        bench.iter(|| black_box(black_box(a).mul_wide_limbs::<3, 5>(black_box(limbs3))))
+    });
+    group.bench_function("mul_wide_limbs_3_to_4_only", |bench| {
+        bench.iter(|| black_box(black_box(a).mul_wide_limbs::<3, 4>(black_box(limbs3))))
+    });
+    group.bench_function("mul_wide_limbs_4_to_5_only", |bench| {
+        bench.iter(|| black_box(black_box(a).mul_wide_limbs::<4, 5>(black_box(limbs4))))
+    });
+    group.bench_function("mul_wide_limbs_4_to_4_only", |bench| {
+        bench.iter(|| black_box(black_box(a).mul_wide_limbs::<4, 4>(black_box(limbs4))))
+    });
+
     // -- Baseline: full mul+reduce (the current path) ------------------------
     group.bench_function("full_mul_u64_reduce", |bench| {
         bench.iter(|| black_box(black_box(a) * F::from_u64(black_box(b_u64))))
@@ -732,6 +756,35 @@ fn bench_widening_ops(c: &mut Criterion) {
             let x = black_box(a);
             let y = black_box(b);
             black_box(F::solinas_reduce(&x.mul_wide(y)))
+        })
+    });
+
+    group.bench_function("mul_wide_limbs_3_to_5_roundtrip", |bench| {
+        bench.iter(|| {
+            let x = black_box(a);
+            let m = black_box(limbs3);
+            black_box(F::solinas_reduce(&x.mul_wide_limbs::<3, 5>(m)))
+        })
+    });
+    group.bench_function("mul_wide_limbs_3_to_4_roundtrip", |bench| {
+        bench.iter(|| {
+            let x = black_box(a);
+            let m = black_box(limbs3);
+            black_box(F::solinas_reduce(&x.mul_wide_limbs::<3, 4>(m)))
+        })
+    });
+    group.bench_function("mul_wide_limbs_4_to_5_roundtrip", |bench| {
+        bench.iter(|| {
+            let x = black_box(a);
+            let m = black_box(limbs4);
+            black_box(F::solinas_reduce(&x.mul_wide_limbs::<4, 5>(m)))
+        })
+    });
+    group.bench_function("mul_wide_limbs_4_to_4_roundtrip", |bench| {
+        bench.iter(|| {
+            let x = black_box(a);
+            let m = black_box(limbs4);
+            black_box(F::solinas_reduce(&x.mul_wide_limbs::<4, 4>(m)))
         })
     });
 
@@ -959,6 +1012,331 @@ fn bench_packed_throughput(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(feature = "parallel")]
+fn bench_parallel_throughput(c: &mut Criterion) {
+    use hachi_pcs::algebra::{Fp32Packing, Fp64Packing};
+
+    let profile = env::var("HACHI_BENCH_PAR_PROFILE").unwrap_or_else(|_| "dev".to_string());
+    let default_n = match profile.as_str() {
+        "scale" | "large" => 1 << 20,
+        "xlarge" => 1 << 22,
+        _ => 1 << 15,
+    };
+    let n = env_usize("HACHI_BENCH_PAR_N", default_n);
+    let default_chunk = match profile.as_str() {
+        "scale" | "large" => 1 << 14,
+        "xlarge" => 1 << 15,
+        _ => 1 << 12,
+    };
+    let chunk = env_usize("HACHI_BENCH_PAR_CHUNK", default_chunk);
+    let threads = env_usize(
+        "HACHI_BENCH_PAR_THREADS",
+        thread::available_parallelism()
+            .map(|v| v.get())
+            .unwrap_or(1),
+    );
+
+    assert!(threads > 0, "HACHI_BENCH_PAR_THREADS must be > 0");
+    assert!(n > 0, "HACHI_BENCH_PAR_N must be > 0");
+    assert!(chunk > 0, "HACHI_BENCH_PAR_CHUNK must be > 0");
+    assert!(n % 4 == 0, "HACHI_BENCH_PAR_N must be divisible by 4");
+
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .expect("failed to build rayon pool");
+
+    let mut rng = StdRng::seed_from_u64(0xfeed_face);
+
+    let lhs31: Vec<Pow2Offset31Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let rhs31: Vec<Pow2Offset31Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let lhs64: Vec<Pow2Offset64Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let rhs64: Vec<Pow2Offset64Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let lhs128: Vec<Prime128M13M4P0> = (0..n)
+        .map(|_| Prime128M13M4P0::from_canonical_u128_reduced(rand_u128(&mut rng)))
+        .collect();
+    let rhs128: Vec<Prime128M13M4P0> = (0..n)
+        .map(|_| Prime128M13M4P0::from_canonical_u128_reduced(rand_u128(&mut rng)))
+        .collect();
+
+    type P31 = Fp32Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_31 }>;
+    type P64 = Fp64Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_64 }>;
+    type F128 = Prime128M13M4P0;
+    type P128 = <F128 as HasPacking>::Packing;
+    let chunk31_p = (chunk / P31::WIDTH).max(1);
+    let chunk64_p = (chunk / P64::WIDTH).max(1);
+    let chunk128_p = (chunk / P128::WIDTH).max(1);
+
+    let lhs31_p = P31::pack_slice(&lhs31);
+    let rhs31_p = P31::pack_slice(&rhs31);
+    let lhs64_p = P64::pack_slice(&lhs64);
+    let rhs64_p = P64::pack_slice(&rhs64);
+    let lhs128_p = P128::pack_slice(&lhs128);
+    let rhs128_p = P128::pack_slice(&rhs128);
+
+    let mut out31 = vec![Pow2Offset31Field::zero(); n];
+    let mut out64 = vec![Pow2Offset64Field::zero(); n];
+    let mut out128 = vec![F128::zero(); n];
+    let mut out31_p = vec![P31::broadcast(Pow2Offset31Field::zero()); lhs31_p.len()];
+    let mut out64_p = vec![P64::broadcast(Pow2Offset64Field::zero()); lhs64_p.len()];
+    let mut out128_p = vec![P128::broadcast(F128::zero()); lhs128_p.len()];
+
+    let mut group =
+        c.benchmark_group(format!("parallel_throughput/{profile}/t{threads}/n{n}/c{chunk}"));
+    group.throughput(Throughput::Elements(n as u64));
+
+    group.bench_function("fp32_31b_mul_seq", |b| {
+        b.iter(|| {
+            let a = black_box(&lhs31);
+            let b_v = black_box(&rhs31);
+            let out = &mut out31;
+            for i in 0..out.len() {
+                out[i] = a[i] * b_v[i];
+            }
+            black_box(out[0])
+        })
+    });
+
+    group.bench_function("fp32_31b_mul_par_zip", |b| {
+        b.iter(|| {
+            let a = black_box(&lhs31);
+            let b_v = black_box(&rhs31);
+            let out = &mut out31;
+            pool.install(|| {
+                out.par_iter_mut()
+                    .zip(a.par_iter())
+                    .zip(b_v.par_iter())
+                    .for_each(|((dst, lhs), rhs)| *dst = *lhs * *rhs);
+            });
+            black_box(out[0])
+        })
+    });
+
+    group.bench_function("fp32_31b_mul_par_chunked", |b| {
+        b.iter(|| {
+            let a = black_box(&lhs31);
+            let b_v = black_box(&rhs31);
+            let out = &mut out31;
+            pool.install(|| {
+                out.par_chunks_mut(chunk)
+                    .zip(a.par_chunks(chunk))
+                    .zip(b_v.par_chunks(chunk))
+                    .for_each(|((dst, lhs), rhs)| {
+                        for i in 0..dst.len() {
+                            dst[i] = lhs[i] * rhs[i];
+                        }
+                    });
+            });
+            black_box(out[0])
+        })
+    });
+
+    group.bench_function("fp32_31b_packed_mul_seq", |b| {
+        b.iter(|| {
+            let a = black_box(&lhs31_p);
+            let b_v = black_box(&rhs31_p);
+            let out = &mut out31_p;
+            for i in 0..out.len() {
+                out[i] = a[i] * b_v[i];
+            }
+            black_box(out[0].extract(0))
+        })
+    });
+
+    group.bench_function("fp32_31b_packed_mul_par_zip", |b| {
+        b.iter(|| {
+            let a = black_box(&lhs31_p);
+            let b_v = black_box(&rhs31_p);
+            let out = &mut out31_p;
+            pool.install(|| {
+                out.par_iter_mut()
+                    .zip(a.par_iter())
+                    .zip(b_v.par_iter())
+                    .for_each(|((dst, lhs), rhs)| *dst = *lhs * *rhs);
+            });
+            black_box(out[0].extract(0))
+        })
+    });
+
+    group.bench_function("fp32_31b_packed_mul_par_chunked", |b| {
+        b.iter(|| {
+            let a = black_box(&lhs31_p);
+            let b_v = black_box(&rhs31_p);
+            let out = &mut out31_p;
+            pool.install(|| {
+                out.par_chunks_mut(chunk31_p)
+                    .zip(a.par_chunks(chunk31_p))
+                    .zip(b_v.par_chunks(chunk31_p))
+                    .for_each(|((dst, lhs), rhs)| {
+                        for i in 0..dst.len() {
+                            dst[i] = lhs[i] * rhs[i];
+                        }
+                    });
+            });
+            black_box(out[0].extract(0))
+        })
+    });
+
+    group.bench_function("fp64_64b_mul_seq", |b| {
+        b.iter(|| {
+            let a = black_box(&lhs64);
+            let b_v = black_box(&rhs64);
+            let out = &mut out64;
+            for i in 0..out.len() {
+                out[i] = a[i] * b_v[i];
+            }
+            black_box(out[0])
+        })
+    });
+
+    group.bench_function("fp64_64b_mul_par_zip", |b| {
+        b.iter(|| {
+            let a = black_box(&lhs64);
+            let b_v = black_box(&rhs64);
+            let out = &mut out64;
+            pool.install(|| {
+                out.par_iter_mut()
+                    .zip(a.par_iter())
+                    .zip(b_v.par_iter())
+                    .for_each(|((dst, lhs), rhs)| *dst = *lhs * *rhs);
+            });
+            black_box(out[0])
+        })
+    });
+
+    group.bench_function("fp64_64b_mul_par_chunked", |b| {
+        b.iter(|| {
+            let a = black_box(&lhs64);
+            let b_v = black_box(&rhs64);
+            let out = &mut out64;
+            pool.install(|| {
+                out.par_chunks_mut(chunk)
+                    .zip(a.par_chunks(chunk))
+                    .zip(b_v.par_chunks(chunk))
+                    .for_each(|((dst, lhs), rhs)| {
+                        for i in 0..dst.len() {
+                            dst[i] = lhs[i] * rhs[i];
+                        }
+                    });
+            });
+            black_box(out[0])
+        })
+    });
+
+    group.bench_function("fp64_64b_packed_mul_seq", |b| {
+        b.iter(|| {
+            let a = black_box(&lhs64_p);
+            let b_v = black_box(&rhs64_p);
+            let out = &mut out64_p;
+            for i in 0..out.len() {
+                out[i] = a[i] * b_v[i];
+            }
+            black_box(out[0].extract(0))
+        })
+    });
+
+    group.bench_function("fp64_64b_packed_mul_par_zip", |b| {
+        b.iter(|| {
+            let a = black_box(&lhs64_p);
+            let b_v = black_box(&rhs64_p);
+            let out = &mut out64_p;
+            pool.install(|| {
+                out.par_iter_mut()
+                    .zip(a.par_iter())
+                    .zip(b_v.par_iter())
+                    .for_each(|((dst, lhs), rhs)| *dst = *lhs * *rhs);
+            });
+            black_box(out[0].extract(0))
+        })
+    });
+
+    group.bench_function("fp64_64b_packed_mul_par_chunked", |b| {
+        b.iter(|| {
+            let a = black_box(&lhs64_p);
+            let b_v = black_box(&rhs64_p);
+            let out = &mut out64_p;
+            pool.install(|| {
+                out.par_chunks_mut(chunk64_p)
+                    .zip(a.par_chunks(chunk64_p))
+                    .zip(b_v.par_chunks(chunk64_p))
+                    .for_each(|((dst, lhs), rhs)| {
+                        for i in 0..dst.len() {
+                            dst[i] = lhs[i] * rhs[i];
+                        }
+                    });
+            });
+            black_box(out[0].extract(0))
+        })
+    });
+
+    group.bench_function("fp128_mul_seq", |b| {
+        b.iter(|| {
+            let a = black_box(&lhs128);
+            let b_v = black_box(&rhs128);
+            let out = &mut out128;
+            for i in 0..out.len() {
+                out[i] = a[i] * b_v[i];
+            }
+            black_box(out[0])
+        })
+    });
+
+    group.bench_function("fp128_mul_par_chunked", |b| {
+        b.iter(|| {
+            let a = black_box(&lhs128);
+            let b_v = black_box(&rhs128);
+            let out = &mut out128;
+            pool.install(|| {
+                out.par_chunks_mut(chunk)
+                    .zip(a.par_chunks(chunk))
+                    .zip(b_v.par_chunks(chunk))
+                    .for_each(|((dst, lhs), rhs)| {
+                        for i in 0..dst.len() {
+                            dst[i] = lhs[i] * rhs[i];
+                        }
+                    });
+            });
+            black_box(out[0])
+        })
+    });
+
+    group.bench_function("fp128_packed_mul_seq", |b| {
+        b.iter(|| {
+            let a = black_box(&lhs128_p);
+            let b_v = black_box(&rhs128_p);
+            let out = &mut out128_p;
+            for i in 0..out.len() {
+                out[i] = a[i] * b_v[i];
+            }
+            black_box(out[0].extract(0))
+        })
+    });
+
+    group.bench_function("fp128_packed_mul_par_chunked", |b| {
+        b.iter(|| {
+            let a = black_box(&lhs128_p);
+            let b_v = black_box(&rhs128_p);
+            let out = &mut out128_p;
+            pool.install(|| {
+                out.par_chunks_mut(chunk128_p)
+                    .zip(a.par_chunks(chunk128_p))
+                    .zip(b_v.par_chunks(chunk128_p))
+                    .for_each(|((dst, lhs), rhs)| {
+                        for i in 0..dst.len() {
+                            dst[i] = lhs[i] * rhs[i];
+                        }
+                    });
+            });
+            black_box(out[0].extract(0))
+        })
+    });
+
+    group.finish();
+}
+
+#[cfg(not(feature = "parallel"))]
+fn bench_parallel_throughput(_: &mut Criterion) {}
+
 criterion_group!(
     field_arith,
     bench_mul,
@@ -972,6 +1350,7 @@ criterion_group!(
     bench_widening_ops,
     bench_accumulator_pattern,
     bench_throughput,
-    bench_packed_throughput
+    bench_packed_throughput,
+    bench_parallel_throughput
 );
 criterion_main!(field_arith);
