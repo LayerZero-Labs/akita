@@ -23,6 +23,7 @@ pub use iteration_prover::HachiProver;
 pub use opening_point::RingOpeningPoint;
 pub use proof::HachiProof;
 pub use sumcheck::{
-    prove_sumcheck, CompressedUniPoly, SumcheckInstanceProver, SumcheckProof, UniPoly,
+    prove_sumcheck, verify_sumcheck, CompressedUniPoly, SumcheckInstanceProver,
+    SumcheckInstanceVerifier, SumcheckProof, UniPoly,
 };
 pub use transcript::{Blake2bTranscript, KeccakTranscript, Transcript};

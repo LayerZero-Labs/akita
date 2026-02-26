@@ -364,6 +364,25 @@ pub trait SumcheckInstanceProver<E: FieldCore>: Send + Sync {
     fn finalize(&mut self) {}
 }
 
+/// Verifier-side sumcheck instance interface.
+///
+/// Implementations provide the initial claim and the oracle evaluation at the
+/// challenge point, enabling the verifier to perform the final consistency check.
+pub trait SumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
+    /// Number of rounds (i.e. number of variables bound by sumcheck).
+    fn num_rounds(&self) -> usize;
+
+    /// Maximum allowed degree for any round univariate polynomial.
+    fn degree_bound(&self) -> usize;
+
+    /// The initial claimed sum that this sumcheck instance is proving.
+    fn input_claim(&self) -> E;
+
+    /// Compute the expected final evaluation `f(r_0, ..., r_{n-1})` at the
+    /// challenge point derived during the protocol.
+    fn expected_output_claim(&self, challenges: &[E]) -> E;
+}
+
 /// Produce a sumcheck proof for a single instance, driving the Fiat–Shamir transcript.
 ///
 /// This method:
@@ -428,4 +447,43 @@ where
 
     let proof = SumcheckProof { round_polys };
     Ok((proof, r, claim))
+}
+
+/// Verify a single-instance sumcheck proof.
+///
+/// This function:
+/// - does **not** absorb the initial claim into the transcript (callers should
+///   do so before calling, matching the prover side),
+/// - delegates round-by-round verification to [`SumcheckProof::verify`],
+/// - performs the final oracle check: `final_claim == verifier.expected_output_claim(r)`.
+///
+/// Returns the challenge point `r` on success.
+pub fn verify_sumcheck<F, T, E, S, V>(
+    proof: &SumcheckProof<E>,
+    verifier: &V,
+    transcript: &mut T,
+    sample_challenge: S,
+) -> Result<Vec<E>, HachiError>
+where
+    F: crate::FieldCore + crate::CanonicalField,
+    T: Transcript<F>,
+    E: FieldCore,
+    S: FnMut(&mut T) -> E,
+    V: SumcheckInstanceVerifier<E>,
+{
+    let claim = verifier.input_claim();
+    let (final_claim, challenges) = proof.verify::<F, T, S>(
+        claim,
+        verifier.num_rounds(),
+        verifier.degree_bound(),
+        transcript,
+        sample_challenge,
+    )?;
+
+    let expected = verifier.expected_output_claim(&challenges);
+    if final_claim != expected {
+        return Err(HachiError::InvalidProof);
+    }
+
+    Ok(challenges)
 }

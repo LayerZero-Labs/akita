@@ -3,7 +3,8 @@
 use hachi_pcs::algebra::Fp64;
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
-    Blake2bTranscript, CompressedUniPoly, SumcheckProof, Transcript, UniPoly,
+    prove_sumcheck, verify_sumcheck, Blake2bTranscript, CompressedUniPoly, SumcheckInstanceProver,
+    SumcheckInstanceVerifier, SumcheckProof, Transcript, UniPoly,
 };
 use hachi_pcs::{CanonicalField, FieldCore, FieldSampling};
 use rand::rngs::StdRng;
@@ -81,4 +82,164 @@ fn sumcheck_proof_verifier_driver_is_transcript_deterministic() {
 
     assert_eq!(r_1, r_manual);
     assert_eq!(final_claim_1, claim);
+}
+
+// ---------------------------------------------------------------------------
+// Dense multilinear sumcheck helpers (test-only)
+// ---------------------------------------------------------------------------
+
+/// Evaluate a multilinear polynomial (given by its boolean-hypercube evaluations
+/// in little-endian bit order) at an arbitrary point via iterated folding.
+fn multilinear_eval<E: FieldCore>(evals: &[E], point: &[E]) -> E {
+    let mut current = evals.to_vec();
+    for r in point {
+        let half = current.len() / 2;
+        let mut next = Vec::with_capacity(half);
+        for i in 0..half {
+            next.push(current[2 * i] + *r * (current[2 * i + 1] - current[2 * i]));
+        }
+        current = next;
+    }
+    current[0]
+}
+
+struct DenseSumcheckProver<E> {
+    evals: Vec<E>,
+    num_vars: usize,
+}
+
+impl<E: FieldCore> SumcheckInstanceProver<E> for DenseSumcheckProver<E> {
+    fn num_rounds(&self) -> usize {
+        self.num_vars
+    }
+
+    fn degree_bound(&self) -> usize {
+        1
+    }
+
+    fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
+        let half = self.evals.len() / 2;
+        let mut eval_0 = E::zero();
+        let mut eval_1 = E::zero();
+        for i in 0..half {
+            eval_0 = eval_0 + self.evals[2 * i];
+            eval_1 = eval_1 + self.evals[2 * i + 1];
+        }
+        // g(X) = eval_0 + (eval_1 - eval_0) * X  (degree 1)
+        UniPoly::from_coeffs(vec![eval_0, eval_1 - eval_0])
+    }
+
+    fn ingest_challenge(&mut self, _round: usize, r: E) {
+        let half = self.evals.len() / 2;
+        let mut new_evals = Vec::with_capacity(half);
+        for i in 0..half {
+            new_evals.push(self.evals[2 * i] + r * (self.evals[2 * i + 1] - self.evals[2 * i]));
+        }
+        self.evals = new_evals;
+    }
+}
+
+struct DenseSumcheckVerifier<E> {
+    evals: Vec<E>,
+    num_vars: usize,
+    claim: E,
+}
+
+impl<E: FieldCore> SumcheckInstanceVerifier<E> for DenseSumcheckVerifier<E> {
+    fn num_rounds(&self) -> usize {
+        self.num_vars
+    }
+
+    fn degree_bound(&self) -> usize {
+        1
+    }
+
+    fn input_claim(&self) -> E {
+        self.claim
+    }
+
+    fn expected_output_claim(&self, challenges: &[E]) -> E {
+        multilinear_eval(&self.evals, challenges)
+    }
+}
+
+#[test]
+fn prove_and_verify_single_sumcheck() {
+    let num_vars = 4;
+    let n = 1 << num_vars;
+
+    let evals: Vec<F> = (1..=n).map(|i| F::from_u64(i as u64)).collect();
+    let claim: F = evals.iter().copied().fold(F::zero(), |a, b| a + b);
+
+    // --- Prover ---
+    let mut prover = DenseSumcheckProver {
+        evals: evals.clone(),
+        num_vars,
+    };
+
+    let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    prover_transcript.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
+
+    let (proof, prover_challenges, _final_claim) =
+        prove_sumcheck::<F, _, F, _, _>(&mut prover, claim, &mut prover_transcript, |tr| {
+            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+        })
+        .unwrap();
+
+    // --- Verifier ---
+    let verifier = DenseSumcheckVerifier {
+        evals,
+        num_vars,
+        claim,
+    };
+
+    let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    verifier_transcript.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
+
+    let verifier_challenges =
+        verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut verifier_transcript, |tr| {
+            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+        })
+        .unwrap();
+
+    assert_eq!(prover_challenges, verifier_challenges);
+}
+
+#[test]
+fn verify_rejects_wrong_claim() {
+    let num_vars = 3;
+    let n = 1 << num_vars;
+
+    let evals: Vec<F> = (1..=n).map(|i| F::from_u64(i as u64)).collect();
+    let correct_claim: F = evals.iter().copied().fold(F::zero(), |a, b| a + b);
+    let wrong_claim = correct_claim + F::one();
+
+    // Prove with correct claim.
+    let mut prover = DenseSumcheckProver {
+        evals: evals.clone(),
+        num_vars,
+    };
+    let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    pt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &correct_claim);
+
+    let (proof, _, _) =
+        prove_sumcheck::<F, _, F, _, _>(&mut prover, correct_claim, &mut pt, |tr| {
+            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+        })
+        .unwrap();
+
+    // Verify with *wrong* claim — should fail.
+    let verifier = DenseSumcheckVerifier {
+        evals,
+        num_vars,
+        claim: wrong_claim,
+    };
+    let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    vt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &wrong_claim);
+
+    let result = verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut vt, |tr| {
+        tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+    });
+
+    assert!(result.is_err());
 }
