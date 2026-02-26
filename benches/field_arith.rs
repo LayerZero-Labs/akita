@@ -4,7 +4,7 @@ use ark_bn254::Fr as BN254Fr;
 use ark_ff::{AdditiveGroup, Field};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use hachi_pcs::algebra::fields::fp128::{Prime128M18M0, Prime128M54P0};
-use hachi_pcs::algebra::{Prime128M13M4P0, Prime128M8M4M1M0};
+use hachi_pcs::algebra::{HasPacking, PackedField, PackedValue, Prime128M13M4P0, Prime128M8M4M1M0};
 use hachi_pcs::{CanonicalField, FieldCore, Invertible};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -407,6 +407,144 @@ fn bench_bn254(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_packed_fp128_backend(c: &mut Criterion) {
+    type F = Prime128M13M4P0;
+    type PF = <F as HasPacking>::Packing;
+
+    let backend = if cfg!(all(target_arch = "aarch64", target_feature = "neon")) {
+        "aarch64_neon"
+    } else {
+        "scalar_fallback"
+    };
+    let mut group = c.benchmark_group(format!("field_packed_backend/{backend}/w{}", PF::WIDTH));
+
+    let mut rng = StdRng::seed_from_u64(0xd00d_f00d_1122_3344);
+    let len = PF::WIDTH * 2048;
+    let lhs: Vec<F> = (0..len)
+        .map(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng)))
+        .collect();
+    let rhs: Vec<F> = (0..len)
+        .map(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng)))
+        .collect();
+
+    let packed_lhs: Vec<PF> = PF::pack_slice(&lhs).to_vec();
+    let packed_rhs: Vec<PF> = PF::pack_slice(&rhs).to_vec();
+
+    group.bench_function("scalar_add_stream", |b| {
+        let mut out = lhs.clone();
+        b.iter(|| {
+            for (dst, src) in out.iter_mut().zip(rhs.iter()) {
+                *dst = *dst + *src;
+            }
+            black_box(out[0])
+        })
+    });
+
+    group.bench_function("packed_add_stream", |b| {
+        let mut out = packed_lhs.clone();
+        b.iter(|| {
+            for (dst, src) in out.iter_mut().zip(packed_rhs.iter()) {
+                *dst = *dst + *src;
+            }
+            black_box(out[0].extract(0))
+        })
+    });
+
+    group.bench_function("scalar_mul_latency_chain", |b| {
+        b.iter(|| {
+            let mut acc = F::one();
+            for x in lhs.iter() {
+                acc = acc * *x;
+            }
+            black_box(acc)
+        })
+    });
+
+    group.bench_function("packed_mul_latency_chain", |b| {
+        b.iter(|| {
+            let mut acc = PF::broadcast(F::one());
+            for x in packed_lhs.iter() {
+                acc = acc * *x;
+            }
+            black_box(acc.extract(0))
+        })
+    });
+
+    let scalar_lanes: [(F, F); 8] = std::array::from_fn(|_| {
+        (
+            F::from_canonical_u128_reduced(rand_u128(&mut rng)),
+            F::from_canonical_u128_reduced(rand_u128(&mut rng)),
+        )
+    });
+    let packed_lanes: [(PF, PF); 8] = std::array::from_fn(|_| {
+        (
+            PF::from_fn(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng))),
+            PF::from_fn(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng))),
+        )
+    });
+
+    group.bench_function("scalar_mul_throughput_8way", |b| {
+        b.iter(|| {
+            let lanes = black_box(&scalar_lanes);
+            let mut a = lanes[0].0 * lanes[0].1;
+            let mut c = lanes[1].0 * lanes[1].1;
+            let mut e = lanes[2].0 * lanes[2].1;
+            let mut g = lanes[3].0 * lanes[3].1;
+            let mut i = lanes[4].0 * lanes[4].1;
+            let mut k = lanes[5].0 * lanes[5].1;
+            let mut m = lanes[6].0 * lanes[6].1;
+            let mut o = lanes[7].0 * lanes[7].1;
+            for _ in 0..256 {
+                a = a * lanes[0].0;
+                c = c * lanes[1].0;
+                e = e * lanes[2].0;
+                g = g * lanes[3].0;
+                i = i * lanes[4].0;
+                k = k * lanes[5].0;
+                m = m * lanes[6].0;
+                o = o * lanes[7].0;
+            }
+            black_box([a, c, e, g, i, k, m, o])
+        })
+    });
+
+    group.bench_function("packed_mul_throughput_8way", |b| {
+        b.iter(|| {
+            let lanes = black_box(&packed_lanes);
+            let mut a = lanes[0].0 * lanes[0].1;
+            let mut c = lanes[1].0 * lanes[1].1;
+            let mut e = lanes[2].0 * lanes[2].1;
+            let mut g = lanes[3].0 * lanes[3].1;
+            let mut i = lanes[4].0 * lanes[4].1;
+            let mut k = lanes[5].0 * lanes[5].1;
+            let mut m = lanes[6].0 * lanes[6].1;
+            let mut o = lanes[7].0 * lanes[7].1;
+            for _ in 0..256 {
+                a = a * lanes[0].0;
+                c = c * lanes[1].0;
+                e = e * lanes[2].0;
+                g = g * lanes[3].0;
+                i = i * lanes[4].0;
+                k = k * lanes[5].0;
+                m = m * lanes[6].0;
+                o = o * lanes[7].0;
+            }
+            black_box([
+                a.extract(0),
+                c.extract(0),
+                e.extract(0),
+                g.extract(0),
+                i.extract(0),
+                k.extract(0),
+                m.extract(0),
+                o.extract(0),
+            ])
+        })
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     field_arith,
     bench_mul,
@@ -414,6 +552,7 @@ criterion_group!(
     bench_mul_isolated,
     bench_sqr,
     bench_inv,
+    bench_packed_fp128_backend,
     bench_bn254
 );
 criterion_main!(field_arith);
