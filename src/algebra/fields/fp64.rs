@@ -29,6 +29,29 @@ const fn log2_pow2_u64(mut x: u64) -> u32 {
     k
 }
 
+#[inline(always)]
+fn mul64_wide(a: u64, b: u64) -> (u64, u64) {
+    #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
+    {
+        // Safety: this block is compiled only when `bmi2` is enabled.
+        return unsafe { mul64_wide_bmi2(a, b) };
+    }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2")))]
+    {
+        let prod = (a as u128) * (b as u128);
+        (prod as u64, (prod >> 64) as u64)
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
+#[inline(always)]
+unsafe fn mul64_wide_bmi2(a: u64, b: u64) -> (u64, u64) {
+    let mut hi = 0;
+    // Safety: caller guarantees CPU support via cfg-gated compilation.
+    let lo = unsafe { std::arch::x86_64::_mulx_u64(a, b, &mut hi) };
+    (lo, hi)
+}
+
 /// Prime field element for primes `p = 2^k − c` stored as `u64`.
 ///
 /// The fold point `k` and offset `c = 2^k − p` are computed at compile time
@@ -107,10 +130,19 @@ impl<const P: u64> Fp64<P> {
     /// Only valid when C fits in u32 (always true: C < sqrt(P) < 2^32).
     #[inline(always)]
     fn mul_c_narrow(x: u64) -> u64 {
-        let c = Self::C as u32;
-        let x_lo = x as u32;
-        let x_hi = (x >> 32) as u32;
-        (c as u64 * x_lo as u64).wrapping_add((c as u64 * x_hi as u64) << 32)
+        #[cfg(target_arch = "x86_64")]
+        {
+            // x86_64 has fast scalar 64-bit multiply; use one multiply instead
+            // of two widened 32-bit multiplies in the fold hot path.
+            return (Self::C as u64).wrapping_mul(x);
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let c = Self::C as u32;
+            let x_lo = x as u32;
+            let x_hi = (x >> 32) as u32;
+            (c as u64 * x_lo as u64).wrapping_add((c as u64 * x_hi as u64) << 32)
+        }
     }
 
     /// Multiply `x` by `C`.  For `C = 2^a ± 1` uses shift+add/sub.
@@ -182,6 +214,23 @@ impl<const P: u64> Fp64<P> {
         }
     }
 
+    /// BMI2 fast path: avoid re-materializing `u128` product in the common
+    /// sub-word configuration where reduction stays in `u64`.
+    #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
+    #[inline(always)]
+    fn reduce_product_wide(lo: u64, hi: u64) -> u64 {
+        if Self::FOLD_IN_U64 {
+            let high = (lo >> Self::BITS) | (hi << (64 - Self::BITS));
+            let f1 = (lo & Self::MASK64) + Self::mul_c_narrow(high);
+            let f2 = (f1 & Self::MASK64) + Self::mul_c_narrow(f1 >> Self::BITS);
+            let reduced = f2.wrapping_sub(P);
+            let borrow = reduced >> 63;
+            reduced.wrapping_add(borrow.wrapping_neg() & P)
+        } else {
+            Self::reduce_product(lo as u128 | ((hi as u128) << 64))
+        }
+    }
+
     #[inline(always)]
     fn add_raw(a: u64, b: u64) -> u64 {
         if Self::BITS <= 62 {
@@ -212,7 +261,15 @@ impl<const P: u64> Fp64<P> {
 
     #[inline(always)]
     fn mul_raw(a: u64, b: u64) -> u64 {
-        Self::reduce_product((a as u128) * (b as u128))
+        #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
+        {
+            let (lo, hi) = mul64_wide(a, b);
+            return Self::reduce_product_wide(lo, hi);
+        }
+        #[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2")))]
+        {
+            Self::reduce_product((a as u128) * (b as u128))
+        }
     }
 
     #[inline(always)]
@@ -248,14 +305,16 @@ impl<const P: u64> Fp64<P> {
     /// 64×64 → 128-bit widening multiply, **no reduction**.
     #[inline(always)]
     pub fn mul_wide(self, other: Self) -> u128 {
-        (self.0 as u128) * (other.0 as u128)
+        let (lo, hi) = mul64_wide(self.0, other.0);
+        lo as u128 | ((hi as u128) << 64)
     }
 
     /// 64×64 → 128-bit widening multiply with a raw `u64` operand,
     /// **no reduction**.
     #[inline(always)]
     pub fn mul_wide_u64(self, other: u64) -> u128 {
-        (self.0 as u128) * (other as u128)
+        let (lo, hi) = mul64_wide(self.0, other);
+        lo as u128 | ((hi as u128) << 64)
     }
 
     /// Reduce a u128 value via Solinas folding to a canonical field element.

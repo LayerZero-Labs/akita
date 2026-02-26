@@ -41,8 +41,25 @@ const fn to_u128(x: [u64; 2]) -> u128 {
 /// `a * b` widening to 128 bits; returns `(lo64, hi64)`.
 #[inline(always)]
 fn mul64_wide(a: u64, b: u64) -> (u64, u64) {
-    let prod = (a as u128) * (b as u128);
-    (prod as u64, (prod >> 64) as u64)
+    #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
+    {
+        // Safety: this block is compiled only when `bmi2` is enabled.
+        return unsafe { mul64_wide_bmi2(a, b) };
+    }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2")))]
+    {
+        let prod = (a as u128) * (b as u128);
+        (prod as u64, (prod >> 64) as u64)
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
+#[inline(always)]
+unsafe fn mul64_wide_bmi2(a: u64, b: u64) -> (u64, u64) {
+    let mut hi = 0;
+    // Safety: caller guarantees CPU support via cfg-gated compilation.
+    let lo = unsafe { std::arch::x86_64::_mulx_u64(a, b, &mut hi) };
+    (lo, hi)
 }
 
 #[inline(always)]
@@ -280,7 +297,6 @@ impl<const P: u128> Fp128<P> {
     pub fn mul_wide(self, other: Self) -> [u64; 4] {
         let (a0, a1) = (self.0[0], self.0[1]);
         let (b0, b1) = (other.0[0], other.0[1]);
-
         let (p00_lo, p00_hi) = mul64_wide(a0, b0);
         let (p01_lo, p01_hi) = mul64_wide(a0, b1);
         let (p10_lo, p10_hi) = mul64_wide(a1, b0);
