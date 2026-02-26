@@ -7,11 +7,19 @@ use hachi_pcs::algebra::fields::fp128::{Prime128M18M0, Prime128M54P0};
 use hachi_pcs::algebra::{HasPacking, PackedField, PackedValue, Prime128M13M4P0, Prime128M8M4M1M0};
 use hachi_pcs::{CanonicalField, FieldCore, Invertible};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
+use std::env;
 
 fn rand_u128<R: RngCore>(rng: &mut R) -> u128 {
     let lo = rng.next_u64() as u128;
     let hi = rng.next_u64() as u128;
     lo | (hi << 64)
+}
+
+fn env_usize(name: &str, default: usize) -> usize {
+    env::var(name)
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(default)
 }
 
 fn bench_mul(c: &mut Criterion) {
@@ -410,11 +418,27 @@ fn bench_bn254(c: &mut Criterion) {
 fn bench_packed_fp128_backend(c: &mut Criterion) {
     type F = Prime128M13M4P0;
     type PF = <F as HasPacking>::Packing;
-    const PACKED_STREAMS: usize = 8;
-    const LATENCY_ITERS: usize = 4096;
-    const THROUGHPUT_ITERS: usize = 256;
-    const STREAM_ITERS: usize = 2048;
-    const MULS_PER_STREAM: usize = THROUGHPUT_ITERS + 1;
+    let packed_streams = env_usize("HACHI_BENCH_PACKED_STREAMS", 8);
+    let latency_iters = env_usize("HACHI_BENCH_LATENCY_ITERS", 4096);
+    let throughput_iters = env_usize("HACHI_BENCH_THROUGHPUT_ITERS", 256);
+    let stream_iters = env_usize("HACHI_BENCH_STREAM_ITERS", 2048);
+    let mix_iters = env_usize("HACHI_BENCH_MIX_ITERS", 256);
+    let mix_muls = env_usize("HACHI_BENCH_MIX_MULS", 3);
+    let mix_adds = env_usize("HACHI_BENCH_MIX_ADDS", 1);
+    let mix_subs = env_usize("HACHI_BENCH_MIX_SUBS", 1);
+
+    assert!(packed_streams > 0, "HACHI_BENCH_PACKED_STREAMS must be > 0");
+    assert!(latency_iters > 0, "HACHI_BENCH_LATENCY_ITERS must be > 0");
+    assert!(
+        throughput_iters > 0,
+        "HACHI_BENCH_THROUGHPUT_ITERS must be > 0"
+    );
+    assert!(stream_iters > 0, "HACHI_BENCH_STREAM_ITERS must be > 0");
+    assert!(mix_iters > 0, "HACHI_BENCH_MIX_ITERS must be > 0");
+
+    let muls_per_stream = throughput_iters + 1;
+    let mix_ops = mix_muls + mix_adds + mix_subs;
+    assert!(mix_ops > 0, "at least one mix operation must be enabled");
 
     let backend = if cfg!(all(target_arch = "aarch64", target_feature = "neon")) {
         "aarch64_neon"
@@ -424,7 +448,7 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
     let mut group = c.benchmark_group(format!("field_packed_backend/{backend}/w{}", PF::WIDTH));
 
     let mut rng = StdRng::seed_from_u64(0xd00d_f00d_1122_3344);
-    let scalar_stream_len = PF::WIDTH * STREAM_ITERS;
+    let scalar_stream_len = PF::WIDTH * stream_iters;
     let lhs: Vec<F> = (0..scalar_stream_len)
         .map(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng)))
         .collect();
@@ -434,16 +458,14 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
 
     let packed_lhs: Vec<PF> = PF::pack_slice(&lhs);
     let packed_rhs: Vec<PF> = PF::pack_slice(&rhs);
-    let scalar_latency_inputs: [F; LATENCY_ITERS] =
-        std::array::from_fn(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng)));
-    let packed_latency_inputs: [PF; LATENCY_ITERS] = std::array::from_fn(|_| {
-        PF::from_fn(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng)))
-    });
+    let scalar_latency_inputs: Vec<F> = (0..latency_iters)
+        .map(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng)))
+        .collect();
+    let packed_latency_inputs: Vec<PF> = (0..latency_iters)
+        .map(|_| PF::from_fn(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng))))
+        .collect();
 
-    const fn scalar_stream_count(width: usize) -> usize {
-        PACKED_STREAMS * width
-    }
-    let scalar_streams = scalar_stream_count(PF::WIDTH);
+    let scalar_streams = packed_streams * PF::WIDTH;
     let scalar_lanes: Vec<(F, F)> = (0..scalar_streams)
         .map(|_| {
             (
@@ -452,12 +474,14 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
             )
         })
         .collect();
-    let packed_lanes: [(PF, PF); PACKED_STREAMS] = std::array::from_fn(|_| {
-        (
-            PF::from_fn(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng))),
-            PF::from_fn(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng))),
-        )
-    });
+    let packed_lanes: Vec<(PF, PF)> = (0..packed_streams)
+        .map(|_| {
+            (
+                PF::from_fn(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng))),
+                PF::from_fn(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng))),
+            )
+        })
+        .collect();
 
     group.throughput(Throughput::Elements(scalar_stream_len as u64));
     group.bench_function("scalar_add_stream", |b| {
@@ -481,7 +505,7 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
         })
     });
 
-    group.throughput(Throughput::Elements(LATENCY_ITERS as u64));
+    group.throughput(Throughput::Elements(latency_iters as u64));
     group.bench_function("scalar_mul_latency_chain", |b| {
         b.iter(|| {
             let mut acc = F::one();
@@ -492,7 +516,7 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
         })
     });
 
-    group.throughput(Throughput::Elements((LATENCY_ITERS * PF::WIDTH) as u64));
+    group.throughput(Throughput::Elements((latency_iters * PF::WIDTH) as u64));
     group.bench_function("packed_mul_latency_chain", |b| {
         b.iter(|| {
             let mut acc = PF::broadcast(F::one());
@@ -504,13 +528,13 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
     });
 
     group.throughput(Throughput::Elements(
-        (scalar_streams * MULS_PER_STREAM) as u64,
+        (scalar_streams * muls_per_stream) as u64,
     ));
     group.bench_function("scalar_mul_throughput_8way", |b| {
         b.iter(|| {
             let lanes = black_box(&scalar_lanes);
             let mut acc: Vec<F> = lanes.iter().map(|(a, b)| *a * *b).collect();
-            for _ in 0..THROUGHPUT_ITERS {
+            for _ in 0..throughput_iters {
                 for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
                     *acc_i = *acc_i * lane.0;
                 }
@@ -520,13 +544,13 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
     });
 
     group.throughput(Throughput::Elements(
-        (PACKED_STREAMS * MULS_PER_STREAM * PF::WIDTH) as u64,
+        (packed_streams * muls_per_stream * PF::WIDTH) as u64,
     ));
     group.bench_function("packed_mul_throughput_8way", |b| {
         b.iter(|| {
             let lanes = black_box(&packed_lanes);
-            let mut acc: [PF; PACKED_STREAMS] = std::array::from_fn(|i| lanes[i].0 * lanes[i].1);
-            for _ in 0..THROUGHPUT_ITERS {
+            let mut acc: Vec<PF> = lanes.iter().map(|(a, b)| *a * *b).collect();
+            for _ in 0..throughput_iters {
                 for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
                     *acc_i = *acc_i * lane.0;
                 }
@@ -534,6 +558,215 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
             black_box(acc[0].extract(0))
         })
     });
+
+    group.throughput(Throughput::Elements(
+        (scalar_streams * mix_iters * mix_ops) as u64,
+    ));
+    group.bench_function("scalar_mix_sumcheck_like", |b| {
+        b.iter(|| {
+            let lanes = black_box(&scalar_lanes);
+            let mut acc: Vec<F> = lanes.iter().map(|(a, b)| *a + *b).collect();
+            for _ in 0..mix_iters {
+                for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
+                    let (x, y) = *lane;
+                    for _ in 0..mix_muls {
+                        *acc_i = *acc_i * x;
+                    }
+                    for _ in 0..mix_adds {
+                        *acc_i = *acc_i + y;
+                    }
+                    for _ in 0..mix_subs {
+                        *acc_i = *acc_i - x;
+                    }
+                }
+            }
+            black_box(acc[0])
+        })
+    });
+
+    group.throughput(Throughput::Elements(
+        (packed_streams * PF::WIDTH * mix_iters * mix_ops) as u64,
+    ));
+    group.bench_function("packed_mix_sumcheck_like", |b| {
+        b.iter(|| {
+            let lanes = black_box(&packed_lanes);
+            let mut acc: Vec<PF> = lanes.iter().map(|(a, b)| *a + *b).collect();
+            for _ in 0..mix_iters {
+                for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
+                    let (x, y) = *lane;
+                    for _ in 0..mix_muls {
+                        *acc_i = *acc_i * x;
+                    }
+                    for _ in 0..mix_adds {
+                        *acc_i = *acc_i + y;
+                    }
+                    for _ in 0..mix_subs {
+                        *acc_i = *acc_i - x;
+                    }
+                }
+            }
+            black_box(acc[0].extract(0))
+        })
+    });
+
+    group.finish();
+}
+
+fn bench_widening_ops(c: &mut Criterion) {
+    type F = Prime128M8M4M1M0;
+
+    let mut rng = StdRng::seed_from_u64(0x01de_be0c_0001);
+    let a = F::from_canonical_u128_reduced(rand_u128(&mut rng));
+    let b = F::from_canonical_u128_reduced(rand_u128(&mut rng));
+    let b_u64 = rng.next_u64();
+
+    let mut group = c.benchmark_group("widening_ops");
+
+    // -- Single-op isolation: widening only (no reduce) ----------------------
+    group.bench_function("mul_wide_u64_only", |bench| {
+        bench.iter(|| black_box(black_box(a).mul_wide_u64(black_box(b_u64))))
+    });
+
+    group.bench_function("mul_wide_only", |bench| {
+        bench.iter(|| black_box(black_box(a).mul_wide(black_box(b))))
+    });
+
+    // -- Baseline: full mul+reduce (the current path) ------------------------
+    group.bench_function("full_mul_u64_reduce", |bench| {
+        bench.iter(|| black_box(black_box(a) * F::from_u64(black_box(b_u64))))
+    });
+
+    group.bench_function("full_mul_reduce", |bench| {
+        bench.iter(|| black_box(black_box(a) * black_box(b)))
+    });
+
+    // -- solinas_reduce isolation per limb count -----------------------------
+    let wide3 = a.mul_wide_u64(b_u64);
+    let wide4 = a.mul_wide(b);
+    let wide5 = {
+        let mut l = [0u64; 5];
+        l[..3].copy_from_slice(&wide3);
+        l[4] = rng.next_u64() & 0xFF;
+        l
+    };
+
+    group.bench_function("solinas_reduce_3_limbs", |bench| {
+        bench.iter(|| black_box(F::solinas_reduce(black_box(&wide3))))
+    });
+
+    group.bench_function("solinas_reduce_4_limbs", |bench| {
+        bench.iter(|| black_box(F::solinas_reduce(black_box(&wide4))))
+    });
+
+    group.bench_function("solinas_reduce_5_limbs", |bench| {
+        bench.iter(|| black_box(F::solinas_reduce(black_box(&wide5))))
+    });
+
+    // -- Round-trip: widen + reduce ------------------------------------------
+    group.bench_function("mul_wide_u64_roundtrip", |bench| {
+        bench.iter(|| {
+            let x = black_box(a);
+            let y = black_box(b_u64);
+            black_box(F::solinas_reduce(&x.mul_wide_u64(y)))
+        })
+    });
+
+    group.bench_function("mul_wide_roundtrip", |bench| {
+        bench.iter(|| {
+            let x = black_box(a);
+            let y = black_box(b);
+            black_box(F::solinas_reduce(&x.mul_wide(y)))
+        })
+    });
+
+    group.finish();
+}
+
+fn bench_accumulator_pattern(c: &mut Criterion) {
+    type F = Prime128M8M4M1M0;
+
+    let mut rng = StdRng::seed_from_u64(0xacc0_1a70_0002);
+    let inputs_a: Vec<F> = (0..256)
+        .map(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng)))
+        .collect();
+    let inputs_b_u64: Vec<u64> = (0..256).map(|_| rng.next_u64()).collect();
+    let inputs_b_f: Vec<F> = (0..256)
+        .map(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng)))
+        .collect();
+
+    let mut group = c.benchmark_group("accumulator_pattern");
+
+    for &n in &[16, 64, 256] {
+        group.bench_function(format!("eager_mul_u64_{n}"), |bench| {
+            bench.iter(|| {
+                let a_s = black_box(&inputs_a[..n]);
+                let b_s = black_box(&inputs_b_u64[..n]);
+                let mut acc = F::zero();
+                for i in 0..n {
+                    acc = acc + a_s[i] * F::from_u64(b_s[i]);
+                }
+                black_box(acc)
+            })
+        });
+
+        group.bench_function(format!("widening_accum_u64_{n}"), |bench| {
+            bench.iter(|| {
+                let a_s = black_box(&inputs_a[..n]);
+                let b_s = black_box(&inputs_b_u64[..n]);
+                let mut acc = [0u64; 5];
+                for i in 0..n {
+                    let wide = a_s[i].mul_wide_u64(b_s[i]);
+                    let mut carry: u64 = 0;
+                    for j in 0..3 {
+                        let sum = acc[j] as u128 + wide[j] as u128 + carry as u128;
+                        acc[j] = sum as u64;
+                        carry = (sum >> 64) as u64;
+                    }
+                    for j in 3..5 {
+                        let sum = acc[j] as u128 + carry as u128;
+                        acc[j] = sum as u64;
+                        carry = (sum >> 64) as u64;
+                    }
+                }
+                black_box(F::solinas_reduce(&acc))
+            })
+        });
+
+        group.bench_function(format!("eager_mul_full_{n}"), |bench| {
+            bench.iter(|| {
+                let a_s = black_box(&inputs_a[..n]);
+                let b_s = black_box(&inputs_b_f[..n]);
+                let mut acc = F::zero();
+                for i in 0..n {
+                    acc = acc + a_s[i] * b_s[i];
+                }
+                black_box(acc)
+            })
+        });
+
+        group.bench_function(format!("widening_accum_full_{n}"), |bench| {
+            bench.iter(|| {
+                let a_s = black_box(&inputs_a[..n]);
+                let b_s = black_box(&inputs_b_f[..n]);
+                let mut acc = [0u64; 6];
+                for i in 0..n {
+                    let wide = a_s[i].mul_wide(b_s[i]);
+                    let mut carry: u64 = 0;
+                    for j in 0..4 {
+                        let sum = acc[j] as u128 + wide[j] as u128 + carry as u128;
+                        acc[j] = sum as u64;
+                        carry = (sum >> 64) as u64;
+                    }
+                    for j in 4..6 {
+                        let sum = acc[j] as u128 + carry as u128;
+                        acc[j] = sum as u64;
+                        carry = (sum >> 64) as u64;
+                    }
+                }
+                black_box(F::solinas_reduce(&acc))
+            })
+        });
+    }
 
     group.finish();
 }
@@ -546,6 +779,8 @@ criterion_group!(
     bench_sqr,
     bench_inv,
     bench_packed_fp128_backend,
-    bench_bn254
+    bench_bn254,
+    bench_widening_ops,
+    bench_accumulator_pattern
 );
 criterion_main!(field_arith);

@@ -207,45 +207,8 @@ impl<const P: u128> Fp128<P> {
 
     #[inline(always)]
     fn mul_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
-        let (a0, a1) = (a[0], a[1]);
-        let (b0, b1) = (b[0], b[1]);
-
-        // Schoolbook 2x2 -> 4 u64 limbs, with products materialized first to
-        // increase ILP in generated code.
-        let (p00_lo, p00_hi) = mul_wide(a0, b0);
-        let (p01_lo, p01_hi) = mul_wide(a0, b1);
-        let (p10_lo, p10_hi) = mul_wide(a1, b0);
-        let (p11_lo, p11_hi) = mul_wide(a1, b1);
-
-        let row1 = p00_hi as u128 + p01_lo as u128 + p10_lo as u128;
-        let r0 = p00_lo;
-        let r1 = row1 as u64;
-        let carry1 = (row1 >> 64) as u64;
-
-        let row2 = p01_hi as u128 + p10_hi as u128 + p11_lo as u128 + carry1 as u128;
-        let r2 = row2 as u64;
-        let carry2 = (row2 >> 64) as u64;
-
-        let row3 = p11_hi as u128 + carry2 as u128;
-        let r3 = row3 as u64;
-        debug_assert_eq!(row3 >> 64, 0);
-
-        // Solinas fold 1: [t0,t1,t2] = [r0,r1] + c*[r2,r3].
-        let (cr2_lo, cr2_hi) = Self::mul_c_wide(r2);
-        let (cr3_lo, cr3_hi) = Self::mul_c_wide(r3);
-
-        let t0_sum = r0 as u128 + cr2_lo as u128;
-        let t0 = t0_sum as u64;
-        let carryf = (t0_sum >> 64) as u64;
-
-        let t1_sum = r1 as u128 + cr2_hi as u128 + cr3_lo as u128 + carryf as u128;
-        let t1 = t1_sum as u64;
-
-        let t2_sum = cr3_hi as u128 + (t1_sum >> 64);
-        let t2 = t2_sum as u64;
-        debug_assert_eq!(t2_sum >> 64, 0);
-
-        Self::fold2_canonicalize(t0, t1, t2)
+        let [r0, r1, r2, r3] = Self(a).mul_wide(Self(b));
+        Self::reduce_4(r0, r1, r2, r3)
     }
 
     #[inline(always)]
@@ -270,6 +233,167 @@ impl<const P: u128> Fp128<P> {
             exp >>= 1;
         }
         acc
+    }
+
+    // -----------------------------------------------------------------------
+    // Widening operations & Solinas reduce (no intermediate reduction)
+    // -----------------------------------------------------------------------
+
+    /// Extract the canonical `[lo, hi]` limb representation.
+    #[inline(always)]
+    pub fn to_limbs(self) -> [u64; 2] {
+        self.0
+    }
+
+    /// 128×64 → 192-bit widening multiply, **no reduction**.
+    ///
+    /// Returns `[lo, mid, hi]` representing `self · other` as a 192-bit
+    /// integer.  Cost: 2 widening `mul64`.
+    #[inline(always)]
+    pub fn mul_wide_u64(self, other: u64) -> [u64; 3] {
+        let (a0, a1) = (self.0[0], self.0[1]);
+        let (p0_lo, p0_hi) = mul_wide(a0, other);
+        let (p1_lo, p1_hi) = mul_wide(a1, other);
+        let mid = p0_hi as u128 + p1_lo as u128;
+        let hi = p1_hi + (mid >> 64) as u64;
+        [p0_lo, mid as u64, hi]
+    }
+
+    /// 128×128 → 256-bit widening multiply, **no reduction**.
+    ///
+    /// Returns `[r0, r1, r2, r3]` representing `self · other` as a 256-bit
+    /// integer.  This is the schoolbook 2×2 portion of the Solinas multiply,
+    /// without the reduction fold.  Cost: 4 widening `mul64`.
+    #[inline(always)]
+    pub fn mul_wide(self, other: Self) -> [u64; 4] {
+        let (a0, a1) = (self.0[0], self.0[1]);
+        let (b0, b1) = (other.0[0], other.0[1]);
+
+        let (p00_lo, p00_hi) = mul_wide(a0, b0);
+        let (p01_lo, p01_hi) = mul_wide(a0, b1);
+        let (p10_lo, p10_hi) = mul_wide(a1, b0);
+        let (p11_lo, p11_hi) = mul_wide(a1, b1);
+
+        let row1 = p00_hi as u128 + p01_lo as u128 + p10_lo as u128;
+        let r0 = p00_lo;
+        let r1 = row1 as u64;
+        let carry1 = (row1 >> 64) as u64;
+
+        let row2 = p01_hi as u128 + p10_hi as u128 + p11_lo as u128 + carry1 as u128;
+        let r2 = row2 as u64;
+        let carry2 = (row2 >> 64) as u64;
+
+        let row3 = p11_hi as u128 + carry2 as u128;
+        let r3 = row3 as u64;
+        debug_assert_eq!(row3 >> 64, 0);
+
+        [r0, r1, r2, r3]
+    }
+
+    /// 128×128 → 256-bit widening multiply with a raw `u128` operand,
+    /// **no reduction**.
+    #[inline(always)]
+    pub fn mul_wide_u128(self, other: u128) -> [u64; 4] {
+        self.mul_wide(Self(from_u128(other)))
+    }
+
+    /// Solinas fold-1 for exactly 4 limbs: `[r0,r1] + C·[r2,r3]` → 3 limbs,
+    /// then `fold2_canonicalize`.  Same code path as `mul_raw`.
+    #[inline(always)]
+    fn reduce_4(r0: u64, r1: u64, r2: u64, r3: u64) -> [u64; 2] {
+        let (cr2_lo, cr2_hi) = Self::mul_c_wide(r2);
+        let (cr3_lo, cr3_hi) = Self::mul_c_wide(r3);
+
+        let t0_sum = r0 as u128 + cr2_lo as u128;
+        let t0 = t0_sum as u64;
+        let carryf = (t0_sum >> 64) as u64;
+
+        let t1_sum = r1 as u128 + cr2_hi as u128 + cr3_lo as u128 + carryf as u128;
+        let t1 = t1_sum as u64;
+
+        let t2_sum = cr3_hi as u128 + (t1_sum >> 64);
+        let t2 = t2_sum as u64;
+        debug_assert_eq!(t2_sum >> 64, 0);
+
+        Self::fold2_canonicalize(t0, t1, t2)
+    }
+
+    /// Reduce an arbitrary-width little-endian limb array to a canonical
+    /// field element via iterated Solinas folding.
+    ///
+    /// Each fold splits at the 128-bit boundary and replaces
+    /// `hi · 2^128` with `hi · C`, reducing width by one limb per
+    /// iteration.  Supports 0–10 input limbs (up to 640 bits).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `limbs.len() > 10`.
+    #[inline(always)]
+    pub fn solinas_reduce(limbs: &[u64]) -> Self {
+        match limbs.len() {
+            0 => Self::zero(),
+            1 => Self(pack(limbs[0], 0)),
+            2 => Self::from_canonical_u128_reduced(to_u128([limbs[0], limbs[1]])),
+            3 => Self(Self::fold2_canonicalize(limbs[0], limbs[1], limbs[2])),
+            4 => Self(Self::reduce_4(limbs[0], limbs[1], limbs[2], limbs[3])),
+            5 => {
+                let (l0, l1, l2, l3, l4) = (limbs[0], limbs[1], limbs[2], limbs[3], limbs[4]);
+                let (c2_lo, c2_hi) = Self::mul_c_wide(l2);
+                let (c3_lo, c3_hi) = Self::mul_c_wide(l3);
+                let (c4_lo, c4_hi) = Self::mul_c_wide(l4);
+
+                let s0 = l0 as u128 + c2_lo as u128;
+                let s1 = l1 as u128 + c2_hi as u128 + c3_lo as u128 + (s0 >> 64);
+                let s2 = c3_hi as u128 + c4_lo as u128 + (s1 >> 64);
+                let s3 = c4_hi as u128 + (s2 >> 64);
+                debug_assert_eq!(s3 >> 64, 0);
+
+                Self(Self::reduce_4(s0 as u64, s1 as u64, s2 as u64, s3 as u64))
+            }
+            n => {
+                assert!(n <= 10, "solinas_reduce supports at most 10 limbs");
+                let mut buf = [0u64; 11];
+                buf[..n].copy_from_slice(limbs);
+                let mut len = n;
+                let c = Self::C_LO;
+
+                while len > 5 {
+                    let high_len = len - 2;
+                    let mut next = [0u64; 11];
+
+                    let mut carry: u64 = 0;
+                    for i in 0..high_len {
+                        let wide = c as u128 * buf[i + 2] as u128 + carry as u128;
+                        next[i] = wide as u64;
+                        carry = (wide >> 64) as u64;
+                    }
+                    next[high_len] = carry;
+
+                    let s0 = next[0] as u128 + buf[0] as u128;
+                    next[0] = s0 as u64;
+                    let s1 = next[1] as u128 + buf[1] as u128 + (s0 >> 64);
+                    next[1] = s1 as u64;
+                    let mut c_out = (s1 >> 64) as u64;
+                    for limb in &mut next[2..=high_len] {
+                        if c_out == 0 {
+                            break;
+                        }
+                        let s = *limb as u128 + c_out as u128;
+                        *limb = s as u64;
+                        c_out = (s >> 64) as u64;
+                    }
+                    debug_assert_eq!(c_out, 0);
+
+                    buf = next;
+                    len -= 1;
+                    while len > 5 && buf[len - 1] == 0 {
+                        len -= 1;
+                    }
+                }
+
+                Self::solinas_reduce(&buf[..len])
+            }
+        }
     }
 }
 
@@ -509,3 +633,123 @@ pub type Prime128M8M4M1M0 = Fp128<0xfffffffffffffffffffffffffffffeed>;
 pub type Prime128M18M0 = Fp128<0xfffffffffffffffffffffffffffbffff>;
 /// `p = 2^128 − 2^54 + 2^0`  (C = 2^54 − 1).
 pub type Prime128M54P0 = Fp128<0xffffffffffffffffffc0000000000001>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{FieldSampling, PseudoMersenneField};
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+    use rand_core::RngCore;
+
+    type F = Prime128M8M4M1M0;
+
+    #[test]
+    fn to_limbs_roundtrip() {
+        let mut rng = StdRng::seed_from_u64(0xdead_beef_cafe_1234);
+        for _ in 0..1000 {
+            let a: F = FieldSampling::sample(&mut rng);
+            assert_eq!(Fp128(a.to_limbs()), a);
+        }
+    }
+
+    #[test]
+    fn mul_wide_u64_matches_full_mul() {
+        let mut rng = StdRng::seed_from_u64(0x1122_3344_5566_7788);
+        for _ in 0..1000 {
+            let a: F = FieldSampling::sample(&mut rng);
+            let b = rng.next_u64();
+            let expected = a * F::from_u64(b);
+            let reduced = F::solinas_reduce(&a.mul_wide_u64(b));
+            assert_eq!(reduced, expected);
+        }
+    }
+
+    #[test]
+    fn mul_wide_matches_full_mul() {
+        let mut rng = StdRng::seed_from_u64(0xaabb_ccdd_eeff_0011);
+        for _ in 0..1000 {
+            let a: F = FieldSampling::sample(&mut rng);
+            let b: F = FieldSampling::sample(&mut rng);
+            let expected = a * b;
+            let reduced = F::solinas_reduce(&a.mul_wide(b));
+            assert_eq!(reduced, expected);
+        }
+    }
+
+    #[test]
+    fn mul_wide_u128_matches_full_mul() {
+        let mut rng = StdRng::seed_from_u64(0x9988_7766_5544_3322);
+        for _ in 0..1000 {
+            let a: F = FieldSampling::sample(&mut rng);
+            let b = rng.next_u64() as u128 | ((rng.next_u64() as u128) << 64);
+            let expected = a * F::from_canonical_u128_reduced(b);
+            let reduced = F::solinas_reduce(&a.mul_wide_u128(b));
+            assert_eq!(reduced, expected);
+        }
+    }
+
+    #[test]
+    fn solinas_reduce_small_inputs() {
+        assert_eq!(F::solinas_reduce(&[]), F::zero());
+        assert_eq!(F::solinas_reduce(&[42]), F::from_u64(42));
+        let one_shifted = F::from_canonical_u128_reduced(1u128 << 64);
+        assert_eq!(F::solinas_reduce(&[0, 1]), one_shifted);
+    }
+
+    #[test]
+    fn solinas_reduce_4_limbs_max() {
+        // 2^256 - 1 ≡ C² - 1 (mod P), since 2^128 ≡ C
+        let c = F::from_canonical_u128_reduced(<F as PseudoMersenneField>::MODULUS_OFFSET);
+        let expected = c * c - F::one();
+        assert_eq!(F::solinas_reduce(&[u64::MAX; 4]), expected);
+    }
+
+    #[test]
+    fn solinas_reduce_9_limbs() {
+        // 1 + 2^512 = 1 + (2^128)^4 ≡ 1 + C^4
+        let c = F::from_canonical_u128_reduced(<F as PseudoMersenneField>::MODULUS_OFFSET);
+        let expected = F::one() + c * c * c * c;
+        assert_eq!(F::solinas_reduce(&[1, 0, 0, 0, 0, 0, 0, 0, 1]), expected);
+    }
+
+    #[test]
+    fn solinas_reduce_accumulated_products() {
+        let mut rng = StdRng::seed_from_u64(0xfeed_face_0bad_c0de);
+        let mut acc = [0u64; 5];
+        let mut expected = F::zero();
+
+        for _ in 0..200 {
+            let a: F = FieldSampling::sample(&mut rng);
+            let b = rng.next_u64();
+            let wide = a.mul_wide_u64(b);
+
+            let mut carry: u64 = 0;
+            for j in 0..5 {
+                let addend = if j < 3 { wide[j] } else { 0 };
+                let sum = acc[j] as u128 + addend as u128 + carry as u128;
+                acc[j] = sum as u64;
+                carry = (sum >> 64) as u64;
+            }
+            assert_eq!(carry, 0);
+            expected = expected + a * F::from_u64(b);
+        }
+
+        assert_eq!(F::solinas_reduce(&acc), expected);
+    }
+
+    #[test]
+    fn solinas_reduce_cross_prime() {
+        // Verify with Prime128M18M0 (C = 2^18 + 1, shift+add path)
+        type G = Prime128M18M0;
+        let c = G::from_canonical_u128_reduced(<G as PseudoMersenneField>::MODULUS_OFFSET);
+        let expected = c * c - G::one();
+        assert_eq!(G::solinas_reduce(&[u64::MAX; 4]), expected);
+
+        // Verify with Prime128M54P0 (C = 2^54 - 1, shift-sub path)
+        type H = Prime128M54P0;
+        let c = H::from_canonical_u128_reduced(<H as PseudoMersenneField>::MODULUS_OFFSET);
+        let expected = c * c - H::one();
+        assert_eq!(H::solinas_reduce(&[u64::MAX; 4]), expected);
+    }
+}
