@@ -1,8 +1,8 @@
-//! Packed field abstractions and Fp128 field backends.
+//! Packed field abstractions and NEON backends for Fp32, Fp64, Fp128.
 //!
 //! This module is intentionally field-scoped for now (no ring/protocol wiring yet).
 
-use crate::algebra::fields::Fp128;
+use crate::algebra::fields::{Fp128, Fp32, Fp64};
 use crate::FieldCore;
 use core::ops::{Add, Mul, Sub};
 
@@ -136,11 +136,41 @@ impl<T: FieldCore + 'static> PackedField for NoPacking<T> {
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 pub mod aarch64_neon {
     use super::{PackedField, PackedValue};
-    use crate::algebra::fields::Fp128;
+    use crate::algebra::fields::{Fp128, Fp32, Fp64};
     use crate::FieldCore;
     use core::arch::aarch64::{
-        uint64x2_t, vaddq_u64, vandq_u64, vbslq_u64, vcgtq_u64, vcltq_u64, vdupq_n_u64, veorq_u64,
-        vorrq_u64, vsubq_u64,
+        uint32x4_t,
+        uint64x2_t,
+        // u32 arithmetic
+        vaddq_u32,
+        // u64 ops
+        vaddq_u64,
+        vandq_u64,
+        // u32 comparison + select
+        vbslq_u32,
+        vbslq_u64,
+        vcgtq_u64,
+        vcltq_u32,
+        vcltq_u64,
+        // Get half / narrow / combine
+        vcombine_u32,
+        // u32 broadcast
+        vdup_n_u32,
+        // u64 variable shift + s64 broadcast
+        vdupq_n_s64,
+        vdupq_n_u32,
+        vdupq_n_u64,
+        veorq_u64,
+        vget_low_u32,
+        vminq_u32,
+        vmovn_u64,
+        // Widening multiply
+        vmull_high_u32,
+        vmull_u32,
+        vorrq_u64,
+        vshlq_u64,
+        vsubq_u32,
+        vsubq_u64,
     };
     use core::fmt;
     use core::mem::transmute;
@@ -478,6 +508,421 @@ pub mod aarch64_neon {
             Self::from_fn(|_| value)
         }
     }
+
+    // ===== PackedFp32Neon =====
+
+    /// Number of packed `Fp32` lanes.
+    pub const FP32_WIDTH: usize = 4;
+
+    /// NEON packed `Fp32` backend: 4 lanes in `uint32x4_t`.
+    ///
+    /// Uses Solinas two-fold reduction for multiplication, and the plonky3
+    /// `umin` trick for branchless add/sub when BITS <= 31.
+    #[derive(Clone, Copy)]
+    pub struct PackedFp32Neon<const P: u32> {
+        vals: [u32; 4],
+    }
+
+    #[inline(always)]
+    fn to_vec32(x: [u32; 4]) -> uint32x4_t {
+        unsafe { transmute::<[u32; 4], uint32x4_t>(x) }
+    }
+
+    #[inline(always)]
+    fn from_vec32(v: uint32x4_t) -> [u32; 4] {
+        unsafe { transmute::<uint32x4_t, [u32; 4]>(v) }
+    }
+
+    impl<const P: u32> PackedFp32Neon<P> {
+        const BITS: u32 = 32 - P.leading_zeros();
+
+        const C: u32 = {
+            let c = if Self::BITS == 32 {
+                0u32.wrapping_sub(P)
+            } else {
+                (1u32 << Self::BITS) - P
+            };
+            assert!(P != 0, "modulus must be nonzero");
+            assert!(P & 1 == 1, "modulus must be odd");
+            assert!(
+                (c as u64) * (c as u64 + 1) < P as u64,
+                "C(C+1) < P required for fused canonicalize"
+            );
+            c
+        };
+
+        const MASK_U64: u64 = if Self::BITS == 32 {
+            u32::MAX as u64
+        } else {
+            (1u64 << Self::BITS) - 1
+        };
+
+        const C_SHIFT_KIND: i8 = {
+            let c = Self::C as u64;
+            if c > 1 && is_pow2_u64(c - 1) {
+                1
+            } else if c == u64::MAX || (c > 0 && is_pow2_u64(c + 1)) {
+                -1
+            } else {
+                0
+            }
+        };
+
+        const C_SHIFT: u32 = {
+            let c = Self::C as u64;
+            if Self::C_SHIFT_KIND == 1 {
+                log2_pow2_u64(c - 1)
+            } else if Self::C_SHIFT_KIND == -1 {
+                if c == u64::MAX {
+                    64
+                } else {
+                    log2_pow2_u64(c + 1)
+                }
+            } else {
+                0
+            }
+        };
+
+        /// Multiply `hi` (uint64x2_t, each lane < 2^BITS) by C in u64 NEON.
+        ///
+        /// When C = 2^a +/- 1, uses shift+add/sub instead of widening multiply.
+        #[inline(always)]
+        fn mul_c_u64(hi: uint64x2_t) -> uint64x2_t {
+            // SAFETY: module is gated on target_feature = "neon".
+            unsafe {
+                if Self::C_SHIFT_KIND == 1 {
+                    let shift = vdupq_n_s64(Self::C_SHIFT as i64);
+                    vaddq_u64(vshlq_u64(hi, shift), hi)
+                } else if Self::C_SHIFT_KIND == -1 {
+                    let shift = vdupq_n_s64(Self::C_SHIFT as i64);
+                    vsubq_u64(vshlq_u64(hi, shift), hi)
+                } else {
+                    let hi_narrow = vmovn_u64(hi);
+                    vmull_u32(hi_narrow, vdup_n_u32(Self::C))
+                }
+            }
+        }
+
+        /// Two-fold Solinas reduction on 4 u64 products (in two uint64x2_t)
+        /// back to 4 canonical u32 results packed into uint32x4_t.
+        #[inline(always)]
+        fn solinas_reduce(prod_lo: uint64x2_t, prod_hi: uint64x2_t) -> uint32x4_t {
+            // SAFETY: module is gated on target_feature = "neon".
+            unsafe {
+                let mask = vdupq_n_u64(Self::MASK_U64);
+                let neg_bits = vdupq_n_s64(-(Self::BITS as i64));
+
+                // Fold 1
+                let f1_lo = vaddq_u64(
+                    vandq_u64(prod_lo, mask),
+                    Self::mul_c_u64(vshlq_u64(prod_lo, neg_bits)),
+                );
+                let f1_hi = vaddq_u64(
+                    vandq_u64(prod_hi, mask),
+                    Self::mul_c_u64(vshlq_u64(prod_hi, neg_bits)),
+                );
+
+                // Fold 2
+                let f2_lo = vaddq_u64(
+                    vandq_u64(f1_lo, mask),
+                    Self::mul_c_u64(vshlq_u64(f1_lo, neg_bits)),
+                );
+                let f2_hi = vaddq_u64(
+                    vandq_u64(f1_hi, mask),
+                    Self::mul_c_u64(vshlq_u64(f1_hi, neg_bits)),
+                );
+
+                // Conditional subtract P and narrow to u32.
+                if Self::BITS < 32 {
+                    // f2 < 2P < 2^32: safe to narrow, then umin.
+                    let result = vcombine_u32(vmovn_u64(f2_lo), vmovn_u64(f2_hi));
+                    let p = vdupq_n_u32(P);
+                    vminq_u32(result, vsubq_u32(result, p))
+                } else {
+                    // f2 < 2P < 2^33: subtract P in u64 first, then narrow.
+                    let p_u64 = vdupq_n_u64(P as u64);
+
+                    let red_lo = vsubq_u64(f2_lo, p_u64);
+                    let keep_lo = vcltq_u64(f2_lo, p_u64);
+                    let out_lo = vbslq_u64(keep_lo, f2_lo, red_lo);
+
+                    let red_hi = vsubq_u64(f2_hi, p_u64);
+                    let keep_hi = vcltq_u64(f2_hi, p_u64);
+                    let out_hi = vbslq_u64(keep_hi, f2_hi, red_hi);
+
+                    vcombine_u32(vmovn_u64(out_lo), vmovn_u64(out_hi))
+                }
+            }
+        }
+    }
+
+    impl<const P: u32> Default for PackedFp32Neon<P> {
+        #[inline]
+        fn default() -> Self {
+            Self { vals: [0; 4] }
+        }
+    }
+
+    impl<const P: u32> fmt::Debug for PackedFp32Neon<P> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_tuple("PackedFp32Neon").field(&self.vals).finish()
+        }
+    }
+
+    impl<const P: u32> PartialEq for PackedFp32Neon<P> {
+        #[inline]
+        fn eq(&self, other: &Self) -> bool {
+            self.vals == other.vals
+        }
+    }
+
+    impl<const P: u32> Eq for PackedFp32Neon<P> {}
+
+    impl<const P: u32> Add for PackedFp32Neon<P> {
+        type Output = Self;
+        #[inline]
+        fn add(self, rhs: Self) -> Self {
+            let a = to_vec32(self.vals);
+            let b = to_vec32(rhs.vals);
+            // SAFETY: module is gated on target_feature = "neon".
+            let result = unsafe {
+                let p = vdupq_n_u32(P);
+                if Self::BITS <= 31 {
+                    // a + b < 2P < 2^32: no overflow.
+                    // umin trick: min(t, t - P) branchlessly selects the reduced value.
+                    let t = vaddq_u32(a, b);
+                    vminq_u32(t, vsubq_u32(t, p))
+                } else {
+                    // a + b can overflow u32. Detect carry and correct.
+                    let c = vdupq_n_u32(Self::C);
+                    let t = vaddq_u32(a, b);
+                    let overflow = vcltq_u32(t, a);
+                    let t_plus_c = vaddq_u32(t, c);
+                    let no_of = vminq_u32(t, vsubq_u32(t, p));
+                    vbslq_u32(overflow, t_plus_c, no_of)
+                }
+            };
+            Self {
+                vals: from_vec32(result),
+            }
+        }
+    }
+
+    impl<const P: u32> Sub for PackedFp32Neon<P> {
+        type Output = Self;
+        #[inline]
+        fn sub(self, rhs: Self) -> Self {
+            let a = to_vec32(self.vals);
+            let b = to_vec32(rhs.vals);
+            // SAFETY: module is gated on target_feature = "neon".
+            let result = unsafe {
+                let p = vdupq_n_u32(P);
+                if Self::BITS <= 31 {
+                    // umin trick: min(t, t + P) picks the non-wrapped value.
+                    let t = vsubq_u32(a, b);
+                    vminq_u32(t, vaddq_u32(t, p))
+                } else {
+                    let t = vsubq_u32(a, b);
+                    let underflow = vcltq_u32(a, b);
+                    vbslq_u32(underflow, vaddq_u32(t, p), t)
+                }
+            };
+            Self {
+                vals: from_vec32(result),
+            }
+        }
+    }
+
+    impl<const P: u32> Mul for PackedFp32Neon<P> {
+        type Output = Self;
+        #[inline]
+        fn mul(self, rhs: Self) -> Self {
+            let a = to_vec32(self.vals);
+            let b = to_vec32(rhs.vals);
+            // SAFETY: module is gated on target_feature = "neon".
+            let result = unsafe {
+                let prod_lo = vmull_u32(vget_low_u32(a), vget_low_u32(b));
+                let prod_hi = vmull_high_u32(a, b);
+                Self::solinas_reduce(prod_lo, prod_hi)
+            };
+            Self {
+                vals: from_vec32(result),
+            }
+        }
+    }
+
+    impl<const P: u32> PackedValue for PackedFp32Neon<P> {
+        type Value = Fp32<P>;
+        const WIDTH: usize = FP32_WIDTH;
+
+        #[inline]
+        fn from_fn<F>(mut f: F) -> Self
+        where
+            F: FnMut(usize) -> Self::Value,
+        {
+            Self {
+                vals: [f(0).0, f(1).0, f(2).0, f(3).0],
+            }
+        }
+
+        #[inline]
+        fn extract(&self, lane: usize) -> Self::Value {
+            debug_assert!(lane < FP32_WIDTH);
+            Fp32(self.vals[lane])
+        }
+    }
+
+    impl<const P: u32> PackedField for PackedFp32Neon<P> {
+        type Scalar = Fp32<P>;
+
+        #[inline]
+        fn broadcast(value: Self::Scalar) -> Self {
+            Self { vals: [value.0; 4] }
+        }
+    }
+
+    // ===== PackedFp64Neon =====
+
+    /// Number of packed `Fp64` lanes.
+    pub const FP64_WIDTH: usize = 2;
+
+    /// NEON packed `Fp64` backend: 2 lanes in `uint64x2_t`.
+    ///
+    /// Add/Sub are vectorized. Mul is scalar per lane (NEON lacks 64x64->128
+    /// multiply, and decomposing into 32x32 products isn't worth it for 2 lanes).
+    #[derive(Clone, Copy)]
+    pub struct PackedFp64Neon<const P: u64> {
+        vals: [u64; 2],
+    }
+
+    impl<const P: u64> PackedFp64Neon<P> {
+        const BITS: u32 = 64 - P.leading_zeros();
+
+        const C_LO: u64 = {
+            let c = if Self::BITS == 64 {
+                0u64.wrapping_sub(P)
+            } else {
+                (1u64 << Self::BITS) - P
+            };
+            assert!(P != 0, "modulus must be nonzero");
+            assert!(P & 1 == 1, "modulus must be odd");
+            c
+        };
+    }
+
+    impl<const P: u64> Default for PackedFp64Neon<P> {
+        #[inline]
+        fn default() -> Self {
+            Self { vals: [0; 2] }
+        }
+    }
+
+    impl<const P: u64> fmt::Debug for PackedFp64Neon<P> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_tuple("PackedFp64Neon").field(&self.vals).finish()
+        }
+    }
+
+    impl<const P: u64> PartialEq for PackedFp64Neon<P> {
+        #[inline]
+        fn eq(&self, other: &Self) -> bool {
+            self.vals == other.vals
+        }
+    }
+
+    impl<const P: u64> Eq for PackedFp64Neon<P> {}
+
+    impl<const P: u64> Add for PackedFp64Neon<P> {
+        type Output = Self;
+        #[inline]
+        fn add(self, rhs: Self) -> Self {
+            let a = to_vec(self.vals);
+            let b = to_vec(rhs.vals);
+            // SAFETY: module is gated on target_feature = "neon".
+            let result = unsafe {
+                let p = vdupq_n_u64(P);
+                if Self::BITS <= 62 {
+                    // a + b < 2P < 2^63: no u64 overflow.
+                    let s = vaddq_u64(a, b);
+                    let r = vsubq_u64(s, p);
+                    let borrow = vcltq_u64(s, p);
+                    vbslq_u64(borrow, s, r)
+                } else {
+                    // a + b can overflow u64.
+                    let s = vaddq_u64(a, b);
+                    let overflow = vcltq_u64(s, a);
+                    let c = vdupq_n_u64(Self::C_LO);
+                    let s_plus_c = vaddq_u64(s, c);
+                    let s_minus_p = vsubq_u64(s, p);
+                    let borrow = vcltq_u64(s, p);
+                    let no_of = vbslq_u64(borrow, s, s_minus_p);
+                    vbslq_u64(overflow, s_plus_c, no_of)
+                }
+            };
+            Self {
+                vals: from_vec(result),
+            }
+        }
+    }
+
+    impl<const P: u64> Sub for PackedFp64Neon<P> {
+        type Output = Self;
+        #[inline]
+        fn sub(self, rhs: Self) -> Self {
+            let a = to_vec(self.vals);
+            let b = to_vec(rhs.vals);
+            // SAFETY: module is gated on target_feature = "neon".
+            let result = unsafe {
+                let p = vdupq_n_u64(P);
+                let d = vsubq_u64(a, b);
+                let underflow = vcltq_u64(a, b);
+                vbslq_u64(underflow, vaddq_u64(d, p), d)
+            };
+            Self {
+                vals: from_vec(result),
+            }
+        }
+    }
+
+    impl<const P: u64> Mul for PackedFp64Neon<P> {
+        type Output = Self;
+        #[inline]
+        fn mul(self, rhs: Self) -> Self {
+            let r0 = (Fp64::<P>(self.vals[0]) * Fp64::<P>(rhs.vals[0])).0;
+            let r1 = (Fp64::<P>(self.vals[1]) * Fp64::<P>(rhs.vals[1])).0;
+            Self { vals: [r0, r1] }
+        }
+    }
+
+    impl<const P: u64> PackedValue for PackedFp64Neon<P> {
+        type Value = Fp64<P>;
+        const WIDTH: usize = FP64_WIDTH;
+
+        #[inline]
+        fn from_fn<F>(mut f: F) -> Self
+        where
+            F: FnMut(usize) -> Self::Value,
+        {
+            Self {
+                vals: [f(0).0, f(1).0],
+            }
+        }
+
+        #[inline]
+        fn extract(&self, lane: usize) -> Self::Value {
+            debug_assert!(lane < FP64_WIDTH);
+            Fp64(self.vals[lane])
+        }
+    }
+
+    impl<const P: u64> PackedField for PackedFp64Neon<P> {
+        type Scalar = Fp64<P>;
+
+        #[inline]
+        fn broadcast(value: Self::Scalar) -> Self {
+            Self { vals: [value.0; 2] }
+        }
+    }
 }
 
 /// Scalar field -> packed field association.
@@ -498,11 +943,38 @@ impl<const P: u128> HasPacking for Fp128<P> {
     type Packing = Fp128Packing<P>;
 }
 
+/// Selected packed backend for `Fp32`.
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+pub type Fp32Packing<const P: u32> = aarch64_neon::PackedFp32Neon<P>;
+
+/// Scalar fallback packed backend for `Fp32` on non-NEON targets.
+#[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
+pub type Fp32Packing<const P: u32> = NoPacking<Fp32<P>>;
+
+impl<const P: u32> HasPacking for Fp32<P> {
+    type Packing = Fp32Packing<P>;
+}
+
+/// Selected packed backend for `Fp64`.
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+pub type Fp64Packing<const P: u64> = aarch64_neon::PackedFp64Neon<P>;
+
+/// Scalar fallback packed backend for `Fp64` on non-NEON targets.
+#[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
+pub type Fp64Packing<const P: u64> = NoPacking<Fp64<P>>;
+
+impl<const P: u64> HasPacking for Fp64<P> {
+    type Packing = Fp64Packing<P>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::{HasPacking, PackedField, PackedValue};
-    use crate::algebra::fields::Prime128M13M4P0;
-    use crate::CanonicalField;
+    use crate::algebra::fields::{
+        Pow2Offset24Field, Pow2Offset31Field, Pow2Offset32Field, Pow2Offset40Field,
+        Pow2Offset64Field, Prime128M13M4P0,
+    };
+    use crate::{CanonicalField, FieldCore, FieldSampling};
     use rand::{rngs::StdRng, RngCore, SeedableRng};
 
     fn rand_u128<R: RngCore>(rng: &mut R) -> u128 {
@@ -511,8 +983,79 @@ mod tests {
         lo | (hi << 64)
     }
 
+    fn check_packed_add_sub_mul<F, PF>(seed: u64)
+    where
+        F: FieldCore + FieldSampling + PartialEq + std::fmt::Debug,
+        PF: PackedField<Scalar = F> + PackedValue<Value = F>,
+    {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let len = PF::WIDTH * 17 + 3;
+        let lhs: Vec<F> = (0..len).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let rhs: Vec<F> = (0..len).map(|_| FieldSampling::sample(&mut rng)).collect();
+
+        let (lhs_p, lhs_s) = PF::pack_slice_with_suffix(&lhs);
+        let (rhs_p, rhs_s) = PF::pack_slice_with_suffix(&rhs);
+
+        let add_p: Vec<PF> = lhs_p
+            .iter()
+            .zip(rhs_p.iter())
+            .map(|(&a, &b)| a + b)
+            .collect();
+        let sub_p: Vec<PF> = lhs_p
+            .iter()
+            .zip(rhs_p.iter())
+            .map(|(&a, &b)| a - b)
+            .collect();
+        let mul_p: Vec<PF> = lhs_p
+            .iter()
+            .zip(rhs_p.iter())
+            .map(|(&a, &b)| a * b)
+            .collect();
+
+        let mut add_out = PF::unpack_slice(&add_p);
+        let mut sub_out = PF::unpack_slice(&sub_p);
+        let mut mul_out = PF::unpack_slice(&mul_p);
+
+        for (&a, &b) in lhs_s.iter().zip(rhs_s.iter()) {
+            add_out.push(a + b);
+            sub_out.push(a - b);
+            mul_out.push(a * b);
+        }
+
+        for i in 0..len {
+            assert_eq!(
+                add_out[i],
+                lhs[i] + rhs[i],
+                "packed add mismatch at lane {i}"
+            );
+            assert_eq!(
+                sub_out[i],
+                lhs[i] - rhs[i],
+                "packed sub mismatch at lane {i}"
+            );
+            assert_eq!(
+                mul_out[i],
+                lhs[i] * rhs[i],
+                "packed mul mismatch at lane {i}"
+            );
+        }
+    }
+
+    fn check_broadcast_roundtrip<F, PF>(val: F)
+    where
+        F: FieldCore + PartialEq + std::fmt::Debug,
+        PF: PackedField<Scalar = F> + PackedValue<Value = F>,
+    {
+        let p = PF::broadcast(val);
+        for lane in 0..PF::WIDTH {
+            assert_eq!(p.extract(lane), val);
+        }
+    }
+
+    // --- Fp128 ---
+
     #[test]
-    fn packed_add_sub_mul_match_scalar() {
+    fn packed_fp128_add_sub_mul_match_scalar() {
         type F = Prime128M13M4P0;
         type PF = <F as HasPacking>::Packing;
 
@@ -574,14 +1117,62 @@ mod tests {
     }
 
     #[test]
-    fn broadcast_and_extract_roundtrip() {
+    fn fp128_broadcast_and_extract_roundtrip() {
         type F = Prime128M13M4P0;
         type PF = <F as HasPacking>::Packing;
+        check_broadcast_roundtrip::<F, PF>(F::from_u64(42));
+    }
 
-        let x = F::from_u64(42);
-        let p = PF::broadcast(x);
-        for lane in 0..PF::WIDTH {
-            assert_eq!(p.extract(lane), x);
-        }
+    // --- Fp32 ---
+
+    #[test]
+    fn packed_fp32_24b_add_sub_mul() {
+        type F = Pow2Offset24Field;
+        type PF = <F as HasPacking>::Packing;
+        check_packed_add_sub_mul::<F, PF>(0xaa24_bb24_cc24_dd24);
+    }
+
+    #[test]
+    fn packed_fp32_31b_add_sub_mul() {
+        type F = Pow2Offset31Field;
+        type PF = <F as HasPacking>::Packing;
+        check_packed_add_sub_mul::<F, PF>(0xaa31_bb31_cc31_dd31);
+    }
+
+    #[test]
+    fn packed_fp32_32b_add_sub_mul() {
+        type F = Pow2Offset32Field;
+        type PF = <F as HasPacking>::Packing;
+        check_packed_add_sub_mul::<F, PF>(0xaa32_bb32_cc32_dd32);
+    }
+
+    #[test]
+    fn fp32_broadcast_and_extract_roundtrip() {
+        type F = Pow2Offset24Field;
+        type PF = <F as HasPacking>::Packing;
+        check_broadcast_roundtrip::<F, PF>(F::from_u64(42));
+    }
+
+    // --- Fp64 ---
+
+    #[test]
+    fn packed_fp64_40b_add_sub_mul() {
+        type F = Pow2Offset40Field;
+        type PF = <F as HasPacking>::Packing;
+        check_packed_add_sub_mul::<F, PF>(0xaa40_bb40_cc40_dd40);
+    }
+
+    #[test]
+    fn packed_fp64_64b_add_sub_mul() {
+        type F = Pow2Offset64Field;
+        type PF = <F as HasPacking>::Packing;
+        check_packed_add_sub_mul::<F, PF>(0xaa64_bb64_cc64_dd64);
+    }
+
+    #[test]
+    fn fp64_broadcast_and_extract_roundtrip() {
+        type F = Pow2Offset40Field;
+        type PF = <F as HasPacking>::Packing;
+        check_broadcast_roundtrip::<F, PF>(F::from_u64(42));
     }
 }

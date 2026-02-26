@@ -15,7 +15,9 @@ pub use fp128::{
 pub use fp32::Fp32;
 pub use fp64::Fp64;
 pub use lift::LiftBase;
-pub use packed::{Fp128Packing, HasPacking, NoPacking, PackedField, PackedValue};
+pub use packed::{
+    Fp128Packing, Fp32Packing, Fp64Packing, HasPacking, NoPacking, PackedField, PackedValue,
+};
 pub use pseudo_mersenne::{
     is_pow2_offset, pow2_offset, pseudo_mersenne_modulus, Pow2Offset128Field, Pow2Offset24Field,
     Pow2Offset30Field, Pow2Offset31Field, Pow2Offset32Field, Pow2Offset40Field, Pow2Offset48Field,

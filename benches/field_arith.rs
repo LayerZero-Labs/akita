@@ -894,6 +894,71 @@ fn bench_throughput(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_packed_throughput(c: &mut Criterion) {
+    use hachi_pcs::algebra::{Fp32Packing, Fp64Packing};
+
+    let n = 4096u64;
+    let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
+
+    macro_rules! packed_bench {
+        ($group:expr, $label:expr, $field:ty, $packing:ty, $rng:expr, $n:expr) => {{
+            let lhs: Vec<$field> = (0..$n).map(|_| FieldSampling::sample($rng)).collect();
+            let rhs: Vec<$field> = (0..$n).map(|_| FieldSampling::sample($rng)).collect();
+            let lhs_p = <$packing>::pack_slice(&lhs);
+            let rhs_p = <$packing>::pack_slice(&rhs);
+            let mut out_p = vec![<$packing>::broadcast(<$field>::zero()); lhs_p.len()];
+
+            $group.bench_function(concat!($label, "_packed_mul"), |b| {
+                b.iter(|| {
+                    let a = black_box(&lhs_p);
+                    let b_v = black_box(&rhs_p);
+                    let out = &mut out_p;
+                    for i in 0..out.len() {
+                        out[i] = a[i] * b_v[i];
+                    }
+                })
+            });
+            $group.bench_function(concat!($label, "_packed_add"), |b| {
+                b.iter(|| {
+                    let a = black_box(&lhs_p);
+                    let b_v = black_box(&rhs_p);
+                    let out = &mut out_p;
+                    for i in 0..out.len() {
+                        out[i] = a[i] + b_v[i];
+                    }
+                })
+            });
+            $group.bench_function(concat!($label, "_packed_sub"), |b| {
+                b.iter(|| {
+                    let a = black_box(&lhs_p);
+                    let b_v = black_box(&rhs_p);
+                    let out = &mut out_p;
+                    for i in 0..out.len() {
+                        out[i] = a[i] - b_v[i];
+                    }
+                })
+            });
+        }};
+    }
+
+    let mut group = c.benchmark_group("packed_throughput");
+    group.throughput(Throughput::Elements(n));
+
+    type P24 = Fp32Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_24 }>;
+    type P31 = Fp32Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_31 }>;
+    type P32 = Fp32Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_32 }>;
+    type P40 = Fp64Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_40 }>;
+    type P64 = Fp64Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_64 }>;
+
+    packed_bench!(group, "fp32_24b", Pow2Offset24Field, P24, &mut rng, n);
+    packed_bench!(group, "fp32_31b", Pow2Offset31Field, P31, &mut rng, n);
+    packed_bench!(group, "fp32_32b", Pow2Offset32Field, P32, &mut rng, n);
+    packed_bench!(group, "fp64_40b", Pow2Offset40Field, P40, &mut rng, n);
+    packed_bench!(group, "fp64_64b", Pow2Offset64Field, P64, &mut rng, n);
+
+    group.finish();
+}
+
 criterion_group!(
     field_arith,
     bench_mul,
@@ -906,6 +971,7 @@ criterion_group!(
     bench_fp32_fp64_mul,
     bench_widening_ops,
     bench_accumulator_pattern,
-    bench_throughput
+    bench_throughput,
+    bench_packed_throughput
 );
 criterion_main!(field_arith);
