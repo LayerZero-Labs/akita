@@ -5,7 +5,8 @@ use ark_ff::{AdditiveGroup, Field};
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use hachi_pcs::algebra::fields::fp128::{Prime128M18M0, Prime128M54P0};
 use hachi_pcs::algebra::{HasPacking, PackedField, PackedValue, Prime128M13M4P0, Prime128M8M4M1M0};
-use hachi_pcs::{CanonicalField, FieldCore, Invertible};
+use hachi_pcs::algebra::{Pow2Offset24Field, Pow2Offset40Field, Pow2Offset64Field};
+use hachi_pcs::{CanonicalField, FieldCore, FieldSampling, Invertible};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use std::env;
 
@@ -612,6 +613,82 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_fp32_fp64_mul(c: &mut Criterion) {
+    let mut rng = StdRng::seed_from_u64(0x3264_3264);
+    let n = 2048;
+
+    let inputs_24: Vec<Pow2Offset24Field> =
+        (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let inputs_40: Vec<Pow2Offset40Field> =
+        (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let inputs_64: Vec<Pow2Offset64Field> =
+        (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+
+    let mut group = c.benchmark_group("fp32_fp64_mul");
+
+    group.bench_function("fp32_2pow24m3_mul_chain_2048", |b| {
+        b.iter(|| {
+            let mut acc = Pow2Offset24Field::one();
+            for x in inputs_24.iter() {
+                acc = acc * *x;
+            }
+            black_box(acc)
+        })
+    });
+
+    group.bench_function("fp64_2pow40m195_mul_chain_2048", |b| {
+        b.iter(|| {
+            let mut acc = Pow2Offset40Field::one();
+            for x in inputs_40.iter() {
+                acc = acc * *x;
+            }
+            black_box(acc)
+        })
+    });
+
+    group.bench_function("fp64_2pow64m59_mul_chain_2048", |b| {
+        b.iter(|| {
+            let mut acc = Pow2Offset64Field::one();
+            for x in inputs_64.iter() {
+                acc = acc * *x;
+            }
+            black_box(acc)
+        })
+    });
+
+    group.bench_function("fp32_2pow24m3_mul_add_chain_2048", |b| {
+        b.iter(|| {
+            let mut acc = Pow2Offset24Field::one();
+            for x in inputs_24.iter() {
+                acc = acc * *x + acc;
+            }
+            black_box(acc)
+        })
+    });
+
+    group.bench_function("fp64_2pow40m195_mul_add_chain_2048", |b| {
+        b.iter(|| {
+            let mut acc = Pow2Offset40Field::one();
+            for x in inputs_40.iter() {
+                acc = acc * *x + acc;
+            }
+            black_box(acc)
+        })
+    });
+
+    group.bench_function("fp64_2pow64m59_mul_add_chain_2048", |b| {
+        b.iter(|| {
+            let mut acc = Pow2Offset64Field::one();
+            for x in inputs_64.iter() {
+                acc = acc * *x + acc;
+            }
+            black_box(acc)
+        })
+    });
+
+    group.finish();
+}
+
 fn bench_widening_ops(c: &mut Criterion) {
     type F = Prime128M8M4M1M0;
 
@@ -771,6 +848,58 @@ fn bench_accumulator_pattern(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_throughput(c: &mut Criterion) {
+    let n = 4096u64;
+    let mut rng = StdRng::seed_from_u64(0xdead_cafe);
+
+    let a24: Vec<Pow2Offset24Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let b24: Vec<Pow2Offset24Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let a40: Vec<Pow2Offset40Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let b40: Vec<Pow2Offset40Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let a64: Vec<Pow2Offset64Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let b64: Vec<Pow2Offset64Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let a128: Vec<Prime128M8M4M1M0> = (0..n)
+        .map(|_| Prime128M8M4M1M0::from_canonical_u128_reduced(rand_u128(&mut rng)))
+        .collect();
+    let b128: Vec<Prime128M8M4M1M0> = (0..n)
+        .map(|_| Prime128M8M4M1M0::from_canonical_u128_reduced(rand_u128(&mut rng)))
+        .collect();
+
+    let mut out24 = vec![Pow2Offset24Field::zero(); n as usize];
+    let mut out40 = vec![Pow2Offset40Field::zero(); n as usize];
+    let mut out64 = vec![Pow2Offset64Field::zero(); n as usize];
+    let mut out128 = vec![Prime128M8M4M1M0::zero(); n as usize];
+
+    let mut group = c.benchmark_group("throughput");
+    group.throughput(Throughput::Elements(n));
+
+    macro_rules! bench_op {
+        ($name:expr, $a:expr, $b:expr, $out:expr, $op:tt) => {
+            group.bench_function($name, |bench| {
+                bench.iter(|| {
+                    let a = black_box(&$a);
+                    let b = black_box(&$b);
+                    let out = &mut $out;
+                    for i in 0..n as usize {
+                        out[i] = a[i] $op b[i];
+                    }
+                })
+            });
+        };
+    }
+
+    bench_op!("fp32_24b_mul", a24, b24, out24, *);
+    bench_op!("fp32_24b_add", a24, b24, out24, +);
+    bench_op!("fp64_40b_mul", a40, b40, out40, *);
+    bench_op!("fp64_40b_add", a40, b40, out40, +);
+    bench_op!("fp64_64b_mul", a64, b64, out64, *);
+    bench_op!("fp64_64b_add", a64, b64, out64, +);
+    bench_op!("fp128_mul", a128, b128, out128, *);
+    bench_op!("fp128_add", a128, b128, out128, +);
+
+    group.finish();
+}
+
 criterion_group!(
     field_arith,
     bench_mul,
@@ -780,7 +909,9 @@ criterion_group!(
     bench_inv,
     bench_packed_fp128_backend,
     bench_bn254,
+    bench_fp32_fp64_mul,
     bench_widening_ops,
-    bench_accumulator_pattern
+    bench_accumulator_pattern,
+    bench_throughput
 );
 criterion_main!(field_arith);

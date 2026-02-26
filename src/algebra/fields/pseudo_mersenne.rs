@@ -4,7 +4,6 @@
 //! prime below `2^k` with `q % 8 == 5`, written as `q = 2^k - offset`.
 
 use super::{Fp128, Fp32, Fp64};
-use crate::PseudoMersenneField;
 
 /// Offset table (`q = 2^k - offset[k]`) imported from `labrador/data.py`.
 pub const POW2_OFFSET_TABLE: [i16; 256] = [
@@ -162,35 +161,5 @@ pub const POW2_OFFSET_PRIMES: [Pow2OffsetPrimeSpec; 7] = [
     },
 ];
 
-impl PseudoMersenneField for Fp32<POW2_OFFSET_MODULUS_24> {
-    const MODULUS_BITS: u32 = 24;
-    const MODULUS_OFFSET: u128 = POW2_OFFSET_24 as u128;
-}
-
-impl PseudoMersenneField for Fp32<POW2_OFFSET_MODULUS_32> {
-    const MODULUS_BITS: u32 = 32;
-    const MODULUS_OFFSET: u128 = POW2_OFFSET_32 as u128;
-}
-
-impl PseudoMersenneField for Fp64<POW2_OFFSET_MODULUS_40> {
-    const MODULUS_BITS: u32 = 40;
-    const MODULUS_OFFSET: u128 = POW2_OFFSET_40 as u128;
-}
-
-impl PseudoMersenneField for Fp64<POW2_OFFSET_MODULUS_48> {
-    const MODULUS_BITS: u32 = 48;
-    const MODULUS_OFFSET: u128 = POW2_OFFSET_48 as u128;
-}
-
-impl PseudoMersenneField for Fp64<POW2_OFFSET_MODULUS_56> {
-    const MODULUS_BITS: u32 = 56;
-    const MODULUS_OFFSET: u128 = POW2_OFFSET_56 as u128;
-}
-
-impl PseudoMersenneField for Fp64<POW2_OFFSET_MODULUS_64> {
-    const MODULUS_BITS: u32 = 64;
-    const MODULUS_OFFSET: u128 = POW2_OFFSET_64 as u128;
-}
-
-// Fp128<POW2_OFFSET_MODULUS_128> gets PseudoMersenneField via the
-// blanket impl in fp128.rs (MODULUS_BITS=128, MODULUS_OFFSET=C).
+// All PseudoMersenneField impls for Fp32/Fp64/Fp128 are blanket impls in
+// their respective modules (fp32.rs, fp64.rs, fp128.rs).

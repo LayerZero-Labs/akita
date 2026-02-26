@@ -30,7 +30,7 @@ pub trait CrtNttConvertibleField: FieldCore + CanonicalField {
     fn from_q_residue_u128(x: u128) -> Self;
 }
 
-impl<const MODULUS: u32> CrtNttConvertibleField for Fp32<MODULUS> {
+impl<const P: u32> CrtNttConvertibleField for Fp32<P> {
     #[inline]
     fn mod_small_prime(self, p: i16) -> i16 {
         (self.to_canonical_u32() % (p as u32)) as i16
@@ -43,7 +43,7 @@ impl<const MODULUS: u32> CrtNttConvertibleField for Fp32<MODULUS> {
     }
 }
 
-impl<const MODULUS: u64> CrtNttConvertibleField for Fp64<MODULUS> {
+impl<const P: u64> CrtNttConvertibleField for Fp64<P> {
     #[inline]
     fn mod_small_prime(self, p: i16) -> i16 {
         (self.to_canonical_u64() % (p as u64)) as i16
@@ -56,7 +56,7 @@ impl<const MODULUS: u64> CrtNttConvertibleField for Fp64<MODULUS> {
     }
 }
 
-impl<const MODULUS: u128> CrtNttConvertibleField for Fp128<MODULUS> {
+impl<const P: u128> CrtNttConvertibleField for Fp128<P> {
     #[inline]
     fn mod_small_prime(self, p: i16) -> i16 {
         (self.to_canonical_u128() % (p as u128)) as i16
