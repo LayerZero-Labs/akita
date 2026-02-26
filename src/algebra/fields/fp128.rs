@@ -10,16 +10,15 @@
 //! modulus `p`** (excluding the leading `+2^128` term).  For example,
 //! `Prime128M13M4P0` denotes `p = 2^128 − 2^13 − 2^4 + 2^0`.
 
+use std::io::{Read, Write};
+use std::ops::{Add, Mul, Neg, Sub};
+
+use rand_core::RngCore;
+
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
 use crate::{CanonicalField, FieldCore, FieldSampling, Invertible, PseudoMersenneField};
-use rand_core::RngCore;
-use std::io::{Read, Write};
-
-// ---------------------------------------------------------------------------
-// Limb helpers
-// ---------------------------------------------------------------------------
 
 /// Pack two u64 limbs into `[lo, hi]`.
 #[inline(always)]
@@ -41,7 +40,7 @@ const fn to_u128(x: [u64; 2]) -> u128 {
 
 /// `a * b` widening to 128 bits; returns `(lo64, hi64)`.
 #[inline(always)]
-fn mul_wide(a: u64, b: u64) -> (u64, u64) {
+fn mul64_wide(a: u64, b: u64) -> (u64, u64) {
     let prod = (a as u128) * (b as u128);
     (prod as u64, (prod >> 64) as u64)
 }
@@ -60,10 +59,6 @@ const fn log2_pow2_u64(mut x: u64) -> u32 {
     }
     k
 }
-
-// ---------------------------------------------------------------------------
-// Fp128
-// ---------------------------------------------------------------------------
 
 /// 128-bit prime field element for primes `p = 2^128 − c` with `c < 2^64`.
 ///
@@ -135,7 +130,7 @@ impl<const P: u128> Fp128<P> {
             let v = ((x as u128) << Self::C_SHIFT) - x as u128;
             (v as u64, (v >> 64) as u64)
         } else {
-            mul_wide(Self::C_LO, x)
+            mul64_wide(Self::C_LO, x)
         }
     }
 
@@ -205,6 +200,27 @@ impl<const P: u128> Fp128<P> {
         )
     }
 
+    /// Solinas fold for exactly 4 limbs: `[r0,r1] + C·[r2,r3]` → 3 limbs,
+    /// then `fold2_canonicalize`.
+    #[inline(always)]
+    fn reduce_4(r0: u64, r1: u64, r2: u64, r3: u64) -> [u64; 2] {
+        let (cr2_lo, cr2_hi) = Self::mul_c_wide(r2);
+        let (cr3_lo, cr3_hi) = Self::mul_c_wide(r3);
+
+        let t0_sum = r0 as u128 + cr2_lo as u128;
+        let t0 = t0_sum as u64;
+        let carryf = (t0_sum >> 64) as u64;
+
+        let t1_sum = r1 as u128 + cr2_hi as u128 + cr3_lo as u128 + carryf as u128;
+        let t1 = t1_sum as u64;
+
+        let t2_sum = cr3_hi as u128 + (t1_sum >> 64);
+        let t2 = t2_sum as u64;
+        debug_assert_eq!(t2_sum >> 64, 0);
+
+        Self::fold2_canonicalize(t0, t1, t2)
+    }
+
     #[inline(always)]
     fn mul_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let [r0, r1, r2, r3] = Self(a).mul_wide(Self(b));
@@ -235,10 +251,6 @@ impl<const P: u128> Fp128<P> {
         acc
     }
 
-    // -----------------------------------------------------------------------
-    // Widening operations & Solinas reduce (no intermediate reduction)
-    // -----------------------------------------------------------------------
-
     /// Extract the canonical `[lo, hi]` limb representation.
     #[inline(always)]
     pub fn to_limbs(self) -> [u64; 2] {
@@ -252,8 +264,8 @@ impl<const P: u128> Fp128<P> {
     #[inline(always)]
     pub fn mul_wide_u64(self, other: u64) -> [u64; 3] {
         let (a0, a1) = (self.0[0], self.0[1]);
-        let (p0_lo, p0_hi) = mul_wide(a0, other);
-        let (p1_lo, p1_hi) = mul_wide(a1, other);
+        let (p0_lo, p0_hi) = mul64_wide(a0, other);
+        let (p1_lo, p1_hi) = mul64_wide(a1, other);
         let mid = p0_hi as u128 + p1_lo as u128;
         let hi = p1_hi + (mid >> 64) as u64;
         [p0_lo, mid as u64, hi]
@@ -269,10 +281,10 @@ impl<const P: u128> Fp128<P> {
         let (a0, a1) = (self.0[0], self.0[1]);
         let (b0, b1) = (other.0[0], other.0[1]);
 
-        let (p00_lo, p00_hi) = mul_wide(a0, b0);
-        let (p01_lo, p01_hi) = mul_wide(a0, b1);
-        let (p10_lo, p10_hi) = mul_wide(a1, b0);
-        let (p11_lo, p11_hi) = mul_wide(a1, b1);
+        let (p00_lo, p00_hi) = mul64_wide(a0, b0);
+        let (p01_lo, p01_hi) = mul64_wide(a0, b1);
+        let (p10_lo, p10_hi) = mul64_wide(a1, b0);
+        let (p11_lo, p11_hi) = mul64_wide(a1, b1);
 
         let row1 = p00_hi as u128 + p01_lo as u128 + p10_lo as u128;
         let r0 = p00_lo;
@@ -295,27 +307,6 @@ impl<const P: u128> Fp128<P> {
     #[inline(always)]
     pub fn mul_wide_u128(self, other: u128) -> [u64; 4] {
         self.mul_wide(Self(from_u128(other)))
-    }
-
-    /// Solinas fold-1 for exactly 4 limbs: `[r0,r1] + C·[r2,r3]` → 3 limbs,
-    /// then `fold2_canonicalize`.  Same code path as `mul_raw`.
-    #[inline(always)]
-    fn reduce_4(r0: u64, r1: u64, r2: u64, r3: u64) -> [u64; 2] {
-        let (cr2_lo, cr2_hi) = Self::mul_c_wide(r2);
-        let (cr3_lo, cr3_hi) = Self::mul_c_wide(r3);
-
-        let t0_sum = r0 as u128 + cr2_lo as u128;
-        let t0 = t0_sum as u64;
-        let carryf = (t0_sum >> 64) as u64;
-
-        let t1_sum = r1 as u128 + cr2_hi as u128 + cr3_lo as u128 + carryf as u128;
-        let t1 = t1_sum as u64;
-
-        let t2_sum = cr3_hi as u128 + (t1_sum >> 64);
-        let t2 = t2_sum as u64;
-        debug_assert_eq!(t2_sum >> 64, 0);
-
-        Self::fold2_canonicalize(t0, t1, t2)
     }
 
     /// Reduce an arbitrary-width little-endian limb array to a canonical
@@ -397,11 +388,7 @@ impl<const P: u128> Fp128<P> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Operator impls
-// ---------------------------------------------------------------------------
-
-impl<const P: u128> std::ops::Add for Fp128<P> {
+impl<const P: u128> Add for Fp128<P> {
     type Output = Self;
     #[inline]
     fn add(self, rhs: Self) -> Self::Output {
@@ -409,7 +396,7 @@ impl<const P: u128> std::ops::Add for Fp128<P> {
     }
 }
 
-impl<const P: u128> std::ops::Sub for Fp128<P> {
+impl<const P: u128> Sub for Fp128<P> {
     type Output = Self;
     #[inline]
     fn sub(self, rhs: Self) -> Self::Output {
@@ -417,7 +404,7 @@ impl<const P: u128> std::ops::Sub for Fp128<P> {
     }
 }
 
-impl<const P: u128> std::ops::Mul for Fp128<P> {
+impl<const P: u128> Mul for Fp128<P> {
     type Output = Self;
     #[inline]
     fn mul(self, rhs: Self) -> Self::Output {
@@ -425,7 +412,7 @@ impl<const P: u128> std::ops::Mul for Fp128<P> {
     }
 }
 
-impl<const P: u128> std::ops::Neg for Fp128<P> {
+impl<const P: u128> Neg for Fp128<P> {
     type Output = Self;
     #[inline]
     fn neg(self) -> Self::Output {
@@ -433,7 +420,7 @@ impl<const P: u128> std::ops::Neg for Fp128<P> {
     }
 }
 
-impl<'a, const P: u128> std::ops::Add<&'a Self> for Fp128<P> {
+impl<'a, const P: u128> Add<&'a Self> for Fp128<P> {
     type Output = Self;
     #[inline]
     fn add(self, rhs: &'a Self) -> Self::Output {
@@ -441,7 +428,7 @@ impl<'a, const P: u128> std::ops::Add<&'a Self> for Fp128<P> {
     }
 }
 
-impl<'a, const P: u128> std::ops::Sub<&'a Self> for Fp128<P> {
+impl<'a, const P: u128> Sub<&'a Self> for Fp128<P> {
     type Output = Self;
     #[inline]
     fn sub(self, rhs: &'a Self) -> Self::Output {
@@ -449,17 +436,13 @@ impl<'a, const P: u128> std::ops::Sub<&'a Self> for Fp128<P> {
     }
 }
 
-impl<'a, const P: u128> std::ops::Mul<&'a Self> for Fp128<P> {
+impl<'a, const P: u128> Mul<&'a Self> for Fp128<P> {
     type Output = Self;
     #[inline]
     fn mul(self, rhs: &'a Self) -> Self::Output {
         self * *rhs
     }
 }
-
-// ---------------------------------------------------------------------------
-// Serialization
-// ---------------------------------------------------------------------------
 
 impl<const P: u128> Valid for Fp128<P> {
     fn check(&self) -> Result<(), SerializationError> {
@@ -515,10 +498,6 @@ impl<const P: u128> HachiDeserialize for Fp128<P> {
         Ok(Self(from_u128(out)))
     }
 }
-
-// ---------------------------------------------------------------------------
-// Core field traits
-// ---------------------------------------------------------------------------
 
 impl<const P: u128> FieldCore for Fp128<P> {
     fn zero() -> Self {
@@ -614,10 +593,6 @@ impl<const P: u128> PseudoMersenneField for Fp128<P> {
     const MODULUS_BITS: u32 = 128;
     const MODULUS_OFFSET: u128 = Self::C;
 }
-
-// ---------------------------------------------------------------------------
-// Built-in prime type aliases
-// ---------------------------------------------------------------------------
 
 /// `p = 2^128 − 2^13 − 2^4 + 2^0`  (C = 8207).
 pub type Prime128M13M4P0 = Fp128<0xffffffffffffffffffffffffffffdff1>;
