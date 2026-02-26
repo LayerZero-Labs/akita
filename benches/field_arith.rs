@@ -5,7 +5,10 @@ use ark_ff::{AdditiveGroup, Field};
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use hachi_pcs::algebra::fields::fp128::{Prime128M18M0, Prime128M54P0};
 use hachi_pcs::algebra::{HasPacking, PackedField, PackedValue, Prime128M13M4P0, Prime128M8M4M1M0};
-use hachi_pcs::algebra::{Pow2Offset24Field, Pow2Offset40Field, Pow2Offset64Field};
+use hachi_pcs::algebra::{
+    Pow2Offset24Field, Pow2Offset30Field, Pow2Offset31Field, Pow2Offset32Field, Pow2Offset40Field,
+    Pow2Offset64Field,
+};
 use hachi_pcs::{CanonicalField, FieldCore, FieldSampling, Invertible};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use std::env;
@@ -619,6 +622,12 @@ fn bench_fp32_fp64_mul(c: &mut Criterion) {
 
     let inputs_24: Vec<Pow2Offset24Field> =
         (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let inputs_30: Vec<Pow2Offset30Field> =
+        (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let inputs_31: Vec<Pow2Offset31Field> =
+        (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let inputs_32: Vec<Pow2Offset32Field> =
+        (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let inputs_40: Vec<Pow2Offset40Field> =
         (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let inputs_64: Vec<Pow2Offset64Field> =
@@ -626,65 +635,35 @@ fn bench_fp32_fp64_mul(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("fp32_fp64_mul");
 
-    group.bench_function("fp32_2pow24m3_mul_chain_2048", |b| {
-        b.iter(|| {
-            let mut acc = Pow2Offset24Field::one();
-            for x in inputs_24.iter() {
-                acc = acc * *x;
-            }
-            black_box(acc)
-        })
-    });
+    macro_rules! chain_bench {
+        ($name:expr, $ty:ty, $inputs:expr) => {
+            group.bench_function(concat!($name, "_mul_chain_2048"), |b| {
+                b.iter(|| {
+                    let mut acc = <$ty>::one();
+                    for x in $inputs.iter() {
+                        acc = acc * *x;
+                    }
+                    black_box(acc)
+                })
+            });
+            group.bench_function(concat!($name, "_mul_add_chain_2048"), |b| {
+                b.iter(|| {
+                    let mut acc = <$ty>::one();
+                    for x in $inputs.iter() {
+                        acc = acc * *x + acc;
+                    }
+                    black_box(acc)
+                })
+            });
+        };
+    }
 
-    group.bench_function("fp64_2pow40m195_mul_chain_2048", |b| {
-        b.iter(|| {
-            let mut acc = Pow2Offset40Field::one();
-            for x in inputs_40.iter() {
-                acc = acc * *x;
-            }
-            black_box(acc)
-        })
-    });
-
-    group.bench_function("fp64_2pow64m59_mul_chain_2048", |b| {
-        b.iter(|| {
-            let mut acc = Pow2Offset64Field::one();
-            for x in inputs_64.iter() {
-                acc = acc * *x;
-            }
-            black_box(acc)
-        })
-    });
-
-    group.bench_function("fp32_2pow24m3_mul_add_chain_2048", |b| {
-        b.iter(|| {
-            let mut acc = Pow2Offset24Field::one();
-            for x in inputs_24.iter() {
-                acc = acc * *x + acc;
-            }
-            black_box(acc)
-        })
-    });
-
-    group.bench_function("fp64_2pow40m195_mul_add_chain_2048", |b| {
-        b.iter(|| {
-            let mut acc = Pow2Offset40Field::one();
-            for x in inputs_40.iter() {
-                acc = acc * *x + acc;
-            }
-            black_box(acc)
-        })
-    });
-
-    group.bench_function("fp64_2pow64m59_mul_add_chain_2048", |b| {
-        b.iter(|| {
-            let mut acc = Pow2Offset64Field::one();
-            for x in inputs_64.iter() {
-                acc = acc * *x + acc;
-            }
-            black_box(acc)
-        })
-    });
+    chain_bench!("fp32_2pow24m3", Pow2Offset24Field, inputs_24);
+    chain_bench!("fp32_2pow30m35", Pow2Offset30Field, inputs_30);
+    chain_bench!("fp32_2pow31m19", Pow2Offset31Field, inputs_31);
+    chain_bench!("fp32_2pow32m99", Pow2Offset32Field, inputs_32);
+    chain_bench!("fp64_2pow40m195", Pow2Offset40Field, inputs_40);
+    chain_bench!("fp64_2pow64m59", Pow2Offset64Field, inputs_64);
 
     group.finish();
 }
@@ -854,6 +833,12 @@ fn bench_throughput(c: &mut Criterion) {
 
     let a24: Vec<Pow2Offset24Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let b24: Vec<Pow2Offset24Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let a30: Vec<Pow2Offset30Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let b30: Vec<Pow2Offset30Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let a31: Vec<Pow2Offset31Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let b31: Vec<Pow2Offset31Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let a32: Vec<Pow2Offset32Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let b32: Vec<Pow2Offset32Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let a40: Vec<Pow2Offset40Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let b40: Vec<Pow2Offset40Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let a64: Vec<Pow2Offset64Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
@@ -866,6 +851,9 @@ fn bench_throughput(c: &mut Criterion) {
         .collect();
 
     let mut out24 = vec![Pow2Offset24Field::zero(); n as usize];
+    let mut out30 = vec![Pow2Offset30Field::zero(); n as usize];
+    let mut out31 = vec![Pow2Offset31Field::zero(); n as usize];
+    let mut out32 = vec![Pow2Offset32Field::zero(); n as usize];
     let mut out40 = vec![Pow2Offset40Field::zero(); n as usize];
     let mut out64 = vec![Pow2Offset64Field::zero(); n as usize];
     let mut out128 = vec![Prime128M8M4M1M0::zero(); n as usize];
@@ -890,6 +878,12 @@ fn bench_throughput(c: &mut Criterion) {
 
     bench_op!("fp32_24b_mul", a24, b24, out24, *);
     bench_op!("fp32_24b_add", a24, b24, out24, +);
+    bench_op!("fp32_30b_mul", a30, b30, out30, *);
+    bench_op!("fp32_30b_add", a30, b30, out30, +);
+    bench_op!("fp32_31b_mul", a31, b31, out31, *);
+    bench_op!("fp32_31b_add", a31, b31, out31, +);
+    bench_op!("fp32_32b_mul", a32, b32, out32, *);
+    bench_op!("fp32_32b_add", a32, b32, out32, +);
     bench_op!("fp64_40b_mul", a40, b40, out40, *);
     bench_op!("fp64_40b_add", a40, b40, out40, +);
     bench_op!("fp64_64b_mul", a64, b64, out64, *);

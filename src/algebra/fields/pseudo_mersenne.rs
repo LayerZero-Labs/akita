@@ -77,6 +77,10 @@ pub const fn is_pow2_offset(bits: u32, offset: u128) -> bool {
 
 /// `offset` for `k = 24`.
 pub const POW2_OFFSET_24: u16 = 3;
+/// `offset` for `k = 30`.
+pub const POW2_OFFSET_30: u16 = 35;
+/// `offset` for `k = 31`.
+pub const POW2_OFFSET_31: u16 = 19;
 /// `offset` for `k = 32`.
 pub const POW2_OFFSET_32: u16 = 99;
 /// `offset` for `k = 40`.
@@ -92,6 +96,10 @@ pub const POW2_OFFSET_128: u16 = 275;
 
 /// `2^24 - 3`.
 pub const POW2_OFFSET_MODULUS_24: u32 = ((1u128 << 24) - (POW2_OFFSET_24 as u128)) as u32;
+/// `2^30 - 35`.
+pub const POW2_OFFSET_MODULUS_30: u32 = ((1u128 << 30) - (POW2_OFFSET_30 as u128)) as u32;
+/// `2^31 - 19`.
+pub const POW2_OFFSET_MODULUS_31: u32 = ((1u128 << 31) - (POW2_OFFSET_31 as u128)) as u32;
 /// `2^32 - 99`.
 pub const POW2_OFFSET_MODULUS_32: u32 = ((1u128 << 32) - (POW2_OFFSET_32 as u128)) as u32;
 /// `2^40 - 195`.
@@ -107,6 +115,10 @@ pub const POW2_OFFSET_MODULUS_128: u128 = u128::MAX - (POW2_OFFSET_128 as u128 -
 
 /// Alias for `2^24 - offset`.
 pub type Pow2Offset24Field = Fp32<POW2_OFFSET_MODULUS_24>;
+/// Alias for `2^30 - offset`.
+pub type Pow2Offset30Field = Fp32<POW2_OFFSET_MODULUS_30>;
+/// Alias for `2^31 - offset`.
+pub type Pow2Offset31Field = Fp32<POW2_OFFSET_MODULUS_31>;
 /// Alias for `2^32 - offset`.
 pub type Pow2Offset32Field = Fp32<POW2_OFFSET_MODULUS_32>;
 /// Alias for `2^40 - offset`.
