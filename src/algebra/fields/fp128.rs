@@ -46,6 +46,21 @@ fn mul_wide(a: u64, b: u64) -> (u64, u64) {
     (prod as u64, (prod >> 64) as u64)
 }
 
+#[inline(always)]
+const fn is_pow2_u64(x: u64) -> bool {
+    x != 0 && (x & (x - 1)) == 0
+}
+
+#[inline(always)]
+const fn log2_pow2_u64(mut x: u64) -> u32 {
+    let mut k = 0u32;
+    while x > 1 {
+        x >>= 1;
+        k += 1;
+    }
+    k
+}
+
 // ---------------------------------------------------------------------------
 // Fp128
 // ---------------------------------------------------------------------------
@@ -83,6 +98,46 @@ impl<const P: u128> Fp128<P> {
         c
     };
     const C_LO: u64 = Self::C as u64;
+    /// +1 means `C = 2^a + 1`, -1 means `C = 2^a - 1`, 0 means generic.
+    const C_SHIFT_KIND: i8 = {
+        let c = Self::C_LO;
+        if c > 1 && is_pow2_u64(c - 1) {
+            1
+        } else if c == u64::MAX || is_pow2_u64(c + 1) {
+            -1
+        } else {
+            0
+        }
+    };
+    const C_SHIFT: u32 = {
+        let c = Self::C_LO;
+        if Self::C_SHIFT_KIND == 1 {
+            log2_pow2_u64(c - 1)
+        } else if Self::C_SHIFT_KIND == -1 {
+            if c == u64::MAX {
+                64
+            } else {
+                log2_pow2_u64(c + 1)
+            }
+        } else {
+            0
+        }
+    };
+
+    /// Multiply by `C = 2^128 - P`. For `C = 2^a ± 1`, this is shift/add or
+    /// shift/sub only; otherwise it falls back to generic widening multiply.
+    #[inline(always)]
+    fn mul_c_wide(x: u64) -> (u64, u64) {
+        if Self::C_SHIFT_KIND == 1 {
+            let v = ((x as u128) << Self::C_SHIFT) + x as u128;
+            (v as u64, (v >> 64) as u64)
+        } else if Self::C_SHIFT_KIND == -1 {
+            let v = ((x as u128) << Self::C_SHIFT) - x as u128;
+            (v as u64, (v >> 64) as u64)
+        } else {
+            mul_wide(Self::C_LO, x)
+        }
+    }
 
     /// Create from a canonical representative in `[0, p)`.
     #[inline]
@@ -134,7 +189,7 @@ impl<const P: u128> Fp128<P> {
     /// in both cases, fusing the overflow correction with canonicalization.
     #[inline(always)]
     fn fold2_canonicalize(t0: u64, t1: u64, t2: u64) -> [u64; 2] {
-        let (ct2_lo, ct2_hi) = mul_wide(Self::C_LO, t2);
+        let (ct2_lo, ct2_hi) = Self::mul_c_wide(t2);
 
         let (s0, carry0) = t0.overflowing_add(ct2_lo);
         let (s1a, carry1a) = t1.overflowing_add(ct2_hi);
@@ -154,7 +209,6 @@ impl<const P: u128> Fp128<P> {
     fn mul_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let (a0, a1) = (a[0], a[1]);
         let (b0, b1) = (b[0], b[1]);
-        let c = Self::C_LO;
 
         // Schoolbook 2x2 -> 4 u64 limbs, with products materialized first to
         // increase ILP in generated code.
@@ -177,8 +231,8 @@ impl<const P: u128> Fp128<P> {
         debug_assert_eq!(row3 >> 64, 0);
 
         // Solinas fold 1: [t0,t1,t2] = [r0,r1] + c*[r2,r3].
-        let (cr2_lo, cr2_hi) = mul_wide(c, r2);
-        let (cr3_lo, cr3_hi) = mul_wide(c, r3);
+        let (cr2_lo, cr2_hi) = Self::mul_c_wide(r2);
+        let (cr3_lo, cr3_hi) = Self::mul_c_wide(r3);
 
         let t0_sum = r0 as u128 + cr2_lo as u128;
         let t0 = t0_sum as u64;
@@ -451,3 +505,7 @@ pub type Prime128M52M3P0 = Fp128<0xffffffffffffffffffeffffffffffff9>;
 pub type Prime128M54P4P0 = Fp128<0xffffffffffffffffffc0000000000011>;
 /// `p = 2^128 − 2^8 − 2^4 − 2^1 − 2^0`  (C = 275).
 pub type Prime128M8M4M1M0 = Fp128<0xfffffffffffffffffffffffffffffeed>;
+/// `p = 2^128 − 2^18 − 2^0`  (C = 2^18 + 1).
+pub type Prime128M18M0 = Fp128<0xfffffffffffffffffffffffffffbffff>;
+/// `p = 2^128 − 2^54 + 2^0`  (C = 2^54 − 1).
+pub type Prime128M54P0 = Fp128<0xffffffffffffffffffc0000000000001>;

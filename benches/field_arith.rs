@@ -3,6 +3,7 @@
 use ark_bn254::Fr as BN254Fr;
 use ark_ff::{AdditiveGroup, Field};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use hachi_pcs::algebra::fields::fp128::{Prime128M18M0, Prime128M54P0};
 use hachi_pcs::algebra::{Prime128M13M4P0, Prime128M8M4M1M0};
 use hachi_pcs::{CanonicalField, FieldCore, Invertible};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
@@ -16,6 +17,8 @@ fn rand_u128<R: RngCore>(rng: &mut R) -> u128 {
 fn bench_mul(c: &mut Criterion) {
     type F13 = Prime128M13M4P0;
     type F275 = Prime128M8M4M1M0;
+    type F2p18p1 = Prime128M18M0;
+    type F2p54m1 = Prime128M54P0;
 
     let mut rng = StdRng::seed_from_u64(0x5eed);
     let inputs_u128: Vec<u128> = (0..2048).map(|_| rand_u128(&mut rng)).collect();
@@ -30,6 +33,16 @@ fn bench_mul(c: &mut Criterion) {
         .iter()
         .copied()
         .map(F275::from_canonical_u128_reduced)
+        .collect();
+    let inputs_f2p18p1: Vec<F2p18p1> = inputs_u128
+        .iter()
+        .copied()
+        .map(F2p18p1::from_canonical_u128_reduced)
+        .collect();
+    let inputs_f2p54m1: Vec<F2p54m1> = inputs_u128
+        .iter()
+        .copied()
+        .map(F2p54m1::from_canonical_u128_reduced)
         .collect();
 
     let mut group = c.benchmark_group("field_mul");
@@ -54,15 +67,43 @@ fn bench_mul(c: &mut Criterion) {
         })
     });
 
+    group.bench_function("fp128_prime128m18m0_shift_special", |b| {
+        b.iter(|| {
+            let mut acc = F2p18p1::one();
+            for x in inputs_f2p18p1.iter() {
+                acc = acc * *x + acc;
+            }
+            black_box(acc)
+        })
+    });
+
+    group.bench_function("fp128_prime128m54p0_shift_special", |b| {
+        b.iter(|| {
+            let mut acc = F2p54m1::one();
+            for x in inputs_f2p54m1.iter() {
+                acc = acc * *x + acc;
+            }
+            black_box(acc)
+        })
+    });
+
     group.finish();
 }
 
 fn bench_mul_only(c: &mut Criterion) {
     type F13 = Prime128M13M4P0;
+    type F2p18p1 = Prime128M18M0;
+    type F2p54m1 = Prime128M54P0;
 
     let mut rng = StdRng::seed_from_u64(0x5eed);
-    let inputs: Vec<F13> = (0..2048)
+    let inputs_f13: Vec<F13> = (0..2048)
         .map(|_| F13::from_canonical_u128_reduced(rand_u128(&mut rng)))
+        .collect();
+    let inputs_f2p18p1: Vec<F2p18p1> = (0..2048)
+        .map(|_| F2p18p1::from_canonical_u128_reduced(rand_u128(&mut rng)))
+        .collect();
+    let inputs_f2p54m1: Vec<F2p54m1> = (0..2048)
+        .map(|_| F2p54m1::from_canonical_u128_reduced(rand_u128(&mut rng)))
         .collect();
 
     let mut group = c.benchmark_group("field_mul_only");
@@ -70,7 +111,7 @@ fn bench_mul_only(c: &mut Criterion) {
     group.bench_function("mul_chain_2048", |b| {
         b.iter(|| {
             let mut acc = F13::one();
-            for x in inputs.iter() {
+            for x in inputs_f13.iter() {
                 acc = acc * *x;
             }
             black_box(acc)
@@ -81,7 +122,7 @@ fn bench_mul_only(c: &mut Criterion) {
         b.iter(|| {
             let mut acc = F13::one();
             for _ in 0..8 {
-                for x in inputs.iter() {
+                for x in inputs_f13.iter() {
                     acc = acc * *x;
                 }
             }
@@ -92,10 +133,30 @@ fn bench_mul_only(c: &mut Criterion) {
     group.bench_function("mul_parallel_1024", |b| {
         b.iter(|| {
             let mut sum = F13::zero();
-            for pair in inputs.chunks_exact(2) {
+            for pair in inputs_f13.chunks_exact(2) {
                 sum = sum + pair[0] * pair[1];
             }
             black_box(sum)
+        })
+    });
+
+    group.bench_function("mul_chain_2048_special_m18m0", |b| {
+        b.iter(|| {
+            let mut acc = F2p18p1::one();
+            for x in inputs_f2p18p1.iter() {
+                acc = acc * *x;
+            }
+            black_box(acc)
+        })
+    });
+
+    group.bench_function("mul_chain_2048_special_m54p0", |b| {
+        b.iter(|| {
+            let mut acc = F2p54m1::one();
+            for x in inputs_f2p54m1.iter() {
+                acc = acc * *x;
+            }
+            black_box(acc)
         })
     });
 
