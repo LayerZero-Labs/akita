@@ -826,14 +826,18 @@ impl<const P: u128> FieldSampling for Fp128<P> {
 
 impl<const P: u128> CanonicalField for Fp128<P> {
     fn from_u64(val: u64) -> Self {
-        Self::from_canonical_u128_reduced(val as u128)
+        // For Fp128 pseudo-Mersenne primes, p = 2^128 - c with c < 2^64.
+        // Therefore any u64 is always canonical (< p), so this can be a
+        // direct limb construction with no reduction path.
+        Self(from_u128(val as u128))
     }
 
     fn from_i64(val: i64) -> Self {
         if val >= 0 {
             Self::from_u64(val as u64)
         } else {
-            -Self::from_u64((-val) as u64)
+            // unsigned_abs avoids overflow for i64::MIN.
+            -Self::from_u64(val.unsigned_abs())
         }
     }
 
@@ -1014,5 +1018,12 @@ mod tests {
         let c = H::from_canonical_u128_reduced(<H as PseudoMersenneField>::MODULUS_OFFSET);
         let expected = c * c - H::one();
         assert_eq!(H::solinas_reduce(&[u64::MAX; 4]), expected);
+    }
+
+    #[test]
+    fn from_i64_handles_min_without_overflow() {
+        let x = F::from_i64(i64::MIN);
+        let y = F::from_u64(i64::MIN.unsigned_abs());
+        assert_eq!(x + y, F::zero());
     }
 }
