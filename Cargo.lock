@@ -65,6 +65,7 @@ checksum = "5192cca8006f1fd4f7237516f40fa183bb07f8fbdfedaa0036de5ea9b0b45e78"
 [[package]]
 name = "ark-bn254"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev/twist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "ark-ec",
  "ark-ff",
@@ -75,6 +76,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev/twist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -84,7 +86,7 @@ dependencies = [
  "educe",
  "fnv",
  "hashbrown",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "num-bigint",
  "num-integer",
  "num-traits",
@@ -94,23 +96,27 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev/twist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "allocative",
  "ark-ff-asm",
  "ark-ff-macros",
  "ark-serialize",
  "ark-std",
+ "arrayvec",
  "digest",
  "educe",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "num-bigint",
  "num-traits",
+ "paste",
  "zeroize",
 ]
 
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev/twist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "quote",
  "syn 2.0.110",
@@ -119,6 +125,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev/twist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -130,6 +137,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev/twist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -143,9 +151,11 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev/twist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "ark-serialize-derive",
  "ark-std",
+ "arrayvec",
  "digest",
  "num-bigint",
 ]
@@ -153,6 +163,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev/twist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -168,6 +179,12 @@ dependencies = [
  "num-traits",
  "rand",
 ]
+
+[[package]]
+name = "arrayvec"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
 name = "autocfg"
@@ -475,9 +492,9 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.16.1"
+version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
  "allocator-api2",
 ]
@@ -510,9 +527,9 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.14.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
+checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
 dependencies = [
  "either",
 ]
@@ -593,6 +610,12 @@ name = "oorandom"
 version = "11.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
+
+[[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pin-project-lite"
@@ -1035,3 +1058,17 @@ name = "zeroize"
 version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
+dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85a5b4158499876c763cb03bc4e49185d3cccbabb15b33c627f7884f43db852e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.110",
+]
