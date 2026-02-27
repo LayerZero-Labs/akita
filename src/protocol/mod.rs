@@ -7,7 +7,6 @@
 pub mod challenges;
 pub mod commitment;
 pub mod commitment_scheme;
-pub mod iteration_prover;
 pub mod opening_point;
 pub mod proof;
 pub mod quadratic_equation;
@@ -21,9 +20,9 @@ pub use commitment::{
     RingCommitmentScheme, RingCommitmentSetup, StreamingCommitmentScheme,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
-pub use iteration_prover::HachiProver;
 pub use opening_point::RingOpeningPoint;
 pub use proof::{HachiProof, SumcheckAux};
+pub use quadratic_equation::QuadraticEquation;
 pub use sumcheck::{
     prove_sumcheck, verify_sumcheck, CompressedUniPoly, SumcheckInstanceProver,
     SumcheckInstanceVerifier, SumcheckProof, UniPoly,

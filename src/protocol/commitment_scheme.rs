@@ -19,6 +19,9 @@ use crate::protocol::transcript::labels::CHALLENGE_SUMCHECK_ROUND;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling, Polynomial};
 
+type Cfg = DefaultCommitmentConfig;
+const D: usize = Cfg::D;
+
 /// Placeholder for the end-to-end PCS wrapper.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HachiCommitmentScheme;
@@ -27,18 +30,18 @@ impl<F> CommitmentScheme<F> for HachiCommitmentScheme
 where
     F: FieldCore + CanonicalField + FieldSampling,
 {
-    type ProverSetup = RingCommitmentSetup<F, { DefaultCommitmentConfig::D }>;
-    type VerifierSetup = RingCommitmentSetup<F, { DefaultCommitmentConfig::D }>;
+    type ProverSetup = RingCommitmentSetup<F, { D }>;
+    type VerifierSetup = RingCommitmentSetup<F, { D }>;
     type Commitment =
-        crate::protocol::commitment::RingCommitment<F, { DefaultCommitmentConfig::D }>;
-    type Proof = HachiProof<F, { DefaultCommitmentConfig::D }>;
-    type OpeningProofHint = HachiCommitmentHint<F, { DefaultCommitmentConfig::D }>;
+        crate::protocol::commitment::RingCommitment<F, { D }>;
+    type Proof = HachiProof<F, { D }>;
+    type OpeningProofHint = HachiCommitmentHint<F, { D }>;
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let (setup, _) = <HachiCommitmentCore as RingCommitmentScheme<
             F,
-            { DefaultCommitmentConfig::D },
-            DefaultCommitmentConfig,
+            { D },
+            Cfg,
         >>::setup(max_num_vars)
         .expect("commitment setup failed");
         setup
@@ -52,14 +55,12 @@ where
         poly: &P,
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::OpeningProofHint), HachiError> {
-        let num_vars = poly.num_vars();
-        let coeffs = poly.coeffs();
         let ring_coeffs =
-            reduce_coeffs_to_ring_elements::<F, { DefaultCommitmentConfig::D }>(num_vars, &coeffs)?;
+            reduce_coeffs_to_ring_elements::<F, { D }>(poly.num_vars(), &poly.coeffs())?;
         let (commitment, s, t_hat) = <HachiCommitmentCore as RingCommitmentScheme<
             F,
-            { DefaultCommitmentConfig::D },
-            DefaultCommitmentConfig,
+            { D },
+            Cfg,
         >>::commit_coeffs(&ring_coeffs, setup)?;
         let hint = HachiCommitmentHint {
             s,
@@ -81,7 +82,7 @@ where
             HachiError::InvalidInput("missing commitment hint for proving".to_string())
         })?;
         let num_vars = poly.num_vars();
-        let alpha = DefaultCommitmentConfig::D.trailing_zeros() as usize;
+        let alpha = Cfg::D.trailing_zeros() as usize;
         let reduced_len = num_vars
             .checked_sub(alpha)
             .ok_or_else(|| HachiError::InvalidSetup("reduction length underflow".to_string()))?;
@@ -92,13 +93,13 @@ where
             });
         }
 
-        let ring_opening_point = ring_opening_point_from_field::<F, { DefaultCommitmentConfig::D }>(
+        let ring_opening_point = ring_opening_point_from_field::<F, { D }>(
             &opening_point[..reduced_len],
-            DefaultCommitmentConfig::R,
-            DefaultCommitmentConfig::M,
+            Cfg::R,
+            Cfg::M,
         )?;
 
-        let y_ring = evaluate_packed_ring_poly::<F, { DefaultCommitmentConfig::D }>(
+        let y_ring = evaluate_packed_ring_poly::<F, { D }>(
             &hint.ring_coeffs,
             &opening_point[..reduced_len],
         );
@@ -106,8 +107,8 @@ where
         // §4.2 Quadratic equation
         let quad_eq = QuadraticEquation::<
             F,
-            { DefaultCommitmentConfig::D },
-            DefaultCommitmentConfig,
+            { D },
+            Cfg,
         >::new_prover(
             setup,
             &ring_opening_point,
@@ -118,7 +119,7 @@ where
         )?;
 
         // §4.3 Ring switch
-        let rs = ring_switch_prover::<F, T, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(
+        let rs = ring_switch_prover::<F, T, { D }, Cfg>(
             &quad_eq, transcript,
         )?;
 
@@ -160,7 +161,7 @@ where
         opening: &F,
         commitment: &Self::Commitment,
     ) -> Result<(), HachiError> {
-        let alpha_bits = DefaultCommitmentConfig::D.trailing_zeros() as usize;
+        let alpha_bits = Cfg::D.trailing_zeros() as usize;
         let reduced_len = opening_point.len().checked_sub(alpha_bits).ok_or_else(|| {
             HachiError::InvalidSetup("opening point length underflow".to_string())
         })?;
@@ -168,26 +169,26 @@ where
         let inner_point = &opening_point[reduced_len..];
 
         // §3.1 trace check
-        let v = reduce_inner_openings_to_ring_elements::<F, { DefaultCommitmentConfig::D }>(
+        let v = reduce_inner_openings_to_ring_elements::<F, { D }>(
             inner_point,
         )?;
-        let d = F::from_u64(DefaultCommitmentConfig::D as u64);
-        let trace_lhs = trace::<F, { DefaultCommitmentConfig::D }>(&(proof.y_ring * v.sigma_m1()));
+        let d = F::from_u64(Cfg::D as u64);
+        let trace_lhs = trace::<F, { D }>(&(proof.y_ring * v.sigma_m1()));
         let trace_rhs = d * *opening;
         if trace_lhs != trace_rhs {
             return Err(HachiError::InvalidProof);
         }
 
         // §4.2 Quadratic equation
-        let ring_opening_point = ring_opening_point_from_field::<F, { DefaultCommitmentConfig::D }>(
+        let ring_opening_point = ring_opening_point_from_field::<F, { D }>(
             reduced_opening_point,
-            DefaultCommitmentConfig::R,
-            DefaultCommitmentConfig::M,
+            Cfg::R,
+            Cfg::M,
         )?;
         let quad_eq = QuadraticEquation::<
             F,
-            { DefaultCommitmentConfig::D },
-            DefaultCommitmentConfig,
+            { D },
+            Cfg,
         >::new_verifier(
             setup,
             &ring_opening_point,
@@ -199,7 +200,7 @@ where
 
         // §4.3 Ring switch (verifier side)
         let rs =
-            ring_switch_verifier::<F, T, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(
+            ring_switch_verifier::<F, T, { D }, Cfg>(
                 &quad_eq,
                 &proof.sumcheck_aux.w,
                 &proof.w_commitment,
@@ -253,7 +254,7 @@ where
 /// verifier does.
 #[cfg(test)]
 pub(crate) fn rederive_alpha_and_m_a<F>(
-    proof: &HachiProof<F, { DefaultCommitmentConfig::D }>,
+    proof: &HachiProof<F, { D }>,
     setup: &<HachiCommitmentScheme as CommitmentScheme<F>>::ProverSetup,
     opening_point: &[F],
     commitment: &<HachiCommitmentScheme as CommitmentScheme<F>>::Commitment,
@@ -261,20 +262,20 @@ pub(crate) fn rederive_alpha_and_m_a<F>(
 where
     F: FieldCore + CanonicalField + FieldSampling + 'static,
 {
-    let alpha_bits = DefaultCommitmentConfig::D.trailing_zeros() as usize;
+    let alpha_bits = Cfg::D.trailing_zeros() as usize;
     let reduced_len = opening_point
         .len()
         .checked_sub(alpha_bits)
         .ok_or_else(|| HachiError::InvalidSetup("opening point length underflow".to_string()))?;
-    let ring_opening_point = ring_opening_point_from_field::<F, { DefaultCommitmentConfig::D }>(
+    let ring_opening_point = ring_opening_point_from_field::<F, { D }>(
         &opening_point[..reduced_len],
-        DefaultCommitmentConfig::R,
-        DefaultCommitmentConfig::M,
+        Cfg::R,
+        Cfg::M,
     )?;
     let mut transcript = crate::protocol::transcript::Blake2bTranscript::<F>::new(
         crate::protocol::transcript::labels::DOMAIN_HACHI_PROTOCOL,
     );
-    let quad_eq = QuadraticEquation::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>::new_verifier(
+    let quad_eq = QuadraticEquation::<F, { D }, Cfg>::new_verifier(
         setup,
         &ring_opening_point,
         &proof.v,
@@ -288,14 +289,14 @@ where
     );
     let alpha: F =
         transcript.challenge_scalar(crate::protocol::transcript::labels::CHALLENGE_RING_SWITCH);
-    let m_a = crate::protocol::ring_switch::eval_ring_matrix_at::<F, { DefaultCommitmentConfig::D }>(
+    let m_a = crate::protocol::ring_switch::eval_ring_matrix_at::<F, { D }>(
         quad_eq.m(),
         &alpha,
     );
     let m_a_vec = crate::protocol::ring_switch::expand_m_a::<
         F,
-        { DefaultCommitmentConfig::D },
-        DefaultCommitmentConfig,
+        { D },
+        Cfg,
     >(&m_a, alpha)?;
     Ok((alpha, m_a_vec))
 }
@@ -432,8 +433,8 @@ mod tests {
 
     #[test]
     fn verify_passes_for_consistent_opening() {
-        let alpha = DefaultCommitmentConfig::D.trailing_zeros() as usize;
-        let num_vars = DefaultCommitmentConfig::R + DefaultCommitmentConfig::M + alpha;
+        let alpha = Cfg::D.trailing_zeros() as usize;
+        let num_vars = Cfg::R + Cfg::M + alpha;
         let len = 1usize << num_vars;
 
         let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();

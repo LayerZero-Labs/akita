@@ -2,7 +2,6 @@
 
 mod commit;
 mod config;
-pub(crate) mod field_to_ring_reduction;
 pub(crate) mod onehot;
 mod scheme;
 mod transcript_append;
