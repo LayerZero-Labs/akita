@@ -117,52 +117,68 @@ vectorized add/sub and scalar-per-lane mul).
 
 ## Apple M4 Pro (macOS / aarch64)
 
-Backend: **NEON** (4-wide Fp32, 2-wide Fp64, 2-wide Fp128)
+Backend: **NEON** (4-wide Fp32, 2-wide Fp64, 2-wide Fp128 SoA).
+`RUSTFLAGS='-C target-cpu=native'`, nightly toolchain.
 
 ### Scalar (`throughput/`)
 
 | Field | mul | add |
 |-------|-----|-----|
-| fp32_24b | | |
-| fp32_30b | | |
-| fp32_31b | | |
-| fp32_m31 | | |
-| fp32_32b | | |
-| fp64_40b | | |
-| fp64_48b | | |
-| fp64_56b | | |
-| fp64_64b | | |
-| fp128 | | |
+| fp32_24b | 1.129 Gelem/s | 1.426 Gelem/s |
+| fp32_30b | 1.133 Gelem/s | 1.425 Gelem/s |
+| fp32_31b | 1.043 Gelem/s | 1.433 Gelem/s |
+| fp32_m31 | 1.319 Gelem/s | 1.435 Gelem/s |
+| fp32_32b | 1.135 Gelem/s | 1.423 Gelem/s |
+| fp64_40b | 0.871 Gelem/s | 1.446 Gelem/s |
+| fp64_48b | 0.886 Gelem/s | 1.385 Gelem/s |
+| fp64_56b | 0.891 Gelem/s | 1.442 Gelem/s |
+| fp64_64b | 0.923 Gelem/s | 1.443 Gelem/s |
+| fp128 | 0.444 Gelem/s | 0.938 Gelem/s |
 
 ### Packed (`packed_throughput/`)
 
 | Field | mul | add | sub |
 |-------|-----|-----|-----|
-| fp32_24b | | | |
-| fp32_30b | | | |
-| fp32_31b | | | |
-| fp32_m31 | | | |
-| fp32_32b | | | |
-| fp64_40b | | | |
-| fp64_48b | | | |
-| fp64_56b | | | |
-| fp64_64b | | | |
-| fp128 | | | |
+| fp32_24b | 3.717 Gelem/s | 5.272 Gelem/s | 5.278 Gelem/s |
+| fp32_30b | 3.719 Gelem/s | 5.281 Gelem/s | 5.275 Gelem/s |
+| fp32_31b | 3.719 Gelem/s | 5.283 Gelem/s | 5.268 Gelem/s |
+| fp32_m31 | 3.720 Gelem/s | 5.263 Gelem/s | 5.263 Gelem/s |
+| fp32_32b | 2.524 Gelem/s | 5.296 Gelem/s | 5.253 Gelem/s |
+| fp64_40b | 1.253 Gelem/s | 2.648 Gelem/s | 2.645 Gelem/s |
+| fp64_48b | 1.254 Gelem/s | 2.650 Gelem/s | 2.643 Gelem/s |
+| fp64_56b | 1.255 Gelem/s | 2.632 Gelem/s | 2.650 Gelem/s |
+| fp64_64b | 1.399 Gelem/s | 2.639 Gelem/s | 2.602 Gelem/s |
+| fp128 | 0.480 Gelem/s | 1.724 Gelem/s | 2.107 Gelem/s |
+
+### Packed speedup over scalar
+
+| Field | mul | add |
+|-------|-----|-----|
+| fp32_24b | **3.3x** | **3.7x** |
+| fp32_30b | **3.3x** | **3.7x** |
+| fp32_31b | **3.6x** | **3.7x** |
+| fp32_m31 | **2.8x** | **3.7x** |
+| fp32_32b | **2.2x** | **3.7x** |
+| fp64_40b | **1.4x** | **1.8x** |
+| fp64_48b | **1.4x** | **1.9x** |
+| fp64_56b | **1.4x** | **1.8x** |
+| fp64_64b | **1.5x** | **1.8x** |
+| fp128 | **1.1x** | **1.8x** |
 
 ### Sumcheck MACC (`packed_sumcheck_mix/`)
 
 | Field | MACC | % of pure mul |
 |-------|------|---------------|
-| fp32_24b | | |
-| fp32_30b | | |
-| fp32_31b | | |
-| fp32_m31 | | |
-| fp32_32b | | |
-| fp64_40b | | |
-| fp64_48b | | |
-| fp64_56b | | |
-| fp64_64b | | |
-| fp128 | | |
+| fp32_24b | 2.652 Gelem/s | 71% |
+| fp32_30b | 2.660 Gelem/s | 72% |
+| fp32_31b | 2.662 Gelem/s | 72% |
+| fp32_m31 | 2.661 Gelem/s | 72% |
+| fp32_32b | 1.991 Gelem/s | 79% |
+| fp64_40b | 0.990 Gelem/s | 79% |
+| fp64_48b | 0.991 Gelem/s | 79% |
+| fp64_56b | 0.993 Gelem/s | 79% |
+| fp64_64b | 0.795 Gelem/s | 57% |
+| fp128 | 0.450 Gelem/s | 94% |
 
 ---
 
@@ -192,6 +208,22 @@ Backend: **NEON** (4-wide Fp32, 2-wide Fp64, 2-wide Fp128)
   pack/unpack overhead.  Sumcheck MACC is -7% (0.35 → 0.32 Gelem/s);
   MACC exceeds pure-mul throughput (114%) because the accumulation loop
   avoids the SoA store overhead that the throughput benchmark incurs.
+
+### M4 Pro NEON observations
+
+- **NEON is 4-wide for Fp32, 2-wide for Fp64/Fp128**, so maximum
+  speedup is 4x and 2x respectively (vs 16x/8x for AVX-512).
+- **Fp32 packed mul** is uniform at ~3.72 Gelem/s for all sub-word
+  primes (24b–31b, including M31), unlike Zen 5 where M31 is notably
+  faster.  The 4-wide NEON `vmull_u32` + reduction is the bottleneck.
+- **Fp32 32b packed mul** drops to 2.52 Gelem/s (carry-based path).
+- **Fp64 packed mul** ~1.25 Gelem/s for all sub-word primes, ~1.40
+  for 64b — the 64b prime is *faster* on NEON, opposite to Zen 5.
+- **Fp128 packed add** 1.72 Gelem/s = **1.8x** scalar speedup; sub
+  2.11 Gelem/s = **2.2x**, both close to the theoretical 2x from
+  2-wide `uint64x2_t`.  Mul 0.48 Gelem/s ≈ **1.1x** (scalar per-lane).
+- **Sumcheck MACC** is 71–72% of pure mul for sub-word Fp32, 79% for
+  Fp64 sub-word, and 94% for Fp128 — higher than Zen 5 ratios.
 
 ### Reduction strategy by field width
 
