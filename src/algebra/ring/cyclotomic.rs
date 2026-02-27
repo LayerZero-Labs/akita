@@ -108,6 +108,39 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
         self.sigma(2 * D - 1)
     }
 
+    /// Multiply by `X^k` in `Z_q[X]/(X^D + 1)` via O(D) coefficient rotation.
+    ///
+    /// Since `X^D = -1`, coefficients that wrap past index `D` get negated.
+    #[inline]
+    pub fn negacyclic_shift(&self, k: usize) -> Self {
+        let k = k % D;
+        if k == 0 {
+            return *self;
+        }
+        let mut out = [F::zero(); D];
+        for i in 0..D {
+            let target = i + k;
+            if target < D {
+                out[target] = self.coeffs[i];
+            } else {
+                out[target - D] = -self.coeffs[i];
+            }
+        }
+        Self { coeffs: out }
+    }
+
+    /// Multiply `self` by a sum of monomials `X^{k_1} + X^{k_2} + ...`
+    ///
+    /// Each term is a negacyclic shift, so the total cost is
+    /// `O(positions.len() * D)` field additions with zero multiplications.
+    pub fn mul_by_monomial_sum(&self, nonzero_positions: &[usize]) -> Self {
+        let mut result = Self::zero();
+        for &k in nonzero_positions {
+            result += self.negacyclic_shift(k);
+        }
+        result
+    }
+
     /// Count non-zero coefficients.
     #[inline]
     pub fn hamming_weight(&self) -> usize {

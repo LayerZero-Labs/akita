@@ -3,6 +3,7 @@
 use super::config::{
     ensure_block_layout, ensure_matrix_shape, ensure_supported_num_vars, validate_and_derive_layout,
 };
+use super::onehot::{inner_ajtai_onehot, map_onehot_to_sparse_blocks};
 use super::scheme::RingCommitmentScheme;
 use super::types::RingCommitment;
 use super::utils::linear::{decompose_block, decompose_rows, mat_vec_mul_unchecked};
@@ -94,6 +95,44 @@ where
             let s_i = decompose_block(block, Cfg::DELTA, Cfg::LOG_BASIS);
 
             let t_i = mat_vec_mul_unchecked(&setup.A, &s_i);
+            let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
+            t_hat_flat.extend(t_hat_i.iter().copied());
+
+            s_all.push(s_i);
+            t_hat_all.push(t_hat_i);
+        }
+
+        let u = mat_vec_mul_unchecked(&setup.B, &t_hat_flat);
+        Ok((RingCommitment { u }, s_all, t_hat_all))
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn commit_onehot(
+        onehot_k: usize,
+        indices: &[usize],
+        setup: &Self::ProverSetup,
+    ) -> Result<
+        (
+            Self::Commitment,
+            Vec<Vec<CyclotomicRing<F, D>>>,
+            Vec<Vec<CyclotomicRing<F, D>>>,
+        ),
+        HachiError,
+    > {
+        let layout = validate_and_derive_layout::<Cfg, D>()?;
+        ensure_supported_num_vars(setup.max_num_vars, layout.required_vars)?;
+        ensure_matrix_shape(&setup.A, Cfg::N_A, layout.inner_width, "A")?;
+        ensure_matrix_shape(&setup.B, Cfg::N_B, layout.outer_width, "B")?;
+
+        let sparse_blocks = map_onehot_to_sparse_blocks(onehot_k, indices, Cfg::R, Cfg::M, D)?;
+
+        let mut s_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(layout.num_blocks);
+        let mut t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(layout.num_blocks);
+        let mut t_hat_flat: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(layout.outer_width);
+
+        for block_entries in &sparse_blocks {
+            let (t_i, s_i) =
+                inner_ajtai_onehot(&setup.A, block_entries, layout.block_len, Cfg::DELTA);
             let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
             t_hat_flat.extend(t_hat_i.iter().copied());
 

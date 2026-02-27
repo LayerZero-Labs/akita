@@ -2,22 +2,36 @@
 
 #[cfg(test)]
 mod tests {
+    use num_bigint::BigUint;
+    use rand::{rngs::StdRng, SeedableRng};
+
+    use hachi_pcs::algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
+    use hachi_pcs::algebra::poly::Poly;
+    use hachi_pcs::algebra::tables::{Q32_DATA, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES};
     use hachi_pcs::algebra::{
-        Fp128, Fp2, Fp2Config, Fp32, Fp4, Fp4Config, Fp64, Prime128M13M4P0, Prime128M37P3P0,
-        Prime128M52M3P0, Prime128M54P4P0, Prime128M8M4M1M0, VectorModule,
+        pseudo_mersenne_modulus, Pow2Offset128Field, Pow2OffsetPrimeSpec, POW2_OFFSET_MAX,
+        POW2_OFFSET_PRIMES, POW2_OFFSET_TABLE,
     };
-    use hachi_pcs::Module;
-    use hachi_pcs::{CanonicalField, FieldCore, Invertible, PseudoMersenneField};
+    use hachi_pcs::algebra::{
+        CyclotomicCrtNtt, CyclotomicRing, Fp128, Fp2, Fp2Config, Fp32, Fp4, Fp4Config, Fp64, LimbQ,
+        MontCoeff, Prime128M13M4P0, Prime128M37P3P0, Prime128M52M3P0, Prime128M54P4P0,
+        Prime128M8M4M1M0, ScalarBackend, VectorModule,
+    };
+    use hachi_pcs::primitives::serialization::SerializationError;
+    use hachi_pcs::{
+        CanonicalField, FieldCore, FieldSampling, HachiDeserialize, HachiSerialize, Invertible,
+        Module, PseudoMersenneField,
+    };
 
     const P_159: u128 = 340282366920938463463374607431768211297u128;
 
     #[test]
     fn fp32_basic_arith() {
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         let a = F::from_u64(17);
         let b = F::from_u64(99);
-        assert_eq!((a + b).to_canonical_u32(), (17 + 99) % 103);
-        assert_eq!((a * b).to_canonical_u32(), (17 * 99) % 103);
+        assert_eq!((a + b).to_canonical_u32(), (17 + 99) % 251);
+        assert_eq!((a * b).to_canonical_u32(), (17u32 * 99) % 251);
 
         let inv = a.inv().unwrap();
         assert_eq!(a * inv, F::one());
@@ -57,7 +71,6 @@ mod tests {
     }
 
     fn big_mul_mod_u128(a: u128, b: u128, p: u128) -> u128 {
-        use num_bigint::BigUint;
         let n = BigUint::from(a) * BigUint::from(b);
         let r = n % BigUint::from(p);
         biguint_to_u128(&r)
@@ -70,8 +83,6 @@ mod tests {
         iters: usize,
         seed: u64,
     ) {
-        use rand::{rngs::StdRng, SeedableRng};
-
         assert_eq!(<S as PseudoMersenneField>::MODULUS_BITS, 128);
         assert_eq!(
             <S as PseudoMersenneField>::MODULUS_OFFSET,
@@ -139,23 +150,22 @@ mod tests {
     }
 
     struct NR;
-    impl Fp2Config<Fp32<103>> for NR {
-        fn non_residue() -> Fp32<103> {
-            -Fp32::<103>::one()
+    impl Fp2Config<Fp32<251>> for NR {
+        fn non_residue() -> Fp32<251> {
+            -Fp32::<251>::one()
         }
     }
 
     struct NR4;
-    impl Fp4Config<Fp32<103>, NR> for NR4 {
-        fn non_residue() -> Fp2<Fp32<103>, NR> {
-            // v^2 = u
-            Fp2::new(Fp32::<103>::zero(), Fp32::<103>::one())
+    impl Fp4Config<Fp32<251>, NR> for NR4 {
+        fn non_residue() -> Fp2<Fp32<251>, NR> {
+            Fp2::new(Fp32::<251>::zero(), Fp32::<251>::one())
         }
     }
 
     #[test]
     fn fp2_fp4_inversion_smoke() {
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         type F2 = Fp2<F, NR>;
         type F4 = Fp4<F, NR, NR4>;
 
@@ -173,7 +183,7 @@ mod tests {
 
     #[test]
     fn vector_module_ops() {
-        type F = Fp32<103>;
+        type F = Fp32<251>;
 
         let a = VectorModule::<F, 3>([F::from_u64(1), F::from_u64(2), F::from_u64(3)]);
         let b = VectorModule::<F, 3>([F::from_u64(3), F::from_u64(4), F::from_u64(5)]);
@@ -187,14 +197,14 @@ mod tests {
 
     #[test]
     fn inv_zero_returns_none() {
-        assert!(Fp32::<103>::zero().inv().is_none());
+        assert!(Fp32::<251>::zero().inv().is_none());
         assert!(Fp64::<4294967197>::zero().inv().is_none());
         assert!(Fp128::<P_159>::zero().inv().is_none());
     }
 
     #[test]
     fn inv_or_zero_behavior_for_prime_fields() {
-        type F32 = Fp32<103>;
+        type F32 = Fp32<251>;
         assert_eq!(F32::zero().inv_or_zero(), F32::zero());
         let x32 = F32::from_u64(17);
         let inv32 = x32.inv_or_zero();
@@ -215,7 +225,7 @@ mod tests {
 
     #[test]
     fn field_identities_fp32() {
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         let a = F::from_u64(42);
         let b = F::from_u64(73);
         let c = F::from_u64(11);
@@ -261,8 +271,7 @@ mod tests {
 
     #[test]
     fn serialization_round_trip_fp32() {
-        use hachi_pcs::{HachiDeserialize, HachiSerialize};
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         let val = F::from_u64(42);
         let mut buf = Vec::new();
         val.serialize_compressed(&mut buf).unwrap();
@@ -272,7 +281,6 @@ mod tests {
 
     #[test]
     fn serialization_round_trip_fp64() {
-        use hachi_pcs::{HachiDeserialize, HachiSerialize};
         type F = Fp64<4294967197>;
         let val = F::from_u64(123456789);
         let mut buf = Vec::new();
@@ -283,7 +291,6 @@ mod tests {
 
     #[test]
     fn serialization_round_trip_fp128() {
-        use hachi_pcs::{HachiDeserialize, HachiSerialize};
         type F = Fp128<P_159>;
         let val = F::from_u64(999999999);
         let mut buf = Vec::new();
@@ -294,8 +301,7 @@ mod tests {
 
     #[test]
     fn serialization_round_trip_ext() {
-        use hachi_pcs::{HachiDeserialize, HachiSerialize};
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         type F2 = Fp2<F, NR>;
         let val = F2::new(F::from_u64(3), F::from_u64(7));
         let mut buf = Vec::new();
@@ -306,8 +312,7 @@ mod tests {
 
     #[test]
     fn serialization_round_trip_fp4() {
-        use hachi_pcs::{HachiDeserialize, HachiSerialize};
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         type F2 = Fp2<F, NR>;
         type F4 = Fp4<F, NR, NR4>;
 
@@ -323,8 +328,7 @@ mod tests {
 
     #[test]
     fn serialization_round_trip_vector_module() {
-        use hachi_pcs::{HachiDeserialize, HachiSerialize};
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         let val = VectorModule::<F, 3>([F::from_u64(1), F::from_u64(2), F::from_u64(3)]);
         let mut buf = Vec::new();
         val.serialize_compressed(&mut buf).unwrap();
@@ -334,9 +338,7 @@ mod tests {
 
     #[test]
     fn serialization_round_trip_poly() {
-        use hachi_pcs::algebra::poly::Poly;
-        use hachi_pcs::{HachiDeserialize, HachiSerialize};
-        type F = Fp32<103>;
+        type F = Fp32<251>;
 
         let val = Poly::<F, 4>([
             F::from_u64(7),
@@ -352,11 +354,8 @@ mod tests {
 
     #[test]
     fn deserialize_checked_rejects_non_canonical_field_elements() {
-        use hachi_pcs::primitives::serialization::SerializationError;
-        use hachi_pcs::HachiDeserialize;
-
-        type F32 = Fp32<103>;
-        let bad32 = 103u32.to_le_bytes();
+        type F32 = Fp32<251>;
+        let bad32 = 251u32.to_le_bytes();
         let err32 = F32::deserialize_compressed(&bad32[..]).unwrap_err();
         assert!(matches!(err32, SerializationError::InvalidData(_)));
         let unchecked32 = F32::deserialize_compressed_unchecked(&bad32[..]).unwrap();
@@ -388,7 +387,7 @@ mod tests {
 
     #[test]
     fn fp2_conjugate_and_norm() {
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         type F2 = Fp2<F, NR>;
         let x = F2::new(F::from_u64(3), F::from_u64(7));
         let conj = x.conjugate();
@@ -402,7 +401,7 @@ mod tests {
 
     #[test]
     fn fp2_distributivity() {
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         type F2 = Fp2<F, NR>;
         let a = F2::new(F::from_u64(3), F::from_u64(7));
         let b = F2::new(F::from_u64(11), F::from_u64(5));
@@ -412,7 +411,6 @@ mod tests {
 
     #[test]
     fn limbq_from_to_u128_round_trip() {
-        use hachi_pcs::algebra::LimbQ;
         for &val in &[0u128, 1, 12345, 123456789, (1u128 << 28) - 1] {
             let limb: LimbQ<3> = LimbQ::from(val);
             assert_eq!(
@@ -425,7 +423,6 @@ mod tests {
 
     #[test]
     fn limbq_add_sub_inverse() {
-        use hachi_pcs::algebra::LimbQ;
         let a: LimbQ<3> = LimbQ::from(12345u128);
         let b: LimbQ<3> = LimbQ::from(6789u128);
         let sum = a + b;
@@ -435,7 +432,6 @@ mod tests {
 
     #[test]
     fn limbq_ordering() {
-        use hachi_pcs::algebra::LimbQ;
         let a: LimbQ<3> = LimbQ::from(100u128);
         let b: LimbQ<3> = LimbQ::from(200u128);
         assert!(a < b);
@@ -445,15 +441,12 @@ mod tests {
 
     #[test]
     fn qdata_q_matches_const() {
-        use hachi_pcs::algebra::tables::{Q32_DATA, Q32_MODULUS};
         let q_from_data = Q32_DATA.q_u128().unwrap();
         assert_eq!(q_from_data, Q32_MODULUS as u128);
     }
 
     #[test]
     fn ntt_normalize_in_range() {
-        use hachi_pcs::algebra::tables::Q32_PRIMES;
-        use hachi_pcs::algebra::MontCoeff;
         for prime in &Q32_PRIMES {
             for &a in &[0i16, 1, -1, 100, -100, prime.p - 1, -(prime.p - 1)] {
                 let n = prime.normalize(MontCoeff::from_raw(a));
@@ -469,8 +462,6 @@ mod tests {
 
     #[test]
     fn ntt_mul_commutative() {
-        use hachi_pcs::algebra::tables::Q32_PRIMES;
-        use hachi_pcs::algebra::MontCoeff;
         let prime = Q32_PRIMES[0];
         let a = MontCoeff::from_raw(1234);
         let b = MontCoeff::from_raw(5678);
@@ -479,7 +470,6 @@ mod tests {
 
     #[test]
     fn mont_coeff_round_trip() {
-        use hachi_pcs::algebra::tables::Q32_PRIMES;
         for prime in &Q32_PRIMES {
             for &val in &[0i16, 1, 2, 100, prime.p - 1] {
                 let mont = prime.from_canonical(val);
@@ -491,8 +481,7 @@ mod tests {
 
     #[test]
     fn poly_add_sub_neg() {
-        use hachi_pcs::algebra::poly::Poly;
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         let a = Poly::<F, 3>([F::from_u64(1), F::from_u64(2), F::from_u64(3)]);
         let b = Poly::<F, 3>([F::from_u64(10), F::from_u64(20), F::from_u64(30)]);
 
@@ -510,8 +499,7 @@ mod tests {
 
     #[test]
     fn cyclotomic_ring_negacyclic_property() {
-        use hachi_pcs::algebra::CyclotomicRing;
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         type R = CyclotomicRing<F, 4>;
 
         // X in the ring: [0, 1, 0, 0]
@@ -529,8 +517,7 @@ mod tests {
 
     #[test]
     fn cyclotomic_ring_mul_identity() {
-        use hachi_pcs::algebra::CyclotomicRing;
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         type R = CyclotomicRing<F, 4>;
 
         let a = R::from_coefficients([
@@ -545,8 +532,7 @@ mod tests {
 
     #[test]
     fn cyclotomic_ring_mul_zero() {
-        use hachi_pcs::algebra::CyclotomicRing;
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         type R = CyclotomicRing<F, 4>;
 
         let a = R::from_coefficients([
@@ -560,8 +546,7 @@ mod tests {
 
     #[test]
     fn cyclotomic_ring_commutativity() {
-        use hachi_pcs::algebra::CyclotomicRing;
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         type R = CyclotomicRing<F, 4>;
 
         let a = R::from_coefficients([
@@ -581,8 +566,7 @@ mod tests {
 
     #[test]
     fn cyclotomic_ring_distributivity() {
-        use hachi_pcs::algebra::CyclotomicRing;
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         type R = CyclotomicRing<F, 4>;
 
         let a = R::from_coefficients([
@@ -608,8 +592,7 @@ mod tests {
 
     #[test]
     fn cyclotomic_ring_associativity() {
-        use hachi_pcs::algebra::CyclotomicRing;
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         type R = CyclotomicRing<F, 4>;
 
         let a = R::from_coefficients([
@@ -635,8 +618,7 @@ mod tests {
 
     #[test]
     fn cyclotomic_ring_additive_inverse() {
-        use hachi_pcs::algebra::CyclotomicRing;
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         type R = CyclotomicRing<F, 4>;
 
         let a = R::from_coefficients([
@@ -650,9 +632,7 @@ mod tests {
 
     #[test]
     fn cyclotomic_ring_serialization_round_trip() {
-        use hachi_pcs::algebra::CyclotomicRing;
-        use hachi_pcs::{HachiDeserialize, HachiSerialize};
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         type R = CyclotomicRing<F, 4>;
 
         let a = R::from_coefficients([
@@ -669,7 +649,6 @@ mod tests {
 
     #[test]
     fn cyclotomic_ring_degree_64() {
-        use hachi_pcs::algebra::CyclotomicRing;
         type F = Fp64<4294967197>;
         type R = CyclotomicRing<F, 64>;
 
@@ -684,10 +663,6 @@ mod tests {
 
     #[test]
     fn ntt_forward_inverse_round_trip() {
-        use hachi_pcs::algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
-        use hachi_pcs::algebra::tables::Q32_PRIMES;
-        use hachi_pcs::algebra::MontCoeff;
-
         let prime = Q32_PRIMES[0];
         let tw = NttTwiddles::<64>::compute(prime);
 
@@ -713,9 +688,6 @@ mod tests {
 
     #[test]
     fn ntt_forward_inverse_all_primes() {
-        use hachi_pcs::algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
-        use hachi_pcs::algebra::tables::Q32_PRIMES;
-
         for (pi, prime) in Q32_PRIMES.iter().enumerate() {
             let tw = NttTwiddles::<64>::compute(*prime);
 
@@ -739,59 +711,7 @@ mod tests {
     }
 
     #[test]
-    fn ntt_mul_matches_schoolbook() {
-        use hachi_pcs::algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
-        use hachi_pcs::algebra::tables::Q32_PRIMES;
-        use hachi_pcs::algebra::{CyclotomicRing, MontCoeff};
-
-        type F = Fp32<{ Q32_PRIMES[0].p as u32 }>;
-
-        let prime = Q32_PRIMES[0];
-        let tw = NttTwiddles::<64>::compute(prime);
-
-        // Two test polynomials in the ring Z_p[X]/(X^64 + 1).
-        let a_coeffs: [F; 64] =
-            std::array::from_fn(|i| F::from_u64((i as u64 + 1) % prime.p as u64));
-        let b_coeffs: [F; 64] =
-            std::array::from_fn(|i| F::from_u64(((i * 3 + 7) as u64) % prime.p as u64));
-
-        // Schoolbook multiplication.
-        let ring_a = CyclotomicRing::<F, 64>::from_coefficients(a_coeffs);
-        let ring_b = CyclotomicRing::<F, 64>::from_coefficients(b_coeffs);
-        let schoolbook = ring_a * ring_b;
-
-        // NTT multiplication (single prime, not full CRT).
-        let mut ntt_a: [MontCoeff; 64] =
-            std::array::from_fn(|i| prime.from_canonical(a_coeffs[i].to_canonical_u32() as i16));
-        let mut ntt_b: [MontCoeff; 64] =
-            std::array::from_fn(|i| prime.from_canonical(b_coeffs[i].to_canonical_u32() as i16));
-        forward_ntt(&mut ntt_a, prime, &tw);
-        forward_ntt(&mut ntt_b, prime, &tw);
-
-        // Pointwise multiply.
-        let mut ntt_c = [MontCoeff::from_raw(0); 64];
-        prime.pointwise_mul(&mut ntt_c, &ntt_a, &ntt_b);
-
-        // Inverse NTT.
-        inverse_ntt(&mut ntt_c, prime, &tw);
-
-        // Compare.
-        for (i, c) in ntt_c.iter().enumerate() {
-            let ntt_val = prime.to_canonical(prime.normalize(*c));
-            let school_val = schoolbook.coefficients()[i].to_canonical_u32() as i16;
-            assert_eq!(
-                ntt_val, school_val,
-                "NTT vs schoolbook mismatch at index {i}: NTT={ntt_val}, school={school_val}"
-            );
-        }
-    }
-
-    #[test]
     fn cyclotomic_ntt_crt_round_trip_q32() {
-        use hachi_pcs::algebra::ntt::butterfly::NttTwiddles;
-        use hachi_pcs::algebra::tables::{Q32_DATA, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES};
-        use hachi_pcs::algebra::{CyclotomicCrtNtt, CyclotomicRing};
-
         type F = Fp64<{ Q32_MODULUS }>;
         type R = CyclotomicRing<F, 64>;
         type N = CyclotomicCrtNtt<Q32_NUM_PRIMES, 64>;
@@ -810,10 +730,6 @@ mod tests {
 
     #[test]
     fn cyclotomic_ntt_reduced_ops_are_stable() {
-        use hachi_pcs::algebra::ntt::butterfly::NttTwiddles;
-        use hachi_pcs::algebra::tables::{Q32_DATA, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES};
-        use hachi_pcs::algebra::{CyclotomicCrtNtt, CyclotomicRing};
-
         type F = Fp64<{ Q32_MODULUS }>;
         type R = CyclotomicRing<F, 64>;
         type N = CyclotomicCrtNtt<Q32_NUM_PRIMES, 64>;
@@ -842,10 +758,6 @@ mod tests {
 
     #[test]
     fn backend_path_matches_default_scalar_path() {
-        use hachi_pcs::algebra::ntt::butterfly::NttTwiddles;
-        use hachi_pcs::algebra::tables::{Q32_DATA, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES};
-        use hachi_pcs::algebra::{CyclotomicCrtNtt, CyclotomicRing, ScalarBackend};
-
         type F = Fp64<{ Q32_MODULUS }>;
         type R = CyclotomicRing<F, 64>;
         type N = CyclotomicCrtNtt<Q32_NUM_PRIMES, 64>;
@@ -872,25 +784,16 @@ mod tests {
 
     #[test]
     fn field_sampling_respects_modulus() {
-        use hachi_pcs::FieldSampling;
-        use rand::{rngs::StdRng, SeedableRng};
-
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         let mut rng = StdRng::seed_from_u64(42);
         for _ in 0..1024 {
             let x = F::sample(&mut rng);
-            assert!(x.to_canonical_u32() < 103);
+            assert!(x.to_canonical_u32() < 251);
         }
     }
 
     #[test]
     fn pow2_offset_registry_is_consistent() {
-        use hachi_pcs::algebra::{
-            pseudo_mersenne_modulus, Pow2Offset128Field, Pow2OffsetPrimeSpec, POW2_OFFSET_MAX,
-            POW2_OFFSET_PRIMES, POW2_OFFSET_TABLE,
-        };
-        use hachi_pcs::{CanonicalField, PseudoMersenneField};
-
         fn assert_is_pseudo_mersenne<F: PseudoMersenneField>() {}
         assert_is_pseudo_mersenne::<Pow2Offset128Field>();
 
@@ -918,9 +821,7 @@ mod tests {
 
     #[test]
     fn cyclotomic_sigma_is_ring_automorphism() {
-        use hachi_pcs::algebra::CyclotomicRing;
-
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         type R = CyclotomicRing<F, 8>;
         let a = R::from_coefficients(std::array::from_fn(|i| F::from_u64((3 * i + 1) as u64)));
         let b = R::from_coefficients(std::array::from_fn(|i| F::from_u64((5 * i + 2) as u64)));
@@ -937,9 +838,6 @@ mod tests {
 
     #[test]
     fn cyclotomic_balanced_pow2_decompose_recompose_round_trip() {
-        use hachi_pcs::algebra::tables::Q32_MODULUS;
-        use hachi_pcs::algebra::CyclotomicRing;
-
         type F = Fp64<{ Q32_MODULUS }>;
         type R = CyclotomicRing<F, 64>;
 
@@ -955,10 +853,7 @@ mod tests {
 
     #[test]
     fn sparse_pm1_challenge_has_expected_weight() {
-        use hachi_pcs::algebra::CyclotomicRing;
-        use rand::{rngs::StdRng, SeedableRng};
-
-        type F = Fp32<103>;
+        type F = Fp32<251>;
         type R = CyclotomicRing<F, 64>;
 
         let mut rng = StdRng::seed_from_u64(123);
@@ -968,8 +863,98 @@ mod tests {
         for c in challenge.coefficients() {
             let x = c.to_canonical_u32();
             if x != 0 {
-                assert!(x == 1 || x == 102, "nonzero coefficient must be +/-1");
+                assert!(x == 1 || x == 250, "nonzero coefficient must be +/-1");
             }
         }
+    }
+
+    #[test]
+    fn negacyclic_shift_equals_mul_by_monomial() {
+        type F = Fp32<251>;
+        type R = CyclotomicRing<F, 8>;
+
+        let a = R::from_coefficients(std::array::from_fn(|i| F::from_u64((3 * i + 1) as u64)));
+
+        for k in 0..8 {
+            let mut monomial_coeffs = [F::zero(); 8];
+            monomial_coeffs[k] = F::one();
+            let monomial = R::from_coefficients(monomial_coeffs);
+            assert_eq!(
+                a.negacyclic_shift(k),
+                a * monomial,
+                "negacyclic_shift({k}) != mul by X^{k}"
+            );
+        }
+
+        assert_eq!(a.negacyclic_shift(0), a);
+        assert_eq!(
+            a.negacyclic_shift(8),
+            a,
+            "shift by D should be identity mod D"
+        );
+    }
+
+    #[test]
+    fn negacyclic_shift_degree_64() {
+        type F = Fp64<4294967197>;
+        type R = CyclotomicRing<F, 64>;
+
+        let a = R::from_coefficients(std::array::from_fn(|i| F::from_u64((7 * i + 3) as u64)));
+        let x = R::x();
+        let mut x_pow = R::one();
+        for k in 0..64 {
+            assert_eq!(
+                a.negacyclic_shift(k),
+                a * x_pow,
+                "negacyclic_shift({k}) mismatch at D=64"
+            );
+            x_pow *= x;
+        }
+    }
+
+    #[test]
+    fn mul_by_monomial_sum_matches_ring_mul() {
+        type F = Fp32<251>;
+        type R = CyclotomicRing<F, 8>;
+
+        let a = R::from_coefficients(std::array::from_fn(|i| F::from_u64((5 * i + 2) as u64)));
+
+        // Sum of X^1 + X^3 + X^5
+        let positions = [1, 3, 5];
+        let mut sparse = [F::zero(); 8];
+        for &p in &positions {
+            sparse[p] = F::one();
+        }
+        let sparse_ring = R::from_coefficients(sparse);
+
+        assert_eq!(
+            a.mul_by_monomial_sum(&positions),
+            a * sparse_ring,
+            "mul_by_monomial_sum should equal ring mul by sparse element"
+        );
+    }
+
+    #[test]
+    fn mul_by_monomial_sum_single_position_equals_shift() {
+        type F = Fp32<251>;
+        type R = CyclotomicRing<F, 8>;
+
+        let a = R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 1) as u64)));
+        for k in 0..8 {
+            assert_eq!(
+                a.mul_by_monomial_sum(&[k]),
+                a.negacyclic_shift(k),
+                "single-position monomial_sum should equal negacyclic_shift"
+            );
+        }
+    }
+
+    #[test]
+    fn mul_by_monomial_sum_empty_is_zero() {
+        type F = Fp32<251>;
+        type R = CyclotomicRing<F, 8>;
+
+        let a = R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 1) as u64)));
+        assert_eq!(a.mul_by_monomial_sum(&[]), R::zero());
     }
 }

@@ -215,4 +215,63 @@ where
 
         Self::commit_ring_blocks(&blocks, setup)
     }
+
+    /// Commit to a regular one-hot witness.
+    ///
+    /// The witness represents `T` chunks of `onehot_k` field elements, each
+    /// chunk containing exactly one 1 and all other entries 0. `indices[c]`
+    /// gives the hot position in chunk `c` (must be in `[0, onehot_k)`).
+    ///
+    /// Requires `D` and `onehot_k` to be "nicely matched": one must divide
+    /// the other.
+    ///
+    /// The default implementation materializes the full one-hot field vector,
+    /// packs it into ring elements via coefficient embedding, and delegates
+    /// to `commit_coeffs`. Implementations may override this with a
+    /// sparse-aware path that avoids all inner ring multiplications.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if dimensions are inconsistent or any index is out
+    /// of range.
+    #[allow(clippy::type_complexity)]
+    fn commit_onehot(
+        onehot_k: usize,
+        indices: &[usize],
+        setup: &Self::ProverSetup,
+    ) -> Result<
+        (
+            Self::Commitment,
+            Vec<Vec<CyclotomicRing<F, D>>>,
+            Vec<Vec<CyclotomicRing<F, D>>>,
+        ),
+        HachiError,
+    > {
+        let num_chunks = indices.len();
+        let total_field_elems = num_chunks
+            .checked_mul(onehot_k)
+            .ok_or_else(|| HachiError::InvalidInput("T*K overflow".into()))?;
+        if total_field_elems % D != 0 {
+            return Err(HachiError::InvalidInput(format!(
+                "T*K={total_field_elems} is not divisible by D={D}"
+            )));
+        }
+
+        // Materialize the full one-hot vector as ring elements.
+        let total_ring_elems = total_field_elems / D;
+        let mut ring_coeffs = vec![CyclotomicRing::<F, D>::zero(); total_ring_elems];
+        for (c, &idx) in indices.iter().enumerate() {
+            if idx >= onehot_k {
+                return Err(HachiError::InvalidInput(format!(
+                    "index {idx} out of range for chunk size K={onehot_k} at position {c}"
+                )));
+            }
+            let field_pos = c * onehot_k + idx;
+            let ring_idx = field_pos / D;
+            let coeff_idx = field_pos % D;
+            ring_coeffs[ring_idx].coeffs[coeff_idx] = F::one();
+        }
+
+        Self::commit_coeffs(&ring_coeffs, setup)
+    }
 }

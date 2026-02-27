@@ -211,9 +211,9 @@ where
         let v = reduce_inner_openings_to_ring_elements::<F, { DefaultCommitmentConfig::D }>(
             inner_point,
         )?;
-        let d_field = F::from_u64(DefaultCommitmentConfig::D as u64);
+        let d = F::from_u64(DefaultCommitmentConfig::D as u64);
         let trace_lhs = trace::<F, { DefaultCommitmentConfig::D }>(&(proof.y_ring * v.sigma_m1()));
-        let trace_rhs = d_field * *opening;
+        let trace_rhs = d * *opening;
         if trace_lhs != trace_rhs {
             return Err(HachiError::InvalidProof);
         }

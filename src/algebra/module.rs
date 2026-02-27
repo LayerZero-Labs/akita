@@ -147,9 +147,9 @@ where
 
 // Scalar * VectorModule impls for our local prime field types.
 
-impl<const MODULUS: u32, const N: usize> Mul<VectorModule<Fp32<MODULUS>, N>> for Fp32<MODULUS> {
-    type Output = VectorModule<Fp32<MODULUS>, N>;
-    fn mul(self, rhs: VectorModule<Fp32<MODULUS>, N>) -> Self::Output {
+impl<const P: u32, const N: usize> Mul<VectorModule<Fp32<P>, N>> for Fp32<P> {
+    type Output = VectorModule<Fp32<P>, N>;
+    fn mul(self, rhs: VectorModule<Fp32<P>, N>) -> Self::Output {
         let mut out = rhs.0;
         for coeff in &mut out {
             *coeff = self * *coeff;
@@ -158,18 +158,16 @@ impl<const MODULUS: u32, const N: usize> Mul<VectorModule<Fp32<MODULUS>, N>> for
     }
 }
 
-impl<'a, const MODULUS: u32, const N: usize> Mul<&'a VectorModule<Fp32<MODULUS>, N>>
-    for Fp32<MODULUS>
-{
-    type Output = VectorModule<Fp32<MODULUS>, N>;
-    fn mul(self, rhs: &'a VectorModule<Fp32<MODULUS>, N>) -> Self::Output {
+impl<'a, const P: u32, const N: usize> Mul<&'a VectorModule<Fp32<P>, N>> for Fp32<P> {
+    type Output = VectorModule<Fp32<P>, N>;
+    fn mul(self, rhs: &'a VectorModule<Fp32<P>, N>) -> Self::Output {
         self * *rhs
     }
 }
 
-impl<const MODULUS: u64, const N: usize> Mul<VectorModule<Fp64<MODULUS>, N>> for Fp64<MODULUS> {
-    type Output = VectorModule<Fp64<MODULUS>, N>;
-    fn mul(self, rhs: VectorModule<Fp64<MODULUS>, N>) -> Self::Output {
+impl<const P: u64, const N: usize> Mul<VectorModule<Fp64<P>, N>> for Fp64<P> {
+    type Output = VectorModule<Fp64<P>, N>;
+    fn mul(self, rhs: VectorModule<Fp64<P>, N>) -> Self::Output {
         let mut out = rhs.0;
         for coeff in &mut out {
             *coeff = self * *coeff;
@@ -178,18 +176,16 @@ impl<const MODULUS: u64, const N: usize> Mul<VectorModule<Fp64<MODULUS>, N>> for
     }
 }
 
-impl<'a, const MODULUS: u64, const N: usize> Mul<&'a VectorModule<Fp64<MODULUS>, N>>
-    for Fp64<MODULUS>
-{
-    type Output = VectorModule<Fp64<MODULUS>, N>;
-    fn mul(self, rhs: &'a VectorModule<Fp64<MODULUS>, N>) -> Self::Output {
+impl<'a, const P: u64, const N: usize> Mul<&'a VectorModule<Fp64<P>, N>> for Fp64<P> {
+    type Output = VectorModule<Fp64<P>, N>;
+    fn mul(self, rhs: &'a VectorModule<Fp64<P>, N>) -> Self::Output {
         self * *rhs
     }
 }
 
-impl<const MODULUS: u128, const N: usize> Mul<VectorModule<Fp128<MODULUS>, N>> for Fp128<MODULUS> {
-    type Output = VectorModule<Fp128<MODULUS>, N>;
-    fn mul(self, rhs: VectorModule<Fp128<MODULUS>, N>) -> Self::Output {
+impl<const P: u128, const N: usize> Mul<VectorModule<Fp128<P>, N>> for Fp128<P> {
+    type Output = VectorModule<Fp128<P>, N>;
+    fn mul(self, rhs: VectorModule<Fp128<P>, N>) -> Self::Output {
         let mut out = rhs.0;
         for coeff in &mut out {
             *coeff = self * *coeff;
@@ -198,11 +194,9 @@ impl<const MODULUS: u128, const N: usize> Mul<VectorModule<Fp128<MODULUS>, N>> f
     }
 }
 
-impl<'a, const MODULUS: u128, const N: usize> Mul<&'a VectorModule<Fp128<MODULUS>, N>>
-    for Fp128<MODULUS>
-{
-    type Output = VectorModule<Fp128<MODULUS>, N>;
-    fn mul(self, rhs: &'a VectorModule<Fp128<MODULUS>, N>) -> Self::Output {
+impl<'a, const P: u128, const N: usize> Mul<&'a VectorModule<Fp128<P>, N>> for Fp128<P> {
+    type Output = VectorModule<Fp128<P>, N>;
+    fn mul(self, rhs: &'a VectorModule<Fp128<P>, N>) -> Self::Output {
         self * *rhs
     }
 }
