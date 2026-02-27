@@ -37,10 +37,9 @@ fn run_f0_e2e(num_u: usize, num_l: usize, b: usize) {
     let t0 = Instant::now();
     let mut prover = F0Prover::new(&tau0, w_evals.clone(), b);
     let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    pt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
 
     let (proof, prover_challenges, final_claim) =
-        prove_sumcheck::<F, _, F, _, _>(&mut prover, claim, &mut pt, |tr| {
+        prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut pt, |tr| {
             tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
         })
         .unwrap();
@@ -55,7 +54,6 @@ fn run_f0_e2e(num_u: usize, num_l: usize, b: usize) {
     let t1 = Instant::now();
     let verifier = F0Verifier::new(tau0, w_evals, b);
     let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    vt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
 
     let verifier_challenges = verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut vt, |tr| {
         tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
@@ -162,10 +160,9 @@ fn run_f_alpha_e2e<const D: usize>(num_u: usize, num_i: usize) {
     let t0 = Instant::now();
     let mut prover = FAlphaProver::new(w_evals.clone(), &alpha_evals_y, &m_evals_x, num_u, num_l);
     let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    pt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
 
     let (proof, prover_challenges, final_claim) =
-        prove_sumcheck::<F, _, F, _, _>(&mut prover, claim, &mut pt, |tr| {
+        prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut pt, |tr| {
             tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
         })
         .unwrap();
@@ -193,7 +190,6 @@ fn run_f_alpha_e2e<const D: usize>(num_u: usize, num_i: usize) {
         num_l,
     );
     let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    vt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
 
     let verifier_challenges = verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut vt, |tr| {
         tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)

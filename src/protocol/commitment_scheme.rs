@@ -14,11 +14,12 @@ use crate::protocol::proof::{HachiProof, SumcheckAux};
 use crate::protocol::sumcheck::hachi_sumcheck::{
     eq_evals, F0Prover, F0Verifier, FAlphaProver, FAlphaVerifier,
 };
-use crate::protocol::sumcheck::{prove_sumcheck, verify_sumcheck, SumcheckInstanceVerifier};
+use crate::protocol::sumcheck::{
+    prove_sumcheck, verify_sumcheck, SumcheckInstanceProver, SumcheckInstanceVerifier,
+};
 use crate::protocol::transcript::labels::{
-    ABSORB_PROVER_V, ABSORB_RING_SWITCH_MESSAGE, ABSORB_SUMCHECK_CLAIM, ABSORB_SUMCHECK_W,
-    CHALLENGE_RING_SWITCH, CHALLENGE_STAGE1_FOLD, CHALLENGE_SUMCHECK_ROUND, CHALLENGE_TAU0,
-    CHALLENGE_TAU1,
+    ABSORB_PROVER_V, ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_STAGE1_FOLD,
+    CHALLENGE_SUMCHECK_ROUND, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling, Polynomial};
@@ -139,36 +140,23 @@ where
 
         // Compute r via poly division: r[i] = (M[i]·z − y[i]) / (X^D + 1)
         let r = compute_r_via_poly_division::<F, { DefaultCommitmentConfig::D }>(&m, &z, &y);
-        let w =
+        let w: Vec<F> =
             build_w_coeffs::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(&z, &r);
 
         // Commit to w and absorb the commitment into the transcript.
         let w_commitment = commit_w::<F>(&w)?;
         transcript.append_serde(ABSORB_SUMCHECK_W, &w_commitment);
 
-        let alpha = derive_ring_switch_challenge::<F, T, { DefaultCommitmentConfig::D }>(
-            transcript, &m, &y,
-        );
+        let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
 
-        let r_a = eval_ring_vec_at::<F, { DefaultCommitmentConfig::D }>(&r, &alpha);
-
-        // Cross-check against scalar-level computation
         let m_a = eval_ring_matrix_at::<F, { DefaultCommitmentConfig::D }>(&m, &alpha);
-        let y_a = eval_ring_vec_at::<F, { DefaultCommitmentConfig::D }>(&y, &alpha);
-        let z_a = eval_ring_vec_at::<F, { DefaultCommitmentConfig::D }>(&z, &alpha);
-        let r_a_old = compute_r_a::<F, { DefaultCommitmentConfig::D }>(&m_a, &z_a, &y_a, &alpha)?;
-        debug_assert!(r_a == r_a_old, "r_a mismatch: poly-division vs scalar");
         let m_a_vec =
             expand_m_a::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(&m_a, alpha)?;
-        debug_assert_eq!(m_a_vec.len() % m_a.len(), 0);
         let m_cols = m_a_vec.len() / m_a.len();
-        debug_assert_eq!(w.len() % DefaultCommitmentConfig::D, 0);
-        let w_cols = w.len() / DefaultCommitmentConfig::D;
-        debug_assert_eq!(w_cols, m_cols);
 
         // --- §4.3 Sumcheck integration ---
 
-        let d = DefaultCommitmentConfig::D;
+        let d: usize = DefaultCommitmentConfig::D;
         let rows = m_row_count::<DefaultCommitmentConfig>();
         let (w_evals, num_u, num_l) = build_w_evals(&w, d);
         let num_sc_vars = num_u + num_l;
@@ -176,12 +164,9 @@ where
 
         // F_0 sumcheck (range check)
         let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
-        let f0_claim = F::zero();
-
         let mut f0_prover = F0Prover::new(&tau0, w_evals.clone(), b);
-        transcript.append_field(ABSORB_SUMCHECK_CLAIM, &f0_claim);
         let (f0_proof, _f0_challenges, _f0_final) =
-            prove_sumcheck::<F, _, F, _, _>(&mut f0_prover, f0_claim, transcript, |tr| {
+            prove_sumcheck::<F, _, F, _, _>(&mut f0_prover, transcript, |tr| {
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
             })?;
 
@@ -190,22 +175,12 @@ where
         let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
         let alpha_evals_y = build_alpha_evals_y(alpha, d);
         let m_evals_x = build_m_evals_x(&m_a_vec, rows, m_cols, &tau1);
-
-        let eq_tau1 = eq_evals(&tau1);
-        let mut f_alpha_claim = F::zero();
-        for (i, eq_i) in eq_tau1.iter().enumerate() {
-            let y_i = if i < y_a.len() { y_a[i] } else { F::zero() };
-            f_alpha_claim = f_alpha_claim + *eq_i * y_i;
-        }
         let mut f_alpha_prover =
             FAlphaProver::new(w_evals, &alpha_evals_y, &m_evals_x, num_u, num_l);
-        transcript.append_field(ABSORB_SUMCHECK_CLAIM, &f_alpha_claim);
-        let (f_alpha_proof, _fa_challenges, _fa_final) = prove_sumcheck::<F, _, F, _, _>(
-            &mut f_alpha_prover,
-            f_alpha_claim,
-            transcript,
-            |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-        )?;
+        let (f_alpha_proof, _fa_challenges, _fa_final) =
+            prove_sumcheck::<F, _, F, _, _>(&mut f_alpha_prover, transcript, |tr| {
+                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+            })?;
 
         Ok(HachiProof {
             v,
@@ -260,16 +235,9 @@ where
             &ring_opening_point,
             &challenges,
         )?;
-        let y = generate_y::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(
-            &proof.v,
-            &commitment.u,
-            &proof.y_ring,
-        )?;
         transcript.append_serde(ABSORB_SUMCHECK_W, &proof.w_commitment);
 
-        let alpha = derive_ring_switch_challenge::<F, T, { DefaultCommitmentConfig::D }>(
-            transcript, &m, &y,
-        );
+        let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
 
         let m_a = eval_ring_matrix_at::<F, { DefaultCommitmentConfig::D }>(&m, &alpha);
         let m_a_vec =
@@ -286,8 +254,6 @@ where
         // F_0 sumcheck verification (range check)
         let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
         let f0_verifier = F0Verifier::new(tau0, w_evals.clone(), b);
-        let f0_claim = f0_verifier.input_claim();
-        transcript.append_field(ABSORB_SUMCHECK_CLAIM, &f0_claim);
         let _f0_challenges =
             verify_sumcheck::<F, _, F, _, _>(&proof.f0_proof, &f0_verifier, transcript, |tr| {
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
@@ -312,8 +278,6 @@ where
             num_u,
             num_l,
         );
-        let f_alpha_claim = f_alpha_verifier.input_claim();
-        transcript.append_field(ABSORB_SUMCHECK_CLAIM, &f_alpha_claim);
         let _fa_challenges = verify_sumcheck::<F, _, F, _, _>(
             &proof.f_alpha_proof,
             &f_alpha_verifier,
@@ -361,20 +325,6 @@ where
     )
 }
 
-fn derive_ring_switch_challenge<F, T, const D: usize>(
-    transcript: &mut T,
-    m: &Vec<Vec<CyclotomicRing<F, D>>>,
-    y: &Vec<CyclotomicRing<F, D>>,
-) -> F
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    transcript.append_serde(ABSORB_RING_SWITCH_MESSAGE, m);
-    transcript.append_serde(ABSORB_RING_SWITCH_MESSAGE, y);
-    transcript.challenge_scalar(CHALLENGE_RING_SWITCH)
-}
-
 /// Re-derive the ring-switch challenge `alpha` and the expanded `M_a` vector
 /// by replaying the transcript from the proof data and setup, exactly as the
 /// verifier does.
@@ -410,20 +360,11 @@ where
         &ring_opening_point,
         &challenges,
     )?;
-    let y = generate_y::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(
-        &proof.v,
-        &commitment.u,
-        &proof.y_ring,
-    )?;
     transcript.append_serde(
         crate::protocol::transcript::labels::ABSORB_SUMCHECK_W,
         &proof.w_commitment,
     );
-    let alpha = derive_ring_switch_challenge::<F, _, { DefaultCommitmentConfig::D }>(
-        &mut transcript,
-        &m,
-        &y,
-    );
+    let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
     let m_a = eval_ring_matrix_at::<F, { DefaultCommitmentConfig::D }>(&m, &alpha);
     let m_a_vec =
         expand_m_a::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(&m_a, alpha)?;
@@ -870,44 +811,6 @@ fn eval_ring_matrix_at<F: FieldCore, const D: usize>(
     alpha: &F,
 ) -> Vec<Vec<F>> {
     m.iter().map(|row| eval_ring_vec_at(row, alpha)).collect()
-}
-
-fn compute_r_a<F: FieldCore, const D: usize>(
-    m_a: &[Vec<F>],
-    z_a: &[F],
-    y_a: &[F],
-    alpha: &F,
-) -> Result<Vec<F>, HachiError> {
-    if m_a.len() != y_a.len() {
-        return Err(HachiError::InvalidSize {
-            expected: m_a.len(),
-            actual: y_a.len(),
-        });
-    }
-    let mut alpha_pow = F::one();
-    for _ in 0..D {
-        alpha_pow = alpha_pow * *alpha;
-    }
-    let denom = alpha_pow + F::one();
-    let denom_inv = denom
-        .inv()
-        .ok_or_else(|| HachiError::InvalidInput("alpha^D + 1 is not invertible".to_string()))?;
-
-    let mut out = Vec::with_capacity(m_a.len());
-    for (row, y_i) in m_a.iter().zip(y_a.iter()) {
-        if row.len() != z_a.len() {
-            return Err(HachiError::InvalidSize {
-                expected: row.len(),
-                actual: z_a.len(),
-            });
-        }
-        let dot = row
-            .iter()
-            .zip(z_a.iter())
-            .fold(F::zero(), |acc, (m_ij, z_j)| acc + (*m_ij * *z_j));
-        out.push((dot - *y_i) * denom_inv);
-    }
-    Ok(out)
 }
 
 /// Compute `r[i] = (M[i]·z − y[i]) / (X^D + 1)` using schoolbook polynomial

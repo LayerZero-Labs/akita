@@ -420,6 +420,9 @@ pub trait SumcheckInstanceProver<E: FieldCore>: Send + Sync {
     /// Maximum allowed degree for any round univariate polynomial.
     fn degree_bound(&self) -> usize;
 
+    /// The initial claimed sum that this sumcheck instance is proving.
+    fn input_claim(&self) -> E;
+
     /// Compute the prover message `g_round(X)` given the previous running claim.
     ///
     /// In standard sumcheck, `previous_claim` is the expected value of the
@@ -469,7 +472,6 @@ pub trait SumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
 /// Returns an error if any per-round polynomial exceeds the instance's degree bound.
 pub fn prove_sumcheck<F, T, E, S, Inst>(
     instance: &mut Inst,
-    mut claim: E,
     transcript: &mut T,
     mut sample_challenge: S,
 ) -> Result<(SumcheckProof<E>, Vec<E>, E), HachiError>
@@ -480,6 +482,9 @@ where
     S: FnMut(&mut T) -> E,
     Inst: SumcheckInstanceProver<E>,
 {
+    let mut claim = instance.input_claim();
+    transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &claim);
+
     let num_rounds = instance.num_rounds();
     let degree_bound = instance.degree_bound();
 
@@ -523,8 +528,7 @@ where
 /// Verify a single-instance sumcheck proof.
 ///
 /// This function:
-/// - does **not** absorb the initial claim into the transcript (callers should
-///   do so before calling, matching the prover side),
+/// - absorbs the initial claim into the transcript,
 /// - delegates round-by-round verification to [`SumcheckProof::verify`],
 /// - performs the final oracle check: `final_claim == verifier.expected_output_claim(r)`.
 ///
@@ -549,6 +553,7 @@ where
     V: SumcheckInstanceVerifier<E>,
 {
     let claim = verifier.input_claim();
+    transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &claim);
     let (final_claim, challenges) = proof.verify::<F, T, S>(
         claim,
         verifier.num_rounds(),

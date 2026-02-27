@@ -5,7 +5,7 @@ use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
     prove_sumcheck, Blake2bTranscript, SumcheckInstanceProver, Transcript, UniPoly,
 };
-use hachi_pcs::{FieldCore, FieldSampling};
+use hachi_pcs::{FieldCore, FieldSampling, HachiSerialize};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
@@ -32,8 +32,11 @@ impl SumcheckInstanceProver<F> for DenseTableSumcheck {
     }
 
     fn degree_bound(&self) -> usize {
-        // Multilinear in each variable ⇒ each round univariate is degree 1.
         1
+    }
+
+    fn input_claim(&self) -> F {
+        self.table.iter().copied().fold(F::zero(), |a, b| a + b)
     }
 
     fn compute_round_univariate(&mut self, _round: usize, _previous_claim: F) -> UniPoly<F> {
@@ -68,12 +71,10 @@ fn prover_driver_produces_proof_that_verifier_replays() {
     let n = 1usize << num_rounds;
 
     let table: Vec<F> = (0..n).map(|_| F::sample(&mut rng)).collect();
-    let initial_claim = table.iter().copied().fold(F::zero(), |acc, x| acc + x);
-
     let mut prover_inst = DenseTableSumcheck::new(table.clone());
     let mut prover_t = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
     let (proof, r_vec, final_claim) =
-        prove_sumcheck::<F, _, F, _, _>(&mut prover_inst, initial_claim, &mut prover_t, |tr| {
+        prove_sumcheck::<F, _, F, _, _>(&mut prover_inst, &mut prover_t, |tr| {
             tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
         })
         .unwrap();
@@ -83,7 +84,9 @@ fn prover_driver_produces_proof_that_verifier_replays() {
     assert_eq!(final_claim, prover_inst.table[0]);
 
     // Verifier replay must derive the same (final_claim, r_vec).
+    let initial_claim = table.iter().copied().fold(F::zero(), |acc, x| acc + x);
     let mut verifier_t = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    verifier_t.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &initial_claim);
     let (final_claim_v, r_vec_v) = proof
         .verify::<F, _, _>(initial_claim, num_rounds, 1, &mut verifier_t, |tr| {
             tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)

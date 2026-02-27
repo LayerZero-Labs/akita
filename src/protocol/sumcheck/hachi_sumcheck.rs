@@ -125,6 +125,10 @@ impl<E: FieldCore + CanonicalField> SumcheckInstanceProver<E> for F0Prover<E> {
         2 * self.b
     }
 
+    fn input_claim(&self) -> E {
+        E::zero()
+    }
+
     fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
         let half = self.eq_table.len() / 2;
         let degree = 2 * self.b;
@@ -255,6 +259,14 @@ impl<E: FieldCore + CanonicalField> SumcheckInstanceProver<E> for FAlphaProver<E
 
     fn degree_bound(&self) -> usize {
         2
+    }
+
+    fn input_claim(&self) -> E {
+        self.w_table
+            .iter()
+            .zip(self.alpha_table.iter())
+            .zip(self.m_table.iter())
+            .fold(E::zero(), |acc, ((&w, &a), &m)| acc + w * a * m)
     }
 
     fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
@@ -421,9 +433,8 @@ mod tests {
 
         let mut prover = F0Prover::new(&tau, w_evals.clone(), b);
         let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        pt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
         let (proof, prover_challenges, final_claim) =
-            prove_sumcheck::<F, _, F, _, _>(&mut prover, claim, &mut pt, |tr| {
+            prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut pt, |tr| {
                 tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
             })
             .unwrap();
@@ -434,7 +445,6 @@ mod tests {
 
         let verifier = F0Verifier::new(tau, w_evals, b);
         let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        vt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
         let verifier_challenges =
             verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut vt, |tr| {
                 tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
@@ -485,9 +495,8 @@ mod tests {
 
         let mut prover = F0Prover::new(&tau, w_evals.clone(), b);
         let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        pt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
         let (proof_sc, prover_challenges, final_claim) =
-            prove_sumcheck::<F, _, F, _, _>(&mut prover, claim, &mut pt, |tr| {
+            prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut pt, |tr| {
                 tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
             })
             .unwrap();
@@ -498,7 +507,6 @@ mod tests {
 
         let verifier = F0Verifier::new(tau, w_evals, b);
         let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        vt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
         let verifier_challenges =
             verify_sumcheck::<F, _, F, _, _>(&proof_sc, &verifier, &mut vt, |tr| {
                 tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
@@ -600,9 +608,8 @@ mod tests {
         let mut prover =
             FAlphaProver::new(w_evals.clone(), &alpha_evals_y, &m_evals_x, num_u, num_l);
         let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        pt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
         let (proof_sc, prover_challenges, final_claim) =
-            prove_sumcheck::<F, _, F, _, _>(&mut prover, claim, &mut pt, |tr| {
+            prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut pt, |tr| {
                 tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
             })
             .unwrap();
@@ -625,9 +632,7 @@ mod tests {
             num_u,
             num_l,
         );
-        let verifier_claim = verifier.input_claim();
         let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        vt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &verifier_claim);
         let verifier_challenges =
             verify_sumcheck::<F, _, F, _, _>(&proof_sc, &verifier, &mut vt, |tr| {
                 tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)

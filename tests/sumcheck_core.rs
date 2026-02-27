@@ -119,6 +119,10 @@ impl<E: FieldCore> SumcheckInstanceProver<E> for DenseSumcheckProver<E> {
         1
     }
 
+    fn input_claim(&self) -> E {
+        self.evals.iter().copied().fold(E::zero(), |a, b| a + b)
+    }
+
     fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
         let half = self.evals.len() / 2;
         let mut eval_0 = E::zero();
@@ -180,10 +184,9 @@ fn prove_and_verify_single_sumcheck() {
     };
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    prover_transcript.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
 
     let (proof, prover_challenges, _final_claim) =
-        prove_sumcheck::<F, _, F, _, _>(&mut prover, claim, &mut prover_transcript, |tr| {
+        prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut prover_transcript, |tr| {
             tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
         })
         .unwrap();
@@ -196,7 +199,6 @@ fn prove_and_verify_single_sumcheck() {
     };
 
     let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    verifier_transcript.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
 
     let verifier_challenges =
         verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut verifier_transcript, |tr| {
@@ -222,13 +224,11 @@ fn verify_rejects_wrong_claim() {
         num_vars,
     };
     let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    pt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &correct_claim);
 
-    let (proof, _, _) =
-        prove_sumcheck::<F, _, F, _, _>(&mut prover, correct_claim, &mut pt, |tr| {
-            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
-        })
-        .unwrap();
+    let (proof, _, _) = prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut pt, |tr| {
+        tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+    })
+    .unwrap();
 
     // Verify with *wrong* claim — should fail.
     let verifier = DenseSumcheckVerifier {
@@ -237,7 +237,6 @@ fn verify_rejects_wrong_claim() {
         claim: wrong_claim,
     };
     let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    vt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &wrong_claim);
 
     let result = verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut vt, |tr| {
         tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
@@ -268,10 +267,9 @@ fn e2e_sumcheck_2_pow_20() {
         num_vars,
     };
     let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    prover_transcript.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
 
     let (proof, prover_challenges, final_claim) =
-        prove_sumcheck::<F, _, F, _, _>(&mut prover, claim, &mut prover_transcript, |tr| {
+        prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut prover_transcript, |tr| {
             tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
         })
         .unwrap();
@@ -294,7 +292,6 @@ fn e2e_sumcheck_2_pow_20() {
         claim,
     };
     let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    verifier_transcript.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
 
     let verifier_challenges =
         verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut verifier_transcript, |tr| {
