@@ -179,7 +179,7 @@ impl CommitmentConfig for DefaultCommitmentConfig {
     const N_B: usize = 4;
     const N_D: usize = 4;
     const LOG_BASIS: u32 = 4;
-    const DELTA: usize = 8;
+    const DELTA: usize = 9;
     const TAU: usize = 4;
     const BETA: u128 = 1_000_000;
     const CHALLENGE_WEIGHT: usize = 3;

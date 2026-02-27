@@ -2,6 +2,7 @@
 
 use crate::algebra::ring::CyclotomicRing;
 use crate::primitives::serialization::Compress;
+use crate::protocol::commitment::RingCommitment;
 use crate::protocol::sumcheck::SumcheckProof;
 use crate::{FieldCore, HachiSerialize};
 
@@ -24,14 +25,14 @@ pub struct HachiProof<F: FieldCore, const D: usize> {
     pub y_ring: CyclotomicRing<F, D>,
     /// `v = D · ŵ`.
     pub v: Vec<CyclotomicRing<F, D>>,
-    /// `u_eval = Σ_i b_i (a^T f_i)` from the ring opening point.
-    pub u_eval: CyclotomicRing<F, D>,
     /// Range-check sumcheck proof (§4.3, F_0).
     pub f0_proof: SumcheckProof<F>,
     /// Evaluation-relation sumcheck proof (§4.3, F_alpha).
     pub f_alpha_proof: SumcheckProof<F>,
     /// Temporary verifier auxiliary (will be removed with recursive PCS).
     pub sumcheck_aux: SumcheckAux<F>,
+    /// Commitment to the sumcheck witness `w`.
+    pub w_commitment: RingCommitment<F, D>,
 }
 
 impl<F: FieldCore + HachiSerialize, const D: usize> HachiProof<F, D> {
@@ -40,8 +41,8 @@ impl<F: FieldCore + HachiSerialize, const D: usize> HachiProof<F, D> {
         self.v.serialized_size(Compress::No)
             + self.y_ring.serialized_size(Compress::No)
             + self.sumcheck_aux.w.serialized_size(Compress::No)
-            + self.u_eval.serialized_size(Compress::No)
             + self.f0_proof.serialized_size(Compress::No)
             + self.f_alpha_proof.serialized_size(Compress::No)
+            + self.w_commitment.serialized_size(Compress::No)
     }
 }

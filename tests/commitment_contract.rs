@@ -74,6 +74,7 @@ impl CommitmentScheme<F> for DummyScheme {
         opening_point: &[F],
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut T,
+        _commitment: &Self::Commitment,
     ) -> Result<Self::Proof, HachiError> {
         if opening_point.len() != poly.num_vars() {
             return Err(HachiError::InvalidPointDimension {
@@ -186,8 +187,15 @@ fn commitment_scheme_round_trip() {
     let (commitment, hint) = DummyScheme::commit(&poly, &psetup).unwrap();
 
     let mut prover_t = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    let proof =
-        DummyScheme::prove(&psetup, &poly, &opening_point, Some(hint), &mut prover_t).unwrap();
+    let proof = DummyScheme::prove(
+        &psetup,
+        &poly,
+        &opening_point,
+        Some(hint),
+        &mut prover_t,
+        &commitment,
+    )
+    .unwrap();
 
     let mut verifier_t = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
     DummyScheme::verify(

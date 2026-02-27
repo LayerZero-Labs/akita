@@ -66,6 +66,7 @@ where
         opening_point: &[F],
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut T,
+        commitment: &Self::Commitment,
     ) -> Result<Self::Proof, HachiError>;
 
     /// Verify an opening proof.

@@ -4,7 +4,6 @@ use crate::algebra::ring::{CyclotomicRing, SparseChallengeConfig};
 use crate::error::HachiError;
 use crate::primitives::poly::multilinear_lagrange_basis;
 use crate::protocol::challenges::sparse::sample_dense_challenges;
-use crate::protocol::commitment::utils::linear::mat_vec_mul_unchecked;
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
     CommitmentConfig, CommitmentScheme, DefaultCommitmentConfig, HachiCommitmentCore,
@@ -91,6 +90,7 @@ where
         opening_point: &[F],
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut T,
+        commitment: &Self::Commitment,
     ) -> Result<Self::Proof, HachiError> {
         let hint = hint.ok_or_else(|| {
             HachiError::InvalidInput("missing commitment hint for proving".to_string())
@@ -117,53 +117,47 @@ where
             &hint.ring_coeffs,
             &opening_point[..reduced_len],
         );
-        let u_eval = compute_u_eval::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(
-            &hint.ring_coeffs,
-            &ring_opening_point,
-        )?;
 
-        let mut transcript_clone = transcript.clone();
         let mut prover = HachiProver::<F, { DefaultCommitmentConfig::D }>::new();
-        let v = prover.prove_stage1::<T, DefaultCommitmentConfig>(
+        let (v, challenges) = prover.prove_stage1::<T, DefaultCommitmentConfig>(
             setup,
             &ring_opening_point,
             transcript,
             &hint,
         )?;
-        let challenges = derive_stage1_challenges::<
-            F,
-            T,
-            { DefaultCommitmentConfig::D },
-            DefaultCommitmentConfig,
-        >(&mut transcript_clone, &v)?;
         let m = generate_m::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(
             setup,
             &ring_opening_point,
             &challenges,
         )?;
         let z = generate_z(&prover.w_hat, &hint.t_hat, &prover.z_hat);
-        let t_hat_flat: Vec<CyclotomicRing<F, { DefaultCommitmentConfig::D }>> =
-            hint.t_hat.iter().flat_map(|v| v.iter().copied()).collect();
-        let u = mat_vec_mul_unchecked(&setup.B, &t_hat_flat);
         let y = generate_y::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(
-            &v, &u, &u_eval,
+            &v,
+            &commitment.u,
+            &y_ring,
         )?;
+
+        // Compute r via poly division: r[i] = (M[i]·z − y[i]) / (X^D + 1)
+        let r = compute_r_via_poly_division::<F, { DefaultCommitmentConfig::D }>(&m, &z, &y);
+        let w =
+            build_w_coeffs::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(&z, &r);
+
+        // Commit to w and absorb the commitment into the transcript.
+        let w_commitment = commit_w::<F>(&w)?;
+        transcript.append_serde(ABSORB_SUMCHECK_W, &w_commitment);
 
         let alpha = derive_ring_switch_challenge::<F, T, { DefaultCommitmentConfig::D }>(
             transcript, &m, &y,
         );
+
+        let r_a = eval_ring_vec_at::<F, { DefaultCommitmentConfig::D }>(&r, &alpha);
+
+        // Cross-check against scalar-level computation
         let m_a = eval_ring_matrix_at::<F, { DefaultCommitmentConfig::D }>(&m, &alpha);
         let y_a = eval_ring_vec_at::<F, { DefaultCommitmentConfig::D }>(&y, &alpha);
         let z_a = eval_ring_vec_at::<F, { DefaultCommitmentConfig::D }>(&z, &alpha);
-        let r_a = compute_r_a::<F, { DefaultCommitmentConfig::D }>(&m_a, &z_a, &y_a, &alpha)?;
-
-        let r: Vec<CyclotomicRing<F, { DefaultCommitmentConfig::D }>> = r_a
-            .iter()
-            .map(|ri| constant_ring::<F, { DefaultCommitmentConfig::D }>(*ri))
-            .collect();
-        debug_assert!(eval_ring_vec_at::<F, { DefaultCommitmentConfig::D }>(&r, &alpha) == r_a);
-        let w =
-            build_w_coeffs::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(&z, &r);
+        let r_a_old = compute_r_a::<F, { DefaultCommitmentConfig::D }>(&m_a, &z_a, &y_a, &alpha)?;
+        debug_assert!(r_a == r_a_old, "r_a mismatch: poly-division vs scalar");
         let m_a_vec =
             expand_m_a::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(&m_a, alpha)?;
         debug_assert_eq!(m_a_vec.len() % m_a.len(), 0);
@@ -179,8 +173,6 @@ where
         let (w_evals, num_u, num_l) = build_w_evals(&w, d);
         let num_sc_vars = num_u + num_l;
         let b = 1usize << DefaultCommitmentConfig::LOG_BASIS;
-
-        transcript.append_serde(ABSORB_SUMCHECK_W, &w);
 
         // F_0 sumcheck (range check)
         let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
@@ -218,10 +210,10 @@ where
         Ok(HachiProof {
             v,
             y_ring,
-            u_eval,
             f0_proof,
             f_alpha_proof,
             sumcheck_aux: SumcheckAux { w },
+            w_commitment,
         })
     }
 
@@ -271,8 +263,10 @@ where
         let y = generate_y::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(
             &proof.v,
             &commitment.u,
-            &proof.u_eval,
+            &proof.y_ring,
         )?;
+        transcript.append_serde(ABSORB_SUMCHECK_W, &proof.w_commitment);
+
         let alpha = derive_ring_switch_challenge::<F, T, { DefaultCommitmentConfig::D }>(
             transcript, &m, &y,
         );
@@ -288,8 +282,6 @@ where
         let (w_evals, num_u, num_l) = build_w_evals(&proof.sumcheck_aux.w, d);
         let num_sc_vars = num_u + num_l;
         let b = 1usize << DefaultCommitmentConfig::LOG_BASIS;
-
-        transcript.append_serde(ABSORB_SUMCHECK_W, &proof.sumcheck_aux.w);
 
         // F_0 sumcheck verification (range check)
         let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
@@ -315,7 +307,7 @@ where
             tau1,
             proof.v.clone(),
             commitment.u.clone(),
-            proof.u_eval,
+            proof.y_ring,
             alpha,
             num_u,
             num_l,
@@ -421,8 +413,12 @@ where
     let y = generate_y::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(
         &proof.v,
         &commitment.u,
-        &proof.u_eval,
+        &proof.y_ring,
     )?;
+    transcript.append_serde(
+        crate::protocol::transcript::labels::ABSORB_SUMCHECK_W,
+        &proof.w_commitment,
+    );
     let alpha = derive_ring_switch_challenge::<F, _, { DefaultCommitmentConfig::D }>(
         &mut transcript,
         &m,
@@ -438,6 +434,69 @@ fn constant_ring<F: FieldCore, const D: usize>(value: F) -> CyclotomicRing<F, D>
     let mut coeffs = [F::zero(); D];
     coeffs[0] = value;
     CyclotomicRing::from_coefficients(coeffs)
+}
+
+/// Commitment config sized for the sumcheck witness `w`.
+///
+/// `w` has more ring elements than `DefaultCommitmentConfig` can handle,
+/// so we use a larger M (giving a bigger block length) while keeping
+/// everything else the same.
+#[derive(Clone, Copy, Debug)]
+struct WCommitmentConfig;
+
+impl CommitmentConfig for WCommitmentConfig {
+    const D: usize = DefaultCommitmentConfig::D;
+    const M: usize = 11;
+    const R: usize = 0;
+    const N_A: usize = DefaultCommitmentConfig::N_A;
+    const N_B: usize = DefaultCommitmentConfig::N_B;
+    const N_D: usize = DefaultCommitmentConfig::N_D;
+    const LOG_BASIS: u32 = DefaultCommitmentConfig::LOG_BASIS;
+    const DELTA: usize = DefaultCommitmentConfig::DELTA;
+    const TAU: usize = DefaultCommitmentConfig::TAU;
+    const BETA: u128 = DefaultCommitmentConfig::BETA;
+    const CHALLENGE_WEIGHT: usize = DefaultCommitmentConfig::CHALLENGE_WEIGHT;
+}
+
+/// Commit to the sumcheck witness `w` (a flat vector of field elements)
+/// using the Hachi ring commitment scheme with [`WCommitmentConfig`].
+fn commit_w<F>(w: &[F]) -> Result<RingCommitment<F, { DefaultCommitmentConfig::D }>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling,
+{
+    let d = DefaultCommitmentConfig::D;
+    let block_len = 1usize << WCommitmentConfig::M;
+
+    let ring_elems: Vec<CyclotomicRing<F, { DefaultCommitmentConfig::D }>> = w
+        .chunks(d)
+        .map(|chunk| {
+            let coeffs: [F; DefaultCommitmentConfig::D] =
+                std::array::from_fn(|i| if i < chunk.len() { chunk[i] } else { F::zero() });
+            CyclotomicRing::from_coefficients(coeffs)
+        })
+        .collect();
+
+    let mut padded = ring_elems;
+    padded.resize(
+        block_len,
+        CyclotomicRing::<F, { DefaultCommitmentConfig::D }>::zero(),
+    );
+
+    let blocks = vec![padded];
+
+    let (w_setup, _) = <HachiCommitmentCore as RingCommitmentScheme<
+        F,
+        { DefaultCommitmentConfig::D },
+        WCommitmentConfig,
+    >>::setup(WCommitmentConfig::M)?;
+
+    let (commitment, _, _) = <HachiCommitmentCore as RingCommitmentScheme<
+        F,
+        { DefaultCommitmentConfig::D },
+        WCommitmentConfig,
+    >>::commit_ring_blocks(&blocks, &w_setup)?;
+
+    Ok(commitment)
 }
 
 fn gadget_row<F: FieldCore + CanonicalField, const D: usize>(
@@ -851,6 +910,44 @@ fn compute_r_a<F: FieldCore, const D: usize>(
     Ok(out)
 }
 
+/// Compute `r[i] = (M[i]·z − y[i]) / (X^D + 1)` using schoolbook polynomial
+/// multiplication followed by polynomial long division.
+fn compute_r_via_poly_division<F: FieldCore, const D: usize>(
+    m: &[Vec<CyclotomicRing<F, D>>],
+    z: &[CyclotomicRing<F, D>],
+    y: &[CyclotomicRing<F, D>],
+) -> Vec<CyclotomicRing<F, D>> {
+    let poly_len = 2 * D - 1;
+    m.iter()
+        .zip(y.iter())
+        .map(|(row, y_i)| {
+            let mut poly = vec![F::zero(); poly_len];
+            for (m_ij, z_j) in row.iter().zip(z.iter()) {
+                let a = m_ij.coefficients();
+                let b = z_j.coefficients();
+                for t in 0..D {
+                    for s in 0..D {
+                        poly[t + s] = poly[t + s] + a[t] * b[s];
+                    }
+                }
+            }
+            let y_coeffs = y_i.coefficients();
+            for k in 0..D {
+                poly[k] = poly[k] - y_coeffs[k];
+            }
+            // Polynomial long division by (X^D + 1), which is monic.
+            let mut quotient = vec![F::zero(); D];
+            for k in (D..poly_len).rev() {
+                let q = poly[k];
+                quotient[k - D] = q;
+                poly[k - D] = poly[k - D] - q;
+            }
+            let coeffs: [F; D] = std::array::from_fn(|k| quotient[k]);
+            CyclotomicRing::from_coefficients(coeffs)
+        })
+        .collect()
+}
+
 #[allow(dead_code)]
 fn compute_r_from_m_z_y<F: FieldCore, const D: usize>(
     m: &[Vec<CyclotomicRing<F, D>>],
@@ -1156,6 +1253,7 @@ mod tests {
             &opening_point,
             Some(hint),
             &mut prover_transcript,
+            &commitment,
         )
         .unwrap();
 

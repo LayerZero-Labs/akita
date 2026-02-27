@@ -7,7 +7,7 @@ use crate::error::HachiError;
 use crate::protocol::challenges::sparse::sample_dense_challenges;
 use crate::protocol::commitment::utils::linear::mat_vec_mul_unchecked;
 use crate::protocol::commitment::utils::norm::{detect_field_modulus, vec_inf_norm};
-use crate::protocol::commitment::{CommitmentConfig, RingCommitmentSetup};
+use crate::protocol::commitment::{CommitmentConfig, RingCommitment, RingCommitmentSetup};
 use crate::protocol::commitment_scheme::HachiCommitmentHint;
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{HachiProof, SumcheckAux};
@@ -68,11 +68,10 @@ impl<F: FieldCore + CanonicalField + HachiSerialize, const D: usize> HachiProver
         Cfg: CommitmentConfig,
     {
         let mut prover = Self::new();
-        let v = prover.prove_stage1::<T, Cfg>(setup, point, transcript, hint)?;
+        let (v, _challenges) = prover.prove_stage1::<T, Cfg>(setup, point, transcript, hint)?;
         Ok(HachiProof {
             v,
             y_ring: CyclotomicRing::<F, D>::zero(),
-            u_eval: CyclotomicRing::<F, D>::zero(),
             f0_proof: SumcheckProof {
                 round_polys: Vec::new(),
             },
@@ -80,13 +79,15 @@ impl<F: FieldCore + CanonicalField + HachiSerialize, const D: usize> HachiProver
                 round_polys: Vec::new(),
             },
             sumcheck_aux: SumcheckAux { w: Vec::new() },
+            w_commitment: RingCommitment { u: Vec::new() },
         })
     }
 
     /// Run §4.2 prover stage 1 (Figure 3, prover side).
     ///
-    /// Populates the prover state with `(ŵ, t̂, ẑ)` and returns the
-    /// verifier-facing proof containing `v = D · ŵ`.
+    /// Populates the prover state with `(ŵ, t̂, ẑ)` and returns `(v, challenges)`
+    /// where `v = D · ŵ` is the verifier-facing proof and `challenges` are the
+    /// stage-1 folding challenges derived from the transcript.
     ///
     /// # Errors
     ///
@@ -98,7 +99,7 @@ impl<F: FieldCore + CanonicalField + HachiSerialize, const D: usize> HachiProver
         point: &RingOpeningPoint<F, D>,
         transcript: &mut T,
         hint: &HachiCommitmentHint<F, D>,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
+    ) -> Result<(Vec<CyclotomicRing<F, D>>, Vec<CyclotomicRing<F, D>>), HachiError>
     where
         T: Transcript<F>,
         Cfg: CommitmentConfig,
@@ -129,7 +130,7 @@ impl<F: FieldCore + CanonicalField + HachiSerialize, const D: usize> HachiProver
         // Steps 7–9: z = Σ c_i · s_i, check ‖z‖_∞ ≤ β, then ẑ = J^{-1}(z)
         self.compute_z_hat::<Cfg>(&challenges)?;
 
-        Ok(v)
+        Ok((v, challenges))
     }
 
     /// Create a new prover with empty state.
@@ -282,7 +283,7 @@ mod tests {
         };
         let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_SEED);
         let mut prover = HachiProver::<F, D>::new();
-        let v = prover
+        let (v, _challenges) = prover
             .prove_stage1::<Blake2bTranscript<F>, TinyConfig>(
                 &setup,
                 &point,
@@ -293,7 +294,6 @@ mod tests {
         let proof = HachiProof {
             v,
             y_ring: CyclotomicRing::<F, D>::zero(),
-            u_eval: CyclotomicRing::<F, D>::zero(),
             f0_proof: SumcheckProof {
                 round_polys: Vec::new(),
             },
@@ -301,6 +301,7 @@ mod tests {
                 round_polys: Vec::new(),
             },
             sumcheck_aux: SumcheckAux { w: Vec::new() },
+            w_commitment: RingCommitment { u: Vec::new() },
         };
 
         let challenges = replay_challenges(&proof);

@@ -297,7 +297,7 @@ pub struct FAlphaVerifier<F: FieldCore, const D: usize> {
     tau: Vec<F>,
     v: Vec<CyclotomicRing<F, D>>,
     u: Vec<CyclotomicRing<F, D>>,
-    u_eval: CyclotomicRing<F, D>,
+    y_ring: CyclotomicRing<F, D>,
     alpha: F,
     num_u: usize,
     num_l: usize,
@@ -311,7 +311,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> FAlphaVerifier<F, D> {
         tau: Vec<F>,
         v: Vec<CyclotomicRing<F, D>>,
         u: Vec<CyclotomicRing<F, D>>,
-        u_eval: CyclotomicRing<F, D>,
+        y_ring: CyclotomicRing<F, D>,
         alpha: F,
         num_u: usize,
         num_l: usize,
@@ -326,7 +326,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> FAlphaVerifier<F, D> {
             tau,
             v,
             u,
-            u_eval,
+            y_ring,
             alpha,
             num_u,
             num_l,
@@ -350,7 +350,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> SumcheckInstanceVerifier<F>
             .v
             .iter()
             .chain(self.u.iter())
-            .chain(std::iter::once(&self.u_eval))
+            .chain(std::iter::once(&self.y_ring))
             .map(|r| eval_ring_at(r, &self.alpha))
             .collect();
 
@@ -453,7 +453,7 @@ mod tests {
         let poly = DenseMultilinearEvals::new_padded(evals);
 
         let setup = HachiCommitmentScheme::setup_prover(num_vars);
-        let (_commitment, hint) = HachiCommitmentScheme::commit(&poly, &setup).unwrap();
+        let (commitment, hint) = HachiCommitmentScheme::commit(&poly, &setup).unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
         let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
@@ -463,6 +463,7 @@ mod tests {
             &opening_point,
             Some(hint),
             &mut prover_transcript,
+            &commitment,
         )
         .unwrap();
 
@@ -526,6 +527,7 @@ mod tests {
             &opening_point,
             Some(hint),
             &mut prover_transcript,
+            &commitment,
         )
         .unwrap();
 
@@ -618,7 +620,7 @@ mod tests {
             tau1,
             proof.v.clone(),
             commitment.u.clone(),
-            proof.u_eval,
+            proof.y_ring,
             alpha,
             num_u,
             num_l,
