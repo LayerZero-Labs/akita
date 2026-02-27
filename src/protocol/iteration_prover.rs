@@ -75,10 +75,10 @@ impl<F: FieldCore + CanonicalField + HachiSerialize, const D: usize> HachiProver
         Ok(HachiProof {
             v,
             y_ring: CyclotomicRing::<F, D>::zero(),
-            f0_proof: SumcheckProof {
+            norm_proof: SumcheckProof {
                 round_polys: Vec::new(),
             },
-            f_alpha_proof: SumcheckProof {
+            relation_proof: SumcheckProof {
                 round_polys: Vec::new(),
             },
             sumcheck_aux: SumcheckAux { w: Vec::new() },
@@ -297,10 +297,10 @@ mod tests {
         let proof = HachiProof {
             v,
             y_ring: CyclotomicRing::<F, D>::zero(),
-            f0_proof: SumcheckProof {
+            norm_proof: SumcheckProof {
                 round_polys: Vec::new(),
             },
-            f_alpha_proof: SumcheckProof {
+            relation_proof: SumcheckProof {
                 round_polys: Vec::new(),
             },
             sumcheck_aux: SumcheckAux { w: Vec::new() },

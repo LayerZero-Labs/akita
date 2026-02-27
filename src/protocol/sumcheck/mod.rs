@@ -19,7 +19,8 @@
 //! duplicates the essential sumcheck data types and transcript-driving logic as a
 //! pragmatic workaround.
 
-pub mod hachi_sumcheck;
+pub mod norm_sumcheck;
+pub mod relation_sumcheck;
 
 use crate::error::HachiError;
 use crate::primitives::serialization::{
@@ -27,6 +28,7 @@ use crate::primitives::serialization::{
 };
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
+use crate::CanonicalField;
 use crate::FieldCore;
 use std::io::{Read, Write};
 
@@ -568,4 +570,76 @@ where
     }
 
     Ok(challenges)
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers used by both sumcheck instances
+// ---------------------------------------------------------------------------
+
+/// Build the full eq polynomial evaluation table.
+///
+/// Returns a vector of size `2^{tau.len()}` where entry `b` (interpreted as a
+/// little-endian bit string, i.e. bit `k` of `b` corresponds to `τ[k]`) equals
+/// `ẽq(τ, b) = Π_i (τ_i·b_i + (1−τ_i)(1−b_i))`.
+pub fn eq_evals<E: FieldCore>(tau: &[E]) -> Vec<E> {
+    let size = 1usize << tau.len();
+    let mut evals = vec![E::zero(); size];
+    evals[0] = E::one();
+    let mut len = 1usize;
+    for &t in tau.iter().rev() {
+        let one_minus_t = E::one() - t;
+        for j in (0..len).rev() {
+            evals[2 * j + 1] = evals[j] * t;
+            evals[2 * j] = evals[j] * one_minus_t;
+        }
+        len *= 2;
+    }
+    evals
+}
+
+/// Evaluate ẽq(τ, r) at a single point.
+pub fn eq_eval<E: FieldCore>(tau: &[E], point: &[E]) -> E {
+    debug_assert_eq!(tau.len(), point.len());
+    tau.iter().zip(point).fold(E::one(), |acc, (&t, &r)| {
+        acc * (t * r + (E::one() - t) * (E::one() - r))
+    })
+}
+
+/// Evaluate the range-check polynomial `w · Π_{k=1}^{b−1} (w − k)(w + k)`.
+///
+/// This polynomial vanishes exactly when `w ∈ {−(b−1), …, b−1}`.
+/// Total degree in `w` is `2b − 1`.
+pub fn range_check_eval<E: FieldCore + CanonicalField>(w: E, b: usize) -> E {
+    let mut acc = w;
+    for k in 1..b {
+        let k_e = E::from_u64(k as u64);
+        acc = acc * (w - k_e) * (w + k_e);
+    }
+    acc
+}
+
+/// Evaluate a multilinear polynomial (given by boolean-hypercube evaluations in
+/// little-endian bit order) at an arbitrary point via iterated folding.
+pub fn multilinear_eval<E: FieldCore>(evals: &[E], point: &[E]) -> E {
+    let mut current = evals.to_vec();
+    for &r in point {
+        let half = current.len() / 2;
+        let mut next = Vec::with_capacity(half);
+        for i in 0..half {
+            next.push(current[2 * i] + r * (current[2 * i + 1] - current[2 * i]));
+        }
+        current = next;
+    }
+    current[0]
+}
+
+/// Fold an evaluation table by binding its first variable to `r`, halving the
+/// table size.
+pub(crate) fn fold_evals<E: FieldCore>(evals: &[E], r: E) -> Vec<E> {
+    let half = evals.len() / 2;
+    let mut out = Vec::with_capacity(half);
+    for i in 0..half {
+        out.push(evals[2 * i] + r * (evals[2 * i + 1] - evals[2 * i]));
+    }
+    out
 }

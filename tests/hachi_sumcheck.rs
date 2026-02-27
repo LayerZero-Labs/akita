@@ -2,10 +2,11 @@
 
 use hachi_pcs::algebra::ring::CyclotomicRing;
 use hachi_pcs::algebra::Fp64;
-use hachi_pcs::protocol::sumcheck::hachi_sumcheck::{
-    eq_eval, eq_evals, multilinear_eval, range_check_eval, F0Prover, F0Verifier, FAlphaProver,
-    FAlphaVerifier,
+use hachi_pcs::protocol::sumcheck::norm_sumcheck::{NormSumcheckProver, NormSumcheckVerifier};
+use hachi_pcs::protocol::sumcheck::relation_sumcheck::{
+    RelationSumcheckProver, RelationSumcheckVerifier,
 };
+use hachi_pcs::protocol::sumcheck::{eq_eval, eq_evals, multilinear_eval, range_check_eval};
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{prove_sumcheck, verify_sumcheck, Blake2bTranscript, Transcript};
 use hachi_pcs::{CanonicalField, FieldCore, FieldSampling};
@@ -27,15 +28,9 @@ fn run_f0_e2e(num_u: usize, num_l: usize, b: usize) {
     let w_evals: Vec<F> = (0..n).map(|i| F::from_u64((i % b) as u64)).collect();
     let tau0: Vec<F> = (0..num_vars).map(|_| F::sample(&mut rng)).collect();
 
-    // Brute-force claim: Σ eq(τ₀, b) · range_check(w(b), b_param)
-    let eq_table = eq_evals(&tau0);
-    let claim: F = (0..n)
-        .map(|i| eq_table[i] * range_check_eval(w_evals[i], b))
-        .fold(F::zero(), |a, v| a + v);
-
     // ---- Prover ----
     let t0 = Instant::now();
-    let mut prover = F0Prover::new(&tau0, w_evals.clone(), b);
+    let mut prover = NormSumcheckProver::new(&tau0, w_evals.clone(), b);
     let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
 
     let (proof, prover_challenges, final_claim) =
@@ -52,7 +47,7 @@ fn run_f0_e2e(num_u: usize, num_l: usize, b: usize) {
 
     // ---- Verifier ----
     let t1 = Instant::now();
-    let verifier = F0Verifier::new(tau0, w_evals, b);
+    let verifier = NormSumcheckVerifier::new(tau0, w_evals, b);
     let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
 
     let verifier_challenges = verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut vt, |tr| {
@@ -146,19 +141,10 @@ fn run_f_alpha_e2e<const D: usize>(num_u: usize, num_i: usize) {
     let u_eval_ring = CyclotomicRing::<F, D>::zero();
     let ring_alpha = F::one();
 
-    // Extend α̃ and m to full domain for brute-force claim computation.
-    let x_mask = (1usize << num_u) - 1;
-    let alpha_full: Vec<F> = (0..n).map(|idx| alpha_evals_y[idx >> num_u]).collect();
-    let m_full: Vec<F> = (0..n).map(|idx| m_evals_x[idx & x_mask]).collect();
-
-    // Brute-force claim: Σ w(idx) · α(y) · m(x)
-    let claim: F = (0..n)
-        .map(|i| w_evals[i] * alpha_full[i] * m_full[i])
-        .fold(F::zero(), |a, v| a + v);
-
     // ---- Prover ----
     let t0 = Instant::now();
-    let mut prover = FAlphaProver::new(w_evals.clone(), &alpha_evals_y, &m_evals_x, num_u, num_l);
+    let mut prover =
+        RelationSumcheckProver::new(w_evals.clone(), &alpha_evals_y, &m_evals_x, num_u, num_l);
     let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
 
     let (proof, prover_challenges, final_claim) =
@@ -177,7 +163,7 @@ fn run_f_alpha_e2e<const D: usize>(num_u: usize, num_i: usize) {
 
     // ---- Verifier ----
     let t1 = Instant::now();
-    let verifier = FAlphaVerifier::<F, D>::new(
+    let verifier = RelationSumcheckVerifier::<F, D>::new(
         w_evals,
         alpha_evals_y,
         m_evals_x,

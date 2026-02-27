@@ -5,7 +5,7 @@ use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
     prove_sumcheck, Blake2bTranscript, SumcheckInstanceProver, Transcript, UniPoly,
 };
-use hachi_pcs::{FieldCore, FieldSampling, HachiSerialize};
+use hachi_pcs::{FieldCore, FieldSampling};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 

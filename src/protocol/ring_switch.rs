@@ -12,7 +12,7 @@ use crate::protocol::commitment::{
     RingCommitmentScheme,
 };
 use crate::protocol::quadratic_equation::QuadraticEquation;
-use crate::protocol::sumcheck::hachi_sumcheck::eq_evals;
+use crate::protocol::sumcheck::eq_evals;
 use crate::protocol::transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
