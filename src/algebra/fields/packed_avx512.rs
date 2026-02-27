@@ -490,48 +490,47 @@ impl<const P: u64> PackedField for PackedFp64Avx512<P> {
     }
 }
 
-// ===== PackedFp128Avx512 (4-wide) =====
+// ===== PackedFp128Avx512 (8-wide, SoA) =====
 
 /// Number of `Fp128` lanes in an AVX-512 packed vector.
-pub const FP128_WIDTH: usize = 4;
+pub const FP128_WIDTH: usize = 8;
 
-/// AVX-512 packed arithmetic for `Fp128<P>`, processing 4 lanes.
+/// AVX-512 packed arithmetic for `Fp128<P>`, 8 lanes in SoA layout.
+///
+/// Stores 8 elements as separate `lo` and `hi` `u64` arrays, enabling
+/// vectorized add/sub via `__m512i`.  Mul remains scalar per-lane.
 #[derive(Clone, Copy)]
-#[repr(transparent)]
-pub struct PackedFp128Avx512<const P: u128>(pub [Fp128<P>; FP128_WIDTH]);
+pub struct PackedFp128Avx512<const P: u128> {
+    lo: [u64; FP128_WIDTH],
+    hi: [u64; FP128_WIDTH],
+}
 
 impl<const P: u128> PackedFp128Avx512<P> {
-    const C: u128 = {
-        let c = 0u128.wrapping_sub(P);
-        assert!(P != 0, "modulus must be nonzero");
-        assert!(P & 1 == 1, "modulus must be odd");
-        assert!(c < (1u128 << 64), "P must be 2^128 - c with c < 2^64");
-        assert!(
-            c * (c + 1) < P,
-            "C(C+1) < P required for fused canonicalize"
-        );
-        c
-    };
-    const C_LO: u64 = Self::C as u64;
+    const P_LO: u64 = P as u64;
+    const P_HI: u64 = (P >> 64) as u64;
 }
 
 impl<const P: u128> Default for PackedFp128Avx512<P> {
     #[inline]
     fn default() -> Self {
-        Self([Fp128::zero(); FP128_WIDTH])
+        Self {
+            lo: [0; FP128_WIDTH],
+            hi: [0; FP128_WIDTH],
+        }
     }
 }
 
 impl<const P: u128> fmt::Debug for PackedFp128Avx512<P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("PackedFp128Avx512").field(&self.0).finish()
+        let elems: Vec<_> = (0..FP128_WIDTH).map(|i| self.extract(i)).collect();
+        f.debug_tuple("PackedFp128Avx512").field(&elems).finish()
     }
 }
 
 impl<const P: u128> PartialEq for PackedFp128Avx512<P> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
+        self.lo == other.lo && self.hi == other.hi
     }
 }
 
@@ -541,12 +540,43 @@ impl<const P: u128> Add for PackedFp128Avx512<P> {
     type Output = Self;
     #[inline]
     fn add(self, rhs: Self) -> Self {
-        Self([
-            self.0[0] + rhs.0[0],
-            self.0[1] + rhs.0[1],
-            self.0[2] + rhs.0[2],
-            self.0[3] + rhs.0[3],
-        ])
+        unsafe {
+            let a_lo = _mm512_loadu_si512(self.lo.as_ptr().cast());
+            let a_hi = _mm512_loadu_si512(self.hi.as_ptr().cast());
+            let b_lo = _mm512_loadu_si512(rhs.lo.as_ptr().cast());
+            let b_hi = _mm512_loadu_si512(rhs.hi.as_ptr().cast());
+            let p_lo = _mm512_set1_epi64(Self::P_LO as i64);
+            let p_hi = _mm512_set1_epi64(Self::P_HI as i64);
+            let one = _mm512_set1_epi64(1);
+
+            // 128-bit add: (sum_hi, sum_lo) = (a_hi, a_lo) + (b_hi, b_lo)
+            let sum_lo = _mm512_add_epi64(a_lo, b_lo);
+            let carry_lo = _mm512_cmplt_epu64_mask(sum_lo, a_lo);
+            let hi_tmp = _mm512_add_epi64(a_hi, b_hi);
+            let ov1 = _mm512_cmplt_epu64_mask(hi_tmp, a_hi);
+            let sum_hi = _mm512_mask_add_epi64(hi_tmp, carry_lo, hi_tmp, one);
+            let ov2 = _mm512_cmplt_epu64_mask(sum_hi, hi_tmp);
+            let carry_128 = ov1 | ov2;
+
+            // 128-bit subtract P: (red_hi, red_lo) = (sum_hi, sum_lo) - P
+            let red_lo = _mm512_sub_epi64(sum_lo, p_lo);
+            let borrow_lo = _mm512_cmplt_epu64_mask(sum_lo, p_lo);
+            let red_hi_tmp = _mm512_sub_epi64(sum_hi, p_hi);
+            let bw1 = _mm512_cmplt_epu64_mask(sum_hi, p_hi);
+            let red_hi = _mm512_mask_sub_epi64(red_hi_tmp, borrow_lo, red_hi_tmp, one);
+            let bw2 = _mm512_cmplt_epu64_mask(red_hi_tmp, _mm512_maskz_mov_epi64(borrow_lo, one));
+            let borrow = bw1 | bw2;
+
+            // Use reduced if: overflow happened OR subtraction didn't borrow
+            let use_reduced = carry_128 | !borrow;
+            let out_lo = _mm512_mask_blend_epi64(use_reduced, sum_lo, red_lo);
+            let out_hi = _mm512_mask_blend_epi64(use_reduced, sum_hi, red_hi);
+
+            let mut result = Self::default();
+            _mm512_storeu_si512(result.lo.as_mut_ptr().cast(), out_lo);
+            _mm512_storeu_si512(result.hi.as_mut_ptr().cast(), out_hi);
+            result
+        }
     }
 }
 
@@ -554,12 +584,38 @@ impl<const P: u128> Sub for PackedFp128Avx512<P> {
     type Output = Self;
     #[inline]
     fn sub(self, rhs: Self) -> Self {
-        Self([
-            self.0[0] - rhs.0[0],
-            self.0[1] - rhs.0[1],
-            self.0[2] - rhs.0[2],
-            self.0[3] - rhs.0[3],
-        ])
+        unsafe {
+            let a_lo = _mm512_loadu_si512(self.lo.as_ptr().cast());
+            let a_hi = _mm512_loadu_si512(self.hi.as_ptr().cast());
+            let b_lo = _mm512_loadu_si512(rhs.lo.as_ptr().cast());
+            let b_hi = _mm512_loadu_si512(rhs.hi.as_ptr().cast());
+            let p_lo = _mm512_set1_epi64(Self::P_LO as i64);
+            let p_hi = _mm512_set1_epi64(Self::P_HI as i64);
+            let one = _mm512_set1_epi64(1);
+
+            // 128-bit sub: (diff_hi, diff_lo) = (a_hi, a_lo) - (b_hi, b_lo)
+            let diff_lo = _mm512_sub_epi64(a_lo, b_lo);
+            let borrow_lo = _mm512_cmplt_epu64_mask(a_lo, b_lo);
+            let hi_tmp = _mm512_sub_epi64(a_hi, b_hi);
+            let bw1 = _mm512_cmplt_epu64_mask(a_hi, b_hi);
+            let diff_hi = _mm512_mask_sub_epi64(hi_tmp, borrow_lo, hi_tmp, one);
+            let bw2 = _mm512_cmplt_epu64_mask(hi_tmp, _mm512_maskz_mov_epi64(borrow_lo, one));
+            let borrow_128 = bw1 | bw2;
+
+            // Correction: add P back where underflow occurred
+            let corr_lo = _mm512_add_epi64(diff_lo, p_lo);
+            let carry_lo = _mm512_cmplt_epu64_mask(corr_lo, diff_lo);
+            let corr_hi = _mm512_add_epi64(diff_hi, p_hi);
+            let corr_hi = _mm512_mask_add_epi64(corr_hi, carry_lo, corr_hi, one);
+
+            let out_lo = _mm512_mask_blend_epi64(borrow_128, diff_lo, corr_lo);
+            let out_hi = _mm512_mask_blend_epi64(borrow_128, diff_hi, corr_hi);
+
+            let mut result = Self::default();
+            _mm512_storeu_si512(result.lo.as_mut_ptr().cast(), out_lo);
+            _mm512_storeu_si512(result.hi.as_mut_ptr().cast(), out_hi);
+            result
+        }
     }
 }
 
@@ -567,12 +623,15 @@ impl<const P: u128> Mul for PackedFp128Avx512<P> {
     type Output = Self;
     #[inline]
     fn mul(self, rhs: Self) -> Self {
-        Self([
-            self.0[0] * rhs.0[0],
-            self.0[1] * rhs.0[1],
-            self.0[2] * rhs.0[2],
-            self.0[3] * rhs.0[3],
-        ])
+        let mut out = Self::default();
+        for i in 0..FP128_WIDTH {
+            let a = Fp128::<P>([self.lo[i], self.hi[i]]);
+            let b = Fp128::<P>([rhs.lo[i], rhs.hi[i]]);
+            let r = a * b;
+            out.lo[i] = r.0[0];
+            out.hi[i] = r.0[1];
+        }
+        out
     }
 }
 
@@ -585,13 +644,20 @@ impl<const P: u128> PackedValue for PackedFp128Avx512<P> {
     where
         F: FnMut(usize) -> Self::Value,
     {
-        Self([f(0), f(1), f(2), f(3)])
+        let mut lo = [0u64; FP128_WIDTH];
+        let mut hi = [0u64; FP128_WIDTH];
+        for i in 0..FP128_WIDTH {
+            let v = f(i);
+            lo[i] = v.0[0];
+            hi[i] = v.0[1];
+        }
+        Self { lo, hi }
     }
 
     #[inline]
     fn extract(&self, lane: usize) -> Self::Value {
         debug_assert!(lane < FP128_WIDTH);
-        self.0[lane]
+        Fp128([self.lo[lane], self.hi[lane]])
     }
 }
 
@@ -600,6 +666,9 @@ impl<const P: u128> PackedField for PackedFp128Avx512<P> {
 
     #[inline]
     fn broadcast(value: Self::Scalar) -> Self {
-        Self([value; FP128_WIDTH])
+        Self {
+            lo: [value.0[0]; FP128_WIDTH],
+            hi: [value.0[1]; FP128_WIDTH],
+        }
     }
 }

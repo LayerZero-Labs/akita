@@ -4,10 +4,11 @@ use ark_bn254::Fr as BN254Fr;
 use ark_ff::{AdditiveGroup, Field};
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use hachi_pcs::algebra::fields::fp128::{Prime128M18M0, Prime128M54P0};
+use hachi_pcs::algebra::fields::fp32::Fp32;
 use hachi_pcs::algebra::{HasPacking, PackedField, PackedValue, Prime128M13M4P0, Prime128M8M4M1M0};
 use hachi_pcs::algebra::{
     Pow2Offset24Field, Pow2Offset30Field, Pow2Offset31Field, Pow2Offset32Field, Pow2Offset40Field,
-    Pow2Offset64Field,
+    Pow2Offset48Field, Pow2Offset56Field, Pow2Offset64Field,
 };
 use hachi_pcs::{CanonicalField, FieldCore, FieldSampling, Invertible};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
@@ -889,16 +890,24 @@ fn bench_throughput(c: &mut Criterion) {
     let n = 4096u64;
     let mut rng = StdRng::seed_from_u64(0xdead_cafe);
 
+    type M31 = Fp32<{ (1u32 << 31) - 1 }>;
+
     let a24: Vec<Pow2Offset24Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let b24: Vec<Pow2Offset24Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let a30: Vec<Pow2Offset30Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let b30: Vec<Pow2Offset30Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let a31: Vec<Pow2Offset31Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let b31: Vec<Pow2Offset31Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let am31: Vec<M31> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let bm31: Vec<M31> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let a32: Vec<Pow2Offset32Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let b32: Vec<Pow2Offset32Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let a40: Vec<Pow2Offset40Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let b40: Vec<Pow2Offset40Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let a48: Vec<Pow2Offset48Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let b48: Vec<Pow2Offset48Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let a56: Vec<Pow2Offset56Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let b56: Vec<Pow2Offset56Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let a64: Vec<Pow2Offset64Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let b64: Vec<Pow2Offset64Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let a128: Vec<Prime128M8M4M1M0> = (0..n)
@@ -911,8 +920,11 @@ fn bench_throughput(c: &mut Criterion) {
     let mut out24 = vec![Pow2Offset24Field::zero(); n as usize];
     let mut out30 = vec![Pow2Offset30Field::zero(); n as usize];
     let mut out31 = vec![Pow2Offset31Field::zero(); n as usize];
+    let mut outm31 = vec![M31::zero(); n as usize];
     let mut out32 = vec![Pow2Offset32Field::zero(); n as usize];
     let mut out40 = vec![Pow2Offset40Field::zero(); n as usize];
+    let mut out48 = vec![Pow2Offset48Field::zero(); n as usize];
+    let mut out56 = vec![Pow2Offset56Field::zero(); n as usize];
     let mut out64 = vec![Pow2Offset64Field::zero(); n as usize];
     let mut out128 = vec![Prime128M8M4M1M0::zero(); n as usize];
 
@@ -940,10 +952,16 @@ fn bench_throughput(c: &mut Criterion) {
     bench_op!("fp32_30b_add", a30, b30, out30, +);
     bench_op!("fp32_31b_mul", a31, b31, out31, *);
     bench_op!("fp32_31b_add", a31, b31, out31, +);
+    bench_op!("fp32_m31_mul", am31, bm31, outm31, *);
+    bench_op!("fp32_m31_add", am31, bm31, outm31, +);
     bench_op!("fp32_32b_mul", a32, b32, out32, *);
     bench_op!("fp32_32b_add", a32, b32, out32, +);
     bench_op!("fp64_40b_mul", a40, b40, out40, *);
     bench_op!("fp64_40b_add", a40, b40, out40, +);
+    bench_op!("fp64_48b_mul", a48, b48, out48, *);
+    bench_op!("fp64_48b_add", a48, b48, out48, +);
+    bench_op!("fp64_56b_mul", a56, b56, out56, *);
+    bench_op!("fp64_56b_add", a56, b56, out56, +);
     bench_op!("fp64_64b_mul", a64, b64, out64, *);
     bench_op!("fp64_64b_add", a64, b64, out64, +);
     bench_op!("fp128_mul", a128, b128, out128, *);
@@ -953,7 +971,7 @@ fn bench_throughput(c: &mut Criterion) {
 }
 
 fn bench_packed_throughput(c: &mut Criterion) {
-    use hachi_pcs::algebra::{Fp32Packing, Fp64Packing};
+    use hachi_pcs::algebra::{Fp128Packing, Fp32Packing, Fp64Packing};
 
     let n = 4096u64;
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
@@ -1002,17 +1020,30 @@ fn bench_packed_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("packed_throughput");
     group.throughput(Throughput::Elements(n));
 
-    type P24 = Fp32Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_24 }>;
-    type P31 = Fp32Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_31 }>;
-    type P32 = Fp32Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_32 }>;
-    type P40 = Fp64Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_40 }>;
-    type P64 = Fp64Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_64 }>;
+    use hachi_pcs::algebra::fields::pseudo_mersenne::*;
+    type M31 = Fp32<{ (1u32 << 31) - 1 }>;
+
+    type P24 = Fp32Packing<{ POW2_OFFSET_MODULUS_24 }>;
+    type P30 = Fp32Packing<{ POW2_OFFSET_MODULUS_30 }>;
+    type P31 = Fp32Packing<{ POW2_OFFSET_MODULUS_31 }>;
+    type PM31 = Fp32Packing<{ (1u32 << 31) - 1 }>;
+    type P32 = Fp32Packing<{ POW2_OFFSET_MODULUS_32 }>;
+    type P40 = Fp64Packing<{ POW2_OFFSET_MODULUS_40 }>;
+    type P48 = Fp64Packing<{ POW2_OFFSET_MODULUS_48 }>;
+    type P56 = Fp64Packing<{ POW2_OFFSET_MODULUS_56 }>;
+    type P64 = Fp64Packing<{ POW2_OFFSET_MODULUS_64 }>;
+    type P128 = Fp128Packing<{ POW2_OFFSET_MODULUS_128 }>;
 
     packed_bench!(group, "fp32_24b", Pow2Offset24Field, P24, &mut rng, n);
+    packed_bench!(group, "fp32_30b", Pow2Offset30Field, P30, &mut rng, n);
     packed_bench!(group, "fp32_31b", Pow2Offset31Field, P31, &mut rng, n);
+    packed_bench!(group, "fp32_m31", M31, PM31, &mut rng, n);
     packed_bench!(group, "fp32_32b", Pow2Offset32Field, P32, &mut rng, n);
     packed_bench!(group, "fp64_40b", Pow2Offset40Field, P40, &mut rng, n);
+    packed_bench!(group, "fp64_48b", Pow2Offset48Field, P48, &mut rng, n);
+    packed_bench!(group, "fp64_56b", Pow2Offset56Field, P56, &mut rng, n);
     packed_bench!(group, "fp64_64b", Pow2Offset64Field, P64, &mut rng, n);
+    packed_bench!(group, "fp128", Prime128M8M4M1M0, P128, &mut rng, n);
 
     group.finish();
 }
@@ -1344,7 +1375,7 @@ fn bench_parallel_throughput(c: &mut Criterion) {
 fn bench_parallel_throughput(_: &mut Criterion) {}
 
 fn bench_packed_sumcheck_mix(c: &mut Criterion) {
-    use hachi_pcs::algebra::{Fp32Packing, Fp64Packing};
+    use hachi_pcs::algebra::{Fp128Packing, Fp32Packing, Fp64Packing};
 
     let n = 4096u64;
     let mut rng = StdRng::seed_from_u64(0xface_bead);
@@ -1374,17 +1405,30 @@ fn bench_packed_sumcheck_mix(c: &mut Criterion) {
     let mut group = c.benchmark_group("packed_sumcheck_mix");
     group.throughput(Throughput::Elements(n));
 
-    type P24 = Fp32Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_24 }>;
-    type P31 = Fp32Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_31 }>;
-    type P32 = Fp32Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_32 }>;
-    type P40 = Fp64Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_40 }>;
-    type P64 = Fp64Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_64 }>;
+    use hachi_pcs::algebra::fields::pseudo_mersenne::*;
+    type M31 = Fp32<{ (1u32 << 31) - 1 }>;
+
+    type P24 = Fp32Packing<{ POW2_OFFSET_MODULUS_24 }>;
+    type P30 = Fp32Packing<{ POW2_OFFSET_MODULUS_30 }>;
+    type P31 = Fp32Packing<{ POW2_OFFSET_MODULUS_31 }>;
+    type PM31 = Fp32Packing<{ (1u32 << 31) - 1 }>;
+    type P32 = Fp32Packing<{ POW2_OFFSET_MODULUS_32 }>;
+    type P40 = Fp64Packing<{ POW2_OFFSET_MODULUS_40 }>;
+    type P48 = Fp64Packing<{ POW2_OFFSET_MODULUS_48 }>;
+    type P56 = Fp64Packing<{ POW2_OFFSET_MODULUS_56 }>;
+    type P64 = Fp64Packing<{ POW2_OFFSET_MODULUS_64 }>;
+    type P128 = Fp128Packing<{ POW2_OFFSET_MODULUS_128 }>;
 
     sumcheck_bench!(group, "fp32_24b", Pow2Offset24Field, P24, &mut rng, n);
+    sumcheck_bench!(group, "fp32_30b", Pow2Offset30Field, P30, &mut rng, n);
     sumcheck_bench!(group, "fp32_31b", Pow2Offset31Field, P31, &mut rng, n);
+    sumcheck_bench!(group, "fp32_m31", M31, PM31, &mut rng, n);
     sumcheck_bench!(group, "fp32_32b", Pow2Offset32Field, P32, &mut rng, n);
     sumcheck_bench!(group, "fp64_40b", Pow2Offset40Field, P40, &mut rng, n);
+    sumcheck_bench!(group, "fp64_48b", Pow2Offset48Field, P48, &mut rng, n);
+    sumcheck_bench!(group, "fp64_56b", Pow2Offset56Field, P56, &mut rng, n);
     sumcheck_bench!(group, "fp64_64b", Pow2Offset64Field, P64, &mut rng, n);
+    sumcheck_bench!(group, "fp128", Prime128M8M4M1M0, P128, &mut rng, n);
 
     group.finish();
 }
