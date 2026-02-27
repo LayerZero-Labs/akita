@@ -10,7 +10,7 @@
 
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
 use crate::algebra::ring::CyclotomicRing;
-use crate::protocol::commitment_scheme::eval_ring_at;
+use crate::protocol::ring_switch::eval_ring_at;
 use crate::{CanonicalField, FieldCore};
 
 // ---------------------------------------------------------------------------
@@ -104,6 +104,11 @@ pub struct F0Prover<E> {
 }
 
 impl<E: FieldCore + CanonicalField> F0Prover<E> {
+    /// Create a new F0 range-check prover.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `w_evals.len() != 2^tau.len()`.
     pub fn new(tau: &[E], w_evals: Vec<E>, b: usize) -> Self {
         let num_vars = tau.len();
         assert_eq!(w_evals.len(), 1 << num_vars);
@@ -141,11 +146,11 @@ impl<E: FieldCore + CanonicalField> SumcheckInstanceProver<E> for F0Prover<E> {
             let w_0 = self.w_table[2 * j];
             let w_1 = self.w_table[2 * j + 1];
 
-            for t in 0..num_points {
+            for (t, eval) in round_evals.iter_mut().enumerate() {
                 let t_e = E::from_u64(t as u64);
                 let eq_t = eq_0 + t_e * (eq_1 - eq_0);
                 let w_t = w_0 + t_e * (w_1 - w_0);
-                round_evals[t] = round_evals[t] + eq_t * range_check_eval(w_t, self.b);
+                *eval = *eval + eq_t * range_check_eval(w_t, self.b);
             }
         }
 
@@ -167,6 +172,11 @@ pub struct F0Verifier<E> {
 }
 
 impl<E: FieldCore + CanonicalField> F0Verifier<E> {
+    /// Create a new F0 range-check verifier.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `w_evals.len() != 2^tau.len()`.
     pub fn new(tau: Vec<E>, w_evals: Vec<E>, b: usize) -> Self {
         let num_vars = tau.len();
         assert_eq!(w_evals.len(), 1 << num_vars);
@@ -226,6 +236,10 @@ impl<E: FieldCore + CanonicalField> FAlphaProver<E> {
     /// - `m_evals_x`: evaluations of `m` over `{0,1}^{num_u}` (compact).
     ///
     /// The constructor extends the compact tables to the full domain by replication.
+    ///
+    /// # Panics
+    ///
+    /// Panics if table sizes don't match `2^num_u`, `2^num_l`, or `2^(num_u+num_l)`.
     pub fn new(
         w_evals: Vec<E>,
         alpha_evals_y: &[E],
@@ -282,12 +296,12 @@ impl<E: FieldCore + CanonicalField> SumcheckInstanceProver<E> for FAlphaProver<E
             let m_0 = self.m_table[2 * j];
             let m_1 = self.m_table[2 * j + 1];
 
-            for t in 0..num_points {
+            for (t, eval) in round_evals.iter_mut().enumerate() {
                 let t_e = E::from_u64(t as u64);
                 let w_t = w_0 + t_e * (w_1 - w_0);
                 let a_t = a_0 + t_e * (a_1 - a_0);
                 let m_t = m_0 + t_e * (m_1 - m_0);
-                round_evals[t] = round_evals[t] + w_t * a_t * m_t;
+                *eval = *eval + w_t * a_t * m_t;
             }
         }
 
@@ -316,6 +330,12 @@ pub struct FAlphaVerifier<F: FieldCore, const D: usize> {
 }
 
 impl<F: FieldCore + CanonicalField, const D: usize> FAlphaVerifier<F, D> {
+    /// Create a new F-alpha evaluation-relation verifier.
+    ///
+    /// # Panics
+    ///
+    /// Panics if table sizes don't match `2^num_u`, `2^num_l`, or `2^(num_u+num_l)`.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         w_evals: Vec<F>,
         alpha_evals_y: Vec<F>,
@@ -389,7 +409,8 @@ mod tests {
     use super::*;
     use crate::algebra::{CyclotomicRing, Fp64};
     use crate::primitives::multilinear_evals::DenseMultilinearEvals;
-    use crate::protocol::commitment_scheme::{build_w_coeffs, rederive_alpha_and_m_a};
+    use crate::protocol::commitment_scheme::rederive_alpha_and_m_a;
+    use crate::protocol::ring_switch::build_w_coeffs;
     use crate::protocol::transcript::labels;
     use crate::protocol::{
         prove_sumcheck, verify_sumcheck, Blake2bTranscript, CommitmentConfig, CommitmentScheme,

@@ -8,13 +8,16 @@ use crate::protocol::challenges::sparse::sample_dense_challenges;
 use crate::protocol::commitment::utils::linear::mat_vec_mul_unchecked;
 use crate::protocol::commitment::utils::norm::{detect_field_modulus, vec_inf_norm};
 use crate::protocol::commitment::{CommitmentConfig, RingCommitment, RingCommitmentSetup};
-use crate::protocol::commitment_scheme::HachiCommitmentHint;
 use crate::protocol::opening_point::RingOpeningPoint;
-use crate::protocol::proof::{HachiProof, SumcheckAux};
+use crate::protocol::proof::{HachiCommitmentHint, HachiProof, SumcheckAux};
 use crate::protocol::sumcheck::SumcheckProof;
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, HachiSerialize};
+
+/// Return type for stage-1 proving: `(v, challenges)`.
+type Stage1Result<F, const D: usize> =
+    Result<(Vec<CyclotomicRing<F, D>>, Vec<CyclotomicRing<F, D>>), HachiError>;
 
 /// Stateful prover accumulating witness data across protocol stages.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,7 +102,7 @@ impl<F: FieldCore + CanonicalField + HachiSerialize, const D: usize> HachiProver
         point: &RingOpeningPoint<F, D>,
         transcript: &mut T,
         hint: &HachiCommitmentHint<F, D>,
-    ) -> Result<(Vec<CyclotomicRing<F, D>>, Vec<CyclotomicRing<F, D>>), HachiError>
+    ) -> Stage1Result<F, D>
     where
         T: Transcript<F>,
         Cfg: CommitmentConfig,
@@ -222,7 +225,7 @@ mod tests {
     use crate::algebra::CyclotomicRing;
     use crate::protocol::challenges::sparse::sample_dense_challenges;
     use crate::protocol::commitment::{HachiCommitmentCore, RingCommitmentScheme};
-    use crate::protocol::commitment_scheme::HachiCommitmentHint;
+    use crate::protocol::proof::HachiCommitmentHint;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::test_utils::*;
     use crate::Transcript;

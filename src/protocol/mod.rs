@@ -10,6 +10,8 @@ pub mod commitment_scheme;
 pub mod iteration_prover;
 pub mod opening_point;
 pub mod proof;
+pub mod quadratic_equation;
+pub mod ring_switch;
 pub mod sumcheck;
 pub mod transcript;
 

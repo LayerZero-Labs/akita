@@ -126,10 +126,10 @@ impl<E: FieldCore + crate::CanonicalField> UniPoly<E> {
         // Divided differences: dd[k] = delta^k / k!
         let mut factorial = E::one();
         let mut divided_diffs = vec![deltas[0]];
-        for k in 1..n {
+        for (k, delta_k) in deltas.iter().enumerate().skip(1) {
             factorial = factorial * E::from_u64(k as u64);
             divided_diffs.push(
-                deltas[k]
+                *delta_k
                     * factorial
                         .inv()
                         .expect("field characteristic too small for interpolation"),
@@ -154,7 +154,7 @@ impl<E: FieldCore + crate::CanonicalField> UniPoly<E> {
             coeffs = new_coeffs;
         }
 
-        while coeffs.len() > 1 && coeffs.last().map_or(false, |c| c.is_zero()) {
+        while coeffs.len() > 1 && coeffs.last().is_some_and(|c| c.is_zero()) {
             coeffs.pop();
         }
 

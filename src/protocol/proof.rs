@@ -6,6 +6,17 @@ use crate::protocol::commitment::RingCommitment;
 use crate::protocol::sumcheck::SumcheckProof;
 use crate::{FieldCore, HachiSerialize};
 
+/// Prover-side hint produced at commitment time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HachiCommitmentHint<F: FieldCore, const D: usize> {
+    /// Decomposed `s_i` blocks from the commitment phase.
+    pub s: Vec<Vec<CyclotomicRing<F, D>>>,
+    /// Decomposed `t̂_i` blocks from the commitment phase.
+    pub t_hat: Vec<Vec<CyclotomicRing<F, D>>>,
+    /// Ring coefficients from the §3.1 reduction (evaluation table).
+    pub ring_coeffs: Vec<CyclotomicRing<F, D>>,
+}
+
 /// Temporary auxiliary data the verifier needs for sumcheck output verification.
 ///
 /// Will be removed once recursive PCS evaluation proofs replace the direct
