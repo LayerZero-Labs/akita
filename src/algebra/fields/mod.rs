@@ -6,6 +6,20 @@ pub mod fp32;
 pub mod fp64;
 pub mod lift;
 pub mod packed;
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx2",
+    not(all(target_feature = "avx512f", target_feature = "avx512dq"))
+))]
+pub mod packed_avx2;
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512dq"
+))]
+pub mod packed_avx512;
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+pub mod packed_neon;
 pub mod pseudo_mersenne;
 
 pub use ext::{Fp2, Fp2Config, Fp4, Fp4Config};

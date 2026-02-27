@@ -1,3 +1,7 @@
+#![cfg_attr(
+    all(target_arch = "x86_64", target_feature = "avx512f"),
+    feature(stdarch_x86_avx512)
+)]
 //! # hachi
 //!
 //! A high performance and modular implementation of the Hachi polynomial commitment scheme.

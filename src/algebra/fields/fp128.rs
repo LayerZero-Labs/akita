@@ -44,7 +44,7 @@ fn mul64_wide(a: u64, b: u64) -> (u64, u64) {
     #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
     {
         // Safety: this block is compiled only when `bmi2` is enabled.
-        return unsafe { mul64_wide_bmi2(a, b) };
+        unsafe { mul64_wide_bmi2(a, b) }
     }
     #[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2")))]
     {

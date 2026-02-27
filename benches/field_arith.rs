@@ -1343,6 +1343,52 @@ fn bench_parallel_throughput(c: &mut Criterion) {
 #[cfg(not(feature = "parallel"))]
 fn bench_parallel_throughput(_: &mut Criterion) {}
 
+fn bench_packed_sumcheck_mix(c: &mut Criterion) {
+    use hachi_pcs::algebra::{Fp32Packing, Fp64Packing};
+
+    let n = 4096u64;
+    let mut rng = StdRng::seed_from_u64(0xface_bead);
+
+    macro_rules! sumcheck_bench {
+        ($group:expr, $label:expr, $field:ty, $packing:ty, $rng:expr, $n:expr) => {{
+            let eq: Vec<$field> = (0..$n).map(|_| FieldSampling::sample($rng)).collect();
+            let poly: Vec<$field> = (0..$n).map(|_| FieldSampling::sample($rng)).collect();
+            let eq_p = <$packing>::pack_slice(&eq);
+            let poly_p = <$packing>::pack_slice(&poly);
+            let mut acc = <$packing>::broadcast(<$field>::zero());
+
+            $group.bench_function(concat!($label, "_packed_macc"), |b| {
+                b.iter(|| {
+                    let e = black_box(&eq_p);
+                    let p_v = black_box(&poly_p);
+                    acc = <$packing>::broadcast(<$field>::zero());
+                    for i in 0..e.len() {
+                        acc = acc + e[i] * p_v[i];
+                    }
+                    black_box(acc)
+                })
+            });
+        }};
+    }
+
+    let mut group = c.benchmark_group("packed_sumcheck_mix");
+    group.throughput(Throughput::Elements(n));
+
+    type P24 = Fp32Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_24 }>;
+    type P31 = Fp32Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_31 }>;
+    type P32 = Fp32Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_32 }>;
+    type P40 = Fp64Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_40 }>;
+    type P64 = Fp64Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_64 }>;
+
+    sumcheck_bench!(group, "fp32_24b", Pow2Offset24Field, P24, &mut rng, n);
+    sumcheck_bench!(group, "fp32_31b", Pow2Offset31Field, P31, &mut rng, n);
+    sumcheck_bench!(group, "fp32_32b", Pow2Offset32Field, P32, &mut rng, n);
+    sumcheck_bench!(group, "fp64_40b", Pow2Offset40Field, P40, &mut rng, n);
+    sumcheck_bench!(group, "fp64_64b", Pow2Offset64Field, P64, &mut rng, n);
+
+    group.finish();
+}
+
 criterion_group!(
     field_arith,
     bench_mul,
@@ -1357,6 +1403,7 @@ criterion_group!(
     bench_accumulator_pattern,
     bench_throughput,
     bench_packed_throughput,
+    bench_packed_sumcheck_mix,
     bench_parallel_throughput
 );
 criterion_main!(field_arith);

@@ -33,8 +33,7 @@ const fn log2_pow2_u64(mut x: u64) -> u32 {
 fn mul64_wide(a: u64, b: u64) -> (u64, u64) {
     #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
     {
-        // Safety: this block is compiled only when `bmi2` is enabled.
-        return unsafe { mul64_wide_bmi2(a, b) };
+        unsafe { mul64_wide_bmi2(a, b) }
     }
     #[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2")))]
     {
@@ -134,7 +133,7 @@ impl<const P: u64> Fp64<P> {
         {
             // x86_64 has fast scalar 64-bit multiply; use one multiply instead
             // of two widened 32-bit multiplies in the fold hot path.
-            return (Self::C as u64).wrapping_mul(x);
+            Self::C.wrapping_mul(x)
         }
         #[cfg(not(target_arch = "x86_64"))]
         {
@@ -264,7 +263,7 @@ impl<const P: u64> Fp64<P> {
         #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
         {
             let (lo, hi) = mul64_wide(a, b);
-            return Self::reduce_product_wide(lo, hi);
+            Self::reduce_product_wide(lo, hi)
         }
         #[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2")))]
         {
