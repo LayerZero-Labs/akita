@@ -354,8 +354,7 @@ impl<const P: u128> Fp128<P> {
             let r1 = row1 as u64;
             let carry1 = row1 >> 64;
 
-            let row2 =
-                p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + carry1;
+            let row2 = p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + carry1;
             let r2 = row2 as u64;
             let carry2 = row2 >> 64;
 
@@ -393,8 +392,7 @@ impl<const P: u128> Fp128<P> {
             let r1 = row1 as u64;
             let carry1 = row1 >> 64;
 
-            let row2 =
-                p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + carry1;
+            let row2 = p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + carry1;
             let r2 = row2 as u64;
             let carry2 = row2 >> 64;
 
@@ -429,13 +427,11 @@ impl<const P: u128> Fp128<P> {
             let r1 = row1 as u64;
             let carry1 = row1 >> 64;
 
-            let row2 =
-                p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + carry1;
+            let row2 = p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + carry1;
             let r2 = row2 as u64;
             let carry2 = row2 >> 64;
 
-            let row3 =
-                p02_hi as u128 + p03_lo as u128 + p11_hi as u128 + p12_lo as u128 + carry2;
+            let row3 = p02_hi as u128 + p03_lo as u128 + p11_hi as u128 + p12_lo as u128 + carry2;
             let r3 = row3 as u64;
             let carry3 = row3 >> 64;
 
@@ -477,13 +473,11 @@ impl<const P: u128> Fp128<P> {
             let r1 = row1 as u64;
             let carry1 = row1 >> 64;
 
-            let row2 =
-                p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + carry1;
+            let row2 = p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + carry1;
             let r2 = row2 as u64;
             let carry2 = row2 >> 64;
 
-            let row3 =
-                p02_hi as u128 + p03_lo as u128 + p11_hi as u128 + p12_lo as u128 + carry2;
+            let row3 = p02_hi as u128 + p03_lo as u128 + p11_hi as u128 + p12_lo as u128 + carry2;
             let r3 = row3 as u64;
             let carry3 = row3 >> 64;
 
@@ -518,13 +512,11 @@ impl<const P: u128> Fp128<P> {
             let r1 = row1 as u64;
             let carry1 = row1 >> 64;
 
-            let row2 =
-                p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + carry1;
+            let row2 = p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + carry1;
             let r2 = row2 as u64;
             let carry2 = row2 >> 64;
 
-            let row3 =
-                p02_hi as u128 + p03_lo as u128 + p11_hi as u128 + p12_lo as u128 + carry2;
+            let row3 = p02_hi as u128 + p03_lo as u128 + p11_hi as u128 + p12_lo as u128 + carry2;
             let r3 = row3 as u64;
 
             let mut out = [0u64; OUT];
@@ -940,17 +932,28 @@ mod tests {
         for _ in 0..1000 {
             let a: F = FieldSampling::sample(&mut rng);
             let b3 = [rng.next_u64(), rng.next_u64(), rng.next_u64()];
-            let b4 = [rng.next_u64(), rng.next_u64(), rng.next_u64(), rng.next_u64()];
+            let b4 = [
+                rng.next_u64(),
+                rng.next_u64(),
+                rng.next_u64(),
+                rng.next_u64(),
+            ];
 
             let got3_full = a.mul_wide_limbs::<3, 5>(b3);
             let got3_trunc = a.mul_wide_limbs::<3, 4>(b3);
-            assert_eq!(got3_trunc, [got3_full[0], got3_full[1], got3_full[2], got3_full[3]]);
+            assert_eq!(
+                got3_trunc,
+                [got3_full[0], got3_full[1], got3_full[2], got3_full[3]]
+            );
             let exp3 = a * F::solinas_reduce(&b3);
             assert_eq!(F::solinas_reduce(&got3_full), exp3);
 
             let got4_full = a.mul_wide_limbs::<4, 6>(b4);
             let got4_trunc = a.mul_wide_limbs::<4, 4>(b4);
-            assert_eq!(got4_trunc, [got4_full[0], got4_full[1], got4_full[2], got4_full[3]]);
+            assert_eq!(
+                got4_trunc,
+                [got4_full[0], got4_full[1], got4_full[2], got4_full[3]]
+            );
             let exp4 = a * F::solinas_reduce(&b4);
             assert_eq!(F::solinas_reduce(&got4_full), exp4);
         }

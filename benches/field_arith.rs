@@ -696,7 +696,12 @@ fn bench_widening_ops(c: &mut Criterion) {
 
     // -- New path isolation: mul_wide_limbs (no reduce) ----------------------
     let limbs3 = [rng.next_u64(), rng.next_u64(), rng.next_u64()];
-    let limbs4 = [rng.next_u64(), rng.next_u64(), rng.next_u64(), rng.next_u64()];
+    let limbs4 = [
+        rng.next_u64(),
+        rng.next_u64(),
+        rng.next_u64(),
+        rng.next_u64(),
+    ];
 
     group.bench_function("mul_wide_limbs_3_to_5_only", |bench| {
         bench.iter(|| black_box(black_box(a).mul_wide_limbs::<3, 5>(black_box(limbs3))))
@@ -1081,8 +1086,9 @@ fn bench_parallel_throughput(c: &mut Criterion) {
     let mut out64_p = vec![P64::broadcast(Pow2Offset64Field::zero()); lhs64_p.len()];
     let mut out128_p = vec![P128::broadcast(F128::zero()); lhs128_p.len()];
 
-    let mut group =
-        c.benchmark_group(format!("parallel_throughput/{profile}/t{threads}/n{n}/c{chunk}"));
+    let mut group = c.benchmark_group(format!(
+        "parallel_throughput/{profile}/t{threads}/n{n}/c{chunk}"
+    ));
     group.throughput(Throughput::Elements(n as u64));
 
     group.bench_function("fp32_31b_mul_seq", |b| {
