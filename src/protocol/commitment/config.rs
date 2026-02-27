@@ -172,7 +172,7 @@ pub(super) fn ensure_matrix_shape<T>(
 pub struct DefaultCommitmentConfig;
 
 impl CommitmentConfig for DefaultCommitmentConfig {
-    const D: usize = 64;
+    const D: usize = 16;
     const M: usize = 4;
     const R: usize = 2;
     const N_A: usize = 8;

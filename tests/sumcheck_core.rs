@@ -1,5 +1,7 @@
 #![allow(missing_docs)]
 
+use std::time::Instant;
+
 use hachi_pcs::algebra::Fp64;
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
@@ -242,4 +244,72 @@ fn verify_rejects_wrong_claim() {
     });
 
     assert!(result.is_err());
+}
+
+/// End-to-end sumcheck over 2^20 random field elements.
+///
+/// The prover holds a multilinear polynomial f with 2^20 evaluations and
+/// proves that Σ_{b ∈ {0,1}^20} f(b) = claimed_sum.  The verifier checks the
+/// proof using only the proof transcript and the oracle evaluation f(r).
+#[test]
+fn e2e_sumcheck_2_pow_20() {
+    let num_vars = 20;
+    let n: usize = 1 << num_vars; // 1,048,576
+
+    let mut rng = StdRng::seed_from_u64(42);
+    let evals: Vec<F> = (0..n).map(|_| F::sample(&mut rng)).collect();
+    let claim: F = evals.iter().copied().fold(F::zero(), |a, b| a + b);
+
+    // ---- Prover ----
+    let t0 = Instant::now();
+
+    let mut prover = DenseSumcheckProver {
+        evals: evals.clone(),
+        num_vars,
+    };
+    let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    prover_transcript.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
+
+    let (proof, prover_challenges, final_claim) =
+        prove_sumcheck::<F, _, F, _, _>(&mut prover, claim, &mut prover_transcript, |tr| {
+            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+        })
+        .unwrap();
+
+    let prove_time = t0.elapsed();
+
+    // Proof is just 20 compressed univariate polynomials (degree 1 each).
+    assert_eq!(proof.round_polys.len(), num_vars);
+
+    // Sanity: final claim must equal f evaluated at the challenge point.
+    let oracle_eval = multilinear_eval(&evals, &prover_challenges);
+    assert_eq!(final_claim, oracle_eval);
+
+    // ---- Verifier ----
+    let t1 = Instant::now();
+
+    let verifier = DenseSumcheckVerifier {
+        evals,
+        num_vars,
+        claim,
+    };
+    let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    verifier_transcript.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
+
+    let verifier_challenges =
+        verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut verifier_transcript, |tr| {
+            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+        })
+        .unwrap();
+
+    let verify_time = t1.elapsed();
+
+    assert_eq!(prover_challenges, verifier_challenges);
+
+    eprintln!(
+        "[e2e_sumcheck_2_pow_20] n=2^{num_vars}={n}  \
+         prove={prove_time:.2?}  verify={verify_time:.2?}  \
+         rounds={} degree=1",
+        proof.round_polys.len()
+    );
 }

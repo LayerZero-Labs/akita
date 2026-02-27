@@ -19,6 +19,8 @@
 //! duplicates the essential sumcheck data types and transcript-driving logic as a
 //! pragmatic workaround.
 
+pub mod hachi_sumcheck;
+
 use crate::error::HachiError;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
@@ -88,6 +90,75 @@ impl<E: FieldCore> UniPoly<E> {
         CompressedUniPoly {
             coeffs_except_linear_term: out,
         }
+    }
+}
+
+impl<E: FieldCore + crate::CanonicalField> UniPoly<E> {
+    /// Interpolate from evaluations at equispaced integer points `x = 0, 1, ..., d`.
+    ///
+    /// Uses Newton forward-difference interpolation: compute divided differences,
+    /// then expand via Horner on the nested Newton form.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any required factorial inverse does not exist (field characteristic
+    /// must exceed the number of evaluation points).
+    pub fn from_evals(evals: &[E]) -> Self {
+        let n = evals.len();
+        if n == 0 {
+            return Self::from_coeffs(vec![]);
+        }
+        if n == 1 {
+            return Self::from_coeffs(vec![evals[0]]);
+        }
+
+        // Forward differences: delta^k[0]
+        let mut table = evals.to_vec();
+        let mut deltas = vec![table[0]];
+        for _ in 1..n {
+            for j in 0..table.len() - 1 {
+                table[j] = table[j + 1] - table[j];
+            }
+            table.pop();
+            deltas.push(table[0]);
+        }
+
+        // Divided differences: dd[k] = delta^k / k!
+        let mut factorial = E::one();
+        let mut divided_diffs = vec![deltas[0]];
+        for k in 1..n {
+            factorial = factorial * E::from_u64(k as u64);
+            divided_diffs.push(
+                deltas[k]
+                    * factorial
+                        .inv()
+                        .expect("field characteristic too small for interpolation"),
+            );
+        }
+
+        // Horner expansion of the Newton nested form:
+        //   p(x) = dd[0] + (x-0)(dd[1] + (x-1)(dd[2] + ...))
+        let mut coeffs = vec![divided_diffs[n - 1]];
+
+        for k in (0..n - 1).rev() {
+            let shift = E::from_u64(k as u64);
+            let old_len = coeffs.len();
+            let mut new_coeffs = vec![E::zero(); old_len + 1];
+
+            new_coeffs[0] = divided_diffs[k];
+            for i in 0..old_len {
+                new_coeffs[i + 1] = new_coeffs[i + 1] + coeffs[i];
+                new_coeffs[i] = new_coeffs[i] - shift * coeffs[i];
+            }
+
+            coeffs = new_coeffs;
+        }
+
+        while coeffs.len() > 1 && coeffs.last().map_or(false, |c| c.is_zero()) {
+            coeffs.pop();
+        }
+
+        Self::from_coeffs(coeffs)
     }
 }
 
@@ -458,6 +529,12 @@ where
 /// - performs the final oracle check: `final_claim == verifier.expected_output_claim(r)`.
 ///
 /// Returns the challenge point `r` on success.
+///
+/// # Errors
+///
+/// Returns [`HachiError::InvalidProof`] if the final sumcheck claim does not
+/// match the oracle evaluation, or propagates any error from the per-round
+/// verification (e.g. degree-bound violation, round-count mismatch).
 pub fn verify_sumcheck<F, T, E, S, V>(
     proof: &SumcheckProof<E>,
     verifier: &V,

@@ -71,6 +71,12 @@ impl<F: FieldCore + CanonicalField + HachiSerialize, const D: usize> HachiProver
         Ok(HachiProof {
             v,
             y_ring: CyclotomicRing::<F, D>::zero(),
+            w: Vec::new(),
+            alpha: F::zero(),
+            m_a: Vec::new(),
+            u_eval: CyclotomicRing::<F, D>::zero(),
+            y_vec: Vec::new(),
+            y_a: Vec::new(),
         })
     }
 
@@ -284,6 +290,12 @@ mod tests {
         let proof = HachiProof {
             v,
             y_ring: CyclotomicRing::<F, D>::zero(),
+            w: Vec::new(),
+            alpha: F::zero(),
+            m_a: Vec::new(),
+            u_eval: CyclotomicRing::<F, D>::zero(),
+            y_vec: Vec::new(),
+            y_a: Vec::new(),
         };
 
         let challenges = replay_challenges(&proof);

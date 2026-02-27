@@ -156,7 +156,7 @@ fn opening_satisfies_inner_and_outer_equations() {
 
 #[test]
 fn default_config_has_expected_shape() {
-    assert_eq!(DefaultCommitmentConfig::D, 64);
+    assert_eq!(DefaultCommitmentConfig::D, 16);
     assert_eq!(1usize << DefaultCommitmentConfig::M, 16);
     assert_eq!(1usize << DefaultCommitmentConfig::R, 4);
     let delta = DefaultCommitmentConfig::DELTA;
