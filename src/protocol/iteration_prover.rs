@@ -10,7 +10,8 @@ use crate::protocol::commitment::utils::norm::{detect_field_modulus, vec_inf_nor
 use crate::protocol::commitment::{CommitmentConfig, RingCommitmentSetup};
 use crate::protocol::commitment_scheme::HachiCommitmentHint;
 use crate::protocol::opening_point::RingOpeningPoint;
-use crate::protocol::proof::HachiProof;
+use crate::protocol::proof::{HachiProof, SumcheckAux};
+use crate::protocol::sumcheck::SumcheckProof;
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, HachiSerialize};
@@ -71,12 +72,14 @@ impl<F: FieldCore + CanonicalField + HachiSerialize, const D: usize> HachiProver
         Ok(HachiProof {
             v,
             y_ring: CyclotomicRing::<F, D>::zero(),
-            w: Vec::new(),
-            alpha: F::zero(),
-            m_a: Vec::new(),
             u_eval: CyclotomicRing::<F, D>::zero(),
-            y_vec: Vec::new(),
-            y_a: Vec::new(),
+            f0_proof: SumcheckProof {
+                round_polys: Vec::new(),
+            },
+            f_alpha_proof: SumcheckProof {
+                round_polys: Vec::new(),
+            },
+            sumcheck_aux: SumcheckAux { w: Vec::new() },
         })
     }
 
@@ -290,12 +293,14 @@ mod tests {
         let proof = HachiProof {
             v,
             y_ring: CyclotomicRing::<F, D>::zero(),
-            w: Vec::new(),
-            alpha: F::zero(),
-            m_a: Vec::new(),
             u_eval: CyclotomicRing::<F, D>::zero(),
-            y_vec: Vec::new(),
-            y_a: Vec::new(),
+            f0_proof: SumcheckProof {
+                round_polys: Vec::new(),
+            },
+            f_alpha_proof: SumcheckProof {
+                round_polys: Vec::new(),
+            },
+            sumcheck_aux: SumcheckAux { w: Vec::new() },
         };
 
         let challenges = replay_challenges(&proof);

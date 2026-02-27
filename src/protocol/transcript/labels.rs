@@ -37,6 +37,13 @@ pub const ABSORB_PROVER_V: &[u8] = b"hachi/absorb/prover-stage1-v";
 /// Challenge label for stage-1 fold (sampling sparse `c_i`).
 pub const CHALLENGE_STAGE1_FOLD: &[u8] = b"hachi/challenge/stage1-fold";
 
+/// Absorb the `w` coefficient vector before sumcheck (paper §4.3).
+pub const ABSORB_SUMCHECK_W: &[u8] = b"hachi/absorb/sumcheck-w";
+/// Challenge for sampling `τ₀` (F_0 range-check batching point, paper §4.3).
+pub const CHALLENGE_TAU0: &[u8] = b"hachi/challenge/tau0";
+/// Challenge for sampling `τ₁` (F_α evaluation-relation batching point, paper §4.3).
+pub const CHALLENGE_TAU1: &[u8] = b"hachi/challenge/tau1";
+
 /// Return all Hachi-core transcript labels.
 pub fn all_labels() -> &'static [&'static [u8]] {
     &[
@@ -55,5 +62,8 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         CHALLENGE_STOP_CONDITION,
         ABSORB_PROVER_V,
         CHALLENGE_STAGE1_FOLD,
+        ABSORB_SUMCHECK_W,
+        CHALLENGE_TAU0,
+        CHALLENGE_TAU1,
     ]
 }

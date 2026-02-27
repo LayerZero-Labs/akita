@@ -9,6 +9,8 @@
 //!   Proves the evaluation relation; sum equals `a = Σ_i ẽq(τ₁,i) · y_i(α)`.
 
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
+use crate::algebra::ring::CyclotomicRing;
+use crate::protocol::commitment_scheme::eval_ring_at;
 use crate::{CanonicalField, FieldCore};
 
 // ---------------------------------------------------------------------------
@@ -158,11 +160,10 @@ pub struct F0Verifier<E> {
     w_evals: Vec<E>,
     num_vars: usize,
     b: usize,
-    claim: E,
 }
 
 impl<E: FieldCore + CanonicalField> F0Verifier<E> {
-    pub fn new(tau: Vec<E>, w_evals: Vec<E>, b: usize, claim: E) -> Self {
+    pub fn new(tau: Vec<E>, w_evals: Vec<E>, b: usize) -> Self {
         let num_vars = tau.len();
         assert_eq!(w_evals.len(), 1 << num_vars);
         Self {
@@ -170,7 +171,6 @@ impl<E: FieldCore + CanonicalField> F0Verifier<E> {
             w_evals,
             num_vars,
             b,
-            claim,
         }
     }
 }
@@ -185,7 +185,7 @@ impl<E: FieldCore + CanonicalField> SumcheckInstanceVerifier<E> for F0Verifier<E
     }
 
     fn input_claim(&self) -> E {
-        self.claim
+        E::zero()
     }
 
     fn expected_output_claim(&self, challenges: &[E]) -> E {
@@ -290,23 +290,31 @@ impl<E: FieldCore + CanonicalField> SumcheckInstanceProver<E> for FAlphaProver<E
 }
 
 /// Verifier for `F_{α,τ₁}`.
-pub struct FAlphaVerifier<E> {
-    w_evals: Vec<E>,
-    alpha_evals_y: Vec<E>,
-    m_evals_x: Vec<E>,
+pub struct FAlphaVerifier<F: FieldCore, const D: usize> {
+    w_evals: Vec<F>,
+    alpha_evals_y: Vec<F>,
+    m_evals_x: Vec<F>,
+    tau: Vec<F>,
+    v: Vec<CyclotomicRing<F, D>>,
+    u: Vec<CyclotomicRing<F, D>>,
+    u_eval: CyclotomicRing<F, D>,
+    alpha: F,
     num_u: usize,
     num_l: usize,
-    claim: E,
 }
 
-impl<E: FieldCore + CanonicalField> FAlphaVerifier<E> {
+impl<F: FieldCore + CanonicalField, const D: usize> FAlphaVerifier<F, D> {
     pub fn new(
-        w_evals: Vec<E>,
-        alpha_evals_y: Vec<E>,
-        m_evals_x: Vec<E>,
+        w_evals: Vec<F>,
+        alpha_evals_y: Vec<F>,
+        m_evals_x: Vec<F>,
+        tau: Vec<F>,
+        v: Vec<CyclotomicRing<F, D>>,
+        u: Vec<CyclotomicRing<F, D>>,
+        u_eval: CyclotomicRing<F, D>,
+        alpha: F,
         num_u: usize,
         num_l: usize,
-        claim: E,
     ) -> Self {
         assert_eq!(w_evals.len(), 1 << (num_u + num_l));
         assert_eq!(alpha_evals_y.len(), 1 << num_l);
@@ -315,14 +323,20 @@ impl<E: FieldCore + CanonicalField> FAlphaVerifier<E> {
             w_evals,
             alpha_evals_y,
             m_evals_x,
+            tau,
+            v,
+            u,
+            u_eval,
+            alpha,
             num_u,
             num_l,
-            claim,
         }
     }
 }
 
-impl<E: FieldCore + CanonicalField> SumcheckInstanceVerifier<E> for FAlphaVerifier<E> {
+impl<F: FieldCore + CanonicalField, const D: usize> SumcheckInstanceVerifier<F>
+    for FAlphaVerifier<F, D>
+{
     fn num_rounds(&self) -> usize {
         self.num_u + self.num_l
     }
@@ -331,11 +345,25 @@ impl<E: FieldCore + CanonicalField> SumcheckInstanceVerifier<E> for FAlphaVerifi
         2
     }
 
-    fn input_claim(&self) -> E {
-        self.claim
+    fn input_claim(&self) -> F {
+        let y_a: Vec<F> = self
+            .v
+            .iter()
+            .chain(self.u.iter())
+            .chain(std::iter::once(&self.u_eval))
+            .map(|r| eval_ring_at(r, &self.alpha))
+            .collect();
+
+        let eq_tau = eq_evals(&self.tau);
+        let mut acc = F::zero();
+        for (i, eq_i) in eq_tau.iter().enumerate() {
+            let y_i = if i < y_a.len() { y_a[i] } else { F::zero() };
+            acc = acc + *eq_i * y_i;
+        }
+        acc
     }
 
-    fn expected_output_claim(&self, challenges: &[E]) -> E {
+    fn expected_output_claim(&self, challenges: &[F]) -> F {
         let (x_challenges, y_challenges) = challenges.split_at(self.num_u);
         let w_val = multilinear_eval(&self.w_evals, challenges);
         let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges);
@@ -349,7 +377,7 @@ mod tests {
     use super::*;
     use crate::algebra::{CyclotomicRing, Fp64};
     use crate::primitives::multilinear_evals::DenseMultilinearEvals;
-    use crate::protocol::commitment_scheme::build_w_coeffs;
+    use crate::protocol::commitment_scheme::{build_w_coeffs, rederive_alpha_and_m_a};
     use crate::protocol::transcript::labels;
     use crate::protocol::{
         prove_sumcheck, verify_sumcheck, Blake2bTranscript, CommitmentConfig, CommitmentScheme,
@@ -365,10 +393,19 @@ mod tests {
         CyclotomicRing::from_coefficients(coeffs)
     }
 
+    fn ring_with_small_coeff(value: u64) -> CyclotomicRing<F, D> {
+        let coeffs = std::array::from_fn(|_| F::from_u64(value));
+        CyclotomicRing::from_coefficients(coeffs)
+    }
+
     #[test]
     fn f0_sumcheck_uses_commitment_w_evals() {
-        let z = vec![ring_with_seed(1), ring_with_seed(17), ring_with_seed(33)];
-        let r = vec![ring_with_seed(101), ring_with_seed(203)];
+        let z = vec![
+            ring_with_small_coeff(1),
+            ring_with_small_coeff(2),
+            ring_with_small_coeff(3),
+        ];
+        let r = vec![ring_with_small_coeff(0), ring_with_small_coeff(1)];
         let mut w_evals = build_w_coeffs::<F, D, DefaultCommitmentConfig>(&z, &r);
 
         let target_len = w_evals.len().next_power_of_two();
@@ -395,13 +432,14 @@ mod tests {
             * range_check_eval(multilinear_eval(&w_evals, &prover_challenges), b);
         assert_eq!(final_claim, oracle, "prover final claim != oracle eval");
 
-        let verifier = F0Verifier::new(tau, w_evals, b, claim);
+        let verifier = F0Verifier::new(tau, w_evals, b);
         let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
         vt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
-        let verifier_challenges = verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut vt, |tr| {
-            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
-        })
-        .unwrap();
+        let verifier_challenges =
+            verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut vt, |tr| {
+                tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            })
+            .unwrap();
 
         assert_eq!(prover_challenges, verifier_challenges);
     }
@@ -415,12 +453,9 @@ mod tests {
         let poly = DenseMultilinearEvals::new_padded(evals);
 
         let setup = HachiCommitmentScheme::setup_prover(num_vars);
-        let (_commitment, hint) =
-            HachiCommitmentScheme::commit(&poly, &setup).unwrap();
+        let (_commitment, hint) = HachiCommitmentScheme::commit(&poly, &setup).unwrap();
 
-        let opening_point: Vec<F> = (0..num_vars)
-            .map(|i| F::from_u64((i + 2) as u64))
-            .collect();
+        let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
         let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
         let proof = HachiCommitmentScheme::prove(
             &setup,
@@ -431,7 +466,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut w_evals = proof.w;
+        let mut w_evals = proof.sumcheck_aux.w.clone();
         let target_len = w_evals.len().next_power_of_two();
         w_evals.resize(target_len, F::zero());
         let num_sumcheck_vars = target_len.trailing_zeros() as usize;
@@ -460,7 +495,7 @@ mod tests {
             * range_check_eval(multilinear_eval(&w_evals, &prover_challenges), b);
         assert_eq!(final_claim, oracle, "prover final claim != oracle eval");
 
-        let verifier = F0Verifier::new(tau, w_evals, b, claim);
+        let verifier = F0Verifier::new(tau, w_evals, b);
         let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
         vt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
         let verifier_challenges =
@@ -481,11 +516,9 @@ mod tests {
         let poly = DenseMultilinearEvals::new_padded(evals);
 
         let setup = HachiCommitmentScheme::setup_prover(num_vars);
-        let (_commitment, hint) = HachiCommitmentScheme::commit(&poly, &setup).unwrap();
+        let (commitment, hint) = HachiCommitmentScheme::commit(&poly, &setup).unwrap();
 
-        let opening_point: Vec<F> = (0..num_vars)
-            .map(|i| F::from_u64((i + 2) as u64))
-            .collect();
+        let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
         let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
         let proof = HachiCommitmentScheme::prove(
             &setup,
@@ -496,17 +529,20 @@ mod tests {
         )
         .unwrap();
 
+        let (alpha, m_a_vec) =
+            rederive_alpha_and_m_a(&proof, &setup, &opening_point, &commitment).unwrap();
+
         let d = DefaultCommitmentConfig::D;
-        assert_eq!(proof.w.len() % d, 0);
-        let w_u = proof.w.len() / d;
+        assert_eq!(proof.sumcheck_aux.w.len() % d, 0);
+        let w_u = proof.sumcheck_aux.w.len() / d;
         let rows = DefaultCommitmentConfig::N_D
             + DefaultCommitmentConfig::N_B
             + 1
             + 1
             + DefaultCommitmentConfig::N_A;
         assert!(rows > 0);
-        assert_eq!(proof.m_a.len() % rows, 0);
-        let cols = proof.m_a.len() / rows;
+        assert_eq!(m_a_vec.len() % rows, 0);
+        let cols = m_a_vec.len() / rows;
         assert_eq!(w_u, cols);
         assert_eq!(w_u, cols);
 
@@ -520,17 +556,15 @@ mod tests {
         for x in 0..x_len {
             for y in 0..y_len {
                 let src = y + (x << num_l);
-                if src < proof.w.len() {
+                if src < proof.sumcheck_aux.w.len() {
                     let dst = x + (y << num_u);
-                    w_evals[dst] = proof.w[src];
+                    w_evals[dst] = proof.sumcheck_aux.w[src];
                 }
             }
         }
 
         let num_i = rows.next_power_of_two().trailing_zeros() as usize;
-        let tau1: Vec<F> = (0..num_i)
-            .map(|i| F::from_u64((i + 5) as u64))
-            .collect();
+        let tau1: Vec<F> = (0..num_i).map(|i| F::from_u64((i + 5) as u64)).collect();
         let eq_tau1 = eq_evals(&tau1);
 
         let mut m_evals_x = vec![F::zero(); x_len];
@@ -538,7 +572,7 @@ mod tests {
             let mut acc = F::zero();
             for i in 0..(1usize << num_i) {
                 let row_val = if i < rows && x < cols {
-                    proof.m_a[i * cols + x]
+                    m_a_vec[i * cols + x]
                 } else {
                     F::zero()
                 };
@@ -551,7 +585,7 @@ mod tests {
         let mut power = F::one();
         for val in alpha_evals_y.iter_mut() {
             *val = power;
-            power = power * proof.alpha;
+            power = power * alpha;
         }
 
         let x_mask = x_len - 1;
@@ -561,40 +595,8 @@ mod tests {
             .map(|i| w_evals[i] * alpha_full[i] * m_full[i])
             .fold(F::zero(), |a, v| a + v);
 
-        let mut claim_alt = F::zero();
-        for i in 0..(1usize << num_i) {
-            let y_i = if i < proof.y_a.len() { proof.y_a[i] } else { F::zero() };
-            claim_alt = claim_alt + eq_tau1[i] * y_i;
-        }
-        let mut w_a = vec![F::zero(); cols];
-        for u in 0..cols {
-            let mut acc = F::zero();
-            let mut pow = F::one();
-            for l in 0..d {
-                let idx = u * d + l;
-                if idx < proof.w.len() {
-                    acc = acc + proof.w[idx] * pow;
-                }
-                pow = pow * proof.alpha;
-            }
-            w_a[u] = acc;
-        }
-        let mut y_from_m = vec![F::zero(); rows];
-        for i in 0..rows {
-            let mut acc = F::zero();
-            let row_start = i * cols;
-            for (m_ij, w_j) in proof.m_a[row_start..row_start + cols]
-                .iter()
-                .zip(w_a.iter())
-            {
-                acc = acc + (*m_ij * *w_j);
-            }
-            y_from_m[i] = acc;
-        }
-        assert_eq!(y_from_m, proof.y_a, "M_a * w_a != y_a");
-        assert_eq!(claim, claim_alt, "Fα claim mismatch vs a");
-
-        let mut prover = FAlphaProver::new(w_evals.clone(), &alpha_evals_y, &m_evals_x, num_u, num_l);
+        let mut prover =
+            FAlphaProver::new(w_evals.clone(), &alpha_evals_y, &m_evals_x, num_u, num_l);
         let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
         pt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
         let (proof_sc, prover_challenges, final_claim) =
@@ -613,12 +615,17 @@ mod tests {
             w_evals,
             alpha_evals_y,
             m_evals_x,
+            tau1,
+            proof.v.clone(),
+            commitment.u.clone(),
+            proof.u_eval,
+            alpha,
             num_u,
             num_l,
-            claim,
         );
+        let verifier_claim = verifier.input_claim();
         let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        vt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
+        vt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &verifier_claim);
         let verifier_challenges =
             verify_sumcheck::<F, _, F, _, _>(&proof_sc, &verifier, &mut vt, |tr| {
                 tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)

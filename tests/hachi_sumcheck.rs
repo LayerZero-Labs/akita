@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
 
+use hachi_pcs::algebra::ring::CyclotomicRing;
 use hachi_pcs::algebra::Fp64;
 use hachi_pcs::protocol::sumcheck::hachi_sumcheck::{
     eq_eval, eq_evals, multilinear_eval, range_check_eval, F0Prover, F0Verifier, FAlphaProver,
@@ -23,7 +24,7 @@ fn run_f0_e2e(num_u: usize, num_l: usize, b: usize) {
     let n = 1usize << num_vars;
     let mut rng = StdRng::seed_from_u64(0xF0);
 
-    let w_evals: Vec<F> = (0..n).map(|_| F::sample(&mut rng)).collect();
+    let w_evals: Vec<F> = (0..n).map(|i| F::from_u64((i % b) as u64)).collect();
     let tau0: Vec<F> = (0..num_vars).map(|_| F::sample(&mut rng)).collect();
 
     // Brute-force claim: Σ eq(τ₀, b) · range_check(w(b), b_param)
@@ -52,7 +53,7 @@ fn run_f0_e2e(num_u: usize, num_l: usize, b: usize) {
 
     // ---- Verifier ----
     let t1 = Instant::now();
-    let verifier = F0Verifier::new(tau0, w_evals, b, claim);
+    let verifier = F0Verifier::new(tau0, w_evals, b);
     let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
     vt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
 
@@ -92,13 +93,14 @@ fn f0_sumcheck_e2e_larger_b() {
 // F_α sumcheck
 // ---------------------------------------------------------------------------
 
-fn run_f_alpha_e2e(num_u: usize, num_l: usize, num_i: usize) {
+fn run_f_alpha_e2e<const D: usize>(num_u: usize, num_i: usize) {
+    let num_l = D.trailing_zeros() as usize;
     let num_vars = num_u + num_l;
     let n = 1usize << num_vars;
     let mut rng = StdRng::seed_from_u64(0xFA);
 
     let w_evals: Vec<F> = (0..n).map(|_| F::sample(&mut rng)).collect();
-    let alpha_evals_y: Vec<F> = (0..(1 << num_l)).map(|_| F::sample(&mut rng)).collect();
+    let alpha_evals_y: Vec<F> = (0..D).map(|_| F::sample(&mut rng)).collect();
     let m_alpha_evals: Vec<F> = (0..(1usize << (num_i + num_u)))
         .map(|_| F::sample(&mut rng))
         .collect();
@@ -114,6 +116,37 @@ fn run_f_alpha_e2e(num_u: usize, num_l: usize, num_i: usize) {
                 .fold(F::zero(), |a, v| a + v)
         })
         .collect();
+
+    // Compute y_a[i] = Σ_x M̃_α(i,x) · w_α(x), where w_α(x) = Σ_y w(x,y) · α̃(y)
+    let num_y = D;
+    let num_rows = 1usize << num_i;
+    let w_alpha: Vec<F> = (0..num_x)
+        .map(|x| {
+            (0..num_y)
+                .map(|y| w_evals[x + y * num_x] * alpha_evals_y[y])
+                .fold(F::zero(), |a, v| a + v)
+        })
+        .collect();
+    let y_a: Vec<F> = (0..num_rows)
+        .map(|i| {
+            (0..num_x)
+                .map(|x| m_alpha_evals[i * num_x + x] * w_alpha[x])
+                .fold(F::zero(), |a, v| a + v)
+        })
+        .collect();
+
+    // Embed y_a values as constant ring elements for the verifier.
+    let v_rings: Vec<CyclotomicRing<F, D>> = y_a
+        .iter()
+        .map(|&val| {
+            let mut coeffs = [F::zero(); D];
+            coeffs[0] = val;
+            CyclotomicRing::from_coefficients(coeffs)
+        })
+        .collect();
+    let u_rings: Vec<CyclotomicRing<F, D>> = vec![];
+    let u_eval_ring = CyclotomicRing::<F, D>::zero();
+    let ring_alpha = F::one();
 
     // Extend α̃ and m to full domain for brute-force claim computation.
     let x_mask = (1usize << num_u) - 1;
@@ -147,7 +180,18 @@ fn run_f_alpha_e2e(num_u: usize, num_l: usize, num_i: usize) {
 
     // ---- Verifier ----
     let t1 = Instant::now();
-    let verifier = FAlphaVerifier::new(w_evals, alpha_evals_y, m_evals_x, num_u, num_l, claim);
+    let verifier = FAlphaVerifier::<F, D>::new(
+        w_evals,
+        alpha_evals_y,
+        m_evals_x,
+        tau1,
+        v_rings,
+        u_rings,
+        u_eval_ring,
+        ring_alpha,
+        num_u,
+        num_l,
+    );
     let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
     vt.append_field(labels::ABSORB_SUMCHECK_CLAIM, &claim);
 
@@ -169,17 +213,17 @@ fn run_f_alpha_e2e(num_u: usize, num_l: usize, num_i: usize) {
 
 #[test]
 fn f_alpha_sumcheck_e2e_small() {
-    run_f_alpha_e2e(3, 2, 2);
+    run_f_alpha_e2e::<4>(3, 2);
 }
 
 #[test]
 fn f_alpha_sumcheck_e2e() {
-    run_f_alpha_e2e(4, 3, 3);
+    run_f_alpha_e2e::<8>(4, 3);
 }
 
 #[test]
 fn f_alpha_sumcheck_e2e_asymmetric() {
-    run_f_alpha_e2e(5, 2, 4);
+    run_f_alpha_e2e::<4>(5, 4);
 }
 
 // ---------------------------------------------------------------------------

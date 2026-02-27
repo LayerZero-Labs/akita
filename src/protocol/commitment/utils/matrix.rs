@@ -2,7 +2,7 @@
 
 use crate::algebra::ring::CyclotomicRing;
 use crate::{FieldCore, FieldSampling};
-use rand_core::{CryptoRng, OsRng, RngCore};
+use rand_core::{CryptoRng, RngCore};
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;
 
@@ -11,10 +11,10 @@ pub(crate) type PublicMatrixSeed = [u8; 32];
 
 const PUBLIC_MATRIX_DOMAIN: &[u8] = b"hachi/commitment/public-matrix";
 
-/// Sample a fresh public seed (entropy source only).
+/// Fixed public seed for deterministic, reproducible setup.
 pub(crate) fn sample_public_matrix_seed() -> PublicMatrixSeed {
     let mut seed = [0u8; 32];
-    OsRng.fill_bytes(&mut seed);
+    seed[..8].copy_from_slice(&0xDEAD_BEEF_CAFE_BABEu64.to_le_bytes());
     seed
 }
 

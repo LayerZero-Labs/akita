@@ -4,16 +4,22 @@ use crate::algebra::ring::{CyclotomicRing, SparseChallengeConfig};
 use crate::error::HachiError;
 use crate::primitives::poly::multilinear_lagrange_basis;
 use crate::protocol::challenges::sparse::sample_dense_challenges;
+use crate::protocol::commitment::utils::linear::mat_vec_mul_unchecked;
+use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
     CommitmentConfig, CommitmentScheme, DefaultCommitmentConfig, HachiCommitmentCore,
     RingCommitment, RingCommitmentScheme, RingCommitmentSetup,
 };
-use crate::protocol::commitment::utils::linear::mat_vec_mul_unchecked;
-use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::iteration_prover::HachiProver;
-use crate::protocol::proof::HachiProof;
+use crate::protocol::proof::{HachiProof, SumcheckAux};
+use crate::protocol::sumcheck::hachi_sumcheck::{
+    eq_evals, F0Prover, F0Verifier, FAlphaProver, FAlphaVerifier,
+};
+use crate::protocol::sumcheck::{prove_sumcheck, verify_sumcheck, SumcheckInstanceVerifier};
 use crate::protocol::transcript::labels::{
-    ABSORB_PROVER_V, ABSORB_RING_SWITCH_MESSAGE, CHALLENGE_RING_SWITCH, CHALLENGE_STAGE1_FOLD,
+    ABSORB_PROVER_V, ABSORB_RING_SWITCH_MESSAGE, ABSORB_SUMCHECK_CLAIM, ABSORB_SUMCHECK_W,
+    CHALLENGE_RING_SWITCH, CHALLENGE_STAGE1_FOLD, CHALLENGE_SUMCHECK_ROUND, CHALLENGE_TAU0,
+    CHALLENGE_TAU1,
 };
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling, Polynomial};
@@ -124,38 +130,37 @@ where
             transcript,
             &hint,
         )?;
-        let challenges = derive_stage1_challenges::<F, T, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(
-            &mut transcript_clone,
-            &v,
-        )?;
+        let challenges = derive_stage1_challenges::<
+            F,
+            T,
+            { DefaultCommitmentConfig::D },
+            DefaultCommitmentConfig,
+        >(&mut transcript_clone, &v)?;
         let m = generate_m::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(
             setup,
             &ring_opening_point,
             &challenges,
         )?;
         let z = generate_z(&prover.w_hat, &hint.t_hat, &prover.z_hat);
-        let t_hat_flat: Vec<CyclotomicRing<F, { DefaultCommitmentConfig::D }>> = hint
-            .t_hat
-            .iter()
-            .flat_map(|v| v.iter().copied())
-            .collect();
+        let t_hat_flat: Vec<CyclotomicRing<F, { DefaultCommitmentConfig::D }>> =
+            hint.t_hat.iter().flat_map(|v| v.iter().copied()).collect();
         let u = mat_vec_mul_unchecked(&setup.B, &t_hat_flat);
         let y = generate_y::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(
             &v, &u, &u_eval,
         )?;
 
         let alpha = derive_ring_switch_challenge::<F, T, { DefaultCommitmentConfig::D }>(
-            transcript,
-            &m,
-            &y,
+            transcript, &m, &y,
         );
         let m_a = eval_ring_matrix_at::<F, { DefaultCommitmentConfig::D }>(&m, &alpha);
         let y_a = eval_ring_vec_at::<F, { DefaultCommitmentConfig::D }>(&y, &alpha);
         let z_a = eval_ring_vec_at::<F, { DefaultCommitmentConfig::D }>(&z, &alpha);
         let r_a = compute_r_a::<F, { DefaultCommitmentConfig::D }>(&m_a, &z_a, &y_a, &alpha)?;
 
-        let r: Vec<CyclotomicRing<F, { DefaultCommitmentConfig::D }>> =
-            r_a.iter().map(|ri| constant_ring::<F, { DefaultCommitmentConfig::D }>(*ri)).collect();
+        let r: Vec<CyclotomicRing<F, { DefaultCommitmentConfig::D }>> = r_a
+            .iter()
+            .map(|ri| constant_ring::<F, { DefaultCommitmentConfig::D }>(*ri))
+            .collect();
         debug_assert!(eval_ring_vec_at::<F, { DefaultCommitmentConfig::D }>(&r, &alpha) == r_a);
         let w =
             build_w_coeffs::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(&z, &r);
@@ -166,18 +171,57 @@ where
         debug_assert_eq!(w.len() % DefaultCommitmentConfig::D, 0);
         let w_cols = w.len() / DefaultCommitmentConfig::D;
         debug_assert_eq!(w_cols, m_cols);
-        let _ = &r_a;
-        let y_a = eval_ring_vec_at::<F, { DefaultCommitmentConfig::D }>(&y, &alpha);
+
+        // --- §4.3 Sumcheck integration ---
+
+        let d = DefaultCommitmentConfig::D;
+        let rows = m_row_count::<DefaultCommitmentConfig>();
+        let (w_evals, num_u, num_l) = build_w_evals(&w, d);
+        let num_sc_vars = num_u + num_l;
+        let b = 1usize << DefaultCommitmentConfig::LOG_BASIS;
+
+        transcript.append_serde(ABSORB_SUMCHECK_W, &w);
+
+        // F_0 sumcheck (range check)
+        let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
+        let f0_claim = F::zero();
+
+        let mut f0_prover = F0Prover::new(&tau0, w_evals.clone(), b);
+        transcript.append_field(ABSORB_SUMCHECK_CLAIM, &f0_claim);
+        let (f0_proof, _f0_challenges, _f0_final) =
+            prove_sumcheck::<F, _, F, _, _>(&mut f0_prover, f0_claim, transcript, |tr| {
+                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+            })?;
+
+        // F_alpha sumcheck (evaluation relation)
+        let num_i = rows.next_power_of_two().trailing_zeros() as usize;
+        let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
+        let alpha_evals_y = build_alpha_evals_y(alpha, d);
+        let m_evals_x = build_m_evals_x(&m_a_vec, rows, m_cols, &tau1);
+
+        let eq_tau1 = eq_evals(&tau1);
+        let mut f_alpha_claim = F::zero();
+        for (i, eq_i) in eq_tau1.iter().enumerate() {
+            let y_i = if i < y_a.len() { y_a[i] } else { F::zero() };
+            f_alpha_claim = f_alpha_claim + *eq_i * y_i;
+        }
+        let mut f_alpha_prover =
+            FAlphaProver::new(w_evals, &alpha_evals_y, &m_evals_x, num_u, num_l);
+        transcript.append_field(ABSORB_SUMCHECK_CLAIM, &f_alpha_claim);
+        let (f_alpha_proof, _fa_challenges, _fa_final) = prove_sumcheck::<F, _, F, _, _>(
+            &mut f_alpha_prover,
+            f_alpha_claim,
+            transcript,
+            |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+        )?;
 
         Ok(HachiProof {
             v,
             y_ring,
-            w,
-            alpha,
-            m_a: m_a_vec,
             u_eval,
-            y_vec: y,
-            y_a,
+            f0_proof,
+            f_alpha_proof,
+            sumcheck_aux: SumcheckAux { w },
         })
     }
 
@@ -189,33 +233,36 @@ where
         opening: &F,
         commitment: &Self::Commitment,
     ) -> Result<(), HachiError> {
-        let alpha = DefaultCommitmentConfig::D.trailing_zeros() as usize;
-        let reduced_len = opening_point.len().checked_sub(alpha).ok_or_else(|| {
+        let alpha_bits = DefaultCommitmentConfig::D.trailing_zeros() as usize;
+        let reduced_len = opening_point.len().checked_sub(alpha_bits).ok_or_else(|| {
             HachiError::InvalidSetup("opening point length underflow".to_string())
         })?;
         let reduced_opening_point = &opening_point[..reduced_len];
         let inner_point = &opening_point[reduced_len..];
 
+        // §3.1 trace check
         let v = reduce_inner_openings_to_ring_elements::<F, { DefaultCommitmentConfig::D }>(
             inner_point,
         )?;
-        let d = F::from_u64(DefaultCommitmentConfig::D as u64);
+        let d_field = F::from_u64(DefaultCommitmentConfig::D as u64);
         let trace_lhs = trace::<F, { DefaultCommitmentConfig::D }>(&(proof.y_ring * v.sigma_m1()));
-        let trace_rhs = d * *opening;
+        let trace_rhs = d_field * *opening;
         if trace_lhs != trace_rhs {
             return Err(HachiError::InvalidProof);
         }
 
+        // Derive stage-1 challenges and ring-switch challenge (same as prover)
         let ring_opening_point = ring_opening_point_from_field::<F, { DefaultCommitmentConfig::D }>(
             reduced_opening_point,
             DefaultCommitmentConfig::R,
             DefaultCommitmentConfig::M,
         )?;
-        let challenges =
-            derive_stage1_challenges::<F, T, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(
-                transcript,
-                &proof.v,
-            )?;
+        let challenges = derive_stage1_challenges::<
+            F,
+            T,
+            { DefaultCommitmentConfig::D },
+            DefaultCommitmentConfig,
+        >(transcript, &proof.v)?;
         let m = generate_m::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(
             setup,
             &ring_opening_point,
@@ -227,14 +274,61 @@ where
             &proof.u_eval,
         )?;
         let alpha = derive_ring_switch_challenge::<F, T, { DefaultCommitmentConfig::D }>(
-            transcript,
-            &m,
-            &y,
+            transcript, &m, &y,
         );
-        let y_a = eval_ring_vec_at::<F, { DefaultCommitmentConfig::D }>(&y, &alpha);
-        if y_a != proof.y_a {
-            return Err(HachiError::InvalidProof);
-        }
+
+        let m_a = eval_ring_matrix_at::<F, { DefaultCommitmentConfig::D }>(&m, &alpha);
+        let m_a_vec =
+            expand_m_a::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(&m_a, alpha)?;
+
+        // --- §4.3 Sumcheck verification ---
+
+        let d = DefaultCommitmentConfig::D;
+        let rows = m_row_count::<DefaultCommitmentConfig>();
+        let (w_evals, num_u, num_l) = build_w_evals(&proof.sumcheck_aux.w, d);
+        let num_sc_vars = num_u + num_l;
+        let b = 1usize << DefaultCommitmentConfig::LOG_BASIS;
+
+        transcript.append_serde(ABSORB_SUMCHECK_W, &proof.sumcheck_aux.w);
+
+        // F_0 sumcheck verification (range check)
+        let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
+        let f0_verifier = F0Verifier::new(tau0, w_evals.clone(), b);
+        let f0_claim = f0_verifier.input_claim();
+        transcript.append_field(ABSORB_SUMCHECK_CLAIM, &f0_claim);
+        let _f0_challenges =
+            verify_sumcheck::<F, _, F, _, _>(&proof.f0_proof, &f0_verifier, transcript, |tr| {
+                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+            })?;
+
+        // F_alpha sumcheck verification (evaluation relation)
+        let num_i = rows.next_power_of_two().trailing_zeros() as usize;
+        let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
+        let cols = m_a_vec.len() / rows.max(1);
+        let alpha_evals_y = build_alpha_evals_y(alpha, d);
+        let m_evals_x = build_m_evals_x(&m_a_vec, rows, cols, &tau1);
+
+        let f_alpha_verifier = FAlphaVerifier::new(
+            w_evals,
+            alpha_evals_y,
+            m_evals_x,
+            tau1,
+            proof.v.clone(),
+            commitment.u.clone(),
+            proof.u_eval,
+            alpha,
+            num_u,
+            num_l,
+        );
+        let f_alpha_claim = f_alpha_verifier.input_claim();
+        transcript.append_field(ABSORB_SUMCHECK_CLAIM, &f_alpha_claim);
+        let _fa_challenges = verify_sumcheck::<F, _, F, _, _>(
+            &proof.f_alpha_proof,
+            &f_alpha_verifier,
+            transcript,
+            |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+        )?;
+
         Ok(())
     }
 
@@ -287,6 +381,57 @@ where
     transcript.append_serde(ABSORB_RING_SWITCH_MESSAGE, m);
     transcript.append_serde(ABSORB_RING_SWITCH_MESSAGE, y);
     transcript.challenge_scalar(CHALLENGE_RING_SWITCH)
+}
+
+/// Re-derive the ring-switch challenge `alpha` and the expanded `M_a` vector
+/// by replaying the transcript from the proof data and setup, exactly as the
+/// verifier does.
+pub(crate) fn rederive_alpha_and_m_a<F>(
+    proof: &HachiProof<F, { DefaultCommitmentConfig::D }>,
+    setup: &<HachiCommitmentScheme as CommitmentScheme<F>>::ProverSetup,
+    opening_point: &[F],
+    commitment: &<HachiCommitmentScheme as CommitmentScheme<F>>::Commitment,
+) -> Result<(F, Vec<F>), HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + 'static,
+{
+    let alpha_bits = DefaultCommitmentConfig::D.trailing_zeros() as usize;
+    let reduced_len = opening_point
+        .len()
+        .checked_sub(alpha_bits)
+        .ok_or_else(|| HachiError::InvalidSetup("opening point length underflow".to_string()))?;
+    let ring_opening_point = ring_opening_point_from_field::<F, { DefaultCommitmentConfig::D }>(
+        &opening_point[..reduced_len],
+        DefaultCommitmentConfig::R,
+        DefaultCommitmentConfig::M,
+    )?;
+    let mut transcript = crate::protocol::transcript::Blake2bTranscript::<F>::new(
+        crate::protocol::transcript::labels::DOMAIN_HACHI_PROTOCOL,
+    );
+    let challenges =
+        derive_stage1_challenges::<F, _, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(
+            &mut transcript,
+            &proof.v,
+        )?;
+    let m = generate_m::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(
+        setup,
+        &ring_opening_point,
+        &challenges,
+    )?;
+    let y = generate_y::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(
+        &proof.v,
+        &commitment.u,
+        &proof.u_eval,
+    )?;
+    let alpha = derive_ring_switch_challenge::<F, _, { DefaultCommitmentConfig::D }>(
+        &mut transcript,
+        &m,
+        &y,
+    );
+    let m_a = eval_ring_matrix_at::<F, { DefaultCommitmentConfig::D }>(&m, &alpha);
+    let m_a_vec =
+        expand_m_a::<F, { DefaultCommitmentConfig::D }, DefaultCommitmentConfig>(&m_a, alpha)?;
+    Ok((alpha, m_a_vec))
 }
 
 fn constant_ring<F: FieldCore, const D: usize>(value: F) -> CyclotomicRing<F, D> {
@@ -429,8 +574,7 @@ where
         .collect::<Vec<Vec<_>>>();
 
     let zero = CyclotomicRing::<F, D>::zero();
-    let mut rows =
-        Vec::with_capacity(Cfg::N_D + Cfg::N_B + 1usize + 1usize + Cfg::N_A);
+    let mut rows = Vec::with_capacity(Cfg::N_D + Cfg::N_B + 1usize + 1usize + Cfg::N_A);
 
     for row in setup.D.iter() {
         if row.len() != w_len {
@@ -648,7 +792,7 @@ fn trace<F: CanonicalField, const D: usize>(u: &CyclotomicRing<F, D>) -> F {
     u.coefficients()[0] * d
 }
 
-fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D>, alpha: &F) -> F {
+pub(crate) fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D>, alpha: &F) -> F {
     let mut acc = F::zero();
     let mut power = F::one();
     for coeff in r.coefficients() {
@@ -658,10 +802,7 @@ fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D>, alpha: &
     acc
 }
 
-fn eval_ring_vec_at<F: FieldCore, const D: usize>(
-    v: &[CyclotomicRing<F, D>],
-    alpha: &F,
-) -> Vec<F> {
+fn eval_ring_vec_at<F: FieldCore, const D: usize>(v: &[CyclotomicRing<F, D>], alpha: &F) -> Vec<F> {
     v.iter().map(|r| eval_ring_at(r, alpha)).collect()
 }
 
@@ -669,9 +810,7 @@ fn eval_ring_matrix_at<F: FieldCore, const D: usize>(
     m: &[Vec<CyclotomicRing<F, D>>],
     alpha: &F,
 ) -> Vec<Vec<F>> {
-    m.iter()
-        .map(|row| eval_ring_vec_at(row, alpha))
-        .collect()
+    m.iter().map(|row| eval_ring_vec_at(row, alpha)).collect()
 }
 
 fn compute_r_a<F: FieldCore, const D: usize>(
@@ -691,9 +830,9 @@ fn compute_r_a<F: FieldCore, const D: usize>(
         alpha_pow = alpha_pow * *alpha;
     }
     let denom = alpha_pow + F::one();
-    let denom_inv = denom.inv().ok_or_else(|| {
-        HachiError::InvalidInput("alpha^D + 1 is not invertible".to_string())
-    })?;
+    let denom_inv = denom
+        .inv()
+        .ok_or_else(|| HachiError::InvalidInput("alpha^D + 1 is not invertible".to_string()))?;
 
     let mut out = Vec::with_capacity(m_a.len());
     for (row, y_i) in m_a.iter().zip(y_a.iter()) {
@@ -806,6 +945,24 @@ fn r_decomp_levels<F: CanonicalField, Cfg: CommitmentConfig>() -> usize {
     if levels == 0 {
         levels = 1;
     }
+
+    // The formula above gives enough digits for *unsigned* base-b representation.
+    // Balanced digits {-b/2, ..., b/2-1} have a smaller positive range:
+    //   max_positive = (b/2 - 1) * (b^l - 1) / (b - 1)
+    // We need max_positive >= (q-1)/2 to cover all signed field values.
+    let b = 1u128 << Cfg::LOG_BASIS;
+    let half_q = modulus / 2;
+    let half_b_minus_1 = b / 2 - 1;
+    let b_minus_1 = b - 1;
+    let mut b_pow = 1u128;
+    for _ in 0..levels {
+        b_pow = b_pow.saturating_mul(b);
+    }
+    let max_positive = half_b_minus_1.saturating_mul((b_pow - 1) / b_minus_1);
+    if max_positive < half_q {
+        levels += 1;
+    }
+
     levels
 }
 
@@ -832,9 +989,10 @@ fn expand_m_a<F: CanonicalField, const D: usize, Cfg: CommitmentConfig>(
 
     let levels = r_decomp_levels::<F, Cfg>();
     let total_cols = cols
-        .checked_add(rows.checked_mul(levels).ok_or_else(|| {
-            HachiError::InvalidSetup("expanded M width overflow".to_string())
-        })?)
+        .checked_add(
+            rows.checked_mul(levels)
+                .ok_or_else(|| HachiError::InvalidSetup("expanded M width overflow".to_string()))?,
+        )
         .ok_or_else(|| HachiError::InvalidSetup("expanded M width overflow".to_string()))?;
 
     let base = F::from_canonical_u128_reduced(1u128 << Cfg::LOG_BASIS);
@@ -861,6 +1019,89 @@ fn expand_m_a<F: CanonicalField, const D: usize, Cfg: CommitmentConfig>(
         }
     }
     Ok(out)
+}
+
+/// Reshape `w` coefficients from ring-element-major order into sumcheck
+/// evaluation-table order and pad to a power-of-two domain.
+///
+/// Input `w` is stored as `[z_0_coeff_0, ..., z_0_coeff_{D-1}, z_1_coeff_0, ...]`,
+/// i.e. for each ring element `u`, the `D` coefficients `ℓ` are consecutive:
+/// `w[u * D + ℓ]`.
+///
+/// The sumcheck instances need the variable ordering `(x, y)` where `x` indexes
+/// the ring element (lower bits) and `y` indexes the coefficient (upper bits):
+/// `w_evals[x + (y << num_u)]`.
+///
+/// Returns `(w_evals, num_u, num_l)`.
+fn build_w_evals<F: FieldCore>(w: &[F], d: usize) -> (Vec<F>, usize, usize) {
+    let num_l = d.trailing_zeros() as usize;
+    let num_ring_elems = w.len() / d.max(1);
+    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let x_len = 1usize << num_u;
+    let y_len = 1usize << num_l;
+    let n = x_len * y_len;
+
+    let mut evals = vec![F::zero(); n];
+    for x in 0..x_len {
+        for y in 0..y_len {
+            let src = y + (x << num_l);
+            if src < w.len() {
+                let dst = x + (y << num_u);
+                evals[dst] = w[src];
+            }
+        }
+    }
+    (evals, num_u, num_l)
+}
+
+/// Compute the M_alpha row count (number of rows in the ring-switch matrix).
+fn m_row_count<Cfg: CommitmentConfig>() -> usize {
+    Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A
+}
+
+/// Build the `m(x) = Σ_i eq(τ₁, i) * M_α(i, x)` evaluation table.
+fn build_m_evals_x<F: FieldCore + CanonicalField>(
+    m_a_flat: &[F],
+    rows: usize,
+    cols: usize,
+    tau1: &[F],
+) -> Vec<F> {
+    let eq_tau1 = eq_evals(tau1);
+    let x_len = cols.next_power_of_two();
+    let mut m_evals = vec![F::zero(); x_len];
+    for x in 0..x_len {
+        let mut acc = F::zero();
+        for i in 0..eq_tau1.len() {
+            let row_val = if i < rows && x < cols {
+                m_a_flat[i * cols + x]
+            } else {
+                F::zero()
+            };
+            acc = acc + eq_tau1[i] * row_val;
+        }
+        m_evals[x] = acc;
+    }
+    m_evals
+}
+
+/// Build the `α̃(y) = [1, α, α², ..., α^{D-1}]` evaluation table.
+fn build_alpha_evals_y<F: FieldCore>(alpha: F, d: usize) -> Vec<F> {
+    let mut out = vec![F::zero(); d];
+    let mut power = F::one();
+    for val in out.iter_mut() {
+        *val = power;
+        power = power * alpha;
+    }
+    out
+}
+
+/// Sample a tau vector of `n` scalars from the transcript.
+fn sample_tau<F: FieldCore + CanonicalField, T: Transcript<F>>(
+    transcript: &mut T,
+    label: &[u8],
+    n: usize,
+) -> Vec<F> {
+    (0..n).map(|_| transcript.challenge_scalar(label)).collect()
 }
 
 /// Build the coefficient vector for `w` by concatenating `z` digits and `r` digits.

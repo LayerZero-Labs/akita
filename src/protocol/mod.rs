@@ -21,7 +21,7 @@ pub use commitment::{
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use iteration_prover::HachiProver;
 pub use opening_point::RingOpeningPoint;
-pub use proof::HachiProof;
+pub use proof::{HachiProof, SumcheckAux};
 pub use sumcheck::{
     prove_sumcheck, verify_sumcheck, CompressedUniPoly, SumcheckInstanceProver,
     SumcheckInstanceVerifier, SumcheckProof, UniPoly,
