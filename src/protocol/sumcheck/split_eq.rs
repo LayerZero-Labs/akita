@@ -23,7 +23,7 @@
 
 use super::eq_poly::EqPolynomial;
 use super::UniPoly;
-use crate::{CanonicalField, FieldCore};
+use crate::FieldCore;
 
 /// Split equality polynomial with Gruen scalar accumulation.
 ///
@@ -56,7 +56,7 @@ pub struct GruenSplitEq<E: FieldCore> {
 }
 
 #[allow(non_snake_case)]
-impl<E: FieldCore + CanonicalField> GruenSplitEq<E> {
+impl<E: FieldCore> GruenSplitEq<E> {
     /// Create a new split-eq from the full challenge vector `τ`.
     ///
     /// Precomputes suffix-cached eq tables for two halves of `τ[1..n]`.
@@ -152,7 +152,7 @@ mod tests {
     use super::*;
     use crate::algebra::Fp64;
     use crate::protocol::sumcheck::fold_evals;
-    use crate::FieldSampling;
+    use crate::{FieldSampling, FromSmallInt};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

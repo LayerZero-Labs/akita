@@ -18,7 +18,9 @@ use rand_core::RngCore;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::{CanonicalField, FieldCore, FieldSampling, Invertible, PseudoMersenneField};
+use crate::{
+    CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, PseudoMersenneField,
+};
 
 /// Pack two u64 limbs into `[lo, hi]`.
 #[inline(always)]
@@ -816,7 +818,7 @@ impl<const P: u128> FieldSampling for Fp128<P> {
     }
 }
 
-impl<const P: u128> CanonicalField for Fp128<P> {
+impl<const P: u128> FromSmallInt for Fp128<P> {
     fn from_u64(val: u64) -> Self {
         // For Fp128 pseudo-Mersenne primes, p = 2^128 - c with c < 2^64.
         // Therefore any u64 is always canonical (< p), so this can be a
@@ -832,7 +834,9 @@ impl<const P: u128> CanonicalField for Fp128<P> {
             -Self::from_u64(val.unsigned_abs())
         }
     }
+}
 
+impl<const P: u128> CanonicalField for Fp128<P> {
     fn to_canonical_u128(self) -> u128 {
         to_u128(self.0)
     }

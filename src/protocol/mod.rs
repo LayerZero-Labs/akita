@@ -28,4 +28,4 @@ pub use sumcheck::{
     prove_sumcheck, verify_sumcheck, CompressedUniPoly, SumcheckInstanceProver,
     SumcheckInstanceVerifier, SumcheckProof, UniPoly,
 };
-pub use transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
+pub use transcript::{sample_ext_challenge, Blake2bTranscript, KeccakTranscript, Transcript};

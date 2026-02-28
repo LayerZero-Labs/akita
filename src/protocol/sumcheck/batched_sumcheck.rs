@@ -12,7 +12,7 @@ use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckProof, Uni
 use crate::error::HachiError;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
-use crate::{CanonicalField, FieldCore};
+use crate::{FieldCore, FromSmallInt};
 
 fn mul_pow_2<E: FieldCore>(x: E, k: usize) -> E {
     let mut result = x;
@@ -59,9 +59,9 @@ pub fn prove_batched_sumcheck<F, T, E, S>(
     mut sample_challenge: S,
 ) -> Result<(SumcheckProof<E>, Vec<E>), HachiError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + crate::CanonicalField,
     T: Transcript<F>,
-    E: FieldCore + CanonicalField,
+    E: FieldCore + FromSmallInt,
     S: FnMut(&mut T) -> E,
 {
     assert!(!instances.is_empty());
@@ -199,9 +199,9 @@ pub fn verify_batched_sumcheck<F, T, E, S>(
     mut sample_challenge: S,
 ) -> Result<Vec<E>, HachiError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + crate::CanonicalField,
     T: Transcript<F>,
-    E: FieldCore + CanonicalField,
+    E: FieldCore,
     S: FnMut(&mut T) -> E,
 {
     assert!(!verifiers.is_empty());

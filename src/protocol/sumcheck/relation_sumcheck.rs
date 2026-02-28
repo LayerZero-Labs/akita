@@ -13,7 +13,7 @@ use crate::cfg_into_iter;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::ring_switch::eval_ring_at;
-use crate::{CanonicalField, FieldCore};
+use crate::{FieldCore, FromSmallInt};
 
 /// Prover for `F_{α,τ₁}(x,y) = w̃(x,y) · α̃(y) · m(x)`.
 ///
@@ -30,7 +30,7 @@ pub struct RelationSumcheckProver<E> {
     num_vars: usize,
 }
 
-impl<E: FieldCore + CanonicalField> RelationSumcheckProver<E> {
+impl<E: FieldCore + FromSmallInt> RelationSumcheckProver<E> {
     /// Construct from the three constituent evaluation tables.
     ///
     /// - `w_evals`: evaluations of `w̃` over `{0,1}^{num_u + num_l}` (full domain).
@@ -72,7 +72,7 @@ impl<E: FieldCore + CanonicalField> RelationSumcheckProver<E> {
     }
 }
 
-impl<E: FieldCore + CanonicalField> SumcheckInstanceProver<E> for RelationSumcheckProver<E> {
+impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for RelationSumcheckProver<E> {
     fn num_rounds(&self) -> usize {
         self.num_vars
     }
@@ -88,10 +88,7 @@ impl<E: FieldCore + CanonicalField> SumcheckInstanceProver<E> for RelationSumche
                 .par_iter()
                 .zip(self.alpha_table.par_iter())
                 .zip(self.m_table.par_iter())
-                .fold(
-                    || E::zero(),
-                    |acc, ((&w, &a), &m)| acc + w * a * m,
-                )
+                .fold(|| E::zero(), |acc, ((&w, &a), &m)| acc + w * a * m)
                 .reduce(|| E::zero(), |a, b| a + b)
         }
         #[cfg(not(feature = "parallel"))]
@@ -186,7 +183,7 @@ pub struct RelationSumcheckVerifier<F: FieldCore, const D: usize> {
     num_l: usize,
 }
 
-impl<F: FieldCore + CanonicalField, const D: usize> RelationSumcheckVerifier<F, D> {
+impl<F: FieldCore, const D: usize> RelationSumcheckVerifier<F, D> {
     /// Create a new evaluation-relation sumcheck verifier.
     ///
     /// # Panics
@@ -223,9 +220,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RelationSumcheckVerifier<F, 
     }
 }
 
-impl<F: FieldCore + CanonicalField, const D: usize> SumcheckInstanceVerifier<F>
-    for RelationSumcheckVerifier<F, D>
-{
+impl<F: FieldCore, const D: usize> SumcheckInstanceVerifier<F> for RelationSumcheckVerifier<F, D> {
     fn num_rounds(&self) -> usize {
         self.num_u + self.num_l
     }
@@ -273,7 +268,7 @@ mod tests {
         prove_sumcheck, verify_sumcheck, Blake2bTranscript, CommitmentConfig, CommitmentScheme,
         DefaultCommitmentConfig, HachiCommitmentScheme, Transcript,
     };
-    use crate::{CanonicalField, FieldCore};
+    use crate::{FieldCore, FromSmallInt};
 
     type F = Fp64<4294967197>;
     type Cfg = DefaultCommitmentConfig;
@@ -302,8 +297,13 @@ mod tests {
         )
         .unwrap();
 
-        let (alpha, m_a_vec) =
-            rederive_alpha_and_m_a::<F, { Cfg::D }, Cfg>(&proof, &setup, &opening_point, &commitment).unwrap();
+        let (alpha, m_a_vec) = rederive_alpha_and_m_a::<F, { Cfg::D }, Cfg>(
+            &proof,
+            &setup,
+            &opening_point,
+            &commitment,
+        )
+        .unwrap();
 
         let d = DefaultCommitmentConfig::D;
         assert_eq!(proof.sumcheck_aux.w.len() % d, 0);

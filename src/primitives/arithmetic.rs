@@ -39,6 +39,14 @@ pub trait FieldCore:
     /// Field multiplication
     fn mul(&self, rhs: &Self) -> Self;
 
+    /// Field squaring.
+    ///
+    /// Default is `self * self`; extension fields override with specialized
+    /// formulas that use fewer base-field multiplications.
+    fn square(&self) -> Self {
+        *self * *self
+    }
+
     /// Field inversion.
     ///
     /// This API may branch on zero-check and is intended for public/non-secret
@@ -55,14 +63,58 @@ pub trait Invertible: FieldCore {
     fn inv_or_zero(self) -> Self;
 }
 
-/// Canonical conversion operations for field elements.
-pub trait CanonicalField: FieldCore {
-    /// Convert from `u64`.
+/// Embed small integers into a field.
+///
+/// Every field contains a copy of its prime subfield, and small integers embed
+/// into it canonically via reduction modulo the characteristic. This trait is
+/// implementable for ALL fields — base and extension alike.
+///
+/// Only `from_u64` and `from_i64` need concrete implementations; the narrower
+/// widths have default impls via lossless widening.
+pub trait FromSmallInt: FieldCore {
+    /// Embed a `u8` into the field.
+    fn from_u8(val: u8) -> Self {
+        Self::from_u64(val as u64)
+    }
+
+    /// Embed an `i8` into the field.
+    fn from_i8(val: i8) -> Self {
+        Self::from_i64(val as i64)
+    }
+
+    /// Embed a `u16` into the field.
+    fn from_u16(val: u16) -> Self {
+        Self::from_u64(val as u64)
+    }
+
+    /// Embed an `i16` into the field.
+    fn from_i16(val: i16) -> Self {
+        Self::from_i64(val as i64)
+    }
+
+    /// Embed a `u32` into the field.
+    fn from_u32(val: u32) -> Self {
+        Self::from_u64(val as u64)
+    }
+
+    /// Embed an `i32` into the field.
+    fn from_i32(val: i32) -> Self {
+        Self::from_i64(val as i64)
+    }
+
+    /// Embed a `u64` into the field (reduce mod characteristic).
     fn from_u64(val: u64) -> Self;
 
-    /// Convert from `i64`.
+    /// Embed an `i64` into the field (reduce mod characteristic).
     fn from_i64(val: i64) -> Self;
+}
 
+/// Canonical integer representation for prime (base) field elements.
+///
+/// Provides a bijection between field elements and integers in `[0, p)`.
+/// Only meaningful for base prime fields where elements ARE residues mod p.
+/// Extension fields should NOT implement this trait.
+pub trait CanonicalField: FromSmallInt {
     /// Return canonical integer representation as `u128`.
     fn to_canonical_u128(self) -> u128;
 

@@ -6,7 +6,7 @@
 
 use crate::algebra::{CyclotomicRing, Fp64};
 use crate::protocol::commitment::CommitmentConfig;
-use crate::{CanonicalField, FieldCore};
+use crate::{FieldCore, FromSmallInt};
 
 pub type F = Fp64<4294967197>;
 pub const D: usize = 64;

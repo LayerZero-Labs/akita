@@ -153,6 +153,7 @@ pub(crate) fn inner_ajtai_onehot<F: FieldCore + CanonicalField, const D: usize>(
 mod tests {
     use super::*;
     use crate::test_utils::F;
+    use crate::FromSmallInt;
 
     #[test]
     fn map_onehot_k_gt_d() {

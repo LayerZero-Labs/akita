@@ -236,7 +236,7 @@ mod tests {
         Pow2Offset24Field, Pow2Offset31Field, Pow2Offset32Field, Pow2Offset40Field,
         Pow2Offset64Field, Prime128M13M4P0,
     };
-    use crate::{CanonicalField, FieldCore, FieldSampling};
+    use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
     use rand::{rngs::StdRng, RngCore, SeedableRng};
 
     fn rand_u128<R: RngCore>(rng: &mut R) -> u128 {

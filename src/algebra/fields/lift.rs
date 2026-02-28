@@ -2,7 +2,7 @@
 
 use crate::algebra::fields::ext::{Fp2, Fp2Config, Fp4, Fp4Config};
 use crate::primitives::serialization::Valid;
-use crate::FieldCore;
+use crate::{FieldCore, FromSmallInt};
 
 /// Lift a base-field element into an extension field.
 ///
@@ -10,6 +10,63 @@ use crate::FieldCore;
 pub trait LiftBase<F: FieldCore>: FieldCore {
     /// Embed `x ∈ F` as a constant in `Self`.
     fn lift_base(x: F) -> Self;
+}
+
+/// An algebraic extension of base field `F`.
+///
+/// Provides the extension degree and a constructor from a slice of base-field
+/// coefficients (in the canonical basis `{1, u, u^2, ...}`).
+pub trait ExtField<F: FieldCore>: FieldCore + LiftBase<F> + FromSmallInt {
+    /// Extension degree: `[Self : F]`.
+    const EXT_DEGREE: usize;
+
+    /// Construct from a coefficient slice `[c0, c1, ..., c_{d-1}]`.
+    ///
+    /// # Panics
+    /// Panics if `coeffs.len() != Self::EXT_DEGREE`.
+    fn from_base_slice(coeffs: &[F]) -> Self;
+}
+
+impl<F: FieldCore + FromSmallInt> ExtField<F> for F {
+    const EXT_DEGREE: usize = 1;
+
+    #[inline]
+    fn from_base_slice(coeffs: &[F]) -> Self {
+        assert_eq!(coeffs.len(), 1);
+        coeffs[0]
+    }
+}
+
+impl<F, C> ExtField<F> for Fp2<F, C>
+where
+    F: FieldCore + FromSmallInt + Valid,
+    C: Fp2Config<F>,
+{
+    const EXT_DEGREE: usize = 2;
+
+    #[inline]
+    fn from_base_slice(coeffs: &[F]) -> Self {
+        assert_eq!(coeffs.len(), 2);
+        Self::new(coeffs[0], coeffs[1])
+    }
+}
+
+impl<F, C2, C4> ExtField<F> for Fp4<F, C2, C4>
+where
+    F: FieldCore + FromSmallInt + Valid,
+    C2: Fp2Config<F>,
+    C4: Fp4Config<F, C2>,
+{
+    const EXT_DEGREE: usize = 4;
+
+    #[inline]
+    fn from_base_slice(coeffs: &[F]) -> Self {
+        assert_eq!(coeffs.len(), 4);
+        Self::new(
+            Fp2::new(coeffs[0], coeffs[1]),
+            Fp2::new(coeffs[2], coeffs[3]),
+        )
+    }
 }
 
 impl<F: FieldCore> LiftBase<F> for F {

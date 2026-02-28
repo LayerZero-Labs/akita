@@ -11,7 +11,7 @@ use super::{fold_evals, multilinear_eval, range_check_eval};
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::{CanonicalField, FieldCore};
+use crate::{FieldCore, FromSmallInt};
 
 /// Prover for `F_{0,τ₀}(x,y) = ẽq(τ₀,(x,y)) · w̃(x,y) · range_check(w̃(x,y), b)`.
 ///
@@ -27,7 +27,7 @@ pub struct NormSumcheckProver<E: FieldCore> {
     b: usize,
 }
 
-impl<E: FieldCore + CanonicalField> NormSumcheckProver<E> {
+impl<E: FieldCore + FromSmallInt> NormSumcheckProver<E> {
     /// Create a new norm (range-check) sumcheck prover.
     ///
     /// # Panics
@@ -45,7 +45,7 @@ impl<E: FieldCore + CanonicalField> NormSumcheckProver<E> {
     }
 }
 
-impl<E: FieldCore + CanonicalField> SumcheckInstanceProver<E> for NormSumcheckProver<E> {
+impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for NormSumcheckProver<E> {
     fn num_rounds(&self) -> usize {
         self.num_vars
     }
@@ -134,7 +134,7 @@ pub struct NormSumcheckVerifier<E> {
     b: usize,
 }
 
-impl<E: FieldCore + CanonicalField> NormSumcheckVerifier<E> {
+impl<E: FieldCore + FromSmallInt> NormSumcheckVerifier<E> {
     /// Create a new norm (range-check) sumcheck verifier.
     ///
     /// # Panics
@@ -152,7 +152,7 @@ impl<E: FieldCore + CanonicalField> NormSumcheckVerifier<E> {
     }
 }
 
-impl<E: FieldCore + CanonicalField> SumcheckInstanceVerifier<E> for NormSumcheckVerifier<E> {
+impl<E: FieldCore + FromSmallInt> SumcheckInstanceVerifier<E> for NormSumcheckVerifier<E> {
     fn num_rounds(&self) -> usize {
         self.num_vars
     }
@@ -180,12 +180,13 @@ mod tests {
     use crate::primitives::multilinear_evals::DenseMultilinearEvals;
     use crate::protocol::ring_switch::build_w_coeffs;
     use crate::protocol::sumcheck::eq_poly::EqPolynomial;
+    use crate::protocol::sumcheck::multilinear_eval;
     use crate::protocol::transcript::labels;
     use crate::protocol::{
         prove_sumcheck, verify_sumcheck, Blake2bTranscript, CommitmentConfig, CommitmentScheme,
         DefaultCommitmentConfig, HachiCommitmentScheme, Transcript,
     };
-    use crate::{CanonicalField, FieldCore};
+    use crate::{FieldCore, FromSmallInt};
 
     type F = Fp64<4294967197>;
     const D: usize = 8;
@@ -295,6 +296,46 @@ mod tests {
         let verifier_challenges =
             verify_sumcheck::<F, _, F, _, _>(&proof_sc, &verifier, &mut vt, |tr| {
                 tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            })
+            .unwrap();
+
+        assert_eq!(prover_challenges, verifier_challenges);
+    }
+
+    #[test]
+    fn norm_sumcheck_over_ext2() {
+        use crate::algebra::fields::ext::Ext2;
+        use crate::algebra::fields::lift::LiftBase;
+
+        type E2 = Ext2<F>;
+
+        let num_vars = 3;
+        let n = 1usize << num_vars;
+        let b = 2;
+        let w_evals_f: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 % b as u64)).collect();
+        let tau_f: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
+
+        let w_evals_e: Vec<E2> = w_evals_f.iter().map(|&f| E2::lift_base(f)).collect();
+        let tau_e: Vec<E2> = tau_f.iter().map(|&f| E2::lift_base(f)).collect();
+
+        let mut prover = NormSumcheckProver::new(&tau_e, w_evals_e.clone(), b);
+
+        let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+        let (proof, prover_challenges, final_claim) =
+            prove_sumcheck::<F, _, E2, _, _>(&mut prover, &mut pt, |tr| {
+                E2::lift_base(tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
+            })
+            .unwrap();
+
+        let oracle = EqPolynomial::mle(&tau_e, &prover_challenges)
+            * range_check_eval(multilinear_eval(&w_evals_e, &prover_challenges), b);
+        assert_eq!(final_claim, oracle, "E2 prover final claim != oracle eval");
+
+        let verifier = NormSumcheckVerifier::new(tau_e, w_evals_e, b);
+        let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+        let verifier_challenges =
+            verify_sumcheck::<F, _, E2, _, _>(&proof, &verifier, &mut vt, |tr| {
+                E2::lift_base(tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
             })
             .unwrap();
 

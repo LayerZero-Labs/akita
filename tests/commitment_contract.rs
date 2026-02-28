@@ -6,7 +6,7 @@ use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
     AppendToTranscript, Blake2bTranscript, CommitmentScheme, StreamingCommitmentScheme, Transcript,
 };
-use hachi_pcs::{CanonicalField, FieldCore, HachiError, Polynomial};
+use hachi_pcs::{CanonicalField, FieldCore, FromSmallInt, HachiError, Polynomial};
 
 type F = Fp64<4294967197>;
 

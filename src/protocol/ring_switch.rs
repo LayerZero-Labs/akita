@@ -276,10 +276,9 @@ where
 
     let blocks = vec![padded];
 
-    let (w_setup, _) =
-        <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::setup(
-            WCfg::<D, Cfg>::M,
-        )?;
+    let (w_setup, _) = <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::setup(
+        WCfg::<D, Cfg>::M,
+    )?;
 
     let (commitment, _, _) =
         <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::commit_ring_blocks(

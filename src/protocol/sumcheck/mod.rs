@@ -31,8 +31,8 @@ use crate::primitives::serialization::{
 };
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
-use crate::CanonicalField;
 use crate::FieldCore;
+use crate::FromSmallInt;
 use std::io::{Read, Write};
 
 /// Univariate polynomial in coefficient form: `p(X) = Σ_{i=0}^d coeffs[i] * X^i`.
@@ -98,7 +98,7 @@ impl<E: FieldCore> UniPoly<E> {
     }
 }
 
-impl<E: FieldCore + crate::CanonicalField> UniPoly<E> {
+impl<E: FieldCore + FromSmallInt> UniPoly<E> {
     /// Interpolate from evaluations at equispaced integer points `x = 0, 1, ..., d`.
     ///
     /// Uses Newton forward-difference interpolation: compute divided differences,
@@ -579,7 +579,7 @@ where
 ///
 /// This polynomial vanishes exactly when `w ∈ {−(b−1), …, b−1}`.
 /// Total degree in `w` is `2b − 1`.
-pub fn range_check_eval<E: FieldCore + CanonicalField>(w: E, b: usize) -> E {
+pub fn range_check_eval<E: FieldCore + FromSmallInt>(w: E, b: usize) -> E {
     let mut acc = w;
     for k in 1..b {
         let k_e = E::from_u64(k as u64);

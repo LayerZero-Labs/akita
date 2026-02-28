@@ -21,10 +21,10 @@ use crate::protocol::sumcheck::norm_sumcheck::{NormSumcheckProver, NormSumcheckV
 use crate::protocol::sumcheck::relation_sumcheck::{
     RelationSumcheckProver, RelationSumcheckVerifier,
 };
-use crate::protocol::sumcheck::SumcheckInstanceProver;
+use crate::protocol::sumcheck::{SumcheckInstanceProver, SumcheckInstanceVerifier};
 use crate::protocol::transcript::labels::CHALLENGE_SUMCHECK_ROUND;
 use crate::protocol::transcript::Transcript;
-use crate::{CanonicalField, FieldCore, FieldSampling, Polynomial};
+use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt, Polynomial};
 
 #[cfg(test)]
 use crate::protocol::ring_switch::{eval_ring_matrix_at, expand_m_a};
@@ -209,7 +209,7 @@ where
             rs.num_l,
         );
 
-        let verifiers: Vec<&dyn crate::protocol::sumcheck::SumcheckInstanceVerifier<F>> =
+        let verifiers: Vec<&dyn SumcheckInstanceVerifier<F>> =
             vec![&norm_verifier, &relation_verifier];
         verify_batched_sumcheck::<F, _, F, _>(
             &proof.sumcheck_proof,
@@ -383,7 +383,7 @@ fn evaluate_packed_ring_poly<F: FieldCore, const D: usize>(
     }
 }
 
-fn trace<F: CanonicalField, const D: usize>(u: &CyclotomicRing<F, D>) -> F {
+fn trace<F: FieldCore + FromSmallInt, const D: usize>(u: &CyclotomicRing<F, D>) -> F {
     let d = F::from_u64(D as u64);
     u.coefficients()[0] * d
 }
@@ -395,7 +395,7 @@ mod tests {
     use crate::protocol::commitment::CommitmentConfig;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::test_utils::F;
-    use crate::{CommitmentScheme, Polynomial};
+    use crate::{CommitmentScheme, FromSmallInt, Polynomial};
 
     type Cfg = DefaultCommitmentConfig;
     type Scheme = HachiCommitmentScheme<{ Cfg::D }, Cfg>;
@@ -412,8 +412,7 @@ mod tests {
         let setup = <Scheme as CommitmentScheme<F>>::setup_prover(num_vars);
         let verifier_setup = <Scheme as CommitmentScheme<F>>::setup_verifier(&setup);
 
-        let (commitment, hint) =
-            <Scheme as CommitmentScheme<F>>::commit(&poly, &setup).unwrap();
+        let (commitment, hint) = <Scheme as CommitmentScheme<F>>::commit(&poly, &setup).unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
         let opening = poly.evaluate(&opening_point);

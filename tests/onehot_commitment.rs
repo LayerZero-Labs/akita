@@ -2,7 +2,7 @@
 
 use hachi_pcs::protocol::commitment::{HachiCommitmentCore, RingCommitmentScheme};
 use hachi_pcs::test_utils::*;
-use hachi_pcs::{CanonicalField, FieldCore};
+use hachi_pcs::{FieldCore, FromSmallInt};
 
 type Core = HachiCommitmentCore;
 

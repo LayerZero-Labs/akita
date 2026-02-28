@@ -7,7 +7,7 @@ use hachi_pcs::protocol::commitment::DefaultCommitmentConfig;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
-use hachi_pcs::{CanonicalField, CommitmentScheme, Polynomial, Transcript};
+use hachi_pcs::{CommitmentScheme, FromSmallInt, Polynomial, Transcript};
 use std::time::Duration;
 
 type F = Fp64<4294967197>;
@@ -119,17 +119,15 @@ where
     group.bench_function("verify", |b| {
         b.iter(|| {
             let mut transcript = Blake2bTranscript::<F>::new(b"bench");
-            black_box(
-                <S<Cfg> as CommitmentScheme<F>>::verify(
-                    black_box(&proof),
-                    black_box(&verifier_setup),
-                    &mut transcript,
-                    black_box(&pt),
-                    black_box(&opening),
-                    black_box(&commitment),
-                )
-                .unwrap(),
+            <S<Cfg> as CommitmentScheme<F>>::verify(
+                black_box(&proof),
+                black_box(&verifier_setup),
+                &mut transcript,
+                black_box(&pt),
+                black_box(&opening),
+                black_box(&commitment),
             )
+            .unwrap();
         })
     });
 
@@ -138,7 +136,12 @@ where
             let (cm, h) = <S<Cfg> as CommitmentScheme<F>>::commit(&poly, &setup).unwrap();
             let mut pt_tr = Blake2bTranscript::<F>::new(b"bench");
             let pf = <S<Cfg> as CommitmentScheme<F>>::prove(
-                &setup, &poly, &pt, Some(h), &mut pt_tr, &cm,
+                &setup,
+                &poly,
+                &pt,
+                Some(h),
+                &mut pt_tr,
+                &cm,
             )
             .unwrap();
             let mut vt_tr = Blake2bTranscript::<F>::new(b"bench");
@@ -158,10 +161,24 @@ where
     group.finish();
 }
 
-fn bench_nv10(c: &mut Criterion) { bench_phases::<CfgNv10>(c, "fp64"); }
-fn bench_nv14(c: &mut Criterion) { bench_phases::<CfgNv14>(c, "fp64"); }
-fn bench_nv18(c: &mut Criterion) { bench_phases::<CfgNv18>(c, "fp64"); }
-fn bench_nv20(c: &mut Criterion) { bench_phases::<CfgNv20>(c, "fp64"); }
+fn bench_nv10(c: &mut Criterion) {
+    bench_phases::<CfgNv10>(c, "fp64");
+}
+fn bench_nv14(c: &mut Criterion) {
+    bench_phases::<CfgNv14>(c, "fp64");
+}
+fn bench_nv18(c: &mut Criterion) {
+    bench_phases::<CfgNv18>(c, "fp64");
+}
+fn bench_nv20(c: &mut Criterion) {
+    bench_phases::<CfgNv20>(c, "fp64");
+}
 
-criterion_group!(hachi_benches, bench_nv10, bench_nv14, bench_nv18, bench_nv20);
+criterion_group!(
+    hachi_benches,
+    bench_nv10,
+    bench_nv14,
+    bench_nv18,
+    bench_nv20
+);
 criterion_main!(hachi_benches);

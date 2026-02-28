@@ -8,7 +8,7 @@ use hachi_pcs::protocol::{
     prove_sumcheck, verify_sumcheck, Blake2bTranscript, CompressedUniPoly, SumcheckInstanceProver,
     SumcheckInstanceVerifier, SumcheckProof, Transcript, UniPoly,
 };
-use hachi_pcs::{CanonicalField, FieldCore, FieldSampling};
+use hachi_pcs::{FieldCore, FieldSampling, FromSmallInt};
 use rand::rngs::StdRng;
 use rand::RngCore;
 use rand::SeedableRng;

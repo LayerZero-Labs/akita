@@ -22,8 +22,8 @@ mod tests {
     };
     use hachi_pcs::primitives::serialization::SerializationError;
     use hachi_pcs::{
-        CanonicalField, FieldCore, FieldSampling, HachiDeserialize, HachiSerialize, Invertible,
-        Module, PseudoMersenneField,
+        CanonicalField, FieldCore, FieldSampling, FromSmallInt, HachiDeserialize, HachiSerialize,
+        Invertible, Module, PseudoMersenneField,
     };
 
     const P_159: u128 = 340282366920938463463374607431768211297u128;

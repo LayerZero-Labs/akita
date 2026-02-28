@@ -10,7 +10,7 @@ use hachi_pcs::protocol::sumcheck::relation_sumcheck::{
 use hachi_pcs::protocol::sumcheck::{multilinear_eval, range_check_eval};
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{prove_sumcheck, verify_sumcheck, Blake2bTranscript, Transcript};
-use hachi_pcs::{CanonicalField, FieldCore, FieldSampling};
+use hachi_pcs::{FieldCore, FieldSampling, FromSmallInt};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::time::Instant;
@@ -41,7 +41,6 @@ fn run_f0_e2e(num_u: usize, num_l: usize, b: usize) {
         * range_check_eval(multilinear_eval(&w_evals, &prover_challenges), b);
     assert_eq!(final_claim, oracle, "prover final claim != oracle eval");
 
-    // ---- Verifier ----
     let t1 = Instant::now();
     let verifier = NormSumcheckVerifier::new(tau0, w_evals, b);
     let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);

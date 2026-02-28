@@ -11,7 +11,9 @@ use rand_core::RngCore;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::{CanonicalField, FieldCore, FieldSampling, Invertible, PseudoMersenneField};
+use crate::{
+    CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, PseudoMersenneField,
+};
 use std::io::{Read, Write};
 
 #[inline(always)]
@@ -477,7 +479,7 @@ impl<const P: u64> FieldSampling for Fp64<P> {
     }
 }
 
-impl<const P: u64> CanonicalField for Fp64<P> {
+impl<const P: u64> FromSmallInt for Fp64<P> {
     fn from_u64(val: u64) -> Self {
         Self(Self::reduce_u128(val as u128))
     }
@@ -489,7 +491,9 @@ impl<const P: u64> CanonicalField for Fp64<P> {
             -Self::from_u64((-val) as u64)
         }
     }
+}
 
+impl<const P: u64> CanonicalField for Fp64<P> {
     fn to_canonical_u128(self) -> u128 {
         self.0 as u128
     }
