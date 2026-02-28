@@ -182,11 +182,13 @@ mod primitive_impls {
     impl_primitive_serialization!(u16, 2);
     impl_primitive_serialization!(u32, 4);
     impl_primitive_serialization!(u64, 8);
+    impl_primitive_serialization!(u128, 16);
     impl_primitive_serialization!(usize, std::mem::size_of::<usize>());
     impl_primitive_serialization!(i8, 1);
     impl_primitive_serialization!(i16, 2);
     impl_primitive_serialization!(i32, 4);
     impl_primitive_serialization!(i64, 8);
+    impl_primitive_serialization!(i128, 16);
 
     impl Valid for bool {
         fn check(&self) -> Result<(), SerializationError> {

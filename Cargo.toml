@@ -6,7 +6,7 @@ resolver = "2"
 name = "hachi-pcs"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.88"
 authors = [
     "Markos Georghiades <mgeorghiades@a16z.com>",
 ]
@@ -37,14 +37,31 @@ parallel = ["dep:rayon"]
 
 [dependencies]
 thiserror = "2.0"
-rand_core = "0.6"
+rand_core = { version = "0.6", features = ["getrandom"] }
 hachi-derive = { version = "0.1.0", path = "derive" }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
+blake2 = "0.10.6"
+sha3 = "0.10.8"
 
 [dev-dependencies]
 rand = "0.8"
 criterion = { version = "0.5", features = ["html_reports"] }
+num-bigint = "0.4.6"
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", features = ["scalar_field"] }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+
+[[bench]]
+name = "ring_ntt"
+harness = false
+
+[[bench]]
+name = "field_arith"
+harness = false
+
+[[bench]]
+name = "fp64_reduce_probe"
+harness = false
 
 [lints.rust]
 missing_docs = "warn"

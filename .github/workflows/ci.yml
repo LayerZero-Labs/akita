@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt
       - name: Check formatting
@@ -31,20 +31,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
       - name: Clippy (all features)
-        run: cargo clippy -q --message-format=short --all-features --all-targets -- -D warnings
+        run: cargo clippy --all --all-targets --all-features -- -D warnings
       - name: Clippy (no default features)
-        run: cargo clippy -q --message-format=short --no-default-features --lib -- -D warnings
+        run: cargo clippy --all --all-targets --no-default-features -- -D warnings
 
   doc:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Build documentation
         run: cargo doc -q --no-deps --all-features
         env:
@@ -55,8 +55,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
       - name: Run tests
-        run: cargo nextest run -q --all-features
+        run: cargo nextest run --all-features
