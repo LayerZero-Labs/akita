@@ -249,17 +249,17 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
 
         let b = 1i128 << log_basis;
         let half_b = b / 2;
-        let q = (-F::one()).to_canonical_u128() as i128 + 1;
+        let q = (-F::one()).to_canonical_u128() + 1;
         let half_q = q / 2;
 
         let mut digit_planes: Vec<[F; D]> = (0..levels).map(|_| [F::zero(); D]).collect();
 
         for i in 0..D {
-            let canonical = self.coeffs[i].to_canonical_u128() as i128;
-            let mut c = if canonical > half_q {
-                canonical - q
+            let canonical = self.coeffs[i].to_canonical_u128();
+            let mut c: i128 = if canonical > half_q {
+                -((q - canonical) as i128)
             } else {
-                canonical
+                canonical as i128
             };
 
             for plane in digit_planes.iter_mut() {
@@ -270,7 +270,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
                 plane[i] = if balanced >= 0 {
                     F::from_canonical_u128_reduced(balanced as u128)
                 } else {
-                    F::from_canonical_u128_reduced((q + balanced) as u128)
+                    F::from_canonical_u128_reduced(q - ((-balanced) as u128))
                 };
             }
         }

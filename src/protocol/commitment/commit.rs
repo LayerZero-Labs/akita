@@ -6,7 +6,10 @@ use super::config::{
 use super::onehot::{inner_ajtai_onehot, map_onehot_to_sparse_blocks};
 use super::scheme::RingCommitmentScheme;
 use super::types::RingCommitment;
-use super::utils::linear::{decompose_block, decompose_rows, mat_vec_mul_unchecked};
+use super::utils::linear::{
+    decompose_block, decompose_rows, mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many,
+    mat_vec_mul_unchecked,
+};
 use super::utils::matrix::{derive_public_matrix, sample_public_matrix_seed, PublicMatrixSeed};
 use super::CommitmentConfig;
 use crate::algebra::ring::CyclotomicRing;
@@ -88,21 +91,21 @@ where
         ensure_matrix_shape(&setup.A, Cfg::N_A, layout.inner_width, "A")?;
         ensure_matrix_shape(&setup.B, Cfg::N_B, layout.outer_width, "B")?;
 
-        let mut s_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(layout.num_blocks);
+        let s_all: Vec<Vec<CyclotomicRing<F, D>>> = f_blocks
+            .iter()
+            .map(|block| decompose_block(block, Cfg::DELTA, Cfg::LOG_BASIS))
+            .collect();
+
+        let t_all = mat_vec_mul_crt_ntt_many(&setup.A, &s_all)?;
         let mut t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(layout.num_blocks);
         let mut t_hat_flat: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(layout.outer_width);
-        for block in f_blocks {
-            let s_i = decompose_block(block, Cfg::DELTA, Cfg::LOG_BASIS);
-
-            let t_i = mat_vec_mul_unchecked(&setup.A, &s_i);
+        for t_i in t_all {
             let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
             t_hat_flat.extend(t_hat_i.iter().copied());
-
-            s_all.push(s_i);
             t_hat_all.push(t_hat_i);
         }
 
-        let u = mat_vec_mul_unchecked(&setup.B, &t_hat_flat);
+        let u = mat_vec_mul_crt_ntt(&setup.B, &t_hat_flat)?;
         Ok((RingCommitment { u }, s_all, t_hat_all))
     }
 

@@ -8,7 +8,7 @@ use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::challenges::sparse::sample_sparse_challenges;
-use crate::protocol::commitment::utils::linear::mat_vec_mul_unchecked;
+use crate::protocol::commitment::utils::linear::mat_vec_mul_crt_ntt;
 use crate::protocol::commitment::utils::norm::{detect_field_modulus, vec_inf_norm};
 use crate::protocol::commitment::{CommitmentConfig, RingCommitment, RingCommitmentSetup};
 use crate::protocol::opening_point::RingOpeningPoint;
@@ -53,10 +53,10 @@ where
 fn compute_v<F: FieldCore + CanonicalField, const D: usize>(
     d: &[Vec<CyclotomicRing<F, D>>],
     w_hat: &[Vec<CyclotomicRing<F, D>>],
-) -> Vec<CyclotomicRing<F, D>> {
+) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
     let w_hat_flat: Vec<CyclotomicRing<F, D>> =
         w_hat.iter().flat_map(|v| v.iter().copied()).collect();
-    mat_vec_mul_unchecked(d, &w_hat_flat)
+    mat_vec_mul_crt_ntt(d, &w_hat_flat)
 }
 
 /// **Steps 7–9.** Fold `z = Σ c_i · s_i`, check `‖z‖_∞ ≤ β`, and decompose `ẑ = J^{-1}(z)`.
@@ -144,7 +144,7 @@ where
         let w_hat = compute_w_hat::<F, D, Cfg>(ring_opening_point, &hint.s);
 
         // Step 4: v = D · ŵ
-        let v = compute_v(&setup.D, &w_hat);
+        let v = compute_v(&setup.D, &w_hat)?;
 
         // Step 5: append v to transcript
         transcript.append_serde(ABSORB_PROVER_V, &v);

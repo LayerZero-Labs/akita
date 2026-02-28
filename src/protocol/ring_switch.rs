@@ -64,7 +64,7 @@ where
     let z = quad_eq
         .z()
         .ok_or_else(|| HachiError::InvalidInput("missing z in prover".to_string()))?;
-    let r = compute_r_via_poly_division::<F, D>(quad_eq.m(), z, quad_eq.y());
+    let r = compute_r_via_poly_division::<F, D>(quad_eq.m(), z, quad_eq.y())?;
     let w = build_w_coeffs::<F, D, Cfg>(z, &r);
 
     let w_commitment = commit_w::<F, D, Cfg>(&w)?;
@@ -162,13 +162,14 @@ where
     })
 }
 
-pub(crate) fn compute_r_via_poly_division<F: FieldCore, const D: usize>(
+pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D: usize>(
     m: &[Vec<CyclotomicRing<F, D>>],
     z: &[CyclotomicRing<F, D>],
     y: &[CyclotomicRing<F, D>],
-) -> Vec<CyclotomicRing<F, D>> {
+) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
     let poly_len = 2 * D - 1;
-    m.iter()
+    let out = m
+        .iter()
         .zip(y.iter())
         .map(|(row, y_i)| {
             let column_contribution =
@@ -232,7 +233,8 @@ pub(crate) fn compute_r_via_poly_division<F: FieldCore, const D: usize>(
             let coeffs: [F; D] = std::array::from_fn(|k| quotient[k]);
             CyclotomicRing::from_coefficients(coeffs)
         })
-        .collect()
+        .collect();
+    Ok(out)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -475,4 +477,101 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize, Cfg: CommitmentC
         out.extend_from_slice(elem.coefficients());
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compute_r_via_poly_division;
+    use crate::algebra::{CyclotomicRing, Fp64};
+    use crate::{FieldCore, FromSmallInt};
+
+    fn compute_r_schoolbook<F: FieldCore, const D: usize>(
+        m: &[Vec<CyclotomicRing<F, D>>],
+        z: &[CyclotomicRing<F, D>],
+        y: &[CyclotomicRing<F, D>],
+    ) -> Vec<CyclotomicRing<F, D>> {
+        let poly_len = 2 * D - 1;
+        m.iter()
+            .zip(y.iter())
+            .map(|(row, y_i)| {
+                let mut poly = vec![F::zero(); poly_len];
+                for (m_ij, z_j) in row.iter().zip(z.iter()) {
+                    if m_ij.is_zero() {
+                        continue;
+                    }
+                    let a = m_ij.coefficients();
+                    let b = z_j.coefficients();
+                    let is_scalar = a[1..].iter().all(|c| c.is_zero());
+                    if is_scalar {
+                        let scalar = a[0];
+                        for s in 0..D {
+                            poly[s] = poly[s] + scalar * b[s];
+                        }
+                    } else {
+                        for t in 0..D {
+                            for s in 0..D {
+                                poly[t + s] = poly[t + s] + a[t] * b[s];
+                            }
+                        }
+                    }
+                }
+                let y_coeffs = y_i.coefficients();
+                for k in 0..D {
+                    poly[k] = poly[k] - y_coeffs[k];
+                }
+                let mut quotient = vec![F::zero(); D];
+                for k in (D..poly_len).rev() {
+                    let q = poly[k];
+                    quotient[k - D] = q;
+                    poly[k - D] = poly[k - D] - q;
+                }
+                let coeffs: [F; D] = std::array::from_fn(|k| quotient[k]);
+                CyclotomicRing::from_coefficients(coeffs)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn compute_r_matches_schoolbook_reference() {
+        type F = Fp64<4294967197>;
+        const D: usize = 64;
+
+        let m: Vec<Vec<CyclotomicRing<F, D>>> = (0..3)
+            .map(|i| {
+                (0..4)
+                    .map(|j| {
+                        if (i + j) % 3 == 0 {
+                            let mut coeffs = [F::zero(); D];
+                            coeffs[0] = F::from_u64((i * 5 + j + 1) as u64);
+                            CyclotomicRing::from_coefficients(coeffs)
+                        } else {
+                            let coeffs = std::array::from_fn(|k| {
+                                F::from_u64((i as u64 * 1000 + j as u64 * 100 + k as u64 + 1) % 97)
+                            });
+                            CyclotomicRing::from_coefficients(coeffs)
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        let z: Vec<CyclotomicRing<F, D>> = (0..4)
+            .map(|j| {
+                let coeffs =
+                    std::array::from_fn(|k| F::from_u64((j as u64 * 37 + k as u64 + 5) % 89));
+                CyclotomicRing::from_coefficients(coeffs)
+            })
+            .collect();
+        let y: Vec<CyclotomicRing<F, D>> = (0..3)
+            .map(|i| {
+                let coeffs =
+                    std::array::from_fn(|k| F::from_u64((i as u64 * 29 + k as u64 + 7) % 83));
+                CyclotomicRing::from_coefficients(coeffs)
+            })
+            .collect();
+
+        let expected = compute_r_schoolbook(&m, &z, &y);
+        let got = compute_r_via_poly_division::<F, D>(&m, &z, &y)
+            .expect("ring-switch CRT+NTT path should dispatch for D=64");
+        assert_eq!(got, expected);
+    }
 }

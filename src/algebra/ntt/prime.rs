@@ -266,16 +266,40 @@ impl<W: PrimeWidth> NttPrime<W> {
     /// Conditionally subtract `p` if `a >= p` (branchless).
     #[inline]
     pub fn csubp(self, a: MontCoeff<W>) -> MontCoeff<W> {
-        let diff = a.0.wrapping_sub(self.p);
-        let mask = diff.sign_mask();
-        MontCoeff(diff.wrapping_add(mask.bitand(self.p)))
+        // IMPORTANT: `a` may be as low as `-2p` during butterflies.
+        // For 30-bit primes with `i32` width, the probe `a - p` can overflow
+        // a narrow signed subtraction. Use widened arithmetic for the compare.
+        //
+        // For `i16` (Q32 primes), the narrow branchless probe is safe and faster.
+        if W::R_LOG == 16 {
+            let diff = a.0.wrapping_sub(self.p);
+            let mask = diff.sign_mask();
+            MontCoeff(diff.wrapping_add(mask.bitand(self.p)))
+        } else {
+            // Branchless i64 variant:
+            // if diff < 0 => mask = -1 => out = diff + p = a
+            // else out = diff = a - p
+            let ai = a.0.to_i64();
+            let pi = self.p.to_i64();
+            let diff = ai - pi;
+            let mask = diff >> 63;
+            MontCoeff(W::from_i64(diff + (mask & pi)))
+        }
     }
 
     /// Conditionally add `p` if `a < 0` (branchless).
     #[inline]
     pub fn caddp(self, a: MontCoeff<W>) -> MontCoeff<W> {
-        let mask = a.0.sign_mask();
-        MontCoeff(a.0.wrapping_add(mask.bitand(self.p)))
+        if W::R_LOG == 16 {
+            let mask = a.0.sign_mask();
+            MontCoeff(a.0.wrapping_add(mask.bitand(self.p)))
+        } else {
+            // Branchless i64 variant: mask = -1 iff a < 0.
+            let ai = a.0.to_i64();
+            let pi = self.p.to_i64();
+            let mask = ai >> 63;
+            MontCoeff(W::from_i64(ai + (mask & pi)))
+        }
     }
 
     /// Range-reduce from `(-2p, 2p)` to `(-p, p)`.

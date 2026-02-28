@@ -70,16 +70,21 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtReconstruct<W, K, D> for 
                     temp = ((temp % pi) + pi) % pi;
                     temp = (temp * garner.gamma[i][j].to_i64()) % pi;
                 }
+                // Center the mixed-radix digit to keep the final reconstruction
+                // in a small signed range when inputs are centered.
+                if temp > pi / 2 {
+                    temp -= pi;
+                }
                 v[i] = temp;
             }
 
             // Horner accumulation in the target field F.
-            let mut result = F::from_u64(v[0] as u64);
-            let mut partial_prod = F::from_u64(primes[0].p.to_i64() as u64);
+            let mut result = F::from_i64(v[0]);
+            let mut partial_prod = F::from_i64(primes[0].p.to_i64());
             for i in 1..K {
-                result = result + F::from_u64(v[i] as u64) * partial_prod;
+                result = result + F::from_i64(v[i]) * partial_prod;
                 if i + 1 < K {
-                    partial_prod = partial_prod * F::from_u64(primes[i].p.to_i64() as u64);
+                    partial_prod = partial_prod * F::from_i64(primes[i].p.to_i64());
                 }
             }
             *coeff = result;

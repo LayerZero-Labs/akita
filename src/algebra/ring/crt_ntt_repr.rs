@@ -29,6 +29,34 @@ pub trait CrtNttConvertibleField: FieldCore + CanonicalField {}
 
 impl<F: FieldCore + CanonicalField> CrtNttConvertibleField for F {}
 
+/// Bundled CRT+NTT parameters for a fixed width/prime-count/degree tuple.
+///
+/// Keeps primes/twiddles/Garner constants consistent and avoids passing them
+/// independently at every call site.
+pub struct CrtNttParamSet<W: PrimeWidth, const K: usize, const D: usize> {
+    /// CRT primes with Montgomery constants.
+    pub primes: [NttPrime<W>; K],
+    /// Per-prime twiddle tables for forward/inverse NTT.
+    pub twiddles: [NttTwiddles<W, D>; K],
+    /// Garner reconstruction constants for CRT lift-back.
+    pub garner: GarnerData<W, K>,
+}
+
+impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
+    /// Build a full parameter set from CRT primes.
+    ///
+    /// Computes per-prime twiddles and Garner reconstruction constants.
+    pub fn new(primes: [NttPrime<W>; K]) -> Self {
+        let twiddles = std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
+        let garner = GarnerData::compute(&primes);
+        Self {
+            primes,
+            twiddles,
+            garner,
+        }
+    }
+}
+
 impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// The additive identity (all zeros in every CRT limb).
     pub fn zero() -> Self {
@@ -48,6 +76,15 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     }
 
     /// Convert a coefficient-form ring element into CRT+NTT domain
+    /// using a bundled parameter set and the scalar backend.
+    pub fn from_ring_with_params<F: CrtNttConvertibleField>(
+        ring: &CyclotomicRing<F, D>,
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Self {
+        Self::from_ring(ring, &params.primes, &params.twiddles)
+    }
+
+    /// Convert a coefficient-form ring element into CRT+NTT domain
     /// through an explicit backend implementation.
     pub fn from_ring_with_backend<
         F: CrtNttConvertibleField,
@@ -57,12 +94,34 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         primes: &[NttPrime<W>; K],
         twiddles: &[NttTwiddles<W, D>; K],
     ) -> Self {
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let half_q = q / 2;
+        let centered_coeffs: [i128; D] = std::array::from_fn(|i| {
+            let canonical = ring.coeffs[i].to_canonical_u128();
+            if canonical > half_q {
+                -((q - canonical) as i128)
+            } else {
+                canonical as i128
+            }
+        });
+
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for ((limb, prime), tw) in limbs.iter_mut().zip(primes.iter()).zip(twiddles.iter()) {
-            for (dst, src) in limb.iter_mut().zip(ring.coeffs.iter()) {
-                let canonical = src.to_canonical_u128();
-                let residue = (canonical % (prime.p.to_i64() as u128)) as i64;
-                *dst = B::from_canonical(*prime, W::from_i64(residue));
+            // Interpret coefficients in centered form (-q/2, q/2] before reducing
+            // into the CRT primes. This makes the reduction map consistent with
+            // negacyclic subtraction (which naturally produces negative values).
+            let p = prime.p.to_i64() as i128;
+            let half_p = p / 2;
+            for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
+                let mut r = *centered % p;
+                if r < 0 {
+                    r += p;
+                }
+                // Center residues into [-p/2, p/2) for stable signed arithmetic.
+                if r >= half_p {
+                    r -= p;
+                }
+                *dst = B::from_canonical(*prime, W::from_i64(r as i64));
             }
             B::forward_ntt(limb, *prime, tw);
         }
@@ -78,6 +137,15 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         garner: &GarnerData<W, K>,
     ) -> CyclotomicRing<F, D> {
         self.to_ring_with_backend::<F, ScalarBackend>(primes, twiddles, garner)
+    }
+
+    /// Convert from CRT+NTT domain back to coefficient form
+    /// using a bundled parameter set and the scalar backend.
+    pub fn to_ring_with_params<F: CrtNttConvertibleField>(
+        &self,
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> CyclotomicRing<F, D> {
+        self.to_ring(&params.primes, &params.twiddles, &params.garner)
     }
 
     /// Convert from CRT+NTT domain back to coefficient form
@@ -101,7 +169,8 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let mut limb = self.limbs[k];
             B::inverse_ntt(&mut limb, *prime, tw);
             for (dst, src) in can.iter_mut().zip(limb.iter()) {
-                *dst = B::to_canonical(*prime, *src);
+                let canon = B::to_canonical(*prime, *src);
+                *dst = prime.center(canon);
             }
         }
 
@@ -114,6 +183,11 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// prime to maintain valid Montgomery ranges using the scalar backend.
     pub fn add_reduced(&self, rhs: &Self, primes: &[NttPrime<W>; K]) -> Self {
         self.add_reduced_with_backend::<ScalarBackend>(rhs, primes)
+    }
+
+    /// Add another CRT+NTT element and reduce using a bundled parameter set.
+    pub fn add_reduced_with_params(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
+        self.add_reduced(rhs, &params.primes)
     }
 
     /// Add another CRT+NTT element and reduce each coefficient with the matching
@@ -139,6 +213,11 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         self.sub_reduced_with_backend::<ScalarBackend>(rhs, primes)
     }
 
+    /// Subtract another CRT+NTT element and reduce using a bundled parameter set.
+    pub fn sub_reduced_with_params(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
+        self.sub_reduced(rhs, &params.primes)
+    }
+
     /// Subtract another CRT+NTT element and reduce through an explicit backend.
     pub fn sub_reduced_with_backend<B: NttPrimeOps<W, D>>(
         &self,
@@ -159,6 +238,11 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// Negate each CRT+NTT coefficient and reduce using the scalar backend.
     pub fn neg_reduced(&self, primes: &[NttPrime<W>; K]) -> Self {
         self.neg_reduced_with_backend::<ScalarBackend>(primes)
+    }
+
+    /// Negate each CRT+NTT coefficient and reduce using a bundled parameter set.
+    pub fn neg_reduced_with_params(&self, params: &CrtNttParamSet<W, K, D>) -> Self {
+        self.neg_reduced(&params.primes)
     }
 
     /// Negate each CRT+NTT coefficient and reduce through an explicit backend.
@@ -182,6 +266,11 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         self.pointwise_mul_with_backend::<ScalarBackend>(rhs, primes)
     }
 
+    /// Pointwise multiplication in CRT+NTT domain using a bundled parameter set.
+    pub fn pointwise_mul_with_params(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
+        self.pointwise_mul(rhs, &params.primes)
+    }
+
     /// Pointwise multiplication in CRT+NTT domain through an explicit backend.
     pub fn pointwise_mul_with_backend<B: NttPrimeOps<W, D>>(
         &self,
@@ -195,7 +284,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .zip(rhs.limbs.iter())
             .enumerate()
         {
-            B::pointwise_mul(primes[k], o, a, b);
+            let prime = primes[k];
+            B::pointwise_mul(prime, o, a, b);
+            // Keep coefficients in a bounded range for subsequent inverse NTT.
+            for c in o.iter_mut() {
+                *c = B::reduce_range(prime, *c);
+            }
         }
         Self { limbs: out }
     }
