@@ -32,18 +32,14 @@ where
 {
     type ProverSetup = RingCommitmentSetup<F, { D }>;
     type VerifierSetup = RingCommitmentSetup<F, { D }>;
-    type Commitment =
-        crate::protocol::commitment::RingCommitment<F, { D }>;
+    type Commitment = crate::protocol::commitment::RingCommitment<F, { D }>;
     type Proof = HachiProof<F, { D }>;
     type OpeningProofHint = HachiCommitmentHint<F, { D }>;
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
-        let (setup, _) = <HachiCommitmentCore as RingCommitmentScheme<
-            F,
-            { D },
-            Cfg,
-        >>::setup(max_num_vars)
-        .expect("commitment setup failed");
+        let (setup, _) =
+            <HachiCommitmentCore as RingCommitmentScheme<F, { D }, Cfg>>::setup(max_num_vars)
+                .expect("commitment setup failed");
         setup
     }
 
@@ -93,23 +89,14 @@ where
             });
         }
 
-        let ring_opening_point = ring_opening_point_from_field::<F, { D }>(
-            &opening_point[..reduced_len],
-            Cfg::R,
-            Cfg::M,
-        )?;
+        let ring_opening_point =
+            ring_opening_point_from_field::<F>(&opening_point[..reduced_len], Cfg::R, Cfg::M)?;
 
-        let y_ring = evaluate_packed_ring_poly::<F, { D }>(
-            &hint.ring_coeffs,
-            &opening_point[..reduced_len],
-        );
+        let y_ring =
+            evaluate_packed_ring_poly::<F, { D }>(&hint.ring_coeffs, &opening_point[..reduced_len]);
 
         // §4.2 Quadratic equation
-        let quad_eq = QuadraticEquation::<
-            F,
-            { D },
-            Cfg,
-        >::new_prover(
+        let quad_eq = QuadraticEquation::<F, { D }, Cfg>::new_prover(
             setup,
             &ring_opening_point,
             &hint,
@@ -119,9 +106,7 @@ where
         )?;
 
         // §4.3 Ring switch
-        let rs = ring_switch_prover::<F, T, { D }, Cfg>(
-            &quad_eq, transcript,
-        )?;
+        let rs = ring_switch_prover::<F, T, { D }, Cfg>(&quad_eq, transcript)?;
 
         // Norm sumcheck (range check on w)
         let mut norm_prover = NormSumcheckProver::new(&rs.tau0, rs.w_evals.clone(), rs.b);
@@ -169,9 +154,7 @@ where
         let inner_point = &opening_point[reduced_len..];
 
         // §3.1 trace check
-        let v = reduce_inner_openings_to_ring_elements::<F, { D }>(
-            inner_point,
-        )?;
+        let v = reduce_inner_openings_to_ring_elements::<F, { D }>(inner_point)?;
         let d = F::from_u64(Cfg::D as u64);
         let trace_lhs = trace::<F, { D }>(&(proof.y_ring * v.sigma_m1()));
         let trace_rhs = d * *opening;
@@ -180,16 +163,9 @@ where
         }
 
         // §4.2 Quadratic equation
-        let ring_opening_point = ring_opening_point_from_field::<F, { D }>(
-            reduced_opening_point,
-            Cfg::R,
-            Cfg::M,
-        )?;
-        let quad_eq = QuadraticEquation::<
-            F,
-            { D },
-            Cfg,
-        >::new_verifier(
+        let ring_opening_point =
+            ring_opening_point_from_field::<F>(reduced_opening_point, Cfg::R, Cfg::M)?;
+        let quad_eq = QuadraticEquation::<F, { D }, Cfg>::new_verifier(
             setup,
             &ring_opening_point,
             &proof.v,
@@ -199,13 +175,12 @@ where
         )?;
 
         // §4.3 Ring switch (verifier side)
-        let rs =
-            ring_switch_verifier::<F, T, { D }, Cfg>(
-                &quad_eq,
-                &proof.sumcheck_aux.w,
-                &proof.w_commitment,
-                transcript,
-            )?;
+        let rs = ring_switch_verifier::<F, T, { D }, Cfg>(
+            &quad_eq,
+            &proof.sumcheck_aux.w,
+            &proof.w_commitment,
+            transcript,
+        )?;
 
         // Norm sumcheck verification (range check)
         let norm_verifier = NormSumcheckVerifier::new(rs.tau0, rs.w_evals.clone(), rs.b);
@@ -267,11 +242,8 @@ where
         .len()
         .checked_sub(alpha_bits)
         .ok_or_else(|| HachiError::InvalidSetup("opening point length underflow".to_string()))?;
-    let ring_opening_point = ring_opening_point_from_field::<F, { D }>(
-        &opening_point[..reduced_len],
-        Cfg::R,
-        Cfg::M,
-    )?;
+    let ring_opening_point =
+        ring_opening_point_from_field::<F>(&opening_point[..reduced_len], Cfg::R, Cfg::M)?;
     let mut transcript = crate::protocol::transcript::Blake2bTranscript::<F>::new(
         crate::protocol::transcript::labels::DOMAIN_HACHI_PROTOCOL,
     );
@@ -289,27 +261,14 @@ where
     );
     let alpha: F =
         transcript.challenge_scalar(crate::protocol::transcript::labels::CHALLENGE_RING_SWITCH);
-    let m_a = crate::protocol::ring_switch::eval_ring_matrix_at::<F, { D }>(
-        quad_eq.m(),
-        &alpha,
-    );
-    let m_a_vec = crate::protocol::ring_switch::expand_m_a::<
-        F,
-        { D },
-        Cfg,
-    >(&m_a, alpha)?;
+    let m_a = crate::protocol::ring_switch::eval_ring_matrix_at::<F, { D }>(quad_eq.m(), &alpha);
+    let m_a_vec = crate::protocol::ring_switch::expand_m_a::<F, { D }, Cfg>(&m_a, alpha)?;
     Ok((alpha, m_a_vec))
 }
 
 // ---------------------------------------------------------------------------
 // §3.1 reduction helpers
 // ---------------------------------------------------------------------------
-
-fn constant_ring<F: FieldCore, const D: usize>(value: F) -> CyclotomicRing<F, D> {
-    let mut coeffs = [F::zero(); D];
-    coeffs[0] = value;
-    CyclotomicRing::from_coefficients(coeffs)
-}
 
 fn lagrange_weights<F: FieldCore>(point: &[F]) -> Vec<F> {
     let len = 1usize << point.len();
@@ -318,11 +277,11 @@ fn lagrange_weights<F: FieldCore>(point: &[F]) -> Vec<F> {
     weights
 }
 
-fn ring_opening_point_from_field<F: FieldCore, const D: usize>(
+fn ring_opening_point_from_field<F: FieldCore>(
     opening_point: &[F],
     r_vars: usize,
     m_vars: usize,
-) -> Result<crate::protocol::opening_point::RingOpeningPoint<F, D>, HachiError> {
+) -> Result<crate::protocol::opening_point::RingOpeningPoint<F>, HachiError> {
     let expected_len = r_vars
         .checked_add(m_vars)
         .ok_or_else(|| HachiError::InvalidSetup("opening point length overflow".to_string()))?;
@@ -333,18 +292,9 @@ fn ring_opening_point_from_field<F: FieldCore, const D: usize>(
         });
     }
 
-    let b = lagrange_vector_from_field::<F, D>(&opening_point[..r_vars]);
-    let a = lagrange_vector_from_field::<F, D>(&opening_point[r_vars..]);
+    let b = lagrange_weights(&opening_point[..r_vars]);
+    let a = lagrange_weights(&opening_point[r_vars..]);
     Ok(crate::protocol::opening_point::RingOpeningPoint { a, b })
-}
-
-fn lagrange_vector_from_field<F: FieldCore, const D: usize>(
-    point: &[F],
-) -> Vec<CyclotomicRing<F, D>> {
-    lagrange_weights(point)
-        .into_iter()
-        .map(constant_ring::<F, D>)
-        .collect()
 }
 
 fn reduce_coeffs_to_ring_elements<F: FieldCore, const D: usize>(

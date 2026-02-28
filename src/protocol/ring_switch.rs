@@ -175,11 +175,24 @@ pub(crate) fn compute_r_via_poly_division<F: FieldCore, const D: usize>(
         .map(|(row, y_i)| {
             let mut poly = vec![F::zero(); poly_len];
             for (m_ij, z_j) in row.iter().zip(z.iter()) {
+                if m_ij.is_zero() {
+                    continue;
+                }
                 let a = m_ij.coefficients();
                 let b = z_j.coefficients();
-                for t in 0..D {
+
+                // Detect constant (scalar) ring elements: only a[0] is non-zero.
+                let is_scalar = a[1..].iter().all(|c| c.is_zero());
+                if is_scalar {
+                    let scalar = a[0];
                     for s in 0..D {
-                        poly[t + s] = poly[t + s] + a[t] * b[s];
+                        poly[s] = poly[s] + scalar * b[s];
+                    }
+                } else {
+                    for t in 0..D {
+                        for s in 0..D {
+                            poly[t + s] = poly[t + s] + a[t] * b[s];
+                        }
                     }
                 }
             }

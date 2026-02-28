@@ -69,21 +69,15 @@ pub fn sample_blocks() -> Vec<Vec<CyclotomicRing<F, D>>> {
         .collect()
 }
 
-pub fn sample_a() -> Vec<CyclotomicRing<F, D>> {
+pub fn sample_a() -> Vec<F> {
     (0..BLOCK_LEN)
-        .map(|j| {
-            let coeffs = std::array::from_fn(|k| F::from_u64((j * 10 + k + 1) as u64));
-            CyclotomicRing::from_coefficients(coeffs)
-        })
+        .map(|j| F::from_u64((j * 10 + 1) as u64))
         .collect()
 }
 
-pub fn sample_b() -> Vec<CyclotomicRing<F, D>> {
+pub fn sample_b() -> Vec<F> {
     (0..NUM_BLOCKS)
-        .map(|i| {
-            let coeffs = std::array::from_fn(|k| F::from_u64((i * 7 + k + 3) as u64));
-            CyclotomicRing::from_coefficients(coeffs)
-        })
+        .map(|i| F::from_u64((i * 7 + 3) as u64))
         .collect()
 }
 
@@ -121,16 +115,13 @@ pub fn field_gadget_recompose_vec(v: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicR
         .collect()
 }
 
-pub fn a_transpose_gadget_times_vec(
-    a: &[CyclotomicRing<F, D>],
-    z: &[CyclotomicRing<F, D>],
-) -> CyclotomicRing<F, D> {
+pub fn a_transpose_gadget_times_vec(a: &[F], z: &[CyclotomicRing<F, D>]) -> CyclotomicRing<F, D> {
     let recomposed = field_gadget_recompose_vec(z);
     assert_eq!(recomposed.len(), a.len());
     recomposed
         .iter()
         .zip(a.iter())
         .fold(CyclotomicRing::<F, D>::zero(), |acc, (z_j, a_j)| {
-            acc + (*a_j * *z_j)
+            acc + z_j.scale(a_j)
         })
 }

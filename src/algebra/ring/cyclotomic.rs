@@ -1,5 +1,6 @@
 //! Cyclotomic ring `Z_q[X]/(X^D + 1)` in coefficient form.
 
+use super::sparse_challenge::SparseChallenge;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
@@ -139,6 +140,32 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
             result += self.negacyclic_shift(k);
         }
         result
+    }
+
+    /// Multiply `self` by a sparse challenge element.
+    ///
+    /// Cost: `O(omega * D)` field additions instead of `O(D^2)` multiplications.
+    /// For `omega=23, D=256` this is 5,888 adds vs 65,536 muls.
+    pub fn mul_by_sparse(&self, challenge: &SparseChallenge) -> Self
+    where
+        F: CanonicalField,
+    {
+        let mut result = Self::zero();
+        for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+            let shifted = self.negacyclic_shift(pos as usize);
+            match coeff {
+                1 => result += shifted,
+                -1 => result -= shifted,
+                c => result += shifted.scale(&F::from_i64(c as i64)),
+            }
+        }
+        result
+    }
+
+    /// Check whether all coefficients are zero.
+    #[inline]
+    pub fn is_zero(&self) -> bool {
+        self.coeffs.iter().all(|c| c.is_zero())
     }
 
     /// Count non-zero coefficients.

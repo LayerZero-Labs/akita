@@ -72,6 +72,27 @@ where
     Ok(SparseChallenge { positions, coeffs })
 }
 
+/// Sample `n` sparse challenges from a transcript, returning the sparse
+/// representation directly.
+///
+/// # Errors
+///
+/// Returns an error if challenge sampling fails.
+pub fn sample_sparse_challenges<F, T, const D: usize>(
+    transcript: &mut T,
+    label: &[u8],
+    n: usize,
+    cfg: &SparseChallengeConfig,
+) -> Result<Vec<SparseChallenge>, HachiError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    (0..n)
+        .map(|i| sparse_challenge_from_transcript::<F, T, D>(transcript, label, i as u64, cfg))
+        .collect()
+}
+
 /// Sample `n` sparse challenges from a transcript and convert them to dense
 /// `CyclotomicRing` elements.
 ///

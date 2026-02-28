@@ -957,4 +957,102 @@ mod tests {
         let a = R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 1) as u64)));
         assert_eq!(a.mul_by_monomial_sum(&[]), R::zero());
     }
+
+    #[test]
+    fn mul_by_sparse_matches_schoolbook() {
+        use hachi_pcs::algebra::SparseChallenge;
+
+        type F = Fp64<4294967197>;
+        type R = CyclotomicRing<F, 64>;
+
+        let a = R::from_coefficients(std::array::from_fn(|i| F::from_u64((3 * i + 7) as u64)));
+
+        let challenge = SparseChallenge {
+            positions: vec![2, 17, 41],
+            coeffs: vec![1, -1, 1],
+        };
+        let dense: R = challenge.to_dense().unwrap();
+
+        let via_sparse = a.mul_by_sparse(&challenge);
+        let via_schoolbook = a * dense;
+
+        assert_eq!(
+            via_sparse, via_schoolbook,
+            "mul_by_sparse must equal schoolbook multiplication"
+        );
+    }
+
+    #[test]
+    fn mul_by_sparse_with_all_negative_coeffs() {
+        use hachi_pcs::algebra::SparseChallenge;
+
+        type F = Fp64<4294967197>;
+        type R = CyclotomicRing<F, 64>;
+
+        let a = R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 1) as u64)));
+
+        let challenge = SparseChallenge {
+            positions: vec![0, 5, 63],
+            coeffs: vec![-1, -1, -1],
+        };
+        let dense: R = challenge.to_dense().unwrap();
+
+        assert_eq!(a.mul_by_sparse(&challenge), a * dense);
+    }
+
+    #[test]
+    fn is_zero_detects_zero_and_nonzero() {
+        type F = Fp32<251>;
+        type R = CyclotomicRing<F, 8>;
+
+        assert!(R::zero().is_zero());
+        assert!(!R::one().is_zero());
+
+        let a = R::from_coefficients(std::array::from_fn(|i| F::from_u64(i as u64)));
+        assert!(!a.is_zero());
+    }
+
+    #[test]
+    fn kron_scalars_matches_kron_row_constant_rings() {
+        type F = Fp64<4294967197>;
+        type R = CyclotomicRing<F, 16>;
+
+        let scalars_a: Vec<F> = (0..4).map(|i| F::from_u64(i * 3 + 1)).collect();
+        let scalars_b: Vec<F> = (0..3).map(|i| F::from_u64(i * 7 + 2)).collect();
+
+        let rings_a: Vec<R> = scalars_a
+            .iter()
+            .map(|&s| {
+                let mut c = [F::zero(); 16];
+                c[0] = s;
+                R::from_coefficients(c)
+            })
+            .collect();
+        let rings_b: Vec<R> = scalars_b
+            .iter()
+            .map(|&s| {
+                let mut c = [F::zero(); 16];
+                c[0] = s;
+                R::from_coefficients(c)
+            })
+            .collect();
+
+        let via_ring: Vec<R> = rings_a
+            .iter()
+            .flat_map(|l| rings_b.iter().map(move |r| *l * *r))
+            .collect();
+
+        let via_scalar: Vec<R> = scalars_a
+            .iter()
+            .flat_map(|&l| {
+                scalars_b.iter().map(move |&r| {
+                    let mut c = [F::zero(); 16];
+                    c[0] = l * r;
+                    R::from_coefficients(c)
+                })
+            })
+            .collect();
+
+        assert_eq!(via_ring, via_scalar);
+    }
 }
