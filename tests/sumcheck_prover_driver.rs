@@ -44,7 +44,7 @@ impl SumcheckInstanceProver<F> for DenseTableSumcheck {
         let mut s0 = F::zero();
         let mut s1 = F::zero();
         for i in 0..half {
-            s0 = s0 + self.table[(i << 1) | 0];
+            s0 = s0 + self.table[i << 1];
             s1 = s1 + self.table[(i << 1) | 1];
         }
         // g(X) = s0 + (s1 - s0) X
@@ -56,7 +56,7 @@ impl SumcheckInstanceProver<F> for DenseTableSumcheck {
         let mut next = Vec::with_capacity(half);
         let one_minus = F::one() - r_round;
         for i in 0..half {
-            let v0 = self.table[(i << 1) | 0];
+            let v0 = self.table[i << 1];
             let v1 = self.table[(i << 1) | 1];
             next.push(one_minus * v0 + r_round * v1);
         }

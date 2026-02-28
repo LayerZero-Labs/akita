@@ -109,8 +109,8 @@ fn commit_ring_coeffs_matches_block_commitment() {
     let block_len = 1usize << TinyConfig::M;
     let mut f_coeffs = Vec::with_capacity(num_blocks * block_len);
     for j in 0..block_len {
-        for i in 0..num_blocks {
-            f_coeffs.push(blocks[i][j]);
+        for block in blocks.iter().take(num_blocks) {
+            f_coeffs.push(block[j]);
         }
     }
 

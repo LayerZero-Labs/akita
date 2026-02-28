@@ -30,7 +30,7 @@ mod tests {
         type F = Fp32<251>;
         let a = F::from_u64(17);
         let b = F::from_u64(99);
-        assert_eq!((a + b).to_canonical_u32(), (17 + 99) % 251);
+        assert_eq!((a + b).to_canonical_u32(), 116);
         assert_eq!((a * b).to_canonical_u32(), (17u32 * 99) % 251);
 
         let inv = a.inv().unwrap();

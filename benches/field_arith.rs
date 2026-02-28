@@ -832,9 +832,9 @@ fn bench_accumulator_pattern(c: &mut Criterion) {
                         acc[j] = sum as u64;
                         carry = (sum >> 64) as u64;
                     }
-                    for j in 3..5 {
-                        let sum = acc[j] as u128 + carry as u128;
-                        acc[j] = sum as u64;
+                    for item in &mut acc[3..5] {
+                        let sum = *item as u128 + carry as u128;
+                        *item = sum as u64;
                         carry = (sum >> 64) as u64;
                     }
                 }
@@ -867,9 +867,9 @@ fn bench_accumulator_pattern(c: &mut Criterion) {
                         acc[j] = sum as u64;
                         carry = (sum >> 64) as u64;
                     }
-                    for j in 4..6 {
-                        let sum = acc[j] as u128 + carry as u128;
-                        acc[j] = sum as u64;
+                    for item in &mut acc[4..6] {
+                        let sum = *item as u128 + carry as u128;
+                        *item = sum as u64;
                         carry = (sum >> 64) as u64;
                     }
                 }

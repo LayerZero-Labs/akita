@@ -417,7 +417,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0xabcd_ef01);
         for _ in 0..1000 {
             let a: F = FieldSampling::sample(&mut rng);
-            let b = (rng.next_u32() % 251) as u32;
+            let b = rng.next_u32() % 251;
             let expected = a * F::from_canonical_u32(b);
             let reduced = F::solinas_reduce(a.mul_wide_u32(b));
             assert_eq!(reduced, expected);
