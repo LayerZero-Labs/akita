@@ -12,7 +12,7 @@ use crate::protocol::commitment::{
     RingCommitmentScheme,
 };
 use crate::protocol::quadratic_equation::QuadraticEquation;
-use crate::protocol::sumcheck::eq_evals;
+use crate::protocol::sumcheck::eq_poly::EqPolynomial;
 use crate::protocol::transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
@@ -399,7 +399,7 @@ pub(crate) fn build_m_evals_x<F: FieldCore + CanonicalField>(
     cols: usize,
     tau1: &[F],
 ) -> Vec<F> {
-    let eq_tau1 = eq_evals(tau1);
+    let eq_tau1 = EqPolynomial::evals(tau1);
     let x_len = cols.next_power_of_two();
     let mut m_evals = vec![F::zero(); x_len];
     for x in 0..x_len {

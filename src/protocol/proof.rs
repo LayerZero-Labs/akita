@@ -36,10 +36,8 @@ pub struct HachiProof<F: FieldCore, const D: usize> {
     pub y_ring: CyclotomicRing<F, D>,
     /// `v = D · ŵ`.
     pub v: Vec<CyclotomicRing<F, D>>,
-    /// Range-check (norm) sumcheck proof (§4.3, F_0).
-    pub norm_proof: SumcheckProof<F>,
-    /// Evaluation-relation sumcheck proof (§4.3, F_α).
-    pub relation_proof: SumcheckProof<F>,
+    /// Batched sumcheck proof (F_0 norm + F_α relation, §4.3).
+    pub sumcheck_proof: SumcheckProof<F>,
     /// Temporary verifier auxiliary (will be removed with recursive PCS).
     pub sumcheck_aux: SumcheckAux<F>,
     /// Commitment to the sumcheck witness `w`.
@@ -52,8 +50,7 @@ impl<F: FieldCore + HachiSerialize, const D: usize> HachiProof<F, D> {
         self.v.serialized_size(Compress::No)
             + self.y_ring.serialized_size(Compress::No)
             + self.sumcheck_aux.w.serialized_size(Compress::No)
-            + self.norm_proof.serialized_size(Compress::No)
-            + self.relation_proof.serialized_size(Compress::No)
+            + self.sumcheck_proof.serialized_size(Compress::No)
             + self.w_commitment.serialized_size(Compress::No)
     }
 }

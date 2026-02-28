@@ -5,7 +5,8 @@
 //!
 //! Proves the evaluation relation; sum equals `a = Σ_i ẽq(τ₁,i) · y_i(α)`.
 
-use super::{eq_evals, fold_evals, multilinear_eval};
+use super::eq_poly::EqPolynomial;
+use super::{fold_evals, multilinear_eval};
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
 use crate::algebra::ring::CyclotomicRing;
 use crate::protocol::ring_switch::eval_ring_at;
@@ -184,7 +185,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> SumcheckInstanceVerifier<F>
             .map(|r| eval_ring_at(r, &self.alpha))
             .collect();
 
-        let eq_tau = eq_evals(&self.tau);
+        let eq_tau = EqPolynomial::evals(&self.tau);
         let mut acc = F::zero();
         for (i, eq_i) in eq_tau.iter().enumerate() {
             let y_i = if i < y_a.len() { y_a[i] } else { F::zero() };
@@ -208,7 +209,7 @@ mod tests {
     use crate::algebra::Fp64;
     use crate::primitives::multilinear_evals::DenseMultilinearEvals;
     use crate::protocol::commitment_scheme::rederive_alpha_and_m_a;
-    use crate::protocol::sumcheck::eq_evals;
+    use crate::protocol::sumcheck::eq_poly::EqPolynomial;
     use crate::protocol::transcript::labels;
     use crate::protocol::{
         prove_sumcheck, verify_sumcheck, Blake2bTranscript, CommitmentConfig, CommitmentScheme,
@@ -276,7 +277,7 @@ mod tests {
 
         let num_i = rows.next_power_of_two().trailing_zeros() as usize;
         let tau1: Vec<F> = (0..num_i).map(|i| F::from_u64((i + 5) as u64)).collect();
-        let eq_tau1 = eq_evals(&tau1);
+        let eq_tau1 = EqPolynomial::evals(&tau1);
 
         let mut m_evals_x = vec![F::zero(); x_len];
         for x in 0..x_len {

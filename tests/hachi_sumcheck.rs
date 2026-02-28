@@ -2,11 +2,12 @@
 
 use hachi_pcs::algebra::ring::CyclotomicRing;
 use hachi_pcs::algebra::Fp64;
+use hachi_pcs::protocol::sumcheck::eq_poly::EqPolynomial;
 use hachi_pcs::protocol::sumcheck::norm_sumcheck::{NormSumcheckProver, NormSumcheckVerifier};
 use hachi_pcs::protocol::sumcheck::relation_sumcheck::{
     RelationSumcheckProver, RelationSumcheckVerifier,
 };
-use hachi_pcs::protocol::sumcheck::{eq_eval, eq_evals, multilinear_eval, range_check_eval};
+use hachi_pcs::protocol::sumcheck::{multilinear_eval, range_check_eval};
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{prove_sumcheck, verify_sumcheck, Blake2bTranscript, Transcript};
 use hachi_pcs::{CanonicalField, FieldCore, FieldSampling};
@@ -36,7 +37,7 @@ fn run_f0_e2e(num_u: usize, num_l: usize, b: usize) {
     let prove_time = t0.elapsed();
 
     // Sanity: prover's final claim matches oracle evaluation.
-    let oracle = eq_eval(&tau0, &prover_challenges)
+    let oracle = EqPolynomial::mle(&tau0, &prover_challenges)
         * range_check_eval(multilinear_eval(&w_evals, &prover_challenges), b);
     assert_eq!(final_claim, oracle, "prover final claim != oracle eval");
 
@@ -91,7 +92,7 @@ fn run_f_alpha_e2e<const D: usize>(num_u: usize, num_i: usize) {
     let tau1: Vec<F> = (0..num_i).map(|_| F::sample(&mut rng)).collect();
 
     // Compute m(x) = Σ_i ẽq(τ₁, i) · M̃_α(i, x)
-    let eq_tau1 = eq_evals(&tau1);
+    let eq_tau1 = EqPolynomial::evals(&tau1);
     let num_x = 1usize << num_u;
     let m_evals_x: Vec<F> = (0..num_x)
         .map(|x_idx| {

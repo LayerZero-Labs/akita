@@ -23,6 +23,7 @@ pub use commitment_scheme::HachiCommitmentScheme;
 pub use opening_point::RingOpeningPoint;
 pub use proof::{HachiProof, SumcheckAux};
 pub use quadratic_equation::QuadraticEquation;
+pub use sumcheck::batched_sumcheck::{prove_batched_sumcheck, verify_batched_sumcheck};
 pub use sumcheck::{
     prove_sumcheck, verify_sumcheck, CompressedUniPoly, SumcheckInstanceProver,
     SumcheckInstanceVerifier, SumcheckProof, UniPoly,
