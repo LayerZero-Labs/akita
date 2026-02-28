@@ -6,5 +6,5 @@ pub mod prime;
 pub mod tables;
 
 pub use butterfly::NttTwiddles;
-pub use crt::{LimbQ, QData, RADIX_BITS};
-pub use prime::{MontCoeff, NttPrime};
+pub use crt::{GarnerData, LimbQ, RADIX_BITS};
+pub use prime::{MontCoeff, NttPrime, PrimeWidth};

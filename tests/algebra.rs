@@ -7,7 +7,10 @@ mod tests {
 
     use hachi_pcs::algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
     use hachi_pcs::algebra::poly::Poly;
-    use hachi_pcs::algebra::tables::{Q32_DATA, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES};
+    use hachi_pcs::algebra::tables::{
+        q128_garner, q128_primes, q32_garner, Q128_MODULUS, Q128_NUM_PRIMES, Q32_MODULUS,
+        Q32_NUM_PRIMES, Q32_PRIMES,
+    };
     use hachi_pcs::algebra::{
         pseudo_mersenne_modulus, Pow2Offset128Field, Pow2OffsetPrimeSpec, POW2_OFFSET_MAX,
         POW2_OFFSET_PRIMES, POW2_OFFSET_TABLE,
@@ -440,12 +443,6 @@ mod tests {
     }
 
     #[test]
-    fn qdata_q_matches_const() {
-        let q_from_data = Q32_DATA.q_u128().unwrap();
-        assert_eq!(q_from_data, Q32_MODULUS as u128);
-    }
-
-    #[test]
     fn ntt_normalize_in_range() {
         for prime in &Q32_PRIMES {
             for &a in &[0i16, 1, -1, 100, -100, prime.p - 1, -(prime.p - 1)] {
@@ -664,18 +661,15 @@ mod tests {
     #[test]
     fn ntt_forward_inverse_round_trip() {
         let prime = Q32_PRIMES[0];
-        let tw = NttTwiddles::<64>::compute(prime);
+        let tw = NttTwiddles::<i16, 64>::compute(prime);
 
-        // Create a test polynomial in Montgomery form.
-        let original: [MontCoeff; 64] =
+        let original: [MontCoeff<i16>; 64] =
             std::array::from_fn(|i| prime.from_canonical((i as i16) % prime.p));
 
-        // Forward then inverse should give back the original.
         let mut a = original;
         forward_ntt(&mut a, prime, &tw);
         inverse_ntt(&mut a, prime, &tw);
 
-        // Normalize and compare.
         for (i, (got, expected)) in a.iter().zip(original.iter()).enumerate() {
             let got_canon = prime.to_canonical(prime.normalize(*got));
             let exp_canon = prime.to_canonical(prime.normalize(*expected));
@@ -689,7 +683,7 @@ mod tests {
     #[test]
     fn ntt_forward_inverse_all_primes() {
         for (pi, prime) in Q32_PRIMES.iter().enumerate() {
-            let tw = NttTwiddles::<64>::compute(*prime);
+            let tw = NttTwiddles::<i16, 64>::compute(*prime);
 
             let original: [_; 64] =
                 std::array::from_fn(|i| prime.from_canonical(((i * (pi + 1)) as i16) % prime.p));
@@ -714,16 +708,17 @@ mod tests {
     fn cyclotomic_ntt_crt_round_trip_q32() {
         type F = Fp64<{ Q32_MODULUS }>;
         type R = CyclotomicRing<F, 64>;
-        type N = CyclotomicCrtNtt<Q32_NUM_PRIMES, 64>;
+        type N = CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, 64>;
 
-        let twiddles: [NttTwiddles<64>; Q32_NUM_PRIMES] =
-            std::array::from_fn(|k| NttTwiddles::<64>::compute(Q32_PRIMES[k]));
+        let twiddles: [NttTwiddles<i16, 64>; Q32_NUM_PRIMES] =
+            std::array::from_fn(|k| NttTwiddles::compute(Q32_PRIMES[k]));
 
         let coeffs: [F; 64] =
             std::array::from_fn(|i| F::from_u64(((i as u64 * 17) + 5) % Q32_MODULUS));
         let ring = R::from_coefficients(coeffs);
         let ntt = N::from_ring(&ring, &Q32_PRIMES, &twiddles);
-        let round_trip = ntt.to_ring(&Q32_PRIMES, &twiddles, &Q32_DATA);
+        let garner = q32_garner();
+        let round_trip = ntt.to_ring(&Q32_PRIMES, &twiddles, &garner);
 
         assert_eq!(ring, round_trip);
     }
@@ -732,10 +727,10 @@ mod tests {
     fn cyclotomic_ntt_reduced_ops_are_stable() {
         type F = Fp64<{ Q32_MODULUS }>;
         type R = CyclotomicRing<F, 64>;
-        type N = CyclotomicCrtNtt<Q32_NUM_PRIMES, 64>;
+        type N = CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, 64>;
 
-        let twiddles: [NttTwiddles<64>; Q32_NUM_PRIMES] =
-            std::array::from_fn(|k| NttTwiddles::<64>::compute(Q32_PRIMES[k]));
+        let twiddles: [NttTwiddles<i16, 64>; Q32_NUM_PRIMES] =
+            std::array::from_fn(|k| NttTwiddles::compute(Q32_PRIMES[k]));
 
         let a = R::from_coefficients(std::array::from_fn(|i| {
             F::from_u64(((i as u64 * 3) + 1) % Q32_MODULUS)
@@ -751,8 +746,9 @@ mod tests {
         let back = sum.sub_reduced(&ntt_b, &Q32_PRIMES);
         assert_eq!(back, ntt_a);
 
+        let garner = q32_garner();
         let zero_ntt = ntt_a.add_reduced(&ntt_a.neg_reduced(&Q32_PRIMES), &Q32_PRIMES);
-        let zero_ring = zero_ntt.to_ring(&Q32_PRIMES, &twiddles, &Q32_DATA);
+        let zero_ring = zero_ntt.to_ring(&Q32_PRIMES, &twiddles, &garner);
         assert_eq!(zero_ring, R::zero());
     }
 
@@ -760,10 +756,10 @@ mod tests {
     fn backend_path_matches_default_scalar_path() {
         type F = Fp64<{ Q32_MODULUS }>;
         type R = CyclotomicRing<F, 64>;
-        type N = CyclotomicCrtNtt<Q32_NUM_PRIMES, 64>;
+        type N = CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, 64>;
 
-        let twiddles: [NttTwiddles<64>; Q32_NUM_PRIMES] =
-            std::array::from_fn(|k| NttTwiddles::<64>::compute(Q32_PRIMES[k]));
+        let twiddles: [NttTwiddles<i16, 64>; Q32_NUM_PRIMES] =
+            std::array::from_fn(|k| NttTwiddles::compute(Q32_PRIMES[k]));
         let ring = R::from_coefficients(std::array::from_fn(|i| {
             F::from_u64(((i as u64 * 13) + 9) % Q32_MODULUS)
         }));
@@ -773,13 +769,86 @@ mod tests {
             N::from_ring_with_backend::<F, ScalarBackend>(&ring, &Q32_PRIMES, &twiddles);
         assert_eq!(default_ntt, backend_ntt);
 
-        let default_back = default_ntt.to_ring(&Q32_PRIMES, &twiddles, &Q32_DATA);
-        let backend_back = backend_ntt.to_ring_with_backend::<F, ScalarBackend, 3>(
-            &Q32_PRIMES,
-            &twiddles,
-            &Q32_DATA,
-        );
+        let garner = q32_garner();
+        let default_back = default_ntt.to_ring(&Q32_PRIMES, &twiddles, &garner);
+        let backend_back =
+            backend_ntt.to_ring_with_backend::<F, ScalarBackend>(&Q32_PRIMES, &twiddles, &garner);
         assert_eq!(default_back, backend_back);
+    }
+
+    #[test]
+    fn crt_ntt_mul_matches_schoolbook_q32() {
+        type F = Fp64<{ Q32_MODULUS }>;
+        type R = CyclotomicRing<F, 64>;
+        type N = CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, 64>;
+
+        let twiddles: [NttTwiddles<i16, 64>; Q32_NUM_PRIMES] =
+            std::array::from_fn(|k| NttTwiddles::compute(Q32_PRIMES[k]));
+        let garner = q32_garner();
+
+        let a = R::from_coefficients(std::array::from_fn(|i| {
+            F::from_u64(((i as u64 * 7) + 3) % Q32_MODULUS)
+        }));
+        let b = R::from_coefficients(std::array::from_fn(|i| {
+            F::from_u64(((i as u64 * 13) + 11) % Q32_MODULUS)
+        }));
+
+        let schoolbook = a * b;
+
+        let ntt_a = N::from_ring(&a, &Q32_PRIMES, &twiddles);
+        let ntt_b = N::from_ring(&b, &Q32_PRIMES, &twiddles);
+        let ntt_prod = ntt_a.pointwise_mul(&ntt_b, &Q32_PRIMES);
+        let ntt_result: R = ntt_prod.to_ring(&Q32_PRIMES, &twiddles, &garner);
+
+        assert_eq!(schoolbook, ntt_result);
+    }
+
+    #[test]
+    fn q128_ntt_round_trip() {
+        type F = Fp128<{ Q128_MODULUS }>;
+        type R = CyclotomicRing<F, 64>;
+        type N = CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, 64>;
+
+        let primes = q128_primes();
+        let twiddles: [NttTwiddles<i32, 64>; Q128_NUM_PRIMES] =
+            std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
+        let garner = q128_garner();
+
+        let coeffs: [F; 64] =
+            std::array::from_fn(|i| F::from_u64(((i as u64 * 31) + 7) % (Q128_MODULUS as u64)));
+        let ring = R::from_coefficients(coeffs);
+        let ntt = N::from_ring(&ring, &primes, &twiddles);
+        let round_trip: R = ntt.to_ring(&primes, &twiddles, &garner);
+
+        assert_eq!(ring, round_trip);
+    }
+
+    #[test]
+    fn crt_ntt_mul_matches_schoolbook_q128() {
+        type F = Fp128<{ Q128_MODULUS }>;
+        type R = CyclotomicRing<F, 64>;
+        type N = CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, 64>;
+
+        let primes = q128_primes();
+        let twiddles: [NttTwiddles<i32, 64>; Q128_NUM_PRIMES] =
+            std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
+        let garner = q128_garner();
+
+        let a = R::from_coefficients(std::array::from_fn(|i| {
+            F::from_u64(((i as u64 * 7) + 3) % (Q128_MODULUS as u64))
+        }));
+        let b = R::from_coefficients(std::array::from_fn(|i| {
+            F::from_u64(((i as u64 * 13) + 11) % (Q128_MODULUS as u64))
+        }));
+
+        let schoolbook = a * b;
+
+        let ntt_a = N::from_ring(&a, &primes, &twiddles);
+        let ntt_b = N::from_ring(&b, &primes, &twiddles);
+        let ntt_prod = ntt_a.pointwise_mul(&ntt_b, &primes);
+        let ntt_result: R = ntt_prod.to_ring(&primes, &twiddles, &garner);
+
+        assert_eq!(schoolbook, ntt_result);
     }
 
     #[test]

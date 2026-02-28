@@ -1,16 +1,55 @@
-//! Limb-based helpers for `q = 2^k - c` style moduli.
-//!
-//! Big-`q` coefficients are stored in radix `2^14` limbs.
-//! This module provides a portable scalar representation with the same limb layout.
+//! CRT helpers: Garner reconstruction and limb-based modular arithmetic.
 
 use std::cmp::Ordering;
 use std::fmt;
 use std::ops::{Add, Sub};
 
+use super::prime::{NttPrime, PrimeWidth};
+
 /// Limb radix bit-width (`2^14`).
 pub const RADIX_BITS: u32 = 14;
 const RADIX: i32 = 1 << RADIX_BITS;
 const RADIX_MASK: i32 = RADIX - 1;
+
+/// Precomputed Garner inverse table for CRT reconstruction.
+///
+/// `gamma[i][j]` = `p_j^{-1} mod p_i` for `j < i`. Upper triangle and
+/// diagonal entries are zero (unused).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GarnerData<W: PrimeWidth, const K: usize> {
+    /// `gamma[i][j]` = `p_j^{-1} mod p_i` for `j < i`.
+    pub gamma: [[W; K]; K],
+}
+
+impl<W: PrimeWidth, const K: usize> GarnerData<W, K> {
+    /// Compute Garner constants from a set of NTT primes.
+    pub fn compute(primes: &[NttPrime<W>; K]) -> Self {
+        let mut gamma = [[W::default(); K]; K];
+        for i in 1..K {
+            let pi = primes[i].p.to_i64();
+            #[allow(clippy::needless_range_loop)]
+            for j in 0..i {
+                let pj = primes[j].p.to_i64();
+                let inv = mod_inverse_i64(pj, pi);
+                gamma[i][j] = W::from_i64(inv);
+            }
+        }
+        Self { gamma }
+    }
+}
+
+/// Modular inverse via extended GCD, operating in `i64`.
+fn mod_inverse_i64(a: i64, modulus: i64) -> i64 {
+    let (mut t, mut new_t) = (0i64, 1i64);
+    let (mut r, mut new_r) = (modulus, ((a % modulus) + modulus) % modulus);
+    while new_r != 0 {
+        let q = r / new_r;
+        (t, new_t) = (new_t, t - q * new_t);
+        (r, new_r) = (new_r, r - q * new_r);
+    }
+    assert_eq!(r, 1, "modular inverse does not exist");
+    ((t % modulus) + modulus) % modulus
+}
 
 /// Fixed-width radix-`2^14` integer.
 ///
@@ -44,7 +83,6 @@ impl<const L: usize> LimbQ<L> {
     /// Conditional subtraction: if `self >= modulus`, return `self - modulus` (branchless).
     #[inline]
     pub fn csub_mod(self, modulus: Self) -> Self {
-        // Compute self - modulus, tracking the final borrow.
         let mut diff = [0u16; L];
         let mut borrow = 0i32;
         for (i, df) in diff.iter_mut().enumerate() {
@@ -56,8 +94,6 @@ impl<const L: usize> LimbQ<L> {
                 *df = d as u16;
             }
         }
-        // borrow = -1 if self < modulus (underflowed), 0 otherwise.
-        // Branchless select: mask = 0xFFFF if underflow (keep self), 0 if not (keep diff).
         let mask = borrow as u16;
         let mut result = [0u16; L];
         for (i, r) in result.iter_mut().enumerate() {
@@ -162,28 +198,5 @@ impl<const L: usize> fmt::Display for LimbQ<L> {
         } else {
             write!(f, "LimbQ{:?}", self.limbs)
         }
-    }
-}
-
-/// CRT/q constants for a given parameter set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct QData<const K: usize, const L: usize> {
-    /// The modulus `q` in radix-`2^14` limbs.
-    pub q: LimbQ<L>,
-    /// `-P mod q` in limbs (where `P = prod p_i`).
-    pub pmq: LimbQ<L>,
-    /// `P/p_i mod q` in limbs.
-    pub xvec: [LimbQ<L>; K],
-    /// `k` in `q = 2^k - c`.
-    pub logq: u32,
-    /// `c` in `q = 2^k - c`.
-    pub qoff: u16,
-}
-
-impl<const K: usize, const L: usize> QData<K, L> {
-    /// `q` as `u128` when representable.
-    #[inline]
-    pub fn q_u128(self) -> Option<u128> {
-        u128::try_from(self.q).ok()
     }
 }

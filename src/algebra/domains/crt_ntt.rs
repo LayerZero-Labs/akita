@@ -3,4 +3,4 @@
 use crate::algebra::ring::CyclotomicCrtNtt;
 
 /// CRT+NTT-domain ring representation.
-pub type CrtNttDomain<const K: usize, const D: usize> = CyclotomicCrtNtt<K, D>;
+pub type CrtNttDomain<W, const K: usize, const D: usize> = CyclotomicCrtNtt<W, K, D>;
