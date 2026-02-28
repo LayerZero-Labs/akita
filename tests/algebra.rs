@@ -715,9 +715,9 @@ mod tests {
 
         // Schoolbook negacyclic convolution mod p: X^D = -1.
         let mut school = [0i16; D];
-        for i in 0..D {
-            for j in 0..D {
-                let prod = (a_canon[i] as i64 * b_canon[j] as i64) % (prime.p as i64);
+        for (i, &ai) in a_canon.iter().enumerate() {
+            for (j, &bj) in b_canon.iter().enumerate() {
+                let prod = (ai as i64 * bj as i64) % (prime.p as i64);
                 let idx = i + j;
                 if idx < D {
                     school[idx] = ((school[idx] as i64 + prod) % (prime.p as i64)) as i16;
@@ -738,10 +738,7 @@ mod tests {
         forward_ntt(&mut a, prime, &tw);
         forward_ntt(&mut b, prime, &tw);
 
-        let mut c = [MontCoeff::from_raw(0i16); D];
-        for i in 0..D {
-            c[i] = prime.mul(a[i], b[i]);
-        }
+        let mut c: [_; D] = std::array::from_fn(|i| prime.mul(a[i], b[i]));
         inverse_ntt(&mut c, prime, &tw);
 
         let got: [i16; D] = std::array::from_fn(|i| prime.to_canonical(prime.normalize(c[i])));
@@ -819,9 +816,9 @@ mod tests {
         let b_canon: [i16; D] = std::array::from_fn(|i| ((i as i16 * 5) + 11) % prime.p);
 
         let mut school = [0i16; D];
-        for i in 0..D {
-            for j in 0..D {
-                let prod = (a_canon[i] as i64 * b_canon[j] as i64) % p;
+        for (i, &ai) in a_canon.iter().enumerate() {
+            for (j, &bj) in b_canon.iter().enumerate() {
+                let prod = (ai as i64 * bj as i64) % p;
                 let idx = i + j;
                 if idx < D {
                     school[idx] = ((school[idx] as i64 + prod) % p) as i16;
@@ -842,10 +839,7 @@ mod tests {
         forward_ntt(&mut a, prime, &tw);
         forward_ntt(&mut b, prime, &tw);
 
-        let mut c = [MontCoeff::from_raw(0i16); D];
-        for i in 0..D {
-            c[i] = prime.reduce_range(prime.mul(a[i], b[i]));
-        }
+        let mut c: [_; D] = std::array::from_fn(|i| prime.reduce_range(prime.mul(a[i], b[i])));
         inverse_ntt(&mut c, prime, &tw);
 
         let got: [i16; D] = std::array::from_fn(|i| prime.to_canonical(prime.normalize(c[i])));
@@ -868,9 +862,9 @@ mod tests {
                 std::array::from_fn(|i| ((b_canon[i] as i64).rem_euclid(p)) as i16);
 
             let mut school = [0i16; D];
-            for i in 0..D {
-                for j in 0..D {
-                    let prod = (a_mod[i] as i64 * b_mod[j] as i64) % p;
+            for (i, &ai) in a_mod.iter().enumerate() {
+                for (j, &bj) in b_mod.iter().enumerate() {
+                    let prod = (ai as i64 * bj as i64) % p;
                     let idx = i + j;
                     if idx < D {
                         school[idx] = ((school[idx] as i64 + prod) % p) as i16;
