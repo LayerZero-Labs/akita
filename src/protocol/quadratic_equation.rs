@@ -5,6 +5,8 @@
 
 use crate::algebra::ring::{CyclotomicRing, SparseChallenge, SparseChallengeConfig};
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::linear::mat_vec_mul_unchecked;
 use crate::protocol::commitment::utils::norm::{detect_field_modulus, vec_inf_norm};
@@ -13,6 +15,7 @@ use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::HachiCommitmentHint;
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use crate::protocol::transcript::Transcript;
+use crate::{cfg_into_iter, cfg_iter};
 use crate::{CanonicalField, FieldCore};
 
 /// **Steps 1–3.** Compute `w_i = a^T G_{2^m} s_i` and decompose: `ŵ_i = G_1^{-1}(w_i)`.
@@ -31,7 +34,7 @@ where
 
     debug_assert_eq!(a.len(), block_len);
 
-    s.iter()
+    cfg_iter!(s)
         .map(|s_i| {
             let mut w_i = CyclotomicRing::<F, D>::zero();
             for (j, a_j) in a.iter().enumerate().take(block_len) {
@@ -67,12 +70,17 @@ where
 {
     debug_assert_eq!(challenges.len(), s.len());
     let len = s[0].len();
-    let mut z = vec![CyclotomicRing::<F, D>::zero(); len];
-    for (c_i, s_i) in challenges.iter().zip(s.iter()) {
-        for (z_j, s_ij) in z.iter_mut().zip(s_i.iter()) {
-            *z_j += s_ij.mul_by_sparse(c_i);
-        }
-    }
+
+    let z: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..len)
+        .map(|j| {
+            challenges
+                .iter()
+                .zip(s.iter())
+                .fold(CyclotomicRing::<F, D>::zero(), |acc, (c_i, s_i)| {
+                    acc + s_i[j].mul_by_sparse(c_i)
+                })
+        })
+        .collect();
 
     let modulus = detect_field_modulus::<F>();
     let norm = vec_inf_norm(&z, modulus);

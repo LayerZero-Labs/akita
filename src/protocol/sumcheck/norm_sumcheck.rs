@@ -9,6 +9,8 @@ use super::eq_poly::EqPolynomial;
 use super::split_eq::GruenSplitEq;
 use super::{fold_evals, multilinear_eval, range_check_eval};
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::{CanonicalField, FieldCore};
 
 /// Prover for `F_{0,τ₀}(x,y) = ẽq(τ₀,(x,y)) · w̃(x,y) · range_check(w̃(x,y), b)`.
@@ -60,26 +62,59 @@ impl<E: FieldCore + CanonicalField> SumcheckInstanceProver<E> for NormSumcheckPr
         let half = self.w_table.len() / 2;
         let degree_q = 2 * self.b - 1;
         let num_points_q = degree_q + 1;
-        let mut q_evals = vec![E::zero(); num_points_q];
 
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros();
+        let b = self.b;
 
-        for j in 0..half {
-            let j_low = j & (num_first - 1);
-            let j_high = j >> first_bits;
-            let eq_rem = e_first[j_low] * e_second[j_high];
-
-            let w_0 = self.w_table[2 * j];
-            let w_1 = self.w_table[2 * j + 1];
-
-            for (t, eval) in q_evals.iter_mut().enumerate() {
-                let t_e = E::from_u64(t as u64);
-                let w_t = w_0 + t_e * (w_1 - w_0);
-                *eval = *eval + eq_rem * range_check_eval(w_t, self.b);
+        #[cfg(feature = "parallel")]
+        let q_evals = {
+            (0..half)
+                .into_par_iter()
+                .fold(
+                    || vec![E::zero(); num_points_q],
+                    |mut evals, j| {
+                        let j_low = j & (num_first - 1);
+                        let j_high = j >> first_bits;
+                        let eq_rem = e_first[j_low] * e_second[j_high];
+                        let w_0 = self.w_table[2 * j];
+                        let w_1 = self.w_table[2 * j + 1];
+                        for (t, eval) in evals.iter_mut().enumerate() {
+                            let t_e = E::from_u64(t as u64);
+                            let w_t = w_0 + t_e * (w_1 - w_0);
+                            *eval = *eval + eq_rem * range_check_eval(w_t, b);
+                        }
+                        evals
+                    },
+                )
+                .reduce(
+                    || vec![E::zero(); num_points_q],
+                    |mut a, b_vec| {
+                        for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
+                            *ai = *ai + *bi;
+                        }
+                        a
+                    },
+                )
+        };
+        #[cfg(not(feature = "parallel"))]
+        let q_evals = {
+            let mut evals = vec![E::zero(); num_points_q];
+            for j in 0..half {
+                let j_low = j & (num_first - 1);
+                let j_high = j >> first_bits;
+                let eq_rem = e_first[j_low] * e_second[j_high];
+                let w_0 = self.w_table[2 * j];
+                let w_1 = self.w_table[2 * j + 1];
+                for (t, eval) in evals.iter_mut().enumerate() {
+                    let t_e = E::from_u64(t as u64);
+                    let w_t = w_0 + t_e * (w_1 - w_0);
+                    *eval = *eval + eq_rem * range_check_eval(w_t, b);
+                }
             }
-        }
+            evals
+        };
 
         let q_poly = UniPoly::from_evals(&q_evals);
         self.split_eq.gruen_mul(&q_poly)

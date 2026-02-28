@@ -6,6 +6,8 @@
 
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
     CommitmentConfig, DefaultCommitmentConfig, HachiCommitmentCore, RingCommitment,
@@ -17,6 +19,7 @@ use crate::protocol::transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
 use crate::protocol::transcript::Transcript;
+use crate::{cfg_into_iter, cfg_iter};
 use crate::{CanonicalField, FieldCore, FieldSampling};
 
 /// Output of the ring switch prover, containing everything needed for sumchecks.
@@ -169,29 +172,54 @@ pub(crate) fn compute_r_via_poly_division<F: FieldCore, const D: usize>(
     m.iter()
         .zip(y.iter())
         .map(|(row, y_i)| {
-            let mut poly = vec![F::zero(); poly_len];
-            for (m_ij, z_j) in row.iter().zip(z.iter()) {
-                if m_ij.is_zero() {
-                    continue;
-                }
-                let a = m_ij.coefficients();
-                let b = z_j.coefficients();
-
-                // Detect constant (scalar) ring elements: only a[0] is non-zero.
-                let is_scalar = a[1..].iter().all(|c| c.is_zero());
-                if is_scalar {
-                    let scalar = a[0];
-                    for s in 0..D {
-                        poly[s] = poly[s] + scalar * b[s];
+            let column_contribution =
+                |m_ij: &CyclotomicRing<F, D>, z_j: &CyclotomicRing<F, D>| -> Vec<F> {
+                    let mut local = vec![F::zero(); poly_len];
+                    if m_ij.is_zero() {
+                        return local;
                     }
-                } else {
-                    for t in 0..D {
+                    let a = m_ij.coefficients();
+                    let b = z_j.coefficients();
+                    let is_scalar = a[1..].iter().all(|c| c.is_zero());
+                    if is_scalar {
+                        let scalar = a[0];
                         for s in 0..D {
-                            poly[t + s] = poly[t + s] + a[t] * b[s];
+                            local[s] = scalar * b[s];
+                        }
+                    } else {
+                        for t in 0..D {
+                            for s in 0..D {
+                                local[t + s] = local[t + s] + a[t] * b[s];
+                            }
                         }
                     }
+                    local
+                };
+
+            let pointwise_add = |mut a: Vec<F>, b: Vec<F>| -> Vec<F> {
+                for (ai, bi) in a.iter_mut().zip(b.iter()) {
+                    *ai = *ai + *bi;
                 }
-            }
+                a
+            };
+
+            #[cfg(feature = "parallel")]
+            let mut poly = row
+                .par_iter()
+                .zip(z.par_iter())
+                .fold(
+                    || vec![F::zero(); poly_len],
+                    |acc, (m_ij, z_j)| pointwise_add(acc, column_contribution(m_ij, z_j)),
+                )
+                .reduce(|| vec![F::zero(); poly_len], pointwise_add);
+
+            #[cfg(not(feature = "parallel"))]
+            let mut poly = row
+                .iter()
+                .zip(z.iter())
+                .fold(vec![F::zero(); poly_len], |acc, (m_ij, z_j)| {
+                    pointwise_add(acc, column_contribution(m_ij, z_j))
+                });
             let y_coeffs = y_i.coefficients();
             for k in 0..D {
                 poly[k] = poly[k] - y_coeffs[k];
@@ -278,7 +306,7 @@ pub(crate) fn eval_ring_vec_at<F: FieldCore, const D: usize>(
     v: &[CyclotomicRing<F, D>],
     alpha: &F,
 ) -> Vec<F> {
-    v.iter().map(|r| eval_ring_at(r, alpha)).collect()
+    cfg_iter!(v).map(|r| eval_ring_at(r, alpha)).collect()
 }
 
 pub(crate) fn eval_ring_matrix_at<F: FieldCore, const D: usize>(
@@ -373,19 +401,20 @@ pub(crate) fn build_w_evals<F: FieldCore>(w: &[F], d: usize) -> (Vec<F>, usize, 
     let num_ring_elems = w.len() / d.max(1);
     let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
     let x_len = 1usize << num_u;
-    let y_len = 1usize << num_l;
-    let n = x_len * y_len;
+    let n = x_len << num_l;
 
-    let mut evals = vec![F::zero(); n];
-    for x in 0..x_len {
-        for y in 0..y_len {
+    let evals: Vec<F> = cfg_into_iter!(0..n)
+        .map(|dst| {
+            let x = dst & (x_len - 1);
+            let y = dst >> num_u;
             let src = y + (x << num_l);
             if src < w.len() {
-                let dst = x + (y << num_u);
-                evals[dst] = w[src];
+                w[src]
+            } else {
+                F::zero()
             }
-        }
-    }
+        })
+        .collect();
     (evals, num_u, num_l)
 }
 
@@ -401,20 +430,20 @@ pub(crate) fn build_m_evals_x<F: FieldCore + CanonicalField>(
 ) -> Vec<F> {
     let eq_tau1 = EqPolynomial::evals(tau1);
     let x_len = cols.next_power_of_two();
-    let mut m_evals = vec![F::zero(); x_len];
-    for x in 0..x_len {
-        let mut acc = F::zero();
-        for i in 0..eq_tau1.len() {
-            let row_val = if i < rows && x < cols {
-                m_a_flat[i * cols + x]
-            } else {
-                F::zero()
-            };
-            acc = acc + eq_tau1[i] * row_val;
-        }
-        m_evals[x] = acc;
-    }
-    m_evals
+    cfg_into_iter!(0..x_len)
+        .map(|x| {
+            let mut acc = F::zero();
+            for i in 0..eq_tau1.len() {
+                let row_val = if i < rows && x < cols {
+                    m_a_flat[i * cols + x]
+                } else {
+                    F::zero()
+                };
+                acc = acc + eq_tau1[i] * row_val;
+            }
+            acc
+        })
+        .collect()
 }
 
 pub(crate) fn build_alpha_evals_y<F: FieldCore>(alpha: F, d: usize) -> Vec<F> {

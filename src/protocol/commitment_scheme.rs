@@ -1,7 +1,10 @@
 //! Commitment scheme trait implementation.
 
 use crate::algebra::ring::CyclotomicRing;
+use crate::cfg_into_iter;
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::primitives::poly::multilinear_lagrange_basis;
 use crate::protocol::commitment::{
     CommitmentConfig, CommitmentScheme, DefaultCommitmentConfig, HachiCommitmentCore,
@@ -325,14 +328,15 @@ fn reduce_coeffs_to_ring_elements<F: FieldCore, const D: usize>(
         .checked_shl(outer_vars as u32)
         .ok_or_else(|| HachiError::InvalidInput(format!("2^{outer_vars} does not fit usize")))?;
 
-    let mut out = Vec::with_capacity(outer_len);
-    for i in 0..outer_len {
-        let coeffs = std::array::from_fn(|j| {
-            let idx = i + (j << outer_vars);
-            coeffs[idx]
-        });
-        out.push(CyclotomicRing::from_coefficients(coeffs));
-    }
+    let out: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..outer_len)
+        .map(|i| {
+            let ring_coeffs = std::array::from_fn(|j| {
+                let idx = i + (j << outer_vars);
+                coeffs[idx]
+            });
+            CyclotomicRing::from_coefficients(ring_coeffs)
+        })
+        .collect();
     Ok(out)
 }
 
@@ -356,12 +360,26 @@ fn evaluate_packed_ring_poly<F: FieldCore, const D: usize>(
 ) -> CyclotomicRing<F, D> {
     let weights = lagrange_weights(outer_point);
     debug_assert_eq!(weights.len(), packed_coeffs.len());
-    packed_coeffs
-        .iter()
-        .zip(weights.iter())
-        .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, w_i)| {
-            acc + f_i.scale(w_i)
-        })
+    #[cfg(feature = "parallel")]
+    {
+        packed_coeffs
+            .par_iter()
+            .zip(weights.par_iter())
+            .fold(
+                || CyclotomicRing::<F, D>::zero(),
+                |acc, (f_i, w_i)| acc + f_i.scale(w_i),
+            )
+            .reduce(|| CyclotomicRing::<F, D>::zero(), |a, b| a + b)
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        packed_coeffs
+            .iter()
+            .zip(weights.iter())
+            .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, w_i)| {
+                acc + f_i.scale(w_i)
+            })
+    }
 }
 
 fn trace<F: CanonicalField, const D: usize>(u: &CyclotomicRing<F, D>) -> F {

@@ -9,6 +9,9 @@ use super::eq_poly::EqPolynomial;
 use super::{fold_evals, multilinear_eval};
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
 use crate::algebra::ring::CyclotomicRing;
+use crate::cfg_into_iter;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::protocol::ring_switch::eval_ring_at;
 use crate::{CanonicalField, FieldCore};
 
@@ -53,8 +56,12 @@ impl<E: FieldCore + CanonicalField> RelationSumcheckProver<E> {
         assert_eq!(m_evals_x.len(), 1 << num_u);
 
         let x_mask = (1usize << num_u) - 1;
-        let alpha_table: Vec<E> = (0..n).map(|idx| alpha_evals_y[idx >> num_u]).collect();
-        let m_table: Vec<E> = (0..n).map(|idx| m_evals_x[idx & x_mask]).collect();
+        let alpha_table: Vec<E> = cfg_into_iter!(0..n)
+            .map(|idx| alpha_evals_y[idx >> num_u])
+            .collect();
+        let m_table: Vec<E> = cfg_into_iter!(0..n)
+            .map(|idx| m_evals_x[idx & x_mask])
+            .collect();
 
         Self {
             w_table: w_evals,
@@ -75,34 +82,85 @@ impl<E: FieldCore + CanonicalField> SumcheckInstanceProver<E> for RelationSumche
     }
 
     fn input_claim(&self) -> E {
-        self.w_table
-            .iter()
-            .zip(self.alpha_table.iter())
-            .zip(self.m_table.iter())
-            .fold(E::zero(), |acc, ((&w, &a), &m)| acc + w * a * m)
+        #[cfg(feature = "parallel")]
+        {
+            self.w_table
+                .par_iter()
+                .zip(self.alpha_table.par_iter())
+                .zip(self.m_table.par_iter())
+                .fold(
+                    || E::zero(),
+                    |acc, ((&w, &a), &m)| acc + w * a * m,
+                )
+                .reduce(|| E::zero(), |a, b| a + b)
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            self.w_table
+                .iter()
+                .zip(self.alpha_table.iter())
+                .zip(self.m_table.iter())
+                .fold(E::zero(), |acc, ((&w, &a), &m)| acc + w * a * m)
+        }
     }
 
     fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
         let half = self.w_table.len() / 2;
         let num_points = 3; // degree 2 → 3 evaluation points
-        let mut round_evals = vec![E::zero(); num_points];
 
-        for j in 0..half {
-            let w_0 = self.w_table[2 * j];
-            let w_1 = self.w_table[2 * j + 1];
-            let a_0 = self.alpha_table[2 * j];
-            let a_1 = self.alpha_table[2 * j + 1];
-            let m_0 = self.m_table[2 * j];
-            let m_1 = self.m_table[2 * j + 1];
-
-            for (t, eval) in round_evals.iter_mut().enumerate() {
-                let t_e = E::from_u64(t as u64);
-                let w_t = w_0 + t_e * (w_1 - w_0);
-                let a_t = a_0 + t_e * (a_1 - a_0);
-                let m_t = m_0 + t_e * (m_1 - m_0);
-                *eval = *eval + w_t * a_t * m_t;
+        #[cfg(feature = "parallel")]
+        let round_evals = {
+            (0..half)
+                .into_par_iter()
+                .fold(
+                    || vec![E::zero(); num_points],
+                    |mut evals, j| {
+                        let w_0 = self.w_table[2 * j];
+                        let w_1 = self.w_table[2 * j + 1];
+                        let a_0 = self.alpha_table[2 * j];
+                        let a_1 = self.alpha_table[2 * j + 1];
+                        let m_0 = self.m_table[2 * j];
+                        let m_1 = self.m_table[2 * j + 1];
+                        for (t, eval) in evals.iter_mut().enumerate() {
+                            let t_e = E::from_u64(t as u64);
+                            let w_t = w_0 + t_e * (w_1 - w_0);
+                            let a_t = a_0 + t_e * (a_1 - a_0);
+                            let m_t = m_0 + t_e * (m_1 - m_0);
+                            *eval = *eval + w_t * a_t * m_t;
+                        }
+                        evals
+                    },
+                )
+                .reduce(
+                    || vec![E::zero(); num_points],
+                    |mut a, b| {
+                        for (ai, bi) in a.iter_mut().zip(b.iter()) {
+                            *ai = *ai + *bi;
+                        }
+                        a
+                    },
+                )
+        };
+        #[cfg(not(feature = "parallel"))]
+        let round_evals = {
+            let mut evals = vec![E::zero(); num_points];
+            for j in 0..half {
+                let w_0 = self.w_table[2 * j];
+                let w_1 = self.w_table[2 * j + 1];
+                let a_0 = self.alpha_table[2 * j];
+                let a_1 = self.alpha_table[2 * j + 1];
+                let m_0 = self.m_table[2 * j];
+                let m_1 = self.m_table[2 * j + 1];
+                for (t, eval) in evals.iter_mut().enumerate() {
+                    let t_e = E::from_u64(t as u64);
+                    let w_t = w_0 + t_e * (w_1 - w_0);
+                    let a_t = a_0 + t_e * (a_1 - a_0);
+                    let m_t = m_0 + t_e * (m_1 - m_0);
+                    *eval = *eval + w_t * a_t * m_t;
+                }
             }
-        }
+            evals
+        };
 
         UniPoly::from_evals(&round_evals)
     }

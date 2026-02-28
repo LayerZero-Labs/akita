@@ -45,6 +45,11 @@ pub mod algebra;
 /// Protocol-layer transcript and commitment abstractions
 pub mod protocol;
 
+/// Conditional parallelism utilities (`cfg_iter!`, `cfg_into_iter!`, etc.)
+#[doc(hidden)]
+#[allow(missing_docs)]
+pub mod parallel;
+
 #[doc(hidden)]
 #[allow(missing_docs)]
 pub mod test_utils;

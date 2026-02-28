@@ -32,7 +32,7 @@ include = [
 all-features = true
 
 [features]
-default = []
+default = ["parallel"]
 parallel = ["dep:rayon"]
 
 [dependencies]
