@@ -226,18 +226,6 @@ impl<F: FieldCore + Valid, C: Fp2Config<F>> FieldCore for Fp2<F, C> {
         self.c0.is_zero() && self.c1.is_zero()
     }
 
-    fn add(&self, rhs: &Self) -> Self {
-        *self + *rhs
-    }
-
-    fn sub(&self, rhs: &Self) -> Self {
-        *self - *rhs
-    }
-
-    fn mul(&self, rhs: &Self) -> Self {
-        *self * *rhs
-    }
-
     /// Specialized squaring: 2 base-field multiplications instead of 3.
     ///
     /// `(c0 + c1·u)^2 = (c0^2 + NR·c1^2) + (2·c0·c1)·u`
@@ -456,18 +444,6 @@ impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> FieldCore for
 
     fn is_zero(&self) -> bool {
         self.c0.is_zero() && self.c1.is_zero()
-    }
-
-    fn add(&self, rhs: &Self) -> Self {
-        *self + *rhs
-    }
-
-    fn sub(&self, rhs: &Self) -> Self {
-        *self - *rhs
-    }
-
-    fn mul(&self, rhs: &Self) -> Self {
-        *self * *rhs
     }
 
     fn square(&self) -> Self {

@@ -301,18 +301,6 @@ impl<const P: u32> FieldCore for Fp32<P> {
         self.0 == 0
     }
 
-    fn add(&self, rhs: &Self) -> Self {
-        *self + *rhs
-    }
-
-    fn sub(&self, rhs: &Self) -> Self {
-        *self - *rhs
-    }
-
-    fn mul(&self, rhs: &Self) -> Self {
-        *self * *rhs
-    }
-
     fn inv(self) -> Option<Self> {
         let inv = self.inv_or_zero();
         if self.is_zero() {

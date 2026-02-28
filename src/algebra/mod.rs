@@ -6,7 +6,6 @@
 //! - Low-level NTT and CRT+NTT arithmetic scaffolding (`ntt`)
 
 pub mod backend;
-pub mod domains;
 pub mod fields;
 pub mod module;
 pub mod ntt;
@@ -15,7 +14,6 @@ pub mod ring;
 
 // Flat re-exports for convenience.
 pub use backend::{CrtReconstruct, NttPrimeOps, NttTransform, RingBackend, ScalarBackend};
-pub use domains::{CoeffDomain, CrtNttDomain};
 pub use fields::{
     is_pow2_offset, pow2_offset, pseudo_mersenne_modulus, ExtField, Fp128, Fp128Packing, Fp2,
     Fp2Config, Fp32, Fp32Packing, Fp4, Fp4Config, Fp64, Fp64Packing, HasPacking, LiftBase,

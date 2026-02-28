@@ -23,6 +23,7 @@ pub mod packed_ext;
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 pub mod packed_neon;
 pub mod pseudo_mersenne;
+pub(crate) mod util;
 
 pub use ext::{Ext2, Ext4, Fp2, Fp2Config, Fp4, Fp4Config, NegOneNr, TwoNr, UnitNr};
 pub use fp128::{

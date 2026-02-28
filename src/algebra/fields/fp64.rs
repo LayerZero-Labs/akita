@@ -16,42 +16,7 @@ use crate::{
 };
 use std::io::{Read, Write};
 
-#[inline(always)]
-const fn is_pow2_u64(x: u64) -> bool {
-    x != 0 && (x & (x - 1)) == 0
-}
-
-#[inline(always)]
-const fn log2_pow2_u64(mut x: u64) -> u32 {
-    let mut k = 0u32;
-    while x > 1 {
-        x >>= 1;
-        k += 1;
-    }
-    k
-}
-
-#[inline(always)]
-fn mul64_wide(a: u64, b: u64) -> (u64, u64) {
-    #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
-    {
-        unsafe { mul64_wide_bmi2(a, b) }
-    }
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2")))]
-    {
-        let prod = (a as u128) * (b as u128);
-        (prod as u64, (prod >> 64) as u64)
-    }
-}
-
-#[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
-#[inline(always)]
-unsafe fn mul64_wide_bmi2(a: u64, b: u64) -> (u64, u64) {
-    let mut hi = 0;
-    // Safety: caller guarantees CPU support via cfg-gated compilation.
-    let lo = unsafe { std::arch::x86_64::_mulx_u64(a, b, &mut hi) };
-    (lo, hi)
-}
+use super::util::{is_pow2_u64, log2_pow2_u64, mul64_wide};
 
 /// Prime field element for primes `p = 2^k − c` stored as `u64`.
 ///
@@ -438,18 +403,6 @@ impl<const P: u64> FieldCore for Fp64<P> {
 
     fn is_zero(&self) -> bool {
         self.0 == 0
-    }
-
-    fn add(&self, rhs: &Self) -> Self {
-        *self + *rhs
-    }
-
-    fn sub(&self, rhs: &Self) -> Self {
-        *self - *rhs
-    }
-
-    fn mul(&self, rhs: &Self) -> Self {
-        *self * *rhs
     }
 
     fn inv(self) -> Option<Self> {

@@ -30,15 +30,6 @@ pub trait FieldCore:
     /// Check if element is zero
     fn is_zero(&self) -> bool;
 
-    /// Field addition
-    fn add(&self, rhs: &Self) -> Self;
-
-    /// Field subtraction
-    fn sub(&self, rhs: &Self) -> Self;
-
-    /// Field multiplication
-    fn mul(&self, rhs: &Self) -> Self;
-
     /// Field squaring.
     ///
     /// Default is `self * self`; extension fields override with specialized
@@ -172,17 +163,9 @@ pub trait Module:
     /// Zero element
     fn zero() -> Self;
 
-    /// Addition
-    fn add(&self, rhs: &Self) -> Self;
-
-    /// Negation
-    fn neg(&self) -> Self;
-
     /// Scalar multiplication
     fn scale(&self, k: &Self::Scalar) -> Self;
 
     /// Generate random module element
     fn random<R: RngCore>(rng: &mut R) -> Self;
 }
-
-pub trait HachiRoutines<M: Module> {}

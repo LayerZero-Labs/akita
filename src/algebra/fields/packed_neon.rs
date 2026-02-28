@@ -52,20 +52,7 @@ const fn modulus_hi<const P: u128>() -> u64 {
     (P >> 64) as u64
 }
 
-#[inline(always)]
-const fn is_pow2_u64(x: u64) -> bool {
-    x != 0 && (x & (x - 1)) == 0
-}
-
-#[inline(always)]
-const fn log2_pow2_u64(mut x: u64) -> u32 {
-    let mut k = 0u32;
-    while x > 1 {
-        x >>= 1;
-        k += 1;
-    }
-    k
-}
+use super::util::{is_pow2_u64, log2_pow2_u64};
 
 impl<const P: u128> PackedFp128Neon<P> {
     const C: u128 = {

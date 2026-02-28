@@ -56,8 +56,7 @@ pub mod test_utils;
 
 pub use error::HachiError;
 pub use primitives::arithmetic::{
-    CanonicalField, FieldCore, FieldSampling, FromSmallInt, HachiRoutines, Invertible, Module,
-    PseudoMersenneField,
+    CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, Module, PseudoMersenneField,
 };
 pub use primitives::poly::{MultilinearLagrange, Polynomial};
 pub use primitives::serialization::{HachiDeserialize, HachiSerialize};
