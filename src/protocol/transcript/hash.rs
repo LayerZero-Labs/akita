@@ -1,22 +1,28 @@
-//! Keccak transcript implementation for protocol-layer Fiat-Shamir.
+//! Generic hash-based transcript for protocol-layer Fiat-Shamir.
+//!
+//! Parameterised over any `Digest + Clone` hasher, eliminating the
+//! near-identical Blake2b and Keccak implementations.
 
 use super::Transcript;
 use crate::primitives::serialization::HachiSerialize;
 use crate::{CanonicalField, FieldCore};
-use sha3::{Digest, Keccak256};
+use blake2::{Blake2b512, Digest};
+use sha3::Keccak256;
 use std::marker::PhantomData;
 
-/// Keccak256 transcript with labeled framing.
+/// Hash-based transcript with labeled framing.
+///
+/// Works with any cryptographic hash that implements `Digest + Clone`.
 #[derive(Clone)]
-pub struct KeccakTranscript<F>
+pub struct HashTranscript<D: Digest + Clone, F>
 where
     F: FieldCore + CanonicalField + 'static,
 {
-    hasher: Keccak256,
+    hasher: D,
     _field: PhantomData<F>,
 }
 
-impl<F> KeccakTranscript<F>
+impl<D: Digest + Clone, F> HashTranscript<D, F>
 where
     F: FieldCore + CanonicalField + 'static,
 {
@@ -28,22 +34,21 @@ where
     }
 
     #[inline]
-    fn challenge_bytes(&mut self, label: &[u8]) -> [u8; 32] {
+    fn challenge_and_chain(&mut self, label: &[u8]) -> Vec<u8> {
         self.hasher.update(label);
         let digest = self.hasher.clone().finalize();
-        let mut out = [0u8; 32];
-        out.copy_from_slice(digest.as_slice());
-        self.hasher.update(out);
+        let out = digest.to_vec();
+        self.hasher.update(&out);
         out
     }
 }
 
-impl<F> Transcript<F> for KeccakTranscript<F>
+impl<D: Digest + Clone + Send + Sync + 'static, F> Transcript<F> for HashTranscript<D, F>
 where
     F: FieldCore + CanonicalField + 'static,
 {
     fn new(domain_label: &[u8]) -> Self {
-        let mut hasher = Keccak256::new();
+        let mut hasher = D::new();
         hasher.update(domain_label);
         Self {
             hasher,
@@ -67,7 +72,7 @@ where
     }
 
     fn challenge_scalar(&mut self, label: &[u8]) -> F {
-        let bytes = self.challenge_bytes(label);
+        let bytes = self.challenge_and_chain(label);
         let mut lo = [0u8; 16];
         lo.copy_from_slice(&bytes[..16]);
         let sampled = u128::from_le_bytes(lo);
@@ -75,8 +80,14 @@ where
     }
 
     fn reset(&mut self, domain_label: &[u8]) {
-        let mut hasher = Keccak256::new();
+        let mut hasher = D::new();
         hasher.update(domain_label);
         self.hasher = hasher;
     }
 }
+
+/// Blake2b512 transcript with labeled framing.
+pub type Blake2bTranscript<F> = HashTranscript<Blake2b512, F>;
+
+/// Keccak256 transcript with labeled framing.
+pub type KeccakTranscript<F> = HashTranscript<Keccak256, F>;

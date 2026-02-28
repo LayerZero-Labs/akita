@@ -1,14 +1,12 @@
 //! Protocol transcript contracts and implementations.
 
-mod blake2b;
-mod keccak;
+mod hash;
 pub mod labels;
 
 use crate::algebra::fields::lift::ExtField;
 use crate::{CanonicalField, FieldCore, HachiSerialize};
 
-pub use blake2b::Blake2bTranscript;
-pub use keccak::KeccakTranscript;
+pub use hash::{Blake2bTranscript, HashTranscript, KeccakTranscript};
 
 /// Transcript interface for protocol Fiat-Shamir transforms.
 ///
