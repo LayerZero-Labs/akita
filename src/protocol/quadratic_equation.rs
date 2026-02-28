@@ -584,7 +584,7 @@ mod tests {
             <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::setup(16).unwrap();
 
         let blocks = sample_blocks();
-        let (commitment, s, t_hat) =
+        let w =
             <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::commit_ring_blocks(
                 &blocks, &setup,
             )
@@ -596,8 +596,8 @@ mod tests {
         };
 
         let hint = HachiCommitmentHint {
-            s,
-            t_hat,
+            s: w.s,
+            t_hat: w.t_hat,
             ring_coeffs: Vec::new(),
         };
         let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_SEED);
@@ -607,7 +607,7 @@ mod tests {
             &point,
             &hint,
             &mut transcript,
-            &commitment,
+            &w.commitment,
             &y_ring,
         )
         .unwrap();
@@ -616,7 +616,7 @@ mod tests {
 
         Fixture {
             setup,
-            commitment_u: commitment.u.clone(),
+            commitment_u: w.commitment.u.clone(),
             point,
             blocks,
             quad_eq,

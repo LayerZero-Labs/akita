@@ -1,18 +1,18 @@
 #![allow(missing_docs)]
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use hachi_pcs::algebra::Fp64;
+use hachi_pcs::algebra::Fp128;
 use hachi_pcs::primitives::multilinear_evals::DenseMultilinearEvals;
-use hachi_pcs::protocol::commitment::DefaultCommitmentConfig;
+use hachi_pcs::protocol::commitment::ProductionFp128CommitmentConfig;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{CommitmentScheme, FromSmallInt, Polynomial, Transcript};
 use std::time::Duration;
 
-type F = Fp64<4294967197>;
+type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
 
-const D: usize = DefaultCommitmentConfig::D;
+const D: usize = ProductionFp128CommitmentConfig::D;
 
 macro_rules! bench_config {
     ($name:ident, M = $m:expr, R = $r:expr) => {
@@ -22,14 +22,14 @@ macro_rules! bench_config {
             const D: usize = D;
             const M: usize = $m;
             const R: usize = $r;
-            const N_A: usize = DefaultCommitmentConfig::N_A;
-            const N_B: usize = DefaultCommitmentConfig::N_B;
-            const N_D: usize = DefaultCommitmentConfig::N_D;
-            const LOG_BASIS: u32 = DefaultCommitmentConfig::LOG_BASIS;
-            const DELTA: usize = DefaultCommitmentConfig::DELTA;
-            const TAU: usize = DefaultCommitmentConfig::TAU;
-            const BETA: u128 = DefaultCommitmentConfig::BETA;
-            const CHALLENGE_WEIGHT: usize = DefaultCommitmentConfig::CHALLENGE_WEIGHT;
+            const N_A: usize = ProductionFp128CommitmentConfig::N_A;
+            const N_B: usize = ProductionFp128CommitmentConfig::N_B;
+            const N_D: usize = ProductionFp128CommitmentConfig::N_D;
+            const LOG_BASIS: u32 = ProductionFp128CommitmentConfig::LOG_BASIS;
+            const DELTA: usize = ProductionFp128CommitmentConfig::DELTA;
+            const TAU: usize = ProductionFp128CommitmentConfig::TAU;
+            const BETA: u128 = ProductionFp128CommitmentConfig::BETA;
+            const CHALLENGE_WEIGHT: usize = ProductionFp128CommitmentConfig::CHALLENGE_WEIGHT;
         }
     };
 }
@@ -162,16 +162,16 @@ where
 }
 
 fn bench_nv10(c: &mut Criterion) {
-    bench_phases::<CfgNv10>(c, "fp64");
+    bench_phases::<CfgNv10>(c, "fp128_p275");
 }
 fn bench_nv14(c: &mut Criterion) {
-    bench_phases::<CfgNv14>(c, "fp64");
+    bench_phases::<CfgNv14>(c, "fp128_p275");
 }
 fn bench_nv18(c: &mut Criterion) {
-    bench_phases::<CfgNv18>(c, "fp64");
+    bench_phases::<CfgNv18>(c, "fp128_p275");
 }
 fn bench_nv20(c: &mut Criterion) {
-    bench_phases::<CfgNv20>(c, "fp64");
+    bench_phases::<CfgNv20>(c, "fp128_p275");
 }
 
 criterion_group!(

@@ -2,6 +2,7 @@
 
 use std::time::Instant;
 
+use hachi_pcs::algebra::poly::multilinear_eval;
 use hachi_pcs::algebra::Fp64;
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
@@ -84,21 +85,6 @@ fn sumcheck_proof_verifier_driver_is_transcript_deterministic() {
 
     assert_eq!(r_1, r_manual);
     assert_eq!(final_claim_1, claim);
-}
-
-/// Evaluate a multilinear polynomial (given by its boolean-hypercube evaluations
-/// in little-endian bit order) at an arbitrary point via iterated folding.
-fn multilinear_eval<E: FieldCore>(evals: &[E], point: &[E]) -> E {
-    let mut current = evals.to_vec();
-    for r in point {
-        let half = current.len() / 2;
-        let mut next = Vec::with_capacity(half);
-        for i in 0..half {
-            next.push(current[2 * i] + *r * (current[2 * i + 1] - current[2 * i]));
-        }
-        current = next;
-    }
-    current[0]
 }
 
 struct DenseSumcheckProver<E> {

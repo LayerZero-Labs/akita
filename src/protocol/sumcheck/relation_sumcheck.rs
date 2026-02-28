@@ -6,7 +6,7 @@
 //! Proves the evaluation relation; sum equals `a = Σ_i ẽq(τ₁,i) · y_i(α)`.
 
 use super::eq_poly::EqPolynomial;
-use super::{fold_evals, multilinear_eval};
+use super::{fold_evals_in_place, multilinear_eval};
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
 use crate::algebra::ring::CyclotomicRing;
 use crate::cfg_into_iter;
@@ -163,9 +163,9 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for RelationSumcheck
     }
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {
-        self.w_table = fold_evals(&self.w_table, r);
-        self.alpha_table = fold_evals(&self.alpha_table, r);
-        self.m_table = fold_evals(&self.m_table, r);
+        fold_evals_in_place(&mut self.w_table, r);
+        fold_evals_in_place(&mut self.alpha_table, r);
+        fold_evals_in_place(&mut self.m_table, r);
     }
 }
 
@@ -266,18 +266,18 @@ mod tests {
     use crate::protocol::transcript::labels;
     use crate::protocol::{
         prove_sumcheck, verify_sumcheck, Blake2bTranscript, CommitmentConfig, CommitmentScheme,
-        DefaultCommitmentConfig, HachiCommitmentScheme, Transcript,
+        HachiCommitmentScheme, SmallTestCommitmentConfig, Transcript,
     };
     use crate::{FieldCore, FromSmallInt};
 
     type F = Fp64<4294967197>;
-    type Cfg = DefaultCommitmentConfig;
+    type Cfg = SmallTestCommitmentConfig;
     type Scheme = HachiCommitmentScheme<{ Cfg::D }, Cfg>;
 
     #[test]
     fn relation_sumcheck_uses_prove_w_evals() {
-        let alpha_bits = DefaultCommitmentConfig::D.trailing_zeros() as usize;
-        let num_vars = DefaultCommitmentConfig::R + DefaultCommitmentConfig::M + alpha_bits;
+        let alpha_bits = SmallTestCommitmentConfig::D.trailing_zeros() as usize;
+        let num_vars = SmallTestCommitmentConfig::R + SmallTestCommitmentConfig::M + alpha_bits;
         let len = 1usize << num_vars;
         let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
         let poly = DenseMultilinearEvals::new_padded(evals);
@@ -305,14 +305,14 @@ mod tests {
         )
         .unwrap();
 
-        let d = DefaultCommitmentConfig::D;
+        let d = SmallTestCommitmentConfig::D;
         assert_eq!(proof.sumcheck_aux.w.len() % d, 0);
         let w_u = proof.sumcheck_aux.w.len() / d;
-        let rows = DefaultCommitmentConfig::N_D
-            + DefaultCommitmentConfig::N_B
+        let rows = SmallTestCommitmentConfig::N_D
+            + SmallTestCommitmentConfig::N_B
             + 1
             + 1
-            + DefaultCommitmentConfig::N_A;
+            + SmallTestCommitmentConfig::N_A;
         assert!(rows > 0);
         assert_eq!(m_a_vec.len() % rows, 0);
         let cols = m_a_vec.len() / rows;

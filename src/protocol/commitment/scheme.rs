@@ -11,6 +11,20 @@ use crate::{CanonicalField, FieldCore, Polynomial};
 /// Output type for batched commitments.
 pub(crate) type BatchCommitOutput<C, H> = Result<Vec<(C, H)>, HachiError>;
 
+/// Witness data produced alongside a ring-native commitment.
+///
+/// Contains the commitment itself plus the decomposed witness vectors `s`
+/// (basis-decomposed input) and `t_hat` (basis-decomposed inner Ajtai output)
+/// from the two-layer Ajtai construction (§4.1).
+pub struct CommitWitness<C, F: FieldCore, const D: usize> {
+    /// The ring commitment (outer Ajtai output `u = B · t̂`).
+    pub commitment: C,
+    /// Per-block basis-decomposed input vectors.
+    pub s: Vec<Vec<CyclotomicRing<F, D>>>,
+    /// Per-block basis-decomposed inner Ajtai output vectors.
+    pub t_hat: Vec<Vec<CyclotomicRing<F, D>>>,
+}
+
 /// Generic commitment-scheme interface used by Hachi protocol code.
 pub trait CommitmentScheme<F>: Clone + Send + Sync + 'static
 where
@@ -147,18 +161,10 @@ where
     /// # Errors
     ///
     /// Returns an error if block layout mismatches config or commitment fails.
-    #[allow(clippy::type_complexity)]
     fn commit_ring_blocks(
         f_blocks: &[Vec<CyclotomicRing<F, D>>],
         setup: &Self::ProverSetup,
-    ) -> Result<
-        (
-            Self::Commitment,
-            Vec<Vec<CyclotomicRing<F, D>>>,
-            Vec<Vec<CyclotomicRing<F, D>>>,
-        ),
-        HachiError,
-    >;
+    ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError>;
 
     /// Commit to a flat coefficient table `(f_i)_{i∈{0,1}^ℓ}` in ring form.
     ///
@@ -177,18 +183,10 @@ where
     /// Returns an error if `f_coeffs.len()` does not match the configured block
     /// layout, if internal index computations overflow, or if the underlying
     /// commitment routine fails.
-    #[allow(clippy::type_complexity)]
     fn commit_coeffs(
         f_coeffs: &[CyclotomicRing<F, D>],
         setup: &Self::ProverSetup,
-    ) -> Result<
-        (
-            Self::Commitment,
-            Vec<Vec<CyclotomicRing<F, D>>>,
-            Vec<Vec<CyclotomicRing<F, D>>>,
-        ),
-        HachiError,
-    > {
+    ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let num_blocks = checked_pow2(Cfg::R)?;
         let block_len = checked_pow2(Cfg::M)?;
         let expected_len = num_blocks
@@ -234,19 +232,11 @@ where
     ///
     /// Returns an error if dimensions are inconsistent or any index is out
     /// of range.
-    #[allow(clippy::type_complexity)]
     fn commit_onehot(
         onehot_k: usize,
         indices: &[usize],
         setup: &Self::ProverSetup,
-    ) -> Result<
-        (
-            Self::Commitment,
-            Vec<Vec<CyclotomicRing<F, D>>>,
-            Vec<Vec<CyclotomicRing<F, D>>>,
-        ),
-        HachiError,
-    > {
+    ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let num_chunks = indices.len();
         let total_field_elems = num_chunks
             .checked_mul(onehot_k)

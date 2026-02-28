@@ -4,7 +4,7 @@ use super::config::{
     ensure_block_layout, ensure_matrix_shape, ensure_supported_num_vars, validate_and_derive_layout,
 };
 use super::onehot::{inner_ajtai_onehot, map_onehot_to_sparse_blocks};
-use super::scheme::RingCommitmentScheme;
+use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
 use super::utils::crt_ntt::{build_ntt_cache, NttMatrixCache};
 use super::utils::linear::{
@@ -79,18 +79,10 @@ where
         Ok((setup.clone(), setup))
     }
 
-    #[allow(clippy::type_complexity)]
     fn commit_ring_blocks(
         f_blocks: &[Vec<CyclotomicRing<F, D>>],
         setup: &Self::ProverSetup,
-    ) -> Result<
-        (
-            Self::Commitment,
-            Vec<Vec<CyclotomicRing<F, D>>>,
-            Vec<Vec<CyclotomicRing<F, D>>>,
-        ),
-        HachiError,
-    > {
+    ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let layout = validate_and_derive_layout::<Cfg, D>()?;
         ensure_supported_num_vars(setup.max_num_vars, layout.required_vars)?;
         ensure_block_layout(f_blocks, layout)?;
@@ -112,22 +104,18 @@ where
         }
 
         let u = mat_vec_mul_ntt_cached(&setup.ntt_cache, MatrixSlot::B, &t_hat_flat)?;
-        Ok((RingCommitment { u }, s_all, t_hat_all))
+        Ok(CommitWitness {
+            commitment: RingCommitment { u },
+            s: s_all,
+            t_hat: t_hat_all,
+        })
     }
 
-    #[allow(clippy::type_complexity)]
     fn commit_onehot(
         onehot_k: usize,
         indices: &[usize],
         setup: &Self::ProverSetup,
-    ) -> Result<
-        (
-            Self::Commitment,
-            Vec<Vec<CyclotomicRing<F, D>>>,
-            Vec<Vec<CyclotomicRing<F, D>>>,
-        ),
-        HachiError,
-    > {
+    ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let layout = validate_and_derive_layout::<Cfg, D>()?;
         ensure_supported_num_vars(setup.max_num_vars, layout.required_vars)?;
         ensure_matrix_shape(&setup.A, Cfg::N_A, layout.inner_width, "A")?;
@@ -150,6 +138,10 @@ where
         }
 
         let u = mat_vec_mul_ntt_cached(&setup.ntt_cache, MatrixSlot::B, &t_hat_flat)?;
-        Ok((RingCommitment { u }, s_all, t_hat_all))
+        Ok(CommitWitness {
+            commitment: RingCommitment { u },
+            s: s_all,
+            t_hat: t_hat_all,
+        })
     }
 }

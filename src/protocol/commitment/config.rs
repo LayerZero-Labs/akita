@@ -31,6 +31,37 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     const CHALLENGE_WEIGHT: usize;
 }
 
+/// Deterministic upper bound for the stage-1 folded-witness infinity norm.
+///
+/// This encodes the bound used in `QuadraticEquation::compute_z_hat`:
+/// `||z||_inf <= 2^R * ω * (b/2)` where `b = 2^LOG_BASIS`.
+///
+/// # Panics
+///
+/// Panics when `log_basis` or `r` are out of range, or when intermediate
+/// products overflow `u128`.
+pub(super) const fn beta_linf_fold_bound(
+    r: usize,
+    challenge_weight: usize,
+    log_basis: u32,
+) -> u128 {
+    assert!(log_basis > 0 && log_basis < 128, "invalid LOG_BASIS");
+    assert!(r < 128, "R must be < 128");
+
+    let blocks = 1u128 << r;
+    let b = 1u128 << log_basis;
+    let half_b = b / 2;
+
+    let term = match blocks.checked_mul(challenge_weight as u128) {
+        Some(v) => v,
+        None => panic!("beta bound overflow (blocks * challenge_weight)"),
+    };
+    match term.checked_mul(half_b) {
+        Some(v) => v,
+        None => panic!("beta bound overflow (term * half_b)"),
+    }
+}
+
 /// Runtime-derived dimensions from a `CommitmentConfig`.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct CommitmentLayout {
@@ -167,11 +198,11 @@ pub(super) fn ensure_matrix_shape<T>(
     Ok(())
 }
 
-/// Default correctness-first config for early protocol integration.
+/// Small correctness-first config for tests and local benchmarks.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct DefaultCommitmentConfig;
+pub struct SmallTestCommitmentConfig;
 
-impl CommitmentConfig for DefaultCommitmentConfig {
+impl CommitmentConfig for SmallTestCommitmentConfig {
     const D: usize = 16;
     const M: usize = 4;
     const R: usize = 2;
@@ -183,4 +214,38 @@ impl CommitmentConfig for DefaultCommitmentConfig {
     const TAU: usize = 4;
     const BETA: u128 = 1_000_000;
     const CHALLENGE_WEIGHT: usize = 3;
+}
+
+/// Production-oriented profile for 128-bit base fields (`Fp128<P>`).
+///
+/// This profile targets the `D = 512`, `n_A = n_B = n_D = 1` regime with
+/// base-16 decomposition over ~128-bit moduli.
+///
+/// Rigorous β derivation for the stage-1 folded witness `z`:
+/// - In `compute_z_hat`, each coordinate is `z[j] = Σ_i s_i[j].mul_by_sparse(c_i)`.
+/// - `balanced_decompose_pow2` yields per-coefficient digits in `[-b/2, b/2)` where
+///   `b = 2^LOG_BASIS`, so each input coefficient has `|·| <= b/2`.
+/// - Challenges use exactly `ω = CHALLENGE_WEIGHT` nonzeros in `{±1}`.
+/// - Therefore each `mul_by_sparse` output coefficient is a signed sum of `ω`
+///   shifted digits, hence bounded by `ω * (b/2)`.
+/// - Summing over `2^R` blocks gives:
+///   `||z||_inf <= 2^R * ω * (b/2)`.
+///
+/// For this profile: `R=11`, `ω=19`, `b=16`, so
+/// `β = 2^11 * 19 * 8 = 311_296`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ProductionFp128CommitmentConfig;
+
+impl CommitmentConfig for ProductionFp128CommitmentConfig {
+    const D: usize = 512;
+    const M: usize = 11;
+    const R: usize = 11;
+    const N_A: usize = 1;
+    const N_B: usize = 1;
+    const N_D: usize = 1;
+    const LOG_BASIS: u32 = 4;
+    const DELTA: usize = 32;
+    const TAU: usize = 5;
+    const BETA: u128 = beta_linf_fold_bound(Self::R, Self::CHALLENGE_WEIGHT, Self::LOG_BASIS);
+    const CHALLENGE_WEIGHT: usize = 19;
 }

@@ -7,7 +7,7 @@
 
 use super::eq_poly::EqPolynomial;
 use super::split_eq::GruenSplitEq;
-use super::{fold_evals, multilinear_eval, range_check_eval};
+use super::{fold_evals_in_place, multilinear_eval, range_check_eval};
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
@@ -122,7 +122,7 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for NormSumcheckProv
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {
         self.split_eq.bind(r);
-        self.w_table = fold_evals(&self.w_table, r);
+        fold_evals_in_place(&mut self.w_table, r);
     }
 }
 
@@ -184,13 +184,13 @@ mod tests {
     use crate::protocol::transcript::labels;
     use crate::protocol::{
         prove_sumcheck, verify_sumcheck, Blake2bTranscript, CommitmentConfig, CommitmentScheme,
-        DefaultCommitmentConfig, HachiCommitmentScheme, Transcript,
+        HachiCommitmentScheme, SmallTestCommitmentConfig, Transcript,
     };
     use crate::{FieldCore, FromSmallInt};
 
     type F = Fp64<4294967197>;
     const D: usize = 8;
-    type Cfg = DefaultCommitmentConfig;
+    type Cfg = SmallTestCommitmentConfig;
     type Scheme = HachiCommitmentScheme<{ Cfg::D }, Cfg>;
 
     fn ring_with_small_coeff(value: u64) -> CyclotomicRing<F, D> {
@@ -206,13 +206,13 @@ mod tests {
             ring_with_small_coeff(3),
         ];
         let r = vec![ring_with_small_coeff(0), ring_with_small_coeff(1)];
-        let mut w_evals = build_w_coeffs::<F, D, DefaultCommitmentConfig>(&z, &r);
+        let mut w_evals = build_w_coeffs::<F, D, SmallTestCommitmentConfig>(&z, &r);
 
         let target_len = w_evals.len().next_power_of_two();
         w_evals.resize(target_len, F::zero());
         let num_vars = target_len.trailing_zeros() as usize;
         let tau: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
-        let b = 1usize << DefaultCommitmentConfig::LOG_BASIS;
+        let b = 1usize << SmallTestCommitmentConfig::LOG_BASIS;
 
         let eq_table = EqPolynomial::evals(&tau);
         let _claim: F = (0..w_evals.len())
@@ -244,8 +244,8 @@ mod tests {
 
     #[test]
     fn norm_sumcheck_uses_prove_w_evals() {
-        let alpha = DefaultCommitmentConfig::D.trailing_zeros() as usize;
-        let num_vars = DefaultCommitmentConfig::R + DefaultCommitmentConfig::M + alpha;
+        let alpha = SmallTestCommitmentConfig::D.trailing_zeros() as usize;
+        let num_vars = SmallTestCommitmentConfig::R + SmallTestCommitmentConfig::M + alpha;
         let len = 1usize << num_vars;
         let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
         let poly = DenseMultilinearEvals::new_padded(evals);
@@ -272,7 +272,7 @@ mod tests {
         let tau: Vec<F> = (0..num_sumcheck_vars)
             .map(|i| F::from_u64((i + 3) as u64))
             .collect();
-        let b = 1usize << DefaultCommitmentConfig::LOG_BASIS;
+        let b = 1usize << SmallTestCommitmentConfig::LOG_BASIS;
 
         let eq_table = EqPolynomial::evals(&tau);
         let _claim: F = (0..w_evals.len())

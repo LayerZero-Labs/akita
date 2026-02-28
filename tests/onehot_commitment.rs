@@ -21,7 +21,7 @@ fn assert_onehot_matches_dense(onehot_k: usize, indices: &[usize]) {
     let setup = psetup();
 
     // Optimized sparse path.
-    let (c_sparse, s_sparse, t_sparse) =
+    let w_sparse =
         <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(onehot_k, indices, &setup)
             .unwrap();
 
@@ -39,14 +39,20 @@ fn assert_onehot_matches_dense(onehot_k: usize, indices: &[usize]) {
             hachi_pcs::algebra::CyclotomicRing::from_coefficients(coeffs)
         })
         .collect();
-    let (c_dense, s_dense, t_dense) =
+    let w_dense =
         <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_coeffs(&ring_coeffs, &setup)
             .unwrap();
 
-    assert_eq!(c_sparse, c_dense, "commitments must match");
-    assert_eq!(s_sparse, s_dense, "s_all (decomposed witness) must match");
     assert_eq!(
-        t_sparse, t_dense,
+        w_sparse.commitment, w_dense.commitment,
+        "commitments must match"
+    );
+    assert_eq!(
+        w_sparse.s, w_dense.s,
+        "s_all (decomposed witness) must match"
+    );
+    assert_eq!(
+        w_sparse.t_hat, w_dense.t_hat,
         "t_hat_all (decomposed inner output) must match"
     );
 }

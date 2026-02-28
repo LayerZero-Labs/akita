@@ -7,8 +7,8 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::primitives::poly::multilinear_lagrange_basis;
 use crate::protocol::commitment::{
-    CommitmentConfig, CommitmentScheme, DefaultCommitmentConfig, HachiCommitmentCore,
-    RingCommitment, RingCommitmentScheme, RingCommitmentSetup,
+    CommitmentConfig, CommitmentScheme, HachiCommitmentCore, RingCommitment, RingCommitmentScheme,
+    RingCommitmentSetup,
 };
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{HachiCommitmentHint, HachiProof, SumcheckAux};
@@ -34,10 +34,12 @@ use crate::protocol::transcript::labels::{
 };
 #[cfg(test)]
 use crate::protocol::transcript::Blake2bTranscript;
+#[cfg(test)]
+use crate::protocol::SmallTestCommitmentConfig;
 
 /// End-to-end PCS wrapper, generic over ring degree `D` and config `Cfg`.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct HachiCommitmentScheme<const D: usize, Cfg: CommitmentConfig = DefaultCommitmentConfig> {
+pub struct HachiCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
     _cfg: std::marker::PhantomData<Cfg>,
 }
 
@@ -69,17 +71,16 @@ where
     ) -> Result<(Self::Commitment, Self::OpeningProofHint), HachiError> {
         let ring_coeffs =
             reduce_coeffs_to_ring_elements::<F, { D }>(poly.num_vars(), &poly.coeffs())?;
-        let (commitment, s, t_hat) = <HachiCommitmentCore as RingCommitmentScheme<
-            F,
-            { D },
-            Cfg,
-        >>::commit_coeffs(&ring_coeffs, setup)?;
+        let w = <HachiCommitmentCore as RingCommitmentScheme<F, { D }, Cfg>>::commit_coeffs(
+            &ring_coeffs,
+            setup,
+        )?;
         let hint = HachiCommitmentHint {
-            s,
-            t_hat,
+            s: w.s,
+            t_hat: w.t_hat,
             ring_coeffs,
         };
-        Ok((commitment, hint))
+        Ok((w.commitment, hint))
     }
 
     fn prove<T: Transcript<F>, P: Polynomial<F>>(
@@ -397,7 +398,7 @@ mod tests {
     use crate::test_utils::F;
     use crate::{CommitmentScheme, FromSmallInt, Polynomial};
 
-    type Cfg = DefaultCommitmentConfig;
+    type Cfg = SmallTestCommitmentConfig;
     type Scheme = HachiCommitmentScheme<{ Cfg::D }, Cfg>;
 
     #[test]
@@ -439,5 +440,50 @@ mod tests {
         );
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn verify_rejects_wrong_opening() {
+        let alpha = Cfg::D.trailing_zeros() as usize;
+        let num_vars = Cfg::R + Cfg::M + alpha;
+        let len = 1usize << num_vars;
+
+        let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
+        let poly = DenseMultilinearEvals::new_padded(evals);
+
+        let setup = <Scheme as CommitmentScheme<F>>::setup_prover(num_vars);
+        let verifier_setup = <Scheme as CommitmentScheme<F>>::setup_verifier(&setup);
+
+        let (commitment, hint) = <Scheme as CommitmentScheme<F>>::commit(&poly, &setup).unwrap();
+
+        let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
+        let opening = poly.evaluate(&opening_point);
+
+        let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+        let proof = <Scheme as CommitmentScheme<F>>::prove(
+            &setup,
+            &poly,
+            &opening_point,
+            Some(hint),
+            &mut prover_transcript,
+            &commitment,
+        )
+        .unwrap();
+
+        let wrong_opening = opening + F::one();
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+        let result = <Scheme as CommitmentScheme<F>>::verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &wrong_opening,
+            &commitment,
+        );
+
+        assert!(
+            result.is_err(),
+            "verify must reject an incorrect opening value"
+        );
     }
 }

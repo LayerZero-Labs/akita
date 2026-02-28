@@ -282,12 +282,11 @@ where
         WCfg::<D, Cfg>::M,
     )?;
 
-    let (commitment, _, _) =
-        <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::commit_ring_blocks(
-            &blocks, &w_setup,
-        )?;
+    let w = <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::commit_ring_blocks(
+        &blocks, &w_setup,
+    )?;
 
-    Ok(commitment)
+    Ok(w.commitment)
 }
 
 pub(crate) fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D>, alpha: &F) -> F {

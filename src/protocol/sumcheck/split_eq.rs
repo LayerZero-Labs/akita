@@ -151,7 +151,7 @@ impl<E: FieldCore> GruenSplitEq<E> {
 mod tests {
     use super::*;
     use crate::algebra::Fp64;
-    use crate::protocol::sumcheck::fold_evals;
+    use crate::protocol::sumcheck::fold_evals_in_place;
     use crate::{FieldSampling, FromSmallInt};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
@@ -186,7 +186,7 @@ mod tests {
                 }
 
                 let r = F::sample(&mut rng);
-                full_eq = fold_evals(&full_eq, r);
+                fold_evals_in_place(&mut full_eq, r);
                 split_eq.bind(r);
             }
         }
