@@ -6,9 +6,10 @@ use super::config::{
 use super::onehot::{inner_ajtai_onehot, map_onehot_to_sparse_blocks};
 use super::scheme::RingCommitmentScheme;
 use super::types::RingCommitment;
+use super::utils::crt_ntt::{build_ntt_cache, NttMatrixCache};
 use super::utils::linear::{
-    decompose_block, decompose_rows, mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many,
-    mat_vec_mul_unchecked,
+    decompose_block, decompose_rows, mat_vec_mul_ntt_cached, mat_vec_mul_ntt_many_cached,
+    MatrixSlot,
 };
 use super::utils::matrix::{derive_public_matrix, sample_public_matrix_seed, PublicMatrixSeed};
 use super::CommitmentConfig;
@@ -30,6 +31,8 @@ pub struct RingCommitmentSetup<F: FieldCore, const D: usize> {
     pub B: Vec<Vec<CyclotomicRing<F, D>>>,
     /// Prover matrix `D ∈ R_q^{n_D × δ·2^R}` (§4.2).
     pub D: Vec<Vec<CyclotomicRing<F, D>>>,
+    /// Pre-converted CRT+NTT matrices for dense mat-vec paths.
+    pub(crate) ntt_cache: NttMatrixCache<D>,
 }
 
 /// Concrete §4.1 commitment core.
@@ -60,12 +63,15 @@ where
             b"D",
         );
 
+        let ntt_cache = build_ntt_cache::<F, D>(&a_matrix, &b_matrix, &d_matrix)?;
+
         let setup = RingCommitmentSetup {
             max_num_vars,
             public_matrix_seed,
             A: a_matrix,
             B: b_matrix,
             D: d_matrix,
+            ntt_cache,
         };
         ensure_matrix_shape(&setup.A, Cfg::N_A, layout.inner_width, "A")?;
         ensure_matrix_shape(&setup.B, Cfg::N_B, layout.outer_width, "B")?;
@@ -96,7 +102,7 @@ where
             .map(|block| decompose_block(block, Cfg::DELTA, Cfg::LOG_BASIS))
             .collect();
 
-        let t_all = mat_vec_mul_crt_ntt_many(&setup.A, &s_all)?;
+        let t_all = mat_vec_mul_ntt_many_cached(&setup.ntt_cache, MatrixSlot::A, &s_all)?;
         let mut t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(layout.num_blocks);
         let mut t_hat_flat: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(layout.outer_width);
         for t_i in t_all {
@@ -105,7 +111,7 @@ where
             t_hat_all.push(t_hat_i);
         }
 
-        let u = mat_vec_mul_crt_ntt(&setup.B, &t_hat_flat)?;
+        let u = mat_vec_mul_ntt_cached(&setup.ntt_cache, MatrixSlot::B, &t_hat_flat)?;
         Ok((RingCommitment { u }, s_all, t_hat_all))
     }
 
@@ -143,7 +149,7 @@ where
             t_hat_all.push(t_hat_i);
         }
 
-        let u = mat_vec_mul_unchecked(&setup.B, &t_hat_flat);
+        let u = mat_vec_mul_ntt_cached(&setup.ntt_cache, MatrixSlot::B, &t_hat_flat)?;
         Ok((RingCommitment { u }, s_all, t_hat_all))
     }
 }

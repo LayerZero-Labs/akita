@@ -2,11 +2,15 @@
 
 use crate::algebra::ntt::{MontCoeff, PrimeWidth};
 use crate::algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
+use crate::cfg_iter;
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::{CanonicalField, FieldCore};
 
-use super::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
+use super::crt_ntt::{select_crt_ntt_params, NttMatrixCache, ProtocolCrtNttParams};
 
+#[cfg(test)]
 pub(crate) fn mat_vec_mul_unchecked<F: FieldCore + CanonicalField, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
     vec: &[CyclotomicRing<F, D>],
@@ -47,6 +51,7 @@ fn accumulate_pointwise_product_into<W: PrimeWidth, const K: usize, const D: usi
     }
 }
 
+#[cfg(test)]
 fn precompute_dense_mat_ntt_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -65,6 +70,7 @@ fn precompute_dense_mat_ntt_with_params<
         .collect()
 }
 
+#[cfg(test)]
 fn mat_vec_mul_dense_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -93,6 +99,7 @@ fn mat_vec_mul_dense_with_params<
         .collect()
 }
 
+#[cfg(test)]
 fn mat_vec_mul_dense_many_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -126,10 +133,7 @@ fn mat_vec_mul_dense_many_with_params<
         .collect()
 }
 
-/// Dense mat-vec multiplication routed through protocol CRT+NTT dispatch.
-///
-/// This replaces coefficient-domain schoolbook multiplication for dense
-/// protocol paths while preserving the existing sparse-specialized paths.
+#[cfg(test)]
 pub(crate) fn mat_vec_mul_crt_ntt<F: FieldCore + CanonicalField, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
     vec: &[CyclotomicRing<F, D>],
@@ -143,10 +147,7 @@ pub(crate) fn mat_vec_mul_crt_ntt<F: FieldCore + CanonicalField, const D: usize>
     Ok(out)
 }
 
-/// Dense batched mat-vec multiplication routed through protocol CRT+NTT dispatch.
-///
-/// This variant precomputes the matrix in CRT+NTT domain once and applies it
-/// to many input vectors, which is faster when `mat` is reused.
+#[cfg(test)]
 pub(crate) fn mat_vec_mul_crt_ntt_many<F: FieldCore + CanonicalField, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
     vecs: &[Vec<CyclotomicRing<F, D>>],
@@ -157,6 +158,111 @@ pub(crate) fn mat_vec_mul_crt_ntt_many<F: FieldCore + CanonicalField, const D: u
         ProtocolCrtNttParams::Q64(p) => mat_vec_mul_dense_many_with_params(mat, vecs, p),
         ProtocolCrtNttParams::Q128(p) => mat_vec_mul_dense_many_with_params(mat, vecs, p),
     };
+    Ok(out)
+}
+
+/// Selector for which cached matrix to use.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum MatrixSlot {
+    A,
+    B,
+    D,
+}
+
+fn mat_vec_mul_precomputed_with_params<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    vec: &[CyclotomicRing<F, D>],
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<CyclotomicRing<F, D>> {
+    let ntt_vec: Vec<CyclotomicCrtNtt<W, K, D>> = vec
+        .iter()
+        .map(|v| CyclotomicCrtNtt::from_ring_with_params(v, params))
+        .collect();
+
+    cfg_iter!(ntt_mat)
+        .map(|row_ntt| {
+            debug_assert_eq!(row_ntt.len(), ntt_vec.len());
+            let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
+            for (a_ntt, x_ntt) in row_ntt.iter().zip(ntt_vec.iter()) {
+                accumulate_pointwise_product_into(&mut acc, a_ntt, x_ntt, params);
+            }
+            acc.to_ring_with_params(params)
+        })
+        .collect()
+}
+
+fn mat_vec_mul_precomputed_many_with_params<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    vecs: &[Vec<CyclotomicRing<F, D>>],
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    cfg_iter!(vecs)
+        .map(|vec| mat_vec_mul_precomputed_with_params(ntt_mat, vec, params))
+        .collect()
+}
+
+macro_rules! dispatch_cached {
+    ($cache:expr, $which:expr, $params:expr, $func:ident $(, $arg:expr)*) => {{
+        #[allow(non_snake_case)]
+        match ($cache, $params) {
+            (NttMatrixCache::Q32 { A, B, D: Dm }, ProtocolCrtNttParams::Q32(p)) => {
+                let m = match $which { MatrixSlot::A => A, MatrixSlot::B => B, MatrixSlot::D => Dm };
+                $func(m, $($arg,)* p)
+            }
+            (NttMatrixCache::Q64 { A, B, D: Dm }, ProtocolCrtNttParams::Q64(p)) => {
+                let m = match $which { MatrixSlot::A => A, MatrixSlot::B => B, MatrixSlot::D => Dm };
+                $func(m, $($arg,)* p)
+            }
+            (NttMatrixCache::Q128 { A, B, D: Dm }, ProtocolCrtNttParams::Q128(p)) => {
+                let m = match $which { MatrixSlot::A => A, MatrixSlot::B => B, MatrixSlot::D => Dm };
+                $func(m, $($arg,)* p)
+            }
+            _ => return Err(HachiError::InvalidSetup("NTT cache / param family mismatch".into())),
+        }
+    }};
+}
+
+/// Dense mat-vec using a pre-converted NTT matrix from the cache.
+pub(crate) fn mat_vec_mul_ntt_cached<F: FieldCore + CanonicalField, const D: usize>(
+    cache: &NttMatrixCache<D>,
+    which: MatrixSlot,
+    vec: &[CyclotomicRing<F, D>],
+) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
+    let params = select_crt_ntt_params::<F, D>()?;
+    let out = dispatch_cached!(
+        cache,
+        which,
+        &params,
+        mat_vec_mul_precomputed_with_params,
+        vec
+    );
+    Ok(out)
+}
+
+/// Batched dense mat-vec using a pre-converted NTT matrix from the cache.
+pub(crate) fn mat_vec_mul_ntt_many_cached<F: FieldCore + CanonicalField, const D: usize>(
+    cache: &NttMatrixCache<D>,
+    which: MatrixSlot,
+    vecs: &[Vec<CyclotomicRing<F, D>>],
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError> {
+    let params = select_crt_ntt_params::<F, D>()?;
+    let out = dispatch_cached!(
+        cache,
+        which,
+        &params,
+        mat_vec_mul_precomputed_many_with_params,
+        vecs
+    );
     Ok(out)
 }
 
