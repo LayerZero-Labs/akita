@@ -244,16 +244,23 @@ struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
 
 impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConfig<D, Cfg> {
     const D: usize = D;
-    const M: usize = 11;
-    const R: usize = 0;
     const N_A: usize = Cfg::N_A;
     const N_B: usize = Cfg::N_B;
     const N_D: usize = Cfg::N_D;
     const LOG_BASIS: u32 = Cfg::LOG_BASIS;
     const DELTA: usize = Cfg::DELTA;
     const TAU: usize = Cfg::TAU;
-    const BETA: u128 = Cfg::BETA;
     const CHALLENGE_WEIGHT: usize = Cfg::CHALLENGE_WEIGHT;
+
+    fn commitment_layout(
+        max_num_vars: usize,
+    ) -> Result<crate::protocol::commitment::HachiCommitmentLayout, HachiError> {
+        let alpha = D.trailing_zeros() as usize;
+        let m_vars = max_num_vars
+            .checked_sub(alpha)
+            .ok_or_else(|| HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string()))?;
+        crate::protocol::commitment::HachiCommitmentLayout::new::<Self>(m_vars, 0)
+    }
 }
 
 fn commit_w<F, const D: usize, Cfg>(w: &[F]) -> Result<RingCommitment<F, D>, HachiError>
@@ -262,7 +269,6 @@ where
     Cfg: CommitmentConfig,
 {
     type WCfg<const D: usize, C> = WCommitmentConfig<D, C>;
-    let block_len = 1usize << WCfg::<D, Cfg>::M;
 
     let ring_elems: Vec<CyclotomicRing<F, D>> = w
         .chunks(D)
@@ -273,13 +279,15 @@ where
         })
         .collect();
 
+    let block_len = ring_elems.len().next_power_of_two().max(1);
     let mut padded = ring_elems;
     padded.resize(block_len, CyclotomicRing::<F, D>::zero());
-
+    let m_vars = block_len.trailing_zeros() as usize;
+    let max_num_vars = m_vars + D.trailing_zeros() as usize;
     let blocks = vec![padded];
 
     let (w_setup, _) = <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::setup(
-        WCfg::<D, Cfg>::M,
+        max_num_vars,
     )?;
 
     let w = <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::commit_ring_blocks(

@@ -12,16 +12,19 @@ struct BadDegreeConfig;
 
 impl CommitmentConfig for BadDegreeConfig {
     const D: usize = 32;
-    const M: usize = 4;
-    const R: usize = 2;
     const N_A: usize = 8;
     const N_B: usize = 4;
     const N_D: usize = 4;
     const LOG_BASIS: u32 = 4;
     const DELTA: usize = 8;
     const TAU: usize = 4;
-    const BETA: u128 = 1_000_000;
     const CHALLENGE_WEIGHT: usize = 3;
+
+    fn commitment_layout(
+        _max_num_vars: usize,
+    ) -> Result<hachi_pcs::protocol::commitment::HachiCommitmentLayout, HachiError> {
+        hachi_pcs::protocol::commitment::HachiCommitmentLayout::new::<Self>(4, 2)
+    }
 }
 
 #[derive(Clone)]
@@ -29,16 +32,19 @@ struct BadDigitBudgetConfig;
 
 impl CommitmentConfig for BadDigitBudgetConfig {
     const D: usize = 64;
-    const M: usize = 4;
-    const R: usize = 2;
     const N_A: usize = 8;
     const N_B: usize = 4;
     const N_D: usize = 4;
     const LOG_BASIS: u32 = 32;
     const DELTA: usize = 5; // 160 > 128
     const TAU: usize = 4;
-    const BETA: u128 = 1_000_000;
     const CHALLENGE_WEIGHT: usize = 3;
+
+    fn commitment_layout(
+        _max_num_vars: usize,
+    ) -> Result<hachi_pcs::protocol::commitment::HachiCommitmentLayout, HachiError> {
+        hachi_pcs::protocol::commitment::HachiCommitmentLayout::new::<Self>(4, 2)
+    }
 }
 
 #[test]
@@ -48,16 +54,16 @@ fn setup_shape_is_consistent() {
     let (p2, v2) =
         <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::setup(16).unwrap();
 
-    assert_eq!(p1.max_num_vars, 16);
-    assert_eq!(v1.max_num_vars, 16);
-    assert_eq!(p2.max_num_vars, 16);
-    assert_eq!(v2.max_num_vars, 16);
-    assert_eq!(p1.A.len(), TinyConfig::N_A);
-    assert_eq!(p1.A[0].len(), (1usize << TinyConfig::M) * TinyConfig::DELTA);
-    assert_eq!(p1.B.len(), TinyConfig::N_B);
+    assert_eq!(p1.expanded.seed.max_num_vars, 16);
+    assert_eq!(v1.expanded.seed.max_num_vars, 16);
+    assert_eq!(p2.expanded.seed.max_num_vars, 16);
+    assert_eq!(v2.expanded.seed.max_num_vars, 16);
+    assert_eq!(p1.expanded.A.len(), TinyConfig::N_A);
+    assert_eq!(p1.expanded.A[0].len(), hachi_pcs::test_utils::BLOCK_LEN * TinyConfig::DELTA);
+    assert_eq!(p1.expanded.B.len(), TinyConfig::N_B);
     assert_eq!(
-        p1.B[0].len(),
-        TinyConfig::N_A * TinyConfig::DELTA * (1usize << TinyConfig::R)
+        p1.expanded.B[0].len(),
+        TinyConfig::N_A * TinyConfig::DELTA * hachi_pcs::test_utils::NUM_BLOCKS
     );
 }
 
@@ -80,8 +86,8 @@ fn commit_is_deterministic_and_shape_consistent() {
     assert_eq!(w1.s, w2.s);
     assert_eq!(w1.t_hat, w2.t_hat);
 
-    let num_blocks = 1usize << TinyConfig::R;
-    let block_len = 1usize << TinyConfig::M;
+    let num_blocks = hachi_pcs::test_utils::NUM_BLOCKS;
+    let block_len = hachi_pcs::test_utils::BLOCK_LEN;
     assert_eq!(w1.commitment.u.len(), TinyConfig::N_B);
     assert_eq!(w1.s.len(), num_blocks);
     assert_eq!(w1.t_hat.len(), num_blocks);
@@ -106,8 +112,8 @@ fn commit_ring_coeffs_matches_block_commitment() {
     )
     .unwrap();
 
-    let num_blocks = 1usize << TinyConfig::R;
-    let block_len = 1usize << TinyConfig::M;
+    let num_blocks = hachi_pcs::test_utils::NUM_BLOCKS;
+    let block_len = hachi_pcs::test_utils::BLOCK_LEN;
     let mut f_coeffs = Vec::with_capacity(num_blocks * block_len);
     for j in 0..block_len {
         for block in blocks.iter().take(num_blocks) {
@@ -136,7 +142,7 @@ fn opening_satisfies_inner_and_outer_equations() {
     .unwrap();
 
     for i in 0..w.s.len() {
-        let lhs = mat_vec_mul(&psetup.A, &w.s[i]);
+        let lhs = mat_vec_mul(&psetup.expanded.A, &w.s[i]);
         let rhs: Vec<CyclotomicRing<F, D>> = (0..TinyConfig::N_A)
             .map(|j| {
                 let start = j * TinyConfig::DELTA;
@@ -152,15 +158,16 @@ fn opening_satisfies_inner_and_outer_equations() {
 
     let t_hat_flat: Vec<CyclotomicRing<F, D>> =
         w.t_hat.iter().flat_map(|x| x.iter().copied()).collect();
-    let outer = mat_vec_mul(&psetup.B, &t_hat_flat);
+    let outer = mat_vec_mul(&psetup.expanded.B, &t_hat_flat);
     assert_eq!(outer, w.commitment.u);
 }
 
 #[test]
 fn small_test_config_has_expected_shape() {
     assert_eq!(SmallTestCommitmentConfig::D, 16);
-    assert_eq!(1usize << SmallTestCommitmentConfig::M, 16);
-    assert_eq!(1usize << SmallTestCommitmentConfig::R, 4);
+    let layout = SmallTestCommitmentConfig::commitment_layout(8).unwrap();
+    assert_eq!(layout.block_len, 16);
+    assert_eq!(layout.num_blocks, 4);
     let delta = SmallTestCommitmentConfig::DELTA;
     assert!(delta > 0);
 }

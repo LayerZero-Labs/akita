@@ -13,6 +13,89 @@ use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
 use crate::parallel::*;
 use crate::{FieldCore, FromSmallInt};
 
+#[derive(Clone)]
+struct RangeAffinePrecomp<E: FieldCore> {
+    /// `coeff_mix[i][k] = c_{i+k} * binom(i+k, i)`, where
+    /// `R(w) = sum_m c_m * w^m` is the range-check polynomial.
+    coeff_mix: Vec<Vec<E>>,
+    degree_q: usize,
+}
+
+impl<E: FieldCore + FromSmallInt> RangeAffinePrecomp<E> {
+    fn new(b: usize) -> Self {
+        assert!(b >= 1, "b must be at least 1");
+        let range_coeffs = range_check_coeffs::<E>(b);
+        let degree_q = range_coeffs.len() - 1;
+        let mut coeff_mix = Vec::with_capacity(degree_q + 1);
+
+        for i in 0..=degree_q {
+            let row_len = degree_q - i + 1;
+            let mut row = Vec::with_capacity(row_len);
+            let mut binom_m_i = E::one(); // binom(i, i)
+            for k in 0..row_len {
+                let m = i + k;
+                row.push(range_coeffs[m] * binom_m_i);
+                if k + 1 < row_len {
+                    let numer = E::from_u64((m + 1) as u64);
+                    let denom = E::from_u64((k + 1) as u64);
+                    let denom_inv = denom
+                        .inv()
+                        .expect("field characteristic too small for range-check precomputation");
+                    binom_m_i = binom_m_i * numer * denom_inv;
+                }
+            }
+            coeff_mix.push(row);
+        }
+
+        Self {
+            coeff_mix,
+            degree_q,
+        }
+    }
+}
+
+/// Coefficients of `R(w) = w * Π_{k=1}^{b-1}(w-k)(w+k)` in increasing degree order.
+fn range_check_coeffs<E: FieldCore + FromSmallInt>(b: usize) -> Vec<E> {
+    assert!(b >= 1, "b must be at least 1");
+    let mut coeffs = vec![E::zero(), E::one()]; // R(w)=w when b=1
+    for k in 1..b {
+        let k_e = E::from_u64(k as u64);
+        let k_sq = k_e * k_e;
+        // Multiply by (w^2 - k^2).
+        let mut next = vec![E::zero(); coeffs.len() + 2];
+        for (idx, c) in coeffs.iter().enumerate() {
+            next[idx] = next[idx] - *c * k_sq;
+            next[idx + 2] = next[idx + 2] + *c;
+        }
+        coeffs = next;
+    }
+    coeffs
+}
+
+fn accumulate_affine_range_coeffs<E: FieldCore>(
+    out_coeffs: &mut [E],
+    coeff_mix: &[Vec<E>],
+    w_0: E,
+    a: E,
+    scale: E,
+) {
+    let mut a_pow = E::one();
+    for (i, row) in coeff_mix.iter().enumerate() {
+        let mut h_i_w0 = E::zero();
+        for coeff in row.iter().rev() {
+            h_i_w0 = h_i_w0 * w_0 + *coeff;
+        }
+        out_coeffs[i] = out_coeffs[i] + scale * a_pow * h_i_w0;
+        a_pow = a_pow * a;
+    }
+}
+
+fn trim_trailing_zeros<E: FieldCore>(coeffs: &mut Vec<E>) {
+    while coeffs.len() > 1 && coeffs.last().is_some_and(|c| c.is_zero()) {
+        coeffs.pop();
+    }
+}
+
 /// Prover for `F_{0,τ₀}(x,y) = ẽq(τ₀,(x,y)) · w̃(x,y) · range_check(w̃(x,y), b)`.
 ///
 /// Uses the Gruen/Dao-Thaler optimization: the eq polynomial is factored into
@@ -23,6 +106,7 @@ use crate::{FieldCore, FromSmallInt};
 pub struct NormSumcheckProver<E: FieldCore> {
     split_eq: GruenSplitEq<E>,
     w_table: Vec<E>,
+    range_precomp: RangeAffinePrecomp<E>,
     num_vars: usize,
     b: usize,
 }
@@ -39,6 +123,7 @@ impl<E: FieldCore + FromSmallInt> NormSumcheckProver<E> {
         Self {
             split_eq: GruenSplitEq::new(tau),
             w_table: w_evals,
+            range_precomp: RangeAffinePrecomp::new(b),
             num_vars,
             b,
         }
@@ -60,36 +145,32 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for NormSumcheckProv
 
     fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
         let half = self.w_table.len() / 2;
-        let degree_q = 2 * self.b - 1;
-        let num_points_q = degree_q + 1;
+        let num_coeffs_q = self.range_precomp.degree_q + 1;
 
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros();
-        let b = self.b;
+        let coeff_mix = &self.range_precomp.coeff_mix;
 
         #[cfg(feature = "parallel")]
-        let q_evals = {
+        let q_coeffs = {
             (0..half)
                 .into_par_iter()
                 .fold(
-                    || vec![E::zero(); num_points_q],
-                    |mut evals, j| {
+                    || vec![E::zero(); num_coeffs_q],
+                    |mut coeffs, j| {
                         let j_low = j & (num_first - 1);
                         let j_high = j >> first_bits;
                         let eq_rem = e_first[j_low] * e_second[j_high];
                         let w_0 = self.w_table[2 * j];
                         let w_1 = self.w_table[2 * j + 1];
-                        for (t, eval) in evals.iter_mut().enumerate() {
-                            let t_e = E::from_u64(t as u64);
-                            let w_t = w_0 + t_e * (w_1 - w_0);
-                            *eval = *eval + eq_rem * range_check_eval(w_t, b);
-                        }
-                        evals
+                        let a = w_1 - w_0;
+                        accumulate_affine_range_coeffs(&mut coeffs, coeff_mix, w_0, a, eq_rem);
+                        coeffs
                     },
                 )
                 .reduce(
-                    || vec![E::zero(); num_points_q],
+                    || vec![E::zero(); num_coeffs_q],
                     |mut a, b_vec| {
                         for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
                             *ai = *ai + *bi;
@@ -99,24 +180,23 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for NormSumcheckProv
                 )
         };
         #[cfg(not(feature = "parallel"))]
-        let q_evals = {
-            let mut evals = vec![E::zero(); num_points_q];
+        let q_coeffs = {
+            let mut coeffs = vec![E::zero(); num_coeffs_q];
             for j in 0..half {
                 let j_low = j & (num_first - 1);
                 let j_high = j >> first_bits;
                 let eq_rem = e_first[j_low] * e_second[j_high];
                 let w_0 = self.w_table[2 * j];
                 let w_1 = self.w_table[2 * j + 1];
-                for (t, eval) in evals.iter_mut().enumerate() {
-                    let t_e = E::from_u64(t as u64);
-                    let w_t = w_0 + t_e * (w_1 - w_0);
-                    *eval = *eval + eq_rem * range_check_eval(w_t, b);
-                }
+                let a = w_1 - w_0;
+                accumulate_affine_range_coeffs(&mut coeffs, coeff_mix, w_0, a, eq_rem);
             }
-            evals
+            coeffs
         };
 
-        let q_poly = UniPoly::from_evals(&q_evals);
+        let mut q_coeffs = q_coeffs;
+        trim_trailing_zeros(&mut q_coeffs);
+        let q_poly = UniPoly::from_coeffs(q_coeffs);
         self.split_eq.gruen_mul(&q_poly)
     }
 
@@ -187,15 +267,135 @@ mod tests {
         HachiCommitmentScheme, SmallTestCommitmentConfig, Transcript,
     };
     use crate::{FieldCore, FromSmallInt};
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
     type F = Fp64<4294967197>;
     const D: usize = 8;
     type Cfg = SmallTestCommitmentConfig;
     type Scheme = HachiCommitmentScheme<{ Cfg::D }, Cfg>;
 
+    struct LegacyNormSumcheckProver<E: FieldCore> {
+        split_eq: GruenSplitEq<E>,
+        w_table: Vec<E>,
+        num_vars: usize,
+        b: usize,
+    }
+
+    impl<E: FieldCore + FromSmallInt> LegacyNormSumcheckProver<E> {
+        fn new(tau: &[E], w_evals: Vec<E>, b: usize) -> Self {
+            let num_vars = tau.len();
+            assert_eq!(w_evals.len(), 1 << num_vars);
+            Self {
+                split_eq: GruenSplitEq::new(tau),
+                w_table: w_evals,
+                num_vars,
+                b,
+            }
+        }
+    }
+
+    impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for LegacyNormSumcheckProver<E> {
+        fn num_rounds(&self) -> usize {
+            self.num_vars
+        }
+
+        fn degree_bound(&self) -> usize {
+            2 * self.b
+        }
+
+        fn input_claim(&self) -> E {
+            E::zero()
+        }
+
+        fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
+            let half = self.w_table.len() / 2;
+            let degree_q = 2 * self.b - 1;
+            let num_points_q = degree_q + 1;
+
+            let (e_first, e_second) = self.split_eq.remaining_eq_tables();
+            let num_first = e_first.len();
+            let first_bits = num_first.trailing_zeros();
+            let b = self.b;
+
+            let mut q_evals = vec![E::zero(); num_points_q];
+            for j in 0..half {
+                let j_low = j & (num_first - 1);
+                let j_high = j >> first_bits;
+                let eq_rem = e_first[j_low] * e_second[j_high];
+                let w_0 = self.w_table[2 * j];
+                let w_1 = self.w_table[2 * j + 1];
+                for (t, eval) in q_evals.iter_mut().enumerate() {
+                    let t_e = E::from_u64(t as u64);
+                    let w_t = w_0 + t_e * (w_1 - w_0);
+                    *eval = *eval + eq_rem * range_check_eval(w_t, b);
+                }
+            }
+
+            let q_poly = UniPoly::from_evals(&q_evals);
+            self.split_eq.gruen_mul(&q_poly)
+        }
+
+        fn ingest_challenge(&mut self, _round: usize, r: E) {
+            self.split_eq.bind(r);
+            fold_evals_in_place(&mut self.w_table, r);
+        }
+    }
+
     fn ring_with_small_coeff(value: u64) -> CyclotomicRing<F, D> {
         let coeffs = std::array::from_fn(|_| F::from_u64(value));
         CyclotomicRing::from_coefficients(coeffs)
+    }
+
+    #[test]
+    fn norm_sumcheck_matches_legacy_round_kernel() {
+        let mut rng = StdRng::seed_from_u64(0xC0FFEE);
+        for case_idx in 0..8u64 {
+            let num_vars = 6;
+            let n = 1usize << num_vars;
+            let b = if case_idx % 2 == 0 { 8 } else { 16 };
+            let w_evals: Vec<F> = (0..n)
+                .map(|i| F::from_u64((i as u64 * 31 + case_idx * 17) % b as u64))
+                .collect();
+            let tau: Vec<F> = (0..num_vars)
+                .map(|_| F::from_u64(rand::Rng::gen_range(&mut rng, 1u64..=257)))
+                .collect();
+
+            let mut optimized = NormSumcheckProver::new(&tau, w_evals.clone(), b);
+            let mut legacy = LegacyNormSumcheckProver::new(&tau, w_evals, b);
+
+            let mut claim_opt = F::zero();
+            let mut claim_old = F::zero();
+            for round in 0..num_vars {
+                let g_opt = optimized.compute_round_univariate(round, claim_opt);
+                let g_old = legacy.compute_round_univariate(round, claim_old);
+                assert_eq!(
+                    g_opt, g_old,
+                    "round poly mismatch for case {case_idx} round {round}"
+                );
+
+                assert_eq!(
+                    g_opt.evaluate(&F::zero()) + g_opt.evaluate(&F::one()),
+                    claim_opt,
+                    "optimized hint mismatch for case {case_idx} round {round}"
+                );
+                assert_eq!(
+                    g_old.evaluate(&F::zero()) + g_old.evaluate(&F::one()),
+                    claim_old,
+                    "legacy hint mismatch for case {case_idx} round {round}"
+                );
+
+                let r = F::from_u64(rand::Rng::gen_range(&mut rng, 1u64..=257));
+                claim_opt = g_opt.evaluate(&r);
+                claim_old = g_old.evaluate(&r);
+                optimized.ingest_challenge(round, r);
+                legacy.ingest_challenge(round, r);
+            }
+            assert_eq!(
+                claim_opt, claim_old,
+                "final claim mismatch for case {case_idx}"
+            );
+        }
     }
 
     #[test]
@@ -245,7 +445,8 @@ mod tests {
     #[test]
     fn norm_sumcheck_uses_prove_w_evals() {
         let alpha = SmallTestCommitmentConfig::D.trailing_zeros() as usize;
-        let num_vars = SmallTestCommitmentConfig::R + SmallTestCommitmentConfig::M + alpha;
+        let layout = SmallTestCommitmentConfig::commitment_layout(8).unwrap();
+        let num_vars = layout.m_vars + layout.r_vars + alpha;
         let len = 1usize << num_vars;
         let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
         let poly = DenseMultilinearEvals::new_padded(evals);

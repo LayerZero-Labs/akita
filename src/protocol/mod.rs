@@ -16,9 +16,10 @@ pub mod transcript;
 
 pub use commitment::{
     AppendToTranscript, CommitmentConfig, CommitmentScheme, DummyProof, HachiCommitment,
-    HachiCommitmentCore, HachiOpeningClaim, HachiOpeningPoint, ProductionFp128CommitmentConfig,
-    RingCommitment, RingCommitmentScheme, RingCommitmentSetup, SmallTestCommitmentConfig,
-    StreamingCommitmentScheme,
+    HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup, HachiOpeningClaim,
+    HachiOpeningPoint, HachiPreparedSetup, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup,
+    ProductionFp128CommitmentConfig, RingCommitment, RingCommitmentScheme,
+    SmallTestCommitmentConfig, StreamingCommitmentScheme,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use opening_point::RingOpeningPoint;

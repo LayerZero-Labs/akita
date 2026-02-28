@@ -11,7 +11,10 @@ use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttMatrixCache;
 use crate::protocol::commitment::utils::linear::{mat_vec_mul_ntt_cached, MatrixSlot};
 use crate::protocol::commitment::utils::norm::{detect_field_modulus, vec_inf_norm};
-use crate::protocol::commitment::{CommitmentConfig, RingCommitment, RingCommitmentSetup};
+use crate::protocol::commitment::{
+    CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiProverSetup,
+    HachiVerifierSetup, RingCommitment,
+};
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::HachiCommitmentHint;
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
@@ -23,13 +26,14 @@ use crate::{CanonicalField, FieldCore};
 fn compute_w_hat<F, const D: usize, Cfg>(
     opening_point: &RingOpeningPoint<F>,
     s: &[Vec<CyclotomicRing<F, D>>],
+    layout: HachiCommitmentLayout,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
     F: FieldCore + CanonicalField,
     Cfg: CommitmentConfig,
 {
     let a = &opening_point.a;
-    let block_len = 1usize << Cfg::M;
+    let block_len = layout.block_len;
     let delta = Cfg::DELTA;
     let log_basis = Cfg::LOG_BASIS;
 
@@ -63,6 +67,7 @@ fn compute_v<F: FieldCore + CanonicalField, const D: usize>(
 fn compute_z_hat<F, const D: usize, Cfg>(
     s: &[Vec<CyclotomicRing<F, D>>],
     challenges: &[SparseChallenge],
+    layout: HachiCommitmentLayout,
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
 where
     F: FieldCore + CanonicalField,
@@ -84,10 +89,10 @@ where
 
     let modulus = detect_field_modulus::<F>();
     let norm = vec_inf_norm(&z, modulus);
-    if norm > Cfg::BETA {
+    let beta = Cfg::beta_bound(layout)?;
+    if norm > beta {
         return Err(HachiError::InvalidInput(format!(
-            "prover abort: ||z||_inf = {norm} > beta = {}",
-            Cfg::BETA
+            "prover abort: ||z||_inf = {norm} > beta = {beta}"
         )));
     }
 
@@ -133,7 +138,7 @@ where
     /// Returns an error if the norm check, challenge sampling, or matrix
     /// generation fails.
     pub fn new_prover<T: Transcript<F>>(
-        setup: &RingCommitmentSetup<F, D>,
+        setup: &HachiProverSetup<F, D>,
         ring_opening_point: &RingOpeningPoint<F>,
         hint: &HachiCommitmentHint<F, D>,
         transcript: &mut T,
@@ -141,10 +146,11 @@ where
         y_ring: &CyclotomicRing<F, D>,
     ) -> Result<Self, HachiError> {
         // Steps 1–3: w_i = a^T G_{2^m} s_i, then ŵ_i = G_1^{-1}(w_i)
-        let w_hat = compute_w_hat::<F, D, Cfg>(ring_opening_point, &hint.s);
+        let layout = setup.layout();
+        let w_hat = compute_w_hat::<F, D, Cfg>(ring_opening_point, &hint.s, layout);
 
         // Step 4: v = D · ŵ
-        let v = compute_v(&setup.ntt_cache, &w_hat)?;
+        let v = compute_v(setup.ntt_cache()?, &w_hat)?;
 
         // Step 5: append v to transcript
         transcript.append_serde(ABSORB_PROVER_V, &v);
@@ -157,14 +163,14 @@ where
         let challenges = sample_sparse_challenges::<F, T, D>(
             transcript,
             CHALLENGE_STAGE1_FOLD,
-            1usize << Cfg::R,
+            layout.num_blocks,
             &challenge_cfg,
         )?;
 
         // Steps 7–9: z = Σ c_i · s_i, check ‖z‖_∞ ≤ β, then ẑ = J^{-1}(z)
-        let z_hat = compute_z_hat::<F, D, Cfg>(&hint.s, &challenges)?;
+        let z_hat = compute_z_hat::<F, D, Cfg>(&hint.s, &challenges, layout)?;
 
-        let m = generate_m::<F, D, Cfg>(setup, ring_opening_point, &challenges)?;
+        let m = generate_m::<F, D, Cfg>(&setup.expanded, ring_opening_point, &challenges)?;
         let y = generate_y::<F, D, Cfg>(&v, &commitment.u, y_ring)?;
         let z = generate_z(&w_hat, &hint.t_hat, &z_hat);
 
@@ -187,15 +193,16 @@ where
     ///
     /// Returns an error if challenge derivation fails.
     pub fn new_verifier<T: Transcript<F>>(
-        setup: &RingCommitmentSetup<F, D>,
+        setup: &HachiVerifierSetup<F, D>,
         ring_opening_point: &RingOpeningPoint<F>,
         v: &Vec<CyclotomicRing<F, D>>,
         transcript: &mut T,
         commitment: &RingCommitment<F, D>,
         y_ring: &CyclotomicRing<F, D>,
     ) -> Result<Self, HachiError> {
-        let challenges = derive_stage1_challenges::<F, T, D, Cfg>(transcript, v)?;
-        let m = generate_m::<F, D, Cfg>(setup, ring_opening_point, &challenges)?;
+        let layout = setup.expanded.seed.layout;
+        let challenges = derive_stage1_challenges::<F, T, D, Cfg>(transcript, v, layout.num_blocks)?;
+        let m = generate_m::<F, D, Cfg>(&setup.expanded, ring_opening_point, &challenges)?;
         let y = generate_y::<F, D, Cfg>(v, &commitment.u, y_ring)?;
 
         Ok(Self {
@@ -250,6 +257,7 @@ where
 pub(crate) fn derive_stage1_challenges<F, T, const D: usize, Cfg: CommitmentConfig>(
     transcript: &mut T,
     v: &Vec<CyclotomicRing<F, D>>,
+    num_blocks: usize,
 ) -> Result<Vec<SparseChallenge>, HachiError>
 where
     F: FieldCore + CanonicalField,
@@ -259,9 +267,6 @@ where
         weight: Cfg::CHALLENGE_WEIGHT,
         nonzero_coeffs: vec![-1, 1],
     };
-    let num_blocks = 1usize
-        .checked_shl(Cfg::R as u32)
-        .ok_or_else(|| HachiError::InvalidSetup("2^R does not fit usize".to_string()))?;
     transcript.append_serde(ABSORB_PROVER_V, v);
     sample_sparse_challenges::<F, T, D>(
         transcript,
@@ -347,19 +352,16 @@ fn gadget_block_diag_scalars<F: FieldCore>(blocks: usize, row: &[F]) -> Vec<Vec<
 }
 
 pub(crate) fn generate_m<F, const D: usize, Cfg: CommitmentConfig>(
-    setup: &RingCommitmentSetup<F, D>,
+    setup: &HachiExpandedSetup<F, D>,
     opening_point: &RingOpeningPoint<F>,
     challenges: &[SparseChallenge],
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError>
 where
     F: FieldCore + CanonicalField,
 {
-    let num_blocks = 1usize
-        .checked_shl(Cfg::R as u32)
-        .ok_or_else(|| HachiError::InvalidSetup("2^R does not fit usize".to_string()))?;
-    let block_len = 1usize
-        .checked_shl(Cfg::M as u32)
-        .ok_or_else(|| HachiError::InvalidSetup("2^M does not fit usize".to_string()))?;
+    let layout = setup.seed.layout;
+    let num_blocks = layout.num_blocks;
+    let block_len = layout.block_len;
     let w_len = Cfg::DELTA
         .checked_mul(num_blocks)
         .ok_or_else(|| HachiError::InvalidSetup("w length overflow".to_string()))?;
@@ -570,7 +572,7 @@ mod tests {
     }
 
     struct Fixture {
-        setup: RingCommitmentSetup<F, D>,
+        setup: HachiProverSetup<F, D>,
         commitment_u: Vec<CyclotomicRing<F, D>>,
         point: RingOpeningPoint<F>,
         blocks: Vec<Vec<CyclotomicRing<F, D>>>,
@@ -632,7 +634,7 @@ mod tests {
         let w_hat = f.quad_eq.w_hat().unwrap();
         let w_hat_flat: Vec<CyclotomicRing<F, D>> =
             w_hat.iter().flat_map(|v| v.iter().copied()).collect();
-        let lhs = mat_vec_mul(&f.setup.D, &w_hat_flat);
+        let lhs = mat_vec_mul(&f.setup.expanded.D, &w_hat_flat);
 
         assert_eq!(lhs, f.quad_eq.v(), "Row 1 failed: D · ŵ ≠ v");
     }
@@ -645,7 +647,7 @@ mod tests {
         let hint = f.quad_eq.hint().unwrap();
         let t_hat_flat: Vec<CyclotomicRing<F, D>> =
             hint.t_hat.iter().flat_map(|v| v.iter().copied()).collect();
-        let lhs = mat_vec_mul(&f.setup.B, &t_hat_flat);
+        let lhs = mat_vec_mul(&f.setup.expanded.B, &t_hat_flat);
 
         assert_eq!(lhs, f.commitment_u, "Row 2 failed: B · t̂ ≠ u");
     }
@@ -728,7 +730,7 @@ mod tests {
         }
 
         let z_recovered = recompose_z_hat(f.quad_eq.z_hat().unwrap());
-        let rhs = mat_vec_mul(&f.setup.A, &z_recovered);
+        let rhs = mat_vec_mul(&f.setup.expanded.A, &z_recovered);
 
         assert_eq!(lhs, rhs, "Row 5 failed: (c^T ⊗ G_nA)t̂ ≠ A · J · ẑ");
     }

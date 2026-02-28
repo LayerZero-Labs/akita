@@ -1,8 +1,7 @@
 //! Commitment-scheme trait surface for Hachi protocol code.
 
-use super::config::CommitmentConfig;
+use super::config::{CommitmentConfig, HachiCommitmentLayout};
 use super::transcript_append::AppendToTranscript;
-use super::utils::math::checked_pow2;
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::transcript::Transcript;
@@ -153,6 +152,13 @@ where
     /// Returns an error if dimensions are inconsistent with `Cfg`.
     fn setup(max_num_vars: usize) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError>;
 
+    /// Read the runtime layout carried by `setup`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when setup metadata is inconsistent.
+    fn layout(setup: &Self::ProverSetup) -> Result<HachiCommitmentLayout, HachiError>;
+
     /// Commit to ring blocks arranged as `2^R` vectors of length `2^M`.
     ///
     /// Returns `(commitment, s, t_hat)` where `s` and `t_hat` are the
@@ -187,8 +193,9 @@ where
         f_coeffs: &[CyclotomicRing<F, D>],
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
-        let num_blocks = checked_pow2(Cfg::R)?;
-        let block_len = checked_pow2(Cfg::M)?;
+        let layout = Self::layout(setup)?;
+        let num_blocks = layout.num_blocks;
+        let block_len = layout.block_len;
         let expected_len = num_blocks
             .checked_mul(block_len)
             .ok_or_else(|| HachiError::InvalidSetup("coefficient length overflow".to_string()))?;
@@ -203,7 +210,7 @@ where
         for i in 0..num_blocks {
             let mut block = Vec::with_capacity(block_len);
             for j in 0..block_len {
-                let idx = (j << Cfg::R)
+                let idx = (j << layout.r_vars)
                     .checked_add(i)
                     .ok_or_else(|| HachiError::InvalidSetup("index overflow".to_string()))?;
                 block.push(f_coeffs[idx]);

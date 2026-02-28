@@ -7,8 +7,8 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::primitives::poly::multilinear_lagrange_basis;
 use crate::protocol::commitment::{
-    CommitmentConfig, CommitmentScheme, HachiCommitmentCore, RingCommitment, RingCommitmentScheme,
-    RingCommitmentSetup,
+    CommitmentConfig, CommitmentScheme, HachiCommitmentCore, HachiProverSetup, HachiVerifierSetup,
+    RingCommitment, RingCommitmentScheme,
 };
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{HachiCommitmentHint, HachiProof, SumcheckAux};
@@ -48,8 +48,8 @@ where
     F: FieldCore + CanonicalField + FieldSampling,
     Cfg: CommitmentConfig,
 {
-    type ProverSetup = RingCommitmentSetup<F, D>;
-    type VerifierSetup = RingCommitmentSetup<F, D>;
+    type ProverSetup = HachiProverSetup<F, D>;
+    type VerifierSetup = HachiVerifierSetup<F, D>;
     type Commitment = RingCommitment<F, D>;
     type Proof = HachiProof<F, D>;
     type OpeningProofHint = HachiCommitmentHint<F, D>;
@@ -62,7 +62,9 @@ where
     }
 
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
-        setup.clone()
+        HachiVerifierSetup {
+            expanded: setup.expanded.clone(),
+        }
     }
 
     fn commit<P: Polynomial<F>>(
@@ -106,8 +108,13 @@ where
             });
         }
 
-        let ring_opening_point =
-            ring_opening_point_from_field::<F>(&opening_point[..reduced_len], Cfg::R, Cfg::M)?;
+        let layout =
+            <HachiCommitmentCore as RingCommitmentScheme<F, { D }, Cfg>>::layout(setup)?;
+        let ring_opening_point = ring_opening_point_from_field::<F>(
+            &opening_point[..reduced_len],
+            layout.r_vars,
+            layout.m_vars,
+        )?;
 
         let y_ring =
             evaluate_packed_ring_poly::<F, { D }>(&hint.ring_coeffs, &opening_point[..reduced_len]);
@@ -176,8 +183,12 @@ where
         }
 
         // §4.2 Quadratic equation
-        let ring_opening_point =
-            ring_opening_point_from_field::<F>(reduced_opening_point, Cfg::R, Cfg::M)?;
+        let layout = setup.expanded.seed.layout;
+        let ring_opening_point = ring_opening_point_from_field::<F>(
+            reduced_opening_point,
+            layout.r_vars,
+            layout.m_vars,
+        )?;
         let quad_eq = QuadraticEquation::<F, { D }, Cfg>::new_verifier(
             setup,
             &ring_opening_point,
@@ -241,7 +252,7 @@ where
 #[cfg(test)]
 pub(crate) fn rederive_alpha_and_m_a<F, const D: usize, Cfg>(
     proof: &HachiProof<F, D>,
-    setup: &RingCommitmentSetup<F, D>,
+    setup: &HachiVerifierSetup<F, D>,
     opening_point: &[F],
     commitment: &RingCommitment<F, D>,
 ) -> Result<(F, Vec<F>), HachiError>
@@ -254,8 +265,12 @@ where
         .len()
         .checked_sub(alpha_bits)
         .ok_or_else(|| HachiError::InvalidSetup("opening point length underflow".to_string()))?;
-    let ring_opening_point =
-        ring_opening_point_from_field::<F>(&opening_point[..reduced_len], Cfg::R, Cfg::M)?;
+    let layout = setup.expanded.seed.layout;
+    let ring_opening_point = ring_opening_point_from_field::<F>(
+        &opening_point[..reduced_len],
+        layout.r_vars,
+        layout.m_vars,
+    )?;
     let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_HACHI_PROTOCOL);
     let quad_eq = QuadraticEquation::<F, D, Cfg>::new_verifier(
         setup,
@@ -404,7 +419,8 @@ mod tests {
     #[test]
     fn verify_passes_for_consistent_opening() {
         let alpha = Cfg::D.trailing_zeros() as usize;
-        let num_vars = Cfg::R + Cfg::M + alpha;
+        let layout = Cfg::commitment_layout(16).unwrap();
+        let num_vars = layout.m_vars + layout.r_vars + alpha;
         let len = 1usize << num_vars;
 
         let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
@@ -445,7 +461,8 @@ mod tests {
     #[test]
     fn verify_rejects_wrong_opening() {
         let alpha = Cfg::D.trailing_zeros() as usize;
-        let num_vars = Cfg::R + Cfg::M + alpha;
+        let layout = Cfg::commitment_layout(16).unwrap();
+        let num_vars = layout.m_vars + layout.r_vars + alpha;
         let len = 1usize << num_vars;
 
         let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();

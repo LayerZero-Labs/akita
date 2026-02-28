@@ -20,16 +20,20 @@ macro_rules! bench_config {
         struct $name;
         impl CommitmentConfig for $name {
             const D: usize = D;
-            const M: usize = $m;
-            const R: usize = $r;
             const N_A: usize = ProductionFp128CommitmentConfig::N_A;
             const N_B: usize = ProductionFp128CommitmentConfig::N_B;
             const N_D: usize = ProductionFp128CommitmentConfig::N_D;
             const LOG_BASIS: u32 = ProductionFp128CommitmentConfig::LOG_BASIS;
             const DELTA: usize = ProductionFp128CommitmentConfig::DELTA;
             const TAU: usize = ProductionFp128CommitmentConfig::TAU;
-            const BETA: u128 = ProductionFp128CommitmentConfig::BETA;
             const CHALLENGE_WEIGHT: usize = ProductionFp128CommitmentConfig::CHALLENGE_WEIGHT;
+
+            fn commitment_layout(
+                _max_num_vars: usize,
+            ) -> Result<hachi_pcs::protocol::commitment::HachiCommitmentLayout, hachi_pcs::error::HachiError>
+            {
+                hachi_pcs::protocol::commitment::HachiCommitmentLayout::new::<Self>($m, $r)
+            }
         }
     };
 }
@@ -41,7 +45,8 @@ bench_config!(CfgNv20, M = 8, R = 8);
 
 fn num_vars<Cfg: CommitmentConfig>() -> usize {
     let alpha = Cfg::D.trailing_zeros() as usize;
-    Cfg::R + Cfg::M + alpha
+    let layout = Cfg::commitment_layout(0).expect("benchmark layout");
+    layout.m_vars + layout.r_vars + alpha
 }
 
 fn make_poly(nv: usize) -> DenseMultilinearEvals<F> {

@@ -8,8 +8,14 @@ mod transcript_append;
 mod types;
 pub(crate) mod utils;
 
-pub use commit::{HachiCommitmentCore, RingCommitmentSetup};
-pub use config::{CommitmentConfig, ProductionFp128CommitmentConfig, SmallTestCommitmentConfig};
+pub use commit::{
+    HachiCommitmentCore, HachiExpandedSetup, HachiPreparedSetup, HachiProverSetup, HachiSetupSeed,
+    HachiVerifierSetup,
+};
+pub use config::{
+    CommitmentConfig, HachiCommitmentLayout, ProductionFp128CommitmentConfig,
+    SmallTestCommitmentConfig,
+};
 pub use scheme::{
     CommitWitness, CommitmentScheme, RingCommitmentScheme, StreamingCommitmentScheme,
 };

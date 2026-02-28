@@ -277,7 +277,8 @@ mod tests {
     #[test]
     fn relation_sumcheck_uses_prove_w_evals() {
         let alpha_bits = SmallTestCommitmentConfig::D.trailing_zeros() as usize;
-        let num_vars = SmallTestCommitmentConfig::R + SmallTestCommitmentConfig::M + alpha_bits;
+        let layout = SmallTestCommitmentConfig::commitment_layout(8).unwrap();
+        let num_vars = layout.m_vars + layout.r_vars + alpha_bits;
         let len = 1usize << num_vars;
         let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
         let poly = DenseMultilinearEvals::new_padded(evals);
@@ -299,7 +300,7 @@ mod tests {
 
         let (alpha, m_a_vec) = rederive_alpha_and_m_a::<F, { Cfg::D }, Cfg>(
             &proof,
-            &setup,
+            &Scheme::setup_verifier(&setup),
             &opening_point,
             &commitment,
         )
