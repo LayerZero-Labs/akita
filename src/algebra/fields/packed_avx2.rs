@@ -9,8 +9,6 @@ use core::fmt;
 use core::mem::transmute;
 use core::ops::{Add, Mul, Sub};
 
-// ===== Helpers =====
-
 /// Duplicate high 32 bits of each 64-bit lane into the low 32 bits.
 /// Uses the float `movehdup` instruction which runs on port 5 (doesn't compete
 /// with multiply on ports 0/1).
@@ -51,8 +49,6 @@ unsafe fn mul64_64_256(x: __m256i, y: __m256i) -> (__m256i, __m256i) {
 
     (res_hi, res_lo)
 }
-
-// ===== PackedFp32Avx2 (8-wide) =====
 
 /// Number of `Fp32` lanes in an AVX2 packed vector.
 pub const FP32_WIDTH: usize = 8;
@@ -252,8 +248,6 @@ impl<const P: u32> PackedField for PackedFp32Avx2<P> {
         Self([value; FP32_WIDTH])
     }
 }
-
-// ===== PackedFp64Avx2 (4-wide) =====
 
 /// Number of `Fp64` lanes in an AVX2 packed vector.
 pub const FP64_WIDTH: usize = 4;
@@ -499,8 +493,6 @@ impl<const P: u64> PackedField for PackedFp64Avx2<P> {
         Self([value; FP64_WIDTH])
     }
 }
-
-// ===== PackedFp128Avx2 (4-wide, SoA) =====
 
 /// Number of `Fp128` lanes in an AVX2 packed vector.
 pub const FP128_WIDTH: usize = 4;

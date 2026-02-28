@@ -51,8 +51,6 @@ fn assert_onehot_matches_dense(onehot_k: usize, indices: &[usize]) {
     );
 }
 
-// --- K > D tests ---
-
 #[test]
 fn onehot_k_gt_d_basic() {
     // K=128, D=64 => K/D=2, T=2 => T*K=256 => 4 ring elements
@@ -76,8 +74,6 @@ fn onehot_k_much_gt_d() {
     assert_onehot_matches_dense(256, &[100]);
 }
 
-// --- K = D tests ---
-
 #[test]
 fn onehot_k_eq_d_basic() {
     // K=64=D, T=4 => 4 ring elements, each is a monomial X^{idx}.
@@ -90,8 +86,6 @@ fn onehot_k_eq_d_varied() {
     assert_onehot_matches_dense(64, &[1, 2, 3, 4]);
     assert_onehot_matches_dense(64, &[63, 63, 63, 63]);
 }
-
-// --- K < D tests ---
 
 #[test]
 fn onehot_k_lt_d_basic() {
@@ -125,8 +119,6 @@ fn onehot_k_lt_d_ratio_2() {
     let indices = vec![0, 31, 16, 8, 24, 4, 12, 20];
     assert_onehot_matches_dense(32, &indices);
 }
-
-// --- Validation tests ---
 
 #[test]
 fn onehot_rejects_non_divisible_k_and_d() {

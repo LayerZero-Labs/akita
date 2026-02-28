@@ -86,10 +86,6 @@ fn sumcheck_proof_verifier_driver_is_transcript_deterministic() {
     assert_eq!(final_claim_1, claim);
 }
 
-// ---------------------------------------------------------------------------
-// Dense multilinear sumcheck helpers (test-only)
-// ---------------------------------------------------------------------------
-
 /// Evaluate a multilinear polynomial (given by its boolean-hypercube evaluations
 /// in little-endian bit order) at an arbitrary point via iterated folding.
 fn multilinear_eval<E: FieldCore>(evals: &[E], point: &[E]) -> E {
@@ -177,7 +173,6 @@ fn prove_and_verify_single_sumcheck() {
     let evals: Vec<F> = (1..=n).map(|i| F::from_u64(i as u64)).collect();
     let claim: F = evals.iter().copied().fold(F::zero(), |a, b| a + b);
 
-    // --- Prover ---
     let mut prover = DenseSumcheckProver {
         evals: evals.clone(),
         num_vars,
@@ -191,7 +186,6 @@ fn prove_and_verify_single_sumcheck() {
         })
         .unwrap();
 
-    // --- Verifier ---
     let verifier = DenseSumcheckVerifier {
         evals,
         num_vars,
@@ -259,7 +253,6 @@ fn e2e_sumcheck_2_pow_20() {
     let evals: Vec<F> = (0..n).map(|_| F::sample(&mut rng)).collect();
     let claim: F = evals.iter().copied().fold(F::zero(), |a, b| a + b);
 
-    // ---- Prover ----
     let t0 = Instant::now();
 
     let mut prover = DenseSumcheckProver {
@@ -283,7 +276,6 @@ fn e2e_sumcheck_2_pow_20() {
     let oracle_eval = multilinear_eval(&evals, &prover_challenges);
     assert_eq!(final_claim, oracle_eval);
 
-    // ---- Verifier ----
     let t1 = Instant::now();
 
     let verifier = DenseSumcheckVerifier {

@@ -16,10 +16,6 @@ use std::time::Instant;
 
 type F = Fp64<4294967197>;
 
-// ---------------------------------------------------------------------------
-// F_0 sumcheck
-// ---------------------------------------------------------------------------
-
 fn run_f0_e2e(num_u: usize, num_l: usize, b: usize) {
     let num_vars = num_u + num_l;
     let n = 1usize << num_vars;
@@ -28,7 +24,6 @@ fn run_f0_e2e(num_u: usize, num_l: usize, b: usize) {
     let w_evals: Vec<F> = (0..n).map(|i| F::from_u64((i % b) as u64)).collect();
     let tau0: Vec<F> = (0..num_vars).map(|_| F::sample(&mut rng)).collect();
 
-    // ---- Prover ----
     let t0 = Instant::now();
     let mut prover = NormSumcheckProver::new(&tau0, w_evals.clone(), b);
     let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
@@ -81,10 +76,6 @@ fn f0_sumcheck_e2e() {
 fn f0_sumcheck_e2e_larger_b() {
     run_f0_e2e(3, 3, 3);
 }
-
-// ---------------------------------------------------------------------------
-// F_α sumcheck
-// ---------------------------------------------------------------------------
 
 fn run_f_alpha_e2e<const D: usize>(num_u: usize, num_i: usize) {
     let num_l = D.trailing_zeros() as usize;
@@ -141,7 +132,6 @@ fn run_f_alpha_e2e<const D: usize>(num_u: usize, num_i: usize) {
     let u_eval_ring = CyclotomicRing::<F, D>::zero();
     let ring_alpha = F::one();
 
-    // ---- Prover ----
     let t0 = Instant::now();
     let mut prover =
         RelationSumcheckProver::new(w_evals.clone(), &alpha_evals_y, &m_evals_x, num_u, num_l);
@@ -161,7 +151,6 @@ fn run_f_alpha_e2e<const D: usize>(num_u: usize, num_i: usize) {
         * multilinear_eval(&m_evals_x, x_ch);
     assert_eq!(final_claim, oracle, "prover final claim != oracle eval");
 
-    // ---- Verifier ----
     let t1 = Instant::now();
     let verifier = RelationSumcheckVerifier::<F, D>::new(
         w_evals,
@@ -207,10 +196,6 @@ fn f_alpha_sumcheck_e2e() {
 fn f_alpha_sumcheck_e2e_asymmetric() {
     run_f_alpha_e2e::<4>(5, 4);
 }
-
-// ---------------------------------------------------------------------------
-// UniPoly::from_evals correctness
-// ---------------------------------------------------------------------------
 
 #[test]
 fn from_evals_matches_direct_polynomial() {

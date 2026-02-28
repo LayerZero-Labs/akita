@@ -337,8 +337,6 @@ impl<const P: u128> PackedField for PackedFp128Neon<P> {
     }
 }
 
-// ===== PackedFp32Neon =====
-
 /// Number of packed `Fp32` lanes.
 pub const FP32_WIDTH: usize = 4;
 
@@ -553,8 +551,6 @@ impl<const P: u32> PackedField for PackedFp32Neon<P> {
         Self { vals: [value.0; 4] }
     }
 }
-
-// ===== PackedFp64Neon =====
 
 /// Number of packed `Fp64` lanes.
 pub const FP64_WIDTH: usize = 2;

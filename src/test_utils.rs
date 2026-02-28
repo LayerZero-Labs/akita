@@ -35,10 +35,6 @@ pub const LOG_BASIS: u32 = TinyConfig::LOG_BASIS;
 pub const N_A: usize = TinyConfig::N_A;
 pub const TAU: usize = TinyConfig::TAU;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 pub fn mat_vec_mul(
     mat: &[Vec<CyclotomicRing<F, D>>],
     vec: &[CyclotomicRing<F, D>],

@@ -129,6 +129,7 @@ impl<E: FieldCore + CanonicalField> SumcheckInstanceVerifier<E> for NormSumcheck
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algebra::ring::CyclotomicRing;
     use crate::algebra::Fp64;
     use crate::primitives::multilinear_evals::DenseMultilinearEvals;
     use crate::protocol::ring_switch::build_w_coeffs;
@@ -139,8 +140,6 @@ mod tests {
         DefaultCommitmentConfig, HachiCommitmentScheme, Transcript,
     };
     use crate::{CanonicalField, FieldCore};
-
-    use crate::algebra::CyclotomicRing;
 
     type F = Fp64<4294967197>;
     const D: usize = 8;

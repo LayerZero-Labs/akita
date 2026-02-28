@@ -160,10 +160,6 @@ where
     })
 }
 
-// ---------------------------------------------------------------------------
-// Helper functions
-// ---------------------------------------------------------------------------
-
 pub(crate) fn compute_r_via_poly_division<F: FieldCore, const D: usize>(
     m: &[Vec<CyclotomicRing<F, D>>],
     z: &[CyclotomicRing<F, D>],

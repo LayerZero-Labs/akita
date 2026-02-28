@@ -572,10 +572,6 @@ where
     Ok(challenges)
 }
 
-// ---------------------------------------------------------------------------
-// Shared helpers used by both sumcheck instances
-// ---------------------------------------------------------------------------
-
 /// Build the full eq polynomial evaluation table.
 ///
 /// Returns a vector of size `2^{tau.len()}` where entry `b` (interpreted as a

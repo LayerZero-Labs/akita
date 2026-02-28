@@ -11,8 +11,6 @@ use core::fmt;
 use core::mem::transmute;
 use core::ops::{Add, Mul, Sub};
 
-// ===== Helpers =====
-
 #[inline(always)]
 unsafe fn movehdup_epi32_512(x: __m512i) -> __m512i {
     _mm512_castps_si512(_mm512_movehdup_ps(_mm512_castsi512_ps(x)))
@@ -51,8 +49,6 @@ unsafe fn mul64_64_512(x: __m512i, y: __m512i) -> (__m512i, __m512i) {
 
     (res_hi, res_lo)
 }
-
-// ===== PackedFp32Avx512 (16-wide) =====
 
 /// Number of `Fp32` lanes in an AVX-512 packed vector.
 pub const FP32_WIDTH: usize = 16;
@@ -263,8 +259,6 @@ impl<const P: u32> PackedField for PackedFp32Avx512<P> {
         Self([value; FP32_WIDTH])
     }
 }
-
-// ===== PackedFp64Avx512 (8-wide) =====
 
 /// Number of `Fp64` lanes in an AVX-512 packed vector.
 pub const FP64_WIDTH: usize = 8;
@@ -489,8 +483,6 @@ impl<const P: u64> PackedField for PackedFp64Avx512<P> {
         Self([value; FP64_WIDTH])
     }
 }
-
-// ===== PackedFp128Avx512 (8-wide, SoA) =====
 
 /// Number of `Fp128` lanes in an AVX-512 packed vector.
 pub const FP128_WIDTH: usize = 8;

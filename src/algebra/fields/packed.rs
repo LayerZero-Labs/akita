@@ -130,15 +130,11 @@ impl<T: FieldCore + 'static> PackedField for NoPacking<T> {
     }
 }
 
-// ===== Backend selection =====
-
 /// Scalar field -> packed field association.
 pub trait HasPacking: FieldCore {
     /// Packed representation for this scalar field.
     type Packing: PackedField<Scalar = Self>;
 }
-
-// --- Fp128 packing ---
 
 /// Selected packed backend for `Fp128`.
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
@@ -171,8 +167,6 @@ impl<const P: u128> HasPacking for Fp128<P> {
     type Packing = Fp128Packing<P>;
 }
 
-// --- Fp32 packing ---
-
 /// Selected packed backend for `Fp32`.
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 pub type Fp32Packing<const P: u32> = super::packed_neon::PackedFp32Neon<P>;
@@ -203,8 +197,6 @@ pub type Fp32Packing<const P: u32> = NoPacking<Fp32<P>>;
 impl<const P: u32> HasPacking for Fp32<P> {
     type Packing = Fp32Packing<P>;
 }
-
-// --- Fp64 packing ---
 
 /// Selected packed backend for `Fp64`.
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
@@ -322,8 +314,6 @@ mod tests {
         }
     }
 
-    // --- Fp128 ---
-
     #[test]
     fn packed_fp128_add_sub_mul_match_scalar() {
         type F = Prime128M13M4P0;
@@ -393,8 +383,6 @@ mod tests {
         check_broadcast_roundtrip::<F, PF>(F::from_u64(42));
     }
 
-    // --- Fp32 ---
-
     #[test]
     fn packed_fp32_24b_add_sub_mul() {
         type F = Pow2Offset24Field;
@@ -422,8 +410,6 @@ mod tests {
         type PF = <F as HasPacking>::Packing;
         check_broadcast_roundtrip::<F, PF>(F::from_u64(42));
     }
-
-    // --- Fp64 ---
 
     #[test]
     fn packed_fp64_40b_add_sub_mul() {

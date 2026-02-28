@@ -15,10 +15,6 @@ use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
 
-// ---------------------------------------------------------------------------
-// Stage-1 helper functions (formerly on HachiProver)
-// ---------------------------------------------------------------------------
-
 /// **Steps 1–3.** Compute `w_i = a^T G_{2^m} s_i` and decompose: `ŵ_i = G_1^{-1}(w_i)`.
 fn compute_w_hat<F, const D: usize, Cfg>(
     opening_point: &RingOpeningPoint<F>,
@@ -91,10 +87,6 @@ where
         .flat_map(|z_j| z_j.balanced_decompose_pow2(Cfg::TAU, Cfg::LOG_BASIS))
         .collect())
 }
-
-// ---------------------------------------------------------------------------
-// QuadraticEquation
-// ---------------------------------------------------------------------------
 
 /// Stage-1 quadratic equation state for the Hachi protocol.
 ///
@@ -246,10 +238,6 @@ where
         self.hint.as_ref()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helper functions
-// ---------------------------------------------------------------------------
 
 pub(crate) fn derive_stage1_challenges<F, T, const D: usize, Cfg: CommitmentConfig>(
     transcript: &mut T,
@@ -538,10 +526,6 @@ where
     Ok(out)
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,10 +560,6 @@ mod tests {
             .map(|c| c.to_dense::<F, D>().unwrap())
             .collect()
     }
-
-    // -----------------------------------------------------------------------
-    // Shared fixture — driven entirely by QuadraticEquation::new_prover()
-    // -----------------------------------------------------------------------
 
     struct Fixture {
         setup: RingCommitmentSetup<F, D>,
@@ -636,10 +616,7 @@ mod tests {
         }
     }
 
-    // =======================================================================
-    // Row 1:  D · ŵ  =  v
-    // =======================================================================
-
+    /// Row 1: D · ŵ = v
     #[test]
     fn row1_d_times_w_hat_equals_v() {
         let f = build_fixture();
@@ -652,10 +629,7 @@ mod tests {
         assert_eq!(lhs, f.quad_eq.v(), "Row 1 failed: D · ŵ ≠ v");
     }
 
-    // =======================================================================
-    // Row 2:  B · t̂  =  u  (commitment vector)
-    // =======================================================================
-
+    /// Row 2: B · t̂ = u (commitment vector)
     #[test]
     fn row2_b_times_t_hat_equals_u_commitment() {
         let f = build_fixture();
@@ -668,10 +642,7 @@ mod tests {
         assert_eq!(lhs, f.commitment_u, "Row 2 failed: B · t̂ ≠ u");
     }
 
-    // =======================================================================
-    // Row 3:  b^T · G_{2^r} · ŵ  =  u_eval
-    // =======================================================================
-
+    /// Row 3: b^T · G_{2^r} · ŵ = u_eval
     #[test]
     fn row3_bt_gadget_w_hat_equals_u_eval() {
         let f = build_fixture();
@@ -708,10 +679,7 @@ mod tests {
         );
     }
 
-    // =======================================================================
-    // Row 4:  (c^T ⊗ G_1) · ŵ  =  a^T · G_{2^m} · J · ẑ
-    // =======================================================================
-
+    /// Row 4: (c^T ⊗ G_1) · ŵ = a^T · G_{2^m} · J · ẑ
     #[test]
     fn row4_challenge_fold_w_equals_a_gadget_j_z_hat() {
         let f = build_fixture();
@@ -736,10 +704,7 @@ mod tests {
         assert_eq!(lhs, rhs, "Row 4 failed: (c^T ⊗ G_1)ŵ ≠ a^T G J ẑ");
     }
 
-    // =======================================================================
-    // Row 5:  (c^T ⊗ G_{n_A}) · t̂  =  A · J · ẑ
-    // =======================================================================
-
+    /// Row 5: (c^T ⊗ G_{n_A}) · t̂ = A · J · ẑ
     #[test]
     fn row5_challenge_fold_t_equals_a_j_z_hat() {
         let f = build_fixture();
@@ -759,10 +724,6 @@ mod tests {
 
         assert_eq!(lhs, rhs, "Row 5 failed: (c^T ⊗ G_nA)t̂ ≠ A · J · ẑ");
     }
-
-    // =======================================================================
-    // Shape sanity
-    // =======================================================================
 
     #[test]
     fn prove_output_shapes_are_correct() {

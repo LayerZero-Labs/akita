@@ -686,7 +686,6 @@ fn bench_widening_ops(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("widening_ops");
 
-    // -- Single-op isolation: widening only (no reduce) ----------------------
     group.bench_function("mul_wide_u64_only", |bench| {
         bench.iter(|| black_box(black_box(a).mul_wide_u64(black_box(b_u64))))
     });
@@ -695,7 +694,6 @@ fn bench_widening_ops(c: &mut Criterion) {
         bench.iter(|| black_box(black_box(a).mul_wide(black_box(b))))
     });
 
-    // -- New path isolation: mul_wide_limbs (no reduce) ----------------------
     let limbs3 = [rng.next_u64(), rng.next_u64(), rng.next_u64()];
     let limbs4 = [
         rng.next_u64(),
@@ -717,7 +715,6 @@ fn bench_widening_ops(c: &mut Criterion) {
         bench.iter(|| black_box(black_box(a).mul_wide_limbs::<4, 4>(black_box(limbs4))))
     });
 
-    // -- Baseline: full mul+reduce (the current path) ------------------------
     group.bench_function("full_mul_u64_reduce", |bench| {
         bench.iter(|| black_box(black_box(a) * F::from_u64(black_box(b_u64))))
     });
@@ -726,7 +723,6 @@ fn bench_widening_ops(c: &mut Criterion) {
         bench.iter(|| black_box(black_box(a) * black_box(b)))
     });
 
-    // -- solinas_reduce isolation per limb count -----------------------------
     let wide3 = a.mul_wide_u64(b_u64);
     let wide4 = a.mul_wide(b);
     let wide5 = {
@@ -748,7 +744,6 @@ fn bench_widening_ops(c: &mut Criterion) {
         bench.iter(|| black_box(F::solinas_reduce(black_box(&wide5))))
     });
 
-    // -- Round-trip: widen + reduce ------------------------------------------
     group.bench_function("mul_wide_u64_roundtrip", |bench| {
         bench.iter(|| {
             let x = black_box(a);
