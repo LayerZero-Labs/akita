@@ -276,6 +276,8 @@ mod tests {
     use crate::{CanonicalField, FieldCore};
 
     type F = Fp64<4294967197>;
+    type Cfg = DefaultCommitmentConfig;
+    type Scheme = HachiCommitmentScheme<{ Cfg::D }, Cfg>;
 
     #[test]
     fn relation_sumcheck_uses_prove_w_evals() {
@@ -285,12 +287,12 @@ mod tests {
         let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
         let poly = DenseMultilinearEvals::new_padded(evals);
 
-        let setup = HachiCommitmentScheme::setup_prover(num_vars);
-        let (commitment, hint) = HachiCommitmentScheme::commit(&poly, &setup).unwrap();
+        let setup = Scheme::setup_prover(num_vars);
+        let (commitment, hint) = Scheme::commit(&poly, &setup).unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
         let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        let proof = HachiCommitmentScheme::prove(
+        let proof = Scheme::prove(
             &setup,
             &poly,
             &opening_point,
@@ -301,7 +303,7 @@ mod tests {
         .unwrap();
 
         let (alpha, m_a_vec) =
-            rederive_alpha_and_m_a(&proof, &setup, &opening_point, &commitment).unwrap();
+            rederive_alpha_and_m_a::<F, { Cfg::D }, Cfg>(&proof, &setup, &opening_point, &commitment).unwrap();
 
         let d = DefaultCommitmentConfig::D;
         assert_eq!(proof.sumcheck_aux.w.len() % d, 0);

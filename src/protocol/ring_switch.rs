@@ -10,8 +10,7 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
-    CommitmentConfig, DefaultCommitmentConfig, HachiCommitmentCore, RingCommitment,
-    RingCommitmentScheme,
+    CommitmentConfig, HachiCommitmentCore, RingCommitment, RingCommitmentScheme,
 };
 use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::sumcheck::eq_poly::EqPolynomial;
@@ -56,7 +55,7 @@ pub struct RingSwitchOutput<F: FieldCore, const D: usize> {
 pub fn ring_switch_prover<F, T, const D: usize, Cfg>(
     quad_eq: &QuadraticEquation<F, D, Cfg>,
     transcript: &mut T,
-) -> Result<RingSwitchOutput<F, { DefaultCommitmentConfig::D }>, HachiError>
+) -> Result<RingSwitchOutput<F, D>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
@@ -68,7 +67,7 @@ where
     let r = compute_r_via_poly_division::<F, D>(quad_eq.m(), z, quad_eq.y());
     let w = build_w_coeffs::<F, D, Cfg>(z, &r);
 
-    let w_commitment = commit_w::<F>(&w)?;
+    let w_commitment = commit_w::<F, D, Cfg>(&w)?;
     transcript.append_serde(ABSORB_SUMCHECK_W, &w_commitment);
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
@@ -116,9 +115,9 @@ where
 pub fn ring_switch_verifier<F, T, const D: usize, Cfg>(
     quad_eq: &QuadraticEquation<F, D, Cfg>,
     w: &[F],
-    w_commitment: &RingCommitment<F, { DefaultCommitmentConfig::D }>,
+    w_commitment: &RingCommitment<F, D>,
     transcript: &mut T,
-) -> Result<RingSwitchOutput<F, { DefaultCommitmentConfig::D }>, HachiError>
+) -> Result<RingSwitchOutput<F, D>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
@@ -237,57 +236,55 @@ pub(crate) fn compute_r_via_poly_division<F: FieldCore, const D: usize>(
 }
 
 #[derive(Clone, Copy, Debug)]
-struct WCommitmentConfig;
-
-impl CommitmentConfig for WCommitmentConfig {
-    const D: usize = DefaultCommitmentConfig::D;
-    const M: usize = 11;
-    const R: usize = 0;
-    const N_A: usize = DefaultCommitmentConfig::N_A;
-    const N_B: usize = DefaultCommitmentConfig::N_B;
-    const N_D: usize = DefaultCommitmentConfig::N_D;
-    const LOG_BASIS: u32 = DefaultCommitmentConfig::LOG_BASIS;
-    const DELTA: usize = DefaultCommitmentConfig::DELTA;
-    const TAU: usize = DefaultCommitmentConfig::TAU;
-    const BETA: u128 = DefaultCommitmentConfig::BETA;
-    const CHALLENGE_WEIGHT: usize = DefaultCommitmentConfig::CHALLENGE_WEIGHT;
+struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
+    _cfg: std::marker::PhantomData<Cfg>,
 }
 
-fn commit_w<F>(w: &[F]) -> Result<RingCommitment<F, { DefaultCommitmentConfig::D }>, HachiError>
+impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConfig<D, Cfg> {
+    const D: usize = D;
+    const M: usize = 11;
+    const R: usize = 0;
+    const N_A: usize = Cfg::N_A;
+    const N_B: usize = Cfg::N_B;
+    const N_D: usize = Cfg::N_D;
+    const LOG_BASIS: u32 = Cfg::LOG_BASIS;
+    const DELTA: usize = Cfg::DELTA;
+    const TAU: usize = Cfg::TAU;
+    const BETA: u128 = Cfg::BETA;
+    const CHALLENGE_WEIGHT: usize = Cfg::CHALLENGE_WEIGHT;
+}
+
+fn commit_w<F, const D: usize, Cfg>(w: &[F]) -> Result<RingCommitment<F, D>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
+    Cfg: CommitmentConfig,
 {
-    let d = DefaultCommitmentConfig::D;
-    let block_len = 1usize << WCommitmentConfig::M;
+    type WCfg<const D: usize, C> = WCommitmentConfig<D, C>;
+    let block_len = 1usize << WCfg::<D, Cfg>::M;
 
-    let ring_elems: Vec<CyclotomicRing<F, { DefaultCommitmentConfig::D }>> = w
-        .chunks(d)
+    let ring_elems: Vec<CyclotomicRing<F, D>> = w
+        .chunks(D)
         .map(|chunk| {
-            let coeffs: [F; DefaultCommitmentConfig::D] =
+            let coeffs: [F; D] =
                 std::array::from_fn(|i| if i < chunk.len() { chunk[i] } else { F::zero() });
             CyclotomicRing::from_coefficients(coeffs)
         })
         .collect();
 
     let mut padded = ring_elems;
-    padded.resize(
-        block_len,
-        CyclotomicRing::<F, { DefaultCommitmentConfig::D }>::zero(),
-    );
+    padded.resize(block_len, CyclotomicRing::<F, D>::zero());
 
     let blocks = vec![padded];
 
-    let (w_setup, _) = <HachiCommitmentCore as RingCommitmentScheme<
-        F,
-        { DefaultCommitmentConfig::D },
-        WCommitmentConfig,
-    >>::setup(WCommitmentConfig::M)?;
+    let (w_setup, _) =
+        <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::setup(
+            WCfg::<D, Cfg>::M,
+        )?;
 
-    let (commitment, _, _) = <HachiCommitmentCore as RingCommitmentScheme<
-        F,
-        { DefaultCommitmentConfig::D },
-        WCommitmentConfig,
-    >>::commit_ring_blocks(&blocks, &w_setup)?;
+    let (commitment, _, _) =
+        <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::commit_ring_blocks(
+            &blocks, &w_setup,
+        )?;
 
     Ok(commitment)
 }

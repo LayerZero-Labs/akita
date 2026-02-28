@@ -35,22 +35,22 @@ use crate::protocol::transcript::labels::{
 #[cfg(test)]
 use crate::protocol::transcript::Blake2bTranscript;
 
-type Cfg = DefaultCommitmentConfig;
-const D: usize = Cfg::D;
-
-/// Placeholder for the end-to-end PCS wrapper.
+/// End-to-end PCS wrapper, generic over ring degree `D` and config `Cfg`.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct HachiCommitmentScheme;
+pub struct HachiCommitmentScheme<const D: usize, Cfg: CommitmentConfig = DefaultCommitmentConfig> {
+    _cfg: std::marker::PhantomData<Cfg>,
+}
 
-impl<F> CommitmentScheme<F> for HachiCommitmentScheme
+impl<F, const D: usize, Cfg> CommitmentScheme<F> for HachiCommitmentScheme<D, Cfg>
 where
     F: FieldCore + CanonicalField + FieldSampling,
+    Cfg: CommitmentConfig,
 {
-    type ProverSetup = RingCommitmentSetup<F, { D }>;
-    type VerifierSetup = RingCommitmentSetup<F, { D }>;
-    type Commitment = RingCommitment<F, { D }>;
-    type Proof = HachiProof<F, { D }>;
-    type OpeningProofHint = HachiCommitmentHint<F, { D }>;
+    type ProverSetup = RingCommitmentSetup<F, D>;
+    type VerifierSetup = RingCommitmentSetup<F, D>;
+    type Commitment = RingCommitment<F, D>;
+    type Proof = HachiProof<F, D>;
+    type OpeningProofHint = HachiCommitmentHint<F, D>;
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let (setup, _) =
@@ -238,14 +238,15 @@ where
 /// by replaying the transcript from the proof data and setup, exactly as the
 /// verifier does.
 #[cfg(test)]
-pub(crate) fn rederive_alpha_and_m_a<F>(
-    proof: &HachiProof<F, { D }>,
-    setup: &<HachiCommitmentScheme as CommitmentScheme<F>>::ProverSetup,
+pub(crate) fn rederive_alpha_and_m_a<F, const D: usize, Cfg>(
+    proof: &HachiProof<F, D>,
+    setup: &RingCommitmentSetup<F, D>,
     opening_point: &[F],
-    commitment: &<HachiCommitmentScheme as CommitmentScheme<F>>::Commitment,
+    commitment: &RingCommitment<F, D>,
 ) -> Result<(F, Vec<F>), HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + 'static,
+    Cfg: CommitmentConfig,
 {
     let alpha_bits = Cfg::D.trailing_zeros() as usize;
     let reduced_len = opening_point
@@ -255,7 +256,7 @@ where
     let ring_opening_point =
         ring_opening_point_from_field::<F>(&opening_point[..reduced_len], Cfg::R, Cfg::M)?;
     let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_HACHI_PROTOCOL);
-    let quad_eq = QuadraticEquation::<F, { D }, Cfg>::new_verifier(
+    let quad_eq = QuadraticEquation::<F, D, Cfg>::new_verifier(
         setup,
         &ring_opening_point,
         &proof.v,
@@ -265,8 +266,8 @@ where
     )?;
     transcript.append_serde(ABSORB_SUMCHECK_W, &proof.w_commitment);
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
-    let m_a = eval_ring_matrix_at::<F, { D }>(quad_eq.m(), &alpha);
-    let m_a_vec = expand_m_a::<F, { D }, Cfg>(&m_a, alpha)?;
+    let m_a = eval_ring_matrix_at::<F, D>(quad_eq.m(), &alpha);
+    let m_a_vec = expand_m_a::<F, D, Cfg>(&m_a, alpha)?;
     Ok((alpha, m_a_vec))
 }
 
@@ -396,6 +397,9 @@ mod tests {
     use crate::test_utils::F;
     use crate::{CommitmentScheme, Polynomial};
 
+    type Cfg = DefaultCommitmentConfig;
+    type Scheme = HachiCommitmentScheme<{ Cfg::D }, Cfg>;
+
     #[test]
     fn verify_passes_for_consistent_opening() {
         let alpha = Cfg::D.trailing_zeros() as usize;
@@ -405,17 +409,17 @@ mod tests {
         let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
         let poly = DenseMultilinearEvals::new_padded(evals);
 
-        let setup = <HachiCommitmentScheme as CommitmentScheme<F>>::setup_prover(num_vars);
-        let verifier_setup = <HachiCommitmentScheme as CommitmentScheme<F>>::setup_verifier(&setup);
+        let setup = <Scheme as CommitmentScheme<F>>::setup_prover(num_vars);
+        let verifier_setup = <Scheme as CommitmentScheme<F>>::setup_verifier(&setup);
 
         let (commitment, hint) =
-            <HachiCommitmentScheme as CommitmentScheme<F>>::commit(&poly, &setup).unwrap();
+            <Scheme as CommitmentScheme<F>>::commit(&poly, &setup).unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
         let opening = poly.evaluate(&opening_point);
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
-        let proof = <HachiCommitmentScheme as CommitmentScheme<F>>::prove(
+        let proof = <Scheme as CommitmentScheme<F>>::prove(
             &setup,
             &poly,
             &opening_point,
@@ -426,7 +430,7 @@ mod tests {
         .unwrap();
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
-        let result = <HachiCommitmentScheme as CommitmentScheme<F>>::verify(
+        let result = <Scheme as CommitmentScheme<F>>::verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,

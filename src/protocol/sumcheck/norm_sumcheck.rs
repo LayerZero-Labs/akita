@@ -189,6 +189,8 @@ mod tests {
 
     type F = Fp64<4294967197>;
     const D: usize = 8;
+    type Cfg = DefaultCommitmentConfig;
+    type Scheme = HachiCommitmentScheme<{ Cfg::D }, Cfg>;
 
     fn ring_with_small_coeff(value: u64) -> CyclotomicRing<F, D> {
         let coeffs = std::array::from_fn(|_| F::from_u64(value));
@@ -247,12 +249,12 @@ mod tests {
         let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
         let poly = DenseMultilinearEvals::new_padded(evals);
 
-        let setup = HachiCommitmentScheme::setup_prover(num_vars);
-        let (commitment, hint) = HachiCommitmentScheme::commit(&poly, &setup).unwrap();
+        let setup = Scheme::setup_prover(num_vars);
+        let (commitment, hint) = Scheme::commit(&poly, &setup).unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
         let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        let proof = HachiCommitmentScheme::prove(
+        let proof = Scheme::prove(
             &setup,
             &poly,
             &opening_point,
