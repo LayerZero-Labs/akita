@@ -19,8 +19,11 @@
 //! duplicates the essential sumcheck data types and transcript-driving logic as a
 //! pragmatic workaround.
 
+pub mod batched_sumcheck;
+pub mod eq_poly;
 pub mod norm_sumcheck;
 pub mod relation_sumcheck;
+pub mod split_eq;
 
 use crate::error::HachiError;
 use crate::primitives::serialization::{
@@ -570,35 +573,6 @@ where
     }
 
     Ok(challenges)
-}
-
-/// Build the full eq polynomial evaluation table.
-///
-/// Returns a vector of size `2^{tau.len()}` where entry `b` (interpreted as a
-/// little-endian bit string, i.e. bit `k` of `b` corresponds to `τ[k]`) equals
-/// `ẽq(τ, b) = Π_i (τ_i·b_i + (1−τ_i)(1−b_i))`.
-pub fn eq_evals<E: FieldCore>(tau: &[E]) -> Vec<E> {
-    let size = 1usize << tau.len();
-    let mut evals = vec![E::zero(); size];
-    evals[0] = E::one();
-    let mut len = 1usize;
-    for &t in tau.iter().rev() {
-        let one_minus_t = E::one() - t;
-        for j in (0..len).rev() {
-            evals[2 * j + 1] = evals[j] * t;
-            evals[2 * j] = evals[j] * one_minus_t;
-        }
-        len *= 2;
-    }
-    evals
-}
-
-/// Evaluate ẽq(τ, r) at a single point.
-pub fn eq_eval<E: FieldCore>(tau: &[E], point: &[E]) -> E {
-    debug_assert_eq!(tau.len(), point.len());
-    tau.iter().zip(point).fold(E::one(), |acc, (&t, &r)| {
-        acc * (t * r + (E::one() - t) * (E::one() - r))
-    })
 }
 
 /// Evaluate the range-check polynomial `w · Π_{k=1}^{b−1} (w − k)(w + k)`.

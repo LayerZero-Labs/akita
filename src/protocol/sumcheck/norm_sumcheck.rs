@@ -5,16 +5,21 @@
 //! Proves that all entries of w̃ lie in {−(b−1), …, b−1}; the sum over the
 //! boolean hypercube should equal zero when the range constraint holds.
 
-use super::{eq_eval, eq_evals, fold_evals, multilinear_eval, range_check_eval};
+use super::eq_poly::EqPolynomial;
+use super::split_eq::GruenSplitEq;
+use super::{fold_evals, multilinear_eval, range_check_eval};
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
 use crate::{CanonicalField, FieldCore};
 
 /// Prover for `F_{0,τ₀}(x,y) = ẽq(τ₀,(x,y)) · w̃(x,y) · range_check(w̃(x,y), b)`.
 ///
-/// Stores `eq` and `w` evaluation tables separately so the composite can be
-/// evaluated at the `2b + 1` points needed per round (degree `2b`).
-pub struct NormSumcheckProver<E> {
-    eq_table: Vec<E>,
+/// Uses the Gruen/Dao-Thaler optimization: the eq polynomial is factored into
+/// a running scalar and split tables instead of being stored as a full table
+/// and folded each round. The round polynomial is computed as `l(X) · q(X)`
+/// where `l(X)` is the linear eq factor and `q(X)` is the inner sum without
+/// the current-variable eq contribution.
+pub struct NormSumcheckProver<E: FieldCore> {
+    split_eq: GruenSplitEq<E>,
     w_table: Vec<E>,
     num_vars: usize,
     b: usize,
@@ -30,7 +35,7 @@ impl<E: FieldCore + CanonicalField> NormSumcheckProver<E> {
         let num_vars = tau.len();
         assert_eq!(w_evals.len(), 1 << num_vars);
         Self {
-            eq_table: eq_evals(tau),
+            split_eq: GruenSplitEq::new(tau),
             w_table: w_evals,
             num_vars,
             b,
@@ -52,30 +57,36 @@ impl<E: FieldCore + CanonicalField> SumcheckInstanceProver<E> for NormSumcheckPr
     }
 
     fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
-        let half = self.eq_table.len() / 2;
-        let degree = 2 * self.b;
-        let num_points = degree + 1;
-        let mut round_evals = vec![E::zero(); num_points];
+        let half = self.w_table.len() / 2;
+        let degree_q = 2 * self.b - 1;
+        let num_points_q = degree_q + 1;
+        let mut q_evals = vec![E::zero(); num_points_q];
+
+        let (e_first, e_second) = self.split_eq.remaining_eq_tables();
+        let num_first = e_first.len();
+        let first_bits = num_first.trailing_zeros();
 
         for j in 0..half {
-            let eq_0 = self.eq_table[2 * j];
-            let eq_1 = self.eq_table[2 * j + 1];
+            let j_low = j & (num_first - 1);
+            let j_high = j >> first_bits;
+            let eq_rem = e_first[j_low] * e_second[j_high];
+
             let w_0 = self.w_table[2 * j];
             let w_1 = self.w_table[2 * j + 1];
 
-            for (t, eval) in round_evals.iter_mut().enumerate() {
+            for (t, eval) in q_evals.iter_mut().enumerate() {
                 let t_e = E::from_u64(t as u64);
-                let eq_t = eq_0 + t_e * (eq_1 - eq_0);
                 let w_t = w_0 + t_e * (w_1 - w_0);
-                *eval = *eval + eq_t * range_check_eval(w_t, self.b);
+                *eval = *eval + eq_rem * range_check_eval(w_t, self.b);
             }
         }
 
-        UniPoly::from_evals(&round_evals)
+        let q_poly = UniPoly::from_evals(&q_evals);
+        self.split_eq.gruen_mul(&q_poly)
     }
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {
-        self.eq_table = fold_evals(&self.eq_table, r);
+        self.split_eq.bind(r);
         self.w_table = fold_evals(&self.w_table, r);
     }
 }
@@ -120,7 +131,7 @@ impl<E: FieldCore + CanonicalField> SumcheckInstanceVerifier<E> for NormSumcheck
     }
 
     fn expected_output_claim(&self, challenges: &[E]) -> E {
-        let eq_val = eq_eval(&self.tau, challenges);
+        let eq_val = EqPolynomial::mle(&self.tau, challenges);
         let w_val = multilinear_eval(&self.w_evals, challenges);
         eq_val * range_check_eval(w_val, self.b)
     }
@@ -133,7 +144,7 @@ mod tests {
     use crate::algebra::Fp64;
     use crate::primitives::multilinear_evals::DenseMultilinearEvals;
     use crate::protocol::ring_switch::build_w_coeffs;
-    use crate::protocol::sumcheck::eq_evals;
+    use crate::protocol::sumcheck::eq_poly::EqPolynomial;
     use crate::protocol::transcript::labels;
     use crate::protocol::{
         prove_sumcheck, verify_sumcheck, Blake2bTranscript, CommitmentConfig, CommitmentScheme,
@@ -165,7 +176,7 @@ mod tests {
         let tau: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
         let b = 1usize << DefaultCommitmentConfig::LOG_BASIS;
 
-        let eq_table = eq_evals(&tau);
+        let eq_table = EqPolynomial::evals(&tau);
         let _claim: F = (0..w_evals.len())
             .map(|i| eq_table[i] * range_check_eval(w_evals[i], b))
             .fold(F::zero(), |a, v| a + v);
@@ -178,7 +189,7 @@ mod tests {
             })
             .unwrap();
 
-        let oracle = eq_eval(&tau, &prover_challenges)
+        let oracle = EqPolynomial::mle(&tau, &prover_challenges)
             * range_check_eval(multilinear_eval(&w_evals, &prover_challenges), b);
         assert_eq!(final_claim, oracle, "prover final claim != oracle eval");
 
@@ -225,7 +236,7 @@ mod tests {
             .collect();
         let b = 1usize << DefaultCommitmentConfig::LOG_BASIS;
 
-        let eq_table = eq_evals(&tau);
+        let eq_table = EqPolynomial::evals(&tau);
         let _claim: F = (0..w_evals.len())
             .map(|i| eq_table[i] * range_check_eval(w_evals[i], b))
             .fold(F::zero(), |a, v| a + v);
@@ -238,7 +249,7 @@ mod tests {
             })
             .unwrap();
 
-        let oracle = eq_eval(&tau, &prover_challenges)
+        let oracle = EqPolynomial::mle(&tau, &prover_challenges)
             * range_check_eval(multilinear_eval(&w_evals, &prover_challenges), b);
         assert_eq!(final_claim, oracle, "prover final claim != oracle eval");
 

@@ -11,11 +11,14 @@ use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{HachiCommitmentHint, HachiProof, SumcheckAux};
 use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::ring_switch::{ring_switch_prover, ring_switch_verifier};
+use crate::protocol::sumcheck::batched_sumcheck::{
+    prove_batched_sumcheck, verify_batched_sumcheck,
+};
 use crate::protocol::sumcheck::norm_sumcheck::{NormSumcheckProver, NormSumcheckVerifier};
 use crate::protocol::sumcheck::relation_sumcheck::{
     RelationSumcheckProver, RelationSumcheckVerifier,
 };
-use crate::protocol::sumcheck::{prove_sumcheck, verify_sumcheck};
+use crate::protocol::sumcheck::SumcheckInstanceProver;
 use crate::protocol::transcript::labels::CHALLENGE_SUMCHECK_ROUND;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling, Polynomial};
@@ -118,14 +121,8 @@ where
         // §4.3 Ring switch
         let rs = ring_switch_prover::<F, T, { D }, Cfg>(&quad_eq, transcript)?;
 
-        // Norm sumcheck (range check on w)
+        // Batched sumcheck: norm + relation
         let mut norm_prover = NormSumcheckProver::new(&rs.tau0, rs.w_evals.clone(), rs.b);
-        let (norm_proof, ..) =
-            prove_sumcheck::<F, _, F, _, _>(&mut norm_prover, transcript, |tr| {
-                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
-            })?;
-
-        // Relation sumcheck (evaluation relation)
         let mut relation_prover = RelationSumcheckProver::new(
             rs.w_evals,
             &rs.alpha_evals_y,
@@ -133,16 +130,18 @@ where
             rs.num_u,
             rs.num_l,
         );
-        let (relation_proof, ..) =
-            prove_sumcheck::<F, _, F, _, _>(&mut relation_prover, transcript, |tr| {
+
+        let instances: Vec<&mut dyn SumcheckInstanceProver<F>> =
+            vec![&mut norm_prover, &mut relation_prover];
+        let (sumcheck_proof, ..) =
+            prove_batched_sumcheck::<F, _, F, _>(instances, transcript, |tr| {
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
             })?;
 
         Ok(HachiProof {
             v: quad_eq.v,
             y_ring,
-            norm_proof,
-            relation_proof,
+            sumcheck_proof,
             sumcheck_aux: SumcheckAux { w: rs.w },
             w_commitment: rs.w_commitment,
         })
@@ -192,13 +191,8 @@ where
             transcript,
         )?;
 
-        // Norm sumcheck verification (range check)
+        // Batched sumcheck verification: norm (F_0) + relation (F_α)
         let norm_verifier = NormSumcheckVerifier::new(rs.tau0, rs.w_evals.clone(), rs.b);
-        verify_sumcheck::<F, _, F, _, _>(&proof.norm_proof, &norm_verifier, transcript, |tr| {
-            tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
-        })?;
-
-        // Relation sumcheck verification (evaluation relation)
         let relation_verifier = RelationSumcheckVerifier::new(
             rs.w_evals,
             rs.alpha_evals_y,
@@ -211,9 +205,12 @@ where
             rs.num_u,
             rs.num_l,
         );
-        verify_sumcheck::<F, _, F, _, _>(
-            &proof.relation_proof,
-            &relation_verifier,
+
+        let verifiers: Vec<&dyn crate::protocol::sumcheck::SumcheckInstanceVerifier<F>> =
+            vec![&norm_verifier, &relation_verifier];
+        verify_batched_sumcheck::<F, _, F, _>(
+            &proof.sumcheck_proof,
+            verifiers,
             transcript,
             |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
         )?;
