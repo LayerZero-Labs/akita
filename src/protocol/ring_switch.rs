@@ -253,9 +253,7 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
     const TAU: usize = Cfg::TAU;
     const CHALLENGE_WEIGHT: usize = Cfg::CHALLENGE_WEIGHT;
 
-    fn commitment_layout(
-        max_num_vars: usize,
-    ) -> Result<HachiCommitmentLayout, HachiError> {
+    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
         let alpha = D.trailing_zeros() as usize;
         let m_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
             HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())

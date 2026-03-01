@@ -21,9 +21,7 @@ impl CommitmentConfig for BadDegreeConfig {
     const TAU: usize = 4;
     const CHALLENGE_WEIGHT: usize = 3;
 
-    fn commitment_layout(
-        _max_num_vars: usize,
-    ) -> Result<HachiCommitmentLayout, HachiError> {
+    fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
         HachiCommitmentLayout::new::<Self>(4, 2)
     }
 }
@@ -41,9 +39,7 @@ impl CommitmentConfig for BadDigitBudgetConfig {
     const TAU: usize = 4;
     const CHALLENGE_WEIGHT: usize = 3;
 
-    fn commitment_layout(
-        _max_num_vars: usize,
-    ) -> Result<HachiCommitmentLayout, HachiError> {
+    fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
         HachiCommitmentLayout::new::<Self>(4, 2)
     }
 }
