@@ -30,9 +30,6 @@ where
 
     /// Derive a challenge scalar under the provided label.
     fn challenge_scalar(&mut self, label: &[u8]) -> F;
-
-    /// Reset transcript state under a new domain label.
-    fn reset(&mut self, domain_label: &[u8]);
 }
 
 /// Sample an extension field challenge by drawing `EXT_DEGREE` base-field

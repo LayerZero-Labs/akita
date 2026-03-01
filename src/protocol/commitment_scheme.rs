@@ -7,8 +7,8 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::primitives::poly::multilinear_lagrange_basis;
 use crate::protocol::commitment::{
-    CommitmentConfig, CommitmentScheme, HachiCommitmentCore, HachiProverSetup, HachiVerifierSetup,
-    RingCommitment, RingCommitmentScheme,
+    AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore, HachiProverSetup,
+    HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
 };
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{HachiCommitmentHint, HachiProof, SumcheckAux};
@@ -22,7 +22,9 @@ use crate::protocol::sumcheck::relation_sumcheck::{
     RelationSumcheckProver, RelationSumcheckVerifier,
 };
 use crate::protocol::sumcheck::{SumcheckInstanceProver, SumcheckInstanceVerifier};
-use crate::protocol::transcript::labels::CHALLENGE_SUMCHECK_ROUND;
+use crate::protocol::transcript::labels::{
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, CHALLENGE_SUMCHECK_ROUND,
+};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt, Polynomial};
 
@@ -108,8 +110,7 @@ where
             });
         }
 
-        let layout =
-            <HachiCommitmentCore as RingCommitmentScheme<F, { D }, Cfg>>::layout(setup)?;
+        let layout = <HachiCommitmentCore as RingCommitmentScheme<F, { D }, Cfg>>::layout(setup)?;
         let ring_opening_point = ring_opening_point_from_field::<F>(
             &opening_point[..reduced_len],
             layout.r_vars,
@@ -118,6 +119,13 @@ where
 
         let y_ring =
             evaluate_packed_ring_poly::<F, { D }>(&hint.ring_coeffs, &opening_point[..reduced_len]);
+
+        // Fiat-Shamir: bind commitment, opening point, and y_ring before any challenges.
+        commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+        for pt in opening_point {
+            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+        }
+        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
 
         // §4.2 Quadratic equation
         let quad_eq = QuadraticEquation::<F, { D }, Cfg>::new_prover(
@@ -172,6 +180,13 @@ where
         })?;
         let reduced_opening_point = &opening_point[..reduced_len];
         let inner_point = &opening_point[reduced_len..];
+
+        // Fiat-Shamir: bind commitment, opening point, and y_ring before any challenges.
+        commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+        for pt in opening_point {
+            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+        }
+        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &proof.y_ring);
 
         // §3.1 trace check
         let v = reduce_inner_openings_to_ring_elements::<F, { D }>(inner_point)?;
@@ -272,6 +287,14 @@ where
         layout.m_vars,
     )?;
     let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_HACHI_PROTOCOL);
+
+    // Replay the same Fiat-Shamir absorptions the real verifier performs.
+    commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+    for pt in opening_point {
+        transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+    }
+    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &proof.y_ring);
+
     let quad_eq = QuadraticEquation::<F, D, Cfg>::new_verifier(
         setup,
         &ring_opening_point,

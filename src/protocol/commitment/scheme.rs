@@ -41,6 +41,10 @@ where
     type OpeningProofHint: Clone + Send + Sync;
 
     /// Build prover setup for maximum polynomial dimension.
+    ///
+    /// # Panics
+    ///
+    /// Panics if internal setup fails (programming error, not adversarial input).
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup;
 
     /// Derive verifier setup from prover setup.

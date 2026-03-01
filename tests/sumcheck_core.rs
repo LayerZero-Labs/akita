@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use hachi_pcs::algebra::poly::multilinear_eval;
 use hachi_pcs::algebra::Fp64;
+use hachi_pcs::error::HachiError;
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
     prove_sumcheck, verify_sumcheck, Blake2bTranscript, CompressedUniPoly, SumcheckInstanceProver,
@@ -113,7 +114,6 @@ impl<E: FieldCore> SumcheckInstanceProver<E> for DenseSumcheckProver<E> {
             eval_0 = eval_0 + self.evals[2 * i];
             eval_1 = eval_1 + self.evals[2 * i + 1];
         }
-        // g(X) = eval_0 + (eval_1 - eval_0) * X  (degree 1)
         UniPoly::from_coeffs(vec![eval_0, eval_1 - eval_0])
     }
 
@@ -146,7 +146,7 @@ impl<E: FieldCore> SumcheckInstanceVerifier<E> for DenseSumcheckVerifier<E> {
         self.claim
     }
 
-    fn expected_output_claim(&self, challenges: &[E]) -> E {
+    fn expected_output_claim(&self, challenges: &[E]) -> Result<E, HachiError> {
         multilinear_eval(&self.evals, challenges)
     }
 }
@@ -259,7 +259,7 @@ fn e2e_sumcheck_2_pow_20() {
     assert_eq!(proof.round_polys.len(), num_vars);
 
     // Sanity: final claim must equal f evaluated at the challenge point.
-    let oracle_eval = multilinear_eval(&evals, &prover_challenges);
+    let oracle_eval = multilinear_eval(&evals, &prover_challenges).unwrap();
     assert_eq!(final_claim, oracle_eval);
 
     let t1 = Instant::now();

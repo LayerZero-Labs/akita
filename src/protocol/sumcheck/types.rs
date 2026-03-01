@@ -23,16 +23,9 @@ impl<E: FieldCore> UniPoly<E> {
         Self { coeffs }
     }
 
-    /// Degree of the polynomial.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the polynomial has no coefficients.
+    /// Degree of the polynomial (0 for empty or constant).
     pub fn degree(&self) -> usize {
-        self.coeffs
-            .len()
-            .checked_sub(1)
-            .expect("UniPoly must have at least one coefficient")
+        self.coeffs.len().saturating_sub(1)
     }
 
     /// Evaluate at `x` via Horner's method.
@@ -80,7 +73,8 @@ impl<E: FieldCore + FromSmallInt> UniPoly<E> {
     /// # Panics
     ///
     /// Panics if any required factorial inverse does not exist (field characteristic
-    /// must exceed the number of evaluation points).
+    /// must exceed the number of evaluation points). This is a prover-only
+    /// function and the condition always holds for Hachi's fields.
     pub fn from_evals(evals: &[E]) -> Self {
         let n = evals.len();
         if n == 0 {

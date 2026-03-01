@@ -59,6 +59,10 @@ impl HachiCommitmentLayout {
     }
 
     /// Total number of outer variables consumed by ring coefficients.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the variable count overflows.
     pub fn outer_vars(&self) -> Result<usize, HachiError> {
         self.m_vars
             .checked_add(self.r_vars)
@@ -66,6 +70,10 @@ impl HachiCommitmentLayout {
     }
 
     /// Required polynomial variable count for this layout (`outer + alpha`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the variable count overflows.
     pub fn required_num_vars<const D: usize>(&self) -> Result<usize, HachiError> {
         let alpha = D.trailing_zeros() as usize;
         self.outer_vars()?

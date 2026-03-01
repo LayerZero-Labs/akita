@@ -64,13 +64,17 @@ where
     E: FieldCore + FromSmallInt,
     S: FnMut(&mut T) -> E,
 {
-    assert!(!instances.is_empty());
+    if instances.is_empty() {
+        return Err(HachiError::InvalidInput(
+            "no sumcheck instances provided".into(),
+        ));
+    }
 
     let max_num_rounds = instances
         .iter()
         .map(|inst| inst.num_rounds())
         .max()
-        .unwrap();
+        .unwrap(); // safe: non-empty checked above
 
     // Absorb individual input claims.
     for inst in instances.iter() {
@@ -103,7 +107,7 @@ where
 
     let two_inv = E::from_u64(2)
         .inv()
-        .expect("2 must be invertible in the field");
+        .expect("field characteristic 2 not supported");
 
     let mut round_polys = Vec::with_capacity(max_num_rounds);
     let mut challenges = Vec::with_capacity(max_num_rounds);
@@ -119,8 +123,6 @@ where
                 if active {
                     inst.compute_round_univariate(round - offset, *previous_claim)
                 } else {
-                    // Variable is "dummy" for this instance: polynomial is independent of it,
-                    // so the round univariate is constant with H(0)=H(1)=previous_claim/2.
                     UniPoly::from_coeffs(vec![*previous_claim * two_inv])
                 }
             })
@@ -204,10 +206,14 @@ where
     E: FieldCore,
     S: FnMut(&mut T) -> E,
 {
-    assert!(!verifiers.is_empty());
+    if verifiers.is_empty() {
+        return Err(HachiError::InvalidInput(
+            "no sumcheck instances provided".into(),
+        ));
+    }
 
-    let max_degree = verifiers.iter().map(|v| v.degree_bound()).max().unwrap();
-    let max_num_rounds = verifiers.iter().map(|v| v.num_rounds()).max().unwrap();
+    let max_degree = verifiers.iter().map(|v| v.degree_bound()).max().unwrap(); // safe: non-empty
+    let max_num_rounds = verifiers.iter().map(|v| v.num_rounds()).max().unwrap(); // safe: non-empty
 
     // Absorb individual input claims.
     for v in verifiers.iter() {
@@ -246,9 +252,9 @@ where
         .map(|(v, coeff)| {
             let offset = max_num_rounds - v.num_rounds();
             let r_slice = &r_sumcheck[offset..offset + v.num_rounds()];
-            v.expected_output_claim(r_slice) * *coeff
+            v.expected_output_claim(r_slice).map(|val| val * *coeff)
         })
-        .fold(E::zero(), |a, v| a + v);
+        .try_fold(E::zero(), |a, v| v.map(|val| a + val))?;
 
     if output_claim != expected_output_claim {
         return Err(HachiError::InvalidProof);

@@ -441,7 +441,7 @@ impl<const P: u64> FromSmallInt for Fp64<P> {
         if val >= 0 {
             Self::from_u64(val as u64)
         } else {
-            -Self::from_u64((-val) as u64)
+            -Self::from_u64(val.unsigned_abs())
         }
     }
 }

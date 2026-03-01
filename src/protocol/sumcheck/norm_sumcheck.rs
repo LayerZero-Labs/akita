@@ -9,6 +9,7 @@ use super::eq_poly::EqPolynomial;
 use super::split_eq::GruenSplitEq;
 use super::{fold_evals_in_place, multilinear_eval, range_check_eval};
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
+use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::{FieldCore, FromSmallInt};
@@ -245,10 +246,10 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceVerifier<E> for NormSumcheckVe
         E::zero()
     }
 
-    fn expected_output_claim(&self, challenges: &[E]) -> E {
+    fn expected_output_claim(&self, challenges: &[E]) -> Result<E, HachiError> {
         let eq_val = EqPolynomial::mle(&self.tau, challenges);
-        let w_val = multilinear_eval(&self.w_evals, challenges);
-        eq_val * range_check_eval(w_val, self.b)
+        let w_val = multilinear_eval(&self.w_evals, challenges)?;
+        Ok(eq_val * range_check_eval(w_val, self.b))
     }
 }
 
@@ -428,7 +429,7 @@ mod tests {
             .unwrap();
 
         let oracle = EqPolynomial::mle(&tau, &prover_challenges)
-            * range_check_eval(multilinear_eval(&w_evals, &prover_challenges), b);
+            * range_check_eval(multilinear_eval(&w_evals, &prover_challenges).unwrap(), b);
         assert_eq!(final_claim, oracle, "prover final claim != oracle eval");
 
         let verifier = NormSumcheckVerifier::new(tau, w_evals, b);
@@ -489,7 +490,7 @@ mod tests {
             .unwrap();
 
         let oracle = EqPolynomial::mle(&tau, &prover_challenges)
-            * range_check_eval(multilinear_eval(&w_evals, &prover_challenges), b);
+            * range_check_eval(multilinear_eval(&w_evals, &prover_challenges).unwrap(), b);
         assert_eq!(final_claim, oracle, "prover final claim != oracle eval");
 
         let verifier = NormSumcheckVerifier::new(tau, w_evals, b);
@@ -529,7 +530,7 @@ mod tests {
             .unwrap();
 
         let oracle = EqPolynomial::mle(&tau_e, &prover_challenges)
-            * range_check_eval(multilinear_eval(&w_evals_e, &prover_challenges), b);
+            * range_check_eval(multilinear_eval(&w_evals_e, &prover_challenges).unwrap(), b);
         assert_eq!(final_claim, oracle, "E2 prover final claim != oracle eval");
 
         let verifier = NormSumcheckVerifier::new(tau_e, w_evals_e, b);

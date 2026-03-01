@@ -78,8 +78,18 @@ where
         let sampled = u128::from_le_bytes(lo);
         F::from_canonical_u128_reduced(sampled)
     }
+}
 
-    fn reset(&mut self, domain_label: &[u8]) {
+impl<D: Digest + Clone, F> HashTranscript<D, F>
+where
+    F: FieldCore + CanonicalField + 'static,
+{
+    /// Reset transcript state under a new domain label.
+    ///
+    /// This is an inherent method (not part of the `Transcript` trait) to
+    /// discourage use in production protocol code where resetting the
+    /// Fiat-Shamir chain would be unsound.
+    pub fn reset(&mut self, domain_label: &[u8]) {
         let mut hasher = D::new();
         hasher.update(domain_label);
         self.hasher = hasher;

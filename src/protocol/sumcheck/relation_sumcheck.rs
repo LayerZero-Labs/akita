@@ -10,6 +10,7 @@ use super::{fold_evals_in_place, multilinear_eval};
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
 use crate::algebra::ring::CyclotomicRing;
 use crate::cfg_into_iter;
+use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::ring_switch::eval_ring_at;
@@ -247,12 +248,12 @@ impl<F: FieldCore, const D: usize> SumcheckInstanceVerifier<F> for RelationSumch
         acc
     }
 
-    fn expected_output_claim(&self, challenges: &[F]) -> F {
+    fn expected_output_claim(&self, challenges: &[F]) -> Result<F, HachiError> {
         let (x_challenges, y_challenges) = challenges.split_at(self.num_u);
-        let w_val = multilinear_eval(&self.w_evals, challenges);
-        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges);
-        let m_val = multilinear_eval(&self.m_evals_x, x_challenges);
-        w_val * alpha_val * m_val
+        let w_val = multilinear_eval(&self.w_evals, challenges)?;
+        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
+        let m_val = multilinear_eval(&self.m_evals_x, x_challenges)?;
+        Ok(w_val * alpha_val * m_val)
     }
 }
 
@@ -378,9 +379,9 @@ mod tests {
             .unwrap();
 
         let (x_ch, y_ch) = prover_challenges.split_at(num_u);
-        let oracle = multilinear_eval(&w_evals, &prover_challenges)
-            * multilinear_eval(&alpha_evals_y, y_ch)
-            * multilinear_eval(&m_evals_x, x_ch);
+        let oracle = multilinear_eval(&w_evals, &prover_challenges).unwrap()
+            * multilinear_eval(&alpha_evals_y, y_ch).unwrap()
+            * multilinear_eval(&m_evals_x, x_ch).unwrap();
         assert_eq!(final_claim, oracle, "prover final claim != oracle eval");
 
         let verifier = RelationSumcheckVerifier::new(

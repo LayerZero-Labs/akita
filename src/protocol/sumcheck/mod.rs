@@ -75,7 +75,12 @@ pub trait SumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
 
     /// Compute the expected final evaluation `f(r_0, ..., r_{n-1})` at the
     /// challenge point derived during the protocol.
-    fn expected_output_claim(&self, challenges: &[E]) -> E;
+    ///
+    /// # Errors
+    ///
+    /// May return an error if internal evaluations fail (e.g., malformed
+    /// evaluation tables from untrusted proof data).
+    fn expected_output_claim(&self, challenges: &[E]) -> Result<E, HachiError>;
 }
 
 /// Produce a sumcheck proof for a single instance, driving the Fiat-Shamir transcript.
@@ -181,7 +186,7 @@ where
         sample_challenge,
     )?;
 
-    let expected = verifier.expected_output_claim(&challenges);
+    let expected = verifier.expected_output_claim(&challenges)?;
     if final_claim != expected {
         return Err(HachiError::InvalidProof);
     }

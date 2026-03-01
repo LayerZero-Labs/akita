@@ -183,12 +183,42 @@ mod primitive_impls {
     impl_primitive_serialization!(u32, 4);
     impl_primitive_serialization!(u64, 8);
     impl_primitive_serialization!(u128, 16);
-    impl_primitive_serialization!(usize, std::mem::size_of::<usize>());
     impl_primitive_serialization!(i8, 1);
     impl_primitive_serialization!(i16, 2);
     impl_primitive_serialization!(i32, 4);
     impl_primitive_serialization!(i64, 8);
     impl_primitive_serialization!(i128, 16);
+
+    impl Valid for usize {
+        fn check(&self) -> Result<(), SerializationError> {
+            Ok(())
+        }
+    }
+
+    impl HachiSerialize for usize {
+        fn serialize_with_mode<W: Write>(
+            &self,
+            writer: W,
+            compress: Compress,
+        ) -> Result<(), SerializationError> {
+            (*self as u64).serialize_with_mode(writer, compress)
+        }
+
+        fn serialized_size(&self, _compress: Compress) -> usize {
+            8
+        }
+    }
+
+    impl HachiDeserialize for usize {
+        fn deserialize_with_mode<R: Read>(
+            reader: R,
+            compress: Compress,
+            validate: Validate,
+        ) -> Result<Self, SerializationError> {
+            let val = u64::deserialize_with_mode(reader, compress, validate)?;
+            Ok(val as usize)
+        }
+    }
 
     impl Valid for bool {
         fn check(&self) -> Result<(), SerializationError> {

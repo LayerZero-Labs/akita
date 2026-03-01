@@ -81,7 +81,7 @@ where
         m_a_vec.len() / m_a.len()
     };
 
-    let (w_evals, num_u, num_l) = build_w_evals(&w, D);
+    let (w_evals, num_u, num_l) = build_w_evals(&w, D)?;
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
 
     let num_sc_vars = num_u + num_l;
@@ -136,7 +136,7 @@ where
         m_a_vec.len() / m_a.len()
     };
 
-    let (w_evals, num_u, num_l) = build_w_evals(w, D);
+    let (w_evals, num_u, num_l) = build_w_evals(w, D)?;
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
 
     let num_sc_vars = num_u + num_l;
@@ -401,9 +401,21 @@ pub(crate) fn expand_m_a<F: CanonicalField, const D: usize, Cfg: CommitmentConfi
     Ok(out)
 }
 
-pub(crate) fn build_w_evals<F: FieldCore>(w: &[F], d: usize) -> (Vec<F>, usize, usize) {
+/// # Errors
+///
+/// Returns an error if `w.len()` is not a multiple of `d`.
+pub(crate) fn build_w_evals<F: FieldCore>(
+    w: &[F],
+    d: usize,
+) -> Result<(Vec<F>, usize, usize), HachiError> {
+    if d == 0 || w.len() % d != 0 {
+        return Err(HachiError::InvalidSize {
+            expected: d,
+            actual: w.len(),
+        });
+    }
     let num_l = d.trailing_zeros() as usize;
-    let num_ring_elems = w.len() / d.max(1);
+    let num_ring_elems = w.len() / d;
     let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
     let x_len = 1usize << num_u;
     let n = x_len << num_l;
@@ -420,7 +432,7 @@ pub(crate) fn build_w_evals<F: FieldCore>(w: &[F], d: usize) -> (Vec<F>, usize, 
             }
         })
         .collect();
-    (evals, num_u, num_l)
+    Ok((evals, num_u, num_l))
 }
 
 pub(crate) fn m_row_count<Cfg: CommitmentConfig>() -> usize {

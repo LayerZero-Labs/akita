@@ -458,6 +458,33 @@ mod tests {
     }
 
     #[test]
+    fn csubp_widened_handles_large_negative_i16() {
+        for &prime in &Q32_PRIMES {
+            let p = prime.p;
+            // Values in (-2p, -(2^15 - p)) that previously overflowed in narrow i16
+            for &raw in &[-20000i16, -(p + p / 2), -(p + 1000)] {
+                if raw <= -2 * p || raw >= 0 {
+                    continue;
+                }
+                let a = MontCoeff::from_raw(raw);
+                let reduced = prime.reduce_range(a);
+                let r = reduced.raw();
+                assert!(
+                    r > -p && r < p,
+                    "reduce_range({raw}) = {r} not in (-{p}, {p}) for p={p}"
+                );
+
+                let norm = prime.normalize(reduced);
+                let n = norm.raw();
+                assert!(
+                    n >= 0 && n < p,
+                    "normalize(reduce_range({raw})) = {n} not in [0, {p}) for p={p}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn ntt_mul_commutative() {
         let prime = Q32_PRIMES[0];
         let a = MontCoeff::from_raw(1234);
