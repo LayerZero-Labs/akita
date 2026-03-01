@@ -2,8 +2,8 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use hachi_pcs::algebra::Fp128;
-use hachi_pcs::error::HachiError;
 use hachi_pcs::primitives::multilinear_evals::DenseMultilinearEvals;
+use hachi_pcs::error::HachiError;
 use hachi_pcs::protocol::commitment::{HachiCommitmentLayout, ProductionFp128CommitmentConfig};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;

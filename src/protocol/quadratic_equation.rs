@@ -201,7 +201,8 @@ where
         y_ring: &CyclotomicRing<F, D>,
     ) -> Result<Self, HachiError> {
         let layout = setup.expanded.seed.layout;
-        let challenges = derive_stage1_challenges::<F, T, D, Cfg>(transcript, v, layout.num_blocks)?;
+        let challenges =
+            derive_stage1_challenges::<F, T, D, Cfg>(transcript, v, layout.num_blocks)?;
         let m = generate_m::<F, D, Cfg>(&setup.expanded, ring_opening_point, &challenges)?;
         let y = generate_y::<F, D, Cfg>(v, &commitment.u, y_ring)?;
 

@@ -103,9 +103,12 @@ impl HachiSerialize for HachiCommitmentLayout {
         self.r_vars.serialize_with_mode(&mut writer, compress)?;
         self.num_blocks.serialize_with_mode(&mut writer, compress)?;
         self.block_len.serialize_with_mode(&mut writer, compress)?;
-        self.inner_width.serialize_with_mode(&mut writer, compress)?;
-        self.outer_width.serialize_with_mode(&mut writer, compress)?;
-        self.d_matrix_width.serialize_with_mode(&mut writer, compress)?;
+        self.inner_width
+            .serialize_with_mode(&mut writer, compress)?;
+        self.outer_width
+            .serialize_with_mode(&mut writer, compress)?;
+        self.d_matrix_width
+            .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 

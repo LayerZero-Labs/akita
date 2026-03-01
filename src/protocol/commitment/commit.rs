@@ -1,8 +1,8 @@
 //! Ring-native §4.1 commitment core implementation.
 
 use super::config::{
-    ensure_block_layout, ensure_matrix_shape, ensure_supported_num_vars, validate_and_derive_layout,
-    HachiCommitmentLayout,
+    ensure_block_layout, ensure_matrix_shape, ensure_supported_num_vars,
+    validate_and_derive_layout, HachiCommitmentLayout,
 };
 use super::onehot::{inner_ajtai_onehot, map_onehot_to_sparse_blocks};
 use super::scheme::{CommitWitness, RingCommitmentScheme};
@@ -99,7 +99,8 @@ impl HachiSerialize for HachiSetupSeed {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.max_num_vars.serialize_with_mode(&mut writer, compress)?;
+        self.max_num_vars
+            .serialize_with_mode(&mut writer, compress)?;
         self.layout.serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.public_matrix_seed)?;
         Ok(())
@@ -171,9 +172,21 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiExpandedSet
     ) -> Result<Self, SerializationError> {
         let out = Self {
             seed: HachiSetupSeed::deserialize_with_mode(&mut reader, compress, validate)?,
-            A: Vec::<Vec<CyclotomicRing<F, D>>>::deserialize_with_mode(&mut reader, compress, validate)?,
-            B: Vec::<Vec<CyclotomicRing<F, D>>>::deserialize_with_mode(&mut reader, compress, validate)?,
-            D: Vec::<Vec<CyclotomicRing<F, D>>>::deserialize_with_mode(&mut reader, compress, validate)?,
+            A: Vec::<Vec<CyclotomicRing<F, D>>>::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            B: Vec::<Vec<CyclotomicRing<F, D>>>::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            D: Vec::<Vec<CyclotomicRing<F, D>>>::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -294,7 +307,12 @@ where
         let verifier_setup = HachiVerifierSetup { expanded };
         ensure_matrix_shape(&prover_setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
         ensure_matrix_shape(&prover_setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
-        ensure_matrix_shape(&prover_setup.expanded.D, Cfg::N_D, layout.d_matrix_width, "D")?;
+        ensure_matrix_shape(
+            &prover_setup.expanded.D,
+            Cfg::N_D,
+            layout.d_matrix_width,
+            "D",
+        )?;
         Ok((prover_setup, verifier_setup))
     }
 
@@ -307,7 +325,10 @@ where
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let layout = setup.layout();
-        ensure_supported_num_vars(setup.expanded.seed.max_num_vars, layout.required_num_vars::<D>()?)?;
+        ensure_supported_num_vars(
+            setup.expanded.seed.max_num_vars,
+            layout.required_num_vars::<D>()?,
+        )?;
         ensure_block_layout(f_blocks, layout)?;
         ensure_matrix_shape(&setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
         ensure_matrix_shape(&setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
@@ -340,7 +361,10 @@ where
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let layout = setup.layout();
-        ensure_supported_num_vars(setup.expanded.seed.max_num_vars, layout.required_num_vars::<D>()?)?;
+        ensure_supported_num_vars(
+            setup.expanded.seed.max_num_vars,
+            layout.required_num_vars::<D>()?,
+        )?;
         ensure_matrix_shape(&setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
         ensure_matrix_shape(&setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
 
@@ -352,8 +376,12 @@ where
         let mut t_hat_flat: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(layout.outer_width);
 
         for block_entries in &sparse_blocks {
-            let (t_i, s_i) =
-                inner_ajtai_onehot(&setup.expanded.A, block_entries, layout.block_len, Cfg::DELTA);
+            let (t_i, s_i) = inner_ajtai_onehot(
+                &setup.expanded.A,
+                block_entries,
+                layout.block_len,
+                Cfg::DELTA,
+            );
             let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
             t_hat_flat.extend(t_hat_i.iter().copied());
 
@@ -374,7 +402,7 @@ where
 mod tests {
     use super::*;
     use crate::primitives::{HachiDeserialize, HachiSerialize};
-    use crate::test_utils::{D as TestD, F as TestF, TinyConfig};
+    use crate::test_utils::{TinyConfig, D as TestD, F as TestF};
 
     #[test]
     fn prover_setup_roundtrips_and_derives_same_verifier() {
