@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
 
+use hachi_pcs::algebra::CyclotomicRing;
 use hachi_pcs::protocol::commitment::{HachiCommitmentCore, RingCommitmentScheme};
 use hachi_pcs::test_utils::*;
 use hachi_pcs::{FieldCore, FromSmallInt};
@@ -33,10 +34,10 @@ fn assert_onehot_matches_dense(onehot_k: usize, indices: &[usize]) {
     for (c, &idx) in indices.iter().enumerate() {
         field_elems[c * onehot_k + idx] = F::from_u64(1);
     }
-    let ring_coeffs: Vec<hachi_pcs::algebra::CyclotomicRing<F, D>> = (0..total_ring)
+    let ring_coeffs: Vec<CyclotomicRing<F, D>> = (0..total_ring)
         .map(|r| {
             let coeffs: [F; D] = std::array::from_fn(|i| field_elems[r * D + i]);
-            hachi_pcs::algebra::CyclotomicRing::from_coefficients(coeffs)
+            CyclotomicRing::from_coefficients(coeffs)
         })
         .collect();
     let w_dense =

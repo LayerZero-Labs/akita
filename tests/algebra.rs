@@ -5,6 +5,7 @@ mod tests {
     use num_bigint::BigUint;
     use rand::{rngs::StdRng, SeedableRng};
 
+    use hachi_pcs::algebra::backend::{CrtReconstruct, NttPrimeOps};
     use hachi_pcs::algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
     use hachi_pcs::algebra::poly::Poly;
     use hachi_pcs::algebra::tables::{
@@ -1046,11 +1047,9 @@ mod tests {
         }
 
         let reconstructed: [F; 64] =
-            <ScalarBackend as hachi_pcs::algebra::backend::CrtReconstruct<
-                i32,
-                Q128_NUM_PRIMES,
-                64,
-            >>::reconstruct(&primes, &canonical, &garner);
+            <ScalarBackend as CrtReconstruct<i32, Q128_NUM_PRIMES, 64>>::reconstruct(
+                &primes, &canonical, &garner,
+            );
 
         assert_eq!(reconstructed, coeffs);
     }
@@ -1071,10 +1070,7 @@ mod tests {
             let mut limb = [MontCoeff::from_raw(0i32); 64];
             for (i, r) in residues.iter().enumerate() {
                 let reduced = (*r as i64 % (prime.p as i64)) as i32;
-                limb[i] = <ScalarBackend as hachi_pcs::algebra::backend::NttPrimeOps<i32, 64>>::from_canonical(
-                    prime,
-                    reduced,
-                );
+                limb[i] = <ScalarBackend as NttPrimeOps<i32, 64>>::from_canonical(prime, reduced);
             }
 
             forward_ntt(&mut limb, prime, &twiddles[k]);
@@ -1082,10 +1078,7 @@ mod tests {
 
             for (i, r) in residues.iter().enumerate() {
                 let expected = (*r as i64 % (prime.p as i64)) as i32;
-                let got = <ScalarBackend as hachi_pcs::algebra::backend::NttPrimeOps<i32, 64>>::to_canonical(
-                    prime,
-                    limb[i],
-                );
+                let got = <ScalarBackend as NttPrimeOps<i32, 64>>::to_canonical(prime, limb[i]);
                 assert_eq!(got, expected, "prime idx={k} coeff idx={i}");
             }
         }

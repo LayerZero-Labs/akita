@@ -10,7 +10,8 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
-    CommitmentConfig, HachiCommitmentCore, RingCommitment, RingCommitmentScheme,
+    CommitmentConfig, HachiCommitmentCore, HachiCommitmentLayout, RingCommitment,
+    RingCommitmentScheme,
 };
 use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::sumcheck::eq_poly::EqPolynomial;
@@ -252,14 +253,12 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
     const TAU: usize = Cfg::TAU;
     const CHALLENGE_WEIGHT: usize = Cfg::CHALLENGE_WEIGHT;
 
-    fn commitment_layout(
-        max_num_vars: usize,
-    ) -> Result<crate::protocol::commitment::HachiCommitmentLayout, HachiError> {
+    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
         let alpha = D.trailing_zeros() as usize;
-        let m_vars = max_num_vars
-            .checked_sub(alpha)
-            .ok_or_else(|| HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string()))?;
-        crate::protocol::commitment::HachiCommitmentLayout::new::<Self>(m_vars, 0)
+        let m_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
+            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
+        })?;
+        HachiCommitmentLayout::new::<Self>(m_vars, 0)
     }
 }
 
@@ -286,9 +285,8 @@ where
     let max_num_vars = m_vars + D.trailing_zeros() as usize;
     let blocks = vec![padded];
 
-    let (w_setup, _) = <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::setup(
-        max_num_vars,
-    )?;
+    let (w_setup, _) =
+        <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::setup(max_num_vars)?;
 
     let w = <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::commit_ring_blocks(
         &blocks, &w_setup,

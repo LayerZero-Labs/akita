@@ -3,7 +3,8 @@
 use hachi_pcs::algebra::CyclotomicRing;
 use hachi_pcs::error::HachiError;
 use hachi_pcs::protocol::commitment::{
-    CommitmentConfig, HachiCommitmentCore, RingCommitmentScheme, SmallTestCommitmentConfig,
+    CommitmentConfig, HachiCommitmentCore, HachiCommitmentLayout, RingCommitmentScheme,
+    SmallTestCommitmentConfig,
 };
 use hachi_pcs::test_utils::*;
 
@@ -20,10 +21,8 @@ impl CommitmentConfig for BadDegreeConfig {
     const TAU: usize = 4;
     const CHALLENGE_WEIGHT: usize = 3;
 
-    fn commitment_layout(
-        _max_num_vars: usize,
-    ) -> Result<hachi_pcs::protocol::commitment::HachiCommitmentLayout, HachiError> {
-        hachi_pcs::protocol::commitment::HachiCommitmentLayout::new::<Self>(4, 2)
+    fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        HachiCommitmentLayout::new::<Self>(4, 2)
     }
 }
 
@@ -40,10 +39,8 @@ impl CommitmentConfig for BadDigitBudgetConfig {
     const TAU: usize = 4;
     const CHALLENGE_WEIGHT: usize = 3;
 
-    fn commitment_layout(
-        _max_num_vars: usize,
-    ) -> Result<hachi_pcs::protocol::commitment::HachiCommitmentLayout, HachiError> {
-        hachi_pcs::protocol::commitment::HachiCommitmentLayout::new::<Self>(4, 2)
+    fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        HachiCommitmentLayout::new::<Self>(4, 2)
     }
 }
 
@@ -59,7 +56,10 @@ fn setup_shape_is_consistent() {
     assert_eq!(p2.expanded.seed.max_num_vars, 16);
     assert_eq!(v2.expanded.seed.max_num_vars, 16);
     assert_eq!(p1.expanded.A.len(), TinyConfig::N_A);
-    assert_eq!(p1.expanded.A[0].len(), hachi_pcs::test_utils::BLOCK_LEN * TinyConfig::DELTA);
+    assert_eq!(
+        p1.expanded.A[0].len(),
+        hachi_pcs::test_utils::BLOCK_LEN * TinyConfig::DELTA
+    );
     assert_eq!(p1.expanded.B.len(), TinyConfig::N_B);
     assert_eq!(
         p1.expanded.B[0].len(),
