@@ -6,9 +6,13 @@ use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::primitives::poly::multilinear_lagrange_basis;
+use crate::protocol::commitment::onehot::{inner_ajtai_onehot, SparseBlockEntry};
+use crate::protocol::commitment::utils::linear::{
+    decompose_block, decompose_rows, mat_vec_mul_ntt_cached, MatrixSlot,
+};
 use crate::protocol::commitment::{
     AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore, HachiProverSetup,
-    HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
+    HachiVerifierSetup, RingCommitment, RingCommitmentScheme, StreamingCommitmentScheme,
 };
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{HachiCommitmentHint, HachiProof, SumcheckAux};
@@ -98,27 +102,29 @@ where
         let hint = hint.ok_or_else(|| {
             HachiError::InvalidInput("missing commitment hint for proving".to_string())
         })?;
-        let num_vars = poly.num_vars();
+        let _num_vars = poly.num_vars();
         let alpha = Cfg::D.trailing_zeros() as usize;
-        let reduced_len = num_vars
-            .checked_sub(alpha)
-            .ok_or_else(|| HachiError::InvalidSetup("reduction length underflow".to_string()))?;
-        if opening_point.len() < reduced_len {
+        if opening_point.len() < alpha {
             return Err(HachiError::InvalidPointDimension {
-                expected: reduced_len,
+                expected: alpha,
+                actual: opening_point.len(),
+            });
+        }
+        let outer_point = &opening_point[alpha..];
+
+        let layout = <HachiCommitmentCore as RingCommitmentScheme<F, { D }, Cfg>>::layout(setup)?;
+        let expected_outer = layout.r_vars + layout.m_vars;
+        if outer_point.len() != expected_outer {
+            return Err(HachiError::InvalidPointDimension {
+                expected: expected_outer + alpha,
                 actual: opening_point.len(),
             });
         }
 
-        let layout = <HachiCommitmentCore as RingCommitmentScheme<F, { D }, Cfg>>::layout(setup)?;
-        let ring_opening_point = ring_opening_point_from_field::<F>(
-            &opening_point[..reduced_len],
-            layout.r_vars,
-            layout.m_vars,
-        )?;
+        let ring_opening_point =
+            ring_opening_point_from_field::<F>(outer_point, layout.r_vars, layout.m_vars)?;
 
-        let y_ring =
-            evaluate_packed_ring_poly::<F, { D }>(&hint.ring_coeffs, &opening_point[..reduced_len]);
+        let y_ring = evaluate_packed_ring_poly::<F, { D }>(&hint.ring_coeffs, outer_point);
 
         // Fiat-Shamir: bind commitment, opening point, and y_ring before any challenges.
         commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
@@ -175,11 +181,13 @@ where
         commitment: &Self::Commitment,
     ) -> Result<(), HachiError> {
         let alpha_bits = Cfg::D.trailing_zeros() as usize;
-        let reduced_len = opening_point.len().checked_sub(alpha_bits).ok_or_else(|| {
-            HachiError::InvalidSetup("opening point length underflow".to_string())
-        })?;
-        let reduced_opening_point = &opening_point[..reduced_len];
-        let inner_point = &opening_point[reduced_len..];
+        if opening_point.len() < alpha_bits {
+            return Err(HachiError::InvalidSetup(
+                "opening point length underflow".to_string(),
+            ));
+        }
+        let inner_point = &opening_point[..alpha_bits];
+        let reduced_opening_point = &opening_point[alpha_bits..];
 
         // Fiat-Shamir: bind commitment, opening point, and y_ring before any challenges.
         commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
@@ -261,6 +269,151 @@ where
     }
 }
 
+/// Per-block intermediate state for streaming Hachi commitment.
+///
+/// Each chunk corresponds to one Ajtai inner block: `D * block_len` field
+/// elements packed into `block_len` ring elements, decomposed, and multiplied
+/// by the inner matrix A.
+#[derive(Clone, PartialEq, Eq)]
+pub struct HachiChunkState<F: FieldCore, const D: usize> {
+    /// Original ring elements for this block (needed for `ring_coeffs` hint).
+    pub block: Vec<CyclotomicRing<F, D>>,
+    /// Basis-decomposed input vector `s_i = G^{-1}(block)`.
+    pub s_i: Vec<CyclotomicRing<F, D>>,
+    /// Basis-decomposed inner Ajtai output `t̂_i = G^{-1}(A · s_i)`.
+    pub t_hat_i: Vec<CyclotomicRing<F, D>>,
+}
+
+impl<F: FieldCore, const D: usize> std::fmt::Debug for HachiChunkState<F, D> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HachiChunkState")
+            .field("block_len", &self.block.len())
+            .field("s_i_len", &self.s_i.len())
+            .field("t_hat_i_len", &self.t_hat_i.len())
+            .finish()
+    }
+}
+
+impl<F, const D: usize, Cfg> StreamingCommitmentScheme<F> for HachiCommitmentScheme<D, Cfg>
+where
+    F: FieldCore + CanonicalField + FieldSampling,
+    Cfg: CommitmentConfig,
+{
+    type ChunkState = HachiChunkState<F, D>;
+
+    fn process_chunk(setup: &Self::ProverSetup, chunk: &[F]) -> Self::ChunkState {
+        assert!(
+            chunk.len() % D == 0,
+            "chunk length {} is not divisible by D={}",
+            chunk.len(),
+            D
+        );
+
+        let block: Vec<CyclotomicRing<F, D>> = chunk
+            .chunks_exact(D)
+            .map(|c| CyclotomicRing::from_coefficients(std::array::from_fn(|j| c[j])))
+            .collect();
+
+        let s_i = decompose_block(&block, Cfg::DELTA, Cfg::LOG_BASIS);
+        let t_i =
+            mat_vec_mul_ntt_cached(setup.ntt_cache().expect("NTT cache"), MatrixSlot::A, &s_i)
+                .expect("inner Ajtai");
+        let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
+
+        HachiChunkState {
+            block,
+            s_i,
+            t_hat_i,
+        }
+    }
+
+    fn process_chunk_onehot(
+        setup: &Self::ProverSetup,
+        onehot_k: usize,
+        chunk: &[Option<usize>],
+    ) -> Self::ChunkState {
+        let layout = <HachiCommitmentCore as RingCommitmentScheme<F, { D }, Cfg>>::layout(setup)
+            .expect("layout");
+        let block_len = layout.block_len;
+
+        let num_field_elems = chunk.len() * onehot_k;
+        assert!(
+            num_field_elems % D == 0,
+            "chunk cycles * K = {num_field_elems} is not divisible by D={D}",
+        );
+
+        // Build sparse entries and original block ring elements.
+        let num_ring_elems = num_field_elems / D;
+        let mut ring_block = vec![CyclotomicRing::<F, D>::zero(); num_ring_elems];
+        let mut ring_elem_map: std::collections::BTreeMap<usize, Vec<usize>> =
+            std::collections::BTreeMap::new();
+        for (c, opt) in chunk.iter().enumerate() {
+            if let Some(k) = opt {
+                let field_pos = c * onehot_k + k;
+                let ring_elem_idx = field_pos / D;
+                let coeff_idx = field_pos % D;
+                ring_block[ring_elem_idx].coeffs[coeff_idx] = F::one();
+                ring_elem_map
+                    .entry(ring_elem_idx)
+                    .or_default()
+                    .push(coeff_idx);
+            }
+        }
+
+        let sparse_entries: Vec<SparseBlockEntry> = ring_elem_map
+            .into_iter()
+            .map(|(ring_elem_idx, nonzero_coeffs)| SparseBlockEntry {
+                pos_in_block: ring_elem_idx,
+                nonzero_coeffs,
+            })
+            .collect();
+
+        let (t_i, s_i) =
+            inner_ajtai_onehot(&setup.expanded.A, &sparse_entries, block_len, Cfg::DELTA);
+        let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
+
+        HachiChunkState {
+            block: ring_block,
+            s_i,
+            t_hat_i,
+        }
+    }
+
+    fn aggregate_chunks(
+        setup: &Self::ProverSetup,
+        _onehot_k: Option<usize>,
+        chunks: &[Self::ChunkState],
+    ) -> (Self::Commitment, Self::OpeningProofHint) {
+        let t_hat_flat: Vec<CyclotomicRing<F, D>> = chunks
+            .iter()
+            .flat_map(|c| c.t_hat_i.iter().copied())
+            .collect();
+
+        let u = mat_vec_mul_ntt_cached(
+            setup.ntt_cache().expect("NTT cache"),
+            MatrixSlot::B,
+            &t_hat_flat,
+        )
+        .expect("outer Ajtai");
+
+        let s_all: Vec<Vec<CyclotomicRing<F, D>>> = chunks.iter().map(|c| c.s_i.clone()).collect();
+        let t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> =
+            chunks.iter().map(|c| c.t_hat_i.clone()).collect();
+        let ring_coeffs: Vec<CyclotomicRing<F, D>> = chunks
+            .iter()
+            .flat_map(|c| c.block.iter().copied())
+            .collect();
+
+        let commitment = RingCommitment { u };
+        let hint = HachiCommitmentHint {
+            s: s_all,
+            t_hat: t_hat_all,
+            ring_coeffs,
+        };
+        (commitment, hint)
+    }
+}
+
 /// Re-derive the ring-switch challenge `alpha` and the expanded `M_a` vector
 /// by replaying the transcript from the proof data and setup, exactly as the
 /// verifier does.
@@ -276,13 +429,14 @@ where
     Cfg: CommitmentConfig,
 {
     let alpha_bits = Cfg::D.trailing_zeros() as usize;
-    let reduced_len = opening_point
-        .len()
-        .checked_sub(alpha_bits)
-        .ok_or_else(|| HachiError::InvalidSetup("opening point length underflow".to_string()))?;
+    if opening_point.len() < alpha_bits {
+        return Err(HachiError::InvalidSetup(
+            "opening point length underflow".to_string(),
+        ));
+    }
     let layout = setup.expanded.seed.layout;
     let ring_opening_point = ring_opening_point_from_field::<F>(
-        &opening_point[..reduced_len],
+        &opening_point[alpha_bits..],
         layout.r_vars,
         layout.m_vars,
     )?;
@@ -332,8 +486,10 @@ fn ring_opening_point_from_field<F: FieldCore>(
         });
     }
 
-    let b = lagrange_weights(&opening_point[..r_vars]);
-    let a = lagrange_weights(&opening_point[r_vars..]);
+    // Sequential ordering: M variables (position in block) come first,
+    // R variables (block selection) come second.
+    let a = lagrange_weights(&opening_point[..m_vars]);
+    let b = lagrange_weights(&opening_point[m_vars..]);
     Ok(RingOpeningPoint { a, b })
 }
 
@@ -363,17 +519,13 @@ fn reduce_coeffs_to_ring_elements<F: FieldCore, const D: usize>(
         });
     }
 
-    let outer_vars = num_vars - alpha;
-    let outer_len = 1usize
-        .checked_shl(outer_vars as u32)
-        .ok_or_else(|| HachiError::InvalidInput(format!("2^{outer_vars} does not fit usize")))?;
-
+    // Sequential packing: ring element i = coeffs[i*D .. (i+1)*D].
+    // The first alpha variables (LSBs) become coefficient slots within each
+    // ring element; the remaining outer_vars variables index ring elements.
+    let outer_len = expected_len / D;
     let out: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..outer_len)
         .map(|i| {
-            let ring_coeffs = std::array::from_fn(|j| {
-                let idx = i + (j << outer_vars);
-                coeffs[idx]
-            });
+            let ring_coeffs = std::array::from_fn(|j| coeffs[i * D + j]);
             CyclotomicRing::from_coefficients(ring_coeffs)
         })
         .collect();
@@ -524,6 +676,88 @@ mod tests {
         assert!(
             result.is_err(),
             "verify must reject an incorrect opening value"
+        );
+    }
+
+    #[test]
+    fn streaming_commit_matches_non_streaming() {
+        let alpha = Cfg::D.trailing_zeros() as usize;
+        let layout = Cfg::commitment_layout(16).unwrap();
+        let num_vars = layout.m_vars + layout.r_vars + alpha;
+        let len = 1usize << num_vars;
+
+        let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
+        let poly = DenseMultilinearEvals::new_padded(evals.clone());
+
+        let setup = <Scheme as CommitmentScheme<F>>::setup_prover(num_vars);
+
+        // Non-streaming commit
+        let (non_streaming_commitment, non_streaming_hint) =
+            <Scheme as CommitmentScheme<F>>::commit(&poly, &setup).unwrap();
+
+        // Streaming commit: split field elements into chunks of D * block_len
+        let chunk_size = Cfg::D * layout.block_len;
+        let chunks: Vec<HachiChunkState<F, { Cfg::D }>> = evals
+            .chunks_exact(chunk_size)
+            .map(|chunk| <Scheme as StreamingCommitmentScheme<F>>::process_chunk(&setup, chunk))
+            .collect();
+
+        let (streaming_commitment, streaming_hint) =
+            <Scheme as StreamingCommitmentScheme<F>>::aggregate_chunks(&setup, None, &chunks);
+
+        assert_eq!(non_streaming_commitment, streaming_commitment);
+        assert_eq!(non_streaming_hint, streaming_hint);
+    }
+
+    #[test]
+    fn streaming_commit_then_prove_verify() {
+        let alpha = Cfg::D.trailing_zeros() as usize;
+        let layout = Cfg::commitment_layout(16).unwrap();
+        let num_vars = layout.m_vars + layout.r_vars + alpha;
+        let len = 1usize << num_vars;
+
+        let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
+        let poly = DenseMultilinearEvals::new_padded(evals.clone());
+
+        let setup = <Scheme as CommitmentScheme<F>>::setup_prover(num_vars);
+        let verifier_setup = <Scheme as CommitmentScheme<F>>::setup_verifier(&setup);
+
+        // Streaming commit
+        let chunk_size = Cfg::D * layout.block_len;
+        let chunks: Vec<HachiChunkState<F, { Cfg::D }>> = evals
+            .chunks_exact(chunk_size)
+            .map(|chunk| <Scheme as StreamingCommitmentScheme<F>>::process_chunk(&setup, chunk))
+            .collect();
+        let (commitment, hint) =
+            <Scheme as StreamingCommitmentScheme<F>>::aggregate_chunks(&setup, None, &chunks);
+
+        // Prove and verify with streaming-produced commitment + hint
+        let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
+        let opening = poly.evaluate(&opening_point);
+
+        let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/stream");
+        let proof = <Scheme as CommitmentScheme<F>>::prove(
+            &setup,
+            &poly,
+            &opening_point,
+            Some(hint),
+            &mut prover_transcript,
+            &commitment,
+        )
+        .unwrap();
+
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/stream");
+        let result = <Scheme as CommitmentScheme<F>>::verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+        );
+        assert!(
+            result.is_ok(),
+            "streaming commit should produce valid proofs"
         );
     }
 }

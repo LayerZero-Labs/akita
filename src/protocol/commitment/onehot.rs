@@ -89,14 +89,12 @@ pub(crate) fn map_onehot_to_sparse_blocks(
             .push(coeff_idx);
     }
 
-    // Distribute into blocks using the same interleaved layout as commit_coeffs:
-    //   block_idx = ring_elem_idx % num_blocks
-    //   pos_in_block = ring_elem_idx / num_blocks
-    // (equivalently: flat_idx = (pos_in_block << R) + block_idx)
+    // Sequential block layout matching commit_coeffs: block i = ring elements
+    // [i*block_len, (i+1)*block_len).
     let mut blocks: Vec<Vec<SparseBlockEntry>> = vec![Vec::new(); num_blocks];
     for (ring_elem_idx, nonzero_coeffs) in ring_elem_map {
-        let block_idx = ring_elem_idx & (num_blocks - 1);
-        let pos_in_block = ring_elem_idx >> r;
+        let block_idx = ring_elem_idx / block_len;
+        let pos_in_block = ring_elem_idx % block_len;
         blocks[block_idx].push(SparseBlockEntry {
             pos_in_block,
             nonzero_coeffs,

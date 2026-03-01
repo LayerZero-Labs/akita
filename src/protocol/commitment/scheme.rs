@@ -178,21 +178,16 @@ where
 
     /// Commit to a flat coefficient table `(f_i)_{i∈{0,1}^ℓ}` in ring form.
     ///
-    /// The input is indexed in LSB-first order (same convention as
-    /// `DenseMultilinearEvals`). We split the variables as:
-    ///
-    /// - outer index `i` for the first `R` variables,
-    /// - inner index `j` for the last `M` variables,
-    ///
-    /// We then form blocks `f_i = (f_{i||j})_{j}` (Eq. (12) in the paper).
-    ///
-    /// This prepares `f_blocks` and delegates to `commit_ring_blocks`.
+    /// The input uses sequential block layout: ring elements
+    /// `[0, block_len)` form block 0, `[block_len, 2*block_len)` form
+    /// block 1, and so on. This matches the sequential variable ordering
+    /// where M variables (position in block) are lower-order and R variables
+    /// (block selection) are higher-order.
     ///
     /// # Errors
     ///
     /// Returns an error if `f_coeffs.len()` does not match the configured block
-    /// layout, if internal index computations overflow, or if the underlying
-    /// commitment routine fails.
+    /// layout or if the underlying commitment routine fails.
     fn commit_coeffs(
         f_coeffs: &[CyclotomicRing<F, D>],
         setup: &Self::ProverSetup,
@@ -210,17 +205,10 @@ where
             });
         }
 
-        let mut blocks = Vec::with_capacity(num_blocks);
-        for i in 0..num_blocks {
-            let mut block = Vec::with_capacity(block_len);
-            for j in 0..block_len {
-                let idx = (j << layout.r_vars)
-                    .checked_add(i)
-                    .ok_or_else(|| HachiError::InvalidSetup("index overflow".to_string()))?;
-                block.push(f_coeffs[idx]);
-            }
-            blocks.push(block);
-        }
+        let blocks: Vec<Vec<CyclotomicRing<F, D>>> = f_coeffs
+            .chunks_exact(block_len)
+            .map(|chunk| chunk.to_vec())
+            .collect();
 
         Self::commit_ring_blocks(&blocks, setup)
     }

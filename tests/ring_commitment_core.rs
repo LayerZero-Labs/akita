@@ -112,14 +112,11 @@ fn commit_ring_coeffs_matches_block_commitment() {
     )
     .unwrap();
 
-    let num_blocks = hachi_pcs::test_utils::NUM_BLOCKS;
-    let block_len = hachi_pcs::test_utils::BLOCK_LEN;
-    let mut f_coeffs = Vec::with_capacity(num_blocks * block_len);
-    for j in 0..block_len {
-        for block in blocks.iter().take(num_blocks) {
-            f_coeffs.push(block[j]);
-        }
-    }
+    // Sequential layout: block 0 elements, then block 1 elements, etc.
+    let f_coeffs: Vec<_> = blocks
+        .iter()
+        .flat_map(|block| block.iter().copied())
+        .collect();
 
     let wc = <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::commit_coeffs(
         &f_coeffs, &psetup,
