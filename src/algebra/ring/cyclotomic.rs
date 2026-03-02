@@ -29,6 +29,17 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
         Self { coeffs }
     }
 
+    /// Construct from a slice, zero-padding if shorter than `D`.
+    ///
+    /// Avoids creating a `[F; D]` stack temporary when `D` is large.
+    #[inline]
+    pub fn from_slice(slice: &[F]) -> Self {
+        let mut coeffs = [F::zero(); D];
+        let len = slice.len().min(D);
+        coeffs[..len].copy_from_slice(&slice[..len]);
+        Self { coeffs }
+    }
+
     /// Borrow the coefficient array.
     #[inline]
     pub fn coefficients(&self) -> &[F; D] {

@@ -30,19 +30,18 @@ use crate::{CanonicalField, FieldCore};
 /// Recomputes each block's `s_i` from `ring_coeffs` on the fly to avoid
 /// storing all `s_i` simultaneously (which can be tens of GB at production
 /// parameters).
-fn compute_w_hat<F, const D: usize, Cfg>(
+fn compute_w_hat<F, const D: usize>(
     opening_point: &RingOpeningPoint<F>,
     ring_coeffs: &[CyclotomicRing<F, D>],
     layout: HachiCommitmentLayout,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
     F: FieldCore + CanonicalField,
-    Cfg: CommitmentConfig,
 {
     let a = &opening_point.a;
     let block_len = layout.block_len;
-    let delta = Cfg::DELTA;
-    let log_basis = Cfg::LOG_BASIS;
+    let delta = layout.delta;
+    let log_basis = layout.log_basis;
 
     debug_assert_eq!(a.len(), block_len);
 
@@ -58,15 +57,18 @@ where
         })
         .collect();
 
+    // w_i = Σ_j a[j] · block[j]  (dot product in ring space).
+    // Then ŵ_i = G^{-1}(w_i).
+    //
+    // The previous implementation materialized s_i = G^{-1}(block) (block_len *
+    // delta ring elements ≈ 512 MB for production params) and then recomposed
+    // each entry G(s_i[j*delta..(j+1)*delta]) = block[j].  The decompose +
+    // recompose is an identity, so we skip it entirely.
     cfg_iter!(blocks)
         .map(|block| {
-            let s_i = decompose_block(block, delta, log_basis);
             let mut w_i = CyclotomicRing::<F, D>::zero();
-            for (j, a_j) in a.iter().enumerate().take(block_len) {
-                let start = j * delta;
-                let end = start + delta;
-                let recomp_j = CyclotomicRing::gadget_recompose_pow2(&s_i[start..end], log_basis);
-                w_i += recomp_j.scale(a_j);
+            for (b_j, a_j) in block.iter().zip(a.iter()) {
+                w_i += b_j.scale(a_j);
             }
             w_i.balanced_decompose_pow2(delta, log_basis)
         })
@@ -76,11 +78,15 @@ where
 /// **Step 4.** Compute `v = D · ŵ` (first prover message).
 fn compute_v<F: FieldCore + CanonicalField, const D: usize>(
     cache: &NttMatrixCache<D>,
-    w_hat: &[Vec<CyclotomicRing<F, D>>],
+    w_hat_flat: &[CyclotomicRing<F, D>],
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-    let w_hat_flat: Vec<CyclotomicRing<F, D>> =
-        w_hat.iter().flat_map(|v| v.iter().copied()).collect();
-    mat_vec_mul_ntt_cached(cache, MatrixSlot::D, &w_hat_flat)
+    mat_vec_mul_ntt_cached(cache, MatrixSlot::D, w_hat_flat)
+}
+
+fn flatten_w_hat<F: FieldCore, const D: usize>(
+    w_hat: &[Vec<CyclotomicRing<F, D>>],
+) -> Vec<CyclotomicRing<F, D>> {
+    w_hat.iter().flat_map(|v| v.iter().copied()).collect()
 }
 
 /// **Steps 7–9.** Fold `z_pre = Σ c_i · s_i` and check `‖z_pre‖_∞ ≤ β`.
@@ -98,8 +104,8 @@ where
     Cfg: CommitmentConfig,
 {
     let block_len = layout.block_len;
-    let delta = Cfg::DELTA;
-    let log_basis = Cfg::LOG_BASIS;
+    let delta = layout.delta;
+    let log_basis = layout.log_basis;
     let inner_width = block_len * delta;
 
     debug_assert_eq!(challenges.len(), layout.num_blocks);
@@ -153,6 +159,8 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize, Cfg: CommitmentConfig
     z_pre: Option<Vec<CyclotomicRing<F, D>>>,
     /// Decomposed `ŵ_i = G_1^{-1}(w_i)` (prover only).
     w_hat: Option<Vec<Vec<CyclotomicRing<F, D>>>>,
+    /// Flattened `w_hat` (prover only, computed once and reused).
+    w_hat_flat: Option<Vec<CyclotomicRing<F, D>>>,
     /// Commitment hint (prover only).
     hint: Option<HachiCommitmentHint<F, D>>,
 
@@ -172,20 +180,19 @@ where
     /// generation fails.
     pub fn new_prover<T: Transcript<F>>(
         setup: &HachiProverSetup<F, D>,
-        ring_opening_point: &RingOpeningPoint<F>,
-        hint: &HachiCommitmentHint<F, D>,
+        ring_opening_point: RingOpeningPoint<F>,
+        hint: HachiCommitmentHint<F, D>,
         transcript: &mut T,
         commitment: &RingCommitment<F, D>,
         y_ring: &CyclotomicRing<F, D>,
     ) -> Result<Self, HachiError> {
         let layout = setup.layout();
-        let w_hat = compute_w_hat::<F, D, Cfg>(ring_opening_point, &hint.ring_coeffs, layout);
-        let v = compute_v(setup.ntt_cache()?, &w_hat)?;
+        let w_hat = compute_w_hat::<F, D>(&ring_opening_point, &hint.ring_coeffs, layout);
+        let w_hat_flat = flatten_w_hat(&w_hat);
+        let v = compute_v(setup.ntt_cache()?, &w_hat_flat)?;
 
-        // Step 5: append v to transcript
         transcript.append_serde(ABSORB_PROVER_V, &v);
 
-        // Step 6: sample sparse folding challenges
         let challenge_cfg = SparseChallengeConfig {
             weight: Cfg::CHALLENGE_WEIGHT,
             nonzero_coeffs: vec![-1, 1],
@@ -199,16 +206,17 @@ where
 
         let z_pre = compute_z_pre::<F, D, Cfg>(&hint.ring_coeffs, &challenges, layout)?;
 
-        let y = generate_y::<F, D, Cfg>(&v, &commitment.u, y_ring)?;
+        let y = generate_y::<F, D>(&v, &commitment.u, y_ring, Cfg::N_D, Cfg::N_B, Cfg::N_A)?;
 
         Ok(Self {
             v,
             challenges,
             y,
-            opening_point: ring_opening_point.clone(),
+            opening_point: ring_opening_point,
             z_pre: Some(z_pre),
             w_hat: Some(w_hat),
-            hint: Some(hint.clone()),
+            w_hat_flat: Some(w_hat_flat),
+            hint: Some(hint),
             _marker: std::marker::PhantomData,
         })
     }
@@ -220,24 +228,25 @@ where
     /// Returns an error if challenge derivation fails.
     pub fn new_verifier<T: Transcript<F>>(
         setup: &HachiVerifierSetup<F, D>,
-        ring_opening_point: &RingOpeningPoint<F>,
-        v: &Vec<CyclotomicRing<F, D>>,
+        ring_opening_point: RingOpeningPoint<F>,
+        v: Vec<CyclotomicRing<F, D>>,
         transcript: &mut T,
         commitment: &RingCommitment<F, D>,
         y_ring: &CyclotomicRing<F, D>,
     ) -> Result<Self, HachiError> {
         let layout = setup.expanded.seed.layout;
         let challenges =
-            derive_stage1_challenges::<F, T, D, Cfg>(transcript, v, layout.num_blocks)?;
-        let y = generate_y::<F, D, Cfg>(v, &commitment.u, y_ring)?;
+            derive_stage1_challenges::<F, T, D, Cfg>(transcript, &v, layout.num_blocks)?;
+        let y = generate_y::<F, D>(&v, &commitment.u, y_ring, Cfg::N_D, Cfg::N_B, Cfg::N_A)?;
 
         Ok(Self {
-            v: v.to_vec(),
+            v,
             challenges,
             y,
-            opening_point: ring_opening_point.clone(),
+            opening_point: ring_opening_point,
             z_pre: None,
             w_hat: None,
+            w_hat_flat: None,
             hint: None,
             _marker: std::marker::PhantomData,
         })
@@ -271,6 +280,11 @@ where
     /// Get the decomposed witness `ŵ` (prover only).
     pub fn w_hat(&self) -> Option<&[Vec<CyclotomicRing<F, D>>]> {
         self.w_hat.as_deref()
+    }
+
+    /// Get the pre-flattened `w_hat` (prover only).
+    pub fn w_hat_flat(&self) -> Option<&[CyclotomicRing<F, D>]> {
+        self.w_hat_flat.as_deref()
     }
 
     /// Take ownership of `w_hat`, leaving `None` in its place.
@@ -411,11 +425,13 @@ fn add_sparse_ring_product<F: FieldCore + CanonicalField, const D: usize>(
 ///
 /// Computes `r` such that `M·z = y + (X^D+1)·r` without materializing M or z.
 /// Uses split-eq factoring: `kron(left, gadget) · decomposed = left · pre_decomp`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_r_split_eq<F, const D: usize, Cfg>(
     setup: &HachiExpandedSetup<F, D>,
     opening_point: &RingOpeningPoint<F>,
     challenges: &[SparseChallenge],
     w_hat: &[Vec<CyclotomicRing<F, D>>],
+    w_hat_flat: &[CyclotomicRing<F, D>],
     t_hat: &[Vec<CyclotomicRing<F, D>>],
     z_pre: &[CyclotomicRing<F, D>],
     y: &[CyclotomicRing<F, D>],
@@ -424,11 +440,12 @@ where
     F: FieldCore + CanonicalField,
     Cfg: CommitmentConfig,
 {
+    let layout = setup.seed.layout;
+    let delta = layout.delta;
+    let log_basis = layout.log_basis;
     let poly_len = 2 * D - 1;
     let num_rows = Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A;
 
-    let w_hat_flat: Vec<CyclotomicRing<F, D>> =
-        w_hat.iter().flat_map(|v| v.iter().copied()).collect();
     let t_hat_flat: Vec<CyclotomicRing<F, D>> =
         t_hat.iter().flat_map(|v| v.iter().copied()).collect();
 
@@ -448,43 +465,36 @@ where
                 add_unreduced_product(&mut poly, m_ij, z_j);
             }
         } else if row_idx == Cfg::N_D + Cfg::N_B {
-            // row3: b . w_recomp (scalar * ring, degree D-1)
             for (i, w_hat_i) in w_hat.iter().enumerate() {
-                let w_recomp = CyclotomicRing::gadget_recompose_pow2(w_hat_i, Cfg::LOG_BASIS);
+                let w_recomp = CyclotomicRing::gadget_recompose_pow2(w_hat_i, log_basis);
                 add_scalar_ring_product(&mut poly, &opening_point.b[i], &w_recomp);
             }
         } else if row_idx == Cfg::N_D + Cfg::N_B + 1 {
-            // row4 w-segment: c . w_recomp (sparse*ring unreduced)
             for (i, w_hat_i) in w_hat.iter().enumerate() {
-                let w_recomp = CyclotomicRing::gadget_recompose_pow2(w_hat_i, Cfg::LOG_BASIS);
+                let w_recomp = CyclotomicRing::gadget_recompose_pow2(w_hat_i, log_basis);
                 add_sparse_ring_product(&mut poly, &challenges[i], &w_recomp);
             }
-            // row4 z-segment: -(a . z_pre_recomp), double-factored
-            // z_pre_recomp[i] = gadget_recompose(z_pre[i*DELTA..(i+1)*DELTA])
             let block_len = opening_point.a.len();
             for i in 0..block_len {
-                let start = i * Cfg::DELTA;
-                let end = start + Cfg::DELTA;
+                let start = i * delta;
+                let end = start + delta;
                 if end <= z_pre.len() {
                     let z_pre_recomp =
-                        CyclotomicRing::gadget_recompose_pow2(&z_pre[start..end], Cfg::LOG_BASIS);
+                        CyclotomicRing::gadget_recompose_pow2(&z_pre[start..end], log_basis);
                     sub_scalar_ring_product(&mut poly, &opening_point.a[i], &z_pre_recomp);
                 }
             }
         } else {
-            // row5 (N_A rows)
             let a_idx = row_idx - (Cfg::N_D + Cfg::N_B + 2);
-            // t-segment: c . t_recomp[a_idx] (sparse*ring unreduced)
             for (i, t_hat_i) in t_hat.iter().enumerate() {
-                let start = a_idx * Cfg::DELTA;
-                let end = start + Cfg::DELTA;
+                let start = a_idx * delta;
+                let end = start + delta;
                 if end <= t_hat_i.len() {
                     let t_recomp =
-                        CyclotomicRing::gadget_recompose_pow2(&t_hat_i[start..end], Cfg::LOG_BASIS);
+                        CyclotomicRing::gadget_recompose_pow2(&t_hat_i[start..end], log_basis);
                     add_sparse_ring_product(&mut poly, &challenges[i], &t_recomp);
                 }
             }
-            // z-segment: -(A[a_idx] . z_pre) (ring*ring unreduced)
             let a_row = &setup.A[a_idx];
             for (m_ij, z_j) in a_row.iter().zip(z_pre.iter()) {
                 sub_unreduced_product(&mut poly, m_ij, z_j);
@@ -503,8 +513,7 @@ where
             quotient[k - D] = q;
             poly[k - D] = poly[k - D] - q;
         }
-        let coeffs: [F; D] = std::array::from_fn(|k| quotient[k]);
-        result.push(CyclotomicRing::from_coefficients(coeffs));
+        result.push(CyclotomicRing::from_slice(&quotient));
     }
 
     Ok(result)
@@ -525,15 +534,18 @@ where
     Cfg: CommitmentConfig,
 {
     let layout = setup.seed.layout;
+    let delta = layout.delta;
+    let tau = layout.tau;
+    let log_basis = layout.log_basis;
     let num_blocks = layout.num_blocks;
     let block_len = layout.block_len;
-    let w_len = Cfg::DELTA * num_blocks;
-    let t_len = Cfg::DELTA * Cfg::N_A * num_blocks;
-    let z_len = Cfg::TAU * Cfg::DELTA * block_len;
+    let w_len = delta * num_blocks;
+    let t_len = delta * Cfg::N_A * num_blocks;
+    let z_len = tau * delta * block_len;
     let total_cols = w_len + t_len + z_len;
 
-    let g1 = gadget_row_scalars::<F>(Cfg::DELTA, Cfg::LOG_BASIS);
-    let j1 = gadget_row_scalars::<F>(Cfg::TAU, Cfg::LOG_BASIS);
+    let g1 = gadget_row_scalars::<F>(delta, log_basis);
+    let j1 = gadget_row_scalars::<F>(tau, log_basis);
 
     // Pre-evaluate alpha powers for gadget scalars (already field elements)
     // g1 and j1 are already field scalars, so eval_ring_at(constant(g), alpha) = g.
@@ -563,30 +575,26 @@ where
         let mut full = vec![F::zero(); total_cols];
         for (i, &b_i) in opening_point.b.iter().enumerate() {
             for (d, &g) in g1.iter().enumerate() {
-                full[i * Cfg::DELTA + d] = b_i * g;
+                full[i * delta + d] = b_i * g;
             }
         }
         rows.push(full);
     }
 
-    // row4: w-segment = kron(c, g1) evaluated at alpha
-    //        z-segment = -kron(kron(a,g1), j1) (all scalars)
     {
         let mut full = vec![F::zero(); total_cols];
-        // w-segment: c[i] evaluated at alpha, times g1[d]
         for (i, c) in challenges.iter().enumerate() {
             let c_alpha = eval_ring_at(&c.to_dense::<F, D>().expect("valid challenge"), alpha);
             for (d, &g) in g1.iter().enumerate() {
-                full[i * Cfg::DELTA + d] = c_alpha * g;
+                full[i * delta + d] = c_alpha * g;
             }
         }
-        // z-segment: -kron(kron(a,g1), j1) = -(a[i] * g1[d] * j1[t])
         let z_offset = w_len + t_len;
         for (i, &a_i) in opening_point.a.iter().enumerate() {
             for (d, &g) in g1.iter().enumerate() {
                 let ag = a_i * g;
                 for (t, &j) in j1.iter().enumerate() {
-                    let idx = (i * Cfg::DELTA + d) * Cfg::TAU + t;
+                    let idx = (i * delta + d) * tau + t;
                     full[z_offset + idx] = -(ag * j);
                 }
             }
@@ -594,25 +602,21 @@ where
         rows.push(full);
     }
 
-    // row5 (N_A rows): t-segment = kron(c, g_na[a_idx]) evaluated at alpha
-    //                   z-segment = -kron(A[a_idx], j1) evaluated at alpha
     for a_idx in 0..Cfg::N_A {
         let mut full = vec![F::zero(); total_cols];
-        // t-segment: block-diagonal gadget times challenges
         for (i, c) in challenges.iter().enumerate() {
             let c_alpha = eval_ring_at(&c.to_dense::<F, D>().expect("valid challenge"), alpha);
             for (d, &g) in g1.iter().enumerate() {
-                let t_idx = i * (Cfg::N_A * Cfg::DELTA) + a_idx * Cfg::DELTA + d;
+                let t_idx = i * (Cfg::N_A * delta) + a_idx * delta + d;
                 full[w_len + t_idx] = c_alpha * g;
             }
         }
-        // z-segment: -A[a_idx][k] evaluated at alpha, times j1[t]
         let z_offset = w_len + t_len;
         let a_row = &setup.A[a_idx];
         for (k, ring) in a_row.iter().enumerate() {
             let ring_alpha = eval_ring_at(ring, alpha);
             for (t, &j) in j1.iter().enumerate() {
-                full[z_offset + k * Cfg::TAU + t] = -(ring_alpha * j);
+                full[z_offset + k * tau + t] = -(ring_alpha * j);
             }
         }
         rows.push(full);
@@ -621,35 +625,35 @@ where
     Ok(rows)
 }
 
-pub(crate) fn generate_y<F, const D: usize, Cfg: CommitmentConfig>(
+pub(crate) fn generate_y<F, const D: usize>(
     v: &[CyclotomicRing<F, D>],
     u: &[CyclotomicRing<F, D>],
     u_eval: &CyclotomicRing<F, D>,
+    n_d: usize,
+    n_b: usize,
+    n_a: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
 where
     F: FieldCore,
 {
-    if v.len() != Cfg::N_D {
+    if v.len() != n_d {
         return Err(HachiError::InvalidSize {
-            expected: Cfg::N_D,
+            expected: n_d,
             actual: v.len(),
         });
     }
-    if u.len() != Cfg::N_B {
+    if u.len() != n_b {
         return Err(HachiError::InvalidSize {
-            expected: Cfg::N_B,
+            expected: n_b,
             actual: u.len(),
         });
     }
-    let mut out = Vec::with_capacity(Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A);
+    let mut out = Vec::with_capacity(n_d + n_b + 1 + 1 + n_a);
     out.extend_from_slice(v);
     out.extend_from_slice(u);
     out.push(*u_eval);
     out.push(CyclotomicRing::<F, D>::zero());
-    out.extend(std::iter::repeat_n(
-        CyclotomicRing::<F, D>::zero(),
-        Cfg::N_A,
-    ));
+    out.extend(std::iter::repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
     Ok(out)
 }
 
@@ -723,8 +727,8 @@ mod tests {
         let y_ring = CyclotomicRing::<F, D>::zero();
         let quad_eq = QuadraticEquation::<F, D, TinyConfig>::new_prover(
             &setup,
-            &point,
-            &hint,
+            point.clone(),
+            hint,
             &mut transcript,
             &w.commitment,
             &y_ring,

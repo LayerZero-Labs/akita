@@ -51,11 +51,16 @@ struct ShakeXofRng {
 }
 
 impl ShakeXofRng {
+    // Dimensions (`rows`, `cols`) are intentionally excluded from the domain
+    // separator so that a matrix derived at one size is a prefix of the same
+    // matrix derived at a larger size.  Each entry is uniquely identified by
+    // `(seed, matrix_label, row, col)`, which is sufficient for collision
+    // resistance while enabling setup reuse across poly/mega-poly layouts.
     fn new(
         seed: &PublicMatrixSeed,
         matrix_label: &[u8],
-        rows: usize,
-        cols: usize,
+        _rows: usize,
+        _cols: usize,
         row: usize,
         col: usize,
     ) -> Self {
@@ -63,8 +68,6 @@ impl ShakeXofRng {
         absorb_len_prefixed(&mut xof, b"domain", PUBLIC_MATRIX_DOMAIN);
         absorb_len_prefixed(&mut xof, b"seed", seed);
         absorb_len_prefixed(&mut xof, b"matrix", matrix_label);
-        absorb_len_prefixed(&mut xof, b"rows", &(rows as u64).to_le_bytes());
-        absorb_len_prefixed(&mut xof, b"cols", &(cols as u64).to_le_bytes());
         absorb_len_prefixed(&mut xof, b"row", &(row as u64).to_le_bytes());
         absorb_len_prefixed(&mut xof, b"col", &(col as u64).to_le_bytes());
         Self {

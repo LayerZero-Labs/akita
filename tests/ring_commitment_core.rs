@@ -181,7 +181,7 @@ fn setup_rejects_invalid_digit_budget() {
     let err = <HachiCommitmentCore as RingCommitmentScheme<F, D, BadDigitBudgetConfig>>::setup(16)
         .unwrap_err();
     match err {
-        HachiError::InvalidSetup(msg) => assert!(msg.contains("DELTA * LOG_BASIS")),
+        HachiError::InvalidSetup(msg) => assert!(msg.contains("delta * log_basis")),
         other => panic!("unexpected error: {other:?}"),
     }
 }

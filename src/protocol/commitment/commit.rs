@@ -330,12 +330,14 @@ where
         ensure_matrix_shape(&setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
 
         let cache = setup.ntt_cache()?;
+        let delta = layout.delta;
+        let log_basis = layout.log_basis;
         let t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = cfg_iter!(f_blocks)
             .map(|block| {
-                let s_i = decompose_block(block, Cfg::DELTA, Cfg::LOG_BASIS);
+                let s_i = decompose_block(block, delta, log_basis);
                 let t_i =
                     mat_vec_mul_ntt_cached(cache, MatrixSlot::A, &s_i).expect("inner Ajtai failed");
-                decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS)
+                decompose_rows(&t_i, delta, log_basis)
             })
             .collect();
 
@@ -366,8 +368,9 @@ where
             });
         }
 
-        let zero_t_hat =
-            vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(Cfg::DELTA).unwrap()];
+        let delta = layout.delta;
+        let log_basis = layout.log_basis;
+        let zero_t_hat = vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(delta).unwrap()];
         let cache = setup.ntt_cache()?;
         let coeff_len = f_coeffs.len();
 
@@ -379,10 +382,10 @@ where
                 } else {
                     let end = (start + block_len).min(coeff_len);
                     let block = &f_coeffs[start..end];
-                    let s_i = decompose_block(block, Cfg::DELTA, Cfg::LOG_BASIS);
+                    let s_i = decompose_block(block, delta, log_basis);
                     let t_i = mat_vec_mul_ntt_cached(cache, MatrixSlot::A, &s_i)
                         .expect("inner Ajtai failed");
-                    decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS)
+                    decompose_rows(&t_i, delta, log_basis)
                 }
             })
             .collect();
@@ -413,8 +416,9 @@ where
         let sparse_blocks =
             map_onehot_to_sparse_blocks(onehot_k, indices, layout.r_vars, layout.m_vars, D)?;
 
-        let zero_t_hat =
-            vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(Cfg::DELTA).unwrap()];
+        let delta = layout.delta;
+        let log_basis = layout.log_basis;
+        let zero_t_hat = vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(delta).unwrap()];
         let cache = setup.ntt_cache()?;
         let a_matrix = &setup.expanded.A;
         let block_len = layout.block_len;
@@ -424,9 +428,8 @@ where
                 if block_entries.is_empty() {
                     zero_t_hat.clone()
                 } else {
-                    let t_i =
-                        inner_ajtai_onehot_t_only(a_matrix, block_entries, block_len, Cfg::DELTA);
-                    decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS)
+                    let t_i = inner_ajtai_onehot_t_only(a_matrix, block_entries, block_len, delta);
+                    decompose_rows(&t_i, delta, log_basis)
                 }
             })
             .collect();
@@ -618,8 +621,9 @@ impl HachiCommitmentCore {
         ensure_matrix_shape(&setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
         ensure_matrix_shape(&setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
 
-        let zero_t_hat =
-            vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(Cfg::DELTA).unwrap()];
+        let delta = layout.delta;
+        let log_basis = layout.log_basis;
+        let zero_t_hat = vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(delta).unwrap()];
         let cache = setup.ntt_cache()?;
         let a_matrix = &setup.expanded.A;
         let block_len = layout.block_len;
@@ -628,22 +632,18 @@ impl HachiCommitmentCore {
             .map(|block| match block {
                 MegaPolyBlock::Zero => zero_t_hat.clone(),
                 MegaPolyBlock::Dense(coeffs) => {
-                    let s_i = decompose_block(coeffs, Cfg::DELTA, Cfg::LOG_BASIS);
+                    let s_i = decompose_block(coeffs, delta, log_basis);
                     let t_i = mat_vec_mul_ntt_cached(cache, MatrixSlot::A, &s_i)
                         .expect("inner Ajtai failed");
-                    decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS)
+                    decompose_rows(&t_i, delta, log_basis)
                 }
                 MegaPolyBlock::OneHot(sparse_entries) => {
                     if sparse_entries.is_empty() {
                         zero_t_hat.clone()
                     } else {
-                        let t_i = inner_ajtai_onehot_t_only(
-                            a_matrix,
-                            sparse_entries,
-                            block_len,
-                            Cfg::DELTA,
-                        );
-                        decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS)
+                        let t_i =
+                            inner_ajtai_onehot_t_only(a_matrix, sparse_entries, block_len, delta);
+                        decompose_rows(&t_i, delta, log_basis)
                     }
                 }
             })

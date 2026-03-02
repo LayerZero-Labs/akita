@@ -94,6 +94,7 @@ where
         transcript: &mut T,
         commitment: &Self::Commitment,
     ) -> Result<Self::Proof, HachiError> {
+        let t_prove_total = std::time::Instant::now();
         let hint = hint.ok_or_else(|| {
             HachiError::InvalidInput("missing commitment hint for proving".to_string())
         })?;
@@ -121,7 +122,13 @@ where
         let ring_opening_point =
             ring_opening_point_from_field::<F>(outer_point, layout.r_vars, layout.m_vars)?;
 
+        let t0 = std::time::Instant::now();
         let y_ring = evaluate_packed_ring_poly::<F, { D }>(&hint.ring_coeffs, outer_point);
+        eprintln!(
+            "  [hachi prove] eval packed ring poly: {:.2}s (ring_coeffs len={})",
+            t0.elapsed().as_secs_f64(),
+            hint.ring_coeffs.len()
+        );
 
         // Fiat-Shamir: bind commitment, opening point, and y_ring before any challenges.
         commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
@@ -131,22 +138,33 @@ where
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
 
         // §4.2 Quadratic equation
+        let t1 = std::time::Instant::now();
         let mut quad_eq = QuadraticEquation::<F, { D }, Cfg>::new_prover(
             setup,
-            &ring_opening_point,
-            &hint,
+            ring_opening_point,
+            hint,
             transcript,
             commitment,
             &y_ring,
         )?;
+        eprintln!(
+            "  [hachi prove] quad_eq new_prover: {:.2}s",
+            t1.elapsed().as_secs_f64()
+        );
 
         // §4.3 Ring switch
+        let t2 = std::time::Instant::now();
         let rs = ring_switch_prover::<F, T, { D }, Cfg>(&mut quad_eq, &setup.expanded, transcript)?;
+        eprintln!(
+            "  [hachi prove] ring_switch_prover: {:.2}s",
+            t2.elapsed().as_secs_f64()
+        );
 
         // Sample batching coefficient for fused sumcheck
         let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
 
         // Fused sumcheck: norm + relation with shared w_table
+        let t3 = std::time::Instant::now();
         let mut fused_prover = HachiSumcheckProver::new(
             batching_coeff,
             rs.w_evals,
@@ -162,6 +180,14 @@ where
             prove_sumcheck::<F, _, F, _, _>(&mut fused_prover, transcript, |tr| {
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
             })?;
+        eprintln!(
+            "  [hachi prove] fused sumcheck: {:.2}s",
+            t3.elapsed().as_secs_f64()
+        );
+        eprintln!(
+            "  [hachi prove] total: {:.2}s",
+            t_prove_total.elapsed().as_secs_f64()
+        );
 
         Ok(HachiProof {
             v: quad_eq.v,
@@ -217,8 +243,8 @@ where
         )?;
         let quad_eq = QuadraticEquation::<F, { D }, Cfg>::new_verifier(
             setup,
-            &ring_opening_point,
-            &proof.v,
+            ring_opening_point,
+            proof.v.clone(),
             transcript,
             commitment,
             &proof.y_ring,
@@ -369,14 +395,16 @@ where
 
         let block: Vec<CyclotomicRing<F, D>> = chunk
             .chunks_exact(D)
-            .map(|c| CyclotomicRing::from_coefficients(std::array::from_fn(|j| c[j])))
+            .map(|c| CyclotomicRing::from_slice(c))
             .collect();
 
-        let s_i = decompose_block(&block, Cfg::DELTA, Cfg::LOG_BASIS);
+        let layout = <HachiCommitmentCore as RingCommitmentScheme<F, { D }, Cfg>>::layout(setup)
+            .expect("layout");
+        let s_i = decompose_block(&block, layout.delta, layout.log_basis);
         let t_i =
             mat_vec_mul_ntt_cached(setup.ntt_cache().expect("NTT cache"), MatrixSlot::A, &s_i)
                 .expect("inner Ajtai");
-        let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
+        let t_hat_i = decompose_rows(&t_i, layout.delta, layout.log_basis);
 
         HachiChunkState {
             block,
@@ -427,8 +455,8 @@ where
             .collect();
 
         let (t_i, s_i) =
-            inner_ajtai_onehot(&setup.expanded.A, &sparse_entries, block_len, Cfg::DELTA);
-        let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
+            inner_ajtai_onehot(&setup.expanded.A, &sparse_entries, block_len, layout.delta);
+        let t_hat_i = decompose_rows(&t_i, layout.delta, layout.log_basis);
 
         HachiChunkState {
             block: ring_block,
@@ -507,8 +535,8 @@ where
 
     let quad_eq = QuadraticEquation::<F, D, Cfg>::new_verifier(
         setup,
-        &ring_opening_point,
-        &proof.v,
+        ring_opening_point,
+        proof.v.clone(),
         &mut transcript,
         commitment,
         &proof.y_ring,
@@ -521,7 +549,7 @@ where
         &quad_eq.challenges,
         &alpha,
     )?;
-    let m_a_vec = expand_m_a::<F, D, Cfg>(&m_a, alpha)?;
+    let m_a_vec = expand_m_a::<F, D>(&m_a, alpha, setup.expanded.seed.layout.log_basis)?;
     Ok((alpha, m_a_vec))
 }
 
@@ -585,10 +613,7 @@ fn reduce_coeffs_to_ring_elements<F: FieldCore, const D: usize>(
     // ring element; the remaining outer_vars variables index ring elements.
     let outer_len = expected_len / D;
     let out: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..outer_len)
-        .map(|i| {
-            let ring_coeffs = std::array::from_fn(|j| coeffs[i * D + j]);
-            CyclotomicRing::from_coefficients(ring_coeffs)
-        })
+        .map(|i| CyclotomicRing::from_slice(&coeffs[i * D..(i + 1) * D]))
         .collect();
     Ok(out)
 }
@@ -603,8 +628,7 @@ fn reduce_inner_openings_to_ring_elements<F: FieldCore, const D: usize>(
             weights.len()
         )));
     }
-    let coeffs = std::array::from_fn(|i| weights[i]);
-    Ok(CyclotomicRing::from_coefficients(coeffs))
+    Ok(CyclotomicRing::from_slice(&weights))
 }
 
 fn evaluate_packed_ring_poly<F: FieldCore, const D: usize>(

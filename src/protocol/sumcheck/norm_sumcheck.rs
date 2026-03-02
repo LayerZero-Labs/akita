@@ -602,7 +602,7 @@ mod tests {
             ring_with_small_coeff(3),
         ];
         let r = [ring_with_small_coeff(0), ring_with_small_coeff(1)];
-        let levels = r_decomp_levels::<F, SmallTestCommitmentConfig>();
+        let levels = r_decomp_levels::<F>(SmallTestCommitmentConfig::LOG_BASIS);
         let r_hat: Vec<CyclotomicRing<F, D>> = r
             .iter()
             .flat_map(|ri| ri.balanced_decompose_pow2(levels, SmallTestCommitmentConfig::LOG_BASIS))

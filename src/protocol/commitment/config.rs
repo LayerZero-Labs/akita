@@ -26,6 +26,12 @@ pub struct HachiCommitmentLayout {
     pub outer_width: usize,
     /// Width of prover matrix `D` (`delta * 2^r_vars`).
     pub d_matrix_width: usize,
+    /// Decomposition levels `delta` (gadget decomposition depth).
+    pub delta: usize,
+    /// Decomposition levels for the folded witness `z` (`tau` in the paper).
+    pub tau: usize,
+    /// Base-2 logarithm of gadget decomposition base.
+    pub log_basis: u32,
 }
 
 impl HachiCommitmentLayout {
@@ -35,16 +41,47 @@ impl HachiCommitmentLayout {
     ///
     /// Returns an error when powers or derived widths overflow.
     pub fn new<Cfg: CommitmentConfig>(m_vars: usize, r_vars: usize) -> Result<Self, HachiError> {
+        Self::new_with_decomp(
+            m_vars,
+            r_vars,
+            Cfg::N_A,
+            Cfg::DELTA,
+            Cfg::TAU,
+            Cfg::LOG_BASIS,
+        )
+    }
+
+    /// Build a layout from explicit decomposition parameters (no config trait needed).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when parameters are invalid or derived widths overflow.
+    pub fn new_with_decomp(
+        m_vars: usize,
+        r_vars: usize,
+        n_a: usize,
+        delta: usize,
+        tau: usize,
+        log_basis: u32,
+    ) -> Result<Self, HachiError> {
+        if log_basis == 0 || log_basis >= 128 {
+            return Err(HachiError::InvalidSetup("invalid log_basis".to_string()));
+        }
+        if (delta as u32).saturating_mul(log_basis) > 128 {
+            return Err(HachiError::InvalidSetup(
+                "delta * log_basis must be <= 128".to_string(),
+            ));
+        }
         let num_blocks = checked_pow2(r_vars)?;
         let block_len = checked_pow2(m_vars)?;
         let inner_width = block_len
-            .checked_mul(Cfg::DELTA)
+            .checked_mul(delta)
             .ok_or_else(|| HachiError::InvalidSetup("inner width overflow".to_string()))?;
-        let outer_width = Cfg::N_A
-            .checked_mul(Cfg::DELTA)
+        let outer_width = n_a
+            .checked_mul(delta)
             .and_then(|x| x.checked_mul(num_blocks))
             .ok_or_else(|| HachiError::InvalidSetup("outer width overflow".to_string()))?;
-        let d_matrix_width = Cfg::DELTA
+        let d_matrix_width = delta
             .checked_mul(num_blocks)
             .ok_or_else(|| HachiError::InvalidSetup("D-matrix width overflow".to_string()))?;
         Ok(Self {
@@ -55,6 +92,9 @@ impl HachiCommitmentLayout {
             inner_width,
             outer_width,
             d_matrix_width,
+            delta,
+            tau,
+            log_basis,
         })
     }
 
@@ -109,6 +149,9 @@ impl HachiSerialize for HachiCommitmentLayout {
             .serialize_with_mode(&mut writer, compress)?;
         self.d_matrix_width
             .serialize_with_mode(&mut writer, compress)?;
+        self.delta.serialize_with_mode(&mut writer, compress)?;
+        self.tau.serialize_with_mode(&mut writer, compress)?;
+        (self.log_basis as usize).serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
@@ -120,6 +163,9 @@ impl HachiSerialize for HachiCommitmentLayout {
             + self.inner_width.serialized_size(compress)
             + self.outer_width.serialized_size(compress)
             + self.d_matrix_width.serialized_size(compress)
+            + self.delta.serialized_size(compress)
+            + self.tau.serialized_size(compress)
+            + self.delta.serialized_size(compress) // log_basis as usize
     }
 }
 
@@ -137,6 +183,9 @@ impl HachiDeserialize for HachiCommitmentLayout {
             inner_width: usize::deserialize_with_mode(&mut reader, compress, validate)?,
             outer_width: usize::deserialize_with_mode(&mut reader, compress, validate)?,
             d_matrix_width: usize::deserialize_with_mode(&mut reader, compress, validate)?,
+            delta: usize::deserialize_with_mode(&mut reader, compress, validate)?,
+            tau: usize::deserialize_with_mode(&mut reader, compress, validate)?,
+            log_basis: usize::deserialize_with_mode(&mut reader, compress, validate)? as u32,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -146,6 +195,10 @@ impl HachiDeserialize for HachiCommitmentLayout {
 }
 
 /// Parameter bundle for the ring-native commitment core (§4.1–§4.2).
+///
+/// Decomposition parameters (`delta`, `tau`, `log_basis`) live in
+/// [`HachiCommitmentLayout`] rather than here, so they can be set at runtime
+/// without changing the config type.
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Ring degree used by `CyclotomicRing<F, D>`.
     const D: usize;
@@ -177,7 +230,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// Returns an error on invalid parameters or arithmetic overflow.
     fn beta_bound(layout: HachiCommitmentLayout) -> Result<u128, HachiError> {
-        beta_linf_fold_bound(layout.r_vars, Self::CHALLENGE_WEIGHT, Self::LOG_BASIS)
+        beta_linf_fold_bound(layout.r_vars, Self::CHALLENGE_WEIGHT, layout.log_basis)
     }
 }
 
@@ -226,14 +279,6 @@ pub(super) fn validate_and_derive_layout<Cfg: CommitmentConfig, const D: usize>(
             "const D={D} mismatches config D={}",
             Cfg::D
         )));
-    }
-    if Cfg::LOG_BASIS == 0 || Cfg::LOG_BASIS >= 128 {
-        return Err(HachiError::InvalidSetup("invalid LOG_BASIS".to_string()));
-    }
-    if (Cfg::DELTA as u32).saturating_mul(Cfg::LOG_BASIS) > 128 {
-        return Err(HachiError::InvalidSetup(
-            "DELTA * LOG_BASIS must be <= 128".to_string(),
-        ));
     }
     Cfg::commitment_layout(max_num_vars)
 }
@@ -359,8 +404,8 @@ impl CommitmentConfig for DynamicSmallTestCommitmentConfig {
                 "max_num_vars must leave at least one outer variable".to_string(),
             ));
         }
-        let m_vars = reduced_vars.min(11);
-        let r_vars = reduced_vars - m_vars;
+        let r_vars = reduced_vars / 2;
+        let m_vars = reduced_vars - r_vars;
         HachiCommitmentLayout::new::<Self>(m_vars, r_vars)
     }
 }
@@ -377,11 +422,8 @@ impl CommitmentConfig for DynamicSmallTestCommitmentConfig {
 /// - Challenges use exactly `ω = CHALLENGE_WEIGHT` nonzeros in `{±1}`.
 /// - Therefore each `mul_by_sparse` output coefficient is a signed sum of `ω`
 ///   shifted digits, hence bounded by `ω * (b/2)`.
-/// - Summing over `2^R` blocks gives:
+/// - Summing over `2^R` blocks (R = r_vars) gives:
 ///   `||z||_inf <= 2^R * ω * (b/2)`.
-///
-/// For this profile: `R=11`, `ω=19`, `b=16`, so
-/// `β = 2^11 * 19 * 8 = 311_296`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ProductionFp128CommitmentConfig;
 
@@ -405,8 +447,8 @@ impl CommitmentConfig for ProductionFp128CommitmentConfig {
                 "max_num_vars must leave at least one outer variable".to_string(),
             ));
         }
-        let m_vars = reduced_vars.min(11);
-        let r_vars = reduced_vars - m_vars;
+        let r_vars = reduced_vars / 2;
+        let m_vars = reduced_vars - r_vars;
         HachiCommitmentLayout::new::<Self>(m_vars, r_vars)
     }
 }

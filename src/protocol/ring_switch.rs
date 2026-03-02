@@ -69,6 +69,9 @@ where
     let w_hat = quad_eq
         .w_hat()
         .ok_or_else(|| HachiError::InvalidInput("missing w_hat in prover".to_string()))?;
+    let w_hat_flat = quad_eq
+        .w_hat_flat()
+        .ok_or_else(|| HachiError::InvalidInput("missing w_hat_flat in prover".to_string()))?;
     let z_pre = quad_eq
         .z_pre()
         .ok_or_else(|| HachiError::InvalidInput("missing z_pre in prover".to_string()))?;
@@ -82,11 +85,13 @@ where
         quad_eq.opening_point(),
         &quad_eq.challenges,
         w_hat,
+        w_hat_flat,
         t_hat,
         z_pre,
         quad_eq.y(),
     )?;
-    let w = build_w_coeffs::<F, D, Cfg>(w_hat, t_hat, z_pre, &r);
+    let layout = setup.seed.layout;
+    let w = build_w_coeffs::<F, D>(w_hat, t_hat, z_pre, &r, layout);
 
     let w_commitment = commit_w::<F, D, Cfg>(&w)?;
     transcript.append_serde(ABSORB_SUMCHECK_W, &w_commitment);
@@ -99,7 +104,7 @@ where
         &quad_eq.challenges,
         &alpha,
     )?;
-    let m_a_vec = expand_m_a::<F, D, Cfg>(&m_a, alpha)?;
+    let m_a_vec = expand_m_a::<F, D>(&m_a, alpha, layout.log_basis)?;
     let m_rows = m_row_count::<Cfg>();
     let m_cols = if m_a.is_empty() {
         0
@@ -128,7 +133,7 @@ where
         num_l,
         tau0,
         tau1,
-        b: 1usize << Cfg::LOG_BASIS,
+        b: 1usize << layout.log_basis,
         alpha,
     })
 }
@@ -150,6 +155,7 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
+    let layout = setup.seed.layout;
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
@@ -160,7 +166,7 @@ where
         &quad_eq.challenges,
         &alpha,
     )?;
-    let m_a_vec = expand_m_a::<F, D, Cfg>(&m_a, alpha)?;
+    let m_a_vec = expand_m_a::<F, D>(&m_a, alpha, layout.log_basis)?;
     let m_rows = m_row_count::<Cfg>();
     let m_cols = if m_a.is_empty() {
         0
@@ -182,7 +188,7 @@ where
     let m_evals_x = build_m_evals_x::<F>(&m_a_vec, m_rows, m_cols, &tau1);
 
     Ok(RingSwitchOutput {
-        w: w.to_vec(),
+        w: Vec::new(),
         w_commitment: w_commitment.clone(),
         w_evals: Vec::new(),
         m_evals_x,
@@ -191,7 +197,7 @@ where
         num_l,
         tau0,
         tau1,
-        b: 1usize << Cfg::LOG_BASIS,
+        b: 1usize << layout.log_basis,
         alpha,
     })
 }
@@ -283,16 +289,27 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
     const N_B: usize = Cfg::N_B;
     const N_D: usize = Cfg::N_D;
     const LOG_BASIS: u32 = Cfg::LOG_BASIS;
-    const DELTA: usize = Cfg::DELTA;
+    // w's entries are already base-2^LOG_BASIS digits (in [-b/2, b/2-1]),
+    // so gadget decomposition is the identity.  DELTA=1 avoids a
+    // block_len × DELTA blowup in inner_width that is otherwise 32×
+    // larger than necessary.
+    const DELTA: usize = 1;
     const TAU: usize = Cfg::TAU;
     const CHALLENGE_WEIGHT: usize = Cfg::CHALLENGE_WEIGHT;
 
     fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
         let alpha = D.trailing_zeros() as usize;
-        let m_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
+        let reduced_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
             HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
         })?;
-        HachiCommitmentLayout::new::<Self>(m_vars, 0)
+        if reduced_vars == 0 {
+            return Err(HachiError::InvalidSetup(
+                "max_num_vars must leave at least one outer variable".to_string(),
+            ));
+        }
+        let r_vars = reduced_vars / 2;
+        let m_vars = reduced_vars - r_vars;
+        HachiCommitmentLayout::new::<Self>(m_vars, r_vars)
     }
 }
 
@@ -305,25 +322,20 @@ where
 
     let ring_elems: Vec<CyclotomicRing<F, D>> = w
         .chunks(D)
-        .map(|chunk| {
-            let coeffs: [F; D] =
-                std::array::from_fn(|i| if i < chunk.len() { chunk[i] } else { F::zero() });
-            CyclotomicRing::from_coefficients(coeffs)
-        })
+        .map(|chunk| CyclotomicRing::from_slice(chunk))
         .collect();
 
-    let block_len = ring_elems.len().next_power_of_two().max(1);
-    let mut padded = ring_elems;
-    padded.resize(block_len, CyclotomicRing::<F, D>::zero());
-    let m_vars = block_len.trailing_zeros() as usize;
-    let max_num_vars = m_vars + D.trailing_zeros() as usize;
-    let blocks = vec![padded];
+    let total = ring_elems.len().next_power_of_two().max(1);
+    let alpha = D.trailing_zeros() as usize;
+    let m_vars = total.trailing_zeros() as usize;
+    let max_num_vars = m_vars + alpha;
 
     let (w_setup, _) =
         <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::setup(max_num_vars)?;
 
-    let w = <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::commit_ring_blocks(
-        &blocks, &w_setup,
+    let w = <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::commit_coeffs(
+        &ring_elems,
+        &w_setup,
     )?;
 
     Ok(w.commitment)
@@ -339,16 +351,16 @@ pub(crate) fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D
     acc
 }
 
-pub(crate) fn r_decomp_levels<F: CanonicalField, Cfg: CommitmentConfig>() -> usize {
+pub(crate) fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
     let modulus = detect_field_modulus::<F>();
     let bits = 128 - (modulus.saturating_sub(1)).leading_zeros() as usize;
-    let log_basis = Cfg::LOG_BASIS as usize;
-    let mut levels = (bits + log_basis.saturating_sub(1)) / log_basis.max(1);
+    let lb = log_basis as usize;
+    let mut levels = (bits + lb.saturating_sub(1)) / lb.max(1);
     if levels == 0 {
         levels = 1;
     }
 
-    let b = 1u128 << Cfg::LOG_BASIS;
+    let b = 1u128 << log_basis;
     let half_q = modulus / 2;
     let half_b_minus_1 = b / 2 - 1;
     let b_minus_1 = b - 1;
@@ -364,9 +376,10 @@ pub(crate) fn r_decomp_levels<F: CanonicalField, Cfg: CommitmentConfig>() -> usi
     levels
 }
 
-pub(crate) fn expand_m_a<F: CanonicalField, const D: usize, Cfg: CommitmentConfig>(
+pub(crate) fn expand_m_a<F: CanonicalField, const D: usize>(
     m_a: &[Vec<F>],
     alpha: F,
+    log_basis: u32,
 ) -> Result<Vec<F>, HachiError> {
     if m_a.is_empty() {
         return Ok(Vec::new());
@@ -385,7 +398,7 @@ pub(crate) fn expand_m_a<F: CanonicalField, const D: usize, Cfg: CommitmentConfi
         }
     }
 
-    let levels = r_decomp_levels::<F, Cfg>();
+    let levels = r_decomp_levels::<F>(log_basis);
     let total_cols = cols
         .checked_add(
             rows.checked_mul(levels)
@@ -393,7 +406,7 @@ pub(crate) fn expand_m_a<F: CanonicalField, const D: usize, Cfg: CommitmentConfi
         )
         .ok_or_else(|| HachiError::InvalidSetup("expanded M width overflow".to_string()))?;
 
-    let base = F::from_canonical_u128_reduced(1u128 << Cfg::LOG_BASIS);
+    let base = F::from_canonical_u128_reduced(1u128 << log_basis);
     let mut gadget_row = Vec::with_capacity(levels);
     let mut power = F::one();
     for _ in 0..levels {
@@ -543,33 +556,37 @@ pub(crate) fn sample_tau<F: FieldCore + CanonicalField, T: Transcript<F>>(
     (0..n).map(|_| transcript.challenge_scalar(label)).collect()
 }
 
-pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize, Cfg: CommitmentConfig>(
+pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     w_hat: &[Vec<CyclotomicRing<F, D>>],
     t_hat: &[Vec<CyclotomicRing<F, D>>],
     z_pre: &[CyclotomicRing<F, D>],
     r: &[CyclotomicRing<F, D>],
+    layout: HachiCommitmentLayout,
 ) -> Vec<F> {
-    let levels = r_decomp_levels::<F, Cfg>();
+    let log_basis = layout.log_basis;
+    let tau = layout.tau;
+    let levels = r_decomp_levels::<F>(log_basis);
     let r_hat: Vec<CyclotomicRing<F, D>> = r
         .iter()
-        .flat_map(|ri| ri.balanced_decompose_pow2(levels, Cfg::LOG_BASIS))
+        .flat_map(|ri| ri.balanced_decompose_pow2(levels, log_basis))
         .collect();
 
     let w_hat_flat = w_hat.iter().flat_map(|v| v.iter());
     let t_hat_flat = t_hat.iter().flat_map(|v| v.iter());
-    let z_hat_iter = z_pre
-        .iter()
-        .flat_map(|z_j| z_j.balanced_decompose_pow2(Cfg::TAU, Cfg::LOG_BASIS));
 
     let z_count = w_hat.iter().map(|v| v.len()).sum::<usize>()
         + t_hat.iter().map(|v| v.len()).sum::<usize>()
-        + z_pre.len() * Cfg::TAU;
+        + z_pre.len() * tau;
     let mut out = Vec::with_capacity((z_count + r_hat.len()) * D);
-    for elem in w_hat_flat
-        .chain(t_hat_flat)
-        .chain(z_hat_iter.collect::<Vec<_>>().iter())
-        .chain(r_hat.iter())
-    {
+    for elem in w_hat_flat.chain(t_hat_flat) {
+        out.extend_from_slice(elem.coefficients());
+    }
+    for z_j in z_pre {
+        for elem in z_j.balanced_decompose_pow2(tau, log_basis) {
+            out.extend_from_slice(elem.coefficients());
+        }
+    }
+    for elem in &r_hat {
         out.extend_from_slice(elem.coefficients());
     }
     out
