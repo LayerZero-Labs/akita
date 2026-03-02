@@ -127,14 +127,6 @@ where
         Self::zero_vec()
     }
 
-    fn add(&self, rhs: &Self) -> Self {
-        *self + *rhs
-    }
-
-    fn neg(&self) -> Self {
-        -*self
-    }
-
     fn scale(&self, k: &Self::Scalar) -> Self {
         // Delegate to Scalar * VectorModule to satisfy the Module trait’s scalar bounds.
         *k * *self

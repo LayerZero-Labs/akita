@@ -18,17 +18,20 @@ pub mod packed_avx2;
     target_feature = "avx512dq"
 ))]
 pub mod packed_avx512;
+#[allow(missing_docs)]
+pub mod packed_ext;
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 pub mod packed_neon;
 pub mod pseudo_mersenne;
+pub(crate) mod util;
 
-pub use ext::{Fp2, Fp2Config, Fp4, Fp4Config};
+pub use ext::{Ext2, Ext4, Fp2, Fp2Config, Fp4, Fp4Config, NegOneNr, TwoNr, UnitNr};
 pub use fp128::{
     Fp128, Prime128M13M4P0, Prime128M37P3P0, Prime128M52M3P0, Prime128M54P4P0, Prime128M8M4M1M0,
 };
 pub use fp32::Fp32;
 pub use fp64::Fp64;
-pub use lift::LiftBase;
+pub use lift::{ExtField, LiftBase};
 pub use packed::{
     Fp128Packing, Fp32Packing, Fp64Packing, HasPacking, NoPacking, PackedField, PackedValue,
 };

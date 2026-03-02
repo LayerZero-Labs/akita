@@ -45,14 +45,18 @@ pub mod algebra;
 /// Protocol-layer transcript and commitment abstractions
 pub mod protocol;
 
+/// Conditional parallelism utilities (`cfg_iter!`, `cfg_into_iter!`, etc.)
+#[doc(hidden)]
+#[allow(missing_docs)]
+pub mod parallel;
+
 #[doc(hidden)]
 #[allow(missing_docs)]
 pub mod test_utils;
 
 pub use error::HachiError;
 pub use primitives::arithmetic::{
-    CanonicalField, FieldCore, FieldSampling, HachiRoutines, Invertible, Module,
-    PseudoMersenneField,
+    CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, Module, PseudoMersenneField,
 };
 pub use primitives::poly::{MultilinearLagrange, Polynomial};
 pub use primitives::serialization::{HachiDeserialize, HachiSerialize};

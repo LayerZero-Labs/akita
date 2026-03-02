@@ -1,15 +1,27 @@
 //! Commitment-scheme trait surface for Hachi protocol code.
 
-use super::config::CommitmentConfig;
+use super::config::{CommitmentConfig, HachiCommitmentLayout};
 use super::transcript_append::AppendToTranscript;
-use super::utils::math::checked_pow2;
-use crate::algebra::ring::CyclotomicRing;
+use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, Polynomial};
 
 /// Output type for batched commitments.
 pub(crate) type BatchCommitOutput<C, H> = Result<Vec<(C, H)>, HachiError>;
+
+/// Witness data produced alongside a ring-native commitment.
+///
+/// Contains the commitment itself plus `t_hat` (basis-decomposed inner Ajtai
+/// output) from the two-layer Ajtai construction (§4.1). The decomposed input
+/// vectors `s` are NOT stored; they are recomputed from `ring_coeffs` during
+/// proving to avoid multi-GB memory usage at production parameters.
+pub struct CommitWitness<C, F: FieldCore, const D: usize> {
+    /// The ring commitment (outer Ajtai output `u = B · t̂`).
+    pub commitment: C,
+    /// Per-block basis-decomposed inner Ajtai output vectors.
+    pub t_hat: Vec<Vec<CyclotomicRing<F, D>>>,
+}
 
 /// Generic commitment-scheme interface used by Hachi protocol code.
 pub trait CommitmentScheme<F>: Clone + Send + Sync + 'static
@@ -28,6 +40,10 @@ where
     type OpeningProofHint: Clone + Send + Sync;
 
     /// Build prover setup for maximum polynomial dimension.
+    ///
+    /// # Panics
+    ///
+    /// Panics if internal setup fails (programming error, not adversarial input).
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup;
 
     /// Derive verifier setup from prover setup.
@@ -139,6 +155,13 @@ where
     /// Returns an error if dimensions are inconsistent with `Cfg`.
     fn setup(max_num_vars: usize) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError>;
 
+    /// Read the runtime layout carried by `setup`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when setup metadata is inconsistent.
+    fn layout(setup: &Self::ProverSetup) -> Result<HachiCommitmentLayout, HachiError>;
+
     /// Commit to ring blocks arranged as `2^R` vectors of length `2^M`.
     ///
     /// Returns `(commitment, s, t_hat)` where `s` and `t_hat` are the
@@ -147,50 +170,30 @@ where
     /// # Errors
     ///
     /// Returns an error if block layout mismatches config or commitment fails.
-    #[allow(clippy::type_complexity)]
     fn commit_ring_blocks(
         f_blocks: &[Vec<CyclotomicRing<F, D>>],
         setup: &Self::ProverSetup,
-    ) -> Result<
-        (
-            Self::Commitment,
-            Vec<Vec<CyclotomicRing<F, D>>>,
-            Vec<Vec<CyclotomicRing<F, D>>>,
-        ),
-        HachiError,
-    >;
+    ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError>;
 
     /// Commit to a flat coefficient table `(f_i)_{i∈{0,1}^ℓ}` in ring form.
     ///
-    /// The input is indexed in LSB-first order (same convention as
-    /// `DenseMultilinearEvals`). We split the variables as:
-    ///
-    /// - outer index `i` for the first `R` variables,
-    /// - inner index `j` for the last `M` variables,
-    ///
-    /// We then form blocks `f_i = (f_{i||j})_{j}` (Eq. (12) in the paper).
-    ///
-    /// This prepares `f_blocks` and delegates to `commit_ring_blocks`.
+    /// The input uses sequential block layout: ring elements
+    /// `[0, block_len)` form block 0, `[block_len, 2*block_len)` form
+    /// block 1, and so on. This matches the sequential variable ordering
+    /// where M variables (position in block) are lower-order and R variables
+    /// (block selection) are higher-order.
     ///
     /// # Errors
     ///
     /// Returns an error if `f_coeffs.len()` does not match the configured block
-    /// layout, if internal index computations overflow, or if the underlying
-    /// commitment routine fails.
-    #[allow(clippy::type_complexity)]
+    /// layout or if the underlying commitment routine fails.
     fn commit_coeffs(
         f_coeffs: &[CyclotomicRing<F, D>],
         setup: &Self::ProverSetup,
-    ) -> Result<
-        (
-            Self::Commitment,
-            Vec<Vec<CyclotomicRing<F, D>>>,
-            Vec<Vec<CyclotomicRing<F, D>>>,
-        ),
-        HachiError,
-    > {
-        let num_blocks = checked_pow2(Cfg::R)?;
-        let block_len = checked_pow2(Cfg::M)?;
+    ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
+        let layout = Self::layout(setup)?;
+        let num_blocks = layout.num_blocks;
+        let block_len = layout.block_len;
         let expected_len = num_blocks
             .checked_mul(block_len)
             .ok_or_else(|| HachiError::InvalidSetup("coefficient length overflow".to_string()))?;
@@ -201,17 +204,10 @@ where
             });
         }
 
-        let mut blocks = Vec::with_capacity(num_blocks);
-        for i in 0..num_blocks {
-            let mut block = Vec::with_capacity(block_len);
-            for j in 0..block_len {
-                let idx = (j << Cfg::R)
-                    .checked_add(i)
-                    .ok_or_else(|| HachiError::InvalidSetup("index overflow".to_string()))?;
-                block.push(f_coeffs[idx]);
-            }
-            blocks.push(block);
-        }
+        let blocks: Vec<Vec<CyclotomicRing<F, D>>> = f_coeffs
+            .chunks_exact(block_len)
+            .map(|chunk| chunk.to_vec())
+            .collect();
 
         Self::commit_ring_blocks(&blocks, setup)
     }
@@ -234,19 +230,11 @@ where
     ///
     /// Returns an error if dimensions are inconsistent or any index is out
     /// of range.
-    #[allow(clippy::type_complexity)]
     fn commit_onehot(
         onehot_k: usize,
-        indices: &[usize],
+        indices: &[Option<usize>],
         setup: &Self::ProverSetup,
-    ) -> Result<
-        (
-            Self::Commitment,
-            Vec<Vec<CyclotomicRing<F, D>>>,
-            Vec<Vec<CyclotomicRing<F, D>>>,
-        ),
-        HachiError,
-    > {
+    ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let num_chunks = indices.len();
         let total_field_elems = num_chunks
             .checked_mul(onehot_k)
@@ -260,7 +248,8 @@ where
         // Materialize the full one-hot vector as ring elements.
         let total_ring_elems = total_field_elems / D;
         let mut ring_coeffs = vec![CyclotomicRing::<F, D>::zero(); total_ring_elems];
-        for (c, &idx) in indices.iter().enumerate() {
+        for (c, opt) in indices.iter().enumerate() {
+            let Some(&idx) = opt.as_ref() else { continue };
             if idx >= onehot_k {
                 return Err(HachiError::InvalidInput(format!(
                     "index {idx} out of range for chunk size K={onehot_k} at position {c}"

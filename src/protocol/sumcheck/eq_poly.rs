@@ -149,7 +149,7 @@ impl<E: FieldCore> EqPolynomial<E> {
 mod tests {
     use super::*;
     use crate::algebra::Fp64;
-    use crate::{CanonicalField, FieldSampling};
+    use crate::{FieldSampling, FromSmallInt};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

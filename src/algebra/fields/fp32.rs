@@ -11,7 +11,9 @@ use rand_core::RngCore;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::{CanonicalField, FieldCore, FieldSampling, Invertible, PseudoMersenneField};
+use crate::{
+    CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, PseudoMersenneField,
+};
 use std::io::{Read, Write};
 
 /// Prime field element for primes `p = 2^k − c` stored as `u32`.
@@ -299,18 +301,6 @@ impl<const P: u32> FieldCore for Fp32<P> {
         self.0 == 0
     }
 
-    fn add(&self, rhs: &Self) -> Self {
-        *self + *rhs
-    }
-
-    fn sub(&self, rhs: &Self) -> Self {
-        *self - *rhs
-    }
-
-    fn mul(&self, rhs: &Self) -> Self {
-        *self * *rhs
-    }
-
     fn inv(self) -> Option<Self> {
         let inv = self.inv_or_zero();
         if self.is_zero() {
@@ -336,7 +326,7 @@ impl<const P: u32> FieldSampling for Fp32<P> {
     }
 }
 
-impl<const P: u32> CanonicalField for Fp32<P> {
+impl<const P: u32> FromSmallInt for Fp32<P> {
     fn from_u64(val: u64) -> Self {
         Self(Self::reduce_u64(val))
     }
@@ -345,10 +335,12 @@ impl<const P: u32> CanonicalField for Fp32<P> {
         if val >= 0 {
             Self::from_u64(val as u64)
         } else {
-            -Self::from_u64((-val) as u64)
+            -Self::from_u64(val.unsigned_abs())
         }
     }
+}
 
+impl<const P: u32> CanonicalField for Fp32<P> {
     fn to_canonical_u128(self) -> u128 {
         self.0 as u128
     }

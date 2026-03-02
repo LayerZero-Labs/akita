@@ -12,7 +12,7 @@ use crate::{CanonicalField, FieldCore};
 
 /// Describes a nonzero ring element within one block of the commitment layout.
 #[derive(Debug, Clone)]
-pub(crate) struct SparseBlockEntry {
+pub struct SparseBlockEntry {
     /// Position within the block (0..2^M).
     pub pos_in_block: usize,
     /// Coefficient indices that are 1 within this ring element.
@@ -35,9 +35,9 @@ pub(crate) struct SparseBlockEntry {
 /// Returns an error if K and D are not "nicely matched" (one must divide
 /// the other), if any index is out of range, or if the dimensions don't
 /// fill the commitment layout.
-pub(crate) fn map_onehot_to_sparse_blocks(
+pub fn map_onehot_to_sparse_blocks(
     onehot_k: usize,
-    indices: &[usize],
+    indices: &[Option<usize>],
     r: usize,
     m: usize,
     d: usize,
@@ -74,7 +74,8 @@ pub(crate) fn map_onehot_to_sparse_blocks(
 
     // Accumulate nonzero coefficients per ring element index.
     let mut ring_elem_map: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for (c, &idx) in indices.iter().enumerate() {
+    for (c, opt) in indices.iter().enumerate() {
+        let Some(&idx) = opt.as_ref() else { continue };
         if idx >= onehot_k {
             return Err(HachiError::InvalidInput(format!(
                 "index {idx} out of range for chunk size K={onehot_k} at position {c}"
@@ -89,14 +90,12 @@ pub(crate) fn map_onehot_to_sparse_blocks(
             .push(coeff_idx);
     }
 
-    // Distribute into blocks using the same interleaved layout as commit_coeffs:
-    //   block_idx = ring_elem_idx % num_blocks
-    //   pos_in_block = ring_elem_idx / num_blocks
-    // (equivalently: flat_idx = (pos_in_block << R) + block_idx)
+    // Sequential block layout matching commit_coeffs: block i = ring elements
+    // [i*block_len, (i+1)*block_len).
     let mut blocks: Vec<Vec<SparseBlockEntry>> = vec![Vec::new(); num_blocks];
     for (ring_elem_idx, nonzero_coeffs) in ring_elem_map {
-        let block_idx = ring_elem_idx & (num_blocks - 1);
-        let pos_in_block = ring_elem_idx >> r;
+        let block_idx = ring_elem_idx / block_len;
+        let pos_in_block = ring_elem_idx % block_len;
         blocks[block_idx].push(SparseBlockEntry {
             pos_in_block,
             nonzero_coeffs,
@@ -153,6 +152,7 @@ pub(crate) fn inner_ajtai_onehot<F: FieldCore + CanonicalField, const D: usize>(
 mod tests {
     use super::*;
     use crate::test_utils::F;
+    use crate::FromSmallInt;
 
     #[test]
     fn map_onehot_k_gt_d() {
@@ -160,7 +160,7 @@ mod tests {
         // R=1 (2 blocks), M=2 (4 per block) => 8 ring elements total
         let k = 16;
         let d = 4;
-        let indices = vec![3, 10];
+        let indices = vec![Some(3), Some(10)];
         let blocks = map_onehot_to_sparse_blocks(k, &indices, 1, 2, d).unwrap();
 
         assert_eq!(blocks.len(), 2);
@@ -180,7 +180,7 @@ mod tests {
         // R=1 (2 blocks), M=1 (2 per block)
         let k = 4;
         let d = 4;
-        let indices = vec![0, 2, 3, 1];
+        let indices = vec![Some(0), Some(2), Some(3), Some(1)];
         let blocks = map_onehot_to_sparse_blocks(k, &indices, 1, 1, d).unwrap();
 
         assert_eq!(blocks.len(), 2);
@@ -200,7 +200,16 @@ mod tests {
         // R=1 (2 blocks), M=1 (2 per block)
         let k = 4;
         let d = 8;
-        let indices = vec![0, 2, 3, 1, 0, 0, 3, 3];
+        let indices = vec![
+            Some(0),
+            Some(2),
+            Some(3),
+            Some(1),
+            Some(0),
+            Some(0),
+            Some(3),
+            Some(3),
+        ];
         let blocks = map_onehot_to_sparse_blocks(k, &indices, 1, 1, d).unwrap();
 
         assert_eq!(blocks.len(), 2);
@@ -220,7 +229,7 @@ mod tests {
 
     #[test]
     fn map_onehot_rejects_non_divisible() {
-        let result = map_onehot_to_sparse_blocks(3, &[0, 1], 0, 1, 4);
+        let result = map_onehot_to_sparse_blocks(3, &[Some(0), Some(1)], 0, 1, 4);
         assert!(result.is_err());
     }
 

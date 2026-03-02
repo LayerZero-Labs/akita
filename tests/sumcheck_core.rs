@@ -2,13 +2,15 @@
 
 use std::time::Instant;
 
+use hachi_pcs::algebra::poly::multilinear_eval;
 use hachi_pcs::algebra::Fp64;
+use hachi_pcs::error::HachiError;
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
     prove_sumcheck, verify_sumcheck, Blake2bTranscript, CompressedUniPoly, SumcheckInstanceProver,
     SumcheckInstanceVerifier, SumcheckProof, Transcript, UniPoly,
 };
-use hachi_pcs::{CanonicalField, FieldCore, FieldSampling};
+use hachi_pcs::{FieldCore, FieldSampling, FromSmallInt};
 use rand::rngs::StdRng;
 use rand::RngCore;
 use rand::SeedableRng;
@@ -86,21 +88,6 @@ fn sumcheck_proof_verifier_driver_is_transcript_deterministic() {
     assert_eq!(final_claim_1, claim);
 }
 
-/// Evaluate a multilinear polynomial (given by its boolean-hypercube evaluations
-/// in little-endian bit order) at an arbitrary point via iterated folding.
-fn multilinear_eval<E: FieldCore>(evals: &[E], point: &[E]) -> E {
-    let mut current = evals.to_vec();
-    for r in point {
-        let half = current.len() / 2;
-        let mut next = Vec::with_capacity(half);
-        for i in 0..half {
-            next.push(current[2 * i] + *r * (current[2 * i + 1] - current[2 * i]));
-        }
-        current = next;
-    }
-    current[0]
-}
-
 struct DenseSumcheckProver<E> {
     evals: Vec<E>,
     num_vars: usize,
@@ -127,7 +114,6 @@ impl<E: FieldCore> SumcheckInstanceProver<E> for DenseSumcheckProver<E> {
             eval_0 = eval_0 + self.evals[2 * i];
             eval_1 = eval_1 + self.evals[2 * i + 1];
         }
-        // g(X) = eval_0 + (eval_1 - eval_0) * X  (degree 1)
         UniPoly::from_coeffs(vec![eval_0, eval_1 - eval_0])
     }
 
@@ -160,7 +146,7 @@ impl<E: FieldCore> SumcheckInstanceVerifier<E> for DenseSumcheckVerifier<E> {
         self.claim
     }
 
-    fn expected_output_claim(&self, challenges: &[E]) -> E {
+    fn expected_output_claim(&self, challenges: &[E]) -> Result<E, HachiError> {
         multilinear_eval(&self.evals, challenges)
     }
 }
@@ -273,7 +259,7 @@ fn e2e_sumcheck_2_pow_20() {
     assert_eq!(proof.round_polys.len(), num_vars);
 
     // Sanity: final claim must equal f evaluated at the challenge point.
-    let oracle_eval = multilinear_eval(&evals, &prover_challenges);
+    let oracle_eval = multilinear_eval(&evals, &prover_challenges).unwrap();
     assert_eq!(final_claim, oracle_eval);
 
     let t1 = Instant::now();

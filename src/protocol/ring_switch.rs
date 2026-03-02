@@ -4,14 +4,19 @@
 //! sumcheck instances by expanding the ring elements into their coefficient
 //! vectors and setting up the evaluation tables.
 
-use crate::algebra::ring::CyclotomicRing;
+use crate::algebra::CyclotomicRing;
+use crate::cfg_into_iter;
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
-    CommitmentConfig, DefaultCommitmentConfig, HachiCommitmentCore, RingCommitment,
-    RingCommitmentScheme,
+    CommitmentConfig, HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup,
+    RingCommitment, RingCommitmentScheme,
 };
-use crate::protocol::quadratic_equation::QuadraticEquation;
+use crate::protocol::quadratic_equation::{
+    compute_m_a_streaming, compute_r_split_eq, QuadraticEquation,
+};
 use crate::protocol::sumcheck::eq_poly::EqPolynomial;
 use crate::protocol::transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
@@ -19,21 +24,22 @@ use crate::protocol::transcript::labels::{
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 
-/// Output of the ring switch prover, containing everything needed for sumchecks.
+/// Output of the ring switch protocol, containing everything needed for sumchecks.
 pub struct RingSwitchOutput<F: FieldCore, const D: usize> {
     /// The witness vector w (concatenation of z and r coefficients).
     pub w: Vec<F>,
     /// Commitment to w.
     pub w_commitment: RingCommitment<F, D>,
-    /// Evaluation table of w (reordered for sumcheck).
-    pub w_evals: Vec<F>,
+    /// Compact evaluation table of w (all entries in [-8, 7], reordered for sumcheck).
+    /// Populated by the prover; empty on the verifier side.
+    pub w_evals: Vec<i8>,
     /// Evaluation table of M_alpha(x) (tau1-weighted).
     pub m_evals_x: Vec<F>,
     /// Evaluation table of alpha powers (y dimension).
     pub alpha_evals_y: Vec<F>,
-    /// Number of upper variable bits in w_evals.
+    /// Number of upper variable bits.
     pub num_u: usize,
-    /// Number of lower variable bits in w_evals.
+    /// Number of lower variable bits.
     pub num_l: usize,
     /// Challenge tau0 for F_0 sumcheck.
     pub tau0: Vec<F>,
@@ -49,28 +55,50 @@ pub struct RingSwitchOutput<F: FieldCore, const D: usize> {
 ///
 /// # Errors
 ///
-/// Returns an error if z is missing, commitment fails, or matrix expansion fails.
+/// Returns an error if z_pre/w_hat is missing, commitment fails, or matrix expansion fails.
 pub fn ring_switch_prover<F, T, const D: usize, Cfg>(
-    quad_eq: &QuadraticEquation<F, D, Cfg>,
+    quad_eq: &mut QuadraticEquation<F, D, Cfg>,
+    setup: &HachiExpandedSetup<F, D>,
     transcript: &mut T,
-) -> Result<RingSwitchOutput<F, { DefaultCommitmentConfig::D }>, HachiError>
+) -> Result<RingSwitchOutput<F, D>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
-    let z = quad_eq
-        .z()
-        .ok_or_else(|| HachiError::InvalidInput("missing z in prover".to_string()))?;
-    let r = compute_r_via_poly_division::<F, D>(quad_eq.m(), z, quad_eq.y());
-    let w = build_w_coeffs::<F, D, Cfg>(z, &r);
+    let w_hat = quad_eq
+        .w_hat()
+        .ok_or_else(|| HachiError::InvalidInput("missing w_hat in prover".to_string()))?;
+    let z_pre = quad_eq
+        .z_pre()
+        .ok_or_else(|| HachiError::InvalidInput("missing z_pre in prover".to_string()))?;
+    let hint = quad_eq
+        .hint()
+        .ok_or_else(|| HachiError::InvalidInput("missing hint in prover".to_string()))?;
+    let t_hat = &hint.t_hat;
 
-    let w_commitment = commit_w::<F>(&w)?;
+    let r = compute_r_split_eq::<F, D, Cfg>(
+        setup,
+        quad_eq.opening_point(),
+        &quad_eq.challenges,
+        w_hat,
+        t_hat,
+        z_pre,
+        quad_eq.y(),
+    )?;
+    let w = build_w_coeffs::<F, D, Cfg>(w_hat, t_hat, z_pre, &r);
+
+    let w_commitment = commit_w::<F, D, Cfg>(&w)?;
     transcript.append_serde(ABSORB_SUMCHECK_W, &w_commitment);
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
 
-    let m_a = eval_ring_matrix_at::<F, D>(quad_eq.m(), &alpha);
+    let m_a = compute_m_a_streaming::<F, D, Cfg>(
+        setup,
+        quad_eq.opening_point(),
+        &quad_eq.challenges,
+        &alpha,
+    )?;
     let m_a_vec = expand_m_a::<F, D, Cfg>(&m_a, alpha)?;
     let m_rows = m_row_count::<Cfg>();
     let m_cols = if m_a.is_empty() {
@@ -79,7 +107,7 @@ where
         m_a_vec.len() / m_a.len()
     };
 
-    let (w_evals, num_u, num_l) = build_w_evals(&w, D);
+    let (w_evals, num_u, num_l) = build_w_evals_compact::<F>(&w, D)?;
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
 
     let num_sc_vars = num_u + num_l;
@@ -112,10 +140,11 @@ where
 /// Returns an error if matrix expansion fails.
 pub fn ring_switch_verifier<F, T, const D: usize, Cfg>(
     quad_eq: &QuadraticEquation<F, D, Cfg>,
+    setup: &HachiExpandedSetup<F, D>,
     w: &[F],
-    w_commitment: &RingCommitment<F, { DefaultCommitmentConfig::D }>,
+    w_commitment: &RingCommitment<F, D>,
     transcript: &mut T,
-) -> Result<RingSwitchOutput<F, { DefaultCommitmentConfig::D }>, HachiError>
+) -> Result<RingSwitchOutput<F, D>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
@@ -125,7 +154,12 @@ where
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
 
-    let m_a = eval_ring_matrix_at::<F, D>(quad_eq.m(), &alpha);
+    let m_a = compute_m_a_streaming::<F, D, Cfg>(
+        setup,
+        quad_eq.opening_point(),
+        &quad_eq.challenges,
+        &alpha,
+    )?;
     let m_a_vec = expand_m_a::<F, D, Cfg>(&m_a, alpha)?;
     let m_rows = m_row_count::<Cfg>();
     let m_cols = if m_a.is_empty() {
@@ -134,7 +168,9 @@ where
         m_a_vec.len() / m_a.len()
     };
 
-    let (w_evals, num_u, num_l) = build_w_evals(w, D);
+    let num_ring_elems = w.len() / D;
+    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let num_l = D.trailing_zeros() as usize;
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
 
     let num_sc_vars = num_u + num_l;
@@ -148,7 +184,7 @@ where
     Ok(RingSwitchOutput {
         w: w.to_vec(),
         w_commitment: w_commitment.clone(),
-        w_evals,
+        w_evals: Vec::new(),
         m_evals_x,
         alpha_evals_y,
         num_u,
@@ -160,38 +196,65 @@ where
     })
 }
 
-pub(crate) fn compute_r_via_poly_division<F: FieldCore, const D: usize>(
+#[cfg(test)]
+pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D: usize>(
     m: &[Vec<CyclotomicRing<F, D>>],
     z: &[CyclotomicRing<F, D>],
     y: &[CyclotomicRing<F, D>],
-) -> Vec<CyclotomicRing<F, D>> {
+) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
     let poly_len = 2 * D - 1;
-    m.iter()
+    let out = m
+        .iter()
         .zip(y.iter())
         .map(|(row, y_i)| {
-            let mut poly = vec![F::zero(); poly_len];
-            for (m_ij, z_j) in row.iter().zip(z.iter()) {
-                if m_ij.is_zero() {
-                    continue;
-                }
-                let a = m_ij.coefficients();
-                let b = z_j.coefficients();
-
-                // Detect constant (scalar) ring elements: only a[0] is non-zero.
-                let is_scalar = a[1..].iter().all(|c| c.is_zero());
-                if is_scalar {
-                    let scalar = a[0];
-                    for s in 0..D {
-                        poly[s] = poly[s] + scalar * b[s];
+            let column_contribution =
+                |m_ij: &CyclotomicRing<F, D>, z_j: &CyclotomicRing<F, D>| -> Vec<F> {
+                    let mut local = vec![F::zero(); poly_len];
+                    if m_ij.is_zero() {
+                        return local;
                     }
-                } else {
-                    for t in 0..D {
+                    let a = m_ij.coefficients();
+                    let b = z_j.coefficients();
+                    let is_scalar = a[1..].iter().all(|c| c.is_zero());
+                    if is_scalar {
+                        let scalar = a[0];
                         for s in 0..D {
-                            poly[t + s] = poly[t + s] + a[t] * b[s];
+                            local[s] = scalar * b[s];
+                        }
+                    } else {
+                        for t in 0..D {
+                            for s in 0..D {
+                                local[t + s] = local[t + s] + a[t] * b[s];
+                            }
                         }
                     }
+                    local
+                };
+
+            let pointwise_add = |mut a: Vec<F>, b: Vec<F>| -> Vec<F> {
+                for (ai, bi) in a.iter_mut().zip(b.iter()) {
+                    *ai = *ai + *bi;
                 }
-            }
+                a
+            };
+
+            #[cfg(feature = "parallel")]
+            let mut poly = row
+                .par_iter()
+                .zip(z.par_iter())
+                .fold(
+                    || vec![F::zero(); poly_len],
+                    |acc, (m_ij, z_j)| pointwise_add(acc, column_contribution(m_ij, z_j)),
+                )
+                .reduce(|| vec![F::zero(); poly_len], pointwise_add);
+
+            #[cfg(not(feature = "parallel"))]
+            let mut poly = row
+                .iter()
+                .zip(z.iter())
+                .fold(vec![F::zero(); poly_len], |acc, (m_ij, z_j)| {
+                    pointwise_add(acc, column_contribution(m_ij, z_j))
+                });
             let y_coeffs = y_i.coefficients();
             for k in 0..D {
                 poly[k] = poly[k] - y_coeffs[k];
@@ -205,63 +268,65 @@ pub(crate) fn compute_r_via_poly_division<F: FieldCore, const D: usize>(
             let coeffs: [F; D] = std::array::from_fn(|k| quotient[k]);
             CyclotomicRing::from_coefficients(coeffs)
         })
-        .collect()
+        .collect();
+    Ok(out)
 }
 
 #[derive(Clone, Copy, Debug)]
-struct WCommitmentConfig;
-
-impl CommitmentConfig for WCommitmentConfig {
-    const D: usize = DefaultCommitmentConfig::D;
-    const M: usize = 11;
-    const R: usize = 0;
-    const N_A: usize = DefaultCommitmentConfig::N_A;
-    const N_B: usize = DefaultCommitmentConfig::N_B;
-    const N_D: usize = DefaultCommitmentConfig::N_D;
-    const LOG_BASIS: u32 = DefaultCommitmentConfig::LOG_BASIS;
-    const DELTA: usize = DefaultCommitmentConfig::DELTA;
-    const TAU: usize = DefaultCommitmentConfig::TAU;
-    const BETA: u128 = DefaultCommitmentConfig::BETA;
-    const CHALLENGE_WEIGHT: usize = DefaultCommitmentConfig::CHALLENGE_WEIGHT;
+struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
+    _cfg: std::marker::PhantomData<Cfg>,
 }
 
-fn commit_w<F>(w: &[F]) -> Result<RingCommitment<F, { DefaultCommitmentConfig::D }>, HachiError>
+impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConfig<D, Cfg> {
+    const D: usize = D;
+    const N_A: usize = Cfg::N_A;
+    const N_B: usize = Cfg::N_B;
+    const N_D: usize = Cfg::N_D;
+    const LOG_BASIS: u32 = Cfg::LOG_BASIS;
+    const DELTA: usize = Cfg::DELTA;
+    const TAU: usize = Cfg::TAU;
+    const CHALLENGE_WEIGHT: usize = Cfg::CHALLENGE_WEIGHT;
+
+    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        let alpha = D.trailing_zeros() as usize;
+        let m_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
+            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
+        })?;
+        HachiCommitmentLayout::new::<Self>(m_vars, 0)
+    }
+}
+
+fn commit_w<F, const D: usize, Cfg>(w: &[F]) -> Result<RingCommitment<F, D>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
+    Cfg: CommitmentConfig,
 {
-    let d = DefaultCommitmentConfig::D;
-    let block_len = 1usize << WCommitmentConfig::M;
+    type WCfg<const D: usize, C> = WCommitmentConfig<D, C>;
 
-    let ring_elems: Vec<CyclotomicRing<F, { DefaultCommitmentConfig::D }>> = w
-        .chunks(d)
+    let ring_elems: Vec<CyclotomicRing<F, D>> = w
+        .chunks(D)
         .map(|chunk| {
-            let coeffs: [F; DefaultCommitmentConfig::D] =
+            let coeffs: [F; D] =
                 std::array::from_fn(|i| if i < chunk.len() { chunk[i] } else { F::zero() });
             CyclotomicRing::from_coefficients(coeffs)
         })
         .collect();
 
+    let block_len = ring_elems.len().next_power_of_two().max(1);
     let mut padded = ring_elems;
-    padded.resize(
-        block_len,
-        CyclotomicRing::<F, { DefaultCommitmentConfig::D }>::zero(),
-    );
-
+    padded.resize(block_len, CyclotomicRing::<F, D>::zero());
+    let m_vars = block_len.trailing_zeros() as usize;
+    let max_num_vars = m_vars + D.trailing_zeros() as usize;
     let blocks = vec![padded];
 
-    let (w_setup, _) = <HachiCommitmentCore as RingCommitmentScheme<
-        F,
-        { DefaultCommitmentConfig::D },
-        WCommitmentConfig,
-    >>::setup(WCommitmentConfig::M)?;
+    let (w_setup, _) =
+        <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::setup(max_num_vars)?;
 
-    let (commitment, _, _) = <HachiCommitmentCore as RingCommitmentScheme<
-        F,
-        { DefaultCommitmentConfig::D },
-        WCommitmentConfig,
-    >>::commit_ring_blocks(&blocks, &w_setup)?;
+    let w = <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::commit_ring_blocks(
+        &blocks, &w_setup,
+    )?;
 
-    Ok(commitment)
+    Ok(w.commitment)
 }
 
 pub(crate) fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D>, alpha: &F) -> F {
@@ -272,20 +337,6 @@ pub(crate) fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D
         power = power * *alpha;
     }
     acc
-}
-
-pub(crate) fn eval_ring_vec_at<F: FieldCore, const D: usize>(
-    v: &[CyclotomicRing<F, D>],
-    alpha: &F,
-) -> Vec<F> {
-    v.iter().map(|r| eval_ring_at(r, alpha)).collect()
-}
-
-pub(crate) fn eval_ring_matrix_at<F: FieldCore, const D: usize>(
-    m: &[Vec<CyclotomicRing<F, D>>],
-    alpha: &F,
-) -> Vec<Vec<F>> {
-    m.iter().map(|row| eval_ring_vec_at(row, alpha)).collect()
 }
 
 pub(crate) fn r_decomp_levels<F: CanonicalField, Cfg: CommitmentConfig>() -> usize {
@@ -368,25 +419,82 @@ pub(crate) fn expand_m_a<F: CanonicalField, const D: usize, Cfg: CommitmentConfi
     Ok(out)
 }
 
-pub(crate) fn build_w_evals<F: FieldCore>(w: &[F], d: usize) -> (Vec<F>, usize, usize) {
+/// # Errors
+///
+/// Returns an error if `w.len()` is not a multiple of `d`.
+pub(crate) fn build_w_evals<F: FieldCore>(
+    w: &[F],
+    d: usize,
+) -> Result<(Vec<F>, usize, usize), HachiError> {
+    if d == 0 || w.len() % d != 0 {
+        return Err(HachiError::InvalidSize {
+            expected: d,
+            actual: w.len(),
+        });
+    }
     let num_l = d.trailing_zeros() as usize;
-    let num_ring_elems = w.len() / d.max(1);
+    let num_ring_elems = w.len() / d;
     let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
     let x_len = 1usize << num_u;
-    let y_len = 1usize << num_l;
-    let n = x_len * y_len;
+    let n = x_len << num_l;
 
-    let mut evals = vec![F::zero(); n];
-    for x in 0..x_len {
-        for y in 0..y_len {
+    let evals: Vec<F> = cfg_into_iter!(0..n)
+        .map(|dst| {
+            let x = dst & (x_len - 1);
+            let y = dst >> num_u;
             let src = y + (x << num_l);
             if src < w.len() {
-                let dst = x + (y << num_u);
-                evals[dst] = w[src];
+                w[src]
+            } else {
+                F::zero()
             }
-        }
+        })
+        .collect();
+    Ok((evals, num_u, num_l))
+}
+
+/// Compact variant of `build_w_evals` returning `Vec<i8>`.
+///
+/// All entries in `w` must have canonical values in `[-half_b, half_b - 1]`
+/// where `half_b = 2^(LOG_BASIS-1)`. This holds when `w` is produced by
+/// `build_w_coeffs` (all components go through `balanced_decompose_pow2`).
+pub(crate) fn build_w_evals_compact<F: FieldCore + CanonicalField>(
+    w: &[F],
+    d: usize,
+) -> Result<(Vec<i8>, usize, usize), HachiError> {
+    if d == 0 || w.len() % d != 0 {
+        return Err(HachiError::InvalidSize {
+            expected: d,
+            actual: w.len(),
+        });
     }
-    (evals, num_u, num_l)
+    let num_l = d.trailing_zeros() as usize;
+    let num_ring_elems = w.len() / d;
+    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let x_len = 1usize << num_u;
+    let n = x_len << num_l;
+
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let half_q = q / 2;
+
+    let evals: Vec<i8> = (0..n)
+        .map(|dst| {
+            let x = dst & (x_len - 1);
+            let y = dst >> num_u;
+            let src = y + (x << num_l);
+            if src < w.len() {
+                let canonical = w[src].to_canonical_u128();
+                if canonical <= half_q {
+                    canonical as i8
+                } else {
+                    (canonical as i128 - q as i128) as i8
+                }
+            } else {
+                0i8
+            }
+        })
+        .collect();
+    Ok((evals, num_u, num_l))
 }
 
 pub(crate) fn m_row_count<Cfg: CommitmentConfig>() -> usize {
@@ -401,20 +509,20 @@ pub(crate) fn build_m_evals_x<F: FieldCore + CanonicalField>(
 ) -> Vec<F> {
     let eq_tau1 = EqPolynomial::evals(tau1);
     let x_len = cols.next_power_of_two();
-    let mut m_evals = vec![F::zero(); x_len];
-    for x in 0..x_len {
-        let mut acc = F::zero();
-        for i in 0..eq_tau1.len() {
-            let row_val = if i < rows && x < cols {
-                m_a_flat[i * cols + x]
-            } else {
-                F::zero()
-            };
-            acc = acc + eq_tau1[i] * row_val;
-        }
-        m_evals[x] = acc;
-    }
-    m_evals
+    cfg_into_iter!(0..x_len)
+        .map(|x| {
+            let mut acc = F::zero();
+            for i in 0..eq_tau1.len() {
+                let row_val = if i < rows && x < cols {
+                    m_a_flat[i * cols + x]
+                } else {
+                    F::zero()
+                };
+                acc = acc + eq_tau1[i] * row_val;
+            }
+            acc
+        })
+        .collect()
 }
 
 pub(crate) fn build_alpha_evals_y<F: FieldCore>(alpha: F, d: usize) -> Vec<F> {
@@ -436,7 +544,9 @@ pub(crate) fn sample_tau<F: FieldCore + CanonicalField, T: Transcript<F>>(
 }
 
 pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize, Cfg: CommitmentConfig>(
-    z: &[CyclotomicRing<F, D>],
+    w_hat: &[Vec<CyclotomicRing<F, D>>],
+    t_hat: &[Vec<CyclotomicRing<F, D>>],
+    z_pre: &[CyclotomicRing<F, D>],
     r: &[CyclotomicRing<F, D>],
 ) -> Vec<F> {
     let levels = r_decomp_levels::<F, Cfg>();
@@ -445,9 +555,119 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize, Cfg: CommitmentC
         .flat_map(|ri| ri.balanced_decompose_pow2(levels, Cfg::LOG_BASIS))
         .collect();
 
-    let mut out = Vec::with_capacity((z.len() + r_hat.len()) * D);
-    for elem in z.iter().chain(r_hat.iter()) {
+    let w_hat_flat = w_hat.iter().flat_map(|v| v.iter());
+    let t_hat_flat = t_hat.iter().flat_map(|v| v.iter());
+    let z_hat_iter = z_pre
+        .iter()
+        .flat_map(|z_j| z_j.balanced_decompose_pow2(Cfg::TAU, Cfg::LOG_BASIS));
+
+    let z_count = w_hat.iter().map(|v| v.len()).sum::<usize>()
+        + t_hat.iter().map(|v| v.len()).sum::<usize>()
+        + z_pre.len() * Cfg::TAU;
+    let mut out = Vec::with_capacity((z_count + r_hat.len()) * D);
+    for elem in w_hat_flat
+        .chain(t_hat_flat)
+        .chain(z_hat_iter.collect::<Vec<_>>().iter())
+        .chain(r_hat.iter())
+    {
         out.extend_from_slice(elem.coefficients());
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compute_r_via_poly_division;
+    use crate::algebra::{CyclotomicRing, Fp64};
+    use crate::{FieldCore, FromSmallInt};
+
+    fn compute_r_schoolbook<F: FieldCore, const D: usize>(
+        m: &[Vec<CyclotomicRing<F, D>>],
+        z: &[CyclotomicRing<F, D>],
+        y: &[CyclotomicRing<F, D>],
+    ) -> Vec<CyclotomicRing<F, D>> {
+        let poly_len = 2 * D - 1;
+        m.iter()
+            .zip(y.iter())
+            .map(|(row, y_i)| {
+                let mut poly = vec![F::zero(); poly_len];
+                for (m_ij, z_j) in row.iter().zip(z.iter()) {
+                    if m_ij.is_zero() {
+                        continue;
+                    }
+                    let a = m_ij.coefficients();
+                    let b = z_j.coefficients();
+                    let is_scalar = a[1..].iter().all(|c| c.is_zero());
+                    if is_scalar {
+                        let scalar = a[0];
+                        for s in 0..D {
+                            poly[s] = poly[s] + scalar * b[s];
+                        }
+                    } else {
+                        for t in 0..D {
+                            for s in 0..D {
+                                poly[t + s] = poly[t + s] + a[t] * b[s];
+                            }
+                        }
+                    }
+                }
+                let y_coeffs = y_i.coefficients();
+                for k in 0..D {
+                    poly[k] = poly[k] - y_coeffs[k];
+                }
+                let mut quotient = vec![F::zero(); D];
+                for k in (D..poly_len).rev() {
+                    let q = poly[k];
+                    quotient[k - D] = q;
+                    poly[k - D] = poly[k - D] - q;
+                }
+                let coeffs: [F; D] = std::array::from_fn(|k| quotient[k]);
+                CyclotomicRing::from_coefficients(coeffs)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn compute_r_matches_schoolbook_reference() {
+        type F = Fp64<4294967197>;
+        const D: usize = 64;
+
+        let m: Vec<Vec<CyclotomicRing<F, D>>> = (0..3)
+            .map(|i| {
+                (0..4)
+                    .map(|j| {
+                        if (i + j) % 3 == 0 {
+                            let mut coeffs = [F::zero(); D];
+                            coeffs[0] = F::from_u64((i * 5 + j + 1) as u64);
+                            CyclotomicRing::from_coefficients(coeffs)
+                        } else {
+                            let coeffs = std::array::from_fn(|k| {
+                                F::from_u64((i as u64 * 1000 + j as u64 * 100 + k as u64 + 1) % 97)
+                            });
+                            CyclotomicRing::from_coefficients(coeffs)
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        let z: Vec<CyclotomicRing<F, D>> = (0..4)
+            .map(|j| {
+                let coeffs =
+                    std::array::from_fn(|k| F::from_u64((j as u64 * 37 + k as u64 + 5) % 89));
+                CyclotomicRing::from_coefficients(coeffs)
+            })
+            .collect();
+        let y: Vec<CyclotomicRing<F, D>> = (0..3)
+            .map(|i| {
+                let coeffs =
+                    std::array::from_fn(|k| F::from_u64((i as u64 * 29 + k as u64 + 7) % 83));
+                CyclotomicRing::from_coefficients(coeffs)
+            })
+            .collect();
+
+        let expected = compute_r_schoolbook(&m, &z, &y);
+        let got = compute_r_via_poly_division::<F, D>(&m, &z, &y)
+            .expect("ring-switch CRT+NTT path should dispatch for D=64");
+        assert_eq!(got, expected);
+    }
 }

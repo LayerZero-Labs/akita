@@ -10,7 +10,7 @@ use hachi_pcs::algebra::{
     Pow2Offset24Field, Pow2Offset30Field, Pow2Offset31Field, Pow2Offset32Field, Pow2Offset40Field,
     Pow2Offset48Field, Pow2Offset56Field, Pow2Offset64Field,
 };
-use hachi_pcs::{CanonicalField, FieldCore, FieldSampling, Invertible};
+use hachi_pcs::{CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use std::env;
 #[cfg(feature = "parallel")]

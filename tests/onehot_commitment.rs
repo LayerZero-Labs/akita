@@ -1,8 +1,9 @@
 #![allow(missing_docs)]
 
+use hachi_pcs::algebra::CyclotomicRing;
 use hachi_pcs::protocol::commitment::{HachiCommitmentCore, RingCommitmentScheme};
 use hachi_pcs::test_utils::*;
-use hachi_pcs::{CanonicalField, FieldCore};
+use hachi_pcs::{FieldCore, FromSmallInt};
 
 type Core = HachiCommitmentCore;
 
@@ -18,12 +19,16 @@ fn psetup() -> <Core as RingCommitmentScheme<F, D, TinyConfig>>::ProverSetup {
 /// `commit_coeffs`. The optimized impl uses sparse inner Ajtai.
 /// Both must produce identical (commitment, s_all, t_hat_all).
 fn assert_onehot_matches_dense(onehot_k: usize, indices: &[usize]) {
+    let opt_indices: Vec<Option<usize>> = indices.iter().map(|&i| Some(i)).collect();
     let setup = psetup();
 
     // Optimized sparse path.
-    let (c_sparse, s_sparse, t_sparse) =
-        <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(onehot_k, indices, &setup)
-            .unwrap();
+    let w_sparse = <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(
+        onehot_k,
+        &opt_indices,
+        &setup,
+    )
+    .unwrap();
 
     // Reference: materialize the full one-hot vector, pack into ring elements,
     // and commit via the dense path.
@@ -33,20 +38,22 @@ fn assert_onehot_matches_dense(onehot_k: usize, indices: &[usize]) {
     for (c, &idx) in indices.iter().enumerate() {
         field_elems[c * onehot_k + idx] = F::from_u64(1);
     }
-    let ring_coeffs: Vec<hachi_pcs::algebra::CyclotomicRing<F, D>> = (0..total_ring)
+    let ring_coeffs: Vec<CyclotomicRing<F, D>> = (0..total_ring)
         .map(|r| {
             let coeffs: [F; D] = std::array::from_fn(|i| field_elems[r * D + i]);
-            hachi_pcs::algebra::CyclotomicRing::from_coefficients(coeffs)
+            CyclotomicRing::from_coefficients(coeffs)
         })
         .collect();
-    let (c_dense, s_dense, t_dense) =
+    let w_dense =
         <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_coeffs(&ring_coeffs, &setup)
             .unwrap();
 
-    assert_eq!(c_sparse, c_dense, "commitments must match");
-    assert_eq!(s_sparse, s_dense, "s_all (decomposed witness) must match");
     assert_eq!(
-        t_sparse, t_dense,
+        w_sparse.commitment, w_dense.commitment,
+        "commitments must match"
+    );
+    assert_eq!(
+        w_sparse.t_hat, w_dense.t_hat,
         "t_hat_all (decomposed inner output) must match"
     );
 }
@@ -124,22 +131,28 @@ fn onehot_k_lt_d_ratio_2() {
 fn onehot_rejects_non_divisible_k_and_d() {
     let setup = psetup();
     let result =
-        <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(17, &[0; 4], &setup);
+        <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(17, &[Some(0); 4], &setup);
     assert!(result.is_err());
 }
 
 #[test]
 fn onehot_rejects_out_of_range_index() {
     let setup = psetup();
-    let result =
-        <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(64, &[0, 64, 0, 0], &setup);
+    let result = <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(
+        64,
+        &[Some(0), Some(64), Some(0), Some(0)],
+        &setup,
+    );
     assert!(result.is_err());
 }
 
 #[test]
 fn onehot_rejects_wrong_total_size() {
     let setup = psetup();
-    let result =
-        <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(64, &[0, 0, 0], &setup);
+    let result = <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(
+        64,
+        &[Some(0), Some(0), Some(0)],
+        &setup,
+    );
     assert!(result.is_err());
 }

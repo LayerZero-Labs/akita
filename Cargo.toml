@@ -32,7 +32,7 @@ include = [
 all-features = true
 
 [features]
-default = []
+default = ["parallel"]
 parallel = ["dep:rayon"]
 
 [dependencies]
@@ -61,6 +61,14 @@ harness = false
 
 [[bench]]
 name = "fp64_reduce_probe"
+harness = false
+
+[[bench]]
+name = "hachi_e2e"
+harness = false
+
+[[bench]]
+name = "norm_sumcheck"
 harness = false
 
 [lints.rust]

@@ -10,7 +10,7 @@ use hachi_pcs::protocol::sumcheck::relation_sumcheck::{
 use hachi_pcs::protocol::sumcheck::{multilinear_eval, range_check_eval};
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{prove_sumcheck, verify_sumcheck, Blake2bTranscript, Transcript};
-use hachi_pcs::{CanonicalField, FieldCore, FieldSampling};
+use hachi_pcs::{FieldCore, FieldSampling, FromSmallInt};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::time::Instant;
@@ -38,10 +38,9 @@ fn run_f0_e2e(num_u: usize, num_l: usize, b: usize) {
 
     // Sanity: prover's final claim matches oracle evaluation.
     let oracle = EqPolynomial::mle(&tau0, &prover_challenges)
-        * range_check_eval(multilinear_eval(&w_evals, &prover_challenges), b);
+        * range_check_eval(multilinear_eval(&w_evals, &prover_challenges).unwrap(), b);
     assert_eq!(final_claim, oracle, "prover final claim != oracle eval");
 
-    // ---- Verifier ----
     let t1 = Instant::now();
     let verifier = NormSumcheckVerifier::new(tau0, w_evals, b);
     let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
@@ -147,9 +146,9 @@ fn run_f_alpha_e2e<const D: usize>(num_u: usize, num_i: usize) {
 
     // Sanity: prover's final claim matches oracle evaluation.
     let (x_ch, y_ch) = prover_challenges.split_at(num_u);
-    let oracle = multilinear_eval(&w_evals, &prover_challenges)
-        * multilinear_eval(&alpha_evals_y, y_ch)
-        * multilinear_eval(&m_evals_x, x_ch);
+    let oracle = multilinear_eval(&w_evals, &prover_challenges).unwrap()
+        * multilinear_eval(&alpha_evals_y, y_ch).unwrap()
+        * multilinear_eval(&m_evals_x, x_ch).unwrap();
     assert_eq!(final_claim, oracle, "prover final claim != oracle eval");
 
     let t1 = Instant::now();

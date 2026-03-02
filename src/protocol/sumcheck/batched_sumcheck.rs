@@ -12,7 +12,7 @@ use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckProof, Uni
 use crate::error::HachiError;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
-use crate::{CanonicalField, FieldCore};
+use crate::{FieldCore, FromSmallInt};
 
 fn mul_pow_2<E: FieldCore>(x: E, k: usize) -> E {
     let mut result = x;
@@ -31,6 +31,24 @@ fn linear_combination<E: FieldCore>(polys: &[UniPoly<E>], coeffs: &[E]) -> UniPo
         }
     }
     UniPoly::from_coeffs(result)
+}
+
+/// Verifier-side output of the batched sumcheck round replay.
+///
+/// This carries all transcript-derived values needed for the final oracle check,
+/// which is intentionally split out so callers can compute the expected output
+/// claim through an external reduction (e.g. Greyhound) before enforcing
+/// equality.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchedSumcheckRoundResult<E: FieldCore> {
+    /// Final claim produced by replaying all sumcheck rounds.
+    pub output_claim: E,
+    /// Challenge vector sampled during replay.
+    pub r_sumcheck: Vec<E>,
+    /// Front-loaded batching coefficient per verifier instance.
+    pub batching_coeffs: Vec<E>,
+    /// Maximum number of rounds among batched instances.
+    pub max_num_rounds: usize,
 }
 
 /// Produce a batched sumcheck proof for multiple instances sharing the same
@@ -59,18 +77,22 @@ pub fn prove_batched_sumcheck<F, T, E, S>(
     mut sample_challenge: S,
 ) -> Result<(SumcheckProof<E>, Vec<E>), HachiError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + crate::CanonicalField,
     T: Transcript<F>,
-    E: FieldCore + CanonicalField,
+    E: FieldCore + FromSmallInt,
     S: FnMut(&mut T) -> E,
 {
-    assert!(!instances.is_empty());
+    if instances.is_empty() {
+        return Err(HachiError::InvalidInput(
+            "no sumcheck instances provided".into(),
+        ));
+    }
 
     let max_num_rounds = instances
         .iter()
         .map(|inst| inst.num_rounds())
         .max()
-        .unwrap();
+        .unwrap(); // safe: non-empty checked above
 
     // Absorb individual input claims.
     for inst in instances.iter() {
@@ -103,7 +125,7 @@ where
 
     let two_inv = E::from_u64(2)
         .inv()
-        .expect("2 must be invertible in the field");
+        .expect("field characteristic 2 not supported");
 
     let mut round_polys = Vec::with_capacity(max_num_rounds);
     let mut challenges = Vec::with_capacity(max_num_rounds);
@@ -119,8 +141,6 @@ where
                 if active {
                     inst.compute_round_univariate(round - offset, *previous_claim)
                 } else {
-                    // Variable is "dummy" for this instance: polynomial is independent of it,
-                    // so the round univariate is constant with H(0)=H(1)=previous_claim/2.
                     UniPoly::from_coeffs(vec![*previous_claim * two_inv])
                 }
             })
@@ -179,10 +199,10 @@ where
 /// - absorbs each verifier instance's initial claim,
 /// - re-derives the batching coefficients,
 /// - computes the batched initial claim,
-/// - verifies the proof against the batched claim,
-/// - checks that the final output matches the batched expected output claims.
+/// - verifies the proof against the batched claim.
 ///
-/// Returns the challenge vector on success.
+/// Returns transcript-derived verifier data for the caller to perform the final
+/// expected-output equality check.
 ///
 /// # Panics
 ///
@@ -190,24 +210,27 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`HachiError::InvalidProof`] if the batched output claim does not
-/// match the expected value, or propagates per-round verification errors.
-pub fn verify_batched_sumcheck<F, T, E, S>(
+/// Propagates per-round verification errors.
+pub fn verify_batched_sumcheck_rounds<F, T, E, S>(
     proof: &SumcheckProof<E>,
     verifiers: Vec<&dyn SumcheckInstanceVerifier<E>>,
     transcript: &mut T,
     mut sample_challenge: S,
-) -> Result<Vec<E>, HachiError>
+) -> Result<BatchedSumcheckRoundResult<E>, HachiError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + crate::CanonicalField,
     T: Transcript<F>,
-    E: FieldCore + CanonicalField,
+    E: FieldCore,
     S: FnMut(&mut T) -> E,
 {
-    assert!(!verifiers.is_empty());
+    if verifiers.is_empty() {
+        return Err(HachiError::InvalidInput(
+            "no sumcheck instances provided".into(),
+        ));
+    }
 
-    let max_degree = verifiers.iter().map(|v| v.degree_bound()).max().unwrap();
-    let max_num_rounds = verifiers.iter().map(|v| v.num_rounds()).max().unwrap();
+    let max_degree = verifiers.iter().map(|v| v.degree_bound()).max().unwrap(); // safe: non-empty
+    let max_num_rounds = verifiers.iter().map(|v| v.num_rounds()).max().unwrap(); // safe: non-empty
 
     // Absorb individual input claims.
     for v in verifiers.iter() {
@@ -239,20 +262,88 @@ where
         &mut sample_challenge,
     )?;
 
-    // Compute the expected batched output claim from each verifier instance.
+    Ok(BatchedSumcheckRoundResult {
+        output_claim,
+        r_sumcheck,
+        batching_coeffs,
+        max_num_rounds,
+    })
+}
+
+/// Compute the expected batched output claim from verifier instances and
+/// transcript-derived batching data.
+///
+/// # Errors
+///
+/// Propagates errors from verifier `expected_output_claim` calls.
+pub fn compute_batched_expected_output_claim<E: FieldCore>(
+    verifiers: Vec<&dyn SumcheckInstanceVerifier<E>>,
+    batching_coeffs: &[E],
+    max_num_rounds: usize,
+    r_sumcheck: &[E],
+) -> Result<E, HachiError> {
     let expected_output_claim: E = verifiers
         .iter()
         .zip(batching_coeffs.iter())
         .map(|(v, coeff)| {
             let offset = max_num_rounds - v.num_rounds();
             let r_slice = &r_sumcheck[offset..offset + v.num_rounds()];
-            v.expected_output_claim(r_slice) * *coeff
+            v.expected_output_claim(r_slice).map(|val| val * *coeff)
         })
-        .fold(E::zero(), |a, v| a + v);
+        .try_fold(E::zero(), |a, v| v.map(|val| a + val))?;
 
+    Ok(expected_output_claim)
+}
+
+/// Enforce final batched output-claim equality.
+///
+/// # Errors
+///
+/// Returns an error if `output_claim != expected_output_claim`.
+pub fn check_batched_output_claim<E: FieldCore>(
+    output_claim: E,
+    expected_output_claim: E,
+) -> Result<(), HachiError> {
     if output_claim != expected_output_claim {
         return Err(HachiError::InvalidProof);
     }
 
-    Ok(r_sumcheck)
+    Ok(())
+}
+
+/// Verify a batched sumcheck proof, including final expected-output equality.
+///
+/// This convenience wrapper preserves the previous behavior. Callers that need
+/// to inject an external reduction should use [`verify_batched_sumcheck_rounds`]
+/// and [`check_batched_output_claim`] directly.
+///
+/// # Errors
+///
+/// Propagates errors from round verification and output-claim equality check.
+pub fn verify_batched_sumcheck<F, T, E, S>(
+    proof: &SumcheckProof<E>,
+    verifiers: Vec<&dyn SumcheckInstanceVerifier<E>>,
+    transcript: &mut T,
+    mut sample_challenge: S,
+) -> Result<Vec<E>, HachiError>
+where
+    F: FieldCore + crate::CanonicalField,
+    T: Transcript<F>,
+    E: FieldCore,
+    S: FnMut(&mut T) -> E,
+{
+    let round_result = verify_batched_sumcheck_rounds::<F, T, E, _>(
+        proof,
+        verifiers.clone(),
+        transcript,
+        &mut sample_challenge,
+    )?;
+    let expected_output_claim = compute_batched_expected_output_claim(
+        verifiers,
+        &round_result.batching_coeffs,
+        round_result.max_num_rounds,
+        &round_result.r_sumcheck,
+    )?;
+    check_batched_output_claim(round_result.output_claim, expected_output_claim)?;
+    Ok(round_result.r_sumcheck)
 }

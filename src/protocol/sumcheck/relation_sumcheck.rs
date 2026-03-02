@@ -6,11 +6,15 @@
 //! Proves the evaluation relation; sum equals `a = Σ_i ẽq(τ₁,i) · y_i(α)`.
 
 use super::eq_poly::EqPolynomial;
-use super::{fold_evals, multilinear_eval};
+use super::{fold_evals_in_place, multilinear_eval};
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
 use crate::algebra::ring::CyclotomicRing;
+use crate::cfg_into_iter;
+use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::protocol::ring_switch::eval_ring_at;
-use crate::{CanonicalField, FieldCore};
+use crate::{FieldCore, FromSmallInt};
 
 /// Prover for `F_{α,τ₁}(x,y) = w̃(x,y) · α̃(y) · m(x)`.
 ///
@@ -27,7 +31,7 @@ pub struct RelationSumcheckProver<E> {
     num_vars: usize,
 }
 
-impl<E: FieldCore + CanonicalField> RelationSumcheckProver<E> {
+impl<E: FieldCore + FromSmallInt> RelationSumcheckProver<E> {
     /// Construct from the three constituent evaluation tables.
     ///
     /// - `w_evals`: evaluations of `w̃` over `{0,1}^{num_u + num_l}` (full domain).
@@ -53,8 +57,12 @@ impl<E: FieldCore + CanonicalField> RelationSumcheckProver<E> {
         assert_eq!(m_evals_x.len(), 1 << num_u);
 
         let x_mask = (1usize << num_u) - 1;
-        let alpha_table: Vec<E> = (0..n).map(|idx| alpha_evals_y[idx >> num_u]).collect();
-        let m_table: Vec<E> = (0..n).map(|idx| m_evals_x[idx & x_mask]).collect();
+        let alpha_table: Vec<E> = cfg_into_iter!(0..n)
+            .map(|idx| alpha_evals_y[idx >> num_u])
+            .collect();
+        let m_table: Vec<E> = cfg_into_iter!(0..n)
+            .map(|idx| m_evals_x[idx & x_mask])
+            .collect();
 
         Self {
             w_table: w_evals,
@@ -65,7 +73,7 @@ impl<E: FieldCore + CanonicalField> RelationSumcheckProver<E> {
     }
 }
 
-impl<E: FieldCore + CanonicalField> SumcheckInstanceProver<E> for RelationSumcheckProver<E> {
+impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for RelationSumcheckProver<E> {
     fn num_rounds(&self) -> usize {
         self.num_vars
     }
@@ -75,42 +83,90 @@ impl<E: FieldCore + CanonicalField> SumcheckInstanceProver<E> for RelationSumche
     }
 
     fn input_claim(&self) -> E {
-        self.w_table
-            .iter()
-            .zip(self.alpha_table.iter())
-            .zip(self.m_table.iter())
-            .fold(E::zero(), |acc, ((&w, &a), &m)| acc + w * a * m)
+        #[cfg(feature = "parallel")]
+        {
+            self.w_table
+                .par_iter()
+                .zip(self.alpha_table.par_iter())
+                .zip(self.m_table.par_iter())
+                .fold(|| E::zero(), |acc, ((&w, &a), &m)| acc + w * a * m)
+                .reduce(|| E::zero(), |a, b| a + b)
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            self.w_table
+                .iter()
+                .zip(self.alpha_table.iter())
+                .zip(self.m_table.iter())
+                .fold(E::zero(), |acc, ((&w, &a), &m)| acc + w * a * m)
+        }
     }
 
     fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
         let half = self.w_table.len() / 2;
         let num_points = 3; // degree 2 → 3 evaluation points
-        let mut round_evals = vec![E::zero(); num_points];
 
-        for j in 0..half {
-            let w_0 = self.w_table[2 * j];
-            let w_1 = self.w_table[2 * j + 1];
-            let a_0 = self.alpha_table[2 * j];
-            let a_1 = self.alpha_table[2 * j + 1];
-            let m_0 = self.m_table[2 * j];
-            let m_1 = self.m_table[2 * j + 1];
-
-            for (t, eval) in round_evals.iter_mut().enumerate() {
-                let t_e = E::from_u64(t as u64);
-                let w_t = w_0 + t_e * (w_1 - w_0);
-                let a_t = a_0 + t_e * (a_1 - a_0);
-                let m_t = m_0 + t_e * (m_1 - m_0);
-                *eval = *eval + w_t * a_t * m_t;
+        #[cfg(feature = "parallel")]
+        let round_evals = {
+            (0..half)
+                .into_par_iter()
+                .fold(
+                    || vec![E::zero(); num_points],
+                    |mut evals, j| {
+                        let w_0 = self.w_table[2 * j];
+                        let w_1 = self.w_table[2 * j + 1];
+                        let a_0 = self.alpha_table[2 * j];
+                        let a_1 = self.alpha_table[2 * j + 1];
+                        let m_0 = self.m_table[2 * j];
+                        let m_1 = self.m_table[2 * j + 1];
+                        for (t, eval) in evals.iter_mut().enumerate() {
+                            let t_e = E::from_u64(t as u64);
+                            let w_t = w_0 + t_e * (w_1 - w_0);
+                            let a_t = a_0 + t_e * (a_1 - a_0);
+                            let m_t = m_0 + t_e * (m_1 - m_0);
+                            *eval = *eval + w_t * a_t * m_t;
+                        }
+                        evals
+                    },
+                )
+                .reduce(
+                    || vec![E::zero(); num_points],
+                    |mut a, b| {
+                        for (ai, bi) in a.iter_mut().zip(b.iter()) {
+                            *ai = *ai + *bi;
+                        }
+                        a
+                    },
+                )
+        };
+        #[cfg(not(feature = "parallel"))]
+        let round_evals = {
+            let mut evals = vec![E::zero(); num_points];
+            for j in 0..half {
+                let w_0 = self.w_table[2 * j];
+                let w_1 = self.w_table[2 * j + 1];
+                let a_0 = self.alpha_table[2 * j];
+                let a_1 = self.alpha_table[2 * j + 1];
+                let m_0 = self.m_table[2 * j];
+                let m_1 = self.m_table[2 * j + 1];
+                for (t, eval) in evals.iter_mut().enumerate() {
+                    let t_e = E::from_u64(t as u64);
+                    let w_t = w_0 + t_e * (w_1 - w_0);
+                    let a_t = a_0 + t_e * (a_1 - a_0);
+                    let m_t = m_0 + t_e * (m_1 - m_0);
+                    *eval = *eval + w_t * a_t * m_t;
+                }
             }
-        }
+            evals
+        };
 
         UniPoly::from_evals(&round_evals)
     }
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {
-        self.w_table = fold_evals(&self.w_table, r);
-        self.alpha_table = fold_evals(&self.alpha_table, r);
-        self.m_table = fold_evals(&self.m_table, r);
+        fold_evals_in_place(&mut self.w_table, r);
+        fold_evals_in_place(&mut self.alpha_table, r);
+        fold_evals_in_place(&mut self.m_table, r);
     }
 }
 
@@ -128,7 +184,7 @@ pub struct RelationSumcheckVerifier<F: FieldCore, const D: usize> {
     num_l: usize,
 }
 
-impl<F: FieldCore + CanonicalField, const D: usize> RelationSumcheckVerifier<F, D> {
+impl<F: FieldCore, const D: usize> RelationSumcheckVerifier<F, D> {
     /// Create a new evaluation-relation sumcheck verifier.
     ///
     /// # Panics
@@ -165,9 +221,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RelationSumcheckVerifier<F, 
     }
 }
 
-impl<F: FieldCore + CanonicalField, const D: usize> SumcheckInstanceVerifier<F>
-    for RelationSumcheckVerifier<F, D>
-{
+impl<F: FieldCore, const D: usize> SumcheckInstanceVerifier<F> for RelationSumcheckVerifier<F, D> {
     fn num_rounds(&self) -> usize {
         self.num_u + self.num_l
     }
@@ -194,12 +248,12 @@ impl<F: FieldCore + CanonicalField, const D: usize> SumcheckInstanceVerifier<F>
         acc
     }
 
-    fn expected_output_claim(&self, challenges: &[F]) -> F {
+    fn expected_output_claim(&self, challenges: &[F]) -> Result<F, HachiError> {
         let (x_challenges, y_challenges) = challenges.split_at(self.num_u);
-        let w_val = multilinear_eval(&self.w_evals, challenges);
-        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges);
-        let m_val = multilinear_eval(&self.m_evals_x, x_challenges);
-        w_val * alpha_val * m_val
+        let w_val = multilinear_eval(&self.w_evals, challenges)?;
+        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
+        let m_val = multilinear_eval(&self.m_evals_x, x_challenges)?;
+        Ok(w_val * alpha_val * m_val)
     }
 }
 
@@ -213,26 +267,29 @@ mod tests {
     use crate::protocol::transcript::labels;
     use crate::protocol::{
         prove_sumcheck, verify_sumcheck, Blake2bTranscript, CommitmentConfig, CommitmentScheme,
-        DefaultCommitmentConfig, HachiCommitmentScheme, Transcript,
+        HachiCommitmentScheme, SmallTestCommitmentConfig, Transcript,
     };
-    use crate::{CanonicalField, FieldCore};
+    use crate::{FieldCore, FromSmallInt};
 
     type F = Fp64<4294967197>;
+    type Cfg = SmallTestCommitmentConfig;
+    type Scheme = HachiCommitmentScheme<{ Cfg::D }, Cfg>;
 
     #[test]
     fn relation_sumcheck_uses_prove_w_evals() {
-        let alpha_bits = DefaultCommitmentConfig::D.trailing_zeros() as usize;
-        let num_vars = DefaultCommitmentConfig::R + DefaultCommitmentConfig::M + alpha_bits;
+        let alpha_bits = SmallTestCommitmentConfig::D.trailing_zeros() as usize;
+        let layout = SmallTestCommitmentConfig::commitment_layout(8).unwrap();
+        let num_vars = layout.m_vars + layout.r_vars + alpha_bits;
         let len = 1usize << num_vars;
         let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
         let poly = DenseMultilinearEvals::new_padded(evals);
 
-        let setup = HachiCommitmentScheme::setup_prover(num_vars);
-        let (commitment, hint) = HachiCommitmentScheme::commit(&poly, &setup).unwrap();
+        let setup = Scheme::setup_prover(num_vars);
+        let (commitment, hint) = Scheme::commit(&poly, &setup).unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
         let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        let proof = HachiCommitmentScheme::prove(
+        let proof = Scheme::prove(
             &setup,
             &poly,
             &opening_point,
@@ -242,17 +299,22 @@ mod tests {
         )
         .unwrap();
 
-        let (alpha, m_a_vec) =
-            rederive_alpha_and_m_a(&proof, &setup, &opening_point, &commitment).unwrap();
+        let (alpha, m_a_vec) = rederive_alpha_and_m_a::<F, { Cfg::D }, Cfg>(
+            &proof,
+            &Scheme::setup_verifier(&setup),
+            &opening_point,
+            &commitment,
+        )
+        .unwrap();
 
-        let d = DefaultCommitmentConfig::D;
+        let d = SmallTestCommitmentConfig::D;
         assert_eq!(proof.sumcheck_aux.w.len() % d, 0);
         let w_u = proof.sumcheck_aux.w.len() / d;
-        let rows = DefaultCommitmentConfig::N_D
-            + DefaultCommitmentConfig::N_B
+        let rows = SmallTestCommitmentConfig::N_D
+            + SmallTestCommitmentConfig::N_B
             + 1
             + 1
-            + DefaultCommitmentConfig::N_A;
+            + SmallTestCommitmentConfig::N_A;
         assert!(rows > 0);
         assert_eq!(m_a_vec.len() % rows, 0);
         let cols = m_a_vec.len() / rows;
@@ -317,9 +379,9 @@ mod tests {
             .unwrap();
 
         let (x_ch, y_ch) = prover_challenges.split_at(num_u);
-        let oracle = multilinear_eval(&w_evals, &prover_challenges)
-            * multilinear_eval(&alpha_evals_y, y_ch)
-            * multilinear_eval(&m_evals_x, x_ch);
+        let oracle = multilinear_eval(&w_evals, &prover_challenges).unwrap()
+            * multilinear_eval(&alpha_evals_y, y_ch).unwrap()
+            * multilinear_eval(&m_evals_x, x_ch).unwrap();
         assert_eq!(final_claim, oracle, "prover final claim != oracle eval");
 
         let verifier = RelationSumcheckVerifier::new(

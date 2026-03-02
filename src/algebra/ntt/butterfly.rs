@@ -1,133 +1,182 @@
 //! NTT butterfly transforms for negacyclic rings `Z_p[X]/(X^D + 1)`.
 //!
-//! Uses a merged negacyclic Cooley-Tukey / Gentleman-Sande butterfly where
-//! the twist factors for `X^D + 1` are folded directly into the twiddles.
-//! Twiddle factors are powers of `psi`, a primitive `2D`-th root of unity
-//! (`psi^D = -1 mod p`), rather than a `D`-th root.
+//! Implements a negacyclic NTT via the standard **twist + cyclic NTT** method.
 //!
-//! TODO(perf): migrate twiddle tables to compile-time `const` arrays once
-//! parameter sets are finalized.
+//! Let `psi` be a primitive `2D`-th root of unity (`psi^D = -1 mod p`) and
+//! `omega = psi^2`, a primitive `D`-th root of unity. For polynomials modulo
+//! `X^D + 1`, we:
+//! - pre-twist coefficients by `psi^i`
+//! - run a cyclic size-`D` NTT using `omega`
+//! - inverse-cyclic NTT using `omega^{-1}`
+//! - post-untwist by `psi^{-i}`
 
-use super::prime::{MontCoeff, NttPrime};
+use super::prime::{MontCoeff, NttPrime, PrimeWidth};
 
 /// Precomputed twiddle factors for a specific prime and degree `D`.
 ///
 /// `D` must be a power of two.
-pub struct NttTwiddles<const D: usize> {
-    /// Twiddle factors in Montgomery form, indexed by bit-reversed position.
-    /// `zetas[i] = from_canonical(psi^{brv(i)})` for `i = 0..D`.
-    /// Index 0 is unused by the forward NTT but set to the Montgomery form of 1.
-    pub(crate) zetas: [MontCoeff; D],
+pub struct NttTwiddles<W: PrimeWidth, const D: usize> {
+    /// Stage roots for iterative forward cyclic NTT in Montgomery form.
+    pub(crate) fwd_wlen: [MontCoeff<W>; D],
+    /// Stage roots for iterative inverse cyclic NTT in Montgomery form.
+    pub(crate) inv_wlen: [MontCoeff<W>; D],
+    /// Number of active stages in the twiddle arrays (`log2(D)`).
+    pub(crate) num_stages: usize,
+    /// Twist factors `psi^i` for negacyclic embedding, in Montgomery form.
+    pub(crate) psi_pows: [MontCoeff<W>; D],
+    /// Untwist factors `psi^{-i}`, in Montgomery form.
+    pub(crate) psi_inv_pows: [MontCoeff<W>; D],
     /// `D^{-1} mod p` in Montgomery form, used for inverse NTT final scaling.
-    pub(crate) d_inv: MontCoeff,
+    pub(crate) d_inv: MontCoeff<W>,
 }
 
-impl<const D: usize> NttTwiddles<D> {
+impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
     /// Compute twiddle factors for the given prime.
     ///
-    /// Finds a primitive `2D`-th root of unity mod `p`, then fills the
-    /// twiddle table in bit-reversed order. All values are stored in
-    /// Montgomery form.
+    /// Finds a primitive `2D`-th root `psi` and derives `omega = psi^2`.
+    /// Fills cyclic forward/inverse twiddles for `omega` and twist/untwist
+    /// tables for `psi`. All values are stored in Montgomery form.
     ///
     /// # Panics
     ///
     /// Panics if `D` is not a power of two, or if `2D` does not divide `p - 1`.
-    pub fn compute(prime: NttPrime) -> Self {
+    pub fn compute(prime: NttPrime<W>) -> Self {
         assert!(D.is_power_of_two(), "D must be a power of two");
-        let p = prime.p as i64;
+        let p = prime.p.to_i64();
         assert!(
             (p - 1) % (2 * D as i64) == 0,
             "2D must divide p - 1 for NTT roots to exist"
         );
 
-        let n = D.trailing_zeros();
         let psi = find_primitive_root_2d(p, D);
+        let omega = (psi * psi) % p;
+        let omega_inv = pow_mod(omega, p - 2, p);
 
-        let mut zetas = [MontCoeff::from_raw(0); D];
-        for (i, z) in zetas.iter_mut().enumerate() {
-            let brv_i = bit_reverse(i, n);
-            let power = pow_mod(psi, brv_i as i64, p) as i16;
-            *z = prime.from_canonical(power);
+        let psi_inv = pow_mod(psi, p - 2, p);
+        let mut psi_pows = [MontCoeff::from_raw(W::default()); D];
+        let mut psi_inv_pows = [MontCoeff::from_raw(W::default()); D];
+        let mut cur = 1i64;
+        let mut cur_inv = 1i64;
+        for i in 0..D {
+            psi_pows[i] = prime.from_canonical(W::from_i64(cur));
+            psi_inv_pows[i] = prime.from_canonical(W::from_i64(cur_inv));
+            cur = (cur * psi) % p;
+            cur_inv = (cur_inv * psi_inv) % p;
         }
 
-        let d_inv_canonical = pow_mod(D as i64, p - 2, p) as i16;
-        let d_inv = prime.from_canonical(d_inv_canonical);
+        let mut fwd_wlen = [MontCoeff::from_raw(W::default()); D];
+        let mut inv_wlen = [MontCoeff::from_raw(W::default()); D];
+        let mut len = 1usize;
+        let mut stage = 0usize;
+        while len < D {
+            let exp = (D / (2 * len)) as i64;
+            fwd_wlen[stage] = prime.from_canonical(W::from_i64(pow_mod(omega, exp, p)));
+            inv_wlen[stage] = prime.from_canonical(W::from_i64(pow_mod(omega_inv, exp, p)));
+            len *= 2;
+            stage += 1;
+        }
 
-        Self { zetas, d_inv }
+        let d_inv_canonical = pow_mod(D as i64, p - 2, p);
+        let d_inv = prime.from_canonical(W::from_i64(d_inv_canonical));
+
+        Self {
+            fwd_wlen,
+            inv_wlen,
+            num_stages: stage,
+            psi_pows,
+            psi_inv_pows,
+            d_inv,
+        }
     }
 }
 
-/// Forward negacyclic NTT (Cooley-Tukey, decimation-in-time).
+/// Forward negacyclic NTT (twist + cyclic Gentleman-Sande DIF).
 ///
 /// Transforms `D` coefficients in-place from coefficient form to NTT
-/// evaluation form. Both outputs of each butterfly are Barrett-reduced
+/// evaluation form. Both outputs of each butterfly are range-reduced
 /// to prevent overflow.
-///
-/// After this call, the coefficients represent evaluations at
-/// `psi^{2*brv(i)+1}` for `i = 0..D-1`.
-pub fn forward_ntt<const D: usize>(a: &mut [MontCoeff; D], prime: NttPrime, tw: &NttTwiddles<D>) {
-    let mut k = 1usize;
+pub fn forward_ntt<W: PrimeWidth, const D: usize>(
+    a: &mut [MontCoeff<W>; D],
+    prime: NttPrime<W>,
+    tw: &NttTwiddles<W, D>,
+) {
+    for (ai, psi) in a.iter_mut().zip(tw.psi_pows.iter()) {
+        *ai = prime.mul(*ai, *psi);
+    }
+
+    let one = prime.from_canonical(W::from_i64(1));
+
     let mut len = D / 2;
-    while len >= 1 {
-        let mut start = 0;
+    let mut stage = tw.num_stages;
+    while len > 0 {
+        stage -= 1;
+        let wlen = tw.fwd_wlen[stage];
+        let mut start = 0usize;
         while start < D {
-            let zeta = tw.zetas[k];
-            k += 1;
-            for j in start..(start + len) {
-                let t = prime.mul(a[j + len], zeta);
-                let diff = a[j].raw().wrapping_sub(t.raw());
-                let sum = a[j].raw().wrapping_add(t.raw());
-                a[j + len] = prime.reduce(MontCoeff::from_raw(diff));
-                a[j] = prime.reduce(MontCoeff::from_raw(sum));
+            let mut w = one;
+            for j in 0..len {
+                let u = a[start + j];
+                let v = a[start + j + len];
+                let sum = u.raw().wrapping_add(v.raw());
+                let diff = u.raw().wrapping_sub(v.raw());
+                a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
+                a[start + j + len] = prime.mul(MontCoeff::from_raw(diff), w);
+                w = prime.mul(w, wlen);
             }
             start += 2 * len;
         }
         len /= 2;
     }
+
+    // Keep exported NTT-domain coefficients in the same reduced range expected
+    // by add/sub reduced operations and equality checks.
+    prime.reduce_range_in_place(a);
 }
 
-/// Inverse negacyclic NTT (Gentleman-Sande, decimation-in-frequency).
+/// Inverse negacyclic NTT (cyclic Cooley-Tukey DIT + untwist).
 ///
 /// Transforms `D` evaluations in-place back to coefficient form.
 /// Includes the final `D^{-1}` scaling.
-pub fn inverse_ntt<const D: usize>(a: &mut [MontCoeff; D], prime: NttPrime, tw: &NttTwiddles<D>) {
-    let mut k = D - 1;
-    let mut len = 1;
-    while len <= D / 2 {
-        let mut start = 0;
+pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
+    a: &mut [MontCoeff<W>; D],
+    prime: NttPrime<W>,
+    tw: &NttTwiddles<W, D>,
+) {
+    let one = prime.from_canonical(W::from_i64(1));
+
+    let mut len = 1usize;
+    let mut stage = 0usize;
+    while len < D {
+        let wlen = tw.inv_wlen[stage];
+        let mut start = 0usize;
         while start < D {
-            let zeta = tw.zetas[k];
-            k = k.wrapping_sub(1);
-            for j in start..(start + len) {
-                let t = a[j];
-                let sum = t.raw().wrapping_add(a[j + len].raw());
-                let diff = t.raw().wrapping_sub(a[j + len].raw());
-                a[j] = prime.reduce(MontCoeff::from_raw(sum));
-                // Multiply difference by negative twiddle: negate zeta.
-                let neg_zeta = MontCoeff::from_raw(zeta.raw().wrapping_neg());
-                a[j + len] = prime.mul(MontCoeff::from_raw(diff), neg_zeta);
+            let mut w = one;
+            for j in 0..len {
+                let u = a[start + j];
+                let v = prime.mul(a[start + j + len], w);
+                let sum = u.raw().wrapping_add(v.raw());
+                let diff = u.raw().wrapping_sub(v.raw());
+                a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
+                a[start + j + len] = prime.reduce_range(MontCoeff::from_raw(diff));
+                w = prime.mul(w, wlen);
             }
             start += 2 * len;
         }
         len *= 2;
+        stage += 1;
     }
 
-    // Scale by D^{-1}.
     for c in a.iter_mut() {
         *c = prime.mul(*c, tw.d_inv);
     }
-}
 
-/// Bit-reverse an `n`-bit integer.
-fn bit_reverse(x: usize, n: u32) -> usize {
-    x.reverse_bits() >> (usize::BITS - n)
+    for (ai, psi_inv) in a.iter_mut().zip(tw.psi_inv_pows.iter()) {
+        *ai = prime.mul(*ai, *psi_inv);
+    }
 }
 
 /// Find a primitive `2D`-th root of unity mod `p`.
-///
-/// Returns `psi` in `[0, p)` such that `psi^D = -1 mod p`.
 fn find_primitive_root_2d(p: i64, d: usize) -> i64 {
-    // Find the smallest quadratic non-residue a (i.e., a^{(p-1)/2} = -1 mod p).
     let half = (p - 1) / 2;
     let exp = (p - 1) / (2 * d as i64);
     for a in 2..p {

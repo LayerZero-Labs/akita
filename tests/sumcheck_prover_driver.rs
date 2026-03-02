@@ -47,7 +47,6 @@ impl SumcheckInstanceProver<F> for DenseTableSumcheck {
             s0 = s0 + self.table[i << 1];
             s1 = s1 + self.table[(i << 1) | 1];
         }
-        // g(X) = s0 + (s1 - s0) X
         UniPoly::from_coeffs(vec![s0, s1 - s0])
     }
 

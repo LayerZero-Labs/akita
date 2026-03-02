@@ -15,11 +15,13 @@ pub mod sumcheck;
 pub mod transcript;
 
 pub use commitment::{
-    AppendToTranscript, CommitmentConfig, CommitmentScheme, DefaultCommitmentConfig, DummyProof,
-    HachiCommitment, HachiCommitmentCore, HachiOpeningClaim, HachiOpeningPoint, RingCommitment,
-    RingCommitmentScheme, RingCommitmentSetup, StreamingCommitmentScheme,
+    AppendToTranscript, CommitmentConfig, CommitmentScheme, DummyProof,
+    DynamicSmallTestCommitmentConfig, HachiCommitment, HachiCommitmentCore, HachiCommitmentLayout,
+    HachiExpandedSetup, HachiOpeningClaim, HachiOpeningPoint, HachiPreparedSetup, HachiProverSetup,
+    HachiSetupSeed, HachiVerifierSetup, ProductionFp128CommitmentConfig, RingCommitment,
+    RingCommitmentScheme, SmallTestCommitmentConfig, StreamingCommitmentScheme,
 };
-pub use commitment_scheme::HachiCommitmentScheme;
+pub use commitment_scheme::{commit_onehot, HachiChunkState, HachiCommitmentScheme};
 pub use opening_point::RingOpeningPoint;
 pub use proof::{HachiProof, SumcheckAux};
 pub use quadratic_equation::QuadraticEquation;
@@ -28,4 +30,4 @@ pub use sumcheck::{
     prove_sumcheck, verify_sumcheck, CompressedUniPoly, SumcheckInstanceProver,
     SumcheckInstanceVerifier, SumcheckProof, UniPoly,
 };
-pub use transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
+pub use transcript::{sample_ext_challenge, Blake2bTranscript, KeccakTranscript, Transcript};

@@ -18,7 +18,9 @@ use rand_core::RngCore;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::{CanonicalField, FieldCore, FieldSampling, Invertible, PseudoMersenneField};
+use crate::{
+    CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, PseudoMersenneField,
+};
 
 /// Pack two u64 limbs into `[lo, hi]`.
 #[inline(always)]
@@ -38,44 +40,7 @@ const fn to_u128(x: [u64; 2]) -> u128 {
     x[0] as u128 | (x[1] as u128) << 64
 }
 
-/// `a * b` widening to 128 bits; returns `(lo64, hi64)`.
-#[inline(always)]
-fn mul64_wide(a: u64, b: u64) -> (u64, u64) {
-    #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
-    {
-        // Safety: this block is compiled only when `bmi2` is enabled.
-        unsafe { mul64_wide_bmi2(a, b) }
-    }
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2")))]
-    {
-        let prod = (a as u128) * (b as u128);
-        (prod as u64, (prod >> 64) as u64)
-    }
-}
-
-#[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
-#[inline(always)]
-unsafe fn mul64_wide_bmi2(a: u64, b: u64) -> (u64, u64) {
-    let mut hi = 0;
-    // Safety: caller guarantees CPU support via cfg-gated compilation.
-    let lo = unsafe { std::arch::x86_64::_mulx_u64(a, b, &mut hi) };
-    (lo, hi)
-}
-
-#[inline(always)]
-const fn is_pow2_u64(x: u64) -> bool {
-    x != 0 && (x & (x - 1)) == 0
-}
-
-#[inline(always)]
-const fn log2_pow2_u64(mut x: u64) -> u32 {
-    let mut k = 0u32;
-    while x > 1 {
-        x >>= 1;
-        k += 1;
-    }
-    k
-}
+use super::util::{is_pow2_u64, log2_pow2_u64, mul64_wide};
 
 /// 128-bit prime field element for primes `p = 2^128 − c` with `c < 2^64`.
 ///
@@ -770,18 +735,6 @@ impl<const P: u128> FieldCore for Fp128<P> {
         self.0 == [0, 0]
     }
 
-    fn add(&self, rhs: &Self) -> Self {
-        *self + *rhs
-    }
-
-    fn sub(&self, rhs: &Self) -> Self {
-        *self - *rhs
-    }
-
-    fn mul(&self, rhs: &Self) -> Self {
-        *self * *rhs
-    }
-
     fn inv(self) -> Option<Self> {
         let inv = self.inv_or_zero();
         if self.is_zero() {
@@ -816,7 +769,7 @@ impl<const P: u128> FieldSampling for Fp128<P> {
     }
 }
 
-impl<const P: u128> CanonicalField for Fp128<P> {
+impl<const P: u128> FromSmallInt for Fp128<P> {
     fn from_u64(val: u64) -> Self {
         // For Fp128 pseudo-Mersenne primes, p = 2^128 - c with c < 2^64.
         // Therefore any u64 is always canonical (< p), so this can be a
@@ -832,7 +785,9 @@ impl<const P: u128> CanonicalField for Fp128<P> {
             -Self::from_u64(val.unsigned_abs())
         }
     }
+}
 
+impl<const P: u128> CanonicalField for Fp128<P> {
     fn to_canonical_u128(self) -> u128 {
         to_u128(self.0)
     }

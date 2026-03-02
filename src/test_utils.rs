@@ -6,7 +6,7 @@
 
 use crate::algebra::{CyclotomicRing, Fp64};
 use crate::protocol::commitment::CommitmentConfig;
-use crate::{CanonicalField, FieldCore};
+use crate::{FieldCore, FromSmallInt};
 
 pub type F = Fp64<4294967197>;
 pub const D: usize = 64;
@@ -16,20 +16,23 @@ pub struct TinyConfig;
 
 impl CommitmentConfig for TinyConfig {
     const D: usize = 64;
-    const M: usize = 1;
-    const R: usize = 1;
     const N_A: usize = 2;
     const N_B: usize = 2;
     const N_D: usize = 2;
     const LOG_BASIS: u32 = 4;
     const DELTA: usize = 9;
     const TAU: usize = 4;
-    const BETA: u128 = 1_000_000;
     const CHALLENGE_WEIGHT: usize = 3;
+
+    fn commitment_layout(
+        _max_num_vars: usize,
+    ) -> Result<crate::protocol::commitment::HachiCommitmentLayout, crate::error::HachiError> {
+        crate::protocol::commitment::HachiCommitmentLayout::new::<Self>(1, 1)
+    }
 }
 
-pub const BLOCK_LEN: usize = 1 << TinyConfig::M;
-pub const NUM_BLOCKS: usize = 1 << TinyConfig::R;
+pub const BLOCK_LEN: usize = 2;
+pub const NUM_BLOCKS: usize = 2;
 pub const DELTA: usize = TinyConfig::DELTA;
 pub const LOG_BASIS: u32 = TinyConfig::LOG_BASIS;
 pub const N_A: usize = TinyConfig::N_A;

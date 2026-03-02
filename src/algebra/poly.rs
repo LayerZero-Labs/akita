@@ -1,9 +1,11 @@
-//! Fixed-size polynomial container.
+//! Polynomial containers and evaluation utilities.
 
+use crate::error::HachiError;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
 use crate::FieldCore;
+use crate::FromSmallInt;
 use std::io::{Read, Write};
 
 /// A degree-<D polynomial over `F`, stored as coefficients `[a0, a1, ..., a_{D-1}]`.
@@ -92,4 +94,70 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for Poly<F, D> {
         }
         Ok(out)
     }
+}
+
+/// Evaluate the range-check polynomial `w · Π_{k=1}^{b−1} (w − k)(w + k)`.
+///
+/// This polynomial vanishes exactly when `w ∈ {−(b−1), …, b−1}`.
+/// Total degree in `w` is `2b − 1`.
+pub fn range_check_eval<E: FieldCore + FromSmallInt>(w: E, b: usize) -> E {
+    let mut acc = w;
+    for k in 1..b {
+        let k_e = E::from_u64(k as u64);
+        acc = acc * (w - k_e) * (w + k_e);
+    }
+    acc
+}
+
+/// Evaluate a multilinear polynomial (given by boolean-hypercube evaluations in
+/// little-endian bit order) at an arbitrary point via iterated folding.
+///
+/// # Errors
+///
+/// Returns an error if the evaluation table length is not a power of two or
+/// does not match `2^point.len()`.
+pub fn multilinear_eval<E: FieldCore>(evals: &[E], point: &[E]) -> Result<E, HachiError> {
+    if !evals.len().is_power_of_two() {
+        return Err(HachiError::InvalidSize {
+            expected: 1 << point.len(),
+            actual: evals.len(),
+        });
+    }
+    if evals.len() != 1 << point.len() {
+        return Err(HachiError::InvalidSize {
+            expected: 1 << point.len(),
+            actual: evals.len(),
+        });
+    }
+    let mut current = evals.to_vec();
+    for &r in point {
+        let half = current.len() / 2;
+        let mut next = Vec::with_capacity(half);
+        for i in 0..half {
+            next.push(current[2 * i] + r * (current[2 * i + 1] - current[2 * i]));
+        }
+        current = next;
+    }
+    Ok(current[0])
+}
+
+/// Fold an evaluation table in place by binding its first variable to `r`,
+/// halving the table size.
+///
+/// # Panics
+///
+/// Panics if the evaluation table length is not a power of two or has fewer
+/// than 2 elements. This is a prover-only helper where the caller guarantees
+/// well-formed input.
+pub fn fold_evals_in_place<E: FieldCore>(evals: &mut Vec<E>, r: E) {
+    assert!(
+        evals.len().is_power_of_two(),
+        "evals length must be a power of two"
+    );
+    assert!(evals.len() >= 2, "evals must have at least 2 elements");
+    let half = evals.len() / 2;
+    for i in 0..half {
+        evals[i] = evals[2 * i] + r * (evals[2 * i + 1] - evals[2 * i]);
+    }
+    evals.truncate(half);
 }
