@@ -75,16 +75,19 @@ pub(crate) enum NttMatrixCache<const D: usize> {
         A: Vec<Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>>,
         B: Vec<Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>>,
         D: Vec<Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>>,
+        params: CrtNttParamSet<i16, Q32_NUM_PRIMES, D>,
     },
     Q64 {
         A: Vec<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
         B: Vec<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
         D: Vec<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
+        params: CrtNttParamSet<i32, Q64_NUM_PRIMES, D>,
     },
     Q128 {
         A: Vec<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
         B: Vec<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
         D: Vec<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
+        params: CrtNttParamSet<i32, Q128_NUM_PRIMES, D>,
     },
 }
 
@@ -112,21 +115,24 @@ pub(crate) fn build_ntt_cache<F: FieldCore + CanonicalField, const D: usize>(
     d: &[Vec<CyclotomicRing<F, D>>],
 ) -> Result<NttMatrixCache<D>, HachiError> {
     let params = select_crt_ntt_params::<F, D>()?;
-    let cache = match &params {
+    let cache = match params {
         ProtocolCrtNttParams::Q32(p) => NttMatrixCache::Q32 {
-            A: convert_mat(a, p),
-            B: convert_mat(b, p),
-            D: convert_mat(d, p),
+            A: convert_mat(a, &p),
+            B: convert_mat(b, &p),
+            D: convert_mat(d, &p),
+            params: p,
         },
         ProtocolCrtNttParams::Q64(p) => NttMatrixCache::Q64 {
-            A: convert_mat(a, p),
-            B: convert_mat(b, p),
-            D: convert_mat(d, p),
+            A: convert_mat(a, &p),
+            B: convert_mat(b, &p),
+            D: convert_mat(d, &p),
+            params: p,
         },
         ProtocolCrtNttParams::Q128(p) => NttMatrixCache::Q128 {
-            A: convert_mat(a, p),
-            B: convert_mat(b, p),
-            D: convert_mat(d, p),
+            A: convert_mat(a, &p),
+            B: convert_mat(b, &p),
+            D: convert_mat(d, &p),
+            params: p,
         },
     };
     Ok(cache)

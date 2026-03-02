@@ -148,11 +148,33 @@ pub(crate) fn inner_ajtai_onehot<F: FieldCore + CanonicalField, const D: usize>(
     (t, s)
 }
 
+/// Like `inner_ajtai_onehot` but only returns `t`, skipping the `s` allocation.
+#[allow(non_snake_case)]
+pub(crate) fn inner_ajtai_onehot_t_only<F: FieldCore + CanonicalField, const D: usize>(
+    A: &[Vec<CyclotomicRing<F, D>>],
+    sparse_entries: &[SparseBlockEntry],
+    _block_len: usize,
+    _delta: usize,
+) -> Vec<CyclotomicRing<F, D>> {
+    let n_a = A.len();
+
+    let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
+    for entry in sparse_entries {
+        let col = entry.pos_in_block * _delta;
+        for a in 0..n_a {
+            t[a] += A[a][col].mul_by_monomial_sum(&entry.nonzero_coeffs);
+        }
+    }
+
+    t
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_utils::F;
     use crate::FromSmallInt;
+    use std::array::from_fn;
 
     #[test]
     fn map_onehot_k_gt_d() {
@@ -241,16 +263,16 @@ mod tests {
         // A is 2x4 (N_A=2, inner_width = block_len * delta = 2 * 2 = 4)
         let a: Vec<Vec<R>> = vec![
             vec![
-                R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 1) as u64))),
-                R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 10) as u64))),
-                R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 20) as u64))),
-                R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 30) as u64))),
+                R::from_coefficients(from_fn(|i| F::from_u64((i + 1) as u64))),
+                R::from_coefficients(from_fn(|i| F::from_u64((i + 10) as u64))),
+                R::from_coefficients(from_fn(|i| F::from_u64((i + 20) as u64))),
+                R::from_coefficients(from_fn(|i| F::from_u64((i + 30) as u64))),
             ],
             vec![
-                R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 5) as u64))),
-                R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 15) as u64))),
-                R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 25) as u64))),
-                R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 35) as u64))),
+                R::from_coefficients(from_fn(|i| F::from_u64((i + 5) as u64))),
+                R::from_coefficients(from_fn(|i| F::from_u64((i + 15) as u64))),
+                R::from_coefficients(from_fn(|i| F::from_u64((i + 25) as u64))),
+                R::from_coefficients(from_fn(|i| F::from_u64((i + 35) as u64))),
             ],
         ];
 

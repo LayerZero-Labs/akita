@@ -8,7 +8,9 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::{CanonicalField, FieldCore};
 
-use super::crt_ntt::{select_crt_ntt_params, NttMatrixCache, ProtocolCrtNttParams};
+use super::crt_ntt::NttMatrixCache;
+#[cfg(test)]
+use super::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
 
 #[cfg(test)]
 pub(crate) fn mat_vec_mul_unchecked<F: FieldCore + CanonicalField, const D: usize>(
@@ -179,8 +181,7 @@ fn mat_vec_mul_precomputed_with_params<
     vec: &[CyclotomicRing<F, D>],
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
-    let ntt_vec: Vec<CyclotomicCrtNtt<W, K, D>> = vec
-        .iter()
+    let ntt_vec: Vec<CyclotomicCrtNtt<W, K, D>> = cfg_iter!(vec)
         .map(|v| CyclotomicCrtNtt::from_ring_with_params(v, params))
         .collect();
 
@@ -197,22 +198,21 @@ fn mat_vec_mul_precomputed_with_params<
 }
 
 macro_rules! dispatch_cached {
-    ($cache:expr, $which:expr, $params:expr, $func:ident $(, $arg:expr)*) => {{
+    ($cache:expr, $which:expr, $func:ident $(, $arg:expr)*) => {{
         #[allow(non_snake_case)]
-        match ($cache, $params) {
-            (NttMatrixCache::Q32 { A, B, D: Dm }, ProtocolCrtNttParams::Q32(p)) => {
+        match $cache {
+            NttMatrixCache::Q32 { A, B, D: Dm, params: p } => {
                 let m = match $which { MatrixSlot::A => A, MatrixSlot::B => B, MatrixSlot::D => Dm };
                 $func(m, $($arg,)* p)
             }
-            (NttMatrixCache::Q64 { A, B, D: Dm }, ProtocolCrtNttParams::Q64(p)) => {
+            NttMatrixCache::Q64 { A, B, D: Dm, params: p } => {
                 let m = match $which { MatrixSlot::A => A, MatrixSlot::B => B, MatrixSlot::D => Dm };
                 $func(m, $($arg,)* p)
             }
-            (NttMatrixCache::Q128 { A, B, D: Dm }, ProtocolCrtNttParams::Q128(p)) => {
+            NttMatrixCache::Q128 { A, B, D: Dm, params: p } => {
                 let m = match $which { MatrixSlot::A => A, MatrixSlot::B => B, MatrixSlot::D => Dm };
                 $func(m, $($arg,)* p)
             }
-            _ => return Err(HachiError::InvalidSetup("NTT cache / param family mismatch".into())),
         }
     }};
 }
@@ -223,14 +223,7 @@ pub(crate) fn mat_vec_mul_ntt_cached<F: FieldCore + CanonicalField, const D: usi
     which: MatrixSlot,
     vec: &[CyclotomicRing<F, D>],
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-    let params = select_crt_ntt_params::<F, D>()?;
-    let out = dispatch_cached!(
-        cache,
-        which,
-        &params,
-        mat_vec_mul_precomputed_with_params,
-        vec
-    );
+    let out = dispatch_cached!(cache, which, mat_vec_mul_precomputed_with_params, vec);
     Ok(out)
 }
 
@@ -240,9 +233,9 @@ pub fn decompose_block<F: FieldCore + CanonicalField, const D: usize>(
     delta: usize,
     log_basis: u32,
 ) -> Vec<CyclotomicRing<F, D>> {
-    let mut out = Vec::with_capacity(block.len() * delta);
-    for coeff_vec in block {
-        out.extend(coeff_vec.balanced_decompose_pow2(delta, log_basis));
+    let mut out = vec![CyclotomicRing::<F, D>::zero(); block.len() * delta];
+    for (i, coeff_vec) in block.iter().enumerate() {
+        coeff_vec.balanced_decompose_pow2_into(&mut out[i * delta..(i + 1) * delta], log_basis);
     }
     out
 }
@@ -252,9 +245,9 @@ pub(crate) fn decompose_rows<F: FieldCore + CanonicalField, const D: usize>(
     delta: usize,
     log_basis: u32,
 ) -> Vec<CyclotomicRing<F, D>> {
-    let mut out = Vec::with_capacity(rows.len() * delta);
-    for row in rows {
-        out.extend(row.balanced_decompose_pow2(delta, log_basis));
+    let mut out = vec![CyclotomicRing::<F, D>::zero(); rows.len() * delta];
+    for (i, row) in rows.iter().enumerate() {
+        row.balanced_decompose_pow2_into(&mut out[i * delta..(i + 1) * delta], log_basis);
     }
     out
 }

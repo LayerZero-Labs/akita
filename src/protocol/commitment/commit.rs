@@ -4,7 +4,7 @@ use super::config::{
     ensure_block_layout, ensure_matrix_shape, ensure_supported_num_vars,
     validate_and_derive_layout, HachiCommitmentLayout,
 };
-use super::onehot::{inner_ajtai_onehot, map_onehot_to_sparse_blocks, SparseBlockEntry};
+use super::onehot::{inner_ajtai_onehot_t_only, map_onehot_to_sparse_blocks, SparseBlockEntry};
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
 use super::utils::crt_ntt::{build_ntt_cache, NttMatrixCache};
@@ -13,10 +13,12 @@ use super::utils::matrix::{derive_public_matrix, sample_public_matrix_seed, Publ
 use super::CommitmentConfig;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::{CanonicalField, FieldCore, FieldSampling};
+use crate::{cfg_into_iter, cfg_iter, CanonicalField, FieldCore, FieldSampling};
 use std::io::{Read, Write};
 
 /// Seed-only stage for deterministic setup expansion.
@@ -330,17 +332,20 @@ where
         ensure_matrix_shape(&setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
         ensure_matrix_shape(&setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
 
-        let mut t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(layout.num_blocks);
-        let mut t_hat_flat: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(layout.outer_width);
-        for block in f_blocks {
-            let s_i = decompose_block(block, Cfg::DELTA, Cfg::LOG_BASIS);
-            let t_i = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::A, &s_i)?;
-            let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
-            t_hat_flat.extend(t_hat_i.iter().copied());
-            t_hat_all.push(t_hat_i);
-        }
+        let cache = setup.ntt_cache()?;
+        let t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = cfg_iter!(f_blocks)
+            .map(|block| {
+                let s_i = decompose_block(block, Cfg::DELTA, Cfg::LOG_BASIS);
+                let t_i =
+                    mat_vec_mul_ntt_cached(cache, MatrixSlot::A, &s_i).expect("inner Ajtai failed");
+                decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS)
+            })
+            .collect();
 
-        let u = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::B, &t_hat_flat)?;
+        let t_hat_flat: Vec<CyclotomicRing<F, D>> =
+            t_hat_all.iter().flat_map(|v| v.iter().copied()).collect();
+
+        let u = mat_vec_mul_ntt_cached(cache, MatrixSlot::B, &t_hat_flat)?;
         Ok(CommitWitness {
             commitment: RingCommitment { u },
             t_hat: t_hat_all,
@@ -366,27 +371,29 @@ where
 
         let zero_t_hat =
             vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(Cfg::DELTA).unwrap()];
+        let cache = setup.ntt_cache()?;
+        let coeff_len = f_coeffs.len();
 
-        let mut t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(num_blocks);
-        let mut t_hat_flat: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(layout.outer_width);
+        let t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = cfg_into_iter!(0..num_blocks)
+            .map(|i| {
+                let start = i * block_len;
+                if start >= coeff_len {
+                    zero_t_hat.clone()
+                } else {
+                    let end = (start + block_len).min(coeff_len);
+                    let block = &f_coeffs[start..end];
+                    let s_i = decompose_block(block, Cfg::DELTA, Cfg::LOG_BASIS);
+                    let t_i = mat_vec_mul_ntt_cached(cache, MatrixSlot::A, &s_i)
+                        .expect("inner Ajtai failed");
+                    decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS)
+                }
+            })
+            .collect();
 
-        for i in 0..num_blocks {
-            let start = i * block_len;
-            if start >= f_coeffs.len() {
-                t_hat_flat.extend(zero_t_hat.iter().copied());
-                t_hat_all.push(zero_t_hat.clone());
-            } else {
-                let end = (start + block_len).min(f_coeffs.len());
-                let block = &f_coeffs[start..end];
-                let s_i = decompose_block(block, Cfg::DELTA, Cfg::LOG_BASIS);
-                let t_i = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::A, &s_i)?;
-                let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
-                t_hat_flat.extend(t_hat_i.iter().copied());
-                t_hat_all.push(t_hat_i);
-            }
-        }
+        let t_hat_flat: Vec<CyclotomicRing<F, D>> =
+            t_hat_all.iter().flat_map(|v| v.iter().copied()).collect();
 
-        let u = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::B, &t_hat_flat)?;
+        let u = mat_vec_mul_ntt_cached(cache, MatrixSlot::B, &t_hat_flat)?;
         Ok(CommitWitness {
             commitment: RingCommitment { u },
             t_hat: t_hat_all,
@@ -409,30 +416,28 @@ where
         let sparse_blocks =
             map_onehot_to_sparse_blocks(onehot_k, indices, layout.r_vars, layout.m_vars, D)?;
 
-        let mut t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(layout.num_blocks);
-        let mut t_hat_flat: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(layout.outer_width);
-
         let zero_t_hat =
             vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(Cfg::DELTA).unwrap()];
+        let cache = setup.ntt_cache()?;
+        let a_matrix = &setup.expanded.A;
+        let block_len = layout.block_len;
 
-        for block_entries in &sparse_blocks {
-            if block_entries.is_empty() {
-                t_hat_flat.extend(zero_t_hat.iter().copied());
-                t_hat_all.push(zero_t_hat.clone());
-            } else {
-                let (t_i, _s_i) = inner_ajtai_onehot(
-                    &setup.expanded.A,
-                    block_entries,
-                    layout.block_len,
-                    Cfg::DELTA,
-                );
-                let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
-                t_hat_flat.extend(t_hat_i.iter().copied());
-                t_hat_all.push(t_hat_i);
-            }
-        }
+        let t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = cfg_iter!(sparse_blocks)
+            .map(|block_entries| {
+                if block_entries.is_empty() {
+                    zero_t_hat.clone()
+                } else {
+                    let t_i =
+                        inner_ajtai_onehot_t_only(a_matrix, block_entries, block_len, Cfg::DELTA);
+                    decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS)
+                }
+            })
+            .collect();
 
-        let u = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::B, &t_hat_flat)?;
+        let t_hat_flat: Vec<CyclotomicRing<F, D>> =
+            t_hat_all.iter().flat_map(|v| v.iter().copied()).collect();
+
+        let u = mat_vec_mul_ntt_cached(cache, MatrixSlot::B, &t_hat_flat)?;
         Ok(CommitWitness {
             commitment: RingCommitment { u },
             t_hat: t_hat_all,
@@ -461,6 +466,75 @@ impl HachiCommitmentCore {
     {
         let max_num_vars = layout.required_num_vars::<D>()?;
         let public_matrix_seed = sample_public_matrix_seed();
+        Self::setup_with_layout_and_seed::<F, D, Cfg>(layout, max_num_vars, public_matrix_seed)
+    }
+
+    /// Like `setup_with_layout` but reuses an existing setup's random seed and
+    /// A matrix (which depends only on `m_vars`). Only regenerates B and D
+    /// matrices for the new `r_vars`.
+    ///
+    /// Use this when creating a mega-polynomial setup that shares `m_vars` with
+    /// an individual polynomial setup — avoids re-deriving and NTT-transforming
+    /// the A matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns `HachiError` if the new layout is incompatible with the existing
+    /// setup or matrix shapes are inconsistent.
+    #[allow(non_snake_case)]
+    pub fn setup_from_existing<F, const D: usize, Cfg>(
+        existing: &HachiExpandedSetup<F, D>,
+        new_r_vars: usize,
+    ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F, D>), HachiError>
+    where
+        F: FieldCore + CanonicalField + FieldSampling,
+        Cfg: CommitmentConfig,
+    {
+        let old_layout = existing.seed.layout;
+        let new_layout = HachiCommitmentLayout::new::<Cfg>(old_layout.m_vars, new_r_vars)?;
+
+        if new_layout.inner_width != old_layout.inner_width {
+            return Err(HachiError::InvalidSetup(
+                "setup_from_existing requires matching m_vars/inner_width".to_string(),
+            ));
+        }
+
+        let max_num_vars = new_layout.required_num_vars::<D>()?;
+        let seed = existing.seed.public_matrix_seed;
+
+        let b_matrix = derive_public_matrix::<F, D>(Cfg::N_B, new_layout.outer_width, &seed, b"B");
+        let d_matrix =
+            derive_public_matrix::<F, D>(Cfg::N_D, new_layout.d_matrix_width, &seed, b"D");
+
+        let ntt_cache = build_ntt_cache::<F, D>(&existing.A, &b_matrix, &d_matrix)?;
+        let expanded = HachiExpandedSetup {
+            seed: HachiSetupSeed {
+                max_num_vars,
+                layout: new_layout,
+                public_matrix_seed: seed,
+            },
+            A: existing.A.clone(),
+            B: b_matrix,
+            D: d_matrix,
+        };
+        let prover_setup = HachiProverSetup {
+            expanded: expanded.clone(),
+            prepared: Some(HachiPreparedSetup { ntt_cache }),
+        };
+        let verifier_setup = HachiVerifierSetup { expanded };
+        Ok((prover_setup, verifier_setup))
+    }
+
+    #[allow(non_snake_case)]
+    fn setup_with_layout_and_seed<F, const D: usize, Cfg>(
+        layout: HachiCommitmentLayout,
+        max_num_vars: usize,
+        public_matrix_seed: PublicMatrixSeed,
+    ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F, D>), HachiError>
+    where
+        F: FieldCore + CanonicalField + FieldSampling,
+        Cfg: CommitmentConfig,
+    {
         let a_matrix =
             derive_public_matrix::<F, D>(Cfg::N_A, layout.inner_width, &public_matrix_seed, b"A");
         let b_matrix =
@@ -552,43 +626,39 @@ impl HachiCommitmentCore {
 
         let zero_t_hat =
             vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(Cfg::DELTA).unwrap()];
+        let cache = setup.ntt_cache()?;
+        let a_matrix = &setup.expanded.A;
+        let block_len = layout.block_len;
 
-        let mut t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(layout.num_blocks);
-        let mut t_hat_flat: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(layout.outer_width);
-
-        for block in blocks {
-            match block {
-                MegaPolyBlock::Zero => {
-                    t_hat_flat.extend(zero_t_hat.iter().copied());
-                    t_hat_all.push(zero_t_hat.clone());
-                }
+        let t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = cfg_iter!(blocks)
+            .map(|block| match block {
+                MegaPolyBlock::Zero => zero_t_hat.clone(),
                 MegaPolyBlock::Dense(coeffs) => {
                     let s_i = decompose_block(coeffs, Cfg::DELTA, Cfg::LOG_BASIS);
-                    let t_i = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::A, &s_i)?;
-                    let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
-                    t_hat_flat.extend(t_hat_i.iter().copied());
-                    t_hat_all.push(t_hat_i);
+                    let t_i = mat_vec_mul_ntt_cached(cache, MatrixSlot::A, &s_i)
+                        .expect("inner Ajtai failed");
+                    decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS)
                 }
                 MegaPolyBlock::OneHot(sparse_entries) => {
                     if sparse_entries.is_empty() {
-                        t_hat_flat.extend(zero_t_hat.iter().copied());
-                        t_hat_all.push(zero_t_hat.clone());
+                        zero_t_hat.clone()
                     } else {
-                        let (t_i, _s_i) = inner_ajtai_onehot(
-                            &setup.expanded.A,
+                        let t_i = inner_ajtai_onehot_t_only(
+                            a_matrix,
                             sparse_entries,
-                            layout.block_len,
+                            block_len,
                             Cfg::DELTA,
                         );
-                        let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
-                        t_hat_flat.extend(t_hat_i.iter().copied());
-                        t_hat_all.push(t_hat_i);
+                        decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS)
                     }
                 }
-            }
-        }
+            })
+            .collect();
 
-        let u = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::B, &t_hat_flat)?;
+        let t_hat_flat: Vec<CyclotomicRing<F, D>> =
+            t_hat_all.iter().flat_map(|v| v.iter().copied()).collect();
+
+        let u = mat_vec_mul_ntt_cached(cache, MatrixSlot::B, &t_hat_flat)?;
         Ok(CommitWitness {
             commitment: RingCommitment { u },
             t_hat: t_hat_all,

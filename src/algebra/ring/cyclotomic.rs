@@ -6,6 +6,7 @@ use crate::primitives::serialization::{
 };
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use rand_core::RngCore;
+use std::array::from_fn;
 use std::io::{Read, Write};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
@@ -201,6 +202,52 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
 }
 
 impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
+    /// Balanced decomposition writing directly into a pre-allocated output slice.
+    ///
+    /// `out` must have length exactly `levels`. Each element receives one digit plane.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `log_basis == 0`, `log_basis >= 128`, or `out.len() * log_basis > 128 + log_basis`.
+    pub fn balanced_decompose_pow2_into(&self, out: &mut [Self], log_basis: u32) {
+        let levels = out.len();
+        assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
+        assert!(
+            (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
+            "levels * log_basis must be <= 128 + log_basis"
+        );
+
+        let b = 1i128 << log_basis;
+        let half_b = b / 2;
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let half_q = q / 2;
+
+        for plane in out.iter_mut() {
+            *plane = Self::zero();
+        }
+
+        for i in 0..D {
+            let canonical = self.coeffs[i].to_canonical_u128();
+            let mut c: i128 = if canonical > half_q {
+                -((q - canonical) as i128)
+            } else {
+                canonical as i128
+            };
+
+            for plane in out.iter_mut() {
+                let d = c.rem_euclid(b);
+                let balanced = if d >= half_b { d - b } else { d };
+                c = (c - balanced) / b;
+
+                plane.coeffs[i] = if balanced >= 0 {
+                    F::from_canonical_u128_reduced(balanced as u128)
+                } else {
+                    F::from_canonical_u128_reduced(q - ((-balanced) as u128))
+                };
+            }
+        }
+    }
+
     /// Functional gadget recomposition (`G * digits`) for base `2^log_basis`.
     ///
     /// Coefficients from each part are interpreted as one digit plane and
@@ -217,7 +264,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
 
         let b = F::from_canonical_u128_reduced(1u128 << log_basis);
-        let coeffs = std::array::from_fn(|i| {
+        let coeffs = from_fn(|i| {
             let mut acc = F::zero();
             let mut power = F::one();
             for part in parts.iter() {
@@ -286,7 +333,7 @@ impl<F: FieldCore + FieldSampling, const D: usize> CyclotomicRing<F, D> {
     /// Generate a random ring element.
     pub fn random<R: RngCore>(rng: &mut R) -> Self {
         Self {
-            coeffs: std::array::from_fn(|_| F::sample(rng)),
+            coeffs: from_fn(|_| F::sample(rng)),
         }
     }
 }
