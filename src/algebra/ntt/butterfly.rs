@@ -15,6 +15,7 @@ use super::prime::{MontCoeff, NttPrime, PrimeWidth};
 /// Precomputed twiddle factors for a specific prime and degree `D`.
 ///
 /// `D` must be a power of two.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NttTwiddles<W: PrimeWidth, const D: usize> {
     /// Stage roots for iterative forward cyclic NTT in Montgomery form.
     pub(crate) fwd_wlen: [MontCoeff<W>; D],

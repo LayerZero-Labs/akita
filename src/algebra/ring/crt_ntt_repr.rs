@@ -1,5 +1,7 @@
 //! CRT+NTT-domain representation of cyclotomic ring elements.
 
+use std::array::from_fn;
+
 use crate::algebra::backend::{CrtReconstruct, NttPrimeOps, NttTransform, ScalarBackend};
 use crate::algebra::ntt::butterfly::NttTwiddles;
 use crate::algebra::ntt::crt::GarnerData;
@@ -33,6 +35,7 @@ impl<F: FieldCore + CanonicalField> CrtNttConvertibleField for F {}
 ///
 /// Keeps primes/twiddles/Garner constants consistent and avoids passing them
 /// independently at every call site.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CrtNttParamSet<W: PrimeWidth, const K: usize, const D: usize> {
     /// CRT primes with Montgomery constants.
     pub primes: [NttPrime<W>; K],
@@ -47,7 +50,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
     ///
     /// Computes per-prime twiddles and Garner reconstruction constants.
     pub fn new(primes: [NttPrime<W>; K]) -> Self {
-        let twiddles = std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
+        let twiddles = from_fn(|k| NttTwiddles::compute(primes[k]));
         let garner = GarnerData::compute(&primes);
         Self {
             primes,
@@ -96,7 +99,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     ) -> Self {
         let q = (-F::one()).to_canonical_u128() + 1;
         let half_q = q / 2;
-        let centered_coeffs: [i128; D] = std::array::from_fn(|i| {
+        let centered_coeffs: [i128; D] = from_fn(|i| {
             let canonical = ring.coeffs[i].to_canonical_u128();
             if canonical > half_q {
                 -((q - canonical) as i128)
