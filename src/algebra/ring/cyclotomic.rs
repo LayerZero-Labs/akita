@@ -243,8 +243,8 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     pub fn balanced_decompose_pow2(&self, levels: usize, log_basis: u32) -> Vec<Self> {
         assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
         assert!(
-            (levels as u32).saturating_mul(log_basis) <= 128,
-            "levels * log_basis must be <= 128"
+            (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
+            "levels * log_basis must be <= 128 + log_basis"
         );
 
         let b = 1i128 << log_basis;
