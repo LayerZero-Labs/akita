@@ -233,7 +233,7 @@ where
     /// of range.
     fn commit_onehot(
         onehot_k: usize,
-        indices: &[usize],
+        indices: &[Option<usize>],
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let num_chunks = indices.len();
@@ -249,7 +249,8 @@ where
         // Materialize the full one-hot vector as ring elements.
         let total_ring_elems = total_field_elems / D;
         let mut ring_coeffs = vec![CyclotomicRing::<F, D>::zero(); total_ring_elems];
-        for (c, &idx) in indices.iter().enumerate() {
+        for (c, opt) in indices.iter().enumerate() {
+            let Some(&idx) = opt.as_ref() else { continue };
             if idx >= onehot_k {
                 return Err(HachiError::InvalidInput(format!(
                     "index {idx} out of range for chunk size K={onehot_k} at position {c}"

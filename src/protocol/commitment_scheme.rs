@@ -269,6 +269,55 @@ where
     }
 }
 
+/// Commit to a one-hot polynomial, returning both the commitment and a
+/// complete `HachiCommitmentHint` (including `ring_coeffs` needed by `prove`).
+///
+/// # Errors
+///
+/// Returns an error if dimensions are inconsistent, any index is out of
+/// range, or the underlying commitment routine fails.
+pub fn commit_onehot<F, const D: usize, Cfg>(
+    onehot_k: usize,
+    indices: &[Option<usize>],
+    setup: &HachiProverSetup<F, D>,
+) -> Result<(RingCommitment<F, D>, HachiCommitmentHint<F, D>), HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling,
+    Cfg: CommitmentConfig,
+{
+    let num_chunks = indices.len();
+    let total_field_elems = num_chunks
+        .checked_mul(onehot_k)
+        .ok_or_else(|| HachiError::InvalidInput("T*K overflow".into()))?;
+    if total_field_elems % D != 0 {
+        return Err(HachiError::InvalidInput(format!(
+            "T*K={total_field_elems} is not divisible by D={D}"
+        )));
+    }
+
+    // Build ring_coeffs (needed for prove) from the sparse one-hot indices.
+    let total_ring_elems = total_field_elems / D;
+    let mut ring_coeffs = vec![CyclotomicRing::<F, D>::zero(); total_ring_elems];
+    for (c, opt) in indices.iter().enumerate() {
+        let Some(&idx) = opt.as_ref() else { continue };
+        let field_pos = c * onehot_k + idx;
+        let ring_idx = field_pos / D;
+        let coeff_idx = field_pos % D;
+        ring_coeffs[ring_idx].coeffs[coeff_idx] = F::one();
+    }
+
+    let w = <HachiCommitmentCore as RingCommitmentScheme<F, { D }, Cfg>>::commit_onehot(
+        onehot_k, indices, setup,
+    )?;
+
+    let hint = HachiCommitmentHint {
+        s: w.s,
+        t_hat: w.t_hat,
+        ring_coeffs,
+    };
+    Ok((w.commitment, hint))
+}
+
 /// Per-block intermediate state for streaming Hachi commitment.
 ///
 /// Each chunk corresponds to one Ajtai inner block: `D * block_len` field

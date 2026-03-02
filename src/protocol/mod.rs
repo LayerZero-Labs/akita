@@ -21,7 +21,7 @@ pub use commitment::{
     ProductionFp128CommitmentConfig, RingCommitment, RingCommitmentScheme,
     SmallTestCommitmentConfig, StreamingCommitmentScheme,
 };
-pub use commitment_scheme::{HachiChunkState, HachiCommitmentScheme};
+pub use commitment_scheme::{commit_onehot, HachiChunkState, HachiCommitmentScheme};
 pub use opening_point::RingOpeningPoint;
 pub use proof::{HachiProof, SumcheckAux};
 pub use quadratic_equation::QuadraticEquation;

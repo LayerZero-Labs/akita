@@ -357,7 +357,7 @@ where
 
     fn commit_onehot(
         onehot_k: usize,
-        indices: &[usize],
+        indices: &[Option<usize>],
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let layout = setup.layout();

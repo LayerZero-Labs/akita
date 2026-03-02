@@ -37,7 +37,7 @@ pub(crate) struct SparseBlockEntry {
 /// fill the commitment layout.
 pub(crate) fn map_onehot_to_sparse_blocks(
     onehot_k: usize,
-    indices: &[usize],
+    indices: &[Option<usize>],
     r: usize,
     m: usize,
     d: usize,
@@ -74,7 +74,8 @@ pub(crate) fn map_onehot_to_sparse_blocks(
 
     // Accumulate nonzero coefficients per ring element index.
     let mut ring_elem_map: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for (c, &idx) in indices.iter().enumerate() {
+    for (c, opt) in indices.iter().enumerate() {
+        let Some(&idx) = opt.as_ref() else { continue };
         if idx >= onehot_k {
             return Err(HachiError::InvalidInput(format!(
                 "index {idx} out of range for chunk size K={onehot_k} at position {c}"
@@ -159,7 +160,7 @@ mod tests {
         // R=1 (2 blocks), M=2 (4 per block) => 8 ring elements total
         let k = 16;
         let d = 4;
-        let indices = vec![3, 10];
+        let indices = vec![Some(3), Some(10)];
         let blocks = map_onehot_to_sparse_blocks(k, &indices, 1, 2, d).unwrap();
 
         assert_eq!(blocks.len(), 2);
@@ -179,7 +180,7 @@ mod tests {
         // R=1 (2 blocks), M=1 (2 per block)
         let k = 4;
         let d = 4;
-        let indices = vec![0, 2, 3, 1];
+        let indices = vec![Some(0), Some(2), Some(3), Some(1)];
         let blocks = map_onehot_to_sparse_blocks(k, &indices, 1, 1, d).unwrap();
 
         assert_eq!(blocks.len(), 2);
@@ -199,7 +200,16 @@ mod tests {
         // R=1 (2 blocks), M=1 (2 per block)
         let k = 4;
         let d = 8;
-        let indices = vec![0, 2, 3, 1, 0, 0, 3, 3];
+        let indices = vec![
+            Some(0),
+            Some(2),
+            Some(3),
+            Some(1),
+            Some(0),
+            Some(0),
+            Some(3),
+            Some(3),
+        ];
         let blocks = map_onehot_to_sparse_blocks(k, &indices, 1, 1, d).unwrap();
 
         assert_eq!(blocks.len(), 2);
@@ -219,7 +229,7 @@ mod tests {
 
     #[test]
     fn map_onehot_rejects_non_divisible() {
-        let result = map_onehot_to_sparse_blocks(3, &[0, 1], 0, 1, 4);
+        let result = map_onehot_to_sparse_blocks(3, &[Some(0), Some(1)], 0, 1, 4);
         assert!(result.is_err());
     }
 
