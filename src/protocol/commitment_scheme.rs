@@ -14,7 +14,7 @@ use crate::protocol::commitment::{
     AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore, HachiProverSetup,
     HachiVerifierSetup, RingCommitment, RingCommitmentScheme, StreamingCommitmentScheme,
 };
-use crate::protocol::opening_point::RingOpeningPoint;
+use crate::protocol::opening_point::{BasisMode, RingOpeningPoint};
 use crate::protocol::proof::{HachiCommitmentHint, HachiProof, SumcheckAux};
 use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::ring_switch::{build_w_evals, ring_switch_prover, ring_switch_verifier};
@@ -25,6 +25,10 @@ use crate::protocol::transcript::labels::{
 };
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt, Polynomial};
+use std::collections::BTreeMap;
+use std::fmt;
+use std::marker::PhantomData;
+use std::time::Instant;
 
 #[cfg(test)]
 use crate::protocol::quadratic_equation::compute_m_a_streaming;
@@ -42,7 +46,7 @@ use crate::protocol::SmallTestCommitmentConfig;
 /// End-to-end PCS wrapper, generic over ring degree `D` and config `Cfg`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HachiCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
-    _cfg: std::marker::PhantomData<Cfg>,
+    _cfg: PhantomData<Cfg>,
 }
 
 impl<F, const D: usize, Cfg> CommitmentScheme<F> for HachiCommitmentScheme<D, Cfg>
@@ -93,8 +97,9 @@ where
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut T,
         commitment: &Self::Commitment,
+        basis: BasisMode,
     ) -> Result<Self::Proof, HachiError> {
-        let t_prove_total = std::time::Instant::now();
+        let t_prove_total = Instant::now();
         let hint = hint.ok_or_else(|| {
             HachiError::InvalidInput("missing commitment hint for proving".to_string())
         })?;
@@ -120,10 +125,10 @@ where
         let outer_point = &padded_point[alpha..];
 
         let ring_opening_point =
-            ring_opening_point_from_field::<F>(outer_point, layout.r_vars, layout.m_vars)?;
+            ring_opening_point_from_field::<F>(outer_point, layout.r_vars, layout.m_vars, basis)?;
 
-        let t0 = std::time::Instant::now();
-        let y_ring = evaluate_packed_ring_poly::<F, { D }>(&hint.ring_coeffs, outer_point);
+        let t0 = Instant::now();
+        let y_ring = evaluate_packed_ring_poly::<F, { D }>(&hint.ring_coeffs, outer_point, basis);
         eprintln!(
             "  [hachi prove] eval packed ring poly: {:.2}s (ring_coeffs len={})",
             t0.elapsed().as_secs_f64(),
@@ -138,7 +143,7 @@ where
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
 
         // §4.2 Quadratic equation
-        let t1 = std::time::Instant::now();
+        let t1 = Instant::now();
         let mut quad_eq = QuadraticEquation::<F, { D }, Cfg>::new_prover(
             setup,
             ring_opening_point,
@@ -153,7 +158,7 @@ where
         );
 
         // §4.3 Ring switch
-        let t2 = std::time::Instant::now();
+        let t2 = Instant::now();
         let rs = ring_switch_prover::<F, T, { D }, Cfg>(&mut quad_eq, &setup.expanded, transcript)?;
         eprintln!(
             "  [hachi prove] ring_switch_prover: {:.2}s",
@@ -164,7 +169,7 @@ where
         let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
 
         // Fused sumcheck: norm + relation with shared w_table
-        let t3 = std::time::Instant::now();
+        let t3 = Instant::now();
         let mut fused_prover = HachiSumcheckProver::new(
             batching_coeff,
             rs.w_evals,
@@ -205,6 +210,7 @@ where
         opening_point: &[F],
         opening: &F,
         commitment: &Self::Commitment,
+        basis: BasisMode,
     ) -> Result<(), HachiError> {
         let alpha_bits = Cfg::D.trailing_zeros() as usize;
         if opening_point.len() < alpha_bits {
@@ -227,7 +233,7 @@ where
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &proof.y_ring);
 
         // §3.1 trace check
-        let v = reduce_inner_openings_to_ring_elements::<F, { D }>(inner_point)?;
+        let v = reduce_inner_openings_to_ring_elements::<F, { D }>(inner_point, basis)?;
         let d = F::from_u64(Cfg::D as u64);
         let trace_lhs = trace::<F, { D }>(&(proof.y_ring * v.sigma_m1()));
         let trace_rhs = d * *opening;
@@ -240,6 +246,7 @@ where
             reduced_opening_point,
             layout.r_vars,
             layout.m_vars,
+            basis,
         )?;
         let quad_eq = QuadraticEquation::<F, { D }, Cfg>::new_verifier(
             setup,
@@ -368,8 +375,8 @@ pub struct HachiChunkState<F: FieldCore, const D: usize> {
     pub t_hat_i: Vec<CyclotomicRing<F, D>>,
 }
 
-impl<F: FieldCore, const D: usize> std::fmt::Debug for HachiChunkState<F, D> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<F: FieldCore, const D: usize> fmt::Debug for HachiChunkState<F, D> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HachiChunkState")
             .field("block_len", &self.block.len())
             .field("s_i_len", &self.s_i.len())
@@ -431,8 +438,7 @@ where
         // Build sparse entries and original block ring elements.
         let num_ring_elems = num_field_elems / D;
         let mut ring_block = vec![CyclotomicRing::<F, D>::zero(); num_ring_elems];
-        let mut ring_elem_map: std::collections::BTreeMap<usize, Vec<usize>> =
-            std::collections::BTreeMap::new();
+        let mut ring_elem_map: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         for (c, opt) in chunk.iter().enumerate() {
             if let Some(k) = opt {
                 let field_pos = c * onehot_k + k;
@@ -523,6 +529,7 @@ where
         &opening_point[alpha_bits..],
         layout.r_vars,
         layout.m_vars,
+        BasisMode::Lagrange,
     )?;
     let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_HACHI_PROTOCOL);
 
@@ -560,10 +567,34 @@ fn lagrange_weights<F: FieldCore>(point: &[F]) -> Vec<F> {
     weights
 }
 
+/// Multilinear monomial weights: `⊗ᵢ (1, xᵢ)`.
+///
+/// The j-th entry is `∏_{i ∈ bits(j)} point[i]`.
+fn monomial_weights<F: FieldCore>(point: &[F]) -> Vec<F> {
+    let len = 1usize << point.len();
+    let mut weights = vec![F::zero(); len];
+    weights[0] = F::one();
+    for (level, &p) in point.iter().enumerate() {
+        let k = 1usize << level;
+        for i in (0..k).rev() {
+            weights[i + k] = weights[i] * p;
+        }
+    }
+    weights
+}
+
+fn basis_weights<F: FieldCore>(point: &[F], mode: BasisMode) -> Vec<F> {
+    match mode {
+        BasisMode::Lagrange => lagrange_weights(point),
+        BasisMode::Monomial => monomial_weights(point),
+    }
+}
+
 fn ring_opening_point_from_field<F: FieldCore>(
     opening_point: &[F],
     r_vars: usize,
     m_vars: usize,
+    basis: BasisMode,
 ) -> Result<RingOpeningPoint<F>, HachiError> {
     let expected_len = r_vars
         .checked_add(m_vars)
@@ -577,8 +608,8 @@ fn ring_opening_point_from_field<F: FieldCore>(
 
     // Sequential ordering: M variables (position in block) come first,
     // R variables (block selection) come second.
-    let a = lagrange_weights(&opening_point[..m_vars]);
-    let b = lagrange_weights(&opening_point[m_vars..]);
+    let a = basis_weights(&opening_point[..m_vars], basis);
+    let b = basis_weights(&opening_point[m_vars..], basis);
     Ok(RingOpeningPoint { a, b })
 }
 
@@ -620,8 +651,9 @@ fn reduce_coeffs_to_ring_elements<F: FieldCore, const D: usize>(
 
 fn reduce_inner_openings_to_ring_elements<F: FieldCore, const D: usize>(
     inner_point: &[F],
+    basis: BasisMode,
 ) -> Result<CyclotomicRing<F, D>, HachiError> {
-    let weights = lagrange_weights(inner_point);
+    let weights = basis_weights(inner_point, basis);
     if weights.len() != D {
         return Err(HachiError::InvalidInput(format!(
             "inner basis length {} does not match D={D}",
@@ -634,8 +666,9 @@ fn reduce_inner_openings_to_ring_elements<F: FieldCore, const D: usize>(
 fn evaluate_packed_ring_poly<F: FieldCore, const D: usize>(
     packed_coeffs: &[CyclotomicRing<F, D>],
     outer_point: &[F],
+    basis: BasisMode,
 ) -> CyclotomicRing<F, D> {
-    let weights = lagrange_weights(outer_point);
+    let weights = basis_weights(outer_point, basis);
     debug_assert!(weights.len() >= packed_coeffs.len());
     #[cfg(feature = "parallel")]
     {
@@ -702,6 +735,7 @@ mod tests {
             Some(hint),
             &mut prover_transcript,
             &commitment,
+            BasisMode::Lagrange,
         )
         .unwrap();
 
@@ -713,6 +747,7 @@ mod tests {
             &opening_point,
             &opening,
             &commitment,
+            BasisMode::Lagrange,
         );
 
         assert!(result.is_ok());
@@ -744,6 +779,7 @@ mod tests {
             Some(hint),
             &mut prover_transcript,
             &commitment,
+            BasisMode::Lagrange,
         )
         .unwrap();
 
@@ -756,6 +792,7 @@ mod tests {
             &opening_point,
             &wrong_opening,
             &commitment,
+            BasisMode::Lagrange,
         );
 
         assert!(
@@ -828,6 +865,7 @@ mod tests {
             Some(hint),
             &mut prover_transcript,
             &commitment,
+            BasisMode::Lagrange,
         )
         .unwrap();
 
@@ -839,10 +877,63 @@ mod tests {
             &opening_point,
             &opening,
             &commitment,
+            BasisMode::Lagrange,
         );
         assert!(
             result.is_ok(),
             "streaming commit should produce valid proofs"
+        );
+    }
+
+    #[test]
+    fn monomial_basis_prove_verify_round_trip() {
+        let alpha = Cfg::D.trailing_zeros() as usize;
+        let layout = Cfg::commitment_layout(16).unwrap();
+        let num_vars = layout.m_vars + layout.r_vars + alpha;
+        let len = 1usize << num_vars;
+
+        let coeffs: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
+        let poly = DenseMultilinearEvals::new_padded(coeffs.clone());
+
+        let setup = <Scheme as CommitmentScheme<F>>::setup_prover(num_vars);
+        let verifier_setup = <Scheme as CommitmentScheme<F>>::setup_verifier(&setup);
+
+        let (commitment, hint) = <Scheme as CommitmentScheme<F>>::commit(&poly, &setup).unwrap();
+
+        let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
+
+        let mw = monomial_weights(&opening_point);
+        let opening: F = coeffs
+            .iter()
+            .zip(mw.iter())
+            .fold(F::zero(), |acc, (&c, &w)| acc + c * w);
+
+        let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/monomial");
+        let proof = <Scheme as CommitmentScheme<F>>::prove(
+            &setup,
+            &poly,
+            &opening_point,
+            Some(hint),
+            &mut prover_transcript,
+            &commitment,
+            BasisMode::Monomial,
+        )
+        .unwrap();
+
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/monomial");
+        let result = <Scheme as CommitmentScheme<F>>::verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Monomial,
+        );
+
+        assert!(
+            result.is_ok(),
+            "monomial-basis proof should verify: {result:?}"
         );
     }
 }

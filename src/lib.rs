@@ -60,4 +60,4 @@ pub use primitives::arithmetic::{
 };
 pub use primitives::poly::{MultilinearLagrange, Polynomial};
 pub use primitives::serialization::{HachiDeserialize, HachiSerialize};
-pub use protocol::{CommitmentScheme, StreamingCommitmentScheme, Transcript};
+pub use protocol::{BasisMode, CommitmentScheme, StreamingCommitmentScheme, Transcript};

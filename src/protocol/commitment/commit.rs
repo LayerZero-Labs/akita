@@ -489,7 +489,11 @@ impl HachiCommitmentCore {
         Cfg: CommitmentConfig,
     {
         let old_layout = existing.seed.layout;
-        let new_layout = HachiCommitmentLayout::new::<Cfg>(old_layout.m_vars, new_r_vars)?;
+        let new_layout = HachiCommitmentLayout::new::<Cfg>(
+            old_layout.m_vars,
+            new_r_vars,
+            &Cfg::decomposition(),
+        )?;
 
         if new_layout.inner_width != old_layout.inner_width {
             return Err(HachiError::InvalidSetup(
@@ -601,7 +605,7 @@ impl HachiCommitmentCore {
     ///
     /// # Panics
     ///
-    /// Panics if `Cfg::N_A * Cfg::DELTA` overflows.
+    /// Panics if `Cfg::N_A * layout.delta` overflows.
     #[allow(non_snake_case)]
     pub fn commit_mixed<F, const D: usize, Cfg>(
         blocks: &[MegaPolyBlock<'_, F, D>],

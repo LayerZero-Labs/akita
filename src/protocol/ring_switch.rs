@@ -11,8 +11,8 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
-    CommitmentConfig, HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup,
-    RingCommitment, RingCommitmentScheme,
+    CommitmentConfig, DecompositionParams, HachiCommitmentCore, HachiCommitmentLayout,
+    HachiExpandedSetup, RingCommitment, RingCommitmentScheme,
 };
 use crate::protocol::quadratic_equation::{
     compute_m_a_streaming, compute_r_split_eq, QuadraticEquation,
@@ -23,6 +23,9 @@ use crate::protocol::transcript::labels::{
 };
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling};
+#[cfg(test)]
+use std::array::from_fn;
+use std::marker::PhantomData;
 
 /// Output of the ring switch protocol, containing everything needed for sumchecks.
 pub struct RingSwitchOutput<F: FieldCore, const D: usize> {
@@ -271,7 +274,7 @@ pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D
                 quotient[k - D] = q;
                 poly[k - D] = poly[k - D] - q;
             }
-            let coeffs: [F; D] = std::array::from_fn(|k| quotient[k]);
+            let coeffs: [F; D] = from_fn(|k| quotient[k]);
             CyclotomicRing::from_coefficients(coeffs)
         })
         .collect();
@@ -280,7 +283,7 @@ pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D
 
 #[derive(Clone, Copy, Debug)]
 struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
-    _cfg: std::marker::PhantomData<Cfg>,
+    _cfg: PhantomData<Cfg>,
 }
 
 impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConfig<D, Cfg> {
@@ -288,14 +291,18 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
     const N_A: usize = Cfg::N_A;
     const N_B: usize = Cfg::N_B;
     const N_D: usize = Cfg::N_D;
-    const LOG_BASIS: u32 = Cfg::LOG_BASIS;
-    // w's entries are already base-2^LOG_BASIS digits (in [-b/2, b/2-1]),
-    // so gadget decomposition is the identity.  DELTA=1 avoids a
-    // block_len × DELTA blowup in inner_width that is otherwise 32×
-    // larger than necessary.
-    const DELTA: usize = 1;
-    const TAU: usize = Cfg::TAU;
     const CHALLENGE_WEIGHT: usize = Cfg::CHALLENGE_WEIGHT;
+
+    fn decomposition() -> DecompositionParams {
+        let parent = Cfg::decomposition();
+        // w's entries are already base-2^log_basis digits (in [-b/2, b/2-1]),
+        // so log_coeff_bound = log_basis yields delta = 1, avoiding a
+        // block_len * delta blowup in inner_width.
+        DecompositionParams {
+            log_basis: parent.log_basis,
+            log_coeff_bound: parent.log_basis,
+        }
+    }
 
     fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
         let alpha = D.trailing_zeros() as usize;
@@ -309,7 +316,7 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         }
         let r_vars = reduced_vars / 2;
         let m_vars = reduced_vars - r_vars;
-        HachiCommitmentLayout::new::<Self>(m_vars, r_vars)
+        HachiCommitmentLayout::new::<Self>(m_vars, r_vars, &Self::decomposition())
     }
 }
 
@@ -596,6 +603,8 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
 mod tests {
     use super::compute_r_via_poly_division;
     use crate::algebra::{CyclotomicRing, Fp64};
+    use std::array::from_fn;
+
     use crate::{FieldCore, FromSmallInt};
 
     fn compute_r_schoolbook<F: FieldCore, const D: usize>(
@@ -638,7 +647,7 @@ mod tests {
                     quotient[k - D] = q;
                     poly[k - D] = poly[k - D] - q;
                 }
-                let coeffs: [F; D] = std::array::from_fn(|k| quotient[k]);
+                let coeffs: [F; D] = from_fn(|k| quotient[k]);
                 CyclotomicRing::from_coefficients(coeffs)
             })
             .collect()
@@ -658,7 +667,7 @@ mod tests {
                             coeffs[0] = F::from_u64((i * 5 + j + 1) as u64);
                             CyclotomicRing::from_coefficients(coeffs)
                         } else {
-                            let coeffs = std::array::from_fn(|k| {
+                            let coeffs = from_fn(|k| {
                                 F::from_u64((i as u64 * 1000 + j as u64 * 100 + k as u64 + 1) % 97)
                             });
                             CyclotomicRing::from_coefficients(coeffs)
@@ -669,15 +678,13 @@ mod tests {
             .collect();
         let z: Vec<CyclotomicRing<F, D>> = (0..4)
             .map(|j| {
-                let coeffs =
-                    std::array::from_fn(|k| F::from_u64((j as u64 * 37 + k as u64 + 5) % 89));
+                let coeffs = from_fn(|k| F::from_u64((j as u64 * 37 + k as u64 + 5) % 89));
                 CyclotomicRing::from_coefficients(coeffs)
             })
             .collect();
         let y: Vec<CyclotomicRing<F, D>> = (0..3)
             .map(|i| {
-                let coeffs =
-                    std::array::from_fn(|k| F::from_u64((i as u64 * 29 + k as u64 + 7) % 83));
+                let coeffs = from_fn(|k| F::from_u64((i as u64 * 29 + k as u64 + 7) % 83));
                 CyclotomicRing::from_coefficients(coeffs)
             })
             .collect();

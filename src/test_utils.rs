@@ -4,8 +4,13 @@
 //! building blocks for both unit tests (inside `src/`) and integration
 //! tests (inside `tests/`).
 
+use std::array::from_fn;
+
 use crate::algebra::{CyclotomicRing, Fp64};
-use crate::protocol::commitment::CommitmentConfig;
+use crate::error::HachiError;
+use crate::protocol::commitment::{
+    compute_delta, compute_tau, CommitmentConfig, DecompositionParams, HachiCommitmentLayout,
+};
 use crate::{FieldCore, FromSmallInt};
 
 pub type F = Fp64<4294967197>;
@@ -19,24 +24,34 @@ impl CommitmentConfig for TinyConfig {
     const N_A: usize = 2;
     const N_B: usize = 2;
     const N_D: usize = 2;
-    const LOG_BASIS: u32 = 4;
-    const DELTA: usize = 9;
-    const TAU: usize = 4;
     const CHALLENGE_WEIGHT: usize = 3;
 
-    fn commitment_layout(
-        _max_num_vars: usize,
-    ) -> Result<crate::protocol::commitment::HachiCommitmentLayout, crate::error::HachiError> {
-        crate::protocol::commitment::HachiCommitmentLayout::new::<Self>(1, 1)
+    fn decomposition() -> DecompositionParams {
+        DecompositionParams {
+            log_basis: 4,
+            log_coeff_bound: 32,
+        }
+    }
+
+    fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        HachiCommitmentLayout::new::<Self>(1, 1, &Self::decomposition())
     }
 }
 
 pub const BLOCK_LEN: usize = 2;
 pub const NUM_BLOCKS: usize = 2;
-pub const DELTA: usize = TinyConfig::DELTA;
-pub const LOG_BASIS: u32 = TinyConfig::LOG_BASIS;
+pub const LOG_BASIS: u32 = 4;
 pub const N_A: usize = TinyConfig::N_A;
-pub const TAU: usize = TinyConfig::TAU;
+
+pub fn delta() -> usize {
+    let d = TinyConfig::decomposition();
+    compute_delta(d.log_coeff_bound, d.log_basis)
+}
+
+pub fn tau() -> usize {
+    let d = TinyConfig::decomposition();
+    compute_tau(1, TinyConfig::CHALLENGE_WEIGHT, d.log_basis)
+}
 
 pub fn mat_vec_mul(
     mat: &[Vec<CyclotomicRing<F, D>>],
@@ -59,8 +74,7 @@ pub fn sample_blocks() -> Vec<Vec<CyclotomicRing<F, D>>> {
         .map(|bi| {
             (0..BLOCK_LEN)
                 .map(|bj| {
-                    let coeffs =
-                        std::array::from_fn(|k| F::from_u64((bi * 1_000 + bj * 100 + k) as u64));
+                    let coeffs = from_fn(|k| F::from_u64((bi * 1_000 + bj * 100 + k) as u64));
                     CyclotomicRing::from_coefficients(coeffs)
                 })
                 .collect()
@@ -96,20 +110,20 @@ pub fn field_gadget_recompose(
 
 pub fn recompose_z_hat(z_hat: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
     z_hat
-        .chunks(TAU)
+        .chunks(tau())
         .map(|chunk| field_gadget_recompose(chunk, LOG_BASIS))
         .collect()
 }
 
 pub fn gadget_recompose_vec(x_hat: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
     x_hat
-        .chunks(DELTA)
+        .chunks(delta())
         .map(|chunk| field_gadget_recompose(chunk, LOG_BASIS))
         .collect()
 }
 
 pub fn field_gadget_recompose_vec(v: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
-    v.chunks(DELTA)
+    v.chunks(delta())
         .map(|chunk| field_gadget_recompose(chunk, LOG_BASIS))
         .collect()
 }

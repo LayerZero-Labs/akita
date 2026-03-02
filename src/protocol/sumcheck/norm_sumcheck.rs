@@ -402,9 +402,12 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceVerifier<E> for NormSumcheckVe
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algebra::fields::ext::Ext2;
+    use crate::algebra::fields::lift::LiftBase;
     use crate::algebra::ring::CyclotomicRing;
     use crate::algebra::Fp64;
     use crate::primitives::multilinear_evals::DenseMultilinearEvals;
+    use crate::protocol::opening_point::BasisMode;
     use crate::protocol::ring_switch::r_decomp_levels;
     use crate::protocol::sumcheck::eq_poly::EqPolynomial;
     use crate::protocol::sumcheck::multilinear_eval;
@@ -416,6 +419,7 @@ mod tests {
     use crate::{FieldCore, FromSmallInt};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use std::array::from_fn;
 
     type F = Fp64<4294967197>;
     const D: usize = 8;
@@ -492,7 +496,7 @@ mod tests {
     }
 
     fn ring_with_small_coeff(value: u64) -> CyclotomicRing<F, D> {
-        let coeffs = std::array::from_fn(|_| F::from_u64(value));
+        let coeffs = from_fn(|_| F::from_u64(value));
         CyclotomicRing::from_coefficients(coeffs)
     }
 
@@ -602,10 +606,11 @@ mod tests {
             ring_with_small_coeff(3),
         ];
         let r = [ring_with_small_coeff(0), ring_with_small_coeff(1)];
-        let levels = r_decomp_levels::<F>(SmallTestCommitmentConfig::LOG_BASIS);
+        let log_basis = SmallTestCommitmentConfig::decomposition().log_basis;
+        let levels = r_decomp_levels::<F>(log_basis);
         let r_hat: Vec<CyclotomicRing<F, D>> = r
             .iter()
-            .flat_map(|ri| ri.balanced_decompose_pow2(levels, SmallTestCommitmentConfig::LOG_BASIS))
+            .flat_map(|ri| ri.balanced_decompose_pow2(levels, log_basis))
             .collect();
         let mut w_evals: Vec<F> = z
             .iter()
@@ -617,7 +622,7 @@ mod tests {
         w_evals.resize(target_len, F::zero());
         let num_vars = target_len.trailing_zeros() as usize;
         let tau: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
-        let b = 1usize << SmallTestCommitmentConfig::LOG_BASIS;
+        let b = 1usize << SmallTestCommitmentConfig::decomposition().log_basis;
 
         let eq_table = EqPolynomial::evals(&tau);
         let _claim: F = (0..w_evals.len())
@@ -668,6 +673,7 @@ mod tests {
             Some(hint),
             &mut prover_transcript,
             &commitment,
+            BasisMode::Lagrange,
         )
         .unwrap();
 
@@ -678,7 +684,7 @@ mod tests {
         let tau: Vec<F> = (0..num_sumcheck_vars)
             .map(|i| F::from_u64((i + 3) as u64))
             .collect();
-        let b = 1usize << SmallTestCommitmentConfig::LOG_BASIS;
+        let b = 1usize << SmallTestCommitmentConfig::decomposition().log_basis;
 
         let eq_table = EqPolynomial::evals(&tau);
         let _claim: F = (0..w_evals.len())
@@ -710,9 +716,6 @@ mod tests {
 
     #[test]
     fn norm_sumcheck_over_ext2() {
-        use crate::algebra::fields::ext::Ext2;
-        use crate::algebra::fields::lift::LiftBase;
-
         type E2 = Ext2<F>;
 
         let num_vars = 3;

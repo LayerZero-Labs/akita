@@ -9,6 +9,90 @@ use crate::primitives::serialization::{
 use crate::FieldCore;
 use std::io::{Read, Write};
 
+/// Parameters controlling the gadget decomposition depth.
+///
+/// The gadget base is `b = 2^log_basis`. Each ring coefficient with centered
+/// magnitude fitting in `log_coeff_bound` bits is decomposed into
+/// `delta = ceil(log_coeff_bound / log_basis)` balanced digits in `[-b/2, b/2)`.
+///
+/// Smaller `log_coeff_bound` (when polynomial coefficients are known to be
+/// small) yields a smaller `delta`, which proportionally shrinks the witness
+/// vector, the commitment matrices, and the proving cost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecompositionParams {
+    /// Base-2 logarithm of the gadget base (e.g., 4 for base-16 digits in [-8, 7]).
+    pub log_basis: u32,
+
+    /// Base-2 logarithm of the maximum centered coefficient magnitude.
+    ///
+    /// Determines the decomposition depth: `delta = ceil(log_coeff_bound / log_basis)`.
+    /// The centered representation maps each coefficient `c ∈ [0, q)` to the
+    /// signed value in `(-q/2, q/2]`. A value of `k` means the signed magnitude
+    /// fits in `k` bits, i.e., lies in `[-2^(k-1), 2^(k-1) - 1]`.
+    ///
+    /// Examples:
+    /// - Binary (0/1) polynomials: 1
+    /// - Already range-checked digits in `[-8, 7]`: 4  (= `log_basis` for one digit)
+    /// - Arbitrary Fp128 elements: 128
+    pub log_coeff_bound: u32,
+}
+
+/// Compute the gadget decomposition depth from a coefficient bound.
+///
+/// Returns `delta = ceil(log_coeff_bound / log_basis)`, with an extra level
+/// when the balanced-digit range would not cover the full bound.
+///
+/// # Panics
+///
+/// Panics if `log_basis` is 0 or >= 128.
+pub fn compute_delta(log_coeff_bound: u32, log_basis: u32) -> usize {
+    assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
+    if log_coeff_bound == 0 {
+        return 1;
+    }
+    let mut delta = (log_coeff_bound as usize).div_ceil(log_basis as usize);
+
+    // Verify the balanced-digit range covers the bound.
+    // Max positive representable by delta digits in base b: (b/2-1)*(b^delta-1)/(b-1).
+    let b: u128 = 1u128 << log_basis;
+    let half_b_minus_1 = b / 2 - 1;
+    let b_minus_1 = b - 1;
+    let mut b_pow = 1u128;
+    for _ in 0..delta {
+        b_pow = b_pow.saturating_mul(b);
+    }
+    let max_positive = half_b_minus_1.saturating_mul(b_pow.saturating_sub(1) / b_minus_1);
+    let required = if log_coeff_bound > 128 {
+        u128::MAX / 2
+    } else if log_coeff_bound == 0 {
+        0
+    } else {
+        (1u128 << (log_coeff_bound - 1)).saturating_sub(1)
+    };
+    if max_positive < required {
+        delta += 1;
+    }
+    delta.max(1)
+}
+
+/// Compute the decomposition depth `tau` for the folded witness `z_pre`.
+///
+/// The folded witness satisfies `||z_pre||_inf <= beta` where
+/// `beta = 2^r_vars * challenge_weight * 2^(log_basis - 1)`.
+/// Returns enough levels to represent values up to `beta`.
+pub fn compute_tau(r_vars: usize, challenge_weight: usize, log_basis: u32) -> usize {
+    let shift = r_vars + (log_basis as usize) - 1;
+    if shift >= 127 || challenge_weight == 0 {
+        return compute_delta(128, log_basis);
+    }
+    let beta = (challenge_weight as u128).saturating_mul(1u128 << shift);
+    if beta == 0 {
+        return 1;
+    }
+    let log_beta = 128 - beta.leading_zeros();
+    compute_delta(log_beta, log_basis)
+}
+
 /// Runtime commitment layout authority for ring-native commitments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HachiCommitmentLayout {
@@ -35,20 +119,23 @@ pub struct HachiCommitmentLayout {
 }
 
 impl HachiCommitmentLayout {
-    /// Build a layout from `(m_vars, r_vars)` and static config constants.
+    /// Build a layout from `(m_vars, r_vars)`, config constants, and decomposition
+    /// parameters.
+    ///
+    /// `tau` is auto-derived from the beta bound (`r_vars`, `challenge_weight`,
+    /// `log_basis`).
     ///
     /// # Errors
     ///
     /// Returns an error when powers or derived widths overflow.
-    pub fn new<Cfg: CommitmentConfig>(m_vars: usize, r_vars: usize) -> Result<Self, HachiError> {
-        Self::new_with_decomp(
-            m_vars,
-            r_vars,
-            Cfg::N_A,
-            Cfg::DELTA,
-            Cfg::TAU,
-            Cfg::LOG_BASIS,
-        )
+    pub fn new<Cfg: CommitmentConfig>(
+        m_vars: usize,
+        r_vars: usize,
+        decomp: &DecompositionParams,
+    ) -> Result<Self, HachiError> {
+        let delta = compute_delta(decomp.log_coeff_bound, decomp.log_basis);
+        let tau = compute_tau(r_vars, Cfg::CHALLENGE_WEIGHT, decomp.log_basis);
+        Self::new_with_decomp(m_vars, r_vars, Cfg::N_A, delta, tau, decomp.log_basis)
     }
 
     /// Build a layout from explicit decomposition parameters (no config trait needed).
@@ -196,9 +283,10 @@ impl HachiDeserialize for HachiCommitmentLayout {
 
 /// Parameter bundle for the ring-native commitment core (§4.1–§4.2).
 ///
-/// Decomposition parameters (`delta`, `tau`, `log_basis`) live in
-/// [`HachiCommitmentLayout`] rather than here, so they can be set at runtime
-/// without changing the config type.
+/// Security parameters (`N_A`, `N_B`, `N_D`, `CHALLENGE_WEIGHT`) are
+/// compile-time constants fixed for a given security level. Decomposition
+/// parameters (`delta`, `tau`, `log_basis`) are runtime values derived from
+/// [`DecompositionParams`] and live in [`HachiCommitmentLayout`].
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Ring degree used by `CyclotomicRing<F, D>`.
     const D: usize;
@@ -208,14 +296,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     const N_B: usize;
     /// Prover commitment matrix `D` row count (§4.2).
     const N_D: usize;
-    /// Base-2 logarithm of gadget decomposition base.
-    const LOG_BASIS: u32;
-    /// Decomposition levels `delta`.
-    const DELTA: usize;
-    /// Decomposition levels for the folded witness `z` (`τ` in the paper).
-    const TAU: usize;
     /// Hamming weight of sparse challenges (`ω` in the paper).
     const CHALLENGE_WEIGHT: usize;
+
+    /// Decomposition parameters (gadget base and coefficient bound).
+    fn decomposition() -> DecompositionParams;
 
     /// Choose the runtime commitment layout for `max_num_vars`.
     ///
@@ -366,13 +451,17 @@ impl CommitmentConfig for SmallTestCommitmentConfig {
     const N_A: usize = 8;
     const N_B: usize = 4;
     const N_D: usize = 4;
-    const LOG_BASIS: u32 = 4;
-    const DELTA: usize = 9;
-    const TAU: usize = 4;
     const CHALLENGE_WEIGHT: usize = 3;
 
+    fn decomposition() -> DecompositionParams {
+        DecompositionParams {
+            log_basis: 4,
+            log_coeff_bound: 32,
+        }
+    }
+
     fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        HachiCommitmentLayout::new::<Self>(4, 2)
+        HachiCommitmentLayout::new::<Self>(4, 2, &Self::decomposition())
     }
 }
 
@@ -389,10 +478,14 @@ impl CommitmentConfig for DynamicSmallTestCommitmentConfig {
     const N_A: usize = 8;
     const N_B: usize = 4;
     const N_D: usize = 4;
-    const LOG_BASIS: u32 = 4;
-    const DELTA: usize = 9;
-    const TAU: usize = 4;
     const CHALLENGE_WEIGHT: usize = 3;
+
+    fn decomposition() -> DecompositionParams {
+        DecompositionParams {
+            log_basis: 4,
+            log_coeff_bound: 32,
+        }
+    }
 
     fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
         let alpha = Self::D.trailing_zeros() as usize;
@@ -406,7 +499,7 @@ impl CommitmentConfig for DynamicSmallTestCommitmentConfig {
         }
         let r_vars = reduced_vars / 2;
         let m_vars = reduced_vars - r_vars;
-        HachiCommitmentLayout::new::<Self>(m_vars, r_vars)
+        HachiCommitmentLayout::new::<Self>(m_vars, r_vars, &Self::decomposition())
     }
 }
 
@@ -432,10 +525,14 @@ impl CommitmentConfig for ProductionFp128CommitmentConfig {
     const N_A: usize = 1;
     const N_B: usize = 1;
     const N_D: usize = 1;
-    const LOG_BASIS: u32 = 4;
-    const DELTA: usize = 32;
-    const TAU: usize = 5;
     const CHALLENGE_WEIGHT: usize = 19;
+
+    fn decomposition() -> DecompositionParams {
+        DecompositionParams {
+            log_basis: 4,
+            log_coeff_bound: 128,
+        }
+    }
 
     fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
         let alpha = Self::D.trailing_zeros() as usize;
@@ -449,6 +546,6 @@ impl CommitmentConfig for ProductionFp128CommitmentConfig {
         }
         let r_vars = reduced_vars / 2;
         let m_vars = reduced_vars - r_vars;
-        HachiCommitmentLayout::new::<Self>(m_vars, r_vars)
+        HachiCommitmentLayout::new::<Self>(m_vars, r_vars, &Self::decomposition())
     }
 }

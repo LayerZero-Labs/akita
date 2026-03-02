@@ -4,7 +4,8 @@ use hachi_pcs::algebra::Fp64;
 use hachi_pcs::protocol::commitment::{DummyProof, HachiCommitment};
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
-    AppendToTranscript, Blake2bTranscript, CommitmentScheme, StreamingCommitmentScheme, Transcript,
+    AppendToTranscript, BasisMode, Blake2bTranscript, CommitmentScheme, StreamingCommitmentScheme,
+    Transcript,
 };
 use hachi_pcs::{CanonicalField, FieldCore, FromSmallInt, HachiError, Polynomial};
 
@@ -75,6 +76,7 @@ impl CommitmentScheme<F> for DummyScheme {
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut T,
         _commitment: &Self::Commitment,
+        _basis: BasisMode,
     ) -> Result<Self::Proof, HachiError> {
         if opening_point.len() != poly.num_vars() {
             return Err(HachiError::InvalidPointDimension {
@@ -104,6 +106,7 @@ impl CommitmentScheme<F> for DummyScheme {
         _opening_point: &[F],
         opening: &F,
         commitment: &Self::Commitment,
+        _basis: BasisMode,
     ) -> Result<(), HachiError> {
         commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
         let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
@@ -194,6 +197,7 @@ fn commitment_scheme_round_trip() {
         Some(hint),
         &mut prover_t,
         &commitment,
+        BasisMode::Lagrange,
     )
     .unwrap();
 
@@ -205,6 +209,7 @@ fn commitment_scheme_round_trip() {
         &opening_point,
         &opening,
         &commitment,
+        BasisMode::Lagrange,
     )
     .unwrap();
 }

@@ -3,8 +3,8 @@
 use hachi_pcs::algebra::CyclotomicRing;
 use hachi_pcs::error::HachiError;
 use hachi_pcs::protocol::commitment::{
-    CommitmentConfig, HachiCommitmentCore, HachiCommitmentLayout, RingCommitmentScheme,
-    SmallTestCommitmentConfig,
+    utils::linear::decompose_block, CommitmentConfig, DecompositionParams, HachiCommitmentCore,
+    HachiCommitmentLayout, RingCommitmentScheme, SmallTestCommitmentConfig,
 };
 use hachi_pcs::test_utils::*;
 
@@ -16,13 +16,17 @@ impl CommitmentConfig for BadDegreeConfig {
     const N_A: usize = 8;
     const N_B: usize = 4;
     const N_D: usize = 4;
-    const LOG_BASIS: u32 = 4;
-    const DELTA: usize = 8;
-    const TAU: usize = 4;
     const CHALLENGE_WEIGHT: usize = 3;
 
+    fn decomposition() -> DecompositionParams {
+        DecompositionParams {
+            log_basis: 4,
+            log_coeff_bound: 32,
+        }
+    }
+
     fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        HachiCommitmentLayout::new::<Self>(4, 2)
+        HachiCommitmentLayout::new::<Self>(4, 2, &Self::decomposition())
     }
 }
 
@@ -34,13 +38,17 @@ impl CommitmentConfig for BadDigitBudgetConfig {
     const N_A: usize = 8;
     const N_B: usize = 4;
     const N_D: usize = 4;
-    const LOG_BASIS: u32 = 32;
-    const DELTA: usize = 5; // 160 > 128
-    const TAU: usize = 4;
     const CHALLENGE_WEIGHT: usize = 3;
 
+    fn decomposition() -> DecompositionParams {
+        DecompositionParams {
+            log_basis: 32,
+            log_coeff_bound: 128,
+        }
+    }
+
     fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        HachiCommitmentLayout::new::<Self>(4, 2)
+        HachiCommitmentLayout::new::<Self>(4, 2, &Self::decomposition())
     }
 }
 
@@ -55,16 +63,11 @@ fn setup_shape_is_consistent() {
     assert_eq!(v1.expanded.seed.max_num_vars, 16);
     assert_eq!(p2.expanded.seed.max_num_vars, 16);
     assert_eq!(v2.expanded.seed.max_num_vars, 16);
+    let delta = delta();
     assert_eq!(p1.expanded.A.len(), TinyConfig::N_A);
-    assert_eq!(
-        p1.expanded.A[0].len(),
-        hachi_pcs::test_utils::BLOCK_LEN * TinyConfig::DELTA
-    );
+    assert_eq!(p1.expanded.A[0].len(), BLOCK_LEN * delta);
     assert_eq!(p1.expanded.B.len(), TinyConfig::N_B);
-    assert_eq!(
-        p1.expanded.B[0].len(),
-        TinyConfig::N_A * TinyConfig::DELTA * hachi_pcs::test_utils::NUM_BLOCKS
-    );
+    assert_eq!(p1.expanded.B[0].len(), TinyConfig::N_A * delta * NUM_BLOCKS);
 }
 
 #[test]
@@ -85,13 +88,11 @@ fn commit_is_deterministic_and_shape_consistent() {
     assert_eq!(w1.commitment, w2.commitment);
     assert_eq!(w1.t_hat, w2.t_hat);
 
-    let num_blocks = hachi_pcs::test_utils::NUM_BLOCKS;
+    let num_blocks = NUM_BLOCKS;
     assert_eq!(w1.commitment.u.len(), TinyConfig::N_B);
     assert_eq!(w1.t_hat.len(), num_blocks);
-    assert!(w1
-        .t_hat
-        .iter()
-        .all(|t| t.len() == TinyConfig::N_A * TinyConfig::DELTA));
+    let delta = delta();
+    assert!(w1.t_hat.iter().all(|t| t.len() == TinyConfig::N_A * delta));
 }
 
 #[test]
@@ -130,21 +131,16 @@ fn opening_satisfies_inner_and_outer_equations() {
     )
     .unwrap();
 
+    let delta = delta();
+    let log_basis = LOG_BASIS;
     for (i, block) in blocks.iter().enumerate() {
-        let s_i = hachi_pcs::protocol::commitment::utils::linear::decompose_block(
-            block,
-            TinyConfig::DELTA,
-            TinyConfig::LOG_BASIS,
-        );
+        let s_i = decompose_block(block, delta, log_basis);
         let lhs = mat_vec_mul(&psetup.expanded.A, &s_i);
         let rhs: Vec<CyclotomicRing<F, D>> = (0..TinyConfig::N_A)
             .map(|j| {
-                let start = j * TinyConfig::DELTA;
-                let end = start + TinyConfig::DELTA;
-                CyclotomicRing::gadget_recompose_pow2(
-                    &w.t_hat[i][start..end],
-                    TinyConfig::LOG_BASIS,
-                )
+                let start = j * delta;
+                let end = start + delta;
+                CyclotomicRing::gadget_recompose_pow2(&w.t_hat[i][start..end], log_basis)
             })
             .collect();
         assert_eq!(lhs, rhs);
@@ -162,7 +158,7 @@ fn small_test_config_has_expected_shape() {
     let layout = SmallTestCommitmentConfig::commitment_layout(8).unwrap();
     assert_eq!(layout.block_len, 16);
     assert_eq!(layout.num_blocks, 4);
-    let delta = SmallTestCommitmentConfig::DELTA;
+    let delta = layout.delta;
     assert!(delta > 0);
 }
 

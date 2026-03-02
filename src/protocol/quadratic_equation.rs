@@ -24,6 +24,8 @@ use crate::protocol::ring_switch::eval_ring_at;
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
+use std::iter::repeat_n;
+use std::marker::PhantomData;
 
 /// **Steps 1–3.** Compute `w_i = a^T G_{2^m} s_i` and decompose: `ŵ_i = G_1^{-1}(w_i)`.
 ///
@@ -164,7 +166,7 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize, Cfg: CommitmentConfig
     /// Commitment hint (prover only).
     hint: Option<HachiCommitmentHint<F, D>>,
 
-    _marker: std::marker::PhantomData<Cfg>,
+    _marker: PhantomData<Cfg>,
 }
 
 impl<F, const D: usize, Cfg> QuadraticEquation<F, D, Cfg>
@@ -217,7 +219,7 @@ where
             w_hat: Some(w_hat),
             w_hat_flat: Some(w_hat_flat),
             hint: Some(hint),
-            _marker: std::marker::PhantomData,
+            _marker: PhantomData,
         })
     }
 
@@ -248,7 +250,7 @@ where
             w_hat: None,
             w_hat_flat: None,
             hint: None,
-            _marker: std::marker::PhantomData,
+            _marker: PhantomData,
         })
     }
 
@@ -653,7 +655,7 @@ where
     out.extend_from_slice(u);
     out.push(*u_eval);
     out.push(CyclotomicRing::<F, D>::zero());
-    out.extend(std::iter::repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
+    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
     Ok(out)
 }
 
@@ -814,7 +816,7 @@ mod tests {
     fn derive_z_hat(z_pre: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
         z_pre
             .iter()
-            .flat_map(|z_j| z_j.balanced_decompose_pow2(TAU, LOG_BASIS))
+            .flat_map(|z_j| z_j.balanced_decompose_pow2(tau(), LOG_BASIS))
             .collect()
     }
 
@@ -874,12 +876,12 @@ mod tests {
 
         let w_hat = f.quad_eq.w_hat().unwrap();
         assert_eq!(w_hat.len(), NUM_BLOCKS);
-        assert!(w_hat.iter().all(|v| v.len() == DELTA));
+        assert!(w_hat.iter().all(|v| v.len() == delta()));
 
         let hint = f.quad_eq.hint().unwrap();
         assert_eq!(hint.t_hat.len(), NUM_BLOCKS);
-        assert!(hint.t_hat.iter().all(|v| v.len() == N_A * DELTA));
+        assert!(hint.t_hat.iter().all(|v| v.len() == N_A * delta()));
 
-        assert_eq!(f.quad_eq.z_pre().unwrap().len(), BLOCK_LEN * DELTA);
+        assert_eq!(f.quad_eq.z_pre().unwrap().len(), BLOCK_LEN * delta());
     }
 }

@@ -263,6 +263,7 @@ mod tests {
     use crate::algebra::Fp64;
     use crate::primitives::multilinear_evals::DenseMultilinearEvals;
     use crate::protocol::commitment_scheme::rederive_alpha_and_m_a;
+    use crate::protocol::opening_point::BasisMode;
     use crate::protocol::sumcheck::eq_poly::EqPolynomial;
     use crate::protocol::transcript::labels;
     use crate::protocol::{
@@ -296,6 +297,7 @@ mod tests {
             Some(hint),
             &mut prover_transcript,
             &commitment,
+            BasisMode::Lagrange,
         )
         .unwrap();
 

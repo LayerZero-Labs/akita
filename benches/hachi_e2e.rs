@@ -5,14 +5,15 @@ use hachi_pcs::algebra::{CyclotomicRing, Fp128};
 use hachi_pcs::error::HachiError;
 use hachi_pcs::primitives::multilinear_evals::DenseMultilinearEvals;
 use hachi_pcs::protocol::commitment::{
-    HachiCommitmentCore, HachiCommitmentLayout, HachiProverSetup, HachiVerifierSetup,
-    MegaPolyBlock, ProductionFp128CommitmentConfig, RingCommitment, SparseBlockEntry,
+    DecompositionParams, HachiCommitmentCore, HachiCommitmentLayout, HachiProverSetup,
+    HachiVerifierSetup, MegaPolyBlock, ProductionFp128CommitmentConfig, RingCommitment,
+    SparseBlockEntry,
 };
 use hachi_pcs::protocol::commitment_scheme::{commit_onehot, HachiCommitmentScheme};
 use hachi_pcs::protocol::proof::HachiCommitmentHint;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::{CommitmentConfig, HachiProof};
-use hachi_pcs::{CommitmentScheme, FromSmallInt, Polynomial, Transcript};
+use hachi_pcs::{BasisMode, CommitmentScheme, FromSmallInt, Polynomial, Transcript};
 use std::time::Duration;
 
 type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
@@ -28,15 +29,16 @@ macro_rules! bench_config {
             const N_A: usize = ProductionFp128CommitmentConfig::N_A;
             const N_B: usize = ProductionFp128CommitmentConfig::N_B;
             const N_D: usize = ProductionFp128CommitmentConfig::N_D;
-            const LOG_BASIS: u32 = ProductionFp128CommitmentConfig::LOG_BASIS;
-            const DELTA: usize = ProductionFp128CommitmentConfig::DELTA;
-            const TAU: usize = ProductionFp128CommitmentConfig::TAU;
             const CHALLENGE_WEIGHT: usize = ProductionFp128CommitmentConfig::CHALLENGE_WEIGHT;
+
+            fn decomposition() -> DecompositionParams {
+                ProductionFp128CommitmentConfig::decomposition()
+            }
 
             fn commitment_layout(
                 _max_num_vars: usize,
             ) -> Result<HachiCommitmentLayout, HachiError> {
-                HachiCommitmentLayout::new::<Self>($m, $r)
+                HachiCommitmentLayout::new::<Self>($m, $r, &Self::decomposition())
             }
         }
     };
@@ -106,6 +108,7 @@ where
                     Some(hint.clone()),
                     &mut transcript,
                     black_box(&commitment),
+                    BasisMode::Lagrange,
                 )
                 .unwrap(),
             )
@@ -122,6 +125,7 @@ where
         Some(hint),
         &mut prover_transcript,
         &commitment,
+        BasisMode::Lagrange,
     )
     .unwrap();
 
@@ -135,6 +139,7 @@ where
                 black_box(&pt),
                 black_box(&opening),
                 black_box(&commitment),
+                BasisMode::Lagrange,
             )
             .unwrap();
         })
@@ -151,6 +156,7 @@ where
                 Some(h),
                 &mut pt_tr,
                 &cm,
+                BasisMode::Lagrange,
             )
             .unwrap();
             let mut vt_tr = Blake2bTranscript::<F>::new(b"bench");
@@ -161,6 +167,7 @@ where
                 &pt,
                 &opening,
                 &cm,
+                BasisMode::Lagrange,
             )
             .unwrap();
             black_box(())
@@ -232,6 +239,7 @@ where
                     Some(hint.clone()),
                     &mut transcript,
                     black_box(&commitment),
+                    BasisMode::Lagrange,
                 )
                 .unwrap(),
             )
@@ -248,6 +256,7 @@ where
         Some(hint.clone()),
         &mut prover_transcript,
         &commitment,
+        BasisMode::Lagrange,
     )
     .unwrap();
 
@@ -261,6 +270,7 @@ where
                 black_box(&pt),
                 black_box(&opening),
                 black_box(&commitment),
+                BasisMode::Lagrange,
             )
             .unwrap();
         })
@@ -277,6 +287,7 @@ where
                 Some(h),
                 &mut pt_tr,
                 &cm,
+                BasisMode::Lagrange,
             )
             .unwrap();
             let mut vt_tr = Blake2bTranscript::<F>::new(b"bench");
@@ -287,6 +298,7 @@ where
                 &pt,
                 &opening,
                 &cm,
+                BasisMode::Lagrange,
             )
             .unwrap();
             black_box(())
@@ -405,6 +417,7 @@ where
                     Some(hint.clone()),
                     &mut transcript,
                     black_box(&commitment),
+                    BasisMode::Lagrange,
                 )
                 .unwrap(),
             )
@@ -421,6 +434,7 @@ where
         Some(hint.clone()),
         &mut prover_transcript,
         &commitment,
+        BasisMode::Lagrange,
     )
     .unwrap();
 
@@ -434,6 +448,7 @@ where
                 black_box(&pt),
                 black_box(&opening),
                 black_box(&commitment),
+                BasisMode::Lagrange,
             )
             .unwrap();
         })
@@ -466,6 +481,7 @@ where
                 Some(h),
                 &mut pt_tr,
                 &cm,
+                BasisMode::Lagrange,
             )
             .unwrap();
             let mut vt_tr = Blake2bTranscript::<F>::new(b"bench");
@@ -476,6 +492,7 @@ where
                 &pt,
                 &opening,
                 &cm,
+                BasisMode::Lagrange,
             )
             .unwrap();
             black_box(())

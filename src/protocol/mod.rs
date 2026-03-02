@@ -22,7 +22,7 @@ pub use commitment::{
     RingCommitmentScheme, SmallTestCommitmentConfig, StreamingCommitmentScheme,
 };
 pub use commitment_scheme::{commit_onehot, HachiChunkState, HachiCommitmentScheme};
-pub use opening_point::RingOpeningPoint;
+pub use opening_point::{BasisMode, RingOpeningPoint};
 pub use proof::{HachiProof, SumcheckAux};
 pub use quadratic_equation::QuadraticEquation;
 pub use sumcheck::batched_sumcheck::{prove_batched_sumcheck, verify_batched_sumcheck};

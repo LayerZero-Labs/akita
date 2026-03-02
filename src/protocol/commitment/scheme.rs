@@ -4,6 +4,7 @@ use super::config::{CommitmentConfig, HachiCommitmentLayout};
 use super::transcript_append::AppendToTranscript;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
+use crate::protocol::opening_point::BasisMode;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, Polynomial};
 
@@ -73,6 +74,8 @@ where
 
     /// Produce an opening proof at `opening_point`.
     ///
+    /// `basis` selects the polynomial representation (see [`BasisMode`]).
+    ///
     /// # Errors
     ///
     /// Returns an error if the opening point is invalid or proof generation fails.
@@ -83,9 +86,12 @@ where
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut T,
         commitment: &Self::Commitment,
+        basis: BasisMode,
     ) -> Result<Self::Proof, HachiError>;
 
     /// Verify an opening proof.
+    ///
+    /// `basis` must match the mode used by the prover (see [`BasisMode`]).
     ///
     /// # Errors
     ///
@@ -97,6 +103,7 @@ where
         opening_point: &[F],
         opening: &F,
         commitment: &Self::Commitment,
+        basis: BasisMode,
     ) -> Result<(), HachiError>;
 
     /// Homomorphic commitment combination.

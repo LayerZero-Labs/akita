@@ -13,8 +13,9 @@ pub use commit::{
     HachiVerifierSetup, MegaPolyBlock,
 };
 pub use config::{
-    CommitmentConfig, DynamicSmallTestCommitmentConfig, HachiCommitmentLayout,
-    ProductionFp128CommitmentConfig, SmallTestCommitmentConfig,
+    compute_delta, compute_tau, CommitmentConfig, DecompositionParams,
+    DynamicSmallTestCommitmentConfig, HachiCommitmentLayout, ProductionFp128CommitmentConfig,
+    SmallTestCommitmentConfig,
 };
 pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
 pub use scheme::{
