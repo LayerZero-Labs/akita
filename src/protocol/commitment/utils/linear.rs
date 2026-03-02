@@ -186,7 +186,7 @@ fn mat_vec_mul_precomputed_with_params<
 
     cfg_iter!(ntt_mat)
         .map(|row_ntt| {
-            debug_assert_eq!(row_ntt.len(), ntt_vec.len());
+            debug_assert!(row_ntt.len() >= ntt_vec.len());
             let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
             for (a_ntt, x_ntt) in row_ntt.iter().zip(ntt_vec.iter()) {
                 accumulate_pointwise_product_into(&mut acc, a_ntt, x_ntt, params);

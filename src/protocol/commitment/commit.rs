@@ -355,6 +355,57 @@ where
         })
     }
 
+    fn commit_coeffs(
+        f_coeffs: &[CyclotomicRing<F, D>],
+        setup: &Self::ProverSetup,
+    ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
+        let layout = setup.layout();
+        let num_blocks = layout.num_blocks;
+        let block_len = layout.block_len;
+        let max_len = num_blocks
+            .checked_mul(block_len)
+            .ok_or_else(|| HachiError::InvalidSetup("coefficient length overflow".to_string()))?;
+        if f_coeffs.len() > max_len {
+            return Err(HachiError::InvalidSize {
+                expected: max_len,
+                actual: f_coeffs.len(),
+            });
+        }
+
+        let zero_s = vec![CyclotomicRing::<F, D>::zero(); Cfg::DELTA];
+        let zero_t_hat =
+            vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(Cfg::DELTA).unwrap()];
+
+        let mut s_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(num_blocks);
+        let mut t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(num_blocks);
+        let mut t_hat_flat: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(layout.outer_width);
+
+        for i in 0..num_blocks {
+            let start = i * block_len;
+            if start >= f_coeffs.len() {
+                s_all.push(zero_s.clone());
+                t_hat_flat.extend(zero_t_hat.iter().copied());
+                t_hat_all.push(zero_t_hat.clone());
+            } else {
+                let end = (start + block_len).min(f_coeffs.len());
+                let block = &f_coeffs[start..end];
+                let s_i = decompose_block(block, Cfg::DELTA, Cfg::LOG_BASIS);
+                let t_i = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::A, &s_i)?;
+                let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
+                t_hat_flat.extend(t_hat_i.iter().copied());
+                s_all.push(s_i);
+                t_hat_all.push(t_hat_i);
+            }
+        }
+
+        let u = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::B, &t_hat_flat)?;
+        Ok(CommitWitness {
+            commitment: RingCommitment { u },
+            s: s_all,
+            t_hat: t_hat_all,
+        })
+    }
+
     fn commit_onehot(
         onehot_k: usize,
         indices: &[Option<usize>],
