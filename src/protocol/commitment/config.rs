@@ -310,6 +310,9 @@ pub(super) fn ensure_matrix_shape<T>(
 }
 
 /// Small correctness-first config for tests and local benchmarks.
+///
+/// Fixed layout (m_vars=4, r_vars=2) for fast test iteration. For larger
+/// polynomials, use [`DynamicSmallTestCommitmentConfig`] instead.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SmallTestCommitmentConfig;
 
@@ -325,6 +328,40 @@ impl CommitmentConfig for SmallTestCommitmentConfig {
 
     fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
         HachiCommitmentLayout::new::<Self>(4, 2)
+    }
+}
+
+/// D=16 config with dynamic layout that adapts to polynomial size.
+///
+/// Uses the same D=16 ring dimension as [`SmallTestCommitmentConfig`] but
+/// derives `m_vars`/`r_vars` from `max_num_vars`, so it can commit
+/// polynomials with an arbitrary number of variables.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DynamicSmallTestCommitmentConfig;
+
+impl CommitmentConfig for DynamicSmallTestCommitmentConfig {
+    const D: usize = 16;
+    const N_A: usize = 8;
+    const N_B: usize = 4;
+    const N_D: usize = 4;
+    const LOG_BASIS: u32 = 4;
+    const DELTA: usize = 9;
+    const TAU: usize = 4;
+    const CHALLENGE_WEIGHT: usize = 3;
+
+    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        let alpha = Self::D.trailing_zeros() as usize;
+        let reduced_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
+            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
+        })?;
+        if reduced_vars == 0 {
+            return Err(HachiError::InvalidSetup(
+                "max_num_vars must leave at least one outer variable".to_string(),
+            ));
+        }
+        let m_vars = reduced_vars.min(11);
+        let r_vars = reduced_vars - m_vars;
+        HachiCommitmentLayout::new::<Self>(m_vars, r_vars)
     }
 }
 

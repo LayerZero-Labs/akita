@@ -13,8 +13,8 @@ pub use commit::{
     HachiVerifierSetup,
 };
 pub use config::{
-    CommitmentConfig, HachiCommitmentLayout, ProductionFp128CommitmentConfig,
-    SmallTestCommitmentConfig,
+    CommitmentConfig, DynamicSmallTestCommitmentConfig, HachiCommitmentLayout,
+    ProductionFp128CommitmentConfig, SmallTestCommitmentConfig,
 };
 pub use scheme::{
     CommitWitness, CommitmentScheme, RingCommitmentScheme, StreamingCommitmentScheme,

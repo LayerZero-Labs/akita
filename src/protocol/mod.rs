@@ -15,11 +15,11 @@ pub mod sumcheck;
 pub mod transcript;
 
 pub use commitment::{
-    AppendToTranscript, CommitmentConfig, CommitmentScheme, DummyProof, HachiCommitment,
-    HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup, HachiOpeningClaim,
-    HachiOpeningPoint, HachiPreparedSetup, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup,
-    ProductionFp128CommitmentConfig, RingCommitment, RingCommitmentScheme,
-    SmallTestCommitmentConfig, StreamingCommitmentScheme,
+    AppendToTranscript, CommitmentConfig, CommitmentScheme, DummyProof,
+    DynamicSmallTestCommitmentConfig, HachiCommitment, HachiCommitmentCore, HachiCommitmentLayout,
+    HachiExpandedSetup, HachiOpeningClaim, HachiOpeningPoint, HachiPreparedSetup, HachiProverSetup,
+    HachiSetupSeed, HachiVerifierSetup, ProductionFp128CommitmentConfig, RingCommitment,
+    RingCommitmentScheme, SmallTestCommitmentConfig, StreamingCommitmentScheme,
 };
 pub use commitment_scheme::{commit_onehot, HachiChunkState, HachiCommitmentScheme};
 pub use opening_point::RingOpeningPoint;
