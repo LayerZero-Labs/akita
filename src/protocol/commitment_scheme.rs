@@ -110,16 +110,18 @@ where
                 actual: opening_point.len(),
             });
         }
-        let outer_point = &opening_point[alpha..];
 
         let layout = <HachiCommitmentCore as RingCommitmentScheme<F, { D }, Cfg>>::layout(setup)?;
-        let expected_outer = layout.r_vars + layout.m_vars;
-        if outer_point.len() != expected_outer {
+        let target_num_vars = layout.m_vars + layout.r_vars + alpha;
+        if opening_point.len() > target_num_vars {
             return Err(HachiError::InvalidPointDimension {
-                expected: expected_outer + alpha,
+                expected: target_num_vars,
                 actual: opening_point.len(),
             });
         }
+        let mut padded_point = opening_point.to_vec();
+        padded_point.resize(target_num_vars, F::zero());
+        let outer_point = &padded_point[alpha..];
 
         let ring_opening_point =
             ring_opening_point_from_field::<F>(outer_point, layout.r_vars, layout.m_vars)?;
@@ -128,7 +130,7 @@ where
 
         // Fiat-Shamir: bind commitment, opening point, and y_ring before any challenges.
         commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
-        for pt in opening_point {
+        for pt in &padded_point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
@@ -186,12 +188,16 @@ where
                 "opening point length underflow".to_string(),
             ));
         }
-        let inner_point = &opening_point[..alpha_bits];
-        let reduced_opening_point = &opening_point[alpha_bits..];
+        let layout = setup.expanded.seed.layout;
+        let target_num_vars = layout.m_vars + layout.r_vars + alpha_bits;
+        let mut padded_point = opening_point.to_vec();
+        padded_point.resize(target_num_vars, F::zero());
+        let inner_point = &padded_point[..alpha_bits];
+        let reduced_opening_point = &padded_point[alpha_bits..];
 
         // Fiat-Shamir: bind commitment, opening point, and y_ring before any challenges.
         commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
-        for pt in opening_point {
+        for pt in &padded_point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &proof.y_ring);
@@ -206,7 +212,6 @@ where
         }
 
         // §4.2 Quadratic equation
-        let layout = setup.expanded.seed.layout;
         let ring_opening_point = ring_opening_point_from_field::<F>(
             reduced_opening_point,
             layout.r_vars,
@@ -600,7 +605,7 @@ fn evaluate_packed_ring_poly<F: FieldCore, const D: usize>(
     outer_point: &[F],
 ) -> CyclotomicRing<F, D> {
     let weights = lagrange_weights(outer_point);
-    debug_assert_eq!(weights.len(), packed_coeffs.len());
+    debug_assert!(weights.len() >= packed_coeffs.len());
     #[cfg(feature = "parallel")]
     {
         packed_coeffs

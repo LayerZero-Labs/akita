@@ -195,20 +195,28 @@ where
         let layout = Self::layout(setup)?;
         let num_blocks = layout.num_blocks;
         let block_len = layout.block_len;
-        let expected_len = num_blocks
+        let max_len = num_blocks
             .checked_mul(block_len)
             .ok_or_else(|| HachiError::InvalidSetup("coefficient length overflow".to_string()))?;
-        if f_coeffs.len() != expected_len {
+        if f_coeffs.len() > max_len {
             return Err(HachiError::InvalidSize {
-                expected: expected_len,
+                expected: max_len,
                 actual: f_coeffs.len(),
             });
         }
 
-        let blocks: Vec<Vec<CyclotomicRing<F, D>>> = f_coeffs
-            .chunks_exact(block_len)
-            .map(|chunk| chunk.to_vec())
-            .collect();
+        let mut blocks: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(num_blocks);
+        for i in 0..num_blocks {
+            let start = i * block_len;
+            if start >= f_coeffs.len() {
+                blocks.push(vec![CyclotomicRing::<F, D>::zero(); block_len]);
+            } else {
+                let end = (start + block_len).min(f_coeffs.len());
+                let mut block = f_coeffs[start..end].to_vec();
+                block.resize(block_len, CyclotomicRing::<F, D>::zero());
+                blocks.push(block);
+            }
+        }
 
         Self::commit_ring_blocks(&blocks, setup)
     }
