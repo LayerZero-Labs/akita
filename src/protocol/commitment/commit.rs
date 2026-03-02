@@ -22,7 +22,6 @@ use crate::{cfg_into_iter, cfg_iter, CanonicalField, FieldCore, FieldSampling};
 use std::io::{Read, Write};
 
 /// Seed-only stage for deterministic setup expansion.
-#[allow(non_snake_case)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiSetupSeed {
     /// Maximum supported variable count.
@@ -55,7 +54,6 @@ pub struct HachiPreparedSetup<const D: usize> {
 }
 
 /// Prover setup artifact (expanded setup + optional runtime cache).
-#[allow(non_snake_case)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiProverSetup<F: FieldCore, const D: usize> {
     /// Expanded matrix stage used by both prover and verifier.
@@ -65,7 +63,6 @@ pub struct HachiProverSetup<F: FieldCore, const D: usize> {
 }
 
 /// Verifier setup artifact derived from prover setup.
-#[allow(non_snake_case)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiVerifierSetup<F: FieldCore, const D: usize> {
     /// Expanded matrix stage used for verification.
@@ -456,7 +453,6 @@ impl HachiCommitmentCore {
     /// # Errors
     ///
     /// Returns `HachiError` on invalid layout or matrix generation failures.
-    #[allow(non_snake_case)]
     pub fn setup_with_layout<F, const D: usize, Cfg>(
         layout: HachiCommitmentLayout,
     ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F, D>), HachiError>
@@ -481,7 +477,6 @@ impl HachiCommitmentCore {
     ///
     /// Returns `HachiError` if the new layout is incompatible with the existing
     /// setup or matrix shapes are inconsistent.
-    #[allow(non_snake_case)]
     pub fn setup_from_existing<F, const D: usize, Cfg>(
         existing: &HachiExpandedSetup<F, D>,
         new_r_vars: usize,
@@ -525,7 +520,6 @@ impl HachiCommitmentCore {
         Ok((prover_setup, verifier_setup))
     }
 
-    #[allow(non_snake_case)]
     fn setup_with_layout_and_seed<F, const D: usize, Cfg>(
         layout: HachiCommitmentLayout,
         max_num_vars: usize,
