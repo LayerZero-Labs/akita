@@ -14,6 +14,7 @@
 
 pub mod batched_sumcheck;
 pub mod eq_poly;
+pub mod hachi_sumcheck;
 pub mod norm_sumcheck;
 pub mod relation_sumcheck;
 pub mod split_eq;

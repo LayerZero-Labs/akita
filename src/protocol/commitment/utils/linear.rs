@@ -1,7 +1,7 @@
 //! Linear algebra helpers for ring commitment.
 
 use crate::algebra::ntt::{MontCoeff, PrimeWidth};
-use crate::algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
+use crate::algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
 use crate::cfg_iter;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
@@ -196,21 +196,6 @@ fn mat_vec_mul_precomputed_with_params<
         .collect()
 }
 
-fn mat_vec_mul_precomputed_many_with_params<
-    F: FieldCore + CanonicalField,
-    W: PrimeWidth,
-    const K: usize,
-    const D: usize,
->(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
-    vecs: &[Vec<CyclotomicRing<F, D>>],
-    params: &CrtNttParamSet<W, K, D>,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    cfg_iter!(vecs)
-        .map(|vec| mat_vec_mul_precomputed_with_params(ntt_mat, vec, params))
-        .collect()
-}
-
 macro_rules! dispatch_cached {
     ($cache:expr, $which:expr, $params:expr, $func:ident $(, $arg:expr)*) => {{
         #[allow(non_snake_case)]
@@ -245,23 +230,6 @@ pub(crate) fn mat_vec_mul_ntt_cached<F: FieldCore + CanonicalField, const D: usi
         &params,
         mat_vec_mul_precomputed_with_params,
         vec
-    );
-    Ok(out)
-}
-
-/// Batched dense mat-vec using a pre-converted NTT matrix from the cache.
-pub(crate) fn mat_vec_mul_ntt_many_cached<F: FieldCore + CanonicalField, const D: usize>(
-    cache: &NttMatrixCache<D>,
-    which: MatrixSlot,
-    vecs: &[Vec<CyclotomicRing<F, D>>],
-) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError> {
-    let params = select_crt_ntt_params::<F, D>()?;
-    let out = dispatch_cached!(
-        cache,
-        which,
-        &params,
-        mat_vec_mul_precomputed_many_with_params,
-        vecs
     );
     Ok(out)
 }

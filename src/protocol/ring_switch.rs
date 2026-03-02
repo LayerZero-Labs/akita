@@ -4,39 +4,42 @@
 //! sumcheck instances by expanding the ring elements into their coefficient
 //! vectors and setting up the evaluation tables.
 
-use crate::algebra::ring::CyclotomicRing;
+use crate::algebra::CyclotomicRing;
+use crate::cfg_into_iter;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
-    CommitmentConfig, HachiCommitmentCore, HachiCommitmentLayout, RingCommitment,
-    RingCommitmentScheme,
+    CommitmentConfig, HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup,
+    RingCommitment, RingCommitmentScheme,
 };
-use crate::protocol::quadratic_equation::QuadraticEquation;
+use crate::protocol::quadratic_equation::{
+    compute_m_a_streaming, compute_r_split_eq, QuadraticEquation,
+};
 use crate::protocol::sumcheck::eq_poly::EqPolynomial;
 use crate::protocol::transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
 use crate::protocol::transcript::Transcript;
-use crate::{cfg_into_iter, cfg_iter};
 use crate::{CanonicalField, FieldCore, FieldSampling};
 
-/// Output of the ring switch prover, containing everything needed for sumchecks.
+/// Output of the ring switch protocol, containing everything needed for sumchecks.
 pub struct RingSwitchOutput<F: FieldCore, const D: usize> {
     /// The witness vector w (concatenation of z and r coefficients).
     pub w: Vec<F>,
     /// Commitment to w.
     pub w_commitment: RingCommitment<F, D>,
-    /// Evaluation table of w (reordered for sumcheck).
-    pub w_evals: Vec<F>,
+    /// Compact evaluation table of w (all entries in [-8, 7], reordered for sumcheck).
+    /// Populated by the prover; empty on the verifier side.
+    pub w_evals: Vec<i8>,
     /// Evaluation table of M_alpha(x) (tau1-weighted).
     pub m_evals_x: Vec<F>,
     /// Evaluation table of alpha powers (y dimension).
     pub alpha_evals_y: Vec<F>,
-    /// Number of upper variable bits in w_evals.
+    /// Number of upper variable bits.
     pub num_u: usize,
-    /// Number of lower variable bits in w_evals.
+    /// Number of lower variable bits.
     pub num_l: usize,
     /// Challenge tau0 for F_0 sumcheck.
     pub tau0: Vec<F>,
@@ -52,9 +55,10 @@ pub struct RingSwitchOutput<F: FieldCore, const D: usize> {
 ///
 /// # Errors
 ///
-/// Returns an error if z is missing, commitment fails, or matrix expansion fails.
+/// Returns an error if z_pre/w_hat is missing, commitment fails, or matrix expansion fails.
 pub fn ring_switch_prover<F, T, const D: usize, Cfg>(
-    quad_eq: &QuadraticEquation<F, D, Cfg>,
+    quad_eq: &mut QuadraticEquation<F, D, Cfg>,
+    setup: &HachiExpandedSetup<F, D>,
     transcript: &mut T,
 ) -> Result<RingSwitchOutput<F, D>, HachiError>
 where
@@ -62,18 +66,39 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
-    let z = quad_eq
-        .z()
-        .ok_or_else(|| HachiError::InvalidInput("missing z in prover".to_string()))?;
-    let r = compute_r_via_poly_division::<F, D>(quad_eq.m(), z, quad_eq.y())?;
-    let w = build_w_coeffs::<F, D, Cfg>(z, &r);
+    let w_hat = quad_eq
+        .w_hat()
+        .ok_or_else(|| HachiError::InvalidInput("missing w_hat in prover".to_string()))?;
+    let z_pre = quad_eq
+        .z_pre()
+        .ok_or_else(|| HachiError::InvalidInput("missing z_pre in prover".to_string()))?;
+    let hint = quad_eq
+        .hint()
+        .ok_or_else(|| HachiError::InvalidInput("missing hint in prover".to_string()))?;
+    let t_hat = &hint.t_hat;
+
+    let r = compute_r_split_eq::<F, D, Cfg>(
+        setup,
+        quad_eq.opening_point(),
+        &quad_eq.challenges,
+        w_hat,
+        t_hat,
+        z_pre,
+        quad_eq.y(),
+    )?;
+    let w = build_w_coeffs::<F, D, Cfg>(w_hat, t_hat, z_pre, &r);
 
     let w_commitment = commit_w::<F, D, Cfg>(&w)?;
     transcript.append_serde(ABSORB_SUMCHECK_W, &w_commitment);
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
 
-    let m_a = eval_ring_matrix_at::<F, D>(quad_eq.m(), &alpha);
+    let m_a = compute_m_a_streaming::<F, D, Cfg>(
+        setup,
+        quad_eq.opening_point(),
+        &quad_eq.challenges,
+        &alpha,
+    )?;
     let m_a_vec = expand_m_a::<F, D, Cfg>(&m_a, alpha)?;
     let m_rows = m_row_count::<Cfg>();
     let m_cols = if m_a.is_empty() {
@@ -82,7 +107,7 @@ where
         m_a_vec.len() / m_a.len()
     };
 
-    let (w_evals, num_u, num_l) = build_w_evals(&w, D)?;
+    let (w_evals, num_u, num_l) = build_w_evals_compact::<F>(&w, D)?;
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
 
     let num_sc_vars = num_u + num_l;
@@ -115,6 +140,7 @@ where
 /// Returns an error if matrix expansion fails.
 pub fn ring_switch_verifier<F, T, const D: usize, Cfg>(
     quad_eq: &QuadraticEquation<F, D, Cfg>,
+    setup: &HachiExpandedSetup<F, D>,
     w: &[F],
     w_commitment: &RingCommitment<F, D>,
     transcript: &mut T,
@@ -128,7 +154,12 @@ where
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
 
-    let m_a = eval_ring_matrix_at::<F, D>(quad_eq.m(), &alpha);
+    let m_a = compute_m_a_streaming::<F, D, Cfg>(
+        setup,
+        quad_eq.opening_point(),
+        &quad_eq.challenges,
+        &alpha,
+    )?;
     let m_a_vec = expand_m_a::<F, D, Cfg>(&m_a, alpha)?;
     let m_rows = m_row_count::<Cfg>();
     let m_cols = if m_a.is_empty() {
@@ -137,7 +168,9 @@ where
         m_a_vec.len() / m_a.len()
     };
 
-    let (w_evals, num_u, num_l) = build_w_evals(w, D)?;
+    let num_ring_elems = w.len() / D;
+    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let num_l = D.trailing_zeros() as usize;
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
 
     let num_sc_vars = num_u + num_l;
@@ -151,7 +184,7 @@ where
     Ok(RingSwitchOutput {
         w: w.to_vec(),
         w_commitment: w_commitment.clone(),
-        w_evals,
+        w_evals: Vec::new(),
         m_evals_x,
         alpha_evals_y,
         num_u,
@@ -163,6 +196,7 @@ where
     })
 }
 
+#[cfg(test)]
 pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D: usize>(
     m: &[Vec<CyclotomicRing<F, D>>],
     z: &[CyclotomicRing<F, D>],
@@ -305,20 +339,6 @@ pub(crate) fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D
     acc
 }
 
-pub(crate) fn eval_ring_vec_at<F: FieldCore, const D: usize>(
-    v: &[CyclotomicRing<F, D>],
-    alpha: &F,
-) -> Vec<F> {
-    cfg_iter!(v).map(|r| eval_ring_at(r, alpha)).collect()
-}
-
-pub(crate) fn eval_ring_matrix_at<F: FieldCore, const D: usize>(
-    m: &[Vec<CyclotomicRing<F, D>>],
-    alpha: &F,
-) -> Vec<Vec<F>> {
-    m.iter().map(|row| eval_ring_vec_at(row, alpha)).collect()
-}
-
 pub(crate) fn r_decomp_levels<F: CanonicalField, Cfg: CommitmentConfig>() -> usize {
     let modulus = detect_field_modulus::<F>();
     let bits = 128 - (modulus.saturating_sub(1)).leading_zeros() as usize;
@@ -433,6 +453,50 @@ pub(crate) fn build_w_evals<F: FieldCore>(
     Ok((evals, num_u, num_l))
 }
 
+/// Compact variant of `build_w_evals` returning `Vec<i8>`.
+///
+/// All entries in `w` must have canonical values in `[-half_b, half_b - 1]`
+/// where `half_b = 2^(LOG_BASIS-1)`. This holds when `w` is produced by
+/// `build_w_coeffs` (all components go through `balanced_decompose_pow2`).
+pub(crate) fn build_w_evals_compact<F: FieldCore + CanonicalField>(
+    w: &[F],
+    d: usize,
+) -> Result<(Vec<i8>, usize, usize), HachiError> {
+    if d == 0 || w.len() % d != 0 {
+        return Err(HachiError::InvalidSize {
+            expected: d,
+            actual: w.len(),
+        });
+    }
+    let num_l = d.trailing_zeros() as usize;
+    let num_ring_elems = w.len() / d;
+    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let x_len = 1usize << num_u;
+    let n = x_len << num_l;
+
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let half_q = q / 2;
+
+    let evals: Vec<i8> = (0..n)
+        .map(|dst| {
+            let x = dst & (x_len - 1);
+            let y = dst >> num_u;
+            let src = y + (x << num_l);
+            if src < w.len() {
+                let canonical = w[src].to_canonical_u128();
+                if canonical <= half_q {
+                    canonical as i8
+                } else {
+                    (canonical as i128 - q as i128) as i8
+                }
+            } else {
+                0i8
+            }
+        })
+        .collect();
+    Ok((evals, num_u, num_l))
+}
+
 pub(crate) fn m_row_count<Cfg: CommitmentConfig>() -> usize {
     Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A
 }
@@ -480,7 +544,9 @@ pub(crate) fn sample_tau<F: FieldCore + CanonicalField, T: Transcript<F>>(
 }
 
 pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize, Cfg: CommitmentConfig>(
-    z: &[CyclotomicRing<F, D>],
+    w_hat: &[Vec<CyclotomicRing<F, D>>],
+    t_hat: &[Vec<CyclotomicRing<F, D>>],
+    z_pre: &[CyclotomicRing<F, D>],
     r: &[CyclotomicRing<F, D>],
 ) -> Vec<F> {
     let levels = r_decomp_levels::<F, Cfg>();
@@ -489,8 +555,21 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize, Cfg: CommitmentC
         .flat_map(|ri| ri.balanced_decompose_pow2(levels, Cfg::LOG_BASIS))
         .collect();
 
-    let mut out = Vec::with_capacity((z.len() + r_hat.len()) * D);
-    for elem in z.iter().chain(r_hat.iter()) {
+    let w_hat_flat = w_hat.iter().flat_map(|v| v.iter());
+    let t_hat_flat = t_hat.iter().flat_map(|v| v.iter());
+    let z_hat_iter = z_pre
+        .iter()
+        .flat_map(|z_j| z_j.balanced_decompose_pow2(Cfg::TAU, Cfg::LOG_BASIS));
+
+    let z_count = w_hat.iter().map(|v| v.len()).sum::<usize>()
+        + t_hat.iter().map(|v| v.len()).sum::<usize>()
+        + z_pre.len() * Cfg::TAU;
+    let mut out = Vec::with_capacity((z_count + r_hat.len()) * D);
+    for elem in w_hat_flat
+        .chain(t_hat_flat)
+        .chain(z_hat_iter.collect::<Vec<_>>().iter())
+        .chain(r_hat.iter())
+    {
         out.extend_from_slice(elem.coefficients());
     }
     out

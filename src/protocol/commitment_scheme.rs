@@ -1,6 +1,6 @@
 //! Commitment scheme trait implementation.
 
-use crate::algebra::ring::CyclotomicRing;
+use crate::algebra::CyclotomicRing;
 use crate::cfg_into_iter;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
@@ -17,23 +17,19 @@ use crate::protocol::commitment::{
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{HachiCommitmentHint, HachiProof, SumcheckAux};
 use crate::protocol::quadratic_equation::QuadraticEquation;
-use crate::protocol::ring_switch::{ring_switch_prover, ring_switch_verifier};
-use crate::protocol::sumcheck::batched_sumcheck::{
-    prove_batched_sumcheck, verify_batched_sumcheck,
-};
-use crate::protocol::sumcheck::norm_sumcheck::{NormSumcheckProver, NormSumcheckVerifier};
-use crate::protocol::sumcheck::relation_sumcheck::{
-    RelationSumcheckProver, RelationSumcheckVerifier,
-};
-use crate::protocol::sumcheck::{SumcheckInstanceProver, SumcheckInstanceVerifier};
+use crate::protocol::ring_switch::{build_w_evals, ring_switch_prover, ring_switch_verifier};
+use crate::protocol::sumcheck::hachi_sumcheck::{HachiSumcheckProver, HachiSumcheckVerifier};
+use crate::protocol::sumcheck::{prove_sumcheck, verify_sumcheck};
 use crate::protocol::transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt, Polynomial};
 
 #[cfg(test)]
-use crate::protocol::ring_switch::{eval_ring_matrix_at, expand_m_a};
+use crate::protocol::quadratic_equation::compute_m_a_streaming;
+#[cfg(test)]
+use crate::protocol::ring_switch::expand_m_a;
 #[cfg(test)]
 use crate::protocol::transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, DOMAIN_HACHI_PROTOCOL,
@@ -135,7 +131,7 @@ where
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
 
         // §4.2 Quadratic equation
-        let quad_eq = QuadraticEquation::<F, { D }, Cfg>::new_prover(
+        let mut quad_eq = QuadraticEquation::<F, { D }, Cfg>::new_prover(
             setup,
             &ring_opening_point,
             &hint,
@@ -145,22 +141,25 @@ where
         )?;
 
         // §4.3 Ring switch
-        let rs = ring_switch_prover::<F, T, { D }, Cfg>(&quad_eq, transcript)?;
+        let rs = ring_switch_prover::<F, T, { D }, Cfg>(&mut quad_eq, &setup.expanded, transcript)?;
 
-        // Batched sumcheck: norm + relation
-        let mut norm_prover = NormSumcheckProver::new(&rs.tau0, rs.w_evals.clone(), rs.b);
-        let mut relation_prover = RelationSumcheckProver::new(
+        // Sample batching coefficient for fused sumcheck
+        let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+
+        // Fused sumcheck: norm + relation with shared w_table
+        let mut fused_prover = HachiSumcheckProver::new(
+            batching_coeff,
             rs.w_evals,
+            &rs.tau0,
+            rs.b,
             &rs.alpha_evals_y,
             &rs.m_evals_x,
             rs.num_u,
             rs.num_l,
         );
 
-        let instances: Vec<&mut dyn SumcheckInstanceProver<F>> =
-            vec![&mut norm_prover, &mut relation_prover];
         let (sumcheck_proof, ..) =
-            prove_batched_sumcheck::<F, _, F, _>(instances, transcript, |tr| {
+            prove_sumcheck::<F, _, F, _, _>(&mut fused_prover, transcript, |tr| {
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
             })?;
 
@@ -228,15 +227,24 @@ where
         // §4.3 Ring switch (verifier side)
         let rs = ring_switch_verifier::<F, T, { D }, Cfg>(
             &quad_eq,
+            &setup.expanded,
             &proof.sumcheck_aux.w,
             &proof.w_commitment,
             transcript,
         )?;
 
-        // Batched sumcheck verification: norm (F_0) + relation (F_α)
-        let norm_verifier = NormSumcheckVerifier::new(rs.tau0, rs.w_evals.clone(), rs.b);
-        let relation_verifier = RelationSumcheckVerifier::new(
-            rs.w_evals,
+        // Sample batching coefficient for fused sumcheck (must match prover)
+        let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+
+        // Build full w_evals for verifier from the witness vector w.
+        let (w_evals_full, _, _) = build_w_evals(&proof.sumcheck_aux.w, Cfg::D)?;
+
+        // Fused sumcheck verification: norm (F_0) + relation (F_α)
+        let fused_verifier = HachiSumcheckVerifier::new(
+            batching_coeff,
+            w_evals_full,
+            rs.tau0,
+            rs.b,
             rs.alpha_evals_y,
             rs.m_evals_x,
             rs.tau1,
@@ -248,11 +256,9 @@ where
             rs.num_l,
         );
 
-        let verifiers: Vec<&dyn SumcheckInstanceVerifier<F>> =
-            vec![&norm_verifier, &relation_verifier];
-        verify_batched_sumcheck::<F, _, F, _>(
+        verify_sumcheck::<F, _, F, _, _>(
             &proof.sumcheck_proof,
-            verifiers,
+            &fused_verifier,
             transcript,
             |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
         )?;
@@ -509,7 +515,12 @@ where
     )?;
     transcript.append_serde(ABSORB_SUMCHECK_W, &proof.w_commitment);
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
-    let m_a = eval_ring_matrix_at::<F, D>(quad_eq.m(), &alpha);
+    let m_a = compute_m_a_streaming::<F, D, Cfg>(
+        &setup.expanded,
+        quad_eq.opening_point(),
+        &quad_eq.challenges,
+        &alpha,
+    )?;
     let m_a_vec = expand_m_a::<F, D, Cfg>(&m_a, alpha)?;
     Ok((alpha, m_a_vec))
 }

@@ -17,7 +17,7 @@ use crate::{FieldCore, FromSmallInt};
 const SMALL_B_POINT_EVAL_MAX: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum NormRoundKernel {
+pub(crate) enum NormRoundKernel {
     PointEvalInterpolation,
     AffineCoeffComposition,
 }
@@ -31,15 +31,15 @@ fn choose_round_kernel(b: usize) -> NormRoundKernel {
 }
 
 #[derive(Clone)]
-struct RangeAffinePrecomp<E: FieldCore> {
+pub(crate) struct RangeAffinePrecomp<E: FieldCore> {
     /// `coeff_mix[i][k] = c_{i+k} * binom(i+k, i)`, where
     /// `R(w) = sum_m c_m * w^m` is the range-check polynomial.
-    coeff_mix: Vec<Vec<E>>,
-    degree_q: usize,
+    pub(crate) coeff_mix: Vec<Vec<E>>,
+    pub(crate) degree_q: usize,
 }
 
 impl<E: FieldCore + FromSmallInt> RangeAffinePrecomp<E> {
-    fn new(b: usize) -> Self {
+    pub(crate) fn new(b: usize) -> Self {
         assert!(b >= 1, "b must be at least 1");
         let range_coeffs = range_check_coeffs::<E>(b);
         let degree_q = range_coeffs.len() - 1;
@@ -81,12 +81,12 @@ impl<E: FieldCore + FromSmallInt> RangeAffinePrecomp<E> {
 }
 
 #[derive(Clone)]
-struct PointEvalPrecomp<E: FieldCore> {
-    range_offsets: Vec<E>,
+pub(crate) struct PointEvalPrecomp<E: FieldCore> {
+    pub(crate) range_offsets: Vec<E>,
 }
 
 impl<E: FieldCore + FromSmallInt> PointEvalPrecomp<E> {
-    fn new(b: usize) -> Self {
+    pub(crate) fn new(b: usize) -> Self {
         let range_offsets = (1..b).map(|k| E::from_u64(k as u64)).collect();
         Self { range_offsets }
     }
@@ -110,7 +110,7 @@ fn range_check_coeffs<E: FieldCore + FromSmallInt>(b: usize) -> Vec<E> {
     coeffs
 }
 
-fn range_check_eval_precomputed<E: FieldCore>(w: E, range_offsets: &[E]) -> E {
+pub(crate) fn range_check_eval_precomputed<E: FieldCore>(w: E, range_offsets: &[E]) -> E {
     let mut acc = w;
     for &k in range_offsets {
         acc = acc * (w - k) * (w + k);
@@ -118,7 +118,7 @@ fn range_check_eval_precomputed<E: FieldCore>(w: E, range_offsets: &[E]) -> E {
     acc
 }
 
-fn accumulate_affine_range_coeffs<E: FieldCore>(
+pub(crate) fn accumulate_affine_range_coeffs<E: FieldCore>(
     out_coeffs: &mut [E],
     coeff_mix: &[Vec<E>],
     w_0: E,
@@ -136,7 +136,7 @@ fn accumulate_affine_range_coeffs<E: FieldCore>(
     }
 }
 
-fn trim_trailing_zeros<E: FieldCore>(coeffs: &mut Vec<E>) {
+pub(crate) fn trim_trailing_zeros<E: FieldCore>(coeffs: &mut Vec<E>) {
     while coeffs.len() > 1 && coeffs.last().is_some_and(|c| c.is_zero()) {
         coeffs.pop();
     }
@@ -405,7 +405,7 @@ mod tests {
     use crate::algebra::ring::CyclotomicRing;
     use crate::algebra::Fp64;
     use crate::primitives::multilinear_evals::DenseMultilinearEvals;
-    use crate::protocol::ring_switch::build_w_coeffs;
+    use crate::protocol::ring_switch::r_decomp_levels;
     use crate::protocol::sumcheck::eq_poly::EqPolynomial;
     use crate::protocol::sumcheck::multilinear_eval;
     use crate::protocol::transcript::labels;
@@ -596,13 +596,22 @@ mod tests {
 
     #[test]
     fn norm_sumcheck_uses_commitment_w_evals() {
-        let z = vec![
+        let z = [
             ring_with_small_coeff(1),
             ring_with_small_coeff(2),
             ring_with_small_coeff(3),
         ];
-        let r = vec![ring_with_small_coeff(0), ring_with_small_coeff(1)];
-        let mut w_evals = build_w_coeffs::<F, D, SmallTestCommitmentConfig>(&z, &r);
+        let r = [ring_with_small_coeff(0), ring_with_small_coeff(1)];
+        let levels = r_decomp_levels::<F, SmallTestCommitmentConfig>();
+        let r_hat: Vec<CyclotomicRing<F, D>> = r
+            .iter()
+            .flat_map(|ri| ri.balanced_decompose_pow2(levels, SmallTestCommitmentConfig::LOG_BASIS))
+            .collect();
+        let mut w_evals: Vec<F> = z
+            .iter()
+            .chain(r_hat.iter())
+            .flat_map(|elem| elem.coefficients().iter().copied())
+            .collect();
 
         let target_len = w_evals.len().next_power_of_two();
         w_evals.resize(target_len, F::zero());

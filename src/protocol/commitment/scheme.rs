@@ -2,7 +2,7 @@
 
 use super::config::{CommitmentConfig, HachiCommitmentLayout};
 use super::transcript_append::AppendToTranscript;
-use crate::algebra::ring::CyclotomicRing;
+use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, Polynomial};

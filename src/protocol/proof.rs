@@ -1,6 +1,6 @@
 //! Proof structures for the Hachi protocol.
 
-use crate::algebra::ring::CyclotomicRing;
+use crate::algebra::CyclotomicRing;
 use crate::primitives::serialization::{Compress, SerializationError};
 use crate::primitives::serialization::{Valid, Validate};
 use crate::protocol::commitment::RingCommitment;

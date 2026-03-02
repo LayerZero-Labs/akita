@@ -11,7 +11,7 @@ use super::utils::crt_ntt::{build_ntt_cache, NttMatrixCache};
 use super::utils::linear::{decompose_block, decompose_rows, mat_vec_mul_ntt_cached, MatrixSlot};
 use super::utils::matrix::{derive_public_matrix, sample_public_matrix_seed, PublicMatrixSeed};
 use super::CommitmentConfig;
-use crate::algebra::ring::CyclotomicRing;
+use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
