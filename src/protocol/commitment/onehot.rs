@@ -12,7 +12,7 @@ use crate::{CanonicalField, FieldCore};
 
 /// Describes a nonzero ring element within one block of the commitment layout.
 #[derive(Debug, Clone)]
-pub(crate) struct SparseBlockEntry {
+pub struct SparseBlockEntry {
     /// Position within the block (0..2^M).
     pub pos_in_block: usize,
     /// Coefficient indices that are 1 within this ring element.
@@ -35,7 +35,7 @@ pub(crate) struct SparseBlockEntry {
 /// Returns an error if K and D are not "nicely matched" (one must divide
 /// the other), if any index is out of range, or if the dimensions don't
 /// fill the commitment layout.
-pub(crate) fn map_onehot_to_sparse_blocks(
+pub fn map_onehot_to_sparse_blocks(
     onehot_k: usize,
     indices: &[Option<usize>],
     r: usize,

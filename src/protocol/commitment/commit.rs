@@ -4,7 +4,7 @@ use super::config::{
     ensure_block_layout, ensure_matrix_shape, ensure_supported_num_vars,
     validate_and_derive_layout, HachiCommitmentLayout,
 };
-use super::onehot::{inner_ajtai_onehot, map_onehot_to_sparse_blocks};
+use super::onehot::{inner_ajtai_onehot, map_onehot_to_sparse_blocks, SparseBlockEntry};
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
 use super::utils::crt_ntt::{build_ntt_cache, NttMatrixCache};
@@ -449,6 +449,110 @@ where
                 t_hat_flat.extend(t_hat_i.iter().copied());
                 s_all.push(s_i);
                 t_hat_all.push(t_hat_i);
+            }
+        }
+
+        let u = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::B, &t_hat_flat)?;
+        Ok(CommitWitness {
+            commitment: RingCommitment { u },
+            s: s_all,
+            t_hat: t_hat_all,
+        })
+    }
+}
+
+/// Describes one block of a mega-polynomial commitment.
+///
+/// A mega-polynomial packs multiple heterogeneous polynomials into a single
+/// Hachi commitment by assigning each polynomial to its own block. Blocks
+/// can be dense (arbitrary ring coefficients), sparse one-hot, or zero.
+pub enum MegaPolyBlock<'a, F: FieldCore, const D: usize> {
+    /// Dense block: full ring coefficients (length ≤ block_len).
+    Dense(&'a [CyclotomicRing<F, D>]),
+    /// One-hot block: sparse entries within this block.
+    OneHot(&'a [SparseBlockEntry]),
+    /// Empty block: all coefficients are zero (no allocation or computation).
+    Zero,
+}
+
+impl HachiCommitmentCore {
+    /// Commit a mega-polynomial composed of heterogeneous blocks.
+    ///
+    /// Each block occupies `block_len` ring elements. Dense blocks are
+    /// decomposed via `balanced_decompose_pow2`; one-hot blocks use sparse
+    /// inner Ajtai; zero blocks are free.
+    ///
+    /// The number of blocks must equal `layout.num_blocks` (power of 2).
+    ///
+    /// # Errors
+    ///
+    /// Returns `HachiError` if the number of blocks doesn't match the layout
+    /// or if matrix shapes are inconsistent.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `Cfg::N_A * Cfg::DELTA` overflows.
+    #[allow(non_snake_case)]
+    pub fn commit_mixed<F, const D: usize, Cfg>(
+        blocks: &[MegaPolyBlock<'_, F, D>],
+        setup: &HachiProverSetup<F, D>,
+    ) -> Result<CommitWitness<RingCommitment<F, D>, F, D>, HachiError>
+    where
+        F: FieldCore + CanonicalField + FieldSampling,
+        Cfg: CommitmentConfig,
+    {
+        let layout = setup.layout();
+        if blocks.len() != layout.num_blocks {
+            return Err(HachiError::InvalidSize {
+                expected: layout.num_blocks,
+                actual: blocks.len(),
+            });
+        }
+        ensure_matrix_shape(&setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
+        ensure_matrix_shape(&setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
+
+        let inner_width = layout.inner_width;
+        let zero_s = vec![CyclotomicRing::<F, D>::zero(); inner_width];
+        let zero_t_hat =
+            vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(Cfg::DELTA).unwrap()];
+
+        let mut s_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(layout.num_blocks);
+        let mut t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(layout.num_blocks);
+        let mut t_hat_flat: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(layout.outer_width);
+
+        for block in blocks {
+            match block {
+                MegaPolyBlock::Zero => {
+                    s_all.push(zero_s.clone());
+                    t_hat_flat.extend(zero_t_hat.iter().copied());
+                    t_hat_all.push(zero_t_hat.clone());
+                }
+                MegaPolyBlock::Dense(coeffs) => {
+                    let s_i = decompose_block(coeffs, Cfg::DELTA, Cfg::LOG_BASIS);
+                    let t_i = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::A, &s_i)?;
+                    let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
+                    t_hat_flat.extend(t_hat_i.iter().copied());
+                    s_all.push(s_i);
+                    t_hat_all.push(t_hat_i);
+                }
+                MegaPolyBlock::OneHot(sparse_entries) => {
+                    if sparse_entries.is_empty() {
+                        s_all.push(zero_s.clone());
+                        t_hat_flat.extend(zero_t_hat.iter().copied());
+                        t_hat_all.push(zero_t_hat.clone());
+                    } else {
+                        let (t_i, s_i) = inner_ajtai_onehot(
+                            &setup.expanded.A,
+                            sparse_entries,
+                            layout.block_len,
+                            Cfg::DELTA,
+                        );
+                        let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
+                        t_hat_flat.extend(t_hat_i.iter().copied());
+                        s_all.push(s_i);
+                        t_hat_all.push(t_hat_i);
+                    }
+                }
             }
         }
 

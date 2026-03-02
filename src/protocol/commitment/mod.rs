@@ -2,7 +2,7 @@
 
 mod commit;
 mod config;
-pub(crate) mod onehot;
+pub mod onehot;
 mod scheme;
 mod transcript_append;
 mod types;
@@ -10,12 +10,13 @@ pub(crate) mod utils;
 
 pub use commit::{
     HachiCommitmentCore, HachiExpandedSetup, HachiPreparedSetup, HachiProverSetup, HachiSetupSeed,
-    HachiVerifierSetup,
+    HachiVerifierSetup, MegaPolyBlock,
 };
 pub use config::{
     CommitmentConfig, DynamicSmallTestCommitmentConfig, HachiCommitmentLayout,
     ProductionFp128CommitmentConfig, SmallTestCommitmentConfig,
 };
+pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
 pub use scheme::{
     CommitWitness, CommitmentScheme, RingCommitmentScheme, StreamingCommitmentScheme,
 };
