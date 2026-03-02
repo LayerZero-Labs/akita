@@ -372,7 +372,8 @@ where
             });
         }
 
-        let zero_s = vec![CyclotomicRing::<F, D>::zero(); Cfg::DELTA];
+        let inner_width = layout.inner_width;
+        let zero_s = vec![CyclotomicRing::<F, D>::zero(); inner_width];
         let zero_t_hat =
             vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(Cfg::DELTA).unwrap()];
 
@@ -426,18 +427,28 @@ where
         let mut t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(layout.num_blocks);
         let mut t_hat_flat: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(layout.outer_width);
 
-        for block_entries in &sparse_blocks {
-            let (t_i, s_i) = inner_ajtai_onehot(
-                &setup.expanded.A,
-                block_entries,
-                layout.block_len,
-                Cfg::DELTA,
-            );
-            let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
-            t_hat_flat.extend(t_hat_i.iter().copied());
+        let inner_width = layout.inner_width;
+        let zero_s = vec![CyclotomicRing::<F, D>::zero(); inner_width];
+        let zero_t_hat =
+            vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(Cfg::DELTA).unwrap()];
 
-            s_all.push(s_i);
-            t_hat_all.push(t_hat_i);
+        for block_entries in &sparse_blocks {
+            if block_entries.is_empty() {
+                s_all.push(zero_s.clone());
+                t_hat_flat.extend(zero_t_hat.iter().copied());
+                t_hat_all.push(zero_t_hat.clone());
+            } else {
+                let (t_i, s_i) = inner_ajtai_onehot(
+                    &setup.expanded.A,
+                    block_entries,
+                    layout.block_len,
+                    Cfg::DELTA,
+                );
+                let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
+                t_hat_flat.extend(t_hat_i.iter().copied());
+                s_all.push(s_i);
+                t_hat_all.push(t_hat_i);
+            }
         }
 
         let u = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::B, &t_hat_flat)?;
