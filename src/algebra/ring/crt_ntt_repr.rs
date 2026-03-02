@@ -293,4 +293,51 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         }
         Self { limbs: out }
     }
+
+    /// Apply `sigma_{-1}` directly in NTT domain (`slot[j] -> slot[D-1-j]`).
+    ///
+    /// This is a pure index permutation per CRT limb and does not negate values.
+    pub fn conjugation_automorphism_ntt(&self) -> Self {
+        let limbs = std::array::from_fn(|k| {
+            std::array::from_fn(|j| self.limbs[k][D.saturating_sub(1) - j])
+        });
+        Self { limbs }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::algebra::fields::Fp64;
+    use crate::algebra::ntt::tables::{Q32_NUM_PRIMES, Q32_PRIMES};
+    use crate::FromSmallInt;
+
+    type F = Fp64<4294967197>;
+    const D: usize = 64;
+
+    #[test]
+    fn conjugation_automorphism_ntt_matches_coefficient_sigma_m1() {
+        let params = CrtNttParamSet::<i16, Q32_NUM_PRIMES, D>::new(Q32_PRIMES);
+        let ring = CyclotomicRing::from_coefficients(std::array::from_fn(|i| {
+            F::from_i64((i as i64 % 17) - 8)
+        }));
+        let ntt = CyclotomicCrtNtt::<i16, Q32_NUM_PRIMES, D>::from_ring_with_params(&ring, &params);
+        let got = ntt
+            .conjugation_automorphism_ntt()
+            .to_ring_with_params::<F>(&params);
+        assert_eq!(got, ring.sigma_m1());
+    }
+
+    #[test]
+    fn conjugation_automorphism_ntt_is_involution() {
+        let params = CrtNttParamSet::<i16, Q32_NUM_PRIMES, D>::new(Q32_PRIMES);
+        let ring = CyclotomicRing::from_coefficients(std::array::from_fn(|i| {
+            F::from_i64((i as i64 % 11) - 5)
+        }));
+        let ntt = CyclotomicCrtNtt::<i16, Q32_NUM_PRIMES, D>::from_ring_with_params(&ring, &params);
+        let roundtrip = ntt
+            .conjugation_automorphism_ntt()
+            .conjugation_automorphism_ntt();
+        assert_eq!(roundtrip, ntt);
+    }
 }

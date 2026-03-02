@@ -404,14 +404,13 @@ mod tests {
     use super::*;
     use crate::algebra::ring::CyclotomicRing;
     use crate::algebra::Fp64;
-    use crate::primitives::multilinear_evals::DenseMultilinearEvals;
     use crate::protocol::ring_switch::build_w_coeffs;
     use crate::protocol::sumcheck::eq_poly::EqPolynomial;
     use crate::protocol::sumcheck::multilinear_eval;
     use crate::protocol::transcript::labels;
     use crate::protocol::{
-        prove_sumcheck, verify_sumcheck, Blake2bTranscript, CommitmentConfig, CommitmentScheme,
-        HachiCommitmentScheme, SmallTestCommitmentConfig, Transcript,
+        prove_sumcheck, verify_sumcheck, Blake2bTranscript, CommitmentConfig,
+        SmallTestCommitmentConfig, Transcript,
     };
     use crate::{FieldCore, FromSmallInt};
     use rand::rngs::StdRng;
@@ -419,8 +418,6 @@ mod tests {
 
     type F = Fp64<4294967197>;
     const D: usize = 8;
-    type Cfg = SmallTestCommitmentConfig;
-    type Scheme = HachiCommitmentScheme<{ Cfg::D }, Cfg>;
 
     struct PointEvalReferenceNormSumcheckProver<E: FieldCore> {
         split_eq: GruenSplitEq<E>,
@@ -631,67 +628,6 @@ mod tests {
         let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
         let verifier_challenges =
             verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut vt, |tr| {
-                tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
-            })
-            .unwrap();
-
-        assert_eq!(prover_challenges, verifier_challenges);
-    }
-
-    #[test]
-    fn norm_sumcheck_uses_prove_w_evals() {
-        let alpha = SmallTestCommitmentConfig::D.trailing_zeros() as usize;
-        let layout = SmallTestCommitmentConfig::commitment_layout(8).unwrap();
-        let num_vars = layout.m_vars + layout.r_vars + alpha;
-        let len = 1usize << num_vars;
-        let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
-        let poly = DenseMultilinearEvals::new_padded(evals);
-
-        let setup = Scheme::setup_prover(num_vars);
-        let (commitment, hint) = Scheme::commit(&poly, &setup).unwrap();
-
-        let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
-        let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        let proof = Scheme::prove(
-            &setup,
-            &poly,
-            &opening_point,
-            Some(hint),
-            &mut prover_transcript,
-            &commitment,
-        )
-        .unwrap();
-
-        let mut w_evals = proof.sumcheck_aux.w.clone();
-        let target_len = w_evals.len().next_power_of_two();
-        w_evals.resize(target_len, F::zero());
-        let num_sumcheck_vars = target_len.trailing_zeros() as usize;
-        let tau: Vec<F> = (0..num_sumcheck_vars)
-            .map(|i| F::from_u64((i + 3) as u64))
-            .collect();
-        let b = 1usize << SmallTestCommitmentConfig::LOG_BASIS;
-
-        let eq_table = EqPolynomial::evals(&tau);
-        let _claim: F = (0..w_evals.len())
-            .map(|i| eq_table[i] * range_check_eval(w_evals[i], b))
-            .fold(F::zero(), |a, v| a + v);
-
-        let mut prover = NormSumcheckProver::new(&tau, w_evals.clone(), b);
-        let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        let (proof_sc, prover_challenges, final_claim) =
-            prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut pt, |tr| {
-                tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
-            })
-            .unwrap();
-
-        let oracle = EqPolynomial::mle(&tau, &prover_challenges)
-            * range_check_eval(multilinear_eval(&w_evals, &prover_challenges).unwrap(), b);
-        assert_eq!(final_claim, oracle, "prover final claim != oracle eval");
-
-        let verifier = NormSumcheckVerifier::new(tau, w_evals, b);
-        let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        let verifier_challenges =
-            verify_sumcheck::<F, _, F, _, _>(&proof_sc, &verifier, &mut vt, |tr| {
                 tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
             })
             .unwrap();

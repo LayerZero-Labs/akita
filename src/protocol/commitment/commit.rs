@@ -12,13 +12,18 @@ use super::utils::linear::{
     decompose_block, decompose_rows, mat_vec_mul_ntt_cached, mat_vec_mul_ntt_many_cached,
     MatrixSlot,
 };
-use super::utils::matrix::{derive_public_matrix, sample_public_matrix_seed, PublicMatrixSeed};
+use super::utils::matrix::{
+    derive_public_matrix, sample_public_matrix_prg_backend, sample_public_matrix_seed,
+    PublicMatrixSeed,
+};
+use super::utils::norm::detect_field_modulus;
 use super::CommitmentConfig;
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
+use crate::protocol::prg::MatrixPrgBackendId;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use std::io::{Read, Write};
 
@@ -32,6 +37,8 @@ pub struct HachiSetupSeed {
     pub layout: HachiCommitmentLayout,
     /// Public seed used to derive commitment matrices.
     pub public_matrix_seed: PublicMatrixSeed,
+    /// Selected matrix PRG backend.
+    pub public_matrix_prg_backend: MatrixPrgBackendId,
 }
 
 /// Expanded setup stage containing coefficient-form matrices.
@@ -52,6 +59,19 @@ pub struct HachiExpandedSetup<F: FieldCore, const D: usize> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiPreparedSetup<const D: usize> {
     /// Pre-converted CRT+NTT matrices for dense mat-vec paths.
+    pub(crate) ntt_cache: NttMatrixCache<D>,
+    /// Prepared matrices and dimensions for ring-switch `w` commitments.
+    pub(crate) w_commit: HachiWCommitPrepared<D>,
+}
+
+/// Runtime-prepared artifacts for ring-switch witness commitments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HachiWCommitPrepared<const D: usize> {
+    /// Maximum ring block length for `w` commitments.
+    pub(crate) block_len: usize,
+    /// Maximum outer-width used for `w` commitments.
+    pub(crate) outer_width: usize,
+    /// Pre-converted CRT+NTT matrices for `w` commitment mat-vecs.
     pub(crate) ntt_cache: NttMatrixCache<D>,
 }
 
@@ -85,6 +105,75 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
             .map(|p| &p.ntt_cache)
             .ok_or_else(|| HachiError::InvalidSetup("missing prepared NTT cache".to_string()))
     }
+
+    pub(crate) fn w_commit_prepared(&self) -> Result<&HachiWCommitPrepared<D>, HachiError> {
+        self.prepared.as_ref().map(|p| &p.w_commit).ok_or_else(|| {
+            HachiError::InvalidSetup("missing prepared w-commitment cache".to_string())
+        })
+    }
+}
+
+fn ring_switch_r_decomp_levels<F: CanonicalField, Cfg: CommitmentConfig>() -> usize {
+    let modulus = detect_field_modulus::<F>();
+    let bits = 128 - (modulus.saturating_sub(1)).leading_zeros() as usize;
+    let log_basis = Cfg::LOG_BASIS as usize;
+    let mut levels = (bits + log_basis.saturating_sub(1)) / log_basis.max(1);
+    if levels == 0 {
+        levels = 1;
+    }
+
+    let b = 1u128 << Cfg::LOG_BASIS;
+    let half_q = modulus / 2;
+    let half_b_minus_1 = b / 2 - 1;
+    let b_minus_1 = b - 1;
+    let mut b_pow = 1u128;
+    for _ in 0..levels {
+        b_pow = b_pow.saturating_mul(b);
+    }
+    let max_positive = half_b_minus_1.saturating_mul((b_pow - 1) / b_minus_1);
+    if max_positive < half_q {
+        levels += 1;
+    }
+
+    levels
+}
+
+fn derive_w_commit_block_len<F: CanonicalField, Cfg: CommitmentConfig>(
+    layout: HachiCommitmentLayout,
+) -> Result<usize, HachiError> {
+    let w_hat_len = layout
+        .num_blocks
+        .checked_mul(layout.block_len)
+        .and_then(|x| x.checked_mul(Cfg::DELTA))
+        .ok_or_else(|| HachiError::InvalidSetup("w_hat length overflow".to_string()))?;
+    let t_hat_len = layout
+        .num_blocks
+        .checked_mul(Cfg::N_A)
+        .and_then(|x| x.checked_mul(Cfg::DELTA))
+        .ok_or_else(|| HachiError::InvalidSetup("t_hat length overflow".to_string()))?;
+    let z_hat_len = layout
+        .block_len
+        .checked_mul(Cfg::DELTA)
+        .and_then(|x| x.checked_mul(Cfg::TAU))
+        .ok_or_else(|| HachiError::InvalidSetup("z_hat length overflow".to_string()))?;
+
+    let m_rows = Cfg::N_D
+        .checked_add(Cfg::N_B)
+        .and_then(|x| x.checked_add(2))
+        .and_then(|x| x.checked_add(Cfg::N_A))
+        .ok_or_else(|| HachiError::InvalidSetup("M row count overflow".to_string()))?;
+    let r_levels = ring_switch_r_decomp_levels::<F, Cfg>();
+    let r_hat_len = m_rows
+        .checked_mul(r_levels)
+        .ok_or_else(|| HachiError::InvalidSetup("r_hat length overflow".to_string()))?;
+
+    let total_ring_elems = w_hat_len
+        .checked_add(t_hat_len)
+        .and_then(|x| x.checked_add(z_hat_len))
+        .and_then(|x| x.checked_add(r_hat_len))
+        .ok_or_else(|| HachiError::InvalidSetup("w length overflow".to_string()))?;
+
+    Ok(total_ring_elems.next_power_of_two().max(1))
 }
 
 impl Valid for HachiSetupSeed {
@@ -103,11 +192,12 @@ impl HachiSerialize for HachiSetupSeed {
             .serialize_with_mode(&mut writer, compress)?;
         self.layout.serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.public_matrix_seed)?;
+        writer.write_all(&[u8::from(self.public_matrix_prg_backend)])?;
         Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.max_num_vars.serialized_size(compress) + self.layout.serialized_size(compress) + 32
+        self.max_num_vars.serialized_size(compress) + self.layout.serialized_size(compress) + 32 + 1
     }
 }
 
@@ -121,10 +211,15 @@ impl HachiDeserialize for HachiSetupSeed {
         let layout = HachiCommitmentLayout::deserialize_with_mode(&mut reader, compress, validate)?;
         let mut public_matrix_seed = [0u8; 32];
         reader.read_exact(&mut public_matrix_seed)?;
+        let mut backend_id = [0u8; 1];
+        reader.read_exact(&mut backend_id)?;
+        let public_matrix_prg_backend = MatrixPrgBackendId::try_from(backend_id[0])
+            .map_err(|e| SerializationError::InvalidData(e.to_string()))?;
         let out = Self {
             max_num_vars,
             layout,
             public_matrix_seed,
+            public_matrix_prg_backend,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -278,23 +373,59 @@ where
         let layout = validate_and_derive_layout::<Cfg, D>(max_num_vars)?;
         ensure_supported_num_vars(max_num_vars, layout.required_num_vars::<D>()?)?;
         let public_matrix_seed = sample_public_matrix_seed();
-        let a_matrix =
-            derive_public_matrix::<F, D>(Cfg::N_A, layout.inner_width, &public_matrix_seed, b"A");
-        let b_matrix =
-            derive_public_matrix::<F, D>(Cfg::N_B, layout.outer_width, &public_matrix_seed, b"B");
+        let public_matrix_prg_backend = sample_public_matrix_prg_backend();
+        let a_matrix = derive_public_matrix::<F, D>(
+            Cfg::N_A,
+            layout.inner_width,
+            &public_matrix_seed,
+            b"A",
+            public_matrix_prg_backend,
+        );
+        let b_matrix = derive_public_matrix::<F, D>(
+            Cfg::N_B,
+            layout.outer_width,
+            &public_matrix_seed,
+            b"B",
+            public_matrix_prg_backend,
+        );
         let d_matrix = derive_public_matrix::<F, D>(
             Cfg::N_D,
             layout.d_matrix_width,
             &public_matrix_seed,
             b"D",
+            public_matrix_prg_backend,
+        );
+
+        let w_block_len = derive_w_commit_block_len::<F, Cfg>(layout)?;
+        let w_inner_width = w_block_len
+            .checked_mul(Cfg::DELTA)
+            .ok_or_else(|| HachiError::InvalidSetup("w inner width overflow".to_string()))?;
+        let w_outer_width = Cfg::N_A
+            .checked_mul(Cfg::DELTA)
+            .ok_or_else(|| HachiError::InvalidSetup("w outer width overflow".to_string()))?;
+        let w_a_matrix = derive_public_matrix::<F, D>(
+            Cfg::N_A,
+            w_inner_width,
+            &public_matrix_seed,
+            b"A",
+            public_matrix_prg_backend,
+        );
+        let w_b_matrix = derive_public_matrix::<F, D>(
+            Cfg::N_B,
+            w_outer_width,
+            &public_matrix_seed,
+            b"B",
+            public_matrix_prg_backend,
         );
 
         let ntt_cache = build_ntt_cache::<F, D>(&a_matrix, &b_matrix, &d_matrix)?;
+        let w_ntt_cache = build_ntt_cache::<F, D>(&w_a_matrix, &w_b_matrix, &d_matrix)?;
         let expanded = HachiExpandedSetup {
             seed: HachiSetupSeed {
                 max_num_vars,
                 layout,
                 public_matrix_seed,
+                public_matrix_prg_backend: public_matrix_prg_backend.backend_id(),
             },
             A: a_matrix,
             B: b_matrix,
@@ -302,7 +433,14 @@ where
         };
         let prover_setup = HachiProverSetup {
             expanded: expanded.clone(),
-            prepared: Some(HachiPreparedSetup { ntt_cache }),
+            prepared: Some(HachiPreparedSetup {
+                ntt_cache,
+                w_commit: HachiWCommitPrepared {
+                    block_len: w_block_len,
+                    outer_width: w_outer_width,
+                    ntt_cache: w_ntt_cache,
+                },
+            }),
         };
         let verifier_setup = HachiVerifierSetup { expanded };
         ensure_matrix_shape(&prover_setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;

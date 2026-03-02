@@ -8,11 +8,11 @@ use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::protocol::commitment::utils::norm::detect_field_modulus;
-use crate::protocol::commitment::{
-    CommitmentConfig, HachiCommitmentCore, HachiCommitmentLayout, RingCommitment,
-    RingCommitmentScheme,
+use crate::protocol::commitment::utils::linear::{
+    decompose_block, decompose_rows, mat_vec_mul_ntt_cached, MatrixSlot,
 };
+use crate::protocol::commitment::utils::norm::detect_field_modulus;
+use crate::protocol::commitment::{CommitmentConfig, HachiProverSetup, RingCommitment};
 use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::sumcheck::eq_poly::EqPolynomial;
 use crate::protocol::transcript::labels::{
@@ -48,6 +48,26 @@ pub struct RingSwitchOutput<F: FieldCore, const D: usize> {
     pub alpha: F,
 }
 
+/// Verifier-side ring-switch metadata when the raw witness `w` is hidden.
+pub struct RingSwitchVerifierMetadata<F: FieldCore> {
+    /// Evaluation table of M_alpha(x) (tau1-weighted).
+    pub m_evals_x: Vec<F>,
+    /// Evaluation table of alpha powers (y dimension).
+    pub alpha_evals_y: Vec<F>,
+    /// Number of upper variable bits in the hidden `w` embedding.
+    pub num_u: usize,
+    /// Number of lower variable bits in the hidden `w` embedding.
+    pub num_l: usize,
+    /// Challenge tau0 sampled for transcript schedule compatibility.
+    pub tau0: Vec<F>,
+    /// Challenge tau1 for F_alpha/relation sumcheck.
+    pub tau1: Vec<F>,
+    /// Basis size b = 2^LOG_BASIS.
+    pub b: usize,
+    /// Ring-switch challenge alpha.
+    pub alpha: F,
+}
+
 /// Execute the prover side of the ring switching protocol (Section 4.3).
 ///
 /// # Errors
@@ -55,6 +75,7 @@ pub struct RingSwitchOutput<F: FieldCore, const D: usize> {
 /// Returns an error if z is missing, commitment fails, or matrix expansion fails.
 pub fn ring_switch_prover<F, T, const D: usize, Cfg>(
     quad_eq: &QuadraticEquation<F, D, Cfg>,
+    setup: &HachiProverSetup<F, D>,
     transcript: &mut T,
 ) -> Result<RingSwitchOutput<F, D>, HachiError>
 where
@@ -68,7 +89,7 @@ where
     let r = compute_r_via_poly_division::<F, D>(quad_eq.m(), z, quad_eq.y())?;
     let w = build_w_coeffs::<F, D, Cfg>(z, &r);
 
-    let w_commitment = commit_w::<F, D, Cfg>(&w)?;
+    let w_commitment = commit_w::<F, D, Cfg>(&w, setup)?;
     transcript.append_serde(ABSORB_SUMCHECK_W, &w_commitment);
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
@@ -163,6 +184,61 @@ where
     })
 }
 
+/// Replay verifier-side ring switching without requiring the raw witness `w`.
+///
+/// This reconstructs all transcript-bound metadata needed to verify relation
+/// sumcheck rounds and externalize the final `w_tilde(r)` check to Greyhound.
+///
+/// # Errors
+///
+/// Returns an error if matrix expansion fails.
+pub fn ring_switch_verifier_metadata<F, T, const D: usize, Cfg>(
+    quad_eq: &QuadraticEquation<F, D, Cfg>,
+    w_commitment: &RingCommitment<F, D>,
+    transcript: &mut T,
+) -> Result<RingSwitchVerifierMetadata<F>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig,
+{
+    transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
+
+    let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
+
+    let m_a = eval_ring_matrix_at::<F, D>(quad_eq.m(), &alpha);
+    let m_a_vec = expand_m_a::<F, D, Cfg>(&m_a, alpha)?;
+    let m_rows = m_row_count::<Cfg>();
+    let m_cols = if m_a.is_empty() {
+        0
+    } else {
+        m_a_vec.len() / m_a.len()
+    };
+
+    let num_l = D.trailing_zeros() as usize;
+    let num_u = m_cols.next_power_of_two().trailing_zeros() as usize;
+    let alpha_evals_y = build_alpha_evals_y(alpha, D);
+
+    let num_sc_vars = num_u + num_l;
+    let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
+
+    let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
+    let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
+
+    let m_evals_x = build_m_evals_x::<F>(&m_a_vec, m_rows, m_cols, &tau1);
+
+    Ok(RingSwitchVerifierMetadata {
+        m_evals_x,
+        alpha_evals_y,
+        num_u,
+        num_l,
+        tau0,
+        tau1,
+        b: 1usize << Cfg::LOG_BASIS,
+        alpha,
+    })
+}
+
 pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D: usize>(
     m: &[Vec<CyclotomicRing<F, D>>],
     z: &[CyclotomicRing<F, D>],
@@ -238,37 +314,18 @@ pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D
     Ok(out)
 }
 
-#[derive(Clone, Copy, Debug)]
-struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
-    _cfg: std::marker::PhantomData<Cfg>,
-}
-
-impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConfig<D, Cfg> {
-    const D: usize = D;
-    const N_A: usize = Cfg::N_A;
-    const N_B: usize = Cfg::N_B;
-    const N_D: usize = Cfg::N_D;
-    const LOG_BASIS: u32 = Cfg::LOG_BASIS;
-    const DELTA: usize = Cfg::DELTA;
-    const TAU: usize = Cfg::TAU;
-    const CHALLENGE_WEIGHT: usize = Cfg::CHALLENGE_WEIGHT;
-
-    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        let alpha = D.trailing_zeros() as usize;
-        let m_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
-            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
-        })?;
-        HachiCommitmentLayout::new::<Self>(m_vars, 0)
-    }
-}
-
-fn commit_w<F, const D: usize, Cfg>(w: &[F]) -> Result<RingCommitment<F, D>, HachiError>
+/// Commit to ring-switch witness `w` using the parent setup matrices.
+///
+/// This implements "derive max once, then slice": `w` is embedded into the
+/// top-left submatrix domain by zero-padding vectors to the parent setup widths.
+fn commit_w<F, const D: usize, Cfg>(
+    w: &[F],
+    setup: &HachiProverSetup<F, D>,
+) -> Result<RingCommitment<F, D>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     Cfg: CommitmentConfig,
 {
-    type WCfg<const D: usize, C> = WCommitmentConfig<D, C>;
-
     let ring_elems: Vec<CyclotomicRing<F, D>> = w
         .chunks(D)
         .map(|chunk| {
@@ -278,21 +335,30 @@ where
         })
         .collect();
 
-    let block_len = ring_elems.len().next_power_of_two().max(1);
-    let mut padded = ring_elems;
-    padded.resize(block_len, CyclotomicRing::<F, D>::zero());
-    let m_vars = block_len.trailing_zeros() as usize;
-    let max_num_vars = m_vars + D.trailing_zeros() as usize;
-    let blocks = vec![padded];
+    let w_prepared = setup.w_commit_prepared()?;
+    let mut block = ring_elems;
+    let block_len = block.len().next_power_of_two().max(1);
+    if block_len > w_prepared.block_len {
+        return Err(HachiError::InvalidSize {
+            expected: w_prepared.block_len,
+            actual: block_len,
+        });
+    }
+    block.resize(w_prepared.block_len, CyclotomicRing::<F, D>::zero());
+    let s = decompose_block(&block, Cfg::DELTA, Cfg::LOG_BASIS);
 
-    let (w_setup, _) =
-        <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::setup(max_num_vars)?;
+    let t = mat_vec_mul_ntt_cached(&w_prepared.ntt_cache, MatrixSlot::A, &s)?;
+    let mut t_hat = decompose_rows(&t, Cfg::DELTA, Cfg::LOG_BASIS);
+    if t_hat.len() > w_prepared.outer_width {
+        return Err(HachiError::InvalidSize {
+            expected: w_prepared.outer_width,
+            actual: t_hat.len(),
+        });
+    }
+    t_hat.resize(w_prepared.outer_width, CyclotomicRing::<F, D>::zero());
+    let u = mat_vec_mul_ntt_cached(&w_prepared.ntt_cache, MatrixSlot::B, &t_hat)?;
 
-    let w = <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::commit_ring_blocks(
-        &blocks, &w_setup,
-    )?;
-
-    Ok(w.commitment)
+    Ok(RingCommitment { u })
 }
 
 pub(crate) fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D>, alpha: &F) -> F {

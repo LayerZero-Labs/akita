@@ -34,6 +34,12 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
         &self.coeffs
     }
 
+    /// Mutably borrow the coefficient array.
+    #[inline]
+    pub fn coefficients_mut(&mut self) -> &mut [F; D] {
+        &mut self.coeffs
+    }
+
     /// The additive identity (all-zero polynomial).
     #[inline]
     pub fn zero() -> Self {
@@ -201,6 +207,26 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
 }
 
 impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
+    /// Squared Euclidean norm of centered integer coefficients.
+    ///
+    /// Coefficients are centered into `(-q/2, q/2]` and accumulated as
+    /// `sum_i c_i^2`, using saturating arithmetic.
+    #[inline]
+    pub fn coeff_norm_sq(&self) -> u128 {
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let half_q = q / 2;
+        self.coeffs.iter().fold(0u128, |acc, &coeff| {
+            let canonical = coeff.to_canonical_u128();
+            let centered: i128 = if canonical > half_q {
+                -((q - canonical) as i128)
+            } else {
+                canonical as i128
+            };
+            let abs = centered.unsigned_abs();
+            acc.saturating_add(abs.saturating_mul(abs))
+        })
+    }
+
     /// Functional gadget recomposition (`G * digits`) for base `2^log_basis`.
     ///
     /// Coefficients from each part are interpreted as one digit plane and

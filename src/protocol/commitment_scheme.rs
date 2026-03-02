@@ -14,18 +14,27 @@ use crate::protocol::commitment::{
     AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore, HachiProverSetup,
     HachiVerifierSetup, RingCommitment, RingCommitmentScheme, StreamingCommitmentScheme,
 };
+use crate::protocol::greyhound::{greyhound_eval, greyhound_reduce};
+use crate::protocol::labrador;
+use crate::protocol::labrador::transcript::{
+    absorb_greyhound_eval_claim, absorb_greyhound_eval_context, absorb_greyhound_u2,
+    sample_greyhound_fold_challenge, GreyhoundEvalTranscriptContext,
+};
 use crate::protocol::opening_point::RingOpeningPoint;
-use crate::protocol::proof::{HachiCommitmentHint, HachiProof, SumcheckAux};
+use crate::protocol::prg::{MatrixPrgBackendChoice, MatrixPrgBackendId};
+use crate::protocol::proof::{HachiCommitmentHint, HachiFoldProof, HachiProof};
 use crate::protocol::quadratic_equation::QuadraticEquation;
-use crate::protocol::ring_switch::{ring_switch_prover, ring_switch_verifier};
+use crate::protocol::ring_switch::{
+    eval_ring_at, ring_switch_prover, ring_switch_verifier_metadata,
+};
 use crate::protocol::sumcheck::batched_sumcheck::{
-    prove_batched_sumcheck, verify_batched_sumcheck,
+    prove_batched_sumcheck, verify_batched_sumcheck_rounds,
 };
-use crate::protocol::sumcheck::norm_sumcheck::{NormSumcheckProver, NormSumcheckVerifier};
-use crate::protocol::sumcheck::relation_sumcheck::{
-    RelationSumcheckProver, RelationSumcheckVerifier,
+use crate::protocol::sumcheck::eq_poly::EqPolynomial;
+use crate::protocol::sumcheck::relation_sumcheck::RelationSumcheckProver;
+use crate::protocol::sumcheck::{
+    multilinear_eval, SumcheckInstanceProver, SumcheckInstanceVerifier,
 };
-use crate::protocol::sumcheck::{SumcheckInstanceProver, SumcheckInstanceVerifier};
 use crate::protocol::transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, CHALLENGE_SUMCHECK_ROUND,
 };
@@ -144,10 +153,10 @@ where
         )?;
 
         // §4.3 Ring switch
-        let rs = ring_switch_prover::<F, T, { D }, Cfg>(&quad_eq, transcript)?;
+        let rs = ring_switch_prover::<F, T, { D }, Cfg>(&quad_eq, setup, transcript)?;
 
-        // Batched sumcheck: norm + relation
-        let mut norm_prover = NormSumcheckProver::new(&rs.tau0, rs.w_evals.clone(), rs.b);
+        // Batched sumcheck: relation only; final w_tilde(r) is handed off to Greyhound.
+        let w_evals = rs.w_evals.clone();
         let mut relation_prover = RelationSumcheckProver::new(
             rs.w_evals,
             &rs.alpha_evals_y,
@@ -156,19 +165,54 @@ where
             rs.num_l,
         );
 
-        let instances: Vec<&mut dyn SumcheckInstanceProver<F>> =
-            vec![&mut norm_prover, &mut relation_prover];
-        let (sumcheck_proof, ..) =
+        let instances: Vec<&mut dyn SumcheckInstanceProver<F>> = vec![&mut relation_prover];
+        let (sumcheck_proof, r_sumcheck) =
             prove_batched_sumcheck::<F, _, F, _>(instances, transcript, |tr| {
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
             })?;
+        let w_eval = multilinear_eval(&w_evals, &r_sumcheck)?;
+
+        let fold = HachiFoldProof {
+            y_ring,
+            v: quad_eq.v,
+            sumcheck_proof,
+            w_commitment: rs.w_commitment.clone(),
+        };
+
+        if !labrador_enabled::<D>() {
+            return Ok(HachiProof {
+                folds: vec![fold],
+                greyhound_eval_proof: crate::protocol::greyhound::GreyhoundEvalProof::empty(),
+                labrador_proof: labrador::LabradorProof::empty(),
+            });
+        }
+
+        let comkey_seed = &setup.expanded.seed.public_matrix_seed;
+        let jl_seed = derive_jl_seed(comkey_seed);
+        let backend = matrix_backend_from_id(setup.expanded.seed.public_matrix_prg_backend);
+
+        let (greyhound_eval_proof, labrador_witness, statement) = greyhound_eval(
+            &rs.w,
+            &r_sumcheck,
+            w_eval,
+            &rs.w_commitment.u,
+            comkey_seed,
+            backend,
+            transcript,
+        )?;
+        let labrador_proof = labrador::prove(
+            labrador_witness,
+            &statement,
+            comkey_seed,
+            &jl_seed,
+            backend,
+            transcript,
+        )?;
 
         Ok(HachiProof {
-            v: quad_eq.v,
-            y_ring,
-            sumcheck_proof,
-            sumcheck_aux: SumcheckAux { w: rs.w },
-            w_commitment: rs.w_commitment,
+            folds: vec![fold],
+            greyhound_eval_proof,
+            labrador_proof,
         })
     }
 
@@ -180,6 +224,11 @@ where
         opening: &F,
         commitment: &Self::Commitment,
     ) -> Result<(), HachiError> {
+        let fold = proof.folds.first().ok_or(HachiError::InvalidProof)?;
+        if proof.folds.len() != 1 {
+            return Err(HachiError::InvalidProof);
+        }
+
         let alpha_bits = Cfg::D.trailing_zeros() as usize;
         if opening_point.len() < alpha_bits {
             return Err(HachiError::InvalidSetup(
@@ -194,12 +243,12 @@ where
         for pt in opening_point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &proof.y_ring);
+        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &fold.y_ring);
 
         // §3.1 trace check
         let v = reduce_inner_openings_to_ring_elements::<F, { D }>(inner_point)?;
         let d = F::from_u64(Cfg::D as u64);
-        let trace_lhs = trace::<F, { D }>(&(proof.y_ring * v.sigma_m1()));
+        let trace_lhs = trace::<F, { D }>(&(fold.y_ring * v.sigma_m1()));
         let trace_rhs = d * *opening;
         if trace_lhs != trace_rhs {
             return Err(HachiError::InvalidProof);
@@ -215,43 +264,96 @@ where
         let quad_eq = QuadraticEquation::<F, { D }, Cfg>::new_verifier(
             setup,
             &ring_opening_point,
-            &proof.v,
+            &fold.v,
             transcript,
             commitment,
-            &proof.y_ring,
+            &fold.y_ring,
         )?;
 
-        // §4.3 Ring switch (verifier side)
-        let rs = ring_switch_verifier::<F, T, { D }, Cfg>(
+        // §4.3 Ring switch (verifier-side metadata only; hidden w is checked via Greyhound).
+        let rs = ring_switch_verifier_metadata::<F, T, { D }, Cfg>(
             &quad_eq,
-            &proof.sumcheck_aux.w,
-            &proof.w_commitment,
+            &fold.w_commitment,
             transcript,
         )?;
 
-        // Batched sumcheck verification: norm (F_0) + relation (F_α)
-        let norm_verifier = NormSumcheckVerifier::new(rs.tau0, rs.w_evals.clone(), rs.b);
-        let relation_verifier = RelationSumcheckVerifier::new(
-            rs.w_evals,
-            rs.alpha_evals_y,
-            rs.m_evals_x,
-            rs.tau1,
-            proof.v.clone(),
-            commitment.u.clone(),
-            proof.y_ring,
-            rs.alpha,
-            rs.num_u,
-            rs.num_l,
-        );
-
-        let verifiers: Vec<&dyn SumcheckInstanceVerifier<F>> =
-            vec![&norm_verifier, &relation_verifier];
-        verify_batched_sumcheck::<F, _, F, _>(
-            &proof.sumcheck_proof,
+        let relation_round_verifier = RelationRoundsVerifier {
+            tau: rs.tau1.clone(),
+            v: fold.v.clone(),
+            u: commitment.u.clone(),
+            y_ring: fold.y_ring,
+            alpha: rs.alpha,
+            num_u: rs.num_u,
+            num_l: rs.num_l,
+        };
+        let verifiers: Vec<&dyn SumcheckInstanceVerifier<F>> = vec![&relation_round_verifier];
+        let round_result = verify_batched_sumcheck_rounds::<F, _, F, _>(
+            &fold.sumcheck_proof,
             verifiers,
             transcript,
             |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
         )?;
+        let batching_coeff = round_result
+            .batching_coeffs
+            .first()
+            .copied()
+            .ok_or(HachiError::InvalidProof)?;
+        if round_result.r_sumcheck.len() != rs.num_u + rs.num_l {
+            return Err(HachiError::InvalidProof);
+        }
+        let (x_challenges, y_challenges) = round_result.r_sumcheck.split_at(rs.num_u);
+        let alpha_val = multilinear_eval(&rs.alpha_evals_y, y_challenges)?;
+        let m_val = multilinear_eval(&rs.m_evals_x, x_challenges)?;
+
+        let denom = batching_coeff * alpha_val * m_val;
+        let w_eval = if denom.is_zero() {
+            if round_result.output_claim.is_zero() {
+                F::zero()
+            } else {
+                return Err(HachiError::InvalidProof);
+            }
+        } else {
+            let denom_inv = denom.inv().ok_or(HachiError::InvalidProof)?;
+            round_result.output_claim * denom_inv
+        };
+
+        if labrador_enabled::<D>() {
+            let comkey_seed = &setup.expanded.seed.public_matrix_seed;
+            let backend_v = matrix_backend_from_id(setup.expanded.seed.public_matrix_prg_backend);
+            let gh_proof = &proof.greyhound_eval_proof;
+
+            absorb_greyhound_eval_context(
+                transcript,
+                &GreyhoundEvalTranscriptContext {
+                    m_rows: gh_proof.m_rows,
+                    n_cols: gh_proof.n_cols,
+                    inner_vars: gh_proof.inner_vars,
+                    eval_point_len: round_result.r_sumcheck.len(),
+                    prg_backend_id: backend_v as u8,
+                },
+            )?;
+            absorb_greyhound_eval_claim(transcript, &round_result.r_sumcheck, &w_eval);
+            absorb_greyhound_u2(transcript, &gh_proof.u2);
+            let fold_challenges: Vec<F> = (0..gh_proof.n_cols)
+                .map(|_| sample_greyhound_fold_challenge(transcript))
+                .collect();
+
+            let labrador_statement = greyhound_reduce(
+                gh_proof,
+                &fold.w_commitment.u,
+                &round_result.r_sumcheck,
+                w_eval,
+                &fold_challenges,
+                comkey_seed,
+                backend_v,
+            )?;
+            labrador::verify(
+                &labrador_statement,
+                &proof.labrador_proof,
+                backend_v,
+                transcript,
+            )?;
+        }
 
         Ok(())
     }
@@ -267,6 +369,77 @@ where
     fn protocol_name() -> &'static [u8] {
         unimplemented!()
     }
+}
+
+/// Relation-sumcheck verifier state used only for round replay.
+///
+/// The final `w_tilde(r)` check is performed externally via Greyhound, so this
+/// verifier intentionally does not implement `expected_output_claim`.
+struct RelationRoundsVerifier<F: FieldCore, const D: usize> {
+    tau: Vec<F>,
+    v: Vec<CyclotomicRing<F, D>>,
+    u: Vec<CyclotomicRing<F, D>>,
+    y_ring: CyclotomicRing<F, D>,
+    alpha: F,
+    num_u: usize,
+    num_l: usize,
+}
+
+impl<F: FieldCore, const D: usize> SumcheckInstanceVerifier<F> for RelationRoundsVerifier<F, D> {
+    fn num_rounds(&self) -> usize {
+        self.num_u + self.num_l
+    }
+
+    fn degree_bound(&self) -> usize {
+        2
+    }
+
+    fn input_claim(&self) -> F {
+        let y_a: Vec<F> = self
+            .v
+            .iter()
+            .chain(self.u.iter())
+            .chain(std::iter::once(&self.y_ring))
+            .map(|r| eval_ring_at(r, &self.alpha))
+            .collect();
+
+        let eq_tau = EqPolynomial::evals(&self.tau);
+        eq_tau.iter().enumerate().fold(F::zero(), |acc, (i, eq_i)| {
+            let y_i = if i < y_a.len() { y_a[i] } else { F::zero() };
+            acc + (*eq_i * y_i)
+        })
+    }
+
+    fn expected_output_claim(&self, _challenges: &[F]) -> Result<F, HachiError> {
+        Err(HachiError::InvalidInput(
+            "relation expected output is externalized to Greyhound".to_string(),
+        ))
+    }
+}
+
+/// Greyhound/Labrador is enabled only for production ring degrees (D >= 64).
+/// Test configs with small D skip the recursive proof layer.
+const fn labrador_enabled<const D: usize>() -> bool {
+    D >= 64
+}
+
+fn matrix_backend_from_id(id: MatrixPrgBackendId) -> MatrixPrgBackendChoice {
+    match id {
+        MatrixPrgBackendId::Shake256 => MatrixPrgBackendChoice::Shake256,
+        MatrixPrgBackendId::Aes128Ctr => MatrixPrgBackendChoice::Aes128Ctr,
+    }
+}
+
+fn derive_jl_seed(comkey_seed: &[u8; 32]) -> [u8; 16] {
+    use sha3::digest::{ExtendableOutput, Update, XofReader};
+    use sha3::Shake256;
+
+    let mut xof = Shake256::default();
+    xof.update(b"hachi/labrador/jl-seed");
+    xof.update(comkey_seed);
+    let mut out = [0u8; 16];
+    xof.finalize_xof().read(&mut out);
+    out
 }
 
 /// Per-block intermediate state for streaming Hachi commitment.
@@ -418,6 +591,7 @@ where
 /// by replaying the transcript from the proof data and setup, exactly as the
 /// verifier does.
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn rederive_alpha_and_m_a<F, const D: usize, Cfg>(
     proof: &HachiProof<F, D>,
     setup: &HachiVerifierSetup<F, D>,
@@ -428,6 +602,10 @@ where
     F: FieldCore + CanonicalField + FieldSampling + 'static,
     Cfg: CommitmentConfig,
 {
+    let fold = proof
+        .folds
+        .first()
+        .ok_or_else(|| HachiError::InvalidInput("missing Hachi fold".to_string()))?;
     let alpha_bits = Cfg::D.trailing_zeros() as usize;
     if opening_point.len() < alpha_bits {
         return Err(HachiError::InvalidSetup(
@@ -447,17 +625,17 @@ where
     for pt in opening_point {
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
     }
-    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &proof.y_ring);
+    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &fold.y_ring);
 
     let quad_eq = QuadraticEquation::<F, D, Cfg>::new_verifier(
         setup,
         &ring_opening_point,
-        &proof.v,
+        &fold.v,
         &mut transcript,
         commitment,
-        &proof.y_ring,
+        &fold.y_ring,
     )?;
-    transcript.append_serde(ABSORB_SUMCHECK_W, &proof.w_commitment);
+    transcript.append_serde(ABSORB_SUMCHECK_W, &fold.w_commitment);
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
     let m_a = eval_ring_matrix_at::<F, D>(quad_eq.m(), &alpha);
     let m_a_vec = expand_m_a::<F, D, Cfg>(&m_a, alpha)?;

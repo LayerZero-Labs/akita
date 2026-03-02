@@ -11,6 +11,7 @@
 
 use super::CyclotomicRing;
 use crate::{CanonicalField, FieldCore};
+use rand_core::RngCore;
 
 /// Configuration for sampling a sparse challenge.
 ///
@@ -160,5 +161,89 @@ impl SparseChallenge {
             acc = acc + (E::lift_base(coeff_f) * alpha_pows[pos as usize]);
         }
         Ok(acc)
+    }
+}
+
+/// Sample a dense ternary ring element with coefficients in `{-1, 0, 1}`.
+///
+/// Distribution matches Labrador C's ternary nibble LUT (`0xA815`), yielding
+/// probabilities `5/16, 6/16, 5/16` for `-1, 0, 1` respectively.
+pub fn sample_ternary<F: FieldCore + CanonicalField, R: RngCore, const D: usize>(
+    rng: &mut R,
+) -> CyclotomicRing<F, D> {
+    const LUT: u16 = 0xA815;
+    let mut coeffs = [F::zero(); D];
+    let mut i = 0usize;
+    while i < D {
+        let byte = (rng.next_u32() & 0xFF) as u8;
+        let lo = (((LUT >> (byte & 0x0F)) & 0x3) as i16) - 1;
+        coeffs[i] = F::from_i64(lo as i64);
+        i += 1;
+        if i < D {
+            let hi = (((LUT >> (byte >> 4)) & 0x3) as i16) - 1;
+            coeffs[i] = F::from_i64(hi as i64);
+            i += 1;
+        }
+    }
+    CyclotomicRing::from_coefficients(coeffs)
+}
+
+/// Sample a dense quaternary ring element with coefficients in `{-2, -1, 0, 1}`.
+///
+/// Coefficients are sampled uniformly from two-bit chunks and shifted by `-2`.
+pub fn sample_quaternary<F: FieldCore + CanonicalField, R: RngCore, const D: usize>(
+    rng: &mut R,
+) -> CyclotomicRing<F, D> {
+    let mut coeffs = [F::zero(); D];
+    let mut i = 0usize;
+    while i < D {
+        let bits = rng.next_u32();
+        for lane in 0..16 {
+            if i >= D {
+                break;
+            }
+            let val = (((bits >> (2 * lane)) & 0x3) as i16) - 2;
+            coeffs[i] = F::from_i64(val as i64);
+            i += 1;
+        }
+    }
+    CyclotomicRing::from_coefficients(coeffs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::algebra::fields::Fp64;
+    use rand::{rngs::StdRng, SeedableRng};
+
+    type F = Fp64<4294967197>;
+    const D: usize = 64;
+
+    fn centered(v: F) -> i64 {
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let c = v.to_canonical_u128();
+        if c > q / 2 {
+            -((q - c) as i64)
+        } else {
+            c as i64
+        }
+    }
+
+    #[test]
+    fn ternary_sampler_range() {
+        let mut rng = StdRng::seed_from_u64(123);
+        let sample = sample_ternary::<F, _, D>(&mut rng);
+        for &c in sample.coefficients().iter() {
+            assert!(matches!(centered(c), -1 | 0 | 1));
+        }
+    }
+
+    #[test]
+    fn quaternary_sampler_range() {
+        let mut rng = StdRng::seed_from_u64(456);
+        let sample = sample_quaternary::<F, _, D>(&mut rng);
+        for &c in sample.coefficients().iter() {
+            assert!(matches!(centered(c), -2 | -1 | 0 | 1));
+        }
     }
 }

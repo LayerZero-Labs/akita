@@ -7,7 +7,10 @@
 pub mod challenges;
 pub mod commitment;
 pub mod commitment_scheme;
+pub mod greyhound;
+pub mod labrador;
 pub mod opening_point;
+pub mod prg;
 pub mod proof;
 pub mod quadratic_equation;
 pub mod ring_switch;
@@ -23,9 +26,12 @@ pub use commitment::{
 };
 pub use commitment_scheme::{HachiChunkState, HachiCommitmentScheme};
 pub use opening_point::RingOpeningPoint;
-pub use proof::{HachiProof, SumcheckAux};
+pub use proof::{HachiFoldProof, HachiProof};
 pub use quadratic_equation::QuadraticEquation;
-pub use sumcheck::batched_sumcheck::{prove_batched_sumcheck, verify_batched_sumcheck};
+pub use sumcheck::batched_sumcheck::{
+    check_batched_output_claim, compute_batched_expected_output_claim, prove_batched_sumcheck,
+    verify_batched_sumcheck, verify_batched_sumcheck_rounds, BatchedSumcheckRoundResult,
+};
 pub use sumcheck::{
     prove_sumcheck, verify_sumcheck, CompressedUniPoly, SumcheckInstanceProver,
     SumcheckInstanceVerifier, SumcheckProof, UniPoly,

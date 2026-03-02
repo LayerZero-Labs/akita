@@ -260,114 +260,51 @@ impl<F: FieldCore, const D: usize> SumcheckInstanceVerifier<F> for RelationSumch
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Fp64;
-    use crate::primitives::multilinear_evals::DenseMultilinearEvals;
-    use crate::protocol::commitment_scheme::rederive_alpha_and_m_a;
-    use crate::protocol::sumcheck::eq_poly::EqPolynomial;
+    use crate::algebra::{ring::CyclotomicRing, Fp64};
     use crate::protocol::transcript::labels;
-    use crate::protocol::{
-        prove_sumcheck, verify_sumcheck, Blake2bTranscript, CommitmentConfig, CommitmentScheme,
-        HachiCommitmentScheme, SmallTestCommitmentConfig, Transcript,
-    };
+    use crate::protocol::{prove_sumcheck, verify_sumcheck, Blake2bTranscript, Transcript};
     use crate::{FieldCore, FromSmallInt};
 
     type F = Fp64<4294967197>;
-    type Cfg = SmallTestCommitmentConfig;
-    type Scheme = HachiCommitmentScheme<{ Cfg::D }, Cfg>;
+    const D: usize = 64;
 
     #[test]
-    fn relation_sumcheck_uses_prove_w_evals() {
-        let alpha_bits = SmallTestCommitmentConfig::D.trailing_zeros() as usize;
-        let layout = SmallTestCommitmentConfig::commitment_layout(8).unwrap();
-        let num_vars = layout.m_vars + layout.r_vars + alpha_bits;
-        let len = 1usize << num_vars;
-        let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
-        let poly = DenseMultilinearEvals::new_padded(evals);
-
-        let setup = Scheme::setup_prover(num_vars);
-        let (commitment, hint) = Scheme::commit(&poly, &setup).unwrap();
-
-        let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
-        let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        let proof = Scheme::prove(
-            &setup,
-            &poly,
-            &opening_point,
-            Some(hint),
-            &mut prover_transcript,
-            &commitment,
-        )
-        .unwrap();
-
-        let (alpha, m_a_vec) = rederive_alpha_and_m_a::<F, { Cfg::D }, Cfg>(
-            &proof,
-            &Scheme::setup_verifier(&setup),
-            &opening_point,
-            &commitment,
-        )
-        .unwrap();
-
-        let d = SmallTestCommitmentConfig::D;
-        assert_eq!(proof.sumcheck_aux.w.len() % d, 0);
-        let w_u = proof.sumcheck_aux.w.len() / d;
-        let rows = SmallTestCommitmentConfig::N_D
-            + SmallTestCommitmentConfig::N_B
-            + 1
-            + 1
-            + SmallTestCommitmentConfig::N_A;
-        assert!(rows > 0);
-        assert_eq!(m_a_vec.len() % rows, 0);
-        let cols = m_a_vec.len() / rows;
-        assert_eq!(w_u, cols);
-
-        let num_u = cols.next_power_of_two().trailing_zeros() as usize;
-        let num_l = alpha_bits;
-        let n = 1usize << (num_u + num_l);
-
-        let mut w_evals = vec![F::zero(); n];
-        let y_len = 1usize << num_l;
+    fn relation_sumcheck_roundtrip() {
+        let num_u = 2;
+        let num_l = 2;
         let x_len = 1usize << num_u;
-        for x in 0..x_len {
-            for y in 0..y_len {
-                let src = y + (x << num_l);
-                if src < proof.sumcheck_aux.w.len() {
-                    let dst = x + (y << num_u);
-                    w_evals[dst] = proof.sumcheck_aux.w[src];
-                }
-            }
-        }
-
-        let num_i = rows.next_power_of_two().trailing_zeros() as usize;
-        let tau1: Vec<F> = (0..num_i).map(|i| F::from_u64((i + 5) as u64)).collect();
-        let eq_tau1 = EqPolynomial::evals(&tau1);
-
-        let mut m_evals_x = vec![F::zero(); x_len];
-        for x in 0..x_len {
-            let mut acc = F::zero();
-            for i in 0..(1usize << num_i) {
-                let row_val = if i < rows && x < cols {
-                    m_a_vec[i * cols + x]
-                } else {
-                    F::zero()
-                };
-                acc = acc + eq_tau1[i] * row_val;
-            }
-            m_evals_x[x] = acc;
-        }
-
+        let y_len = 1usize << num_l;
+        let n = 1usize << (num_u + num_l);
+        let w_evals: Vec<F> = (0..n).map(|i| F::from_i64((i as i64 % 11) - 5)).collect();
+        let alpha = F::from_u64(7);
         let mut alpha_evals_y = vec![F::zero(); y_len];
         let mut power = F::one();
         for val in alpha_evals_y.iter_mut() {
             *val = power;
             power = power * alpha;
         }
+        let m_evals_x: Vec<F> = (0..x_len).map(|i| F::from_u64((i + 3) as u64)).collect();
+        let claim: F = (0..n)
+            .map(|idx| {
+                let x = idx & (x_len - 1);
+                let y = idx >> num_u;
+                w_evals[idx] * alpha_evals_y[y] * m_evals_x[x]
+            })
+            .fold(F::zero(), |acc, v| acc + v);
+        let tau1: Vec<F> = Vec::new();
 
-        let x_mask = x_len - 1;
-        let alpha_full: Vec<F> = (0..n).map(|idx| alpha_evals_y[idx >> num_u]).collect();
-        let m_full: Vec<F> = (0..n).map(|idx| m_evals_x[idx & x_mask]).collect();
-        let _claim: F = (0..n)
-            .map(|i| w_evals[i] * alpha_full[i] * m_full[i])
-            .fold(F::zero(), |a, v| a + v);
+        let const_ring = |c: F| {
+            CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|j| {
+                if j == 0 {
+                    c
+                } else {
+                    F::zero()
+                }
+            }))
+        };
+        let v = vec![const_ring(claim)];
+        let u = Vec::new();
+        let y_ring = const_ring(F::zero());
 
         let mut prover =
             RelationSumcheckProver::new(w_evals.clone(), &alpha_evals_y, &m_evals_x, num_u, num_l);
@@ -389,9 +326,9 @@ mod tests {
             alpha_evals_y,
             m_evals_x,
             tau1,
-            proof.v.clone(),
-            commitment.u.clone(),
-            proof.y_ring,
+            v,
+            u,
+            y_ring,
             alpha,
             num_u,
             num_l,
