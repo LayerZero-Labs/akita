@@ -266,7 +266,8 @@ pub(crate) fn mat_vec_mul_ntt_many_cached<F: FieldCore + CanonicalField, const D
     Ok(out)
 }
 
-pub(crate) fn decompose_block<F: FieldCore + CanonicalField, const D: usize>(
+/// Basis-decompose a block of ring elements into `block.len() * delta` gadget components.
+pub fn decompose_block<F: FieldCore + CanonicalField, const D: usize>(
     block: &[CyclotomicRing<F, D>],
     delta: usize,
     log_basis: u32,

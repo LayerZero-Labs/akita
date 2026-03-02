@@ -12,14 +12,13 @@ pub(crate) type BatchCommitOutput<C, H> = Result<Vec<(C, H)>, HachiError>;
 
 /// Witness data produced alongside a ring-native commitment.
 ///
-/// Contains the commitment itself plus the decomposed witness vectors `s`
-/// (basis-decomposed input) and `t_hat` (basis-decomposed inner Ajtai output)
-/// from the two-layer Ajtai construction (§4.1).
+/// Contains the commitment itself plus `t_hat` (basis-decomposed inner Ajtai
+/// output) from the two-layer Ajtai construction (§4.1). The decomposed input
+/// vectors `s` are NOT stored; they are recomputed from `ring_coeffs` during
+/// proving to avoid multi-GB memory usage at production parameters.
 pub struct CommitWitness<C, F: FieldCore, const D: usize> {
     /// The ring commitment (outer Ajtai output `u = B · t̂`).
     pub commitment: C,
-    /// Per-block basis-decomposed input vectors.
-    pub s: Vec<Vec<CyclotomicRing<F, D>>>,
     /// Per-block basis-decomposed inner Ajtai output vectors.
     pub t_hat: Vec<Vec<CyclotomicRing<F, D>>>,
 }

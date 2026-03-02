@@ -84,7 +84,6 @@ where
             setup,
         )?;
         let hint = HachiCommitmentHint {
-            s: w.s,
             t_hat: w.t_hat,
             ring_coeffs,
         };
@@ -316,7 +315,6 @@ where
     )?;
 
     let hint = HachiCommitmentHint {
-        s: w.s,
         t_hat: w.t_hat,
         ring_coeffs,
     };
@@ -450,7 +448,6 @@ where
         )
         .expect("outer Ajtai");
 
-        let s_all: Vec<Vec<CyclotomicRing<F, D>>> = chunks.iter().map(|c| c.s_i.clone()).collect();
         let t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> =
             chunks.iter().map(|c| c.t_hat_i.clone()).collect();
         let ring_coeffs: Vec<CyclotomicRing<F, D>> = chunks
@@ -460,7 +457,6 @@ where
 
         let commitment = RingCommitment { u };
         let hint = HachiCommitmentHint {
-            s: s_all,
             t_hat: t_hat_all,
             ring_coeffs,
         };

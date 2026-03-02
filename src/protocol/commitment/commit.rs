@@ -8,10 +8,7 @@ use super::onehot::{inner_ajtai_onehot, map_onehot_to_sparse_blocks, SparseBlock
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
 use super::utils::crt_ntt::{build_ntt_cache, NttMatrixCache};
-use super::utils::linear::{
-    decompose_block, decompose_rows, mat_vec_mul_ntt_cached, mat_vec_mul_ntt_many_cached,
-    MatrixSlot,
-};
+use super::utils::linear::{decompose_block, decompose_rows, mat_vec_mul_ntt_cached, MatrixSlot};
 use super::utils::matrix::{derive_public_matrix, sample_public_matrix_seed, PublicMatrixSeed};
 use super::CommitmentConfig;
 use crate::algebra::ring::CyclotomicRing;
@@ -334,15 +331,11 @@ where
         ensure_matrix_shape(&setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
         ensure_matrix_shape(&setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
 
-        let s_all: Vec<Vec<CyclotomicRing<F, D>>> = f_blocks
-            .iter()
-            .map(|block| decompose_block(block, Cfg::DELTA, Cfg::LOG_BASIS))
-            .collect();
-
-        let t_all = mat_vec_mul_ntt_many_cached(setup.ntt_cache()?, MatrixSlot::A, &s_all)?;
         let mut t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(layout.num_blocks);
         let mut t_hat_flat: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(layout.outer_width);
-        for t_i in t_all {
+        for block in f_blocks {
+            let s_i = decompose_block(block, Cfg::DELTA, Cfg::LOG_BASIS);
+            let t_i = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::A, &s_i)?;
             let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
             t_hat_flat.extend(t_hat_i.iter().copied());
             t_hat_all.push(t_hat_i);
@@ -351,7 +344,6 @@ where
         let u = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::B, &t_hat_flat)?;
         Ok(CommitWitness {
             commitment: RingCommitment { u },
-            s: s_all,
             t_hat: t_hat_all,
         })
     }
@@ -373,19 +365,15 @@ where
             });
         }
 
-        let inner_width = layout.inner_width;
-        let zero_s = vec![CyclotomicRing::<F, D>::zero(); inner_width];
         let zero_t_hat =
             vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(Cfg::DELTA).unwrap()];
 
-        let mut s_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(num_blocks);
         let mut t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(num_blocks);
         let mut t_hat_flat: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(layout.outer_width);
 
         for i in 0..num_blocks {
             let start = i * block_len;
             if start >= f_coeffs.len() {
-                s_all.push(zero_s.clone());
                 t_hat_flat.extend(zero_t_hat.iter().copied());
                 t_hat_all.push(zero_t_hat.clone());
             } else {
@@ -395,7 +383,6 @@ where
                 let t_i = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::A, &s_i)?;
                 let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
                 t_hat_flat.extend(t_hat_i.iter().copied());
-                s_all.push(s_i);
                 t_hat_all.push(t_hat_i);
             }
         }
@@ -403,7 +390,6 @@ where
         let u = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::B, &t_hat_flat)?;
         Ok(CommitWitness {
             commitment: RingCommitment { u },
-            s: s_all,
             t_hat: t_hat_all,
         })
     }
@@ -424,22 +410,18 @@ where
         let sparse_blocks =
             map_onehot_to_sparse_blocks(onehot_k, indices, layout.r_vars, layout.m_vars, D)?;
 
-        let mut s_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(layout.num_blocks);
         let mut t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(layout.num_blocks);
         let mut t_hat_flat: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(layout.outer_width);
 
-        let inner_width = layout.inner_width;
-        let zero_s = vec![CyclotomicRing::<F, D>::zero(); inner_width];
         let zero_t_hat =
             vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(Cfg::DELTA).unwrap()];
 
         for block_entries in &sparse_blocks {
             if block_entries.is_empty() {
-                s_all.push(zero_s.clone());
                 t_hat_flat.extend(zero_t_hat.iter().copied());
                 t_hat_all.push(zero_t_hat.clone());
             } else {
-                let (t_i, s_i) = inner_ajtai_onehot(
+                let (t_i, _s_i) = inner_ajtai_onehot(
                     &setup.expanded.A,
                     block_entries,
                     layout.block_len,
@@ -447,7 +429,6 @@ where
                 );
                 let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
                 t_hat_flat.extend(t_hat_i.iter().copied());
-                s_all.push(s_i);
                 t_hat_all.push(t_hat_i);
             }
         }
@@ -455,9 +436,69 @@ where
         let u = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::B, &t_hat_flat)?;
         Ok(CommitWitness {
             commitment: RingCommitment { u },
-            s: s_all,
             t_hat: t_hat_all,
         })
+    }
+}
+
+impl HachiCommitmentCore {
+    /// Create a setup with a caller-specified layout, bypassing
+    /// `CommitmentConfig::commitment_layout`.
+    ///
+    /// Use this when the desired `(m_vars, r_vars)` split differs from what
+    /// the config's heuristic would choose (e.g. mega-polynomial commitments
+    /// where each sub-polynomial occupies one block).
+    ///
+    /// # Errors
+    ///
+    /// Returns `HachiError` on invalid layout or matrix generation failures.
+    #[allow(non_snake_case)]
+    pub fn setup_with_layout<F, const D: usize, Cfg>(
+        layout: HachiCommitmentLayout,
+    ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F, D>), HachiError>
+    where
+        F: FieldCore + CanonicalField + FieldSampling,
+        Cfg: CommitmentConfig,
+    {
+        crate::ensure_large_thread_stack();
+        let max_num_vars = layout.required_num_vars::<D>()?;
+        let public_matrix_seed = sample_public_matrix_seed();
+        let a_matrix =
+            derive_public_matrix::<F, D>(Cfg::N_A, layout.inner_width, &public_matrix_seed, b"A");
+        let b_matrix =
+            derive_public_matrix::<F, D>(Cfg::N_B, layout.outer_width, &public_matrix_seed, b"B");
+        let d_matrix = derive_public_matrix::<F, D>(
+            Cfg::N_D,
+            layout.d_matrix_width,
+            &public_matrix_seed,
+            b"D",
+        );
+
+        let ntt_cache = build_ntt_cache::<F, D>(&a_matrix, &b_matrix, &d_matrix)?;
+        let expanded = HachiExpandedSetup {
+            seed: HachiSetupSeed {
+                max_num_vars,
+                layout,
+                public_matrix_seed,
+            },
+            A: a_matrix,
+            B: b_matrix,
+            D: d_matrix,
+        };
+        let prover_setup = HachiProverSetup {
+            expanded: expanded.clone(),
+            prepared: Some(HachiPreparedSetup { ntt_cache }),
+        };
+        let verifier_setup = HachiVerifierSetup { expanded };
+        ensure_matrix_shape(&prover_setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
+        ensure_matrix_shape(&prover_setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
+        ensure_matrix_shape(
+            &prover_setup.expanded.D,
+            Cfg::N_D,
+            layout.d_matrix_width,
+            "D",
+        )?;
+        Ok((prover_setup, verifier_setup))
     }
 }
 
@@ -511,19 +552,15 @@ impl HachiCommitmentCore {
         ensure_matrix_shape(&setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
         ensure_matrix_shape(&setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
 
-        let inner_width = layout.inner_width;
-        let zero_s = vec![CyclotomicRing::<F, D>::zero(); inner_width];
         let zero_t_hat =
             vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(Cfg::DELTA).unwrap()];
 
-        let mut s_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(layout.num_blocks);
         let mut t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(layout.num_blocks);
         let mut t_hat_flat: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(layout.outer_width);
 
         for block in blocks {
             match block {
                 MegaPolyBlock::Zero => {
-                    s_all.push(zero_s.clone());
                     t_hat_flat.extend(zero_t_hat.iter().copied());
                     t_hat_all.push(zero_t_hat.clone());
                 }
@@ -532,16 +569,14 @@ impl HachiCommitmentCore {
                     let t_i = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::A, &s_i)?;
                     let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
                     t_hat_flat.extend(t_hat_i.iter().copied());
-                    s_all.push(s_i);
                     t_hat_all.push(t_hat_i);
                 }
                 MegaPolyBlock::OneHot(sparse_entries) => {
                     if sparse_entries.is_empty() {
-                        s_all.push(zero_s.clone());
                         t_hat_flat.extend(zero_t_hat.iter().copied());
                         t_hat_all.push(zero_t_hat.clone());
                     } else {
-                        let (t_i, s_i) = inner_ajtai_onehot(
+                        let (t_i, _s_i) = inner_ajtai_onehot(
                             &setup.expanded.A,
                             sparse_entries,
                             layout.block_len,
@@ -549,7 +584,6 @@ impl HachiCommitmentCore {
                         );
                         let t_hat_i = decompose_rows(&t_i, Cfg::DELTA, Cfg::LOG_BASIS);
                         t_hat_flat.extend(t_hat_i.iter().copied());
-                        s_all.push(s_i);
                         t_hat_all.push(t_hat_i);
                     }
                 }
@@ -559,7 +593,6 @@ impl HachiCommitmentCore {
         let u = mat_vec_mul_ntt_cached(setup.ntt_cache()?, MatrixSlot::B, &t_hat_flat)?;
         Ok(CommitWitness {
             commitment: RingCommitment { u },
-            s: s_all,
             t_hat: t_hat_all,
         })
     }

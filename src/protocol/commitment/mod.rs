@@ -6,7 +6,7 @@ pub mod onehot;
 mod scheme;
 mod transcript_append;
 mod types;
-pub(crate) mod utils;
+pub mod utils;
 
 pub use commit::{
     HachiCommitmentCore, HachiExpandedSetup, HachiPreparedSetup, HachiProverSetup, HachiSetupSeed,

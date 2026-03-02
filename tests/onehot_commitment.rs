@@ -53,10 +53,6 @@ fn assert_onehot_matches_dense(onehot_k: usize, indices: &[usize]) {
         "commitments must match"
     );
     assert_eq!(
-        w_sparse.s, w_dense.s,
-        "s_all (decomposed witness) must match"
-    );
-    assert_eq!(
         w_sparse.t_hat, w_dense.t_hat,
         "t_hat_all (decomposed inner output) must match"
     );

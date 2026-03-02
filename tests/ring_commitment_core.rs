@@ -83,18 +83,11 @@ fn commit_is_deterministic_and_shape_consistent() {
     .unwrap();
 
     assert_eq!(w1.commitment, w2.commitment);
-    assert_eq!(w1.s, w2.s);
     assert_eq!(w1.t_hat, w2.t_hat);
 
     let num_blocks = hachi_pcs::test_utils::NUM_BLOCKS;
-    let block_len = hachi_pcs::test_utils::BLOCK_LEN;
     assert_eq!(w1.commitment.u.len(), TinyConfig::N_B);
-    assert_eq!(w1.s.len(), num_blocks);
     assert_eq!(w1.t_hat.len(), num_blocks);
-    assert!(w1
-        .s
-        .iter()
-        .all(|s| s.len() == block_len * TinyConfig::DELTA));
     assert!(w1
         .t_hat
         .iter()
@@ -124,7 +117,6 @@ fn commit_ring_coeffs_matches_block_commitment() {
     .unwrap();
 
     assert_eq!(wb.commitment, wc.commitment);
-    assert_eq!(wb.s, wc.s);
     assert_eq!(wb.t_hat, wc.t_hat);
 }
 
@@ -138,8 +130,13 @@ fn opening_satisfies_inner_and_outer_equations() {
     )
     .unwrap();
 
-    for i in 0..w.s.len() {
-        let lhs = mat_vec_mul(&psetup.expanded.A, &w.s[i]);
+    for (i, block) in blocks.iter().enumerate() {
+        let s_i = hachi_pcs::protocol::commitment::utils::linear::decompose_block(
+            block,
+            TinyConfig::DELTA,
+            TinyConfig::LOG_BASIS,
+        );
+        let lhs = mat_vec_mul(&psetup.expanded.A, &s_i);
         let rhs: Vec<CyclotomicRing<F, D>> = (0..TinyConfig::N_A)
             .map(|j| {
                 let start = j * TinyConfig::DELTA;

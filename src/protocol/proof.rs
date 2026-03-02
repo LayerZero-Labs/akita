@@ -9,10 +9,13 @@ use crate::{FieldCore, HachiDeserialize, HachiSerialize};
 use std::io::{Read, Write};
 
 /// Prover-side hint produced at commitment time.
+///
+/// Stores the ring-level coefficients and the decomposed inner-Ajtai outputs
+/// `t̂_i`. The basis-decomposed inputs `s_i` are NOT stored; they are
+/// recomputed from `ring_coeffs` during proving to avoid multi-GB memory
+/// usage at production parameters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiCommitmentHint<F: FieldCore, const D: usize> {
-    /// Decomposed `s_i` blocks from the commitment phase.
-    pub s: Vec<Vec<CyclotomicRing<F, D>>>,
     /// Decomposed `t̂_i` blocks from the commitment phase.
     pub t_hat: Vec<Vec<CyclotomicRing<F, D>>>,
     /// Ring coefficients from the §3.1 reduction (evaluation table).
@@ -94,14 +97,11 @@ impl<F: FieldCore, const D: usize> HachiSerialize for HachiCommitmentHint<F, D> 
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.s.serialize_with_mode(&mut writer, compress)?;
         self.t_hat.serialize_with_mode(&mut writer, compress)?;
         self.ring_coeffs.serialize_with_mode(&mut writer, compress)
     }
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.s.serialized_size(compress)
-            + self.t_hat.serialized_size(compress)
-            + self.ring_coeffs.serialized_size(compress)
+        self.t_hat.serialized_size(compress) + self.ring_coeffs.serialized_size(compress)
     }
 }
 
@@ -118,7 +118,6 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiCommitmentH
         validate: Validate,
     ) -> Result<Self, SerializationError> {
         Ok(Self {
-            s: Vec::deserialize_with_mode(&mut reader, compress, validate)?,
             t_hat: Vec::deserialize_with_mode(&mut reader, compress, validate)?,
             ring_coeffs: Vec::deserialize_with_mode(&mut reader, compress, validate)?,
         })
