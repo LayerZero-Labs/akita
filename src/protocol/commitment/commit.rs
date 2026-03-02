@@ -275,6 +275,7 @@ where
     type Commitment = RingCommitment<F, D>;
 
     fn setup(max_num_vars: usize) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError> {
+        crate::ensure_large_thread_stack();
         let layout = validate_and_derive_layout::<Cfg, D>(max_num_vars)?;
         ensure_supported_num_vars(max_num_vars, layout.required_num_vars::<D>()?)?;
         let public_matrix_seed = sample_public_matrix_seed();

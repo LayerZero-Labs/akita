@@ -61,3 +61,23 @@ pub use primitives::arithmetic::{
 pub use primitives::poly::{MultilinearLagrange, Polynomial};
 pub use primitives::serialization::{HachiDeserialize, HachiSerialize};
 pub use protocol::{CommitmentScheme, StreamingCommitmentScheme, Transcript};
+
+/// Minimum rayon thread stack size for large ring degrees (D >= 512).
+///
+/// CRT-NTT conversion puts `[[MontCoeff; D]; K]` on the stack per ring element,
+/// which at D=512, K=5 is ~20 KB per frame. Rayon's default thread stack is
+/// too small for the call depth commit → decompose → mat-vec → NTT.
+const MIN_THREAD_STACK: usize = 64 * 1024 * 1024;
+
+/// Install the global rayon thread pool with a stack large enough for D=512+.
+///
+/// Safe to call multiple times — only the first call configures the pool.
+/// Subsequent calls are silently ignored.
+pub fn ensure_large_thread_stack() {
+    #[cfg(feature = "parallel")]
+    {
+        let _ = rayon::ThreadPoolBuilder::new()
+            .stack_size(MIN_THREAD_STACK)
+            .build_global();
+    }
+}
