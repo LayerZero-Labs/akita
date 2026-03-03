@@ -176,6 +176,78 @@ pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
     }
 }
 
+/// Forward cyclic NTT (Gentleman-Sande DIF, **no** negacyclic twist).
+///
+/// Evaluates a polynomial at the D-th roots of *unity* (roots of X^D - 1)
+/// rather than X^D + 1. Used with `inverse_ntt_cyclic` to compute unreduced
+/// polynomial products via CRT over (X^D - 1)(X^D + 1).
+pub fn forward_ntt_cyclic<W: PrimeWidth, const D: usize>(
+    a: &mut [MontCoeff<W>; D],
+    prime: NttPrime<W>,
+    tw: &NttTwiddles<W, D>,
+) {
+    let one = prime.from_canonical(W::from_i64(1));
+    let mut len = D / 2;
+    let mut stage = tw.num_stages;
+    while len > 0 {
+        stage -= 1;
+        let wlen = tw.fwd_wlen[stage];
+        let mut start = 0usize;
+        while start < D {
+            let mut w = one;
+            for j in 0..len {
+                let u = a[start + j];
+                let v = a[start + j + len];
+                let sum = u.raw().wrapping_add(v.raw());
+                let diff = u.raw().wrapping_sub(v.raw());
+                a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
+                a[start + j + len] = prime.mul(MontCoeff::from_raw(diff), w);
+                w = prime.mul(w, wlen);
+            }
+            start += 2 * len;
+        }
+        len /= 2;
+    }
+    prime.reduce_range_in_place(a);
+}
+
+/// Inverse cyclic NTT (Cooley-Tukey DIT, **no** negacyclic untwist).
+///
+/// Recovers coefficients of a polynomial from evaluations at D-th roots of unity.
+/// Includes the `D^{-1}` scaling factor.
+pub fn inverse_ntt_cyclic<W: PrimeWidth, const D: usize>(
+    a: &mut [MontCoeff<W>; D],
+    prime: NttPrime<W>,
+    tw: &NttTwiddles<W, D>,
+) {
+    let one = prime.from_canonical(W::from_i64(1));
+    let mut len = 1usize;
+    let mut stage = 0usize;
+    while len < D {
+        let wlen = tw.inv_wlen[stage];
+        let mut start = 0usize;
+        while start < D {
+            let mut w = one;
+            for j in 0..len {
+                let u = a[start + j];
+                let v = prime.mul(a[start + j + len], w);
+                let sum = u.raw().wrapping_add(v.raw());
+                let diff = u.raw().wrapping_sub(v.raw());
+                a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
+                a[start + j + len] = prime.reduce_range(MontCoeff::from_raw(diff));
+                w = prime.mul(w, wlen);
+            }
+            start += 2 * len;
+        }
+        len *= 2;
+        stage += 1;
+    }
+
+    for c in a.iter_mut() {
+        *c = prime.mul(*c, tw.d_inv);
+    }
+}
+
 /// Find a primitive `2D`-th root of unity mod `p`.
 fn find_primitive_root_2d(p: i64, d: usize) -> i64 {
     let half = (p - 1) / 2;

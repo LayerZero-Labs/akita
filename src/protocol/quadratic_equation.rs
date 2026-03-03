@@ -5,9 +5,13 @@
 
 use crate::algebra::{CyclotomicRing, SparseChallenge, SparseChallengeConfig};
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttMatrixCache;
-use crate::protocol::commitment::utils::linear::{mat_vec_mul_ntt_cached, MatrixSlot};
+use crate::protocol::commitment::utils::linear::{
+    mat_vec_mul_ntt_cached, unreduced_quotient_rows_ntt_cached, MatrixSlot,
+};
 use crate::protocol::commitment::utils::norm::{detect_field_modulus, vec_inf_norm};
 use crate::protocol::commitment::{
     CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiProverSetup,
@@ -19,9 +23,10 @@ use crate::protocol::proof::HachiCommitmentHint;
 use crate::protocol::ring_switch::eval_ring_at;
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use crate::protocol::transcript::Transcript;
-use crate::{CanonicalField, FieldCore};
+use crate::{cfg_iter, CanonicalField, FieldCore};
 use std::iter::repeat_n;
 use std::marker::PhantomData;
+use std::time::Instant;
 
 /// **Steps 1–3.** Compute `w_i = a^T G_{2^m} s_i` and decompose: `ŵ_i = G_1^{-1}(w_i)`.
 ///
@@ -140,6 +145,7 @@ where
     ///
     /// Returns an error if the norm check, challenge sampling, or matrix
     /// generation fails.
+    #[tracing::instrument(skip_all, name = "QuadraticEquation::new_prover")]
     pub fn new_prover<T: Transcript<F>, P: HachiPolyOps<F, D>>(
         setup: &HachiProverSetup<F, D>,
         ring_opening_point: RingOpeningPoint<F>,
@@ -150,9 +156,31 @@ where
         y_ring: &CyclotomicRing<F, D>,
     ) -> Result<Self, HachiError> {
         let layout = setup.layout();
-        let w_hat = compute_w_hat::<F, D, P>(&ring_opening_point, poly, layout);
-        let w_hat_flat = flatten_w_hat(&w_hat);
-        let v = compute_v(setup.ntt_cache()?, &w_hat_flat)?;
+
+        let t_wh = Instant::now();
+        let (w_hat, w_hat_flat) = {
+            let _span = tracing::info_span!("compute_w_hat").entered();
+            let w_hat = compute_w_hat::<F, D, P>(&ring_opening_point, poly, layout);
+            let w_hat_flat = flatten_w_hat(&w_hat);
+            (w_hat, w_hat_flat)
+        };
+        eprintln!(
+            "    [quad_eq] compute_w_hat+flatten: {:.2}s (blocks={}, depth={})",
+            t_wh.elapsed().as_secs_f64(),
+            w_hat.len(),
+            w_hat.first().map_or(0, |v| v.len())
+        );
+
+        let t_v = Instant::now();
+        let v = {
+            let _span = tracing::info_span!("compute_v").entered();
+            compute_v(setup.ntt_cache()?, &w_hat_flat)?
+        };
+        eprintln!(
+            "    [quad_eq] compute_v (D*w_hat): {:.2}s (w_hat_flat_len={})",
+            t_v.elapsed().as_secs_f64(),
+            w_hat_flat.len()
+        );
 
         transcript.append_serde(ABSORB_PROVER_V, &v);
 
@@ -167,7 +195,16 @@ where
             &challenge_cfg,
         )?;
 
-        let z_pre = compute_z_pre::<F, D, Cfg, P>(poly, &challenges, layout)?;
+        let t_zp = Instant::now();
+        let z_pre = {
+            let _span = tracing::info_span!("compute_z_pre").entered();
+            compute_z_pre::<F, D, Cfg, P>(poly, &challenges, layout)?
+        };
+        eprintln!(
+            "    [quad_eq] compute_z_pre: {:.2}s (z_pre_len={})",
+            t_zp.elapsed().as_secs_f64(),
+            z_pre.len()
+        );
 
         let y = generate_y::<F, D>(&v, &commitment.u, y_ring, Cfg::N_D, Cfg::N_B, Cfg::N_A)?;
 
@@ -189,6 +226,7 @@ where
     /// # Errors
     ///
     /// Returns an error if challenge derivation fails.
+    #[tracing::instrument(skip_all, name = "QuadraticEquation::new_verifier")]
     pub fn new_verifier<T: Transcript<F>>(
         setup: &HachiVerifierSetup<F, D>,
         ring_opening_point: RingOpeningPoint<F>,
@@ -389,6 +427,7 @@ fn add_sparse_ring_product<F: FieldCore + CanonicalField, const D: usize>(
 /// Computes `r` such that `M·z = y + (X^D+1)·r` without materializing M or z.
 /// Uses split-eq factoring: `kron(left, gadget) · decomposed = left · pre_decomp`.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "compute_r_split_eq")]
 pub(crate) fn compute_r_split_eq<F, const D: usize, Cfg>(
     setup: &HachiExpandedSetup<F, D>,
     opening_point: &RingOpeningPoint<F>,
@@ -398,6 +437,7 @@ pub(crate) fn compute_r_split_eq<F, const D: usize, Cfg>(
     t_hat: &[Vec<CyclotomicRing<F, D>>],
     z_pre: &[CyclotomicRing<F, D>],
     y: &[CyclotomicRing<F, D>],
+    ntt_cache: &NttMatrixCache<D>,
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
 where
     F: FieldCore + CanonicalField,
@@ -412,75 +452,100 @@ where
     let t_hat_flat: Vec<CyclotomicRing<F, D>> =
         t_hat.iter().flat_map(|v| v.iter().copied()).collect();
 
-    let w_recomps: Vec<CyclotomicRing<F, D>> = w_hat
-        .iter()
-        .map(|w_hat_i| CyclotomicRing::gadget_recompose_pow2(w_hat_i, log_basis))
-        .collect();
+    let w_recomps: Vec<CyclotomicRing<F, D>> = {
+        let _span = tracing::info_span!("w_hat_recompose").entered();
+        w_hat
+            .iter()
+            .map(|w_hat_i| CyclotomicRing::gadget_recompose_pow2(w_hat_i, log_basis))
+            .collect()
+    };
+
+    // NTT-accelerated D and B rows: compute quotient = (cyc - neg) / 2
+    let t_d = Instant::now();
+    let d_quotients = {
+        let _span = tracing::info_span!("D_rows_ntt").entered();
+        unreduced_quotient_rows_ntt_cached(ntt_cache, MatrixSlot::D, &setup.D, w_hat_flat)
+    };
+    let d_time = t_d.elapsed().as_secs_f64();
+
+    let t_b = Instant::now();
+    let b_quotients = {
+        let _span = tracing::info_span!("B_rows_ntt").entered();
+        unreduced_quotient_rows_ntt_cached(ntt_cache, MatrixSlot::B, &setup.B, &t_hat_flat)
+    };
+    let b_time = t_b.elapsed().as_secs_f64();
 
     let mut result = Vec::with_capacity(num_rows);
+    let mut other_time = 0.0f64;
 
-    for (row_idx, y_i) in y.iter().enumerate().take(num_rows) {
-        let mut poly = vec![F::zero(); poly_len];
-
+    for (row_idx, _y_i) in y.iter().enumerate().take(num_rows) {
         if row_idx < Cfg::N_D {
-            let d_row = &setup.D[row_idx];
-            for (m_ij, z_j) in d_row.iter().zip(w_hat_flat.iter()) {
-                add_unreduced_product(&mut poly, m_ij, z_j);
-            }
+            result.push(d_quotients[row_idx]);
         } else if row_idx < Cfg::N_D + Cfg::N_B {
-            let b_row = &setup.B[row_idx - Cfg::N_D];
-            for (m_ij, z_j) in b_row.iter().zip(t_hat_flat.iter()) {
-                add_unreduced_product(&mut poly, m_ij, z_j);
-            }
-        } else if row_idx == Cfg::N_D + Cfg::N_B {
-            for (i, w_recomp) in w_recomps.iter().enumerate() {
-                add_scalar_ring_product(&mut poly, &opening_point.b[i], w_recomp);
-            }
-        } else if row_idx == Cfg::N_D + Cfg::N_B + 1 {
-            for (i, w_recomp) in w_recomps.iter().enumerate() {
-                add_sparse_ring_product(&mut poly, &challenges[i], w_recomp);
-            }
-            let block_len = opening_point.a.len();
-            for i in 0..block_len {
-                let start = i * decomp_commit;
-                let end = start + decomp_commit;
-                if end <= z_pre.len() {
-                    let z_pre_recomp =
-                        CyclotomicRing::gadget_recompose_pow2(&z_pre[start..end], log_basis);
-                    sub_scalar_ring_product(&mut poly, &opening_point.a[i], &z_pre_recomp);
-                }
-            }
+            result.push(b_quotients[row_idx - Cfg::N_D]);
         } else {
-            let a_idx = row_idx - (Cfg::N_D + Cfg::N_B + 2);
-            for (i, t_hat_i) in t_hat.iter().enumerate() {
-                let start = a_idx * decomp_commit;
-                let end = start + decomp_commit;
-                if end <= t_hat_i.len() {
-                    let t_recomp =
-                        CyclotomicRing::gadget_recompose_pow2(&t_hat_i[start..end], log_basis);
-                    add_sparse_ring_product(&mut poly, &challenges[i], &t_recomp);
+            let t_row = Instant::now();
+            let mut poly = vec![F::zero(); poly_len];
+
+            if row_idx == Cfg::N_D + Cfg::N_B {
+                let _span = tracing::info_span!("bTw_row").entered();
+                for (i, w_recomp) in w_recomps.iter().enumerate() {
+                    add_scalar_ring_product(&mut poly, &opening_point.b[i], w_recomp);
+                }
+            } else if row_idx == Cfg::N_D + Cfg::N_B + 1 {
+                let _span = tracing::info_span!("challenge_fold_row").entered();
+                for (i, w_recomp) in w_recomps.iter().enumerate() {
+                    add_sparse_ring_product(&mut poly, &challenges[i], w_recomp);
+                }
+                let block_len = opening_point.a.len();
+                for i in 0..block_len {
+                    let start = i * decomp_commit;
+                    let end = start + decomp_commit;
+                    if end <= z_pre.len() {
+                        let z_pre_recomp =
+                            CyclotomicRing::gadget_recompose_pow2(&z_pre[start..end], log_basis);
+                        sub_scalar_ring_product(&mut poly, &opening_point.a[i], &z_pre_recomp);
+                    }
+                }
+            } else {
+                let _span = tracing::info_span!("A_row").entered();
+                let a_idx = row_idx - (Cfg::N_D + Cfg::N_B + 2);
+                for (i, t_hat_i) in t_hat.iter().enumerate() {
+                    let start = a_idx * decomp_commit;
+                    let end = start + decomp_commit;
+                    if end <= t_hat_i.len() {
+                        let t_recomp =
+                            CyclotomicRing::gadget_recompose_pow2(&t_hat_i[start..end], log_basis);
+                        add_sparse_ring_product(&mut poly, &challenges[i], &t_recomp);
+                    }
+                }
+                let a_row = &setup.A[a_idx];
+                for (m_ij, z_j) in a_row.iter().zip(z_pre.iter()) {
+                    sub_unreduced_product(&mut poly, m_ij, z_j);
                 }
             }
-            let a_row = &setup.A[a_idx];
-            for (m_ij, z_j) in a_row.iter().zip(z_pre.iter()) {
-                sub_unreduced_product(&mut poly, m_ij, z_j);
+
+            let y_coeffs = _y_i.coefficients();
+            for k in 0..D {
+                poly[k] = poly[k] - y_coeffs[k];
             }
-        }
 
-        let y_coeffs = y_i.coefficients();
-        for k in 0..D {
-            poly[k] = poly[k] - y_coeffs[k];
+            let mut quotient = vec![F::zero(); D];
+            for k in (D..poly_len).rev() {
+                let q = poly[k];
+                quotient[k - D] = q;
+                poly[k - D] = poly[k - D] - q;
+            }
+            result.push(CyclotomicRing::from_slice(&quotient));
+            other_time += t_row.elapsed().as_secs_f64();
         }
-
-        // Divide by X^D + 1
-        let mut quotient = vec![F::zero(); D];
-        for k in (D..poly_len).rev() {
-            let q = poly[k];
-            quotient[k - D] = q;
-            poly[k - D] = poly[k - D] - q;
-        }
-        result.push(CyclotomicRing::from_slice(&quotient));
     }
+
+    eprintln!(
+        "      [compute_r] D-rows(NTT): {d_time:.2}s ({} products x D={D}), B-rows(NTT): {b_time:.2}s ({} products), other: {other_time:.2}s",
+        w_hat_flat.len(),
+        t_hat_flat.len(),
+    );
 
     Ok(result)
 }
@@ -489,6 +554,7 @@ where
 ///
 /// Computes the field-element evaluations of each M entry at `alpha`,
 /// organized as rows of field elements, without materializing M.
+#[tracing::instrument(skip_all, name = "compute_m_a_streaming")]
 pub(crate) fn compute_m_a_streaming<F, const D: usize, Cfg>(
     setup: &HachiExpandedSetup<F, D>,
     opening_point: &RingOpeningPoint<F>,
@@ -515,25 +581,29 @@ where
     let g1_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
     let j1 = gadget_row_scalars::<F>(depth_fold, log_basis);
 
+    let d_rows: Vec<Vec<F>> = cfg_iter!(setup.D)
+        .map(|d_row| {
+            let mut full = vec![F::zero(); total_cols];
+            for (j, ring) in d_row.iter().take(w_len).enumerate() {
+                full[j] = eval_ring_at(ring, alpha);
+            }
+            full
+        })
+        .collect();
+
+    let b_rows: Vec<Vec<F>> = cfg_iter!(setup.B)
+        .map(|b_row| {
+            let mut full = vec![F::zero(); total_cols];
+            for (j, ring) in b_row.iter().take(t_len).enumerate() {
+                full[w_len + j] = eval_ring_at(ring, alpha);
+            }
+            full
+        })
+        .collect();
+
     let mut rows = Vec::with_capacity(Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A);
-
-    // D rows: D · ŵ = v (ŵ uses delta_open)
-    for d_row in setup.D.iter() {
-        let mut full = vec![F::zero(); total_cols];
-        for (j, ring) in d_row.iter().take(w_len).enumerate() {
-            full[j] = eval_ring_at(ring, alpha);
-        }
-        rows.push(full);
-    }
-
-    // B rows: B · t̂ = u (t̂ uses delta_commit)
-    for b_row in setup.B.iter() {
-        let mut full = vec![F::zero(); total_cols];
-        for (j, ring) in b_row.iter().take(t_len).enumerate() {
-            full[w_len + j] = eval_ring_at(ring, alpha);
-        }
-        rows.push(full);
-    }
+    rows.extend(d_rows);
+    rows.extend(b_rows);
 
     // Row 3: b^T · G · ŵ = y_ring (ŵ uses delta_open)
     {

@@ -14,20 +14,17 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::{FieldCore, FromSmallInt};
 
-const SMALL_B_POINT_EVAL_MAX: usize = 8;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NormRoundKernel {
     PointEvalInterpolation,
+    #[allow(dead_code)] // Temporarily unused while forcing point-eval kernel.
     AffineCoeffComposition,
 }
 
-fn choose_round_kernel(b: usize) -> NormRoundKernel {
-    if b <= SMALL_B_POINT_EVAL_MAX {
-        NormRoundKernel::PointEvalInterpolation
-    } else {
-        NormRoundKernel::AffineCoeffComposition
-    }
+fn choose_round_kernel(_b: usize) -> NormRoundKernel {
+    // Temporary profiling switch: always use point-eval interpolation.
+    // Revert by restoring the b-threshold dispatch.
+    NormRoundKernel::PointEvalInterpolation
 }
 
 #[derive(Clone)]

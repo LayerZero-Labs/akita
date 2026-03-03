@@ -30,6 +30,7 @@ use crate::{CanonicalField, FieldCore, FieldSampling};
 #[cfg(test)]
 use std::array::from_fn;
 use std::marker::PhantomData;
+use std::time::Instant;
 
 /// Output of the ring switch protocol, containing everything needed for sumchecks.
 pub struct RingSwitchOutput<F: FieldCore, const D: usize> {
@@ -63,6 +64,7 @@ pub struct RingSwitchOutput<F: FieldCore, const D: usize> {
 /// # Errors
 ///
 /// Returns an error if z_pre/w_hat is missing, commitment fails, or matrix expansion fails.
+#[tracing::instrument(skip_all, name = "ring_switch_prover")]
 pub fn ring_switch_prover<F, T, const D: usize, Cfg>(
     quad_eq: &mut QuadraticEquation<F, D, Cfg>,
     setup: &HachiExpandedSetup<F, D>,
@@ -88,6 +90,7 @@ where
         .ok_or_else(|| HachiError::InvalidInput("missing hint in prover".to_string()))?;
     let t_hat = &hint.t_hat;
 
+    let t_rs = Instant::now();
     let r = compute_r_split_eq::<F, D, Cfg>(
         setup,
         quad_eq.opening_point(),
@@ -97,29 +100,66 @@ where
         t_hat,
         z_pre,
         quad_eq.y(),
+        ntt_cache,
     )?;
-    let layout = setup.seed.layout;
-    let w = build_w_coeffs::<F, D>(w_hat, t_hat, z_pre, &r, layout);
+    eprintln!(
+        "    [ring_switch] compute_r_split_eq: {:.2}s",
+        t_rs.elapsed().as_secs_f64()
+    );
 
+    let layout = setup.seed.layout;
+    let t_wc = Instant::now();
+    let w = {
+        let _span = tracing::info_span!("build_w_coeffs").entered();
+        build_w_coeffs::<F, D>(w_hat, t_hat, z_pre, &r, layout)
+    };
+    eprintln!(
+        "    [ring_switch] build_w_coeffs: {:.2}s",
+        t_wc.elapsed().as_secs_f64()
+    );
+
+    let t_cw = Instant::now();
     let w_commitment = commit_w::<F, D, Cfg>(&w, ntt_cache)?;
+    eprintln!(
+        "    [ring_switch] commit_w: {:.2}s (w_len={})",
+        t_cw.elapsed().as_secs_f64(),
+        w.len()
+    );
     transcript.append_serde(ABSORB_SUMCHECK_W, &w_commitment);
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
 
+    let t_ma = Instant::now();
     let m_a = compute_m_a_streaming::<F, D, Cfg>(
         setup,
         quad_eq.opening_point(),
         &quad_eq.challenges,
         &alpha,
     )?;
-    let m_a_vec = expand_m_a::<F, D>(&m_a, alpha, layout.log_basis)?;
-    let m_rows = m_row_count::<Cfg>();
-    let m_cols = if m_a.is_empty() {
-        0
-    } else {
-        m_a_vec.len() / m_a.len()
-    };
+    eprintln!(
+        "    [ring_switch] compute_m_a_streaming: {:.2}s",
+        t_ma.elapsed().as_secs_f64()
+    );
 
+    let t_exp = Instant::now();
+    let (m_a_vec, m_rows, m_cols) = {
+        let _span = tracing::info_span!("expand_m_a").entered();
+        let m_a_vec = expand_m_a::<F, D>(&m_a, alpha, layout.log_basis)?;
+        let m_rows = m_row_count::<Cfg>();
+        let m_cols = if m_a.is_empty() {
+            0
+        } else {
+            m_a_vec.len() / m_a.len()
+        };
+        (m_a_vec, m_rows, m_cols)
+    };
+    eprintln!(
+        "    [ring_switch] expand_m_a: {:.2}s",
+        t_exp.elapsed().as_secs_f64()
+    );
+
+    let t_we = Instant::now();
+    let _span_we = tracing::info_span!("build_w_evals_and_tables").entered();
     let (w_evals, num_u, num_l) = build_w_evals_compact::<F>(&w, D)?;
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
 
@@ -130,6 +170,11 @@ where
     let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
 
     let m_evals_x = build_m_evals_x::<F>(&m_a_vec, m_rows, m_cols, &tau1);
+    drop(_span_we);
+    eprintln!(
+        "    [ring_switch] build_w_evals+tables: {:.2}s",
+        t_we.elapsed().as_secs_f64()
+    );
 
     Ok(RingSwitchOutput {
         w,
@@ -151,6 +196,7 @@ where
 /// # Errors
 ///
 /// Returns an error if matrix expansion fails.
+#[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 pub fn ring_switch_verifier<F, T, const D: usize, Cfg>(
     quad_eq: &QuadraticEquation<F, D, Cfg>,
     setup: &HachiExpandedSetup<F, D>,
@@ -355,6 +401,7 @@ pub(crate) fn w_commitment_layout<F: CanonicalField, const D: usize, Cfg: Commit
     WCommitmentConfig::<D, Cfg>::commitment_layout(max_num_vars)
 }
 
+#[tracing::instrument(skip_all, name = "commit_w")]
 fn commit_w<F, const D: usize, Cfg>(
     w: &[F],
     cache: &NttMatrixCache<D>,

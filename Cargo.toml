@@ -50,6 +50,11 @@ criterion = { version = "0.5", features = ["html_reports"] }
 num-bigint = "0.4.6"
 ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", features = ["scalar_field"] }
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+tracing-chrome = "0.7"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
+
+[[example]]
+name = "profile"
 
 [[bench]]
 name = "ring_ntt"

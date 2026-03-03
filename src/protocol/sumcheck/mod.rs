@@ -23,7 +23,7 @@ pub mod types;
 use crate::error::HachiError;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
-use crate::FieldCore;
+use crate::{CanonicalField, FieldCore};
 
 pub use crate::algebra::poly::{fold_evals_in_place, multilinear_eval, range_check_eval};
 pub use types::{CompressedUniPoly, SumcheckProof, UniPoly};
@@ -97,13 +97,14 @@ pub trait SumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
 /// # Errors
 ///
 /// Returns an error if any per-round polynomial exceeds the instance's degree bound.
+#[tracing::instrument(skip_all, name = "prove_sumcheck")]
 pub fn prove_sumcheck<F, T, E, S, Inst>(
     instance: &mut Inst,
     transcript: &mut T,
     mut sample_challenge: S,
 ) -> Result<(SumcheckProof<E>, Vec<E>, E), HachiError>
 where
-    F: crate::FieldCore + crate::CanonicalField,
+    F: FieldCore + CanonicalField,
     T: Transcript<F>,
     E: FieldCore,
     S: FnMut(&mut T) -> E,
@@ -164,6 +165,7 @@ where
 /// Returns [`HachiError::InvalidProof`] if the final sumcheck claim does not
 /// match the oracle evaluation, or propagates any error from the per-round
 /// verification (e.g. degree-bound violation, round-count mismatch).
+#[tracing::instrument(skip_all, name = "verify_sumcheck")]
 pub fn verify_sumcheck<F, T, E, S, V>(
     proof: &SumcheckProof<E>,
     verifier: &V,
@@ -171,7 +173,7 @@ pub fn verify_sumcheck<F, T, E, S, V>(
     sample_challenge: S,
 ) -> Result<Vec<E>, HachiError>
 where
-    F: crate::FieldCore + crate::CanonicalField,
+    F: FieldCore + CanonicalField,
     T: Transcript<F>,
     E: FieldCore,
     S: FnMut(&mut T) -> E,

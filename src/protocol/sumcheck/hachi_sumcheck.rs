@@ -23,6 +23,7 @@ use std::marker::PhantomData;
 use crate::{cfg_fold_reduce, cfg_into_iter};
 use std::iter;
 use std::mem;
+use std::time::Instant;
 
 use crate::{FieldCore, FromSmallInt};
 
@@ -53,6 +54,11 @@ pub struct HachiSumcheckProver<E: FieldCore> {
 
     num_vars: usize,
     relation_claim: E,
+
+    norm_time_total: f64,
+    relation_time_total: f64,
+    fold_time_total: f64,
+    rounds_completed: usize,
 }
 
 impl<E: FieldCore + FromSmallInt> HachiSumcheckProver<E> {
@@ -62,6 +68,7 @@ impl<E: FieldCore + FromSmallInt> HachiSumcheckProver<E> {
     ///
     /// Panics if table sizes are inconsistent with `num_u` and `num_l`.
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip_all, name = "HachiSumcheckProver::new")]
     pub fn new(
         batching_coeff: E,
         w_evals_compact: Vec<i8>,
@@ -90,11 +97,9 @@ impl<E: FieldCore + FromSmallInt> HachiSumcheckProver<E> {
         let relation_claim =
             Self::compute_relation_claim_compact(&w_evals_compact, &alpha_table, &m_table);
 
-        let round_kernel = if b <= 8 {
-            NormRoundKernel::PointEvalInterpolation
-        } else {
-            NormRoundKernel::AffineCoeffComposition
-        };
+        // Temporary profiling switch: always use point-eval interpolation.
+        // Revert by restoring the b-threshold dispatch.
+        let round_kernel = NormRoundKernel::PointEvalInterpolation;
         let point_precomp = match round_kernel {
             NormRoundKernel::PointEvalInterpolation => Some(PointEvalPrecomp::new(b)),
             NormRoundKernel::AffineCoeffComposition => None,
@@ -116,6 +121,10 @@ impl<E: FieldCore + FromSmallInt> HachiSumcheckProver<E> {
             m_table,
             num_vars,
             relation_claim,
+            norm_time_total: 0.0,
+            relation_time_total: 0.0,
+            fold_time_total: 0.0,
+            rounds_completed: 0,
         }
     }
 
@@ -149,32 +158,36 @@ impl<E: FieldCore + FromSmallInt> HachiSumcheckProver<E> {
                 let num_points_q = degree_q + 1;
                 let range_offsets = &self.point_precomp.as_ref().unwrap().range_offsets;
 
-                let q_evals = cfg_fold_reduce!(
-                    0..half,
-                    || vec![E::zero(); num_points_q],
-                    |mut evals, j| {
-                        let j_low = j & (num_first - 1);
-                        let j_high = j >> first_bits;
-                        let eq_rem = e_first[j_low] * e_second[j_high];
-                        let (w_0, w_1) = w_pair(j);
-                        let delta = w_1 - w_0;
-                        let mut w_t = w_0;
-                        for eval in evals.iter_mut() {
-                            *eval =
-                                *eval + eq_rem * range_check_eval_precomputed(w_t, range_offsets);
-                            w_t = w_t + delta;
+                let q_evals = {
+                    let _span = tracing::info_span!("norm_accumulate").entered();
+                    cfg_fold_reduce!(
+                        0..half,
+                        || vec![E::zero(); num_points_q],
+                        |mut evals, j| {
+                            let j_low = j & (num_first - 1);
+                            let j_high = j >> first_bits;
+                            let eq_rem = e_first[j_low] * e_second[j_high];
+                            let (w_0, w_1) = w_pair(j);
+                            let delta = w_1 - w_0;
+                            let mut w_t = w_0;
+                            for eval in evals.iter_mut() {
+                                *eval = *eval
+                                    + eq_rem * range_check_eval_precomputed(w_t, range_offsets);
+                                w_t = w_t + delta;
+                            }
+                            evals
+                        },
+                        |mut a, b_vec| {
+                            for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
+                                *ai = *ai + *bi;
+                            }
+                            a
                         }
-                        evals
-                    },
-                    |mut a, b_vec| {
-                        for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
-                            *ai = *ai + *bi;
-                        }
-                        a
-                    }
-                );
+                    )
+                };
 
                 let q_poly = UniPoly::from_evals(&q_evals);
+                let _span = tracing::info_span!("gruen_mul").entered();
                 self.split_eq.gruen_mul(&q_poly)
             }
             NormRoundKernel::AffineCoeffComposition => {
@@ -182,28 +195,32 @@ impl<E: FieldCore + FromSmallInt> HachiSumcheckProver<E> {
                 let num_coeffs_q = range_precomp.degree_q + 1;
                 let coeff_mix = &range_precomp.coeff_mix;
 
-                let mut q_coeffs = cfg_fold_reduce!(
-                    0..half,
-                    || vec![E::zero(); num_coeffs_q],
-                    |mut coeffs, j| {
-                        let j_low = j & (num_first - 1);
-                        let j_high = j >> first_bits;
-                        let eq_rem = e_first[j_low] * e_second[j_high];
-                        let (w_0, w_1) = w_pair(j);
-                        let a = w_1 - w_0;
-                        accumulate_affine_range_coeffs(&mut coeffs, coeff_mix, w_0, a, eq_rem);
-                        coeffs
-                    },
-                    |mut a, b_vec| {
-                        for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
-                            *ai = *ai + *bi;
+                let mut q_coeffs = {
+                    let _span = tracing::info_span!("norm_accumulate").entered();
+                    cfg_fold_reduce!(
+                        0..half,
+                        || vec![E::zero(); num_coeffs_q],
+                        |mut coeffs, j| {
+                            let j_low = j & (num_first - 1);
+                            let j_high = j >> first_bits;
+                            let eq_rem = e_first[j_low] * e_second[j_high];
+                            let (w_0, w_1) = w_pair(j);
+                            let a = w_1 - w_0;
+                            accumulate_affine_range_coeffs(&mut coeffs, coeff_mix, w_0, a, eq_rem);
+                            coeffs
+                        },
+                        |mut a, b_vec| {
+                            for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
+                                *ai = *ai + *bi;
+                            }
+                            a
                         }
-                        a
-                    }
-                );
+                    )
+                };
 
                 trim_trailing_zeros(&mut q_coeffs);
                 let q_poly = UniPoly::from_coeffs(q_coeffs);
+                let _span = tracing::info_span!("gruen_mul").entered();
                 self.split_eq.gruen_mul(&q_poly)
             }
         }
@@ -267,6 +284,7 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for HachiSumcheckPro
     }
 
     fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
+        let t_norm = Instant::now();
         let (norm_poly, relation_poly) = match &self.w_table {
             WTable::Compact(w_compact) => {
                 let half = w_compact.len() / 2;
@@ -276,18 +294,38 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for HachiSumcheckPro
                         Self::lift_i8(w_compact[2 * j + 1]),
                     )
                 };
-                (
-                    self.compute_round_norm(half, pair),
-                    self.compute_round_relation(half, pair),
-                )
+                let np = {
+                    let _span = tracing::info_span!("norm_round").entered();
+                    self.compute_round_norm(half, pair)
+                };
+                let norm_elapsed = t_norm.elapsed().as_secs_f64();
+                self.norm_time_total += norm_elapsed;
+
+                let t_rel = Instant::now();
+                let rp = {
+                    let _span = tracing::info_span!("relation_round").entered();
+                    self.compute_round_relation(half, pair)
+                };
+                self.relation_time_total += t_rel.elapsed().as_secs_f64();
+                (np, rp)
             }
             WTable::Full(w_full) => {
                 let half = w_full.len() / 2;
                 let pair = |j: usize| (w_full[2 * j], w_full[2 * j + 1]);
-                (
-                    self.compute_round_norm(half, pair),
-                    self.compute_round_relation(half, pair),
-                )
+                let np = {
+                    let _span = tracing::info_span!("norm_round").entered();
+                    self.compute_round_norm(half, pair)
+                };
+                let norm_elapsed = t_norm.elapsed().as_secs_f64();
+                self.norm_time_total += norm_elapsed;
+
+                let t_rel = Instant::now();
+                let rp = {
+                    let _span = tracing::info_span!("relation_round").entered();
+                    self.compute_round_relation(half, pair)
+                };
+                self.relation_time_total += t_rel.elapsed().as_secs_f64();
+                (np, rp)
             }
         };
 
@@ -303,6 +341,8 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for HachiSumcheckPro
     }
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {
+        let t_fold = Instant::now();
+        let _span = tracing::info_span!("fold_round").entered();
         self.split_eq.bind(r);
 
         self.w_table = match mem::replace(&mut self.w_table, WTable::Full(Vec::new())) {
@@ -315,6 +355,16 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for HachiSumcheckPro
 
         fold_evals_in_place(&mut self.alpha_table, r);
         fold_evals_in_place(&mut self.m_table, r);
+        drop(_span);
+        self.fold_time_total += t_fold.elapsed().as_secs_f64();
+        self.rounds_completed += 1;
+
+        if self.rounds_completed == self.num_vars {
+            eprintln!(
+                "    [fused_sc] {} rounds: norm={:.2}s, relation={:.2}s, fold={:.2}s",
+                self.num_vars, self.norm_time_total, self.relation_time_total, self.fold_time_total
+            );
+        }
     }
 }
 
@@ -335,6 +385,7 @@ pub struct HachiSumcheckVerifier<F: FieldCore, const D: usize> {
 impl<F: FieldCore + FromSmallInt, const D: usize> HachiSumcheckVerifier<F, D> {
     /// Create a fused verifier for the norm + relation sumcheck.
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip_all, name = "HachiSumcheckVerifier::new")]
     pub fn new(
         batching_coeff: F,
         w_evals: Vec<F>,

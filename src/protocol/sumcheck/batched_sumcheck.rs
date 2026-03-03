@@ -12,7 +12,7 @@ use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckProof, Uni
 use crate::error::HachiError;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
-use crate::{FieldCore, FromSmallInt};
+use crate::{CanonicalField, FieldCore, FromSmallInt};
 
 fn mul_pow_2<E: FieldCore>(x: E, k: usize) -> E {
     let mut result = x;
@@ -71,13 +71,14 @@ pub struct BatchedSumcheckRoundResult<E: FieldCore> {
 /// # Errors
 ///
 /// Returns an error if the field inverse of 2 does not exist.
+#[tracing::instrument(skip_all, name = "prove_batched_sumcheck")]
 pub fn prove_batched_sumcheck<F, T, E, S>(
     mut instances: Vec<&mut dyn SumcheckInstanceProver<E>>,
     transcript: &mut T,
     mut sample_challenge: S,
 ) -> Result<(SumcheckProof<E>, Vec<E>), HachiError>
 where
-    F: FieldCore + crate::CanonicalField,
+    F: FieldCore + CanonicalField,
     T: Transcript<F>,
     E: FieldCore + FromSmallInt,
     S: FnMut(&mut T) -> E,
@@ -218,7 +219,7 @@ pub fn verify_batched_sumcheck_rounds<F, T, E, S>(
     mut sample_challenge: S,
 ) -> Result<BatchedSumcheckRoundResult<E>, HachiError>
 where
-    F: FieldCore + crate::CanonicalField,
+    F: FieldCore + CanonicalField,
     T: Transcript<F>,
     E: FieldCore,
     S: FnMut(&mut T) -> E,
@@ -320,6 +321,7 @@ pub fn check_batched_output_claim<E: FieldCore>(
 /// # Errors
 ///
 /// Propagates errors from round verification and output-claim equality check.
+#[tracing::instrument(skip_all, name = "verify_batched_sumcheck")]
 pub fn verify_batched_sumcheck<F, T, E, S>(
     proof: &SumcheckProof<E>,
     verifiers: Vec<&dyn SumcheckInstanceVerifier<E>>,
@@ -327,7 +329,7 @@ pub fn verify_batched_sumcheck<F, T, E, S>(
     mut sample_challenge: S,
 ) -> Result<Vec<E>, HachiError>
 where
-    F: FieldCore + crate::CanonicalField,
+    F: FieldCore + CanonicalField,
     T: Transcript<F>,
     E: FieldCore,
     S: FnMut(&mut T) -> E,

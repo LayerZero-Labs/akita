@@ -53,6 +53,7 @@ where
     type Proof = HachiProof<F, D>;
     type CommitHint = HachiCommitmentHint<F, D>;
 
+    #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::setup_prover")]
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let (setup, _) =
             <HachiCommitmentCore as RingCommitmentScheme<F, { D }, Cfg>>::setup(max_num_vars)
@@ -66,6 +67,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::commit")]
     fn commit<P: HachiPolyOps<F, D>>(
         poly: &P,
         setup: &Self::ProverSetup,
@@ -86,6 +88,7 @@ where
         Ok((RingCommitment { u }, hint))
     }
 
+    #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::prove")]
     fn prove<T: Transcript<F>, P: HachiPolyOps<F, D>>(
         setup: &Self::ProverSetup,
         poly: &P,
@@ -121,7 +124,10 @@ where
 
         let t0 = Instant::now();
         let outer_weights = basis_weights(outer_point, basis);
-        let y_ring = poly.evaluate_ring(&outer_weights);
+        let y_ring = {
+            let _span = tracing::info_span!("evaluate_ring").entered();
+            poly.evaluate_ring(&outer_weights)
+        };
         eprintln!(
             "  [hachi prove] eval ring poly: {:.2}s (num_ring_elems={})",
             t0.elapsed().as_secs_f64(),
@@ -198,6 +204,7 @@ where
         })
     }
 
+    #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::verify")]
     fn verify<T: Transcript<F>>(
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,

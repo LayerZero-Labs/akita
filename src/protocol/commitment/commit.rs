@@ -271,6 +271,7 @@ where
     type VerifierSetup = HachiVerifierSetup<F, D>;
     type Commitment = RingCommitment<F, D>;
 
+    #[tracing::instrument(skip_all, name = "RingCommitmentScheme::setup")]
     fn setup(max_num_vars: usize) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError> {
         let layout = validate_and_derive_layout::<Cfg, D>(max_num_vars)?;
         ensure_supported_num_vars(max_num_vars, layout.required_num_vars::<D>()?)?;
@@ -320,6 +321,7 @@ where
         Ok(setup.layout())
     }
 
+    #[tracing::instrument(skip_all, name = "RingCommitmentScheme::commit_ring_blocks")]
     fn commit_ring_blocks(
         f_blocks: &[Vec<CyclotomicRing<F, D>>],
         setup: &Self::ProverSetup,
@@ -355,6 +357,7 @@ where
         })
     }
 
+    #[tracing::instrument(skip_all, name = "RingCommitmentScheme::commit_coeffs")]
     fn commit_coeffs(
         f_coeffs: &[CyclotomicRing<F, D>],
         setup: &Self::ProverSetup,
@@ -404,6 +407,7 @@ where
         })
     }
 
+    #[tracing::instrument(skip_all, name = "RingCommitmentScheme::commit_onehot")]
     fn commit_onehot(
         onehot_k: usize,
         indices: &[Option<usize>],

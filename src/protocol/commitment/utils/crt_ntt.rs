@@ -112,6 +112,7 @@ where
 }
 
 #[allow(non_snake_case)]
+#[tracing::instrument(skip_all, name = "build_ntt_cache")]
 pub(crate) fn build_ntt_cache<F: FieldCore + CanonicalField, const D: usize>(
     a: &[Vec<CyclotomicRing<F, D>>],
     b: &[Vec<CyclotomicRing<F, D>>],

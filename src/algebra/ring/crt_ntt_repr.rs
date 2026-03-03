@@ -4,6 +4,7 @@ use std::array::from_fn;
 
 use crate::algebra::backend::{CrtReconstruct, NttPrimeOps, NttTransform, ScalarBackend};
 use crate::algebra::ntt::butterfly::NttTwiddles;
+use crate::algebra::ntt::butterfly::{forward_ntt_cyclic, inverse_ntt_cyclic};
 use crate::algebra::ntt::crt::GarnerData;
 use crate::algebra::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
 use crate::{CanonicalField, FieldCore};
@@ -262,6 +263,98 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             }
         }
         out
+    }
+
+    /// Convert a coefficient-form ring element into CRT+**cyclic** NTT domain.
+    ///
+    /// Evaluates at D-th roots of unity (X^D - 1) instead of X^D + 1.
+    /// Used together with `to_ring_cyclic` to compute unreduced polynomial products.
+    /// Convert a coefficient-form ring element into CRT+**cyclic** NTT domain.
+    ///
+    /// Evaluates at D-th roots of unity (X^D - 1) instead of X^D + 1.
+    /// Used together with `to_ring_cyclic` to compute unreduced polynomial products.
+    pub fn from_ring_cyclic<F: CrtNttConvertibleField>(
+        ring: &CyclotomicRing<F, D>,
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Self {
+        Self::from_ring_cyclic_with_backend::<F, ScalarBackend>(ring, params)
+    }
+
+    /// Convert a coefficient-form ring element into CRT+**cyclic** NTT domain
+    /// through an explicit backend.
+    pub fn from_ring_cyclic_with_backend<F: CrtNttConvertibleField, B: NttPrimeOps<W, D>>(
+        ring: &CyclotomicRing<F, D>,
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Self {
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let half_q = q / 2;
+        let centered_coeffs: [i128; D] = from_fn(|i| {
+            let canonical = ring.coeffs[i].to_canonical_u128();
+            if canonical > half_q {
+                -((q - canonical) as i128)
+            } else {
+                canonical as i128
+            }
+        });
+
+        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for ((limb, prime), tw) in limbs
+            .iter_mut()
+            .zip(params.primes.iter())
+            .zip(params.twiddles.iter())
+        {
+            let p = prime.p.to_i64() as i128;
+            let half_p = p / 2;
+            for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
+                let mut r = *centered % p;
+                if r < 0 {
+                    r += p;
+                }
+                if r >= half_p {
+                    r -= p;
+                }
+                *dst = B::from_canonical(*prime, W::from_i64(r as i64));
+            }
+            forward_ntt_cyclic(limb, *prime, tw);
+        }
+        Self { limbs }
+    }
+
+    /// Convert from CRT+**cyclic** NTT domain back to coefficient form.
+    ///
+    /// Inverse of `from_ring_cyclic`: applies inverse cyclic NTT then CRT reconstruction.
+    pub fn to_ring_cyclic<F: CrtNttConvertibleField>(
+        &self,
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> CyclotomicRing<F, D> {
+        self.to_ring_cyclic_with_backend::<F, ScalarBackend>(params)
+    }
+
+    /// Convert from CRT+**cyclic** NTT domain back to coefficient form
+    /// through an explicit backend.
+    pub fn to_ring_cyclic_with_backend<
+        F: CrtNttConvertibleField,
+        B: NttPrimeOps<W, D> + CrtReconstruct<W, K, D>,
+    >(
+        &self,
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> CyclotomicRing<F, D> {
+        let mut canonical = [[W::default(); D]; K];
+        for (k, ((can, prime), tw)) in canonical
+            .iter_mut()
+            .zip(params.primes.iter())
+            .zip(params.twiddles.iter())
+            .enumerate()
+        {
+            let mut limb = self.limbs[k];
+            inverse_ntt_cyclic(&mut limb, *prime, tw);
+            for (dst, src) in can.iter_mut().zip(limb.iter()) {
+                let canon = B::to_canonical(*prime, *src);
+                *dst = prime.center(canon);
+            }
+        }
+        let coeffs = B::reconstruct::<F>(&params.primes, &canonical, &params.garner);
+        CyclotomicRing::from_coefficients(coeffs)
     }
 
     /// Pointwise multiplication in CRT+NTT domain using the scalar backend.

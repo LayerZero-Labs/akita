@@ -230,6 +230,7 @@ where
         )
     }
 
+    #[tracing::instrument(skip_all, name = "DensePoly::commit_inner")]
     fn commit_inner(
         &self,
         _a_matrix: &[Vec<CyclotomicRing<F, D>>],
@@ -386,6 +387,7 @@ where
         z
     }
 
+    #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner")]
     fn commit_inner(
         &self,
         a_matrix: &[Vec<CyclotomicRing<F, D>>],
