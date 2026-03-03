@@ -296,7 +296,7 @@ where
         let t_prove_total = Instant::now();
         let mut levels = Vec::new();
 
-        // --- Level 0: original polynomial with Cfg ---
+        // Level 0: original polynomial with Cfg
         let out = prove_one_level::<F, T, D, Cfg, P>(
             setup,
             poly,
@@ -317,7 +317,7 @@ where
         let mut current_num_l = out.num_l;
         let mut level = 1usize;
 
-        // --- Subsequent levels: recursive w-opening with WCommitmentConfig ---
+        // Subsequent levels: recursive w-opening with WCommitmentConfig
         while !should_stop_folding(current_w.len(), prev_poly_len) {
             let w_poly = dense_poly_from_w::<F, D>(&current_w)?;
             let opening_point =
@@ -381,7 +381,6 @@ where
         for (i, level_proof) in proof.levels.iter().enumerate() {
             let is_last = i == num_levels - 1;
 
-            // --- Verify one level ---
             let challenges = if i == 0 {
                 verify_one_level::<F, T, D, Cfg>(
                     level_proof,

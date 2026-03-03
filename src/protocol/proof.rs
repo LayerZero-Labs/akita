@@ -69,8 +69,6 @@ impl<F: FieldCore + HachiSerialize, const D: usize> HachiProof<F, D> {
     }
 }
 
-// --- HachiCommitmentHint serialization ---
-
 impl<F: FieldCore, const D: usize> HachiSerialize for HachiCommitmentHint<F, D> {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -101,8 +99,6 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiCommitmentH
         })
     }
 }
-
-// --- HachiLevelProof serialization ---
 
 impl<F: FieldCore, const D: usize> HachiSerialize for HachiLevelProof<F, D> {
     fn serialize_with_mode<W: Write>(
@@ -148,8 +144,6 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiLevelProof<
         })
     }
 }
-
-// --- HachiProof serialization ---
 
 impl<F: FieldCore, const D: usize> HachiSerialize for HachiProof<F, D> {
     fn serialize_with_mode<W: Write>(

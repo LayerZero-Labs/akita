@@ -7,8 +7,8 @@
 
 use super::eq_poly::EqPolynomial;
 use super::norm_sumcheck::{
-    compute_norm_round_poly, compute_norm_round_poly_compact, NormRoundKernel, PointEvalPrecomp,
-    RangeAffinePrecomp,
+    choose_round_kernel, compute_norm_round_poly, compute_norm_round_poly_compact, NormRoundKernel,
+    PointEvalPrecomp, RangeAffinePrecomp,
 };
 use super::split_eq::GruenSplitEq;
 use super::{fold_evals_in_place, multilinear_eval, range_check_eval};
@@ -98,7 +98,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField> HachiSumcheckProver<E> {
         let relation_claim =
             Self::compute_relation_claim_compact(&w_evals_compact, &alpha_table, &m_table);
 
-        use super::norm_sumcheck::choose_round_kernel;
         let round_kernel = choose_round_kernel(b);
         let point_precomp = match round_kernel {
             NormRoundKernel::PointEvalInterpolation => Some(PointEvalPrecomp::new(b)),
