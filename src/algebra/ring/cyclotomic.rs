@@ -338,6 +338,56 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             .map(Self::from_coefficients)
             .collect()
     }
+
+    /// Balanced gadget decomposition into native `i8` digits.
+    ///
+    /// Same semantics as [`balanced_decompose_pow2`](Self::balanced_decompose_pow2)
+    /// but stores each digit as `i8` instead of a field element, avoiding
+    /// the cost of `F::from_canonical_u128_reduced`.
+    ///
+    /// Requires `log_basis <= 7` so digits fit in `[-64, 63]` (i8 range).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `log_basis` is 0 or > 7, or if `levels * log_basis > 128 + log_basis`.
+    pub fn balanced_decompose_pow2_i8(&self, levels: usize, log_basis: u32) -> Vec<[i8; D]>
+    where
+        F: CanonicalField,
+    {
+        assert!(
+            log_basis > 0 && log_basis <= 7,
+            "log_basis must be in 1..=7 for i8 output"
+        );
+        assert!(
+            (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
+            "levels * log_basis must be <= 128 + log_basis"
+        );
+
+        let b = 1i128 << log_basis;
+        let half_b = b / 2;
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let half_q = q / 2;
+
+        let mut digit_planes: Vec<[i8; D]> = (0..levels).map(|_| [0i8; D]).collect();
+
+        for i in 0..D {
+            let canonical = self.coeffs[i].to_canonical_u128();
+            let mut c: i128 = if canonical > half_q {
+                -((q - canonical) as i128)
+            } else {
+                canonical as i128
+            };
+
+            for plane in digit_planes.iter_mut() {
+                let d = c.rem_euclid(b);
+                let balanced = if d >= half_b { d - b } else { d };
+                c = (c - balanced) / b;
+                plane[i] = balanced as i8;
+            }
+        }
+
+        digit_planes
+    }
 }
 
 impl<F: FieldCore + FieldSampling, const D: usize> CyclotomicRing<F, D> {

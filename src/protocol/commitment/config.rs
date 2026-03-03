@@ -20,7 +20,7 @@ use std::io::{Read, Write};
 /// witness vector, the commitment matrices, and the proving cost.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DecompositionParams {
-    /// Base-2 logarithm of the gadget base (e.g., 4 for base-16 digits in [-8, 7]).
+    /// Base-2 logarithm of the gadget base (e.g., 3 for base-8 digits in [-4, 3]).
     pub log_basis: u32,
 
     /// Bit-width of the largest coefficient that the *commitment* decomposition
@@ -33,7 +33,7 @@ pub struct DecompositionParams {
     ///
     /// Examples:
     /// - Binary (0/1) polynomials: 1
-    /// - Already range-checked digits in `[-8, 7]`: 4  (= `log_basis` for one digit)
+    /// - Already range-checked digits in `[-b/2, b/2)`: `log_basis` (one digit)
     /// - Arbitrary Fp128 elements: 128
     pub log_commit_bound: u32,
 
@@ -66,23 +66,29 @@ pub fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
     }
     let mut levels = (log_bound as usize).div_ceil(log_basis as usize);
 
-    let b: u128 = 1u128 << log_basis;
-    let half_b_minus_1 = b / 2 - 1;
-    let b_minus_1 = b - 1;
-    let mut b_pow = 1u128;
-    for _ in 0..levels {
-        b_pow = b_pow.saturating_mul(b);
-    }
-    let max_positive = half_b_minus_1.saturating_mul(b_pow.saturating_sub(1) / b_minus_1);
-    let required = if log_bound > 128 {
-        u128::MAX / 2
-    } else if log_bound == 0 {
-        0
-    } else {
-        (1u128 << (log_bound - 1)).saturating_sub(1)
-    };
-    if max_positive < required {
-        levels += 1;
+    // When levels * log_basis > log_bound (i.e., not exactly aligned), the
+    // balanced digit range (b/2-1) * (b^levels - 1)/(b-1) always exceeds
+    // 2^(log_bound-1) for b >= 4 (log_basis >= 2). Only check when aligned.
+    let total_bits = (levels as u32).saturating_mul(log_basis);
+    if total_bits <= log_bound {
+        let b: u128 = 1u128 << log_basis;
+        let half_b_minus_1 = b / 2 - 1;
+        let b_minus_1 = b - 1;
+        let mut b_pow = 1u128;
+        for _ in 0..levels {
+            b_pow = b_pow.saturating_mul(b);
+        }
+        let max_positive = half_b_minus_1.saturating_mul(b_pow.saturating_sub(1) / b_minus_1);
+        let required = if log_bound > 128 {
+            u128::MAX / 2
+        } else if log_bound == 0 {
+            0
+        } else {
+            (1u128 << (log_bound - 1)).saturating_sub(1)
+        };
+        if max_positive < required {
+            levels += 1;
+        }
     }
     levels.max(1)
 }
@@ -522,7 +528,7 @@ impl CommitmentConfig for SmallTestCommitmentConfig {
 
     fn decomposition() -> DecompositionParams {
         DecompositionParams {
-            log_basis: 4,
+            log_basis: 3,
             log_commit_bound: 32,
             log_open_bound: None,
         }
@@ -550,7 +556,7 @@ impl CommitmentConfig for DynamicSmallTestCommitmentConfig {
 
     fn decomposition() -> DecompositionParams {
         DecompositionParams {
-            log_basis: 4,
+            log_basis: 3,
             log_commit_bound: 32,
             log_open_bound: None,
         }
@@ -598,7 +604,7 @@ impl CommitmentConfig for ProductionFp128CommitmentConfig {
 
     fn decomposition() -> DecompositionParams {
         DecompositionParams {
-            log_basis: 4,
+            log_basis: 3,
             log_commit_bound: 128,
             log_open_bound: None,
         }

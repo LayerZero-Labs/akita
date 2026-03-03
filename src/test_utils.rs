@@ -32,7 +32,7 @@ impl CommitmentConfig for TinyConfig {
 
     fn decomposition() -> DecompositionParams {
         DecompositionParams {
-            log_basis: 4,
+            log_basis: 3,
             log_commit_bound: 32,
             log_open_bound: None,
         }
@@ -47,8 +47,10 @@ impl CommitmentConfig for TinyConfig {
 pub const BLOCK_LEN: usize = 2;
 /// Number of blocks (`2^r_vars`).
 pub const NUM_BLOCKS: usize = 2;
-/// Gadget base exponent (`b = 2^LOG_BASIS`).
-pub const LOG_BASIS: u32 = 4;
+/// Gadget base exponent (`b = 2^log_basis()`), derived from `TinyConfig`.
+pub fn log_basis() -> u32 {
+    TinyConfig::decomposition().log_basis
+}
 /// Inner Ajtai row count from `TinyConfig`.
 pub const N_A: usize = TinyConfig::N_A;
 
@@ -128,7 +130,7 @@ pub fn field_gadget_recompose(
 pub fn recompose_z_hat(z_hat: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
     z_hat
         .chunks(num_digits_fold())
-        .map(|chunk| field_gadget_recompose(chunk, LOG_BASIS))
+        .map(|chunk| field_gadget_recompose(chunk, log_basis()))
         .collect()
 }
 
@@ -136,14 +138,14 @@ pub fn recompose_z_hat(z_hat: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, 
 pub fn gadget_recompose_vec(x_hat: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
     x_hat
         .chunks(num_digits_commit())
-        .map(|chunk| field_gadget_recompose(chunk, LOG_BASIS))
+        .map(|chunk| field_gadget_recompose(chunk, log_basis()))
         .collect()
 }
 
 /// Alias for [`gadget_recompose_vec`] (same num_digits_commit-width recomposition).
 pub fn field_gadget_recompose_vec(v: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
     v.chunks(num_digits_commit())
-        .map(|chunk| field_gadget_recompose(chunk, LOG_BASIS))
+        .map(|chunk| field_gadget_recompose(chunk, log_basis()))
         .collect()
 }
 

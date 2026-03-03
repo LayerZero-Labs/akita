@@ -38,7 +38,7 @@ pub struct RingSwitchOutput<F: FieldCore, const D: usize> {
     pub w: Vec<F>,
     /// Commitment to w.
     pub w_commitment: RingCommitment<F, D>,
-    /// Compact evaluation table of w (all entries in [-8, 7], reordered for sumcheck).
+    /// Compact evaluation table of w (all entries in [-b/2, b/2), reordered for sumcheck).
     /// Populated by the prover; empty on the verifier side.
     pub w_evals: Vec<i8>,
     /// Evaluation table of M_alpha(x) (tau1-weighted).
@@ -467,17 +467,20 @@ pub(crate) fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
         levels = 1;
     }
 
-    let b = 1u128 << log_basis;
-    let half_q = modulus / 2;
-    let half_b_minus_1 = b / 2 - 1;
-    let b_minus_1 = b - 1;
-    let mut b_pow = 1u128;
-    for _ in 0..levels {
-        b_pow = b_pow.saturating_mul(b);
-    }
-    let max_positive = half_b_minus_1.saturating_mul((b_pow - 1) / b_minus_1);
-    if max_positive < half_q {
-        levels += 1;
+    let total_bits = levels * lb;
+    if total_bits <= bits {
+        let b = 1u128 << log_basis;
+        let half_q = modulus / 2;
+        let half_b_minus_1 = b / 2 - 1;
+        let b_minus_1 = b - 1;
+        let mut b_pow = 1u128;
+        for _ in 0..levels {
+            b_pow = b_pow.saturating_mul(b);
+        }
+        let max_positive = half_b_minus_1.saturating_mul((b_pow - 1) / b_minus_1);
+        if max_positive < half_q {
+            levels += 1;
+        }
     }
 
     levels

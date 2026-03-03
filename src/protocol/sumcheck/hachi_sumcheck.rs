@@ -2,7 +2,7 @@
 //!
 //! Eliminates the redundant `w_evals` clone by sharing a single `w_table`
 //! across both the norm (F_0) and relation (F_α) sumcheck computations.
-//! Supports compact `Vec<i8>` storage for round 0 (all entries in [-8, 7]),
+//! Supports compact `Vec<i8>` storage for round 0 (all entries in [-b/2, b/2)),
 //! transitioning to `Vec<F>` at half size after the first fold.
 
 use super::eq_poly::EqPolynomial;

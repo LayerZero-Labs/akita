@@ -337,58 +337,6 @@ fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basis: u
     out
 }
 
-/// Accumulate unreduced polynomial product `a * b` into `poly` (length 2D-1).
-fn add_unreduced_product<F: FieldCore, const D: usize>(
-    poly: &mut [F],
-    a: &CyclotomicRing<F, D>,
-    b: &CyclotomicRing<F, D>,
-) {
-    if a.is_zero() {
-        return;
-    }
-    let ac = a.coefficients();
-    let bc = b.coefficients();
-    let is_scalar = ac[1..].iter().all(|c| c.is_zero());
-    if is_scalar {
-        let s = ac[0];
-        for k in 0..D {
-            poly[k] = poly[k] + s * bc[k];
-        }
-    } else {
-        for t in 0..D {
-            for s in 0..D {
-                poly[t + s] = poly[t + s] + ac[t] * bc[s];
-            }
-        }
-    }
-}
-
-/// Accumulate negated unreduced product `-a * b` into `poly`.
-fn sub_unreduced_product<F: FieldCore, const D: usize>(
-    poly: &mut [F],
-    a: &CyclotomicRing<F, D>,
-    b: &CyclotomicRing<F, D>,
-) {
-    if a.is_zero() {
-        return;
-    }
-    let ac = a.coefficients();
-    let bc = b.coefficients();
-    let is_scalar = ac[1..].iter().all(|c| c.is_zero());
-    if is_scalar {
-        let s = ac[0];
-        for k in 0..D {
-            poly[k] = poly[k] - s * bc[k];
-        }
-    } else {
-        for t in 0..D {
-            for s in 0..D {
-                poly[t + s] = poly[t + s] - ac[t] * bc[s];
-            }
-        }
-    }
-}
-
 /// Add scalar * ring_element into the low-D coefficients of `poly`.
 /// scalar * ring produces degree D-1, so no high-half contribution.
 fn add_scalar_ring_product<F: FieldCore, const D: usize>(
@@ -413,13 +361,21 @@ fn sub_scalar_ring_product<F: FieldCore, const D: usize>(
 }
 
 /// Add sparse_challenge * ring_element as unreduced product into `poly`.
+///
+/// Exploits sparsity: O(weight * D) instead of O(D^2) schoolbook.
 fn add_sparse_ring_product<F: FieldCore + CanonicalField, const D: usize>(
     poly: &mut [F],
     challenge: &SparseChallenge,
     ring: &CyclotomicRing<F, D>,
 ) {
-    let dense: CyclotomicRing<F, D> = challenge.to_dense().expect("valid sparse challenge");
-    add_unreduced_product(poly, &dense, ring);
+    let rc = ring.coefficients();
+    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+        let c = F::from_i64(coeff as i64);
+        let p = pos as usize;
+        for (s, &r_s) in rc.iter().enumerate() {
+            poly[p + s] = poly[p + s] + c * r_s;
+        }
+    }
 }
 
 /// Split-eq replacement for `generate_m` + `compute_r_via_poly_division`.
@@ -460,7 +416,7 @@ where
             .collect()
     };
 
-    // NTT-accelerated D and B rows: compute quotient = (cyc - neg) / 2
+    // NTT-accelerated D, B, and A rows: compute quotient = (cyc - neg) / 2
     let t_d = Instant::now();
     let d_quotients = {
         let _span = tracing::info_span!("D_rows_ntt").entered();
@@ -475,6 +431,13 @@ where
     };
     let b_time = t_b.elapsed().as_secs_f64();
 
+    let t_a = Instant::now();
+    let a_quotients = {
+        let _span = tracing::info_span!("A_rows_ntt").entered();
+        unreduced_quotient_rows_ntt_cached(ntt_cache, MatrixSlot::A, &setup.A, z_pre)
+    };
+    let a_time = t_a.elapsed().as_secs_f64();
+
     let mut result = Vec::with_capacity(num_rows);
     let mut other_time = 0.0f64;
 
@@ -483,7 +446,35 @@ where
             result.push(d_quotients[row_idx]);
         } else if row_idx < Cfg::N_D + Cfg::N_B {
             result.push(b_quotients[row_idx - Cfg::N_D]);
+        } else if row_idx >= Cfg::N_D + Cfg::N_B + 2 {
+            // A-rows: NTT-accelerated A*z_pre + sparse challenge terms
+            let t_row = Instant::now();
+            let _span = tracing::info_span!("A_row").entered();
+            let a_idx = row_idx - (Cfg::N_D + Cfg::N_B + 2);
+
+            // Challenge terms: sparse * dense is O(weight * D) per block
+            let mut poly = vec![F::zero(); poly_len];
+            for (i, t_hat_i) in t_hat.iter().enumerate() {
+                let start = a_idx * decomp_commit;
+                let end = start + decomp_commit;
+                if end <= t_hat_i.len() {
+                    let t_recomp =
+                        CyclotomicRing::gadget_recompose_pow2(&t_hat_i[start..end], log_basis);
+                    add_sparse_ring_product(&mut poly, &challenges[i], &t_recomp);
+                }
+            }
+
+            // quotient = high_part(challenge_unreduced) - ntt_quotient(A * z_pre)
+            let a_q = a_quotients[a_idx].coefficients();
+            let mut quotient = vec![F::zero(); D];
+            quotient[..(poly_len - D)].copy_from_slice(&poly[D..poly_len]);
+            for k in 0..D {
+                quotient[k] = quotient[k] - a_q[k];
+            }
+            result.push(CyclotomicRing::from_slice(&quotient));
+            other_time += t_row.elapsed().as_secs_f64();
         } else {
+            // bTw_row and challenge_fold_row: schoolbook (cheap)
             let t_row = Instant::now();
             let mut poly = vec![F::zero(); poly_len];
 
@@ -492,7 +483,7 @@ where
                 for (i, w_recomp) in w_recomps.iter().enumerate() {
                     add_scalar_ring_product(&mut poly, &opening_point.b[i], w_recomp);
                 }
-            } else if row_idx == Cfg::N_D + Cfg::N_B + 1 {
+            } else {
                 let _span = tracing::info_span!("challenge_fold_row").entered();
                 for (i, w_recomp) in w_recomps.iter().enumerate() {
                     add_sparse_ring_product(&mut poly, &challenges[i], w_recomp);
@@ -506,22 +497,6 @@ where
                             CyclotomicRing::gadget_recompose_pow2(&z_pre[start..end], log_basis);
                         sub_scalar_ring_product(&mut poly, &opening_point.a[i], &z_pre_recomp);
                     }
-                }
-            } else {
-                let _span = tracing::info_span!("A_row").entered();
-                let a_idx = row_idx - (Cfg::N_D + Cfg::N_B + 2);
-                for (i, t_hat_i) in t_hat.iter().enumerate() {
-                    let start = a_idx * decomp_commit;
-                    let end = start + decomp_commit;
-                    if end <= t_hat_i.len() {
-                        let t_recomp =
-                            CyclotomicRing::gadget_recompose_pow2(&t_hat_i[start..end], log_basis);
-                        add_sparse_ring_product(&mut poly, &challenges[i], &t_recomp);
-                    }
-                }
-                let a_row = &setup.A[a_idx];
-                for (m_ij, z_j) in a_row.iter().zip(z_pre.iter()) {
-                    sub_unreduced_product(&mut poly, m_ij, z_j);
                 }
             }
 
@@ -542,9 +517,7 @@ where
     }
 
     eprintln!(
-        "      [compute_r] D-rows(NTT): {d_time:.2}s ({} products x D={D}), B-rows(NTT): {b_time:.2}s ({} products), other: {other_time:.2}s",
-        w_hat_flat.len(),
-        t_hat_flat.len(),
+        "      [compute_r] D(NTT): {d_time:.2}s, B(NTT): {b_time:.2}s, A(NTT): {a_time:.2}s, other: {other_time:.2}s",
     );
 
     Ok(result)
@@ -820,7 +793,7 @@ mod tests {
         let w_hat = f.quad_eq.w_hat().unwrap();
         let w_recomposed: Vec<CyclotomicRing<F, D>> = w_hat
             .iter()
-            .map(|w_hat_i| CyclotomicRing::gadget_recompose_pow2(w_hat_i, LOG_BASIS))
+            .map(|w_hat_i| CyclotomicRing::gadget_recompose_pow2(w_hat_i, log_basis()))
             .collect();
 
         let u_eval = w_recomposed
@@ -853,7 +826,7 @@ mod tests {
     fn derive_z_hat(z_pre: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
         z_pre
             .iter()
-            .flat_map(|z_j| z_j.balanced_decompose_pow2(num_digits_fold(), LOG_BASIS))
+            .flat_map(|z_j| z_j.balanced_decompose_pow2(num_digits_fold(), log_basis()))
             .collect()
     }
 
@@ -865,7 +838,7 @@ mod tests {
         let w_hat = f.quad_eq.w_hat().unwrap();
         let w: Vec<CyclotomicRing<F, D>> = w_hat
             .iter()
-            .map(|w_hat_i| CyclotomicRing::gadget_recompose_pow2(w_hat_i, LOG_BASIS))
+            .map(|w_hat_i| CyclotomicRing::gadget_recompose_pow2(w_hat_i, log_basis()))
             .collect();
 
         let lhs = f

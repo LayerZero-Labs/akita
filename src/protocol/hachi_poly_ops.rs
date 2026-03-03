@@ -203,31 +203,83 @@ where
         let n = self.coeffs.len();
         let coeffs = &self.coeffs;
 
-        cfg_fold_reduce!(
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let half_q = q / 2;
+
+        let z_i32: Vec<[i32; D]> = cfg_fold_reduce!(
             0..challenges.len(),
-            || vec![CyclotomicRing::<F, D>::zero(); inner_width],
-            |mut z, i| {
+            || vec![[0i32; D]; inner_width],
+            |mut z: Vec<[i32; D]>, i| {
                 let c_i = &challenges[i];
                 let start = i * block_len;
                 let end = (start + block_len).min(n);
-                let block = if start < n {
-                    &coeffs[start..end]
-                } else {
-                    &[] as &[CyclotomicRing<F, D>]
-                };
-                let s_i = decompose_block(block, num_digits, log_basis);
-                for (j, z_j) in z.iter_mut().enumerate() {
-                    *z_j += s_i[j].mul_by_sparse(c_i);
+
+                let b_val = 1i128 << log_basis;
+                let half_b = b_val / 2;
+
+                for elem_idx in 0..(end.saturating_sub(start)) {
+                    let ring = &coeffs[start + elem_idx];
+                    let base_j = elem_idx * num_digits;
+
+                    for coeff_idx in 0..D {
+                        let canonical = ring.coeffs[coeff_idx].to_canonical_u128();
+                        let mut c: i128 = if canonical > half_q {
+                            -((q - canonical) as i128)
+                        } else {
+                            canonical as i128
+                        };
+
+                        for digit in 0..num_digits {
+                            let d = c.rem_euclid(b_val);
+                            let balanced = if d >= half_b { d - b_val } else { d };
+                            c = (c - balanced) / b_val;
+
+                            if balanced == 0 {
+                                continue;
+                            }
+                            let digit_i8 = balanced as i8;
+
+                            for (&pos, &challenge_coeff) in
+                                c_i.positions.iter().zip(c_i.coeffs.iter())
+                            {
+                                let target = coeff_idx + pos as usize;
+                                let (idx, sign) = if target < D {
+                                    (target, 1i32)
+                                } else {
+                                    (target - D, -1i32)
+                                };
+                                z[base_j + digit][idx] +=
+                                    sign * digit_i8 as i32 * challenge_coeff as i32;
+                            }
+                        }
+                    }
                 }
                 z
             },
             |mut a, b| {
                 for (ai, bi) in a.iter_mut().zip(b.iter()) {
-                    *ai += *bi;
+                    for (a_coeff, b_coeff) in ai.iter_mut().zip(bi.iter()) {
+                        *a_coeff += b_coeff;
+                    }
                 }
                 a
             }
-        )
+        );
+
+        z_i32
+            .into_iter()
+            .map(|arr| {
+                let field_coeffs: [F; D] = std::array::from_fn(|k| {
+                    let v = arr[k];
+                    if v >= 0 {
+                        F::from_canonical_u128_reduced(v as u128)
+                    } else {
+                        F::from_canonical_u128_reduced(q - ((-v) as u128))
+                    }
+                });
+                CyclotomicRing::from_coefficients(field_coeffs)
+            })
+            .collect()
     }
 
     #[tracing::instrument(skip_all, name = "DensePoly::commit_inner")]

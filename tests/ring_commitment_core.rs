@@ -20,7 +20,7 @@ impl CommitmentConfig for BadDegreeConfig {
 
     fn decomposition() -> DecompositionParams {
         DecompositionParams {
-            log_basis: 4,
+            log_basis: 3,
             log_commit_bound: 32,
             log_open_bound: None,
         }
@@ -111,7 +111,7 @@ fn opening_satisfies_inner_and_outer_equations() {
     .unwrap();
 
     let depth = num_digits_commit();
-    let log_basis = LOG_BASIS;
+    let log_basis = log_basis();
     for (i, block) in blocks.iter().enumerate() {
         let s_i = decompose_block(block, depth, log_basis);
         let lhs = mat_vec_mul(&psetup.expanded.A, &s_i);
