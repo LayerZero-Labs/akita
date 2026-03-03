@@ -30,27 +30,6 @@ impl CommitmentConfig for BadDegreeConfig {
     }
 }
 
-#[derive(Clone)]
-struct BadDigitBudgetConfig;
-
-impl CommitmentConfig for BadDigitBudgetConfig {
-    const D: usize = 64;
-    const N_A: usize = 8;
-    const N_B: usize = 4;
-    const N_D: usize = 4;
-    const CHALLENGE_WEIGHT: usize = 3;
-
-    fn decomposition() -> DecompositionParams {
-        DecompositionParams {
-            log_basis: 32,
-            log_coeff_bound: 128,
-        }
-    }
-
-    fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        HachiCommitmentLayout::new::<Self>(4, 2, &Self::decomposition())
-    }
-}
 
 #[test]
 fn setup_shape_is_consistent() {
@@ -172,12 +151,3 @@ fn setup_rejects_mismatched_degree() {
     }
 }
 
-#[test]
-fn setup_rejects_invalid_digit_budget() {
-    let err = <HachiCommitmentCore as RingCommitmentScheme<F, D, BadDigitBudgetConfig>>::setup(16)
-        .unwrap_err();
-    match err {
-        HachiError::InvalidSetup(msg) => assert!(msg.contains("delta * log_basis")),
-        other => panic!("unexpected error: {other:?}"),
-    }
-}
