@@ -314,6 +314,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField> SumcheckInstanceProver<E>
 pub struct HachiSumcheckVerifier<F: FieldCore, const D: usize> {
     batching_coeff: F,
     w_evals: Vec<F>,
+    /// When set, overrides the `w_val` computed from `w_evals` in
+    /// `expected_output_claim`. Used at intermediate fold levels where
+    /// the full w vector is not available.
+    w_val_override: Option<F>,
     tau0: Vec<F>,
     b: usize,
     alpha_evals_y: Vec<F>,
@@ -359,6 +363,7 @@ impl<F: FieldCore + FromSmallInt, const D: usize> HachiSumcheckVerifier<F, D> {
         Self {
             batching_coeff,
             w_evals,
+            w_val_override: None,
             tau0,
             b,
             alpha_evals_y,
@@ -368,6 +373,13 @@ impl<F: FieldCore + FromSmallInt, const D: usize> HachiSumcheckVerifier<F, D> {
             relation_claim,
             _marker: PhantomData,
         }
+    }
+
+    /// Set the w_val override for intermediate fold levels where the
+    /// full w vector is not available.
+    pub fn with_w_val_override(mut self, w_val: F) -> Self {
+        self.w_val_override = Some(w_val);
+        self
     }
 }
 
@@ -388,7 +400,10 @@ impl<F: FieldCore + FromSmallInt, const D: usize> SumcheckInstanceVerifier<F>
 
     fn expected_output_claim(&self, challenges: &[F]) -> Result<F, HachiError> {
         let eq_val = EqPolynomial::mle(&self.tau0, challenges);
-        let w_val = multilinear_eval(&self.w_evals, challenges)?;
+        let w_val = match self.w_val_override {
+            Some(v) => v,
+            None => multilinear_eval(&self.w_evals, challenges)?,
+        };
         let norm_oracle = eq_val * range_check_eval(w_val, self.b);
 
         let (x_challenges, y_challenges) = challenges.split_at(self.num_u);

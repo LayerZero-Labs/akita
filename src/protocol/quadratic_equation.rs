@@ -15,8 +15,7 @@ use crate::protocol::commitment::utils::linear::{
 };
 use crate::protocol::commitment::utils::norm::{detect_field_modulus, vec_inf_norm};
 use crate::protocol::commitment::{
-    CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiProverSetup,
-    HachiVerifierSetup, RingCommitment,
+    CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiProverSetup, RingCommitment,
 };
 use crate::protocol::hachi_poly_ops::HachiPolyOps;
 use crate::protocol::opening_point::RingOpeningPoint;
@@ -144,6 +143,7 @@ where
     ///
     /// Returns an error if the norm check, challenge sampling, or matrix
     /// generation fails.
+    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "QuadraticEquation::new_prover")]
     pub fn new_prover<T: Transcript<F>, P: HachiPolyOps<F, D>>(
         setup: &HachiProverSetup<F, D>,
@@ -153,9 +153,8 @@ where
         transcript: &mut T,
         commitment: &RingCommitment<F, D>,
         y_ring: &CyclotomicRing<F, D>,
+        layout: HachiCommitmentLayout,
     ) -> Result<Self, HachiError> {
-        let layout = setup.layout();
-
         let t_wh = Instant::now();
         let (w_hat, w_hat_flat) = {
             let _span = tracing::info_span!("compute_w_hat").entered();
@@ -227,14 +226,13 @@ where
     /// Returns an error if challenge derivation fails.
     #[tracing::instrument(skip_all, name = "QuadraticEquation::new_verifier")]
     pub fn new_verifier<T: Transcript<F>>(
-        setup: &HachiVerifierSetup<F, D>,
         ring_opening_point: RingOpeningPoint<F>,
         v: Vec<CyclotomicRing<F, D>>,
         transcript: &mut T,
         commitment: &RingCommitment<F, D>,
         y_ring: &CyclotomicRing<F, D>,
+        layout: HachiCommitmentLayout,
     ) -> Result<Self, HachiError> {
-        let layout = setup.expanded.seed.layout;
         let challenges =
             derive_stage1_challenges::<F, T, D, Cfg>(transcript, &v, layout.num_blocks)?;
         let y = generate_y::<F, D>(&v, &commitment.u, y_ring, Cfg::N_D, Cfg::N_B, Cfg::N_A)?;
@@ -393,12 +391,12 @@ pub(crate) fn compute_r_split_eq<F, const D: usize, Cfg>(
     z_pre: &[CyclotomicRing<F, D>],
     y: &[CyclotomicRing<F, D>],
     ntt_cache: &NttMatrixCache<D>,
+    layout: HachiCommitmentLayout,
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
 where
     F: FieldCore + CanonicalField,
     Cfg: CommitmentConfig,
 {
-    let layout = setup.seed.layout;
     let decomp_commit = layout.num_digits_commit;
     let log_basis = layout.log_basis;
     let poly_len = 2 * D - 1;
@@ -532,12 +530,12 @@ pub(crate) fn compute_m_a_streaming<F, const D: usize, Cfg>(
     opening_point: &RingOpeningPoint<F>,
     challenges: &[SparseChallenge],
     alpha: &F,
+    layout: HachiCommitmentLayout,
 ) -> Result<Vec<Vec<F>>, HachiError>
 where
     F: FieldCore + CanonicalField,
     Cfg: CommitmentConfig,
 {
-    let layout = setup.seed.layout;
     let depth_commit = layout.num_digits_commit;
     let depth_open = layout.num_digits_open;
     let depth_fold = layout.num_digits_fold;
@@ -624,7 +622,8 @@ where
         }
         let z_offset = w_len + t_len;
         let a_row = &setup.A[a_idx];
-        for (k, ring) in a_row.iter().enumerate() {
+        let inner_width = block_len * depth_commit;
+        for (k, ring) in a_row.iter().take(inner_width).enumerate() {
             let ring_alpha = eval_ring_at(ring, alpha);
             for (t, &j) in j1.iter().enumerate() {
                 full[z_offset + k * depth_fold + t] = -(ring_alpha * j);
@@ -738,6 +737,7 @@ mod tests {
         let hint = HachiCommitmentHint { t_hat: w.t_hat };
         let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_SEED);
         let y_ring = CyclotomicRing::<F, D>::zero();
+        let layout = setup.layout();
         let quad_eq = QuadraticEquation::<F, D, TinyConfig>::new_prover(
             &setup,
             point.clone(),
@@ -746,6 +746,7 @@ mod tests {
             &mut transcript,
             &w.commitment,
             &y_ring,
+            layout,
         )
         .unwrap();
 

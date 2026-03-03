@@ -1,7 +1,7 @@
 //! Ring-native §4.1 commitment core implementation.
 
 use super::config::{
-    ensure_block_layout, ensure_matrix_shape, ensure_matrix_shape_ge, ensure_supported_num_vars,
+    ensure_block_layout, ensure_matrix_shape_ge, ensure_supported_num_vars,
     validate_and_derive_layout, HachiCommitmentLayout,
 };
 use super::onehot::{inner_ajtai_onehot_t_only, map_onehot_to_sparse_blocks};
@@ -279,16 +279,12 @@ where
         let w_layout = w_commitment_layout::<F, D, Cfg>(layout)?;
         let a_cols = layout.inner_width.max(w_layout.inner_width);
         let b_cols = layout.outer_width.max(w_layout.outer_width);
+        let d_cols = layout.d_matrix_width.max(w_layout.d_matrix_width);
 
         let public_matrix_seed = sample_public_matrix_seed();
         let a_matrix = derive_public_matrix::<F, D>(Cfg::N_A, a_cols, &public_matrix_seed, b"A");
         let b_matrix = derive_public_matrix::<F, D>(Cfg::N_B, b_cols, &public_matrix_seed, b"B");
-        let d_matrix = derive_public_matrix::<F, D>(
-            Cfg::N_D,
-            layout.d_matrix_width,
-            &public_matrix_seed,
-            b"D",
-        );
+        let d_matrix = derive_public_matrix::<F, D>(Cfg::N_D, d_cols, &public_matrix_seed, b"D");
 
         let ntt_cache = build_ntt_cache::<F, D>(&a_matrix, &b_matrix, &d_matrix)?;
         let expanded = HachiExpandedSetup {
@@ -308,7 +304,7 @@ where
         let verifier_setup = HachiVerifierSetup { expanded };
         ensure_matrix_shape_ge(&prover_setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
         ensure_matrix_shape_ge(&prover_setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
-        ensure_matrix_shape(
+        ensure_matrix_shape_ge(
             &prover_setup.expanded.D,
             Cfg::N_D,
             layout.d_matrix_width,
@@ -522,9 +518,9 @@ impl HachiCommitmentCore {
         let max_num_vars = new_layout.required_num_vars::<D>()?;
         let seed = existing.seed.public_matrix_seed;
 
+        let d_cols = new_layout.d_matrix_width.max(w_layout.d_matrix_width);
         let b_matrix = derive_public_matrix::<F, D>(Cfg::N_B, b_cols, &seed, b"B");
-        let d_matrix =
-            derive_public_matrix::<F, D>(Cfg::N_D, new_layout.d_matrix_width, &seed, b"D");
+        let d_matrix = derive_public_matrix::<F, D>(Cfg::N_D, d_cols, &seed, b"D");
 
         let ntt_cache = build_ntt_cache::<F, D>(&existing.A, &b_matrix, &d_matrix)?;
         let expanded = HachiExpandedSetup {
@@ -557,15 +553,11 @@ impl HachiCommitmentCore {
         let w_layout = w_commitment_layout::<F, D, Cfg>(layout)?;
         let a_cols = layout.inner_width.max(w_layout.inner_width);
         let b_cols = layout.outer_width.max(w_layout.outer_width);
+        let d_cols = layout.d_matrix_width.max(w_layout.d_matrix_width);
 
         let a_matrix = derive_public_matrix::<F, D>(Cfg::N_A, a_cols, &public_matrix_seed, b"A");
         let b_matrix = derive_public_matrix::<F, D>(Cfg::N_B, b_cols, &public_matrix_seed, b"B");
-        let d_matrix = derive_public_matrix::<F, D>(
-            Cfg::N_D,
-            layout.d_matrix_width,
-            &public_matrix_seed,
-            b"D",
-        );
+        let d_matrix = derive_public_matrix::<F, D>(Cfg::N_D, d_cols, &public_matrix_seed, b"D");
 
         let ntt_cache = build_ntt_cache::<F, D>(&a_matrix, &b_matrix, &d_matrix)?;
         let expanded = HachiExpandedSetup {
@@ -585,7 +577,7 @@ impl HachiCommitmentCore {
         let verifier_setup = HachiVerifierSetup { expanded };
         ensure_matrix_shape_ge(&prover_setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
         ensure_matrix_shape_ge(&prover_setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
-        ensure_matrix_shape(
+        ensure_matrix_shape_ge(
             &prover_setup.expanded.D,
             Cfg::N_D,
             layout.d_matrix_width,

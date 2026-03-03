@@ -18,6 +18,7 @@ use crate::protocol::commitment::{
     CommitmentConfig, DecompositionParams, HachiCommitmentLayout, HachiExpandedSetup,
     RingCommitment,
 };
+use crate::protocol::proof::HachiCommitmentHint;
 use crate::protocol::quadratic_equation::{
     compute_m_a_streaming, compute_r_split_eq, QuadraticEquation,
 };
@@ -38,6 +39,8 @@ pub struct RingSwitchOutput<F: FieldCore, const D: usize> {
     pub w: Vec<F>,
     /// Commitment to w.
     pub w_commitment: RingCommitment<F, D>,
+    /// Prover hint for the w-commitment (t_hat blocks), needed for recursive opening.
+    pub w_hint: HachiCommitmentHint<F, D>,
     /// Compact evaluation table of w (all entries in [-b/2, b/2), reordered for sumcheck).
     /// Populated by the prover; empty on the verifier side.
     pub w_evals: Vec<i8>,
@@ -70,6 +73,7 @@ pub fn ring_switch_prover<F, T, const D: usize, Cfg>(
     setup: &HachiExpandedSetup<F, D>,
     transcript: &mut T,
     ntt_cache: &NttMatrixCache<D>,
+    layout: HachiCommitmentLayout,
 ) -> Result<RingSwitchOutput<F, D>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -101,13 +105,12 @@ where
         z_pre,
         quad_eq.y(),
         ntt_cache,
+        layout,
     )?;
     eprintln!(
         "    [ring_switch] compute_r_split_eq: {:.2}s",
         t_rs.elapsed().as_secs_f64()
     );
-
-    let layout = setup.seed.layout;
     let t_wc = Instant::now();
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
@@ -119,7 +122,7 @@ where
     );
 
     let t_cw = Instant::now();
-    let w_commitment = commit_w::<F, D, Cfg>(&w, ntt_cache)?;
+    let (w_commitment, w_hint) = commit_w::<F, D, Cfg>(&w, ntt_cache)?;
     eprintln!(
         "    [ring_switch] commit_w: {:.2}s (w_len={})",
         t_cw.elapsed().as_secs_f64(),
@@ -135,6 +138,7 @@ where
         quad_eq.opening_point(),
         &quad_eq.challenges,
         &alpha,
+        layout,
     )?;
     eprintln!(
         "    [ring_switch] compute_m_a_streaming: {:.2}s",
@@ -179,6 +183,7 @@ where
     Ok(RingSwitchOutput {
         w,
         w_commitment,
+        w_hint,
         w_evals,
         m_evals_x,
         alpha_evals_y,
@@ -200,16 +205,16 @@ where
 pub fn ring_switch_verifier<F, T, const D: usize, Cfg>(
     quad_eq: &QuadraticEquation<F, D, Cfg>,
     setup: &HachiExpandedSetup<F, D>,
-    w: &[F],
+    w_len: usize,
     w_commitment: &RingCommitment<F, D>,
     transcript: &mut T,
+    layout: HachiCommitmentLayout,
 ) -> Result<RingSwitchOutput<F, D>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
-    let layout = setup.seed.layout;
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
@@ -219,6 +224,7 @@ where
         quad_eq.opening_point(),
         &quad_eq.challenges,
         &alpha,
+        layout,
     )?;
     let m_a_vec = expand_m_a::<F, D>(&m_a, alpha, layout.log_basis)?;
     let m_rows = m_row_count::<Cfg>();
@@ -228,7 +234,7 @@ where
         m_a_vec.len() / m_a.len()
     };
 
-    let num_ring_elems = w.len() / D;
+    let num_ring_elems = w_len / D;
     let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
     let num_l = D.trailing_zeros() as usize;
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
@@ -244,6 +250,7 @@ where
     Ok(RingSwitchOutput {
         w: Vec::new(),
         w_commitment: w_commitment.clone(),
+        w_hint: HachiCommitmentHint { t_hat: Vec::new() },
         w_evals: Vec::new(),
         m_evals_x,
         alpha_evals_y,
@@ -333,7 +340,7 @@ pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D
 }
 
 #[derive(Clone, Copy, Debug)]
-struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
+pub(crate) struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
 }
 
@@ -405,7 +412,7 @@ pub(crate) fn w_commitment_layout<F: CanonicalField, const D: usize, Cfg: Commit
 fn commit_w<F, const D: usize, Cfg>(
     w: &[F],
     cache: &NttMatrixCache<D>,
-) -> Result<RingCommitment<F, D>, HachiError>
+) -> Result<(RingCommitment<F, D>, HachiCommitmentHint<F, D>), HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     Cfg: CommitmentConfig,
@@ -428,8 +435,8 @@ where
     let coeff_len = ring_elems.len();
     let zero_t_hat = vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(depth).unwrap()];
 
-    let t_hat_flat: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..num_blocks)
-        .flat_map(|i| {
+    let t_hat_per_block: Vec<Vec<CyclotomicRing<F, D>>> = cfg_into_iter!(0..num_blocks)
+        .map(|i| {
             let start = i * block_len;
             if start >= coeff_len {
                 zero_t_hat.clone()
@@ -444,8 +451,15 @@ where
         })
         .collect();
 
+    let t_hat_flat: Vec<CyclotomicRing<F, D>> = t_hat_per_block
+        .iter()
+        .flat_map(|v| v.iter().copied())
+        .collect();
     let u = mat_vec_mul_ntt_cached(cache, MatrixSlot::B, &t_hat_flat)?;
-    Ok(RingCommitment { u })
+    let hint = HachiCommitmentHint {
+        t_hat: t_hat_per_block,
+    };
+    Ok((RingCommitment { u }, hint))
 }
 
 pub(crate) fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D>, alpha: &F) -> F {
@@ -585,6 +599,10 @@ pub(crate) fn build_w_evals_compact<F: FieldCore + CanonicalField>(
     w: &[F],
     d: usize,
 ) -> Result<(Vec<i8>, usize, usize), HachiError> {
+    debug_assert!(
+        d.is_power_of_two() && d.trailing_zeros() <= 7,
+        "log_basis must be <= 7 to fit balanced digits in i8"
+    );
     if d == 0 || w.len() % d != 0 {
         return Err(HachiError::InvalidSize {
             expected: d,

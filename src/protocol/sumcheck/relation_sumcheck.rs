@@ -311,8 +311,8 @@ mod tests {
         .unwrap();
 
         let d = SmallTestCommitmentConfig::D;
-        assert_eq!(proof.sumcheck_aux.w.len() % d, 0);
-        let w_u = proof.sumcheck_aux.w.len() / d;
+        assert_eq!(proof.final_w.len() % d, 0);
+        let w_u = proof.final_w.len() / d;
         let rows = SmallTestCommitmentConfig::N_D
             + SmallTestCommitmentConfig::N_B
             + 1
@@ -333,9 +333,9 @@ mod tests {
         for x in 0..x_len {
             for y in 0..y_len {
                 let src = y + (x << num_l);
-                if src < proof.sumcheck_aux.w.len() {
+                if src < proof.final_w.len() {
                     let dst = x + (y << num_u);
-                    w_evals[dst] = proof.sumcheck_aux.w[src];
+                    w_evals[dst] = proof.final_w[src];
                 }
             }
         }
@@ -392,9 +392,9 @@ mod tests {
             alpha_evals_y,
             m_evals_x,
             tau1,
-            proof.v.clone(),
+            proof.levels[0].v.clone(),
             commitment.u.clone(),
-            proof.y_ring,
+            proof.levels[0].y_ring,
             alpha,
             num_u,
             num_l,

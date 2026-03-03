@@ -862,7 +862,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut w_evals = proof.sumcheck_aux.w.clone();
+        let mut w_evals = proof.final_w.clone();
         let target_len = w_evals.len().next_power_of_two();
         w_evals.resize(target_len, F::zero());
         let num_sumcheck_vars = target_len.trailing_zeros() as usize;

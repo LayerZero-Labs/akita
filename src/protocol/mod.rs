@@ -25,7 +25,7 @@ pub use commitment::{
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
 pub use opening_point::{BasisMode, RingOpeningPoint};
-pub use proof::{HachiProof, SumcheckAux};
+pub use proof::{HachiLevelProof, HachiProof};
 pub use quadratic_equation::QuadraticEquation;
 pub use sumcheck::batched_sumcheck::{prove_batched_sumcheck, verify_batched_sumcheck};
 pub use sumcheck::{

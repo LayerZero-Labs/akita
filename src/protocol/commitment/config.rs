@@ -453,34 +453,6 @@ pub(super) fn ensure_block_layout<F: FieldCore, const D: usize>(
     Ok(())
 }
 
-/// Ensure matrix shape matches expected dimensions exactly.
-///
-/// # Errors
-///
-/// Returns an error if row count or row width mismatch.
-pub(super) fn ensure_matrix_shape<T>(
-    mat: &[Vec<T>],
-    expected_rows: usize,
-    expected_cols: usize,
-    name: &str,
-) -> Result<(), HachiError> {
-    if mat.len() != expected_rows {
-        return Err(HachiError::InvalidSize {
-            expected: expected_rows,
-            actual: mat.len(),
-        });
-    }
-    for (row_idx, row) in mat.iter().enumerate() {
-        if row.len() != expected_cols {
-            return Err(HachiError::InvalidSetup(format!(
-                "{name} row {row_idx} has width {}, expected {expected_cols}",
-                row.len()
-            )));
-        }
-    }
-    Ok(())
-}
-
 /// Ensure matrix has at least the expected dimensions.
 ///
 /// Matrices may be wider than the main layout requires when widened to

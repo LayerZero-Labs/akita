@@ -8,13 +8,16 @@ use crate::protocol::commitment::{
     AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore, HachiProverSetup,
     HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
 };
-use crate::protocol::hachi_poly_ops::HachiPolyOps;
+use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
 use crate::protocol::opening_point::{BasisMode, RingOpeningPoint};
-use crate::protocol::proof::{HachiCommitmentHint, HachiProof, SumcheckAux};
+use crate::protocol::proof::{HachiCommitmentHint, HachiLevelProof, HachiProof};
 use crate::protocol::quadratic_equation::QuadraticEquation;
-use crate::protocol::ring_switch::{build_w_evals, ring_switch_prover, ring_switch_verifier};
+use crate::protocol::ring_switch::{
+    build_w_evals, ring_switch_prover, ring_switch_verifier, w_ring_element_count,
+    WCommitmentConfig,
+};
 use crate::protocol::sumcheck::hachi_sumcheck::{HachiSumcheckProver, HachiSumcheckVerifier};
-use crate::protocol::sumcheck::{prove_sumcheck, verify_sumcheck};
+use crate::protocol::sumcheck::{multilinear_eval, prove_sumcheck, verify_sumcheck};
 use crate::protocol::transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
@@ -36,10 +39,202 @@ use crate::protocol::transcript::Blake2bTranscript;
 #[cfg(test)]
 use crate::protocol::SmallTestCommitmentConfig;
 
+/// Minimum w vector length (in field elements) below which further folding
+/// is not beneficial.  When `w.len() <= MIN_W_LEN_FOR_FOLDING`, the prover
+/// sends `w` directly instead of recursing.
+const MIN_W_LEN_FOR_FOLDING: usize = 4096;
+
+/// Minimum shrink ratio (next_w / prev_w) below which further folding
+/// stops being worthwhile.  If the w vector doesn't shrink by at least
+/// this factor, the overhead of another fold level outweighs the saving.
+const MIN_SHRINK_RATIO: f64 = 0.5;
+
 /// End-to-end PCS wrapper, generic over ring degree `D` and config `Cfg`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HachiCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
+}
+
+/// Output from a single prove level, needed to chain into the next level.
+struct ProveLevelOutput<F: FieldCore, const D: usize> {
+    level_proof: HachiLevelProof<F, D>,
+    w: Vec<F>,
+    w_hint: HachiCommitmentHint<F, D>,
+    sumcheck_challenges: Vec<F>,
+    num_u: usize,
+    num_l: usize,
+}
+
+/// Prove one fold level: quad_eq -> ring_switch -> sumcheck.
+///
+/// Generic over the commitment config so it works for both the original
+/// polynomial (using `Cfg`) and recursive w-openings (using `WCommitmentConfig`).
+#[allow(clippy::too_many_arguments)]
+fn prove_one_level<F, T, const D: usize, Cfg, P>(
+    setup: &HachiProverSetup<F, D>,
+    poly: &P,
+    opening_point: &[F],
+    hint: HachiCommitmentHint<F, D>,
+    transcript: &mut T,
+    commitment: &RingCommitment<F, D>,
+    basis: BasisMode,
+    level: usize,
+) -> Result<ProveLevelOutput<F, D>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig,
+    P: HachiPolyOps<F, D>,
+{
+    let alpha = Cfg::D.trailing_zeros() as usize;
+    if opening_point.len() < alpha {
+        return Err(HachiError::InvalidPointDimension {
+            expected: alpha,
+            actual: opening_point.len(),
+        });
+    }
+
+    let layout = Cfg::commitment_layout(opening_point.len())?;
+    let target_num_vars = layout.m_vars + layout.r_vars + alpha;
+    let mut padded_point = opening_point.to_vec();
+    padded_point.resize(target_num_vars, F::zero());
+    let outer_point = &padded_point[alpha..];
+
+    let ring_opening_point =
+        ring_opening_point_from_field::<F>(outer_point, layout.r_vars, layout.m_vars, basis)?;
+
+    let t0 = Instant::now();
+    let outer_weights = basis_weights(outer_point, basis);
+    let y_ring = {
+        let _span = tracing::info_span!("evaluate_ring", level).entered();
+        poly.evaluate_ring(&outer_weights)
+    };
+    eprintln!(
+        "  [hachi prove L{level}] eval ring poly: {:.2}s (num_ring_elems={})",
+        t0.elapsed().as_secs_f64(),
+        poly.num_ring_elems()
+    );
+
+    commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+    for pt in &padded_point {
+        transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+    }
+    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+
+    let t1 = Instant::now();
+    let mut quad_eq = QuadraticEquation::<F, { D }, Cfg>::new_prover(
+        setup,
+        ring_opening_point,
+        poly,
+        hint,
+        transcript,
+        commitment,
+        &y_ring,
+        layout,
+    )?;
+    eprintln!(
+        "  [hachi prove L{level}] quad_eq new_prover: {:.2}s",
+        t1.elapsed().as_secs_f64()
+    );
+
+    let t2 = Instant::now();
+    let ntt_cache = setup.ntt_cache()?;
+    let rs = ring_switch_prover::<F, T, { D }, Cfg>(
+        &mut quad_eq,
+        &setup.expanded,
+        transcript,
+        ntt_cache,
+        layout,
+    )?;
+    eprintln!(
+        "  [hachi prove L{level}] ring_switch_prover: {:.2}s",
+        t2.elapsed().as_secs_f64()
+    );
+
+    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+
+    let t3 = Instant::now();
+    let num_u = rs.num_u;
+    let num_l = rs.num_l;
+    let mut fused_prover = HachiSumcheckProver::new(
+        batching_coeff,
+        rs.w_evals,
+        &rs.tau0,
+        rs.b,
+        &rs.alpha_evals_y,
+        &rs.m_evals_x,
+        num_u,
+        num_l,
+    );
+
+    let (sumcheck_proof, sumcheck_challenges, _final_claim) =
+        prove_sumcheck::<F, _, F, _, _>(&mut fused_prover, transcript, |tr| {
+            tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+        })?;
+    eprintln!(
+        "  [hachi prove L{level}] fused sumcheck: {:.2}s",
+        t3.elapsed().as_secs_f64()
+    );
+
+    let (w_evals_for_eval, _, _) = build_w_evals(&rs.w, D)?;
+    let w_eval = multilinear_eval(&w_evals_for_eval, &sumcheck_challenges)?;
+
+    Ok(ProveLevelOutput {
+        level_proof: HachiLevelProof {
+            v: quad_eq.v,
+            y_ring,
+            sumcheck_proof,
+            w_commitment: rs.w_commitment,
+            w_eval,
+        },
+        w: rs.w,
+        w_hint: rs.w_hint,
+        sumcheck_challenges,
+        num_u,
+        num_l,
+    })
+}
+
+/// Whether the prover should stop folding and send `w` directly.
+///
+/// `prev_w_len` is the polynomial length at the previous level (or the
+/// original polynomial's field-element count for level 0).
+fn should_stop_folding(w_len: usize, prev_w_len: usize) -> bool {
+    if w_len <= MIN_W_LEN_FOR_FOLDING {
+        return true;
+    }
+    // Stop if w didn't shrink enough relative to the input.
+    let ratio = w_len as f64 / prev_w_len as f64;
+    ratio > MIN_SHRINK_RATIO
+}
+
+/// Derive the opening point for the next fold level from the sumcheck
+/// challenges of the current level.
+///
+/// Sumcheck challenges are ordered `[x_0..x_{num_u-1}, y_0..y_{num_l-1}]`
+/// where x selects ring elements and y selects coefficients.
+/// The PCS opening point is `[inner, outer]` = `[y, x]`.
+fn next_level_opening_point<F: FieldCore>(
+    sumcheck_challenges: &[F],
+    num_u: usize,
+    num_l: usize,
+) -> Vec<F> {
+    let (x, y) = sumcheck_challenges.split_at(num_u);
+    debug_assert_eq!(y.len(), num_l);
+    let mut point = Vec::with_capacity(num_u + num_l);
+    point.extend_from_slice(y);
+    point.extend_from_slice(x);
+    point
+}
+
+/// Build a `DensePoly` from the flat w coefficient vector, padding to
+/// the next power of two in total field elements.
+fn dense_poly_from_w<F: FieldCore, const D: usize>(w: &[F]) -> Result<DensePoly<F, D>, HachiError> {
+    let total_coeffs = w.len().next_power_of_two().max(D);
+    let num_vars = total_coeffs.trailing_zeros() as usize;
+    let mut padded = w.to_vec();
+    padded.resize(total_coeffs, F::zero());
+    DensePoly::from_field_evals(num_vars, &padded)
 }
 
 impl<F, const D: usize, Cfg> CommitmentScheme<F, D> for HachiCommitmentScheme<D, Cfg>
@@ -99,108 +294,65 @@ where
         basis: BasisMode,
     ) -> Result<Self::Proof, HachiError> {
         let t_prove_total = Instant::now();
-        let alpha = Cfg::D.trailing_zeros() as usize;
-        if opening_point.len() < alpha {
-            return Err(HachiError::InvalidPointDimension {
-                expected: alpha,
-                actual: opening_point.len(),
-            });
-        }
+        let mut levels = Vec::new();
 
-        let layout = <HachiCommitmentCore as RingCommitmentScheme<F, { D }, Cfg>>::layout(setup)?;
-        let target_num_vars = layout.m_vars + layout.r_vars + alpha;
-        if opening_point.len() > target_num_vars {
-            return Err(HachiError::InvalidPointDimension {
-                expected: target_num_vars,
-                actual: opening_point.len(),
-            });
-        }
-        let mut padded_point = opening_point.to_vec();
-        padded_point.resize(target_num_vars, F::zero());
-        let outer_point = &padded_point[alpha..];
-
-        let ring_opening_point =
-            ring_opening_point_from_field::<F>(outer_point, layout.r_vars, layout.m_vars, basis)?;
-
-        let t0 = Instant::now();
-        let outer_weights = basis_weights(outer_point, basis);
-        let y_ring = {
-            let _span = tracing::info_span!("evaluate_ring").entered();
-            poly.evaluate_ring(&outer_weights)
-        };
-        eprintln!(
-            "  [hachi prove] eval ring poly: {:.2}s (num_ring_elems={})",
-            t0.elapsed().as_secs_f64(),
-            poly.num_ring_elems()
-        );
-
-        commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
-        for pt in &padded_point {
-            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
-        }
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
-
-        let t1 = Instant::now();
-        let mut quad_eq = QuadraticEquation::<F, { D }, Cfg>::new_prover(
+        // --- Level 0: original polynomial with Cfg ---
+        let out = prove_one_level::<F, T, D, Cfg, P>(
             setup,
-            ring_opening_point,
             poly,
+            opening_point,
             hint,
             transcript,
             commitment,
-            &y_ring,
+            basis,
+            0,
         )?;
-        eprintln!(
-            "  [hachi prove] quad_eq new_prover: {:.2}s",
-            t1.elapsed().as_secs_f64()
-        );
+        levels.push(out.level_proof);
 
-        let t2 = Instant::now();
-        let ntt_cache = setup.ntt_cache()?;
-        let rs = ring_switch_prover::<F, T, { D }, Cfg>(
-            &mut quad_eq,
-            &setup.expanded,
-            transcript,
-            ntt_cache,
-        )?;
-        eprintln!(
-            "  [hachi prove] ring_switch_prover: {:.2}s",
-            t2.elapsed().as_secs_f64()
-        );
+        let mut prev_poly_len = poly.num_ring_elems() * D;
+        let mut current_w = out.w;
+        let mut current_hint = out.w_hint;
+        let mut current_challenges = out.sumcheck_challenges;
+        let mut current_num_u = out.num_u;
+        let mut current_num_l = out.num_l;
+        let mut level = 1usize;
 
-        let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+        // --- Subsequent levels: recursive w-opening with WCommitmentConfig ---
+        while !should_stop_folding(current_w.len(), prev_poly_len) {
+            let w_poly = dense_poly_from_w::<F, D>(&current_w)?;
+            let opening_point =
+                next_level_opening_point(&current_challenges, current_num_u, current_num_l);
+            let w_commitment = &levels.last().unwrap().w_commitment;
 
-        let t3 = Instant::now();
-        let mut fused_prover = HachiSumcheckProver::new(
-            batching_coeff,
-            rs.w_evals,
-            &rs.tau0,
-            rs.b,
-            &rs.alpha_evals_y,
-            &rs.m_evals_x,
-            rs.num_u,
-            rs.num_l,
-        );
+            let out = prove_one_level::<F, T, D, WCommitmentConfig<D, Cfg>, DensePoly<F, D>>(
+                setup,
+                &w_poly,
+                &opening_point,
+                current_hint,
+                transcript,
+                w_commitment,
+                BasisMode::Lagrange,
+                level,
+            )?;
+            levels.push(out.level_proof);
 
-        let (sumcheck_proof, ..) =
-            prove_sumcheck::<F, _, F, _, _>(&mut fused_prover, transcript, |tr| {
-                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
-            })?;
+            prev_poly_len = current_w.len();
+            current_w = out.w;
+            current_hint = out.w_hint;
+            current_challenges = out.sumcheck_challenges;
+            current_num_u = out.num_u;
+            current_num_l = out.num_l;
+            level += 1;
+        }
+
         eprintln!(
-            "  [hachi prove] fused sumcheck: {:.2}s",
-            t3.elapsed().as_secs_f64()
-        );
-        eprintln!(
-            "  [hachi prove] total: {:.2}s",
+            "  [hachi prove] total ({level} levels): {:.2}s",
             t_prove_total.elapsed().as_secs_f64()
         );
 
         Ok(HachiProof {
-            v: quad_eq.v,
-            y_ring,
-            sumcheck_proof,
-            sumcheck_aux: SumcheckAux { w: rs.w },
-            w_commitment: rs.w_commitment,
+            levels,
+            final_w: current_w,
         })
     }
 
@@ -214,81 +366,59 @@ where
         commitment: &Self::Commitment,
         basis: BasisMode,
     ) -> Result<(), HachiError> {
-        let alpha_bits = Cfg::D.trailing_zeros() as usize;
-        if opening_point.len() < alpha_bits {
-            return Err(HachiError::InvalidSetup(
-                "opening point length underflow".to_string(),
-            ));
-        }
-        let layout = setup.expanded.seed.layout;
-        let target_num_vars = layout.m_vars + layout.r_vars + alpha_bits;
-        let mut padded_point = opening_point.to_vec();
-        padded_point.resize(target_num_vars, F::zero());
-        let inner_point = &padded_point[..alpha_bits];
-        let reduced_opening_point = &padded_point[alpha_bits..];
-
-        commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
-        for pt in &padded_point {
-            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
-        }
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &proof.y_ring);
-
-        let v = reduce_inner_openings_to_ring_elements::<F, { D }>(inner_point, basis)?;
-        let d = F::from_u64(Cfg::D as u64);
-        let trace_lhs = trace::<F, { D }>(&(proof.y_ring * v.sigma_m1()));
-        let trace_rhs = d * *opening;
-        if trace_lhs != trace_rhs {
+        if proof.levels.is_empty() {
             return Err(HachiError::InvalidProof);
         }
 
-        let ring_opening_point = ring_opening_point_from_field::<F>(
-            reduced_opening_point,
-            layout.r_vars,
-            layout.m_vars,
-            basis,
-        )?;
-        let quad_eq = QuadraticEquation::<F, { D }, Cfg>::new_verifier(
-            setup,
-            ring_opening_point,
-            proof.v.clone(),
-            transcript,
-            commitment,
-            &proof.y_ring,
-        )?;
+        let num_levels = proof.levels.len();
 
-        let rs = ring_switch_verifier::<F, T, { D }, Cfg>(
-            &quad_eq,
-            &setup.expanded,
-            &proof.sumcheck_aux.w,
-            &proof.w_commitment,
-            transcript,
-        )?;
+        // State carried between levels.
+        let mut current_point = opening_point.to_vec();
+        let mut current_opening = *opening;
+        let mut current_commitment = commitment.clone();
+        let mut current_basis = basis;
 
-        let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
-        let (w_evals_full, _, _) = build_w_evals(&proof.sumcheck_aux.w, Cfg::D)?;
+        for (i, level_proof) in proof.levels.iter().enumerate() {
+            let is_last = i == num_levels - 1;
 
-        let fused_verifier = HachiSumcheckVerifier::new(
-            batching_coeff,
-            w_evals_full,
-            rs.tau0,
-            rs.b,
-            rs.alpha_evals_y,
-            rs.m_evals_x,
-            rs.tau1,
-            proof.v.clone(),
-            commitment.u.clone(),
-            proof.y_ring,
-            rs.alpha,
-            rs.num_u,
-            rs.num_l,
-        );
+            // --- Verify one level ---
+            let challenges = if i == 0 {
+                verify_one_level::<F, T, D, Cfg>(
+                    level_proof,
+                    setup,
+                    transcript,
+                    &current_point,
+                    &current_opening,
+                    &current_commitment,
+                    current_basis,
+                    is_last,
+                    if is_last { Some(&proof.final_w) } else { None },
+                )?
+            } else {
+                verify_one_level::<F, T, D, WCommitmentConfig<D, Cfg>>(
+                    level_proof,
+                    setup,
+                    transcript,
+                    &current_point,
+                    &current_opening,
+                    &current_commitment,
+                    current_basis,
+                    is_last,
+                    if is_last { Some(&proof.final_w) } else { None },
+                )?
+            };
 
-        verify_sumcheck::<F, _, F, _, _>(
-            &proof.sumcheck_proof,
-            &fused_verifier,
-            transcript,
-            |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-        )?;
+            if !is_last {
+                let alpha_bits = D.trailing_zeros() as usize;
+                let num_l = alpha_bits;
+                let num_u = challenges.len() - num_l;
+
+                current_point = next_level_opening_point(&challenges, num_u, num_l);
+                current_opening = level_proof.w_eval;
+                current_commitment = level_proof.w_commitment.clone();
+                current_basis = BasisMode::Lagrange;
+            }
+        }
 
         Ok(())
     }
@@ -296,6 +426,136 @@ where
     fn protocol_name() -> &'static [u8] {
         unimplemented!()
     }
+}
+
+/// Verify one fold level.
+///
+/// At the final level, `final_w` is provided and the verifier checks w_val
+/// from it directly. At intermediate levels, `level_proof.w_eval` is used.
+///
+/// Returns the sumcheck challenges for chaining into the next level.
+#[allow(clippy::too_many_arguments)]
+fn verify_one_level<F, T, const D: usize, Cfg>(
+    level_proof: &HachiLevelProof<F, D>,
+    setup: &HachiVerifierSetup<F, D>,
+    transcript: &mut T,
+    opening_point: &[F],
+    opening: &F,
+    commitment: &RingCommitment<F, D>,
+    basis: BasisMode,
+    is_last: bool,
+    final_w: Option<&[F]>,
+) -> Result<Vec<F>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig,
+{
+    let alpha_bits = Cfg::D.trailing_zeros() as usize;
+    if opening_point.len() < alpha_bits {
+        return Err(HachiError::InvalidSetup(
+            "opening point length underflow".to_string(),
+        ));
+    }
+    let layout = Cfg::commitment_layout(opening_point.len())?;
+    let target_num_vars = layout.m_vars + layout.r_vars + alpha_bits;
+    let mut padded_point = opening_point.to_vec();
+    padded_point.resize(target_num_vars, F::zero());
+    let inner_point = &padded_point[..alpha_bits];
+    let reduced_opening_point = &padded_point[alpha_bits..];
+
+    commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+    for pt in &padded_point {
+        transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+    }
+    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &level_proof.y_ring);
+
+    // Trace check
+    let v = reduce_inner_openings_to_ring_elements::<F, { D }>(inner_point, basis)?;
+    let d = F::from_u64(Cfg::D as u64);
+    let trace_lhs = trace::<F, { D }>(&(level_proof.y_ring * v.sigma_m1()));
+    let trace_rhs = d * *opening;
+    if trace_lhs != trace_rhs {
+        return Err(HachiError::InvalidProof);
+    }
+
+    let ring_opening_point = ring_opening_point_from_field::<F>(
+        reduced_opening_point,
+        layout.r_vars,
+        layout.m_vars,
+        basis,
+    )?;
+    let quad_eq = QuadraticEquation::<F, { D }, Cfg>::new_verifier(
+        ring_opening_point,
+        level_proof.v.clone(),
+        transcript,
+        commitment,
+        &level_proof.y_ring,
+        layout,
+    )?;
+
+    let w_len = if is_last {
+        final_w.map_or(0, |fw| fw.len())
+    } else {
+        w_ring_element_count::<F, Cfg>(layout) * D
+    };
+
+    let rs = ring_switch_verifier::<F, T, { D }, Cfg>(
+        &quad_eq,
+        &setup.expanded,
+        w_len,
+        &level_proof.w_commitment,
+        transcript,
+        layout,
+    )?;
+
+    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+
+    let fused_verifier = if is_last {
+        let fw = final_w.ok_or(HachiError::InvalidProof)?;
+        let (w_evals_full, _, _) = build_w_evals(fw, Cfg::D)?;
+        HachiSumcheckVerifier::new(
+            batching_coeff,
+            w_evals_full,
+            rs.tau0,
+            rs.b,
+            rs.alpha_evals_y,
+            rs.m_evals_x,
+            rs.tau1,
+            level_proof.v.clone(),
+            commitment.u.clone(),
+            level_proof.y_ring,
+            rs.alpha,
+            rs.num_u,
+            rs.num_l,
+        )
+    } else {
+        HachiSumcheckVerifier::new(
+            batching_coeff,
+            Vec::new(),
+            rs.tau0,
+            rs.b,
+            rs.alpha_evals_y,
+            rs.m_evals_x,
+            rs.tau1,
+            level_proof.v.clone(),
+            commitment.u.clone(),
+            level_proof.y_ring,
+            rs.alpha,
+            rs.num_u,
+            rs.num_l,
+        )
+        .with_w_val_override(level_proof.w_eval)
+    };
+
+    let challenges = verify_sumcheck::<F, _, F, _, _>(
+        &level_proof.sumcheck_proof,
+        &fused_verifier,
+        transcript,
+        |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+    )?;
+
+    Ok(challenges)
 }
 
 /// Re-derive the ring-switch challenge `alpha` and the expanded `M_a` vector
@@ -312,13 +572,14 @@ where
     F: FieldCore + CanonicalField + FieldSampling + 'static,
     Cfg: CommitmentConfig,
 {
+    let level0 = proof.levels.first().ok_or(HachiError::InvalidProof)?;
     let alpha_bits = Cfg::D.trailing_zeros() as usize;
     if opening_point.len() < alpha_bits {
         return Err(HachiError::InvalidSetup(
             "opening point length underflow".to_string(),
         ));
     }
-    let layout = setup.expanded.seed.layout;
+    let layout = Cfg::commitment_layout(opening_point.len())?;
     let ring_opening_point = ring_opening_point_from_field::<F>(
         &opening_point[alpha_bits..],
         layout.r_vars,
@@ -327,30 +588,30 @@ where
     )?;
     let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_HACHI_PROTOCOL);
 
-    // Replay the same Fiat-Shamir absorptions the real verifier performs.
     commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
     for pt in opening_point {
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
     }
-    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &proof.y_ring);
+    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &level0.y_ring);
 
     let quad_eq = QuadraticEquation::<F, D, Cfg>::new_verifier(
-        setup,
         ring_opening_point,
-        proof.v.clone(),
+        level0.v.clone(),
         &mut transcript,
         commitment,
-        &proof.y_ring,
+        &level0.y_ring,
+        layout,
     )?;
-    transcript.append_serde(ABSORB_SUMCHECK_W, &proof.w_commitment);
+    transcript.append_serde(ABSORB_SUMCHECK_W, &level0.w_commitment);
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
     let m_a = compute_m_a_streaming::<F, D, Cfg>(
         &setup.expanded,
         quad_eq.opening_point(),
         &quad_eq.challenges,
         &alpha,
+        layout,
     )?;
-    let m_a_vec = expand_m_a::<F, D>(&m_a, alpha, setup.expanded.seed.layout.log_basis)?;
+    let m_a_vec = expand_m_a::<F, D>(&m_a, alpha, layout.log_basis)?;
     Ok((alpha, m_a_vec))
 }
 

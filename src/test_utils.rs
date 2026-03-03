@@ -67,13 +67,16 @@ pub fn num_digits_fold() -> usize {
 }
 
 /// Dense matrix-vector multiply over cyclotomic rings.
+///
+/// Matrix rows may be wider than `vec` (e.g. when matrices are widened for
+/// multi-level folding); extra columns are treated as multiplying zero.
 pub fn mat_vec_mul(
     mat: &[Vec<CyclotomicRing<F, D>>],
     vec: &[CyclotomicRing<F, D>],
 ) -> Vec<CyclotomicRing<F, D>> {
     mat.iter()
         .map(|row| {
-            assert_eq!(row.len(), vec.len());
+            assert!(row.len() >= vec.len());
             row.iter()
                 .zip(vec.iter())
                 .fold(CyclotomicRing::<F, D>::zero(), |acc, (a, x)| {
