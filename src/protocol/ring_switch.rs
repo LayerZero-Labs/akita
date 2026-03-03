@@ -35,8 +35,8 @@ use std::time::Instant;
 
 /// Output of the ring switch protocol, containing everything needed for sumchecks.
 pub struct RingSwitchOutput<F: FieldCore, const D: usize> {
-    /// The witness vector w (concatenation of z and r coefficients).
-    pub w: Vec<F>,
+    /// The witness vector w as balanced digits in `[-b/2, b/2)`.
+    pub w: Vec<i8>,
     /// Commitment to w.
     pub w_commitment: RingCommitment<F, D>,
     /// Prover hint for the w-commitment (t_hat blocks), needed for recursive opening.
@@ -412,7 +412,7 @@ pub(crate) fn w_commitment_layout<F: CanonicalField, const D: usize, Cfg: Commit
 
 #[tracing::instrument(skip_all, name = "commit_w")]
 fn commit_w<F, const D: usize, Cfg>(
-    w: &[F],
+    w: &[i8],
     ntt_a: &NttSlotCache<D>,
     ntt_b: &NttSlotCache<D>,
 ) -> Result<(RingCommitment<F, D>, HachiCommitmentHint<F, D>), HachiError>
@@ -422,7 +422,13 @@ where
 {
     let ring_elems: Vec<CyclotomicRing<F, D>> = w
         .chunks(D)
-        .map(|chunk| CyclotomicRing::from_slice(chunk))
+        .map(|chunk| {
+            let mut coeffs = [F::zero(); D];
+            for (c, &d) in coeffs.iter_mut().zip(chunk.iter()) {
+                *c = F::from_i64(d as i64);
+            }
+            CyclotomicRing::from_coefficients(coeffs)
+        })
         .collect();
 
     let total = ring_elems.len().next_power_of_two().max(1);
@@ -590,8 +596,8 @@ pub(crate) fn build_w_evals<F: FieldCore>(
 
 /// Produce both compact `Vec<i8>` and field `Vec<F>` eval tables in one pass
 /// over `w`, sharing the index computation.
-pub(crate) fn build_w_evals_dual<F: FieldCore + CanonicalField>(
-    w: &[F],
+pub(crate) fn build_w_evals_dual<F: FieldCore + crate::FromSmallInt>(
+    w: &[i8],
     d: usize,
 ) -> Result<(Vec<i8>, Vec<F>, usize, usize), HachiError> {
     if d == 0 || w.len() % d != 0 {
@@ -606,23 +612,14 @@ pub(crate) fn build_w_evals_dual<F: FieldCore + CanonicalField>(
     let x_len = 1usize << num_u;
     let n = x_len << num_l;
 
-    let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-
     let (compact, field): (Vec<i8>, Vec<F>) = cfg_into_iter!(0..n)
         .map(|dst| {
             let x = dst & (x_len - 1);
             let y = dst >> num_u;
             let src = y + (x << num_l);
             if src < w.len() {
-                let val = w[src];
-                let canonical = val.to_canonical_u128();
-                let c = if canonical <= half_q {
-                    canonical as i8
-                } else {
-                    (canonical as i128 - q as i128) as i8
-                };
-                (c, val)
+                let d = w[src];
+                (d, F::from_i64(d as i64))
             } else {
                 (0i8, F::zero())
             }
@@ -725,40 +722,35 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     z_pre: &[CyclotomicRing<F, D>],
     r: &[CyclotomicRing<F, D>],
     layout: HachiCommitmentLayout,
-) -> Vec<F> {
+) -> Vec<i8> {
     let log_basis = layout.log_basis;
     let num_digits_fold = layout.num_digits_fold;
     let levels = r_decomp_levels::<F>(log_basis);
-    let r_hat: Vec<CyclotomicRing<F, D>> = r
-        .iter()
-        .flat_map(|ri| ri.balanced_decompose_pow2(levels, log_basis))
-        .collect();
 
     let t_hat_flat = t_hat.iter().flat_map(|v| v.iter());
 
     let z_count = w_hat.iter().map(|v| v.len()).sum::<usize>()
         + t_hat.iter().map(|v| v.len()).sum::<usize>()
         + z_pre.len() * num_digits_fold;
-    let mut out = Vec::with_capacity((z_count + r_hat.len()) * D);
+    let r_hat_count = r.len() * levels;
+    let mut out = Vec::with_capacity((z_count + r_hat_count) * D);
     for block in w_hat {
         for digits in block {
-            for &d in digits.iter() {
-                out.push(F::from_i64(d as i64));
-            }
+            out.extend_from_slice(digits);
         }
     }
     for digits in t_hat_flat {
-        for &d in digits.iter() {
-            out.push(F::from_i64(d as i64));
-        }
+        out.extend_from_slice(digits);
     }
     for z_j in z_pre {
-        for elem in z_j.balanced_decompose_pow2(num_digits_fold, log_basis) {
-            out.extend_from_slice(elem.coefficients());
+        for plane in z_j.balanced_decompose_pow2_i8(num_digits_fold, log_basis) {
+            out.extend_from_slice(&plane);
         }
     }
-    for elem in &r_hat {
-        out.extend_from_slice(elem.coefficients());
+    for ri in r {
+        for plane in ri.balanced_decompose_pow2_i8(levels, log_basis) {
+            out.extend_from_slice(&plane);
+        }
     }
     out
 }

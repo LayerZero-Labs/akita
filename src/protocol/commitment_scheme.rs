@@ -11,7 +11,7 @@ use crate::protocol::commitment::{
 };
 use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
 use crate::protocol::opening_point::{BasisMode, RingOpeningPoint};
-use crate::protocol::proof::{HachiCommitmentHint, HachiLevelProof, HachiProof};
+use crate::protocol::proof::{HachiCommitmentHint, HachiLevelProof, HachiProof, PackedDigits};
 use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::ring_switch::{
     build_w_evals, ring_switch_prover, ring_switch_verifier, w_ring_element_count,
@@ -59,7 +59,7 @@ pub struct HachiCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
 /// Output from a single prove level, needed to chain into the next level.
 struct ProveLevelOutput<F: FieldCore, const D: usize> {
     level_proof: HachiLevelProof<F, D>,
-    w: Vec<F>,
+    w: Vec<i8>,
     w_hint: HachiCommitmentHint<F, D>,
     sumcheck_challenges: Vec<F>,
     num_u: usize,
@@ -228,12 +228,14 @@ fn next_level_opening_point<F: FieldCore>(
     point
 }
 
-/// Build a `DensePoly` from the flat w coefficient vector, padding to
-/// the next power of two in total field elements.
-fn dense_poly_from_w<F: FieldCore, const D: usize>(w: &[F]) -> Result<DensePoly<F, D>, HachiError> {
+/// Build a `DensePoly` from the flat w digit vector, converting i8 -> F
+/// and padding to the next power of two in total field elements.
+fn dense_poly_from_w<F: FieldCore + FromSmallInt, const D: usize>(
+    w: &[i8],
+) -> Result<DensePoly<F, D>, HachiError> {
     let total_coeffs = w.len().next_power_of_two().max(D);
     let num_vars = total_coeffs.trailing_zeros() as usize;
-    let mut padded = w.to_vec();
+    let mut padded: Vec<F> = w.iter().map(|&d| F::from_i64(d as i64)).collect();
     padded.resize(total_coeffs, F::zero());
     DensePoly::from_field_evals(num_vars, &padded)
 }
@@ -349,10 +351,10 @@ where
             t_prove_total.elapsed().as_secs_f64()
         );
 
-        Ok(HachiProof {
-            levels,
-            final_w: current_w,
-        })
+        let log_basis = Cfg::decomposition().log_basis;
+        let final_w = PackedDigits::from_i8_digits(&current_w, log_basis);
+
+        Ok(HachiProof { levels, final_w })
     }
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::verify")]
@@ -370,6 +372,7 @@ where
         }
 
         let num_levels = proof.levels.len();
+        let final_w_elems: Vec<F> = proof.final_w.to_field_elems();
 
         // State carried between levels.
         let mut current_point = opening_point.to_vec();
@@ -390,7 +393,7 @@ where
                     &current_commitment,
                     current_basis,
                     is_last,
-                    if is_last { Some(&proof.final_w) } else { None },
+                    if is_last { Some(&final_w_elems) } else { None },
                 )?
             } else {
                 verify_one_level::<F, T, D, WCommitmentConfig<D, Cfg>>(
@@ -402,7 +405,7 @@ where
                     &current_commitment,
                     current_basis,
                     is_last,
-                    if is_last { Some(&proof.final_w) } else { None },
+                    if is_last { Some(&final_w_elems) } else { None },
                 )?
             };
 

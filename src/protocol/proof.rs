@@ -5,8 +5,151 @@ use crate::primitives::serialization::{Compress, SerializationError};
 use crate::primitives::serialization::{Valid, Validate};
 use crate::protocol::commitment::RingCommitment;
 use crate::protocol::sumcheck::SumcheckProof;
-use crate::{FieldCore, HachiDeserialize, HachiSerialize};
+use crate::{FieldCore, FromSmallInt, HachiDeserialize, HachiSerialize};
 use std::io::{Read, Write};
+use std::marker::PhantomData;
+
+/// Bit-packed balanced digits for the final-level witness vector.
+///
+/// Each element is a signed value in `[-b/2, b/2)` where `b = 2^bits_per_elem`,
+/// stored in two's-complement using exactly `bits_per_elem` bits per value.
+/// This reduces proof size by ~32x compared to storing full field elements.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackedDigits {
+    /// Number of logical elements.
+    pub num_elems: usize,
+    /// Bits per element (= `log_basis` from the commitment config).
+    pub bits_per_elem: u32,
+    /// Bit-packed two's-complement data.
+    pub data: Vec<u8>,
+}
+
+impl PackedDigits {
+    /// Pack balanced i8 digits into bit-packed form.
+    ///
+    /// Each element must be in `[-b/2, b/2)` where `b = 2^log_basis`.
+    ///
+    /// # Panics
+    ///
+    /// Panics (in debug) if any element does not fit in `log_basis` bits.
+    pub fn from_i8_digits(w: &[i8], log_basis: u32) -> Self {
+        assert!(log_basis > 0 && log_basis <= 7, "log_basis out of range");
+        let half_b = 1i8 << (log_basis - 1);
+
+        let bits = log_basis as usize;
+        let total_bits = w.len() * bits;
+        let num_bytes = total_bits.div_ceil(8);
+        let mut data = vec![0u8; num_bytes];
+
+        for (i, &signed) in w.iter().enumerate() {
+            debug_assert!(
+                signed >= -half_b && signed < half_b,
+                "digit {signed} out of range for log_basis={log_basis}"
+            );
+            let unsigned = (signed as u8) & ((1u8 << bits) - 1);
+            let bit_offset = i * bits;
+            let byte_idx = bit_offset / 8;
+            let bit_idx = bit_offset % 8;
+            data[byte_idx] |= unsigned << bit_idx;
+            if bit_idx + bits > 8 {
+                data[byte_idx + 1] |= unsigned >> (8 - bit_idx);
+            }
+        }
+
+        Self {
+            num_elems: w.len(),
+            bits_per_elem: log_basis,
+            data,
+        }
+    }
+
+    /// Unpack to field elements via `F::from_i64`.
+    pub fn to_field_elems<F: FieldCore + FromSmallInt>(&self) -> Vec<F> {
+        let bits = self.bits_per_elem as usize;
+        let mask = (1u8 << bits) - 1;
+        let sign_bit = 1u8 << (bits - 1);
+
+        let mut out = Vec::with_capacity(self.num_elems);
+        for i in 0..self.num_elems {
+            let bit_offset = i * bits;
+            let byte_idx = bit_offset / 8;
+            let bit_idx = bit_offset % 8;
+            let mut raw = (self.data[byte_idx] >> bit_idx) & mask;
+            if bit_idx + bits > 8 {
+                raw |= (self.data[byte_idx + 1] << (8 - bit_idx)) & mask;
+            }
+            let signed = if raw & sign_bit != 0 {
+                raw as i8 | !(mask as i8)
+            } else {
+                raw as i8
+            };
+            out.push(F::from_i64(signed as i64));
+        }
+        out
+    }
+
+    /// Number of packed data bytes.
+    pub fn packed_byte_len(&self) -> usize {
+        self.data.len()
+    }
+}
+
+impl HachiSerialize for PackedDigits {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        (self.num_elems as u64).serialize_with_mode(&mut writer, compress)?;
+        (self.bits_per_elem as u8).serialize_with_mode(&mut writer, compress)?;
+        writer.write_all(&self.data)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, _compress: Compress) -> usize {
+        8 + 1 + self.data.len()
+    }
+}
+
+impl Valid for PackedDigits {
+    fn check(&self) -> Result<(), SerializationError> {
+        if self.bits_per_elem == 0 || self.bits_per_elem > 7 {
+            return Err(SerializationError::InvalidData(
+                "bits_per_elem out of range".to_string(),
+            ));
+        }
+        let expected_bytes = (self.num_elems * self.bits_per_elem as usize).div_ceil(8);
+        if self.data.len() != expected_bytes {
+            return Err(SerializationError::InvalidData(
+                "packed data length mismatch".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl HachiDeserialize for PackedDigits {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let num_elems = u64::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+        let bits_per_elem = u8::deserialize_with_mode(&mut reader, compress, validate)? as u32;
+        let num_bytes = (num_elems * bits_per_elem as usize).div_ceil(8);
+        let mut data = vec![0u8; num_bytes];
+        reader.read_exact(&mut data)?;
+        let out = Self {
+            num_elems,
+            bits_per_elem,
+            data,
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
 
 /// Prover-side hint produced at commitment time.
 ///
@@ -17,7 +160,7 @@ use std::io::{Read, Write};
 pub struct HachiCommitmentHint<F: FieldCore, const D: usize> {
     /// Decomposed `t̂_i` blocks from the commitment phase as i8 digit planes.
     pub t_hat: Vec<Vec<[i8; D]>>,
-    _marker: std::marker::PhantomData<F>,
+    _marker: PhantomData<F>,
 }
 
 impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
@@ -25,7 +168,7 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
     pub fn new(t_hat: Vec<Vec<[i8; D]>>) -> Self {
         Self {
             t_hat,
-            _marker: std::marker::PhantomData,
+            _marker: PhantomData,
         }
     }
 }
@@ -51,15 +194,16 @@ pub struct HachiLevelProof<F: FieldCore, const D: usize> {
 ///
 /// Each level runs the full protocol (quadratic equation, ring switch,
 /// sumcheck) on the previous level's witness `w`. The final level sends
-/// `w` directly for the verifier to check.
+/// `w` directly for the verifier to check, packed as balanced digits.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiProof<F: FieldCore, const D: usize> {
     /// Per-level proofs, from the original polynomial (level 0) through
     /// recursive w-openings.
     pub levels: Vec<HachiLevelProof<F, D>>,
-    /// The witness vector at the deepest fold level, sent directly to the
-    /// verifier for the final oracle check.
-    pub final_w: Vec<F>,
+    /// The witness vector at the deepest fold level, bit-packed as balanced
+    /// digits in `[-b/2, b/2)`. Use [`PackedDigits::to_field_elems`] to
+    /// reconstruct `Vec<F>`.
+    pub final_w: PackedDigits,
 }
 
 impl<F: FieldCore + HachiSerialize, const D: usize> HachiProof<F, D> {
@@ -92,7 +236,7 @@ impl<F: FieldCore, const D: usize> HachiSerialize for HachiCommitmentHint<F, D> 
             for plane in block {
                 // Safety: i8 and u8 have identical layout.
                 let bytes: &[u8] =
-                    unsafe { std::slice::from_raw_parts(plane.as_ptr() as *const u8, D) };
+                    unsafe { std::slice::from_raw_parts(plane.as_ptr().cast::<u8>(), D) };
                 writer.write_all(bytes)?;
             }
         }
@@ -128,7 +272,7 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiCommitmentH
                 let mut plane = [0i8; D];
                 // Safety: i8 and u8 have identical layout.
                 let bytes: &mut [u8] =
-                    unsafe { std::slice::from_raw_parts_mut(plane.as_mut_ptr() as *mut u8, D) };
+                    unsafe { std::slice::from_raw_parts_mut(plane.as_mut_ptr().cast::<u8>(), D) };
                 reader.read_exact(bytes)?;
                 block.push(plane);
             }
@@ -226,7 +370,7 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiProof<F, D>
                 validate,
             )?);
         }
-        let final_w = Vec::<F>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let final_w = PackedDigits::deserialize_with_mode(&mut reader, compress, validate)?;
         Ok(Self { levels, final_w })
     }
 }

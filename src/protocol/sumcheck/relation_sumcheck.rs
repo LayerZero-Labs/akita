@@ -321,9 +321,10 @@ mod tests {
         )
         .unwrap();
 
+        let final_w: Vec<F> = proof.final_w.to_field_elems();
         let d = SmallTestCommitmentConfig::D;
-        assert_eq!(proof.final_w.len() % d, 0);
-        let w_u = proof.final_w.len() / d;
+        assert_eq!(final_w.len() % d, 0);
+        let w_u = final_w.len() / d;
         let rows = SmallTestCommitmentConfig::N_D
             + SmallTestCommitmentConfig::N_B
             + 1
@@ -344,9 +345,9 @@ mod tests {
         for x in 0..x_len {
             for y in 0..y_len {
                 let src = y + (x << num_l);
-                if src < proof.final_w.len() {
+                if src < final_w.len() {
                     let dst = x + (y << num_u);
-                    w_evals[dst] = proof.final_w[src];
+                    w_evals[dst] = final_w[src];
                 }
             }
         }
