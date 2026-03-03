@@ -10,7 +10,7 @@ use crate::parallel::*;
 use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
-    flatten_i8_blocks, mat_vec_mul_ntt_cached_i8, unreduced_quotient_rows_ntt_cached,
+    flatten_i8_blocks, mat_vec_mul_ntt_tiled_single_i8, unreduced_quotient_rows_ntt_cached,
     unreduced_quotient_rows_ntt_cached_i8,
 };
 use crate::protocol::commitment::utils::norm::{detect_field_modulus, vec_inf_norm};
@@ -64,7 +64,7 @@ fn compute_v<F: FieldCore + CanonicalField, const D: usize>(
     ntt_d: &NttSlotCache<D>,
     w_hat_flat: &[[i8; D]],
 ) -> Vec<CyclotomicRing<F, D>> {
-    mat_vec_mul_ntt_cached_i8(ntt_d, w_hat_flat)
+    mat_vec_mul_ntt_tiled_single_i8(ntt_d, w_hat_flat, None)
 }
 
 fn flatten_w_hat<const D: usize>(w_hat: &[Vec<[i8; D]>]) -> Vec<[i8; D]> {

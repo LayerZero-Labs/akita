@@ -11,7 +11,8 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
-    decompose_block_i8, decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_cached_i8,
+    decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_tiled_i8,
+    mat_vec_mul_ntt_tiled_single_i8,
 };
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
@@ -447,25 +448,26 @@ where
     let depth = w_layout.num_digits_commit;
     let log_basis = w_layout.log_basis;
     let coeff_len = ring_elems.len();
-    let zero_block_len = Cfg::N_A.checked_mul(depth).unwrap();
 
-    let t_hat_per_block: Vec<Vec<[i8; D]>> = cfg_into_iter!(0..num_blocks)
+    let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
         .map(|i| {
             let start = i * block_len;
             if start >= coeff_len {
-                vec![[0i8; D]; zero_block_len]
+                &[] as &[CyclotomicRing<F, D>]
             } else {
-                let end = (start + block_len).min(coeff_len);
-                let block = &ring_elems[start..end];
-                let s_i = decompose_block_i8(block, depth, log_basis);
-                let t_i: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_cached_i8(ntt_a, &s_i);
-                decompose_rows_i8(&t_i, depth, log_basis)
+                &ring_elems[start..(start + block_len).min(coeff_len)]
             }
         })
         .collect();
 
+    let t_all = mat_vec_mul_ntt_tiled_i8(ntt_a, &block_slices, depth, log_basis, None);
+    let t_hat_per_block: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
+        .map(|t_i| decompose_rows_i8(&t_i, depth, log_basis))
+        .collect();
+
     let t_hat_flat = flatten_i8_blocks(&t_hat_per_block);
-    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_cached_i8(ntt_b, &t_hat_flat);
+    let u: Vec<CyclotomicRing<F, D>> =
+        mat_vec_mul_ntt_tiled_single_i8(ntt_b, &t_hat_flat, None);
     let hint = HachiCommitmentHint::new(t_hat_per_block);
     Ok((RingCommitment { u }, hint))
 }

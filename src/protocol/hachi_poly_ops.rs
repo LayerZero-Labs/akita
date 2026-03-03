@@ -25,7 +25,7 @@ use crate::protocol::commitment::onehot::{
 };
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
-    decompose_block_i8, decompose_rows_i8, mat_vec_mul_ntt_cached_i8,
+    decompose_rows_i8, mat_vec_mul_ntt_tiled_i8,
 };
 use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
 use std::array::from_fn;
@@ -302,21 +302,22 @@ where
     ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
         let n = self.coeffs.len();
         let num_blocks = n.div_ceil(block_len);
-        let n_a = _a_matrix.len();
-        let zero_block_len = n_a.checked_mul(num_digits).unwrap();
 
-        let results: Vec<Vec<[i8; D]>> = cfg_into_iter!(0..num_blocks)
+        let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
             .map(|i| {
                 let start = i * block_len;
                 if start >= n {
-                    return vec![[0i8; D]; zero_block_len];
+                    &[] as &[CyclotomicRing<F, D>]
+                } else {
+                    &self.coeffs[start..(start + block_len).min(n)]
                 }
-                let end = (start + block_len).min(n);
-                let block = &self.coeffs[start..end];
-                let s_i = decompose_block_i8(block, num_digits, log_basis);
-                let t_i: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_cached_i8(ntt_a, &s_i);
-                decompose_rows_i8(&t_i, num_digits, log_basis)
             })
+            .collect();
+
+        let t_all = mat_vec_mul_ntt_tiled_i8(ntt_a, &block_slices, num_digits, log_basis, None);
+
+        let results: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
+            .map(|t_i| decompose_rows_i8(&t_i, num_digits, log_basis))
             .collect();
 
         Ok(results)

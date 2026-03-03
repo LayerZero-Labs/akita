@@ -1,0 +1,2274 @@
+
+
+--- page 1 ---
+
+Hachi: Efficient Lattice-Based Multilinear Polynomial Commitments
+over Extension Fields
+Ngoc Khanh Nguyen1, George O’Rourke1, and Jiapeng Zhang2
+1 King’s College London
+2 University of Southern California
+Abstract. In this work, we present Hachi, a concretely efficient multilinear polynomial commitment
+scheme that offers succinct proof sizes ofpoly(ℓ, 𝜆) and achieves a “square-root” verifier time complexity
+of ˜𝑂 (
+√
+2ℓ 𝜆) for ℓ-variate polynomials under the Module-SIS assumption. Compared to the current
+state-of-the-art scheme, Greyhound (CRYPTO 2024), Hachi provides an asymptotic improvement of
+˜𝑂 (𝜆) in verification time, which translates into a practical 12.5-fold speedup, while maintaining compact
+proofs of approximately 55 KB.
+To improve the verification time, we adopt the sumcheck protocol. Note that the standard sumcheck
+has efficiency bottlenecks for lattice-based constructions, since lattice operations are usually performed
+over power-of-two cyclotomic ringsR𝑞 := Z𝑞 [𝑋 ]/( 𝑋 𝑑 +1). To address this challenge, we provide a novel
+approach that integrates Greyhound with the ring-switching idea proposed by Huang, Mao and Zhang
+(ePrint 2025). Surprisingly, under this approach, the verifier does not need to perform any multiplication
+over R𝑞, enabling a much faster verification time. This technique could be of independent interest for
+building lattice-based SNARKs, particularly for achieving faster verification.
+As a separate contribution, we introduce a generic reduction that converts polynomial evaluation
+proofs over extension fieldsF𝑞𝑘 (under suitable parameter regimes) into equivalent statements over
+cyclotomic rings R𝑞. This reduction is compatible with existing lattice-based polynomial commitment
+schemes and can be integrated as a modular enhancement to broaden applicability to statements over
+extension fields.
+1 Introduction
+Multilinear polynomial commitment scheme (PCS) [KZG10; BBHR18] is a strong cryptographic primitive
+that allows a prover to commit to aℓ-dimensional multilinear polynomial𝑓 ∈ F≤1 [𝑋1, . . . , 𝑋ℓ ] and later prove
+its evaluation
+𝑓 (𝑥1, . . . , 𝑥ℓ ) = 𝑦
+where the evaluation point(𝑥1, . . . , 𝑥ℓ ) ∈ Fℓ and the image𝑦 ∈ F are public. Multilinear polynomial commit-
+ments are a core building block for succinct non-interactive arguments of knowledge (SNARKs) [WTs+18;
+Set20; CHM+20; GLS+23; CBBZ23], look-up arguments [STW24] and multi-party computation [BHV+23].
+In such applications, it is crucial for the polynomial evaluation proof to be succinct, i.e. polynomial in the
+number of variablesℓ, and be verified efficiently.
+With the rapid advancement of quantum computing, there is increasing interest in quantum-safe PCS
+constructions. Among these, lattice-based and hash-based approaches have emerged as the leading candidates.
+Lattice-based PCS are particularly attractive due to their efficient prover runtime and compact proof sizes,
+both concretely [NS24] and asymptotically [KLNO25]. In contrast, hash-based constructions currently offer
+significantly faster verification (by two orders of magnitude) compared to lattice-based schemes [ACFY24;
+ACFY25]. Such a long verification time has become a major bottleneck for lattice-based protocols, such as
+Greyhound, being widely deployed in practice. This discrepancy raises a natural research question:
+Can we design a lattice-based PCS that has fast verification while retaining the compact proof sizes?
+In this paper, we answer this question affirmatively.
+
+--- page 2 ---
+
+1.1 Prior Works
+Split-and-fold. At the core of state-of-the-art lattice-based succinct proof systems (including polynomial
+commitments) lies proving knowledge of vectorss1, . . . , s𝑟 ∈ R𝑚
+𝑞 such that
+B
+
+A
+. . .
+A
+
+
+s1
+...
+s𝑟
+
+= u (mod 𝑞) and ∥s𝑖 ∥ ≤ 𝛽 for 𝑖 = 1, . . . , 𝑟 (1)
+where R𝑞 := Z𝑞 [𝑋 ]/( 𝑋 𝑑 +1) for a power-of-two𝑑, and the matricesA, B, vector t and norm bound 𝛽 are
+public. The first interactive protocol for this relation was proposed by Baum et al. [BBC+18] which can be
+summarized as follows. The prover starts by sending the “partial evaluations”t𝑖 = As𝑖 for 𝑖 ∈ [ 𝑟 ] (this step is
+called split). The verifier responds by outputting short challenges𝑐1, . . . , 𝑐𝑟 ∈ C over the cyclotomic ringR𝑞.
+Finally, the prover sends returns the linear combination of witness vectors (this step is calledfold)
+z := 𝑐1s1 + . . . 𝑐𝑟 s𝑟 ∈ R𝑚
+𝑞 . (2)
+The verifier then checks three conditions:
+B
+
+t1
+...
+t𝑟
+
+= u, Az =
+𝑟∑︁
+𝑖=1
+𝑐𝑖 t𝑖 and ∥z∥ is short. (3)
+The complexity of the communication of the prover is𝑟 + 𝑚 ring elements, which is strictly sublinear in the
+original witness length𝑁 := 𝑟 ·𝑚 in terms ofR𝑞-elements. By picking parameters appropriately, [BBC+18]
+obtains “square-root” proofs of size˜𝑂 (
+√
+𝑁 𝜆), where 𝜆 is the security parameter.
+Multiple follow-up works [BLNS20; AFLN24; CMNW24; KLNO24] managed to reduce the proof size
+further topolylog(𝑁 ) ring elements. The key insight lies in making the matrixA to have a tensor structure
+similar to the matrix on the left-hand side of Equation (1). This allows the prover, instead of sending the
+final message z in the clear, to prove knowledge ofz satisfying the verification equation of(3) in a recursive
+fashion.
+Exact norm proof.Arguably, the hardest part of designing proof systems for relations such as(1) is proving
+that vectors s𝑖 are actually short. Indeed, knowledge soundness of the original protocol of [BBC+18] only
+guarantees extraction of (not necessarily short)¯s1, . . . ,¯s𝑟 ∈ R𝑚
+𝑞 of the form
+¯s𝑖 := ¯z𝑖
+¯𝑐𝑖
+where both¯z𝑖,¯𝑐𝑖 are short.
+There is a line of research [BLNS20; AL21; ACK21; CLM23; FMN24; AFLN24; KLNO24] which addresses
+this issue using so-called subtractive sets. A setC ⊆ R𝑞 is called subtractive if for any two distinct elements
+𝑐, 𝑐′ ∈ C, inverse of the difference𝑐 − 𝑐 ′ over R𝑞 is short. This allows the knowledge extractor to deduce that
+the extracted¯s𝑖 are short. This approach has one crucial disadvantage, which is that all subtractive sets are
+only of polynomial size [AL21]. Consequently, to obtain negligible soundness error, multiple repetitions are
+needed which affect the efficiency of the scheme significantly.
+An alternative approach to proving shortness, which avoids subtractive sets, involves applying random
+projections to the witness vectors [BL17; LNS21; LNP22; GHL22; BS23; KLNO25]. Lets′ ∈ Z𝑚𝑑
+𝑞 denote
+the coefficient vector ofs ∈ R𝑚
+𝑞 . Consider a matrixJ ∈ Z𝑟 ×𝑚𝑑 with small, independently chosen random
+entries, where 𝑟 is a soundness parameter. The Johnson-Lindenstrauss Lemma (and heuristic variants [Ach03;
+GHL22]) implies that
+∥Js′ ∥ ≈ ∥ s′ ∥ = ∥s∥.
+2
+
+--- page 3 ---
+
+Using this fact, the verifier sends the projection matrixJ to the prover (or in the non-interactive case it is
+generated from a hash function), who responds withv := Js′ ∈ Z𝑟. The verifier then checks whetherv is short.
+For soundness, previous works show that ifs were large (i.e. a prover was malicious), then with probability
+exp(−𝑟 ), v would also have large norm, and thus result in a contradiction. Hence,𝑟 = 𝑂 (𝜆) is required for
+soundness.
+The prover must also prove thatv is well-formed. As shown in [LNP22; BS23], this reduces to proving that
+certain 𝑟 polynomials 𝑢1, 𝑢2, . . . , 𝑢𝑟 ∈ R𝑞 have zero constant coefficients. One method is to send all(𝑢𝑖 )𝑖 ∈ [𝑟 ] in
+the clear for the verifier to check, but this requires sending at least𝑂 (𝜆) ring elements, resulting in large proofs.
+A more efficient method batches the𝑟 statements: the verifier sends𝑟 random challenges𝛼1, . . . , 𝛼𝑟 ← Z𝑞, and
+the prover returns the linear combination
+𝑢 :=
+𝑟∑︁
+𝑖=1
+𝛼𝑖 ·𝑢𝑖 ∈ R𝑞.
+The verifier checks that the constant coefficient of𝑢 is zero. For soundness, if some𝑢𝑖 had a non-zero constant
+coefficient, then with probability 1/𝑞, so would𝑢, leading to a contradiction. Since 1/𝑞 may not be negligible,
+this must be repeated𝑂 (𝜆/log 𝑞) times to achieve exp(−𝜆) soundness error.
+Concretely, the Johnson-Lindenstrauss projection has shown to be a practical approach to prove norm
+bounds compared to subtractive sets. The prime example is the LaBRADOR proof system introduced by
+Beullens and Seiler, which achieves≈ 60KB proofs for large statements (of size 230). The main disadvantage
+of the random projection methodology is the verification time. Indeed, the verifier has to operate on the
+projection matrix J of size 𝑂 (𝜆 ·𝑚𝑑) – linear in witness length (in terms ofZ𝑞-elements). This makes the
+LaBRADOR verifier linear time, and thus not suitable for various SNARK-oriented applications. More
+recently, Klooß et al. [KLNO25] focused on tensor-structured projection matricesJ, and managed to reduce
+the verification time to polylog(𝑚𝑑), at the cost of 40X larger proof sizes compared to LaBRADOR.
+Nguyen and Seiler [NS24] proposed a promising hybrid polynomial commitment, called Greyhound. Their
+evaluation proof intuitively follows the three-round protocol from [BBC+18], but instead of sending the prover
+message in the clear, the prover commits to(t𝑖 )𝑖, z and later proves that they satisfy the verification equations
+in (3) via the LaBRADOR proof system. The key advantage of this strategy is that invoking LaBRADOR on
+a smaller statement yields square-root˜𝑂 (𝜆
+√
+𝑁 𝜆) verification time, while benefiting from the attractive proof
+sizes of [BS23].
+Several recent works employ the sumcheck protocol [LFKN90] to prove exact norm bounds of committed
+vectors based on lattice assumptions, both in the setting of succinct proofs and folding schemes [KST22].
+This strategy was first used by Boneh and Chen in LatticeFold [BC24] to prove that the committed (NTT)
+coefficients are binary. A drawback of their approach is that the sumcheck protocol is executed over the
+cyclotomic ring R𝑞, where each ring element is large, resulting in significantly increased proof sizes. Kuriyama
+et al. [KLOT25] later expanded this methodology and introduced a new technique to prove exact Euclidean
+norm bounds usingR𝑞-based sumchecks. Neo [NS25] departs fromR𝑞-based sumchecks entirely by mapping
+all relevantR𝑞-relations into Z𝑞 via rotational (i.e., skew-circulant) matrices. This allows the protocol to run
+sumcheck directly overZ𝑞 (or over an extension fieldF𝑞𝑘 to obtain negligible soundness error). Concurrently,
+LatticeFold+ [BC25] proposed a new method to prove range statements. Specifically, to prove that𝑎 ∈ [0, 𝑑),
+the prover commits to the monomial𝑋 𝑎 ∈ R𝑞 and then proves that the committed ring element is indeed a
+monomial. LatticeFold+ reduces this (and related statements) to sumcheck claims overR𝑞. In contrast to
+[BC24; NS25], the authors observe that these claims do not involve any “full-fledged”R𝑞-multiplications and
+can therefore be naturally reduced to𝑂 (𝑑) sumcheck claims overZ𝑞. The main efficiency bottleneck of this
+approach is that, for a witness®𝑠 ′ ∈ Z𝑚𝑑
+𝑞 of length 𝑚𝑑, the prover must commit to𝑚𝑑 elements of R𝑞, rather
+than 𝑚 as in [BS23; NS24; NS25] (excluding decomposition costs).
+1.2 Our Contributions
+In this work, we propose Hachi, a concretely efficient multilinear polynomial commitment scheme with succinct
+poly(ℓ, 𝜆) proof size and˜𝑂 (
+√
+2ℓ𝜆) verifier time forℓ-variate polynomials based on standard lattice assumptions
+3
+
+--- page 4 ---
+
+Scheme Multi Extension Asymptotic Concrete
+-linear fields proof verifier proof verifier
+Greyhound [NS24] ✗ ✗ poly(ℓ, 𝜆) ˜𝑂 (𝜆 ·
+√
+2ℓ 𝜆) 53KB 2.8s
+Hachi ✓ ✓ poly(ℓ, 𝜆) ˜𝑂 (
+√
+2ℓ 𝜆) 55KB 227ms
+Fig. 1. Overview of Hachi and comparison with the state-of-the-art lattice-based polynomial commitment scheme
+Greyhound [NS24]. The asymptotic verifier time is measured inZ𝑞-operations. We use the ˜𝑂-notation to hide
+logarithmic factors. The concrete numbers are taken from evaluating the polynomial withℓ = 30 variables.
+(and the random oracle model for the Fiat-Shamir transformation). Hence, asymptotically we achieve˜𝑂 (𝜆)
+improvement in verification time compared to Greyhound [NS24]. In Figure 1 we provide more details on the
+comparison. Our improvements can be summarized as follows.
+Faster verification via ring switching.Our protocol mainly follows the framework of Greyhound [NS24].
+However, unlike Greyhound, we move away from the random projection strategy and instead adopt a
+sumcheck-based approach to prove infinity-norm bounds. Although sumcheck is a well-known protocol, we
+emphasize that the main challenge for lattice-based constructions is that lattice protocols typically involve
+arithmetic over large polynomial rings. Directly running the sumcheck protocol over such large rings would
+be highly inefficient.
+To address this challenge and keep the protocol efficient, we propose a novel approach that organically
+integrates the Greyhound framework with the ring-switching technique introduced by Huang, Mao and Zhang
+[HMZ25]. This technique lifts statements overR𝑞 to the polynomial ringF𝑞𝑘 [𝑋 ], allowing us to evaluate
+the equations at a random point𝑋 := 𝛼 ∈ F𝑞𝑘 and run the sumcheck protocol over the extension fieldF𝑞𝑘.
+Surprisingly, our verification algorithm does not need to perform any cyclotomic ring operations, even though
+our protocol is based on lattices. Switching the sumcheck protocol to a smaller extension field is crucial to
+achieving a total verifier complexity of˜𝑂 (
+√
+2ℓ𝜆). To the best of our knowledge, other than our protocol, we are
+not aware of any lattice-based SNARK, PCS, or folding scheme that can eliminate the expensive cyclotomic
+ring operations for verifiers.
+Embedding multilinear evaluation claims insideR𝒒. We provide a generic transformation from proving
+ℓ-variate polynomial evaluations over finite fieldsF𝑞𝑘 to proving (ℓ − 𝛼 + 𝜅)-variate polynomial evaluations
+over “NTT-unfriendly” cyclotomic ringsR𝑞, where 𝑑 = 2𝛼 and 𝑘 = 2𝜅. Thus, we generalize the result of
+SLAP [AFLN24] in two orthogonal directions: (i) we support polynomials over field extensions (for specific
+parameter sets), rather than just prime-order fields, and (ii) we extend the strategy from univariate to the
+multivariate case. Using our methodology, one can already adapt Greyhound [NS24] to prove multilinear
+polynomial evaluations out-of-the-box. We also provide an optimization if the polynomial𝑓 itself is only over
+F𝑞 while the evaluation points still lie inF𝑞𝑘.
+Flexibility in picking ring dimension and implications.Both Greyhound and LaBRADOR have
+certain limitations in picking the ring dimension𝑑. One of the main obstacles is when applying random
+projection strategy, one has to prove that certain ring elements have constant coefficients equal to zero. As
+described above, this comes at the cost of the prover sending𝑂 (𝜆/log 𝑞) ring elements after each iteration of
+LaBRADOR. Hence, choosing𝑑 (equal to 64 in [BS23; NS24]) as small as possible is essential to achieve
+small proof sizes. In our construction, since we apply the ring switching idea, the sumcheck protocol is always
+performed over an extension field, which is independent of the size of𝑑. This gives us more freedom in
+choosing ring dimension𝑑 with smaller impact on the communication size.
+In particular, picking larger𝑑 has two efficiency benefits: (i) the committing time becomes faster thanks
+to the optimized NTT-based ring multiplication, and (ii) this allows us to define a challenge spaceC of sparse
+ring elements - thus speeding up the ring multiplication for computing the folded witness as in (2).
+2 Concrete verification time for first round of Hachi.
+4
+
+--- page 5 ---
+
+Implementation. WehavedevelopedaprototypeimplementationofHachiinRust.Whiletheimplementation
+is still in its early stages, it is amenable to several optimizations—particularly those leveraging SIMD—that
+could significantly enhance performance. Even at this early stage, the advantages of our protocol are clearly
+demonstrated. Specifically, we observe:
+–faster verification time. Although the implementation of our verifier does not use advanced optimizations
+such as SIMD, our verification time is already one order of magnitude faster than Greyhound.3
+–faster commitment time. Our commitment step is almost identical to that of Greyhound. However, due
+to the use of ring switching, we are able to choose larger rings; as a result, our commitment time is 3-5
+faster than Greyhound4.
+1.3 Technical Overview
+Denote 𝜆 as a security parameter. Let𝑑 := 2𝛼 be a power-of-two andR := Z[𝑋 ]/( 𝑋 𝑑 + 1) be the ring of
+integers of the 2𝑑-th cyclotomic field. Take an odd prime𝑞 and define R𝑞 := R/(𝑞) and 𝛿 := ⌈log 𝑞⌉. For
+𝑘 ≥ 1, we denoteF𝑞𝑘 to be a finite field of order𝑞𝑘. In this overview, we consider base-two gadget matrices
+G𝑛 := I𝑛 ⊗
+
+1 2 4· · ·2𝛿 −1
+∈ R𝑛×𝑛𝛿
+𝑞 for 𝑛 ≥ 1. We define the standard inverse functionG−1
+𝑛 : R𝑛
+𝑞 → R𝑛𝛿
+𝑞 ,
+which decomposes each entry w.r.t. base 2. In particular, for anyt ∈ R𝑛
+𝑞, G−1
+𝑛 (t) has binary coefficients and
+G𝑛G−1
+𝑛 (t) = t.
+For 𝑖 ∈ Z×
+2𝑑, we define the Galois automorphism 𝜎𝑖 : R → R defined as 𝑋 ↦→ 𝑋 𝑖, and denote the
+Galois group of automorphisms as Aut(R) := {𝜎𝑖 : 𝑖 ∈ Z×
+2𝑑 }. For a subgroup 𝐻 of Aut(R), we denote
+R𝐻
+𝑞 := {𝑥 ∈ R𝑞 : ∀𝜎 ∈ 𝐻, 𝜎 (𝑥) = 𝑥 }, i.e. the ring of elements ofR𝑞 fixed by all automorphisms in𝐻. Also, we
+denote the R𝑞-trace map Tr𝐻 : R𝑞 → R𝐻
+𝑞 as Tr𝐻 (𝑎) := Í
+𝜎 ∈𝐻 𝜎 (𝑎) ∈ R𝐻
+𝑞 .
+Reducing multilinear evaluation claims to relations overR𝒒. Our first step will be to translate the
+multilinear evaluation overF𝑞𝑘, i.e. 𝑓 (𝑥1, . . . , 𝑥ℓ ) = 𝑦, to an equivalent relation overR𝑞 (or a related ring).
+The hardness lies in translating operations over field extensionsF𝑞𝑘, such as addition and multiplication, to
+equivalent operations over the cyclotomic ringR𝑞. We proceed in two steps. First, we directly identify the
+finite fields withinR𝑞.
+Lemma 1(Informal). Let 𝑞 = 5 (mod 8) and 𝑘 ≥ 1 be a divisor of 𝑑/2 and consider the subgroup
+𝐻 := ⟨𝜎−1, 𝜎4𝑘+1⟩ of Aut(R). Then, R𝐻
+𝑞 is a subfield ofR𝑞 isomorphic to F𝑞𝑘.
+This lemma allows us to translate proving inner products overF𝑞𝑘 into relations directly over the cyclotomic
+ring R𝑞 using the R𝑞-trace map.
+Theorem 1(Informal). Let 𝑞 = 5 (mod 8), 𝑘 divide 𝑑/2 and 𝐻 := ⟨𝜎−1, 𝜎4𝑘+1⟩ ⊆ Aut(R). Then, there
+exists an efficiently computable bijection𝜓 : (R𝐻
+𝑞 )𝑑/𝑘 → R𝑞 such that for anya, b ∈ ( R𝐻
+𝑞 )𝑑/𝑘,
+Tr𝐻 (𝜓 (a) · 𝜎−1(𝜓 (b))) = 𝑑
+𝑘 · ⟨a, b⟩.
+We now show how to use these two theoretical results. Let𝑘 = 2𝜅 be a divisor of𝑑/2 and suppose we want to
+prove a polynomial evaluation claim overR𝐻
+𝑞 ( F𝑞𝑘 by Lemma 1). Denote the coefficients of polynomial𝑓 as
+(𝑓𝜄)𝜄 ∈ {0,1}ℓ ∈ F𝑞𝑘. We can explicitly rewrite the evaluation equation as
+𝑦 =
+∑︁
+𝑖 ∈ {0,1}ℓ −𝛼 +𝜅
+
+𝑥𝑖1
+1 · . . . ·𝑥𝑖ℓ −𝛼 +𝜅
+ℓ −𝛼+𝜅
+
+·©­
+«
+∑︁
+𝑗 ∈ {0,1}𝛼 −𝜅
+𝑓𝑖 ∥ 𝑗 ·𝑥 𝑗1
+ℓ −𝛼+𝜅+1 · . . . ·𝑥 𝑗𝛼 −𝜅
+ℓ
+ª®
+¬
+. (4)
+3 Concrete verification times for first round of Hachi, and later composed with Greyhound on a smaller instance.
+4 When compared with the same implementation.
+5
+
+--- page 6 ---
+
+For each𝑖 ∈ {0,1}ℓ −𝛼+𝜅 define the ring element
+𝐹𝑖 := 𝜓  (𝑓𝑖 | |𝑗 ) 𝑗 ∈ {0,1}𝛼 −𝜅
+ and also 𝑣 := 𝜓
+
+(𝑥 𝑗1
+ℓ −𝛼+𝜅+1 · . . . ·𝑥 𝑗𝛼 −𝜅
+ℓ ) 𝑗 ∈ {0,1}𝛼 −𝜅
+
+.
+Then, using the fact thatR𝐻
+𝑞 is stable under the additively homomorphic maptr𝐻, and by applying Theorem 1
+to Equation (4) we get
+𝑑
+𝑘 ·𝑦 = Tr𝐻
+©­­­­­­
+«
+∑︁
+𝑖 ∈ {0,1}ℓ −𝛼 +𝜅
+
+𝑥𝑖1
+1 · . . . ·𝑥𝑖ℓ −𝛼 +𝜅
+ℓ −𝛼
+
+·𝐹𝑖
+|                                      {z                                      }
+𝑌:=
+·𝜎−1(𝑣)
+ª®®®®®®
+¬
+.
+Therefore, the prover can send a single ring element𝑌 ∈ R𝑞, that allows the verifier to check if theR𝑞-trace
+map of 𝑌 · 𝜎−1(𝑣) is equal to 𝑑𝑦/𝑘. Then, we only need to prove that𝑌 is well-formed, which is now an
+evaluation proof for the(ℓ − 𝛼 + 𝜅)-variate polynomial 𝐹 := (𝐹𝑖 )𝑖 over R𝑞.
+In certain scenarios, the evaluation point might be defined over the extension fieldF𝑞𝑘, while the coefficients
+of the committed polynomial𝑓 are over F𝑞 (which is the case after the first iteration of our recursive proof
+system). Can we optimize our transformation in this setting without bluntly assuming that𝑓 ∈ F≤1
+𝑞𝑘 [𝑋1, . . . , 𝑋ℓ ]?
+To this end, we use the similar observation as before that a polynomial evaluation claim can be written as
+𝑦 =
+∑︁
+𝑖 ∈ {0,1}𝜅
+
+𝑥𝑖1
+1 · . . . ·𝑥𝑖𝜅
+𝜅
+
+·
+©­­­­­­­
+«
+∑︁
+𝑗 ∈ {0,1}ℓ −𝜅
+𝑓𝑖 ∥ 𝑗 ·𝑥 𝑗1
+𝜅+1 · . . . ·𝑥 𝑗ℓ −𝜅
+ℓ
+|                                   {z                                   }
+𝑦𝑖:=
+ª®®®®®®®
+¬
+. (5)
+Hence, we let the prover send𝑘 partial evaluations𝑦𝑖 ∈ F𝑞𝑘 to the verifier, who can directly check the equation
+above5. What we have left to prove is that all the𝑦𝑖 are well-formed, or in other words𝑓𝑖 (𝑥𝜅+1, . . . , 𝑥ℓ ) = 𝑦𝑖
+where 𝑓𝑖 ∈ F𝑞 [𝑋𝜅+1, . . . , 𝑋ℓ ].
+Next, denote F𝑞𝑘 := F𝑞 [𝑍 ]/𝜑 (𝑍 ), where 𝜑 is an irreducible polynomial inF𝑞 [𝑍 ] of degree 𝑘. Then, define
+the (ℓ − 𝜅)-variate multilinear polynomial𝑓 ′ ∈ F𝑞𝑘 [𝑋𝜅+1, . . . , 𝑋ℓ ]:
+𝑓 ′ (𝑋𝜅+1, . . . , 𝑋ℓ ) :=
+∑︁
+𝑖 ∈ {0,1}𝜅
+𝑓𝑖 (𝑋𝜅+1, . . . , 𝑋ℓ ) · 𝑍
+Í𝜅
+𝑡 =1 𝑖𝑡 ·2𝑡 −1
+.
+Then, it is easy to see that
+𝑓 ′ (𝑥𝜅+1, . . . , 𝑥ℓ ) =
+∑︁
+𝑖 ∈ {0,1}𝜅
+𝑦𝑖 ·𝑍
+Í𝜅
+𝑡 =1 𝑖𝑡 ·2𝑡 −1
+∈ F𝑞𝑘
+which is now a full-fledged polynomial evaluation overF𝑞𝑘. By applying the generic transformation above,
+we can reduce the statement into an evaluation claim overR𝑞 for a (ℓ − 𝛼)-variate multilinear polynomial
+(instead of ℓ − 𝛼 + 𝜅, if done generically).
+Polynomial evaluation claim as a quadratic equation.Now, consider proving an evaluation claim of
+a 𝜇-variate multilinear polynomial𝑓 over R𝑞. We use the following folklore strategy. Suppose𝜇 = 𝑚 + 𝑟 for
+some 𝑚, 𝑟 ≥ 1 and letf := (𝑓𝜄)𝜄 ∈ {0,1}𝜇 be the coefficient vector of𝑓. Then, for any
+𝑓 (𝑋1, . . . , 𝑋𝜇) :=
+∑︁
+𝑖 ∈ {0,1}𝑟
+∑︁
+𝑗 ∈ {0,1}𝑚
+𝑓𝑖 | |𝑗 · (𝑋 𝑖1
+1 · . . . ·𝑋 𝑖𝑟
+𝑟 ) · (𝑋 𝑗1
+𝑟 +1 · . . . ·𝑋 𝑗𝑚
+𝜇 )
+5 A simple optimization is for the prover to send only𝑘 −1 partial evaluation𝑦𝑖, excluding 𝑦0...0 ∈ F𝑞𝑘, which can be
+deterministically derived from the verification equation.
+6
+
+--- page 7 ---
+
+and any evaluation point(𝑥1, . . . , 𝑥𝜇) ∈ R𝜇
+𝑞 we can write:
+𝑓 (𝑥1, . . . , 𝑥𝜇) = b⊺
+
+a⊺
+. . .
+a⊺
+
+
+f0...0
+...
+f1...1
+
+where
+b⊺ := (𝑥𝑖1
+1 · . . . ·𝑥𝑖𝑟
+𝑟 )𝑖 ∈ {0,1}𝑟 ∈ R2𝑟
+𝑞
+a⊺ := (𝑥 𝑗1
+𝑟 +1 · . . . ·𝑥 𝑗𝑚
+𝜇 ) 𝑗 ∈ {0,1}𝑚 ∈ R2𝑚
+𝑞
+f ⊺
+𝑖 := (𝑓𝑖 | |𝑗 ) 𝑗 ∈ {0,1}𝑚 ∈ R2𝑚
+𝑞 for 𝑖 ∈ {0,1}𝑟
+.
+Finally, by defining the decompositions := G−1
+2𝜇 (f ) ∈ R2𝑚𝛿
+𝑞 and using the mixed product of the tensor product,
+we deduce that
+𝑓 (𝑥1, . . . , 𝑥𝜇) = b⊺ (a⊺ ⊗ I2𝑟 )f
+= b⊺ (a⊺ ⊗ I2𝑟 ) (g⊺ ⊗ I2𝑚+𝑟 )s
+= b⊺ (a⊺ (g⊺ ⊗ I2𝑟 ) ⊗ I2𝑟 )s.
+Hence, the goal is to prove that the (committed) vectors is short and satisfies the quadratic equation above,
+which exactly the relation formulated in Equation (1). To prove knowledge of suchs, we closely follow the
+initial methodology from Greyhound [NS24]. That is, we consider the square-root interactive proof from
+[BBC+18], but instead of sending the prover messages in the clear, we commit to them. Later, we need
+to prove knowledge of the prover messages that satisfy all the verification equations (as well as proving
+knowledge of the commitment opening). All these relations can be phrased as proving knowledge of a short
+vector z of dimension (2𝑚 +2𝑟 ) ·poly(𝜆) such that
+Mz = w and z is short. (6)
+This is the point where our strategy diverges from [NS24]. Instead of running LaBRADOR [BS23] to prove
+the relation above, we propose a new sumcheck-based solution.
+Ring switching and sumcheck over extension fields.We take inspiration from the ring switching
+approach proposed recently by Huang, Mao, and Zhang [HMZ25].To begin with, recall that a multilinear
+extension mle[𝑓 ] ∈ F≤1
+𝑞𝑘 [𝑋1, . . . , 𝑋𝜇] of 𝑓 is defined as
+mle[𝑓 ] (x) :=
+∑︁
+𝑖 ∈ {0,1}𝜇
+𝑓 (b) · 𝑒𝑞 (𝑖, x)
+where 𝑒𝑞 (𝑖, x) := Î𝜇
+𝑗=1
+ (1 − 𝑖 𝑗 ) · (1 − 𝑥 𝑗 ) + 𝑖 𝑗𝑥 𝑗
+ is the equality polynomial.
+The first step is to lift Equation (6) fromR𝑞 to Z𝑞 [𝑋 ]. For the sake of overview, we only focus on the
+unstructured linear relation and suppose matrixM has only one row (dealing with multiple rows and proving
+norm bounds is presented in Section 4.3). Then, we can rewrite it as
+∑︁
+𝑘
+𝑀𝑘 (𝑋 ) · 𝑧𝑘 (𝑋 ) = 𝑤 (𝑋 ) + ( 𝑋 𝑑 +1) · 𝑟 (𝑋 ) for some 𝑟 ∈ Z<𝑑 −1
+𝑞 [𝑋 ].
+Let z′ (resp. r′) be theZ𝑞-coefficient vector ofz (resp. 𝑟). Then, the prover commits, by using a polynomial
+commitment scheme, to the multilinear extension 𝑃 := mle[( z′, r′)] ∈ F≤1
+𝑞 [𝑋1, . . . , 𝑋𝜇] of (z′, r′)6, before
+obtaining a challenge 𝛼 ← F𝑞𝑘 from the verifier. The challenge is then used to substitute𝑋 = 𝛼, which
+simplifies to an inner product claim purely overF𝑞𝑘. We note that the size of𝑃 is much smaller than that of
+the original committed polynomial𝑓; hence, we can recursively repeat this process. Similarly as in [HMZ25]
+this can further get transformed into proving a sumcheck-type relation
+∑︁
+𝑖 ∈ {0,1}𝜇
+𝑃 (𝑖) · 𝑄 (𝑖) = 𝑉
+6 Here, we implicitly treat a vectora ∈ F2𝐿
+𝑞 as an indexing function from{0,1}𝐿 to F𝑞.
+7
+
+--- page 8 ---
+
+for a public polynomial𝑄 over F𝑞𝑘 [𝑋1, . . . , 𝑋𝜇] and a public value𝑉 ∈ F𝑞𝑘.
+On the other hand, to prove thatz is short, we only need to show that all coordinates ofz′ are small. Here
+we can use a standard range proof over a finite field, since the ring switching has transformed the statements
+from polynomial rings into a finite field. In contrast, both LaBRADOR and LatticeFold+ demonstrate
+smallness directly over polynomial rings, which is considerably more complicated and less efficient for the
+verifier.
+Finally, by running the sumcheck protocol [LFKN90], we end up with a polynomial evaluation claim of
+the form:
+𝑃 (𝑟 ∗
+1, . . . , 𝑟∗
+𝜇) · 𝑄 (𝑟 ∗
+1, . . . , 𝑟∗
+𝜇) = 𝑦∗,
+wheretheevaluationpoint (𝑟 ∗
+1, . . . , 𝑟∗
+𝜇) andtheimage 𝑦∗ arepublic.Hence,bysendingtheevaluation 𝑃 (𝑟 ∗
+1, . . . , 𝑟∗
+𝜇)
+to the verifier, they can directly check the equation above. What is left for the prover to do now is to prove
+the evaluation claim for the polynomial𝑃, and thus the protocol can be repeated in a further way to obtain
+smaller proof sizes.
+Committing to 𝑷 and avoiding re-decomposition.A naive approach to commit to the multilinear
+polynomial 𝑃 = mle[( z′, r′)] is to first decompose the coefficients of𝑃 (and thus the committed witness gets
+longer), and then apply an Ajtai-style [Ajt96] commitment scheme. A more natural and efficient way is to
+directly commit to(z′, r′), as we know that the coefficients ofz′ are already small and thus no decomposition
+for z′ is needed7. But this directly leads to a question of how to directly provemle[( z′, r′)] (𝑥1, . . . , 𝑥𝜇) = 𝑦′,
+when having only committed to(z′, r′). We solve this issue by observing a very simple homomorphic property
+of the 𝑒𝑞 polynomials. Namely, for any vectors𝑖, 𝑗 and x0, x1 we have
+𝑒𝑞 (𝑖, x0) · 𝑒 ( 𝑗, x1) = 𝑒𝑞 (𝑖 || 𝑗, x0|| x1).
+Then, by definition of the multilinear extension and for𝜇 = 𝑚 + 𝑟, we can write
+mle[( z′, r′)] (x0 ∥ x1) =
+∑︁
+𝑖 ∈ {0,1}𝑟
+∑︁
+𝑗 ∈ {0,1}𝑚
+(z′, r′)𝑖 ∥ 𝑗 ·𝑒𝑞 (𝑖 ∥ 𝑗, x0 ∥ x1)
+=
+∑︁
+𝑖 ∈ {0,1}𝑟
+𝑒𝑞 (𝑖, x0) ·©­
+«
+∑︁
+𝑗 ∈ {0,1}𝑚
+(z′, r′)𝑖 ∥ 𝑗 ·𝑒𝑞 ( 𝑗, x1)ª®
+¬
+which is exactly of the same form as(4). Therefore, we can recursively run our protocol to prove evaluation
+of 𝑃 (with minor modifications) without explicitly committing to its coefficients.
+2 Preliminaries
+Notation. Let 𝑞 = 5 (mod 8) be an odd prime. DenoteZ𝑞 := {0,1, . . . , 𝑞 −1} to be the ring of integers of order
+𝑞 and F𝑞𝑘 be the Galois field of dimension𝑘 and size 𝑞𝑘. In this paper, we will useZ𝑞 and F𝑞 interchangeably.
+For 𝑛 ∈ N, we define [𝑛] := {1,2, . . . , 𝑛}. Let 𝜆 to be the security parameter. We write𝑂𝜆 (𝑇 ) to denote
+𝑇 ·poly(𝜆). For a probability distributionX (resp. finite setX), 𝑥 ← X means that 𝑥 is sampled fromX (resp.
+𝑥 is chosen uniformly at random from the setX). We writenegl to denote an unspecified negligible function.
+We will mostly use letters𝑖, 𝑗 for indexing. For𝑛 ∈ N, we write [𝑛] := {1,2, . . . , 𝑛}. When we denote
+𝑖 ∈ {0,1}𝑘, we treat𝑖 as a binary vector(𝑖1, . . . , 𝑖𝑘 ) of length𝑘. For presentation purposes, when we say𝑖 ∈ [2𝑘 ],
+we may also mean its binary encoding𝑖 ∈ {0,1}𝑘. This will be useful when describing the sumcheck-based
+norm protocol (cf. Section 4.3).
+7 Nevertheless, we would need to decompose the coefficients ofr′.
+8
+
+--- page 9 ---
+
+2.1 Cyclotomic Rings
+For a power of two𝑑 := 2𝛼 and prime 𝑞, denote R and R𝑞 respectively to be the ringsZ[𝑋 ]/( 𝑋 𝑑 +1) and
+Z𝑞 [𝑋 ]/( 𝑋 𝑑 +1). Lower-case letters denote elements inR or R𝑞𝑘 and bold lower-case (resp. upper-case) letters
+represent column vectors (resp. matrices) with coefficients inR or R𝑞𝑘. For𝑦 = Í𝑑 −1
+𝑖=0 𝑦𝑖 ·𝑋 𝑖 ∈ R𝑞, we write
+cf(𝑦) := (𝑦0, . . . , 𝑦𝑑 −1) ∈ F𝑑
+𝑞 to denote the coefficient vector of𝑦. We naturally extend this notation to vectors.
+We consider base-𝑏 gadget matrices G𝑏,𝑛 := I𝑛 ⊗
+
+1 𝑏 𝑏2 · · ·𝑏𝛿 −1
+∈ R𝑛×𝑛𝛿
+𝑞 for 𝑛 ≥ 1 and 𝛿 = ⌈log𝑏 𝑞⌉. We
+define the inverse functionG−1
+𝑏,𝑛 : R𝑛
+𝑞 → R𝑛𝛿
+𝑞 , which decomposes each entry w.r.t. base𝑏. In particular, for any
+t ∈ R𝑛
+𝑞, G−1
+𝑏,𝑛 (t) has coefficients between⌈−𝑏/2⌉ and ⌈𝑏/2⌉ −1 and G𝑏,𝑛G−1
+𝑏,𝑛 (t) = t. We will omit the subscript
+𝑏 if the base is known and fixed from the context.
+Galois Automorphisms and trace map.For 𝑖 ∈ Z×
+2𝑑, we define the Galois automorphism𝜎𝑖 : R → R defined
+as 𝑋 ↦→ 𝑋 𝑖, and denote the Galois group of automorphisms asAut(R) := {𝜎𝑖 : 𝑖 ∈ Z×
+2𝑑 }. For a subgroup
+𝐻 of Aut(R), we denote R𝐻
+𝑞 := {𝑥 ∈ R𝑞 : ∀𝜎 ∈ 𝐻, 𝜎 (𝑥) = 𝑥 }, i.e. the ring of elements ofR𝑞 fixed by all
+automorphisms in 𝐻. Also, we define theR𝑞-trace map Tr𝐻 : R𝑞 → R𝐻
+𝑞 as Tr𝐻 (𝑎) := Í
+𝜎 ∈𝐻 𝜎 (𝑎) ∈ R𝐻
+𝑞 .
+Norms. We define 𝑟 ′ = 𝑟 mod± 𝑞 to be the unique element 𝑟 ′ in the range − 𝑞−1
+2 ≤ 𝑟 ′ ≤ 𝑞−1
+2 such that
+𝑟 ′ = 𝑟 mod 𝑞. We also denote 𝑟 ′ = 𝑟 mod+𝑞 to be the unique element 𝑟 ′ in the range 0 ≤ 𝑟 ′ < 𝑞 such
+that 𝑟 ′ = 𝑟 mod 𝑞. When the exact representation is not important, we simply write 𝑟 mod 𝑞. For an
+element 𝑤 ∈ Z𝑞, we write∥𝑤 ∥∞ to mean |𝑤 mod± 𝑞|. Define theℓ∞ and ℓ𝑝 norms for 𝑤 = 𝑤0 + 𝑤1𝑋 + . . . +
+𝑤 𝑑 −1𝑋 𝑑 −1 ∈ R as ∥𝑤 ∥∞ = max𝑗 ∥𝑤 𝑗 ∥∞, ∥𝑤 ∥𝑝 =
+𝑝
+√︁
+∥𝑤0∥𝑝
+∞ + . . . + ∥𝑤 𝑑 −1∥𝑝
+∞. If w = (w1, . . . , w𝑚) ∈ R𝑘, then
+∥w∥∞ = max𝑗 ∥w𝑗 ∥∞, ∥w∥𝑝 = 𝑝
+√︁
+∥w1 ∥𝑝 + . . . + ∥ w𝑘 ∥𝑝. By default,∥w∥ := ∥w∥2. For𝛽 ≥ 1, we define𝑆𝛽 to be
+the set of ring elements inR with coefficients between⌈−𝛽/2⌉ and ⌈𝛽/2⌉ −1.
+In this work, we will use the well-known inequality of [Mic07] to derive norm bounds.
+Lemma 2. For any 𝑓 , 𝑔 ∈ R, ∥𝑓 𝑔∥∞ ≤ ∥ 𝑓 ∥1 · ∥𝑔∥∞.
+Short elements are invertible.We recall the main result by Lyubashevsky and Seiler [LS18] which says that
+short polynomials overR𝑞 are invertible overR𝑞.
+Lemma 3([LS18]). Let 𝑞 ≡ 5 (mod 8) be a prime. Then, any𝑓 ∈ R𝑞 which satisfies0 < ∥𝑓 ∥∞ < 1√
+2𝑞1/2 or
+0 < ∥𝑓 ∥ < 𝑞1/2 has an inverse inR𝑞.
+The set of invertible elements ofR𝑞 is denoted byR×
+𝑞.
+Module-SIS Assumption. We recall the Module-SIS hardness assumption [LS15] adapted to the infinity norm
+setting.
+Definition 1(Module-SIS). Let 𝑞 = 𝑞(𝜆), 𝑛 = 𝑛(𝜆), 𝑚 = 𝑚(𝜆), 𝑑 = 𝑑 (𝜆) and 𝛽 = 𝛽 (𝜆). We say that the
+MSIS𝑞,𝑑,𝑛,𝑚,𝛽 assumption holds if for any PPT algorithmA, the following holds:
+Pr
+
+Az = 0 ∧0 < ∥z∥∞ ≤ 𝛽 | 𝐴 ← R𝑛×𝑚
+𝑞 , z ← A (A)
+
+= negl(𝜆)
+2.2 Multilinear Extensions over Rings
+Definition 2(Multilinear extension over rings).Let 𝑅 be an arbitrary ring with zero0 and identity1.
+Given a function 𝑓 : {0,1}𝜇 → 𝑅, we define the multilinear extensionmle[𝑓 ] ∈ 𝑅 ≤1 [𝑋1, . . . , 𝑋𝜇] of 𝑓 as
+mle[𝑓 ] (x) :=
+∑︁
+𝑖 ∈ {0,1}𝜇
+𝑓 (𝑖) · 𝑒𝑞 (𝑖, x)
+where 𝑒𝑞 (𝑖, x) := Î𝜇
+𝑗=1
+ (1 − 𝑖 𝑗 ) · (1 − 𝑥 𝑗 ) + 𝑖 𝑗𝑥 𝑗
+.
+By definition, mle[𝑓 ] (x) = 𝑓 (x) for all x ∈ {0,1}𝜇.
+For a vectorf := (𝑓𝑖 )𝑖 ∈ {0,1}𝜇 ∈ 𝑅2𝜇
+, we denote˜f as the multilinear extension of the function𝑓 : {0,1}𝜇 → 𝑅
+defined by𝑖 ↦→ 𝑓𝑖.
+9
+
+--- page 10 ---
+
+2.3 Coordinate-Wise Special Soundness
+Let R ⊆ { 0,1}∗ × {0,1}∗ × {0,1}∗ be a ternary relation. For a triple(pp, x, w) ∈ R, we call pp the public
+parameters, x is a statement andw is a witness forx w.r.t. pp 8. We denoteR(pp, x) = {w : R(pp, x, w) = 1}.
+An interactive proof systemΠ = (S, P, V) for relation R consists of three PPT algorithms: the setup
+algorithm S, proverP, and verifierV. The latter two are interactive and stateful. Further, we say a protocol is
+public coinif the verifier’s challenges are chosen uniformly at random independently of the prover’s messages.
+We recall the notion of coordinate-wise special soundness from [FMN24]. Let𝑆 be a set andℓ, 𝑘 ∈ N.
+Namely, take two vectorsx := (𝑥1, . . . , 𝑥ℓ ), y := (𝑦1, . . . , 𝑦ℓ ) ∈ 𝑆 ℓ. Then, we define the following relation “≡𝑖” for
+fixed 𝑖 ∈ [ ℓ] as:
+x ≡𝑖 y ⇐ ⇒ 𝑥𝑖 ≠ 𝑦𝑖 ∧ ∀𝑗 ∈ [ ℓ]\{𝑖}, 𝑥𝑗 = 𝑦 𝑗 .
+That is, vectors x and y have the same values in all coordinates apart from the𝑖-th one. Forℓ = 1, the
+relations boil down to checking whether two elements are distinct. Further, we can define the set
+SS(𝑆, ℓ, 𝑘) :=
+ 
+
+{x1, . . . , x𝐾 } ⊆ ( 𝑆 ℓ )𝐾 :
+∃𝑒 ∈ [ 𝐾], ∀𝑖 ∈ [ ℓ],
+∃𝐽 = { 𝑗1, . . . , 𝑗𝑘 −1} ⊆ [ 𝐾] \ { 𝑒},
+∀𝑗 ∈ 𝐽 ,x𝑒 ≡𝑖 x𝑗
+ 
+
+,
+where 𝐾 := ℓ (𝑘 − 1) + 1. In other words, there is acentral vector x𝑒 ∈ 𝑋 such that for each coordinate of
+x𝑒, there are𝑘 −1 other vectors in𝑋 that differ fromx𝑒 only in that coordinate. In other words, for each
+coordinate, there are𝑘 vectors in 𝑋 that differ from each other only in that coordinate, andx𝑒 is always one
+of them.
+We are ready to define the notion of coordinate-wise special soundness.
+Definition 3(CWSS for Multi-Round Protocols).Let Π be public-coin (2𝜇 +1)-round interactive proof
+system for relationR, where in the2𝑖-th round, for𝑖 ∈ [ 𝜇], the verifier picks a uniformly random challenge
+from 𝑆 ℓ𝑖
+𝑖 . A tree of transcripts is a set of𝐾 := Î𝜇
+𝑖=1 (ℓ𝑖 (𝑘𝑖 −1) +1) arranged in the following tree structure. The
+nodes in the tree correspond to the prover’s messages and the edges correspond to the verifier’s challenges.
+Each node at depth𝑖 has exactly ℓ𝑖 (𝑘𝑖 −1) +1 children corresponding toℓ𝑖 (𝑘𝑖 −1) +1 distinct challenges which,
+as a set of vectors, lie inSS(𝑆𝑖, ℓ𝑖, 𝑘𝑖 ). Every transcript corresponds to exactly one path from the root to a leaf
+node.
+We say that Π is (ℓ1, . . . , ℓ𝜇)-coordinate-wise (𝑘1, . . . , 𝑘𝜇)-special sound for the relationR if there is a
+polynomial time algorithm that given public parameterspp, statement x and the tree of transcripts, outputs a
+witness w ∈ 𝑅(pp, x). If ℓ1 = . . . = ℓ𝜇 = 1 then we say the protocol is(𝑘1, . . . , 𝑘𝜇)-special sound.
+We recall the main result of [FMN24, Section 7] which translates CWSS to knowledge soundness.
+Lemma 4. Let Π be a (ℓ1, . . . , ℓ𝜇)-coordinate-wise (𝑘1, . . . , 𝑘𝜇)-special sound interactive proof system as in
+Definition 3 and assume𝐾 := Î𝜇
+𝑖=1(ℓ𝑖 (𝑘𝑖 −1) +1) = poly(𝜆). Then, it is knowledge sound with knowledge error
+𝜇∑︁
+𝑖=1
+ℓ𝑖 ·𝑘𝑖
+|𝑆𝑖 |ℓ𝑖
+.
+A similar result also holds in the random oracle model ifΠ is turned non-interactive via Fiat-Shamir
+transformation (see [FMN24, Section 8]). In this work, we will aim to show that our protocol satisfies
+coordinate-wise special soundness.
+8 We omitpp and simply writeR(x, w) if the public parameters are not relevant to the relation.
+10
+
+--- page 11 ---
+
+3 Evaluation Claims over Extension Fields as Relations over R𝒒
+In this section, we provide a generic transformation from provingℓ-variate polynomial evaluations over
+finite fields F𝑞𝑘 to proving (ℓ − 𝛼 + 𝜅)-variate polynomial evaluations over the cyclotomic ringR𝑞. Next, we
+improve the result if the committed polynomial is only over the base fieldF𝑞, instead ofF𝑞𝑘. At the core of
+our transformation is the process of embedding vectors of extension fieldsF𝑞𝑘 inside ring elementsR𝑞 and
+translating inner products overF𝑞𝑘 as “inner-product-related” statements overR𝑞. In Figure 2 we provide a
+summary table of how much theF𝑞𝑘-to-R𝑞 transformations presented in this section cost in terms of prover
+communication.
+3.1 Generic Transformation over F𝒒𝒌
+Finding subfields inR𝑞. We introduce a lemma that explicitly describe finite field extensions withinR𝑞.
+Lemma 5(Subfields of R𝑞). Let 𝑞 = 5 (mod 8) and 𝑘 ≥ 1 be a divisor of𝑑/2 and 𝐻 := ⟨𝜎−1, 𝜎4𝑘+1⟩ ⊆
+Aut(R). Then, R𝐻
+𝑞 is a subfield ofR𝑞 isomorphic to F𝑞𝑘.
+Proof. By definition, R𝐻
+𝑞 is a subset of the set of all ring elements inR𝑞 stable under the𝜎−1 automorphism,
+which itself is a field [LNP22, Lemma 2.6]. Using the homomorphic properties of Galois automorphisms, the
+set R𝐻
+𝑞 is closed under both addition and multiplication. Finally, the size ofR𝐻
+𝑞 is 𝑞𝑘 since each element of
+R𝐻
+𝑞 is of the form
+𝑎 := 𝑎0 +
+𝑘 −1∑︁
+𝑗=1
+𝑎𝑘 − 𝑗 ·
+
+𝑋
+𝑑
+2𝑘 · (𝑘 − 𝑗 ) − 𝑋
+𝑑
+2𝑘 · (𝑘+𝑗 )
+
+(7)
+with 𝑘 degrees of freedom:𝑎0, 𝑎1, . . . , 𝑎𝑘 −1 ∈ Z𝑞. ⊓ ⊔
+Inner products.Our main theorem of this section generalizes [LNP22], and reduces proving inner products
+over the subfield into proving statements overR𝑞 related to the trace map. Informally, it introduces a bijection
+𝜓 which allows packing𝑑/𝑘 elements of fieldF𝑞𝑘 into one singleR𝑞 element. The fact that it is an invertible
+function is crucial in arguing knowledge soundness.
+Theorem 2(Inner product as output of the trace).Let 𝑘 divide 𝑑/2 and 𝐻 := ⟨𝜎−1, 𝜎4𝑘+1⟩ ⊆ Aut(R).
+Consider a map
+𝜓 : (R𝐻
+𝑞 )𝑑/𝑘 → R𝑞,
+(𝑎0, 𝑎1, . . . , 𝑎𝑑/𝑘 −1) ↦→
+ 𝑑/2𝑘 −1∑︁
+𝑖=0
+𝑎𝑖 ·𝑋 𝑖
+!
++ 𝑋 𝑑/2 ·
+ 𝑑/2𝑘 −1∑︁
+𝑖=0
+𝑎𝑑/2𝑘+𝑖 ·𝑋 𝑖
+!
+.
+(8)
+Then, 𝜓 is a bijection. Moreover, for anya, b ∈ ( R𝐻
+𝑞 )𝑑/𝑘,
+Tr𝐻 (𝜓 (a) · 𝜎−1(𝜓 (b))) = 𝑑
+𝑘 · ⟨a, b⟩.
+Proof. To prove the first part, we only need to show that𝜓 is injective since the domain and co-domain size
+are the same. Indeed, suppose that for somea = (𝑎0, . . . , 𝑎𝑑/𝑘 −1) we have𝜓 (a) = 0 (the statement holds by the
+linearly homomorphic property of𝜓). We prove thata is the zero-vector.
+First, we note that𝜓 (a) can be expanded as
+𝑑
+2𝑘 −1∑︁
+𝑖=0
+𝑋 𝑖𝑎𝑖,0 + 𝑋
+𝑑
+2 +𝑖𝑎𝑑/2𝑘+𝑖,0 +
+𝑘 −1∑︁
+𝑗=1
+𝑎𝑖,𝑘 − 𝑗 · (𝑋
+𝑑
+2𝑘 · (𝑘 − 𝑗 )+𝑖 − 𝑋
+𝑑
+2𝑘 · (𝑘+𝑗 )+𝑖 )
++
+𝑘 −1∑︁
+𝑗=1
+𝑎𝑑/2𝑘+𝑖,𝑘 − 𝑗 · (𝑋
+𝑑
+2𝑘 · (2𝑘 − 𝑗 )+𝑖 − 𝑋
+𝑑
+2𝑘 · (2𝑘+𝑗 )+𝑖 ).
+(9)
+11
+
+--- page 12 ---
+
+Then, the 𝑢-th coefficient of the polynomial above, where 0≤ 𝑢 < 𝑑/(2𝑘), is exactly 𝑎𝑢,0. Similarly, the
+(𝑑/2𝑘 + 𝑢)-th coefficient is𝑎𝑑/2𝑘+𝑢,0. Hence, 𝑎𝑢,0 = 𝑎𝑑/2𝑘+𝑢,0 = 0.
+Now, we claim that for any 1≤ 𝑢 < 𝑘 and 0 ≤ 𝑣 < 𝑑
+2𝑘, 𝑎𝑣,𝑢 = 𝑎𝑑/2𝑘+𝑣,𝑢 = 0. Indeed, first consider the
+( 𝑑
+2𝑘 ·𝑢 + 𝑣)-th coefficient of the polynomial above. It is equal to𝑎𝑣,𝑢 + 𝑎𝑑/2𝑘+𝑣,𝑘 −𝑢 = 0. On the other hand, if we
+focus on the( 𝑑
+2𝑘 · (𝑘 + 𝑢) + 𝑣)-th coefficient, then it is exactly equal to−𝑎𝑣,𝑘 −𝑢 + 𝑎𝑑/2𝑘+𝑣,𝑢 = 0. By combining
+the two observations we obtain
+𝑎𝑑/2𝑘+𝑣,𝑢 = 𝑎𝑣,𝑘 −𝑢 = −𝑎𝑑/2𝑘+𝑣,𝑢
+which implies 𝑎𝑑/2𝑘+𝑣,𝑢 = 𝑎𝑣,𝑢 = 0, and thusa = 0.
+We move on to the second part. We will make use of the following three claims.
+Claim. Consider the multiplicative groupZ×
+2𝑑 and let 𝑘 ≤ 𝑑/2 be a power-of-two. Then,
+⟨4𝑘 +1⟩ = {(4𝑘) · 𝛼 +1 : 0≤ 𝛼 ≤ 𝑑/(2𝑘) − 1}.
+Proof. First, using the property that 4𝑘 divides 2𝑑, we have for any𝑖,
+((4𝑘 +1)𝑖 mod 2𝑑) mod 4𝑘 = (4𝑘 +1)𝑖 mod 4𝑘 =
+𝑖∑︁
+𝑗=0
+𝑖
+𝑗
+
+(4𝑘) 𝑗 mod 4𝑘 = 1.
+Therefore, ⟨4𝑘 +1⟩ ⊆ {( 4𝑘) ·𝛼 +1 : 0≤ 𝛼 ≤ 𝑑/(2𝑘) −1}. Now, the statement holds since by [LS18, Lemma 2.4],
+we know that the order of 4𝑘 +1 ∈ Z×
+2𝑑 is exactly 2𝑑
+4𝑘 = 𝑑/(2𝑘). ⊓ ⊔
+Claim. Let 𝑖 ∈ Z be not divisible by𝑑/2𝑘. Then, Tr𝐻 (𝑋 𝑖 ) = 0.
+Proof. Indeed, by assumption 4𝑘𝑖 cannot be divisible 2𝑑 and thus𝑋4𝑘𝑖 ≠ 1. Now, using the first claim, we get
+Tr𝐻 (𝑋 𝑖 ) =
+∑︁
+ℎ∈ ⟨−1,4𝑘+1⟩
+𝑋 ℎ·𝑖
+=
+∑︁
+ℎ∈ ⟨4𝑘+1⟩
+𝑋 ℎ·𝑖 + 𝑋 −ℎ·𝑖
+=
+𝑑/(2𝑘 ) −1∑︁
+𝛼=0
+𝑋 (4𝑘 ·𝛼+1) ·𝑖 +
+𝑑/(2𝑘 ) −1∑︁
+𝛼=0
+𝑋 − (4𝑘 ·𝛼+1) ·𝑖
+= 𝑋 𝑖 · (𝑋4𝑘𝑖 )𝑑/(2𝑘 ) −1
+𝑋4𝑘𝑖 −1 + 𝑋 −𝑖 · (𝑋 −4𝑘𝑖 )𝑑/(2𝑘 ) −1
+𝑋 −4𝑘𝑖 −1
+= 0.
+⊓ ⊔
+Claim. Tr𝐻 (𝑋 𝑑/2) = 0.
+Proof. Using the first claim we obtain
+Tr𝐻 (𝑋 𝑑/2) =
+𝑑/(2𝑘 ) −1∑︁
+𝛼=0
+𝑋 (4𝑘 ·𝛼+1) ·𝑑/2 +
+𝑑/(2𝑘 ) −1∑︁
+𝛼=0
+𝑋 − (4𝑘 ·𝛼+1) ·𝑑/2
+=
+𝑑/(2𝑘 ) −1∑︁
+𝛼=0
+𝑋 𝑑/2 +
+𝑑/(2𝑘 ) −1∑︁
+𝛼=0
+𝑋 −𝑑/2
+=
+𝑑/(2𝑘 ) −1∑︁
+𝛼=0
+𝑋 𝑑/2 − 𝑋 𝑑/2 = 0.
+⊓ ⊔
+12
+
+--- page 13 ---
+
+To conclude the proof of the theorem, we notice that
+𝜓 (a) · 𝜎−1 (𝜓 (b)) =
+ 𝑑/2𝑘 −1∑︁
+𝑖=0
+𝑑/2𝑘 −1∑︁
+𝑗=0
+𝑎𝑖𝑏 𝑗 ·𝑋 𝑖 − 𝑗 +
+𝑑/2𝑘 −1∑︁
+𝑖=0
+𝑑/2𝑘 −1∑︁
+𝑗=0
+𝑎𝑑/2𝑘+𝑖𝑏𝑑/2𝑘+𝑗 ·𝑋 𝑖 − 𝑗
+!
++ 𝑋 𝑑/2 ·
+ 𝑑/2𝑘 −1∑︁
+𝑖=0
+𝑑/2𝑘 −1∑︁
+𝑗=0
+𝑎𝑑/2𝑘+𝑖𝑏 𝑗 ·𝑋 𝑖 − 𝑗 −
+𝑑/2𝑘 −1∑︁
+𝑖=0
+𝑑/2𝑘 −1∑︁
+𝑗=0
+𝑎𝑖𝑏𝑑/2𝑘+𝑗 ·𝑋 𝑖 − 𝑗
+!
+.
+Hence,
+Tr𝐻 (𝜓 (a) · 𝜎−1(𝜓 (b)))
+=
+ 𝑑/2𝑘 −1∑︁
+𝑖=0
+𝑑/2𝑘 −1∑︁
+𝑗=0
+𝑎𝑖𝑏 𝑗 ·Tr𝐻 (𝑋 𝑖 − 𝑗 ) +
+𝑑/2𝑘 −1∑︁
+𝑖=0
+𝑑/2𝑘 −1∑︁
+𝑗=0
+𝑎𝑑/2𝑘+𝑖𝑏𝑑/2𝑘+𝑗 ·Tr𝐻 (𝑋 𝑖 − 𝑗 )
+!
++
+ 𝑑/2𝑘 −1∑︁
+𝑖=0
+𝑑/2𝑘 −1∑︁
+𝑗=0
+𝑎𝑑/2𝑘+𝑖𝑏 𝑗 ·Tr𝐻 (𝑋 𝑑/2+(𝑖 − 𝑗 ) ) −
+𝑑/2𝑘 −1∑︁
+𝑖=0
+𝑑/2𝑘 −1∑︁
+𝑗=0
+𝑎𝑖𝑏𝑑/2𝑘+𝑗 ·Tr𝐻 (𝑋 𝑑/2+(𝑖 − 𝑗 ) )
+!
+.
+Now, using the fact that for two distinct 0≤ 𝑖, 𝑗 < 𝑑/2𝑘, both 𝑖 − 𝑗 and 𝑑/2 + ( 𝑖 − 𝑗) cannot be divisible
+by 𝑑/2𝑘, and the second claim, we deduce thatTr𝐻 (𝑋 𝑖 − 𝑗 ) = Tr𝐻 (𝑋 𝑑/2+𝑖 − 𝑗 ) = 0. However, when𝑖 = 𝑗, then
+Tr𝐻 (𝑋 𝑖 − 𝑗 ) = 𝑑
+𝑘 and Tr𝐻 (𝑋 𝑑/2+(𝑖 − 𝑗 ) ) = 0 by the third claim. Hence, we deduce that
+Tr𝐻 (𝜓 (a) · 𝜎−1 (𝜓 (b))) = 𝑑
+𝑘
+𝑑/𝑘 −1∑︁
+𝑖=0
+𝑎𝑖𝑏𝑖 = 𝑑
+𝑘 ⟨a, b⟩
+which concludes the proof. ⊓ ⊔
+Next, we give a simple observation regarding how infinity norm changes after applying the𝜓 map.
+Lemma 6. Let a be a vector overR𝐻
+𝑞 such that ∥a∥∞ ≤ 𝛽 and 𝜓 be the map defined in Theorem 2. Then,
+∥𝜓 (a) ∥∞ ≤ 2𝛽.
+Proof. The statement follows directly from the explicit formula in Equation (9), where some coefficients of
+𝜓 (a) are equal to the sum of two coefficients ofa.
+Reducing to multilinear evaluation overR𝑞. We use the results above to translate the multilinear evaluation
+claim over R𝐻
+𝑞
+𝑓 (𝑥1, . . . , 𝑥ℓ ) = 𝑦
+to an equivalent relation over the ringR𝑞. Denote the coefficients of polynomial𝑓 as (𝑓𝜄)𝜄 ∈ {0,1}ℓ ∈ R𝐻
+𝑞 . We can
+explicitly rewrite the evaluation equation as
+𝑦 =
+∑︁
+𝑖 ∈ {0,1}ℓ −𝛼 +𝜅
+
+𝑥𝑖1
+1 · . . . ·𝑥𝑖ℓ −𝛼 +𝜅
+ℓ −𝛼+𝜅
+
+·©­
+«
+∑︁
+𝑗 ∈ {0,1}𝛼 −𝜅
+𝑓𝑖 ∥ 𝑗 ·𝑥 𝑗1
+ℓ −𝛼+𝜅+1 · . . . ·𝑥 𝑗𝛼 −𝜅
+ℓ
+ª®
+¬
+. (10)
+For each𝑖 ∈ {0,1}ℓ −𝛼+𝜅 we define
+𝐹𝑖 := 𝜓  (𝑓𝑖 | |𝑗 ) 𝑗 ∈ {0,1}𝛼 −𝜅
+ and also 𝑣 := 𝜓
+
+(𝑥 𝑗1
+ℓ −𝛼+𝜅+1 · . . . ·𝑥 𝑗𝛼 −𝜅
+ℓ ) 𝑗 ∈ {0,1}𝛼 −𝜅
+
+.
+Now, recall that for every𝑥 ∈ R𝐻
+𝑞 we haveTr𝐻 (𝑥) = 𝑥 and trace is additively homomorphic. Hence, by
+applying Theorem 2 to Equation (10) we obtain
+𝑑
+𝑘 ·𝑦 = Tr𝐻
+©­­­­­­
+«
+∑︁
+𝑖 ∈ {0,1}ℓ −𝛼 +𝜅
+
+𝑥𝑖1
+1 · . . . ·𝑥𝑖ℓ −𝛼 +𝜅
+ℓ −𝛼
+
+·𝐹𝑖
+|                                      {z                                      }
+𝑌:=
+·𝜎−1(𝑣)
+ª®®®®®®
+¬
+.
+13
+
+--- page 14 ---
+
+Therefore,theproverwillsendasingleringelement 𝑌 ∈ R𝑞,whichallowstheverifiertocheckif Tr𝐻 (𝑌 ·𝜎−1(𝑣)) =
+𝑑𝑦/𝑘. Then, we only need to prove that𝑌 is well-formed, which is an evaluation proof for the(ℓ − 𝛼 +𝜅)-variate
+multilinear polynomial 𝐹 := (𝐹𝑖 )𝑖 over R𝑞.
+3.2 Dealing with 𝒇 ∈ Z≤1
+𝒒 [𝑿1, . . . , 𝑿ℓ ]
+We now optimize the special case where the evaluation point(𝑥1, . . . , 𝑥ℓ ) is defined in the extension fieldF𝑞𝑘,
+while the coefficients of the committed polynomial𝑓 are over Z𝑞. Note that if we naively apply the generic
+transformation from Section 3.1 then we would end up with an evaluation proof for the(ℓ − 𝛼 + 𝜅)-variate
+multilinear polynomial overR𝑞. This subsection focuses on how to lower it further toℓ − 𝛼 variables.
+We start with a similar observation as in Equation (10) that a polynomial evaluation claim can be written
+as
+𝑦 =
+∑︁
+𝑖 ∈ {0,1}𝜅
+
+𝑥𝑖1
+1 · . . . ·𝑥𝑖𝜅
+𝜅
+
+·
+©­­­­­­­
+«
+∑︁
+𝑗 ∈ {0,1}ℓ −𝜅
+𝑓𝑖 ∥ 𝑗 ·𝑥 𝑗1
+𝜅+1 · . . . ·𝑥 𝑗ℓ −𝜅
+ℓ
+|                                   {z                                   }
+𝑦𝑖:=
+ª®®®®®®®
+¬
+. (11)
+Hence, we let the prover send𝑘 partial evaluations𝑦𝑖 ∈ F𝑞𝑘 to the verifier who can directly check whether
+𝑦 =
+∑︁
+𝑖
+
+𝑥𝑖1
+1 · . . . ·𝑥𝑖𝜅
+𝜅
+
+·𝑦𝑖 .
+What we have left to prove is that all the𝑦𝑖 are well-formed, or in other words𝑓𝑖 (𝑥𝜅+1, . . . , 𝑥ℓ ) = 𝑦𝑖 for
+𝑖 ∈ {0,1}𝜅 where 𝑓𝑖 ∈ Z𝑞 [𝑋ℓ −𝜅+1, . . . , 𝑋ℓ ].
+For the next part, we need a somewhat explicit definition of the extension field (it could as well be
+R𝐻
+𝑞 ). Let F𝑞𝑘 := F𝑞 [𝑍 ]/𝜑 (𝑍 ), where 𝜑 is an irreducible polynomial inF𝑞 [𝑍 ] of degree 𝑘. Then, we define the
+(ℓ − 𝜅)-variate multilinear polynomial𝑓 ′ ∈ F𝑞𝑘 [𝑋𝜅+1, . . . , 𝑋ℓ ] as
+𝑓 ′ (𝑋𝜅+1, . . . , 𝑋ℓ ) :=
+∑︁
+𝑖 ∈ {0,1}𝜅
+𝑓𝑖 (𝑋𝜅+1, . . . , 𝑋ℓ ) · 𝑍
+Í𝜅
+𝑡 =1 𝑖𝑡 ·2𝑡 −1
+.
+Then, by definition of the partial evaluations𝑦𝑖 we obtain
+𝑓 ′ (𝑥𝜅+1, . . . , 𝑥ℓ ) =
+∑︁
+𝑖 ∈ {0,1}𝜅
+𝑦𝑖 ·𝑍
+Í𝜅
+𝑡 =1 𝑖𝑡 ·2𝑡 −1
+∈ F𝑞𝑘
+which is now a full-fledged polynomial evaluation overF𝑞𝑘. By applying the generic transformation from
+Section 3.1, we can reduce the statement into an evaluation claim overR𝑞 for a𝜇-variate multilinear polynomial,
+where
+𝜇 = (ℓ − 𝜅)|  {z  }
+Section 3.2
+−𝛼 + 𝜅
+|                {z                }
+Section 3.1
+= ℓ − 𝛼 .
+The final observation is that the verifier can directly compute𝑦0...0 from 𝑦 and other 𝑦𝑖, and thus only𝑘 −1
+evaluations are needed to be sent.
+Remark 1. One may notice a strange behavior in Figure 2 in a sense that the transformation from a field
+extension F𝑞𝑘 to R𝑞 seems cheaper than from the base fieldF𝑞 to R𝑞. Indeed, if given a witness polynomial𝑓
+over F𝑞, why is it not enough to just follow the transformation from Section 3.1?
+There are two main reasons. The first one is that, when combined with a polynomial evaluation protocol
+over R𝑞, it is not guaranteed in the knowledge soundness proof that the extracted polynomial𝑓 is also over
+F𝑞, as we obtain𝑓 ∈ F𝑞𝑘 [𝑋1, . . . , 𝑋ℓ ]. Moreover, the transformation in Section 3.2 allows us to further reduce
+the number of variables of theR𝑞-polynomial, from ℓ − 𝛼 + 𝜅 to ℓ − 𝛼, which has significant impact in reducing
+round complexity of the protocol.
+14
+
+--- page 15 ---
+
+Committed polynomial # variables after theR𝑞-transformation Prover cost
+𝑓 ∈ F𝑞𝑘 [𝑋1, . . . , 𝑋ℓ ] ℓ − 𝛼 + 𝜅 𝑑log 𝑞
+𝑓 ∈ F𝑞 [𝑋1, . . . , 𝑋ℓ ] ℓ − 𝛼 (𝑑 + 𝑘 (𝑘 −1)) log 𝑞
+Fig. 2. Summary of our transformation in Sections 3.1 and 3.2. The prover cost is measured in the size of the prover
+messages in bits.
+4 Multilinear Polynomial Commitment Scheme over R𝒒
+This section focuses on proving knowledge of acommitted multilinear polynomial 𝑓 ∈ R≤1
+𝑞 [𝑋1, . . . , 𝑋ℓ ] with
+coefficients (𝑓𝑖 )𝑖 ∈ {0,1}ℓ such that
+𝑓 (𝑥1, . . . , 𝑥ℓ ) :=
+∑︁
+𝑖 ∈ {0,1}ℓ
+𝑓𝑖 ·𝑥𝑖1
+1 · . . . ·𝑥𝑖ℓ
+ℓ = 𝑢
+where the evaluation point(𝑥1, . . . , 𝑥ℓ ) ∈ Rℓ
+𝑞 and the image𝑢 ∈ R𝑞 are public.
+We follow the initial strategy from Greyhound [NS24]. Supposeℓ = 𝑚 + 𝑟 for some 𝑚, 𝑟 ≥ 1 (keep in mind
+𝑚 ≈ 𝑟). Then, we can rewrite the equation above as
+𝑓 (𝑥1, . . . , 𝑥𝜇) :=
+∑︁
+𝑖 ∈ {0,1}𝑟
+∑︁
+𝑗 ∈ {0,1}𝑚
+𝑓𝑖 | |𝑗 · (𝑥𝑖1
+1 · . . . ·𝑥𝑖𝑟
+𝑟 ) · (𝑥 𝑗1
+𝑟 +1 · . . . ·𝑥 𝑗𝑚
+ℓ ),
+or in other words
+𝑓 (𝑥1, . . . , 𝑥𝜇) = b⊺
+
+a⊺
+. . .
+a⊺
+
+
+f0...0
+...
+f1...1
+
+for
+b⊺ := (𝑥𝑖1
+1 · . . . ·𝑥𝑖𝑟
+𝑟 )𝑖 ∈ {0,1}𝑟 ∈ R2𝑟
+𝑞
+a⊺ := (𝑥 𝑗1
+𝑟 +1 · . . . ·𝑥 𝑗𝑚
+ℓ ) 𝑗 ∈ {0,1}𝑚 ∈ R2𝑚
+𝑞
+f ⊺
+𝑖 := (𝑓𝑖 | |𝑗 ) 𝑗 ∈ {0,1}𝑚 ∈ R2𝑚
+𝑞 for 𝑖 ∈ {0,1}𝑟
+. (12)
+This representation of a polynomial evaluation claim gives intuition how to commit to the polynomial𝑓.
+4.1 Inner and Outer Commitment
+The starting point of our polynomial commitment scheme construction is the basic commitment scheme from
+LaBRADOR [BS23]. Let𝑏 > 1 be the base used for decomposition (throughout) and denote𝛿 := ⌈log𝑏 𝑞⌉.
+The commitment key is a pair of uniformly random matricesA ∈ R𝑛𝐴 ×𝛿2𝑚
+𝑞 and B ∈ R𝑛𝐵 ×𝑛𝐴𝛿2𝑟
+𝑞 where 𝑛𝐴, 𝑛𝐵
+are the security parameters which determine hardness of the underlying Module-SIS problem.
+Suppose we want to commit to the 2𝑟 vectors (f ⊺
+𝑖 )𝑖 of length 2𝑚. The first step is to compute the
+decompositions:
+s1+Í𝑟
+𝑧=1 𝑖𝑧 ·2𝑧−1 := G−1
+2𝑚 (f𝑖 ) (13)
+and the inner Ajtai commitmentst𝑖 := As𝑖 ∈ R𝑛𝐴
+𝑞 for 𝑖 ∈ [ 2𝑟 ]. The next step is to compute their binary
+decomposition ˆt𝑖 := G−1
+𝑛𝐴 (t𝑖 ). The final outer commitment is
+u := B
+
+ˆt1
+...
+ˆt2𝑟
+
+∈ R𝑛𝐵
+𝑞 . (14)
+The commitment opening becomes a tuple of(s𝑖,ˆt𝑖 )𝑖.
+15
+
+--- page 16 ---
+
+In the knowledge extraction, we will only be able to extract so-called weak openings. We define a weak
+opening for the commitmentu is a tuple(s𝑖,ˆt𝑖, 𝑐𝑖 )𝑖 ∈ [2𝑟 ], which satisfies all the following conditions
+∀𝑖 ∈ [2𝑟 ] : ∥𝑐𝑖 ·s𝑖 ∥ ≤ ¯𝛽, ∥𝑐𝑖 ∥1 ≤ ¯𝜔, 𝑐 𝑖 ∈ R×
+𝑞 , As𝑖 = G𝑛𝐵
+ˆt𝑖
+B
+
+ˆt1
+...
+ˆt2𝑟
+
+= u and
+
+
+ˆt1
+...
+ˆt2𝑟
+
+
+∞
+≤ ¯𝛾 .
+Clearly, a message can be derived from the weak opening by Equation (13). We recall the known result that
+the commitment scheme above satisfies binding w.r.t. weak openings under the Module-SIS assumption. We
+omit the proof since it follows identically as in [NS24, Lemma 2.11].
+Lemma 7(Weak Binding). There is a deterministic algorithm that given two weak openings(s𝑖,ˆt𝑖, 𝑐𝑖 )𝑖 ∈ [2𝑟 ]
+and (s′
+𝑖,ˆt′
+𝑖, 𝑐′
+𝑖 )𝑖 ∈ [2𝑟 ] for the commitment u ∈ R𝑛𝐵
+𝑞 such that s𝑗 ≠ s′
+𝑗 for some 𝑗 ∈ [ 2𝑟 ], outputs a vector
+z ∈ R2𝑚+𝑛𝐴𝛿2𝑟
+𝑞 such that [A | B]z = 0 and 0 < ∥z∥∞ ≤ max(2¯𝜔¯𝛽,2¯𝛾).
+4.2 Polynomial Evaluation as Quadratic Equation
+We can now rephrase Equation (12) in terms of the commitment opening(s𝑖 )𝑖. Namely, we can write
+𝑢 = 𝑓 (𝑥1, . . . , 𝑥ℓ ) = b⊺
+
+a⊺G2𝑚
+. . .
+a⊺G2𝑚
+
+
+s1
+...
+s2𝑟
+
+. (15)
+From now on, we focus on proving knowledge of a commitment opening(s𝑖,ˆt𝑖 )𝑖 for the commitment®𝑢 which
+satisfies the above equation. We summarize the protocol in Figure 3.
+To begin with, the prover commits to the vectorw = (𝑤1, . . . , 𝑤2𝑟 ) ∈ R2𝑟
+𝑞 defined as𝑤 𝑖 := a⊺G2𝑚 s𝑖 ∈ R𝑞.
+That is, P first decomposes each 𝑤 𝑖, thus obtaining ˆw𝑖 := G−1
+1 (𝑤 𝑖 ) ∈ R𝛿
+𝑞. Finally, the prover sends the
+commitment
+v := Dˆw ∈ R𝑛𝐷
+𝑞 (16)
+where D ∈ R𝑛𝐷 ×𝛿 ·2𝑟
+𝑞 is a public uniformly random matrix andˆw⊺ := (ˆw⊺
+1 , . . . ,ˆw⊺
+2𝑟 ). Note that Equation (15)
+can be rephrased as
+𝑢 = b⊺w = b⊺G2𝑟 ˆw. (17)
+The verifier V responds with a challenge vectorc := (𝑐1, . . . , 𝑐2𝑟 ) ← C 2𝑟
+, where the challenge spaceC is
+currently defined as a subset of short challenges inR𝑞:
+C ⊆ { 𝑐 ∈ R𝑞 : ∥𝑐 ∥1 ≤ 𝜔 }
+for some 𝜔 instantiated later9. Then, the proverP computes the short folded witness
+z := 𝑐1s1 + 𝑐2s2 + . . . + 𝑐2𝑟 s2𝑟 ∈ R2𝑚𝛿
+𝑞 .
+We note the relationship betweenz and ˆw
+a⊺G2𝑚 z =
+2𝑟
+∑︁
+𝑖=1
+𝑐𝑖 a⊺G2𝑚 s𝑖 =
+2𝑟
+∑︁
+𝑖=1
+𝑐𝑖𝑤 𝑖 =
+2𝑟
+∑︁
+𝑖=1
+𝑐𝑖 G1ˆ𝑤 𝑖 = (c⊺ ⊗ G1)ˆw. (18)
+We also note the relationship betweenz and ˆt:
+Az :=
+2𝑟
+∑︁
+𝑖=1
+𝑐𝑖 As𝑖 =
+2𝑟
+∑︁
+𝑖=1
+𝑐𝑖 G𝑛𝐴
+ˆt𝑖 = (c ⊗ G𝑛𝐴 )ˆt. (19)
+9 The ℓ1 norm bound for challenges is set here to later apply Lemma 2.
+16
+
+--- page 17 ---
+
+Now, combining Equations 14, 16, 17, 18, and 19, the proverP will prove that shortz,ˆt, ˆw satisfy the linear
+relation over R𝑞:
+
+D 0 0
+0 B 0
+b⊺G2𝑟 0 0
+(c⊺ ⊗ G1) 0 −a⊺G2𝑚
+0 c ⊺ ⊗ G𝑛𝐴 −A
+
+
+ˆw
+ˆt
+z
+
+=
+
+v
+u
+𝑢
+0
+0
+
+.
+We see that while coefficients ofˆw,ˆt are between ⌈−𝑏/2⌉ and ⌈𝑏/2⌉ −1, the coefficients ofz will be moderately
+larger. Let 𝛽 be the maximum𝐿∞ norm of z, 𝜏 ≔ ⌈log𝑏 𝛽⌉ and J𝑛 ≔ I𝑛 ⊗
+1 𝑏 𝑏2 · · ·𝑏𝜏 −1
+∈ R𝑛×𝑛𝜏
+𝑞 be the
+corresponding gadget matrix. To decrease the coefficients ofz further, we decompose asˆz = J−1
+2𝑚 (z) ∈ R2𝑚𝛿𝜏
+𝑞 .
+Hence, the prover now needs to prove knowledge of(ˆw,ˆt,ˆz) ∈ 𝑆2𝑟 𝛿+2𝑟 𝑛𝐴𝛿+2𝑚𝛿𝜏
+𝑏 such that
+
+D 0 0
+0 B 0
+b⊺G2𝑟 0 0
+(c⊺ ⊗ G1) 0 −a⊺G2𝑚 J2𝑚
+0 c ⊺ ⊗ G𝑛𝐴 −AJ2𝑚
+
+
+ˆw
+ˆt
+ˆz
+
+=
+
+v
+u
+𝑢
+0
+0
+
+. (20)
+Public parameters: A ∈ R𝑛𝐴 ×𝛿2𝑚
+𝑞 , B ∈ R𝑛𝐵 ×𝑛𝐴𝛿2𝑟
+𝑞 , D ∈ R𝑛𝐷 ×𝛿2𝑟
+𝑞
+Witness: commitment openings := (s𝑖 )𝑖,ˆt := (ˆt𝑖 )𝑖
+Statement: commitment u ∈ R𝑛𝐵
+𝑞 , evaluation𝑢, vectors a, b as in Equation (15)
+Prover P Verifier V
+For 𝑖 ∈ [2𝑟 ]
+𝑤𝑖 := a⊺G2𝑚 s𝑖
+w := (𝑤1, . . . , 𝑤2𝑟 )
+ˆw := G−1
+2𝑟 (w)
+v := Dˆw ∈ R𝑛𝐷
+𝑞
+v -
+c := (𝑐1, . . . , 𝑐2𝑟 ) ← C 2𝑟
+c
+z := Í2𝑟
+𝑖=1 𝑐𝑖 s𝑖
+If ∥z∥∞ > 𝛽, abort
+ˆz = J−1
+2𝑚 (z)
+ˆt, ˆw,ˆz -
+(ˆw,ˆt,ˆz)
+?
+∈ 𝑆2𝑟 𝛿+2𝑟 𝑛𝐴𝛿+2𝑚𝛿𝜏
+𝑏
+
+D 0 0
+0 B 0
+b⊺G2𝑟 0 0
+(c⊺ ⊗ G1) 0 −a⊺G2𝑚 J2𝑚
+0 c ⊺ ⊗ G𝑛𝐴 −AJ2𝑚
+
+
+ˆw
+ˆt
+ˆz
+
+?=
+
+v
+u
+𝑢
+0
+0
+
+.
+Fig. 3. Interactive proof of knowledge of the commitment opening(s𝑖,ˆt𝑖 ) which satisfies(15). In our final scheme, the
+prover does not send the final message in the clear, but proves knowledge of valid(ˆw,ˆt,ˆz).
+The completeness follows directly from the protocol rationale described above. Hence, we move on the
+soundness guarantees. Identically as [NS24, Lemma 3.2] we show that given CWSS-structured transcripts, we
+can extract a valid weak opening which satisfies Equation (15).
+17
+
+--- page 18 ---
+
+Lemma 8(CWSS of Figure 3).Let (¯𝛽, ¯𝜔, ¯𝛾) := (2𝑏𝑘,2𝜔, 𝑏). Suppose 𝜔 < 1
+2
+√
+2𝑞1/2. Then, given the public
+parameters, the statement(u, 𝑢), and2𝑟 +1 valid transcripts of the form
+tr( 𝑗 ) := (v, c( 𝑗 ), (ˆw( 𝑗 ),ˆt( 𝑗 ),ˆz( 𝑗 ) )) where (c( 𝑗 ) )0≤ 𝑗 ≤2𝑟 ∈ SS(C,2𝑟 ,2),
+one can either efficiently extract a weak opening(¯s( 𝑗 ),¯t( 𝑗 ), 𝑐( 𝑗 ) ) 𝑗 ∈ [2𝑟 ] for the commitmentu such that
+𝑢 = b⊺
+
+a⊺G2𝑚
+. . .
+a⊺G2𝑚
+
+
+¯s1
+...
+¯s2𝑟
+
+,
+or solve MSIS𝑞,𝑑,𝑛𝐵,𝛿2𝑟 𝑛𝐴,2𝑏 or MSIS𝑞,𝑑,𝑛𝐷 ,𝛿2𝑟 ,2𝑏.
+Proof. For each 𝑗 ∈ [2𝑟 ], let us reconstruct the vectorz( 𝑗 ) := J2𝑚ˆz( 𝑗 ). Then, we have∥z( 𝑗 ) ∥∞ ≤ 𝑏𝑘.
+Without loss of generality, assume thatc(0) is the “central vector”. First, suppose that for two distinct
+𝑖 ≠ 𝑗 we haveˆt(𝑖 ) ≠ˆt( 𝑗 ). In particular, we haveBˆt(𝑖 ) = u = Bˆt( 𝑗 ), and so we have found a short solution of
+norm at most 2𝑏 for the matrixB. Similarly, we argue for the vectorsˆw( 𝑗 ). Hence, from now on we assume
+that allˆt( 𝑗 ) :=ˆt and ˆw( 𝑗 ) := ˆw are the same. Denotew := G2𝑟 ˆw and parse w = (𝑤 𝑖 )𝑖,ˆt := (ˆt𝑖 )𝑖. Then, we have
+b⊺w = 𝑢.
+Fix 𝑗 ∈ [2𝑟 ] and consider the transcriptstr( 𝑗 ) and tr(0) with the verifier challenges denoted asc( 𝑗 ) := (𝑐 𝑗,𝑖 )𝑖
+and c(0) := (𝑐0,𝑖)𝑖. Recall that the two challenge vectors differexactly in the 𝑗-th coordinate and𝑐 𝑗,𝑖 = 𝑐0,𝑖 for
+all 𝑖 ≠ 𝑗. By subtracting the two corresponding verification equations, we obtain
+b⊺G2𝑚 (z( 𝑗 ) − z(0) ) = (𝑐 𝑗,𝑗 − 𝑐0,𝑗 ) · 𝑤 𝑗 and A(z( 𝑗 ) − z(0) ) = (𝑐 𝑗,𝑗 − 𝑐0,𝑗 ) · G𝑏,𝑛ˆt𝑗 .
+Hence, define our extracted opening as¯st := (s𝑗,ˆt𝑗 ) 𝑗 where
+s𝑗 := z( 𝑗 ) − z(0)
+𝑐 𝑗,𝑗 − 𝑐0,𝑗
+for all 𝑗 ∈ {0,1}𝑟
+and the slack vector(¯𝑐 𝑗 ) 𝑗 is defined as¯𝑐 𝑗 := 𝑐 𝑗,𝑗 − 𝑐0,𝑗. By construction, we have∥¯𝑐 𝑗 ∥1 ≤ 2𝜔 and ∥¯𝑐 𝑗 s𝑗 ∥∞ ≤ 2𝑏𝑘.
+By Lemma 3,¯𝑐 𝑗 is invertible overR𝑞 since ∥¯𝑐 𝑗 ∥∞ ≤ 2𝜔 < 1√
+2𝑞1/2. Finally,b⊺G2𝑚 s𝑗 = 𝑤 𝑗 for all 𝑗 ∈ [2𝑟 ], which
+concludes the proof. ⊓ ⊔
+4.3 Unstructured Linear Relations and Sumcheck
+In this section, we show how to reduce proving unstructured linear relations overR𝑞 with infinity-norm
+constraints, as in Equation (20). Concretely, we focus of the following relationRlin:
+Rlin
+𝑞,𝑑,𝑛,𝜇,𝑏 :=
+
+(z ∈ R𝜇
+𝑞, (M ∈ R𝑛×𝜇
+𝑞 , y ∈ R𝑛
+𝑞 )) : Mz = y ∧ ∥ z∥∞ ≤ 𝑏 −1	
+.
+At a high level, our approach is to commit toz using a (potentially another) polynomial commitment scheme,
+and then apply the sumcheck protocol to prove the relation. However, one challenge is that the relation
+Rlin
+𝑞,𝑑,𝑛,𝜇,𝑏 is defined over polynomial ringsR𝑞, so the standard sumcheck protocol over finite fields cannot be
+directly applied (or one would have to run it overR𝑞 as in [BC24]). To bridge this gap, we leverage the
+ring-switching technique introduced by [HMZ25].
+Ring switching. In the relationRlin
+𝑞,𝑑,𝑛,𝜇,𝑏, the inputM ∈ R𝑛×𝜇
+𝑞 and y ∈ R𝑛
+𝑞 are public information, and the
+prover needs to prove knowledge of a witnessz ∈ R𝜇
+𝑞 such that
+–Mz = y
+–∥z∥∞ ≤ 𝑏 −1
+18
+
+--- page 19 ---
+
+For the first identity, the authors of [HMZ25] observe thatMz = y if and only if there is a polynomial
+r ∈ ( Z<𝑑
+𝑞 [𝑋 ]) 𝑛 such that
+Mz = y + (𝑋 𝑑 +1) · r
+We now naturally considerM, z, and y as matrices or vectors overZ<𝑑
+𝑞 [𝑋 ] (instead of overR𝑞). Since we will
+apply the sumcheck protocol later, we further considerM, x, y, r as elements overF<𝑑
+𝑞𝑘 [𝑋 ]. Now, we can divide
+the process into two steps: the prover first commits to(z, r) using a polynomial commitment schemeCom,
+and then proves the following constraints:
+–For each𝑖 ∈ [ 𝑛], Í
+𝑗 M𝑖,𝑗 z𝑗 = y𝑖 + (𝑋 𝑑 +1) · r𝑖, where M𝑖,𝑗 , y𝑖 ∈ Z<𝑑
+𝑞 [𝑋 ]
+–z is a vector overZ<𝑑
+𝑞 [𝑋 ] and ∥z∥∞ ≤ 𝑏 −1.
+Notice that the verifier can check whetherM and y are over Z<𝑑
+𝑞 [𝑋 ] by themselves, sinceM and y are public
+information. However, the prover has to prove thatz is a vector overZ<𝑑
+𝑞 [𝑋 ] if we run the sumcheck protocol
+over F<𝑑
+𝑞𝑘 [𝑋 ]. Since M𝑖,𝑗 , z𝑗, y𝑖, r𝑖 ∈ Z<𝑑
+𝑞 [𝑋 ], we can represent them as
+M𝑖,𝑗 =
+∑︁
+ℓ<𝑑
+𝑀𝑖,𝑗,ℓ ·𝑋 ℓ,
+and similarly for allz𝑗, y𝑖, and r𝑖. Here we note that bothz and r are witnesses of the prover, and the prover
+needs to prove the norm bound ofz. For the sake of notation and implementation simplicity, we also let the
+prover performs a gadget decomposition ofr as r = Í
+𝑢 𝑏𝑢 ·r𝑢, and commits(z, r1, . . . , rlog𝑏 (𝑞) ) instead, and
+also proves the norm bound ofr𝑢 for each𝑢. That is, the prover proves the following statement:
+–For each𝑖 ∈ [ 𝑛], Í
+𝑗 M𝑖,𝑗 z𝑗 = y𝑖 + (𝑋 𝑑 +1) ·Í
+𝑢 𝑏𝑢r𝑖,𝑢, where M𝑖,𝑗 , y𝑖 ∈ Z<𝑑
+𝑞 [𝑋 ]
+–z, r1, . . . , rlog𝑏 (𝑞) are vectors overZ<𝑑
+𝑞 [𝑋 ] and ∥z∥∞, ∥r1∥∞, . . . , ∥rlog𝑏 (𝑞) ∥∞ ≤ 𝑏 −1.
+To simplify the presentation, in the following we omit the subscript𝑢 and explain how to prove the
+statement below. Readers should be aware that there is a hidden gadget decomposition ofr. We believe this is
+sufficient to explain our main idea. To incorporate this gadget decomposition, we can modify the multilinear
+extension correspondingly.
+–For each𝑖 ∈ [ 𝑛], Í
+𝑗 M𝑖,𝑗 z𝑗 = y𝑖 + (𝑋 𝑑 +1) · r𝑖, where M𝑖,𝑗 , y𝑖 ∈ Z<𝑑
+𝑞 [𝑋 ]
+–z, r are vectors overZ<𝑑
+𝑞 [𝑋 ] and ∥z∥∞, ∥r∥∞ ≤ 𝑏 −1.
+For each𝛼 ∈ F𝑞𝑘, we denote
+M𝑖,𝑗 (𝛼) =
+∑︁
+ℓ<𝑑
+𝑀𝑖,𝑗,ℓ ·𝛼 ℓ ∈ F𝑞𝑘 ,
+and similarly for allz𝑗, y𝑖, and r𝑖. Now, instead of proving the constraints overF<𝑑
+𝑞𝑘 [𝑋 ], which could be very
+costly, we optimize by letting the verifier first send a random𝛼 to the prover. Then, the prover proves the
+following constraints:
+–For each𝑖 ∈ [ 𝑛], Í
+𝑗 M𝑖,𝑗 (𝛼)z𝑗 (𝛼) = y𝑖 (𝛼) + ( 𝛼𝑑 +1) · r𝑖 (𝛼), where M𝑖,𝑗 , y𝑖 ∈ Z<𝑑
+𝑞 [𝑋 ]
+–z is a vector overZ<𝑑
+𝑞 [𝑋 ] and ∥z∥∞, ∥r∥∞ ≤ 𝑏 −1.
+Having proof composition in mind, we consider the following simple three-round protocol in Figure 4 which
+captures the idea above.
+19
+
+--- page 20 ---
+
+Prover P Verifier V
+𝑡 := Com(z, r) 𝑡 -
+𝛼 ← F𝑞𝑘
+𝛼
+z, r -
+𝑡 ?= Com(z, r)
+z
+?
+∈ Z<𝑑𝑞 [𝑋 ] and ∥z∥∞, ∥r∥∞ ≤ 𝑏 −1
+∀𝑖 ∈ [ 𝑛],Í
+𝑗 M𝑖,𝑗 (𝛼)z𝑗 (𝛼) ?= y𝑖 (𝛼) + ( 𝛼𝑑 +1) · r𝑖 (𝛼)
+Fig. 4. Reducing proving linear equations overZ<𝑑𝑞 𝑞 [𝑋 ] to equations overF𝑞𝑘.
+We note that this simplification could introduce a(2𝑑 −1)/| F𝑞𝑘 | soundness error. This is because the polynomialÍ
+𝑗 M𝑖,𝑗 z𝑗 − y𝑖 − (𝑋 𝑑 +1) ·r𝑖 has degree at most 2𝑑 −1. Formally, we argue this by proving 2𝑑-special soundness
+in Lemma 9.
+Lemma 9(Special soundness of Figure 4).There is an efficient, deterministic algorithm that given
+a statement (M𝑖,𝑗 , y𝑖, 𝑏) and 2𝑑 valid transcripts (𝑡𝑖, 𝛼𝑖, (z𝑖, r𝑖 )) of the protocol in Figure 4 such that(𝛼𝑖 )𝑖 ∈
+SS(F𝑞𝑘 ,1,2𝑑), can either extract¯z,¯r which satify Mz = y + ( 𝑋 𝑑 +1) · r over Z𝑞 [𝑋 ], or break binding of the
+commitment scheme Com.
+Proof. If for some𝑖 ≠ 𝑗 we have (z𝑖, r𝑖 ) ≠ (z𝑗, r𝑗 ), then we automatically break the binding property of the
+commitment scheme. Otherwise, define¯z := z𝑖,¯r := r𝑖 for all 𝑖. Then, for 2𝑑 distinct evaluation points𝛼 𝑗, we
+have
+∀𝑖 ∈ [ 𝑛],
+∑︁
+𝑗
+M𝑖,𝑗 (𝛼 𝑗 )z𝑗 (𝛼 𝑗 )
+?
+= y𝑖 (𝛼 𝑗 ) + ( 𝛼𝑑 +1) · r𝑖 (𝛼 𝑗 ).
+Since the polynomialÍ
+𝑗 M𝑖,𝑗 z𝑗 − y𝑖 − (𝑋 𝑑 +1) · r𝑖 has degree at most 2𝑑 −1, this implies that it must be a
+zero polynomial, which finishes the proof. ⊓ ⊔
+From now on, we focus on proving knowledge of the prover’s last message which satisfies the verification
+conditions.
+Remark 2. Looking ahead, we will instantiateCom with the inner-outer commitment from Section 4. In this
+case, for special soundness we will consider breaking the weak binding property (cf. Lemma 7), rather than
+binding.
+Represent the constraints by polynomials.In our sumcheck protocol, we first commit(z, r) as a multilinear
+polynomial over F𝑞𝑘. Let e𝑤 be a multilinear polynomial such that
+e𝑤 (𝑢, ℓ) =
+(
+𝑧𝑢,ℓ , if 𝑢 ≤ 𝜇
+𝑟𝑢 −𝜇,ℓ , if 𝜇 < 𝑢 ≤ 𝜇 + 𝑛 (21)
+Here, we slightly abuse the notation; that is,𝑢 and ℓ actually refer to the binary representations of numbers
+in [𝜇 + 𝑛] and [𝑑], respectively. Now we can assume that𝛼 is fixed. We define multilinear polynomialse𝛼 and
+e𝑀𝛼 such that:
+∀𝑖, 𝑢, ℓ, e𝛼 (ℓ) = 𝛼 ℓ and e𝑀𝛼 (𝑖, 𝑢) =
+ 
+
+M𝑖,𝑢 (𝛼), if 𝑢 ≤ 𝜇 and 𝑖 ≤ 𝑛
+−(𝛼𝑑 +1), if 𝑖 + 𝜇 = 𝑢
+0, otherwise
+Now, for each fixed𝛼, we can represent the constraints as polynomials:
+20
+
+--- page 21 ---
+
+Prover P (𝑡, ˜𝑤 ) Verifier V (𝑡, ˜𝑀𝛼, ˜𝛼)
+𝜏0 ← Flog 𝜇+log 𝑑, 𝜏1 ← Flog 𝑛
+𝜏0, 𝜏1
+˜𝑤 -
+𝑡 ?= Com(˜𝑤 )
+Reconstruct 𝐻0, 𝐻1 as in (22) and (23)
+𝐻0 (𝜏0) ?= 0 and 𝐻𝛼 (𝜏1) ?= 0
+Fig. 5. Proving that polynomials𝐻0 and 𝐻𝛼 are zero via random evaluation.
+–For each𝑖 ∈ [ 𝑛],
+𝜇+𝑛∑︁
+𝑢=1
+e𝑀𝛼 (𝑖, 𝑢)
+∑︁
+ℓ
+e𝑤 (𝑢, ℓ) · e𝛼 (ℓ) = y𝑖 (𝛼),
+where M𝑖,𝑗 , y𝑖 ∈ Z<𝑑
+𝑞 [𝑋 ].
+–For each𝑢 ∈ [ 𝜇 + 𝑛] and ℓ ∈ [ 𝑑],
+e𝑤 (𝑢, ℓ) · (e𝑤 (𝑢, ℓ) − 1) · (e𝑤 (𝑢, ℓ) + 1) · · · (e𝑤 (𝑢, ℓ) − 𝑏 +1) · (e𝑤 (𝑢, ℓ) + 𝑏 −1) = 0.
+Following standard approaches [Set20; HMZ25], we use an equality function to batch these constraints. Since
+𝑖 ∈ [ 𝑛], its binary representation is a string in{0,1}log 𝑛. Recall that the equality functione𝑒𝑞 : Flog 𝑛
+𝑞𝑘 × Flog 𝑛
+𝑞𝑘 →
+F𝑞𝑘 is defined
+e𝑒𝑞 (𝑡, 𝑖) =
+Ö
+𝑗
+(𝑡 𝑗 ·𝑖 𝑗 + (1 − 𝑡 𝑗 ) · (1 − 𝑖 𝑗 ))
+Using e𝑒𝑞, we can then batch the first type of constraints to show that the following polynomial𝐻𝛼 (𝑡) : Flog 𝑛
+𝑞𝑘 →
+F𝑞𝑘 is a zero polynomial.
+𝐻𝛼 (𝑡) :=
+∑︁
+𝑖 ∈ [𝑛]
+e𝑒𝑞 (𝑡, 𝑖)
+ ∑︁
+𝑢,ℓ
+e𝑀𝛼 (𝑖, 𝑢) · e𝑤 (𝑢, ℓ) · e𝛼 (ℓ) − y𝑖 (𝛼)
+!
+, (22)
+Similarly, we can also batch the second type of constraints (smallness check) as proving that the following
+polynomial 𝐻0 : Flog 𝜇+log 𝑑
+𝑞𝑘 → F𝑞𝑘 is a zero polynomial.
+𝐻0 (𝑡) :=
+∑︁
+ℓ,𝑢
+e𝑒𝑞 (𝑡, (𝑢, ℓ)) · e𝑤 (𝑢, ℓ) (e𝑤 (𝑢, ℓ) − 1) (e𝑤 (𝑢, ℓ) + 1) · · · (e𝑤 (𝑢, ℓ) − 𝑏 +1) (e𝑤 (𝑢, ℓ) + 𝑏 −1). (23)
+Finish the proof using sumcheck protocols.Now, the goal of the honest prover is to prove that𝐻0 (𝑡) ≡ 0 and
+𝐻𝛼 (𝑡) ≡ 0. We adopt a standard approach again: the verifier sends two random points,𝜏0 and 𝜏1, and the
+prover then proves that𝐻0(𝜏0) = 0 and 𝐻𝛼 (𝜏1) = 0. We capture this with the following protocol. Similarly as
+in Lemma 9, we can show coordinate-wise special soundness of this protocol by treating(𝜏0, 𝜏1) as a vector of
+log 𝜇 +log 𝑑 +log 𝑛 coordinates.
+Lemma 10(CWSS of Figure 5).There is an efficient, deterministic algorithm that given a statement
+(𝑡, ˜𝑀𝛼, ˜𝛼) and 𝐷 := max(2𝑑,2𝑏 − 1) valid transcripts ((𝜏𝑖,0, 𝜏𝑖,1), ˜𝑤 𝑖 ) of the protocol in Figure 5 such that
+(𝜏𝑖,0, 𝜏𝑖,1)𝑖 ∈ SS(F𝑞𝑘 ,2, 𝐷), can either extract a valid opening˜𝑤 of 𝑡, i.e. 𝑡 = Com(˜𝑤 ), which satisfies𝐻0 (𝑡0) ≡ 0
+and 𝐻𝛼 (𝑡) ≡ 0 (defined in Equations(22) and (23)), or break binding of the commitment schemeCom.
+21
+
+--- page 22 ---
+
+Proof. If for some𝑖 ≠ 𝑗 we have ˜𝑤 𝑖 ≠ ˜𝑤 𝑗, then we break the binding property of the commitment scheme.
+Otherwise, define ˜𝑤 := ˜𝑤 𝑖 for all 𝑖. By definition of𝐷 = max(2𝑑,2𝑏 − 1) and the coordinate-wise special
+soundness, we have found at least 2𝑑 (resp. 2𝑏 − 1) distinct roots for 𝐻𝛼 (𝐻0), which implies that the
+aforementioned polynomials are equal to zero. ⊓ ⊔
+Now, fix𝜏0, 𝜏1 and recall that by definition of𝐻0 and 𝐻𝛼:
+𝐻0 (𝜏0) :=
+∑︁
+ℓ,𝑢
+e𝑒𝑞 (𝜏0, (𝑢, ℓ))e𝑤 (𝑢, ℓ) (e𝑤 (𝑢, ℓ) − 1) (e𝑤 (𝑢, ℓ) + 1) · · · (e𝑤 (𝑢, ℓ) − 𝑏 +1) (e𝑤 (𝑢, ℓ) + 𝑏 −1),
+and
+𝐻𝛼 (𝜏1) =
+∑︁
+𝑢,ℓ
+e𝑤 (𝑢, ℓ) · e𝛼 (ℓ)
+∑︁
+𝑖
+e𝑒𝑞 (𝜏1, 𝑖) · e𝑀𝛼 (𝑖, 𝑢) −
+∑︁
+𝑖
+e𝑒𝑞 (𝜏1, 𝑖) · y𝑖 (𝛼).
+We then use sumcheck to prove that𝐻0(𝜏0) = 𝐻𝛼 (𝜏1) = 0. Defining polynomials
+𝐹0,𝜏0 (𝑥, 𝑦) := e𝑒𝑞 (𝜏0, (𝑥, 𝑦))e𝑤 (𝑥, 𝑦) (e𝑤 (𝑥, 𝑦) − 1) (e𝑤 (𝑥, 𝑦) + 1) · · · (e𝑤 (𝑥, 𝑦) − 𝑏 +1) · (e𝑤 (𝑥, 𝑦) + 𝑏 −1) ·1≤𝜇 (𝑥, 𝑦),
+and
+𝐹𝛼,𝜏1 (𝑥, 𝑦) := e𝑤 (𝑥, 𝑦) · e𝛼 (𝑦) ·
+∑︁
+𝑖
+e𝑒𝑞 (𝜏1, 𝑖) · e𝑀𝛼 (𝑖, 𝑥),
+we have that𝐻0(𝜏0) = 0 and 𝐻𝛼 (𝜏1) = 0 if and only if
+∑︁
+𝑢,ℓ
+𝐹0,𝜏0 (𝑢, ℓ) = 0 and
+∑︁
+𝑢,ℓ
+𝐹𝛼,𝜏1 (𝑢, ℓ) = 𝑎,
+where 𝑎 := Í
+𝑖 e𝑒𝑞 (𝜏1, 𝑖) ·y𝑖 (𝛼), which the verifier can compute on their own. Therefore, we lastly apply sumcheck
+on 𝐹0,𝜏0 and 𝐹𝛼,𝜏1.
+A reinterpretation of the sumcheck protocol.In the standard sumcheck protocol, the prover and the verifier
+communicate univariate polynomials and random field elements. In the last round of the protocol, the verifier
+makes a single evaluation query to the polynomial. However, since we rely on the special soundness notion (see
+Lemma 11), we reinterpret the sumcheck protocol as a composition of single-round communication protocols
+to simplify the analysis. In Figure 6, we demonstrate the sumcheck protocol for polynomials of the form
+𝐻 (X) := 𝑃 (X) · 𝑄 (˜𝑤 (X)), where 𝑃 and 𝑄 are public information and˜𝑤 (X) is the witness. We note that both
+𝐹0,𝜏0 and 𝐹𝛼,𝜏1 have this form.
+Compared to the standard sumcheck protocol, we note that the prover usually does not sende𝑤 to the
+verifier directly. Instead, it typically proves knowledge ofe𝑤 by continuing the sumcheck protocol, and finally
+by providing a proof of the evaluation ofe𝑤.
+Lemma 11(Special soundness of Figure 6). There is an efficient, deterministic algorithm that
+given a statement and 𝐷 := deg(𝐻 ) + 1 valid transcripts (𝑔𝑖 (𝑋𝑖 ), 𝑎𝑖,𝑗 , ˜𝑤 ) 𝑗 of the protocol in Figure 6 such
+that (𝑎𝑖,𝑗 ) 𝑗 ∈ SS(F𝑞𝑘 ,1, 𝐷), can either extract a valid opening ˜𝑤 of 𝑡, i.e. 𝑡 = Com(˜𝑤 ), which satisfiesÍ
+𝑏 𝑗 𝐻 (𝑎1, . . . , 𝑎𝑖, 𝑏𝑖+1, . . . , 𝑏ℓ ) = 𝑔𝑖 (𝑎𝑖 ), or break binding of the commitment schemeCom.
+Proof. If for some𝑖 ≠ 𝑗 we have ˜𝑤 𝑖 ≠ ˜𝑤 𝑗, then we break the binding property of the commitment scheme.
+Otherwise, define ˜𝑤 := ˜𝑤 𝑖 for all 𝑖. By definition of𝐷 = deg(𝐻 ) + 1 and the coordinate-wise special soundness,
+we have found at leastdeg(𝐻 ) + 1 distinct roots forÍ
+𝑏 𝑗 𝐻 (𝑎<𝑖, 𝑋𝑖, 𝑏𝑖+1, . . . , 𝑏ℓ ) − 𝑔𝑖 (𝑋𝑖 ), which implies thatÍ
+𝑏 𝑗 𝐻 (𝑎<𝑖, 𝑋𝑖, 𝑏𝑖+1, . . . , 𝑏ℓ ) − 𝑔𝑖 (𝑋𝑖 ) ≡ 0.
+Since special soundness is composable, we can obtain the special soundness of the sumcheck protocol by
+composing Figure 6 for all𝑖 ∈ [ ℓ]. Finally, the prover outputs𝑦′ := ˜𝑤 (𝑎1, . . . , 𝑎ℓ ), which allows the verifier to
+compute the evaluation𝐻 (𝑎1, . . . , 𝑎ℓ ). What is left for the prover to do now is prove the polynomial evaluation
+claim for ˜𝑤. This ends the first iteration of our protocol.
+22
+
+--- page 23 ---
+
+Prover P (𝑡, 𝑃, 𝑄, ˜𝑤 ) Verifier V (𝑡, 𝑃, 𝑄, 𝑧𝑖 −1)
+𝑔𝑖 (𝑋𝑖 ) := Í
+𝑏 𝑗 𝐻 (𝑎<𝑖, 𝑋𝑖, 𝑏𝑖+1, . . . , 𝑏ℓ )
+𝑔𝑖 (𝑋𝑖 ) -
+𝑎𝑖 ← F𝑞𝑘
+𝑎𝑖
+˜𝑤 -
+𝐻 (X) := 𝑃 (X) · 𝑄 (˜𝑤 (X))
+𝑡 ?= Com(˜𝑤 )
+𝑔𝑖 (0) + 𝑔𝑖 (1) ?= 𝑧𝑖 −1
+Í
+𝑏 𝑗 𝐻 (𝑎 ≤𝑖, 𝑏𝑖+1, . . . , 𝑏ℓ ) ?= 𝑔𝑖 (𝑎𝑖 )
+Fig. 6. Proving Í
+𝑏𝑖,...,𝑏 ℓ 𝐻 (𝑎1, . . . , 𝑎𝑖 −1, 𝑏𝑖, . . . , 𝑏ℓ ) = 𝑧𝑖 −1 for 𝑖 ∈ [ ℓ], where 𝐻 (X) := 𝑃 (X) · 𝑄 (˜𝑤 (X)). We set𝑧0 to be the
+initial sum, and𝑧𝑖 := 𝑔𝑖 (𝑎𝑖 ).
+Putting everything together.The complete protocol is presented in Figure 7, which is a natural composition
+of subprotocols in Figures 4, 5 and 6. By combining Lemmas 9, 10 and 11, we conclude that our final protocol
+satisfies coordinate-wise special soundness.
+Prover P Verifier V
+𝑡 := Com(z, r) 𝑡 -
+𝛼 ← F𝑞𝑘 , 𝜏0 ← Flog 𝜇+log 𝑑, 𝜏1 ← Flog 𝑛
+𝛼, 𝜏0, 𝜏1
+Run sumcheck to𝐻0 (𝜏0), 𝐻𝛼 (𝜏1) 𝑔1 (𝑋1) -
+𝑎1 ← F𝑞𝑘
+𝑎1
+· · ·
+· · ·
+𝑔ℓ (𝑋ℓ ) -
+𝑎ℓ ← F𝑞𝑘
+Open 𝑡 to evaluate˜𝑤 (𝑎1, . . . , 𝑎ℓ )
+Evaluate e𝑀𝛼 (𝑎1, . . . , 𝑎ℓ )
+Check the correctness of the sumcheck.
+Fig. 7. Efficient Sumcheck via Ring Switching
+4.4 Asymptotic Efficiency Analysis
+Suppose we want to prove knowledge of the committed multilinear polynomial𝑓 ∈ Z≤1
+𝑞 [𝑋1, . . . , 𝑋ℓ ] which
+satisfies a polynomial evaluation claim overF𝑞𝑘. In the following, let𝐿 := 2ℓ.
+23
+
+--- page 24 ---
+
+Basic parameters.Let 𝑞 = poly(𝜆, 𝐿) and 𝑘 = 𝜆/log 𝑞, so thatF𝑞𝑘 is of exponential size to ensure negligible
+knowledge soundness in Lemmas 9, 10 and 11. We set the ring dimension𝑑 = poly(𝜆), so 𝛼 = log 𝜆, and
+𝑛𝐴 = 𝑛𝐵 = 𝑛𝐷 = 𝑂 (1) for hardness of the Module-SIS problem. Then, we pick𝜔 = 𝑂 (𝑑) for sufficiently large
+challenge space so that knowledge soundness error in Lemma 8 becomes negligible. We pick the decomposition
+base 𝑏 = 𝑂 (1) and therefore 𝛿 = 𝑂 (log 𝑞). Recall that𝛽 in Section 4.2 was the upper-bound on the vectorz
+(see Figure 3). A naive bound for𝛽 is:
+
+2𝑟
+∑︁
+𝑖=1
+𝑐𝑖 s𝑖
+
+∞
+≤
+2𝑟
+∑︁
+𝑖=1
+𝜔 ·𝑏 = 2𝑟 𝜔𝑏 =: 𝛽.
+Hence, if we choose the smallest integer𝜏 such that𝑏𝜏 > 𝛽, then 𝜏 = 𝑂 (𝑟 + 𝛼).
+Witness length reduction after one iteration.By Section 3, we can consider polynomials overR𝑞 with ℓ − 𝛼
+variables. As in Section 4.2, we define variables𝑚, 𝑟 such that𝑚 + 𝑟 = ℓ − 𝛼. Let𝑚 = 𝑟 = (ℓ − 𝛼)/2 (we implicitly
+assume ℓ − 𝛼 is even, which does not have anyasymptotic impact). Then, the witness(ˆt, ˆw,ˆz), parsed in
+Section 4.3 asz, together with the “quotient”r from the ring switching methodology, is together of length –
+in terms ofZ𝑞 elements:
+(𝑛𝐴 +1) ·2𝑟 ·𝛿 ·𝑑|                  {z                  }
+|ˆt|+| ˆw|
++ (𝜏 +1)2𝑚) · 𝛿 ·𝑑|                {z                }
+|ˆz|
++ (𝑛𝐴 + 𝑛𝐵 + 𝑛𝐷 +2) · 𝛿 ·𝑑|                           {z                           }
+|r|
+= 𝑂 (( ℓ + 𝛼)2 ·2
+ℓ +𝛼
+2 ).
+Hence, we conclude that after one round of iteration, the number of variables for the polynomial evaluation
+gets reduced (at most) to:
+ℓ ↦→ ℓ + 𝛼
+2 +2log (ℓ + 𝛼) + 𝑂 (1) ≤ 2
+3 (ℓ + 𝛼) + 𝑂 (1).
+After 𝑡 iterations, the length of the witness is reduced to (at most):
+(2
+3 )𝑡 ·ℓ +
+𝑡∑︁
+𝑖=1
+(2
+3 )𝑡 ·𝛼 + 𝑂 (𝑡) ≤ ( 2
+3 )𝑡 ·ℓ +2𝛼 + 𝑂 (𝑡).
+Thus, after running our protocol 𝑡 = 𝑂 (log ℓ) times we will output a witness polynomial with at most
+𝑂 (log ℓ + 𝛼) variables. Consequently, sending all theZ𝑞-coeffients of the final polynomial in the clear costs
+poly(ℓ, 𝑑) = poly(ℓ, 𝜆) bits.
+Proof size.Having non-interactive proofs via Fiat-Shamir transformation in mind, we only count the prover
+messages. The proof size of a single iteration can be split in three parts. The first is the transformation from
+Z𝑞 to R𝑞 from Section 3, where the prover sends𝑑 + 𝑘 (𝑘 −1) Z𝑞-elements, where𝑘 = 𝜆/log 𝜆. The second is the
+commitment v from Section 4.2, which is of size𝑛𝐷 ·𝑑 elements in Z𝑞. Finally, in the protocol in Section 4.3,
+for each sumcheck round (out of𝑂 (ℓ + 𝛼)) the prover sends 2 (resp.𝑏 +1) elements inF𝑞𝑘 corresponding to
+the coefficients of the univariate polynomials obtained from𝐹𝛼,𝜏1 (resp. 𝐹0,𝜏0). Finally, the prover sends the
+commitment to ˜𝑤 which is of length𝑛𝐵 ·𝑑 Z𝑞-elements (resp. Section 4). In total, a single iteration of the
+protocol has proof size, in terms ofZ𝑞 elements:
+(𝑛𝐵 + 𝑛𝐷 +1) · 𝑑 + (𝑘 −1) · 𝑘 + (𝑏 +2) · 𝑘 ·𝑂 (ℓ + 𝛼) = 𝑂
+ 𝜆
+log 𝜆 ·ℓ
+
++poly(𝜆).
+By recursively running the protocol𝑂 (log ℓ) times and by having𝑞 = poly(𝜆, 𝐿), we obtain succinctpoly(ℓ, 𝜆)
+proof size.
+24
+
+--- page 25 ---
+
+Verifier time.We split the verifier algorithm in three parts. For the transformation in Section 3 the verifier
+has to compute theR𝑞-trace map consistency, which is of timepoly(𝜆). For the protocol in Section 4.2 the
+verifier does not check anything. Finally, in Section 4.3 the verifier has two tasks. First is checking that
+the univariate polynomials sent by the prover every sumcheck round are consistent. This takes𝑂 (𝑏) = 𝑂 (1)
+Z𝑞-operations. A much more expensive part is the final evaluation of the polynomial𝐹𝛼,𝜏1 after sumcheck,
+which involves evaluating the (publicly known) multilinear extensions˜𝑀𝛼 𝑛 := 𝑛𝐵 + 𝑛𝐷 +3 = 𝑂 (1) times. As
+shown in [VSBW13], to evaluate˜𝑀𝛼 once, it would take
+𝑂 ((𝑛𝐴 +1)2𝑟 + (𝜏 +1)2𝑚𝛿) = ˜𝑂 (
+√︁
+2ℓ /𝜆) time
+in terms of field operations overF𝑞𝑘 using dynamic programming. A single multiplication overF𝑞𝑘 can be
+computed with ˜𝑂 (𝑘) operations overZ𝑞. Since𝑘 = 𝑂 (𝜆/log 𝑞) the total verifier time is dominated by˜𝑂 (
+√
+2ℓ ·𝜆).
+4.5 Concrete Optimizations and Composing with Greyhound
+Avoiding re-decomposition.Having a recursive proof system in mind, a naive approach to commit to the
+multilinear extension mle[˜𝑤 ] of ˜𝑤 (cf. Equation (21)) is to run again the commitment scheme from Section 4.
+The first part is the inner commitment, where we decompose the coefficients of˜𝑤 (and thus the committed
+witness length increases), and then run an Ajtai commitment scheme to get the inner commitments(t𝑖 )𝑖. A
+more natural and efficient way is to directly commit to˜𝑤 (cf. Figure 7), as we know that the coefficients of˜𝑤
+are already short and no decomposition for˜𝑤. It is straightforward from the committing point of view, as we
+show below, but more importantly, how should one prove an evaluation claim overF𝑞𝑘:
+mle[˜𝑤 ] (𝑎1, . . . , 𝑎ℓ ) = 𝑦,
+when having only committed to˜𝑤?
+Let us recall the notation for completeness. The vector˜𝑤 ∈ Z𝔫·𝑑 is defined in Equation (21), and in
+particular, the coefficients of˜𝑤 are between −𝛽 and 𝛽, where parameters𝔫 and 𝛽 are chosen according to the
+protocol in Section 4.3. We assume that𝔫𝑑 is a power-of-two. Let𝑑 ′ = 2𝛼 ′
+be a power-of-two ring dimension
+used to defineR′
+𝑞 := Z𝑞 [𝑋 ]/( 𝑋 𝑑 ′
++1) (potentially 𝑑 ′ ≠ 𝑑); it is the cyclotomic ring used for the next iteration
+of the protocol. Let𝑚′, 𝑟′ be integers chosen such that𝔫𝑑 = 2ℓ, where ℓ = 𝑚′ + 𝑟 ′ + 𝛼 ′; they will be responsible
+for the split-and-fold in the next round.
+We start with with the definition of a multilinear polynomial. Let us definea0 = (𝑎1, . . . , 𝑎ℓ −𝜅) and
+a1 := (𝑎ℓ −𝜅+1, . . . , 𝑎ℓ ). Then, we can write
+𝑦 = mle[˜𝑤 ] (𝑎1, . . . , 𝑎ℓ ) =
+∑︁
+𝑖 ∈ {0,1}𝜅
+𝑒𝑞 (𝑖, a1) ·
+©­­­­­­­
+«
+∑︁
+𝑗 ∈ {0,1}ℓ −𝜅
+˜𝑤 𝑗 ∥𝑖 ·𝑒𝑞 ( 𝑗, a0)
+|                          {z                          }
+𝑦𝑖:=
+ª®®®®®®®
+¬
+(24)
+Hence, we let the prover send𝑘 partial evaluations𝑦𝑖 ∈ F𝑞𝑘 to the verifier who can directly check10 whether
+𝑦 =
+∑︁
+𝑖
+𝑒𝑞 (𝑖, a1) · 𝑦𝑖 .
+What we have left to prove is that all the𝑦𝑖 are well-formed, or in other wordsÍ
+𝑗 ∈ {0,1}ℓ −𝜅 ˜𝑤 𝑗 ∥𝑖 ·𝑒𝑞 ( 𝑗, a0) = 𝑦𝑖
+for 𝑖 ∈ {0,1}𝜅.
+10 As in Section 3, the prover can just send the𝑘 −1 evaluations𝑦𝑖 excluding 𝑦0...0, which can be derived directly by
+the verifier.
+25
+
+--- page 26 ---
+
+For the next part, we assume without loss of generality thatF𝑞𝑘 = R′
+𝑞
+𝐻 where 𝐻 = ⟨𝜎−1, 𝜎4𝑘+1⟩ (cf.
+Section 3). Indeed, as the field isomorphism fixes elements inF𝑞, the coefficients ofz are still small after
+mapping the statement intoR′𝐻
+𝑞 . Then, any field element𝑣 ∈ R′
+𝑞
+𝐻 can be explicitly written as:
+𝑣 := 𝑣0 ·𝑍0 +
+𝑘 −1∑︁
+𝑗=1
+𝑣𝑘 − 𝑗 ·𝑍𝑘 − 𝑗 where 𝑍0 = 1 and 𝑍𝑘 − 𝑗 := 𝑋
+𝑑′
+2𝑘 · (𝑘 − 𝑗 ) − 𝑋
+𝑑′
+2𝑘 · (𝑘+𝑗 ) .
+Now, for each𝑗 ∈ {0,1}ℓ −𝜅 define
+ˆ𝑤 𝑗 :=
+∑︁
+𝑖 ∈ {0,1}𝜅
+˜𝑤 𝑗 ∥𝑖 ·𝑍Í𝜅
+𝑡 =1 𝑖𝑡 ·2𝑡 −1 ∈ F𝑞𝑘 . (25)
+We observe that∥ˆ𝑤 𝑗 ∥∞ ≤ 𝛽. Then, proving well-formedness of all(𝑦𝑖 )𝑖 is equivalent to proving
+∑︁
+𝑗 ∈ {0,1}ℓ −𝜅
+ˆ𝑤 𝑗 ·𝑒𝑞 ( 𝑗, a1) =
+∑︁
+𝑗 ∈ {0,1}ℓ −𝜅
+∑︁
+𝑖 ∈ {0,1}𝜅
+˜𝑤 𝑗 ∥𝑖 ·𝑒𝑞 ( 𝑗, x1) · 𝑍Í𝜅
+𝑡 =1 𝑖𝑡 ·2𝑡 −1
+=
+∑︁
+𝑖 ∈ {0,1}𝜅
+∑︁
+𝑗 ∈ {0,1}ℓ −𝜅
+ ˜𝑤 𝑗 ∥𝑖 ·𝑒𝑞 ( 𝑗, x1) ·𝑍Í𝜅
+𝑡 =1 𝑖𝑡 ·2𝑡 −1
+=
+∑︁
+𝑖 ∈ {0,1}𝜅
+𝑦𝑖 ·𝑍Í𝜅
+𝑡 =1 𝑖𝑡 ·2𝑡 −1 ∈ F𝑞𝑘 .
+(26)
+where the right-hand side is public. Next, we prove (26) as follows. Note that ultimately we can write
+∑︁
+𝑗 ∈ {0,1}ℓ −𝜅
+ˆ𝑤 𝑗 ·𝑒𝑞 ( 𝑗, a1) = e⊺ (f ⊺ ⊗ I2𝑟 )ˆ𝑤 𝑗 (27)
+where e := (𝑒𝑞 (𝑖, x0))𝑖 ∈ F2𝑟 ′
+𝑞𝑘 and f := (𝑒𝑞 ( 𝑗, x1)) 𝑗 ∈ F2𝑚′
+𝑑 ′/𝑘
+𝑞𝑘 . Finally, using Theorem 2, theR𝑞-trace of the ring
+element
+𝑝 := e⊺ (𝜎−1(𝜓 (f )) ⊺ ⊗ I2𝑟 )𝜓 (ˆ𝑤 ) ∈ R′
+𝑞
+is exactly equal to the value in (27), which is also equal to (26). By Lemma 6, the infinity norm of
+𝜓 (ˆ𝑤 ) ∈ R′
+𝑞
+𝔫·𝑑/𝑑 ′
+is at most 2𝛽, so we will commit to it using the inner-outer commitments without initial
+decomposition. What is left to prove is the knowledge of the short commitment opening𝜓 (ˆ𝑤 ) which satisfies
+the quadratic relation above. This is exactly the type of statement supported natively by Greyhound (cf.
+[NS24, Section 3]). To sum up, the total communication complexity of our reduction to Greyhound is
+(𝑘 −1) · 𝑘 ·log 𝑞
+|                {z                }
+| (𝑦𝑖 )𝑖 |
++ 𝑑 ′ ·log 𝑞
+|     {z     }
+|𝑝 |
+. (28)
+Using Johnson-Lindnestrauss instead of sumcheck.Similarly as in Greyhound [NS24], instead of running the
+protocol from Section 4.3, at some point we can naturally switch to LaBRADOR [BS23]. This can be done
+when the witness length is small enough so that performing the Johnson-Lindenstrauss projection becomes
+cheap. In fact, although the sumcheck-based approach provides a faster verification time, reducing witness
+length after a single operation is slower. The reason is that we have to pick relatively small base𝑏, as the
+sumcheck proof size consists of𝑂 (𝑏) field elements. This implies longer decomposition𝛿, and thus longer
+witness for the next round. On the other hand, the random projection approach allows larger bases𝑏 (at a
+fairly small cost), which makes𝛿 concretely smaller. This allows LaBRADOR to recurse further until the
+final witness is cheap enough to send in the clear (≈ 30KB).
+26
+
+--- page 27 ---
+
+5 Experimental Results
+To demonstrate the concrete performance of our protocol, we have developed a prototype implementation of
+Hachi in Rust. The source can be found here:
+https://github.com/georgeorourke/hachi-pcs
+Our implementation currently supports committing to, and single evaluation proofs and verification for
+multilinear polynomials overZ𝑞. We highlight that our implementation is still in an early stage of development
+and is amenable to a number of optimizations which would lead to considerable increases in performance.
+Despite this, our implementation already demonstrates significant improvements in verification time, with
+first (by far most expensive) round verification times being 12 to 29 times faster than Greyhound verification.
+Additionally, we concretely improve commitment times for large polynomials (30+ variables). At present,
+our evaluation proof times substantially exceed those of existing implementations and will need further
+optimization — such as SIMD acceleration — to align with the state of the art.
+We have benchmarked our implementation on a University server (with AVX-512 support) and a Mac
+Mini M4 (no AVX support). The stated times for Prove and Verify are for the first round only; though,
+following a single round, the new witness is far smaller and so the first round of the protocol dominates the
+total cost of the proof and verification times.
+Hardware Variables Commit / s Prove / s Verify / ms
+Mac Mini M4 30 149 268 96.5
+Mac Mini M4 28 34.2 114 49.3
+Mac Mini M4 26 8.79 51.3 26.6
+Server 30 87.3 495 185
+Server 28 21.9 219 93.7
+Server 26 5.49 103 39.0
+Greyhound 30 132 41.2 2800
+Greyhound 28 21.2 8.21 1150
+Greyhound 26 4.37 2.03 492
+Fig. 8. Concrete running time of the Hachi PCS with prototype implementation on different hardware. Prove and
+Verify times are for the first (and by far the most computationally expensive) round only. The Greyhound benchmark
+was tested on an Intel Xeon Sapphire Rapids core at 3.2 GHz with full AVX-512 optimization.
+5.1 Concrete Parameters
+The parameters (30 variable polynomial) used in benchmarking are shown in Figure 9. We heuristically set
+the ring dimension𝑑 = 2𝛼 of R𝑞 and the height of the commitment matrices,𝑛, so that𝑛 ·𝑑 ≥ 210. For𝑙 = 30
+variables, we aim to reduce the size of the witness as much as possible in ‘one-shot‘. Hence, we set𝑑 = 1024
+and 𝑛 = 1. With these parameters, in a single round of Prove and Verify, we reduce the size of the witness by
+a factor of 128. Specifically, we reduce a 30 variable multilinear polynomial overZ𝑞 (32 bits per coefficient) to
+a 26 variable polynomial overZ16 (4 bits per coefficient). The evaluation proof is reduced from an evaluation
+of a 30 variable polynomial overZ𝑞 to an evaluation of a 26 variable polynomial with coefficients inZ16 and
+an evaluation point over𝐹𝑞4.
+5.2 Concrete Efficiency and Composing with Greyhound
+To showcase the communication efficiency, let us set parameters forℓ = 30. We refer to Section 5 (and in
+particular Figure 9) for more rationale on the parameters. We aim for𝜆 = 128 security level and use the
+Lattice Estimator [APS15] to measure hardness of the Module-SIS problem in the infinity norm.
+27
+
+--- page 28 ---
+
+variable description value
+ℓ number of variables of witness polynomial 30
+𝑞 prime modulus 4294967197
+𝑘 degree of the extension fieldF𝑞𝑘 for sumcheck 4
+𝛼 log of ring dimension 10
+𝑑 𝑑 := 2𝛼 is the ring dimension ofR𝑞 1024
+𝑚 folding parameter 10
+𝑟 folding parameter 10
+𝑛𝐴 height of the matrixA 1
+𝑛𝐵 height of the matrixB 1
+𝑛𝐷 height of the matrixD 1
+𝑧 maximum 𝐿∞ norm of z 30583
+𝑏 decomposition base 16
+𝛿 expansion factor for decomposing base witness 8
+𝜏 expansion factor for decomposingz 4
+𝜔 𝐿1 norm of a challenge element 16
+𝑐 number of non-zero coefficients in challenge 16
+Next witness size 226
+Next witness norm bound infinity norm 8
+Fig. 9. Concrete parameters for anℓ = 30 variable multilinear polynomial overZ𝑞.
+To recall, we pick𝑞 ≈ 232, 𝑑 = 210, 𝛼 = 10, 𝑟 = 10 and𝑚 = 10 and (𝑛𝐴, 𝑛𝐵, 𝑛𝐷 ) = (1,1,1). The decomposition
+base is 𝑏 = 16, thus 𝛿 = 8. For comparison with Greyhound, we consider polynomial evaluations over the base
+field F𝑞.
+First invocation of Hachi.The cost of the transformation in Section 3 is𝑑log 𝑞 ≤ 4KB (where 𝑘 = 1). Next
+is the commitmentv is also of size 4KB. Length of the witness˜𝑤 for sumcheck is be bounded by 226, as
+discussed in Section 5.1. Then, we consider extension fieldsF𝑞𝑘 for 𝑘 = 4. The cost of sumcheck is then
+bounded by 26·4 ·32 · (16 +2) bits ≈ 7.3KB.
+Adapting to the Greyhound relation.We apply our transformation from Section 4.5. To this end, we set the
+ring dimension exactly as in Greyhound, i.e.𝑑 ′ = 64. Theshort witness 𝜓 (ˆ𝑤 ) for the quadratic relation over
+R′
+𝑞 is of length 226/𝑑 ′ = 220. By Equation (28), the cost of the transformation can be upper-bounded by:
+12 ·32 +64 ·32 bits ≈ 0.3KB.
+Moreover, we also need to commit to𝜓 (ˆ𝑤 ), which again takes 4.5KB (cf. [NS24, Table 4]). Hence, the cost of
+preparation to run Greyhound is≈ 4.8KB.
+Finally, we can directly apply Greyhound for theshort witness 𝜓 (ˆ𝑤 ) of length 220 over R′
+𝑞. To estimate
+the proof size for Greyhound, we consider the parameters of the “𝑁 = 226” column of [NS24, Table 1]).
+This column focuses on the polynomial of length 226 with full-fledged Z𝑞-elements. After the coefficient
+decomposition, the witness gets increased by a factor of𝛿0 = 5. Keeping in mind that the ring dimension is
+𝑑 ′ = 64, Greyhound reduces proving polynomial evaluation to a quadratic equation overR′
+𝑞, where the witness
+is of length 226 ·𝛿/𝑑 ′ ≈ 222.3, which is more than enough for our scenario. Therefore, we can upper-bound the
+evaluation proof size of Greyhound is≈ 43KB. To conclude, the total evaluation proof can be estimated to be
+7.3 +4.8 +43 KB = 55.1KB.
+Running time. The concrete experimental running time for the first round of Hachi can be found in Figure 8.
+The running time of the transformation, which is done by the prover, from Section 4.5 is negligible compared
+to other parts. Finally, we use the Greyhound estimates for the witness of length 224 Z𝑞-elements, which
+roughly translates to 224 ·𝛿/𝑑 ′ ≈ 220.3 R′
+𝑞-elements. From [ACFY25; Sei24], the prover runtime (which includes
+28
+
+--- page 29 ---
+
+committing to 𝜓 (ˆ𝑤 )) is around 1220ms, while the verifier runtime is 130ms. Hence, by combining with
+Figure 8, the total prover and verifier runtime are approximately 270s and 227ms.
+5.3 Faster Commitment Time
+The commitment function of Hachi is essentially identical to Greyhound except for the choice of ring. Unlike
+Greyhound, which is restricted to small ring dimensions (e.g.𝑑 = 64), Hachi is suitable for use with large
+ring dimensions (e.g.𝑑 = 1024). A major benefit of this is improved commitment time. This is because the
+number of ring multiplications decreases in proportion to𝑑2 (since both 2𝑟 +𝑚 and 𝑛𝐴, 𝑛𝐵 decrease linearly
+with 𝑑) however, with NTT, the cost of the ring multiplication scales with𝑑log 𝑑.
+The existing Greyhound implementation is highly optimized for certain rings and does not support large
+ring dimensions. Therefore, we cannot benchmarch the commitment times for both the Greyhound parameters
+and our parameters using the Greyhound implementation. However, as our library is much more flexible,
+we are able to benchmark the Greyhound commitment times with our implementation - providing a near
+like-for-like comparison. Our parameters are restricted to powers of two, and we set them as close to the
+Greyhound parameters as possible. The comparative results are shown in Figure 10 and indicate a 3-5X
+algorithmic improvement in the commitment time.
+Variables Folding Parameters,𝑟, 𝑚 Decomposition base Commit / s Comparison
+30 16384, 1024 256 433 5.0X slower
+28 8192, 512 256 71.8 3.3X slower
+26 4096, 256 256 18.6 3.4X slower
+Fig. 10. Concrete running time of the Commitment function using a smaller ring dimension𝑑 = 64 on an AVX-512
+comptaible University server and comparison to concrete times with Hachi parameters.
+5.4 Implementation Details
+Integer Operations and Data StructuresInteger coefficients are stored as unsigned 64 or 32 bit integers
+(for compatibility with tfhe-ntt). Integer decomposition has been optimized for power of two bases but not
+optimized with SIMD. Sampling inZ𝑞 for 𝑘-bit prime 𝑞 is performed by sampling 32/64 bits (using any
+PRNG) and masking𝑘 bits. Rejection sampling is then used to sample uniformly overZ𝑞. Polynomials are
+represented as coefficient slices over integers (u32 or u64). Vectors and matrices over polynomials are stored
+as tightly packed coefficients in a single vector (Array of Structure format). Decomposition of vectors of
+polynomials is done by sequentially decomposing coefficients and has not yet been optimized with SIMD.
+Initialization of the commitment matrices is done by sequentially sampling coefficients from a seeded PRNG.
+If the parameters are set so that the commitment matrices have the same dimensions, the same commitment
+matrix is used for all commitments. The commitment matrices are re-generated by the commit/prove/verify
+functions for each invocation and this overhead is included in the stated benchmarks.
+Field ArithmeticWe use the extension field𝐹𝑞4 to ensure approximately 128 bits of security. Representation
+and multiplication of field elements in𝐹𝑞4 is provided by the ark-ff library11. In general, we do not use ark-ff
+for multiplication over the base fieldZ𝑞, instead opting to perform integer multiplication over u64 and reduce
+modulo 𝑞 naively. This is to maintain compatibility with tfhe-ntt and, whilst suboptimal, avoids conversion
+between ark-ff types and u64 which is more costly than naive modulo reduction. In several cases we need to
+multiply an element of the base fieldZ𝑞 with an element of the extension fieldF𝑞4, and have optimized the
+arithmetic for this case.
+11 https://crates.io/crates/ark-ff
+29
+
+--- page 30 ---
+
+Polynomial Arithmetic Hachi requires general polynomial arithmetic overR𝑞 := Z𝑞 [𝑋 ]/( 𝑋 𝑑 +1), for a
+range of ring dimensions𝑑, as well as overZ𝑞 [𝑋 ] (to transition to the sumcheck). Our arithmetic library builds
+on top of the tfhe-ntt library12, which provides SIMD (AVX-2 or AVX-512) optimized NTT-multiplication.
+Since the prime modulus𝑞 cannot be chosen to be ‘NTT-friendly’, we cannot use NTT-based multiplication
+directly for R𝑞. Instead, we use the tfhe-ntt 64-bit ‘Native NTT’, which performs NTT-based multiplication
+modulo several primes𝑝𝑖 to simulate the arithmetic moduloÎ 𝑝𝑖. SinceÎ 𝑝𝑖 is larger than the coefficients
+of any product of polynomials, the product holds overZ[𝑋 ]/( 𝑋 𝑑 +1) with 64-bit wrapping arithmetic. We
+then naively reduce the coefficients modulo𝑞 to achieve efficient multiplication overZ𝑞 [𝑋 ]/( 𝑋 𝑑 +1). For the
+reduction modulo 𝑞 to hold, we require that no 64-bit wrap has occurred during the multiplication (i.e. the
+product has coefficients smaller than 64 bits). Note that Hachi only ever requires multiplication overR𝑞
+when one operand is small (i.e. it has been decomposed). With a maximum ring dimension of 210 and 32-bit
+modulus 𝑞, the product will not wrap as long as the coefficients of the small operand are no more than 22 bits.
+We use a 4-bit decomposition base and so can safely use the 64-bit implementation. The reduction modulo𝑞
+in our implementation is suboptimal, however it does not add too much to the cost of multiplication (about
+5%). On the other hand, whilst this approach lacks optimizations that could be made for more specific rings,
+it is very flexible; allowing both the (power-of-two) ring dimension and arbitrary modulus𝑞 to be chosen at
+runtime.
+To efficiently multiply polynomials overZ𝑞 [𝑋 ], note that Hachi only requires computing a sum over a
+product oftwo polynomials with degree less than𝑑, so that the result has degree at most 2𝑑 −1. We therefore
+pad the polynomials to degree 2𝑑 −1 and use the existing library to efficiently multiply overZ𝑞 [𝑋 ]/( 𝑋2𝑑 +1).
+The result does not incur any reduction modulo𝑋2𝑑 +1 and so holds overZ𝑞 [𝑋 ]. Given the full convolution,
+we perform (optimized) polynomial division to compute the residues modulo(𝑋 𝑑 +1).
+Our library abstracts the ring multiplication for larger structures like vectors and matrices of polynomials.
+We minimize the number of NTTs that must be performed by keeping re-used and intermediate values in
+NTT form.
+Optimized Sparse Polynomial MultiplicationSince Hachi may use large ring dimensions, the challenge
+polynomials can be very sparse whilst still producing an exponential challenge set. For example, for𝑑 = 1024,
+the challenge set may consist of ring elements with exactly𝑘 = 16 non-zero coefficients, each of which is -1 or
+1. We sample such elements using a Fisher-Yates-like algorithm to obtain a partial permutation on 0, ..., 𝑑 −1,
+giving the indices of the 16 non-zero coefficients. A bit is independently sampled for each non-zero coefficient
+to determine its sign. Since these challenge elements are so sparse, they can be more efficiently multiplied
+by a full ring element (compared to treating the sparse element as an arbitrary ring element). Our library
+implements this sparse polynomial product directly for bothZ𝑞 [𝑋 ] and Z𝑞 [𝑋 ]/( 𝑋 𝑑 +1). This has not yet been
+optimized with SIMD, yet performs about as well as the general AVX-512 optimized NTT multiplication.
+With a good SIMD optimization, it should significantly outperform general NTT multiplication.
+Witness Streams The witness is supplied to the commit/prove functions as a general stream. In our tests,
+the witness was stored in a file and provided as a file stream which reads chunks of the witness on demand.
+The commit and prove functions access the witness from the stream in small chunks of size 2−𝑚 ≊ 0.1% of
+the whole witness size. This makes our implementation suitable for very large witnesses whilst maintaining
+moderate memory usage. The overhead of reading the witness from the file stream (as well as re-decomposing
+in the prove function) is included in the benchmarking.
+References
+[ACFY24] G. Arnon, A. Chiesa, G. Fenzi, and E. Yogev, “STIR: Reed-solomon proximity testing with
+fewer queries,” inCRYPTO 2024, Part X, L. Reyzin and D. Stebila, Eds., ser. LNCS, vol. 14929,
+Springer, Cham, Aug. 2024, pp. 380–413.doi: 10.1007/978-3-031-68403-6_12.
+12 https://crates.io/crates/tfhe-ntt
+30
+
+--- page 31 ---
+
+[ACFY25] G. Arnon, A. Chiesa, G. Fenzi, and E. Yogev, “WHIR: Reed-solomon proximity testing with
+super-fast verification,” inEUROCRYPT 2025, Part IV, S. Fehr and P.-A. Fouque, Eds.,
+ser. LNCS, vol. 15604, Springer, Cham, May 2025, pp. 214–243.doi: 10.1007/978-3-031-91134-
+7_8.
+[Ach03] D. Achlioptas, “Database-friendly random projections: Johnson-lindenstrauss with binary coins,”
+J. Comput. Syst. Sci., vol. 66, no. 4, pp. 671–687, 2003.
+[ACK21] T. Attema, R. Cramer, and L. Kohl, “A compressed 𝛴-protocol theory for lattices,” in
+CRYPTO 2021, Part II, T. Malkin and C. Peikert, Eds., ser. LNCS, vol. 12826, Virtual
+Event: Springer, Cham, Aug. 2021, pp. 549–579.doi: 10.1007/978-3-030-84245-1_19.
+[AFLN24] M. R. Albrecht, G. Fenzi, O. Lapiha, and N. K. Nguyen, “SLAP: Succinct lattice-based
+polynomial commitments from standard assumptions,” inEUROCRYPT 2024, Part VII, M.
+Joye and G. Leander, Eds., ser. LNCS, vol. 14657, Springer, Cham, May 2024, pp. 90–119.doi:
+10.1007/978-3-031-58754-2_4.
+[Ajt96] M. Ajtai, “Generating hard instances of lattice problems (extended abstract),” in28th ACM
+STOC, ACM Press, May 1996, pp. 99–108.doi: 10.1145/237814.237838.
+[AL21] M. R. Albrecht and R. W. F. Lai, “Subtractive sets over cyclotomic rings - limits of Schnorr-like
+arguments over lattices,” inCRYPTO 2021, Part II, T. Malkin and C. Peikert, Eds., ser. LNCS,
+vol. 12826, Virtual Event: Springer, Cham, Aug. 2021, pp. 519–548.doi: 10.1007/978-3-030-
+84245-1_18.
+[APS15] M.R.Albrecht,R.Player,andS.Scott, Journal of Mathematical Cryptology,vol.9,no.3,pp.169–
+203, 2015. doi: doi:10.1515/jmc-2015-0016. [Online]. Available:https://doi.org/10.1515/jmc-
+2015-0016.
+[BBC+18] C. Baum, J. Bootle, A. Cerulli, R. del Pino, J. Groth, and V. Lyubashevsky, “Sub-linear lattice-
+based zero-knowledge arguments for arithmetic circuits,” inCRYPTO 2018, Part II, H. Shacham
+and A. Boldyreva, Eds., ser. LNCS, vol. 10992, Springer, Cham, Aug. 2018, pp. 669–699.doi:
+10.1007/978-3-319-96881-0_23.
+[BBHR18] E. Ben-Sasson, I. Bentov, Y. Horesh, and M. Riabzev, “Fast reed-solomon interactive oracle
+proofs of proximity,” inICALP 2018, I. Chatzigiannakis, C. Kaklamanis, D. Marx, and D.
+Sannella, Eds., ser. LIPIcs, vol. 107, Schloss Dagstuhl, Jul. 2018, 14:1–14:17.doi: 10.4230/
+LIPIcs.ICALP.2018.14.
+[BC24] D. Boneh and B. Chen,LatticeFold: A lattice-based folding scheme and its applications to
+succinct proof systems, Cryptology ePrint Archive, Report 2024/257, 2024. [Online]. Available:
+https://eprint.iacr.org/2024/257.
+[BC25] D. Boneh and B. Chen, “LatticeFold+: Faster, simpler, shorter lattice-based folding for succinct
+proof systems,” inCRYPTO 2025, Part VII, Y. T. Kalai and S. F. Kamara, Eds., ser. LNCS,
+vol. 16006, Springer, Cham, Aug. 2025, pp. 327–361.doi: 10.1007/978-3-032-01907-3_11.
+[BHV+23] R. Bhadauria, C. Hazay, M. Venkitasubramaniam, W. Wu, and Y. Zhang, “Private polynomial
+commitments and applications to MPC,” inPKC 2023, Part II, A. Boldyreva and V. Kolesnikov,
+Eds., ser. LNCS, vol. 13941, Springer, Cham, May 2023, pp. 127–158.doi: 10.1007/978-3-031-
+31371-4_5.
+[BL17] C. Baum and V. Lyubashevsky, Simple amortized proofs of shortness for linear relations
+over polynomial rings, Cryptology ePrint Archive, Report 2017/759, 2017. [Online]. Available:
+https://eprint.iacr.org/2017/759.
+[BLNS20] J. Bootle, V. Lyubashevsky, N. K. Nguyen, and G. Seiler, “A non-PCP approach to succinct
+quantum-safe zero-knowledge,” inCRYPTO 2020, Part II, D. Micciancio and T. Ristenpart,
+Eds., ser. LNCS, vol. 12171, Springer, Cham, Aug. 2020, pp. 441–469.doi: 10.1007/978-3-030-
+56880-1_16.
+[BS23] W. Beullens and G. Seiler, “LaBRADOR: Compact proofs for R1CS from module-SIS,” in
+CRYPTO 2023, Part V, H. Handschuh and A. Lysyanskaya, Eds., ser. LNCS, vol. 14085,
+Springer, Cham, Aug. 2023, pp. 518–548.doi: 10.1007/978-3-031-38554-4_17.
+31
+
+--- page 32 ---
+
+[CBBZ23] B. Chen, B. Bünz, D. Boneh, and Z. Zhang, “HyperPlonk: Plonk with linear-time prover and high-
+degree custom gates,” inEUROCRYPT 2023, Part II, C. Hazay and M. Stam, Eds., ser. LNCS,
+vol. 14005, Springer, Cham, Apr. 2023, pp. 499–530.doi: 10.1007/978-3-031-30617-4_17.
+[CHM+20] A. Chiesa, Y. Hu, M. Maller, P. Mishra, P. Vesely, and N. P. Ward, “Marlin: Preprocessing
+zkSNARKs with universal and updatable SRS,” inEUROCRYPT 2020, Part I, A. Canteaut
+and Y. Ishai, Eds., ser. LNCS, vol. 12105, Springer, Cham, May 2020, pp. 738–768.doi:
+10.1007/978-3-030-45721-1_26.
+[CLM23] V. Cini, R. W. F. Lai, and G. Malavolta, “Lattice-based succinct arguments from vanishing
+polynomials - (extended abstract),” inCRYPTO 2023, Part II, H. Handschuh and A. Lysyan-
+skaya, Eds., ser. LNCS, vol. 14082, Springer, Cham, Aug. 2023, pp. 72–105.doi: 10.1007/978-3-
+031-38545-2_3.
+[CMNW24] V. Cini, G. Malavolta, N. K. Nguyen, and H. Wee, “Polynomial commitments from lattices:
+Post-quantum security, fast verification and transparent setup,” inCRYPTO 2024, Part X,
+L. Reyzin and D. Stebila, Eds., ser. LNCS, vol. 14929, Springer, Cham, Aug. 2024, pp. 207–242.
+doi: 10.1007/978-3-031-68403-6_7.
+[FMN24] G. Fenzi, H. Moghaddas, and N. K. Nguyen, “Lattice-based polynomial commitments: Towards
+asymptotic and concrete efficiency,”Journal of Cryptology, vol. 37, no. 3, p. 31, Jul. 2024.doi:
+10.1007/s00145-024-09511-8.
+[GHL22] C. Gentry, S. Halevi, and V. Lyubashevsky, “Practical non-interactive publicly verifiable secret
+sharing with thousands of parties,” inEUROCRYPT 2022, Part I, O. Dunkelman and S.
+Dziembowski, Eds., ser. LNCS, vol. 13275, Springer, Cham, May 2022, pp. 458–487.doi:
+10.1007/978-3-031-06944-4_16.
+[GLS+23] A. Golovnev, J. Lee, S. T. V. Setty, J. Thaler, and R. S. Wahby, “Brakedown: Linear-time
+and field-agnostic SNARKs for R1CS,” inCRYPTO 2023, Part II, H. Handschuh and A.
+Lysyanskaya, Eds., ser. LNCS, vol. 14082, Springer, Cham, Aug. 2023, pp. 193–226.doi:
+10.1007/978-3-031-38545-2_7.
+[HMZ25] M.-Y. M. Huang, X. Mao, and J. Zhang,Sublinear proofs over polynomial rings, Cryptology
+ePrint Archive, Report 2025/199, 2025. [Online]. Available:https://eprint.iacr.org/2025/199.
+[KLNO24] M. Klooß, R. W. F. Lai, N. K. Nguyen, and M. Osadnik, “RoK, paper, SISsors toolkit for
+lattice-based succinct arguments - (extended abstract),” inASIACRYPT 2024, Part V, K.-M.
+Chung and Y. Sasaki, Eds., ser. LNCS, vol. 15488, Springer, Singapore, Dec. 2024, pp. 203–235.
+doi: 10.1007/978-981-96-0935-2_7.
+[KLNO25] M. Klooß, R. W. F. Lai, N. K. Nguyen, and M. Osadnik, “RoK and roll - verifier-efficient
+random projection for˜𝑂 (𝜆)-size lattice arguments - (extended abstract),” inASIACRYPT 2025,
+Part III, G. Hanaoka and B.-Y. Yang, Eds., ser. LNCS, vol. 16247, Springer, Singapore, Dec.
+2025, pp. 297–329.doi: 10.1007/978-981-95-5099-9_10.
+[KLOT25] S. Kuriyama, R. W. F. Lai, M. Osadnik, and L. Tucci,SALSAA – sumcheck-aided lattice-
+based succinct arguments and applications, Cryptology ePrint Archive, Paper 2025/2124, 2025.
+[Online]. Available:https://eprint.iacr.org/2025/2124.
+[KST22] A. Kothapalli, S. Setty, and I. Tzialla, “Nova: Recursive zero-knowledge arguments from folding
+schemes,” inCRYPTO 2022, Part IV, Y. Dodis and T. Shrimpton, Eds., ser. LNCS, vol. 13510,
+Springer, Cham, Aug. 2022, pp. 359–388.doi: 10.1007/978-3-031-15985-5_13.
+[KZG10] A. Kate, G. M. Zaverucha, and I. Goldberg, “Constant-size commitments to polynomials and
+their applications,” inASIACRYPT 2010, M. Abe, Ed., ser. LNCS, vol. 6477, Springer, Berlin,
+Heidelberg, Dec. 2010, pp. 177–194.doi: 10.1007/978-3-642-17373-8_11.
+[LFKN90] C. Lund, L. Fortnow, H. J. Karloff, and N. Nisan, “Algebraic methods for interactive proof
+systems,” in31st FOCS, IEEE Computer Society Press, Oct. 1990, pp. 2–10.doi: 10.1109/
+FSCS.1990.89518.
+[LNP22] V. Lyubashevsky, N. K. Nguyen, and M. Plançon, “Lattice-based zero-knowledge proofs and
+applications: Shorter, simpler, and more general,” inCRYPTO 2022, Part II, Y. Dodis and
+32
+
+--- page 33 ---
+
+T. Shrimpton, Eds., ser. LNCS, vol. 13508, Springer, Cham, Aug. 2022, pp. 71–101.doi:
+10.1007/978-3-031-15979-4_3.
+[LNS21] V. Lyubashevsky, N. K. Nguyen, and G. Seiler, “Shorter lattice-based zero-knowledge proofs via
+one-time commitments,” inPKC 2021, Part I, J. Garay, Ed., ser. LNCS, vol. 12710, Springer,
+Cham, May 2021, pp. 215–241.doi: 10.1007/978-3-030-75245-3_9.
+[LS15] A. Langlois and D. Stehlé, “Worst-case to average-case reductions for module lattices,”DCC,
+vol. 75, no. 3, pp. 565–599, 2015.doi: 10.1007/s10623-014-9938-4.
+[LS18] V. Lyubashevsky and G. Seiler, “Short, invertible elements in partially splitting cyclotomic rings
+and applications to lattice-based zero-knowledge proofs,” inEUROCRYPT 2018, Part I, J. B.
+Nielsen and V. Rijmen, Eds., ser. LNCS, vol. 10820, Springer, Cham, Apr. 2018, pp. 204–224.
+doi: 10.1007/978-3-319-78381-9_8.
+[Mic07] D. Micciancio, “Generalized compact knapsacks, cyclic lattices, and efficient one-way functions,”
+Comput. Complex., vol. 16, no. 4, pp. 365–411, 2007.
+[NS24] N. K. Nguyen and G. Seiler, “Greyhound: Fast polynomial commitments from lattices,” in
+CRYPTO 2024, Part X, L. Reyzin and D. Stebila, Eds., ser. LNCS, vol. 14929, Springer, Cham,
+Aug. 2024, pp. 243–275.doi: 10.1007/978-3-031-68403-6_8.
+[NS25] W. Nguyen and S. Setty,Neo: Lattice-based folding scheme for CCS over small fields and
+pay-per-bit commitments, Cryptology ePrint Archive, Report 2025/294, 2025. [Online]. Available:
+https://eprint.iacr.org/2025/294.
+[Sei24] G. Seiler, Private communication, 2024.
+[Set20] S.Setty,“Spartan:Efficientandgeneral-purposezkSNARKswithouttrustedsetup,” in CRYPTO 2020,
+Part III, D. Micciancio and T. Ristenpart, Eds., ser. LNCS, vol. 12172, Springer, Cham, Aug.
+2020, pp. 704–737.doi: 10.1007/978-3-030-56877-1_25.
+[STW24] S. T. V. Setty, J. Thaler, and R. S. Wahby, “Unlocking the lookup singularity with Lasso,” in
+EUROCRYPT 2024, Part VI, M. Joye and G. Leander, Eds., ser. LNCS, vol. 14656, Springer,
+Cham, May 2024, pp. 180–209.doi: 10.1007/978-3-031-58751-1_7.
+[VSBW13] V. Vu, S. T. V. Setty, A. J. Blumberg, and M. Walfish, “A hybrid architecture for interactive
+verifiable computation,” in2013 IEEE Symposium on Security and Privacy, IEEE Computer
+Society Press, May 2013, pp. 223–237.doi: 10.1109/SP.2013.48.
+[WTs+18] R. S. Wahby, I. Tzialla, a. shelat, J. Thaler, and M. Walfish, “Doubly-efficient zkSNARKs
+without trusted setup,” in2018 IEEE Symposium on Security and Privacy, IEEE Computer
+Society Press, May 2018, pp. 926–943.doi: 10.1109/SP.2018.00060.
+33

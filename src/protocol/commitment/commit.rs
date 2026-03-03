@@ -9,7 +9,8 @@ use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
 use super::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use super::utils::linear::{
-    decompose_block_i8, decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_cached_i8,
+    decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_tiled_i8,
+    mat_vec_mul_ntt_tiled_single_i8,
 };
 use super::utils::matrix::{derive_public_matrix, sample_public_matrix_seed, PublicMatrixSeed};
 use super::CommitmentConfig;
@@ -299,17 +300,18 @@ where
 
         let depth = layout.num_digits_commit;
         let log_basis = layout.log_basis;
-        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(f_blocks)
-            .map(|block| {
-                let s_i = decompose_block_i8(block, depth, log_basis);
-                let t_i: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_cached_i8(&setup.ntt_A, &s_i);
-                decompose_rows_i8(&t_i, depth, log_basis)
-            })
+        let block_slices: Vec<&[CyclotomicRing<F, D>]> =
+            f_blocks.iter().map(|b| b.as_slice()).collect();
+        let t_all =
+            mat_vec_mul_ntt_tiled_i8(&setup.ntt_A, &block_slices, depth, log_basis, None);
+        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
+            .map(|t_i| decompose_rows_i8(&t_i, depth, log_basis))
             .collect();
 
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
 
-        let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_cached_i8(&setup.ntt_B, &t_hat_flat);
+        let u: Vec<CyclotomicRing<F, D>> =
+            mat_vec_mul_ntt_tiled_single_i8(&setup.ntt_B, &t_hat_flat, None);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
 
@@ -333,28 +335,29 @@ where
 
         let depth = layout.num_digits_commit;
         let log_basis = layout.log_basis;
-        let zero_block_len = Cfg::N_A.checked_mul(depth).unwrap();
         let coeff_len = f_coeffs.len();
 
-        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(0..num_blocks)
+        let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
             .map(|i| {
                 let start = i * block_len;
                 if start >= coeff_len {
-                    vec![[0i8; D]; zero_block_len]
+                    &[] as &[CyclotomicRing<F, D>]
                 } else {
-                    let end = (start + block_len).min(coeff_len);
-                    let block = &f_coeffs[start..end];
-                    let s_i = decompose_block_i8(block, depth, log_basis);
-                    let t_i: Vec<CyclotomicRing<F, D>> =
-                        mat_vec_mul_ntt_cached_i8(&setup.ntt_A, &s_i);
-                    decompose_rows_i8(&t_i, depth, log_basis)
+                    &f_coeffs[start..(start + block_len).min(coeff_len)]
                 }
             })
             .collect();
 
+        let t_all =
+            mat_vec_mul_ntt_tiled_i8(&setup.ntt_A, &block_slices, depth, log_basis, None);
+        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
+            .map(|t_i| decompose_rows_i8(&t_i, depth, log_basis))
+            .collect();
+
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
 
-        let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_cached_i8(&setup.ntt_B, &t_hat_flat);
+        let u: Vec<CyclotomicRing<F, D>> =
+            mat_vec_mul_ntt_tiled_single_i8(&setup.ntt_B, &t_hat_flat, None);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
 
@@ -394,7 +397,8 @@ where
 
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
 
-        let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_cached_i8(&setup.ntt_B, &t_hat_flat);
+        let u: Vec<CyclotomicRing<F, D>> =
+            mat_vec_mul_ntt_tiled_single_i8(&setup.ntt_B, &t_hat_flat, None);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
 }

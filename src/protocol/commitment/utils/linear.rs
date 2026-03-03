@@ -5,7 +5,7 @@ use crate::algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::{cfg_into_iter, cfg_iter};
+use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter};
 use crate::{CanonicalField, FieldCore};
 use std::array::from_fn;
 
@@ -196,6 +196,7 @@ fn unreduced_quotient_ntt<F, W, const K: usize, const D: usize>(
     vec_neg: &[CyclotomicCrtNtt<W, K, D>],
     vec_cyc: &[CyclotomicCrtNtt<W, K, D>],
     params: &CrtNttParamSet<W, K, D>,
+    two_inv: F,
 ) -> CyclotomicRing<F, D>
 where
     F: FieldCore + CanonicalField,
@@ -214,9 +215,6 @@ where
     let neg_ring: CyclotomicRing<F, D> = acc_neg.to_ring_with_params(params);
     let cyc_ring: CyclotomicRing<F, D> = acc_cyc.to_ring_cyclic(params);
 
-    let two_inv = (F::one() + F::one())
-        .inv()
-        .expect("2 is invertible in odd-char fields");
     let neg_coeffs = neg_ring.coefficients();
     let cyc_coeffs = cyc_ring.coefficients();
     let quotient: [F; D] = from_fn(|k| (cyc_coeffs[k] - neg_coeffs[k]) * two_inv);
@@ -469,6 +467,199 @@ pub fn decompose_rows_i8<F: FieldCore + CanonicalField, const D: usize>(
         out.extend(row.balanced_decompose_pow2_i8(num_digits, log_basis));
     }
     out
+}
+
+const DEFAULT_TILE_WIDTH: usize = 400;
+
+#[inline]
+fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
+    acc: &mut CyclotomicCrtNtt<W, K, D>,
+    other: &CyclotomicCrtNtt<W, K, D>,
+    params: &CrtNttParamSet<W, K, D>,
+) {
+    for k in 0..K {
+        let prime = params.primes[k];
+        for d in 0..D {
+            let sum = MontCoeff::from_raw(acc.limbs[k][d].raw().wrapping_add(other.limbs[k][d].raw()));
+            acc.limbs[k][d] = prime.reduce_range(sum);
+        }
+    }
+}
+
+/// Column-tiled A*x across multiple blocks simultaneously.
+///
+/// Each rayon thread owns one column tile of `ntt_mat` (sized to fit in L2
+/// cache) and iterates over all blocks, accumulating partial NTT results.
+/// The matrix is loaded from DRAM exactly once. A final reduction sums
+/// partial accumulators across tiles for each block.
+///
+/// Accepts raw ring-coefficient slices per block. Decomposes to i8 digits
+/// on-the-fly per tile to avoid materializing all digits at once.
+///
+/// `tile_width`: number of matrix columns per tile. `None` defaults to ~400
+/// (targets ~4 MB L2 for Q128/D=512 NTT elements).
+#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_tiled_i8")]
+pub fn mat_vec_mul_ntt_tiled_i8<F: FieldCore + CanonicalField, const D: usize>(
+    slot: &NttSlotCache<D>,
+    blocks: &[&[CyclotomicRing<F, D>]],
+    num_digits: usize,
+    log_basis: u32,
+    tile_width: Option<usize>,
+) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    let tw = tile_width.unwrap_or(DEFAULT_TILE_WIDTH);
+    dispatch_slot!(slot, mat_vec_mul_tiled_i8_with_params, blocks, num_digits, log_basis, tw)
+}
+
+fn mat_vec_mul_tiled_i8_with_params<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    blocks: &[&[CyclotomicRing<F, D>]],
+    num_digits: usize,
+    log_basis: u32,
+    tile_width: usize,
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    let num_blocks = blocks.len();
+    if num_blocks == 0 {
+        return vec![];
+    }
+    let n_a = ntt_mat.len();
+    let inner_width = ntt_mat.first().map_or(0, |row| row.len());
+    if inner_width == 0 || n_a == 0 {
+        return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
+    }
+
+    let tw = tile_width.max(1);
+    let num_tiles = inner_width.div_ceil(tw);
+
+    let final_accs: Vec<Vec<CyclotomicCrtNtt<W, K, D>>> = cfg_fold_reduce!(
+        0..num_tiles,
+        || vec![vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a]; num_blocks],
+        |mut accs: Vec<Vec<CyclotomicCrtNtt<W, K, D>>>, tile_idx| {
+            let tile_start = tile_idx * tw;
+            let tile_end = (tile_start + tw).min(inner_width);
+            let ring_start = tile_start / num_digits;
+            let ring_end = ((tile_end - 1) / num_digits) + 1;
+            let digit_offset = tile_start - ring_start * num_digits;
+            let tile_len = tile_end - tile_start;
+
+            for block_idx in 0..num_blocks {
+                let block = blocks[block_idx];
+                if ring_start >= block.len() {
+                    continue;
+                }
+                let block_ring_end = ring_end.min(block.len());
+                let partial_coeffs = &block[ring_start..block_ring_end];
+                let all_digits = decompose_block_i8(partial_coeffs, num_digits, log_basis);
+                let available = all_digits.len().saturating_sub(digit_offset);
+                let n = tile_len.min(available);
+
+                for (j, digit) in all_digits[digit_offset..digit_offset + n].iter().enumerate() {
+                    let ntt_d = CyclotomicCrtNtt::from_i8_with_params(digit, params);
+                    for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
+                        accumulate_pointwise_product_into(
+                            acc,
+                            &mat_row[tile_start + j],
+                            &ntt_d,
+                            params,
+                        );
+                    }
+                }
+            }
+            accs
+        },
+        |mut a: Vec<Vec<CyclotomicCrtNtt<W, K, D>>>, b| {
+            for block_idx in 0..num_blocks {
+                for row in 0..n_a {
+                    add_ntt_into(&mut a[block_idx][row], &b[block_idx][row], params);
+                }
+            }
+            a
+        }
+    );
+
+    cfg_into_iter!(final_accs)
+        .map(|row_accs| {
+            row_accs
+                .into_iter()
+                .map(|acc| acc.to_ring_with_params(params))
+                .collect()
+        })
+        .collect()
+}
+
+/// Column-tiled mat-vec for a single pre-decomposed i8 digit vector.
+///
+/// Same tiling strategy as [`mat_vec_mul_ntt_tiled_i8`] but for a single
+/// input vector of i8 digit planes (already decomposed). Tiles the matrix
+/// columns to keep each tile in L2, eliminating the full `ntt_vec`
+/// materialization of the non-tiled path.
+#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_tiled_single_i8")]
+pub fn mat_vec_mul_ntt_tiled_single_i8<F: FieldCore + CanonicalField, const D: usize>(
+    slot: &NttSlotCache<D>,
+    vec: &[[i8; D]],
+    tile_width: Option<usize>,
+) -> Vec<CyclotomicRing<F, D>> {
+    let tw = tile_width.unwrap_or(DEFAULT_TILE_WIDTH);
+    dispatch_slot!(slot, mat_vec_mul_tiled_single_i8_with_params, vec, tw)
+}
+
+fn mat_vec_mul_tiled_single_i8_with_params<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    vec: &[[i8; D]],
+    tile_width: usize,
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<CyclotomicRing<F, D>> {
+    let n_a = ntt_mat.len();
+    let inner_width = ntt_mat.first().map_or(0, |row| row.len());
+    if inner_width == 0 || n_a == 0 {
+        return vec![CyclotomicRing::<F, D>::zero(); n_a];
+    }
+
+    let vec_len = vec.len().min(inner_width);
+    let tw = tile_width.max(1);
+    let num_tiles = vec_len.div_ceil(tw);
+
+    let final_accs: Vec<CyclotomicCrtNtt<W, K, D>> = cfg_fold_reduce!(
+        0..num_tiles,
+        || vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a],
+        |mut accs: Vec<CyclotomicCrtNtt<W, K, D>>, tile_idx| {
+            let tile_start = tile_idx * tw;
+            let tile_end = (tile_start + tw).min(vec_len);
+            for (j, digit) in vec[tile_start..tile_end].iter().enumerate() {
+                let ntt_d = CyclotomicCrtNtt::from_i8_with_params(digit, params);
+                for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
+                    accumulate_pointwise_product_into(
+                        acc,
+                        &mat_row[tile_start + j],
+                        &ntt_d,
+                        params,
+                    );
+                }
+            }
+            accs
+        },
+        |mut a: Vec<CyclotomicCrtNtt<W, K, D>>, b| {
+            for row in 0..n_a {
+                add_ntt_into(&mut a[row], &b[row], params);
+            }
+            a
+        }
+    );
+
+    final_accs
+        .into_iter()
+        .map(|acc| acc.to_ring_with_params(params))
+        .collect()
 }
 
 #[cfg(test)]
