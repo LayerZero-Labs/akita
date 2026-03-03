@@ -149,9 +149,66 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     pub fn mul_by_monomial_sum(&self, nonzero_positions: &[usize]) -> Self {
         let mut result = Self::zero();
         for &k in nonzero_positions {
-            result += self.negacyclic_shift(k);
+            self.shift_accumulate_into(&mut result, k);
         }
         result
+    }
+
+    /// Fused negacyclic shift + accumulate: `dst += self * X^k`.
+    ///
+    /// Equivalent to `*dst += self.negacyclic_shift(k)` but avoids
+    /// allocating a temporary ring element.
+    #[inline]
+    pub fn shift_accumulate_into(&self, dst: &mut Self, k: usize) {
+        let k = k % D;
+        if k == 0 {
+            for i in 0..D {
+                dst.coeffs[i] = dst.coeffs[i] + self.coeffs[i];
+            }
+            return;
+        }
+        for i in 0..D {
+            let target = i + k;
+            if target < D {
+                dst.coeffs[target] = dst.coeffs[target] + self.coeffs[i];
+            } else {
+                dst.coeffs[target - D] = dst.coeffs[target - D] - self.coeffs[i];
+            }
+        }
+    }
+
+    /// Fused negacyclic shift + subtract: `dst -= self * X^k`.
+    ///
+    /// Equivalent to `*dst -= self.negacyclic_shift(k)` but avoids
+    /// allocating a temporary ring element.
+    #[inline]
+    pub fn shift_sub_into(&self, dst: &mut Self, k: usize) {
+        let k = k % D;
+        if k == 0 {
+            for i in 0..D {
+                dst.coeffs[i] = dst.coeffs[i] - self.coeffs[i];
+            }
+            return;
+        }
+        for i in 0..D {
+            let target = i + k;
+            if target < D {
+                dst.coeffs[target] = dst.coeffs[target] - self.coeffs[i];
+            } else {
+                dst.coeffs[target - D] = dst.coeffs[target - D] + self.coeffs[i];
+            }
+        }
+    }
+
+    /// Fused multiply-by-monomial-sum + accumulate:
+    /// `dst += self * (X^{k_1} + X^{k_2} + ...)`.
+    ///
+    /// Equivalent to `*dst += self.mul_by_monomial_sum(positions)` but avoids
+    /// all intermediate temporaries.
+    pub fn mul_by_monomial_sum_into(&self, dst: &mut Self, nonzero_positions: &[usize]) {
+        for &k in nonzero_positions {
+            self.shift_accumulate_into(dst, k);
+        }
     }
 
     /// Multiply `self` by a sparse challenge element.

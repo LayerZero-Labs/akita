@@ -23,6 +23,7 @@ pub mod packed_ext;
 pub mod packed_neon;
 pub mod pseudo_mersenne;
 pub(crate) mod util;
+pub mod wide;
 
 pub use ext::{Ext2, Ext4, Fp2, Fp2Config, Fp4, Fp4Config, NegOneNr, TwoNr, UnitNr};
 pub use fp128::{
@@ -40,3 +41,4 @@ pub use pseudo_mersenne::{
     Pow2Offset56Field, Pow2Offset64Field, Pow2OffsetPrimeSpec, POW2_OFFSET_IMPLEMENTED_MAX_BITS,
     POW2_OFFSET_MAX, POW2_OFFSET_PRIMES, POW2_OFFSET_TABLE,
 };
+pub use wide::{Fp128x8i32, Fp32x2i32, Fp64x4i32};

@@ -1,0 +1,491 @@
+//! Wide unreduced field accumulators for carry-free signed addition.
+//!
+//! Each type splits a canonical field element into 16-bit limbs stored in
+//! `i32` slots.  Addition and negation are element-wise i32 ops — no carry
+//! propagation, no modular reduction.  Reduction back to canonical form
+//! happens once after accumulation via [`reduce`](Fp128x8i32::reduce).
+//!
+//! The i32 overflow budget is `i32::MAX / u16::MAX ≈ 32,769` signed
+//! additions before any limb can overflow.
+
+use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
+
+use crate::CanonicalField;
+
+use super::fp128::Fp128;
+use super::fp32::Fp32;
+use super::fp64::Fp64;
+
+/// Wide unreduced accumulator for `Fp32`: 2 × i32 limbs (16-bit data each).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+pub struct Fp32x2i32(pub [i32; 2]);
+
+impl Fp32x2i32 {
+    /// Additive identity.
+    pub const ZERO: Self = Self([0; 2]);
+
+    /// Returns the zero accumulator.
+    #[inline]
+    pub fn zero() -> Self {
+        Self::ZERO
+    }
+}
+
+impl<const P: u32> From<Fp32<P>> for Fp32x2i32 {
+    #[inline]
+    fn from(x: Fp32<P>) -> Self {
+        let v = x.0;
+        Self([(v & 0xFFFF) as i32, (v >> 16) as i32])
+    }
+}
+
+impl Fp32x2i32 {
+    /// Reduce back to canonical `Fp32<P>`.
+    ///
+    /// Carry-propagates the i32 limbs into a signed value, normalizes to
+    /// `[0, p)`, and returns the canonical field element.
+    #[inline]
+    pub fn reduce<const P: u32>(self) -> Fp32<P> {
+        let [l0, l1] = self.0;
+        // Carry-propagate: value = l0 + l1 * 2^16
+        let wide = l0 as i64 + (l1 as i64) * (1i64 << 16);
+        // Normalize to [0, p)
+        let p = P as i64;
+        let normalized = ((wide % p) + p) % p;
+        Fp32::from_canonical_u32(normalized as u32)
+    }
+}
+
+impl Add for Fp32x2i32 {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        Self([self.0[0] + rhs.0[0], self.0[1] + rhs.0[1]])
+    }
+}
+
+impl AddAssign for Fp32x2i32 {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.0[0] += rhs.0[0];
+        self.0[1] += rhs.0[1];
+    }
+}
+
+impl Sub for Fp32x2i32 {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        Self([self.0[0] - rhs.0[0], self.0[1] - rhs.0[1]])
+    }
+}
+
+impl SubAssign for Fp32x2i32 {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0[0] -= rhs.0[0];
+        self.0[1] -= rhs.0[1];
+    }
+}
+
+impl Neg for Fp32x2i32 {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        Self([-self.0[0], -self.0[1]])
+    }
+}
+
+/// Wide unreduced accumulator for `Fp64`: 4 × i32 limbs (16-bit data each).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+pub struct Fp64x4i32(pub [i32; 4]);
+
+impl Fp64x4i32 {
+    /// Additive identity.
+    pub const ZERO: Self = Self([0; 4]);
+
+    /// Returns the zero accumulator.
+    #[inline]
+    pub fn zero() -> Self {
+        Self::ZERO
+    }
+}
+
+impl<const P: u64> From<Fp64<P>> for Fp64x4i32 {
+    #[inline]
+    fn from(x: Fp64<P>) -> Self {
+        let v = x.0;
+        Self([
+            (v & 0xFFFF) as i32,
+            ((v >> 16) & 0xFFFF) as i32,
+            ((v >> 32) & 0xFFFF) as i32,
+            ((v >> 48) & 0xFFFF) as i32,
+        ])
+    }
+}
+
+impl Fp64x4i32 {
+    /// Reduce back to canonical `Fp64<P>`.
+    #[inline]
+    pub fn reduce<const P: u64>(self) -> Fp64<P> {
+        let [l0, l1, l2, l3] = self.0;
+        // Carry-propagate: value = l0 + l1*2^16 + l2*2^32 + l3*2^48
+        let wide = l0 as i128
+            + (l1 as i128) * (1i128 << 16)
+            + (l2 as i128) * (1i128 << 32)
+            + (l3 as i128) * (1i128 << 48);
+        let p = P as i128;
+        let normalized = ((wide % p) + p) % p;
+        Fp64::<P>::from_canonical_u64(normalized as u64)
+    }
+}
+
+impl Add for Fp64x4i32 {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        Self([
+            self.0[0] + rhs.0[0],
+            self.0[1] + rhs.0[1],
+            self.0[2] + rhs.0[2],
+            self.0[3] + rhs.0[3],
+        ])
+    }
+}
+
+impl AddAssign for Fp64x4i32 {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.0[0] += rhs.0[0];
+        self.0[1] += rhs.0[1];
+        self.0[2] += rhs.0[2];
+        self.0[3] += rhs.0[3];
+    }
+}
+
+impl Sub for Fp64x4i32 {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        Self([
+            self.0[0] - rhs.0[0],
+            self.0[1] - rhs.0[1],
+            self.0[2] - rhs.0[2],
+            self.0[3] - rhs.0[3],
+        ])
+    }
+}
+
+impl SubAssign for Fp64x4i32 {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0[0] -= rhs.0[0];
+        self.0[1] -= rhs.0[1];
+        self.0[2] -= rhs.0[2];
+        self.0[3] -= rhs.0[3];
+    }
+}
+
+impl Neg for Fp64x4i32 {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        Self([-self.0[0], -self.0[1], -self.0[2], -self.0[3]])
+    }
+}
+
+/// Wide unreduced accumulator for `Fp128`: 8 × i32 limbs (16-bit data each).
+///
+/// On AVX2, one element fits a single 256-bit YMM register.  On NEON, it
+/// spans two 128-bit Q registers.  All arithmetic is carry-free element-wise
+/// i32 operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+pub struct Fp128x8i32(pub [i32; 8]);
+
+impl Fp128x8i32 {
+    /// Additive identity.
+    pub const ZERO: Self = Self([0; 8]);
+
+    /// Returns the zero accumulator.
+    #[inline]
+    pub fn zero() -> Self {
+        Self::ZERO
+    }
+}
+
+impl<const P: u128> From<Fp128<P>> for Fp128x8i32 {
+    #[inline]
+    fn from(x: Fp128<P>) -> Self {
+        let lo = x.0[0];
+        let hi = x.0[1];
+        Self([
+            (lo & 0xFFFF) as i32,
+            ((lo >> 16) & 0xFFFF) as i32,
+            ((lo >> 32) & 0xFFFF) as i32,
+            ((lo >> 48) & 0xFFFF) as i32,
+            (hi & 0xFFFF) as i32,
+            ((hi >> 16) & 0xFFFF) as i32,
+            ((hi >> 32) & 0xFFFF) as i32,
+            ((hi >> 48) & 0xFFFF) as i32,
+        ])
+    }
+}
+
+impl Fp128x8i32 {
+    /// Reduce back to canonical `Fp128<P>`.
+    ///
+    /// Carry-propagates the 8 × i32 limbs into unsigned u64 limbs, then
+    /// applies Solinas reduction.
+    #[inline]
+    pub fn reduce<const P: u128>(self) -> Fp128<P> {
+        let limbs = self.0;
+
+        // Carry-propagate from low to high, accumulating into i64 slots.
+        // Each i32 limb can be in [-32769*65535, 32769*65535] ≈ ±2^31.
+        // After propagation, each 16-bit "digit" is in [0, 65535] and we
+        // may have a signed residual in the top that overflows 128 bits.
+        let mut carry: i64 = 0;
+        let mut digits = [0u16; 8];
+        for i in 0..8 {
+            let v = limbs[i] as i64 + carry;
+            // Arithmetic right-shift to propagate sign correctly
+            digits[i] = (v & 0xFFFF) as u16;
+            carry = v >> 16;
+        }
+
+        // Reassemble into u64 limbs
+        let lo = digits[0] as u64
+            | (digits[1] as u64) << 16
+            | (digits[2] as u64) << 32
+            | (digits[3] as u64) << 48;
+        let hi = digits[4] as u64
+            | (digits[5] as u64) << 16
+            | (digits[6] as u64) << 32
+            | (digits[7] as u64) << 48;
+
+        // p = 2^128 - c, so 2^128 ≡ c (mod p).
+        // value = lo + hi*2^64 + carry*2^128 ≡ lo + hi*2^64 + carry*c (mod p).
+        let c = Fp128::<P>::C_LO;
+        if carry == 0 {
+            Fp128::<P>::from_canonical_u128_reduced(lo as u128 | (hi as u128) << 64)
+        } else if carry > 0 {
+            Fp128::<P>::solinas_reduce(&[lo, hi, carry as u64])
+        } else {
+            // carry < 0: value = base - |carry|*c.
+            let neg_carry = (-carry) as u64;
+            let sub = neg_carry as u128 * c as u128;
+            let base = lo as u128 | (hi as u128) << 64;
+            if base >= sub {
+                Fp128::<P>::from_canonical_u128_reduced(base - sub)
+            } else {
+                let diff = sub - base;
+                Fp128::<P>::from_canonical_u128_reduced(P - diff)
+            }
+        }
+    }
+}
+
+impl Add for Fp128x8i32 {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        Self([
+            self.0[0] + rhs.0[0],
+            self.0[1] + rhs.0[1],
+            self.0[2] + rhs.0[2],
+            self.0[3] + rhs.0[3],
+            self.0[4] + rhs.0[4],
+            self.0[5] + rhs.0[5],
+            self.0[6] + rhs.0[6],
+            self.0[7] + rhs.0[7],
+        ])
+    }
+}
+
+impl AddAssign for Fp128x8i32 {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.0[0] += rhs.0[0];
+        self.0[1] += rhs.0[1];
+        self.0[2] += rhs.0[2];
+        self.0[3] += rhs.0[3];
+        self.0[4] += rhs.0[4];
+        self.0[5] += rhs.0[5];
+        self.0[6] += rhs.0[6];
+        self.0[7] += rhs.0[7];
+    }
+}
+
+impl Sub for Fp128x8i32 {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        Self([
+            self.0[0] - rhs.0[0],
+            self.0[1] - rhs.0[1],
+            self.0[2] - rhs.0[2],
+            self.0[3] - rhs.0[3],
+            self.0[4] - rhs.0[4],
+            self.0[5] - rhs.0[5],
+            self.0[6] - rhs.0[6],
+            self.0[7] - rhs.0[7],
+        ])
+    }
+}
+
+impl SubAssign for Fp128x8i32 {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0[0] -= rhs.0[0];
+        self.0[1] -= rhs.0[1];
+        self.0[2] -= rhs.0[2];
+        self.0[3] -= rhs.0[3];
+        self.0[4] -= rhs.0[4];
+        self.0[5] -= rhs.0[5];
+        self.0[6] -= rhs.0[6];
+        self.0[7] -= rhs.0[7];
+    }
+}
+
+impl Neg for Fp128x8i32 {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        Self([
+            -self.0[0], -self.0[1], -self.0[2], -self.0[3], -self.0[4], -self.0[5], -self.0[6],
+            -self.0[7],
+        ])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::algebra::fields::{Pow2Offset24Field, Pow2Offset40Field, Prime128M8M4M1M0};
+    use crate::{FieldCore, FieldSampling};
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+
+    type F128 = Prime128M8M4M1M0;
+    type F32 = Pow2Offset24Field;
+    type F64 = Pow2Offset40Field;
+
+    const P128: u128 = 0xfffffffffffffffffffffffffffffeed;
+    const P32: u32 = (1 << 24) - 3;
+    const P64: u64 = (1 << 40) - 195;
+
+    #[test]
+    fn fp128_roundtrip() {
+        let mut rng = StdRng::seed_from_u64(0xdead_1234);
+        for _ in 0..1000 {
+            let a: F128 = FieldSampling::sample(&mut rng);
+            let wide = Fp128x8i32::from(a);
+            let back = wide.reduce::<P128>();
+            assert_eq!(a, back, "roundtrip failed for {a:?}");
+        }
+    }
+
+    #[test]
+    fn fp128_accumulate_matches_scalar() {
+        let mut rng = StdRng::seed_from_u64(0xbeef_cafe_4321);
+        let n = 1000;
+        let vals: Vec<F128> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+
+        let scalar_sum = vals.iter().fold(F128::zero(), |acc, &x| acc + x);
+
+        let wide_sum = vals
+            .iter()
+            .fold(Fp128x8i32::zero(), |acc, &x| acc + Fp128x8i32::from(x));
+        let reduced = wide_sum.reduce::<P128>();
+
+        assert_eq!(scalar_sum, reduced);
+    }
+
+    #[test]
+    fn fp128_add_sub_neg_match_scalar() {
+        let mut rng = StdRng::seed_from_u64(0x1122_3344_5566);
+        for _ in 0..500 {
+            let a: F128 = FieldSampling::sample(&mut rng);
+            let b: F128 = FieldSampling::sample(&mut rng);
+
+            let wa = Fp128x8i32::from(a);
+            let wb = Fp128x8i32::from(b);
+
+            assert_eq!((wa + wb).reduce::<P128>(), a + b);
+            assert_eq!((wa - wb).reduce::<P128>(), a - b);
+            assert_eq!((-wa).reduce::<P128>(), -a);
+        }
+    }
+
+    #[test]
+    fn fp128_mixed_add_sub_stress() {
+        let mut rng = StdRng::seed_from_u64(0xaaaa_bbbb_cccc);
+        let n = 500;
+        let vals: Vec<F128> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+
+        let mut scalar = F128::zero();
+        let mut wide = Fp128x8i32::zero();
+        for (i, &v) in vals.iter().enumerate() {
+            let wv = Fp128x8i32::from(v);
+            if i % 3 == 0 {
+                scalar = scalar - v;
+                wide -= wv;
+            } else {
+                scalar = scalar + v;
+                wide += wv;
+            }
+        }
+        assert_eq!(wide.reduce::<P128>(), scalar);
+    }
+
+    #[test]
+    fn fp32_roundtrip() {
+        let mut rng = StdRng::seed_from_u64(0x3232_3232);
+        for _ in 0..1000 {
+            let a: F32 = FieldSampling::sample(&mut rng);
+            let wide = Fp32x2i32::from(a);
+            let back = wide.reduce::<P32>();
+            assert_eq!(a, back);
+        }
+    }
+
+    #[test]
+    fn fp32_accumulate_matches_scalar() {
+        let mut rng = StdRng::seed_from_u64(0x3232_abcd);
+        let n = 1000;
+        let vals: Vec<F32> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+
+        let scalar_sum = vals.iter().fold(F32::zero(), |acc, &x| acc + x);
+        let wide_sum = vals
+            .iter()
+            .fold(Fp32x2i32::zero(), |acc, &x| acc + Fp32x2i32::from(x));
+        assert_eq!(wide_sum.reduce::<P32>(), scalar_sum);
+    }
+
+    #[test]
+    fn fp64_roundtrip() {
+        let mut rng = StdRng::seed_from_u64(0x6464_6464);
+        for _ in 0..1000 {
+            let a: F64 = FieldSampling::sample(&mut rng);
+            let wide = Fp64x4i32::from(a);
+            let back = wide.reduce::<P64>();
+            assert_eq!(a, back);
+        }
+    }
+
+    #[test]
+    fn fp64_accumulate_matches_scalar() {
+        let mut rng = StdRng::seed_from_u64(0x6464_beef);
+        let n = 1000;
+        let vals: Vec<F64> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+
+        let scalar_sum = vals.iter().fold(F64::zero(), |acc, &x| acc + x);
+        let wide_sum = vals
+            .iter()
+            .fold(Fp64x4i32::zero(), |acc, &x| acc + Fp64x4i32::from(x));
+        assert_eq!(wide_sum.reduce::<P64>(), scalar_sum);
+    }
+}

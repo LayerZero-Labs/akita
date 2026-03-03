@@ -29,7 +29,7 @@ impl<const P: u32> Fp32<P> {
     const BITS: u32 = 32 - P.leading_zeros();
 
     /// Offset `c = 2^k − P`.
-    const C: u32 = {
+    pub const C: u32 = {
         let c = if Self::BITS == 32 {
             0u32.wrapping_sub(P)
         } else {

@@ -62,7 +62,7 @@ impl<const P: u128> Eq for Fp128<P> {}
 
 impl<const P: u128> Fp128<P> {
     /// Offset `c = 2^128 − p`.  Validated at compile time.
-    const C: u128 = {
+    pub const C: u128 = {
         let c = 0u128.wrapping_sub(P);
         assert!(P != 0, "modulus must be nonzero");
         assert!(P & 1 == 1, "modulus must be odd");
@@ -74,7 +74,8 @@ impl<const P: u128> Fp128<P> {
         );
         c
     };
-    const C_LO: u64 = Self::C as u64;
+    /// Low 64 bits of `C` (always equals `C` since `C < 2^64`).
+    pub const C_LO: u64 = Self::C as u64;
     /// +1 means `C = 2^a + 1`, -1 means `C = 2^a - 1`, 0 means generic.
     const C_SHIFT_KIND: i8 = {
         let c = Self::C_LO;

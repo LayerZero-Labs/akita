@@ -31,7 +31,7 @@ impl<const P: u64> Fp64<P> {
     const BITS: u32 = 64 - P.leading_zeros();
 
     /// Offset `c = 2^k − P`.
-    const C: u64 = {
+    pub const C: u64 = {
         let c = if Self::BITS == 64 {
             0u64.wrapping_sub(P)
         } else {
