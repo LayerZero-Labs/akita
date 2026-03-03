@@ -1,9 +1,6 @@
 //! Polynomial containers and evaluation utilities.
 
-use crate::cfg_into_iter;
 use crate::error::HachiError;
-#[cfg(feature = "parallel")]
-use crate::parallel::*;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
@@ -105,10 +102,11 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for Poly<F, D> {
 /// This polynomial vanishes exactly when `w ∈ {−(b−1), …, b−1}`.
 /// Total degree in `w` is `2b − 1`.
 pub fn range_check_eval<E: FieldCore + FromSmallInt>(w: E, b: usize) -> E {
+    let s = w * w;
     let mut acc = w;
     for k in 1..b {
         let k_e = E::from_u64(k as u64);
-        acc = acc * (w - k_e) * (w + k_e);
+        acc = acc * (s - k_e * k_e);
     }
     acc
 }
@@ -160,8 +158,8 @@ pub fn fold_evals_in_place<E: FieldCore>(evals: &mut Vec<E>, r: E) {
     );
     assert!(evals.len() >= 2, "evals must have at least 2 elements");
     let half = evals.len() / 2;
-    let folded: Vec<E> = cfg_into_iter!(0..half)
-        .map(|i| evals[2 * i] + r * (evals[2 * i + 1] - evals[2 * i]))
-        .collect();
-    *evals = folded;
+    for i in 0..half {
+        evals[i] = evals[2 * i] + r * (evals[2 * i + 1] - evals[2 * i]);
+    }
+    evals.truncate(half);
 }
