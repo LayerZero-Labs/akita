@@ -2,7 +2,7 @@
 
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
-use crate::protocol::commitment::utils::linear::decompose_rows;
+use crate::protocol::commitment::utils::linear::decompose_rows_with_carry;
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
 use crate::protocol::labrador::types::{LabradorReductionConfig, LabradorWitness};
 use crate::protocol::prg::MatrixPrgBackendChoice;
@@ -68,8 +68,8 @@ where
                 "inner commitment row {row_idx} produced empty vector"
             )));
         }
-        let t_hat = decompose_rows(&t, config.fu, config.bu as u32);
-        let s_hat = decompose_rows(&row.s, config.f, config.b as u32);
+        let t_hat = decompose_rows_with_carry(&t, config.fu, config.bu as u32);
+        let s_hat = decompose_rows_with_carry(&row.s, config.f, config.b as u32);
         decomposed_witness.push(s_hat);
         decomposed_inner.push(t_hat);
         u_inner.push(t);

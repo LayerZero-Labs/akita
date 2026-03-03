@@ -68,6 +68,8 @@ pub const ABSORB_LABRADOR_JL_PROJECTION: &[u8] = b"hachi/absorb/labrador-jl-proj
 pub const ABSORB_LABRADOR_JL_NONCE: &[u8] = b"hachi/absorb/labrador-jl-nonce";
 /// Challenge for Labrador aggregation/lift stage.
 pub const CHALLENGE_LABRADOR_AGGREGATION: &[u8] = b"hachi/challenge/labrador-aggregation";
+/// Challenge for Labrador JL collapse coefficients.
+pub const CHALLENGE_LABRADOR_JL_COLLAPSE: &[u8] = b"hachi/challenge/labrador-jl-collapse";
 /// Absorb Labrador inner commitment u1 at each recursion level.
 pub const ABSORB_LABRADOR_U1: &[u8] = b"hachi/absorb/labrador-u1";
 /// Absorb Labrador outer commitment u2 at each recursion level.
@@ -112,6 +114,7 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         ABSORB_LABRADOR_JL_PROJECTION,
         ABSORB_LABRADOR_JL_NONCE,
         CHALLENGE_LABRADOR_AGGREGATION,
+        CHALLENGE_LABRADOR_JL_COLLAPSE,
         ABSORB_LABRADOR_U1,
         ABSORB_LABRADOR_U2,
         ABSORB_LABRADOR_BB,

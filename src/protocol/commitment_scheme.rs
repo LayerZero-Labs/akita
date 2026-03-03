@@ -60,7 +60,7 @@ pub struct HachiCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
 
 impl<F, const D: usize, Cfg> CommitmentScheme<F> for HachiCommitmentScheme<D, Cfg>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
     Cfg: CommitmentConfig,
 {
     type ProverSetup = HachiProverSetup<F, D>;
@@ -319,6 +319,7 @@ where
 
         if labrador_enabled::<D>() {
             let comkey_seed = &setup.expanded.seed.public_matrix_seed;
+            let jl_seed = derive_jl_seed(comkey_seed);
             let backend_v = matrix_backend_from_id(setup.expanded.seed.public_matrix_prg_backend);
             let gh_proof = &proof.greyhound_eval_proof;
 
@@ -350,6 +351,8 @@ where
             labrador::verify(
                 &labrador_statement,
                 &proof.labrador_proof,
+                comkey_seed,
+                &jl_seed,
                 backend_v,
                 transcript,
             )?;

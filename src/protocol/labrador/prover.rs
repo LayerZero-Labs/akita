@@ -9,7 +9,7 @@ use crate::protocol::labrador::types::{LabradorProof, LabradorStatement, Labrado
 use crate::protocol::labrador::LabradorReductionConfig;
 use crate::protocol::prg::MatrixPrgBackendChoice;
 use crate::protocol::transcript::Transcript;
-use crate::{CanonicalField, FieldCore, FieldSampling};
+use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 
 const ESTIMATED_LOGQ_BITS: usize = 32;
 
@@ -30,7 +30,7 @@ pub fn prove<F, T, const D: usize>(
     transcript: &mut T,
 ) -> Result<LabradorProof<F, D>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
     T: Transcript<F>,
 {
     if initial_witness.rows.is_empty() {
@@ -53,6 +53,7 @@ where
         let cfg = select_config(&witness)?;
         let fold = standard_fold(
             &witness,
+            &_statement,
             &cfg,
             comkey_seed,
             jl_seed,
@@ -61,11 +62,11 @@ where
             transcript,
         )?;
         let after_size = witness_size_bits::<F, D>(&fold.next_witness);
-        levels.push(fold.level_proof);
 
         if after_size >= before_size {
             break;
         }
+        levels.push(fold.level_proof);
         _statement = fold.statement;
         witness = fold.next_witness;
         level_idx += 1;
@@ -91,6 +92,7 @@ where
         let mut tail_transcript = transcript.clone();
         if let Ok(tail) = tail_fold(
             &witness,
+            &_statement,
             &tail_cfg,
             comkey_seed,
             jl_seed,
@@ -170,6 +172,7 @@ mod tests {
         let statement = crate::protocol::labrador::types::LabradorStatement {
             u1: Vec::new(),
             u2: Vec::new(),
+            challenges: Vec::new(),
             constraints: Vec::new(),
             beta_sq: 1024,
             hash: [0u8; 16],
@@ -186,5 +189,38 @@ mod tests {
         .unwrap();
         assert!(!proof.final_opening_witness.rows.is_empty());
         assert!(proof.levels.len() <= LABRADOR_MAX_LEVELS);
+    }
+
+    #[test]
+    fn prover_proof_verifies() {
+        let statement = crate::protocol::labrador::types::LabradorStatement {
+            u1: Vec::new(),
+            u2: Vec::new(),
+            challenges: Vec::new(),
+            constraints: Vec::new(),
+            beta_sq: 1 << 30,
+            hash: [0u8; 16],
+        };
+        let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let proof = prove(
+            sample_witness(),
+            &statement,
+            &[1u8; 32],
+            &[2u8; 16],
+            MatrixPrgBackendChoice::Shake256,
+            &mut transcript,
+        )
+        .unwrap();
+
+        let mut verify_transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+        crate::protocol::labrador::verify(
+            &statement,
+            &proof,
+            &[1u8; 32],
+            &[2u8; 16],
+            MatrixPrgBackendChoice::Shake256,
+            &mut verify_transcript,
+        )
+        .unwrap();
     }
 }

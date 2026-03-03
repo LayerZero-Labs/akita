@@ -87,6 +87,7 @@ where
     Ok(LabradorStatement {
         u1: w_commitment_u1.to_vec(),
         u2: eval_proof.u2.clone(),
+        challenges: Vec::new(),
         constraints,
         beta_sq: 0,
         hash: [0u8; 16],
@@ -319,7 +320,7 @@ fn build_constraints<F: FieldCore + CanonicalField + FieldSampling, const D: usi
                 len: t_hat_len,
             },
         ],
-        multiplicities: vec![kappa, kappa, kappa],
+        multiplicities: vec![1, 1, 1],
         coefficients: vec![phi_z0, phi_z1, phi_t],
         target: vec![CyclotomicRing::<F, D>::zero(); kappa],
     };

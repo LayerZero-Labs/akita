@@ -51,6 +51,8 @@ pub struct LabradorStatement<F: FieldCore, const D: usize> {
     pub u1: Vec<CyclotomicRing<F, D>>,
     /// Outer commitment for linear-garbage relation.
     pub u2: Vec<CyclotomicRing<F, D>>,
+    /// Amortization challenges (per input witness row).
+    pub challenges: Vec<CyclotomicRing<F, D>>,
     /// Sparse constraints checked by reducer/verifier.
     pub constraints: Vec<LabradorConstraint<F, D>>,
     /// Squared norm bound.

@@ -290,6 +290,18 @@ pub(crate) fn decompose_rows<F: FieldCore + CanonicalField, const D: usize>(
     out
 }
 
+pub(crate) fn decompose_rows_with_carry<F: FieldCore + CanonicalField, const D: usize>(
+    rows: &[CyclotomicRing<F, D>],
+    delta: usize,
+    log_basis: u32,
+) -> Vec<CyclotomicRing<F, D>> {
+    let mut out = Vec::with_capacity(rows.len() * delta);
+    for row in rows {
+        out.extend(row.balanced_decompose_pow2_with_carry(delta, log_basis));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::{mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many, mat_vec_mul_unchecked};
