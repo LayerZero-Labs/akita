@@ -14,7 +14,7 @@ use crate::protocol::labrador::transcript::{
 };
 use crate::protocol::labrador::types::{
     LabradorConstraint, LabradorConstraintEntry, LabradorLevelProof, LabradorReductionConfig,
-    LabradorStatement, LabradorWitness, LabradorWitnessRow,
+    LabradorStatement, LabradorWitness,
 };
 use crate::protocol::prg::MatrixPrgBackendChoice;
 use crate::protocol::transcript::labels;
@@ -133,7 +133,7 @@ where
     F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
     T: Transcript<F>,
 {
-    if witness.rows.is_empty() {
+    if witness.rows().is_empty() {
         return Err(HachiError::InvalidInput(
             "cannot fold empty Labrador witness".to_string(),
         ));
@@ -143,8 +143,8 @@ where
             "Labrador fold requires f > 0".to_string(),
         ));
     }
-    let r = witness.rows.len();
-    let row_lengths: Vec<usize> = witness.rows.iter().map(|row| row.s.len()).collect();
+    let r = witness.rows().len();
+    let row_lengths: Vec<usize> = witness.rows().iter().map(|row| row.len()).collect();
     let max_len = row_lengths.iter().copied().max().unwrap_or(0);
 
     // Phase 1: Inner commitments (t_i) and outer commitment u1.
@@ -156,9 +156,9 @@ where
         backend,
     );
     let mut t_hat = Vec::new();
-    for row in &witness.rows {
+    for row in witness.rows() {
         let mut padded = Vec::with_capacity(max_len);
-        padded.extend_from_slice(&row.s);
+        padded.extend_from_slice(row);
         padded.resize(max_len, CyclotomicRing::<F, D>::zero());
         let t = mat_vec_mul(&a, &padded);
         t_hat.extend(decompose_rows_with_carry(&t, config.fu, config.bu as u32));
@@ -252,26 +252,17 @@ where
     let decomposed_z = decompose_rows_with_carry(&z, config.f, config.b as u32);
     let z_rows = split_decomposed_rows(&decomposed_z, config.f, z.len())?;
 
-    let mut output_rows: Vec<LabradorWitnessRow<F, D>> = z_rows
-        .into_iter()
-        .map(|row| LabradorWitnessRow {
-            norm_sq: row_norm_sq(&row),
-            s: row,
-        })
-        .collect();
+    let mut output_rows: Vec<Vec<CyclotomicRing<F, D>>> = z_rows;
 
     if !tail_mode {
         let mut aux = Vec::with_capacity(t_hat.len() + h_hat.len());
         aux.extend_from_slice(&t_hat);
         aux.extend_from_slice(&h_hat);
-        output_rows.push(LabradorWitnessRow {
-            norm_sq: row_norm_sq(&aux),
-            s: aux,
-        });
+        output_rows.push(aux);
     }
 
-    let next_witness = LabradorWitness { rows: output_rows };
-    let out_norm_sq: u128 = next_witness.rows.iter().map(|r| r.norm_sq).sum();
+    let next_witness = LabradorWitness::new_unchecked(output_rows);
+    let out_norm_sq: u128 = next_witness.norm();
 
     let next_constraints = if tail_mode {
         Vec::new()
@@ -318,10 +309,6 @@ where
         level_proof,
         statement,
     })
-}
-
-fn row_norm_sq<F: CanonicalField, const D: usize>(row: &[CyclotomicRing<F, D>]) -> u128 {
-    row.iter().map(|x| x.coeff_norm_sq()).sum()
 }
 
 fn split_decomposed_rows<F: FieldCore, const D: usize>(
@@ -462,12 +449,12 @@ fn flatten_witness<F: FieldCore, const D: usize>(
     witness: &LabradorWitness<F, D>,
 ) -> (Vec<CyclotomicRing<F, D>>, Vec<(usize, usize)>) {
     let mut flat = Vec::new();
-    let mut ranges = Vec::with_capacity(witness.rows.len());
+    let mut ranges = Vec::with_capacity(witness.rows().len());
     let mut cursor = 0usize;
-    for row in &witness.rows {
+    for row in witness.rows() {
         let start = cursor;
-        flat.extend(row.s.iter().copied());
-        cursor += row.s.len();
+        flat.extend(row.iter().copied());
+        cursor += row.len();
         ranges.push((start, cursor));
     }
     (flat, ranges)
@@ -552,9 +539,9 @@ where
 
     let matrix = LabradorJlMatrix::generate(jl_seed, jl_nonce, cols, backend)?;
     let mut phi_total: Vec<Vec<CyclotomicRing<F, D>>> = witness
-        .rows
+        .rows()
         .iter()
-        .map(|row| vec![CyclotomicRing::zero(); row.s.len()])
+        .map(|row| vec![CyclotomicRing::zero(); row.len()])
         .collect();
     let mut b_total = CyclotomicRing::<F, D>::zero();
     let mut bb = Vec::with_capacity(JL_LIFTS);
@@ -593,29 +580,29 @@ fn compute_linear_garbage<F: FieldCore + CanonicalField + FromSmallInt, const D:
     phi: &[Vec<CyclotomicRing<F, D>>],
     witness: &LabradorWitness<F, D>,
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-    if phi.len() != witness.rows.len() {
+    if phi.len() != witness.rows().len() {
         return Err(HachiError::InvalidInput(
             "phi row count mismatch".to_string(),
         ));
     }
-    let mut out = Vec::with_capacity((witness.rows.len() * (witness.rows.len() + 1)) / 2);
-    for i in 0..witness.rows.len() {
-        if phi[i].len() != witness.rows[i].s.len() {
+    let mut out = Vec::with_capacity((witness.rows().len() * (witness.rows().len() + 1)) / 2);
+    for i in 0..witness.rows().len() {
+        if phi[i].len() != witness.rows()[i].len() {
             return Err(HachiError::InvalidInput(
                 "phi row length mismatch".to_string(),
             ));
         }
-        for j in i..witness.rows.len() {
-            if phi[j].len() != witness.rows[j].s.len() {
+        for j in i..witness.rows().len() {
+            if phi[j].len() != witness.rows()[j].len() {
                 return Err(HachiError::InvalidInput(
                     "phi row length mismatch".to_string(),
                 ));
             }
             let entry = if i == j {
-                dot_product(&phi[i], &witness.rows[i].s)
+                dot_product(&phi[i], &witness.rows()[i])
             } else {
-                let lhs = dot_product(&phi[i], &witness.rows[j].s);
-                let rhs = dot_product(&phi[j], &witness.rows[i].s);
+                let lhs = dot_product(&phi[i], &witness.rows()[j]);
+                let rhs = dot_product(&phi[j], &witness.rows()[i]);
                 lhs + rhs
             };
             out.push(entry);
@@ -748,8 +735,7 @@ fn build_next_constraints<
         az_coeffs.push(coeffs);
     }
 
-    let mut t_coeffs =
-        vec![CyclotomicRing::<F, D>::zero(); config.kappa * t_hat_len];
+    let mut t_coeffs = vec![CyclotomicRing::<F, D>::zero(); config.kappa * t_hat_len];
     for (row_idx, challenge) in challenges.iter().enumerate() {
         for part_idx in 0..config.fu {
             let scale = pow_bu[part_idx];
@@ -778,10 +764,8 @@ fn build_next_constraints<
     let mut lg_coeffs = Vec::with_capacity(config.f + 1);
     for part_idx in 0..config.f {
         let scale = pow_b[part_idx];
-        let coeffs: Vec<CyclotomicRing<F, D>> = combined_phi
-            .iter()
-            .map(|elem| elem.scale(&scale))
-            .collect();
+        let coeffs: Vec<CyclotomicRing<F, D>> =
+            combined_phi.iter().map(|elem| elem.scale(&scale)).collect();
         lg_entries.push(LabradorConstraintEntry {
             row: part_idx,
             offset: 0,
@@ -847,13 +831,15 @@ fn pow2_field<F: FieldCore + FromSmallInt>(exp: usize) -> F {
 }
 
 fn constant_poly<F: FieldCore, const D: usize>(value: F) -> CyclotomicRing<F, D> {
-    CyclotomicRing::from_coefficients(std::array::from_fn(|i| {
-        if i == 0 {
-            value
-        } else {
-            F::zero()
-        }
-    }))
+    CyclotomicRing::from_coefficients(std::array::from_fn(
+        |i| {
+            if i == 0 {
+                value
+            } else {
+                F::zero()
+            }
+        },
+    ))
 }
 
 fn pair_index(i: usize, j: usize, r: usize) -> usize {
@@ -868,8 +854,8 @@ fn amortize_witness<F: FieldCore + CanonicalField, const D: usize>(
     max_len: usize,
 ) -> Vec<CyclotomicRing<F, D>> {
     let mut z = vec![CyclotomicRing::<F, D>::zero(); max_len];
-    for (row, challenge) in witness.rows.iter().zip(challenges.iter()) {
-        for (j, elem) in row.s.iter().enumerate() {
+    for (row, challenge) in witness.rows().iter().zip(challenges.iter()) {
+        for (j, elem) in row.iter().enumerate() {
             z[j] += *challenge * *elem;
         }
     }
@@ -890,19 +876,16 @@ mod tests {
     const D: usize = 64;
 
     fn sample_witness() -> LabradorWitness<F, D> {
-        let row = |len: usize| LabradorWitnessRow {
-            s: (0..len)
+        let row = |len: usize| -> Vec<CyclotomicRing<F, D>> {
+            (0..len)
                 .map(|i| {
                     CyclotomicRing::from_coefficients(std::array::from_fn(|j| {
                         F::from_i64(((i + j) as i64 % 5) - 2)
                     }))
                 })
-                .collect(),
-            norm_sq: 64,
+                .collect()
         };
-        LabradorWitness {
-            rows: vec![row(4), row(4), row(2)],
-        }
+        LabradorWitness::new(vec![row(4), row(4), row(4)])
     }
 
     #[test]
@@ -940,10 +923,10 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !out.next_witness.rows.is_empty(),
+            !out.next_witness.rows().is_empty(),
             "fold must produce output witness"
         );
-        assert_eq!(out.next_witness.rows.len(), cfg.f + 1);
+        assert_eq!(out.next_witness.rows().len(), cfg.f + 1);
         assert!(!out.level_proof.u2.is_empty());
     }
 
@@ -982,10 +965,10 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !out.next_witness.rows.is_empty(),
+            !out.next_witness.rows().is_empty(),
             "tail fold must produce output"
         );
-        assert_eq!(out.next_witness.rows.len(), cfg.f);
+        assert_eq!(out.next_witness.rows().len(), cfg.f);
         assert!(out.level_proof.tail);
     }
 
@@ -993,17 +976,16 @@ mod tests {
     fn amortize_is_linear_combination() {
         let witness = sample_witness();
         let one = CyclotomicRing::<F, D>::one();
-        let challenges = vec![one; witness.rows.len()];
-        let max_len = witness.rows.iter().map(|r| r.s.len()).max().unwrap();
+        let challenges = vec![one; witness.rows().len()];
+        let max_len = witness.rows().iter().map(|r| r.len()).max().unwrap();
         let z = amortize_witness(&witness, &challenges, max_len);
 
         for j in 0..max_len {
             let expected = witness
-                .rows
+                .rows()
                 .iter()
                 .map(|row| {
-                    row.s
-                        .get(j)
+                    row.get(j)
                         .copied()
                         .unwrap_or_else(CyclotomicRing::<F, D>::zero)
                 })
@@ -1023,19 +1005,11 @@ mod tests {
                 }
             }))
         };
-        let witness = LabradorWitness {
-            rows: vec![
-                LabradorWitnessRow {
-                    s: vec![mk_ring(1), mk_ring(2)],
-                    norm_sq: 5,
-                },
-                LabradorWitnessRow {
-                    s: vec![mk_ring(3), mk_ring(-1)],
-                    norm_sq: 10,
-                },
-            ],
-        };
-        let target = witness.rows[0].s[0] + witness.rows[1].s[1];
+        let witness = LabradorWitness::new(vec![
+            vec![mk_ring(1), mk_ring(2)],
+            vec![mk_ring(3), mk_ring(-1)],
+        ]);
+        let target = witness.rows()[0][0] + witness.rows()[1][1];
         let statement = LabradorStatement {
             u1: Vec::new(),
             u2: Vec::new(),
@@ -1126,19 +1100,11 @@ mod tests {
                 }
             }))
         };
-        let witness = LabradorWitness {
-            rows: vec![
-                LabradorWitnessRow {
-                    s: vec![mk_ring(1), mk_ring(2)],
-                    norm_sq: 5,
-                },
-                LabradorWitnessRow {
-                    s: vec![mk_ring(3), mk_ring(-1)],
-                    norm_sq: 10,
-                },
-            ],
-        };
-        let target = witness.rows[0].s[0] + witness.rows[1].s[1];
+        let witness = LabradorWitness::new(vec![
+            vec![mk_ring(1), mk_ring(2)],
+            vec![mk_ring(3), mk_ring(-1)],
+        ]);
+        let target = witness.rows()[0][0] + witness.rows()[1][1];
         let statement = LabradorStatement {
             u1: Vec::new(),
             u2: Vec::new(),
@@ -1200,20 +1166,14 @@ mod tests {
 
         let r = fold2.level_proof.input_row_lengths.len();
         let challenges = &fold2.statement.challenges;
-        let aux_row = &fold2.next_witness.rows[cfg.f].s;
+        let aux_row = &fold2.next_witness.rows()[cfg.f];
         let t_hat_len = r * cfg.kappa * cfg.fu;
         let t_hat = &aux_row[..t_hat_len];
         let mut t_flat = Vec::with_capacity(r * cfg.kappa);
         for chunk in t_hat.chunks(cfg.fu) {
             t_flat.push(CyclotomicRing::gadget_recompose_pow2(chunk, cfg.bu as u32));
         }
-        let z_parts: Vec<Vec<CyclotomicRing<F, D>>> = fold2
-            .next_witness
-            .rows
-            .iter()
-            .take(cfg.f)
-            .map(|row| row.s.clone())
-            .collect();
+        let z_parts: Vec<Vec<CyclotomicRing<F, D>>> = fold2.next_witness.rows()[..cfg.f].to_vec();
         let mut z = Vec::with_capacity(z_parts[0].len());
         for idx in 0..z_parts[0].len() {
             let mut slice = Vec::with_capacity(cfg.f);
@@ -1254,5 +1214,4 @@ mod tests {
         )
         .unwrap();
     }
-
 }

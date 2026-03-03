@@ -24,6 +24,6 @@ pub use johnson_lindenstrauss::{
 pub use prover::prove;
 pub use types::{
     LabradorConstraint, LabradorConstraintEntry, LabradorLevelProof, LabradorProof,
-    LabradorReductionConfig, LabradorStatement, LabradorWitness, LabradorWitnessRow,
+    LabradorReductionConfig, LabradorStatement, LabradorWitness,
 };
 pub use verifier::{verify, LabradorVerifyResult};

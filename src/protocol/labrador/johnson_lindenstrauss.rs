@@ -154,9 +154,9 @@ fn flatten_witness_coeffs<F: FieldCore + CanonicalField, const D: usize>(
     let q = (-F::one()).to_canonical_u128() + 1;
     let half_q = q / 2;
     witness
-        .rows
+        .rows()
         .iter()
-        .flat_map(|row| row.s.iter())
+        .flat_map(|row| row.iter())
         .flat_map(|ring| ring.coefficients().iter())
         .map(|coeff| {
             let c = coeff.to_canonical_u128();
@@ -191,26 +191,22 @@ fn project_with_matrix(matrix: &LabradorJlMatrix, vector: &[i64]) -> Option<[i32
 mod tests {
     use super::*;
     use crate::algebra::fields::Fp64;
-    use crate::protocol::labrador::types::LabradorWitnessRow;
     use crate::FromSmallInt;
 
     type F = Fp64<4294967197>;
     const D: usize = 64;
 
     fn sample_witness() -> LabradorWitness<F, D> {
-        let row = |len: usize| LabradorWitnessRow {
-            s: (0..len)
+        let row = |len: usize| -> Vec<CyclotomicRing<F, D>> {
+            (0..len)
                 .map(|i| {
                     CyclotomicRing::from_coefficients(std::array::from_fn(|j| {
                         F::from_i64(((i + j) as i64 % 7) - 3)
                     }))
                 })
-                .collect(),
-            norm_sq: 100,
+                .collect()
         };
-        LabradorWitness {
-            rows: vec![row(4), row(3)],
-        }
+        LabradorWitness::new(vec![row(4), row(4)])
     }
 
     #[test]

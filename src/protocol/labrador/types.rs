@@ -1,22 +1,53 @@
 //! Core Labrador witness/statement/proof types.
 
 use crate::algebra::ring::CyclotomicRing;
-use crate::FieldCore;
+use crate::{CanonicalField, FieldCore};
 
-/// One witness row carried through Labrador recursion.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LabradorWitnessRow<F: FieldCore, const D: usize> {
-    /// Row elements in `R_q`.
-    pub s: Vec<CyclotomicRing<F, D>>,
-    /// Squared norm contribution of this row.
-    pub norm_sq: u128,
-}
-
-/// Full witness object for one Labrador statement.
+/// Witness object for a Labrador statement, holding the `s_i` row vectors.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LabradorWitness<F: FieldCore, const D: usize> {
-    /// Witness rows.
-    pub rows: Vec<LabradorWitnessRow<F, D>>,
+    rows: Vec<Vec<CyclotomicRing<F, D>>>,
+}
+
+impl<F: FieldCore, const D: usize> LabradorWitness<F, D> {
+    /// Build a witness from row vectors, all of which must share the same length.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any two rows differ in length.
+    pub fn new(rows: Vec<Vec<CyclotomicRing<F, D>>>) -> Self {
+        if let Some(first_len) = rows.first().map(|r| r.len()) {
+            assert!(
+                rows.iter().all(|r| r.len() == first_len),
+                "all witness rows must have the same length"
+            );
+        }
+        Self { rows }
+    }
+
+    /// Build a witness without asserting uniform row length.
+    ///
+    /// Use only where the protocol produces rows of mixed length
+    /// (e.g. z-decomposition rows plus an auxiliary row).
+    pub(crate) fn new_unchecked(rows: Vec<Vec<CyclotomicRing<F, D>>>) -> Self {
+        Self { rows }
+    }
+
+    /// Borrow the underlying row slices.
+    pub(crate) fn rows(&self) -> &[Vec<CyclotomicRing<F, D>>] {
+        &self.rows
+    }
+}
+
+impl<F: FieldCore + CanonicalField, const D: usize> LabradorWitness<F, D> {
+    /// Squared coefficient norm summed over every ring element in the witness.
+    pub fn norm(&self) -> u128 {
+        self.rows
+            .iter()
+            .flat_map(|row| row.iter())
+            .map(|ring| ring.coeff_norm_sq())
+            .fold(0u128, |acc, v| acc.saturating_add(v))
+    }
 }
 
 /// Identifies a contiguous witness slice participating in a sparse constraint.

@@ -39,7 +39,7 @@ pub fn commit_linear_only<F, const D: usize>(
 where
     F: FieldCore + CanonicalField + FieldSampling,
 {
-    if witness.rows.is_empty() {
+    if witness.rows().is_empty() {
         return Err(HachiError::InvalidInput(
             "cannot commit empty Labrador witness".to_string(),
         ));
@@ -50,26 +50,26 @@ where
         ));
     }
 
-    let mut decomposed_witness = Vec::with_capacity(witness.rows.len());
-    let mut u_inner = Vec::with_capacity(witness.rows.len());
-    let mut decomposed_inner = Vec::with_capacity(witness.rows.len());
+    let mut decomposed_witness = Vec::with_capacity(witness.rows().len());
+    let mut u_inner = Vec::with_capacity(witness.rows().len());
+    let mut decomposed_inner = Vec::with_capacity(witness.rows().len());
 
-    for (row_idx, row) in witness.rows.iter().enumerate() {
+    for (row_idx, row) in witness.rows().iter().enumerate() {
         let a = derive_extendable_comkey_matrix::<F, D>(
             config.kappa,
-            row.s.len(),
+            row.len(),
             comkey_seed,
             b"labrador/comkey/A",
             backend,
         );
-        let t = mat_vec_mul(&a, &row.s);
+        let t = mat_vec_mul(&a, row);
         if t.is_empty() {
             return Err(HachiError::InvalidInput(format!(
                 "inner commitment row {row_idx} produced empty vector"
             )));
         }
         let t_hat = decompose_rows_with_carry(&t, config.fu, config.bu as u32);
-        let s_hat = decompose_rows_with_carry(&row.s, config.f, config.b as u32);
+        let s_hat = decompose_rows_with_carry(row, config.f, config.b as u32);
         decomposed_witness.push(s_hat);
         decomposed_inner.push(t_hat);
         u_inner.push(t);
@@ -120,14 +120,15 @@ where
 fn build_linear_garbage<F: FieldCore, const D: usize>(
     witness: &LabradorWitness<F, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
-    let mut out =
-        Vec::with_capacity((witness.rows.len() * witness.rows.len() + witness.rows.len()) / 2);
-    for i in 0..witness.rows.len() {
-        for j in i..witness.rows.len() {
-            let len = witness.rows[i].s.len().min(witness.rows[j].s.len());
+    let mut out = Vec::with_capacity(
+        (witness.rows().len() * witness.rows().len() + witness.rows().len()) / 2,
+    );
+    for i in 0..witness.rows().len() {
+        for j in i..witness.rows().len() {
+            let len = witness.rows()[i].len().min(witness.rows()[j].len());
             let mut acc = CyclotomicRing::<F, D>::zero();
             for k in 0..len {
-                acc += witness.rows[i].s[k] * witness.rows[j].s[k];
+                acc += witness.rows()[i][k] * witness.rows()[j][k];
             }
             out.push(acc);
         }
@@ -155,26 +156,23 @@ pub(crate) fn mat_vec_mul<F: FieldCore, const D: usize>(
 mod tests {
     use super::*;
     use crate::algebra::fields::Fp64;
-    use crate::protocol::labrador::types::{LabradorReductionConfig, LabradorWitnessRow};
+    use crate::protocol::labrador::types::LabradorReductionConfig;
     use crate::FromSmallInt;
 
     type F = Fp64<4294967197>;
     const D: usize = 64;
 
     fn sample_witness() -> LabradorWitness<F, D> {
-        let row = |len: usize| LabradorWitnessRow {
-            s: (0..len)
+        let row = |len: usize| -> Vec<CyclotomicRing<F, D>> {
+            (0..len)
                 .map(|i| {
                     CyclotomicRing::from_coefficients(std::array::from_fn(|j| {
                         F::from_i64(((i + j) as i64 % 9) - 4)
                     }))
                 })
-                .collect(),
-            norm_sq: 1000,
+                .collect()
         };
-        LabradorWitness {
-            rows: vec![row(3), row(2), row(4)],
-        }
+        LabradorWitness::new(vec![row(4), row(4), row(4)])
     }
 
     #[test]

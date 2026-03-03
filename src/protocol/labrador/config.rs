@@ -2,7 +2,7 @@
 
 use crate::error::HachiError;
 use crate::protocol::labrador::types::{LabradorReductionConfig, LabradorWitness};
-use crate::FieldCore;
+use crate::{CanonicalField, FieldCore};
 
 const LABRADOR_LOGQ: f64 = 32.0;
 const LABRADOR_N: f64 = 64.0;
@@ -34,24 +34,24 @@ pub fn sis_secure(rank: usize, norm: f64) -> bool {
 ///
 /// Returns an error if witness metadata is empty/invalid or if no secure
 /// commitment ranks are found within supported bounds.
-pub fn select_config<F: FieldCore, const D: usize>(
+pub fn select_config<F: FieldCore + CanonicalField, const D: usize>(
     witness: &LabradorWitness<F, D>,
 ) -> Result<LabradorReductionConfig, HachiError> {
-    if witness.rows.is_empty() {
+    if witness.rows().is_empty() {
         return Err(HachiError::InvalidInput(
             "cannot select config for empty Labrador witness".to_string(),
         ));
     }
 
-    let row_count = witness.rows.len() as f64;
-    let total_len: usize = witness.rows.iter().map(|r| r.s.len()).sum();
+    let row_count = witness.rows().len() as f64;
+    let total_len: usize = witness.rows().iter().map(|r| r.len()).sum();
     if total_len == 0 {
         return Err(HachiError::InvalidInput(
             "cannot select config for zero-length Labrador witness".to_string(),
         ));
     }
     let nn = (total_len as f64) / row_count;
-    let norm_sum: f64 = witness.rows.iter().map(|r| r.norm_sq as f64).sum();
+    let norm_sum: f64 = witness.norm() as f64;
     let mut varz = norm_sum / ((total_len as f64) * (D as f64));
     varz *= LABRADOR_TAU1 + 4.0 * LABRADOR_TAU2;
     varz = varz.max(1.0);
@@ -74,7 +74,7 @@ pub fn select_config<F: FieldCore, const D: usize>(
     let fu = (((LABRADOR_LOGQ as usize) + 2 * (b as usize) / 3) / (b as usize)).max(1);
     let bu = (((LABRADOR_LOGQ as usize) + fu / 2) / fu).max(1);
 
-    let rr = witness.rows.len() as f64;
+    let rr = witness.rows().len() as f64;
     let mut selected: Option<(usize, usize)> = None;
 
     for kappa in 1..=32usize {
@@ -130,15 +130,14 @@ mod tests {
     type F = Fp64<4294967197>;
     const D: usize = 64;
 
-    fn row(len: usize, norm_sq: u128) -> crate::protocol::labrador::LabradorWitnessRow<F, D> {
-        let s = (0..len)
+    fn row(len: usize) -> Vec<CyclotomicRing<F, D>> {
+        (0..len)
             .map(|i| {
                 CyclotomicRing::from_coefficients(std::array::from_fn(|j| {
                     F::from_i64(((i + j) as i64 % 5) - 2)
                 }))
             })
-            .collect();
-        crate::protocol::labrador::LabradorWitnessRow { s, norm_sq }
+            .collect()
     }
 
     #[test]
@@ -149,9 +148,7 @@ mod tests {
 
     #[test]
     fn select_config_returns_valid_ranges() {
-        let witness = LabradorWitness {
-            rows: vec![row(32, 400), row(16, 240), row(8, 120)],
-        };
+        let witness = LabradorWitness::new(vec![row(32), row(32), row(32)]);
         let cfg = select_config::<F, D>(&witness).unwrap();
         assert!(cfg.f >= 1 && cfg.f <= 2);
         assert!(cfg.b > 0);

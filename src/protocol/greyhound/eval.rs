@@ -16,7 +16,7 @@ use crate::protocol::labrador::transcript::{
     absorb_greyhound_eval_claim, absorb_greyhound_eval_context, absorb_greyhound_u2,
     sample_greyhound_fold_challenge, GreyhoundEvalTranscriptContext,
 };
-use crate::protocol::labrador::types::{LabradorStatement, LabradorWitness, LabradorWitnessRow};
+use crate::protocol::labrador::types::{LabradorStatement, LabradorWitness};
 use crate::protocol::prg::MatrixPrgBackendChoice;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling};
@@ -147,28 +147,7 @@ where
         t_hat_flat.extend(decompose_rows(&t_j, cfg.fu, cfg.bu as u32));
     }
 
-    let row_norm =
-        |row: &[CyclotomicRing<F, D>]| -> u128 { row.iter().map(|x| x.coeff_norm_sq()).sum() };
-    let greyhound_witness = LabradorWitness {
-        rows: vec![
-            LabradorWitnessRow {
-                norm_sq: row_norm(&z_low),
-                s: z_low,
-            },
-            LabradorWitnessRow {
-                norm_sq: row_norm(&z_high),
-                s: z_high,
-            },
-            LabradorWitnessRow {
-                norm_sq: row_norm(&t_hat_flat),
-                s: t_hat_flat,
-            },
-            LabradorWitnessRow {
-                norm_sq: row_norm(&v_hat),
-                s: v_hat,
-            },
-        ],
-    };
+    let greyhound_witness = LabradorWitness::new_unchecked(vec![z_low, z_high, t_hat_flat, v_hat]);
 
     let proof = GreyhoundEvalProof {
         u2: u2.clone(),
@@ -187,7 +166,7 @@ where
         comkey_seed,
         backend,
     )?;
-    statement.beta_sq = greyhound_witness.rows.iter().map(|r| r.norm_sq).sum();
+    statement.beta_sq = greyhound_witness.norm();
 
     Ok((proof, greyhound_witness, statement))
 }
@@ -253,21 +232,10 @@ fn partial_evaluate_columns<F: FieldCore, const D: usize>(
 }
 
 /// Build a temporary witness from columns for config selection.
-fn columns_to_witness<F: FieldCore + CanonicalField, const D: usize>(
+fn columns_to_witness<F: FieldCore, const D: usize>(
     matrix: &[Vec<CyclotomicRing<F, D>>],
 ) -> LabradorWitness<F, D> {
-    LabradorWitness {
-        rows: matrix
-            .iter()
-            .map(|col| {
-                let norm_sq = col.iter().map(|x| x.coeff_norm_sq()).sum();
-                LabradorWitnessRow {
-                    s: col.clone(),
-                    norm_sq,
-                }
-            })
-            .collect(),
-    }
+    LabradorWitness::new_unchecked(matrix.to_vec())
 }
 
 #[cfg(test)]
@@ -299,7 +267,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(proof.u2, statement.u2);
-        assert_eq!(witness.rows.len(), 4);
+        assert_eq!(witness.rows().len(), 4);
         assert_eq!(statement.constraints.len(), 5);
     }
 }

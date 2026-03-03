@@ -5,7 +5,9 @@ use crate::error::HachiError;
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
 use crate::protocol::labrador::commit::mat_vec_mul;
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
-use crate::protocol::labrador::johnson_lindenstrauss::{collapse, restore_constant_term, LabradorJlMatrix};
+use crate::protocol::labrador::johnson_lindenstrauss::{
+    collapse, restore_constant_term, LabradorJlMatrix,
+};
 use crate::protocol::labrador::transcript::{
     absorb_labrador_jl_nonce, absorb_labrador_jl_projection, absorb_labrador_level_context,
     LabradorLevelTranscriptContext,
@@ -52,12 +54,12 @@ where
     F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
     T: Transcript<F>,
 {
-    if proof.levels.len() > LABRADOR_MAX_LEVELS || proof.final_opening_witness.rows.is_empty() {
+    if proof.levels.len() > LABRADOR_MAX_LEVELS || proof.final_opening_witness.rows().is_empty() {
         return Err(HachiError::InvalidProof);
     }
 
     if proof.levels.is_empty() {
-        let final_norm = recompute_witness_norm(&proof.final_opening_witness);
+        let final_norm = proof.final_opening_witness.norm();
         if final_norm > initial_statement.beta_sq {
             return Err(HachiError::InvalidProof);
         }
@@ -101,7 +103,7 @@ where
         )?;
     }
 
-    let final_norm = recompute_witness_norm(&proof.final_opening_witness);
+    let final_norm = proof.final_opening_witness.norm();
     if final_norm > statement.beta_sq {
         return Err(HachiError::InvalidProof);
     }
@@ -167,8 +169,11 @@ where
         backend,
         transcript,
     )?;
-    let (phi_stmt, b_stmt) =
-        aggregate_statement_constraints(&statement.constraints, &level.input_row_lengths, transcript)?;
+    let (phi_stmt, b_stmt) = aggregate_statement_constraints(
+        &statement.constraints,
+        &level.input_row_lengths,
+        transcript,
+    )?;
 
     let mut phi_total = phi_stmt;
     add_phi_in_place(&mut phi_total, &phi_jl)?;
@@ -232,11 +237,11 @@ where
         return Err(HachiError::InvalidProof);
     }
     let max_len = level.input_row_lengths.iter().copied().max().unwrap_or(0);
-    if witness.rows.len() != level.config.f {
+    if witness.rows().len() != level.config.f {
         return Err(HachiError::InvalidProof);
     }
-    for row in &witness.rows {
-        if row.s.len() != max_len {
+    for row in witness.rows() {
+        if row.len() != max_len {
             return Err(HachiError::InvalidProof);
         }
     }
@@ -278,8 +283,11 @@ where
         backend,
         transcript,
     )?;
-    let (phi_stmt, b_stmt) =
-        aggregate_statement_constraints(&statement.constraints, &level.input_row_lengths, transcript)?;
+    let (phi_stmt, b_stmt) = aggregate_statement_constraints(
+        &statement.constraints,
+        &level.input_row_lengths,
+        transcript,
+    )?;
     let mut phi_total = phi_stmt;
     add_phi_in_place(&mut phi_total, &phi_jl)?;
     let b_total = b_stmt + b_jl;
@@ -293,8 +301,7 @@ where
         )?);
     }
 
-    let z_parts: Vec<Vec<CyclotomicRing<F, D>>> =
-        witness.rows.iter().map(|row| row.s.clone()).collect();
+    let z_parts: Vec<Vec<CyclotomicRing<F, D>>> = witness.rows().to_vec();
     let z = recompose_from_parts(&z_parts, level.config.b as u32)?;
     let t_flat = recompose_flat(t_hat, level.config.fu, level.config.bu as u32)?;
     let h_flat = recompose_flat(h_hat, level.config.fu, level.config.bu as u32)?;
@@ -302,7 +309,7 @@ where
         return Err(HachiError::InvalidProof);
     }
 
-    let computed_norm = recompute_witness_norm(witness);
+    let computed_norm = witness.norm();
     if computed_norm > level.norm_sq {
         return Err(HachiError::InvalidProof);
     }
@@ -389,18 +396,18 @@ where
 
     let max_len = level.input_row_lengths.iter().copied().max().unwrap_or(0);
     let expected_rows = level.config.f + 1;
-    if witness.rows.len() != expected_rows {
+    if witness.rows().len() != expected_rows {
         return Err(HachiError::InvalidProof);
     }
-    for row in witness.rows.iter().take(level.config.f) {
-        if row.s.len() != max_len {
+    for row in witness.rows().iter().take(level.config.f) {
+        if row.len() != max_len {
             return Err(HachiError::InvalidProof);
         }
     }
 
     let t_hat_len = r * level.config.kappa * level.config.fu;
     let h_hat_len = r * (r + 1) / 2 * level.config.fu;
-    let aux = &witness.rows[level.config.f].s;
+    let aux = &witness.rows()[level.config.f];
     if aux.len() != t_hat_len + h_hat_len {
         return Err(HachiError::InvalidProof);
     }
@@ -436,8 +443,11 @@ where
         backend,
         transcript,
     )?;
-    let (phi_stmt, b_stmt) =
-        aggregate_statement_constraints(&statement.constraints, &level.input_row_lengths, transcript)?;
+    let (phi_stmt, b_stmt) = aggregate_statement_constraints(
+        &statement.constraints,
+        &level.input_row_lengths,
+        transcript,
+    )?;
 
     let mut phi_total = phi_stmt;
     add_phi_in_place(&mut phi_total, &phi_jl)?;
@@ -453,12 +463,11 @@ where
         )?);
     }
 
-    // Recompose z from its parts.
     let z_parts: Vec<Vec<CyclotomicRing<F, D>>> = witness
-        .rows
+        .rows()
         .iter()
         .take(level.config.f)
-        .map(|row| row.s.clone())
+        .cloned()
         .collect();
     let z = recompose_from_parts(&z_parts, level.config.b as u32)?;
 
@@ -514,7 +523,7 @@ where
         }
     }
 
-    let computed_norm = recompute_witness_norm(witness);
+    let computed_norm = witness.norm();
     if computed_norm > level.norm_sq {
         return Err(HachiError::InvalidProof);
     }
@@ -743,8 +752,7 @@ fn build_next_constraints<
         az_coeffs.push(coeffs);
     }
 
-    let mut t_coeffs =
-        vec![CyclotomicRing::<F, D>::zero(); config.kappa * t_hat_len];
+    let mut t_coeffs = vec![CyclotomicRing::<F, D>::zero(); config.kappa * t_hat_len];
     for (row_idx, challenge) in challenges.iter().enumerate() {
         for part_idx in 0..config.fu {
             let scale = pow_bu[part_idx];
@@ -773,10 +781,8 @@ fn build_next_constraints<
     let mut lg_coeffs = Vec::with_capacity(config.f + 1);
     for part_idx in 0..config.f {
         let scale = pow_b[part_idx];
-        let coeffs: Vec<CyclotomicRing<F, D>> = combined_phi
-            .iter()
-            .map(|elem| elem.scale(&scale))
-            .collect();
+        let coeffs: Vec<CyclotomicRing<F, D>> =
+            combined_phi.iter().map(|elem| elem.scale(&scale)).collect();
         lg_entries.push(LabradorConstraintEntry {
             row: part_idx,
             offset: 0,
@@ -842,13 +848,15 @@ fn pow2_field<F: FieldCore + FromSmallInt>(exp: usize) -> F {
 }
 
 fn constant_poly<F: FieldCore, const D: usize>(value: F) -> CyclotomicRing<F, D> {
-    CyclotomicRing::from_coefficients(std::array::from_fn(|i| {
-        if i == 0 {
-            value
-        } else {
-            F::zero()
-        }
-    }))
+    CyclotomicRing::from_coefficients(std::array::from_fn(
+        |i| {
+            if i == 0 {
+                value
+            } else {
+                F::zero()
+            }
+        },
+    ))
 }
 
 fn pair_index(i: usize, j: usize, r: usize) -> usize {
@@ -1057,17 +1065,6 @@ where
     Ok((phi_total, b_total))
 }
 
-fn recompute_witness_norm<F: FieldCore + CanonicalField, const D: usize>(
-    witness: &LabradorWitness<F, D>,
-) -> u128 {
-    witness
-        .rows
-        .iter()
-        .flat_map(|row| row.s.iter())
-        .map(|ring| ring.coeff_norm_sq())
-        .fold(0u128, |acc, v| acc.saturating_add(v))
-}
-
 fn verify_constraints<F: FieldCore + CanonicalField + FromSmallInt, const D: usize>(
     constraints: &[LabradorConstraint<F, D>],
     witness: &LabradorWitness<F, D>,
@@ -1080,10 +1077,10 @@ fn verify_constraints<F: FieldCore + CanonicalField + FromSmallInt, const D: usi
         let mut lhs = vec![CyclotomicRing::<F, D>::zero(); outputs];
 
         for (entry_idx, entry) in cnst.entries.iter().enumerate() {
-            if entry.row >= witness.rows.len() {
+            if entry.row >= witness.rows().len() {
                 return Err(HachiError::InvalidProof);
             }
-            let row = &witness.rows[entry.row].s;
+            let row = &witness.rows()[entry.row];
             let mult = cnst.multiplicities.get(entry_idx).copied().unwrap_or(1);
             let mult_f = F::from_u64(mult as u64);
             let coeffs = cnst
@@ -1130,7 +1127,7 @@ mod tests {
     use super::*;
     use crate::algebra::fields::Fp64;
     use crate::algebra::ring::CyclotomicRing;
-    use crate::protocol::labrador::types::{LabradorConstraint, LabradorWitnessRow};
+    use crate::protocol::labrador::types::LabradorConstraint;
     use crate::protocol::transcript::labels::DOMAIN_LABRADOR_PROTOCOL;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::FromSmallInt;
@@ -1140,25 +1137,14 @@ mod tests {
 
     #[test]
     fn verify_accepts_basic_linear_constraint() {
-        let row = LabradorWitnessRow::<F, D> {
-            s: vec![CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|i| {
-                if i == 0 {
-                    F::from_i64(3)
-                } else {
-                    F::zero()
-                }
-            }))],
-            norm_sq: 9,
-        };
-        let witness = LabradorWitness { rows: vec![row.clone()] };
+        let row = vec![CyclotomicRing::<F, D>::from_coefficients(
+            std::array::from_fn(|i| if i == 0 { F::from_i64(3) } else { F::zero() }),
+        )];
+        let witness = LabradorWitness::new(vec![row.clone()]);
         let coeff = vec![CyclotomicRing::one()];
-        let target = vec![CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|i| {
-            if i == 0 {
-                F::from_i64(3)
-            } else {
-                F::zero()
-            }
-        }))];
+        let target = vec![CyclotomicRing::<F, D>::from_coefficients(
+            std::array::from_fn(|i| if i == 0 { F::from_i64(3) } else { F::zero() }),
+        )];
         let constraint = LabradorConstraint {
             entries: vec![crate::protocol::labrador::types::LabradorConstraintEntry {
                 row: 0,

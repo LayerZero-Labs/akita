@@ -33,7 +33,7 @@ where
     F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
     T: Transcript<F>,
 {
-    if initial_witness.rows.is_empty() {
+    if initial_witness.rows().is_empty() {
         return Err(HachiError::InvalidInput(
             "cannot prove with empty Labrador witness".to_string(),
         ));
@@ -46,7 +46,7 @@ where
 
     while level_idx + 1 < LABRADOR_MAX_LEVELS {
         let before_size = witness_size_bits::<F, D>(&witness);
-        if before_size == 0 || witness.rows.len() <= 1 {
+        if before_size == 0 || witness.rows().len() <= 1 {
             break;
         }
 
@@ -123,9 +123,9 @@ where
 
 fn witness_size_bits<F: FieldCore, const D: usize>(witness: &LabradorWitness<F, D>) -> usize {
     witness
-        .rows
+        .rows()
         .iter()
-        .map(|row| row.s.len() * D * ESTIMATED_LOGQ_BITS)
+        .map(|row| row.len() * D * ESTIMATED_LOGQ_BITS)
         .sum()
 }
 
@@ -143,7 +143,6 @@ mod tests {
     use super::*;
     use crate::algebra::fields::Fp64;
     use crate::algebra::ring::CyclotomicRing;
-    use crate::protocol::labrador::types::LabradorWitnessRow;
     use crate::protocol::transcript::labels::DOMAIN_LABRADOR_PROTOCOL;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::FromSmallInt;
@@ -152,19 +151,16 @@ mod tests {
     const D: usize = 64;
 
     fn sample_witness() -> LabradorWitness<F, D> {
-        let row = |len: usize| LabradorWitnessRow {
-            s: (0..len)
+        let row = |len: usize| -> Vec<CyclotomicRing<F, D>> {
+            (0..len)
                 .map(|i| {
                     CyclotomicRing::from_coefficients(std::array::from_fn(|j| {
                         F::from_i64(((i + j) as i64 % 7) - 3)
                     }))
                 })
-                .collect(),
-            norm_sq: 256,
+                .collect()
         };
-        LabradorWitness {
-            rows: vec![row(6), row(4), row(2)],
-        }
+        LabradorWitness::new(vec![row(6), row(6), row(6)])
     }
 
     #[test]
@@ -187,7 +183,7 @@ mod tests {
             &mut transcript,
         )
         .unwrap();
-        assert!(!proof.final_opening_witness.rows.is_empty());
+        assert!(!proof.final_opening_witness.rows().is_empty());
         assert!(proof.levels.len() <= LABRADOR_MAX_LEVELS);
     }
 
