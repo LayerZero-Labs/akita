@@ -124,10 +124,6 @@ where
         })
         .collect();
 
-    let two_inv = E::from_u64(2)
-        .inv()
-        .expect("field characteristic 2 not supported");
-
     let mut round_polys = Vec::with_capacity(max_num_rounds);
     let mut challenges = Vec::with_capacity(max_num_rounds);
 
@@ -142,7 +138,7 @@ where
                 if active {
                     inst.compute_round_univariate(round - offset, *previous_claim)
                 } else {
-                    UniPoly::from_coeffs(vec![*previous_claim * two_inv])
+                    UniPoly::from_coeffs(vec![*previous_claim * E::TWO_INV])
                 }
             })
             .collect();

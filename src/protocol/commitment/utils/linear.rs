@@ -196,7 +196,6 @@ fn unreduced_quotient_ntt<F, W, const K: usize, const D: usize>(
     vec_neg: &[CyclotomicCrtNtt<W, K, D>],
     vec_cyc: &[CyclotomicCrtNtt<W, K, D>],
     params: &CrtNttParamSet<W, K, D>,
-    two_inv: F,
 ) -> CyclotomicRing<F, D>
 where
     F: FieldCore + CanonicalField,
@@ -217,13 +216,12 @@ where
 
     let neg_coeffs = neg_ring.coefficients();
     let cyc_coeffs = cyc_ring.coefficients();
-    let quotient: [F; D] = from_fn(|k| (cyc_coeffs[k] - neg_coeffs[k]) * two_inv);
+    let quotient: [F; D] = from_fn(|k| (cyc_coeffs[k] - neg_coeffs[k]) * F::TWO_INV);
     CyclotomicRing::from_coefficients(quotient)
 }
 
 macro_rules! dispatch_slot_quotient {
-    ($slot:expr, $vec:expr, $two_inv:expr, $convert_neg:ident, $convert_cyc:ident, $quotient_fn:ident) => {{
-        let half = $two_inv;
+    ($slot:expr, $vec:expr, $convert_neg:ident, $convert_cyc:ident, $quotient_fn:ident) => {{
         match $slot {
             NttSlotCache::Q32 {
                 neg,
@@ -239,7 +237,7 @@ macro_rules! dispatch_slot_quotient {
                     .map(|x| CyclotomicCrtNtt::$convert_cyc(x, p))
                     .collect();
                 cfg_into_iter!(0..neg.len())
-                    .map(|i| $quotient_fn(&neg[i], &cyc[i], &v_neg, &v_cyc, p, half))
+                    .map(|i| $quotient_fn(&neg[i], &cyc[i], &v_neg, &v_cyc, p))
                     .collect()
             }
             NttSlotCache::Q64 {
@@ -256,7 +254,7 @@ macro_rules! dispatch_slot_quotient {
                     .map(|x| CyclotomicCrtNtt::$convert_cyc(x, p))
                     .collect();
                 cfg_into_iter!(0..neg.len())
-                    .map(|i| $quotient_fn(&neg[i], &cyc[i], &v_neg, &v_cyc, p, half))
+                    .map(|i| $quotient_fn(&neg[i], &cyc[i], &v_neg, &v_cyc, p))
                     .collect()
             }
             NttSlotCache::Q128 {
@@ -273,7 +271,7 @@ macro_rules! dispatch_slot_quotient {
                     .map(|x| CyclotomicCrtNtt::$convert_cyc(x, p))
                     .collect();
                 cfg_into_iter!(0..neg.len())
-                    .map(|i| $quotient_fn(&neg[i], &cyc[i], &v_neg, &v_cyc, p, half))
+                    .map(|i| $quotient_fn(&neg[i], &cyc[i], &v_neg, &v_cyc, p))
                     .collect()
             }
         }
@@ -291,7 +289,6 @@ pub fn unreduced_quotient_rows_ntt_cached<F: FieldCore + CanonicalField, const D
     dispatch_slot_quotient!(
         slot,
         vec,
-        F::TWO_INV,
         from_ring_with_params,
         from_ring_cyclic,
         unreduced_quotient_ntt
@@ -304,7 +301,6 @@ fn unreduced_quotient_ntt_i8<F, W, const K: usize, const D: usize>(
     vec_neg: &[CyclotomicCrtNtt<W, K, D>],
     vec_cyc: &[CyclotomicCrtNtt<W, K, D>],
     params: &CrtNttParamSet<W, K, D>,
-    two_inv: F,
 ) -> CyclotomicRing<F, D>
 where
     F: FieldCore + CanonicalField,
@@ -325,7 +321,7 @@ where
 
     let neg_coeffs = neg_ring.coefficients();
     let cyc_coeffs = cyc_ring.coefficients();
-    let quotient: [F; D] = from_fn(|k| (cyc_coeffs[k] - neg_coeffs[k]) * two_inv);
+    let quotient: [F; D] = from_fn(|k| (cyc_coeffs[k] - neg_coeffs[k]) * F::TWO_INV);
     CyclotomicRing::from_coefficients(quotient)
 }
 
@@ -338,7 +334,6 @@ pub fn unreduced_quotient_rows_ntt_cached_i8<F: FieldCore + CanonicalField, cons
     dispatch_slot_quotient!(
         slot,
         vec,
-        F::TWO_INV,
         from_i8_with_params,
         from_i8_cyclic,
         unreduced_quotient_ntt_i8
