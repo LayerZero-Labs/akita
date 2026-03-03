@@ -5,7 +5,7 @@ use hachi_pcs::protocol::commitment::{
     DecompositionParams, HachiCommitmentLayout, ProductionFp128CommitmentConfig,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
-use hachi_pcs::protocol::hachi_poly_ops::DensePoly;
+use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{BasisMode, CommitmentScheme, FromSmallInt, Transcript};
@@ -59,6 +59,58 @@ fn run_prove(
     let proof = <Scheme as CommitmentScheme<F, D>>::prove(
         setup,
         poly,
+        pt,
+        hint,
+        &mut prover_transcript,
+        &commitment,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
+    eprintln!("[{label}] prove: {:.3}s", t0.elapsed().as_secs_f64());
+    eprintln!(
+        "[{label}]   levels: {}, final_w len: {}, proof size: {} bytes",
+        proof.levels.len(),
+        proof.final_w.len(),
+        proof.size()
+    );
+
+    let t0 = Instant::now();
+    let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(setup);
+    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
+    <Scheme as CommitmentScheme<F, D>>::verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        pt,
+        &opening,
+        &commitment,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
+    eprintln!("[{label}] verify: {:.3}s", t0.elapsed().as_secs_f64());
+}
+
+fn run_prove_onehot(
+    label: &str,
+    setup: &<Scheme as CommitmentScheme<F, D>>::ProverSetup,
+    onehot_poly: &OneHotPoly<F, D>,
+    dense_poly: &DensePoly<F, D>,
+    pt: &[F],
+    opening: F,
+) {
+    let t0 = Instant::now();
+    let (commitment, hint) =
+        <Scheme as CommitmentScheme<F, D>>::commit(onehot_poly, setup).unwrap();
+    eprintln!(
+        "[{label}] onehot commit: {:.3}s",
+        t0.elapsed().as_secs_f64()
+    );
+
+    let t0 = Instant::now();
+    let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
+    let proof = <Scheme as CommitmentScheme<F, D>>::prove(
+        setup,
+        dense_poly,
         pt,
         hint,
         &mut prover_transcript,
@@ -171,6 +223,48 @@ fn main() {
         );
         run_prove("default", &setup, &poly, &pt, opening);
     }
+
+    eprintln!("\n--- one-hot commit path ---");
+    let layout = ProfileCfg::commitment_layout(0).expect("layout");
+    let total_ring = layout.num_blocks * layout.block_len;
+    let onehot_k = D;
+    let indices: Vec<Option<usize>> = (0..total_ring).map(|i| Some(i % onehot_k)).collect();
+    let onehot_poly =
+        OneHotPoly::<F, D>::new(onehot_k, indices.clone(), layout.r_vars, layout.m_vars).unwrap();
+
+    let dense_evals: Vec<F> = {
+        let mut evals = vec![F::from_u64(0); total_ring * D];
+        for (ci, opt_idx) in indices.iter().enumerate() {
+            if let Some(idx) = opt_idx {
+                evals[ci * onehot_k + idx] = F::from_u64(1);
+            }
+        }
+        evals
+    };
+    let dense_poly_oh = DensePoly::<F, D>::from_field_evals(nv, &dense_evals).unwrap();
+    let opening_oh = {
+        let mut weights = vec![F::from_u64(0); len];
+        weights[0] = F::from_u64(1);
+        for (k, &x) in pt.iter().enumerate() {
+            let half = 1usize << k;
+            for i in (0..half).rev() {
+                weights[i + half] = weights[i] * x;
+                weights[i] = weights[i] - weights[i + half];
+            }
+        }
+        dense_evals
+            .iter()
+            .zip(weights.iter())
+            .fold(F::from_u64(0), |a, (&e, &w)| a + e * w)
+    };
+    run_prove_onehot(
+        "onehot",
+        &setup,
+        &onehot_poly,
+        &dense_poly_oh,
+        &pt,
+        opening_oh,
+    );
 
     eprintln!("\nDone. Trace saved to {trace_file}");
 }

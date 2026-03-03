@@ -166,8 +166,8 @@ fn range_check_coeffs<E: FieldCore + FromSmallInt>(b: usize) -> Vec<E> {
         // Multiply by (w^2 - k^2).
         let mut next = vec![E::zero(); coeffs.len() + 2];
         for (idx, c) in coeffs.iter().enumerate() {
-            next[idx] = next[idx] - *c * k_sq;
-            next[idx + 2] = next[idx + 2] + *c;
+            next[idx] -= *c * k_sq;
+            next[idx + 2] += *c;
         }
         coeffs = next;
     }
@@ -227,7 +227,7 @@ pub(crate) fn accumulate_affine_range_coeffs<E: FieldCore>(
         for &coeff in rest.iter().rev() {
             h_i_w0 = h_i_w0 * w_0 + coeff;
         }
-        *out = *out + scale * a_pow * h_i_w0;
+        *out += scale * a_pow * h_i_w0;
         a_pow = a_pow * a;
     }
 }
@@ -245,7 +245,7 @@ pub(crate) fn accumulate_affine_range_coeffs_compact<E: FieldCore>(
     let mut a_pow = E::one();
     for (i, out) in out_coeffs.iter_mut().enumerate().take(precomp.num_rows()) {
         let h_i_w0 = precomp.h_i_lut(w_0_int, i);
-        *out = *out + scale * a_pow * h_i_w0;
+        *out += scale * a_pow * h_i_w0;
         a_pow = a_pow * a;
     }
 }
@@ -291,14 +291,14 @@ pub(crate) fn compute_norm_round_poly<E: FieldCore + FromSmallInt>(
                         let delta = w_1 - w_0;
                         let mut w_t = w_0;
                         for eval in evals.iter_mut() {
-                            *eval = *eval + eq_rem * range_check_eval_precomputed(w_t, offsets_sq);
-                            w_t = w_t + delta;
+                            *eval += eq_rem * range_check_eval_precomputed(w_t, offsets_sq);
+                            w_t += delta;
                         }
                         evals
                     },
                     |mut a, b_vec| {
                         for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
-                            *ai = *ai + *bi;
+                            *ai += *bi;
                         }
                         a
                     }
@@ -329,7 +329,7 @@ pub(crate) fn compute_norm_round_poly<E: FieldCore + FromSmallInt>(
                     },
                     |mut a, b_vec| {
                         for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
-                            *ai = *ai + *bi;
+                            *ai += *bi;
                         }
                         a
                     }
@@ -378,14 +378,14 @@ pub(crate) fn compute_norm_round_poly_compact<E: FieldCore + FromSmallInt + Cano
                         let mut w_t_i = w0_i;
                         for eval in evals.iter_mut() {
                             let rc = range_check_eval_i128(w_t_i, b);
-                            *eval = *eval + eq_rem * field_from_i128::<E>(rc);
+                            *eval += eq_rem * field_from_i128::<E>(rc);
                             w_t_i += delta_i;
                         }
                         evals
                     },
                     |mut a, b_vec| {
                         for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
-                            *ai = *ai + *bi;
+                            *ai += *bi;
                         }
                         a
                     }
@@ -417,7 +417,7 @@ pub(crate) fn compute_norm_round_poly_compact<E: FieldCore + FromSmallInt + Cano
                     },
                     |mut a, b_vec| {
                         for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
-                            *ai = *ai + *bi;
+                            *ai += *bi;
                         }
                         a
                     }

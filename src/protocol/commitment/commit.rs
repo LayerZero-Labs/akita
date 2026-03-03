@@ -4,7 +4,7 @@ use super::config::{
     ensure_block_layout, ensure_matrix_shape_ge, ensure_supported_num_vars,
     validate_and_derive_layout, HachiCommitmentLayout,
 };
-use super::onehot::{inner_ajtai_onehot_t_only, map_onehot_to_sparse_blocks};
+use super::onehot::{inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks};
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
 use super::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
@@ -13,6 +13,7 @@ use super::utils::linear::{
 };
 use super::utils::matrix::{derive_public_matrix, sample_public_matrix_seed, PublicMatrixSeed};
 use super::CommitmentConfig;
+use crate::algebra::fields::wide::HasWide;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
@@ -245,7 +246,7 @@ pub struct HachiCommitmentCore;
 
 impl<F, const D: usize, Cfg> RingCommitmentScheme<F, D, Cfg> for HachiCommitmentCore
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + FieldSampling + HasWide,
     Cfg: CommitmentConfig,
 {
     type ProverSetup = HachiProverSetup<F, D>;
@@ -320,7 +321,7 @@ where
         let log_basis = layout.log_basis;
         let block_slices: Vec<&[CyclotomicRing<F, D>]> =
             f_blocks.iter().map(|b| b.as_slice()).collect();
-        let t_all = mat_vec_mul_ntt_tiled_i8(&setup.ntt_A, &block_slices, depth, log_basis, None);
+        let t_all = mat_vec_mul_ntt_tiled_i8(&setup.ntt_A, &block_slices, depth, log_basis);
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
             .map(|t_i| decompose_rows_i8(&t_i, depth, log_basis))
             .collect();
@@ -328,7 +329,7 @@ where
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
 
         let u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_tiled_single_i8(&setup.ntt_B, &t_hat_flat, None);
+            mat_vec_mul_ntt_tiled_single_i8(&setup.ntt_B, &t_hat_flat);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
 
@@ -365,7 +366,7 @@ where
             })
             .collect();
 
-        let t_all = mat_vec_mul_ntt_tiled_i8(&setup.ntt_A, &block_slices, depth, log_basis, None);
+        let t_all = mat_vec_mul_ntt_tiled_i8(&setup.ntt_A, &block_slices, depth, log_basis);
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
             .map(|t_i| decompose_rows_i8(&t_i, depth, log_basis))
             .collect();
@@ -373,7 +374,7 @@ where
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
 
         let u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_tiled_single_i8(&setup.ntt_B, &t_hat_flat, None);
+            mat_vec_mul_ntt_tiled_single_i8(&setup.ntt_B, &t_hat_flat);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
 
@@ -405,7 +406,7 @@ where
                 if block_entries.is_empty() {
                     vec![[0i8; D]; zero_block_len]
                 } else {
-                    let t_i = inner_ajtai_onehot_t_only(a_matrix, block_entries, block_len, depth);
+                    let t_i = inner_ajtai_onehot_wide(a_matrix, block_entries, block_len, depth);
                     decompose_rows_i8(&t_i, depth, log_basis)
                 }
             })
@@ -414,7 +415,7 @@ where
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
 
         let u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_tiled_single_i8(&setup.ntt_B, &t_hat_flat, None);
+            mat_vec_mul_ntt_tiled_single_i8(&setup.ntt_B, &t_hat_flat);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
 }

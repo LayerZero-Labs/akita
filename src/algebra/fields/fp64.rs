@@ -4,7 +4,7 @@
 //! Uses Solinas-style two-fold reduction.  For `c = 2^a ± 1` the fold
 //! multiply is replaced by shift+add/sub, saving a u128 widening multiply.
 
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
 
 use rand_core::RngCore;
 
@@ -12,7 +12,8 @@ use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
 use crate::{
-    CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, PseudoMersenneField,
+    AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible,
+    PseudoMersenneField,
 };
 use std::io::{Read, Write};
 
@@ -322,6 +323,20 @@ impl<const P: u64> Neg for Fp64<P> {
     }
 }
 
+impl<const P: u64> AddAssign for Fp64<P> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl<const P: u64> SubAssign for Fp64<P> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
 impl<'a, const P: u64> Add<&'a Self> for Fp64<P> {
     type Output = Self;
     #[inline]
@@ -392,9 +407,11 @@ impl<const P: u64> HachiDeserialize for Fp64<P> {
     }
 }
 
-impl<const P: u64> FieldCore for Fp64<P> {
+impl<const P: u64> AdditiveGroup for Fp64<P> {
     const ZERO: Self = Self(0);
+}
 
+impl<const P: u64> FieldCore for Fp64<P> {
     fn one() -> Self {
         Self(if P > 1 { 1 } else { 0 })
     }

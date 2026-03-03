@@ -6,9 +6,10 @@
 
 use std::collections::BTreeMap;
 
-use crate::algebra::ring::CyclotomicRing;
+use crate::algebra::fields::wide::{HasWide, ReduceTo};
+use crate::algebra::ring::{CyclotomicRing, WideCyclotomicRing};
 use crate::error::HachiError;
-use crate::{CanonicalField, FieldCore};
+use crate::{AdditiveGroup, CanonicalField, FieldCore};
 
 /// Describes a nonzero ring element within one block of the commitment layout.
 #[derive(Debug, Clone, PartialEq)]
@@ -114,6 +115,7 @@ pub fn map_onehot_to_sparse_blocks(
 /// ```text
 /// t[a] += A[a][entry.pos * num_digits] * (X^{k_1} + X^{k_2} + ...)
 /// ```
+#[cfg(test)]
 #[allow(non_snake_case)]
 pub(crate) fn inner_ajtai_onehot_t_only<F: FieldCore + CanonicalField, const D: usize>(
     A: &[Vec<CyclotomicRing<F, D>>],
@@ -132,6 +134,35 @@ pub(crate) fn inner_ajtai_onehot_t_only<F: FieldCore + CanonicalField, const D: 
     }
 
     t
+}
+
+/// Wide-accumulator variant of [`inner_ajtai_onehot_t_only`].
+///
+/// Accumulates into `WideCyclotomicRing<W, D>` (carry-free i32 additions),
+/// then reduces once at the end. This avoids per-addition modular reduction.
+#[allow(non_snake_case)]
+pub(crate) fn inner_ajtai_onehot_wide<F, const D: usize>(
+    A: &[Vec<CyclotomicRing<F, D>>],
+    sparse_entries: &[SparseBlockEntry],
+    _block_len: usize,
+    num_digits: usize,
+) -> Vec<CyclotomicRing<F, D>>
+where
+    F: FieldCore + CanonicalField + HasWide,
+    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+{
+    let n_a = A.len();
+    let mut t_wide = vec![WideCyclotomicRing::<F::Wide, D>::zero(); n_a];
+
+    for entry in sparse_entries {
+        let col = entry.pos_in_block * num_digits;
+        for a in 0..n_a {
+            let a_wide = WideCyclotomicRing::from_ring(&A[a][col]);
+            a_wide.mul_by_monomial_sum_into(&mut t_wide[a], &entry.nonzero_coeffs);
+        }
+    }
+
+    t_wide.into_iter().map(|w| w.reduce()).collect()
 }
 
 #[cfg(test)]
@@ -215,5 +246,87 @@ mod tests {
     fn map_onehot_rejects_non_divisible() {
         let result = map_onehot_to_sparse_blocks(3, &[Some(0), Some(1)], 0, 1, 4);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn wide_matches_reference() {
+        use crate::algebra::fields::Fp64;
+        use rand::rngs::StdRng;
+        use rand::SeedableRng;
+
+        type F = Fp64<4294967197>;
+        const D: usize = 64;
+
+        let mut rng = StdRng::seed_from_u64(0xdead_beef);
+        let n_a = 3;
+        let block_len = 4;
+        let num_digits = 5;
+        let a_matrix: Vec<Vec<CyclotomicRing<F, D>>> = (0..n_a)
+            .map(|_| {
+                (0..block_len * num_digits)
+                    .map(|_| CyclotomicRing::random(&mut rng))
+                    .collect()
+            })
+            .collect();
+
+        let entries = vec![
+            SparseBlockEntry {
+                pos_in_block: 0,
+                nonzero_coeffs: vec![1, 7, 15],
+            },
+            SparseBlockEntry {
+                pos_in_block: 2,
+                nonzero_coeffs: vec![0, 63],
+            },
+        ];
+
+        let ref_result = inner_ajtai_onehot_t_only(&a_matrix, &entries, block_len, num_digits);
+        let wide_result = inner_ajtai_onehot_wide(&a_matrix, &entries, block_len, num_digits);
+
+        assert_eq!(ref_result.len(), wide_result.len());
+        for (r, w) in ref_result.iter().zip(wide_result.iter()) {
+            assert_eq!(r, w, "wide result must match reference");
+        }
+    }
+
+    #[test]
+    fn wide_matches_reference_fp128() {
+        use crate::algebra::fields::Prime128M8M4M1M0;
+        use rand::rngs::StdRng;
+        use rand::SeedableRng;
+
+        type F = Prime128M8M4M1M0;
+        const D: usize = 64;
+
+        let mut rng = StdRng::seed_from_u64(0xcafe_1234);
+        let n_a = 2;
+        let block_len = 2;
+        let num_digits = 3;
+        let a_matrix: Vec<Vec<CyclotomicRing<F, D>>> = (0..n_a)
+            .map(|_| {
+                (0..block_len * num_digits)
+                    .map(|_| CyclotomicRing::random(&mut rng))
+                    .collect()
+            })
+            .collect();
+
+        let entries = vec![
+            SparseBlockEntry {
+                pos_in_block: 0,
+                nonzero_coeffs: vec![0, 5, 32, 63],
+            },
+            SparseBlockEntry {
+                pos_in_block: 1,
+                nonzero_coeffs: vec![10],
+            },
+        ];
+
+        let ref_result = inner_ajtai_onehot_t_only(&a_matrix, &entries, block_len, num_digits);
+        let wide_result = inner_ajtai_onehot_wide(&a_matrix, &entries, block_len, num_digits);
+
+        assert_eq!(ref_result.len(), wide_result.len());
+        for (r, w) in ref_result.iter().zip(wide_result.iter()) {
+            assert_eq!(r, w, "wide result must match reference (Fp128)");
+        }
     }
 }

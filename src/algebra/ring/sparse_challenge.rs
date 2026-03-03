@@ -131,7 +131,7 @@ impl SparseChallenge {
         self.validate::<D>()?;
         let mut out = [F::zero(); D];
         for (&pos, &c) in self.positions.iter().zip(self.coeffs.iter()) {
-            out[pos as usize] = out[pos as usize] + F::from_i64(c as i64);
+            out[pos as usize] += F::from_i64(c as i64);
         }
         Ok(CyclotomicRing::from_coefficients(out))
     }
@@ -157,7 +157,7 @@ impl SparseChallenge {
         let mut acc = E::zero();
         for (&pos, &c) in self.positions.iter().zip(self.coeffs.iter()) {
             let coeff_f = F::from_i64(c as i64);
-            acc = acc + (E::lift_base(coeff_f) * alpha_pows[pos as usize]);
+            acc += E::lift_base(coeff_f) * alpha_pows[pos as usize];
         }
         Ok(acc)
     }

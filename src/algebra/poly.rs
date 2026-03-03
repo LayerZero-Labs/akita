@@ -25,7 +25,7 @@ impl<F: FieldCore, const D: usize> Add for Poly<F, D> {
     fn add(self, rhs: Self) -> Self::Output {
         let mut out = self.0;
         for (dst, src) in out.iter_mut().zip(rhs.0.iter()) {
-            *dst = *dst + *src;
+            *dst += *src;
         }
         Self(out)
     }
@@ -36,7 +36,7 @@ impl<F: FieldCore, const D: usize> Sub for Poly<F, D> {
     fn sub(self, rhs: Self) -> Self::Output {
         let mut out = self.0;
         for (dst, src) in out.iter_mut().zip(rhs.0.iter()) {
-            *dst = *dst - *src;
+            *dst -= *src;
         }
         Self(out)
     }

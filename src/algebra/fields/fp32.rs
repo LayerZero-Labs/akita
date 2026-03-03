@@ -4,7 +4,7 @@
 //! Uses Solinas-style two-fold reduction: the offset `c` and fold point `k`
 //! are computed at compile time from the const-generic modulus `P`.
 
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
 
 use rand_core::RngCore;
 
@@ -12,7 +12,8 @@ use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
 use crate::{
-    CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, PseudoMersenneField,
+    AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible,
+    PseudoMersenneField,
 };
 use std::io::{Read, Write};
 
@@ -218,6 +219,20 @@ impl<const P: u32> Neg for Fp32<P> {
     }
 }
 
+impl<const P: u32> AddAssign for Fp32<P> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl<const P: u32> SubAssign for Fp32<P> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
 impl<'a, const P: u32> Add<&'a Self> for Fp32<P> {
     type Output = Self;
     #[inline]
@@ -288,9 +303,11 @@ impl<const P: u32> HachiDeserialize for Fp32<P> {
     }
 }
 
-impl<const P: u32> FieldCore for Fp32<P> {
+impl<const P: u32> AdditiveGroup for Fp32<P> {
     const ZERO: Self = Self(0);
+}
 
+impl<const P: u32> FieldCore for Fp32<P> {
     fn one() -> Self {
         Self(if P > 1 { 1 } else { 0 })
     }

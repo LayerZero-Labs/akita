@@ -4,7 +4,7 @@ use crate::algebra::module::VectorModule;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::{FieldCore, FieldSampling, FromSmallInt};
+use crate::{AdditiveGroup, FieldCore, FieldSampling, FromSmallInt};
 
 /// `Fp2Config` with non-residue = -1.
 ///
@@ -34,7 +34,7 @@ impl<F: FieldCore + FromSmallInt> Fp2Config<F> for TwoNr {
 use rand_core::RngCore;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
 
 /// Parameters for an `Fp2` quadratic extension over base field `F`.
 pub trait Fp2Config<F: FieldCore> {
@@ -142,6 +142,18 @@ impl<F: FieldCore, C: Fp2Config<F>> Neg for Fp2<F, C> {
         Self::new(-self.c0, -self.c1)
     }
 }
+impl<F: FieldCore, C: Fp2Config<F>> AddAssign for Fp2<F, C> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+impl<F: FieldCore, C: Fp2Config<F>> SubAssign for Fp2<F, C> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
 impl<F: FieldCore, C: Fp2Config<F>> Mul for Fp2<F, C> {
     type Output = Self;
     fn mul(self, rhs: Self) -> Self::Output {
@@ -213,13 +225,15 @@ impl<F: FieldCore + Valid, C: Fp2Config<F>> HachiDeserialize for Fp2<F, C> {
     }
 }
 
-impl<F: FieldCore + Valid, C: Fp2Config<F>> FieldCore for Fp2<F, C> {
+impl<F: FieldCore, C: Fp2Config<F>> AdditiveGroup for Fp2<F, C> {
     const ZERO: Self = Self {
         c0: F::ZERO,
         c1: F::ZERO,
         _cfg: PhantomData,
     };
+}
 
+impl<F: FieldCore + Valid, C: Fp2Config<F>> FieldCore for Fp2<F, C> {
     fn one() -> Self {
         Self::new(F::one(), F::zero())
     }
@@ -367,6 +381,18 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Neg for Fp4<F, C2, C4
         Self::new(-self.c0, -self.c1)
     }
 }
+impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> AddAssign for Fp4<F, C2, C4> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> SubAssign for Fp4<F, C2, C4> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
 impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Mul for Fp4<F, C2, C4> {
     type Output = Self;
     fn mul(self, rhs: Self) -> Self::Output {
@@ -441,13 +467,15 @@ impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> HachiDeserial
     }
 }
 
-impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> FieldCore for Fp4<F, C2, C4> {
+impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> AdditiveGroup for Fp4<F, C2, C4> {
     const ZERO: Self = Self {
         c0: Fp2::ZERO,
         c1: Fp2::ZERO,
         _cfg: PhantomData,
     };
+}
 
+impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> FieldCore for Fp4<F, C2, C4> {
     fn one() -> Self {
         Self::new(Fp2::one(), Fp2::zero())
     }

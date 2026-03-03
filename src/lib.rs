@@ -55,7 +55,8 @@ pub mod test_utils;
 
 pub use error::HachiError;
 pub use primitives::arithmetic::{
-    CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, Module, PseudoMersenneField,
+    AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, Module,
+    PseudoMersenneField,
 };
 pub use primitives::serialization::{HachiDeserialize, HachiSerialize};
 pub use protocol::{BasisMode, CommitmentScheme, DensePoly, HachiPolyOps, OneHotPoly, Transcript};

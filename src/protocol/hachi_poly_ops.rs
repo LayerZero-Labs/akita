@@ -15,13 +15,14 @@
 //! signature will change.  Additional operation methods may be added as the
 //! protocol evolves.
 
+use crate::algebra::fields::wide::HasWide;
 use crate::algebra::ring::sparse_challenge::SparseChallenge;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::onehot::{
-    inner_ajtai_onehot_t_only, map_onehot_to_sparse_blocks, SparseBlockEntry,
+    inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks, SparseBlockEntry,
 };
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{decompose_rows_i8, mat_vec_mul_ntt_tiled_i8};
@@ -312,7 +313,7 @@ where
             })
             .collect();
 
-        let t_all = mat_vec_mul_ntt_tiled_i8(ntt_a, &block_slices, num_digits, log_basis, None);
+        let t_all = mat_vec_mul_ntt_tiled_i8(ntt_a, &block_slices, num_digits, log_basis);
 
         let results: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
             .map(|t_i| decompose_rows_i8(&t_i, num_digits, log_basis))
@@ -368,7 +369,7 @@ impl<F: FieldCore, const D: usize> OneHotPoly<F, D> {
 
 impl<F, const D: usize> HachiPolyOps<F, D> for OneHotPoly<F, D>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + HasWide,
 {
     type CommitCache = NttSlotCache<D>;
 
@@ -387,7 +388,7 @@ where
                 if ring_idx < scalars.len() {
                     let s = scalars[ring_idx];
                     for &ci in &entry.nonzero_coeffs {
-                        coeffs_acc[ci] = coeffs_acc[ci] + s;
+                        coeffs_acc[ci] += s;
                     }
                 }
             }
@@ -406,7 +407,7 @@ where
                 if entry.pos_in_block < scalars.len() && entry.pos_in_block < block_len {
                     let s = scalars[entry.pos_in_block];
                     for &ci in &entry.nonzero_coeffs {
-                        coeffs_acc[ci] = coeffs_acc[ci] + s;
+                        coeffs_acc[ci] += s;
                     }
                 }
             }
@@ -466,7 +467,7 @@ where
                     vec![[0i8; D]; zero_block_len]
                 } else {
                     let t_i =
-                        inner_ajtai_onehot_t_only(a_matrix, block_entries, block_len, num_digits);
+                        inner_ajtai_onehot_wide(a_matrix, block_entries, block_len, num_digits);
                     decompose_rows_i8(&t_i, num_digits, log_basis)
                 }
             })

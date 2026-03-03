@@ -27,7 +27,7 @@ fn linear_combination<E: FieldCore>(polys: &[UniPoly<E>], coeffs: &[E]) -> UniPo
     let mut result = vec![E::zero(); max_len];
     for (poly, coeff) in polys.iter().zip(coeffs.iter()) {
         for (i, c) in poly.coeffs.iter().enumerate() {
-            result[i] = result[i] + *c * *coeff;
+            result[i] += *c * *coeff;
         }
     }
     UniPoly::from_coeffs(result)

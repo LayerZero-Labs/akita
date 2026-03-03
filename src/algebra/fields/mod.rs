@@ -41,4 +41,4 @@ pub use pseudo_mersenne::{
     Pow2Offset56Field, Pow2Offset64Field, Pow2OffsetPrimeSpec, POW2_OFFSET_IMPLEMENTED_MAX_BITS,
     POW2_OFFSET_MAX, POW2_OFFSET_PRIMES, POW2_OFFSET_TABLE,
 };
-pub use wide::{Fp128x8i32, Fp32x2i32, Fp64x4i32};
+pub use wide::{Fp128x8i32, Fp32x2i32, Fp64x4i32, HasWide, ReduceTo};

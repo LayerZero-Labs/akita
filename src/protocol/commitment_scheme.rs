@@ -1,5 +1,6 @@
 //! Commitment scheme trait implementation.
 
+use crate::algebra::fields::wide::HasWide;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::primitives::poly::multilinear_lagrange_basis;
@@ -241,7 +242,7 @@ fn dense_poly_from_w<F: FieldCore, const D: usize>(w: &[F]) -> Result<DensePoly<
 
 impl<F, const D: usize, Cfg> CommitmentScheme<F, D> for HachiCommitmentScheme<D, Cfg>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + FieldSampling + HasWide,
     Cfg: CommitmentConfig,
 {
     type ProverSetup = HachiProverSetup<F, D>;
@@ -279,7 +280,7 @@ where
         )?;
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
         let u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_tiled_single_i8(&setup.ntt_B, &t_hat_flat, None);
+            mat_vec_mul_ntt_tiled_single_i8(&setup.ntt_B, &t_hat_flat);
         let hint = HachiCommitmentHint::new(t_hat_all);
         Ok((RingCommitment { u }, hint))
     }

@@ -448,13 +448,13 @@ where
         })
         .collect();
 
-    let t_all = mat_vec_mul_ntt_tiled_i8(ntt_a, &block_slices, depth, log_basis, None);
+    let t_all = mat_vec_mul_ntt_tiled_i8(ntt_a, &block_slices, depth, log_basis);
     let t_hat_per_block: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
         .map(|t_i| decompose_rows_i8(&t_i, depth, log_basis))
         .collect();
 
     let t_hat_flat = flatten_i8_blocks(&t_hat_per_block);
-    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_tiled_single_i8(ntt_b, &t_hat_flat, None);
+    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_tiled_single_i8(ntt_b, &t_hat_flat);
     let hint = HachiCommitmentHint::new(t_hat_per_block);
     Ok((RingCommitment { u }, hint))
 }
@@ -463,7 +463,7 @@ pub(crate) fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D
     let mut acc = F::zero();
     let mut power = F::one();
     for coeff in r.coefficients() {
-        acc = acc + (*coeff * power);
+        acc += *coeff * power;
         power = power * *alpha;
     }
     acc
@@ -685,7 +685,7 @@ pub(crate) fn build_m_evals_x_fused<F: FieldCore + CanonicalField, const D: usiz
             let mut acc = F::zero();
             if x < orig_cols {
                 for (i, eq_i) in eq_tau1.iter().enumerate().take(rows) {
-                    acc = acc + *eq_i * m_a[i][x];
+                    acc += *eq_i * m_a[i][x];
                 }
             } else if x < total_cols {
                 let offset = x - orig_cols;

@@ -3,27 +3,38 @@
 use super::{HachiDeserialize, HachiSerialize};
 use rand_core::RngCore;
 
-/// Core field operations required across algebra backends.
-pub trait FieldCore:
+/// Minimal additive group: add, sub, neg, zero.
+///
+/// Satisfied by both reduced field elements (`FieldCore`) and wide unreduced
+/// accumulators (`Fp128x8i32`, etc.), enabling generic shift-accumulate
+/// operations on `WideCyclotomicRing<W, D>`.
+pub trait AdditiveGroup:
     Sized
     + Clone
     + Copy
-    + PartialEq
     + Send
     + Sync
-    + HachiSerialize
-    + HachiDeserialize
     + std::ops::Add<Output = Self>
     + std::ops::Sub<Output = Self>
-    + std::ops::Mul<Output = Self>
     + std::ops::Neg<Output = Self>
+    + std::ops::AddAssign
+    + std::ops::SubAssign
+{
+    /// Additive identity.
+    const ZERO: Self;
+}
+
+/// Core field operations required across algebra backends.
+pub trait FieldCore:
+    AdditiveGroup
+    + PartialEq
+    + HachiSerialize
+    + HachiDeserialize
+    + std::ops::Mul<Output = Self>
     + for<'a> std::ops::Add<&'a Self, Output = Self>
     + for<'a> std::ops::Sub<&'a Self, Output = Self>
     + for<'a> std::ops::Mul<&'a Self, Output = Self>
 {
-    /// Additive identity (const).
-    const ZERO: Self;
-
     /// Additive identity.
     fn zero() -> Self {
         Self::ZERO

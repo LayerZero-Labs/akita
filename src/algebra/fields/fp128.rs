@@ -11,7 +11,7 @@
 //! `Prime128M13M4P0` denotes `p = 2^128 − 2^13 − 2^4 + 2^0`.
 
 use std::io::{Read, Write};
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
 
 use rand_core::RngCore;
 
@@ -19,7 +19,8 @@ use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
 use crate::{
-    CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, PseudoMersenneField,
+    AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible,
+    PseudoMersenneField,
 };
 
 /// Pack two u64 limbs into `[lo, hi]`.
@@ -668,6 +669,20 @@ impl<const P: u128> Neg for Fp128<P> {
     }
 }
 
+impl<const P: u128> AddAssign for Fp128<P> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl<const P: u128> SubAssign for Fp128<P> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
 impl<'a, const P: u128> Add<&'a Self> for Fp128<P> {
     type Output = Self;
     #[inline]
@@ -747,9 +762,11 @@ impl<const P: u128> HachiDeserialize for Fp128<P> {
     }
 }
 
-impl<const P: u128> FieldCore for Fp128<P> {
+impl<const P: u128> AdditiveGroup for Fp128<P> {
     const ZERO: Self = Self(pack(0, 0));
+}
 
+impl<const P: u128> FieldCore for Fp128<P> {
     fn one() -> Self {
         Self(pack(1, 0))
     }

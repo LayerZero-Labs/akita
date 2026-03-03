@@ -10,7 +10,7 @@
 
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
-use crate::CanonicalField;
+use crate::{AdditiveGroup, CanonicalField, FieldCore};
 
 use super::fp128::Fp128;
 use super::fp32::Fp32;
@@ -22,13 +22,10 @@ use super::fp64::Fp64;
 pub struct Fp32x2i32(pub [i32; 2]);
 
 impl Fp32x2i32 {
-    /// Additive identity.
-    pub const ZERO: Self = Self([0; 2]);
-
     /// Returns the zero accumulator.
     #[inline]
     pub fn zero() -> Self {
-        Self::ZERO
+        <Self as AdditiveGroup>::ZERO
     }
 }
 
@@ -103,13 +100,10 @@ impl Neg for Fp32x2i32 {
 pub struct Fp64x4i32(pub [i32; 4]);
 
 impl Fp64x4i32 {
-    /// Additive identity.
-    pub const ZERO: Self = Self([0; 4]);
-
     /// Returns the zero accumulator.
     #[inline]
     pub fn zero() -> Self {
-        Self::ZERO
+        <Self as AdditiveGroup>::ZERO
     }
 }
 
@@ -142,6 +136,74 @@ impl Fp64x4i32 {
     }
 }
 
+// --- Fp64x4i32 arithmetic: NEON (aarch64) ---
+
+#[cfg(target_arch = "aarch64")]
+impl Add for Fp64x4i32 {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        unsafe {
+            use std::arch::aarch64::*;
+            let a = vld1q_s32(self.0.as_ptr());
+            let b = vld1q_s32(rhs.0.as_ptr());
+            let mut out = [0i32; 4];
+            vst1q_s32(out.as_mut_ptr(), vaddq_s32(a, b));
+            Self(out)
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl AddAssign for Fp64x4i32 {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl Sub for Fp64x4i32 {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        unsafe {
+            use std::arch::aarch64::*;
+            let a = vld1q_s32(self.0.as_ptr());
+            let b = vld1q_s32(rhs.0.as_ptr());
+            let mut out = [0i32; 4];
+            vst1q_s32(out.as_mut_ptr(), vsubq_s32(a, b));
+            Self(out)
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl SubAssign for Fp64x4i32 {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl Neg for Fp64x4i32 {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        unsafe {
+            use std::arch::aarch64::*;
+            let a = vld1q_s32(self.0.as_ptr());
+            let mut out = [0i32; 4];
+            vst1q_s32(out.as_mut_ptr(), vnegq_s32(a));
+            Self(out)
+        }
+    }
+}
+
+// --- Fp64x4i32 arithmetic: scalar fallback ---
+
+#[cfg(not(target_arch = "aarch64"))]
 impl Add for Fp64x4i32 {
     type Output = Self;
     #[inline]
@@ -155,6 +217,7 @@ impl Add for Fp64x4i32 {
     }
 }
 
+#[cfg(not(target_arch = "aarch64"))]
 impl AddAssign for Fp64x4i32 {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
@@ -165,6 +228,7 @@ impl AddAssign for Fp64x4i32 {
     }
 }
 
+#[cfg(not(target_arch = "aarch64"))]
 impl Sub for Fp64x4i32 {
     type Output = Self;
     #[inline]
@@ -178,6 +242,7 @@ impl Sub for Fp64x4i32 {
     }
 }
 
+#[cfg(not(target_arch = "aarch64"))]
 impl SubAssign for Fp64x4i32 {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
@@ -188,6 +253,7 @@ impl SubAssign for Fp64x4i32 {
     }
 }
 
+#[cfg(not(target_arch = "aarch64"))]
 impl Neg for Fp64x4i32 {
     type Output = Self;
     #[inline]
@@ -206,13 +272,10 @@ impl Neg for Fp64x4i32 {
 pub struct Fp128x8i32(pub [i32; 8]);
 
 impl Fp128x8i32 {
-    /// Additive identity.
-    pub const ZERO: Self = Self([0; 8]);
-
     /// Returns the zero accumulator.
     #[inline]
     pub fn zero() -> Self {
-        Self::ZERO
+        <Self as AdditiveGroup>::ZERO
     }
 }
 
@@ -288,6 +351,82 @@ impl Fp128x8i32 {
     }
 }
 
+// --- Fp128x8i32 arithmetic: NEON (aarch64) ---
+
+#[cfg(target_arch = "aarch64")]
+impl Add for Fp128x8i32 {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        unsafe {
+            use std::arch::aarch64::*;
+            let a0 = vld1q_s32(self.0.as_ptr());
+            let a1 = vld1q_s32(self.0.as_ptr().add(4));
+            let b0 = vld1q_s32(rhs.0.as_ptr());
+            let b1 = vld1q_s32(rhs.0.as_ptr().add(4));
+            let mut out = [0i32; 8];
+            vst1q_s32(out.as_mut_ptr(), vaddq_s32(a0, b0));
+            vst1q_s32(out.as_mut_ptr().add(4), vaddq_s32(a1, b1));
+            Self(out)
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl AddAssign for Fp128x8i32 {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl Sub for Fp128x8i32 {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        unsafe {
+            use std::arch::aarch64::*;
+            let a0 = vld1q_s32(self.0.as_ptr());
+            let a1 = vld1q_s32(self.0.as_ptr().add(4));
+            let b0 = vld1q_s32(rhs.0.as_ptr());
+            let b1 = vld1q_s32(rhs.0.as_ptr().add(4));
+            let mut out = [0i32; 8];
+            vst1q_s32(out.as_mut_ptr(), vsubq_s32(a0, b0));
+            vst1q_s32(out.as_mut_ptr().add(4), vsubq_s32(a1, b1));
+            Self(out)
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl SubAssign for Fp128x8i32 {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl Neg for Fp128x8i32 {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        unsafe {
+            use std::arch::aarch64::*;
+            let a0 = vld1q_s32(self.0.as_ptr());
+            let a1 = vld1q_s32(self.0.as_ptr().add(4));
+            let mut out = [0i32; 8];
+            vst1q_s32(out.as_mut_ptr(), vnegq_s32(a0));
+            vst1q_s32(out.as_mut_ptr().add(4), vnegq_s32(a1));
+            Self(out)
+        }
+    }
+}
+
+// --- Fp128x8i32 arithmetic: scalar fallback ---
+
+#[cfg(not(target_arch = "aarch64"))]
 impl Add for Fp128x8i32 {
     type Output = Self;
     #[inline]
@@ -305,6 +444,7 @@ impl Add for Fp128x8i32 {
     }
 }
 
+#[cfg(not(target_arch = "aarch64"))]
 impl AddAssign for Fp128x8i32 {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
@@ -319,6 +459,7 @@ impl AddAssign for Fp128x8i32 {
     }
 }
 
+#[cfg(not(target_arch = "aarch64"))]
 impl Sub for Fp128x8i32 {
     type Output = Self;
     #[inline]
@@ -336,6 +477,7 @@ impl Sub for Fp128x8i32 {
     }
 }
 
+#[cfg(not(target_arch = "aarch64"))]
 impl SubAssign for Fp128x8i32 {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
@@ -350,6 +492,7 @@ impl SubAssign for Fp128x8i32 {
     }
 }
 
+#[cfg(not(target_arch = "aarch64"))]
 impl Neg for Fp128x8i32 {
     type Output = Self;
     #[inline]
@@ -359,6 +502,63 @@ impl Neg for Fp128x8i32 {
             -self.0[7],
         ])
     }
+}
+
+impl AdditiveGroup for Fp32x2i32 {
+    const ZERO: Self = Self([0; 2]);
+}
+
+impl AdditiveGroup for Fp64x4i32 {
+    const ZERO: Self = Self([0; 4]);
+}
+
+impl AdditiveGroup for Fp128x8i32 {
+    const ZERO: Self = Self([0; 8]);
+}
+
+/// Reduce a wide unreduced accumulator back to a canonical field element.
+pub trait ReduceTo<F> {
+    /// Carry-propagate and reduce to a canonical field element.
+    fn reduce(self) -> F;
+}
+
+impl<const P: u32> ReduceTo<Fp32<P>> for Fp32x2i32 {
+    #[inline]
+    fn reduce(self) -> Fp32<P> {
+        Fp32x2i32::reduce::<P>(self)
+    }
+}
+
+impl<const P: u64> ReduceTo<Fp64<P>> for Fp64x4i32 {
+    #[inline]
+    fn reduce(self) -> Fp64<P> {
+        Fp64x4i32::reduce::<P>(self)
+    }
+}
+
+impl<const P: u128> ReduceTo<Fp128<P>> for Fp128x8i32 {
+    #[inline]
+    fn reduce(self) -> Fp128<P> {
+        Fp128x8i32::reduce::<P>(self)
+    }
+}
+
+/// Associates a field type with its wide unreduced accumulator.
+pub trait HasWide: FieldCore {
+    /// The wide accumulator type.
+    type Wide: AdditiveGroup + From<Self> + ReduceTo<Self>;
+}
+
+impl<const P: u32> HasWide for Fp32<P> {
+    type Wide = Fp32x2i32;
+}
+
+impl<const P: u64> HasWide for Fp64<P> {
+    type Wide = Fp64x4i32;
+}
+
+impl<const P: u128> HasWide for Fp128<P> {
+    type Wide = Fp128x8i32;
 }
 
 #[cfg(test)]

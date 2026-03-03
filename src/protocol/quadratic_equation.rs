@@ -11,7 +11,7 @@ use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
     flatten_i8_blocks, mat_vec_mul_ntt_tiled_single_i8, unreduced_quotient_rows_ntt_cached,
-    unreduced_quotient_rows_ntt_cached_i8,
+    unreduced_quotient_rows_ntt_tiled_i8,
 };
 use crate::protocol::commitment::utils::norm::{detect_field_modulus, vec_inf_norm};
 use crate::protocol::commitment::{
@@ -64,7 +64,7 @@ fn compute_v<F: FieldCore + CanonicalField, const D: usize>(
     ntt_d: &NttSlotCache<D>,
     w_hat_flat: &[[i8; D]],
 ) -> Vec<CyclotomicRing<F, D>> {
-    mat_vec_mul_ntt_tiled_single_i8(ntt_d, w_hat_flat, None)
+    mat_vec_mul_ntt_tiled_single_i8(ntt_d, w_hat_flat)
 }
 
 fn flatten_w_hat<const D: usize>(w_hat: &[Vec<[i8; D]>]) -> Vec<[i8; D]> {
@@ -355,7 +355,7 @@ fn add_scalar_ring_product<F: FieldCore, const D: usize>(
     ring: &CyclotomicRing<F, D>,
 ) {
     for (k, coeff) in ring.coefficients().iter().enumerate() {
-        poly[k] = poly[k] + *scalar * *coeff;
+        poly[k] += *scalar * *coeff;
     }
 }
 
@@ -366,7 +366,7 @@ fn sub_scalar_ring_product<F: FieldCore, const D: usize>(
     ring: &CyclotomicRing<F, D>,
 ) {
     for (k, coeff) in ring.coefficients().iter().enumerate() {
-        poly[k] = poly[k] - *scalar * *coeff;
+        poly[k] -= *scalar * *coeff;
     }
 }
 
@@ -383,7 +383,7 @@ fn add_sparse_ring_product<F: FieldCore + CanonicalField, const D: usize>(
         let c = F::from_i64(coeff as i64);
         let p = pos as usize;
         for (s, &r_s) in rc.iter().enumerate() {
-            poly[p + s] = poly[p + s] + c * r_s;
+            poly[p + s] += c * r_s;
         }
     }
 }
@@ -424,14 +424,14 @@ where
     let t_d = Instant::now();
     let d_quotients = {
         let _span = tracing::info_span!("D_rows_ntt").entered();
-        unreduced_quotient_rows_ntt_cached_i8(ntt_d, w_hat_flat)
+        unreduced_quotient_rows_ntt_tiled_i8(ntt_d, w_hat_flat)
     };
     let d_time = t_d.elapsed().as_secs_f64();
 
     let t_b = Instant::now();
     let b_quotients = {
         let _span = tracing::info_span!("B_rows_ntt").entered();
-        unreduced_quotient_rows_ntt_cached_i8(ntt_b, &t_hat_flat)
+        unreduced_quotient_rows_ntt_tiled_i8(ntt_b, &t_hat_flat)
     };
     let b_time = t_b.elapsed().as_secs_f64();
 
@@ -473,7 +473,7 @@ where
             quotient_buf.fill(F::zero());
             quotient_buf[..(poly_len - D)].copy_from_slice(&poly_buf[D..poly_len]);
             for k in 0..D {
-                quotient_buf[k] = quotient_buf[k] - a_q[k];
+                quotient_buf[k] -= a_q[k];
             }
             result.push(CyclotomicRing::from_slice(&quotient_buf));
             other_time += t_row.elapsed().as_secs_f64();
@@ -506,14 +506,14 @@ where
 
             let y_coeffs = _y_i.coefficients();
             for k in 0..D {
-                poly_buf[k] = poly_buf[k] - y_coeffs[k];
+                poly_buf[k] -= y_coeffs[k];
             }
 
             quotient_buf.fill(F::zero());
             for k in (D..poly_len).rev() {
                 let q = poly_buf[k];
                 quotient_buf[k - D] = q;
-                poly_buf[k - D] = poly_buf[k - D] - q;
+                poly_buf[k - D] -= q;
             }
             result.push(CyclotomicRing::from_slice(&quotient_buf));
             other_time += t_row.elapsed().as_secs_f64();

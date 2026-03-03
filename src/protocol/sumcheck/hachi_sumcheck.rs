@@ -174,17 +174,17 @@ impl<E: FieldCore + FromSmallInt + CanonicalField> HachiSumcheckProver<E> {
                 let a_1 = alpha_compact[(2 * j + 1) >> current_x_width];
                 let m_0 = m_compact[(2 * j) & current_x_mask];
                 let m_1 = m_compact[(2 * j + 1) & current_x_mask];
-                evals[0] = evals[0] + w_0 * a_0 * m_0;
-                evals[1] = evals[1] + w_1 * a_1 * m_1;
+                evals[0] += w_0 * a_0 * m_0;
+                evals[1] += w_1 * a_1 * m_1;
                 let w_2 = w_1 + w_1 - w_0;
                 let a_2 = a_1 + a_1 - a_0;
                 let m_2 = m_1 + m_1 - m_0;
-                evals[2] = evals[2] + w_2 * a_2 * m_2;
+                evals[2] += w_2 * a_2 * m_2;
                 evals
             },
             |mut a, b| {
                 for (ai, bi) in a.iter_mut().zip(b.iter()) {
-                    *ai = *ai + *bi;
+                    *ai += *bi;
                 }
                 a
             }
@@ -282,30 +282,29 @@ impl<E: FieldCore + FromSmallInt + CanonicalField> SumcheckInstanceProver<E>
                                 let delta = w_1 - w_0;
                                 let mut w_t = w_0;
                                 for eval in norm_evals.iter_mut() {
-                                    *eval = *eval
-                                        + eq_rem * range_check_eval_precomputed(w_t, offsets_sq);
-                                    w_t = w_t + delta;
+                                    *eval += eq_rem * range_check_eval_precomputed(w_t, offsets_sq);
+                                    w_t += delta;
                                 }
 
                                 let a_0 = alpha_compact[(2 * j) >> current_x_width];
                                 let a_1 = alpha_compact[(2 * j + 1) >> current_x_width];
                                 let m_0 = m_compact[(2 * j) & current_x_mask];
                                 let m_1 = m_compact[(2 * j + 1) & current_x_mask];
-                                rel_evals[0] = rel_evals[0] + w_0 * a_0 * m_0;
-                                rel_evals[1] = rel_evals[1] + w_1 * a_1 * m_1;
+                                rel_evals[0] += w_0 * a_0 * m_0;
+                                rel_evals[1] += w_1 * a_1 * m_1;
                                 let w_2 = w_1 + w_1 - w_0;
                                 let a_2 = a_1 + a_1 - a_0;
                                 let m_2 = m_1 + m_1 - m_0;
-                                rel_evals[2] = rel_evals[2] + w_2 * a_2 * m_2;
+                                rel_evals[2] += w_2 * a_2 * m_2;
 
                                 (norm_evals, rel_evals)
                             },
                             |(mut na, mut ra), (nb, rb)| {
                                 for (ai, bi) in na.iter_mut().zip(nb.iter()) {
-                                    *ai = *ai + *bi;
+                                    *ai += *bi;
                                 }
                                 for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                                    *ai = *ai + *bi;
+                                    *ai += *bi;
                                 }
                                 (na, ra)
                             }
@@ -344,21 +343,21 @@ impl<E: FieldCore + FromSmallInt + CanonicalField> SumcheckInstanceProver<E>
                                 let a_1 = alpha_compact[(2 * j + 1) >> current_x_width];
                                 let m_0 = m_compact[(2 * j) & current_x_mask];
                                 let m_1 = m_compact[(2 * j + 1) & current_x_mask];
-                                rel_evals[0] = rel_evals[0] + w_0 * a_0 * m_0;
-                                rel_evals[1] = rel_evals[1] + w_1 * a_1 * m_1;
+                                rel_evals[0] += w_0 * a_0 * m_0;
+                                rel_evals[1] += w_1 * a_1 * m_1;
                                 let w_2 = w_1 + w_1 - w_0;
                                 let a_2 = a_1 + a_1 - a_0;
                                 let m_2 = m_1 + m_1 - m_0;
-                                rel_evals[2] = rel_evals[2] + w_2 * a_2 * m_2;
+                                rel_evals[2] += w_2 * a_2 * m_2;
 
                                 (coeffs, rel_evals)
                             },
                             |(mut ca, mut ra), (cb, rb)| {
                                 for (ai, bi) in ca.iter_mut().zip(cb.iter()) {
-                                    *ai = *ai + *bi;
+                                    *ai += *bi;
                                 }
                                 for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                                    *ai = *ai + *bi;
+                                    *ai += *bi;
                                 }
                                 (ca, ra)
                             }
@@ -381,10 +380,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField> SumcheckInstanceProver<E>
         let max_len = norm_poly.coeffs.len().max(relation_poly.coeffs.len());
         let mut combined = vec![E::zero(); max_len];
         for (i, c) in norm_poly.coeffs.iter().enumerate() {
-            combined[i] = combined[i] + self.batching_coeff * *c;
+            combined[i] += self.batching_coeff * *c;
         }
         for (i, c) in relation_poly.coeffs.iter().enumerate() {
-            combined[i] = combined[i] + *c;
+            combined[i] += *c;
         }
         UniPoly::from_coeffs(combined)
     }
@@ -468,7 +467,7 @@ impl<F: FieldCore + FromSmallInt, const D: usize> HachiSumcheckVerifier<F, D> {
         let mut relation_claim = F::zero();
         for (i, eq_i) in eq_tau1.iter().enumerate() {
             let y_i = if i < y_a.len() { y_a[i] } else { F::zero() };
-            relation_claim = relation_claim + *eq_i * y_i;
+            relation_claim += *eq_i * y_i;
         }
 
         Self {

@@ -131,7 +131,7 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for RelationSumcheck
                             let w_t = w_0 + t_e * (w_1 - w_0);
                             let a_t = a_0 + t_e * (a_1 - a_0);
                             let m_t = m_0 + t_e * (m_1 - m_0);
-                            *eval = *eval + w_t * a_t * m_t;
+                            *eval += w_t * a_t * m_t;
                         }
                         evals
                     },
@@ -140,7 +140,7 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for RelationSumcheck
                     || vec![E::zero(); num_points],
                     |mut a, b| {
                         for (ai, bi) in a.iter_mut().zip(b.iter()) {
-                            *ai = *ai + *bi;
+                            *ai += *bi;
                         }
                         a
                     },
@@ -254,7 +254,7 @@ impl<F: FieldCore, const D: usize> SumcheckInstanceVerifier<F> for RelationSumch
         let mut acc = F::zero();
         for (i, eq_i) in eq_tau.iter().enumerate() {
             let y_i = if i < y_a.len() { y_a[i] } else { F::zero() };
-            acc = acc + *eq_i * y_i;
+            acc += *eq_i * y_i;
         }
         acc
     }
