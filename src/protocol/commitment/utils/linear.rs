@@ -1,5 +1,7 @@
 //! Linear algebra helpers for ring commitment.
 
+#[cfg(target_arch = "aarch64")]
+use crate::algebra::ntt::neon;
 use crate::algebra::ntt::{MontCoeff, PrimeWidth};
 use crate::algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut};
 #[cfg(test)]
@@ -9,6 +11,7 @@ use crate::parallel::*;
 use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter};
 use crate::{CanonicalField, FieldCore};
 use std::array::from_fn;
+use std::mem::size_of;
 
 use super::crt_ntt::NttSlotCache;
 #[cfg(test)]
@@ -38,6 +41,35 @@ fn accumulate_pointwise_product_into<W: PrimeWidth, const K: usize, const D: usi
     rhs: &CyclotomicCrtNtt<W, K, D>,
     params: &CrtNttParamSet<W, K, D>,
 ) {
+    #[cfg(target_arch = "aarch64")]
+    if neon::use_neon_ntt() {
+        for k in 0..K {
+            let prime = params.primes[k];
+            unsafe {
+                if size_of::<W>() == size_of::<i32>() {
+                    neon::pointwise_mul_acc_i32(
+                        acc.limbs[k].as_mut_ptr() as *mut i32,
+                        lhs.limbs[k].as_ptr() as *const i32,
+                        rhs.limbs[k].as_ptr() as *const i32,
+                        D,
+                        prime.p.to_i64() as i32,
+                        prime.pinv.to_i64() as i32,
+                    );
+                } else {
+                    neon::pointwise_mul_acc_i16(
+                        acc.limbs[k].as_mut_ptr() as *mut i16,
+                        lhs.limbs[k].as_ptr() as *const i16,
+                        rhs.limbs[k].as_ptr() as *const i16,
+                        D,
+                        prime.p.to_i64() as i16,
+                        prime.pinv.to_i64() as i16,
+                    );
+                }
+            }
+        }
+        return;
+    }
+
     for k in 0..K {
         let prime = params.primes[k];
         let acc_limb = &mut acc.limbs[k];
@@ -364,6 +396,31 @@ fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
     other: &CyclotomicCrtNtt<W, K, D>,
     params: &CrtNttParamSet<W, K, D>,
 ) {
+    #[cfg(target_arch = "aarch64")]
+    if neon::use_neon_ntt() {
+        for k in 0..K {
+            let prime = params.primes[k];
+            unsafe {
+                if size_of::<W>() == size_of::<i32>() {
+                    neon::add_reduce_i32(
+                        acc.limbs[k].as_mut_ptr() as *mut i32,
+                        other.limbs[k].as_ptr() as *const i32,
+                        D,
+                        prime.p.to_i64() as i32,
+                    );
+                } else {
+                    neon::add_reduce_i16(
+                        acc.limbs[k].as_mut_ptr() as *mut i16,
+                        other.limbs[k].as_ptr() as *const i16,
+                        D,
+                        prime.p.to_i64() as i16,
+                    );
+                }
+            }
+        }
+        return;
+    }
+
     for k in 0..K {
         let prime = params.primes[k];
         for d in 0..D {
@@ -423,7 +480,7 @@ fn mat_vec_mul_i8_with_params<
     }
 
     let lut = DigitMontLut::new(params);
-    let tw = (TARGET_L2_CACHE_BYTES / (K * D * std::mem::size_of::<W>())).max(1);
+    let tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
     let num_tiles = inner_width.div_ceil(tw);
 
     let final_accs: Vec<Vec<CyclotomicCrtNtt<W, K, D>>> = cfg_fold_reduce!(
@@ -521,7 +578,7 @@ fn mat_vec_mul_single_i8_with_params<
 
     let lut = DigitMontLut::new(params);
     let vec_len = vec.len().min(inner_width);
-    let tw = (TARGET_L2_CACHE_BYTES / (K * D * std::mem::size_of::<W>())).max(1);
+    let tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
     let num_tiles = vec_len.div_ceil(tw);
 
     let final_accs: Vec<CyclotomicCrtNtt<W, K, D>> = cfg_fold_reduce!(
@@ -606,7 +663,7 @@ fn quotient_single_i8_with_params<
 
     let lut = DigitMontLut::new(params);
     let vec_len = vec.len().min(inner_width);
-    let tw = (TARGET_L2_CACHE_BYTES / (K * D * std::mem::size_of::<W>())).max(1);
+    let tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
     let num_tiles = vec_len.div_ceil(tw);
 
     let zero = CyclotomicCrtNtt::<W, K, D>::zero();

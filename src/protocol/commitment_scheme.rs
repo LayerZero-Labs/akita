@@ -6,8 +6,9 @@ use crate::error::HachiError;
 use crate::primitives::poly::multilinear_lagrange_basis;
 use crate::protocol::commitment::utils::linear::{flatten_i8_blocks, mat_vec_mul_ntt_single_i8};
 use crate::protocol::commitment::{
-    AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore, HachiProverSetup,
-    HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
+    AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore,
+    HachiCommitmentLayout, HachiProverSetup, HachiVerifierSetup, RingCommitment,
+    RingCommitmentScheme,
 };
 use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
 use crate::protocol::opening_point::{BasisMode, RingOpeningPoint};
@@ -82,6 +83,7 @@ fn prove_one_level<F, T, const D: usize, Cfg, P>(
     commitment: &RingCommitment<F, D>,
     basis: BasisMode,
     level: usize,
+    layout: HachiCommitmentLayout,
 ) -> Result<ProveLevelOutput<F, D>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -96,18 +98,21 @@ where
             actual: opening_point.len(),
         });
     }
-
-    let layout = Cfg::commitment_layout(opening_point.len())?;
     let target_num_vars = layout.m_vars + layout.r_vars + alpha;
     let mut padded_point = opening_point.to_vec();
     padded_point.resize(target_num_vars, F::zero());
     let outer_point = &padded_point[alpha..];
 
-    let ring_opening_point =
-        ring_opening_point_from_field::<F>(outer_point, layout.r_vars, layout.m_vars, basis)?;
+    let ring_opening_point = {
+        let _span = tracing::info_span!("ring_opening_point", level).entered();
+        ring_opening_point_from_field::<F>(outer_point, layout.r_vars, layout.m_vars, basis)?
+    };
 
     let t0 = Instant::now();
-    let outer_weights = basis_weights(outer_point, basis);
+    let outer_weights = {
+        let _span = tracing::info_span!("outer_basis_weights", level).entered();
+        basis_weights(outer_point, basis)
+    };
     let y_ring = {
         let _span = tracing::info_span!("evaluate_ring", level).entered();
         poly.evaluate_ring(&outer_weights)
@@ -151,8 +156,11 @@ where
         layout,
     )?;
     eprintln!(
-        "  [hachi prove L{level}] ring_switch_prover: {:.2}s",
-        t2.elapsed().as_secs_f64()
+        "  [hachi prove L{level}] ring_switch_prover: {:.2}s, w.len()={}, num_u={}, num_l={}",
+        t2.elapsed().as_secs_f64(),
+        rs.w.len(),
+        rs.num_u,
+        rs.num_l,
     );
 
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
@@ -180,7 +188,10 @@ where
         t3.elapsed().as_secs_f64()
     );
 
-    let w_eval = multilinear_eval(&rs.w_evals_field, &sumcheck_challenges)?;
+    let w_eval = {
+        let _span = tracing::info_span!("multilinear_eval", level).entered();
+        multilinear_eval(&rs.w_evals_field, &sumcheck_challenges)?
+    };
 
     Ok(ProveLevelOutput {
         level_proof: HachiLevelProof {
@@ -232,6 +243,7 @@ fn next_level_opening_point<F: FieldCore>(
 
 /// Build a `DensePoly` from the flat w digit vector, converting i8 -> F
 /// via lookup table and padding to the next power of two.
+#[tracing::instrument(skip_all, name = "dense_poly_from_w")]
 fn dense_poly_from_w<F: FieldCore + FromSmallInt, const D: usize>(
     w: &[i8],
     log_basis: u32,
@@ -273,8 +285,9 @@ where
     fn commit<P: HachiPolyOps<F, D>>(
         poly: &P,
         setup: &Self::ProverSetup,
+        layout: &HachiCommitmentLayout,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError> {
-        let layout = setup.layout();
+        setup.assert_layout_fits(layout);
         let t_hat_all = poly.commit_inner(
             &setup.expanded.A,
             &setup.ntt_A,
@@ -297,11 +310,12 @@ where
         transcript: &mut T,
         commitment: &Self::Commitment,
         basis: BasisMode,
+        layout: &HachiCommitmentLayout,
     ) -> Result<Self::Proof, HachiError> {
         let t_prove_total = Instant::now();
         let mut levels = Vec::new();
 
-        // Level 0: original polynomial with Cfg
+        // Level 0: original polynomial with caller-provided layout
         let out = prove_one_level::<F, T, D, Cfg, P>(
             setup,
             poly,
@@ -311,6 +325,7 @@ where
             commitment,
             basis,
             0,
+            *layout,
         )?;
         levels.push(out.level_proof);
 
@@ -329,6 +344,7 @@ where
                 next_level_opening_point(&current_challenges, current_num_u, current_num_l);
             let w_commitment = &levels.last().unwrap().w_commitment;
 
+            let w_layout = <WCommitmentConfig<D, Cfg>>::commitment_layout(opening_point.len())?;
             let out = prove_one_level::<F, T, D, WCommitmentConfig<D, Cfg>, DensePoly<F, D>>(
                 setup,
                 &w_poly,
@@ -338,6 +354,7 @@ where
                 w_commitment,
                 BasisMode::Lagrange,
                 level,
+                w_layout,
             )?;
             levels.push(out.level_proof);
 
@@ -370,6 +387,7 @@ where
         opening: &F,
         commitment: &Self::Commitment,
         basis: BasisMode,
+        layout: &HachiCommitmentLayout,
     ) -> Result<(), HachiError> {
         if proof.levels.is_empty() {
             return Err(HachiError::InvalidProof);
@@ -387,8 +405,10 @@ where
         for (i, level_proof) in proof.levels.iter().enumerate() {
             let is_last = i == num_levels - 1;
 
+            eprintln!("[verify] level {i}/{num_levels}, is_last={is_last}, point_len={}, basis={current_basis:?}", current_point.len());
+
             let challenges = if i == 0 {
-                verify_one_level::<F, T, D, Cfg>(
+                match verify_one_level::<F, T, D, Cfg>(
                     level_proof,
                     setup,
                     transcript,
@@ -398,9 +418,15 @@ where
                     current_basis,
                     is_last,
                     if is_last { Some(&final_w_elems) } else { None },
-                )?
+                    *layout,
+                ) {
+                    Ok(c) => { eprintln!("[verify] level {i} OK, {} challenges", c.len()); c }
+                    Err(e) => { eprintln!("[verify] level {i} FAILED: {e:?}"); return Err(e); }
+                }
             } else {
-                verify_one_level::<F, T, D, WCommitmentConfig<D, Cfg>>(
+                let w_layout = <WCommitmentConfig<D, Cfg>>::commitment_layout(current_point.len())?;
+                eprintln!("[verify] level {i} w_layout: m={}, r={}", w_layout.m_vars, w_layout.r_vars);
+                match verify_one_level::<F, T, D, WCommitmentConfig<D, Cfg>>(
                     level_proof,
                     setup,
                     transcript,
@@ -410,7 +436,11 @@ where
                     current_basis,
                     is_last,
                     if is_last { Some(&final_w_elems) } else { None },
-                )?
+                    w_layout,
+                ) {
+                    Ok(c) => { eprintln!("[verify] level {i} OK, {} challenges", c.len()); c }
+                    Err(e) => { eprintln!("[verify] level {i} FAILED: {e:?}"); return Err(e); }
+                }
             };
 
             if !is_last {
@@ -450,6 +480,7 @@ fn verify_one_level<F, T, const D: usize, Cfg>(
     basis: BasisMode,
     is_last: bool,
     final_w: Option<&[F]>,
+    layout: HachiCommitmentLayout,
 ) -> Result<Vec<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -462,7 +493,6 @@ where
             "opening point length underflow".to_string(),
         ));
     }
-    let layout = Cfg::commitment_layout(opening_point.len())?;
     let target_num_vars = layout.m_vars + layout.r_vars + alpha_bits;
     let mut padded_point = opening_point.to_vec();
     padded_point.resize(target_num_vars, F::zero());
@@ -481,8 +511,10 @@ where
     let trace_lhs = trace::<F, { D }>(&(level_proof.y_ring * v.sigma_m1()));
     let trace_rhs = d * *opening;
     if trace_lhs != trace_rhs {
+        eprintln!("[verify_one_level] TRACE CHECK FAILED");
         return Err(HachiError::InvalidProof);
     }
+    eprintln!("[verify_one_level] trace check passed, w_len calc next...");
 
     let ring_opening_point = ring_opening_point_from_field::<F>(
         reduced_opening_point,
@@ -504,6 +536,7 @@ where
     } else {
         w_ring_element_count::<F, Cfg>(layout) * D
     };
+    eprintln!("[verify_one_level] w_len={w_len}, is_last={is_last}, layout m={} r={} inner_width={} num_digits_open={} num_digits_commit={} num_digits_fold={}", layout.m_vars, layout.r_vars, layout.inner_width, layout.num_digits_open, layout.num_digits_commit, layout.num_digits_fold);
 
     let rs = ring_switch_verifier::<F, T, { D }, Cfg>(
         &quad_eq,
@@ -723,7 +756,8 @@ mod tests {
         let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
-        let (commitment, hint) = <Scheme as CommitmentScheme<F, D>>::commit(&poly, &setup).unwrap();
+        let (commitment, hint) =
+            <Scheme as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout).unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
         let lw = lagrange_weights(&opening_point);
@@ -741,6 +775,7 @@ mod tests {
             &mut prover_transcript,
             &commitment,
             BasisMode::Lagrange,
+            &layout,
         )
         .unwrap();
 
@@ -753,6 +788,7 @@ mod tests {
             &opening,
             &commitment,
             BasisMode::Lagrange,
+            &layout,
         );
 
         assert!(result.is_ok());
@@ -769,7 +805,8 @@ mod tests {
         let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
-        let (commitment, hint) = <Scheme as CommitmentScheme<F, D>>::commit(&poly, &setup).unwrap();
+        let (commitment, hint) =
+            <Scheme as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout).unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
         let lw = lagrange_weights(&opening_point);
@@ -787,6 +824,7 @@ mod tests {
             &mut prover_transcript,
             &commitment,
             BasisMode::Lagrange,
+            &layout,
         )
         .unwrap();
 
@@ -800,6 +838,7 @@ mod tests {
             &wrong_opening,
             &commitment,
             BasisMode::Lagrange,
+            &layout,
         );
 
         assert!(
@@ -821,7 +860,8 @@ mod tests {
         let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
-        let (commitment, hint) = <Scheme as CommitmentScheme<F, D>>::commit(&poly, &setup).unwrap();
+        let (commitment, hint) =
+            <Scheme as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout).unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
 
@@ -840,6 +880,7 @@ mod tests {
             &mut prover_transcript,
             &commitment,
             BasisMode::Monomial,
+            &layout,
         )
         .unwrap();
 
@@ -852,6 +893,7 @@ mod tests {
             &opening,
             &commitment,
             BasisMode::Monomial,
+            &layout,
         );
 
         assert!(

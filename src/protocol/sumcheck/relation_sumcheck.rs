@@ -298,7 +298,7 @@ mod tests {
         let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
 
         let setup = Scheme::setup_prover(num_vars);
-        let (commitment, hint) = Scheme::commit(&poly, &setup).unwrap();
+        let (commitment, hint) = Scheme::commit(&poly, &setup, &layout).unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
         let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
@@ -310,6 +310,7 @@ mod tests {
             &mut prover_transcript,
             &commitment,
             BasisMode::Lagrange,
+            &layout,
         )
         .unwrap();
 

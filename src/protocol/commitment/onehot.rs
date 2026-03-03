@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use crate::algebra::fields::wide::{HasWide, ReduceTo};
 use crate::algebra::ring::{CyclotomicRing, WideCyclotomicRing};
 use crate::error::HachiError;
+use crate::protocol::hachi_poly_ops::OneHotIndex;
 use crate::{AdditiveGroup, CanonicalField, FieldCore};
 
 /// Describes a nonzero ring element within one block of the commitment layout.
@@ -36,9 +37,9 @@ pub struct SparseBlockEntry {
 /// Returns an error if K and D are not "nicely matched" (one must divide
 /// the other), if any index is out of range, or if the dimensions don't
 /// fill the commitment layout.
-pub fn map_onehot_to_sparse_blocks(
+pub fn map_onehot_to_sparse_blocks<I: OneHotIndex>(
     onehot_k: usize,
-    indices: &[Option<usize>],
+    indices: &[Option<I>],
     r: usize,
     m: usize,
     d: usize,
@@ -73,10 +74,12 @@ pub fn map_onehot_to_sparse_blocks(
         });
     }
 
-    // Accumulate nonzero coefficients per ring element index.
     let mut ring_elem_map: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for (c, opt) in indices.iter().enumerate() {
-        let Some(&idx) = opt.as_ref() else { continue };
+        let Some(&idx_raw) = opt.as_ref() else {
+            continue;
+        };
+        let idx = idx_raw.as_usize();
         if idx >= onehot_k {
             return Err(HachiError::InvalidInput(format!(
                 "index {idx} out of range for chunk size K={onehot_k} at position {c}"
@@ -168,6 +171,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algebra::fields::{Fp64, Prime128M8M4M1M0};
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
     #[test]
     fn map_onehot_k_gt_d() {
@@ -175,7 +181,7 @@ mod tests {
         // R=1 (2 blocks), M=2 (4 per block) => 8 ring elements total
         let k = 16;
         let d = 4;
-        let indices = vec![Some(3), Some(10)];
+        let indices: Vec<Option<u32>> = vec![Some(3), Some(10)];
         let blocks = map_onehot_to_sparse_blocks(k, &indices, 1, 2, d).unwrap();
 
         assert_eq!(blocks.len(), 2);
@@ -195,7 +201,7 @@ mod tests {
         // R=1 (2 blocks), M=1 (2 per block)
         let k = 4;
         let d = 4;
-        let indices = vec![Some(0), Some(2), Some(3), Some(1)];
+        let indices: Vec<Option<u32>> = vec![Some(0), Some(2), Some(3), Some(1)];
         let blocks = map_onehot_to_sparse_blocks(k, &indices, 1, 1, d).unwrap();
 
         assert_eq!(blocks.len(), 2);
@@ -215,7 +221,7 @@ mod tests {
         // R=1 (2 blocks), M=1 (2 per block)
         let k = 4;
         let d = 8;
-        let indices = vec![
+        let indices: Vec<Option<u32>> = vec![
             Some(0),
             Some(2),
             Some(3),
@@ -244,16 +250,12 @@ mod tests {
 
     #[test]
     fn map_onehot_rejects_non_divisible() {
-        let result = map_onehot_to_sparse_blocks(3, &[Some(0), Some(1)], 0, 1, 4);
+        let result = map_onehot_to_sparse_blocks(3, &[Some(0usize), Some(1)], 0, 1, 4);
         assert!(result.is_err());
     }
 
     #[test]
     fn wide_matches_reference() {
-        use crate::algebra::fields::Fp64;
-        use rand::rngs::StdRng;
-        use rand::SeedableRng;
-
         type F = Fp64<4294967197>;
         const D: usize = 64;
 
@@ -291,10 +293,6 @@ mod tests {
 
     #[test]
     fn wide_matches_reference_fp128() {
-        use crate::algebra::fields::Prime128M8M4M1M0;
-        use rand::rngs::StdRng;
-        use rand::SeedableRng;
-
         type F = Prime128M8M4M1M0;
         const D: usize = 64;
 

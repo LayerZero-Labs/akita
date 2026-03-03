@@ -23,7 +23,7 @@ pub use commitment::{
     SmallTestCommitmentConfig,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
-pub use hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
+pub use hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly};
 pub use opening_point::{BasisMode, RingOpeningPoint};
 pub use proof::{HachiLevelProof, HachiProof, PackedDigits};
 pub use quadratic_equation::QuadraticEquation;

@@ -63,9 +63,11 @@ fn run_prove(
     poly: &DensePoly<F, D>,
     pt: &[F],
     opening: F,
+    layout: &HachiCommitmentLayout,
 ) {
     let t0 = Instant::now();
-    let (commitment, hint) = <Scheme as CommitmentScheme<F, D>>::commit(poly, setup).unwrap();
+    let (commitment, hint) =
+        <Scheme as CommitmentScheme<F, D>>::commit(poly, setup, layout).unwrap();
     eprintln!("[{label}] commit: {:.3}s", t0.elapsed().as_secs_f64());
 
     let t0 = Instant::now();
@@ -78,6 +80,7 @@ fn run_prove(
         &mut prover_transcript,
         &commitment,
         BasisMode::Lagrange,
+        layout,
     )
     .unwrap();
     eprintln!("[{label}] prove: {:.3}s", t0.elapsed().as_secs_f64());
@@ -94,6 +97,7 @@ fn run_prove(
         &opening,
         &commitment,
         BasisMode::Lagrange,
+        layout,
     )
     .unwrap();
     eprintln!("[{label}] verify: {:.3}s", t0.elapsed().as_secs_f64());
@@ -127,13 +131,14 @@ fn run_prove_onehot(
     label: &str,
     setup: &<Scheme as CommitmentScheme<F, D>>::ProverSetup,
     onehot_poly: &OneHotPoly<F, D>,
-    dense_poly: &DensePoly<F, D>,
+    _dense_poly: &DensePoly<F, D>,
     pt: &[F],
     opening: F,
+    layout: &HachiCommitmentLayout,
 ) {
     let t0 = Instant::now();
     let (commitment, hint) =
-        <Scheme as CommitmentScheme<F, D>>::commit(onehot_poly, setup).unwrap();
+        <Scheme as CommitmentScheme<F, D>>::commit(onehot_poly, setup, layout).unwrap();
     eprintln!(
         "[{label}] onehot commit: {:.3}s",
         t0.elapsed().as_secs_f64()
@@ -143,12 +148,13 @@ fn run_prove_onehot(
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
     let proof = <Scheme as CommitmentScheme<F, D>>::prove(
         setup,
-        dense_poly,
+        onehot_poly,
         pt,
         hint,
         &mut prover_transcript,
         &commitment,
         BasisMode::Lagrange,
+        layout,
     )
     .unwrap();
     eprintln!("[{label}] prove: {:.3}s", t0.elapsed().as_secs_f64());
@@ -165,6 +171,7 @@ fn run_prove_onehot(
         &opening,
         &commitment,
         BasisMode::Lagrange,
+        layout,
     )
     .unwrap();
     eprintln!("[{label}] verify: {:.3}s", t0.elapsed().as_secs_f64());
@@ -232,16 +239,18 @@ fn main() {
 
     let ab_mode = env::var("HACHI_AB_TEST").unwrap_or_default();
 
+    let layout = ProfileCfg::commitment_layout(0).expect("layout");
+
     if ab_mode == "1" {
         eprintln!("\n=== A/B TEST: running both kernels ===\n");
 
         env::set_var("HACHI_NORM_KERNEL", "affine_coeff");
         eprintln!("--- kernel: affine_coeff ---");
-        run_prove("affine", &setup, &poly, &pt, opening);
+        run_prove("affine", &setup, &poly, &pt, opening, &layout);
 
         env::set_var("HACHI_NORM_KERNEL", "point_eval");
         eprintln!("\n--- kernel: point_eval ---");
-        run_prove("point", &setup, &poly, &pt, opening);
+        run_prove("point", &setup, &poly, &pt, opening, &layout);
 
         env::remove_var("HACHI_NORM_KERNEL");
     } else {
@@ -249,11 +258,10 @@ fn main() {
             "kernel: {:?} (set HACHI_AB_TEST=1 to compare both)",
             choose_round_kernel(b as usize)
         );
-        run_prove("default", &setup, &poly, &pt, opening);
+        run_prove("default", &setup, &poly, &pt, opening, &layout);
     }
 
     eprintln!("\n--- one-hot commit path ---");
-    let layout = ProfileCfg::commitment_layout(0).expect("layout");
     let total_ring = layout.num_blocks * layout.block_len;
     let onehot_k = D;
     let num_chunks = total_ring; // K == D, so each ring element is one chunk
@@ -297,6 +305,7 @@ fn main() {
         &dense_poly_oh,
         &pt,
         opening_oh,
+        &layout,
     );
 
     eprintln!("\nDone. Trace saved to {trace_file}");

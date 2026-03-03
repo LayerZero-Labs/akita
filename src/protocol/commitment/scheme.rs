@@ -4,7 +4,7 @@ use super::config::{CommitmentConfig, HachiCommitmentLayout};
 use super::transcript_append::AppendToTranscript;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
-use crate::protocol::hachi_poly_ops::HachiPolyOps;
+use crate::protocol::hachi_poly_ops::{HachiPolyOps, OneHotIndex};
 use crate::protocol::opening_point::BasisMode;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
@@ -63,7 +63,11 @@ where
     /// Derive verifier setup from prover setup.
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;
 
-    /// Commit to one polynomial.
+    /// Commit to one polynomial with a caller-specified layout.
+    ///
+    /// The layout's matrix dimensions must not exceed the setup's max dimensions.
+    /// Callers control `num_digits_commit` via the layout to reduce decomposition
+    /// depth for polynomials with bounded coefficients (e.g. delta=1 for {0,1}).
     ///
     /// # Errors
     ///
@@ -71,15 +75,20 @@ where
     fn commit<P: HachiPolyOps<F, D>>(
         poly: &P,
         setup: &Self::ProverSetup,
+        layout: &HachiCommitmentLayout,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError>;
 
-    /// Produce an opening proof at `opening_point`.
+    /// Produce an opening proof at `opening_point` with a caller-specified layout.
+    ///
+    /// The layout must match the one used during commitment. Recursive w-opening
+    /// levels derive their own layouts internally via `WCommitmentConfig`.
     ///
     /// `basis` selects the polynomial representation (see [`BasisMode`]).
     ///
     /// # Errors
     ///
     /// Returns an error if the opening point is invalid or proof generation fails.
+    #[allow(clippy::too_many_arguments)]
     fn prove<T: Transcript<F>, P: HachiPolyOps<F, D>>(
         setup: &Self::ProverSetup,
         poly: &P,
@@ -88,15 +97,21 @@ where
         transcript: &mut T,
         commitment: &Self::Commitment,
         basis: BasisMode,
+        layout: &HachiCommitmentLayout,
     ) -> Result<Self::Proof, HachiError>;
 
-    /// Verify an opening proof.
+    /// Verify an opening proof with a caller-specified layout.
+    ///
+    /// The layout must be reconstructed deterministically by the verifier —
+    /// never deserialized from the proof. It must match the layout used by the
+    /// prover for commitment and proving.
     ///
     /// `basis` must match the mode used by the prover (see [`BasisMode`]).
     ///
     /// # Errors
     ///
     /// Returns an error when verification fails.
+    #[allow(clippy::too_many_arguments)]
     fn verify<T: Transcript<F>>(
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
@@ -105,6 +120,7 @@ where
         opening: &F,
         commitment: &Self::Commitment,
         basis: BasisMode,
+        layout: &HachiCommitmentLayout,
     ) -> Result<(), HachiError>;
 
     /// Protocol identifier.
@@ -185,9 +201,9 @@ where
     ///
     /// Returns an error if dimensions are inconsistent or any index is out
     /// of range.
-    fn commit_onehot(
+    fn commit_onehot<I: OneHotIndex>(
         onehot_k: usize,
-        indices: &[Option<usize>],
+        indices: &[Option<I>],
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let num_chunks = indices.len();
@@ -203,7 +219,10 @@ where
         let total_ring_elems = total_field_elems / D;
         let mut ring_coeffs = vec![CyclotomicRing::<F, D>::zero(); total_ring_elems];
         for (c, opt) in indices.iter().enumerate() {
-            let Some(&idx) = opt.as_ref() else { continue };
+            let Some(&idx_raw) = opt.as_ref() else {
+                continue;
+            };
+            let idx = idx_raw.as_usize();
             if idx >= onehot_k {
                 return Err(HachiError::InvalidInput(format!(
                     "index {idx} out of range for chunk size K={onehot_k} at position {c}"

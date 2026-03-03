@@ -86,6 +86,7 @@ fn bench_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
     let nv = num_vars::<Cfg>();
     let poly = make_dense_poly(nv);
     let pt = opening_point(nv);
+    let layout = Cfg::commitment_layout(nv).expect("benchmark layout");
 
     let mut group = c.benchmark_group(format!("hachi/{label}/nv{nv}"));
     if nv >= 18 {
@@ -109,6 +110,7 @@ fn bench_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
                 <Scheme<Cfg> as CommitmentScheme<F, D>>::commit(
                     black_box(&poly),
                     black_box(&setup),
+                    black_box(&layout),
                 )
                 .unwrap(),
             )
@@ -116,7 +118,7 @@ fn bench_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
     });
 
     let (commitment, hint) =
-        <Scheme<Cfg> as CommitmentScheme<F, D>>::commit(&poly, &setup).unwrap();
+        <Scheme<Cfg> as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout).unwrap();
 
     group.bench_function("prove", |b| {
         b.iter(|| {
@@ -130,6 +132,7 @@ fn bench_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
                     &mut transcript,
                     black_box(&commitment),
                     BasisMode::Lagrange,
+                    black_box(&layout),
                 )
                 .unwrap(),
             )
@@ -148,6 +151,7 @@ fn bench_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
         &mut prover_transcript,
         &commitment,
         BasisMode::Lagrange,
+        &layout,
     )
     .unwrap();
 
@@ -162,6 +166,7 @@ fn bench_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
                 black_box(&opening),
                 black_box(&commitment),
                 BasisMode::Lagrange,
+                black_box(&layout),
             )
             .unwrap();
         })
@@ -169,7 +174,8 @@ fn bench_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
 
     group.bench_function(BenchmarkId::new("e2e", nv), |b| {
         b.iter(|| {
-            let (cm, h) = <Scheme<Cfg> as CommitmentScheme<F, D>>::commit(&poly, &setup).unwrap();
+            let (cm, h) =
+                <Scheme<Cfg> as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout).unwrap();
             let mut pt_tr = Blake2bTranscript::<F>::new(b"bench");
             let pf = <Scheme<Cfg> as CommitmentScheme<F, D>>::prove(
                 &setup,
@@ -179,6 +185,7 @@ fn bench_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
                 &mut pt_tr,
                 &cm,
                 BasisMode::Lagrange,
+                &layout,
             )
             .unwrap();
             let mut vt_tr = Blake2bTranscript::<F>::new(b"bench");
@@ -190,6 +197,7 @@ fn bench_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
                 &opening,
                 &cm,
                 BasisMode::Lagrange,
+                &layout,
             )
             .unwrap();
             black_box(())
@@ -201,7 +209,7 @@ fn bench_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
 
 fn bench_onehot_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
     let nv = num_vars::<Cfg>();
-    let layout = Cfg::commitment_layout(0).expect("benchmark layout");
+    let layout = Cfg::commitment_layout(nv).expect("benchmark layout");
     let total_ring = layout.num_blocks * layout.block_len;
     let onehot_k = D;
     let num_chunks = total_ring;
@@ -237,6 +245,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
                 <Scheme<Cfg> as CommitmentScheme<F, D>>::commit(
                     black_box(&onehot_poly),
                     black_box(&setup),
+                    black_box(&layout),
                 )
                 .unwrap(),
             )
@@ -244,7 +253,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
     });
 
     let (commitment, hint) =
-        <Scheme<Cfg> as CommitmentScheme<F, D>>::commit(&onehot_poly, &setup).unwrap();
+        <Scheme<Cfg> as CommitmentScheme<F, D>>::commit(&onehot_poly, &setup, &layout).unwrap();
 
     group.bench_function("prove", |b| {
         b.iter(|| {
@@ -258,6 +267,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
                     &mut transcript,
                     black_box(&commitment),
                     BasisMode::Lagrange,
+                    black_box(&layout),
                 )
                 .unwrap(),
             )
@@ -275,6 +285,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
         &mut prover_transcript,
         &commitment,
         BasisMode::Lagrange,
+        &layout,
     )
     .unwrap();
 
@@ -289,6 +300,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
                 black_box(&opening),
                 black_box(&commitment),
                 BasisMode::Lagrange,
+                black_box(&layout),
             )
             .unwrap();
         })
@@ -297,7 +309,8 @@ fn bench_onehot_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
     group.bench_function(BenchmarkId::new("e2e", nv), |b| {
         b.iter(|| {
             let (cm, h) =
-                <Scheme<Cfg> as CommitmentScheme<F, D>>::commit(&onehot_poly, &setup).unwrap();
+                <Scheme<Cfg> as CommitmentScheme<F, D>>::commit(&onehot_poly, &setup, &layout)
+                    .unwrap();
             let mut pt_tr = Blake2bTranscript::<F>::new(b"bench");
             let pf = <Scheme<Cfg> as CommitmentScheme<F, D>>::prove(
                 &setup,
@@ -307,6 +320,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
                 &mut pt_tr,
                 &cm,
                 BasisMode::Lagrange,
+                &layout,
             )
             .unwrap();
             let mut vt_tr = Blake2bTranscript::<F>::new(b"bench");
@@ -318,6 +332,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
                 &opening,
                 &cm,
                 BasisMode::Lagrange,
+                &layout,
             )
             .unwrap();
             black_box(())

@@ -21,6 +21,7 @@ use crate::parallel::*;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
+use crate::protocol::hachi_poly_ops::OneHotIndex;
 use crate::protocol::ring_switch::w_commitment_layout;
 use crate::{cfg_into_iter, cfg_iter, CanonicalField, FieldCore, FieldSampling};
 use std::io::{Read, Write};
@@ -72,9 +73,37 @@ pub struct HachiVerifierSetup<F: FieldCore, const D: usize> {
 }
 
 impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
-    /// Runtime layout carried by this setup.
+    /// Runtime layout carried by this setup (the max-dimension layout).
     pub fn layout(&self) -> HachiCommitmentLayout {
         self.expanded.seed.layout
+    }
+
+    /// Panic if `layout`'s matrix dimensions exceed this setup's maximums.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any of `layout`'s matrix widths (inner, outer, D) exceed
+    /// those of this setup.
+    pub fn assert_layout_fits(&self, layout: &HachiCommitmentLayout) {
+        let max = &self.expanded.seed.layout;
+        assert!(
+            layout.inner_width <= max.inner_width,
+            "A matrix too narrow: need {} but setup has {}",
+            layout.inner_width,
+            max.inner_width
+        );
+        assert!(
+            layout.outer_width <= max.outer_width,
+            "B matrix too narrow: need {} but setup has {}",
+            layout.outer_width,
+            max.outer_width
+        );
+        assert!(
+            layout.d_matrix_width <= max.d_matrix_width,
+            "D matrix too narrow: need {} but setup has {}",
+            layout.d_matrix_width,
+            max.d_matrix_width
+        );
     }
 }
 
@@ -377,9 +406,9 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "RingCommitmentScheme::commit_onehot")]
-    fn commit_onehot(
+    fn commit_onehot<I: OneHotIndex>(
         onehot_k: usize,
-        indices: &[Option<usize>],
+        indices: &[Option<I>],
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let layout = setup.layout();

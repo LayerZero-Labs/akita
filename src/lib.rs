@@ -59,4 +59,6 @@ pub use primitives::arithmetic::{
     PseudoMersenneField,
 };
 pub use primitives::serialization::{HachiDeserialize, HachiSerialize};
-pub use protocol::{BasisMode, CommitmentScheme, DensePoly, HachiPolyOps, OneHotPoly, Transcript};
+pub use protocol::{
+    BasisMode, CommitmentScheme, DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly, Transcript,
+};

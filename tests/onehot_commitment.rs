@@ -130,8 +130,11 @@ fn onehot_k_lt_d_ratio_2() {
 #[test]
 fn onehot_rejects_non_divisible_k_and_d() {
     let setup = psetup();
-    let result =
-        <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(17, &[Some(0); 4], &setup);
+    let result = <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(
+        17,
+        &[Some(0usize); 4],
+        &setup,
+    );
     assert!(result.is_err());
 }
 
@@ -140,7 +143,7 @@ fn onehot_rejects_out_of_range_index() {
     let setup = psetup();
     let result = <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(
         64,
-        &[Some(0), Some(64), Some(0), Some(0)],
+        &[Some(0usize), Some(64), Some(0), Some(0)],
         &setup,
     );
     assert!(result.is_err());
@@ -151,7 +154,7 @@ fn onehot_rejects_wrong_total_size() {
     let setup = psetup();
     let result = <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(
         64,
-        &[Some(0), Some(0), Some(0)],
+        &[Some(0usize), Some(0), Some(0)],
         &setup,
     );
     assert!(result.is_err());

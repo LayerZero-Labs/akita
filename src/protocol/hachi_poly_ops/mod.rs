@@ -26,9 +26,137 @@ use crate::protocol::commitment::onehot::{
 };
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{decompose_rows_i8, mat_vec_mul_ntt_i8};
-use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
+use crate::{cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
 use std::array::from_fn;
 use std::marker::PhantomData;
+
+#[cfg(target_arch = "aarch64")]
+use crate::algebra::ntt::neon;
+
+#[cfg(target_arch = "aarch64")]
+mod decompose_fold_neon;
+
+/// Precomputed constants for balanced base-b decomposition.
+struct DecomposeParams {
+    half_q: u128,
+    q: u128,
+    mask: i128,
+    half_b: i128,
+    b_val: i128,
+    log_basis: u32,
+}
+
+/// Decompose all D coefficients of a ring element into balanced base-b digits,
+/// storing results in digit-major order for subsequent SIMD scatter.
+///
+/// Uses K=3 interleaved carry chains to saturate ALU throughput (3x ILP gain
+/// over processing one coefficient at a time on out-of-order cores).
+///
+/// `digit_buf` is `[num_digits][D]` in i8, OVERWRITTEN (not accumulated).
+#[inline(never)]
+fn decompose_ring_interleaved<const D: usize>(
+    coeffs: &[u128; D],
+    digit_buf: &mut [Vec<i8>],
+    num_digits: usize,
+    p: &DecomposeParams,
+) {
+    let bulk_end = D - (D % 3);
+
+    for base in (0..bulk_end).step_by(3) {
+        let mut c0 = to_signed(coeffs[base], p);
+        let mut c1 = to_signed(coeffs[base + 1], p);
+        let mut c2 = to_signed(coeffs[base + 2], p);
+
+        for plane in digit_buf.iter_mut().take(num_digits) {
+            let d0 = extract_balanced_digit(&mut c0, p);
+            let d1 = extract_balanced_digit(&mut c1, p);
+            let d2 = extract_balanced_digit(&mut c2, p);
+            plane[base] = d0 as i8;
+            plane[base + 1] = d1 as i8;
+            plane[base + 2] = d2 as i8;
+        }
+    }
+
+    for idx in bulk_end..D {
+        let mut c = to_signed(coeffs[idx], p);
+        for plane in digit_buf.iter_mut().take(num_digits) {
+            plane[idx] = extract_balanced_digit(&mut c, p) as i8;
+        }
+    }
+}
+
+#[inline(always)]
+fn to_signed(canonical: u128, p: &DecomposeParams) -> i128 {
+    if canonical > p.half_q {
+        -((p.q - canonical) as i128)
+    } else {
+        canonical as i128
+    }
+}
+
+#[inline(always)]
+fn extract_balanced_digit(c: &mut i128, p: &DecomposeParams) -> i32 {
+    let d = *c & p.mask;
+    let balanced = if d >= p.half_b { d - p.b_val } else { d };
+    *c = (*c - balanced) >> p.log_basis;
+    balanced as i32
+}
+
+/// Scalar sparse-multiply-accumulate: accumulate `challenge * digit_plane`
+/// into `acc` using the rotate-and-add formulation.
+///
+/// `digit_plane` is `[i8; D]`, `acc` is `[i32; D]`.
+/// Each challenge term rotates the digit plane and adds/subtracts contiguously.
+fn sparse_mul_acc_scalar<const D: usize>(
+    digit_plane: &[i8],
+    challenge: &SparseChallenge,
+    acc: &mut [i32; D],
+) {
+    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+        let p = pos as usize;
+        let split = D - p;
+        if coeff > 0 {
+            for i in 0..split {
+                acc[i + p] += digit_plane[i] as i32;
+            }
+            for i in split..D {
+                acc[i - split] -= digit_plane[i] as i32;
+            }
+        } else {
+            for i in 0..split {
+                acc[i + p] -= digit_plane[i] as i32;
+            }
+            for i in split..D {
+                acc[i - split] += digit_plane[i] as i32;
+            }
+        }
+    }
+}
+
+/// Dispatch to NEON or scalar sparse-multiply-accumulate.
+#[inline(always)]
+fn sparse_mul_acc<const D: usize>(
+    digit_plane: &[i8],
+    challenge: &SparseChallenge,
+    acc: &mut [i32; D],
+) {
+    #[cfg(target_arch = "aarch64")]
+    {
+        if neon::use_neon_ntt() {
+            unsafe {
+                decompose_fold_neon::sparse_mul_acc_neon(
+                    digit_plane.as_ptr(),
+                    acc.as_mut_ptr(),
+                    D,
+                    &challenge.positions,
+                    &challenge.coeffs,
+                );
+            }
+            return;
+        }
+    }
+    sparse_mul_acc_scalar::<D>(digit_plane, challenge, acc);
+}
 
 /// Operations the Hachi commitment scheme needs from a polynomial.
 ///
@@ -207,87 +335,77 @@ where
         num_digits: usize,
         log_basis: u32,
     ) -> Vec<CyclotomicRing<F, D>> {
-        let inner_width = block_len * num_digits;
         let n = self.coeffs.len();
         let coeffs = &self.coeffs;
 
         let q = (-F::one()).to_canonical_u128() + 1;
-        let half_q = q / 2;
+        let params = DecomposeParams {
+            half_q: q / 2,
+            q,
+            mask: (1i128 << log_basis) - 1,
+            half_b: 1i128 << (log_basis - 1),
+            b_val: 1i128 << log_basis,
+            log_basis,
+        };
 
-        let z_i32: Vec<[i32; D]> = cfg_fold_reduce!(
-            0..challenges.len(),
-            || vec![[0i32; D]; inner_width],
-            |mut z: Vec<[i32; D]>, i| {
-                let c_i = &challenges[i];
-                let start = i * block_len;
-                let end = (start + block_len).min(n);
+        // Two-phase approach: decompose ring element coefficients into i8 digit
+        // planes, then scatter via sparse polynomial multiply.
+        //
+        // Phase 1 (decompose): K=3 interleaved carry chains for ILP (~3x over
+        // single-chain). Writes into a digit_buf [num_digits][D] in i8 (~16 KB,
+        // L1-resident).
+        //
+        // Phase 2 (scatter): rotate-and-add formulation — contiguous NEON
+        // SADDW/SSUBW on aarch64, scalar fallback elsewhere. Accumulates into
+        // z_local [num_digits][D] in i32 (~66 KB, L2-resident).
+        let z_chunks: Vec<Vec<CyclotomicRing<F, D>>> = cfg_into_iter!(0..block_len)
+            .map(|elem_idx| {
+                let mut z_local: Vec<[i32; D]> = vec![[0i32; D]; num_digits];
+                let mut digit_buf: Vec<Vec<i8>> = vec![vec![0i8; D]; num_digits];
 
-                let half_b = 1i128 << (log_basis - 1);
-                let b_val = half_b << 1;
-                let mask = b_val - 1;
+                for (block_idx, c_i) in challenges.iter().enumerate() {
+                    let global_idx = block_idx * block_len + elem_idx;
+                    if global_idx >= n {
+                        continue;
+                    }
+                    let ring = &coeffs[global_idx];
 
-                for elem_idx in 0..(end.saturating_sub(start)) {
-                    let ring = &coeffs[start + elem_idx];
-                    let base_j = elem_idx * num_digits;
+                    let canonical: [u128; D] = from_fn(|k| ring.coeffs[k].to_canonical_u128());
+                    decompose_ring_interleaved::<D>(
+                        &canonical,
+                        &mut digit_buf,
+                        num_digits,
+                        &params,
+                    );
 
-                    for coeff_idx in 0..D {
-                        let canonical = ring.coeffs[coeff_idx].to_canonical_u128();
-                        let mut c: i128 = if canonical > half_q {
-                            -((q - canonical) as i128)
-                        } else {
-                            canonical as i128
-                        };
-
-                        for digit in 0..num_digits {
-                            let d = c & mask;
-                            let balanced = if d >= half_b { d - b_val } else { d };
-                            c = (c - balanced) >> log_basis;
-
-                            if balanced == 0 {
-                                continue;
-                            }
-                            let digit_i32 = balanced as i32;
-
-                            for (&pos, &challenge_coeff) in
-                                c_i.positions.iter().zip(c_i.coeffs.iter())
-                            {
-                                let target = coeff_idx + pos as usize;
-                                let (idx, sign) = if target < D {
-                                    (target, 1i32)
-                                } else {
-                                    (target - D, -1i32)
-                                };
-                                z[base_j + digit][idx] += sign * digit_i32 * challenge_coeff as i32;
-                            }
-                        }
+                    for digit in 0..num_digits {
+                        sparse_mul_acc::<D>(&digit_buf[digit], c_i, &mut z_local[digit]);
                     }
                 }
-                z
-            },
-            |mut a, b| {
-                for (ai, bi) in a.iter_mut().zip(b.iter()) {
-                    for (a_coeff, b_coeff) in ai.iter_mut().zip(bi.iter()) {
-                        *a_coeff += b_coeff;
-                    }
-                }
-                a
-            }
-        );
 
-        z_i32
-            .into_iter()
-            .map(|arr| {
-                let field_coeffs: [F; D] = from_fn(|k| {
-                    let v = arr[k];
-                    if v >= 0 {
-                        F::from_canonical_u128_reduced(v as u128)
-                    } else {
-                        F::from_canonical_u128_reduced(q - ((-v) as u128))
-                    }
-                });
-                CyclotomicRing::from_coefficients(field_coeffs)
+                let q = params.q;
+                z_local
+                    .into_iter()
+                    .map(|arr| {
+                        let field_coeffs: [F; D] = from_fn(|k| {
+                            let v = arr[k];
+                            if v >= 0 {
+                                F::from_canonical_u128_reduced(v as u128)
+                            } else {
+                                F::from_canonical_u128_reduced(q - ((-v) as u128))
+                            }
+                        });
+                        CyclotomicRing::from_coefficients(field_coeffs)
+                    })
+                    .collect()
             })
-            .collect()
+            .collect();
+
+        let mut z = Vec::with_capacity(block_len * num_digits);
+        for chunk in z_chunks {
+            z.extend(chunk);
+        }
+        z
     }
 
     #[tracing::instrument(skip_all, name = "DensePoly::commit_inner")]
@@ -323,21 +441,60 @@ where
     }
 }
 
+/// Types usable as one-hot position indices.
+///
+/// Implemented for `u8`, `u16`, `u32`, and `usize`.
+pub trait OneHotIndex: Copy + Send + Sync + std::fmt::Debug + 'static {
+    /// Convert to `usize` for indexing.
+    fn as_usize(self) -> usize;
+}
+
+impl OneHotIndex for u8 {
+    #[inline]
+    fn as_usize(self) -> usize {
+        self as usize
+    }
+}
+
+impl OneHotIndex for u16 {
+    #[inline]
+    fn as_usize(self) -> usize {
+        self as usize
+    }
+}
+
+impl OneHotIndex for u32 {
+    #[inline]
+    fn as_usize(self) -> usize {
+        self as usize
+    }
+}
+
+impl OneHotIndex for usize {
+    #[inline]
+    fn as_usize(self) -> usize {
+        self
+    }
+}
+
 /// One-hot polynomial: sparse witness with at most one nonzero field element
 /// per chunk of size `onehot_k`.
 ///
 /// Exploits sparsity in all four operations, avoiding inner ring
 /// multiplications during commit and decomposing only nonzero monomials.
+///
+/// Generic over `I`: the index type stored per chunk. Use `u8` when
+/// `onehot_k <= 256` to cut per-entry memory from 16 bytes to 2 bytes.
 #[derive(Debug, Clone)]
-pub struct OneHotPoly<F: FieldCore, const D: usize> {
+pub struct OneHotPoly<F: FieldCore, const D: usize, I: OneHotIndex = usize> {
     onehot_k: usize,
-    indices: Vec<Option<usize>>,
+    indices: Vec<Option<I>>,
     m_vars: usize,
     sparse_blocks: Vec<Vec<SparseBlockEntry>>,
     _marker: PhantomData<F>,
 }
 
-impl<F: FieldCore, const D: usize> OneHotPoly<F, D> {
+impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     /// Build a one-hot polynomial from chunk size and hot-position indices.
     ///
     /// `indices[c]` is the hot position in chunk `c` (`None` for all-zero chunks).
@@ -347,7 +504,7 @@ impl<F: FieldCore, const D: usize> OneHotPoly<F, D> {
     /// Returns an error if dimensions are inconsistent or any index is out of range.
     pub fn new(
         onehot_k: usize,
-        indices: Vec<Option<usize>>,
+        indices: Vec<Option<I>>,
         r_vars: usize,
         m_vars: usize,
     ) -> Result<Self, HachiError> {
@@ -367,7 +524,7 @@ impl<F: FieldCore, const D: usize> OneHotPoly<F, D> {
     }
 }
 
-impl<F, const D: usize> HachiPolyOps<F, D> for OneHotPoly<F, D>
+impl<F, const D: usize, I: OneHotIndex> HachiPolyOps<F, D> for OneHotPoly<F, D, I>
 where
     F: FieldCore + CanonicalField + HasWide,
 {
@@ -428,21 +585,30 @@ where
         let mut z = vec![CyclotomicRing::<F, D>::zero(); inner_width];
 
         // One-hot coefficients are {0,1}: balanced_decompose_pow2 produces
-        // nonzero output only in digit plane 0 (the value itself). So we skip
-        // materialize_block + decompose_block entirely and accumulate only at
-        // the first digit plane position for each sparse entry.
+        // nonzero output only in digit plane 0 (the value itself).
+        //
+        // Direct sparse-sparse multiply: for each nonzero coefficient at
+        // position `ci` and each challenge term `(pos, coeff)`, we know the
+        // exact output position in the cyclotomic ring (X^D + 1).
+        // O(omega * |nonzero_coeffs|) per entry instead of O(omega * D).
         for (i, c_i) in challenges.iter().enumerate() {
             if i >= self.sparse_blocks.len() {
                 continue;
             }
             for entry in &self.sparse_blocks[i] {
                 let j = entry.pos_in_block * num_digits;
-                let mut one_hot_coeffs = [F::zero(); D];
-                for &ci in &entry.nonzero_coeffs {
-                    one_hot_coeffs[ci] = F::one();
+                let z_coeffs = &mut z[j].coeffs;
+                for (&pos, &coeff) in c_i.positions.iter().zip(c_i.coeffs.iter()) {
+                    let c_val = F::from_i64(coeff as i64);
+                    for &ci in &entry.nonzero_coeffs {
+                        let target = ci + pos as usize;
+                        if target < D {
+                            z_coeffs[target] += c_val;
+                        } else {
+                            z_coeffs[target - D] -= c_val;
+                        }
+                    }
                 }
-                let one_hot = CyclotomicRing::from_coefficients(one_hot_coeffs);
-                z[j] += one_hot.mul_by_sparse(c_i);
             }
         }
 
