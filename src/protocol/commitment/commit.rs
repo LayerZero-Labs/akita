@@ -7,9 +7,10 @@ use super::config::{
 use super::onehot::{inner_ajtai_onehot_t_only, map_onehot_to_sparse_blocks};
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
-use super::utils::crt_ntt::{build_ntt_slots, NttSlotCache};
+use super::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use super::utils::linear::{
-    decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_tiled_i8, mat_vec_mul_ntt_tiled_single_i8,
+    decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_tiled_i8,
+    mat_vec_mul_ntt_tiled_single_i8,
 };
 use super::utils::matrix::{derive_public_matrix, sample_public_matrix_seed, PublicMatrixSeed};
 use super::CommitmentConfig;
@@ -185,8 +186,27 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiExpandedSet
     }
 }
 
-// NOTE: HachiProverSetup is not serializable — NTT caches are runtime artifacts.
-// Serialize/deserialize HachiExpandedSetup directly and rebuild caches at load.
+impl<F: FieldCore + Valid, const D: usize> Valid for HachiProverSetup<F, D> {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.expanded.check()
+    }
+}
+
+impl<F: FieldCore, const D: usize> HachiSerialize for HachiProverSetup<F, D> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        _writer: W,
+        _compress: Compress,
+    ) -> Result<(), SerializationError> {
+        Err(SerializationError::InvalidData(
+            "HachiProverSetup contains runtime NTT caches and is not serializable".into(),
+        ))
+    }
+
+    fn serialized_size(&self, _compress: Compress) -> usize {
+        0
+    }
+}
 
 impl<F: FieldCore + Valid, const D: usize> Valid for HachiVerifierSetup<F, D> {
     fn check(&self) -> Result<(), SerializationError> {
@@ -248,7 +268,9 @@ where
         let b_matrix = derive_public_matrix::<F, D>(Cfg::N_B, b_cols, &public_matrix_seed, b"B");
         let d_matrix = derive_public_matrix::<F, D>(Cfg::N_D, d_cols, &public_matrix_seed, b"D");
 
-        let (ntt_a, ntt_b, ntt_d) = build_ntt_slots::<F, D>(&a_matrix, &b_matrix, &d_matrix)?;
+        let ntt_a = build_ntt_slot::<F, D>(&a_matrix)?;
+        let ntt_b = build_ntt_slot::<F, D>(&b_matrix)?;
+        let ntt_d = build_ntt_slot::<F, D>(&d_matrix)?;
         let expanded = HachiExpandedSetup {
             seed: HachiSetupSeed {
                 max_num_vars,
@@ -299,7 +321,8 @@ where
         let log_basis = layout.log_basis;
         let block_slices: Vec<&[CyclotomicRing<F, D>]> =
             f_blocks.iter().map(|b| b.as_slice()).collect();
-        let t_all = mat_vec_mul_ntt_tiled_i8(&setup.ntt_A, &block_slices, depth, log_basis, None);
+        let t_all =
+            mat_vec_mul_ntt_tiled_i8(&setup.ntt_A, &block_slices, depth, log_basis, None);
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
             .map(|t_i| decompose_rows_i8(&t_i, depth, log_basis))
             .collect();
@@ -344,7 +367,8 @@ where
             })
             .collect();
 
-        let t_all = mat_vec_mul_ntt_tiled_i8(&setup.ntt_A, &block_slices, depth, log_basis, None);
+        let t_all =
+            mat_vec_mul_ntt_tiled_i8(&setup.ntt_A, &block_slices, depth, log_basis, None);
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
             .map(|t_i| decompose_rows_i8(&t_i, depth, log_basis))
             .collect();
@@ -471,7 +495,9 @@ impl HachiCommitmentCore {
         let b_matrix = derive_public_matrix::<F, D>(Cfg::N_B, b_cols, &seed, b"B");
         let d_matrix = derive_public_matrix::<F, D>(Cfg::N_D, d_cols, &seed, b"D");
 
-        let (ntt_a, ntt_b, ntt_d) = build_ntt_slots::<F, D>(&existing.A, &b_matrix, &d_matrix)?;
+        let ntt_a = build_ntt_slot::<F, D>(&existing.A)?;
+        let ntt_b = build_ntt_slot::<F, D>(&b_matrix)?;
+        let ntt_d = build_ntt_slot::<F, D>(&d_matrix)?;
         let expanded = HachiExpandedSetup {
             seed: HachiSetupSeed {
                 max_num_vars,
@@ -510,7 +536,9 @@ impl HachiCommitmentCore {
         let b_matrix = derive_public_matrix::<F, D>(Cfg::N_B, b_cols, &public_matrix_seed, b"B");
         let d_matrix = derive_public_matrix::<F, D>(Cfg::N_D, d_cols, &public_matrix_seed, b"D");
 
-        let (ntt_a, ntt_b, ntt_d) = build_ntt_slots::<F, D>(&a_matrix, &b_matrix, &d_matrix)?;
+        let ntt_a = build_ntt_slot::<F, D>(&a_matrix)?;
+        let ntt_b = build_ntt_slot::<F, D>(&b_matrix)?;
+        let ntt_d = build_ntt_slot::<F, D>(&d_matrix)?;
         let expanded = HachiExpandedSetup {
             seed: HachiSetupSeed {
                 max_num_vars,
