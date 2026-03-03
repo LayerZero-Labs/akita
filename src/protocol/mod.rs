@@ -17,9 +17,9 @@ pub mod transcript;
 
 pub use commitment::{
     AppendToTranscript, CommitmentConfig, CommitmentScheme, DummyProof,
-    DynamicSmallTestCommitmentConfig, HachiCommitment, HachiCommitmentCore, HachiCommitmentLayout,
-    HachiExpandedSetup, HachiOpeningClaim, HachiOpeningPoint, HachiProverSetup, HachiSetupSeed,
-    HachiVerifierSetup, ProductionFp128CommitmentConfig, RingCommitment, RingCommitmentScheme,
+    DynamicSmallTestCommitmentConfig, Fp128CommitmentConfig, HachiCommitment, HachiCommitmentCore,
+    HachiCommitmentLayout, HachiExpandedSetup, HachiOpeningClaim, HachiOpeningPoint,
+    HachiProverSetup, HachiSetupSeed, HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
     SmallTestCommitmentConfig,
 };
 pub use commitment_scheme::HachiCommitmentScheme;

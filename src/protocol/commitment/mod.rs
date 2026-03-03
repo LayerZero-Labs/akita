@@ -13,7 +13,7 @@ pub use commit::{
 };
 pub use config::{
     compute_num_digits, compute_num_digits_fold, CommitmentConfig, DecompositionParams,
-    DynamicSmallTestCommitmentConfig, HachiCommitmentLayout, ProductionFp128CommitmentConfig,
+    DynamicSmallTestCommitmentConfig, Fp128CommitmentConfig, HachiCommitmentLayout,
     SmallTestCommitmentConfig,
 };
 pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};

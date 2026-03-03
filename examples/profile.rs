@@ -2,7 +2,7 @@
 
 use hachi_pcs::algebra::Fp128;
 use hachi_pcs::protocol::commitment::{
-    DecompositionParams, HachiCommitmentLayout, ProductionFp128CommitmentConfig,
+    DecompositionParams, Fp128CommitmentConfig, HachiCommitmentLayout,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
@@ -15,16 +15,16 @@ use tracing_subscriber::prelude::*;
 
 type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
 
-const D: usize = ProductionFp128CommitmentConfig::D;
+const D: usize = Fp128CommitmentConfig::D;
 
 #[derive(Clone, Copy, Debug)]
 struct ProfileCfg;
 impl CommitmentConfig for ProfileCfg {
     const D: usize = D;
-    const N_A: usize = ProductionFp128CommitmentConfig::N_A;
-    const N_B: usize = ProductionFp128CommitmentConfig::N_B;
-    const N_D: usize = ProductionFp128CommitmentConfig::N_D;
-    const CHALLENGE_WEIGHT: usize = ProductionFp128CommitmentConfig::CHALLENGE_WEIGHT;
+    const N_A: usize = Fp128CommitmentConfig::N_A;
+    const N_B: usize = Fp128CommitmentConfig::N_B;
+    const N_D: usize = Fp128CommitmentConfig::N_D;
+    const CHALLENGE_WEIGHT: usize = Fp128CommitmentConfig::CHALLENGE_WEIGHT;
 
     fn decomposition() -> DecompositionParams {
         DecompositionParams {

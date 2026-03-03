@@ -10,6 +10,7 @@
 //! - and efficient to evaluate at a point `α` using precomputed powers.
 
 use super::CyclotomicRing;
+use crate::algebra::fields::LiftBase;
 use crate::{CanonicalField, FieldCore};
 
 /// Configuration for sampling a sparse challenge.
@@ -148,7 +149,7 @@ impl SparseChallenge {
     pub fn eval_at_alpha<F, E, const D: usize>(&self, alpha_pows: &[E]) -> Result<E, &'static str>
     where
         F: FieldCore + CanonicalField,
-        E: FieldCore + crate::algebra::fields::LiftBase<F>,
+        E: FieldCore + LiftBase<F>,
     {
         self.validate::<D>()?;
         if alpha_pows.len() != D {

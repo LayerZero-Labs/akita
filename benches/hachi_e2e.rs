@@ -4,7 +4,7 @@ use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
 use hachi_pcs::algebra::Fp128;
 use hachi_pcs::error::HachiError;
 use hachi_pcs::protocol::commitment::{
-    DecompositionParams, HachiCommitmentLayout, ProductionFp128CommitmentConfig,
+    DecompositionParams, Fp128CommitmentConfig, HachiCommitmentLayout,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
@@ -15,7 +15,7 @@ use std::time::Duration;
 
 type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
 
-const D: usize = ProductionFp128CommitmentConfig::D;
+const D: usize = Fp128CommitmentConfig::D;
 
 macro_rules! bench_config {
     ($name:ident, M = $m:expr, R = $r:expr) => {
@@ -23,13 +23,13 @@ macro_rules! bench_config {
         struct $name;
         impl CommitmentConfig for $name {
             const D: usize = D;
-            const N_A: usize = ProductionFp128CommitmentConfig::N_A;
-            const N_B: usize = ProductionFp128CommitmentConfig::N_B;
-            const N_D: usize = ProductionFp128CommitmentConfig::N_D;
-            const CHALLENGE_WEIGHT: usize = ProductionFp128CommitmentConfig::CHALLENGE_WEIGHT;
+            const N_A: usize = Fp128CommitmentConfig::N_A;
+            const N_B: usize = Fp128CommitmentConfig::N_B;
+            const N_D: usize = Fp128CommitmentConfig::N_D;
+            const CHALLENGE_WEIGHT: usize = Fp128CommitmentConfig::CHALLENGE_WEIGHT;
 
             fn decomposition() -> DecompositionParams {
-                ProductionFp128CommitmentConfig::decomposition()
+                Fp128CommitmentConfig::decomposition()
             }
 
             fn commitment_layout(

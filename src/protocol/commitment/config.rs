@@ -565,9 +565,9 @@ impl CommitmentConfig for DynamicSmallTestCommitmentConfig {
 /// - Summing over `2^R` blocks (R = r_vars) gives:
 ///   `||z||_inf <= 2^R * ω * (b/2)`.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct ProductionFp128CommitmentConfig;
+pub struct Fp128CommitmentConfig;
 
-impl CommitmentConfig for ProductionFp128CommitmentConfig {
+impl CommitmentConfig for Fp128CommitmentConfig {
     const D: usize = 512;
     const N_A: usize = 1;
     const N_B: usize = 1;
