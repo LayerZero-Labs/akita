@@ -4,7 +4,7 @@ use super::config::{
     ensure_block_layout, ensure_matrix_shape, ensure_supported_num_vars,
     validate_and_derive_layout, HachiCommitmentLayout,
 };
-use super::onehot::{inner_ajtai_onehot_t_only, map_onehot_to_sparse_blocks, SparseBlockEntry};
+use super::onehot::{inner_ajtai_onehot_t_only, map_onehot_to_sparse_blocks};
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
 use super::utils::crt_ntt::{build_ntt_cache, NttMatrixCache};
@@ -572,95 +572,6 @@ impl HachiCommitmentCore {
             "D",
         )?;
         Ok((prover_setup, verifier_setup))
-    }
-}
-
-/// Describes one block of a mega-polynomial commitment.
-///
-/// A mega-polynomial packs multiple heterogeneous polynomials into a single
-/// Hachi commitment by assigning each polynomial to its own block. Blocks
-/// can be dense (arbitrary ring coefficients), sparse one-hot, or zero.
-pub enum MegaPolyBlock<'a, F: FieldCore, const D: usize> {
-    /// Dense block: full ring coefficients (length ≤ block_len).
-    Dense(&'a [CyclotomicRing<F, D>]),
-    /// One-hot block: sparse entries within this block.
-    OneHot(&'a [SparseBlockEntry]),
-    /// Empty block: all coefficients are zero (no allocation or computation).
-    Zero,
-}
-
-impl HachiCommitmentCore {
-    /// Commit a mega-polynomial composed of heterogeneous blocks.
-    ///
-    /// Each block occupies `block_len` ring elements. Dense blocks are
-    /// decomposed via `balanced_decompose_pow2`; one-hot blocks use sparse
-    /// inner Ajtai; zero blocks are free.
-    ///
-    /// The number of blocks must equal `layout.num_blocks` (power of 2).
-    ///
-    /// # Errors
-    ///
-    /// Returns `HachiError` if the number of blocks doesn't match the layout
-    /// or if matrix shapes are inconsistent.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `Cfg::N_A * layout.delta` overflows.
-    #[allow(non_snake_case)]
-    pub fn commit_mixed<F, const D: usize, Cfg>(
-        blocks: &[MegaPolyBlock<'_, F, D>],
-        setup: &HachiProverSetup<F, D>,
-    ) -> Result<CommitWitness<RingCommitment<F, D>, F, D>, HachiError>
-    where
-        F: FieldCore + CanonicalField + FieldSampling,
-        Cfg: CommitmentConfig,
-    {
-        let layout = setup.layout();
-        if blocks.len() != layout.num_blocks {
-            return Err(HachiError::InvalidSize {
-                expected: layout.num_blocks,
-                actual: blocks.len(),
-            });
-        }
-        ensure_matrix_shape(&setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
-        ensure_matrix_shape(&setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
-
-        let delta = layout.delta;
-        let log_basis = layout.log_basis;
-        let zero_t_hat = vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(delta).unwrap()];
-        let cache = setup.ntt_cache()?;
-        let a_matrix = &setup.expanded.A;
-        let block_len = layout.block_len;
-
-        let t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = cfg_iter!(blocks)
-            .map(|block| match block {
-                MegaPolyBlock::Zero => zero_t_hat.clone(),
-                MegaPolyBlock::Dense(coeffs) => {
-                    let s_i = decompose_block(coeffs, delta, log_basis);
-                    let t_i = mat_vec_mul_ntt_cached(cache, MatrixSlot::A, &s_i)
-                        .expect("inner Ajtai failed");
-                    decompose_rows(&t_i, delta, log_basis)
-                }
-                MegaPolyBlock::OneHot(sparse_entries) => {
-                    if sparse_entries.is_empty() {
-                        zero_t_hat.clone()
-                    } else {
-                        let t_i =
-                            inner_ajtai_onehot_t_only(a_matrix, sparse_entries, block_len, delta);
-                        decompose_rows(&t_i, delta, log_basis)
-                    }
-                }
-            })
-            .collect();
-
-        let t_hat_flat: Vec<CyclotomicRing<F, D>> =
-            t_hat_all.iter().flat_map(|v| v.iter().copied()).collect();
-
-        let u = mat_vec_mul_ntt_cached(cache, MatrixSlot::B, &t_hat_flat)?;
-        Ok(CommitWitness {
-            commitment: RingCommitment { u },
-            t_hat: t_hat_all,
-        })
     }
 }
 

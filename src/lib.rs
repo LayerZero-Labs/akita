@@ -21,7 +21,7 @@
 //! ### Core Modules
 //! - [`primitives`] - Core traits and abstractions
 //!   - [`primitives::arithmetic`] - Field and module traits for lattice arithmetic
-//!   - [`primitives::poly`] - Multilinear polynomial traits and operations
+//!   - [`primitives::poly`] - Multilinear polynomial utility functions
 //!   - [`primitives::transcript`] - Fiat-Shamir transcript trait
 //!   - [`primitives::serialization`] - Serialization abstractions
 //! - [`error`] - Error types
@@ -47,17 +47,15 @@ pub mod protocol;
 
 /// Conditional parallelism utilities (`cfg_iter!`, `cfg_into_iter!`, etc.)
 #[doc(hidden)]
-#[allow(missing_docs)]
 pub mod parallel;
 
+/// Shared test configuration and helpers.
 #[doc(hidden)]
-#[allow(missing_docs)]
 pub mod test_utils;
 
 pub use error::HachiError;
 pub use primitives::arithmetic::{
     CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, Module, PseudoMersenneField,
 };
-pub use primitives::poly::{MultilinearLagrange, Polynomial};
 pub use primitives::serialization::{HachiDeserialize, HachiSerialize};
-pub use protocol::{BasisMode, CommitmentScheme, StreamingCommitmentScheme, Transcript};
+pub use protocol::{BasisMode, CommitmentScheme, DensePoly, HachiPolyOps, OneHotPoly, Transcript};

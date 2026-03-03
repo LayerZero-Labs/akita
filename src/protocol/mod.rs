@@ -7,6 +7,7 @@
 pub mod challenges;
 pub mod commitment;
 pub mod commitment_scheme;
+pub mod hachi_poly_ops;
 pub mod opening_point;
 pub mod proof;
 pub mod quadratic_equation;
@@ -19,9 +20,10 @@ pub use commitment::{
     DynamicSmallTestCommitmentConfig, HachiCommitment, HachiCommitmentCore, HachiCommitmentLayout,
     HachiExpandedSetup, HachiOpeningClaim, HachiOpeningPoint, HachiPreparedSetup, HachiProverSetup,
     HachiSetupSeed, HachiVerifierSetup, ProductionFp128CommitmentConfig, RingCommitment,
-    RingCommitmentScheme, SmallTestCommitmentConfig, StreamingCommitmentScheme,
+    RingCommitmentScheme, SmallTestCommitmentConfig,
 };
-pub use commitment_scheme::{commit_onehot, HachiChunkState, HachiCommitmentScheme};
+pub use commitment_scheme::HachiCommitmentScheme;
+pub use hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
 pub use opening_point::{BasisMode, RingOpeningPoint};
 pub use proof::{HachiProof, SumcheckAux};
 pub use quadratic_equation::QuadraticEquation;

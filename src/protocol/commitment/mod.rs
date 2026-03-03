@@ -10,7 +10,7 @@ pub mod utils;
 
 pub use commit::{
     HachiCommitmentCore, HachiExpandedSetup, HachiPreparedSetup, HachiProverSetup, HachiSetupSeed,
-    HachiVerifierSetup, MegaPolyBlock,
+    HachiVerifierSetup,
 };
 pub use config::{
     compute_delta, compute_tau, CommitmentConfig, DecompositionParams,
@@ -18,9 +18,7 @@ pub use config::{
     SmallTestCommitmentConfig,
 };
 pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
-pub use scheme::{
-    CommitWitness, CommitmentScheme, RingCommitmentScheme, StreamingCommitmentScheme,
-};
+pub use scheme::{CommitWitness, CommitmentScheme, RingCommitmentScheme};
 pub use transcript_append::AppendToTranscript;
 pub use types::{
     DummyProof, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint, RingCommitment,

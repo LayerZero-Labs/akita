@@ -13,9 +13,12 @@ use crate::protocol::commitment::{
 };
 use crate::{FieldCore, FromSmallInt};
 
+/// Default test field: a 32-bit prime `p = 4294967197`.
 pub type F = Fp64<4294967197>;
+/// Ring degree used in tests.
 pub const D: usize = 64;
 
+/// Minimal commitment config for fast unit tests.
 #[derive(Clone)]
 pub struct TinyConfig;
 
@@ -38,21 +41,28 @@ impl CommitmentConfig for TinyConfig {
     }
 }
 
+/// Number of ring elements per block (`2^m_vars`).
 pub const BLOCK_LEN: usize = 2;
+/// Number of blocks (`2^r_vars`).
 pub const NUM_BLOCKS: usize = 2;
+/// Gadget base exponent (`b = 2^LOG_BASIS`).
 pub const LOG_BASIS: u32 = 4;
+/// Inner Ajtai row count from `TinyConfig`.
 pub const N_A: usize = TinyConfig::N_A;
 
+/// Decomposition depth for original coefficients under `TinyConfig`.
 pub fn delta() -> usize {
     let d = TinyConfig::decomposition();
     compute_delta(d.log_coeff_bound, d.log_basis)
 }
 
+/// Decomposition depth for the folded witness `z_pre` under `TinyConfig`.
 pub fn tau() -> usize {
     let d = TinyConfig::decomposition();
     compute_tau(1, TinyConfig::CHALLENGE_WEIGHT, d.log_basis)
 }
 
+/// Dense matrix-vector multiply over cyclotomic rings.
 pub fn mat_vec_mul(
     mat: &[Vec<CyclotomicRing<F, D>>],
     vec: &[CyclotomicRing<F, D>],
@@ -69,6 +79,7 @@ pub fn mat_vec_mul(
         .collect()
 }
 
+/// Generate deterministic test blocks of ring elements.
 pub fn sample_blocks() -> Vec<Vec<CyclotomicRing<F, D>>> {
     (0..NUM_BLOCKS)
         .map(|bi| {
@@ -82,18 +93,21 @@ pub fn sample_blocks() -> Vec<Vec<CyclotomicRing<F, D>>> {
         .collect()
 }
 
+/// Generate deterministic inner opening-point scalars.
 pub fn sample_a() -> Vec<F> {
     (0..BLOCK_LEN)
         .map(|j| F::from_u64((j * 10 + 1) as u64))
         .collect()
 }
 
+/// Generate deterministic outer opening-point scalars.
 pub fn sample_b() -> Vec<F> {
     (0..NUM_BLOCKS)
         .map(|i| F::from_u64((i * 7 + 3) as u64))
         .collect()
 }
 
+/// Recompose a gadget-decomposed ring element: `sum_i parts[i] * b^i`.
 pub fn field_gadget_recompose(
     parts: &[CyclotomicRing<F, D>],
     log_basis: u32,
@@ -108,6 +122,7 @@ pub fn field_gadget_recompose(
     result
 }
 
+/// Recompose `z_hat` chunks (tau-width) back to `z_pre` elements.
 pub fn recompose_z_hat(z_hat: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
     z_hat
         .chunks(tau())
@@ -115,6 +130,7 @@ pub fn recompose_z_hat(z_hat: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, 
         .collect()
 }
 
+/// Recompose a vector of gadget-decomposed elements (delta-width chunks).
 pub fn gadget_recompose_vec(x_hat: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
     x_hat
         .chunks(delta())
@@ -122,12 +138,14 @@ pub fn gadget_recompose_vec(x_hat: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRin
         .collect()
 }
 
+/// Alias for [`gadget_recompose_vec`] (same delta-width recomposition).
 pub fn field_gadget_recompose_vec(v: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
     v.chunks(delta())
         .map(|chunk| field_gadget_recompose(chunk, LOG_BASIS))
         .collect()
 }
 
+/// Compute `a^T * G^{-1}(z)`: recompose `z` then inner-product with `a`.
 pub fn a_transpose_gadget_times_vec(a: &[F], z: &[CyclotomicRing<F, D>]) -> CyclotomicRing<F, D> {
     let recomposed = field_gadget_recompose_vec(z);
     assert_eq!(recomposed.len(), a.len());

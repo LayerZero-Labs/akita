@@ -10,16 +10,13 @@ use std::io::{Read, Write};
 
 /// Prover-side hint produced at commitment time.
 ///
-/// Stores the ring-level coefficients and the decomposed inner-Ajtai outputs
-/// `t̂_i`. The basis-decomposed inputs `s_i` are NOT stored; they are
-/// recomputed from `ring_coeffs` during proving to avoid multi-GB memory
-/// usage at production parameters.
+/// Contains the decomposed inner-Ajtai outputs `t̂_i` needed by the
+/// ring-switch step of the prover. The polynomial itself (ring coefficients)
+/// is passed separately to `prove` via `HachiPolyOps`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiCommitmentHint<F: FieldCore, const D: usize> {
     /// Decomposed `t̂_i` blocks from the commitment phase.
     pub t_hat: Vec<Vec<CyclotomicRing<F, D>>>,
-    /// Ring coefficients from the §3.1 reduction (evaluation table).
-    pub ring_coeffs: Vec<CyclotomicRing<F, D>>,
 }
 
 /// Temporary auxiliary data the verifier needs for sumcheck output verification.
@@ -94,14 +91,13 @@ impl<F: FieldCore + Valid> HachiDeserialize for SumcheckAux<F> {
 impl<F: FieldCore, const D: usize> HachiSerialize for HachiCommitmentHint<F, D> {
     fn serialize_with_mode<W: Write>(
         &self,
-        mut writer: W,
+        writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.t_hat.serialize_with_mode(&mut writer, compress)?;
-        self.ring_coeffs.serialize_with_mode(&mut writer, compress)
+        self.t_hat.serialize_with_mode(writer, compress)
     }
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.t_hat.serialized_size(compress) + self.ring_coeffs.serialized_size(compress)
+        self.t_hat.serialized_size(compress)
     }
 }
 
@@ -113,13 +109,12 @@ impl<F: FieldCore + Valid, const D: usize> Valid for HachiCommitmentHint<F, D> {
 
 impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiCommitmentHint<F, D> {
     fn deserialize_with_mode<R: Read>(
-        mut reader: R,
+        reader: R,
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
         Ok(Self {
-            t_hat: Vec::deserialize_with_mode(&mut reader, compress, validate)?,
-            ring_coeffs: Vec::deserialize_with_mode(&mut reader, compress, validate)?,
+            t_hat: Vec::deserialize_with_mode(reader, compress, validate)?,
         })
     }
 }

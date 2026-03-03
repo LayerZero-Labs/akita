@@ -261,8 +261,8 @@ impl<F: FieldCore, const D: usize> SumcheckInstanceVerifier<F> for RelationSumch
 mod tests {
     use super::*;
     use crate::algebra::Fp64;
-    use crate::primitives::multilinear_evals::DenseMultilinearEvals;
     use crate::protocol::commitment_scheme::rederive_alpha_and_m_a;
+    use crate::protocol::hachi_poly_ops::DensePoly;
     use crate::protocol::opening_point::BasisMode;
     use crate::protocol::sumcheck::eq_poly::EqPolynomial;
     use crate::protocol::transcript::labels;
@@ -274,16 +274,17 @@ mod tests {
 
     type F = Fp64<4294967197>;
     type Cfg = SmallTestCommitmentConfig;
-    type Scheme = HachiCommitmentScheme<{ Cfg::D }, Cfg>;
+    const D: usize = Cfg::D;
+    type Scheme = HachiCommitmentScheme<D, Cfg>;
 
     #[test]
     fn relation_sumcheck_uses_prove_w_evals() {
-        let alpha_bits = SmallTestCommitmentConfig::D.trailing_zeros() as usize;
+        let alpha_bits = D.trailing_zeros() as usize;
         let layout = SmallTestCommitmentConfig::commitment_layout(8).unwrap();
         let num_vars = layout.m_vars + layout.r_vars + alpha_bits;
         let len = 1usize << num_vars;
         let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
-        let poly = DenseMultilinearEvals::new_padded(evals);
+        let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
 
         let setup = Scheme::setup_prover(num_vars);
         let (commitment, hint) = Scheme::commit(&poly, &setup).unwrap();
@@ -294,7 +295,7 @@ mod tests {
             &setup,
             &poly,
             &opening_point,
-            Some(hint),
+            hint,
             &mut prover_transcript,
             &commitment,
             BasisMode::Lagrange,

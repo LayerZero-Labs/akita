@@ -18,7 +18,6 @@ pub mod packed_avx2;
     target_feature = "avx512dq"
 ))]
 pub mod packed_avx512;
-#[allow(missing_docs)]
 pub mod packed_ext;
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 pub mod packed_neon;

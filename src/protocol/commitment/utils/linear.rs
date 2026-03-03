@@ -163,11 +163,14 @@ pub(crate) fn mat_vec_mul_crt_ntt_many<F: FieldCore + CanonicalField, const D: u
     Ok(out)
 }
 
-/// Selector for which cached matrix to use.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum MatrixSlot {
+/// Selector for which cached matrix to use.
+pub enum MatrixSlot {
+    /// Inner Ajtai matrix.
     A,
+    /// Outer Ajtai matrix.
     B,
+    /// Stage-1 matrix.
     D,
 }
 
@@ -218,7 +221,11 @@ macro_rules! dispatch_cached {
 }
 
 /// Dense mat-vec using a pre-converted NTT matrix from the cache.
-pub(crate) fn mat_vec_mul_ntt_cached<F: FieldCore + CanonicalField, const D: usize>(
+///
+/// # Errors
+///
+/// Returns an error if the matrix and vector dimensions are incompatible.
+pub fn mat_vec_mul_ntt_cached<F: FieldCore + CanonicalField, const D: usize>(
     cache: &NttMatrixCache<D>,
     which: MatrixSlot,
     vec: &[CyclotomicRing<F, D>],
@@ -240,7 +247,8 @@ pub fn decompose_block<F: FieldCore + CanonicalField, const D: usize>(
     out
 }
 
-pub(crate) fn decompose_rows<F: FieldCore + CanonicalField, const D: usize>(
+/// Decompose each ring element in `rows` into `delta` gadget components.
+pub fn decompose_rows<F: FieldCore + CanonicalField, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
     delta: usize,
     log_basis: u32,

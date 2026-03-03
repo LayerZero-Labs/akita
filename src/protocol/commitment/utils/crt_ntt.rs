@@ -69,20 +69,23 @@ pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
 ///
 /// Avoids repeated coefficient-to-NTT conversion on every dense mat-vec.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(non_snake_case)]
-pub(crate) enum NttMatrixCache<const D: usize> {
+#[allow(non_snake_case, missing_docs)]
+pub enum NttMatrixCache<const D: usize> {
+    /// 32-bit CRT primes.
     Q32 {
         A: Vec<Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>>,
         B: Vec<Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>>,
         D: Vec<Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>>,
         params: CrtNttParamSet<i16, Q32_NUM_PRIMES, D>,
     },
+    /// 64-bit CRT primes.
     Q64 {
         A: Vec<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
         B: Vec<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
         D: Vec<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
         params: CrtNttParamSet<i32, Q64_NUM_PRIMES, D>,
     },
+    /// 128-bit CRT primes.
     Q128 {
         A: Vec<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
         B: Vec<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,

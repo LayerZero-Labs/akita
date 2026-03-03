@@ -154,11 +154,6 @@ impl HachiCommitmentLayout {
         if log_basis == 0 || log_basis >= 128 {
             return Err(HachiError::InvalidSetup("invalid log_basis".to_string()));
         }
-        if (delta as u32).saturating_mul(log_basis) > 128 {
-            return Err(HachiError::InvalidSetup(
-                "delta * log_basis must be <= 128".to_string(),
-            ));
-        }
         let num_blocks = checked_pow2(r_vars)?;
         let block_len = checked_pow2(m_vars)?;
         let inner_width = block_len

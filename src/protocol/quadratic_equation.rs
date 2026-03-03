@@ -4,20 +4,16 @@
 //! the quadratic equation components M, y, z, and v.
 
 use crate::algebra::{CyclotomicRing, SparseChallenge, SparseChallengeConfig};
-use crate::cfg_iter;
 use crate::error::HachiError;
-#[cfg(feature = "parallel")]
-use crate::parallel::*;
 use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttMatrixCache;
-use crate::protocol::commitment::utils::linear::{
-    decompose_block, mat_vec_mul_ntt_cached, MatrixSlot,
-};
+use crate::protocol::commitment::utils::linear::{mat_vec_mul_ntt_cached, MatrixSlot};
 use crate::protocol::commitment::utils::norm::{detect_field_modulus, vec_inf_norm};
 use crate::protocol::commitment::{
     CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiProverSetup,
     HachiVerifierSetup, RingCommitment,
 };
+use crate::protocol::hachi_poly_ops::HachiPolyOps;
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::HachiCommitmentHint;
 use crate::protocol::ring_switch::eval_ring_at;
@@ -29,16 +25,16 @@ use std::marker::PhantomData;
 
 /// **Steps 1–3.** Compute `w_i = a^T G_{2^m} s_i` and decompose: `ŵ_i = G_1^{-1}(w_i)`.
 ///
-/// Recomputes each block's `s_i` from `ring_coeffs` on the fly to avoid
-/// storing all `s_i` simultaneously (which can be tens of GB at production
-/// parameters).
-fn compute_w_hat<F, const D: usize>(
+/// Uses `HachiPolyOps::fold_blocks` to compute the per-block dot products,
+/// then decomposes each result.
+fn compute_w_hat<F, const D: usize, P>(
     opening_point: &RingOpeningPoint<F>,
-    ring_coeffs: &[CyclotomicRing<F, D>],
+    poly: &P,
     layout: HachiCommitmentLayout,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
     F: FieldCore + CanonicalField,
+    P: HachiPolyOps<F, D>,
 {
     let a = &opening_point.a;
     let block_len = layout.block_len;
@@ -47,33 +43,10 @@ where
 
     debug_assert_eq!(a.len(), block_len);
 
-    let blocks: Vec<&[CyclotomicRing<F, D>]> = (0..layout.num_blocks)
-        .map(|i| {
-            let start = i * block_len;
-            let end = (start + block_len).min(ring_coeffs.len());
-            if start < ring_coeffs.len() {
-                &ring_coeffs[start..end]
-            } else {
-                &[] as &[CyclotomicRing<F, D>]
-            }
-        })
-        .collect();
-
-    // w_i = Σ_j a[j] · block[j]  (dot product in ring space).
-    // Then ŵ_i = G^{-1}(w_i).
-    //
-    // The previous implementation materialized s_i = G^{-1}(block) (block_len *
-    // delta ring elements ≈ 512 MB for production params) and then recomposed
-    // each entry G(s_i[j*delta..(j+1)*delta]) = block[j].  The decompose +
-    // recompose is an identity, so we skip it entirely.
-    cfg_iter!(blocks)
-        .map(|block| {
-            let mut w_i = CyclotomicRing::<F, D>::zero();
-            for (b_j, a_j) in block.iter().zip(a.iter()) {
-                w_i += b_j.scale(a_j);
-            }
-            w_i.balanced_decompose_pow2(delta, log_basis)
-        })
+    let folded = poly.fold_blocks(a, block_len);
+    folded
+        .into_iter()
+        .map(|w_i| w_i.balanced_decompose_pow2(delta, log_basis))
         .collect()
 }
 
@@ -93,40 +66,19 @@ fn flatten_w_hat<F: FieldCore, const D: usize>(
 
 /// **Steps 7–9.** Fold `z_pre = Σ c_i · s_i` and check `‖z_pre‖_∞ ≤ β`.
 ///
-/// Returns the pre-decomposition `z` vector (before gadget decomposition into
-/// `ẑ = J^{-1}(z_pre)`). Callers that need `z_hat` can apply
-/// `balanced_decompose_pow2(TAU, LOG_BASIS)` themselves.
-fn compute_z_pre<F, const D: usize, Cfg>(
-    ring_coeffs: &[CyclotomicRing<F, D>],
+/// Uses `HachiPolyOps::decompose_fold` to carry out the decompose + fold
+/// in whatever way the polynomial implementation prefers.
+fn compute_z_pre<F, const D: usize, Cfg, P>(
+    poly: &P,
     challenges: &[SparseChallenge],
     layout: HachiCommitmentLayout,
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
 where
     F: FieldCore + CanonicalField,
     Cfg: CommitmentConfig,
+    P: HachiPolyOps<F, D>,
 {
-    let block_len = layout.block_len;
-    let delta = layout.delta;
-    let log_basis = layout.log_basis;
-    let inner_width = block_len * delta;
-
-    debug_assert_eq!(challenges.len(), layout.num_blocks);
-
-    let mut z = vec![CyclotomicRing::<F, D>::zero(); inner_width];
-
-    for (i, c_i) in challenges.iter().enumerate() {
-        let start = i * block_len;
-        let end = (start + block_len).min(ring_coeffs.len());
-        let block = if start < ring_coeffs.len() {
-            &ring_coeffs[start..end]
-        } else {
-            &[] as &[CyclotomicRing<F, D>]
-        };
-        let s_i = decompose_block(block, delta, log_basis);
-        for (j, z_j) in z.iter_mut().enumerate() {
-            *z_j += s_i[j].mul_by_sparse(c_i);
-        }
-    }
+    let z = poly.decompose_fold(challenges, layout.block_len, layout.delta, layout.log_basis);
 
     let modulus = detect_field_modulus::<F>();
     let norm = vec_inf_norm(&z, modulus);
@@ -176,20 +128,24 @@ where
 {
     /// Prover constructor: runs §4.2 stage 1 and builds all equation components.
     ///
+    /// `poly` provides the ring-level polynomial data for fold/decompose ops.
+    /// `hint` carries `t_hat` from the commitment phase.
+    ///
     /// # Errors
     ///
     /// Returns an error if the norm check, challenge sampling, or matrix
     /// generation fails.
-    pub fn new_prover<T: Transcript<F>>(
+    pub fn new_prover<T: Transcript<F>, P: HachiPolyOps<F, D>>(
         setup: &HachiProverSetup<F, D>,
         ring_opening_point: RingOpeningPoint<F>,
+        poly: &P,
         hint: HachiCommitmentHint<F, D>,
         transcript: &mut T,
         commitment: &RingCommitment<F, D>,
         y_ring: &CyclotomicRing<F, D>,
     ) -> Result<Self, HachiError> {
         let layout = setup.layout();
-        let w_hat = compute_w_hat::<F, D>(&ring_opening_point, &hint.ring_coeffs, layout);
+        let w_hat = compute_w_hat::<F, D, P>(&ring_opening_point, poly, layout);
         let w_hat_flat = flatten_w_hat(&w_hat);
         let v = compute_v(setup.ntt_cache()?, &w_hat_flat)?;
 
@@ -206,7 +162,7 @@ where
             &challenge_cfg,
         )?;
 
-        let z_pre = compute_z_pre::<F, D, Cfg>(&hint.ring_coeffs, &challenges, layout)?;
+        let z_pre = compute_z_pre::<F, D, Cfg, P>(poly, &challenges, layout)?;
 
         let y = generate_y::<F, D>(&v, &commitment.u, y_ring, Cfg::N_D, Cfg::N_B, Cfg::N_A)?;
 
@@ -663,6 +619,7 @@ mod tests {
     use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
     use crate::protocol::challenges::sparse::sample_sparse_challenges;
     use crate::protocol::commitment::{HachiCommitmentCore, RingCommitmentScheme};
+    use crate::protocol::hachi_poly_ops::DensePoly;
     use crate::protocol::proof::HachiCommitmentHint;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::test_utils::*;
@@ -719,15 +676,14 @@ mod tests {
 
         let ring_coeffs: Vec<CyclotomicRing<F, D>> =
             blocks.iter().flat_map(|b| b.iter().copied()).collect();
-        let hint = HachiCommitmentHint {
-            t_hat: w.t_hat,
-            ring_coeffs,
-        };
+        let poly = DensePoly::from_ring_coeffs(ring_coeffs);
+        let hint = HachiCommitmentHint { t_hat: w.t_hat };
         let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_SEED);
         let y_ring = CyclotomicRing::<F, D>::zero();
         let quad_eq = QuadraticEquation::<F, D, TinyConfig>::new_prover(
             &setup,
             point.clone(),
+            &poly,
             hint,
             &mut transcript,
             &w.commitment,

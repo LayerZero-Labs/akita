@@ -406,7 +406,7 @@ mod tests {
     use crate::algebra::fields::lift::LiftBase;
     use crate::algebra::ring::CyclotomicRing;
     use crate::algebra::Fp64;
-    use crate::primitives::multilinear_evals::DenseMultilinearEvals;
+    use crate::protocol::hachi_poly_ops::DensePoly;
     use crate::protocol::opening_point::BasisMode;
     use crate::protocol::ring_switch::r_decomp_levels;
     use crate::protocol::sumcheck::eq_poly::EqPolynomial;
@@ -422,9 +422,9 @@ mod tests {
     use std::array::from_fn;
 
     type F = Fp64<4294967197>;
-    const D: usize = 8;
     type Cfg = SmallTestCommitmentConfig;
-    type Scheme = HachiCommitmentScheme<{ Cfg::D }, Cfg>;
+    const D: usize = Cfg::D;
+    type Scheme = HachiCommitmentScheme<D, Cfg>;
 
     struct PointEvalReferenceNormSumcheckProver<E: FieldCore> {
         split_eq: GruenSplitEq<E>,
@@ -659,7 +659,7 @@ mod tests {
         let num_vars = layout.m_vars + layout.r_vars + alpha;
         let len = 1usize << num_vars;
         let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
-        let poly = DenseMultilinearEvals::new_padded(evals);
+        let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
 
         let setup = Scheme::setup_prover(num_vars);
         let (commitment, hint) = Scheme::commit(&poly, &setup).unwrap();
@@ -670,7 +670,7 @@ mod tests {
             &setup,
             &poly,
             &opening_point,
-            Some(hint),
+            hint,
             &mut prover_transcript,
             &commitment,
             BasisMode::Lagrange,

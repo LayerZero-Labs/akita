@@ -113,42 +113,6 @@ pub fn map_onehot_to_sparse_blocks(
 /// ```text
 /// t[a] = sum_{entry} A[a][entry.pos * delta].mul_by_monomial_sum(entry.nonzero_coeffs)
 /// ```
-///
-/// Also returns `s` (densely materialized) for the opening proof hint.
-#[allow(non_snake_case)]
-pub(crate) fn inner_ajtai_onehot<F: FieldCore + CanonicalField, const D: usize>(
-    A: &[Vec<CyclotomicRing<F, D>>],
-    sparse_entries: &[SparseBlockEntry],
-    block_len: usize,
-    delta: usize,
-) -> (Vec<CyclotomicRing<F, D>>, Vec<CyclotomicRing<F, D>>) {
-    let n_a = A.len();
-    let inner_width = block_len * delta;
-
-    // Build s: mostly zeros, with level-0 entries for nonzero ring elements.
-    let mut s = vec![CyclotomicRing::<F, D>::zero(); inner_width];
-    for entry in sparse_entries {
-        let mut coeffs = [F::zero(); D];
-        for &ci in &entry.nonzero_coeffs {
-            coeffs[ci] = F::one();
-        }
-        s[entry.pos_in_block * delta] = CyclotomicRing::from_coefficients(coeffs);
-    }
-
-    // Compute t[a] = sum over nonzero entries of A[a][pos*delta] * f_j,
-    // where f_j is the monomial sum at that position.
-    let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
-    for entry in sparse_entries {
-        let col = entry.pos_in_block * delta;
-        for a in 0..n_a {
-            t[a] += A[a][col].mul_by_monomial_sum(&entry.nonzero_coeffs);
-        }
-    }
-
-    (t, s)
-}
-
-/// Like `inner_ajtai_onehot` but only returns `t`, skipping the `s` allocation.
 #[allow(non_snake_case)]
 pub(crate) fn inner_ajtai_onehot_t_only<F: FieldCore + CanonicalField, const D: usize>(
     A: &[Vec<CyclotomicRing<F, D>>],
@@ -172,9 +136,6 @@ pub(crate) fn inner_ajtai_onehot_t_only<F: FieldCore + CanonicalField, const D: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::F;
-    use crate::FromSmallInt;
-    use std::array::from_fn;
 
     #[test]
     fn map_onehot_k_gt_d() {
@@ -253,47 +214,5 @@ mod tests {
     fn map_onehot_rejects_non_divisible() {
         let result = map_onehot_to_sparse_blocks(3, &[Some(0), Some(1)], 0, 1, 4);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn inner_ajtai_onehot_single_monomial() {
-        const D: usize = 4;
-        type R = CyclotomicRing<F, D>;
-
-        // A is 2x4 (N_A=2, inner_width = block_len * delta = 2 * 2 = 4)
-        let a: Vec<Vec<R>> = vec![
-            vec![
-                R::from_coefficients(from_fn(|i| F::from_u64((i + 1) as u64))),
-                R::from_coefficients(from_fn(|i| F::from_u64((i + 10) as u64))),
-                R::from_coefficients(from_fn(|i| F::from_u64((i + 20) as u64))),
-                R::from_coefficients(from_fn(|i| F::from_u64((i + 30) as u64))),
-            ],
-            vec![
-                R::from_coefficients(from_fn(|i| F::from_u64((i + 5) as u64))),
-                R::from_coefficients(from_fn(|i| F::from_u64((i + 15) as u64))),
-                R::from_coefficients(from_fn(|i| F::from_u64((i + 25) as u64))),
-                R::from_coefficients(from_fn(|i| F::from_u64((i + 35) as u64))),
-            ],
-        ];
-
-        // One nonzero entry at pos=1, coefficient index 2 => monomial X^2
-        let entries = vec![SparseBlockEntry {
-            pos_in_block: 1,
-            nonzero_coeffs: vec![2],
-        }];
-
-        let (t, s) = inner_ajtai_onehot(&a, &entries, 2, 2);
-
-        // t[row] should equal A[row][1*2] * X^2 = A[row][2].negacyclic_shift(2)
-        for row in 0..2 {
-            let expected = a[row][2].negacyclic_shift(2);
-            assert_eq!(t[row], expected);
-        }
-
-        // s should have a nonzero entry at position 1*2 = 2
-        assert_eq!(s[2].coefficients()[2], F::one());
-        assert!(s[0] == R::zero());
-        assert!(s[1] == R::zero());
-        assert!(s[3] == R::zero());
     }
 }
