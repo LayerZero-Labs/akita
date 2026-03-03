@@ -13,8 +13,8 @@ use crate::protocol::labrador::transcript::{
     LabradorLevelTranscriptContext,
 };
 use crate::protocol::labrador::types::{
-    LabradorConstraint, LabradorConstraintEntry, LabradorLevelProof, LabradorProof,
-    LabradorReductionConfig, LabradorStatement, LabradorWitness,
+    LabradorConstraint, LabradorLevelProof, LabradorProof, LabradorReductionConfig,
+    LabradorStatement, LabradorWitness,
 };
 use crate::protocol::prg::MatrixPrgBackendChoice;
 use crate::protocol::transcript::labels;
@@ -677,11 +677,15 @@ fn build_next_constraints<
     let h_len = r * (r + 1) / 2;
     let h_hat_len = h_len * config.fu;
     let aux_row = config.f;
+    let aux_row_len = t_hat_len + h_hat_len;
+    let num_rows = config.f + 1;
 
     if config.kappa1 > 0 {
         if u1.len() != config.kappa1 || u2.len() != config.kappa1 {
             return Err(HachiError::InvalidProof);
         }
+
+        // B · t_hat = u1
         let b = derive_extendable_comkey_matrix::<F, D>(
             config.kappa1,
             t_hat_len,
@@ -689,21 +693,21 @@ fn build_next_constraints<
             b"labrador/comkey/B",
             backend,
         );
-        let mut coeffs = Vec::with_capacity(config.kappa1 * t_hat_len);
-        for row in &b {
-            coeffs.extend_from_slice(row);
+        let mut aux_coeffs = vec![CyclotomicRing::<F, D>::zero(); config.kappa1 * aux_row_len];
+        for (out_idx, b_row) in b.iter().enumerate() {
+            let start = out_idx * aux_row_len;
+            for (j, val) in b_row.iter().enumerate() {
+                aux_coeffs[start + j] = *val;
+            }
         }
+        let mut coefficients = vec![vec![]; num_rows];
+        coefficients[aux_row] = aux_coeffs;
         constraints.push(LabradorConstraint {
-            entries: vec![LabradorConstraintEntry {
-                row: aux_row,
-                offset: 0,
-                len: t_hat_len,
-            }],
-            multiplicities: vec![1],
-            coefficients: vec![coeffs],
+            coefficients,
             target: u1.to_vec(),
         });
 
+        // B2 · h_hat = u2
         let b2 = derive_extendable_comkey_matrix::<F, D>(
             config.kappa1,
             h_hat_len,
@@ -711,22 +715,22 @@ fn build_next_constraints<
             b"labrador/comkey/U2",
             backend,
         );
-        let mut coeffs = Vec::with_capacity(config.kappa1 * h_hat_len);
-        for row in &b2 {
-            coeffs.extend_from_slice(row);
+        let mut aux_coeffs = vec![CyclotomicRing::<F, D>::zero(); config.kappa1 * aux_row_len];
+        for (out_idx, b2_row) in b2.iter().enumerate() {
+            let start = out_idx * aux_row_len + t_hat_len;
+            for (j, val) in b2_row.iter().enumerate() {
+                aux_coeffs[start + j] = *val;
+            }
         }
+        let mut coefficients = vec![vec![]; num_rows];
+        coefficients[aux_row] = aux_coeffs;
         constraints.push(LabradorConstraint {
-            entries: vec![LabradorConstraintEntry {
-                row: aux_row,
-                offset: t_hat_len,
-                len: h_hat_len,
-            }],
-            multiplicities: vec![1],
-            coefficients: vec![coeffs],
+            coefficients,
             target: u2.to_vec(),
         });
     }
 
+    // A·z - c·t = 0
     let a = derive_extendable_comkey_matrix::<F, D>(
         config.kappa,
         max_len,
@@ -734,22 +738,16 @@ fn build_next_constraints<
         b"labrador/comkey/A",
         backend,
     );
-    let mut az_entries = Vec::with_capacity(config.f + 1);
-    let mut az_coeffs = Vec::with_capacity(config.f + 1);
+    let mut az_coefficients = vec![vec![]; num_rows];
     for part_idx in 0..config.f {
         let scale = pow_b[part_idx];
         let mut coeffs = Vec::with_capacity(config.kappa * max_len);
-        for row in &a {
-            for elem in row.iter() {
+        for a_row in &a {
+            for elem in a_row.iter() {
                 coeffs.push(elem.scale(&scale));
             }
         }
-        az_entries.push(LabradorConstraintEntry {
-            row: part_idx,
-            offset: 0,
-            len: max_len,
-        });
-        az_coeffs.push(coeffs);
+        az_coefficients[part_idx] = coeffs;
     }
 
     let mut t_coeffs = vec![CyclotomicRing::<F, D>::zero(); config.kappa * t_hat_len];
@@ -764,31 +762,26 @@ fn build_next_constraints<
             }
         }
     }
-    az_entries.push(LabradorConstraintEntry {
-        row: aux_row,
-        offset: 0,
-        len: t_hat_len,
-    });
-    az_coeffs.push(t_coeffs);
+    let mut aux_az = vec![CyclotomicRing::<F, D>::zero(); config.kappa * aux_row_len];
+    for k in 0..config.kappa {
+        let src_start = k * t_hat_len;
+        let dst_start = k * aux_row_len;
+        aux_az[dst_start..dst_start + t_hat_len]
+            .copy_from_slice(&t_coeffs[src_start..src_start + t_hat_len]);
+    }
+    az_coefficients[aux_row] = aux_az;
     constraints.push(LabradorConstraint {
-        entries: az_entries,
-        multiplicities: vec![1; az_coeffs.len()],
-        coefficients: az_coeffs,
+        coefficients: az_coefficients,
         target: vec![CyclotomicRing::<F, D>::zero(); config.kappa],
     });
 
-    let mut lg_entries = Vec::with_capacity(config.f + 1);
-    let mut lg_coeffs = Vec::with_capacity(config.f + 1);
+    // linear garbage constraint
+    let mut lg_coefficients = vec![vec![]; num_rows];
     for part_idx in 0..config.f {
         let scale = pow_b[part_idx];
         let coeffs: Vec<CyclotomicRing<F, D>> =
             combined_phi.iter().map(|elem| elem.scale(&scale)).collect();
-        lg_entries.push(LabradorConstraintEntry {
-            row: part_idx,
-            offset: 0,
-            len: max_len,
-        });
-        lg_coeffs.push(coeffs);
+        lg_coefficients[part_idx] = coeffs;
     }
     let mut h_coeffs = vec![CyclotomicRing::<F, D>::zero(); h_hat_len];
     for i in 0..r {
@@ -802,36 +795,28 @@ fn build_next_constraints<
             }
         }
     }
-    lg_entries.push(LabradorConstraintEntry {
-        row: aux_row,
-        offset: t_hat_len,
-        len: h_hat_len,
-    });
-    lg_coeffs.push(h_coeffs);
+    let mut aux_lg = vec![CyclotomicRing::<F, D>::zero(); aux_row_len];
+    aux_lg[t_hat_len..t_hat_len + h_hat_len].copy_from_slice(&h_coeffs);
+    lg_coefficients[aux_row] = aux_lg;
     constraints.push(LabradorConstraint {
-        entries: lg_entries,
-        multiplicities: vec![1; lg_coeffs.len()],
-        coefficients: lg_coeffs,
+        coefficients: lg_coefficients,
         target: vec![CyclotomicRing::<F, D>::zero()],
     });
 
-    let mut diag_coeffs = vec![CyclotomicRing::<F, D>::zero(); h_hat_len];
+    // diagonal (norm) constraint
+    let mut diag_coeffs = vec![CyclotomicRing::<F, D>::zero(); aux_row_len];
     for i in 0..r {
         let pair = pair_index(i, i, r);
         for part_idx in 0..config.fu {
             let scale = pow_bu[part_idx];
             let idx = pair * config.fu + part_idx;
-            diag_coeffs[idx] = constant_poly(scale);
+            diag_coeffs[t_hat_len + idx] = constant_poly(scale);
         }
     }
+    let mut diag_coefficients = vec![vec![]; num_rows];
+    diag_coefficients[aux_row] = diag_coeffs;
     constraints.push(LabradorConstraint {
-        entries: vec![LabradorConstraintEntry {
-            row: aux_row,
-            offset: t_hat_len,
-            len: h_hat_len,
-        }],
-        multiplicities: vec![1],
-        coefficients: vec![diag_coeffs],
+        coefficients: diag_coefficients,
         target: vec![*b_total],
     });
 
@@ -914,9 +899,6 @@ where
     }
 
     for cnst in constraints {
-        if cnst.entries.len() != cnst.coefficients.len() {
-            return Err(HachiError::InvalidProof);
-        }
         let outputs = cnst.target.len().max(1);
         for out_idx in 0..outputs {
             let alpha = challenge_ring_element_rejection_sampled(
@@ -930,27 +912,18 @@ where
                 .unwrap_or_else(CyclotomicRing::<F, D>::zero);
             b_total += alpha * target;
 
-            for (entry_idx, entry) in cnst.entries.iter().enumerate() {
-                if entry.row >= phi_total.len() {
+            for (row_idx, coeffs) in cnst.coefficients.iter().enumerate() {
+                if coeffs.is_empty() {
+                    continue;
+                }
+                if row_idx >= phi_total.len() {
                     return Err(HachiError::InvalidProof);
                 }
-                if entry.offset + entry.len > phi_total[entry.row].len() {
-                    return Err(HachiError::InvalidProof);
-                }
-                let coeffs = cnst
-                    .coefficients
-                    .get(entry_idx)
-                    .ok_or(HachiError::InvalidProof)?;
-                if coeffs.len() < outputs * entry.len {
-                    return Err(HachiError::InvalidProof);
-                }
-                let coeff_start = out_idx * entry.len;
-                let coeff_slice = &coeffs[coeff_start..coeff_start + entry.len];
-                let mult = cnst.multiplicities.get(entry_idx).copied().unwrap_or(1);
-                let mult_f = F::from_u64(mult as u64);
+                let row_len = coeffs.len() / outputs;
+                let coeff_start = out_idx * row_len;
+                let coeff_slice = &coeffs[coeff_start..coeff_start + row_len];
                 for (j, coeff) in coeff_slice.iter().enumerate() {
-                    let scaled = coeff.scale(&mult_f);
-                    phi_total[entry.row][entry.offset + j] += alpha * scaled;
+                    phi_total[row_idx][j] += alpha * *coeff;
                 }
             }
         }
@@ -1070,39 +1043,30 @@ fn verify_constraints<F: FieldCore + CanonicalField + FromSmallInt, const D: usi
     witness: &LabradorWitness<F, D>,
 ) -> Result<(), HachiError> {
     for (idx, cnst) in constraints.iter().enumerate() {
-        if cnst.entries.len() != cnst.coefficients.len() {
-            return Err(HachiError::InvalidProof);
-        }
         let outputs = cnst.target.len().max(1);
         let mut lhs = vec![CyclotomicRing::<F, D>::zero(); outputs];
 
-        for (entry_idx, entry) in cnst.entries.iter().enumerate() {
-            if entry.row >= witness.rows().len() {
+        for (row_idx, coeffs) in cnst.coefficients.iter().enumerate() {
+            if coeffs.is_empty() {
+                continue;
+            }
+            if row_idx >= witness.rows().len() {
                 return Err(HachiError::InvalidProof);
             }
-            let row = &witness.rows()[entry.row];
-            let mult = cnst.multiplicities.get(entry_idx).copied().unwrap_or(1);
-            let mult_f = F::from_u64(mult as u64);
-            let coeffs = cnst
-                .coefficients
-                .get(entry_idx)
-                .ok_or(HachiError::InvalidProof)?;
-            if coeffs.len() < outputs * entry.len {
-                return Err(HachiError::InvalidProof);
-            }
+            let row = &witness.rows()[row_idx];
+            let row_len = coeffs.len() / outputs;
             for out_idx in 0..outputs {
-                let coeff_start = out_idx * entry.len;
-                let coeff_slice = &coeffs[coeff_start..coeff_start + entry.len];
+                let coeff_start = out_idx * row_len;
+                let coeff_slice = &coeffs[coeff_start..coeff_start + row_len];
                 let mut inner = CyclotomicRing::<F, D>::zero();
                 for (j, coeff) in coeff_slice.iter().enumerate() {
-                    let witness_idx = entry.offset + j;
                     let w_elem = row
-                        .get(witness_idx)
+                        .get(j)
                         .copied()
                         .unwrap_or_else(CyclotomicRing::<F, D>::zero);
                     inner += *coeff * w_elem;
                 }
-                lhs[out_idx] += inner.scale(&mult_f);
+                lhs[out_idx] += inner;
             }
         }
 
@@ -1146,12 +1110,6 @@ mod tests {
             std::array::from_fn(|i| if i == 0 { F::from_i64(3) } else { F::zero() }),
         )];
         let constraint = LabradorConstraint {
-            entries: vec![crate::protocol::labrador::types::LabradorConstraintEntry {
-                row: 0,
-                offset: 0,
-                len: 1,
-            }],
-            multiplicities: vec![1],
             coefficients: vec![coeff],
             target,
         };

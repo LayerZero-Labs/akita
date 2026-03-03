@@ -50,26 +50,16 @@ impl<F: FieldCore + CanonicalField, const D: usize> LabradorWitness<F, D> {
     }
 }
 
-/// Identifies a contiguous witness slice participating in a sparse constraint.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LabradorConstraintEntry {
-    /// Row index into `LabradorWitness::rows`.
-    pub row: usize,
-    /// Start offset within the row.
-    pub offset: usize,
-    /// Number of elements consumed from the row.
-    pub len: usize,
-}
-
-/// Sparse linear constraint:
-/// `sum_i multiplicities[i] * <coefficients[i], witness[entries[i]]> = target`.
+/// Linear constraint: `sum_i <coefficients[i], witness_row_i> = target`.
+///
+/// `coefficients[i]` holds the φ_i vector for witness row `i`.
+/// For multi-output constraints (`target.len() > 1`), each coefficient
+/// vector is `outputs * row_len` long: output `k` occupies
+/// `coefficients[i][k*row_len..(k+1)*row_len]`.
+/// An empty inner vec means the row does not participate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabradorConstraint<F: FieldCore, const D: usize> {
-    /// Witness slices used by the constraint.
-    pub entries: Vec<LabradorConstraintEntry>,
-    /// Multiplicity per entry (C analogue: `sparsecnst.mult`).
-    pub multiplicities: Vec<usize>,
-    /// Coefficient vectors paired with `entries`.
+    /// Per-row coefficient vectors (one per witness row).
     pub coefficients: Vec<Vec<CyclotomicRing<F, D>>>,
     /// Right-hand side target vector.
     pub target: Vec<CyclotomicRing<F, D>>,
