@@ -25,7 +25,7 @@ use crate::protocol::commitment::onehot::{
     inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks, SparseBlockEntry,
 };
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
-use crate::protocol::commitment::utils::linear::{decompose_rows_i8, mat_vec_mul_ntt_tiled_i8};
+use crate::protocol::commitment::utils::linear::{decompose_rows_i8, mat_vec_mul_ntt_i8};
 use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
 use std::array::from_fn;
 use std::marker::PhantomData;
@@ -313,7 +313,7 @@ where
             })
             .collect();
 
-        let t_all = mat_vec_mul_ntt_tiled_i8(ntt_a, &block_slices, num_digits, log_basis);
+        let t_all = mat_vec_mul_ntt_i8(ntt_a, &block_slices, num_digits, log_basis);
 
         let results: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
             .map(|t_i| decompose_rows_i8(&t_i, num_digits, log_basis))

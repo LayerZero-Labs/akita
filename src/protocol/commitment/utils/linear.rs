@@ -2,6 +2,7 @@
 
 use crate::algebra::ntt::{MontCoeff, PrimeWidth};
 use crate::algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
+#[cfg(test)]
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
@@ -164,32 +165,6 @@ pub(crate) fn mat_vec_mul_crt_ntt_many<F: FieldCore + CanonicalField, const D: u
     Ok(out)
 }
 
-fn mat_vec_mul_precomputed_with_params<
-    F: FieldCore + CanonicalField,
-    W: PrimeWidth,
-    const K: usize,
-    const D: usize,
->(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
-    vec: &[CyclotomicRing<F, D>],
-    params: &CrtNttParamSet<W, K, D>,
-) -> Vec<CyclotomicRing<F, D>> {
-    let ntt_vec: Vec<CyclotomicCrtNtt<W, K, D>> = cfg_iter!(vec)
-        .map(|v| CyclotomicCrtNtt::from_ring_with_params(v, params))
-        .collect();
-
-    cfg_iter!(ntt_mat)
-        .map(|row_ntt| {
-            debug_assert!(row_ntt.len() >= ntt_vec.len());
-            let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
-            for (a_ntt, x_ntt) in row_ntt.iter().zip(ntt_vec.iter()) {
-                accumulate_pointwise_product_into(&mut acc, a_ntt, x_ntt, params);
-            }
-            acc.to_ring_with_params(params)
-        })
-        .collect()
-}
-
 fn unreduced_quotient_ntt<F, W, const K: usize, const D: usize>(
     ntt_row: &[CyclotomicCrtNtt<W, K, D>],
     cyc_row: &[CyclotomicCrtNtt<W, K, D>],
@@ -295,170 +270,6 @@ pub fn unreduced_quotient_rows_ntt_cached<F: FieldCore + CanonicalField, const D
     )
 }
 
-fn unreduced_quotient_ntt_i8<F, W, const K: usize, const D: usize>(
-    ntt_row: &[CyclotomicCrtNtt<W, K, D>],
-    cyc_row: &[CyclotomicCrtNtt<W, K, D>],
-    vec_neg: &[Option<CyclotomicCrtNtt<W, K, D>>],
-    vec_cyc: &[Option<CyclotomicCrtNtt<W, K, D>>],
-    params: &CrtNttParamSet<W, K, D>,
-) -> CyclotomicRing<F, D>
-where
-    F: FieldCore + CanonicalField,
-    W: PrimeWidth,
-{
-    let n = ntt_row.len().min(vec_neg.len());
-
-    let mut acc_neg = CyclotomicCrtNtt::<W, K, D>::zero();
-    let mut acc_cyc = CyclotomicCrtNtt::<W, K, D>::zero();
-
-    for j in 0..n {
-        if let Some(neg_j) = &vec_neg[j] {
-            accumulate_pointwise_product_into(&mut acc_neg, &ntt_row[j], neg_j, params);
-        }
-        if let Some(cyc_j) = &vec_cyc[j] {
-            accumulate_pointwise_product_into(&mut acc_cyc, &cyc_row[j], cyc_j, params);
-        }
-    }
-
-    let neg_ring: CyclotomicRing<F, D> = acc_neg.to_ring_with_params(params);
-    let cyc_ring: CyclotomicRing<F, D> = acc_cyc.to_ring_cyclic(params);
-
-    let neg_coeffs = neg_ring.coefficients();
-    let cyc_coeffs = cyc_ring.coefficients();
-    let quotient: [F; D] = from_fn(|k| (cyc_coeffs[k] - neg_coeffs[k]) * F::TWO_INV);
-    CyclotomicRing::from_coefficients(quotient)
-}
-
-macro_rules! dispatch_slot_quotient_i8 {
-    ($slot:expr, $vec:expr) => {{
-        match $slot {
-            NttSlotCache::Q32 {
-                neg,
-                cyc,
-                params: p,
-            } => {
-                let v = $vec;
-                let n = neg.first().map_or(0, |r| r.len().min(v.len()));
-                let v_neg: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| {
-                        if is_zero_plane(x) {
-                            None
-                        } else {
-                            Some(CyclotomicCrtNtt::from_i8_with_params(x, p))
-                        }
-                    })
-                    .collect();
-                let v_cyc: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| {
-                        if is_zero_plane(x) {
-                            None
-                        } else {
-                            Some(CyclotomicCrtNtt::from_i8_cyclic(x, p))
-                        }
-                    })
-                    .collect();
-                cfg_into_iter!(0..neg.len())
-                    .map(|i| unreduced_quotient_ntt_i8(&neg[i], &cyc[i], &v_neg, &v_cyc, p))
-                    .collect()
-            }
-            NttSlotCache::Q64 {
-                neg,
-                cyc,
-                params: p,
-            } => {
-                let v = $vec;
-                let n = neg.first().map_or(0, |r| r.len().min(v.len()));
-                let v_neg: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| {
-                        if is_zero_plane(x) {
-                            None
-                        } else {
-                            Some(CyclotomicCrtNtt::from_i8_with_params(x, p))
-                        }
-                    })
-                    .collect();
-                let v_cyc: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| {
-                        if is_zero_plane(x) {
-                            None
-                        } else {
-                            Some(CyclotomicCrtNtt::from_i8_cyclic(x, p))
-                        }
-                    })
-                    .collect();
-                cfg_into_iter!(0..neg.len())
-                    .map(|i| unreduced_quotient_ntt_i8(&neg[i], &cyc[i], &v_neg, &v_cyc, p))
-                    .collect()
-            }
-            NttSlotCache::Q128 {
-                neg,
-                cyc,
-                params: p,
-            } => {
-                let v = $vec;
-                let n = neg.first().map_or(0, |r| r.len().min(v.len()));
-                let v_neg: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| {
-                        if is_zero_plane(x) {
-                            None
-                        } else {
-                            Some(CyclotomicCrtNtt::from_i8_with_params(x, p))
-                        }
-                    })
-                    .collect();
-                let v_cyc: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| {
-                        if is_zero_plane(x) {
-                            None
-                        } else {
-                            Some(CyclotomicCrtNtt::from_i8_cyclic(x, p))
-                        }
-                    })
-                    .collect();
-                cfg_into_iter!(0..neg.len())
-                    .map(|i| unreduced_quotient_ntt_i8(&neg[i], &cyc[i], &v_neg, &v_cyc, p))
-                    .collect()
-            }
-        }
-    }};
-}
-
-/// Like [`unreduced_quotient_rows_ntt_cached`] but accepts i8 digit planes
-/// instead of ring elements, using direct i8 → CRT+NTT conversion.
-/// Skips all-zero digit planes to avoid wasted NTT work.
-pub fn unreduced_quotient_rows_ntt_cached_i8<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &NttSlotCache<D>,
-    vec: &[[i8; D]],
-) -> Vec<CyclotomicRing<F, D>> {
-    dispatch_slot_quotient_i8!(slot, vec)
-}
-
-fn mat_vec_mul_precomputed_i8_with_params<
-    F: FieldCore + CanonicalField,
-    W: PrimeWidth,
-    const K: usize,
-    const D: usize,
->(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
-    vec: &[[i8; D]],
-    params: &CrtNttParamSet<W, K, D>,
-) -> Vec<CyclotomicRing<F, D>> {
-    let ntt_vec: Vec<CyclotomicCrtNtt<W, K, D>> = cfg_iter!(vec)
-        .map(|v| CyclotomicCrtNtt::from_i8_with_params(v, params))
-        .collect();
-
-    cfg_iter!(ntt_mat)
-        .map(|row_ntt| {
-            debug_assert!(row_ntt.len() >= ntt_vec.len());
-            let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
-            for (a_ntt, x_ntt) in row_ntt.iter().zip(ntt_vec.iter()) {
-                accumulate_pointwise_product_into(&mut acc, a_ntt, x_ntt, params);
-            }
-            acc.to_ring_with_params(params)
-        })
-        .collect()
-}
-
 macro_rules! dispatch_slot {
     ($slot:expr, $func:ident $(, $arg:expr)*) => {{
         match $slot {
@@ -467,29 +278,6 @@ macro_rules! dispatch_slot {
             NttSlotCache::Q128 { neg, params: p, .. } => $func(neg, $($arg,)* p),
         }
     }};
-}
-
-/// Like [`mat_vec_mul_ntt_cached`] but accepts i8 digit planes
-/// instead of ring elements, using direct i8 → CRT+NTT conversion.
-pub fn mat_vec_mul_ntt_cached_i8<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &NttSlotCache<D>,
-    vec: &[[i8; D]],
-) -> Vec<CyclotomicRing<F, D>> {
-    dispatch_slot!(slot, mat_vec_mul_precomputed_i8_with_params, vec)
-}
-
-/// Dense mat-vec using a pre-converted NTT matrix from the cache.
-///
-/// # Errors
-///
-/// Returns an error if the matrix and vector dimensions are incompatible.
-#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_cached")]
-pub fn mat_vec_mul_ntt_cached<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &NttSlotCache<D>,
-    vec: &[CyclotomicRing<F, D>],
-) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-    let out = dispatch_slot!(slot, mat_vec_mul_precomputed_with_params, vec);
-    Ok(out)
 }
 
 /// Flatten a nested `Vec<Vec<[i8; D]>>` into a contiguous `Vec<[i8; D]>` using
@@ -596,8 +384,8 @@ fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
 /// Accepts raw ring-coefficient slices per block. Decomposes to i8 digits
 /// on-the-fly per tile to avoid materializing all digits at once.
 /// Tile width is auto-computed from ring parameters and target L2 cache size.
-#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_tiled_i8")]
-pub fn mat_vec_mul_ntt_tiled_i8<F: FieldCore + CanonicalField, const D: usize>(
+#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8")]
+pub fn mat_vec_mul_ntt_i8<F: FieldCore + CanonicalField, const D: usize>(
     slot: &NttSlotCache<D>,
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
@@ -605,14 +393,14 @@ pub fn mat_vec_mul_ntt_tiled_i8<F: FieldCore + CanonicalField, const D: usize>(
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     dispatch_slot!(
         slot,
-        mat_vec_mul_tiled_i8_with_params,
+        mat_vec_mul_i8_with_params,
         blocks,
         num_digits,
         log_basis
     )
 }
 
-fn mat_vec_mul_tiled_i8_with_params<
+fn mat_vec_mul_i8_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
     const K: usize,
@@ -701,20 +489,20 @@ fn mat_vec_mul_tiled_i8_with_params<
 
 /// Column-tiled mat-vec for a single pre-decomposed i8 digit vector.
 ///
-/// Same tiling strategy as [`mat_vec_mul_ntt_tiled_i8`] but for a single
+/// Same tiling strategy as [`mat_vec_mul_ntt_i8`] but for a single
 /// input vector of i8 digit planes (already decomposed). Tiles the matrix
 /// columns to keep each tile in L2, eliminating the full `ntt_vec`
 /// materialization of the non-tiled path.
 /// Tile width is auto-computed from ring parameters and target L2 cache size.
-#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_tiled_single_i8")]
-pub fn mat_vec_mul_ntt_tiled_single_i8<F: FieldCore + CanonicalField, const D: usize>(
+#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_single_i8")]
+pub fn mat_vec_mul_ntt_single_i8<F: FieldCore + CanonicalField, const D: usize>(
     slot: &NttSlotCache<D>,
     vec: &[[i8; D]],
 ) -> Vec<CyclotomicRing<F, D>> {
-    dispatch_slot!(slot, mat_vec_mul_tiled_single_i8_with_params, vec)
+    dispatch_slot!(slot, mat_vec_mul_single_i8_with_params, vec)
 }
 
-fn mat_vec_mul_tiled_single_i8_with_params<
+fn mat_vec_mul_single_i8_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
     const K: usize,
@@ -770,14 +558,11 @@ fn mat_vec_mul_tiled_single_i8_with_params<
         .collect()
 }
 
-/// Column-tiled quotient computation for a single pre-decomposed i8 digit vector.
-///
-/// Same tiling strategy as [`mat_vec_mul_ntt_tiled_single_i8`] but computes
-/// unreduced quotients: `(cyc_product - neg_product) / 2` for each row.
-/// Uses dual accumulators (neg, cyc) per row per tile.
-/// Tile width is auto-computed from ring parameters and target L2 cache size.
-#[tracing::instrument(skip_all, name = "unreduced_quotient_rows_ntt_tiled_i8")]
-pub fn unreduced_quotient_rows_ntt_tiled_i8<F: FieldCore + CanonicalField, const D: usize>(
+/// Like [`unreduced_quotient_rows_ntt_cached`] but accepts i8 digit planes
+/// instead of ring elements, using direct i8 -> CRT+NTT conversion.
+/// Column-tiled with zero-skip for all-zero digit planes.
+#[tracing::instrument(skip_all, name = "unreduced_quotient_rows_ntt_cached_i8")]
+pub fn unreduced_quotient_rows_ntt_cached_i8<F: FieldCore + CanonicalField, const D: usize>(
     slot: &NttSlotCache<D>,
     vec: &[[i8; D]],
 ) -> Vec<CyclotomicRing<F, D>> {
@@ -786,21 +571,21 @@ pub fn unreduced_quotient_rows_ntt_tiled_i8<F: FieldCore + CanonicalField, const
             neg,
             cyc,
             params: p,
-        } => quotient_tiled_single_i8_with_params(neg, cyc, vec, p),
+        } => quotient_single_i8_with_params(neg, cyc, vec, p),
         NttSlotCache::Q64 {
             neg,
             cyc,
             params: p,
-        } => quotient_tiled_single_i8_with_params(neg, cyc, vec, p),
+        } => quotient_single_i8_with_params(neg, cyc, vec, p),
         NttSlotCache::Q128 {
             neg,
             cyc,
             params: p,
-        } => quotient_tiled_single_i8_with_params(neg, cyc, vec, p),
+        } => quotient_single_i8_with_params(neg, cyc, vec, p),
     }
 }
 
-fn quotient_tiled_single_i8_with_params<
+fn quotient_single_i8_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
     const K: usize,

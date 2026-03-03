@@ -4,9 +4,7 @@ use crate::algebra::fields::wide::HasWide;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::primitives::poly::multilinear_lagrange_basis;
-use crate::protocol::commitment::utils::linear::{
-    flatten_i8_blocks, mat_vec_mul_ntt_tiled_single_i8,
-};
+use crate::protocol::commitment::utils::linear::{flatten_i8_blocks, mat_vec_mul_ntt_single_i8};
 use crate::protocol::commitment::{
     AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore, HachiProverSetup,
     HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
@@ -279,8 +277,7 @@ where
             layout.log_basis,
         )?;
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
-        let u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_tiled_single_i8(&setup.ntt_B, &t_hat_flat);
+        let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(&setup.ntt_B, &t_hat_flat);
         let hint = HachiCommitmentHint::new(t_hat_all);
         Ok((RingCommitment { u }, hint))
     }
