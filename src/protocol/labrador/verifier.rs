@@ -3,7 +3,6 @@
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
-use crate::protocol::labrador::commit::mat_vec_mul;
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
 use crate::protocol::labrador::johnson_lindenstrauss::{
     collapse, restore_constant_term, LabradorJlMatrix,
@@ -16,6 +15,7 @@ use crate::protocol::labrador::types::{
     LabradorConstraint, LabradorLevelProof, LabradorProof, LabradorReductionConfig,
     LabradorStatement, LabradorWitness,
 };
+use crate::protocol::labrador::utils::mat_vec_mul;
 use crate::protocol::prg::MatrixPrgBackendChoice;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::{challenge_ring_element_rejection_sampled, Transcript};
@@ -30,8 +30,7 @@ pub struct LabradorVerifyResult<F: FieldCore, const D: usize> {
     pub final_opening_witness: LabradorWitness<F, D>,
 }
 
-const LABRADOR_LOGQ_BITS: usize = 32;
-const JL_LIFTS: usize = (128 + LABRADOR_LOGQ_BITS - 1) / LABRADOR_LOGQ_BITS;
+use crate::protocol::labrador::config::JL_LIFTS;
 
 /// Verify Labrador proof and return terminal reduction state.
 ///

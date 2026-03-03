@@ -4,6 +4,9 @@ use crate::error::HachiError;
 use crate::protocol::labrador::types::{LabradorReductionConfig, LabradorWitness};
 use crate::{CanonicalField, FieldCore};
 
+pub(crate) const LABRADOR_LOGQ_BITS: usize = 32;
+pub(crate) const JL_LIFTS: usize = 128_usize.div_ceil(LABRADOR_LOGQ_BITS);
+
 const LABRADOR_LOGQ: f64 = 32.0;
 const LABRADOR_N: f64 = 64.0;
 const LABRADOR_LOGDELTA: f64 = 0.00639138757765197; // log2(1.00444)

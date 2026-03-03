@@ -200,9 +200,10 @@ where
             backend,
             transcript,
         )?;
-        let labrador_proof = labrador::prove(
+        let labrador_proof = labrador::prove_with_config(
             labrador_witness,
             &statement,
+            &greyhound_eval_proof.config,
             comkey_seed,
             &jl_seed,
             backend,

@@ -5,7 +5,7 @@ use crate::error::HachiError;
 /// Maximum recursion levels accepted by the protocol.
 ///
 /// Mirrors the fixed upper bound used by the C reference (`proof *pi[16]`).
-pub const LABRADOR_MAX_LEVELS: usize = 16;
+pub const LABRADOR_MAX_LEVELS: usize = 4;
 /// Upper bound for JL nonce search attempts.
 pub const LABRADOR_MAX_JL_NONCE_RETRIES: u64 = 1 << 20;
 /// Upper bound on challenge polynomials sampled per call.

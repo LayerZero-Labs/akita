@@ -4,7 +4,6 @@ use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::commitment::utils::linear::decompose_rows_with_carry;
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
-use crate::protocol::labrador::commit::mat_vec_mul;
 use crate::protocol::labrador::johnson_lindenstrauss::{
     collapse, project, zero_constant_term_for_proof, LabradorJlMatrix,
 };
@@ -16,6 +15,7 @@ use crate::protocol::labrador::types::{
     LabradorConstraint, LabradorLevelProof, LabradorReductionConfig, LabradorStatement,
     LabradorWitness,
 };
+use crate::protocol::labrador::utils::mat_vec_mul;
 use crate::protocol::prg::MatrixPrgBackendChoice;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::{challenge_ring_element_rejection_sampled, Transcript};
@@ -32,93 +32,23 @@ pub struct LabradorFoldResult<F: FieldCore, const D: usize> {
     pub statement: LabradorStatement<F, D>,
 }
 
-const LABRADOR_LOGQ_BITS: usize = 32;
-const JL_LIFTS: usize = (128 + LABRADOR_LOGQ_BITS - 1) / LABRADOR_LOGQ_BITS;
+use crate::protocol::labrador::config::JL_LIFTS;
 
-/// Perform one standard (non-tail) Labrador fold.
+/// Perform one Labrador fold level (standard or tail, determined by `config.tail`).
 ///
-/// # Errors
-///
-/// Returns `HachiError::InvalidInput` if `config.tail` is true, or propagates
-/// errors from commitment, projection, or hashing.
-pub fn standard_fold<F, T, const D: usize>(
-    witness: &LabradorWitness<F, D>,
-    statement: &LabradorStatement<F, D>,
-    config: &LabradorReductionConfig,
-    comkey_seed: &LabradorComKeySeed,
-    jl_seed: &[u8; 16],
-    backend: MatrixPrgBackendChoice,
-    level_index: usize,
-    transcript: &mut T,
-) -> Result<LabradorFoldResult<F, D>, HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
-    T: Transcript<F>,
-{
-    if config.tail {
-        return Err(HachiError::InvalidInput(
-            "standard_fold requires non-tail config".to_string(),
-        ));
-    }
-    fold_impl(
-        witness,
-        statement,
-        config,
-        comkey_seed,
-        jl_seed,
-        backend,
-        level_index,
-        false,
-        transcript,
-    )
-}
-
-/// Perform one tail Labrador fold.
-///
-/// # Errors
-///
-/// Returns `HachiError::InvalidInput` if `config.tail` is false, or propagates
-/// errors from commitment, projection, or hashing.
-pub fn tail_fold<F, T, const D: usize>(
-    witness: &LabradorWitness<F, D>,
-    statement: &LabradorStatement<F, D>,
-    config: &LabradorReductionConfig,
-    comkey_seed: &LabradorComKeySeed,
-    jl_seed: &[u8; 16],
-    backend: MatrixPrgBackendChoice,
-    level_index: usize,
-    transcript: &mut T,
-) -> Result<LabradorFoldResult<F, D>, HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
-    T: Transcript<F>,
-{
-    if !config.tail {
-        return Err(HachiError::InvalidInput(
-            "tail_fold requires tail config".to_string(),
-        ));
-    }
-    fold_impl(
-        witness,
-        statement,
-        config,
-        comkey_seed,
-        jl_seed,
-        backend,
-        level_index,
-        true,
-        transcript,
-    )
-}
-
-/// Core fold implementation following the C Labrador protocol phases:
+/// Follows the C Labrador protocol phases:
 ///   1. Commit: inner + outer Ajtai commitment → u1
 ///   2. Project: JL projection → p[256], nonce
 ///   3. LIFTS × (collapse + lift): build linear constraints from JL
 ///   4. Amortize: absorb into transcript, sample ring-element challenges,
 ///      fold z = sum_i c_i * s_i, decompose z → output witness
+///
+/// # Errors
+///
+/// Returns `HachiError::InvalidInput` if the witness is empty or `config.f` is zero.
+/// Propagates errors from commitment, projection, or hashing.
 #[allow(clippy::too_many_arguments)]
-fn fold_impl<F, T, const D: usize>(
+pub fn prove_level<F, T, const D: usize>(
     witness: &LabradorWitness<F, D>,
     statement: &LabradorStatement<F, D>,
     config: &LabradorReductionConfig,
@@ -126,7 +56,6 @@ fn fold_impl<F, T, const D: usize>(
     jl_seed: &[u8; 16],
     backend: MatrixPrgBackendChoice,
     level_index: usize,
-    tail_mode: bool,
     transcript: &mut T,
 ) -> Result<LabradorFoldResult<F, D>, HachiError>
 where
@@ -164,7 +93,7 @@ where
         t_hat.extend(decompose_rows_with_carry(&t, config.fu, config.bu as u32));
     }
 
-    let u1 = if config.kappa1 > 0 && !tail_mode {
+    let u1 = if config.kappa1 > 0 && !config.tail {
         let b = derive_extendable_comkey_matrix::<F, D>(
             config.kappa1,
             t_hat.len(),
@@ -185,7 +114,7 @@ where
         transcript,
         &LabradorLevelTranscriptContext {
             level_index,
-            tail: tail_mode,
+            tail: config.tail,
             input_row_lengths: row_lengths.clone(),
             input_row_chunks: vec![1usize; r],
             f: config.f,
@@ -223,7 +152,7 @@ where
     let h = compute_linear_garbage(&phi_total, witness)?;
     let h_hat = decompose_rows_with_carry(&h, config.fu, config.bu as u32);
 
-    let u2 = if config.kappa1 > 0 && !tail_mode {
+    let u2 = if config.kappa1 > 0 && !config.tail {
         let b2 = derive_extendable_comkey_matrix::<F, D>(
             config.kappa1,
             h_hat.len(),
@@ -254,7 +183,7 @@ where
 
     let mut output_rows: Vec<Vec<CyclotomicRing<F, D>>> = z_rows;
 
-    if !tail_mode {
+    if !config.tail {
         let mut aux = Vec::with_capacity(t_hat.len() + h_hat.len());
         aux.extend_from_slice(&t_hat);
         aux.extend_from_slice(&h_hat);
@@ -264,7 +193,7 @@ where
     let next_witness = LabradorWitness::new_unchecked(output_rows);
     let out_norm_sq: u128 = next_witness.norm();
 
-    let next_constraints = if tail_mode {
+    let next_constraints = if config.tail {
         Vec::new()
     } else {
         build_next_constraints(
@@ -282,7 +211,7 @@ where
     };
 
     let level_proof = LabradorLevelProof {
-        tail: tail_mode,
+        tail: config.tail,
         input_row_lengths: row_lengths,
         input_row_chunks: vec![1usize; r],
         config: *config,
@@ -878,7 +807,7 @@ mod tests {
         let seed = [1u8; 32];
         let jl_seed = [2u8; 16];
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
-        let out = standard_fold(
+        let out = prove_level(
             &witness,
             &statement,
             &cfg,
@@ -920,7 +849,7 @@ mod tests {
         let seed = [3u8; 32];
         let jl_seed = [4u8; 16];
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
-        let out = tail_fold(
+        let out = prove_level(
             &witness,
             &statement,
             &cfg,
@@ -1000,7 +929,7 @@ mod tests {
         let comkey_seed = [9u8; 32];
         let jl_seed = [7u8; 16];
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
-        let fold = standard_fold(
+        let fold = prove_level(
             &witness,
             &statement,
             &cfg,
@@ -1082,7 +1011,7 @@ mod tests {
         let comkey_seed = [9u8; 32];
         let jl_seed = [7u8; 16];
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
-        let fold1 = standard_fold(
+        let fold1 = prove_level(
             &witness,
             &statement,
             &cfg,
@@ -1093,7 +1022,7 @@ mod tests {
             &mut transcript,
         )
         .unwrap();
-        let fold2 = standard_fold(
+        let fold2 = prove_level(
             &fold1.next_witness,
             &fold1.statement,
             &cfg,

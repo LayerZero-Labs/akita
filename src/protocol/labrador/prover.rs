@@ -2,7 +2,7 @@
 
 use crate::error::HachiError;
 use crate::protocol::labrador::comkey::LabradorComKeySeed;
-use crate::protocol::labrador::fold::{standard_fold, tail_fold};
+use crate::protocol::labrador::fold::prove_level;
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
 use crate::protocol::labrador::select_config;
 use crate::protocol::labrador::types::{LabradorProof, LabradorStatement, LabradorWitness};
@@ -51,7 +51,7 @@ where
         }
 
         let cfg = select_config(&witness)?;
-        let fold = standard_fold(
+        let fold = prove_level(
             &witness,
             &_statement,
             &cfg,
@@ -62,7 +62,6 @@ where
             transcript,
         )?;
         let after_size = witness_size_bits::<F, D>(&fold.next_witness);
-
         if after_size >= before_size {
             break;
         }
@@ -90,7 +89,7 @@ where
 
         // Clone transcript so we can roll back if tail doesn't help.
         let mut tail_transcript = transcript.clone();
-        if let Ok(tail) = tail_fold(
+        if let Ok(tail) = prove_level(
             &witness,
             &_statement,
             &tail_cfg,
@@ -109,6 +108,112 @@ where
             if candidate_bits < baseline_bits {
                 levels.push(tail.level_proof);
                 _statement = tail.statement;
+                witness = tail.next_witness;
+                *transcript = tail_transcript;
+            }
+        }
+    }
+
+    Ok(LabradorProof {
+        levels,
+        final_opening_witness: witness,
+    })
+}
+
+/// Build a recursive Labrador proof using a caller-supplied initial config.
+///
+/// Falls back to the provided config if `select_config` fails for a level.
+pub fn prove_with_config<F, T, const D: usize>(
+    initial_witness: LabradorWitness<F, D>,
+    initial_statement: &LabradorStatement<F, D>,
+    initial_config: &LabradorReductionConfig,
+    comkey_seed: &LabradorComKeySeed,
+    jl_seed: &[u8; 16],
+    backend: MatrixPrgBackendChoice,
+    transcript: &mut T,
+) -> Result<LabradorProof<F, D>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
+    T: Transcript<F>,
+{
+    if initial_witness.rows().is_empty() {
+        return Err(HachiError::InvalidInput(
+            "cannot prove with empty Labrador witness".to_string(),
+        ));
+    }
+
+    let mut levels = Vec::new();
+    let mut witness = initial_witness;
+    let mut statement = initial_statement.clone();
+    let mut level_idx = 0usize;
+    let mut fallback_cfg = *initial_config;
+    let mut force_first_level = true;
+
+    while level_idx + 1 < LABRADOR_MAX_LEVELS {
+        let before_size = witness_size_bits::<F, D>(&witness);
+        if before_size == 0 || witness.rows().len() <= 1 {
+            break;
+        }
+
+        let cfg = select_config(&witness).unwrap_or(fallback_cfg);
+        let fold = prove_level(
+            &witness,
+            &statement,
+            &cfg,
+            comkey_seed,
+            jl_seed,
+            backend,
+            level_idx,
+            transcript,
+        )?;
+        let after_size = witness_size_bits::<F, D>(&fold.next_witness);
+        if after_size >= before_size && !force_first_level {
+            break;
+        }
+
+        levels.push(fold.level_proof);
+        statement = fold.statement;
+        witness = fold.next_witness;
+        fallback_cfg = cfg;
+        level_idx += 1;
+        force_first_level = false;
+    }
+
+    if level_idx + 1 < LABRADOR_MAX_LEVELS {
+        let mut tail_cfg = select_config(&witness).unwrap_or(fallback_cfg);
+        tail_cfg = LabradorReductionConfig {
+            tail: true,
+            kappa1: 0,
+            fu: 1,
+            bu: ESTIMATED_LOGQ_BITS,
+            ..tail_cfg
+        };
+
+        let baseline_bits = witness_size_bits::<F, D>(&witness)
+            + levels
+                .iter()
+                .map(level_payload_size_bits::<F, D>)
+                .sum::<usize>();
+
+        let mut tail_transcript = transcript.clone();
+        if let Ok(tail) = prove_level(
+            &witness,
+            &statement,
+            &tail_cfg,
+            comkey_seed,
+            jl_seed,
+            backend,
+            level_idx,
+            &mut tail_transcript,
+        ) {
+            let candidate_bits = witness_size_bits::<F, D>(&tail.next_witness)
+                + levels
+                    .iter()
+                    .map(level_payload_size_bits::<F, D>)
+                    .sum::<usize>()
+                + level_payload_size_bits::<F, D>(&tail.level_proof);
+            if candidate_bits < baseline_bits {
+                levels.push(tail.level_proof);
                 witness = tail.next_witness;
                 *transcript = tail_transcript;
             }

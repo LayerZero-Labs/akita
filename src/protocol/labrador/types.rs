@@ -135,6 +135,18 @@ pub struct LabradorProof<F: FieldCore, const D: usize> {
     pub final_opening_witness: LabradorWitness<F, D>,
 }
 
+impl<F: FieldCore, const D: usize> LabradorLevelProof<F, D> {
+    /// Serialized size of this level in bytes.
+    pub fn size(&self) -> usize {
+        let ring_bytes = std::mem::size_of::<CyclotomicRing<F, D>>();
+        let ring_count = self.u1.len() + self.u2.len() + self.bb.len();
+        ring_count * ring_bytes
+            + self.jl_projection.len() * std::mem::size_of::<i32>()
+            + std::mem::size_of::<u64>() // jl_nonce
+            + std::mem::size_of::<u128>() // norm_sq
+    }
+}
+
 impl<F: FieldCore, const D: usize> LabradorProof<F, D> {
     /// Construct an empty proof (used when Labrador is disabled).
     pub fn empty() -> Self {
@@ -142,5 +154,18 @@ impl<F: FieldCore, const D: usize> LabradorProof<F, D> {
             levels: Vec::new(),
             final_opening_witness: LabradorWitness { rows: Vec::new() },
         }
+    }
+
+    /// Total serialized size of the proof in bytes.
+    pub fn size(&self) -> usize {
+        let ring_bytes = std::mem::size_of::<CyclotomicRing<F, D>>();
+        let levels_size: usize = self.levels.iter().map(|l| l.size()).sum();
+        let witness_rings: usize = self
+            .final_opening_witness
+            .rows
+            .iter()
+            .map(|r| r.len())
+            .sum();
+        levels_size + witness_rings * ring_bytes
     }
 }

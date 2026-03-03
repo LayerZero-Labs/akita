@@ -5,6 +5,7 @@ use crate::error::HachiError;
 use crate::protocol::commitment::utils::linear::decompose_rows_with_carry;
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
 use crate::protocol::labrador::types::{LabradorReductionConfig, LabradorWitness};
+use crate::protocol::labrador::utils::mat_vec_mul;
 use crate::protocol::prg::MatrixPrgBackendChoice;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 
@@ -134,22 +135,6 @@ fn build_linear_garbage<F: FieldCore, const D: usize>(
         }
     }
     out
-}
-
-pub(crate) fn mat_vec_mul<F: FieldCore, const D: usize>(
-    mat: &[Vec<CyclotomicRing<F, D>>],
-    vec: &[CyclotomicRing<F, D>],
-) -> Vec<CyclotomicRing<F, D>> {
-    mat.iter()
-        .map(|row| {
-            debug_assert_eq!(row.len(), vec.len());
-            let mut acc = CyclotomicRing::<F, D>::zero();
-            for (a, x) in row.iter().zip(vec.iter()) {
-                acc += *a * *x;
-            }
-            acc
-        })
-        .collect()
 }
 
 #[cfg(test)]
