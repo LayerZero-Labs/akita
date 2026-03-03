@@ -3,8 +3,9 @@
 use std::array::from_fn;
 
 use crate::algebra::backend::{CrtReconstruct, NttPrimeOps, NttTransform, ScalarBackend};
-use crate::algebra::ntt::butterfly::NttTwiddles;
-use crate::algebra::ntt::butterfly::{forward_ntt_cyclic, inverse_ntt_cyclic};
+use crate::algebra::ntt::butterfly::{
+    forward_ntt, forward_ntt_cyclic, inverse_ntt_cyclic, NttTwiddles,
+};
 use crate::algebra::ntt::crt::GarnerData;
 use crate::algebra::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
 use crate::{CanonicalField, FieldCore};
@@ -44,6 +45,47 @@ pub struct CrtNttParamSet<W: PrimeWidth, const K: usize, const D: usize> {
     pub twiddles: [NttTwiddles<W, D>; K],
     /// Garner reconstruction constants for CRT lift-back.
     pub garner: GarnerData<W, K>,
+}
+
+/// Precomputed Montgomery forms for small balanced digit values.
+///
+/// Covers the full `{-8, ..., 7}` range (16 entries per CRT prime),
+/// which is sufficient for any `log_basis <= 4`. Storing the Montgomery
+/// representation eliminates one `from_canonical` (a Montgomery multiply)
+/// per coefficient in the `from_i8` hot path.
+#[derive(Debug, Clone)]
+pub struct DigitMontLut<W: PrimeWidth, const K: usize> {
+    vals: [[MontCoeff<W>; 16]; K],
+}
+
+const DIGIT_LUT_HALF_B: i16 = 8;
+
+impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
+    /// Build the lookup table from CRT primes.
+    ///
+    /// Covers digit values in `{-8, ..., 7}` (balanced representation for
+    /// `log_basis <= 4`).
+    pub fn new<const D: usize>(params: &CrtNttParamSet<W, K, D>) -> Self {
+        let mut vals = [[MontCoeff::from_raw(W::default()); 16]; K];
+        for (k, prime) in params.primes.iter().enumerate() {
+            for v_idx in 0..16u8 {
+                let v = v_idx as i64 - DIGIT_LUT_HALF_B as i64;
+                vals[k][v_idx as usize] = prime.from_canonical(W::from_i64(v));
+            }
+        }
+        Self { vals }
+    }
+
+    /// Look up the Montgomery form of a balanced digit for CRT prime `k`.
+    #[inline(always)]
+    pub fn get(&self, k: usize, digit: i8) -> MontCoeff<W> {
+        unsafe {
+            *self
+                .vals
+                .get_unchecked(k)
+                .get_unchecked((digit as i16 + DIGIT_LUT_HALF_B) as usize)
+        }
+    }
 }
 
 impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
@@ -137,6 +179,42 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// negacyclic CRT+NTT domain, bypassing Fp128 centering entirely.
     pub fn from_i8_with_params(digits: &[i8; D], params: &CrtNttParamSet<W, K, D>) -> Self {
         Self::from_i8_negacyclic_backend::<ScalarBackend>(digits, params)
+    }
+
+    /// Like [`Self::from_i8_with_params`] but uses a precomputed
+    /// [`DigitMontLut`] to replace per-coefficient `from_canonical`
+    /// (Montgomery multiply) with a table lookup.
+    #[inline]
+    pub fn from_i8_with_lut(
+        digits: &[i8; D],
+        params: &CrtNttParamSet<W, K, D>,
+        lut: &DigitMontLut<W, K>,
+    ) -> Self {
+        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for (k, (limb, tw)) in limbs.iter_mut().zip(params.twiddles.iter()).enumerate() {
+            for (dst, &d) in limb.iter_mut().zip(digits.iter()) {
+                *dst = lut.get(k, d);
+            }
+            forward_ntt(limb, params.primes[k], tw);
+        }
+        Self { limbs }
+    }
+
+    /// Like [`Self::from_i8_cyclic`] but uses a precomputed [`DigitMontLut`].
+    #[inline]
+    pub fn from_i8_cyclic_with_lut(
+        digits: &[i8; D],
+        params: &CrtNttParamSet<W, K, D>,
+        lut: &DigitMontLut<W, K>,
+    ) -> Self {
+        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for (k, (limb, tw)) in limbs.iter_mut().zip(params.twiddles.iter()).enumerate() {
+            for (dst, &d) in limb.iter_mut().zip(digits.iter()) {
+                *dst = lut.get(k, d);
+            }
+            forward_ntt_cyclic(limb, params.primes[k], tw);
+        }
+        Self { limbs }
     }
 
     fn from_i8_negacyclic_backend<B: NttPrimeOps<W, D> + NttTransform<W, D>>(
@@ -314,10 +392,6 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         out
     }
 
-    /// Convert a coefficient-form ring element into CRT+**cyclic** NTT domain.
-    ///
-    /// Evaluates at D-th roots of unity (X^D - 1) instead of X^D + 1.
-    /// Used together with `to_ring_cyclic` to compute unreduced polynomial products.
     /// Convert a coefficient-form ring element into CRT+**cyclic** NTT domain.
     ///
     /// Evaluates at D-th roots of unity (X^D - 1) instead of X^D + 1.

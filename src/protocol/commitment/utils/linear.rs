@@ -1,7 +1,7 @@
 //! Linear algebra helpers for ring commitment.
 
 use crate::algebra::ntt::{MontCoeff, PrimeWidth};
-use crate::algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
+use crate::algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut};
 #[cfg(test)]
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
@@ -422,6 +422,7 @@ fn mat_vec_mul_i8_with_params<
         return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
     }
 
+    let lut = DigitMontLut::new(params);
     let tw = (TARGET_L2_CACHE_BYTES / (K * D * std::mem::size_of::<W>())).max(1);
     let num_tiles = inner_width.div_ceil(tw);
 
@@ -454,7 +455,7 @@ fn mat_vec_mul_i8_with_params<
                     if is_zero_plane(digit) {
                         continue;
                     }
-                    let ntt_d = CyclotomicCrtNtt::from_i8_with_params(digit, params);
+                    let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
                     for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
                         accumulate_pointwise_product_into(
                             acc,
@@ -518,6 +519,7 @@ fn mat_vec_mul_single_i8_with_params<
         return vec![CyclotomicRing::<F, D>::zero(); n_a];
     }
 
+    let lut = DigitMontLut::new(params);
     let vec_len = vec.len().min(inner_width);
     let tw = (TARGET_L2_CACHE_BYTES / (K * D * std::mem::size_of::<W>())).max(1);
     let num_tiles = vec_len.div_ceil(tw);
@@ -532,7 +534,7 @@ fn mat_vec_mul_single_i8_with_params<
                 if is_zero_plane(digit) {
                     continue;
                 }
-                let ntt_d = CyclotomicCrtNtt::from_i8_with_params(digit, params);
+                let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
                 for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
                     accumulate_pointwise_product_into(
                         acc,
@@ -602,6 +604,7 @@ fn quotient_single_i8_with_params<
         return vec![CyclotomicRing::<F, D>::zero(); n_a];
     }
 
+    let lut = DigitMontLut::new(params);
     let vec_len = vec.len().min(inner_width);
     let tw = (TARGET_L2_CACHE_BYTES / (K * D * std::mem::size_of::<W>())).max(1);
     let num_tiles = vec_len.div_ceil(tw);
@@ -625,8 +628,8 @@ fn quotient_single_i8_with_params<
                 if is_zero_plane(digit) {
                     continue;
                 }
-                let ntt_d_neg = CyclotomicCrtNtt::from_i8_with_params(digit, params);
-                let ntt_d_cyc = CyclotomicCrtNtt::from_i8_cyclic(digit, params);
+                let ntt_d_neg = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                let ntt_d_cyc = CyclotomicCrtNtt::from_i8_cyclic_with_lut(digit, params, &lut);
                 let col = tile_start + j;
                 for (row, (acc_neg, acc_cyc)) in
                     accs.0.iter_mut().zip(accs.1.iter_mut()).enumerate()

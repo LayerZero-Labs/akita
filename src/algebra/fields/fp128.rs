@@ -136,7 +136,10 @@ impl<const P: u128> Fp128<P> {
         if val >= 0 {
             Self(from_u128(val as u128))
         } else {
-            Self(Self::sub_raw(pack(0, 0), from_u128(val.unsigned_abs() as u128)))
+            Self(Self::sub_raw(
+                pack(0, 0),
+                from_u128(val.unsigned_abs() as u128),
+            ))
         }
     }
 

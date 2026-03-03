@@ -27,6 +27,6 @@ pub use module::VectorModule;
 pub use ntt::tables;
 pub use ntt::{GarnerData, LimbQ, MontCoeff, NttPrime, PrimeWidth, RADIX_BITS};
 pub use ring::{
-    CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, SparseChallenge,
-    SparseChallengeConfig,
+    CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
+    SparseChallenge, SparseChallengeConfig,
 };
