@@ -145,6 +145,14 @@ pub fn gadget_recompose_vec(x_hat: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRin
         .collect()
 }
 
+/// Recompose a vector of i8 gadget-decomposed digit planes (num_digits_commit-width chunks).
+pub fn gadget_recompose_vec_i8(x_hat: &[[i8; D]]) -> Vec<CyclotomicRing<F, D>> {
+    x_hat
+        .chunks(num_digits_commit())
+        .map(|chunk| CyclotomicRing::gadget_recompose_pow2_i8(chunk, log_basis()))
+        .collect()
+}
+
 /// Alias for [`gadget_recompose_vec`] (same num_digits_commit-width recomposition).
 pub fn field_gadget_recompose_vec(v: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
     v.chunks(num_digits_commit())

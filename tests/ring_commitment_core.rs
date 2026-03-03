@@ -6,7 +6,7 @@ use hachi_pcs::protocol::commitment::{
     HachiCommitmentLayout, RingCommitmentScheme, SmallTestCommitmentConfig,
 };
 use hachi_pcs::test_utils::*;
-use hachi_pcs::HachiError;
+use hachi_pcs::{FromSmallInt, HachiError};
 
 #[derive(Clone)]
 struct BadDegreeConfig;
@@ -119,15 +119,22 @@ fn opening_satisfies_inner_and_outer_equations() {
             .map(|j| {
                 let start = j * depth;
                 let end = start + depth;
-                CyclotomicRing::gadget_recompose_pow2(&w.t_hat[i][start..end], log_basis)
+                CyclotomicRing::gadget_recompose_pow2_i8(&w.t_hat[i][start..end], log_basis)
             })
             .collect();
         assert_eq!(lhs, rhs);
     }
 
-    let t_hat_flat: Vec<CyclotomicRing<F, D>> =
-        w.t_hat.iter().flat_map(|x| x.iter().copied()).collect();
-    let outer = mat_vec_mul(&psetup.expanded.B, &t_hat_flat);
+    let t_hat_flat_ring: Vec<CyclotomicRing<F, D>> = w
+        .t_hat
+        .iter()
+        .flat_map(|x| x.iter())
+        .map(|plane| {
+            let coeffs: [F; D] = std::array::from_fn(|k| F::from_i64(plane[k] as i64));
+            CyclotomicRing::from_coefficients(coeffs)
+        })
+        .collect();
+    let outer = mat_vec_mul(&psetup.expanded.B, &t_hat_flat_ring);
     assert_eq!(outer, w.commitment.u);
 }
 

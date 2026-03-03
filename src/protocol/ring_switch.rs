@@ -11,7 +11,7 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttMatrixCache;
 use crate::protocol::commitment::utils::linear::{
-    decompose_block, decompose_rows, mat_vec_mul_ntt_cached, MatrixSlot,
+    decompose_block_i8, decompose_rows_i8, mat_vec_mul_ntt_cached_i8, MatrixSlot,
 };
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
@@ -93,15 +93,18 @@ where
         .hint()
         .ok_or_else(|| HachiError::InvalidInput("missing hint in prover".to_string()))?;
     let t_hat = &hint.t_hat;
+    let w_folded = quad_eq
+        .w_folded()
+        .ok_or_else(|| HachiError::InvalidInput("missing w_folded in prover".to_string()))?;
 
     let t_rs = Instant::now();
     let r = compute_r_split_eq::<F, D, Cfg>(
         setup,
         quad_eq.opening_point(),
         &quad_eq.challenges,
-        w_hat,
         w_hat_flat,
         t_hat,
+        w_folded,
         z_pre,
         quad_eq.y(),
         ntt_cache,
@@ -250,7 +253,7 @@ where
     Ok(RingSwitchOutput {
         w: Vec::new(),
         w_commitment: w_commitment.clone(),
-        w_hint: HachiCommitmentHint { t_hat: Vec::new() },
+        w_hint: HachiCommitmentHint::new(Vec::new()),
         w_evals: Vec::new(),
         m_evals_x,
         alpha_evals_y,
@@ -433,9 +436,9 @@ where
     let depth = w_layout.num_digits_commit;
     let log_basis = w_layout.log_basis;
     let coeff_len = ring_elems.len();
-    let zero_t_hat = vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(depth).unwrap()];
+    let zero_t_hat = vec![[0i8; D]; Cfg::N_A.checked_mul(depth).unwrap()];
 
-    let t_hat_per_block: Vec<Vec<CyclotomicRing<F, D>>> = cfg_into_iter!(0..num_blocks)
+    let t_hat_per_block: Vec<Vec<[i8; D]>> = cfg_into_iter!(0..num_blocks)
         .map(|i| {
             let start = i * block_len;
             if start >= coeff_len {
@@ -443,22 +446,20 @@ where
             } else {
                 let end = (start + block_len).min(coeff_len);
                 let block = &ring_elems[start..end];
-                let s_i = decompose_block(block, depth, log_basis);
-                let t_i =
-                    mat_vec_mul_ntt_cached(cache, MatrixSlot::A, &s_i).expect("inner Ajtai failed");
-                decompose_rows(&t_i, depth, log_basis)
+                let s_i = decompose_block_i8(block, depth, log_basis);
+                let t_i: Vec<CyclotomicRing<F, D>> =
+                    mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::A, &s_i);
+                decompose_rows_i8(&t_i, depth, log_basis)
             }
         })
         .collect();
 
-    let t_hat_flat: Vec<CyclotomicRing<F, D>> = t_hat_per_block
+    let t_hat_flat: Vec<[i8; D]> = t_hat_per_block
         .iter()
         .flat_map(|v| v.iter().copied())
         .collect();
-    let u = mat_vec_mul_ntt_cached(cache, MatrixSlot::B, &t_hat_flat)?;
-    let hint = HachiCommitmentHint {
-        t_hat: t_hat_per_block,
-    };
+    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::B, &t_hat_flat);
+    let hint = HachiCommitmentHint::new(t_hat_per_block);
     Ok((RingCommitment { u }, hint))
 }
 
@@ -599,10 +600,6 @@ pub(crate) fn build_w_evals_compact<F: FieldCore + CanonicalField>(
     w: &[F],
     d: usize,
 ) -> Result<(Vec<i8>, usize, usize), HachiError> {
-    debug_assert!(
-        d.is_power_of_two() && d.trailing_zeros() <= 7,
-        "log_basis must be <= 7 to fit balanced digits in i8"
-    );
     if d == 0 || w.len() % d != 0 {
         return Err(HachiError::InvalidSize {
             expected: d,
@@ -686,7 +683,7 @@ pub(crate) fn sample_tau<F: FieldCore + CanonicalField, T: Transcript<F>>(
 
 pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     w_hat: &[Vec<[i8; D]>],
-    t_hat: &[Vec<CyclotomicRing<F, D>>],
+    t_hat: &[Vec<[i8; D]>],
     z_pre: &[CyclotomicRing<F, D>],
     r: &[CyclotomicRing<F, D>],
     layout: HachiCommitmentLayout,
@@ -712,8 +709,10 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
             }
         }
     }
-    for elem in t_hat_flat {
-        out.extend_from_slice(elem.coefficients());
+    for digits in t_hat_flat {
+        for &d in digits.iter() {
+            out.push(F::from_i64(d as i64));
+        }
     }
     for z_j in z_pre {
         for elem in z_j.balanced_decompose_pow2(num_digits_fold, log_basis) {

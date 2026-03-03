@@ -25,7 +25,7 @@ use crate::protocol::commitment::onehot::{
 };
 use crate::protocol::commitment::utils::crt_ntt::NttMatrixCache;
 use crate::protocol::commitment::utils::linear::{
-    decompose_block, decompose_rows, mat_vec_mul_ntt_cached, MatrixSlot,
+    decompose_block_i8, decompose_rows_i8, mat_vec_mul_ntt_cached_i8, MatrixSlot,
 };
 use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
 use std::marker::PhantomData;
@@ -73,11 +73,11 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// **Op 4 — commit: per-block inner Ajtai.**
     ///
     /// For each block of `block_len` ring elements:
-    /// 1. `sᵢ = G⁻¹(blockᵢ)` (balanced decomposition).
-    /// 2. `tᵢ = A · sᵢ` (matrix-vector multiply).
-    /// 3. `t̂ᵢ = G⁻¹(tᵢ)` (decompose rows).
+    /// 1. `sᵢ = G⁻¹(blockᵢ)` (balanced decomposition to i8 digits).
+    /// 2. `tᵢ = A · sᵢ` (matrix-vector multiply via i8 NTT path).
+    /// 3. `t̂ᵢ = G⁻¹(tᵢ)` (decompose rows to i8 digits).
     ///
-    /// Returns one `t̂ᵢ` vector per block.
+    /// Returns one `t̂ᵢ` vector per block as `[i8; D]` digit planes.
     ///
     /// # Errors
     ///
@@ -89,7 +89,7 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError>;
+    ) -> Result<Vec<Vec<[i8; D]>>, HachiError>;
 }
 
 /// Dense polynomial: all ring coefficients materialized in memory.
@@ -218,6 +218,27 @@ where
                 let b_val = half_b << 1;
                 let mask = b_val - 1;
 
+                // Precompute target index and effective sign for each
+                // (challenge_position, coeff_idx) pair, eliminating branches
+                // and bounds checks from the hot loop.
+                let n_pos = c_i.positions.len();
+                let mut idx_table = vec![[0u16; D]; n_pos];
+                let mut sign_table = vec![[0i16; D]; n_pos];
+                for (j, &pos) in c_i.positions.iter().enumerate() {
+                    let p = pos as usize;
+                    let cc = c_i.coeffs[j];
+                    for k in 0..D {
+                        let target = k + p;
+                        if target < D {
+                            idx_table[j][k] = target as u16;
+                            sign_table[j][k] = cc;
+                        } else {
+                            idx_table[j][k] = (target - D) as u16;
+                            sign_table[j][k] = -cc;
+                        }
+                    }
+                }
+
                 for elem_idx in 0..(end.saturating_sub(start)) {
                     let ring = &coeffs[start + elem_idx];
                     let base_j = elem_idx * num_digits;
@@ -238,19 +259,19 @@ where
                             if balanced == 0 {
                                 continue;
                             }
-                            let digit_i8 = balanced as i8;
+                            let val = balanced as i32;
+                            let z_row = &mut z[base_j + digit];
 
-                            for (&pos, &challenge_coeff) in
-                                c_i.positions.iter().zip(c_i.coeffs.iter())
-                            {
-                                let target = coeff_idx + pos as usize;
-                                let (idx, sign) = if target < D {
-                                    (target, 1i32)
-                                } else {
-                                    (target - D, -1i32)
-                                };
-                                z[base_j + digit][idx] +=
-                                    sign * digit_i8 as i32 * challenge_coeff as i32;
+                            for j in 0..n_pos {
+                                // SAFETY: idx_table/sign_table have n_pos rows of D entries,
+                                // j < n_pos and coeff_idx < D. idx values are < D.
+                                unsafe {
+                                    let idx = *idx_table.get_unchecked(j).get_unchecked(coeff_idx)
+                                        as usize;
+                                    let s = *sign_table.get_unchecked(j).get_unchecked(coeff_idx)
+                                        as i32;
+                                    *z_row.get_unchecked_mut(idx) += s * val;
+                                }
                             }
                         }
                     }
@@ -291,28 +312,28 @@ where
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError> {
+    ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
         let n = self.coeffs.len();
         let num_blocks = n.div_ceil(block_len);
         let n_a = _a_matrix.len();
-        let zero_t_hat = vec![CyclotomicRing::<F, D>::zero(); n_a.checked_mul(num_digits).unwrap()];
+        let zero_t_hat = vec![[0i8; D]; n_a.checked_mul(num_digits).unwrap()];
 
-        let results: Vec<Result<Vec<CyclotomicRing<F, D>>, HachiError>> =
-            cfg_into_iter!(0..num_blocks)
-                .map(|i| {
-                    let start = i * block_len;
-                    if start >= n {
-                        return Ok(zero_t_hat.clone());
-                    }
-                    let end = (start + block_len).min(n);
-                    let block = &self.coeffs[start..end];
-                    let s_i = decompose_block(block, num_digits, log_basis);
-                    let t_i = mat_vec_mul_ntt_cached(cache, MatrixSlot::A, &s_i)?;
-                    Ok(decompose_rows(&t_i, num_digits, log_basis))
-                })
-                .collect();
+        let results: Vec<Vec<[i8; D]>> = cfg_into_iter!(0..num_blocks)
+            .map(|i| {
+                let start = i * block_len;
+                if start >= n {
+                    return zero_t_hat.clone();
+                }
+                let end = (start + block_len).min(n);
+                let block = &self.coeffs[start..end];
+                let s_i = decompose_block_i8(block, num_digits, log_basis);
+                let t_i: Vec<CyclotomicRing<F, D>> =
+                    mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::A, &s_i);
+                decompose_rows_i8(&t_i, num_digits, log_basis)
+            })
+            .collect();
 
-        results.into_iter().collect()
+        Ok(results)
     }
 }
 
@@ -448,18 +469,18 @@ where
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError> {
+    ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
         let n_a = a_matrix.len();
-        let zero_t_hat = vec![CyclotomicRing::<F, D>::zero(); n_a.checked_mul(num_digits).unwrap()];
+        let zero_t_hat = vec![[0i8; D]; n_a.checked_mul(num_digits).unwrap()];
 
-        let t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = cfg_iter!(self.sparse_blocks)
+        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(self.sparse_blocks)
             .map(|block_entries| {
                 if block_entries.is_empty() {
                     zero_t_hat.clone()
                 } else {
                     let t_i =
                         inner_ajtai_onehot_t_only(a_matrix, block_entries, block_len, num_digits);
-                    decompose_rows(&t_i, num_digits, log_basis)
+                    decompose_rows_i8(&t_i, num_digits, log_basis)
                 }
             })
             .collect();

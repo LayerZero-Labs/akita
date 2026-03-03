@@ -8,7 +8,9 @@ use super::onehot::{inner_ajtai_onehot_t_only, map_onehot_to_sparse_blocks};
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
 use super::utils::crt_ntt::{build_ntt_cache, NttMatrixCache};
-use super::utils::linear::{decompose_block, decompose_rows, mat_vec_mul_ntt_cached, MatrixSlot};
+use super::utils::linear::{
+    decompose_block_i8, decompose_rows_i8, mat_vec_mul_ntt_cached_i8, MatrixSlot,
+};
 use super::utils::matrix::{derive_public_matrix, sample_public_matrix_seed, PublicMatrixSeed};
 use super::CommitmentConfig;
 use crate::algebra::CyclotomicRing;
@@ -334,23 +336,20 @@ where
         let cache = setup.ntt_cache()?;
         let depth = layout.num_digits_commit;
         let log_basis = layout.log_basis;
-        let t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = cfg_iter!(f_blocks)
+        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(f_blocks)
             .map(|block| {
-                let s_i = decompose_block(block, depth, log_basis);
-                let t_i =
-                    mat_vec_mul_ntt_cached(cache, MatrixSlot::A, &s_i).expect("inner Ajtai failed");
-                decompose_rows(&t_i, depth, log_basis)
+                let s_i = decompose_block_i8(block, depth, log_basis);
+                let t_i: Vec<CyclotomicRing<F, D>> =
+                    mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::A, &s_i);
+                decompose_rows_i8(&t_i, depth, log_basis)
             })
             .collect();
 
-        let t_hat_flat: Vec<CyclotomicRing<F, D>> =
-            t_hat_all.iter().flat_map(|v| v.iter().copied()).collect();
+        let t_hat_flat: Vec<[i8; D]> = t_hat_all.iter().flat_map(|v| v.iter().copied()).collect();
 
-        let u = mat_vec_mul_ntt_cached(cache, MatrixSlot::B, &t_hat_flat)?;
-        Ok(CommitWitness {
-            commitment: RingCommitment { u },
-            t_hat: t_hat_all,
-        })
+        let u: Vec<CyclotomicRing<F, D>> =
+            mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::B, &t_hat_flat);
+        Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
 
     #[tracing::instrument(skip_all, name = "RingCommitmentScheme::commit_coeffs")]
@@ -373,11 +372,11 @@ where
 
         let depth = layout.num_digits_commit;
         let log_basis = layout.log_basis;
-        let zero_t_hat = vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(depth).unwrap()];
+        let zero_t_hat = vec![[0i8; D]; Cfg::N_A.checked_mul(depth).unwrap()];
         let cache = setup.ntt_cache()?;
         let coeff_len = f_coeffs.len();
 
-        let t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = cfg_into_iter!(0..num_blocks)
+        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(0..num_blocks)
             .map(|i| {
                 let start = i * block_len;
                 if start >= coeff_len {
@@ -385,22 +384,19 @@ where
                 } else {
                     let end = (start + block_len).min(coeff_len);
                     let block = &f_coeffs[start..end];
-                    let s_i = decompose_block(block, depth, log_basis);
-                    let t_i = mat_vec_mul_ntt_cached(cache, MatrixSlot::A, &s_i)
-                        .expect("inner Ajtai failed");
-                    decompose_rows(&t_i, depth, log_basis)
+                    let s_i = decompose_block_i8(block, depth, log_basis);
+                    let t_i: Vec<CyclotomicRing<F, D>> =
+                        mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::A, &s_i);
+                    decompose_rows_i8(&t_i, depth, log_basis)
                 }
             })
             .collect();
 
-        let t_hat_flat: Vec<CyclotomicRing<F, D>> =
-            t_hat_all.iter().flat_map(|v| v.iter().copied()).collect();
+        let t_hat_flat: Vec<[i8; D]> = t_hat_all.iter().flat_map(|v| v.iter().copied()).collect();
 
-        let u = mat_vec_mul_ntt_cached(cache, MatrixSlot::B, &t_hat_flat)?;
-        Ok(CommitWitness {
-            commitment: RingCommitment { u },
-            t_hat: t_hat_all,
-        })
+        let u: Vec<CyclotomicRing<F, D>> =
+            mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::B, &t_hat_flat);
+        Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
 
     #[tracing::instrument(skip_all, name = "RingCommitmentScheme::commit_onehot")]
@@ -422,30 +418,27 @@ where
 
         let depth = layout.num_digits_commit;
         let log_basis = layout.log_basis;
-        let zero_t_hat = vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(depth).unwrap()];
+        let zero_t_hat = vec![[0i8; D]; Cfg::N_A.checked_mul(depth).unwrap()];
         let cache = setup.ntt_cache()?;
         let a_matrix = &setup.expanded.A;
         let block_len = layout.block_len;
 
-        let t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = cfg_iter!(sparse_blocks)
+        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(sparse_blocks)
             .map(|block_entries| {
                 if block_entries.is_empty() {
                     zero_t_hat.clone()
                 } else {
                     let t_i = inner_ajtai_onehot_t_only(a_matrix, block_entries, block_len, depth);
-                    decompose_rows(&t_i, depth, log_basis)
+                    decompose_rows_i8(&t_i, depth, log_basis)
                 }
             })
             .collect();
 
-        let t_hat_flat: Vec<CyclotomicRing<F, D>> =
-            t_hat_all.iter().flat_map(|v| v.iter().copied()).collect();
+        let t_hat_flat: Vec<[i8; D]> = t_hat_all.iter().flat_map(|v| v.iter().copied()).collect();
 
-        let u = mat_vec_mul_ntt_cached(cache, MatrixSlot::B, &t_hat_flat)?;
-        Ok(CommitWitness {
-            commitment: RingCommitment { u },
-            t_hat: t_hat_all,
-        })
+        let u: Vec<CyclotomicRing<F, D>> =
+            mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::B, &t_hat_flat);
+        Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
 }
 

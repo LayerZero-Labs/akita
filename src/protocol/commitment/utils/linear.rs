@@ -548,6 +548,32 @@ pub fn decompose_rows<F: FieldCore + CanonicalField, const D: usize>(
     out
 }
 
+/// Like [`decompose_block`] but outputs `[i8; D]` digit planes instead of ring elements.
+pub fn decompose_block_i8<F: FieldCore + CanonicalField, const D: usize>(
+    block: &[CyclotomicRing<F, D>],
+    num_digits: usize,
+    log_basis: u32,
+) -> Vec<[i8; D]> {
+    let mut out = Vec::with_capacity(block.len() * num_digits);
+    for coeff_vec in block {
+        out.extend(coeff_vec.balanced_decompose_pow2_i8(num_digits, log_basis));
+    }
+    out
+}
+
+/// Like [`decompose_rows`] but outputs `[i8; D]` digit planes instead of ring elements.
+pub fn decompose_rows_i8<F: FieldCore + CanonicalField, const D: usize>(
+    rows: &[CyclotomicRing<F, D>],
+    num_digits: usize,
+    log_basis: u32,
+) -> Vec<[i8; D]> {
+    let mut out = Vec::with_capacity(rows.len() * num_digits);
+    for row in rows {
+        out.extend(row.balanced_decompose_pow2_i8(num_digits, log_basis));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::{mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many, mat_vec_mul_unchecked};

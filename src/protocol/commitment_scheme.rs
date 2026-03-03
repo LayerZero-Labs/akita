@@ -3,7 +3,7 @@
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::primitives::poly::multilinear_lagrange_basis;
-use crate::protocol::commitment::utils::linear::{mat_vec_mul_ntt_cached, MatrixSlot};
+use crate::protocol::commitment::utils::linear::{mat_vec_mul_ntt_cached_i8, MatrixSlot};
 use crate::protocol::commitment::{
     AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore, HachiProverSetup,
     HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
@@ -276,10 +276,10 @@ where
             layout.num_digits_commit,
             layout.log_basis,
         )?;
-        let t_hat_flat: Vec<CyclotomicRing<F, D>> =
-            t_hat_all.iter().flat_map(|v| v.iter().copied()).collect();
-        let u = mat_vec_mul_ntt_cached(cache, MatrixSlot::B, &t_hat_flat)?;
-        let hint = HachiCommitmentHint { t_hat: t_hat_all };
+        let t_hat_flat: Vec<[i8; D]> = t_hat_all.iter().flat_map(|v| v.iter().copied()).collect();
+        let u: Vec<CyclotomicRing<F, D>> =
+            mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::B, &t_hat_flat);
+        let hint = HachiCommitmentHint::new(t_hat_all);
         Ok((RingCommitment { u }, hint))
     }
 

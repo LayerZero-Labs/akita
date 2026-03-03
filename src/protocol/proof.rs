@@ -15,8 +15,19 @@ use std::io::{Read, Write};
 /// is passed separately to `prove` via `HachiPolyOps`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiCommitmentHint<F: FieldCore, const D: usize> {
-    /// Decomposed `t̂_i` blocks from the commitment phase.
-    pub t_hat: Vec<Vec<CyclotomicRing<F, D>>>,
+    /// Decomposed `t̂_i` blocks from the commitment phase as i8 digit planes.
+    pub t_hat: Vec<Vec<[i8; D]>>,
+    _marker: std::marker::PhantomData<F>,
+}
+
+impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
+    /// Construct a new hint from i8 digit plane blocks.
+    pub fn new(t_hat: Vec<Vec<[i8; D]>>) -> Self {
+        Self {
+            t_hat,
+            _marker: std::marker::PhantomData,
+        }
+    }
 }
 
 /// Proof for a single fold level (quad_eq + ring_switch + sumcheck).
@@ -72,13 +83,27 @@ impl<F: FieldCore + HachiSerialize, const D: usize> HachiProof<F, D> {
 impl<F: FieldCore, const D: usize> HachiSerialize for HachiCommitmentHint<F, D> {
     fn serialize_with_mode<W: Write>(
         &self,
-        writer: W,
+        mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.t_hat.serialize_with_mode(writer, compress)
+        (self.t_hat.len() as u64).serialize_with_mode(&mut writer, compress)?;
+        for block in &self.t_hat {
+            (block.len() as u64).serialize_with_mode(&mut writer, compress)?;
+            for plane in block {
+                // Safety: i8 and u8 have identical layout.
+                let bytes: &[u8] =
+                    unsafe { std::slice::from_raw_parts(plane.as_ptr() as *const u8, D) };
+                writer.write_all(bytes)?;
+            }
+        }
+        Ok(())
     }
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.t_hat.serialized_size(compress)
+    fn serialized_size(&self, _compress: Compress) -> usize {
+        8 + self
+            .t_hat
+            .iter()
+            .map(|block| 8 + block.len() * D)
+            .sum::<usize>()
     }
 }
 
@@ -90,13 +115,26 @@ impl<F: FieldCore + Valid, const D: usize> Valid for HachiCommitmentHint<F, D> {
 
 impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiCommitmentHint<F, D> {
     fn deserialize_with_mode<R: Read>(
-        reader: R,
+        mut reader: R,
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        Ok(Self {
-            t_hat: Vec::deserialize_with_mode(reader, compress, validate)?,
-        })
+        let num_blocks = u64::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+        let mut t_hat = Vec::with_capacity(num_blocks);
+        for _ in 0..num_blocks {
+            let block_len = u64::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+            let mut block = Vec::with_capacity(block_len);
+            for _ in 0..block_len {
+                let mut plane = [0i8; D];
+                // Safety: i8 and u8 have identical layout.
+                let bytes: &mut [u8] =
+                    unsafe { std::slice::from_raw_parts_mut(plane.as_mut_ptr() as *mut u8, D) };
+                reader.read_exact(bytes)?;
+                block.push(plane);
+            }
+            t_hat.push(block);
+        }
+        Ok(Self::new(t_hat))
     }
 }
 

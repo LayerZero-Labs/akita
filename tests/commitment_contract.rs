@@ -69,7 +69,7 @@ impl HachiPolyOps<F, 1> for DummyPoly {
         _block_len: usize,
         _num_digits: usize,
         _log_basis: u32,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, 1>>>, HachiError> {
+    ) -> Result<Vec<Vec<[i8; 1]>>, HachiError> {
         Ok(vec![])
     }
 }
