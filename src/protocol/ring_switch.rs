@@ -9,9 +9,9 @@ use crate::cfg_into_iter;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::protocol::commitment::utils::crt_ntt::NttMatrixCache;
+use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
-    decompose_block_i8, decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_cached_i8, MatrixSlot,
+    decompose_block_i8, decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_cached_i8,
 };
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
@@ -71,11 +71,14 @@ pub struct RingSwitchOutput<F: FieldCore, const D: usize> {
 ///
 /// Returns an error if z_pre/w_hat is missing, commitment fails, or matrix expansion fails.
 #[tracing::instrument(skip_all, name = "ring_switch_prover")]
+#[allow(clippy::too_many_arguments)]
 pub fn ring_switch_prover<F, T, const D: usize, Cfg>(
     quad_eq: &mut QuadraticEquation<F, D, Cfg>,
     setup: &HachiExpandedSetup<F, D>,
     transcript: &mut T,
-    ntt_cache: &NttMatrixCache<D>,
+    ntt_a: &NttSlotCache<D>,
+    ntt_b: &NttSlotCache<D>,
+    ntt_d: &NttSlotCache<D>,
     layout: HachiCommitmentLayout,
 ) -> Result<RingSwitchOutput<F, D>, HachiError>
 where
@@ -110,7 +113,9 @@ where
         w_folded,
         z_pre,
         quad_eq.y(),
-        ntt_cache,
+        ntt_a,
+        ntt_b,
+        ntt_d,
         layout,
     )?;
     eprintln!(
@@ -128,7 +133,7 @@ where
     );
 
     let t_cw = Instant::now();
-    let (w_commitment, w_hint) = commit_w::<F, D, Cfg>(&w, ntt_cache)?;
+    let (w_commitment, w_hint) = commit_w::<F, D, Cfg>(&w, ntt_a, ntt_b)?;
     eprintln!(
         "    [ring_switch] commit_w: {:.2}s (w_len={})",
         t_cw.elapsed().as_secs_f64(),
@@ -419,7 +424,8 @@ pub(crate) fn w_commitment_layout<F: CanonicalField, const D: usize, Cfg: Commit
 #[tracing::instrument(skip_all, name = "commit_w")]
 fn commit_w<F, const D: usize, Cfg>(
     w: &[F],
-    cache: &NttMatrixCache<D>,
+    ntt_a: &NttSlotCache<D>,
+    ntt_b: &NttSlotCache<D>,
 ) -> Result<(RingCommitment<F, D>, HachiCommitmentHint<F, D>), HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -452,15 +458,14 @@ where
                 let end = (start + block_len).min(coeff_len);
                 let block = &ring_elems[start..end];
                 let s_i = decompose_block_i8(block, depth, log_basis);
-                let t_i: Vec<CyclotomicRing<F, D>> =
-                    mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::A, &s_i);
+                let t_i: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_cached_i8(ntt_a, &s_i);
                 decompose_rows_i8(&t_i, depth, log_basis)
             }
         })
         .collect();
 
     let t_hat_flat = flatten_i8_blocks(&t_hat_per_block);
-    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::B, &t_hat_flat);
+    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_cached_i8(ntt_b, &t_hat_flat);
     let hint = HachiCommitmentHint::new(t_hat_per_block);
     Ok((RingCommitment { u }, hint))
 }

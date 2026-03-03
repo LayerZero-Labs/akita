@@ -3,7 +3,7 @@
 use hachi_pcs::algebra::CyclotomicRing;
 use hachi_pcs::algebra::Fp64;
 use hachi_pcs::algebra::SparseChallenge;
-use hachi_pcs::protocol::commitment::utils::crt_ntt::NttMatrixCache;
+use hachi_pcs::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use hachi_pcs::protocol::commitment::{DummyProof, HachiCommitment};
 use hachi_pcs::protocol::hachi_poly_ops::HachiPolyOps;
 use hachi_pcs::protocol::transcript::labels;
@@ -36,6 +36,8 @@ impl DummyPoly {
 }
 
 impl HachiPolyOps<F, 1> for DummyPoly {
+    type CommitCache = NttSlotCache<1>;
+
     fn num_ring_elems(&self) -> usize {
         self.coeffs.len()
     }
@@ -65,7 +67,7 @@ impl HachiPolyOps<F, 1> for DummyPoly {
     fn commit_inner(
         &self,
         _a_matrix: &[Vec<CyclotomicRing<F, 1>>],
-        _cache: &NttMatrixCache<1>,
+        _ntt_a: &NttSlotCache<1>,
         _block_len: usize,
         _num_digits: usize,
         _log_basis: u32,

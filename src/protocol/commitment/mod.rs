@@ -9,8 +9,7 @@ mod types;
 pub mod utils;
 
 pub use commit::{
-    HachiCommitmentCore, HachiExpandedSetup, HachiPreparedSetup, HachiProverSetup, HachiSetupSeed,
-    HachiVerifierSetup,
+    HachiCommitmentCore, HachiExpandedSetup, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup,
 };
 pub use config::{
     compute_num_digits, compute_num_digits_fold, CommitmentConfig, DecompositionParams,

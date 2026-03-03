@@ -8,10 +8,10 @@ use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::challenges::sparse::sample_sparse_challenges;
-use crate::protocol::commitment::utils::crt_ntt::NttMatrixCache;
+use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
     flatten_i8_blocks, mat_vec_mul_ntt_cached_i8, unreduced_quotient_rows_ntt_cached,
-    unreduced_quotient_rows_ntt_cached_i8, MatrixSlot,
+    unreduced_quotient_rows_ntt_cached_i8,
 };
 use crate::protocol::commitment::utils::norm::{detect_field_modulus, vec_inf_norm};
 use crate::protocol::commitment::{
@@ -61,10 +61,10 @@ where
 
 /// **Step 4.** Compute `v = D · ŵ` (first prover message).
 fn compute_v<F: FieldCore + CanonicalField, const D: usize>(
-    cache: &NttMatrixCache<D>,
+    ntt_d: &NttSlotCache<D>,
     w_hat_flat: &[[i8; D]],
 ) -> Vec<CyclotomicRing<F, D>> {
-    mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::D, w_hat_flat)
+    mat_vec_mul_ntt_cached_i8(ntt_d, w_hat_flat)
 }
 
 fn flatten_w_hat<const D: usize>(w_hat: &[Vec<[i8; D]>]) -> Vec<[i8; D]> {
@@ -178,7 +178,7 @@ where
         let t_v = Instant::now();
         let v = {
             let _span = tracing::info_span!("compute_v").entered();
-            compute_v(setup.ntt_cache()?, &w_hat_flat)
+            compute_v(&setup.ntt_D, &w_hat_flat)
         };
         eprintln!(
             "    [quad_eq] compute_v (D*w_hat): {:.2}s (w_hat_flat_len={})",
@@ -394,8 +394,9 @@ fn add_sparse_ring_product<F: FieldCore + CanonicalField, const D: usize>(
 /// Uses split-eq factoring: `kron(left, gadget) · decomposed = left · pre_decomp`.
 #[allow(clippy::too_many_arguments, clippy::needless_borrow)]
 #[tracing::instrument(skip_all, name = "compute_r_split_eq")]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_r_split_eq<F, const D: usize, Cfg>(
-    setup: &HachiExpandedSetup<F, D>,
+    _setup: &HachiExpandedSetup<F, D>,
     opening_point: &RingOpeningPoint<F>,
     challenges: &[SparseChallenge],
     w_hat_flat: &[[i8; D]],
@@ -403,7 +404,9 @@ pub(crate) fn compute_r_split_eq<F, const D: usize, Cfg>(
     w_folded: &[CyclotomicRing<F, D>],
     z_pre: &[CyclotomicRing<F, D>],
     y: &[CyclotomicRing<F, D>],
-    ntt_cache: &NttMatrixCache<D>,
+    ntt_a: &NttSlotCache<D>,
+    ntt_b: &NttSlotCache<D>,
+    ntt_d: &NttSlotCache<D>,
     layout: HachiCommitmentLayout,
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
 where
@@ -421,21 +424,21 @@ where
     let t_d = Instant::now();
     let d_quotients = {
         let _span = tracing::info_span!("D_rows_ntt").entered();
-        unreduced_quotient_rows_ntt_cached_i8(ntt_cache, MatrixSlot::D, &setup.D, w_hat_flat)
+        unreduced_quotient_rows_ntt_cached_i8(ntt_d, w_hat_flat)
     };
     let d_time = t_d.elapsed().as_secs_f64();
 
     let t_b = Instant::now();
     let b_quotients = {
         let _span = tracing::info_span!("B_rows_ntt").entered();
-        unreduced_quotient_rows_ntt_cached_i8(ntt_cache, MatrixSlot::B, &setup.B, &t_hat_flat)
+        unreduced_quotient_rows_ntt_cached_i8(ntt_b, &t_hat_flat)
     };
     let b_time = t_b.elapsed().as_secs_f64();
 
     let t_a = Instant::now();
     let a_quotients = {
         let _span = tracing::info_span!("A_rows_ntt").entered();
-        unreduced_quotient_rows_ntt_cached(ntt_cache, MatrixSlot::A, &setup.A, z_pre)
+        unreduced_quotient_rows_ntt_cached(ntt_a, z_pre)
     };
     let a_time = t_a.elapsed().as_secs_f64();
 

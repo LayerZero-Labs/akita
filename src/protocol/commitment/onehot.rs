@@ -108,10 +108,11 @@ pub fn map_onehot_to_sparse_blocks(
 /// Sparse inner Ajtai: compute `t = A * s` for a one-hot block.
 ///
 /// Instead of materializing the full decomposed vector `s` and doing a dense
-/// matvec, we accumulate only the nonzero contributions:
+/// matvec, we accumulate only the nonzero contributions using fused
+/// shift-accumulate (no intermediate temporaries):
 ///
 /// ```text
-/// t[a] = sum_{entry} A[a][entry.pos * num_digits].mul_by_monomial_sum(entry.nonzero_coeffs)
+/// t[a] += A[a][entry.pos * num_digits] * (X^{k_1} + X^{k_2} + ...)
 /// ```
 #[allow(non_snake_case)]
 pub(crate) fn inner_ajtai_onehot_t_only<F: FieldCore + CanonicalField, const D: usize>(
@@ -126,7 +127,7 @@ pub(crate) fn inner_ajtai_onehot_t_only<F: FieldCore + CanonicalField, const D: 
     for entry in sparse_entries {
         let col = entry.pos_in_block * num_digits;
         for a in 0..n_a {
-            t[a] += A[a][col].mul_by_monomial_sum(&entry.nonzero_coeffs);
+            A[a][col].mul_by_monomial_sum_into(&mut t[a], &entry.nonzero_coeffs);
         }
     }
 

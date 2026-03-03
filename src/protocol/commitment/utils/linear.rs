@@ -9,7 +9,7 @@ use crate::{cfg_into_iter, cfg_iter};
 use crate::{CanonicalField, FieldCore};
 use std::array::from_fn;
 
-use super::crt_ntt::NttMatrixCache;
+use super::crt_ntt::NttSlotCache;
 #[cfg(test)]
 use super::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
 
@@ -164,17 +164,6 @@ pub(crate) fn mat_vec_mul_crt_ntt_many<F: FieldCore + CanonicalField, const D: u
     Ok(out)
 }
 
-#[derive(Debug, Clone, Copy)]
-/// Selector for which cached matrix to use.
-pub enum MatrixSlot {
-    /// Inner Ajtai matrix.
-    A,
-    /// Outer Ajtai matrix.
-    B,
-    /// Stage-1 matrix.
-    D,
-}
-
 fn mat_vec_mul_precomputed_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -201,12 +190,6 @@ fn mat_vec_mul_precomputed_with_params<
         .collect()
 }
 
-/// Compute the quotient of `(sum_j row_j * vec_j) / (X^D + 1)` using NTT.
-///
-/// Uses CRT-based accumulation in both negacyclic and cyclic NTT domains,
-/// then recovers the unreduced product's high part as `(cyc - neg) / 2`.
-/// Accepts precomputed negacyclic/cyclic NTT of `vec` and cyclic NTT of the
-/// matrix row to avoid redundant per-row conversions.
 fn unreduced_quotient_ntt<F, W, const K: usize, const D: usize>(
     ntt_row: &[CyclotomicCrtNtt<W, K, D>],
     cyc_row: &[CyclotomicCrtNtt<W, K, D>],
@@ -240,86 +223,58 @@ where
     CyclotomicRing::from_coefficients(quotient)
 }
 
-macro_rules! dispatch_cached_quotient {
-    ($cache:expr, $which:expr, $vec:expr) => {{
-        #[allow(non_snake_case)]
-        match $cache {
-            NttMatrixCache::Q32 {
-                A,
-                B,
-                D: Dm,
-                A_cyc,
-                B_cyc,
-                D_cyc,
+macro_rules! dispatch_slot_quotient {
+    ($slot:expr, $vec:expr, $convert_neg:ident, $convert_cyc:ident, $quotient_fn:ident) => {{
+        match $slot {
+            NttSlotCache::Q32 {
+                neg,
+                cyc,
                 params: p,
             } => {
-                let (ntt_mat, cyc_mat) = match $which {
-                    MatrixSlot::A => (A, A_cyc),
-                    MatrixSlot::B => (B, B_cyc),
-                    MatrixSlot::D => (Dm, D_cyc),
-                };
                 let v = $vec;
-                let n = ntt_mat.first().map_or(0, |r| r.len().min(v.len()));
+                let n = neg.first().map_or(0, |r| r.len().min(v.len()));
                 let v_neg: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| CyclotomicCrtNtt::from_ring_with_params(x, p))
+                    .map(|x| CyclotomicCrtNtt::$convert_neg(x, p))
                     .collect();
                 let v_cyc: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| CyclotomicCrtNtt::from_ring_cyclic(x, p))
+                    .map(|x| CyclotomicCrtNtt::$convert_cyc(x, p))
                     .collect();
-                cfg_into_iter!(0..ntt_mat.len())
-                    .map(|i| unreduced_quotient_ntt(&ntt_mat[i], &cyc_mat[i], &v_neg, &v_cyc, p))
+                cfg_into_iter!(0..neg.len())
+                    .map(|i| $quotient_fn(&neg[i], &cyc[i], &v_neg, &v_cyc, p))
                     .collect()
             }
-            NttMatrixCache::Q64 {
-                A,
-                B,
-                D: Dm,
-                A_cyc,
-                B_cyc,
-                D_cyc,
+            NttSlotCache::Q64 {
+                neg,
+                cyc,
                 params: p,
             } => {
-                let (ntt_mat, cyc_mat) = match $which {
-                    MatrixSlot::A => (A, A_cyc),
-                    MatrixSlot::B => (B, B_cyc),
-                    MatrixSlot::D => (Dm, D_cyc),
-                };
                 let v = $vec;
-                let n = ntt_mat.first().map_or(0, |r| r.len().min(v.len()));
+                let n = neg.first().map_or(0, |r| r.len().min(v.len()));
                 let v_neg: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| CyclotomicCrtNtt::from_ring_with_params(x, p))
+                    .map(|x| CyclotomicCrtNtt::$convert_neg(x, p))
                     .collect();
                 let v_cyc: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| CyclotomicCrtNtt::from_ring_cyclic(x, p))
+                    .map(|x| CyclotomicCrtNtt::$convert_cyc(x, p))
                     .collect();
-                cfg_into_iter!(0..ntt_mat.len())
-                    .map(|i| unreduced_quotient_ntt(&ntt_mat[i], &cyc_mat[i], &v_neg, &v_cyc, p))
+                cfg_into_iter!(0..neg.len())
+                    .map(|i| $quotient_fn(&neg[i], &cyc[i], &v_neg, &v_cyc, p))
                     .collect()
             }
-            NttMatrixCache::Q128 {
-                A,
-                B,
-                D: Dm,
-                A_cyc,
-                B_cyc,
-                D_cyc,
+            NttSlotCache::Q128 {
+                neg,
+                cyc,
                 params: p,
             } => {
-                let (ntt_mat, cyc_mat) = match $which {
-                    MatrixSlot::A => (A, A_cyc),
-                    MatrixSlot::B => (B, B_cyc),
-                    MatrixSlot::D => (Dm, D_cyc),
-                };
                 let v = $vec;
-                let n = ntt_mat.first().map_or(0, |r| r.len().min(v.len()));
+                let n = neg.first().map_or(0, |r| r.len().min(v.len()));
                 let v_neg: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| CyclotomicCrtNtt::from_ring_with_params(x, p))
+                    .map(|x| CyclotomicCrtNtt::$convert_neg(x, p))
                     .collect();
                 let v_cyc: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| CyclotomicCrtNtt::from_ring_cyclic(x, p))
+                    .map(|x| CyclotomicCrtNtt::$convert_cyc(x, p))
                     .collect();
-                cfg_into_iter!(0..ntt_mat.len())
-                    .map(|i| unreduced_quotient_ntt(&ntt_mat[i], &cyc_mat[i], &v_neg, &v_cyc, p))
+                cfg_into_iter!(0..neg.len())
+                    .map(|i| $quotient_fn(&neg[i], &cyc[i], &v_neg, &v_cyc, p))
                     .collect()
             }
         }
@@ -331,12 +286,16 @@ macro_rules! dispatch_cached_quotient {
 /// For each row: `r_i = high_part(sum_j row_ij * vec_j) = (cyc - neg) / 2`.
 /// Vec NTT conversions and matrix cyclic NTT are precomputed once (not per-row).
 pub fn unreduced_quotient_rows_ntt_cached<F: FieldCore + CanonicalField, const D: usize>(
-    cache: &NttMatrixCache<D>,
-    which: MatrixSlot,
-    _coeff_mat: &[Vec<CyclotomicRing<F, D>>],
+    slot: &NttSlotCache<D>,
     vec: &[CyclotomicRing<F, D>],
 ) -> Vec<CyclotomicRing<F, D>> {
-    dispatch_cached_quotient!(cache, which, vec)
+    dispatch_slot_quotient!(
+        slot,
+        vec,
+        from_ring_with_params,
+        from_ring_cyclic,
+        unreduced_quotient_ntt
+    )
 }
 
 fn unreduced_quotient_ntt_i8<F, W, const K: usize, const D: usize>(
@@ -372,101 +331,19 @@ where
     CyclotomicRing::from_coefficients(quotient)
 }
 
-macro_rules! dispatch_cached_quotient_i8 {
-    ($cache:expr, $which:expr, $vec:expr) => {{
-        #[allow(non_snake_case)]
-        match $cache {
-            NttMatrixCache::Q32 {
-                A,
-                B,
-                D: Dm,
-                A_cyc,
-                B_cyc,
-                D_cyc,
-                params: p,
-            } => {
-                let (ntt_mat, cyc_mat) = match $which {
-                    MatrixSlot::A => (A, A_cyc),
-                    MatrixSlot::B => (B, B_cyc),
-                    MatrixSlot::D => (Dm, D_cyc),
-                };
-                let v = $vec;
-                let n = ntt_mat.first().map_or(0, |r| r.len().min(v.len()));
-                let v_neg: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| CyclotomicCrtNtt::from_i8_with_params(x, p))
-                    .collect();
-                let v_cyc: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| CyclotomicCrtNtt::from_i8_cyclic(x, p))
-                    .collect();
-                cfg_into_iter!(0..ntt_mat.len())
-                    .map(|i| unreduced_quotient_ntt_i8(&ntt_mat[i], &cyc_mat[i], &v_neg, &v_cyc, p))
-                    .collect()
-            }
-            NttMatrixCache::Q64 {
-                A,
-                B,
-                D: Dm,
-                A_cyc,
-                B_cyc,
-                D_cyc,
-                params: p,
-            } => {
-                let (ntt_mat, cyc_mat) = match $which {
-                    MatrixSlot::A => (A, A_cyc),
-                    MatrixSlot::B => (B, B_cyc),
-                    MatrixSlot::D => (Dm, D_cyc),
-                };
-                let v = $vec;
-                let n = ntt_mat.first().map_or(0, |r| r.len().min(v.len()));
-                let v_neg: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| CyclotomicCrtNtt::from_i8_with_params(x, p))
-                    .collect();
-                let v_cyc: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| CyclotomicCrtNtt::from_i8_cyclic(x, p))
-                    .collect();
-                cfg_into_iter!(0..ntt_mat.len())
-                    .map(|i| unreduced_quotient_ntt_i8(&ntt_mat[i], &cyc_mat[i], &v_neg, &v_cyc, p))
-                    .collect()
-            }
-            NttMatrixCache::Q128 {
-                A,
-                B,
-                D: Dm,
-                A_cyc,
-                B_cyc,
-                D_cyc,
-                params: p,
-            } => {
-                let (ntt_mat, cyc_mat) = match $which {
-                    MatrixSlot::A => (A, A_cyc),
-                    MatrixSlot::B => (B, B_cyc),
-                    MatrixSlot::D => (Dm, D_cyc),
-                };
-                let v = $vec;
-                let n = ntt_mat.first().map_or(0, |r| r.len().min(v.len()));
-                let v_neg: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| CyclotomicCrtNtt::from_i8_with_params(x, p))
-                    .collect();
-                let v_cyc: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| CyclotomicCrtNtt::from_i8_cyclic(x, p))
-                    .collect();
-                cfg_into_iter!(0..ntt_mat.len())
-                    .map(|i| unreduced_quotient_ntt_i8(&ntt_mat[i], &cyc_mat[i], &v_neg, &v_cyc, p))
-                    .collect()
-            }
-        }
-    }};
-}
-
 /// Like [`unreduced_quotient_rows_ntt_cached`] but accepts i8 digit planes
 /// instead of ring elements, using direct i8 → CRT+NTT conversion.
 pub fn unreduced_quotient_rows_ntt_cached_i8<F: FieldCore + CanonicalField, const D: usize>(
-    cache: &NttMatrixCache<D>,
-    which: MatrixSlot,
-    _coeff_mat: &[Vec<CyclotomicRing<F, D>>],
+    slot: &NttSlotCache<D>,
     vec: &[[i8; D]],
 ) -> Vec<CyclotomicRing<F, D>> {
-    dispatch_cached_quotient_i8!(cache, which, vec)
+    dispatch_slot_quotient!(
+        slot,
+        vec,
+        from_i8_with_params,
+        from_i8_cyclic,
+        unreduced_quotient_ntt_i8
+    )
 }
 
 fn mat_vec_mul_precomputed_i8_with_params<
@@ -495,22 +372,12 @@ fn mat_vec_mul_precomputed_i8_with_params<
         .collect()
 }
 
-macro_rules! dispatch_cached_i8 {
-    ($cache:expr, $which:expr, $func:ident $(, $arg:expr)*) => {{
-        #[allow(non_snake_case)]
-        match $cache {
-            NttMatrixCache::Q32 { A, B, D: Dm, params: p, .. } => {
-                let m = match $which { MatrixSlot::A => A, MatrixSlot::B => B, MatrixSlot::D => Dm };
-                $func(m, $($arg,)* p)
-            }
-            NttMatrixCache::Q64 { A, B, D: Dm, params: p, .. } => {
-                let m = match $which { MatrixSlot::A => A, MatrixSlot::B => B, MatrixSlot::D => Dm };
-                $func(m, $($arg,)* p)
-            }
-            NttMatrixCache::Q128 { A, B, D: Dm, params: p, .. } => {
-                let m = match $which { MatrixSlot::A => A, MatrixSlot::B => B, MatrixSlot::D => Dm };
-                $func(m, $($arg,)* p)
-            }
+macro_rules! dispatch_slot {
+    ($slot:expr, $func:ident $(, $arg:expr)*) => {{
+        match $slot {
+            NttSlotCache::Q32 { neg, params: p, .. } => $func(neg, $($arg,)* p),
+            NttSlotCache::Q64 { neg, params: p, .. } => $func(neg, $($arg,)* p),
+            NttSlotCache::Q128 { neg, params: p, .. } => $func(neg, $($arg,)* p),
         }
     }};
 }
@@ -518,31 +385,10 @@ macro_rules! dispatch_cached_i8 {
 /// Like [`mat_vec_mul_ntt_cached`] but accepts i8 digit planes
 /// instead of ring elements, using direct i8 → CRT+NTT conversion.
 pub fn mat_vec_mul_ntt_cached_i8<F: FieldCore + CanonicalField, const D: usize>(
-    cache: &NttMatrixCache<D>,
-    which: MatrixSlot,
+    slot: &NttSlotCache<D>,
     vec: &[[i8; D]],
 ) -> Vec<CyclotomicRing<F, D>> {
-    dispatch_cached_i8!(cache, which, mat_vec_mul_precomputed_i8_with_params, vec)
-}
-
-macro_rules! dispatch_cached {
-    ($cache:expr, $which:expr, $func:ident $(, $arg:expr)*) => {{
-        #[allow(non_snake_case)]
-        match $cache {
-            NttMatrixCache::Q32 { A, B, D: Dm, params: p, .. } => {
-                let m = match $which { MatrixSlot::A => A, MatrixSlot::B => B, MatrixSlot::D => Dm };
-                $func(m, $($arg,)* p)
-            }
-            NttMatrixCache::Q64 { A, B, D: Dm, params: p, .. } => {
-                let m = match $which { MatrixSlot::A => A, MatrixSlot::B => B, MatrixSlot::D => Dm };
-                $func(m, $($arg,)* p)
-            }
-            NttMatrixCache::Q128 { A, B, D: Dm, params: p, .. } => {
-                let m = match $which { MatrixSlot::A => A, MatrixSlot::B => B, MatrixSlot::D => Dm };
-                $func(m, $($arg,)* p)
-            }
-        }
-    }};
+    dispatch_slot!(slot, mat_vec_mul_precomputed_i8_with_params, vec)
 }
 
 /// Dense mat-vec using a pre-converted NTT matrix from the cache.
@@ -552,11 +398,10 @@ macro_rules! dispatch_cached {
 /// Returns an error if the matrix and vector dimensions are incompatible.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_cached")]
 pub fn mat_vec_mul_ntt_cached<F: FieldCore + CanonicalField, const D: usize>(
-    cache: &NttMatrixCache<D>,
-    which: MatrixSlot,
+    slot: &NttSlotCache<D>,
     vec: &[CyclotomicRing<F, D>],
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-    let out = dispatch_cached!(cache, which, mat_vec_mul_precomputed_with_params, vec);
+    let out = dispatch_slot!(slot, mat_vec_mul_precomputed_with_params, vec);
     Ok(out)
 }
 

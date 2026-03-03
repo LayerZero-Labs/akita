@@ -351,4 +351,15 @@ criterion_group!(
     bench_nv20,
     bench_onehot_nv14,
 );
-criterion_main!(hachi_benches);
+
+fn main() {
+    rayon::ThreadPoolBuilder::new()
+        .stack_size(64 * 1024 * 1024)
+        .build_global()
+        .ok();
+
+    hachi_benches();
+    criterion::Criterion::default()
+        .configure_from_args()
+        .final_summary();
+}

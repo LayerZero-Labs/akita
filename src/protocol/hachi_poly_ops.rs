@@ -23,9 +23,9 @@ use crate::parallel::*;
 use crate::protocol::commitment::onehot::{
     inner_ajtai_onehot_t_only, map_onehot_to_sparse_blocks, SparseBlockEntry,
 };
-use crate::protocol::commitment::utils::crt_ntt::NttMatrixCache;
+use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
-    decompose_block_i8, decompose_rows_i8, mat_vec_mul_ntt_cached_i8, MatrixSlot,
+    decompose_block_i8, decompose_rows_i8, mat_vec_mul_ntt_cached_i8,
 };
 use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
 use std::array::from_fn;
@@ -37,6 +37,12 @@ use std::marker::PhantomData;
 /// polynomial data.  Implementations decide *how* to carry out each operation
 /// (dense decompose + NTT, sparse monomial tricks, streaming, etc.).
 pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
+    /// Per-polynomial cache type for the A-matrix commit path.
+    ///
+    /// `DensePoly` uses `NttSlotCache<D>` (CRT+NTT of A for dense mat-vec).
+    /// `OneHotPoly` uses `()` (one-hot commit bypasses NTT entirely).
+    type CommitCache: Send + Sync;
+
     /// Total number of ring elements in the polynomial.
     fn num_ring_elems(&self) -> usize;
 
@@ -75,18 +81,18 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     ///
     /// For each block of `block_len` ring elements:
     /// 1. `sᵢ = G⁻¹(blockᵢ)` (balanced decomposition to i8 digits).
-    /// 2. `tᵢ = A · sᵢ` (matrix-vector multiply via i8 NTT path).
+    /// 2. `tᵢ = A · sᵢ` (matrix-vector multiply via NTT cache or sparse path).
     /// 3. `t̂ᵢ = G⁻¹(tᵢ)` (decompose rows to i8 digits).
     ///
     /// Returns one `t̂ᵢ` vector per block as `[i8; D]` digit planes.
     ///
     /// # Errors
     ///
-    /// Returns an error if the NTT-cached matrix-vector multiply fails.
+    /// Returns an error if the cached matrix-vector multiply fails.
     fn commit_inner(
         &self,
         a_matrix: &[Vec<CyclotomicRing<F, D>>],
-        cache: &NttMatrixCache<D>,
+        ntt_a: &NttSlotCache<D>,
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
@@ -149,6 +155,8 @@ impl<F, const D: usize> HachiPolyOps<F, D> for DensePoly<F, D>
 where
     F: FieldCore + CanonicalField,
 {
+    type CommitCache = NttSlotCache<D>;
+
     fn num_ring_elems(&self) -> usize {
         self.coeffs.len()
     }
@@ -287,7 +295,7 @@ where
     fn commit_inner(
         &self,
         _a_matrix: &[Vec<CyclotomicRing<F, D>>],
-        cache: &NttMatrixCache<D>,
+        ntt_a: &NttSlotCache<D>,
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
@@ -306,8 +314,7 @@ where
                 let end = (start + block_len).min(n);
                 let block = &self.coeffs[start..end];
                 let s_i = decompose_block_i8(block, num_digits, log_basis);
-                let t_i: Vec<CyclotomicRing<F, D>> =
-                    mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::A, &s_i);
+                let t_i: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_cached_i8(ntt_a, &s_i);
                 decompose_rows_i8(&t_i, num_digits, log_basis)
             })
             .collect();
@@ -364,6 +371,8 @@ impl<F, const D: usize> HachiPolyOps<F, D> for OneHotPoly<F, D>
 where
     F: FieldCore + CanonicalField,
 {
+    type CommitCache = NttSlotCache<D>;
+
     fn num_ring_elems(&self) -> usize {
         self.total_ring_elems()
     }
@@ -444,7 +453,7 @@ where
     fn commit_inner(
         &self,
         a_matrix: &[Vec<CyclotomicRing<F, D>>],
-        _cache: &NttMatrixCache<D>,
+        _ntt_a: &NttSlotCache<D>,
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
@@ -499,11 +508,10 @@ mod tests {
         let num_vars = alpha + layout.m_vars + layout.r_vars;
         let poly = DensePoly::<TestF, TestD>::from_field_evals(num_vars, &evals).unwrap();
 
-        let cache = setup.ntt_cache().unwrap();
         let t_hat_poly = poly
             .commit_inner(
                 &setup.expanded.A,
-                cache,
+                &setup.ntt_A,
                 layout.block_len,
                 layout.num_digits_commit,
                 layout.log_basis,
@@ -539,11 +547,10 @@ mod tests {
         )
         .unwrap();
 
-        let cache = setup.ntt_cache().unwrap();
         let t_hat_poly = poly
             .commit_inner(
                 &setup.expanded.A,
-                cache,
+                &setup.ntt_A,
                 layout.block_len,
                 layout.num_digits_commit,
                 layout.log_basis,
