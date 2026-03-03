@@ -1,12 +1,16 @@
 //! Polynomial containers and evaluation utilities.
 
+use crate::cfg_into_iter;
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
 use crate::FieldCore;
 use crate::FromSmallInt;
 use std::io::{Read, Write};
+use std::ops::{Add, Neg, Sub};
 
 /// A degree-<D polynomial over `F`, stored as coefficients `[a0, a1, ..., a_{D-1}]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,7 +23,7 @@ impl<F: FieldCore, const D: usize> Poly<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> std::ops::Add for Poly<F, D> {
+impl<F: FieldCore, const D: usize> Add for Poly<F, D> {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
         let mut out = self.0;
@@ -30,7 +34,7 @@ impl<F: FieldCore, const D: usize> std::ops::Add for Poly<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> std::ops::Sub for Poly<F, D> {
+impl<F: FieldCore, const D: usize> Sub for Poly<F, D> {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self::Output {
         let mut out = self.0;
@@ -41,7 +45,7 @@ impl<F: FieldCore, const D: usize> std::ops::Sub for Poly<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> std::ops::Neg for Poly<F, D> {
+impl<F: FieldCore, const D: usize> Neg for Poly<F, D> {
     type Output = Self;
     fn neg(self) -> Self::Output {
         let mut out = self.0;
@@ -156,8 +160,8 @@ pub fn fold_evals_in_place<E: FieldCore>(evals: &mut Vec<E>, r: E) {
     );
     assert!(evals.len() >= 2, "evals must have at least 2 elements");
     let half = evals.len() / 2;
-    for i in 0..half {
-        evals[i] = evals[2 * i] + r * (evals[2 * i + 1] - evals[2 * i]);
-    }
-    evals.truncate(half);
+    let folded: Vec<E> = cfg_into_iter!(0..half)
+        .map(|i| evals[2 * i] + r * (evals[2 * i + 1] - evals[2 * i]))
+        .collect();
+    *evals = folded;
 }

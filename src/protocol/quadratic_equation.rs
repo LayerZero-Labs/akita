@@ -38,7 +38,7 @@ where
 {
     let a = &opening_point.a;
     let block_len = layout.block_len;
-    let delta = layout.delta;
+    let depth_open = layout.num_digits_open;
     let log_basis = layout.log_basis;
 
     debug_assert_eq!(a.len(), block_len);
@@ -46,7 +46,7 @@ where
     let folded = poly.fold_blocks(a, block_len);
     folded
         .into_iter()
-        .map(|w_i| w_i.balanced_decompose_pow2(delta, log_basis))
+        .map(|w_i| w_i.balanced_decompose_pow2(depth_open, log_basis))
         .collect()
 }
 
@@ -78,7 +78,12 @@ where
     Cfg: CommitmentConfig,
     P: HachiPolyOps<F, D>,
 {
-    let z = poly.decompose_fold(challenges, layout.block_len, layout.delta, layout.log_basis);
+    let z = poly.decompose_fold(
+        challenges,
+        layout.block_len,
+        layout.num_digits_commit,
+        layout.log_basis,
+    );
 
     let modulus = detect_field_modulus::<F>();
     let norm = vec_inf_norm(&z, modulus);
@@ -399,13 +404,18 @@ where
     Cfg: CommitmentConfig,
 {
     let layout = setup.seed.layout;
-    let delta = layout.delta;
+    let decomp_commit = layout.num_digits_commit;
     let log_basis = layout.log_basis;
     let poly_len = 2 * D - 1;
     let num_rows = Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A;
 
     let t_hat_flat: Vec<CyclotomicRing<F, D>> =
         t_hat.iter().flat_map(|v| v.iter().copied()).collect();
+
+    let w_recomps: Vec<CyclotomicRing<F, D>> = w_hat
+        .iter()
+        .map(|w_hat_i| CyclotomicRing::gadget_recompose_pow2(w_hat_i, log_basis))
+        .collect();
 
     let mut result = Vec::with_capacity(num_rows);
 
@@ -423,19 +433,17 @@ where
                 add_unreduced_product(&mut poly, m_ij, z_j);
             }
         } else if row_idx == Cfg::N_D + Cfg::N_B {
-            for (i, w_hat_i) in w_hat.iter().enumerate() {
-                let w_recomp = CyclotomicRing::gadget_recompose_pow2(w_hat_i, log_basis);
-                add_scalar_ring_product(&mut poly, &opening_point.b[i], &w_recomp);
+            for (i, w_recomp) in w_recomps.iter().enumerate() {
+                add_scalar_ring_product(&mut poly, &opening_point.b[i], w_recomp);
             }
         } else if row_idx == Cfg::N_D + Cfg::N_B + 1 {
-            for (i, w_hat_i) in w_hat.iter().enumerate() {
-                let w_recomp = CyclotomicRing::gadget_recompose_pow2(w_hat_i, log_basis);
-                add_sparse_ring_product(&mut poly, &challenges[i], &w_recomp);
+            for (i, w_recomp) in w_recomps.iter().enumerate() {
+                add_sparse_ring_product(&mut poly, &challenges[i], w_recomp);
             }
             let block_len = opening_point.a.len();
             for i in 0..block_len {
-                let start = i * delta;
-                let end = start + delta;
+                let start = i * decomp_commit;
+                let end = start + decomp_commit;
                 if end <= z_pre.len() {
                     let z_pre_recomp =
                         CyclotomicRing::gadget_recompose_pow2(&z_pre[start..end], log_basis);
@@ -445,8 +453,8 @@ where
         } else {
             let a_idx = row_idx - (Cfg::N_D + Cfg::N_B + 2);
             for (i, t_hat_i) in t_hat.iter().enumerate() {
-                let start = a_idx * delta;
-                let end = start + delta;
+                let start = a_idx * decomp_commit;
+                let end = start + decomp_commit;
                 if end <= t_hat_i.len() {
                     let t_recomp =
                         CyclotomicRing::gadget_recompose_pow2(&t_hat_i[start..end], log_basis);
@@ -492,24 +500,24 @@ where
     Cfg: CommitmentConfig,
 {
     let layout = setup.seed.layout;
-    let delta = layout.delta;
-    let tau = layout.tau;
+    let depth_commit = layout.num_digits_commit;
+    let depth_open = layout.num_digits_open;
+    let depth_fold = layout.num_digits_fold;
     let log_basis = layout.log_basis;
     let num_blocks = opening_point.b.len();
     let block_len = layout.block_len;
-    let w_len = delta * num_blocks;
-    let t_len = delta * Cfg::N_A * num_blocks;
-    let z_len = tau * delta * block_len;
+    let w_len = depth_open * num_blocks;
+    let t_len = depth_commit * Cfg::N_A * num_blocks;
+    let z_len = depth_fold * depth_commit * block_len;
     let total_cols = w_len + t_len + z_len;
 
-    let g1 = gadget_row_scalars::<F>(delta, log_basis);
-    let j1 = gadget_row_scalars::<F>(tau, log_basis);
-
-    // Pre-evaluate alpha powers for gadget scalars (already field elements)
-    // g1 and j1 are already field scalars, so eval_ring_at(constant(g), alpha) = g.
+    let g1_open = gadget_row_scalars::<F>(depth_open, log_basis);
+    let g1_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
+    let j1 = gadget_row_scalars::<F>(depth_fold, log_basis);
 
     let mut rows = Vec::with_capacity(Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A);
 
+    // D rows: D · ŵ = v (ŵ uses delta_open)
     for d_row in setup.D.iter() {
         let mut full = vec![F::zero(); total_cols];
         for (j, ring) in d_row.iter().take(w_len).enumerate() {
@@ -518,6 +526,7 @@ where
         rows.push(full);
     }
 
+    // B rows: B · t̂ = u (t̂ uses delta_commit)
     for b_row in setup.B.iter() {
         let mut full = vec![F::zero(); total_cols];
         for (j, ring) in b_row.iter().take(t_len).enumerate() {
@@ -526,31 +535,34 @@ where
         rows.push(full);
     }
 
-    // row3: kron(b, g1) evaluated at alpha -> b[i] * g1[d] (all scalars)
+    // Row 3: b^T · G · ŵ = y_ring (ŵ uses delta_open)
     {
         let mut full = vec![F::zero(); total_cols];
         for (i, &b_i) in opening_point.b.iter().enumerate() {
-            for (d, &g) in g1.iter().enumerate() {
-                full[i * delta + d] = b_i * g;
+            for (d, &g) in g1_open.iter().enumerate() {
+                full[i * depth_open + d] = b_i * g;
             }
         }
         rows.push(full);
     }
 
+    // Row 4: (c^T ⊗ G) · ŵ = a^T · G · J · ẑ
     {
         let mut full = vec![F::zero(); total_cols];
+        // LHS: challenges × ŵ (delta_open)
         for (i, c) in challenges.iter().enumerate() {
             let c_alpha = eval_ring_at(&c.to_dense::<F, D>().expect("valid challenge"), alpha);
-            for (d, &g) in g1.iter().enumerate() {
-                full[i * delta + d] = c_alpha * g;
+            for (d, &g) in g1_open.iter().enumerate() {
+                full[i * depth_open + d] = c_alpha * g;
             }
         }
+        // RHS: -a^T · G · J · ẑ (z_pre uses delta_commit)
         let z_offset = w_len + t_len;
         for (i, &a_i) in opening_point.a.iter().enumerate() {
-            for (d, &g) in g1.iter().enumerate() {
+            for (d, &g) in g1_commit.iter().enumerate() {
                 let ag = a_i * g;
                 for (t, &j) in j1.iter().enumerate() {
-                    let idx = (i * delta + d) * tau + t;
+                    let idx = (i * depth_commit + d) * depth_fold + t;
                     full[z_offset + idx] = -(ag * j);
                 }
             }
@@ -558,12 +570,13 @@ where
         rows.push(full);
     }
 
+    // Row 5: (c^T ⊗ G_{N_A}) · t̂ = A · J · ẑ (t̂ and ẑ use delta_commit)
     for a_idx in 0..Cfg::N_A {
         let mut full = vec![F::zero(); total_cols];
         for (i, c) in challenges.iter().enumerate() {
             let c_alpha = eval_ring_at(&c.to_dense::<F, D>().expect("valid challenge"), alpha);
-            for (d, &g) in g1.iter().enumerate() {
-                let t_idx = i * (Cfg::N_A * delta) + a_idx * delta + d;
+            for (d, &g) in g1_commit.iter().enumerate() {
+                let t_idx = i * (Cfg::N_A * depth_commit) + a_idx * depth_commit + d;
                 full[w_len + t_idx] = c_alpha * g;
             }
         }
@@ -572,7 +585,7 @@ where
         for (k, ring) in a_row.iter().enumerate() {
             let ring_alpha = eval_ring_at(ring, alpha);
             for (t, &j) in j1.iter().enumerate() {
-                full[z_offset + k * tau + t] = -(ring_alpha * j);
+                full[z_offset + k * depth_fold + t] = -(ring_alpha * j);
             }
         }
         rows.push(full);
@@ -770,7 +783,7 @@ mod tests {
     fn derive_z_hat(z_pre: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
         z_pre
             .iter()
-            .flat_map(|z_j| z_j.balanced_decompose_pow2(tau(), LOG_BASIS))
+            .flat_map(|z_j| z_j.balanced_decompose_pow2(num_digits_fold(), LOG_BASIS))
             .collect()
     }
 
@@ -830,12 +843,18 @@ mod tests {
 
         let w_hat = f.quad_eq.w_hat().unwrap();
         assert_eq!(w_hat.len(), NUM_BLOCKS);
-        assert!(w_hat.iter().all(|v| v.len() == delta()));
+        assert!(w_hat.iter().all(|v| v.len() == num_digits_commit()));
 
         let hint = f.quad_eq.hint().unwrap();
         assert_eq!(hint.t_hat.len(), NUM_BLOCKS);
-        assert!(hint.t_hat.iter().all(|v| v.len() == N_A * delta()));
+        assert!(hint
+            .t_hat
+            .iter()
+            .all(|v| v.len() == N_A * num_digits_commit()));
 
-        assert_eq!(f.quad_eq.z_pre().unwrap().len(), BLOCK_LEN * delta());
+        assert_eq!(
+            f.quad_eq.z_pre().unwrap().len(),
+            BLOCK_LEN * num_digits_commit()
+        );
     }
 }

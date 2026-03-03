@@ -234,28 +234,31 @@ pub fn mat_vec_mul_ntt_cached<F: FieldCore + CanonicalField, const D: usize>(
     Ok(out)
 }
 
-/// Basis-decompose a block of ring elements into `block.len() * delta` gadget components.
+/// Basis-decompose a block of ring elements into `block.len() * num_digits` gadget components.
 pub fn decompose_block<F: FieldCore + CanonicalField, const D: usize>(
     block: &[CyclotomicRing<F, D>],
-    delta: usize,
+    num_digits: usize,
     log_basis: u32,
 ) -> Vec<CyclotomicRing<F, D>> {
-    let mut out = vec![CyclotomicRing::<F, D>::zero(); block.len() * delta];
+    let mut out = vec![CyclotomicRing::<F, D>::zero(); block.len() * num_digits];
     for (i, coeff_vec) in block.iter().enumerate() {
-        coeff_vec.balanced_decompose_pow2_into(&mut out[i * delta..(i + 1) * delta], log_basis);
+        coeff_vec.balanced_decompose_pow2_into(
+            &mut out[i * num_digits..(i + 1) * num_digits],
+            log_basis,
+        );
     }
     out
 }
 
-/// Decompose each ring element in `rows` into `delta` gadget components.
+/// Decompose each ring element in `rows` into `num_digits` gadget components.
 pub fn decompose_rows<F: FieldCore + CanonicalField, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
-    delta: usize,
+    num_digits: usize,
     log_basis: u32,
 ) -> Vec<CyclotomicRing<F, D>> {
-    let mut out = vec![CyclotomicRing::<F, D>::zero(); rows.len() * delta];
+    let mut out = vec![CyclotomicRing::<F, D>::zero(); rows.len() * num_digits];
     for (i, row) in rows.iter().enumerate() {
-        row.balanced_decompose_pow2_into(&mut out[i * delta..(i + 1) * delta], log_basis);
+        row.balanced_decompose_pow2_into(&mut out[i * num_digits..(i + 1) * num_digits], log_basis);
     }
     out
 }

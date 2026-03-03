@@ -76,7 +76,7 @@ where
             &setup.expanded.A,
             cache,
             layout.block_len,
-            layout.delta,
+            layout.num_digits_commit,
             layout.log_basis,
         )?;
         let t_hat_flat: Vec<CyclotomicRing<F, D>> =
@@ -150,7 +150,13 @@ where
         );
 
         let t2 = Instant::now();
-        let rs = ring_switch_prover::<F, T, { D }, Cfg>(&mut quad_eq, &setup.expanded, transcript)?;
+        let ntt_cache = setup.ntt_cache()?;
+        let rs = ring_switch_prover::<F, T, { D }, Cfg>(
+            &mut quad_eq,
+            &setup.expanded,
+            transcript,
+            ntt_cache,
+        )?;
         eprintln!(
             "  [hachi prove] ring_switch_prover: {:.2}s",
             t2.elapsed().as_secs_f64()

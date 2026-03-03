@@ -9,10 +9,14 @@ use crate::cfg_into_iter;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
+use crate::protocol::commitment::utils::crt_ntt::NttMatrixCache;
+use crate::protocol::commitment::utils::linear::{
+    decompose_block, decompose_rows, mat_vec_mul_ntt_cached, MatrixSlot,
+};
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
-    CommitmentConfig, DecompositionParams, HachiCommitmentCore, HachiCommitmentLayout,
-    HachiExpandedSetup, RingCommitment, RingCommitmentScheme,
+    CommitmentConfig, DecompositionParams, HachiCommitmentLayout, HachiExpandedSetup,
+    RingCommitment,
 };
 use crate::protocol::quadratic_equation::{
     compute_m_a_streaming, compute_r_split_eq, QuadraticEquation,
@@ -63,6 +67,7 @@ pub fn ring_switch_prover<F, T, const D: usize, Cfg>(
     quad_eq: &mut QuadraticEquation<F, D, Cfg>,
     setup: &HachiExpandedSetup<F, D>,
     transcript: &mut T,
+    ntt_cache: &NttMatrixCache<D>,
 ) -> Result<RingSwitchOutput<F, D>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -96,7 +101,7 @@ where
     let layout = setup.seed.layout;
     let w = build_w_coeffs::<F, D>(w_hat, t_hat, z_pre, &r, layout);
 
-    let w_commitment = commit_w::<F, D, Cfg>(&w)?;
+    let w_commitment = commit_w::<F, D, Cfg>(&w, ntt_cache)?;
     transcript.append_serde(ABSORB_SUMCHECK_W, &w_commitment);
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
@@ -295,12 +300,16 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
 
     fn decomposition() -> DecompositionParams {
         let parent = Cfg::decomposition();
-        // w's entries are already base-2^log_basis digits (in [-b/2, b/2-1]),
-        // so log_coeff_bound = log_basis yields delta = 1, avoiding a
-        // block_len * delta blowup in inner_width.
+        let parent_open = parent.log_open_bound.unwrap_or(parent.log_commit_bound);
         DecompositionParams {
             log_basis: parent.log_basis,
-            log_coeff_bound: parent.log_basis,
+            // w's entries are balanced digits in [-b/2, b/2), so commitment
+            // decomposition needs only one level.
+            log_commit_bound: parent.log_basis,
+            // Opening folds w with arbitrary field-element weights, producing
+            // full-field-size coefficients that need the same decomposition
+            // depth as the parent's opening bound.
+            log_open_bound: Some(parent_open),
         }
     }
 
@@ -320,13 +329,40 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
     }
 }
 
-fn commit_w<F, const D: usize, Cfg>(w: &[F]) -> Result<RingCommitment<F, D>, HachiError>
+/// Total ring elements in the w polynomial, computed from the main layout.
+///
+/// Components: w_hat + t_hat + decomposed z_pre + decomposed r.
+pub(crate) fn w_ring_element_count<F: CanonicalField, Cfg: CommitmentConfig>(
+    layout: HachiCommitmentLayout,
+) -> usize {
+    let w_hat_count = layout.num_blocks * layout.num_digits_open;
+    let t_hat_count = layout.num_blocks * Cfg::N_A * layout.num_digits_commit;
+    let z_pre_count = layout.inner_width * layout.num_digits_fold;
+    let r_count = (Cfg::N_D + Cfg::N_B + 2) * r_decomp_levels::<F>(layout.log_basis);
+    w_hat_count + t_hat_count + z_pre_count + r_count
+}
+
+/// Compute the w-commitment layout from the main layout.
+pub(crate) fn w_commitment_layout<F: CanonicalField, const D: usize, Cfg: CommitmentConfig>(
+    main_layout: HachiCommitmentLayout,
+) -> Result<HachiCommitmentLayout, HachiError> {
+    let total = w_ring_element_count::<F, Cfg>(main_layout)
+        .next_power_of_two()
+        .max(1);
+    let alpha = D.trailing_zeros() as usize;
+    let m_vars = total.trailing_zeros() as usize;
+    let max_num_vars = m_vars + alpha;
+    WCommitmentConfig::<D, Cfg>::commitment_layout(max_num_vars)
+}
+
+fn commit_w<F, const D: usize, Cfg>(
+    w: &[F],
+    cache: &NttMatrixCache<D>,
+) -> Result<RingCommitment<F, D>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     Cfg: CommitmentConfig,
 {
-    type WCfg<const D: usize, C> = WCommitmentConfig<D, C>;
-
     let ring_elems: Vec<CyclotomicRing<F, D>> = w
         .chunks(D)
         .map(|chunk| CyclotomicRing::from_slice(chunk))
@@ -334,18 +370,35 @@ where
 
     let total = ring_elems.len().next_power_of_two().max(1);
     let alpha = D.trailing_zeros() as usize;
-    let m_vars = total.trailing_zeros() as usize;
-    let max_num_vars = m_vars + alpha;
+    let m_vars_total = total.trailing_zeros() as usize;
+    let max_num_vars = m_vars_total + alpha;
+    let w_layout = WCommitmentConfig::<D, Cfg>::commitment_layout(max_num_vars)?;
 
-    let (w_setup, _) =
-        <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::setup(max_num_vars)?;
+    let num_blocks = w_layout.num_blocks;
+    let block_len = w_layout.block_len;
+    let depth = w_layout.num_digits_commit;
+    let log_basis = w_layout.log_basis;
+    let coeff_len = ring_elems.len();
+    let zero_t_hat = vec![CyclotomicRing::<F, D>::zero(); Cfg::N_A.checked_mul(depth).unwrap()];
 
-    let w = <HachiCommitmentCore as RingCommitmentScheme<F, D, WCfg<D, Cfg>>>::commit_coeffs(
-        &ring_elems,
-        &w_setup,
-    )?;
+    let t_hat_flat: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..num_blocks)
+        .flat_map(|i| {
+            let start = i * block_len;
+            if start >= coeff_len {
+                zero_t_hat.clone()
+            } else {
+                let end = (start + block_len).min(coeff_len);
+                let block = &ring_elems[start..end];
+                let s_i = decompose_block(block, depth, log_basis);
+                let t_i =
+                    mat_vec_mul_ntt_cached(cache, MatrixSlot::A, &s_i).expect("inner Ajtai failed");
+                decompose_rows(&t_i, depth, log_basis)
+            }
+        })
+        .collect();
 
-    Ok(w.commitment)
+    let u = mat_vec_mul_ntt_cached(cache, MatrixSlot::B, &t_hat_flat)?;
+    Ok(RingCommitment { u })
 }
 
 pub(crate) fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D>, alpha: &F) -> F {
@@ -497,7 +550,7 @@ pub(crate) fn build_w_evals_compact<F: FieldCore + CanonicalField>(
     let q = (-F::one()).to_canonical_u128() + 1;
     let half_q = q / 2;
 
-    let evals: Vec<i8> = (0..n)
+    let evals: Vec<i8> = cfg_into_iter!(0..n)
         .map(|dst| {
             let x = dst & (x_len - 1);
             let y = dst >> num_u;
@@ -571,7 +624,7 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     layout: HachiCommitmentLayout,
 ) -> Vec<F> {
     let log_basis = layout.log_basis;
-    let tau = layout.tau;
+    let num_digits_fold = layout.num_digits_fold;
     let levels = r_decomp_levels::<F>(log_basis);
     let r_hat: Vec<CyclotomicRing<F, D>> = r
         .iter()
@@ -583,13 +636,13 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
 
     let z_count = w_hat.iter().map(|v| v.len()).sum::<usize>()
         + t_hat.iter().map(|v| v.len()).sum::<usize>()
-        + z_pre.len() * tau;
+        + z_pre.len() * num_digits_fold;
     let mut out = Vec::with_capacity((z_count + r_hat.len()) * D);
     for elem in w_hat_flat.chain(t_hat_flat) {
         out.extend_from_slice(elem.coefficients());
     }
     for z_j in z_pre {
-        for elem in z_j.balanced_decompose_pow2(tau, log_basis) {
+        for elem in z_j.balanced_decompose_pow2(num_digits_fold, log_basis) {
             out.extend_from_slice(elem.coefficients());
         }
     }

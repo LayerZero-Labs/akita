@@ -9,23 +9,24 @@ use crate::primitives::serialization::{
 use crate::FieldCore;
 use std::io::{Read, Write};
 
-/// Parameters controlling the gadget decomposition depth.
+/// Parameters controlling the gadget decomposition depth (called δ in the paper).
 ///
 /// The gadget base is `b = 2^log_basis`. Each ring coefficient with centered
-/// magnitude fitting in `log_coeff_bound` bits is decomposed into
-/// `delta = ceil(log_coeff_bound / log_basis)` balanced digits in `[-b/2, b/2)`.
+/// magnitude fitting in `log_commit_bound` bits is decomposed into
+/// `ceil(log_commit_bound / log_basis)` balanced digits in `[-b/2, b/2)`.
 ///
-/// Smaller `log_coeff_bound` (when polynomial coefficients are known to be
-/// small) yields a smaller `delta`, which proportionally shrinks the witness
-/// vector, the commitment matrices, and the proving cost.
+/// Smaller `log_commit_bound` (when polynomial coefficients are known to be
+/// small) yields fewer decomposition levels, which proportionally shrinks the
+/// witness vector, the commitment matrices, and the proving cost.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DecompositionParams {
     /// Base-2 logarithm of the gadget base (e.g., 4 for base-16 digits in [-8, 7]).
     pub log_basis: u32,
 
-    /// Base-2 logarithm of the maximum centered coefficient magnitude.
+    /// Bit-width of the largest coefficient that the *commitment* decomposition
+    /// must represent. Controls the commitment-side decomposition depth (δ in
+    /// the paper): `num_digits = ceil(log_commit_bound / log_basis)`.
     ///
-    /// Determines the decomposition depth: `delta = ceil(log_coeff_bound / log_basis)`.
     /// The centered representation maps each coefficient `c ∈ [0, q)` to the
     /// signed value in `(-q/2, q/2]`. A value of `k` means the signed magnitude
     /// fits in `k` bits, i.e., lies in `[-2^(k-1), 2^(k-1) - 1]`.
@@ -34,63 +35,75 @@ pub struct DecompositionParams {
     /// - Binary (0/1) polynomials: 1
     /// - Already range-checked digits in `[-8, 7]`: 4  (= `log_basis` for one digit)
     /// - Arbitrary Fp128 elements: 128
-    pub log_coeff_bound: u32,
+    pub log_commit_bound: u32,
+
+    /// Bit-width of the largest coefficient that the *opening* decomposition
+    /// must represent (ŵ = G⁻¹(w_folded)).
+    ///
+    /// During opening, `fold_blocks` computes inner products with arbitrary
+    /// field-element weights, so the result always has full-field-size
+    /// coefficients regardless of the original `log_commit_bound`. When `None`,
+    /// defaults to `log_commit_bound` (correct when `log_commit_bound` already
+    /// covers the full field, e.g. 128). Set to the field modulus bit-width
+    /// when `log_commit_bound` is smaller (e.g. for recursive w commitments
+    /// where entries are small but fold products are not).
+    pub log_open_bound: Option<u32>,
 }
 
-/// Compute the gadget decomposition depth from a coefficient bound.
+/// Compute the gadget decomposition depth (δ in the paper) from a
+/// coefficient bit-width bound.
 ///
-/// Returns `delta = ceil(log_coeff_bound / log_basis)`, with an extra level
-/// when the balanced-digit range would not cover the full bound.
+/// Returns `ceil(log_bound / log_basis)`, with an extra level when the
+/// balanced-digit range would not cover the full bound.
 ///
 /// # Panics
 ///
 /// Panics if `log_basis` is 0 or >= 128.
-pub fn compute_delta(log_coeff_bound: u32, log_basis: u32) -> usize {
+pub fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
     assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
-    if log_coeff_bound == 0 {
+    if log_bound == 0 {
         return 1;
     }
-    let mut delta = (log_coeff_bound as usize).div_ceil(log_basis as usize);
+    let mut levels = (log_bound as usize).div_ceil(log_basis as usize);
 
-    // Verify the balanced-digit range covers the bound.
-    // Max positive representable by delta digits in base b: (b/2-1)*(b^delta-1)/(b-1).
     let b: u128 = 1u128 << log_basis;
     let half_b_minus_1 = b / 2 - 1;
     let b_minus_1 = b - 1;
     let mut b_pow = 1u128;
-    for _ in 0..delta {
+    for _ in 0..levels {
         b_pow = b_pow.saturating_mul(b);
     }
     let max_positive = half_b_minus_1.saturating_mul(b_pow.saturating_sub(1) / b_minus_1);
-    let required = if log_coeff_bound > 128 {
+    let required = if log_bound > 128 {
         u128::MAX / 2
-    } else if log_coeff_bound == 0 {
+    } else if log_bound == 0 {
         0
     } else {
-        (1u128 << (log_coeff_bound - 1)).saturating_sub(1)
+        (1u128 << (log_bound - 1)).saturating_sub(1)
     };
     if max_positive < required {
-        delta += 1;
+        levels += 1;
     }
-    delta.max(1)
+    levels.max(1)
 }
 
-/// Compute the decomposition depth `tau` for the folded witness `z_pre`.
+/// Compute the decomposition depth for the folded witness `z_pre`
+/// (τ in the paper).
 ///
-/// The folded witness satisfies `||z_pre||_inf <= beta` where
-/// `beta = 2^r_vars * challenge_weight * 2^(log_basis - 1)`.
-/// Returns enough levels to represent values up to `beta`.
-pub fn compute_tau(r_vars: usize, challenge_weight: usize, log_basis: u32) -> usize {
+/// The folded witness satisfies `||z_pre||_inf <= β` where
+/// `β = 2^r_vars * challenge_weight * 2^(log_basis - 1)`.
+/// Returns enough gadget levels to represent values up to `β`.
+pub fn compute_num_digits_fold(r_vars: usize, challenge_weight: usize, log_basis: u32) -> usize {
     let shift = r_vars + (log_basis as usize) - 1;
     if shift >= 127 || challenge_weight == 0 {
-        return compute_delta(128, log_basis);
+        return compute_num_digits(128, log_basis);
     }
     let beta = (challenge_weight as u128).saturating_mul(1u128 << shift);
     if beta == 0 {
         return 1;
     }
     let log_beta = 128 - beta.leading_zeros();
-    compute_delta(log_beta, log_basis)
+    compute_num_digits(log_beta, log_basis)
 }
 
 /// Runtime commitment layout authority for ring-native commitments.
@@ -104,16 +117,26 @@ pub struct HachiCommitmentLayout {
     pub num_blocks: usize,
     /// Number of ring elements per block (`2^m_vars`).
     pub block_len: usize,
-    /// Width of inner matrix `A`.
+    /// Width of inner matrix `A` (`block_len * num_digits_commit`).
     pub inner_width: usize,
-    /// Width of outer matrix `B`.
+    /// Width of outer matrix `B` (`n_a * num_digits_commit * num_blocks`).
     pub outer_width: usize,
-    /// Width of prover matrix `D` (`delta * 2^r_vars`).
+    /// Width of prover matrix `D` (`num_digits_open * num_blocks`).
     pub d_matrix_width: usize,
-    /// Decomposition levels `delta` (gadget decomposition depth).
-    pub delta: usize,
-    /// Decomposition levels for the folded witness `z` (`tau` in the paper).
-    pub tau: usize,
+    /// Number of gadget decomposition levels for commitment-time coefficients
+    /// (δ_commit in the paper). Controls how the original polynomial
+    /// coefficients are decomposed into balanced base-b digits for the Ajtai
+    /// commitment.
+    pub num_digits_commit: usize,
+    /// Number of gadget decomposition levels for opening-time folded
+    /// evaluations (δ_open in the paper). Folding inner-products with
+    /// arbitrary field-element weights produces full-field-size coefficients,
+    /// so this equals `num_digits_commit` when `log_commit_bound` covers
+    /// the full field, and is larger otherwise (e.g. recursive w witnesses).
+    pub num_digits_open: usize,
+    /// Number of gadget decomposition levels for the folded witness `z_pre`
+    /// (τ in the paper). Derived from the L∞ bound on `z_pre`.
+    pub num_digits_fold: usize,
     /// Base-2 logarithm of gadget decomposition base.
     pub log_basis: u32,
 }
@@ -122,8 +145,8 @@ impl HachiCommitmentLayout {
     /// Build a layout from `(m_vars, r_vars)`, config constants, and decomposition
     /// parameters.
     ///
-    /// `tau` is auto-derived from the beta bound (`r_vars`, `challenge_weight`,
-    /// `log_basis`).
+    /// `num_digits_fold` (τ) is auto-derived from the beta bound
+    /// (`r_vars`, `challenge_weight`, `log_basis`).
     ///
     /// # Errors
     ///
@@ -133,9 +156,19 @@ impl HachiCommitmentLayout {
         r_vars: usize,
         decomp: &DecompositionParams,
     ) -> Result<Self, HachiError> {
-        let delta = compute_delta(decomp.log_coeff_bound, decomp.log_basis);
-        let tau = compute_tau(r_vars, Cfg::CHALLENGE_WEIGHT, decomp.log_basis);
-        Self::new_with_decomp(m_vars, r_vars, Cfg::N_A, delta, tau, decomp.log_basis)
+        let depth_commit = compute_num_digits(decomp.log_commit_bound, decomp.log_basis);
+        let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
+        let depth_open = compute_num_digits(open_bound, decomp.log_basis);
+        let depth_fold = compute_num_digits_fold(r_vars, Cfg::CHALLENGE_WEIGHT, decomp.log_basis);
+        Self::new_with_decomp(
+            m_vars,
+            r_vars,
+            Cfg::N_A,
+            depth_commit,
+            depth_open,
+            depth_fold,
+            decomp.log_basis,
+        )
     }
 
     /// Build a layout from explicit decomposition parameters (no config trait needed).
@@ -147,8 +180,9 @@ impl HachiCommitmentLayout {
         m_vars: usize,
         r_vars: usize,
         n_a: usize,
-        delta: usize,
-        tau: usize,
+        num_digits_commit: usize,
+        num_digits_open: usize,
+        num_digits_fold: usize,
         log_basis: u32,
     ) -> Result<Self, HachiError> {
         if log_basis == 0 || log_basis >= 128 {
@@ -157,13 +191,13 @@ impl HachiCommitmentLayout {
         let num_blocks = checked_pow2(r_vars)?;
         let block_len = checked_pow2(m_vars)?;
         let inner_width = block_len
-            .checked_mul(delta)
+            .checked_mul(num_digits_commit)
             .ok_or_else(|| HachiError::InvalidSetup("inner width overflow".to_string()))?;
         let outer_width = n_a
-            .checked_mul(delta)
+            .checked_mul(num_digits_commit)
             .and_then(|x| x.checked_mul(num_blocks))
             .ok_or_else(|| HachiError::InvalidSetup("outer width overflow".to_string()))?;
-        let d_matrix_width = delta
+        let d_matrix_width = num_digits_open
             .checked_mul(num_blocks)
             .ok_or_else(|| HachiError::InvalidSetup("D-matrix width overflow".to_string()))?;
         Ok(Self {
@@ -174,8 +208,9 @@ impl HachiCommitmentLayout {
             inner_width,
             outer_width,
             d_matrix_width,
-            delta,
-            tau,
+            num_digits_commit,
+            num_digits_open,
+            num_digits_fold,
             log_basis,
         })
     }
@@ -231,8 +266,12 @@ impl HachiSerialize for HachiCommitmentLayout {
             .serialize_with_mode(&mut writer, compress)?;
         self.d_matrix_width
             .serialize_with_mode(&mut writer, compress)?;
-        self.delta.serialize_with_mode(&mut writer, compress)?;
-        self.tau.serialize_with_mode(&mut writer, compress)?;
+        self.num_digits_commit
+            .serialize_with_mode(&mut writer, compress)?;
+        self.num_digits_open
+            .serialize_with_mode(&mut writer, compress)?;
+        self.num_digits_fold
+            .serialize_with_mode(&mut writer, compress)?;
         (self.log_basis as usize).serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
@@ -245,9 +284,10 @@ impl HachiSerialize for HachiCommitmentLayout {
             + self.inner_width.serialized_size(compress)
             + self.outer_width.serialized_size(compress)
             + self.d_matrix_width.serialized_size(compress)
-            + self.delta.serialized_size(compress)
-            + self.tau.serialized_size(compress)
-            + self.delta.serialized_size(compress) // log_basis as usize
+            + self.num_digits_commit.serialized_size(compress)
+            + self.num_digits_open.serialized_size(compress)
+            + self.num_digits_fold.serialized_size(compress)
+            + (self.log_basis as usize).serialized_size(compress)
     }
 }
 
@@ -265,8 +305,9 @@ impl HachiDeserialize for HachiCommitmentLayout {
             inner_width: usize::deserialize_with_mode(&mut reader, compress, validate)?,
             outer_width: usize::deserialize_with_mode(&mut reader, compress, validate)?,
             d_matrix_width: usize::deserialize_with_mode(&mut reader, compress, validate)?,
-            delta: usize::deserialize_with_mode(&mut reader, compress, validate)?,
-            tau: usize::deserialize_with_mode(&mut reader, compress, validate)?,
+            num_digits_commit: usize::deserialize_with_mode(&mut reader, compress, validate)?,
+            num_digits_open: usize::deserialize_with_mode(&mut reader, compress, validate)?,
+            num_digits_fold: usize::deserialize_with_mode(&mut reader, compress, validate)?,
             log_basis: usize::deserialize_with_mode(&mut reader, compress, validate)? as u32,
         };
         if matches!(validate, Validate::Yes) {
@@ -280,7 +321,7 @@ impl HachiDeserialize for HachiCommitmentLayout {
 ///
 /// Security parameters (`N_A`, `N_B`, `N_D`, `CHALLENGE_WEIGHT`) are
 /// compile-time constants fixed for a given security level. Decomposition
-/// parameters (`delta`, `tau`, `log_basis`) are runtime values derived from
+/// parameters (gadget depths, `log_basis`) are runtime values derived from
 /// [`DecompositionParams`] and live in [`HachiCommitmentLayout`].
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Ring degree used by `CyclotomicRing<F, D>`.
@@ -294,7 +335,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Hamming weight of sparse challenges (`ω` in the paper).
     const CHALLENGE_WEIGHT: usize;
 
-    /// Decomposition parameters (gadget base and coefficient bound).
+    /// Decomposition parameters (gadget base and coefficient bounds).
     fn decomposition() -> DecompositionParams;
 
     /// Choose the runtime commitment layout for `max_num_vars`.
@@ -406,7 +447,7 @@ pub(super) fn ensure_block_layout<F: FieldCore, const D: usize>(
     Ok(())
 }
 
-/// Ensure matrix shape matches expected dimensions.
+/// Ensure matrix shape matches expected dimensions exactly.
 ///
 /// # Errors
 ///
@@ -434,6 +475,37 @@ pub(super) fn ensure_matrix_shape<T>(
     Ok(())
 }
 
+/// Ensure matrix has at least the expected dimensions.
+///
+/// Matrices may be wider than the main layout requires when widened to
+/// accommodate the w-commitment's column counts.
+///
+/// # Errors
+///
+/// Returns an error if row count mismatches or any row is too narrow.
+pub(super) fn ensure_matrix_shape_ge<T>(
+    mat: &[Vec<T>],
+    expected_rows: usize,
+    min_cols: usize,
+    name: &str,
+) -> Result<(), HachiError> {
+    if mat.len() != expected_rows {
+        return Err(HachiError::InvalidSize {
+            expected: expected_rows,
+            actual: mat.len(),
+        });
+    }
+    for (row_idx, row) in mat.iter().enumerate() {
+        if row.len() < min_cols {
+            return Err(HachiError::InvalidSetup(format!(
+                "{name} row {row_idx} has width {}, expected >= {min_cols}",
+                row.len()
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Small correctness-first config for tests and local benchmarks.
 ///
 /// Fixed layout (m_vars=4, r_vars=2) for fast test iteration. For larger
@@ -451,7 +523,8 @@ impl CommitmentConfig for SmallTestCommitmentConfig {
     fn decomposition() -> DecompositionParams {
         DecompositionParams {
             log_basis: 4,
-            log_coeff_bound: 32,
+            log_commit_bound: 32,
+            log_open_bound: None,
         }
     }
 
@@ -478,7 +551,8 @@ impl CommitmentConfig for DynamicSmallTestCommitmentConfig {
     fn decomposition() -> DecompositionParams {
         DecompositionParams {
             log_basis: 4,
-            log_coeff_bound: 32,
+            log_commit_bound: 32,
+            log_open_bound: None,
         }
     }
 
@@ -525,7 +599,8 @@ impl CommitmentConfig for ProductionFp128CommitmentConfig {
     fn decomposition() -> DecompositionParams {
         DecompositionParams {
             log_basis: 4,
-            log_coeff_bound: 128,
+            log_commit_bound: 128,
+            log_open_bound: None,
         }
     }
 

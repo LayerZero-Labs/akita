@@ -27,7 +27,8 @@ use crate::protocol::commitment::utils::crt_ntt::NttMatrixCache;
 use crate::protocol::commitment::utils::linear::{
     decompose_block, decompose_rows, mat_vec_mul_ntt_cached, MatrixSlot,
 };
-use crate::{cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
+use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
+use std::marker::PhantomData;
 
 /// Operations the Hachi commitment scheme needs from a polynomial.
 ///
@@ -57,15 +58,15 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// **Op 3 — prove: decompose + challenge-fold.**
     ///
     /// For each block of `block_len` ring elements:
-    /// 1. Decompose: `sᵢ = G⁻¹(blockᵢ)` via `balanced_decompose_pow2(delta, log_basis)`.
+    /// 1. Decompose: `sᵢ = G⁻¹(blockᵢ)` via `balanced_decompose_pow2(num_digits, log_basis)`.
     /// 2. Accumulate: `z += cᵢ ⊗ sᵢ` (sparse challenge multiplication).
     ///
-    /// Returns `z` of length `block_len · delta`.
+    /// Returns `z` of length `block_len · num_digits`.
     fn decompose_fold(
         &self,
         challenges: &[SparseChallenge],
         block_len: usize,
-        delta: usize,
+        num_digits: usize,
         log_basis: u32,
     ) -> Vec<CyclotomicRing<F, D>>;
 
@@ -86,7 +87,7 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         a_matrix: &[Vec<CyclotomicRing<F, D>>],
         cache: &NttMatrixCache<D>,
         block_len: usize,
-        delta: usize,
+        num_digits: usize,
         log_basis: u32,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError>;
 }
@@ -195,28 +196,38 @@ where
         &self,
         challenges: &[SparseChallenge],
         block_len: usize,
-        delta: usize,
+        num_digits: usize,
         log_basis: u32,
     ) -> Vec<CyclotomicRing<F, D>> {
-        let inner_width = block_len * delta;
-        let mut z = vec![CyclotomicRing::<F, D>::zero(); inner_width];
+        let inner_width = block_len * num_digits;
         let n = self.coeffs.len();
+        let coeffs = &self.coeffs;
 
-        for (i, c_i) in challenges.iter().enumerate() {
-            let start = i * block_len;
-            let end = (start + block_len).min(n);
-            let block = if start < n {
-                &self.coeffs[start..end]
-            } else {
-                &[] as &[CyclotomicRing<F, D>]
-            };
-            let s_i = decompose_block(block, delta, log_basis);
-            for (j, z_j) in z.iter_mut().enumerate() {
-                *z_j += s_i[j].mul_by_sparse(c_i);
+        cfg_fold_reduce!(
+            0..challenges.len(),
+            || vec![CyclotomicRing::<F, D>::zero(); inner_width],
+            |mut z, i| {
+                let c_i = &challenges[i];
+                let start = i * block_len;
+                let end = (start + block_len).min(n);
+                let block = if start < n {
+                    &coeffs[start..end]
+                } else {
+                    &[] as &[CyclotomicRing<F, D>]
+                };
+                let s_i = decompose_block(block, num_digits, log_basis);
+                for (j, z_j) in z.iter_mut().enumerate() {
+                    *z_j += s_i[j].mul_by_sparse(c_i);
+                }
+                z
+            },
+            |mut a, b| {
+                for (ai, bi) in a.iter_mut().zip(b.iter()) {
+                    *ai += *bi;
+                }
+                a
             }
-        }
-
-        z
+        )
     }
 
     fn commit_inner(
@@ -224,13 +235,13 @@ where
         _a_matrix: &[Vec<CyclotomicRing<F, D>>],
         cache: &NttMatrixCache<D>,
         block_len: usize,
-        delta: usize,
+        num_digits: usize,
         log_basis: u32,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError> {
         let n = self.coeffs.len();
         let num_blocks = n.div_ceil(block_len);
         let n_a = _a_matrix.len();
-        let zero_t_hat = vec![CyclotomicRing::<F, D>::zero(); n_a.checked_mul(delta).unwrap()];
+        let zero_t_hat = vec![CyclotomicRing::<F, D>::zero(); n_a.checked_mul(num_digits).unwrap()];
 
         let results: Vec<Result<Vec<CyclotomicRing<F, D>>, HachiError>> =
             cfg_into_iter!(0..num_blocks)
@@ -241,19 +252,15 @@ where
                     }
                     let end = (start + block_len).min(n);
                     let block = &self.coeffs[start..end];
-                    let s_i = decompose_block(block, delta, log_basis);
+                    let s_i = decompose_block(block, num_digits, log_basis);
                     let t_i = mat_vec_mul_ntt_cached(cache, MatrixSlot::A, &s_i)?;
-                    Ok(decompose_rows(&t_i, delta, log_basis))
+                    Ok(decompose_rows(&t_i, num_digits, log_basis))
                 })
                 .collect();
 
         results.into_iter().collect()
     }
 }
-
-// ---------------------------------------------------------------------------
-// OneHotPoly
-// ---------------------------------------------------------------------------
 
 /// One-hot polynomial: sparse witness with at most one nonzero field element
 /// per chunk of size `onehot_k`.
@@ -266,7 +273,7 @@ pub struct OneHotPoly<F: FieldCore, const D: usize> {
     indices: Vec<Option<usize>>,
     m_vars: usize,
     sparse_blocks: Vec<Vec<SparseBlockEntry>>,
-    _marker: std::marker::PhantomData<F>,
+    _marker: PhantomData<F>,
 }
 
 impl<F: FieldCore, const D: usize> OneHotPoly<F, D> {
@@ -289,29 +296,13 @@ impl<F: FieldCore, const D: usize> OneHotPoly<F, D> {
             indices,
             m_vars,
             sparse_blocks,
-            _marker: std::marker::PhantomData,
+            _marker: PhantomData,
         })
     }
 
     fn total_ring_elems(&self) -> usize {
         let total_field = self.indices.len() * self.onehot_k;
         total_field / D
-    }
-
-    /// Materialize one block of ring elements (for operations that need dense data).
-    fn materialize_block(&self, block_idx: usize) -> Vec<CyclotomicRing<F, D>> {
-        let block_len = 1usize << self.m_vars;
-        let mut block = vec![CyclotomicRing::<F, D>::zero(); block_len];
-
-        for entry in &self.sparse_blocks[block_idx] {
-            let mut coeffs = [F::zero(); D];
-            for &ci in &entry.nonzero_coeffs {
-                coeffs[ci] = F::one();
-            }
-            block[entry.pos_in_block] = CyclotomicRing::from_coefficients(coeffs);
-        }
-
-        block
     }
 }
 
@@ -325,23 +316,22 @@ where
 
     fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
         let block_len = 1usize << self.m_vars;
-        let mut acc = CyclotomicRing::<F, D>::zero();
+        let mut coeffs_acc = [F::zero(); D];
 
         for (block_idx, entries) in self.sparse_blocks.iter().enumerate() {
             let block_offset = block_idx * block_len;
             for entry in entries {
                 let ring_idx = block_offset + entry.pos_in_block;
                 if ring_idx < scalars.len() {
-                    let mut ring_elem = CyclotomicRing::<F, D>::zero();
+                    let s = scalars[ring_idx];
                     for &ci in &entry.nonzero_coeffs {
-                        ring_elem.coeffs[ci] = F::one();
+                        coeffs_acc[ci] = coeffs_acc[ci] + s;
                     }
-                    acc += ring_elem.scale(&scalars[ring_idx]);
                 }
             }
         }
 
-        acc
+        CyclotomicRing::from_coefficients(coeffs_acc)
     }
 
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
@@ -349,15 +339,16 @@ where
         let mut results = vec![CyclotomicRing::<F, D>::zero(); num_blocks];
 
         for (block_idx, entries) in self.sparse_blocks.iter().enumerate() {
+            let mut coeffs_acc = [F::zero(); D];
             for entry in entries {
                 if entry.pos_in_block < scalars.len() && entry.pos_in_block < block_len {
-                    let mut ring_elem = CyclotomicRing::<F, D>::zero();
+                    let s = scalars[entry.pos_in_block];
                     for &ci in &entry.nonzero_coeffs {
-                        ring_elem.coeffs[ci] = F::one();
+                        coeffs_acc[ci] = coeffs_acc[ci] + s;
                     }
-                    results[block_idx] += ring_elem.scale(&scalars[entry.pos_in_block]);
                 }
             }
+            results[block_idx] = CyclotomicRing::from_coefficients(coeffs_acc);
         }
 
         results
@@ -367,20 +358,28 @@ where
         &self,
         challenges: &[SparseChallenge],
         block_len: usize,
-        delta: usize,
-        log_basis: u32,
+        num_digits: usize,
+        _log_basis: u32,
     ) -> Vec<CyclotomicRing<F, D>> {
-        let inner_width = block_len * delta;
+        let inner_width = block_len * num_digits;
         let mut z = vec![CyclotomicRing::<F, D>::zero(); inner_width];
 
+        // One-hot coefficients are {0,1}: balanced_decompose_pow2 produces
+        // nonzero output only in digit plane 0 (the value itself). So we skip
+        // materialize_block + decompose_block entirely and accumulate only at
+        // the first digit plane position for each sparse entry.
         for (i, c_i) in challenges.iter().enumerate() {
             if i >= self.sparse_blocks.len() {
                 continue;
             }
-            let block = self.materialize_block(i);
-            let s_i = decompose_block(&block, delta, log_basis);
-            for (j, z_j) in z.iter_mut().enumerate() {
-                *z_j += s_i[j].mul_by_sparse(c_i);
+            for entry in &self.sparse_blocks[i] {
+                let j = entry.pos_in_block * num_digits;
+                let mut one_hot_coeffs = [F::zero(); D];
+                for &ci in &entry.nonzero_coeffs {
+                    one_hot_coeffs[ci] = F::one();
+                }
+                let one_hot = CyclotomicRing::from_coefficients(one_hot_coeffs);
+                z[j] += one_hot.mul_by_sparse(c_i);
             }
         }
 
@@ -392,19 +391,20 @@ where
         a_matrix: &[Vec<CyclotomicRing<F, D>>],
         _cache: &NttMatrixCache<D>,
         block_len: usize,
-        delta: usize,
+        num_digits: usize,
         log_basis: u32,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError> {
         let n_a = a_matrix.len();
-        let zero_t_hat = vec![CyclotomicRing::<F, D>::zero(); n_a.checked_mul(delta).unwrap()];
+        let zero_t_hat = vec![CyclotomicRing::<F, D>::zero(); n_a.checked_mul(num_digits).unwrap()];
 
         let t_hat_all: Vec<Vec<CyclotomicRing<F, D>>> = cfg_iter!(self.sparse_blocks)
             .map(|block_entries| {
                 if block_entries.is_empty() {
                     zero_t_hat.clone()
                 } else {
-                    let t_i = inner_ajtai_onehot_t_only(a_matrix, block_entries, block_len, delta);
-                    decompose_rows(&t_i, delta, log_basis)
+                    let t_i =
+                        inner_ajtai_onehot_t_only(a_matrix, block_entries, block_len, num_digits);
+                    decompose_rows(&t_i, num_digits, log_basis)
                 }
             })
             .collect();
@@ -450,7 +450,7 @@ mod tests {
                 &setup.expanded.A,
                 cache,
                 layout.block_len,
-                layout.delta,
+                layout.num_digits_commit,
                 layout.log_basis,
             )
             .unwrap();
@@ -490,7 +490,7 @@ mod tests {
                 &setup.expanded.A,
                 cache,
                 layout.block_len,
-                layout.delta,
+                layout.num_digits_commit,
                 layout.log_basis,
             )
             .unwrap();

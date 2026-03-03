@@ -9,7 +9,8 @@ use std::array::from_fn;
 use crate::algebra::{CyclotomicRing, Fp64};
 use crate::error::HachiError;
 use crate::protocol::commitment::{
-    compute_delta, compute_tau, CommitmentConfig, DecompositionParams, HachiCommitmentLayout,
+    compute_num_digits, compute_num_digits_fold, CommitmentConfig, DecompositionParams,
+    HachiCommitmentLayout,
 };
 use crate::{FieldCore, FromSmallInt};
 
@@ -32,7 +33,8 @@ impl CommitmentConfig for TinyConfig {
     fn decomposition() -> DecompositionParams {
         DecompositionParams {
             log_basis: 4,
-            log_coeff_bound: 32,
+            log_commit_bound: 32,
+            log_open_bound: None,
         }
     }
 
@@ -51,15 +53,15 @@ pub const LOG_BASIS: u32 = 4;
 pub const N_A: usize = TinyConfig::N_A;
 
 /// Decomposition depth for original coefficients under `TinyConfig`.
-pub fn delta() -> usize {
+pub fn num_digits_commit() -> usize {
     let d = TinyConfig::decomposition();
-    compute_delta(d.log_coeff_bound, d.log_basis)
+    compute_num_digits(d.log_commit_bound, d.log_basis)
 }
 
 /// Decomposition depth for the folded witness `z_pre` under `TinyConfig`.
-pub fn tau() -> usize {
+pub fn num_digits_fold() -> usize {
     let d = TinyConfig::decomposition();
-    compute_tau(1, TinyConfig::CHALLENGE_WEIGHT, d.log_basis)
+    compute_num_digits_fold(1, TinyConfig::CHALLENGE_WEIGHT, d.log_basis)
 }
 
 /// Dense matrix-vector multiply over cyclotomic rings.
@@ -122,25 +124,25 @@ pub fn field_gadget_recompose(
     result
 }
 
-/// Recompose `z_hat` chunks (tau-width) back to `z_pre` elements.
+/// Recompose `z_hat` chunks (num_digits_fold-width) back to `z_pre` elements.
 pub fn recompose_z_hat(z_hat: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
     z_hat
-        .chunks(tau())
+        .chunks(num_digits_fold())
         .map(|chunk| field_gadget_recompose(chunk, LOG_BASIS))
         .collect()
 }
 
-/// Recompose a vector of gadget-decomposed elements (delta-width chunks).
+/// Recompose a vector of gadget-decomposed elements (num_digits_commit-width chunks).
 pub fn gadget_recompose_vec(x_hat: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
     x_hat
-        .chunks(delta())
+        .chunks(num_digits_commit())
         .map(|chunk| field_gadget_recompose(chunk, LOG_BASIS))
         .collect()
 }
 
-/// Alias for [`gadget_recompose_vec`] (same delta-width recomposition).
+/// Alias for [`gadget_recompose_vec`] (same num_digits_commit-width recomposition).
 pub fn field_gadget_recompose_vec(v: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
-    v.chunks(delta())
+    v.chunks(num_digits_commit())
         .map(|chunk| field_gadget_recompose(chunk, LOG_BASIS))
         .collect()
 }

@@ -11,7 +11,7 @@ use crate::error::HachiError;
 use crate::{CanonicalField, FieldCore};
 
 /// Describes a nonzero ring element within one block of the commitment layout.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SparseBlockEntry {
     /// Position within the block (0..2^M).
     pub pos_in_block: usize,
@@ -111,20 +111,20 @@ pub fn map_onehot_to_sparse_blocks(
 /// matvec, we accumulate only the nonzero contributions:
 ///
 /// ```text
-/// t[a] = sum_{entry} A[a][entry.pos * delta].mul_by_monomial_sum(entry.nonzero_coeffs)
+/// t[a] = sum_{entry} A[a][entry.pos * num_digits].mul_by_monomial_sum(entry.nonzero_coeffs)
 /// ```
 #[allow(non_snake_case)]
 pub(crate) fn inner_ajtai_onehot_t_only<F: FieldCore + CanonicalField, const D: usize>(
     A: &[Vec<CyclotomicRing<F, D>>],
     sparse_entries: &[SparseBlockEntry],
     _block_len: usize,
-    _delta: usize,
+    num_digits: usize,
 ) -> Vec<CyclotomicRing<F, D>> {
     let n_a = A.len();
 
     let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
     for entry in sparse_entries {
-        let col = entry.pos_in_block * _delta;
+        let col = entry.pos_in_block * num_digits;
         for a in 0..n_a {
             t[a] += A[a][col].mul_by_monomial_sum(&entry.nonzero_coeffs);
         }

@@ -1,7 +1,9 @@
 #![allow(missing_docs)]
 
-use hachi_pcs::algebra::ring::CyclotomicRing;
+use hachi_pcs::algebra::CyclotomicRing;
 use hachi_pcs::algebra::Fp64;
+use hachi_pcs::algebra::SparseChallenge;
+use hachi_pcs::protocol::commitment::utils::crt_ntt::NttMatrixCache;
 use hachi_pcs::protocol::commitment::{DummyProof, HachiCommitment};
 use hachi_pcs::protocol::hachi_poly_ops::HachiPolyOps;
 use hachi_pcs::protocol::transcript::labels;
@@ -52,9 +54,9 @@ impl HachiPolyOps<F, 1> for DummyPoly {
 
     fn decompose_fold(
         &self,
-        _challenges: &[hachi_pcs::algebra::SparseChallenge],
+        _challenges: &[SparseChallenge],
         _block_len: usize,
-        _delta: usize,
+        _num_digits: usize,
         _log_basis: u32,
     ) -> Vec<CyclotomicRing<F, 1>> {
         vec![]
@@ -63,9 +65,9 @@ impl HachiPolyOps<F, 1> for DummyPoly {
     fn commit_inner(
         &self,
         _a_matrix: &[Vec<CyclotomicRing<F, 1>>],
-        _cache: &hachi_pcs::protocol::commitment::utils::crt_ntt::NttMatrixCache<1>,
+        _cache: &NttMatrixCache<1>,
         _block_len: usize,
-        _delta: usize,
+        _num_digits: usize,
         _log_basis: u32,
     ) -> Result<Vec<Vec<CyclotomicRing<F, 1>>>, HachiError> {
         Ok(vec![])

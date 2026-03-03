@@ -13,7 +13,7 @@ pub use commit::{
     HachiVerifierSetup,
 };
 pub use config::{
-    compute_delta, compute_tau, CommitmentConfig, DecompositionParams,
+    compute_num_digits, compute_num_digits_fold, CommitmentConfig, DecompositionParams,
     DynamicSmallTestCommitmentConfig, HachiCommitmentLayout, ProductionFp128CommitmentConfig,
     SmallTestCommitmentConfig,
 };
