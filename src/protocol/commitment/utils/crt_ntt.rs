@@ -15,6 +15,7 @@ use crate::{CanonicalField, FieldCore};
 use super::norm::detect_field_modulus;
 
 /// Supported protocol CRT+NTT parameter families.
+#[derive(Clone)]
 pub(crate) enum ProtocolCrtNttParams<const D: usize> {
     Q32(CrtNttParamSet<i16, Q32_NUM_PRIMES, D>),
     Q64(CrtNttParamSet<i32, Q64_NUM_PRIMES, D>),
@@ -136,7 +137,14 @@ pub fn build_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
 ) -> Result<NttSlotCache<D>, HachiError> {
     let params = select_crt_ntt_params::<F, D>()?;
-    let cache = match params {
+    Ok(build_ntt_slot_from_params(mat, params))
+}
+
+fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
+    mat: &[Vec<CyclotomicRing<F, D>>],
+    params: ProtocolCrtNttParams<D>,
+) -> NttSlotCache<D> {
+    match params {
         ProtocolCrtNttParams::Q32(p) => NttSlotCache::Q32 {
             neg: convert_mat(mat, &p),
             cyc: convert_mat_cyclic(mat, &p),
@@ -152,6 +160,24 @@ pub fn build_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
             cyc: convert_mat_cyclic(mat, &p),
             params: p,
         },
-    };
-    Ok(cache)
+    }
+}
+
+/// Build NTT slot caches for three matrices, computing CRT+NTT parameters once.
+///
+/// # Errors
+///
+/// Returns an error if no CRT+NTT parameter set matches the field modulus and ring degree.
+#[tracing::instrument(skip_all, name = "build_ntt_slots")]
+#[allow(non_snake_case)]
+pub fn build_ntt_slots<F: FieldCore + CanonicalField, const D: usize>(
+    A: &[Vec<CyclotomicRing<F, D>>],
+    B: &[Vec<CyclotomicRing<F, D>>],
+    D_mat: &[Vec<CyclotomicRing<F, D>>],
+) -> Result<(NttSlotCache<D>, NttSlotCache<D>, NttSlotCache<D>), HachiError> {
+    let params = select_crt_ntt_params::<F, D>()?;
+    let slot_a = build_ntt_slot_from_params(A, params.clone());
+    let slot_b = build_ntt_slot_from_params(B, params.clone());
+    let slot_d = build_ntt_slot_from_params(D_mat, params);
+    Ok((slot_a, slot_b, slot_d))
 }

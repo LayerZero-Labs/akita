@@ -11,8 +11,7 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
-    decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_tiled_i8,
-    mat_vec_mul_ntt_tiled_single_i8,
+    decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_tiled_i8, mat_vec_mul_ntt_tiled_single_i8,
 };
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
@@ -466,8 +465,7 @@ where
         .collect();
 
     let t_hat_flat = flatten_i8_blocks(&t_hat_per_block);
-    let u: Vec<CyclotomicRing<F, D>> =
-        mat_vec_mul_ntt_tiled_single_i8(ntt_b, &t_hat_flat, None);
+    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_tiled_single_i8(ntt_b, &t_hat_flat, None);
     let hint = HachiCommitmentHint::new(t_hat_per_block);
     Ok((RingCommitment { u }, hint))
 }

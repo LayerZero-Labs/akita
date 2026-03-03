@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
 use hachi_pcs::algebra::Fp128;
 use hachi_pcs::error::HachiError;
 use hachi_pcs::protocol::commitment::{

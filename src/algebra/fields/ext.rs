@@ -214,9 +214,11 @@ impl<F: FieldCore + Valid, C: Fp2Config<F>> HachiDeserialize for Fp2<F, C> {
 }
 
 impl<F: FieldCore + Valid, C: Fp2Config<F>> FieldCore for Fp2<F, C> {
-    fn zero() -> Self {
-        Self::new(F::zero(), F::zero())
-    }
+    const ZERO: Self = Self {
+        c0: F::ZERO,
+        c1: F::ZERO,
+        _cfg: PhantomData,
+    };
 
     fn one() -> Self {
         Self::new(F::one(), F::zero())
@@ -242,6 +244,12 @@ impl<F: FieldCore + Valid, C: Fp2Config<F>> FieldCore for Fp2<F, C> {
         let inv_n = self.norm().inv()?;
         Some(Self::new(self.c0 * inv_n, (-self.c1) * inv_n))
     }
+
+    const TWO_INV: Self = Self {
+        c0: F::TWO_INV,
+        c1: F::ZERO,
+        _cfg: PhantomData,
+    };
 }
 
 impl<F: FieldCore + FieldSampling + Valid, C: Fp2Config<F>> FieldSampling for Fp2<F, C> {
@@ -434,9 +442,11 @@ impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> HachiDeserial
 }
 
 impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> FieldCore for Fp4<F, C2, C4> {
-    fn zero() -> Self {
-        Self::new(Fp2::zero(), Fp2::zero())
-    }
+    const ZERO: Self = Self {
+        c0: Fp2::ZERO,
+        c1: Fp2::ZERO,
+        _cfg: PhantomData,
+    };
 
     fn one() -> Self {
         Self::new(Fp2::one(), Fp2::zero())
@@ -460,6 +470,12 @@ impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> FieldCore for
         let inv_n = self.norm().inv()?;
         Some(Self::new(self.c0 * inv_n, (-self.c1) * inv_n))
     }
+
+    const TWO_INV: Self = Self {
+        c0: Fp2::TWO_INV,
+        c1: Fp2::ZERO,
+        _cfg: PhantomData,
+    };
 }
 
 impl<F: FieldCore + FieldSampling + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> FieldSampling

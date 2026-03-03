@@ -724,9 +724,7 @@ impl<const P: u128> HachiDeserialize for Fp128<P> {
 }
 
 impl<const P: u128> FieldCore for Fp128<P> {
-    fn zero() -> Self {
-        Self(pack(0, 0))
-    }
+    const ZERO: Self = Self(pack(0, 0));
 
     fn one() -> Self {
         Self(pack(1, 0))
@@ -744,6 +742,11 @@ impl<const P: u128> FieldCore for Fp128<P> {
             Some(inv)
         }
     }
+
+    const TWO_INV: Self = {
+        let v = (P >> 1) + 1;
+        Self(pack(v as u64, (v >> 64) as u64))
+    };
 }
 
 impl<const P: u128> Invertible for Fp128<P> {

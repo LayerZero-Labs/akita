@@ -393,9 +393,7 @@ impl<const P: u64> HachiDeserialize for Fp64<P> {
 }
 
 impl<const P: u64> FieldCore for Fp64<P> {
-    fn zero() -> Self {
-        Self(0)
-    }
+    const ZERO: Self = Self(0);
 
     fn one() -> Self {
         Self(if P > 1 { 1 } else { 0 })
@@ -413,6 +411,8 @@ impl<const P: u64> FieldCore for Fp64<P> {
             Some(inv)
         }
     }
+
+    const TWO_INV: Self = Self((P as u128).div_ceil(2) as u64);
 }
 
 impl<const P: u64> Invertible for Fp64<P> {

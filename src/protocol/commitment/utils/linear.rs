@@ -222,7 +222,8 @@ where
 }
 
 macro_rules! dispatch_slot_quotient {
-    ($slot:expr, $vec:expr, $convert_neg:ident, $convert_cyc:ident, $quotient_fn:ident) => {{
+    ($slot:expr, $vec:expr, $two_inv:expr, $convert_neg:ident, $convert_cyc:ident, $quotient_fn:ident) => {{
+        let half = $two_inv;
         match $slot {
             NttSlotCache::Q32 {
                 neg,
@@ -238,7 +239,7 @@ macro_rules! dispatch_slot_quotient {
                     .map(|x| CyclotomicCrtNtt::$convert_cyc(x, p))
                     .collect();
                 cfg_into_iter!(0..neg.len())
-                    .map(|i| $quotient_fn(&neg[i], &cyc[i], &v_neg, &v_cyc, p))
+                    .map(|i| $quotient_fn(&neg[i], &cyc[i], &v_neg, &v_cyc, p, half))
                     .collect()
             }
             NttSlotCache::Q64 {
@@ -255,7 +256,7 @@ macro_rules! dispatch_slot_quotient {
                     .map(|x| CyclotomicCrtNtt::$convert_cyc(x, p))
                     .collect();
                 cfg_into_iter!(0..neg.len())
-                    .map(|i| $quotient_fn(&neg[i], &cyc[i], &v_neg, &v_cyc, p))
+                    .map(|i| $quotient_fn(&neg[i], &cyc[i], &v_neg, &v_cyc, p, half))
                     .collect()
             }
             NttSlotCache::Q128 {
@@ -272,7 +273,7 @@ macro_rules! dispatch_slot_quotient {
                     .map(|x| CyclotomicCrtNtt::$convert_cyc(x, p))
                     .collect();
                 cfg_into_iter!(0..neg.len())
-                    .map(|i| $quotient_fn(&neg[i], &cyc[i], &v_neg, &v_cyc, p))
+                    .map(|i| $quotient_fn(&neg[i], &cyc[i], &v_neg, &v_cyc, p, half))
                     .collect()
             }
         }
@@ -290,6 +291,7 @@ pub fn unreduced_quotient_rows_ntt_cached<F: FieldCore + CanonicalField, const D
     dispatch_slot_quotient!(
         slot,
         vec,
+        F::TWO_INV,
         from_ring_with_params,
         from_ring_cyclic,
         unreduced_quotient_ntt
@@ -302,6 +304,7 @@ fn unreduced_quotient_ntt_i8<F, W, const K: usize, const D: usize>(
     vec_neg: &[CyclotomicCrtNtt<W, K, D>],
     vec_cyc: &[CyclotomicCrtNtt<W, K, D>],
     params: &CrtNttParamSet<W, K, D>,
+    two_inv: F,
 ) -> CyclotomicRing<F, D>
 where
     F: FieldCore + CanonicalField,
@@ -320,9 +323,6 @@ where
     let neg_ring: CyclotomicRing<F, D> = acc_neg.to_ring_with_params(params);
     let cyc_ring: CyclotomicRing<F, D> = acc_cyc.to_ring_cyclic(params);
 
-    let two_inv = (F::one() + F::one())
-        .inv()
-        .expect("2 is invertible in odd-char fields");
     let neg_coeffs = neg_ring.coefficients();
     let cyc_coeffs = cyc_ring.coefficients();
     let quotient: [F; D] = from_fn(|k| (cyc_coeffs[k] - neg_coeffs[k]) * two_inv);
@@ -338,6 +338,7 @@ pub fn unreduced_quotient_rows_ntt_cached_i8<F: FieldCore + CanonicalField, cons
     dispatch_slot_quotient!(
         slot,
         vec,
+        F::TWO_INV,
         from_i8_with_params,
         from_i8_cyclic,
         unreduced_quotient_ntt_i8
@@ -480,7 +481,8 @@ fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
     for k in 0..K {
         let prime = params.primes[k];
         for d in 0..D {
-            let sum = MontCoeff::from_raw(acc.limbs[k][d].raw().wrapping_add(other.limbs[k][d].raw()));
+            let sum =
+                MontCoeff::from_raw(acc.limbs[k][d].raw().wrapping_add(other.limbs[k][d].raw()));
             acc.limbs[k][d] = prime.reduce_range(sum);
         }
     }
@@ -507,7 +509,14 @@ pub fn mat_vec_mul_ntt_tiled_i8<F: FieldCore + CanonicalField, const D: usize>(
     tile_width: Option<usize>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     let tw = tile_width.unwrap_or(DEFAULT_TILE_WIDTH);
-    dispatch_slot!(slot, mat_vec_mul_tiled_i8_with_params, blocks, num_digits, log_basis, tw)
+    dispatch_slot!(
+        slot,
+        mat_vec_mul_tiled_i8_with_params,
+        blocks,
+        num_digits,
+        log_basis,
+        tw
+    )
 }
 
 fn mat_vec_mul_tiled_i8_with_params<
@@ -558,7 +567,10 @@ fn mat_vec_mul_tiled_i8_with_params<
                 let available = all_digits.len().saturating_sub(digit_offset);
                 let n = tile_len.min(available);
 
-                for (j, digit) in all_digits[digit_offset..digit_offset + n].iter().enumerate() {
+                for (j, digit) in all_digits[digit_offset..digit_offset + n]
+                    .iter()
+                    .enumerate()
+                {
                     let ntt_d = CyclotomicCrtNtt::from_i8_with_params(digit, params);
                     for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
                         accumulate_pointwise_product_into(

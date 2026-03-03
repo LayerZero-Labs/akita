@@ -21,8 +21,13 @@ pub trait FieldCore:
     + for<'a> std::ops::Sub<&'a Self, Output = Self>
     + for<'a> std::ops::Mul<&'a Self, Output = Self>
 {
-    /// Additive identity
-    fn zero() -> Self;
+    /// Additive identity (const).
+    const ZERO: Self;
+
+    /// Additive identity.
+    fn zero() -> Self {
+        Self::ZERO
+    }
 
     /// Multiplicative identity
     fn one() -> Self;
@@ -43,6 +48,9 @@ pub trait FieldCore:
     /// This API may branch on zero-check and is intended for public/non-secret
     /// values. For secret-bearing paths, use [`Invertible::inv_or_zero`].
     fn inv(self) -> Option<Self>;
+
+    /// Multiplicative inverse of 2: `(p + 1) / 2` for odd-characteristic fields.
+    const TWO_INV: Self;
 }
 
 /// Constant-time inversion helper for secret-bearing code paths.

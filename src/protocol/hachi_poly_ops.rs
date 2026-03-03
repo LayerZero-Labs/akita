@@ -24,9 +24,7 @@ use crate::protocol::commitment::onehot::{
     inner_ajtai_onehot_t_only, map_onehot_to_sparse_blocks, SparseBlockEntry,
 };
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
-use crate::protocol::commitment::utils::linear::{
-    decompose_rows_i8, mat_vec_mul_ntt_tiled_i8,
-};
+use crate::protocol::commitment::utils::linear::{decompose_rows_i8, mat_vec_mul_ntt_tiled_i8};
 use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
 use std::array::from_fn;
 use std::marker::PhantomData;
