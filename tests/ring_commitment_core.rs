@@ -30,7 +30,6 @@ impl CommitmentConfig for BadDegreeConfig {
     }
 }
 
-
 #[test]
 fn setup_shape_is_consistent() {
     let (p1, v1) =
@@ -150,4 +149,3 @@ fn setup_rejects_mismatched_degree() {
         other => panic!("unexpected error: {other:?}"),
     }
 }
-
