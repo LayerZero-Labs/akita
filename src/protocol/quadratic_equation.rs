@@ -539,7 +539,7 @@ where
     let delta = layout.delta;
     let tau = layout.tau;
     let log_basis = layout.log_basis;
-    let num_blocks = layout.num_blocks;
+    let num_blocks = opening_point.b.len();
     let block_len = layout.block_len;
     let w_len = delta * num_blocks;
     let t_len = delta * Cfg::N_A * num_blocks;
@@ -554,19 +554,17 @@ where
 
     let mut rows = Vec::with_capacity(Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A);
 
-    // D rows: setup.D[i] evaluated at alpha, zero-padded
     for d_row in setup.D.iter() {
         let mut full = vec![F::zero(); total_cols];
-        for (j, ring) in d_row.iter().enumerate() {
+        for (j, ring) in d_row.iter().take(w_len).enumerate() {
             full[j] = eval_ring_at(ring, alpha);
         }
         rows.push(full);
     }
 
-    // B rows: setup.B[i] evaluated at alpha, in t-segment
     for b_row in setup.B.iter() {
         let mut full = vec![F::zero(); total_cols];
-        for (j, ring) in b_row.iter().enumerate() {
+        for (j, ring) in b_row.iter().take(t_len).enumerate() {
             full[w_len + j] = eval_ring_at(ring, alpha);
         }
         rows.push(full);
