@@ -27,27 +27,92 @@ impl CommitmentConfig for ProfileCfg {
     const CHALLENGE_WEIGHT: usize = ProductionFp128CommitmentConfig::CHALLENGE_WEIGHT;
 
     fn decomposition() -> DecompositionParams {
-        ProductionFp128CommitmentConfig::decomposition()
+        DecompositionParams {
+            log_basis: 4,
+            log_commit_bound: 128,
+            log_open_bound: None,
+        }
     }
 
     fn commitment_layout(
         _max_num_vars: usize,
     ) -> Result<HachiCommitmentLayout, hachi_pcs::error::HachiError> {
-        HachiCommitmentLayout::new::<Self>(6, 4, &Self::decomposition())
+        HachiCommitmentLayout::new::<Self>(8, 8, &Self::decomposition())
     }
 }
 
 type Scheme = HachiCommitmentScheme<D, ProfileCfg>;
 
+fn run_prove(
+    label: &str,
+    setup: &<Scheme as CommitmentScheme<F, D>>::ProverSetup,
+    poly: &DensePoly<F, D>,
+    pt: &[F],
+    opening: F,
+) {
+    let t0 = Instant::now();
+    let (commitment, hint) = <Scheme as CommitmentScheme<F, D>>::commit(poly, setup).unwrap();
+    eprintln!("[{label}] commit: {:.3}s", t0.elapsed().as_secs_f64());
+
+    let t0 = Instant::now();
+    let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
+    let proof = <Scheme as CommitmentScheme<F, D>>::prove(
+        setup,
+        poly,
+        pt,
+        hint,
+        &mut prover_transcript,
+        &commitment,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
+    eprintln!("[{label}] prove: {:.3}s", t0.elapsed().as_secs_f64());
+    eprintln!(
+        "[{label}]   levels: {}, final_w len: {}, proof size: {} bytes",
+        proof.levels.len(),
+        proof.final_w.len(),
+        proof.size()
+    );
+
+    let t0 = Instant::now();
+    let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(setup);
+    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
+    <Scheme as CommitmentScheme<F, D>>::verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        pt,
+        &opening,
+        &commitment,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
+    eprintln!("[{label}] verify: {:.3}s", t0.elapsed().as_secs_f64());
+}
+
 fn main() {
+    rayon::ThreadPoolBuilder::new()
+        .stack_size(64 * 1024 * 1024)
+        .build_global()
+        .ok();
+
     let trace_dir = "profile_traces";
     std::fs::create_dir_all(trace_dir).ok();
+
+    let log_basis: u32 = 4;
+    let b = 1u32 << log_basis;
+
+    let nv = {
+        let alpha = D.trailing_zeros() as usize;
+        let layout = ProfileCfg::commitment_layout(0).expect("layout");
+        layout.m_vars + layout.r_vars + alpha
+    };
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let trace_file = format!("{trace_dir}/hachi_{timestamp}.json");
+    let trace_file = format!("{trace_dir}/hachi_nv{nv}_b{b}_{timestamp}.json");
 
     let (chrome_layer, _guard) = ChromeLayerBuilder::new()
         .include_args(true)
@@ -58,13 +123,7 @@ fn main() {
 
     eprintln!("Perfetto trace will be written to: {trace_file}");
     eprintln!("Open at https://ui.perfetto.dev/");
-
-    let nv = {
-        let alpha = D.trailing_zeros() as usize;
-        let layout = ProfileCfg::commitment_layout(0).expect("layout");
-        layout.m_vars + layout.r_vars + alpha
-    };
-    eprintln!("num_vars = {nv}");
+    eprintln!("num_vars = {nv}, b = {b}");
 
     let len = 1usize << nv;
     let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
@@ -91,38 +150,27 @@ fn main() {
     let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(nv);
     eprintln!("setup: {:.3}s", t0.elapsed().as_secs_f64());
 
-    let t0 = Instant::now();
-    let (commitment, hint) = <Scheme as CommitmentScheme<F, D>>::commit(&poly, &setup).unwrap();
-    eprintln!("commit: {:.3}s", t0.elapsed().as_secs_f64());
+    let ab_mode = std::env::var("HACHI_AB_TEST").unwrap_or_default();
 
-    let t0 = Instant::now();
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
-    let proof = <Scheme as CommitmentScheme<F, D>>::prove(
-        &setup,
-        &poly,
-        &pt,
-        hint,
-        &mut prover_transcript,
-        &commitment,
-        BasisMode::Lagrange,
-    )
-    .unwrap();
-    eprintln!("prove: {:.3}s", t0.elapsed().as_secs_f64());
+    if ab_mode == "1" {
+        eprintln!("\n=== A/B TEST: running both kernels ===\n");
 
-    let t0 = Instant::now();
-    let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
-    <Scheme as CommitmentScheme<F, D>>::verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        &pt,
-        &opening,
-        &commitment,
-        BasisMode::Lagrange,
-    )
-    .unwrap();
-    eprintln!("verify: {:.3}s", t0.elapsed().as_secs_f64());
+        std::env::set_var("HACHI_NORM_KERNEL", "affine_coeff");
+        eprintln!("--- kernel: affine_coeff ---");
+        run_prove("affine", &setup, &poly, &pt, opening);
 
-    eprintln!("Done. Trace saved to {trace_file}");
+        std::env::set_var("HACHI_NORM_KERNEL", "point_eval");
+        eprintln!("\n--- kernel: point_eval ---");
+        run_prove("point", &setup, &poly, &pt, opening);
+
+        std::env::remove_var("HACHI_NORM_KERNEL");
+    } else {
+        eprintln!(
+            "kernel: {:?} (set HACHI_AB_TEST=1 to compare both)",
+            hachi_pcs::protocol::sumcheck::norm_sumcheck::choose_round_kernel(b as usize)
+        );
+        run_prove("default", &setup, &poly, &pt, opening);
+    }
+
+    eprintln!("\nDone. Trace saved to {trace_file}");
 }
