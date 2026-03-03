@@ -211,8 +211,32 @@ impl<const P: u128> Fp128<P> {
     }
 
     #[inline(always)]
+    fn sqr_wide(self) -> [u64; 4] {
+        let (a0, a1) = (self.0[0], self.0[1]);
+        let (p00_lo, p00_hi) = mul64_wide(a0, a0);
+        let (p01_lo, p01_hi) = mul64_wide(a0, a1);
+        let (p11_lo, p11_hi) = mul64_wide(a1, a1);
+
+        let row1 = p00_hi as u128 + (p01_lo as u128) * 2;
+        let r0 = p00_lo;
+        let r1 = row1 as u64;
+        let carry1 = (row1 >> 64) as u64;
+
+        let row2 = (p01_hi as u128) * 2 + p11_lo as u128 + carry1 as u128;
+        let r2 = row2 as u64;
+        let carry2 = (row2 >> 64) as u64;
+
+        let row3 = p11_hi as u128 + carry2 as u128;
+        let r3 = row3 as u64;
+        debug_assert_eq!(row3 >> 64, 0);
+
+        [r0, r1, r2, r3]
+    }
+
+    #[inline(always)]
     fn sqr_raw(a: [u64; 2]) -> [u64; 2] {
-        Self::mul_raw(a, a)
+        let [r0, r1, r2, r3] = Self(a).sqr_wide();
+        Self::reduce_4(r0, r1, r2, r3)
     }
 
     /// Squaring, equivalent to `self * self`.

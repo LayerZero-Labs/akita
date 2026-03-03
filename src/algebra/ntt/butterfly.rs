@@ -29,6 +29,8 @@ pub struct NttTwiddles<W: PrimeWidth, const D: usize> {
     pub(crate) psi_inv_pows: [MontCoeff<W>; D],
     /// `D^{-1} mod p` in Montgomery form, used for inverse NTT final scaling.
     pub(crate) d_inv: MontCoeff<W>,
+    /// Fused `D^{-1} * psi^{-i}` for each index, in Montgomery form.
+    pub(crate) d_inv_psi_inv: [MontCoeff<W>; D],
 }
 
 impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
@@ -80,6 +82,11 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
         let d_inv_canonical = pow_mod(D as i64, p - 2, p);
         let d_inv = prime.from_canonical(W::from_i64(d_inv_canonical));
 
+        let mut d_inv_psi_inv = [MontCoeff::from_raw(W::default()); D];
+        for i in 0..D {
+            d_inv_psi_inv[i] = prime.mul(d_inv, psi_inv_pows[i]);
+        }
+
         Self {
             fwd_wlen,
             inv_wlen,
@@ -87,6 +94,7 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
             psi_pows,
             psi_inv_pows,
             d_inv,
+            d_inv_psi_inv,
         }
     }
 }
@@ -167,12 +175,8 @@ pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
         stage += 1;
     }
 
-    for c in a.iter_mut() {
-        *c = prime.mul(*c, tw.d_inv);
-    }
-
-    for (ai, psi_inv) in a.iter_mut().zip(tw.psi_inv_pows.iter()) {
-        *ai = prime.mul(*ai, *psi_inv);
+    for (ai, fused) in a.iter_mut().zip(tw.d_inv_psi_inv.iter()) {
+        *ai = prime.mul(*ai, *fused);
     }
 }
 

@@ -221,11 +221,13 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     {
         let mut result = Self::zero();
         for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-            let shifted = self.negacyclic_shift(pos as usize);
             match coeff {
-                1 => result += shifted,
-                -1 => result -= shifted,
-                c => result += shifted.scale(&F::from_i64(c as i64)),
+                1 => self.shift_accumulate_into(&mut result, pos as usize),
+                -1 => self.shift_sub_into(&mut result, pos as usize),
+                c => {
+                    let shifted = self.negacyclic_shift(pos as usize);
+                    result += shifted.scale(&F::from_i64(c as i64));
+                }
             }
         }
         result
@@ -436,10 +438,11 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     /// # Panics
     ///
     /// Panics if `log_basis` is 0 or > 7, or if `levels * log_basis > 128 + log_basis`.
-    pub fn balanced_decompose_pow2_i8(&self, levels: usize, log_basis: u32) -> Vec<[i8; D]>
+    pub fn balanced_decompose_pow2_i8_into(&self, out: &mut [[i8; D]], log_basis: u32)
     where
         F: CanonicalField,
     {
+        let levels = out.len();
         assert!(
             log_basis > 0 && log_basis <= 7,
             "log_basis must be in 1..=7 for i8 output"
@@ -455,8 +458,6 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         let q = (-F::one()).to_canonical_u128() + 1;
         let half_q = q / 2;
 
-        let mut digit_planes: Vec<[i8; D]> = (0..levels).map(|_| [0i8; D]).collect();
-
         for i in 0..D {
             let canonical = self.coeffs[i].to_canonical_u128();
             let mut c: i128 = if canonical > half_q {
@@ -465,14 +466,22 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
                 canonical as i128
             };
 
-            for plane in digit_planes.iter_mut() {
+            for plane in out.iter_mut() {
                 let d = c & mask;
                 let balanced = if d >= half_b { d - b } else { d };
                 c = (c - balanced) >> log_basis;
                 plane[i] = balanced as i8;
             }
         }
+    }
 
+    /// Allocating variant of [`balanced_decompose_pow2_i8_into`](Self::balanced_decompose_pow2_i8_into).
+    pub fn balanced_decompose_pow2_i8(&self, levels: usize, log_basis: u32) -> Vec<[i8; D]>
+    where
+        F: CanonicalField,
+    {
+        let mut digit_planes: Vec<[i8; D]> = vec![[0i8; D]; levels];
+        self.balanced_decompose_pow2_i8_into(&mut digit_planes, log_basis);
         digit_planes
     }
 }

@@ -143,52 +143,49 @@ where
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
 
-    let t_ma = Instant::now();
-    let m_a = compute_m_a_streaming::<F, D, Cfg>(
-        setup,
-        quad_eq.opening_point(),
-        &quad_eq.challenges,
-        &alpha,
-        layout,
-    )?;
-    eprintln!(
-        "    [ring_switch] compute_m_a_streaming: {:.2}s",
-        t_ma.elapsed().as_secs_f64()
-    );
+    let num_l = D.trailing_zeros() as usize;
+    let num_ring_elems = w.len() / D;
+    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let m_rows = m_row_count::<Cfg>();
+    let num_sc_vars = num_u + num_l;
+    let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
-    let t_exp = Instant::now();
-    let (m_a_vec, m_rows, m_cols) = {
-        let _span = tracing::info_span!("expand_m_a").entered();
-        let m_a_vec = expand_m_a::<F, D>(&m_a, alpha, layout.log_basis)?;
-        let m_rows = m_row_count::<Cfg>();
-        let m_cols = if m_a.is_empty() {
-            0
-        } else {
-            m_a_vec.len() / m_a.len()
-        };
-        (m_a_vec, m_rows, m_cols)
-    };
-    eprintln!(
-        "    [ring_switch] expand_m_a: {:.2}s",
-        t_exp.elapsed().as_secs_f64()
-    );
-
-    let t_we = Instant::now();
-    let _span_we = tracing::info_span!("build_w_evals_and_tables").entered();
-    let (w_evals, w_evals_field, num_u, num_l) = build_w_evals_dual::<F>(&w, D)?;
+    let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
+    let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
 
-    let num_sc_vars = num_u + num_l;
-    let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
+    let t_par = Instant::now();
+    let opening_point = quad_eq.opening_point();
+    let challenges = &quad_eq.challenges;
 
-    let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
-    let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
+    #[cfg(feature = "parallel")]
+    let (m_evals_x_result, w_result) = rayon::join(
+        || {
+            let m_a = compute_m_a_streaming::<F, D, Cfg>(
+                setup,
+                opening_point,
+                challenges,
+                &alpha,
+                layout,
+            )?;
+            build_m_evals_x_fused::<F, D>(&m_a, alpha, layout.log_basis, &tau1)
+        },
+        || build_w_evals_dual::<F>(&w, D),
+    );
+    #[cfg(not(feature = "parallel"))]
+    let (m_evals_x_result, w_result) = {
+        let m_a =
+            compute_m_a_streaming::<F, D, Cfg>(setup, opening_point, challenges, &alpha, layout)?;
+        let m_evals_x = build_m_evals_x_fused::<F, D>(&m_a, alpha, layout.log_basis, &tau1)?;
+        let w_dual = build_w_evals_dual::<F>(&w, D);
+        (Ok(m_evals_x), w_dual)
+    };
 
-    let m_evals_x = build_m_evals_x::<F>(&m_a_vec, m_rows, m_cols, &tau1);
-    drop(_span_we);
+    let m_evals_x = m_evals_x_result?;
+    let (w_evals, w_evals_field, _, _) = w_result?;
     eprintln!(
-        "    [ring_switch] build_w_evals+tables: {:.2}s",
-        t_we.elapsed().as_secs_f64()
+        "    [ring_switch] m_a+w_evals parallel: {:.2}s",
+        t_par.elapsed().as_secs_f64()
     );
 
     Ok(RingSwitchOutput {
@@ -231,6 +228,17 @@ where
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
 
+    let num_ring_elems = w_len / D;
+    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let num_l = D.trailing_zeros() as usize;
+    let m_rows = m_row_count::<Cfg>();
+    let num_sc_vars = num_u + num_l;
+    let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
+
+    let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
+    let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
+    let alpha_evals_y = build_alpha_evals_y(alpha, D);
+
     let m_a = compute_m_a_streaming::<F, D, Cfg>(
         setup,
         quad_eq.opening_point(),
@@ -238,26 +246,7 @@ where
         &alpha,
         layout,
     )?;
-    let m_a_vec = expand_m_a::<F, D>(&m_a, alpha, layout.log_basis)?;
-    let m_rows = m_row_count::<Cfg>();
-    let m_cols = if m_a.is_empty() {
-        0
-    } else {
-        m_a_vec.len() / m_a.len()
-    };
-
-    let num_ring_elems = w_len / D;
-    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    let num_l = D.trailing_zeros() as usize;
-    let alpha_evals_y = build_alpha_evals_y(alpha, D);
-
-    let num_sc_vars = num_u + num_l;
-    let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
-
-    let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
-    let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
-
-    let m_evals_x = build_m_evals_x::<F>(&m_a_vec, m_rows, m_cols, &tau1);
+    let m_evals_x = build_m_evals_x_fused::<F, D>(&m_a, alpha, layout.log_basis, &tau1)?;
 
     Ok(RingSwitchOutput {
         w: Vec::new(),
@@ -508,6 +497,7 @@ pub(crate) fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
     levels
 }
 
+#[cfg(test)]
 pub(crate) fn expand_m_a<F: CanonicalField, const D: usize>(
     m_a: &[Vec<F>],
     alpha: F,
@@ -619,7 +609,7 @@ pub(crate) fn build_w_evals_dual<F: FieldCore + CanonicalField>(
     let q = (-F::one()).to_canonical_u128() + 1;
     let half_q = q / 2;
 
-    let pairs: Vec<(i8, F)> = cfg_into_iter!(0..n)
+    let (compact, field): (Vec<i8>, Vec<F>) = cfg_into_iter!(0..n)
         .map(|dst| {
             let x = dst & (x_len - 1);
             let y = dst >> num_u;
@@ -627,24 +617,17 @@ pub(crate) fn build_w_evals_dual<F: FieldCore + CanonicalField>(
             if src < w.len() {
                 let val = w[src];
                 let canonical = val.to_canonical_u128();
-                let compact = if canonical <= half_q {
+                let c = if canonical <= half_q {
                     canonical as i8
                 } else {
                     (canonical as i128 - q as i128) as i8
                 };
-                (compact, val)
+                (c, val)
             } else {
                 (0i8, F::zero())
             }
         })
-        .collect();
-
-    let mut compact = Vec::with_capacity(n);
-    let mut field = Vec::with_capacity(n);
-    for (c, f) in pairs {
-        compact.push(c);
-        field.push(f);
-    }
+        .unzip();
     Ok((compact, field, num_u, num_l))
 }
 
@@ -652,28 +635,70 @@ pub(crate) fn m_row_count<Cfg: CommitmentConfig>() -> usize {
     Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A
 }
 
-pub(crate) fn build_m_evals_x<F: FieldCore + CanonicalField>(
-    m_a_flat: &[F],
-    rows: usize,
-    cols: usize,
+pub(crate) fn build_m_evals_x_fused<F: FieldCore + CanonicalField, const D: usize>(
+    m_a: &[Vec<F>],
+    alpha: F,
+    log_basis: u32,
     tau1: &[F],
-) -> Vec<F> {
+) -> Result<Vec<F>, HachiError> {
+    if m_a.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = m_a.len();
+    let orig_cols = m_a[0].len();
+    for row in m_a.iter() {
+        if row.len() != orig_cols {
+            return Err(HachiError::InvalidSize {
+                expected: orig_cols,
+                actual: row.len(),
+            });
+        }
+    }
+
+    let levels = r_decomp_levels::<F>(log_basis);
+    let total_cols = orig_cols
+        .checked_add(
+            rows.checked_mul(levels)
+                .ok_or_else(|| HachiError::InvalidSetup("expanded M width overflow".to_string()))?,
+        )
+        .ok_or_else(|| HachiError::InvalidSetup("expanded M width overflow".to_string()))?;
+
+    let base = F::from_canonical_u128_reduced(1u128 << log_basis);
+    let mut gadget_row = Vec::with_capacity(levels);
+    let mut power = F::one();
+    for _ in 0..levels {
+        gadget_row.push(power);
+        power = power * base;
+    }
+
+    let mut alpha_pow = F::one();
+    for _ in 0..D {
+        alpha_pow = alpha_pow * alpha;
+    }
+    let denom = alpha_pow + F::one();
+
     let eq_tau1 = EqPolynomial::evals(tau1);
-    let x_len = cols.next_power_of_two();
-    cfg_into_iter!(0..x_len)
+    let x_len = total_cols.next_power_of_two();
+
+    let out = cfg_into_iter!(0..x_len)
         .map(|x| {
             let mut acc = F::zero();
-            for i in 0..eq_tau1.len() {
-                let row_val = if i < rows && x < cols {
-                    m_a_flat[i * cols + x]
-                } else {
-                    F::zero()
-                };
-                acc = acc + eq_tau1[i] * row_val;
+            if x < orig_cols {
+                for (i, eq_i) in eq_tau1.iter().enumerate().take(rows) {
+                    acc = acc + *eq_i * m_a[i][x];
+                }
+            } else if x < total_cols {
+                let offset = x - orig_cols;
+                let i = offset / levels;
+                let j = offset % levels;
+                if i < rows && i < eq_tau1.len() {
+                    acc = eq_tau1[i] * (-denom * gadget_row[j]);
+                }
             }
             acc
         })
-        .collect()
+        .collect();
+    Ok(out)
 }
 
 pub(crate) fn build_alpha_evals_y<F: FieldCore>(alpha: F, d: usize) -> Vec<F> {

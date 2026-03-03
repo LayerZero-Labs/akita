@@ -114,18 +114,19 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             // Interpret coefficients in centered form (-q/2, q/2] before reducing
             // into the CRT primes. This makes the reduction map consistent with
             // negacyclic subtraction (which naturally produces negative values).
-            let p = prime.p.to_i64() as i128;
+            let p = prime.p.to_i64();
+            let p_u64 = p as u64;
+            let r64 = ((1u128 << 64) % p_u64 as u128) as i64;
             let half_p = p / 2;
             for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
-                let mut r = *centered % p;
-                if r < 0 {
-                    r += p;
-                }
-                // Center residues into [-p/2, p/2) for stable signed arithmetic.
+                let c = *centered;
+                let lo = (c as u64 % p_u64) as i64;
+                let hi = ((c >> 64) as i64).rem_euclid(p);
+                let mut r = (lo + hi * r64) % p;
                 if r >= half_p {
                     r -= p;
                 }
-                *dst = B::from_canonical(*prime, W::from_i64(r as i64));
+                *dst = B::from_canonical(*prime, W::from_i64(r));
             }
             B::forward_ntt(limb, *prime, tw);
         }
@@ -351,17 +352,19 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .zip(params.primes.iter())
             .zip(params.twiddles.iter())
         {
-            let p = prime.p.to_i64() as i128;
+            let p = prime.p.to_i64();
+            let p_u64 = p as u64;
+            let r64 = ((1u128 << 64) % p_u64 as u128) as i64;
             let half_p = p / 2;
             for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
-                let mut r = *centered % p;
-                if r < 0 {
-                    r += p;
-                }
+                let c = *centered;
+                let lo = (c as u64 % p_u64) as i64;
+                let hi = ((c >> 64) as i64).rem_euclid(p);
+                let mut r = (lo + hi * r64) % p;
                 if r >= half_p {
                     r -= p;
                 }
-                *dst = B::from_canonical(*prime, W::from_i64(r as i64));
+                *dst = B::from_canonical(*prime, W::from_i64(r));
             }
             forward_ntt_cyclic(limb, *prime, tw);
         }

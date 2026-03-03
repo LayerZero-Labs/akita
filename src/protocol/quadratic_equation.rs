@@ -444,6 +444,8 @@ where
 
     let mut result = Vec::with_capacity(num_rows);
     let mut other_time = 0.0f64;
+    let mut poly_buf = vec![F::zero(); poly_len];
+    let mut quotient_buf = vec![F::zero(); D];
 
     for (row_idx, _y_i) in y.iter().enumerate().take(num_rows) {
         if row_idx < Cfg::N_D {
@@ -456,40 +458,39 @@ where
             let _span = tracing::info_span!("A_row").entered();
             let a_idx = row_idx - (Cfg::N_D + Cfg::N_B + 2);
 
-            let mut poly = vec![F::zero(); poly_len];
+            poly_buf.fill(F::zero());
             for (i, t_hat_i) in t_hat.iter().enumerate() {
                 let start = a_idx * decomp_commit;
                 let end = start + decomp_commit;
                 if end <= t_hat_i.len() {
                     let t_recomp =
                         CyclotomicRing::gadget_recompose_pow2_i8(&t_hat_i[start..end], log_basis);
-                    add_sparse_ring_product(&mut poly, &challenges[i], &t_recomp);
+                    add_sparse_ring_product(&mut poly_buf, &challenges[i], &t_recomp);
                 }
             }
 
-            // quotient = high_part(challenge_unreduced) - ntt_quotient(A * z_pre)
             let a_q = a_quotients[a_idx].coefficients();
-            let mut quotient = vec![F::zero(); D];
-            quotient[..(poly_len - D)].copy_from_slice(&poly[D..poly_len]);
+            quotient_buf.fill(F::zero());
+            quotient_buf[..(poly_len - D)].copy_from_slice(&poly_buf[D..poly_len]);
             for k in 0..D {
-                quotient[k] = quotient[k] - a_q[k];
+                quotient_buf[k] = quotient_buf[k] - a_q[k];
             }
-            result.push(CyclotomicRing::from_slice(&quotient));
+            result.push(CyclotomicRing::from_slice(&quotient_buf));
             other_time += t_row.elapsed().as_secs_f64();
         } else {
             // bTw_row and challenge_fold_row: schoolbook (cheap)
             let t_row = Instant::now();
-            let mut poly = vec![F::zero(); poly_len];
+            poly_buf.fill(F::zero());
 
             if row_idx == Cfg::N_D + Cfg::N_B {
                 let _span = tracing::info_span!("bTw_row").entered();
                 for (i, w_f) in w_folded.iter().enumerate() {
-                    add_scalar_ring_product(&mut poly, &opening_point.b[i], w_f);
+                    add_scalar_ring_product(&mut poly_buf, &opening_point.b[i], w_f);
                 }
             } else {
                 let _span = tracing::info_span!("challenge_fold_row").entered();
                 for (i, w_f) in w_folded.iter().enumerate() {
-                    add_sparse_ring_product(&mut poly, &challenges[i], w_f);
+                    add_sparse_ring_product(&mut poly_buf, &challenges[i], w_f);
                 }
                 let block_len = opening_point.a.len();
                 for i in 0..block_len {
@@ -498,23 +499,23 @@ where
                     if end <= z_pre.len() {
                         let z_pre_recomp =
                             CyclotomicRing::gadget_recompose_pow2(&z_pre[start..end], log_basis);
-                        sub_scalar_ring_product(&mut poly, &opening_point.a[i], &z_pre_recomp);
+                        sub_scalar_ring_product(&mut poly_buf, &opening_point.a[i], &z_pre_recomp);
                     }
                 }
             }
 
             let y_coeffs = _y_i.coefficients();
             for k in 0..D {
-                poly[k] = poly[k] - y_coeffs[k];
+                poly_buf[k] = poly_buf[k] - y_coeffs[k];
             }
 
-            let mut quotient = vec![F::zero(); D];
+            quotient_buf.fill(F::zero());
             for k in (D..poly_len).rev() {
-                let q = poly[k];
-                quotient[k - D] = q;
-                poly[k - D] = poly[k - D] - q;
+                let q = poly_buf[k];
+                quotient_buf[k - D] = q;
+                poly_buf[k - D] = poly_buf[k - D] - q;
             }
-            result.push(CyclotomicRing::from_slice(&quotient));
+            result.push(CyclotomicRing::from_slice(&quotient_buf));
             other_time += t_row.elapsed().as_secs_f64();
         }
     }

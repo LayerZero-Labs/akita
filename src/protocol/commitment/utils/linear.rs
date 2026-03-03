@@ -439,16 +439,29 @@ pub fn decompose_rows<F: FieldCore + CanonicalField, const D: usize>(
     out
 }
 
+/// Like [`decompose_block_i8`] but writes into a caller-provided `out` slice.
+pub fn decompose_block_i8_into<F: FieldCore + CanonicalField, const D: usize>(
+    block: &[CyclotomicRing<F, D>],
+    num_digits: usize,
+    log_basis: u32,
+    out: &mut [[i8; D]],
+) {
+    for (i, coeff_vec) in block.iter().enumerate() {
+        coeff_vec.balanced_decompose_pow2_i8_into(
+            &mut out[i * num_digits..(i + 1) * num_digits],
+            log_basis,
+        );
+    }
+}
+
 /// Like [`decompose_block`] but outputs `[i8; D]` digit planes instead of ring elements.
 pub fn decompose_block_i8<F: FieldCore + CanonicalField, const D: usize>(
     block: &[CyclotomicRing<F, D>],
     num_digits: usize,
     log_basis: u32,
 ) -> Vec<[i8; D]> {
-    let mut out = Vec::with_capacity(block.len() * num_digits);
-    for coeff_vec in block {
-        out.extend(coeff_vec.balanced_decompose_pow2_i8(num_digits, log_basis));
-    }
+    let mut out = vec![[0i8; D]; block.len() * num_digits];
+    decompose_block_i8_into(block, num_digits, log_basis, &mut out);
     out
 }
 
@@ -550,6 +563,8 @@ fn mat_vec_mul_tiled_i8_with_params<
             let ring_end = ((tile_end - 1) / num_digits) + 1;
             let digit_offset = tile_start - ring_start * num_digits;
             let tile_len = tile_end - tile_start;
+            let ring_count = ring_end - ring_start;
+            let mut digit_buf = vec![[0i8; D]; ring_count * num_digits];
 
             for block_idx in 0..num_blocks {
                 let block = blocks[block_idx];
@@ -558,14 +573,20 @@ fn mat_vec_mul_tiled_i8_with_params<
                 }
                 let block_ring_end = ring_end.min(block.len());
                 let partial_coeffs = &block[ring_start..block_ring_end];
-                let all_digits = decompose_block_i8(partial_coeffs, num_digits, log_basis);
-                let available = all_digits.len().saturating_sub(digit_offset);
+                let actual_digits = partial_coeffs.len() * num_digits;
+                digit_buf[..actual_digits]
+                    .iter_mut()
+                    .for_each(|plane| *plane = [0i8; D]);
+                decompose_block_i8_into(
+                    partial_coeffs,
+                    num_digits,
+                    log_basis,
+                    &mut digit_buf[..actual_digits],
+                );
+                let available = actual_digits.saturating_sub(digit_offset);
                 let n = tile_len.min(available);
 
-                for (j, digit) in all_digits[digit_offset..digit_offset + n]
-                    .iter()
-                    .enumerate()
-                {
+                for (j, digit) in digit_buf[digit_offset..digit_offset + n].iter().enumerate() {
                     let ntt_d = CyclotomicCrtNtt::from_i8_with_params(digit, params);
                     for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
                         accumulate_pointwise_product_into(
