@@ -18,7 +18,7 @@ use crate::protocol::commitment::{
     CommitmentConfig, DecompositionParams, HachiCommitmentLayout, HachiExpandedSetup,
     RingCommitment,
 };
-use crate::protocol::proof::HachiCommitmentHint;
+use crate::protocol::proof::{DigitLut, HachiCommitmentHint};
 use crate::protocol::quadratic_equation::{
     compute_m_a_streaming, compute_r_split_eq, QuadraticEquation,
 };
@@ -170,14 +170,14 @@ where
             )?;
             build_m_evals_x_fused::<F, D>(&m_a, alpha, layout.log_basis, &tau1)
         },
-        || build_w_evals_dual::<F>(&w, D),
+        || build_w_evals_dual::<F>(&w, D, layout.log_basis),
     );
     #[cfg(not(feature = "parallel"))]
     let (m_evals_x_result, w_result) = {
         let m_a =
             compute_m_a_streaming::<F, D, Cfg>(setup, opening_point, challenges, &alpha, layout)?;
         let m_evals_x = build_m_evals_x_fused::<F, D>(&m_a, alpha, layout.log_basis, &tau1)?;
-        let w_dual = build_w_evals_dual::<F>(&w, D);
+        let w_dual = build_w_evals_dual::<F>(&w, D, layout.log_basis);
         (Ok(m_evals_x), w_dual)
     };
 
@@ -420,12 +420,13 @@ where
     F: FieldCore + CanonicalField + FieldSampling,
     Cfg: CommitmentConfig,
 {
+    let lut = DigitLut::<F>::new(Cfg::decomposition().log_basis);
     let ring_elems: Vec<CyclotomicRing<F, D>> = w
         .chunks(D)
         .map(|chunk| {
             let mut coeffs = [F::zero(); D];
             for (c, &d) in coeffs.iter_mut().zip(chunk.iter()) {
-                *c = F::from_i64(d as i64);
+                *c = lut.get(d);
             }
             CyclotomicRing::from_coefficients(coeffs)
         })
@@ -599,6 +600,7 @@ pub(crate) fn build_w_evals<F: FieldCore>(
 pub(crate) fn build_w_evals_dual<F: FieldCore + crate::FromSmallInt>(
     w: &[i8],
     d: usize,
+    log_basis: u32,
 ) -> Result<(Vec<i8>, Vec<F>, usize, usize), HachiError> {
     if d == 0 || w.len() % d != 0 {
         return Err(HachiError::InvalidSize {
@@ -612,6 +614,7 @@ pub(crate) fn build_w_evals_dual<F: FieldCore + crate::FromSmallInt>(
     let x_len = 1usize << num_u;
     let n = x_len << num_l;
 
+    let lut = DigitLut::<F>::new(log_basis);
     let (compact, field): (Vec<i8>, Vec<F>) = cfg_into_iter!(0..n)
         .map(|dst| {
             let x = dst & (x_len - 1);
@@ -619,7 +622,7 @@ pub(crate) fn build_w_evals_dual<F: FieldCore + crate::FromSmallInt>(
             let src = y + (x << num_l);
             if src < w.len() {
                 let d = w[src];
-                (d, F::from_i64(d as i64))
+                (d, lut.get(d))
             } else {
                 (0i8, F::zero())
             }

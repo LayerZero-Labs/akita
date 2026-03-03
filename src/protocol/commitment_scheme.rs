@@ -11,7 +11,9 @@ use crate::protocol::commitment::{
 };
 use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
 use crate::protocol::opening_point::{BasisMode, RingOpeningPoint};
-use crate::protocol::proof::{HachiCommitmentHint, HachiLevelProof, HachiProof, PackedDigits};
+use crate::protocol::proof::{
+    DigitLut, HachiCommitmentHint, HachiLevelProof, HachiProof, PackedDigits,
+};
 use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::ring_switch::{
     build_w_evals, ring_switch_prover, ring_switch_verifier, w_ring_element_count,
@@ -229,13 +231,15 @@ fn next_level_opening_point<F: FieldCore>(
 }
 
 /// Build a `DensePoly` from the flat w digit vector, converting i8 -> F
-/// and padding to the next power of two in total field elements.
+/// via lookup table and padding to the next power of two.
 fn dense_poly_from_w<F: FieldCore + FromSmallInt, const D: usize>(
     w: &[i8],
+    log_basis: u32,
 ) -> Result<DensePoly<F, D>, HachiError> {
+    let lut = DigitLut::<F>::new(log_basis);
     let total_coeffs = w.len().next_power_of_two().max(D);
     let num_vars = total_coeffs.trailing_zeros() as usize;
-    let mut padded: Vec<F> = w.iter().map(|&d| F::from_i64(d as i64)).collect();
+    let mut padded: Vec<F> = w.iter().map(|&d| lut.get(d)).collect();
     padded.resize(total_coeffs, F::zero());
     DensePoly::from_field_evals(num_vars, &padded)
 }
@@ -320,7 +324,7 @@ where
 
         // Subsequent levels: recursive w-opening with WCommitmentConfig
         while !should_stop_folding(current_w.len(), prev_poly_len) {
-            let w_poly = dense_poly_from_w::<F, D>(&current_w)?;
+            let w_poly = dense_poly_from_w::<F, D>(&current_w, Cfg::decomposition().log_basis)?;
             let opening_point =
                 next_level_opening_point(&current_challenges, current_num_u, current_num_l);
             let w_commitment = &levels.last().unwrap().w_commitment;

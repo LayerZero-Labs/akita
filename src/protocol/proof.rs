@@ -24,6 +24,31 @@ pub struct PackedDigits {
     pub data: Vec<u8>,
 }
 
+/// Precomputed lookup table mapping balanced digit index → field element.
+///
+/// Wraps `FromSmallInt::digit_lut` with convenient signed-digit indexing.
+/// Index a digit `d ∈ [-b/2, b/2)` via [`get`](DigitLut::get).
+pub(crate) struct DigitLut<F> {
+    table: [F; 16],
+    half_b: i8,
+}
+
+impl<F: FieldCore + FromSmallInt> DigitLut<F> {
+    #[inline]
+    pub(crate) fn new(log_basis: u32) -> Self {
+        let half_b = 1i8 << (log_basis - 1);
+        Self {
+            table: F::digit_lut(log_basis),
+            half_b,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn get(&self, d: i8) -> F {
+        self.table[(d + self.half_b) as usize]
+    }
+}
+
 impl PackedDigits {
     /// Pack balanced i8 digits into bit-packed form.
     ///
@@ -63,11 +88,12 @@ impl PackedDigits {
         }
     }
 
-    /// Unpack to field elements via `F::from_i64`.
+    /// Unpack to field elements using a precomputed lookup table.
     pub fn to_field_elems<F: FieldCore + FromSmallInt>(&self) -> Vec<F> {
         let bits = self.bits_per_elem as usize;
         let mask = (1u8 << bits) - 1;
         let sign_bit = 1u8 << (bits - 1);
+        let lut = DigitLut::<F>::new(self.bits_per_elem);
 
         let mut out = Vec::with_capacity(self.num_elems);
         for i in 0..self.num_elems {
@@ -83,7 +109,7 @@ impl PackedDigits {
             } else {
                 raw as i8
             };
-            out.push(F::from_i64(signed as i64));
+            out.push(lut.get(signed));
         }
         out
     }

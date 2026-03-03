@@ -131,6 +131,30 @@ impl<const P: u128> Fp128<P> {
         to_u128(self.0)
     }
 
+    /// Const-evaluable `from_i64`. Embeds a small signed integer into `Fp`.
+    pub const fn from_i64_const(val: i64) -> Self {
+        if val >= 0 {
+            Self(from_u128(val as u128))
+        } else {
+            Self(Self::sub_raw(pack(0, 0), from_u128(val.unsigned_abs() as u128)))
+        }
+    }
+
+    /// Const-evaluable lookup table for balanced digits in `[-b/2, b/2)`
+    /// where `b = 2^log_basis`. Requires `log_basis <= 4`.
+    pub const fn digit_lut(log_basis: u32) -> [Self; 16] {
+        assert!(log_basis > 0 && log_basis <= 4);
+        let b = 1u32 << log_basis;
+        let half_b = (b / 2) as i64;
+        let mut lut = [Self(pack(0, 0)); 16];
+        let mut i = 0u32;
+        while i < b {
+            lut[i as usize] = Self::from_i64_const(i as i64 - half_b);
+            i += 1;
+        }
+        lut
+    }
+
     #[inline(always)]
     fn add_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let (s, carry) = to_u128(a).overflowing_add(to_u128(b));
@@ -143,7 +167,7 @@ impl<const P: u128> Fp128<P> {
     }
 
     #[inline(always)]
-    fn sub_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+    const fn sub_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let (diff, borrow) = to_u128(a).overflowing_sub(to_u128(b));
         from_u128(if borrow { diff.wrapping_add(P) } else { diff })
     }
@@ -823,12 +847,11 @@ impl<const P: u128> FromSmallInt for Fp128<P> {
     }
 
     fn from_i64(val: i64) -> Self {
-        if val >= 0 {
-            Self::from_u64(val as u64)
-        } else {
-            // unsigned_abs avoids overflow for i64::MIN.
-            -Self::from_u64(val.unsigned_abs())
-        }
+        Self::from_i64_const(val)
+    }
+
+    fn digit_lut(log_basis: u32) -> [Self; 16] {
+        Self::digit_lut(log_basis)
     }
 }
 
