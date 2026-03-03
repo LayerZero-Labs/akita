@@ -7,8 +7,8 @@
 
 use super::eq_poly::EqPolynomial;
 use super::norm_sumcheck::{
-    accumulate_affine_range_coeffs, range_check_eval_precomputed, trim_trailing_zeros,
-    NormRoundKernel, PointEvalPrecomp, RangeAffinePrecomp,
+    compute_norm_round_poly, compute_norm_round_poly_compact, NormRoundKernel, PointEvalPrecomp,
+    RangeAffinePrecomp,
 };
 use super::split_eq::GruenSplitEq;
 use super::{fold_evals_in_place, multilinear_eval, range_check_eval};
@@ -25,7 +25,7 @@ use std::iter;
 use std::mem;
 use std::time::Instant;
 
-use crate::{FieldCore, FromSmallInt};
+use crate::{CanonicalField, FieldCore, FromSmallInt};
 
 enum WTable<E: FieldCore> {
     Compact(Vec<i8>),
@@ -61,7 +61,7 @@ pub struct HachiSumcheckProver<E: FieldCore> {
     rounds_completed: usize,
 }
 
-impl<E: FieldCore + FromSmallInt> HachiSumcheckProver<E> {
+impl<E: FieldCore + FromSmallInt + CanonicalField> HachiSumcheckProver<E> {
     /// Create a fused norm+relation sumcheck prover.
     ///
     /// # Panics
@@ -79,6 +79,7 @@ impl<E: FieldCore + FromSmallInt> HachiSumcheckProver<E> {
         num_u: usize,
         num_l: usize,
     ) -> Self {
+        assert!(b >= 1, "b must be at least 1");
         let num_vars = num_u + num_l;
         let n = 1usize << num_vars;
         assert_eq!(w_evals_compact.len(), n);
@@ -97,9 +98,8 @@ impl<E: FieldCore + FromSmallInt> HachiSumcheckProver<E> {
         let relation_claim =
             Self::compute_relation_claim_compact(&w_evals_compact, &alpha_table, &m_table);
 
-        // Temporary profiling switch: always use point-eval interpolation.
-        // Revert by restoring the b-threshold dispatch.
-        let round_kernel = NormRoundKernel::PointEvalInterpolation;
+        use super::norm_sumcheck::choose_round_kernel;
+        let round_kernel = choose_round_kernel(b);
         let point_precomp = match round_kernel {
             NormRoundKernel::PointEvalInterpolation => Some(PointEvalPrecomp::new(b)),
             NormRoundKernel::AffineCoeffComposition => None,
@@ -148,82 +148,15 @@ impl<E: FieldCore + FromSmallInt> HachiSumcheckProver<E> {
         half: usize,
         w_pair: impl Fn(usize) -> (E, E) + Sync,
     ) -> UniPoly<E> {
-        let (e_first, e_second) = self.split_eq.remaining_eq_tables();
-        let num_first = e_first.len();
-        let first_bits = num_first.trailing_zeros();
-
-        match self.round_kernel {
-            NormRoundKernel::PointEvalInterpolation => {
-                let degree_q = 2 * self.b - 1;
-                let num_points_q = degree_q + 1;
-                let range_offsets = &self.point_precomp.as_ref().unwrap().range_offsets;
-
-                let q_evals = {
-                    let _span = tracing::info_span!("norm_accumulate").entered();
-                    cfg_fold_reduce!(
-                        0..half,
-                        || vec![E::zero(); num_points_q],
-                        |mut evals, j| {
-                            let j_low = j & (num_first - 1);
-                            let j_high = j >> first_bits;
-                            let eq_rem = e_first[j_low] * e_second[j_high];
-                            let (w_0, w_1) = w_pair(j);
-                            let delta = w_1 - w_0;
-                            let mut w_t = w_0;
-                            for eval in evals.iter_mut() {
-                                *eval = *eval
-                                    + eq_rem * range_check_eval_precomputed(w_t, range_offsets);
-                                w_t = w_t + delta;
-                            }
-                            evals
-                        },
-                        |mut a, b_vec| {
-                            for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
-                                *ai = *ai + *bi;
-                            }
-                            a
-                        }
-                    )
-                };
-
-                let q_poly = UniPoly::from_evals(&q_evals);
-                let _span = tracing::info_span!("gruen_mul").entered();
-                self.split_eq.gruen_mul(&q_poly)
-            }
-            NormRoundKernel::AffineCoeffComposition => {
-                let range_precomp = self.range_precomp.as_ref().unwrap();
-                let num_coeffs_q = range_precomp.degree_q + 1;
-                let coeff_mix = &range_precomp.coeff_mix;
-
-                let mut q_coeffs = {
-                    let _span = tracing::info_span!("norm_accumulate").entered();
-                    cfg_fold_reduce!(
-                        0..half,
-                        || vec![E::zero(); num_coeffs_q],
-                        |mut coeffs, j| {
-                            let j_low = j & (num_first - 1);
-                            let j_high = j >> first_bits;
-                            let eq_rem = e_first[j_low] * e_second[j_high];
-                            let (w_0, w_1) = w_pair(j);
-                            let a = w_1 - w_0;
-                            accumulate_affine_range_coeffs(&mut coeffs, coeff_mix, w_0, a, eq_rem);
-                            coeffs
-                        },
-                        |mut a, b_vec| {
-                            for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
-                                *ai = *ai + *bi;
-                            }
-                            a
-                        }
-                    )
-                };
-
-                trim_trailing_zeros(&mut q_coeffs);
-                let q_poly = UniPoly::from_coeffs(q_coeffs);
-                let _span = tracing::info_span!("gruen_mul").entered();
-                self.split_eq.gruen_mul(&q_poly)
-            }
-        }
+        compute_norm_round_poly(
+            &self.split_eq,
+            half,
+            self.b,
+            self.round_kernel,
+            self.point_precomp.as_ref(),
+            self.range_precomp.as_ref(),
+            w_pair,
+        )
     }
 
     /// Unified relation sumcheck round. `w_pair(j)` returns `(w_{2j}, w_{2j+1})`.
@@ -270,7 +203,9 @@ impl<E: FieldCore + FromSmallInt> HachiSumcheckProver<E> {
     }
 }
 
-impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for HachiSumcheckProver<E> {
+impl<E: FieldCore + FromSmallInt + CanonicalField> SumcheckInstanceProver<E>
+    for HachiSumcheckProver<E>
+{
     fn num_rounds(&self) -> usize {
         self.num_vars
     }
@@ -288,20 +223,27 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for HachiSumcheckPro
         let (norm_poly, relation_poly) = match &self.w_table {
             WTable::Compact(w_compact) => {
                 let half = w_compact.len() / 2;
+                let np = {
+                    let _span = tracing::info_span!("norm_round").entered();
+                    compute_norm_round_poly_compact(
+                        &self.split_eq,
+                        w_compact,
+                        self.b,
+                        self.round_kernel,
+                        self.point_precomp.as_ref(),
+                        self.range_precomp.as_ref(),
+                    )
+                };
+                let norm_elapsed = t_norm.elapsed().as_secs_f64();
+                self.norm_time_total += norm_elapsed;
+
+                let t_rel = Instant::now();
                 let pair = |j: usize| {
                     (
                         Self::lift_i8(w_compact[2 * j]),
                         Self::lift_i8(w_compact[2 * j + 1]),
                     )
                 };
-                let np = {
-                    let _span = tracing::info_span!("norm_round").entered();
-                    self.compute_round_norm(half, pair)
-                };
-                let norm_elapsed = t_norm.elapsed().as_secs_f64();
-                self.norm_time_total += norm_elapsed;
-
-                let t_rel = Instant::now();
                 let rp = {
                     let _span = tracing::info_span!("relation_round").entered();
                     self.compute_round_relation(half, pair)

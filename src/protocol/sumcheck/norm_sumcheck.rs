@@ -12,27 +12,49 @@ use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::{FieldCore, FromSmallInt};
+use crate::{cfg_fold_reduce, CanonicalField, FieldCore, FromSmallInt};
 
+/// Which kernel to use for the norm sumcheck accumulation loop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NormRoundKernel {
+pub enum NormRoundKernel {
+    /// Evaluate the range-check polynomial at `degree_q+1` points, then interpolate.
     PointEvalInterpolation,
-    #[allow(dead_code)] // Temporarily unused while forcing point-eval kernel.
+    /// Directly accumulate polynomial coefficients via affine substitution.
     AffineCoeffComposition,
 }
 
-fn choose_round_kernel(_b: usize) -> NormRoundKernel {
-    // Temporary profiling switch: always use point-eval interpolation.
-    // Revert by restoring the b-threshold dispatch.
-    NormRoundKernel::PointEvalInterpolation
+/// Select the norm kernel for a given `b`.
+///
+/// Override with env var `HACHI_NORM_KERNEL=point_eval` or `affine_coeff`.
+pub fn choose_round_kernel(b: usize) -> NormRoundKernel {
+    if let Ok(v) = std::env::var("HACHI_NORM_KERNEL") {
+        match v.as_str() {
+            "point_eval" => return NormRoundKernel::PointEvalInterpolation,
+            "affine_coeff" => return NormRoundKernel::AffineCoeffComposition,
+            _ => {}
+        }
+    }
+    if b <= 16 {
+        NormRoundKernel::AffineCoeffComposition
+    } else {
+        NormRoundKernel::PointEvalInterpolation
+    }
 }
 
 #[derive(Clone)]
 pub(crate) struct RangeAffinePrecomp<E: FieldCore> {
-    /// `coeff_mix[i][k] = c_{i+k} * binom(i+k, i)`, where
-    /// `R(w) = sum_m c_m * w^m` is the range-check polynomial.
-    pub(crate) coeff_mix: Vec<Vec<E>>,
+    /// Flat contiguous storage of `coeff_mix[i][k] = c_{i+k} * binom(i+k, i)`,
+    /// where `R(w) = sum_m c_m * w^m` is the range-check polynomial.
+    /// Row `i` has length `degree_q - i + 1` and starts at
+    /// `row_offsets[i]`.
+    coeff_mix_flat: Vec<E>,
+    row_offsets: Vec<usize>,
     pub(crate) degree_q: usize,
+    /// Precomputed `h_i(w_0)` for all small-integer `w_0 ∈ {-(b-1),...,b-1}`.
+    /// Indexed as `small_w_lut[(w_0 + b - 1) * num_rows + i]`.
+    /// Used by the round-0 compact accumulation path.
+    small_w_lut: Vec<E>,
+    b: usize,
 }
 
 impl<E: FieldCore + FromSmallInt> RangeAffinePrecomp<E> {
@@ -52,40 +74,85 @@ impl<E: FieldCore + FromSmallInt> RangeAffinePrecomp<E> {
                 }
             })
             .collect();
-        let mut coeff_mix = Vec::with_capacity(degree_q + 1);
+
+        let total_elems = (degree_q + 1) * (degree_q + 2) / 2;
+        let mut coeff_mix_flat = Vec::with_capacity(total_elems);
+        let mut row_offsets = Vec::with_capacity(degree_q + 2);
 
         for i in 0..=degree_q {
+            row_offsets.push(coeff_mix_flat.len());
             let row_len = degree_q - i + 1;
-            let mut row = Vec::with_capacity(row_len);
             let mut binom_m_i = E::one(); // binom(i, i)
             for k in 0..row_len {
                 let m = i + k;
-                row.push(range_coeffs[m] * binom_m_i);
+                coeff_mix_flat.push(range_coeffs[m] * binom_m_i);
                 if k + 1 < row_len {
                     let numer = small_scalars[m + 1];
                     let denom_inv = inv_small_scalars[k + 1];
                     binom_m_i = binom_m_i * numer * denom_inv;
                 }
             }
-            coeff_mix.push(row);
+        }
+        row_offsets.push(coeff_mix_flat.len());
+
+        let num_rows = degree_q + 1;
+        let num_w_vals = 2 * b - 1; // w_0 ∈ {-(b-1),...,b-1}
+        let mut small_w_lut = vec![E::zero(); num_w_vals * num_rows];
+        for (w_idx, w_0_int) in (-(b as i64 - 1)..=(b as i64 - 1)).enumerate() {
+            let w_0 = E::from_i64(w_0_int);
+            for i in 0..num_rows {
+                let row = &coeff_mix_flat[row_offsets[i]..row_offsets[i + 1]];
+                let (&last, rest) = row.split_last().unwrap();
+                let mut h = last;
+                for &c in rest.iter().rev() {
+                    h = h * w_0 + c;
+                }
+                small_w_lut[w_idx * num_rows + i] = h;
+            }
         }
 
         Self {
-            coeff_mix,
+            coeff_mix_flat,
+            row_offsets,
             degree_q,
+            small_w_lut,
+            b,
         }
+    }
+}
+
+impl<E: FieldCore> RangeAffinePrecomp<E> {
+    #[inline]
+    pub(crate) fn row(&self, i: usize) -> &[E] {
+        &self.coeff_mix_flat[self.row_offsets[i]..self.row_offsets[i + 1]]
+    }
+
+    pub(crate) fn num_rows(&self) -> usize {
+        self.degree_q + 1
+    }
+
+    #[inline]
+    pub(crate) fn h_i_lut(&self, w_0_int: i8, i: usize) -> E {
+        let w_idx = (w_0_int as i16 + self.b as i16 - 1) as usize;
+        self.small_w_lut[w_idx * self.num_rows() + i]
     }
 }
 
 #[derive(Clone)]
 pub(crate) struct PointEvalPrecomp<E: FieldCore> {
-    pub(crate) range_offsets: Vec<E>,
+    pub(crate) range_offsets_sq: Vec<E>,
 }
 
 impl<E: FieldCore + FromSmallInt> PointEvalPrecomp<E> {
     pub(crate) fn new(b: usize) -> Self {
-        let range_offsets = (1..b).map(|k| E::from_u64(k as u64)).collect();
-        Self { range_offsets }
+        assert!(b >= 1, "b must be at least 1");
+        let range_offsets_sq = (1..b)
+            .map(|k| {
+                let k_e = E::from_u64(k as u64);
+                k_e * k_e
+            })
+            .collect();
+        Self { range_offsets_sq }
     }
 }
 
@@ -107,28 +174,78 @@ fn range_check_coeffs<E: FieldCore + FromSmallInt>(b: usize) -> Vec<E> {
     coeffs
 }
 
-pub(crate) fn range_check_eval_precomputed<E: FieldCore>(w: E, range_offsets: &[E]) -> E {
-    let mut acc = w;
-    for &k in range_offsets {
-        acc = acc * (w - k) * (w + k);
+/// Evaluate `R(w) = w · Π_{k=1}^{b-1}(w² - k²)` in native `i128` arithmetic.
+///
+/// Only valid for `b <= 10` (intermediates fit i128; verified up to ~2^117 for b=8).
+/// Panics in debug mode if an intermediate overflows.
+#[inline]
+pub(crate) fn range_check_eval_i128(w: i32, b: usize) -> i128 {
+    debug_assert!(b <= 10, "i128 range-check only valid for b <= 10");
+    let s = (w as i128) * (w as i128);
+    let mut acc = w as i128;
+    for k in 1..b as i128 {
+        acc = acc
+            .checked_mul(s - k * k)
+            .expect("i128 overflow in range-check");
     }
     acc
 }
 
+/// Convert an `i128` to a field element via `CanonicalField::from_canonical_u128_reduced`.
+#[inline]
+pub(crate) fn field_from_i128<E: CanonicalField>(val: i128) -> E {
+    if val >= 0 {
+        E::from_canonical_u128_reduced(val as u128)
+    } else {
+        -E::from_canonical_u128_reduced(val.unsigned_abs())
+    }
+}
+
+pub(crate) fn range_check_eval_precomputed<E: FieldCore>(w: E, offsets_sq: &[E]) -> E {
+    let s = w * w;
+    let mut acc = w;
+    for &k_sq in offsets_sq {
+        acc = acc * (s - k_sq);
+    }
+    acc
+}
+
+#[inline(never)]
 pub(crate) fn accumulate_affine_range_coeffs<E: FieldCore>(
     out_coeffs: &mut [E],
-    coeff_mix: &[Vec<E>],
+    precomp: &RangeAffinePrecomp<E>,
     w_0: E,
     a: E,
     scale: E,
 ) {
     let mut a_pow = E::one();
-    for (i, row) in coeff_mix.iter().enumerate() {
-        let mut h_i_w0 = E::zero();
-        for coeff in row.iter().rev() {
-            h_i_w0 = h_i_w0 * w_0 + *coeff;
+    for (i, out) in out_coeffs.iter_mut().enumerate().take(precomp.num_rows()) {
+        let row = precomp.row(i);
+        debug_assert!(!row.is_empty());
+        let (&last, rest) = row.split_last().unwrap();
+        let mut h_i_w0 = last;
+        for &coeff in rest.iter().rev() {
+            h_i_w0 = h_i_w0 * w_0 + coeff;
         }
-        out_coeffs[i] = out_coeffs[i] + scale * a_pow * h_i_w0;
+        *out = *out + scale * a_pow * h_i_w0;
+        a_pow = a_pow * a;
+    }
+}
+
+/// Compact-path variant: uses precomputed `h_i(w_0)` lookup table
+/// when `w_0` is a small integer (round 0 with `Vec<i8>` storage).
+#[inline(never)]
+pub(crate) fn accumulate_affine_range_coeffs_compact<E: FieldCore>(
+    out_coeffs: &mut [E],
+    precomp: &RangeAffinePrecomp<E>,
+    w_0_int: i8,
+    a: E,
+    scale: E,
+) {
+    let mut a_pow = E::one();
+    for (i, out) in out_coeffs.iter_mut().enumerate().take(precomp.num_rows()) {
+        let h_i_w0 = precomp.h_i_lut(w_0_int, i);
+        *out = *out + scale * a_pow * h_i_w0;
         a_pow = a_pow * a;
     }
 }
@@ -136,6 +253,199 @@ pub(crate) fn accumulate_affine_range_coeffs<E: FieldCore>(
 pub(crate) fn trim_trailing_zeros<E: FieldCore>(coeffs: &mut Vec<E>) {
     while coeffs.len() > 1 && coeffs.last().is_some_and(|c| c.is_zero()) {
         coeffs.pop();
+    }
+}
+
+/// Centralized norm round polynomial computation (full field-element path).
+///
+/// Both `NormSumcheckProver` and `HachiSumcheckProver` delegate here.
+pub(crate) fn compute_norm_round_poly<E: FieldCore + FromSmallInt>(
+    split_eq: &GruenSplitEq<E>,
+    half: usize,
+    b: usize,
+    round_kernel: NormRoundKernel,
+    point_precomp: Option<&PointEvalPrecomp<E>>,
+    range_precomp: Option<&RangeAffinePrecomp<E>>,
+    w_pair: impl Fn(usize) -> (E, E) + Sync,
+) -> UniPoly<E> {
+    let (e_first, e_second) = split_eq.remaining_eq_tables();
+    let num_first = e_first.len();
+    let first_bits = num_first.trailing_zeros();
+
+    match round_kernel {
+        NormRoundKernel::PointEvalInterpolation => {
+            let degree_q = 2 * b - 1;
+            let num_points_q = degree_q + 1;
+            let offsets_sq = &point_precomp.unwrap().range_offsets_sq;
+
+            let q_evals = {
+                let _span = tracing::info_span!("norm_accumulate", kernel = "point_eval").entered();
+                cfg_fold_reduce!(
+                    0..half,
+                    || vec![E::zero(); num_points_q],
+                    |mut evals, j| {
+                        let j_low = j & (num_first - 1);
+                        let j_high = j >> first_bits;
+                        let eq_rem = e_first[j_low] * e_second[j_high];
+                        let (w_0, w_1) = w_pair(j);
+                        let delta = w_1 - w_0;
+                        let mut w_t = w_0;
+                        for eval in evals.iter_mut() {
+                            *eval = *eval + eq_rem * range_check_eval_precomputed(w_t, offsets_sq);
+                            w_t = w_t + delta;
+                        }
+                        evals
+                    },
+                    |mut a, b_vec| {
+                        for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
+                            *ai = *ai + *bi;
+                        }
+                        a
+                    }
+                )
+            };
+
+            let q_poly = UniPoly::from_evals(&q_evals);
+            split_eq.gruen_mul(&q_poly)
+        }
+        NormRoundKernel::AffineCoeffComposition => {
+            let rp = range_precomp.unwrap();
+            let num_coeffs_q = rp.degree_q + 1;
+
+            let mut q_coeffs = {
+                let _span =
+                    tracing::info_span!("norm_accumulate", kernel = "affine_coeff").entered();
+                cfg_fold_reduce!(
+                    0..half,
+                    || vec![E::zero(); num_coeffs_q],
+                    |mut coeffs, j| {
+                        let j_low = j & (num_first - 1);
+                        let j_high = j >> first_bits;
+                        let eq_rem = e_first[j_low] * e_second[j_high];
+                        let (w_0, w_1) = w_pair(j);
+                        let a = w_1 - w_0;
+                        accumulate_affine_range_coeffs(&mut coeffs, rp, w_0, a, eq_rem);
+                        coeffs
+                    },
+                    |mut a, b_vec| {
+                        for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
+                            *ai = *ai + *bi;
+                        }
+                        a
+                    }
+                )
+            };
+
+            trim_trailing_zeros(&mut q_coeffs);
+            let q_poly = UniPoly::from_coeffs(q_coeffs);
+            split_eq.gruen_mul(&q_poly)
+        }
+    }
+}
+
+/// Compact round-0 variant: uses native i128 arithmetic (point-eval, b<=10)
+/// or precomputed LUT (affine-coeff) when w values are small integers.
+pub(crate) fn compute_norm_round_poly_compact<E: FieldCore + FromSmallInt + CanonicalField>(
+    split_eq: &GruenSplitEq<E>,
+    w_compact: &[i8],
+    b: usize,
+    round_kernel: NormRoundKernel,
+    point_precomp: Option<&PointEvalPrecomp<E>>,
+    range_precomp: Option<&RangeAffinePrecomp<E>>,
+) -> UniPoly<E> {
+    let half = w_compact.len() / 2;
+    let (e_first, e_second) = split_eq.remaining_eq_tables();
+    let num_first = e_first.len();
+    let first_bits = num_first.trailing_zeros();
+
+    match round_kernel {
+        NormRoundKernel::PointEvalInterpolation if b <= 10 => {
+            let degree_q = 2 * b - 1;
+            let num_points_q = degree_q + 1;
+
+            let q_evals = {
+                let _span =
+                    tracing::info_span!("norm_accumulate", kernel = "point_eval_i128").entered();
+                cfg_fold_reduce!(
+                    0..half,
+                    || vec![E::zero(); num_points_q],
+                    |mut evals, j| {
+                        let j_low = j & (num_first - 1);
+                        let j_high = j >> first_bits;
+                        let eq_rem = e_first[j_low] * e_second[j_high];
+                        let w0_i = w_compact[2 * j] as i32;
+                        let delta_i = w_compact[2 * j + 1] as i32 - w0_i;
+                        let mut w_t_i = w0_i;
+                        for eval in evals.iter_mut() {
+                            let rc = range_check_eval_i128(w_t_i, b);
+                            *eval = *eval + eq_rem * field_from_i128::<E>(rc);
+                            w_t_i += delta_i;
+                        }
+                        evals
+                    },
+                    |mut a, b_vec| {
+                        for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
+                            *ai = *ai + *bi;
+                        }
+                        a
+                    }
+                )
+            };
+
+            let q_poly = UniPoly::from_evals(&q_evals);
+            split_eq.gruen_mul(&q_poly)
+        }
+        NormRoundKernel::AffineCoeffComposition => {
+            let rp = range_precomp.unwrap();
+            let num_coeffs_q = rp.degree_q + 1;
+
+            let mut q_coeffs = {
+                let _span =
+                    tracing::info_span!("norm_accumulate", kernel = "affine_coeff_lut").entered();
+                cfg_fold_reduce!(
+                    0..half,
+                    || vec![E::zero(); num_coeffs_q],
+                    |mut coeffs, j| {
+                        let j_low = j & (num_first - 1);
+                        let j_high = j >> first_bits;
+                        let eq_rem = e_first[j_low] * e_second[j_high];
+                        let w_0_int = w_compact[2 * j];
+                        let w_1 = E::from_i64(w_compact[2 * j + 1] as i64);
+                        let a = w_1 - E::from_i64(w_0_int as i64);
+                        accumulate_affine_range_coeffs_compact(&mut coeffs, rp, w_0_int, a, eq_rem);
+                        coeffs
+                    },
+                    |mut a, b_vec| {
+                        for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
+                            *ai = *ai + *bi;
+                        }
+                        a
+                    }
+                )
+            };
+
+            trim_trailing_zeros(&mut q_coeffs);
+            let q_poly = UniPoly::from_coeffs(q_coeffs);
+            split_eq.gruen_mul(&q_poly)
+        }
+        _ => {
+            // b > 10 with point-eval: fall back to field-element path
+            let pair = |j: usize| {
+                (
+                    E::from_i64(w_compact[2 * j] as i64),
+                    E::from_i64(w_compact[2 * j + 1] as i64),
+                )
+            };
+            compute_norm_round_poly(
+                split_eq,
+                half,
+                b,
+                round_kernel,
+                point_precomp,
+                range_precomp,
+                pair,
+            )
+        }
     }
 }
 
@@ -172,6 +482,7 @@ impl<E: FieldCore + FromSmallInt> NormSumcheckProver<E> {
         b: usize,
         round_kernel: NormRoundKernel,
     ) -> Self {
+        assert!(b >= 1, "b must be at least 1");
         let num_vars = tau.len();
         assert_eq!(w_evals.len(), 1 << num_vars);
         let point_precomp = match round_kernel {
@@ -192,136 +503,6 @@ impl<E: FieldCore + FromSmallInt> NormSumcheckProver<E> {
             b,
         }
     }
-
-    fn compute_round_univariate_point_eval(&self) -> UniPoly<E> {
-        let half = self.w_table.len() / 2;
-        let degree_q = 2 * self.b - 1;
-        let num_points_q = degree_q + 1;
-        let point_precomp = self
-            .point_precomp
-            .as_ref()
-            .expect("point-eval precomputation must exist");
-        let range_offsets = &point_precomp.range_offsets;
-
-        let (e_first, e_second) = self.split_eq.remaining_eq_tables();
-        let num_first = e_first.len();
-        let first_bits = num_first.trailing_zeros();
-
-        #[cfg(feature = "parallel")]
-        let q_evals = {
-            (0..half)
-                .into_par_iter()
-                .fold(
-                    || vec![E::zero(); num_points_q],
-                    |mut evals, j| {
-                        let j_low = j & (num_first - 1);
-                        let j_high = j >> first_bits;
-                        let eq_rem = e_first[j_low] * e_second[j_high];
-                        let w_0 = self.w_table[2 * j];
-                        let w_1 = self.w_table[2 * j + 1];
-                        let delta = w_1 - w_0;
-                        let mut w_t = w_0;
-                        for eval in evals.iter_mut() {
-                            *eval =
-                                *eval + eq_rem * range_check_eval_precomputed(w_t, range_offsets);
-                            w_t = w_t + delta;
-                        }
-                        evals
-                    },
-                )
-                .reduce(
-                    || vec![E::zero(); num_points_q],
-                    |mut a, b_vec| {
-                        for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
-                            *ai = *ai + *bi;
-                        }
-                        a
-                    },
-                )
-        };
-        #[cfg(not(feature = "parallel"))]
-        let q_evals = {
-            let mut evals = vec![E::zero(); num_points_q];
-            for j in 0..half {
-                let j_low = j & (num_first - 1);
-                let j_high = j >> first_bits;
-                let eq_rem = e_first[j_low] * e_second[j_high];
-                let w_0 = self.w_table[2 * j];
-                let w_1 = self.w_table[2 * j + 1];
-                let delta = w_1 - w_0;
-                let mut w_t = w_0;
-                for eval in evals.iter_mut() {
-                    *eval = *eval + eq_rem * range_check_eval_precomputed(w_t, range_offsets);
-                    w_t = w_t + delta;
-                }
-            }
-            evals
-        };
-
-        let q_poly = UniPoly::from_evals(&q_evals);
-        self.split_eq.gruen_mul(&q_poly)
-    }
-
-    fn compute_round_univariate_affine_coeff(&self) -> UniPoly<E> {
-        let half = self.w_table.len() / 2;
-        let range_precomp = self
-            .range_precomp
-            .as_ref()
-            .expect("affine-coeff precomputation must exist");
-        let num_coeffs_q = range_precomp.degree_q + 1;
-
-        let (e_first, e_second) = self.split_eq.remaining_eq_tables();
-        let num_first = e_first.len();
-        let first_bits = num_first.trailing_zeros();
-        let coeff_mix = &range_precomp.coeff_mix;
-
-        #[cfg(feature = "parallel")]
-        let q_coeffs = {
-            (0..half)
-                .into_par_iter()
-                .fold(
-                    || vec![E::zero(); num_coeffs_q],
-                    |mut coeffs, j| {
-                        let j_low = j & (num_first - 1);
-                        let j_high = j >> first_bits;
-                        let eq_rem = e_first[j_low] * e_second[j_high];
-                        let w_0 = self.w_table[2 * j];
-                        let w_1 = self.w_table[2 * j + 1];
-                        let a = w_1 - w_0;
-                        accumulate_affine_range_coeffs(&mut coeffs, coeff_mix, w_0, a, eq_rem);
-                        coeffs
-                    },
-                )
-                .reduce(
-                    || vec![E::zero(); num_coeffs_q],
-                    |mut a, b_vec| {
-                        for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
-                            *ai = *ai + *bi;
-                        }
-                        a
-                    },
-                )
-        };
-        #[cfg(not(feature = "parallel"))]
-        let q_coeffs = {
-            let mut coeffs = vec![E::zero(); num_coeffs_q];
-            for j in 0..half {
-                let j_low = j & (num_first - 1);
-                let j_high = j >> first_bits;
-                let eq_rem = e_first[j_low] * e_second[j_high];
-                let w_0 = self.w_table[2 * j];
-                let w_1 = self.w_table[2 * j + 1];
-                let a = w_1 - w_0;
-                accumulate_affine_range_coeffs(&mut coeffs, coeff_mix, w_0, a, eq_rem);
-            }
-            coeffs
-        };
-
-        let mut q_coeffs = q_coeffs;
-        trim_trailing_zeros(&mut q_coeffs);
-        let q_poly = UniPoly::from_coeffs(q_coeffs);
-        self.split_eq.gruen_mul(&q_poly)
-    }
 }
 
 impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for NormSumcheckProver<E> {
@@ -338,10 +519,17 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for NormSumcheckProv
     }
 
     fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
-        match self.round_kernel {
-            NormRoundKernel::PointEvalInterpolation => self.compute_round_univariate_point_eval(),
-            NormRoundKernel::AffineCoeffComposition => self.compute_round_univariate_affine_coeff(),
-        }
+        let half = self.w_table.len() / 2;
+        let w_table = &self.w_table;
+        compute_norm_round_poly(
+            &self.split_eq,
+            half,
+            self.b,
+            self.round_kernel,
+            self.point_precomp.as_ref(),
+            self.range_precomp.as_ref(),
+            |j| (w_table[2 * j], w_table[2 * j + 1]),
+        )
     }
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {
@@ -746,5 +934,21 @@ mod tests {
             .unwrap();
 
         assert_eq!(prover_challenges, verifier_challenges);
+    }
+
+    #[test]
+    fn range_check_eval_i128_matches_field() {
+        for b in [2, 4, 8, 10] {
+            for w in -(b as i32 - 1)..=(b as i32 - 1) {
+                let i128_val = range_check_eval_i128(w, b);
+                let field_val: F = range_check_eval(F::from_i64(w as i64), b);
+                let field_from_i128_val: F = field_from_i128(i128_val);
+                assert_eq!(
+                    field_from_i128_val, field_val,
+                    "i128 range-check mismatch for b={b}, w={w}: \
+                     i128={i128_val}, field_from_i128={field_from_i128_val:?}, field={field_val:?}"
+                );
+            }
+        }
     }
 }
