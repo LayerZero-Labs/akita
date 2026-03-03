@@ -37,6 +37,9 @@ enum WTable<E: FieldCore> {
 /// Holds a single `w_table` shared by both sumcheck instances, weighted
 /// by `batching_coeff`. The round polynomial is
 /// `batching_coeff * norm_round(t) + relation_round(t)`.
+///
+/// Alpha and m are stored in compact form (sizes `2^num_l` and `2^num_u`
+/// respectively) and folded only during rounds where their variables are active.
 pub struct HachiSumcheckProver<E: FieldCore> {
     w_table: WTable<E>,
     batching_coeff: E,
@@ -48,9 +51,10 @@ pub struct HachiSumcheckProver<E: FieldCore> {
     range_precomp: Option<RangeAffinePrecomp<E>>,
     b: usize,
 
-    // Relation state
-    alpha_table: Vec<E>,
-    m_table: Vec<E>,
+    // Relation state (compact — not expanded to full domain)
+    alpha_compact: Vec<E>,
+    m_compact: Vec<E>,
+    num_u: usize,
 
     num_vars: usize,
     relation_claim: E,
@@ -87,16 +91,17 @@ impl<E: FieldCore + FromSmallInt + CanonicalField> HachiSumcheckProver<E> {
         assert_eq!(alpha_evals_y.len(), 1 << num_l);
         assert_eq!(m_evals_x.len(), 1 << num_u);
 
-        let x_mask = (1usize << num_u) - 1;
-        let alpha_table: Vec<E> = cfg_into_iter!(0..n)
-            .map(|idx| alpha_evals_y[idx >> num_u])
-            .collect();
-        let m_table: Vec<E> = cfg_into_iter!(0..n)
-            .map(|idx| m_evals_x[idx & x_mask])
-            .collect();
+        let alpha_compact = alpha_evals_y.to_vec();
+        let m_compact = m_evals_x.to_vec();
 
-        let relation_claim =
-            Self::compute_relation_claim_compact(&w_evals_compact, &alpha_table, &m_table);
+        let x_mask = (1usize << num_u) - 1;
+        let relation_claim = Self::compute_relation_claim_compact(
+            &w_evals_compact,
+            &alpha_compact,
+            &m_compact,
+            num_u,
+            x_mask,
+        );
 
         let round_kernel = choose_round_kernel(b);
         let point_precomp = match round_kernel {
@@ -116,8 +121,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField> HachiSumcheckProver<E> {
             point_precomp,
             range_precomp,
             b,
-            alpha_table,
-            m_table,
+            alpha_compact,
+            m_compact,
+            num_u,
             num_vars,
             relation_claim,
             norm_time_total: 0.0,
@@ -127,13 +133,18 @@ impl<E: FieldCore + FromSmallInt + CanonicalField> HachiSumcheckProver<E> {
         }
     }
 
-    fn compute_relation_claim_compact(w_compact: &[i8], alpha_table: &[E], m_table: &[E]) -> E {
+    fn compute_relation_claim_compact(
+        w_compact: &[i8],
+        alpha_compact: &[E],
+        m_compact: &[E],
+        num_u: usize,
+        x_mask: usize,
+    ) -> E {
         w_compact
             .iter()
-            .zip(alpha_table.iter())
-            .zip(m_table.iter())
-            .fold(E::zero(), |acc, ((&w, &a), &m)| {
-                acc + E::from_i64(w as i64) * a * m
+            .enumerate()
+            .fold(E::zero(), |acc, (idx, &w)| {
+                acc + E::from_i64(w as i64) * alpha_compact[idx >> num_u] * m_compact[idx & x_mask]
             })
     }
 
@@ -158,21 +169,27 @@ impl<E: FieldCore + FromSmallInt + CanonicalField> HachiSumcheckProver<E> {
         )
     }
 
-    /// Unified relation sumcheck round. `w_pair(j)` returns `(w_{2j}, w_{2j+1})`.
+    /// Unified relation sumcheck round using compact alpha/m tables.
+    /// `w_pair(j)` returns `(w_{2j}, w_{2j+1})`.
     fn compute_round_relation(
         &self,
         half: usize,
         w_pair: impl Fn(usize) -> (E, E) + Sync,
     ) -> UniPoly<E> {
+        let current_x_width = self.num_u.saturating_sub(self.rounds_completed);
+        let current_x_mask = (1usize << current_x_width).wrapping_sub(1);
+        let alpha_compact = &self.alpha_compact;
+        let m_compact = &self.m_compact;
+
         let evals = cfg_fold_reduce!(
             0..half,
             || [E::zero(); 3],
             |mut evals, j| {
                 let (w_0, w_1) = w_pair(j);
-                let a_0 = self.alpha_table[2 * j];
-                let a_1 = self.alpha_table[2 * j + 1];
-                let m_0 = self.m_table[2 * j];
-                let m_1 = self.m_table[2 * j + 1];
+                let a_0 = alpha_compact[(2 * j) >> current_x_width];
+                let a_1 = alpha_compact[(2 * j + 1) >> current_x_width];
+                let m_0 = m_compact[(2 * j) & current_x_mask];
+                let m_1 = m_compact[(2 * j + 1) & current_x_mask];
                 evals[0] = evals[0] + w_0 * a_0 * m_0;
                 evals[1] = evals[1] + w_1 * a_1 * m_1;
                 let w_2 = w_1 + w_1 - w_0;
@@ -294,8 +311,12 @@ impl<E: FieldCore + FromSmallInt + CanonicalField> SumcheckInstanceProver<E>
             }
         };
 
-        fold_evals_in_place(&mut self.alpha_table, r);
-        fold_evals_in_place(&mut self.m_table, r);
+        if self.rounds_completed < self.num_u {
+            fold_evals_in_place(&mut self.m_compact, r);
+        } else {
+            fold_evals_in_place(&mut self.alpha_compact, r);
+        }
+
         drop(_span);
         self.fold_time_total += t_fold.elapsed().as_secs_f64();
         self.rounds_completed += 1;

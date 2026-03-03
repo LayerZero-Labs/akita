@@ -67,7 +67,8 @@ pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
 
 /// Pre-converted CRT+NTT matrices, keyed by parameter family.
 ///
-/// Avoids repeated coefficient-to-NTT conversion on every dense mat-vec.
+/// Stores both negacyclic (for mat-vec) and cyclic (for quotient) representations
+/// to avoid repeated coefficient-to-NTT conversion.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(non_snake_case, missing_docs)]
 pub enum NttMatrixCache<const D: usize> {
@@ -76,6 +77,9 @@ pub enum NttMatrixCache<const D: usize> {
         A: Vec<Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>>,
         B: Vec<Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>>,
         D: Vec<Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>>,
+        A_cyc: Vec<Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>>,
+        B_cyc: Vec<Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>>,
+        D_cyc: Vec<Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>>,
         params: CrtNttParamSet<i16, Q32_NUM_PRIMES, D>,
     },
     /// 64-bit CRT primes.
@@ -83,6 +87,9 @@ pub enum NttMatrixCache<const D: usize> {
         A: Vec<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
         B: Vec<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
         D: Vec<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
+        A_cyc: Vec<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
+        B_cyc: Vec<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
+        D_cyc: Vec<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
         params: CrtNttParamSet<i32, Q64_NUM_PRIMES, D>,
     },
     /// 128-bit CRT primes.
@@ -90,6 +97,9 @@ pub enum NttMatrixCache<const D: usize> {
         A: Vec<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
         B: Vec<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
         D: Vec<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
+        A_cyc: Vec<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
+        B_cyc: Vec<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
+        D_cyc: Vec<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
         params: CrtNttParamSet<i32, Q128_NUM_PRIMES, D>,
     },
 }
@@ -111,6 +121,23 @@ where
         .collect()
 }
 
+fn convert_mat_cyclic<F, W, const K: usize, const D: usize>(
+    mat: &[Vec<CyclotomicRing<F, D>>],
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<Vec<CyclotomicCrtNtt<W, K, D>>>
+where
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+{
+    cfg_iter!(mat)
+        .map(|row| {
+            row.iter()
+                .map(|a| CyclotomicCrtNtt::from_ring_cyclic(a, params))
+                .collect()
+        })
+        .collect()
+}
+
 #[allow(non_snake_case)]
 #[tracing::instrument(skip_all, name = "build_ntt_cache")]
 pub(crate) fn build_ntt_cache<F: FieldCore + CanonicalField, const D: usize>(
@@ -124,18 +151,27 @@ pub(crate) fn build_ntt_cache<F: FieldCore + CanonicalField, const D: usize>(
             A: convert_mat(a, &p),
             B: convert_mat(b, &p),
             D: convert_mat(d, &p),
+            A_cyc: convert_mat_cyclic(a, &p),
+            B_cyc: convert_mat_cyclic(b, &p),
+            D_cyc: convert_mat_cyclic(d, &p),
             params: p,
         },
         ProtocolCrtNttParams::Q64(p) => NttMatrixCache::Q64 {
             A: convert_mat(a, &p),
             B: convert_mat(b, &p),
             D: convert_mat(d, &p),
+            A_cyc: convert_mat_cyclic(a, &p),
+            B_cyc: convert_mat_cyclic(b, &p),
+            D_cyc: convert_mat_cyclic(d, &p),
             params: p,
         },
         ProtocolCrtNttParams::Q128(p) => NttMatrixCache::Q128 {
             A: convert_mat(a, &p),
             B: convert_mat(b, &p),
             D: convert_mat(d, &p),
+            A_cyc: convert_mat_cyclic(a, &p),
+            B_cyc: convert_mat_cyclic(b, &p),
+            D_cyc: convert_mat_cyclic(d, &p),
             params: p,
         },
     };

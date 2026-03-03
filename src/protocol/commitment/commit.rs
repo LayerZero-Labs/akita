@@ -9,7 +9,7 @@ use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
 use super::utils::crt_ntt::{build_ntt_cache, NttMatrixCache};
 use super::utils::linear::{
-    decompose_block_i8, decompose_rows_i8, mat_vec_mul_ntt_cached_i8, MatrixSlot,
+    decompose_block_i8, decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_cached_i8, MatrixSlot,
 };
 use super::utils::matrix::{derive_public_matrix, sample_public_matrix_seed, PublicMatrixSeed};
 use super::CommitmentConfig;
@@ -345,7 +345,7 @@ where
             })
             .collect();
 
-        let t_hat_flat: Vec<[i8; D]> = t_hat_all.iter().flat_map(|v| v.iter().copied()).collect();
+        let t_hat_flat = flatten_i8_blocks(&t_hat_all);
 
         let u: Vec<CyclotomicRing<F, D>> =
             mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::B, &t_hat_flat);
@@ -372,7 +372,7 @@ where
 
         let depth = layout.num_digits_commit;
         let log_basis = layout.log_basis;
-        let zero_t_hat = vec![[0i8; D]; Cfg::N_A.checked_mul(depth).unwrap()];
+        let zero_block_len = Cfg::N_A.checked_mul(depth).unwrap();
         let cache = setup.ntt_cache()?;
         let coeff_len = f_coeffs.len();
 
@@ -380,7 +380,7 @@ where
             .map(|i| {
                 let start = i * block_len;
                 if start >= coeff_len {
-                    zero_t_hat.clone()
+                    vec![[0i8; D]; zero_block_len]
                 } else {
                     let end = (start + block_len).min(coeff_len);
                     let block = &f_coeffs[start..end];
@@ -392,7 +392,7 @@ where
             })
             .collect();
 
-        let t_hat_flat: Vec<[i8; D]> = t_hat_all.iter().flat_map(|v| v.iter().copied()).collect();
+        let t_hat_flat = flatten_i8_blocks(&t_hat_all);
 
         let u: Vec<CyclotomicRing<F, D>> =
             mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::B, &t_hat_flat);
@@ -418,7 +418,7 @@ where
 
         let depth = layout.num_digits_commit;
         let log_basis = layout.log_basis;
-        let zero_t_hat = vec![[0i8; D]; Cfg::N_A.checked_mul(depth).unwrap()];
+        let zero_block_len = Cfg::N_A.checked_mul(depth).unwrap();
         let cache = setup.ntt_cache()?;
         let a_matrix = &setup.expanded.A;
         let block_len = layout.block_len;
@@ -426,7 +426,7 @@ where
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(sparse_blocks)
             .map(|block_entries| {
                 if block_entries.is_empty() {
-                    zero_t_hat.clone()
+                    vec![[0i8; D]; zero_block_len]
                 } else {
                     let t_i = inner_ajtai_onehot_t_only(a_matrix, block_entries, block_len, depth);
                     decompose_rows_i8(&t_i, depth, log_basis)
@@ -434,7 +434,7 @@ where
             })
             .collect();
 
-        let t_hat_flat: Vec<[i8; D]> = t_hat_all.iter().flat_map(|v| v.iter().copied()).collect();
+        let t_hat_flat = flatten_i8_blocks(&t_hat_all);
 
         let u: Vec<CyclotomicRing<F, D>> =
             mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::B, &t_hat_flat);

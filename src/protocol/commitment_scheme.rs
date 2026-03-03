@@ -3,7 +3,9 @@
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::primitives::poly::multilinear_lagrange_basis;
-use crate::protocol::commitment::utils::linear::{mat_vec_mul_ntt_cached_i8, MatrixSlot};
+use crate::protocol::commitment::utils::linear::{
+    flatten_i8_blocks, mat_vec_mul_ntt_cached_i8, MatrixSlot,
+};
 use crate::protocol::commitment::{
     AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore, HachiProverSetup,
     HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
@@ -176,8 +178,7 @@ where
         t3.elapsed().as_secs_f64()
     );
 
-    let (w_evals_for_eval, _, _) = build_w_evals(&rs.w, D)?;
-    let w_eval = multilinear_eval(&w_evals_for_eval, &sumcheck_challenges)?;
+    let w_eval = multilinear_eval(&rs.w_evals_field, &sumcheck_challenges)?;
 
     Ok(ProveLevelOutput {
         level_proof: HachiLevelProof {
@@ -276,7 +277,7 @@ where
             layout.num_digits_commit,
             layout.log_basis,
         )?;
-        let t_hat_flat: Vec<[i8; D]> = t_hat_all.iter().flat_map(|v| v.iter().copied()).collect();
+        let t_hat_flat = flatten_i8_blocks(&t_hat_all);
         let u: Vec<CyclotomicRing<F, D>> =
             mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::B, &t_hat_flat);
         let hint = HachiCommitmentHint::new(t_hat_all);

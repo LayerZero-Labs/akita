@@ -28,6 +28,7 @@ use crate::protocol::commitment::utils::linear::{
     decompose_block_i8, decompose_rows_i8, mat_vec_mul_ntt_cached_i8, MatrixSlot,
 };
 use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
+use std::array::from_fn;
 use std::marker::PhantomData;
 
 /// Operations the Hachi commitment scheme needs from a polynomial.
@@ -218,27 +219,6 @@ where
                 let b_val = half_b << 1;
                 let mask = b_val - 1;
 
-                // Precompute target index and effective sign for each
-                // (challenge_position, coeff_idx) pair, eliminating branches
-                // and bounds checks from the hot loop.
-                let n_pos = c_i.positions.len();
-                let mut idx_table = vec![[0u16; D]; n_pos];
-                let mut sign_table = vec![[0i16; D]; n_pos];
-                for (j, &pos) in c_i.positions.iter().enumerate() {
-                    let p = pos as usize;
-                    let cc = c_i.coeffs[j];
-                    for k in 0..D {
-                        let target = k + p;
-                        if target < D {
-                            idx_table[j][k] = target as u16;
-                            sign_table[j][k] = cc;
-                        } else {
-                            idx_table[j][k] = (target - D) as u16;
-                            sign_table[j][k] = -cc;
-                        }
-                    }
-                }
-
                 for elem_idx in 0..(end.saturating_sub(start)) {
                     let ring = &coeffs[start + elem_idx];
                     let base_j = elem_idx * num_digits;
@@ -259,19 +239,18 @@ where
                             if balanced == 0 {
                                 continue;
                             }
-                            let val = balanced as i32;
-                            let z_row = &mut z[base_j + digit];
+                            let digit_i32 = balanced as i32;
 
-                            for j in 0..n_pos {
-                                // SAFETY: idx_table/sign_table have n_pos rows of D entries,
-                                // j < n_pos and coeff_idx < D. idx values are < D.
-                                unsafe {
-                                    let idx = *idx_table.get_unchecked(j).get_unchecked(coeff_idx)
-                                        as usize;
-                                    let s = *sign_table.get_unchecked(j).get_unchecked(coeff_idx)
-                                        as i32;
-                                    *z_row.get_unchecked_mut(idx) += s * val;
-                                }
+                            for (&pos, &challenge_coeff) in
+                                c_i.positions.iter().zip(c_i.coeffs.iter())
+                            {
+                                let target = coeff_idx + pos as usize;
+                                let (idx, sign) = if target < D {
+                                    (target, 1i32)
+                                } else {
+                                    (target - D, -1i32)
+                                };
+                                z[base_j + digit][idx] += sign * digit_i32 * challenge_coeff as i32;
                             }
                         }
                     }
@@ -291,7 +270,7 @@ where
         z_i32
             .into_iter()
             .map(|arr| {
-                let field_coeffs: [F; D] = std::array::from_fn(|k| {
+                let field_coeffs: [F; D] = from_fn(|k| {
                     let v = arr[k];
                     if v >= 0 {
                         F::from_canonical_u128_reduced(v as u128)
@@ -316,13 +295,13 @@ where
         let n = self.coeffs.len();
         let num_blocks = n.div_ceil(block_len);
         let n_a = _a_matrix.len();
-        let zero_t_hat = vec![[0i8; D]; n_a.checked_mul(num_digits).unwrap()];
+        let zero_block_len = n_a.checked_mul(num_digits).unwrap();
 
         let results: Vec<Vec<[i8; D]>> = cfg_into_iter!(0..num_blocks)
             .map(|i| {
                 let start = i * block_len;
                 if start >= n {
-                    return zero_t_hat.clone();
+                    return vec![[0i8; D]; zero_block_len];
                 }
                 let end = (start + block_len).min(n);
                 let block = &self.coeffs[start..end];
@@ -471,12 +450,12 @@ where
         log_basis: u32,
     ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
         let n_a = a_matrix.len();
-        let zero_t_hat = vec![[0i8; D]; n_a.checked_mul(num_digits).unwrap()];
+        let zero_block_len = n_a.checked_mul(num_digits).unwrap();
 
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(self.sparse_blocks)
             .map(|block_entries| {
                 if block_entries.is_empty() {
-                    zero_t_hat.clone()
+                    vec![[0i8; D]; zero_block_len]
                 } else {
                     let t_i =
                         inner_ajtai_onehot_t_only(a_matrix, block_entries, block_len, num_digits);

@@ -11,7 +11,7 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttMatrixCache;
 use crate::protocol::commitment::utils::linear::{
-    decompose_block_i8, decompose_rows_i8, mat_vec_mul_ntt_cached_i8, MatrixSlot,
+    decompose_block_i8, decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_cached_i8, MatrixSlot,
 };
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
@@ -44,6 +44,9 @@ pub struct RingSwitchOutput<F: FieldCore, const D: usize> {
     /// Compact evaluation table of w (all entries in [-b/2, b/2), reordered for sumcheck).
     /// Populated by the prover; empty on the verifier side.
     pub w_evals: Vec<i8>,
+    /// Field-element evaluation table of w (same reordering as `w_evals`).
+    /// Produced alongside `w_evals` in a single pass to avoid a duplicate scan.
+    pub w_evals_field: Vec<F>,
     /// Evaluation table of M_alpha(x) (tau1-weighted).
     pub m_evals_x: Vec<F>,
     /// Evaluation table of alpha powers (y dimension).
@@ -167,7 +170,7 @@ where
 
     let t_we = Instant::now();
     let _span_we = tracing::info_span!("build_w_evals_and_tables").entered();
-    let (w_evals, num_u, num_l) = build_w_evals_compact::<F>(&w, D)?;
+    let (w_evals, w_evals_field, num_u, num_l) = build_w_evals_dual::<F>(&w, D)?;
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
 
     let num_sc_vars = num_u + num_l;
@@ -188,6 +191,7 @@ where
         w_commitment,
         w_hint,
         w_evals,
+        w_evals_field,
         m_evals_x,
         alpha_evals_y,
         num_u,
@@ -255,6 +259,7 @@ where
         w_commitment: w_commitment.clone(),
         w_hint: HachiCommitmentHint::new(Vec::new()),
         w_evals: Vec::new(),
+        w_evals_field: Vec::new(),
         m_evals_x,
         alpha_evals_y,
         num_u,
@@ -436,13 +441,13 @@ where
     let depth = w_layout.num_digits_commit;
     let log_basis = w_layout.log_basis;
     let coeff_len = ring_elems.len();
-    let zero_t_hat = vec![[0i8; D]; Cfg::N_A.checked_mul(depth).unwrap()];
+    let zero_block_len = Cfg::N_A.checked_mul(depth).unwrap();
 
     let t_hat_per_block: Vec<Vec<[i8; D]>> = cfg_into_iter!(0..num_blocks)
         .map(|i| {
             let start = i * block_len;
             if start >= coeff_len {
-                zero_t_hat.clone()
+                vec![[0i8; D]; zero_block_len]
             } else {
                 let end = (start + block_len).min(coeff_len);
                 let block = &ring_elems[start..end];
@@ -454,10 +459,7 @@ where
         })
         .collect();
 
-    let t_hat_flat: Vec<[i8; D]> = t_hat_per_block
-        .iter()
-        .flat_map(|v| v.iter().copied())
-        .collect();
+    let t_hat_flat = flatten_i8_blocks(&t_hat_per_block);
     let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::B, &t_hat_flat);
     let hint = HachiCommitmentHint::new(t_hat_per_block);
     Ok((RingCommitment { u }, hint))
@@ -591,15 +593,12 @@ pub(crate) fn build_w_evals<F: FieldCore>(
     Ok((evals, num_u, num_l))
 }
 
-/// Compact variant of `build_w_evals` returning `Vec<i8>`.
-///
-/// All entries in `w` must have canonical values in `[-half_b, half_b - 1]`
-/// where `half_b = 2^(LOG_BASIS-1)`. This holds when `w` is produced by
-/// `build_w_coeffs` (all components go through `balanced_decompose_pow2`).
-pub(crate) fn build_w_evals_compact<F: FieldCore + CanonicalField>(
+/// Produce both compact `Vec<i8>` and field `Vec<F>` eval tables in one pass
+/// over `w`, sharing the index computation.
+pub(crate) fn build_w_evals_dual<F: FieldCore + CanonicalField>(
     w: &[F],
     d: usize,
-) -> Result<(Vec<i8>, usize, usize), HachiError> {
+) -> Result<(Vec<i8>, Vec<F>, usize, usize), HachiError> {
     if d == 0 || w.len() % d != 0 {
         return Err(HachiError::InvalidSize {
             expected: d,
@@ -615,24 +614,33 @@ pub(crate) fn build_w_evals_compact<F: FieldCore + CanonicalField>(
     let q = (-F::one()).to_canonical_u128() + 1;
     let half_q = q / 2;
 
-    let evals: Vec<i8> = cfg_into_iter!(0..n)
+    let pairs: Vec<(i8, F)> = cfg_into_iter!(0..n)
         .map(|dst| {
             let x = dst & (x_len - 1);
             let y = dst >> num_u;
             let src = y + (x << num_l);
             if src < w.len() {
-                let canonical = w[src].to_canonical_u128();
-                if canonical <= half_q {
+                let val = w[src];
+                let canonical = val.to_canonical_u128();
+                let compact = if canonical <= half_q {
                     canonical as i8
                 } else {
                     (canonical as i128 - q as i128) as i8
-                }
+                };
+                (compact, val)
             } else {
-                0i8
+                (0i8, F::zero())
             }
         })
         .collect();
-    Ok((evals, num_u, num_l))
+
+    let mut compact = Vec::with_capacity(n);
+    let mut field = Vec::with_capacity(n);
+    for (c, f) in pairs {
+        compact.push(c);
+        field.push(f);
+    }
+    Ok((compact, field, num_u, num_l))
 }
 
 pub(crate) fn m_row_count<Cfg: CommitmentConfig>() -> usize {

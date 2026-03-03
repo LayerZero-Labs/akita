@@ -9,26 +9,27 @@ use super::eq_poly::EqPolynomial;
 use super::{fold_evals_in_place, multilinear_eval};
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
 use crate::algebra::ring::CyclotomicRing;
-use crate::cfg_into_iter;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::ring_switch::eval_ring_at;
 use crate::{FieldCore, FromSmallInt};
+use std::iter;
 
 /// Prover for `F_{α,τ₁}(x,y) = w̃(x,y) · α̃(y) · m(x)`.
 ///
-/// All three constituent evaluation tables are stored at full domain size
-/// (`2^{num_u + num_l}`).  `α̃` is replicated along x dimensions and `m` along
-/// y dimensions so that a uniform fold-by-pairs works in every round.
+/// Alpha and m are stored in compact form (sizes `2^num_l` and `2^num_u`)
+/// and folded only during rounds where their variables are active.
 ///
 /// Round polynomial degree is 2 (product of at most two multilinear factors
 /// depending on any single variable).
 pub struct RelationSumcheckProver<E> {
     w_table: Vec<E>,
-    alpha_table: Vec<E>,
-    m_table: Vec<E>,
+    alpha_compact: Vec<E>,
+    m_compact: Vec<E>,
+    num_u: usize,
     num_vars: usize,
+    rounds_completed: usize,
 }
 
 impl<E: FieldCore + FromSmallInt> RelationSumcheckProver<E> {
@@ -37,8 +38,6 @@ impl<E: FieldCore + FromSmallInt> RelationSumcheckProver<E> {
     /// - `w_evals`: evaluations of `w̃` over `{0,1}^{num_u + num_l}` (full domain).
     /// - `alpha_evals_y`: evaluations of `α̃` over `{0,1}^{num_l}` (compact).
     /// - `m_evals_x`: evaluations of `m` over `{0,1}^{num_u}` (compact).
-    ///
-    /// The constructor extends the compact tables to the full domain by replication.
     ///
     /// # Panics
     ///
@@ -56,19 +55,13 @@ impl<E: FieldCore + FromSmallInt> RelationSumcheckProver<E> {
         assert_eq!(alpha_evals_y.len(), 1 << num_l);
         assert_eq!(m_evals_x.len(), 1 << num_u);
 
-        let x_mask = (1usize << num_u) - 1;
-        let alpha_table: Vec<E> = cfg_into_iter!(0..n)
-            .map(|idx| alpha_evals_y[idx >> num_u])
-            .collect();
-        let m_table: Vec<E> = cfg_into_iter!(0..n)
-            .map(|idx| m_evals_x[idx & x_mask])
-            .collect();
-
         Self {
             w_table: w_evals,
-            alpha_table,
-            m_table,
+            alpha_compact: alpha_evals_y.to_vec(),
+            m_compact: m_evals_x.to_vec(),
+            num_u,
             num_vars,
+            rounds_completed: 0,
         }
     }
 }
@@ -83,28 +76,42 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for RelationSumcheck
     }
 
     fn input_claim(&self) -> E {
+        let x_mask = (1usize << self.num_u) - 1;
+        let alpha_compact = &self.alpha_compact;
+        let m_compact = &self.m_compact;
+        let num_u = self.num_u;
+
         #[cfg(feature = "parallel")]
         {
             self.w_table
                 .par_iter()
-                .zip(self.alpha_table.par_iter())
-                .zip(self.m_table.par_iter())
-                .fold(|| E::zero(), |acc, ((&w, &a), &m)| acc + w * a * m)
+                .enumerate()
+                .fold(
+                    || E::zero(),
+                    |acc, (idx, &w)| {
+                        acc + w * alpha_compact[idx >> num_u] * m_compact[idx & x_mask]
+                    },
+                )
                 .reduce(|| E::zero(), |a, b| a + b)
         }
         #[cfg(not(feature = "parallel"))]
         {
             self.w_table
                 .iter()
-                .zip(self.alpha_table.iter())
-                .zip(self.m_table.iter())
-                .fold(E::zero(), |acc, ((&w, &a), &m)| acc + w * a * m)
+                .enumerate()
+                .fold(E::zero(), |acc, (idx, &w)| {
+                    acc + w * alpha_compact[idx >> num_u] * m_compact[idx & x_mask]
+                })
         }
     }
 
     fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
         let half = self.w_table.len() / 2;
-        let num_points = 3; // degree 2 → 3 evaluation points
+        let num_points = 3;
+        let current_x_width = self.num_u.saturating_sub(self.rounds_completed);
+        let current_x_mask = (1usize << current_x_width).wrapping_sub(1);
+        let alpha_compact = &self.alpha_compact;
+        let m_compact = &self.m_compact;
 
         #[cfg(feature = "parallel")]
         let round_evals = {
@@ -115,10 +122,10 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for RelationSumcheck
                     |mut evals, j| {
                         let w_0 = self.w_table[2 * j];
                         let w_1 = self.w_table[2 * j + 1];
-                        let a_0 = self.alpha_table[2 * j];
-                        let a_1 = self.alpha_table[2 * j + 1];
-                        let m_0 = self.m_table[2 * j];
-                        let m_1 = self.m_table[2 * j + 1];
+                        let a_0 = alpha_compact[(2 * j) >> current_x_width];
+                        let a_1 = alpha_compact[(2 * j + 1) >> current_x_width];
+                        let m_0 = m_compact[(2 * j) & current_x_mask];
+                        let m_1 = m_compact[(2 * j + 1) & current_x_mask];
                         for (t, eval) in evals.iter_mut().enumerate() {
                             let t_e = E::from_u64(t as u64);
                             let w_t = w_0 + t_e * (w_1 - w_0);
@@ -145,10 +152,10 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for RelationSumcheck
             for j in 0..half {
                 let w_0 = self.w_table[2 * j];
                 let w_1 = self.w_table[2 * j + 1];
-                let a_0 = self.alpha_table[2 * j];
-                let a_1 = self.alpha_table[2 * j + 1];
-                let m_0 = self.m_table[2 * j];
-                let m_1 = self.m_table[2 * j + 1];
+                let a_0 = alpha_compact[(2 * j) >> current_x_width];
+                let a_1 = alpha_compact[(2 * j + 1) >> current_x_width];
+                let m_0 = m_compact[(2 * j) & current_x_mask];
+                let m_1 = m_compact[(2 * j + 1) & current_x_mask];
                 for (t, eval) in evals.iter_mut().enumerate() {
                     let t_e = E::from_u64(t as u64);
                     let w_t = w_0 + t_e * (w_1 - w_0);
@@ -165,8 +172,12 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for RelationSumcheck
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {
         fold_evals_in_place(&mut self.w_table, r);
-        fold_evals_in_place(&mut self.alpha_table, r);
-        fold_evals_in_place(&mut self.m_table, r);
+        if self.rounds_completed < self.num_u {
+            fold_evals_in_place(&mut self.m_compact, r);
+        } else {
+            fold_evals_in_place(&mut self.alpha_compact, r);
+        }
+        self.rounds_completed += 1;
     }
 }
 
@@ -235,7 +246,7 @@ impl<F: FieldCore, const D: usize> SumcheckInstanceVerifier<F> for RelationSumch
             .v
             .iter()
             .chain(self.u.iter())
-            .chain(std::iter::once(&self.y_ring))
+            .chain(iter::once(&self.y_ring))
             .map(|r| eval_ring_at(r, &self.alpha))
             .collect();
 

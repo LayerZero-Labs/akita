@@ -10,7 +10,7 @@ use crate::parallel::*;
 use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttMatrixCache;
 use crate::protocol::commitment::utils::linear::{
-    mat_vec_mul_ntt_cached_i8, unreduced_quotient_rows_ntt_cached,
+    flatten_i8_blocks, mat_vec_mul_ntt_cached_i8, unreduced_quotient_rows_ntt_cached,
     unreduced_quotient_rows_ntt_cached_i8, MatrixSlot,
 };
 use crate::protocol::commitment::utils::norm::{detect_field_modulus, vec_inf_norm};
@@ -415,7 +415,7 @@ where
     let poly_len = 2 * D - 1;
     let num_rows = Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A;
 
-    let t_hat_flat: Vec<[i8; D]> = t_hat.iter().flat_map(|v| v.iter().copied()).collect();
+    let t_hat_flat = flatten_i8_blocks(t_hat);
 
     // NTT-accelerated D, B, and A rows: compute quotient = (cyc - neg) / 2
     let t_d = Instant::now();
@@ -554,6 +554,11 @@ where
     let g1_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
     let j1 = gadget_row_scalars::<F>(depth_fold, log_basis);
 
+    let c_alphas: Vec<F> = challenges
+        .iter()
+        .map(|c| eval_ring_at(&c.to_dense::<F, D>().expect("valid challenge"), alpha))
+        .collect();
+
     let d_rows: Vec<Vec<F>> = cfg_iter!(setup.D)
         .map(|d_row| {
             let mut full = vec![F::zero(); total_cols];
@@ -592,14 +597,11 @@ where
     // Row 4: (c^T ⊗ G) · ŵ = a^T · G · J · ẑ
     {
         let mut full = vec![F::zero(); total_cols];
-        // LHS: challenges × ŵ (delta_open)
-        for (i, c) in challenges.iter().enumerate() {
-            let c_alpha = eval_ring_at(&c.to_dense::<F, D>().expect("valid challenge"), alpha);
+        for (i, &c_alpha) in c_alphas.iter().enumerate() {
             for (d, &g) in g1_open.iter().enumerate() {
                 full[i * depth_open + d] = c_alpha * g;
             }
         }
-        // RHS: -a^T · G · J · ẑ (z_pre uses delta_commit)
         let z_offset = w_len + t_len;
         for (i, &a_i) in opening_point.a.iter().enumerate() {
             for (d, &g) in g1_commit.iter().enumerate() {
@@ -616,8 +618,7 @@ where
     // Row 5: (c^T ⊗ G_{N_A}) · t̂ = A · J · ẑ (t̂ and ẑ use delta_commit)
     for a_idx in 0..Cfg::N_A {
         let mut full = vec![F::zero(); total_cols];
-        for (i, c) in challenges.iter().enumerate() {
-            let c_alpha = eval_ring_at(&c.to_dense::<F, D>().expect("valid challenge"), alpha);
+        for (i, &c_alpha) in c_alphas.iter().enumerate() {
             for (d, &g) in g1_commit.iter().enumerate() {
                 let t_idx = i * (Cfg::N_A * depth_commit) + a_idx * depth_commit + d;
                 full[w_len + t_idx] = c_alpha * g;
