@@ -132,6 +132,54 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         Self { limbs }
     }
 
+    /// Convert small integer coefficients (e.g. gadget digits) into
+    /// negacyclic CRT+NTT domain, bypassing Fp128 centering entirely.
+    pub fn from_i8_with_params(digits: &[i8; D], params: &CrtNttParamSet<W, K, D>) -> Self {
+        Self::from_i8_negacyclic_backend::<ScalarBackend>(digits, params)
+    }
+
+    fn from_i8_negacyclic_backend<B: NttPrimeOps<W, D> + NttTransform<W, D>>(
+        digits: &[i8; D],
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Self {
+        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for ((limb, prime), tw) in limbs
+            .iter_mut()
+            .zip(params.primes.iter())
+            .zip(params.twiddles.iter())
+        {
+            for (dst, &d) in limb.iter_mut().zip(digits.iter()) {
+                *dst = B::from_canonical(*prime, W::from_i64(d as i64));
+            }
+            B::forward_ntt(limb, *prime, tw);
+        }
+        Self { limbs }
+    }
+
+    /// Convert small integer coefficients into cyclic CRT+NTT domain,
+    /// bypassing Fp128 centering entirely.
+    pub fn from_i8_cyclic(digits: &[i8; D], params: &CrtNttParamSet<W, K, D>) -> Self {
+        Self::from_i8_cyclic_backend::<ScalarBackend>(digits, params)
+    }
+
+    fn from_i8_cyclic_backend<B: NttPrimeOps<W, D>>(
+        digits: &[i8; D],
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Self {
+        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for ((limb, prime), tw) in limbs
+            .iter_mut()
+            .zip(params.primes.iter())
+            .zip(params.twiddles.iter())
+        {
+            for (dst, &d) in limb.iter_mut().zip(digits.iter()) {
+                *dst = B::from_canonical(*prime, W::from_i64(d as i64));
+            }
+            forward_ntt_cyclic(limb, *prime, tw);
+        }
+        Self { limbs }
+    }
+
     /// Convert from CRT+NTT domain back to coefficient form
     /// using the default scalar backend.
     pub fn to_ring<F: CrtNttConvertibleField>(

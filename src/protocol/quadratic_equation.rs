@@ -10,7 +10,8 @@ use crate::parallel::*;
 use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttMatrixCache;
 use crate::protocol::commitment::utils::linear::{
-    mat_vec_mul_ntt_cached, unreduced_quotient_rows_ntt_cached, MatrixSlot,
+    mat_vec_mul_ntt_cached_i8, unreduced_quotient_rows_ntt_cached,
+    unreduced_quotient_rows_ntt_cached_i8, MatrixSlot,
 };
 use crate::protocol::commitment::utils::norm::{detect_field_modulus, vec_inf_norm};
 use crate::protocol::commitment::{
@@ -31,12 +32,12 @@ use std::time::Instant;
 /// **Steps 1–3.** Compute `w_i = a^T G_{2^m} s_i` and decompose: `ŵ_i = G_1^{-1}(w_i)`.
 ///
 /// Uses `HachiPolyOps::fold_blocks` to compute the per-block dot products,
-/// then decomposes each result.
+/// then decomposes each result into i8 digit planes.
 fn compute_w_hat<F, const D: usize, P>(
     opening_point: &RingOpeningPoint<F>,
     poly: &P,
     layout: HachiCommitmentLayout,
-) -> Vec<Vec<CyclotomicRing<F, D>>>
+) -> Vec<Vec<[i8; D]>>
 where
     F: FieldCore + CanonicalField,
     P: HachiPolyOps<F, D>,
@@ -51,21 +52,19 @@ where
     let folded = poly.fold_blocks(a, block_len);
     folded
         .into_iter()
-        .map(|w_i| w_i.balanced_decompose_pow2(depth_open, log_basis))
+        .map(|w_i| w_i.balanced_decompose_pow2_i8(depth_open, log_basis))
         .collect()
 }
 
 /// **Step 4.** Compute `v = D · ŵ` (first prover message).
 fn compute_v<F: FieldCore + CanonicalField, const D: usize>(
     cache: &NttMatrixCache<D>,
-    w_hat_flat: &[CyclotomicRing<F, D>],
-) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-    mat_vec_mul_ntt_cached(cache, MatrixSlot::D, w_hat_flat)
+    w_hat_flat: &[[i8; D]],
+) -> Vec<CyclotomicRing<F, D>> {
+    mat_vec_mul_ntt_cached_i8(cache, MatrixSlot::D, w_hat_flat)
 }
 
-fn flatten_w_hat<F: FieldCore, const D: usize>(
-    w_hat: &[Vec<CyclotomicRing<F, D>>],
-) -> Vec<CyclotomicRing<F, D>> {
+fn flatten_w_hat<const D: usize>(w_hat: &[Vec<[i8; D]>]) -> Vec<[i8; D]> {
     w_hat.iter().flat_map(|v| v.iter().copied()).collect()
 }
 
@@ -121,10 +120,10 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize, Cfg: CommitmentConfig
     /// Pre-decomposition folded witness `z_pre = Σ c_i · s_i` (prover only).
     /// Replaces both `z_hat` and `z`: `z_hat = J^{-1}(z_pre)`.
     z_pre: Option<Vec<CyclotomicRing<F, D>>>,
-    /// Decomposed `ŵ_i = G_1^{-1}(w_i)` (prover only).
-    w_hat: Option<Vec<Vec<CyclotomicRing<F, D>>>>,
-    /// Flattened `w_hat` (prover only, computed once and reused).
-    w_hat_flat: Option<Vec<CyclotomicRing<F, D>>>,
+    /// Decomposed `ŵ_i = G_1^{-1}(w_i)` as i8 digit planes (prover only).
+    w_hat: Option<Vec<Vec<[i8; D]>>>,
+    /// Flattened `w_hat` as i8 digit planes (prover only, computed once and reused).
+    w_hat_flat: Option<Vec<[i8; D]>>,
     /// Commitment hint (prover only).
     hint: Option<HachiCommitmentHint<F, D>>,
 
@@ -174,7 +173,7 @@ where
         let t_v = Instant::now();
         let v = {
             let _span = tracing::info_span!("compute_v").entered();
-            compute_v(setup.ntt_cache()?, &w_hat_flat)?
+            compute_v(setup.ntt_cache()?, &w_hat_flat)
         };
         eprintln!(
             "    [quad_eq] compute_v (D*w_hat): {:.2}s (w_hat_flat_len={})",
@@ -278,18 +277,18 @@ where
         self.z_pre.take()
     }
 
-    /// Get the decomposed witness `ŵ` (prover only).
-    pub fn w_hat(&self) -> Option<&[Vec<CyclotomicRing<F, D>>]> {
+    /// Get the decomposed witness `ŵ` as i8 digit planes (prover only).
+    pub fn w_hat(&self) -> Option<&[Vec<[i8; D]>]> {
         self.w_hat.as_deref()
     }
 
-    /// Get the pre-flattened `w_hat` (prover only).
-    pub fn w_hat_flat(&self) -> Option<&[CyclotomicRing<F, D>]> {
+    /// Get the pre-flattened `w_hat` as i8 digit planes (prover only).
+    pub fn w_hat_flat(&self) -> Option<&[[i8; D]]> {
         self.w_hat_flat.as_deref()
     }
 
     /// Take ownership of `w_hat`, leaving `None` in its place.
-    pub fn take_w_hat(&mut self) -> Option<Vec<Vec<CyclotomicRing<F, D>>>> {
+    pub fn take_w_hat(&mut self) -> Option<Vec<Vec<[i8; D]>>> {
         self.w_hat.take()
     }
 
@@ -388,8 +387,8 @@ pub(crate) fn compute_r_split_eq<F, const D: usize, Cfg>(
     setup: &HachiExpandedSetup<F, D>,
     opening_point: &RingOpeningPoint<F>,
     challenges: &[SparseChallenge],
-    w_hat: &[Vec<CyclotomicRing<F, D>>],
-    w_hat_flat: &[CyclotomicRing<F, D>],
+    w_hat: &[Vec<[i8; D]>],
+    w_hat_flat: &[[i8; D]],
     t_hat: &[Vec<CyclotomicRing<F, D>>],
     z_pre: &[CyclotomicRing<F, D>],
     y: &[CyclotomicRing<F, D>],
@@ -412,7 +411,7 @@ where
         let _span = tracing::info_span!("w_hat_recompose").entered();
         w_hat
             .iter()
-            .map(|w_hat_i| CyclotomicRing::gadget_recompose_pow2(w_hat_i, log_basis))
+            .map(|w_hat_i| CyclotomicRing::gadget_recompose_pow2_i8(w_hat_i, log_basis))
             .collect()
     };
 
@@ -420,7 +419,7 @@ where
     let t_d = Instant::now();
     let d_quotients = {
         let _span = tracing::info_span!("D_rows_ntt").entered();
-        unreduced_quotient_rows_ntt_cached(ntt_cache, MatrixSlot::D, &setup.D, w_hat_flat)
+        unreduced_quotient_rows_ntt_cached_i8(ntt_cache, MatrixSlot::D, &setup.D, w_hat_flat)
     };
     let d_time = t_d.elapsed().as_secs_f64();
 
@@ -672,6 +671,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::array::from_fn;
+
     use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
     use crate::protocol::challenges::sparse::sample_sparse_challenges;
     use crate::protocol::commitment::{HachiCommitmentCore, RingCommitmentScheme};
@@ -679,6 +680,7 @@ mod tests {
     use crate::protocol::proof::HachiCommitmentHint;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::test_utils::*;
+    use crate::FromSmallInt;
     use crate::Transcript;
 
     const TRANSCRIPT_SEED: &[u8] = b"test/prover-relation";
@@ -759,14 +761,28 @@ mod tests {
         }
     }
 
+    fn i8_to_ring(digits: &[[i8; D]]) -> Vec<CyclotomicRing<F, D>> {
+        digits
+            .iter()
+            .map(|d| {
+                let coeffs: [F; D] = from_fn(|i| F::from_i64(d[i] as i64));
+                CyclotomicRing::from_coefficients(coeffs)
+            })
+            .collect()
+    }
+
     /// Row 1: D · ŵ = v
     #[test]
     fn row1_d_times_w_hat_equals_v() {
         let f = build_fixture();
 
         let w_hat = f.quad_eq.w_hat().unwrap();
-        let w_hat_flat: Vec<CyclotomicRing<F, D>> =
-            w_hat.iter().flat_map(|v| v.iter().copied()).collect();
+        let w_hat_flat: Vec<CyclotomicRing<F, D>> = i8_to_ring(
+            &w_hat
+                .iter()
+                .flat_map(|v| v.iter().copied())
+                .collect::<Vec<_>>(),
+        );
         let lhs = mat_vec_mul(&f.setup.expanded.D, &w_hat_flat);
 
         assert_eq!(lhs, f.quad_eq.v(), "Row 1 failed: D · ŵ ≠ v");
@@ -793,7 +809,7 @@ mod tests {
         let w_hat = f.quad_eq.w_hat().unwrap();
         let w_recomposed: Vec<CyclotomicRing<F, D>> = w_hat
             .iter()
-            .map(|w_hat_i| CyclotomicRing::gadget_recompose_pow2(w_hat_i, log_basis()))
+            .map(|w_hat_i| CyclotomicRing::gadget_recompose_pow2_i8(w_hat_i, log_basis()))
             .collect();
 
         let u_eval = w_recomposed
@@ -838,7 +854,7 @@ mod tests {
         let w_hat = f.quad_eq.w_hat().unwrap();
         let w: Vec<CyclotomicRing<F, D>> = w_hat
             .iter()
-            .map(|w_hat_i| CyclotomicRing::gadget_recompose_pow2(w_hat_i, log_basis()))
+            .map(|w_hat_i| CyclotomicRing::gadget_recompose_pow2_i8(w_hat_i, log_basis()))
             .collect();
 
         let lhs = f

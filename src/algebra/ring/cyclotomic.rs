@@ -287,6 +287,33 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         Self { coeffs }
     }
 
+    /// Recompose from i8 digit planes (output of `balanced_decompose_pow2_i8`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `log_basis` is zero or >= 128.
+    pub fn gadget_recompose_pow2_i8(digits: &[[i8; D]], log_basis: u32) -> Self
+    where
+        F: CanonicalField,
+    {
+        if digits.is_empty() {
+            return Self::zero();
+        }
+        assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
+
+        let b = F::from_canonical_u128_reduced(1u128 << log_basis);
+        let coeffs = from_fn(|i| {
+            let mut acc = F::zero();
+            let mut power = F::one();
+            for plane in digits {
+                acc = acc + F::from_i64(plane[i] as i64) * power;
+                power = power * b;
+            }
+            acc
+        });
+        Self { coeffs }
+    }
+
     /// Balanced (centered) base-`2^log_basis` gadget decomposition: `G^{-1}`.
     ///
     /// Each coefficient `c` (centered into `(-q/2, q/2]`) is decomposed into

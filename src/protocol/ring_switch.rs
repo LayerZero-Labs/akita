@@ -667,7 +667,7 @@ pub(crate) fn sample_tau<F: FieldCore + CanonicalField, T: Transcript<F>>(
 }
 
 pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
-    w_hat: &[Vec<CyclotomicRing<F, D>>],
+    w_hat: &[Vec<[i8; D]>],
     t_hat: &[Vec<CyclotomicRing<F, D>>],
     z_pre: &[CyclotomicRing<F, D>],
     r: &[CyclotomicRing<F, D>],
@@ -681,14 +681,20 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
         .flat_map(|ri| ri.balanced_decompose_pow2(levels, log_basis))
         .collect();
 
-    let w_hat_flat = w_hat.iter().flat_map(|v| v.iter());
     let t_hat_flat = t_hat.iter().flat_map(|v| v.iter());
 
     let z_count = w_hat.iter().map(|v| v.len()).sum::<usize>()
         + t_hat.iter().map(|v| v.len()).sum::<usize>()
         + z_pre.len() * num_digits_fold;
     let mut out = Vec::with_capacity((z_count + r_hat.len()) * D);
-    for elem in w_hat_flat.chain(t_hat_flat) {
+    for block in w_hat {
+        for digits in block {
+            for &d in digits.iter() {
+                out.push(F::from_i64(d as i64));
+            }
+        }
+    }
+    for elem in t_hat_flat {
         out.extend_from_slice(elem.coefficients());
     }
     for z_j in z_pre {
