@@ -214,8 +214,9 @@ where
                 let start = i * block_len;
                 let end = (start + block_len).min(n);
 
-                let b_val = 1i128 << log_basis;
-                let half_b = b_val / 2;
+                let half_b = 1i128 << (log_basis - 1);
+                let b_val = half_b << 1;
+                let mask = b_val - 1;
 
                 for elem_idx in 0..(end.saturating_sub(start)) {
                     let ring = &coeffs[start + elem_idx];
@@ -230,9 +231,9 @@ where
                         };
 
                         for digit in 0..num_digits {
-                            let d = c.rem_euclid(b_val);
+                            let d = c & mask;
                             let balanced = if d >= half_b { d - b_val } else { d };
-                            c = (c - balanced) / b_val;
+                            c = (c - balanced) >> log_basis;
 
                             if balanced == 0 {
                                 continue;

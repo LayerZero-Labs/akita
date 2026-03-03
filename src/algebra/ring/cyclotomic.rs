@@ -228,8 +228,9 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             "levels * log_basis must be <= 128 + log_basis"
         );
 
-        let b = 1i128 << log_basis;
-        let half_b = b / 2;
+        let half_b = 1i128 << (log_basis - 1);
+        let b = half_b << 1;
+        let mask = b - 1;
         let q = (-F::one()).to_canonical_u128() + 1;
         let half_q = q / 2;
 
@@ -246,9 +247,9 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             };
 
             for plane in out.iter_mut() {
-                let d = c.rem_euclid(b);
+                let d = c & mask;
                 let balanced = if d >= half_b { d - b } else { d };
-                c = (c - balanced) / b;
+                c = (c - balanced) >> log_basis;
 
                 plane.coeffs[i] = if balanced >= 0 {
                     F::from_canonical_u128_reduced(balanced as u128)
@@ -332,8 +333,9 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             "levels * log_basis must be <= 128 + log_basis"
         );
 
-        let b = 1i128 << log_basis;
-        let half_b = b / 2;
+        let half_b = 1i128 << (log_basis - 1);
+        let b = half_b << 1;
+        let mask = b - 1;
         let q = (-F::one()).to_canonical_u128() + 1;
         let half_q = q / 2;
 
@@ -348,9 +350,9 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             };
 
             for plane in digit_planes.iter_mut() {
-                let d = c.rem_euclid(b);
+                let d = c & mask;
                 let balanced = if d >= half_b { d - b } else { d };
-                c = (c - balanced) / b;
+                c = (c - balanced) >> log_basis;
 
                 plane[i] = if balanced >= 0 {
                     F::from_canonical_u128_reduced(balanced as u128)
@@ -390,8 +392,9 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             "levels * log_basis must be <= 128 + log_basis"
         );
 
-        let b = 1i128 << log_basis;
-        let half_b = b / 2;
+        let half_b = 1i128 << (log_basis - 1);
+        let b = half_b << 1;
+        let mask = b - 1;
         let q = (-F::one()).to_canonical_u128() + 1;
         let half_q = q / 2;
 
@@ -406,9 +409,9 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             };
 
             for plane in digit_planes.iter_mut() {
-                let d = c.rem_euclid(b);
+                let d = c & mask;
                 let balanced = if d >= half_b { d - b } else { d };
-                c = (c - balanced) / b;
+                c = (c - balanced) >> log_basis;
                 plane[i] = balanced as i8;
             }
         }
