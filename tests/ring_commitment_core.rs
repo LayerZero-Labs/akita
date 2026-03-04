@@ -1,12 +1,12 @@
 #![allow(missing_docs)]
 
 use hachi_pcs::algebra::CyclotomicRing;
-use hachi_pcs::error::HachiError;
 use hachi_pcs::protocol::commitment::{
-    CommitmentConfig, HachiCommitmentCore, HachiCommitmentLayout, RingCommitmentScheme,
-    SmallTestCommitmentConfig,
+    utils::linear::decompose_block, CommitmentConfig, DecompositionParams, HachiCommitmentCore,
+    HachiCommitmentLayout, RingCommitmentScheme, SmallTestCommitmentConfig,
 };
 use hachi_pcs::test_utils::*;
+use hachi_pcs::{FromSmallInt, HachiError};
 
 #[derive(Clone)]
 struct BadDegreeConfig;
@@ -16,31 +16,18 @@ impl CommitmentConfig for BadDegreeConfig {
     const N_A: usize = 8;
     const N_B: usize = 4;
     const N_D: usize = 4;
-    const LOG_BASIS: u32 = 4;
-    const DELTA: usize = 8;
-    const TAU: usize = 4;
     const CHALLENGE_WEIGHT: usize = 3;
 
-    fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        HachiCommitmentLayout::new::<Self>(4, 2)
+    fn decomposition() -> DecompositionParams {
+        DecompositionParams {
+            log_basis: 3,
+            log_commit_bound: 32,
+            log_open_bound: None,
+        }
     }
-}
-
-#[derive(Clone)]
-struct BadDigitBudgetConfig;
-
-impl CommitmentConfig for BadDigitBudgetConfig {
-    const D: usize = 64;
-    const N_A: usize = 8;
-    const N_B: usize = 4;
-    const N_D: usize = 4;
-    const LOG_BASIS: u32 = 32;
-    const DELTA: usize = 5; // 160 > 128
-    const TAU: usize = 4;
-    const CHALLENGE_WEIGHT: usize = 3;
 
     fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        HachiCommitmentLayout::new::<Self>(4, 2)
+        HachiCommitmentLayout::new::<Self>(4, 2, &Self::decomposition())
     }
 }
 
@@ -55,16 +42,11 @@ fn setup_shape_is_consistent() {
     assert_eq!(v1.expanded.seed.max_num_vars, 16);
     assert_eq!(p2.expanded.seed.max_num_vars, 16);
     assert_eq!(v2.expanded.seed.max_num_vars, 16);
+    let depth = num_digits_commit();
     assert_eq!(p1.expanded.A.len(), TinyConfig::N_A);
-    assert_eq!(
-        p1.expanded.A[0].len(),
-        hachi_pcs::test_utils::BLOCK_LEN * TinyConfig::DELTA
-    );
+    assert_eq!(p1.expanded.A[0].len(), BLOCK_LEN * depth);
     assert_eq!(p1.expanded.B.len(), TinyConfig::N_B);
-    assert_eq!(
-        p1.expanded.B[0].len(),
-        TinyConfig::N_A * TinyConfig::DELTA * hachi_pcs::test_utils::NUM_BLOCKS
-    );
+    assert_eq!(p1.expanded.B[0].len(), TinyConfig::N_A * depth * NUM_BLOCKS);
 }
 
 #[test]
@@ -83,22 +65,13 @@ fn commit_is_deterministic_and_shape_consistent() {
     .unwrap();
 
     assert_eq!(w1.commitment, w2.commitment);
-    assert_eq!(w1.s, w2.s);
     assert_eq!(w1.t_hat, w2.t_hat);
 
-    let num_blocks = hachi_pcs::test_utils::NUM_BLOCKS;
-    let block_len = hachi_pcs::test_utils::BLOCK_LEN;
+    let num_blocks = NUM_BLOCKS;
     assert_eq!(w1.commitment.u.len(), TinyConfig::N_B);
-    assert_eq!(w1.s.len(), num_blocks);
     assert_eq!(w1.t_hat.len(), num_blocks);
-    assert!(w1
-        .s
-        .iter()
-        .all(|s| s.len() == block_len * TinyConfig::DELTA));
-    assert!(w1
-        .t_hat
-        .iter()
-        .all(|t| t.len() == TinyConfig::N_A * TinyConfig::DELTA));
+    let depth = num_digits_commit();
+    assert!(w1.t_hat.iter().all(|t| t.len() == TinyConfig::N_A * depth));
 }
 
 #[test]
@@ -124,7 +97,6 @@ fn commit_ring_coeffs_matches_block_commitment() {
     .unwrap();
 
     assert_eq!(wb.commitment, wc.commitment);
-    assert_eq!(wb.s, wc.s);
     assert_eq!(wb.t_hat, wc.t_hat);
 }
 
@@ -138,24 +110,31 @@ fn opening_satisfies_inner_and_outer_equations() {
     )
     .unwrap();
 
-    for i in 0..w.s.len() {
-        let lhs = mat_vec_mul(&psetup.expanded.A, &w.s[i]);
+    let depth = num_digits_commit();
+    let log_basis = log_basis();
+    for (i, block) in blocks.iter().enumerate() {
+        let s_i = decompose_block(block, depth, log_basis);
+        let lhs = mat_vec_mul(&psetup.expanded.A, &s_i);
         let rhs: Vec<CyclotomicRing<F, D>> = (0..TinyConfig::N_A)
             .map(|j| {
-                let start = j * TinyConfig::DELTA;
-                let end = start + TinyConfig::DELTA;
-                CyclotomicRing::gadget_recompose_pow2(
-                    &w.t_hat[i][start..end],
-                    TinyConfig::LOG_BASIS,
-                )
+                let start = j * depth;
+                let end = start + depth;
+                CyclotomicRing::gadget_recompose_pow2_i8(&w.t_hat[i][start..end], log_basis)
             })
             .collect();
         assert_eq!(lhs, rhs);
     }
 
-    let t_hat_flat: Vec<CyclotomicRing<F, D>> =
-        w.t_hat.iter().flat_map(|x| x.iter().copied()).collect();
-    let outer = mat_vec_mul(&psetup.expanded.B, &t_hat_flat);
+    let t_hat_flat_ring: Vec<CyclotomicRing<F, D>> = w
+        .t_hat
+        .iter()
+        .flat_map(|x| x.iter())
+        .map(|plane| {
+            let coeffs: [F; D] = std::array::from_fn(|k| F::from_i64(plane[k] as i64));
+            CyclotomicRing::from_coefficients(coeffs)
+        })
+        .collect();
+    let outer = mat_vec_mul(&psetup.expanded.B, &t_hat_flat_ring);
     assert_eq!(outer, w.commitment.u);
 }
 
@@ -165,8 +144,8 @@ fn small_test_config_has_expected_shape() {
     let layout = SmallTestCommitmentConfig::commitment_layout(8).unwrap();
     assert_eq!(layout.block_len, 16);
     assert_eq!(layout.num_blocks, 4);
-    let delta = SmallTestCommitmentConfig::DELTA;
-    assert!(delta > 0);
+    let depth = layout.num_digits_commit;
+    assert!(depth > 0);
 }
 
 #[test]
@@ -175,16 +154,6 @@ fn setup_rejects_mismatched_degree() {
         .unwrap_err();
     match err {
         HachiError::InvalidSetup(msg) => assert!(msg.contains("mismatches")),
-        other => panic!("unexpected error: {other:?}"),
-    }
-}
-
-#[test]
-fn setup_rejects_invalid_digit_budget() {
-    let err = <HachiCommitmentCore as RingCommitmentScheme<F, D, BadDigitBudgetConfig>>::setup(16)
-        .unwrap_err();
-    match err {
-        HachiError::InvalidSetup(msg) => assert!(msg.contains("DELTA * LOG_BASIS")),
         other => panic!("unexpected error: {other:?}"),
     }
 }

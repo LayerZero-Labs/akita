@@ -11,7 +11,7 @@
 //! `Prime128M13M4P0` denotes `p = 2^128 − 2^13 − 2^4 + 2^0`.
 
 use std::io::{Read, Write};
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use rand_core::RngCore;
 
@@ -19,7 +19,8 @@ use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
 use crate::{
-    CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, PseudoMersenneField,
+    AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible,
+    PseudoMersenneField,
 };
 
 /// Pack two u64 limbs into `[lo, hi]`.
@@ -62,7 +63,7 @@ impl<const P: u128> Eq for Fp128<P> {}
 
 impl<const P: u128> Fp128<P> {
     /// Offset `c = 2^128 − p`.  Validated at compile time.
-    const C: u128 = {
+    pub const C: u128 = {
         let c = 0u128.wrapping_sub(P);
         assert!(P != 0, "modulus must be nonzero");
         assert!(P & 1 == 1, "modulus must be odd");
@@ -74,7 +75,8 @@ impl<const P: u128> Fp128<P> {
         );
         c
     };
-    const C_LO: u64 = Self::C as u64;
+    /// Low 64 bits of `C` (always equals `C` since `C < 2^64`).
+    pub const C_LO: u64 = Self::C as u64;
     /// +1 means `C = 2^a + 1`, -1 means `C = 2^a - 1`, 0 means generic.
     const C_SHIFT_KIND: i8 = {
         let c = Self::C_LO;
@@ -129,6 +131,33 @@ impl<const P: u128> Fp128<P> {
         to_u128(self.0)
     }
 
+    /// Const-evaluable `from_i64`. Embeds a small signed integer into `Fp`.
+    pub const fn from_i64_const(val: i64) -> Self {
+        if val >= 0 {
+            Self(from_u128(val as u128))
+        } else {
+            Self(Self::sub_raw(
+                pack(0, 0),
+                from_u128(val.unsigned_abs() as u128),
+            ))
+        }
+    }
+
+    /// Const-evaluable lookup table for balanced digits in `[-b/2, b/2)`
+    /// where `b = 2^log_basis`. Requires `log_basis <= 4`.
+    pub const fn digit_lut(log_basis: u32) -> [Self; 16] {
+        assert!(log_basis > 0 && log_basis <= 4);
+        let b = 1u32 << log_basis;
+        let half_b = (b / 2) as i64;
+        let mut lut = [Self(pack(0, 0)); 16];
+        let mut i = 0u32;
+        while i < b {
+            lut[i as usize] = Self::from_i64_const(i as i64 - half_b);
+            i += 1;
+        }
+        lut
+    }
+
     #[inline(always)]
     fn add_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let (s, carry) = to_u128(a).overflowing_add(to_u128(b));
@@ -141,7 +170,7 @@ impl<const P: u128> Fp128<P> {
     }
 
     #[inline(always)]
-    fn sub_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+    const fn sub_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let (diff, borrow) = to_u128(a).overflowing_sub(to_u128(b));
         from_u128(if borrow { diff.wrapping_add(P) } else { diff })
     }
@@ -210,8 +239,32 @@ impl<const P: u128> Fp128<P> {
     }
 
     #[inline(always)]
+    fn sqr_wide(self) -> [u64; 4] {
+        let (a0, a1) = (self.0[0], self.0[1]);
+        let (p00_lo, p00_hi) = mul64_wide(a0, a0);
+        let (p01_lo, p01_hi) = mul64_wide(a0, a1);
+        let (p11_lo, p11_hi) = mul64_wide(a1, a1);
+
+        let row1 = p00_hi as u128 + (p01_lo as u128) * 2;
+        let r0 = p00_lo;
+        let r1 = row1 as u64;
+        let carry1 = (row1 >> 64) as u64;
+
+        let row2 = (p01_hi as u128) * 2 + p11_lo as u128 + carry1 as u128;
+        let r2 = row2 as u64;
+        let carry2 = (row2 >> 64) as u64;
+
+        let row3 = p11_hi as u128 + carry2 as u128;
+        let r3 = row3 as u64;
+        debug_assert_eq!(row3 >> 64, 0);
+
+        [r0, r1, r2, r3]
+    }
+
+    #[inline(always)]
     fn sqr_raw(a: [u64; 2]) -> [u64; 2] {
-        Self::mul_raw(a, a)
+        let [r0, r1, r2, r3] = Self(a).sqr_wide();
+        Self::reduce_4(r0, r1, r2, r3)
     }
 
     /// Squaring, equivalent to `self * self`.
@@ -225,7 +278,7 @@ impl<const P: u128> Fp128<P> {
         let mut acc = Self::one();
         while exp > 0 {
             if (exp & 1) == 1 {
-                acc = acc * base;
+                acc *= base;
             }
             base = Self(Self::sqr_raw(base.0));
             exp >>= 1;
@@ -643,6 +696,27 @@ impl<const P: u128> Neg for Fp128<P> {
     }
 }
 
+impl<const P: u128> AddAssign for Fp128<P> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl<const P: u128> SubAssign for Fp128<P> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl<const P: u128> MulAssign for Fp128<P> {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
+    }
+}
+
 impl<'a, const P: u128> Add<&'a Self> for Fp128<P> {
     type Output = Self;
     #[inline]
@@ -722,11 +796,11 @@ impl<const P: u128> HachiDeserialize for Fp128<P> {
     }
 }
 
-impl<const P: u128> FieldCore for Fp128<P> {
-    fn zero() -> Self {
-        Self(pack(0, 0))
-    }
+impl<const P: u128> AdditiveGroup for Fp128<P> {
+    const ZERO: Self = Self(pack(0, 0));
+}
 
+impl<const P: u128> FieldCore for Fp128<P> {
     fn one() -> Self {
         Self(pack(1, 0))
     }
@@ -743,6 +817,11 @@ impl<const P: u128> FieldCore for Fp128<P> {
             Some(inv)
         }
     }
+
+    const TWO_INV: Self = {
+        let v = (P >> 1) + 1;
+        Self(pack(v as u64, (v >> 64) as u64))
+    };
 }
 
 impl<const P: u128> Invertible for Fp128<P> {
@@ -778,12 +857,11 @@ impl<const P: u128> FromSmallInt for Fp128<P> {
     }
 
     fn from_i64(val: i64) -> Self {
-        if val >= 0 {
-            Self::from_u64(val as u64)
-        } else {
-            // unsigned_abs avoids overflow for i64::MIN.
-            -Self::from_u64(val.unsigned_abs())
-        }
+        Self::from_i64_const(val)
+    }
+
+    fn digit_lut(log_basis: u32) -> [Self; 16] {
+        Self::digit_lut(log_basis)
     }
 }
 
@@ -957,7 +1035,7 @@ mod tests {
                 carry = (sum >> 64) as u64;
             }
             assert_eq!(carry, 0);
-            expected = expected + a * F::from_u64(b);
+            expected += a * F::from_u64(b);
         }
 
         assert_eq!(F::solinas_reduce(&acc), expected);

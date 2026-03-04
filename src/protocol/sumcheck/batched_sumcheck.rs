@@ -12,7 +12,7 @@ use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckProof, Uni
 use crate::error::HachiError;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
-use crate::{FieldCore, FromSmallInt};
+use crate::{CanonicalField, FieldCore, FromSmallInt};
 
 fn mul_pow_2<E: FieldCore>(x: E, k: usize) -> E {
     let mut result = x;
@@ -27,7 +27,7 @@ fn linear_combination<E: FieldCore>(polys: &[UniPoly<E>], coeffs: &[E]) -> UniPo
     let mut result = vec![E::zero(); max_len];
     for (poly, coeff) in polys.iter().zip(coeffs.iter()) {
         for (i, c) in poly.coeffs.iter().enumerate() {
-            result[i] = result[i] + *c * *coeff;
+            result[i] += *c * *coeff;
         }
     }
     UniPoly::from_coeffs(result)
@@ -71,13 +71,14 @@ pub struct BatchedSumcheckRoundResult<E: FieldCore> {
 /// # Errors
 ///
 /// Returns an error if the field inverse of 2 does not exist.
+#[tracing::instrument(skip_all, name = "prove_batched_sumcheck")]
 pub fn prove_batched_sumcheck<F, T, E, S>(
     mut instances: Vec<&mut dyn SumcheckInstanceProver<E>>,
     transcript: &mut T,
     mut sample_challenge: S,
 ) -> Result<(SumcheckProof<E>, Vec<E>), HachiError>
 where
-    F: FieldCore + crate::CanonicalField,
+    F: FieldCore + CanonicalField,
     T: Transcript<F>,
     E: FieldCore + FromSmallInt,
     S: FnMut(&mut T) -> E,
@@ -123,10 +124,6 @@ where
         })
         .collect();
 
-    let two_inv = E::from_u64(2)
-        .inv()
-        .expect("field characteristic 2 not supported");
-
     let mut round_polys = Vec::with_capacity(max_num_rounds);
     let mut challenges = Vec::with_capacity(max_num_rounds);
 
@@ -141,7 +138,7 @@ where
                 if active {
                     inst.compute_round_univariate(round - offset, *previous_claim)
                 } else {
-                    UniPoly::from_coeffs(vec![*previous_claim * two_inv])
+                    UniPoly::from_coeffs(vec![*previous_claim * E::TWO_INV])
                 }
             })
             .collect();
@@ -218,7 +215,7 @@ pub fn verify_batched_sumcheck_rounds<F, T, E, S>(
     mut sample_challenge: S,
 ) -> Result<BatchedSumcheckRoundResult<E>, HachiError>
 where
-    F: FieldCore + crate::CanonicalField,
+    F: FieldCore + CanonicalField,
     T: Transcript<F>,
     E: FieldCore,
     S: FnMut(&mut T) -> E,
@@ -320,6 +317,7 @@ pub fn check_batched_output_claim<E: FieldCore>(
 /// # Errors
 ///
 /// Propagates errors from round verification and output-claim equality check.
+#[tracing::instrument(skip_all, name = "verify_batched_sumcheck")]
 pub fn verify_batched_sumcheck<F, T, E, S>(
     proof: &SumcheckProof<E>,
     verifiers: Vec<&dyn SumcheckInstanceVerifier<E>>,
@@ -327,7 +325,7 @@ pub fn verify_batched_sumcheck<F, T, E, S>(
     mut sample_challenge: S,
 ) -> Result<Vec<E>, HachiError>
 where
-    F: FieldCore + crate::CanonicalField,
+    F: FieldCore + CanonicalField,
     T: Transcript<F>,
     E: FieldCore,
     S: FnMut(&mut T) -> E,

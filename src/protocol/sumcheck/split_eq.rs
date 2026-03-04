@@ -140,8 +140,8 @@ impl<E: FieldCore> GruenSplitEq<E> {
         let slope = l_1 - l_0;
         let mut coeffs = vec![E::zero(); q_poly.coeffs.len() + 1];
         for (i, &c) in q_poly.coeffs.iter().enumerate() {
-            coeffs[i] = coeffs[i] + c * l_0;
-            coeffs[i + 1] = coeffs[i + 1] + c * slope;
+            coeffs[i] += c * l_0;
+            coeffs[i + 1] += c * slope;
         }
         UniPoly::from_coeffs(coeffs)
     }

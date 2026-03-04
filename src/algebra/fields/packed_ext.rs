@@ -15,7 +15,9 @@ use core::ops::{Add, Mul, Sub};
 ///
 /// If `PF` has width `W`, this represents `W` parallel `Fp2` values.
 pub struct PackedFp2<F: FieldCore, C: Fp2Config<F>, PF: PackedField<Scalar = F>> {
+    /// Degree-0 coefficient (packed across SIMD lanes).
     pub c0: PF,
+    /// Degree-1 coefficient (packed across SIMD lanes).
     pub c1: PF,
     _marker: std::marker::PhantomData<fn() -> (F, C)>,
 }
@@ -37,6 +39,7 @@ impl<F: FieldCore, C: Fp2Config<F>, PF: PackedField<Scalar = F>> std::fmt::Debug
 }
 
 impl<F: FieldCore, C: Fp2Config<F>, PF: PackedField<Scalar = F>> PackedFp2<F, C, PF> {
+    /// Create a `PackedFp2` from its two packed coefficients.
     #[inline]
     pub fn new(c0: PF, c1: PF) -> Self {
         Self {
@@ -158,7 +161,9 @@ pub struct PackedFp4<
     C4: Fp4Config<F, C2>,
     PF: PackedField<Scalar = F>,
 > {
+    /// Low half (`Fp2` coefficient 0).
     pub c0: PackedFp2<F, C2, PF>,
+    /// High half (`Fp2` coefficient 1).
     pub c1: PackedFp2<F, C2, PF>,
     _marker: std::marker::PhantomData<fn() -> C4>,
 }
@@ -203,6 +208,7 @@ where
     C4: Fp4Config<F, C2>,
     PF: PackedField<Scalar = F>,
 {
+    /// Create a `PackedFp4` from its two `PackedFp2` halves.
     #[inline]
     pub fn new(c0: PackedFp2<F, C2, PF>, c1: PackedFp2<F, C2, PF>) -> Self {
         Self {

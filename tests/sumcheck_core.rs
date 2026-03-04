@@ -111,8 +111,8 @@ impl<E: FieldCore> SumcheckInstanceProver<E> for DenseSumcheckProver<E> {
         let mut eval_0 = E::zero();
         let mut eval_1 = E::zero();
         for i in 0..half {
-            eval_0 = eval_0 + self.evals[2 * i];
-            eval_1 = eval_1 + self.evals[2 * i + 1];
+            eval_0 += self.evals[2 * i];
+            eval_1 += self.evals[2 * i + 1];
         }
         UniPoly::from_coeffs(vec![eval_0, eval_1 - eval_0])
     }

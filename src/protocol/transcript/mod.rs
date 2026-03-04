@@ -11,12 +11,6 @@ use crate::{CanonicalField, FieldCore, FromSmallInt, HachiSerialize};
 
 pub use hash::{Blake2bTranscript, HashTranscript, KeccakTranscript};
 
-/// Fixed nonce for single-polynomial rejection sampling. The seed is
-/// already transcript-derived and unique per challenge invocation, so
-/// the nonce is only needed for batching (`len > 1`). When sampling a
-/// single polynomial the nonce carries no additional entropy.
-const REJECTION_SAMPLER_SINGLE_NONCE: u64 = 0;
-
 /// Transcript interface for protocol Fiat-Shamir transforms.
 ///
 /// The protocol layer is label-aware and uses deterministic byte encoding for
@@ -58,6 +52,9 @@ where
     )
 }
 
+/// Fixed nonce for single-polynomial rejection sampling.
+const REJECTION_SAMPLER_SINGLE_NONCE: u64 = 0;
+
 /// Sample a dense ring-element challenge by drawing `D` scalar challenges.
 pub fn challenge_ring_element<F, T, const D: usize>(
     tr: &mut T,
@@ -73,14 +70,12 @@ where
 /// Sample a sparse ring-element challenge with operator-norm rejection sampling.
 ///
 /// Squeezes a 16-byte seed from the transcript, then delegates to the Labrador
-/// rejection sampler (`sample_labrador_challenge_coeffs`) which produces a
-/// polynomial with exactly `TAU1` coefficients in {±1} and `TAU2` in {±2},
-/// retrying until the operator norm is at most `LABRADOR_CHALLENGE_OPNORM_BOUND`.
+/// rejection sampler which produces a polynomial with exactly `TAU1` coefficients
+/// in {+/-1} and `TAU2` in {+/-2}, retrying until the operator norm is bounded.
 ///
 /// # Errors
 ///
-/// Returns an error if `D` is incompatible with the rejection sampler
-/// (must be a power of two, at most 256, and >= TAU1 + TAU2).
+/// Returns an error if `D` is incompatible with the rejection sampler.
 pub fn challenge_ring_element_rejection_sampled<F, T, const D: usize>(
     tr: &mut T,
     label: &[u8],

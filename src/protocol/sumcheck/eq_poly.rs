@@ -135,7 +135,7 @@ impl<E: FieldCore> EqPolynomial<E> {
                 .zip(evals_right.par_iter_mut())
                 .for_each(|(x, y)| {
                     *y = *x * r_i;
-                    *x = *x - *y;
+                    *x -= *y;
                 });
 
             size *= 2;

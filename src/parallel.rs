@@ -54,3 +54,21 @@ macro_rules! cfg_chunks {
         it
     }};
 }
+
+/// Parallel fold-reduce over a range.
+///
+/// With `parallel`: `range.into_par_iter().fold(identity, fold_op).reduce(identity, reduce_op)`.
+/// Without: `range.into_iter().fold(identity(), fold_op)`.
+#[macro_export]
+macro_rules! cfg_fold_reduce {
+    ($range:expr, $identity:expr, $fold_op:expr, $reduce_op:expr) => {{
+        #[cfg(feature = "parallel")]
+        let result = $range
+            .into_par_iter()
+            .fold($identity, $fold_op)
+            .reduce($identity, $reduce_op);
+        #[cfg(not(feature = "parallel"))]
+        let result = $range.into_iter().fold(($identity)(), $fold_op);
+        result
+    }};
+}

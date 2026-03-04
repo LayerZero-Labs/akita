@@ -1,61 +1,6 @@
-//! Polynomial trait for multilinear polynomials.
+//! Multilinear polynomial utility functions.
 
 use super::arithmetic::FieldCore;
-
-/// Trait for multilinear Lagrange polynomial operations
-pub trait MultilinearLagrange<F: FieldCore>: Polynomial<F> {
-    /// Compute multilinear Lagrange basis evaluations at a point
-    ///
-    /// For variables (r₀, r₁, ..., r_{n-1}), computes all 2^n basis polynomial evaluations.
-    /// The i-th basis polynomial evaluates to 1 at the i-th hypercube vertex and 0 elsewhere.
-    fn lagrange_basis(&self, output: &mut [F], point: &[F]) {
-        multilinear_lagrange_basis(output, point)
-    }
-
-    /// Compute vector-matrix product: v = L^T * M
-    ///
-    /// Treats coefficients as a 2^nu × 2^sigma matrix.
-    /// For each column j: v\[j\] = Σ_i left_vec\[i\] * coefficients\[i\]\[j\]
-    fn vector_matrix_product(&self, left_vec: &[F], nu: usize, sigma: usize) -> Vec<F>;
-
-    /// Compute left and right vectors from evaluation point
-    ///
-    /// Given a point arranged for matrix evaluation, computes L and R such that:
-    /// polynomial_evaluation(point) = L^T × M × R
-    fn compute_evaluation_vectors(&self, point: &[F], nu: usize, sigma: usize) -> (Vec<F>, Vec<F>) {
-        compute_left_right_vectors(point, nu, sigma)
-    }
-}
-
-/// Trait for multilinear polynomials
-///
-/// Represents a polynomial in evaluation form (coefficients at hypercube points).
-pub trait Polynomial<F: FieldCore> {
-    /// Number of variables
-    fn num_vars(&self) -> usize;
-
-    /// Total number of coefficients (2^num_vars)
-    fn len(&self) -> usize {
-        1 << self.num_vars()
-    }
-
-    /// Check if polynomial is empty
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Evaluate polynomial at a point
-    ///
-    /// # Parameters
-    /// - `point`: Evaluation point (length must equal num_vars)
-    ///
-    /// # Returns
-    /// Polynomial evaluation result
-    fn evaluate(&self, point: &[F]) -> F;
-
-    /// Return the coefficient/evaluation table on `{0,1}^n` in LSB-first order.
-    fn coeffs(&self) -> Vec<F>;
-}
 
 /// Compute multilinear Lagrange basis evaluations at a point
 ///

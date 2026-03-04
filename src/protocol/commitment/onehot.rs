@@ -6,13 +6,15 @@
 
 use std::collections::BTreeMap;
 
-use crate::algebra::ring::CyclotomicRing;
+use crate::algebra::fields::wide::{HasWide, ReduceTo};
+use crate::algebra::ring::{CyclotomicRing, WideCyclotomicRing};
 use crate::error::HachiError;
-use crate::{CanonicalField, FieldCore};
+use crate::protocol::hachi_poly_ops::OneHotIndex;
+use crate::{AdditiveGroup, CanonicalField, FieldCore};
 
 /// Describes a nonzero ring element within one block of the commitment layout.
-#[derive(Debug, Clone)]
-pub(crate) struct SparseBlockEntry {
+#[derive(Debug, Clone, PartialEq)]
+pub struct SparseBlockEntry {
     /// Position within the block (0..2^M).
     pub pos_in_block: usize,
     /// Coefficient indices that are 1 within this ring element.
@@ -35,9 +37,9 @@ pub(crate) struct SparseBlockEntry {
 /// Returns an error if K and D are not "nicely matched" (one must divide
 /// the other), if any index is out of range, or if the dimensions don't
 /// fill the commitment layout.
-pub(crate) fn map_onehot_to_sparse_blocks(
+pub fn map_onehot_to_sparse_blocks<I: OneHotIndex>(
     onehot_k: usize,
-    indices: &[usize],
+    indices: &[Option<I>],
     r: usize,
     m: usize,
     d: usize,
@@ -72,9 +74,12 @@ pub(crate) fn map_onehot_to_sparse_blocks(
         });
     }
 
-    // Accumulate nonzero coefficients per ring element index.
     let mut ring_elem_map: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for (c, &idx) in indices.iter().enumerate() {
+    for (c, opt) in indices.iter().enumerate() {
+        let Some(&idx_raw) = opt.as_ref() else {
+            continue;
+        };
+        let idx = idx_raw.as_usize();
         if idx >= onehot_k {
             return Err(HachiError::InvalidInput(format!(
                 "index {idx} out of range for chunk size K={onehot_k} at position {c}"
@@ -107,51 +112,68 @@ pub(crate) fn map_onehot_to_sparse_blocks(
 /// Sparse inner Ajtai: compute `t = A * s` for a one-hot block.
 ///
 /// Instead of materializing the full decomposed vector `s` and doing a dense
-/// matvec, we accumulate only the nonzero contributions:
+/// matvec, we accumulate only the nonzero contributions using fused
+/// shift-accumulate (no intermediate temporaries):
 ///
 /// ```text
-/// t[a] = sum_{entry} A[a][entry.pos * delta].mul_by_monomial_sum(entry.nonzero_coeffs)
+/// t[a] += A[a][entry.pos * num_digits] * (X^{k_1} + X^{k_2} + ...)
 /// ```
-///
-/// Also returns `s` (densely materialized) for the opening proof hint.
+#[cfg(test)]
 #[allow(non_snake_case)]
-pub(crate) fn inner_ajtai_onehot<F: FieldCore + CanonicalField, const D: usize>(
+pub(crate) fn inner_ajtai_onehot_t_only<F: FieldCore + CanonicalField, const D: usize>(
     A: &[Vec<CyclotomicRing<F, D>>],
     sparse_entries: &[SparseBlockEntry],
-    block_len: usize,
-    delta: usize,
-) -> (Vec<CyclotomicRing<F, D>>, Vec<CyclotomicRing<F, D>>) {
+    _block_len: usize,
+    num_digits: usize,
+) -> Vec<CyclotomicRing<F, D>> {
     let n_a = A.len();
-    let inner_width = block_len * delta;
 
-    // Build s: mostly zeros, with level-0 entries for nonzero ring elements.
-    let mut s = vec![CyclotomicRing::<F, D>::zero(); inner_width];
-    for entry in sparse_entries {
-        let mut coeffs = [F::zero(); D];
-        for &ci in &entry.nonzero_coeffs {
-            coeffs[ci] = F::one();
-        }
-        s[entry.pos_in_block * delta] = CyclotomicRing::from_coefficients(coeffs);
-    }
-
-    // Compute t[a] = sum over nonzero entries of A[a][pos*delta] * f_j,
-    // where f_j is the monomial sum at that position.
     let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
     for entry in sparse_entries {
-        let col = entry.pos_in_block * delta;
+        let col = entry.pos_in_block * num_digits;
         for a in 0..n_a {
-            t[a] += A[a][col].mul_by_monomial_sum(&entry.nonzero_coeffs);
+            A[a][col].mul_by_monomial_sum_into(&mut t[a], &entry.nonzero_coeffs);
         }
     }
 
-    (t, s)
+    t
+}
+
+/// Wide-accumulator variant of [`inner_ajtai_onehot_t_only`].
+///
+/// Accumulates into `WideCyclotomicRing<W, D>` (carry-free i32 additions),
+/// then reduces once at the end. This avoids per-addition modular reduction.
+#[allow(non_snake_case)]
+pub(crate) fn inner_ajtai_onehot_wide<F, const D: usize>(
+    A: &[Vec<CyclotomicRing<F, D>>],
+    sparse_entries: &[SparseBlockEntry],
+    _block_len: usize,
+    num_digits: usize,
+) -> Vec<CyclotomicRing<F, D>>
+where
+    F: FieldCore + CanonicalField + HasWide,
+    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+{
+    let n_a = A.len();
+    let mut t_wide = vec![WideCyclotomicRing::<F::Wide, D>::zero(); n_a];
+
+    for entry in sparse_entries {
+        let col = entry.pos_in_block * num_digits;
+        for a in 0..n_a {
+            let a_wide = WideCyclotomicRing::from_ring(&A[a][col]);
+            a_wide.mul_by_monomial_sum_into(&mut t_wide[a], &entry.nonzero_coeffs);
+        }
+    }
+
+    t_wide.into_iter().map(|w| w.reduce()).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::F;
-    use crate::FromSmallInt;
+    use crate::algebra::fields::{Fp64, Prime128M8M4M1M0};
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
     #[test]
     fn map_onehot_k_gt_d() {
@@ -159,7 +181,7 @@ mod tests {
         // R=1 (2 blocks), M=2 (4 per block) => 8 ring elements total
         let k = 16;
         let d = 4;
-        let indices = vec![3, 10];
+        let indices: Vec<Option<u32>> = vec![Some(3), Some(10)];
         let blocks = map_onehot_to_sparse_blocks(k, &indices, 1, 2, d).unwrap();
 
         assert_eq!(blocks.len(), 2);
@@ -179,7 +201,7 @@ mod tests {
         // R=1 (2 blocks), M=1 (2 per block)
         let k = 4;
         let d = 4;
-        let indices = vec![0, 2, 3, 1];
+        let indices: Vec<Option<u32>> = vec![Some(0), Some(2), Some(3), Some(1)];
         let blocks = map_onehot_to_sparse_blocks(k, &indices, 1, 1, d).unwrap();
 
         assert_eq!(blocks.len(), 2);
@@ -199,7 +221,16 @@ mod tests {
         // R=1 (2 blocks), M=1 (2 per block)
         let k = 4;
         let d = 8;
-        let indices = vec![0, 2, 3, 1, 0, 0, 3, 3];
+        let indices: Vec<Option<u32>> = vec![
+            Some(0),
+            Some(2),
+            Some(3),
+            Some(1),
+            Some(0),
+            Some(0),
+            Some(3),
+            Some(3),
+        ];
         let blocks = map_onehot_to_sparse_blocks(k, &indices, 1, 1, d).unwrap();
 
         assert_eq!(blocks.len(), 2);
@@ -219,49 +250,81 @@ mod tests {
 
     #[test]
     fn map_onehot_rejects_non_divisible() {
-        let result = map_onehot_to_sparse_blocks(3, &[0, 1], 0, 1, 4);
+        let result = map_onehot_to_sparse_blocks(3, &[Some(0usize), Some(1)], 0, 1, 4);
         assert!(result.is_err());
     }
 
     #[test]
-    fn inner_ajtai_onehot_single_monomial() {
-        const D: usize = 4;
-        type R = CyclotomicRing<F, D>;
+    fn wide_matches_reference() {
+        type F = Fp64<4294967197>;
+        const D: usize = 64;
 
-        // A is 2x4 (N_A=2, inner_width = block_len * delta = 2 * 2 = 4)
-        let a: Vec<Vec<R>> = vec![
-            vec![
-                R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 1) as u64))),
-                R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 10) as u64))),
-                R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 20) as u64))),
-                R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 30) as u64))),
-            ],
-            vec![
-                R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 5) as u64))),
-                R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 15) as u64))),
-                R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 25) as u64))),
-                R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 35) as u64))),
-            ],
+        let mut rng = StdRng::seed_from_u64(0xdead_beef);
+        let n_a = 3;
+        let block_len = 4;
+        let num_digits = 5;
+        let a_matrix: Vec<Vec<CyclotomicRing<F, D>>> = (0..n_a)
+            .map(|_| {
+                (0..block_len * num_digits)
+                    .map(|_| CyclotomicRing::random(&mut rng))
+                    .collect()
+            })
+            .collect();
+
+        let entries = vec![
+            SparseBlockEntry {
+                pos_in_block: 0,
+                nonzero_coeffs: vec![1, 7, 15],
+            },
+            SparseBlockEntry {
+                pos_in_block: 2,
+                nonzero_coeffs: vec![0, 63],
+            },
         ];
 
-        // One nonzero entry at pos=1, coefficient index 2 => monomial X^2
-        let entries = vec![SparseBlockEntry {
-            pos_in_block: 1,
-            nonzero_coeffs: vec![2],
-        }];
+        let ref_result = inner_ajtai_onehot_t_only(&a_matrix, &entries, block_len, num_digits);
+        let wide_result = inner_ajtai_onehot_wide(&a_matrix, &entries, block_len, num_digits);
 
-        let (t, s) = inner_ajtai_onehot(&a, &entries, 2, 2);
-
-        // t[row] should equal A[row][1*2] * X^2 = A[row][2].negacyclic_shift(2)
-        for row in 0..2 {
-            let expected = a[row][2].negacyclic_shift(2);
-            assert_eq!(t[row], expected);
+        assert_eq!(ref_result.len(), wide_result.len());
+        for (r, w) in ref_result.iter().zip(wide_result.iter()) {
+            assert_eq!(r, w, "wide result must match reference");
         }
+    }
 
-        // s should have a nonzero entry at position 1*2 = 2
-        assert_eq!(s[2].coefficients()[2], F::one());
-        assert!(s[0] == R::zero());
-        assert!(s[1] == R::zero());
-        assert!(s[3] == R::zero());
+    #[test]
+    fn wide_matches_reference_fp128() {
+        type F = Prime128M8M4M1M0;
+        const D: usize = 64;
+
+        let mut rng = StdRng::seed_from_u64(0xcafe_1234);
+        let n_a = 2;
+        let block_len = 2;
+        let num_digits = 3;
+        let a_matrix: Vec<Vec<CyclotomicRing<F, D>>> = (0..n_a)
+            .map(|_| {
+                (0..block_len * num_digits)
+                    .map(|_| CyclotomicRing::random(&mut rng))
+                    .collect()
+            })
+            .collect();
+
+        let entries = vec![
+            SparseBlockEntry {
+                pos_in_block: 0,
+                nonzero_coeffs: vec![0, 5, 32, 63],
+            },
+            SparseBlockEntry {
+                pos_in_block: 1,
+                nonzero_coeffs: vec![10],
+            },
+        ];
+
+        let ref_result = inner_ajtai_onehot_t_only(&a_matrix, &entries, block_len, num_digits);
+        let wide_result = inner_ajtai_onehot_wide(&a_matrix, &entries, block_len, num_digits);
+
+        assert_eq!(ref_result.len(), wide_result.len());
+        for (r, w) in ref_result.iter().zip(wide_result.iter()) {
+            assert_eq!(r, w, "wide result must match reference (Fp128)");
+        }
     }
 }

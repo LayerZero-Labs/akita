@@ -78,7 +78,7 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for BaselineNormSumc
                         for (t, eval) in evals.iter_mut().enumerate() {
                             let t_e = E::from_u64(t as u64);
                             let w_t = w_0 + t_e * (w_1 - w_0);
-                            *eval = *eval + eq_rem * range_check_eval(w_t, b);
+                            *eval += eq_rem * range_check_eval(w_t, b);
                         }
                         evals
                     },
@@ -87,7 +87,7 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for BaselineNormSumc
                     || vec![E::zero(); num_points_q],
                     |mut a, b_vec| {
                         for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
-                            *ai = *ai + *bi;
+                            *ai += *bi;
                         }
                         a
                     },
@@ -105,7 +105,7 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for BaselineNormSumc
                 for (t, eval) in q_evals.iter_mut().enumerate() {
                     let t_e = E::from_u64(t as u64);
                     let w_t = w_0 + t_e * (w_1 - w_0);
-                    *eval = *eval + eq_rem * range_check_eval(w_t, b);
+                    *eval += eq_rem * range_check_eval(w_t, b);
                 }
             }
             q_evals

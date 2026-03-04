@@ -14,6 +14,7 @@
 
 pub mod batched_sumcheck;
 pub mod eq_poly;
+pub mod hachi_sumcheck;
 pub mod norm_sumcheck;
 pub mod relation_sumcheck;
 pub mod split_eq;
@@ -22,9 +23,11 @@ pub mod types;
 use crate::error::HachiError;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
-use crate::FieldCore;
+use crate::{CanonicalField, FieldCore};
 
-pub use crate::algebra::poly::{fold_evals_in_place, multilinear_eval, range_check_eval};
+pub use crate::algebra::poly::{
+    fold_evals_in_place, multilinear_eval, multilinear_eval_small, range_check_eval,
+};
 pub use types::{CompressedUniPoly, SumcheckProof, UniPoly};
 
 /// Prover-side sumcheck instance interface.
@@ -96,13 +99,14 @@ pub trait SumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
 /// # Errors
 ///
 /// Returns an error if any per-round polynomial exceeds the instance's degree bound.
+#[tracing::instrument(skip_all, name = "prove_sumcheck")]
 pub fn prove_sumcheck<F, T, E, S, Inst>(
     instance: &mut Inst,
     transcript: &mut T,
     mut sample_challenge: S,
 ) -> Result<(SumcheckProof<E>, Vec<E>, E), HachiError>
 where
-    F: crate::FieldCore + crate::CanonicalField,
+    F: FieldCore + CanonicalField,
     T: Transcript<F>,
     E: FieldCore,
     S: FnMut(&mut T) -> E,
@@ -163,6 +167,7 @@ where
 /// Returns [`HachiError::InvalidProof`] if the final sumcheck claim does not
 /// match the oracle evaluation, or propagates any error from the per-round
 /// verification (e.g. degree-bound violation, round-count mismatch).
+#[tracing::instrument(skip_all, name = "verify_sumcheck")]
 pub fn verify_sumcheck<F, T, E, S, V>(
     proof: &SumcheckProof<E>,
     verifier: &V,
@@ -170,7 +175,7 @@ pub fn verify_sumcheck<F, T, E, S, V>(
     sample_challenge: S,
 ) -> Result<Vec<E>, HachiError>
 where
-    F: crate::FieldCore + crate::CanonicalField,
+    F: FieldCore + CanonicalField,
     T: Transcript<F>,
     E: FieldCore,
     S: FnMut(&mut T) -> E,
@@ -188,6 +193,12 @@ where
 
     let expected = verifier.expected_output_claim(&challenges)?;
     if final_claim != expected {
+        eprintln!(
+            "[verify_sumcheck] MISMATCH: rounds={}, degree_bound={}",
+            verifier.num_rounds(),
+            verifier.degree_bound(),
+        );
+        eprintln!("  diff_is_zero = {}", (final_claim - expected).is_zero());
         return Err(HachiError::InvalidProof);
     }
 

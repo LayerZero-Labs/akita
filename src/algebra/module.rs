@@ -26,7 +26,7 @@ impl<F: FieldCore, const N: usize> Add for VectorModule<F, N> {
     fn add(self, rhs: Self) -> Self::Output {
         let mut out = self.0;
         for (dst, src) in out.iter_mut().zip(rhs.0.iter()) {
-            *dst = *dst + *src;
+            *dst += *src;
         }
         Self(out)
     }
@@ -37,7 +37,7 @@ impl<F: FieldCore, const N: usize> Sub for VectorModule<F, N> {
     fn sub(self, rhs: Self) -> Self::Output {
         let mut out = self.0;
         for (dst, src) in out.iter_mut().zip(rhs.0.iter()) {
-            *dst = *dst - *src;
+            *dst -= *src;
         }
         Self(out)
     }

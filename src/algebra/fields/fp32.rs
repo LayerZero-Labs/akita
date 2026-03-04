@@ -4,7 +4,7 @@
 //! Uses Solinas-style two-fold reduction: the offset `c` and fold point `k`
 //! are computed at compile time from the const-generic modulus `P`.
 
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use rand_core::RngCore;
 
@@ -12,7 +12,8 @@ use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
 use crate::{
-    CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, PseudoMersenneField,
+    AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible,
+    PseudoMersenneField,
 };
 use std::io::{Read, Write};
 
@@ -29,7 +30,7 @@ impl<const P: u32> Fp32<P> {
     const BITS: u32 = 32 - P.leading_zeros();
 
     /// Offset `c = 2^k − P`.
-    const C: u32 = {
+    pub const C: u32 = {
         let c = if Self::BITS == 32 {
             0u32.wrapping_sub(P)
         } else {
@@ -152,7 +153,7 @@ impl<const P: u32> Fp32<P> {
         let mut acc = Self::one();
         while exp > 0 {
             if (exp & 1) == 1 {
-                acc = acc * base;
+                acc *= base;
             }
             base = base.square();
             exp >>= 1;
@@ -215,6 +216,27 @@ impl<const P: u32> Neg for Fp32<P> {
     #[inline]
     fn neg(self) -> Self::Output {
         Self(Self::sub_raw(0, self.0))
+    }
+}
+
+impl<const P: u32> AddAssign for Fp32<P> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl<const P: u32> SubAssign for Fp32<P> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl<const P: u32> MulAssign for Fp32<P> {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
     }
 }
 
@@ -288,11 +310,11 @@ impl<const P: u32> HachiDeserialize for Fp32<P> {
     }
 }
 
-impl<const P: u32> FieldCore for Fp32<P> {
-    fn zero() -> Self {
-        Self(0)
-    }
+impl<const P: u32> AdditiveGroup for Fp32<P> {
+    const ZERO: Self = Self(0);
+}
 
+impl<const P: u32> FieldCore for Fp32<P> {
     fn one() -> Self {
         Self(if P > 1 { 1 } else { 0 })
     }
@@ -309,6 +331,8 @@ impl<const P: u32> FieldCore for Fp32<P> {
             Some(inv)
         }
     }
+
+    const TWO_INV: Self = Self((P as u64).div_ceil(2) as u32);
 }
 
 impl<const P: u32> Invertible for Fp32<P> {

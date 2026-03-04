@@ -8,6 +8,7 @@ pub mod challenges;
 pub mod commitment;
 pub mod commitment_scheme;
 pub mod greyhound;
+pub mod hachi_poly_ops;
 pub mod labrador;
 pub mod opening_point;
 pub mod prg;
@@ -18,20 +19,18 @@ pub mod sumcheck;
 pub mod transcript;
 
 pub use commitment::{
-    AppendToTranscript, CommitmentConfig, CommitmentScheme, DummyProof, HachiCommitment,
-    HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup, HachiOpeningClaim,
-    HachiOpeningPoint, HachiPreparedSetup, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup,
-    ProductionFp128CommitmentConfig, RingCommitment, RingCommitmentScheme,
-    SmallTestCommitmentConfig, StreamingCommitmentScheme,
+    AppendToTranscript, CommitmentConfig, CommitmentScheme, DummyProof,
+    DynamicSmallTestCommitmentConfig, Fp128CommitmentConfig, HachiCommitment, HachiCommitmentCore,
+    HachiCommitmentLayout, HachiExpandedSetup, HachiOpeningClaim, HachiOpeningPoint,
+    HachiProverSetup, HachiSetupSeed, HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
+    SmallTestCommitmentConfig,
 };
-pub use commitment_scheme::{HachiChunkState, HachiCommitmentScheme};
-pub use opening_point::RingOpeningPoint;
-pub use proof::{HachiFoldProof, HachiProof};
+pub use commitment_scheme::HachiCommitmentScheme;
+pub use hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly};
+pub use opening_point::{BasisMode, RingOpeningPoint};
+pub use proof::{HachiLevelProof, HachiProof, PackedDigits};
 pub use quadratic_equation::QuadraticEquation;
-pub use sumcheck::batched_sumcheck::{
-    check_batched_output_claim, compute_batched_expected_output_claim, prove_batched_sumcheck,
-    verify_batched_sumcheck, verify_batched_sumcheck_rounds, BatchedSumcheckRoundResult,
-};
+pub use sumcheck::batched_sumcheck::{prove_batched_sumcheck, verify_batched_sumcheck};
 pub use sumcheck::{
     prove_sumcheck, verify_sumcheck, CompressedUniPoly, SumcheckInstanceProver,
     SumcheckInstanceVerifier, SumcheckProof, UniPoly,

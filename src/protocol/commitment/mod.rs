@@ -2,23 +2,22 @@
 
 mod commit;
 mod config;
-pub(crate) mod onehot;
+pub mod onehot;
 mod scheme;
 mod transcript_append;
 mod types;
-pub(crate) mod utils;
+pub mod utils;
 
 pub use commit::{
-    HachiCommitmentCore, HachiExpandedSetup, HachiPreparedSetup, HachiProverSetup, HachiSetupSeed,
-    HachiVerifierSetup,
+    HachiCommitmentCore, HachiExpandedSetup, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup,
 };
 pub use config::{
-    CommitmentConfig, HachiCommitmentLayout, ProductionFp128CommitmentConfig,
+    compute_num_digits, compute_num_digits_fold, CommitmentConfig, DecompositionParams,
+    DynamicSmallTestCommitmentConfig, Fp128CommitmentConfig, HachiCommitmentLayout,
     SmallTestCommitmentConfig,
 };
-pub use scheme::{
-    CommitWitness, CommitmentScheme, RingCommitmentScheme, StreamingCommitmentScheme,
-};
+pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
+pub use scheme::{CommitWitness, CommitmentScheme, RingCommitmentScheme};
 pub use transcript_append::AppendToTranscript;
 pub use types::{
     DummyProof, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint, RingCommitment,

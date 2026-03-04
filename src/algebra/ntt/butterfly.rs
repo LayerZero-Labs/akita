@@ -15,6 +15,7 @@ use super::prime::{MontCoeff, NttPrime, PrimeWidth};
 /// Precomputed twiddle factors for a specific prime and degree `D`.
 ///
 /// `D` must be a power of two.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NttTwiddles<W: PrimeWidth, const D: usize> {
     /// Stage roots for iterative forward cyclic NTT in Montgomery form.
     pub(crate) fwd_wlen: [MontCoeff<W>; D],
@@ -28,6 +29,14 @@ pub struct NttTwiddles<W: PrimeWidth, const D: usize> {
     pub(crate) psi_inv_pows: [MontCoeff<W>; D],
     /// `D^{-1} mod p` in Montgomery form, used for inverse NTT final scaling.
     pub(crate) d_inv: MontCoeff<W>,
+    /// Fused `D^{-1} * psi^{-i}` for each index, in Montgomery form.
+    pub(crate) d_inv_psi_inv: [MontCoeff<W>; D],
+    /// Per-position forward twiddles, packed across stages.
+    /// Stage s (with butterfly half-length 2^s) occupies `[2^s - 1 .. 2^(s+1) - 2]`.
+    /// Breaks the serial `w = mul(w, wlen)` dependency chain in butterfly loops.
+    pub(crate) fwd_twiddles: [MontCoeff<W>; D],
+    /// Per-position inverse twiddles, same layout as `fwd_twiddles`.
+    pub(crate) inv_twiddles: [MontCoeff<W>; D],
 }
 
 impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
@@ -79,13 +88,38 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
         let d_inv_canonical = pow_mod(D as i64, p - 2, p);
         let d_inv = prime.from_canonical(W::from_i64(d_inv_canonical));
 
+        let mut d_inv_psi_inv = [MontCoeff::from_raw(W::default()); D];
+        for i in 0..D {
+            d_inv_psi_inv[i] = prime.mul(d_inv, psi_inv_pows[i]);
+        }
+
+        let num_stages = stage;
+        let mut fwd_twiddles = [MontCoeff::from_raw(W::default()); D];
+        let mut inv_twiddles = [MontCoeff::from_raw(W::default()); D];
+        let one = prime.from_canonical(W::from_i64(1));
+        for s in 0..num_stages {
+            let len = 1usize << s;
+            let base = len - 1;
+            let mut w_fwd = one;
+            let mut w_inv = one;
+            for j in 0..len {
+                fwd_twiddles[base + j] = w_fwd;
+                inv_twiddles[base + j] = w_inv;
+                w_fwd = prime.mul(w_fwd, fwd_wlen[s]);
+                w_inv = prime.mul(w_inv, inv_wlen[s]);
+            }
+        }
+
         Self {
             fwd_wlen,
             inv_wlen,
-            num_stages: stage,
+            num_stages,
             psi_pows,
             psi_inv_pows,
             d_inv,
+            d_inv_psi_inv,
+            fwd_twiddles,
+            inv_twiddles,
         }
     }
 }
@@ -100,36 +134,53 @@ pub fn forward_ntt<W: PrimeWidth, const D: usize>(
     prime: NttPrime<W>,
     tw: &NttTwiddles<W, D>,
 ) {
+    #[cfg(target_arch = "aarch64")]
+    if super::neon::use_neon_ntt() {
+        if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
+            unsafe {
+                super::neon::forward_ntt_i32(
+                    &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
+                    *(&prime as *const _ as *const NttPrime<i32>),
+                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                );
+            }
+            return;
+        }
+        if std::mem::size_of::<W>() == std::mem::size_of::<i16>() {
+            unsafe {
+                super::neon::forward_ntt_i16(
+                    &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
+                    *(&prime as *const _ as *const NttPrime<i16>),
+                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                );
+            }
+            return;
+        }
+    }
+
     for (ai, psi) in a.iter_mut().zip(tw.psi_pows.iter()) {
         *ai = prime.mul(*ai, *psi);
     }
 
-    let one = prime.from_canonical(W::from_i64(1));
-
     let mut len = D / 2;
-    let mut stage = tw.num_stages;
     while len > 0 {
-        stage -= 1;
-        let wlen = tw.fwd_wlen[stage];
+        let twiddle_base = len - 1;
         let mut start = 0usize;
         while start < D {
-            let mut w = one;
             for j in 0..len {
+                let w = tw.fwd_twiddles[twiddle_base + j];
                 let u = a[start + j];
                 let v = a[start + j + len];
                 let sum = u.raw().wrapping_add(v.raw());
                 let diff = u.raw().wrapping_sub(v.raw());
                 a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
                 a[start + j + len] = prime.mul(MontCoeff::from_raw(diff), w);
-                w = prime.mul(w, wlen);
             }
             start += 2 * len;
         }
         len /= 2;
     }
 
-    // Keep exported NTT-domain coefficients in the same reduced range expected
-    // by add/sub reduced operations and equality checks.
     prime.reduce_range_in_place(a);
 }
 
@@ -142,36 +193,163 @@ pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
     prime: NttPrime<W>,
     tw: &NttTwiddles<W, D>,
 ) {
-    let one = prime.from_canonical(W::from_i64(1));
+    #[cfg(target_arch = "aarch64")]
+    if super::neon::use_neon_ntt() {
+        if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
+            unsafe {
+                super::neon::inverse_ntt_i32(
+                    &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
+                    *(&prime as *const _ as *const NttPrime<i32>),
+                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                );
+            }
+            return;
+        }
+        if std::mem::size_of::<W>() == std::mem::size_of::<i16>() {
+            unsafe {
+                super::neon::inverse_ntt_i16(
+                    &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
+                    *(&prime as *const _ as *const NttPrime<i16>),
+                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                );
+            }
+            return;
+        }
+    }
 
     let mut len = 1usize;
-    let mut stage = 0usize;
     while len < D {
-        let wlen = tw.inv_wlen[stage];
+        let twiddle_base = len - 1;
         let mut start = 0usize;
         while start < D {
-            let mut w = one;
             for j in 0..len {
+                let w = tw.inv_twiddles[twiddle_base + j];
                 let u = a[start + j];
                 let v = prime.mul(a[start + j + len], w);
                 let sum = u.raw().wrapping_add(v.raw());
                 let diff = u.raw().wrapping_sub(v.raw());
                 a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
                 a[start + j + len] = prime.reduce_range(MontCoeff::from_raw(diff));
-                w = prime.mul(w, wlen);
             }
             start += 2 * len;
         }
         len *= 2;
-        stage += 1;
+    }
+
+    for (ai, fused) in a.iter_mut().zip(tw.d_inv_psi_inv.iter()) {
+        *ai = prime.mul(*ai, *fused);
+    }
+}
+
+/// Forward cyclic NTT (Gentleman-Sande DIF, **no** negacyclic twist).
+///
+/// Evaluates a polynomial at the D-th roots of *unity* (roots of X^D - 1)
+/// rather than X^D + 1. Used with `inverse_ntt_cyclic` to compute unreduced
+/// polynomial products via CRT over (X^D - 1)(X^D + 1).
+pub fn forward_ntt_cyclic<W: PrimeWidth, const D: usize>(
+    a: &mut [MontCoeff<W>; D],
+    prime: NttPrime<W>,
+    tw: &NttTwiddles<W, D>,
+) {
+    #[cfg(target_arch = "aarch64")]
+    if super::neon::use_neon_ntt() {
+        if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
+            unsafe {
+                super::neon::forward_ntt_cyclic_i32(
+                    &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
+                    *(&prime as *const _ as *const NttPrime<i32>),
+                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                );
+            }
+            return;
+        }
+        if std::mem::size_of::<W>() == std::mem::size_of::<i16>() {
+            unsafe {
+                super::neon::forward_ntt_cyclic_i16(
+                    &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
+                    *(&prime as *const _ as *const NttPrime<i16>),
+                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                );
+            }
+            return;
+        }
+    }
+
+    let mut len = D / 2;
+    while len > 0 {
+        let twiddle_base = len - 1;
+        let mut start = 0usize;
+        while start < D {
+            for j in 0..len {
+                let w = tw.fwd_twiddles[twiddle_base + j];
+                let u = a[start + j];
+                let v = a[start + j + len];
+                let sum = u.raw().wrapping_add(v.raw());
+                let diff = u.raw().wrapping_sub(v.raw());
+                a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
+                a[start + j + len] = prime.mul(MontCoeff::from_raw(diff), w);
+            }
+            start += 2 * len;
+        }
+        len /= 2;
+    }
+    prime.reduce_range_in_place(a);
+}
+
+/// Inverse cyclic NTT (Cooley-Tukey DIT, **no** negacyclic untwist).
+///
+/// Recovers coefficients of a polynomial from evaluations at D-th roots of unity.
+/// Includes the `D^{-1}` scaling factor.
+pub fn inverse_ntt_cyclic<W: PrimeWidth, const D: usize>(
+    a: &mut [MontCoeff<W>; D],
+    prime: NttPrime<W>,
+    tw: &NttTwiddles<W, D>,
+) {
+    #[cfg(target_arch = "aarch64")]
+    if super::neon::use_neon_ntt() {
+        if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
+            unsafe {
+                super::neon::inverse_ntt_cyclic_i32(
+                    &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
+                    *(&prime as *const _ as *const NttPrime<i32>),
+                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                );
+            }
+            return;
+        }
+        if std::mem::size_of::<W>() == std::mem::size_of::<i16>() {
+            unsafe {
+                super::neon::inverse_ntt_cyclic_i16(
+                    &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
+                    *(&prime as *const _ as *const NttPrime<i16>),
+                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                );
+            }
+            return;
+        }
+    }
+
+    let mut len = 1usize;
+    while len < D {
+        let twiddle_base = len - 1;
+        let mut start = 0usize;
+        while start < D {
+            for j in 0..len {
+                let w = tw.inv_twiddles[twiddle_base + j];
+                let u = a[start + j];
+                let v = prime.mul(a[start + j + len], w);
+                let sum = u.raw().wrapping_add(v.raw());
+                let diff = u.raw().wrapping_sub(v.raw());
+                a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
+                a[start + j + len] = prime.reduce_range(MontCoeff::from_raw(diff));
+            }
+            start += 2 * len;
+        }
+        len *= 2;
     }
 
     for c in a.iter_mut() {
         *c = prime.mul(*c, tw.d_inv);
-    }
-
-    for (ai, psi_inv) in a.iter_mut().zip(tw.psi_inv_pows.iter()) {
-        *ai = prime.mul(*ai, *psi_inv);
     }
 }
 

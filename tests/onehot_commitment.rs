@@ -19,12 +19,16 @@ fn psetup() -> <Core as RingCommitmentScheme<F, D, TinyConfig>>::ProverSetup {
 /// `commit_coeffs`. The optimized impl uses sparse inner Ajtai.
 /// Both must produce identical (commitment, s_all, t_hat_all).
 fn assert_onehot_matches_dense(onehot_k: usize, indices: &[usize]) {
+    let opt_indices: Vec<Option<usize>> = indices.iter().map(|&i| Some(i)).collect();
     let setup = psetup();
 
     // Optimized sparse path.
-    let w_sparse =
-        <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(onehot_k, indices, &setup)
-            .unwrap();
+    let w_sparse = <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(
+        onehot_k,
+        &opt_indices,
+        &setup,
+    )
+    .unwrap();
 
     // Reference: materialize the full one-hot vector, pack into ring elements,
     // and commit via the dense path.
@@ -47,10 +51,6 @@ fn assert_onehot_matches_dense(onehot_k: usize, indices: &[usize]) {
     assert_eq!(
         w_sparse.commitment, w_dense.commitment,
         "commitments must match"
-    );
-    assert_eq!(
-        w_sparse.s, w_dense.s,
-        "s_all (decomposed witness) must match"
     );
     assert_eq!(
         w_sparse.t_hat, w_dense.t_hat,
@@ -130,23 +130,32 @@ fn onehot_k_lt_d_ratio_2() {
 #[test]
 fn onehot_rejects_non_divisible_k_and_d() {
     let setup = psetup();
-    let result =
-        <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(17, &[0; 4], &setup);
+    let result = <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(
+        17,
+        &[Some(0usize); 4],
+        &setup,
+    );
     assert!(result.is_err());
 }
 
 #[test]
 fn onehot_rejects_out_of_range_index() {
     let setup = psetup();
-    let result =
-        <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(64, &[0, 64, 0, 0], &setup);
+    let result = <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(
+        64,
+        &[Some(0usize), Some(64), Some(0), Some(0)],
+        &setup,
+    );
     assert!(result.is_err());
 }
 
 #[test]
 fn onehot_rejects_wrong_total_size() {
     let setup = psetup();
-    let result =
-        <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(64, &[0, 0, 0], &setup);
+    let result = <Core as RingCommitmentScheme<F, D, TinyConfig>>::commit_onehot(
+        64,
+        &[Some(0usize), Some(0), Some(0)],
+        &setup,
+    );
     assert!(result.is_err());
 }

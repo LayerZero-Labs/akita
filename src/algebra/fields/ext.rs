@@ -1,10 +1,11 @@
 //! Quadratic and quartic extension fields.
 
+use super::wide::{AccumPair, HasUnreducedOps};
 use crate::algebra::module::VectorModule;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::{FieldCore, FieldSampling, FromSmallInt};
+use crate::{AdditiveGroup, FieldCore, FieldSampling, FromSmallInt};
 
 /// `Fp2Config` with non-residue = -1.
 ///
@@ -34,7 +35,7 @@ impl<F: FieldCore + FromSmallInt> Fp2Config<F> for TwoNr {
 use rand_core::RngCore;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
 
 /// Parameters for an `Fp2` quadratic extension over base field `F`.
 pub trait Fp2Config<F: FieldCore> {
@@ -142,6 +143,18 @@ impl<F: FieldCore, C: Fp2Config<F>> Neg for Fp2<F, C> {
         Self::new(-self.c0, -self.c1)
     }
 }
+impl<F: FieldCore, C: Fp2Config<F>> AddAssign for Fp2<F, C> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+impl<F: FieldCore, C: Fp2Config<F>> SubAssign for Fp2<F, C> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
 impl<F: FieldCore, C: Fp2Config<F>> Mul for Fp2<F, C> {
     type Output = Self;
     fn mul(self, rhs: Self) -> Self::Output {
@@ -213,11 +226,15 @@ impl<F: FieldCore + Valid, C: Fp2Config<F>> HachiDeserialize for Fp2<F, C> {
     }
 }
 
-impl<F: FieldCore + Valid, C: Fp2Config<F>> FieldCore for Fp2<F, C> {
-    fn zero() -> Self {
-        Self::new(F::zero(), F::zero())
-    }
+impl<F: FieldCore, C: Fp2Config<F>> AdditiveGroup for Fp2<F, C> {
+    const ZERO: Self = Self {
+        c0: F::ZERO,
+        c1: F::ZERO,
+        _cfg: PhantomData,
+    };
+}
 
+impl<F: FieldCore + Valid, C: Fp2Config<F>> FieldCore for Fp2<F, C> {
     fn one() -> Self {
         Self::new(F::one(), F::zero())
     }
@@ -242,6 +259,12 @@ impl<F: FieldCore + Valid, C: Fp2Config<F>> FieldCore for Fp2<F, C> {
         let inv_n = self.norm().inv()?;
         Some(Self::new(self.c0 * inv_n, (-self.c1) * inv_n))
     }
+
+    const TWO_INV: Self = Self {
+        c0: F::TWO_INV,
+        c1: F::ZERO,
+        _cfg: PhantomData,
+    };
 }
 
 impl<F: FieldCore + FieldSampling + Valid, C: Fp2Config<F>> FieldSampling for Fp2<F, C> {
@@ -257,6 +280,46 @@ impl<F: FieldCore + FromSmallInt + Valid, C: Fp2Config<F>> FromSmallInt for Fp2<
 
     fn from_i64(val: i64) -> Self {
         Self::new(F::from_i64(val), F::zero())
+    }
+}
+
+impl<F: HasUnreducedOps + Valid, C: Fp2Config<F>> HasUnreducedOps for Fp2<F, C> {
+    type MulU64Accum = AccumPair<F::MulU64Accum>;
+    type ProductAccum = AccumPair<F::ProductAccum>;
+
+    #[inline]
+    fn mul_u64_unreduced(self, small: u64) -> AccumPair<F::MulU64Accum> {
+        AccumPair(
+            self.c0.mul_u64_unreduced(small),
+            self.c1.mul_u64_unreduced(small),
+        )
+    }
+
+    #[inline]
+    fn mul_to_product_accum(self, other: Self) -> AccumPair<F::ProductAccum> {
+        // Karatsuba: (c0 + c1·u)(d0 + d1·u) = (c0·d0 + NR·c1·d1) + (c0·d1 + c1·d0)·u
+        let v0 = self.c0.mul_to_product_accum(other.c0);
+        let v1 = self.c1.mul_to_product_accum(other.c1);
+        let cross = (self.c0 + self.c1).mul_to_product_accum(other.c0 + other.c1);
+
+        let nr_v1 = if C::IS_NEG_ONE { -v1 } else { v1 + v1 };
+        AccumPair(v0 + nr_v1, cross - v0 - v1)
+    }
+
+    #[inline]
+    fn reduce_mul_u64_accum(accum: AccumPair<F::MulU64Accum>) -> Self {
+        Self::new(
+            F::reduce_mul_u64_accum(accum.0),
+            F::reduce_mul_u64_accum(accum.1),
+        )
+    }
+
+    #[inline]
+    fn reduce_product_accum(accum: AccumPair<F::ProductAccum>) -> Self {
+        Self::new(
+            F::reduce_product_accum(accum.0),
+            F::reduce_product_accum(accum.1),
+        )
     }
 }
 
@@ -359,6 +422,18 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Neg for Fp4<F, C2, C4
         Self::new(-self.c0, -self.c1)
     }
 }
+impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> AddAssign for Fp4<F, C2, C4> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> SubAssign for Fp4<F, C2, C4> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
 impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Mul for Fp4<F, C2, C4> {
     type Output = Self;
     fn mul(self, rhs: Self) -> Self::Output {
@@ -433,11 +508,15 @@ impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> HachiDeserial
     }
 }
 
-impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> FieldCore for Fp4<F, C2, C4> {
-    fn zero() -> Self {
-        Self::new(Fp2::zero(), Fp2::zero())
-    }
+impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> AdditiveGroup for Fp4<F, C2, C4> {
+    const ZERO: Self = Self {
+        c0: Fp2::ZERO,
+        c1: Fp2::ZERO,
+        _cfg: PhantomData,
+    };
+}
 
+impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> FieldCore for Fp4<F, C2, C4> {
     fn one() -> Self {
         Self::new(Fp2::one(), Fp2::zero())
     }
@@ -460,6 +539,12 @@ impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> FieldCore for
         let inv_n = self.norm().inv()?;
         Some(Self::new(self.c0 * inv_n, (-self.c1) * inv_n))
     }
+
+    const TWO_INV: Self = Self {
+        c0: Fp2::TWO_INV,
+        c1: Fp2::ZERO,
+        _cfg: PhantomData,
+    };
 }
 
 impl<F: FieldCore + FieldSampling + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> FieldSampling

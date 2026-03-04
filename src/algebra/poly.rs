@@ -1,12 +1,16 @@
 //! Polynomial containers and evaluation utilities.
 
+use crate::algebra::fields::wide::{HasWide, ReduceTo};
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::FieldCore;
-use crate::FromSmallInt;
+use crate::protocol::sumcheck::eq_poly::EqPolynomial;
+use crate::{cfg_fold_reduce, AdditiveGroup, FieldCore, FromSmallInt};
 use std::io::{Read, Write};
+use std::ops::{Add, Neg, Sub};
 
 /// A degree-<D polynomial over `F`, stored as coefficients `[a0, a1, ..., a_{D-1}]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,29 +23,29 @@ impl<F: FieldCore, const D: usize> Poly<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> std::ops::Add for Poly<F, D> {
+impl<F: FieldCore, const D: usize> Add for Poly<F, D> {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
         let mut out = self.0;
         for (dst, src) in out.iter_mut().zip(rhs.0.iter()) {
-            *dst = *dst + *src;
+            *dst += *src;
         }
         Self(out)
     }
 }
 
-impl<F: FieldCore, const D: usize> std::ops::Sub for Poly<F, D> {
+impl<F: FieldCore, const D: usize> Sub for Poly<F, D> {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self::Output {
         let mut out = self.0;
         for (dst, src) in out.iter_mut().zip(rhs.0.iter()) {
-            *dst = *dst - *src;
+            *dst -= *src;
         }
         Self(out)
     }
 }
 
-impl<F: FieldCore, const D: usize> std::ops::Neg for Poly<F, D> {
+impl<F: FieldCore, const D: usize> Neg for Poly<F, D> {
     type Output = Self;
     fn neg(self) -> Self::Output {
         let mut out = self.0;
@@ -101,10 +105,11 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for Poly<F, D> {
 /// This polynomial vanishes exactly when `w ∈ {−(b−1), …, b−1}`.
 /// Total degree in `w` is `2b − 1`.
 pub fn range_check_eval<E: FieldCore + FromSmallInt>(w: E, b: usize) -> E {
+    let s = w * w;
     let mut acc = w;
     for k in 1..b {
         let k_e = E::from_u64(k as u64);
-        acc = acc * (w - k_e) * (w + k_e);
+        acc = acc * (s - k_e * k_e);
     }
     acc
 }
@@ -149,6 +154,7 @@ pub fn multilinear_eval<E: FieldCore>(evals: &[E], point: &[E]) -> Result<E, Hac
 /// Panics if the evaluation table length is not a power of two or has fewer
 /// than 2 elements. This is a prover-only helper where the caller guarantees
 /// well-formed input.
+#[tracing::instrument(skip_all, name = "fold_evals_in_place")]
 pub fn fold_evals_in_place<E: FieldCore>(evals: &mut Vec<E>, r: E) {
     assert!(
         evals.len().is_power_of_two(),
@@ -160,4 +166,68 @@ pub fn fold_evals_in_place<E: FieldCore>(evals: &mut Vec<E>, r: E) {
         evals[i] = evals[2 * i] + r * (evals[2 * i + 1] - evals[2 * i]);
     }
     evals.truncate(half);
+}
+
+/// Evaluate a multilinear polynomial with small integer evaluations at a
+/// field point, using the split-eq structure with unreduced accumulation.
+///
+/// Uses `HasWide::mul_small_to_wide` in the inner loop: each eq table entry
+/// is widened, scaled by the small witness value, and accumulated without
+/// reduction. The inner sum is reduced once per outer iteration, then
+/// multiplied by the outer eq factor and accumulated again in wide form.
+///
+/// Overflow budget: each inner accumulation adds at most `0xFFFF * |small|`
+/// to each i32 limb. For `|small| ≤ 128` (b ≤ 256), we can safely
+/// accumulate 256 products before an i32 limb overflows.
+///
+/// # Errors
+///
+/// Returns an error if the table length does not match `2^point.len()`.
+#[tracing::instrument(skip_all, name = "multilinear_eval_small")]
+pub fn multilinear_eval_small<E: FieldCore + HasWide + FromSmallInt>(
+    evals_small: &[i8],
+    point: &[E],
+) -> Result<E, HachiError> {
+    let n = point.len();
+    if evals_small.len() != 1 << n {
+        return Err(HachiError::InvalidSize {
+            expected: 1 << n,
+            actual: evals_small.len(),
+        });
+    }
+    if n == 0 {
+        return Ok(E::from_i64(evals_small[0] as i64));
+    }
+
+    let m = n / 2;
+    let (r_first, r_second) = point.split_at(m);
+    let eq_first = EqPolynomial::evals(r_first);
+    let eq_second = EqPolynomial::evals(r_second);
+    let in_len = eq_first.len();
+
+    // Max safe accumulations per chunk before i32 overflow.
+    // Limbs are 16-bit (0..0xFFFF), scaled by |small| ≤ 128 → 23-bit products.
+    // i32::MAX / (0xFFFF * 128) ≈ 256.
+    const CHUNK: usize = 256;
+
+    let outer_accum = cfg_fold_reduce!(
+        0..eq_second.len(),
+        || E::Wide::ZERO,
+        |acc, x_out| {
+            let base = x_out * in_len;
+            let mut inner_field = E::zero();
+            for chunk_start in (0..in_len).step_by(CHUNK) {
+                let chunk_end = (chunk_start + CHUNK).min(in_len);
+                let mut chunk_acc = E::Wide::ZERO;
+                for x_in in chunk_start..chunk_end {
+                    chunk_acc += eq_first[x_in].mul_small_to_wide(evals_small[base + x_in] as i32);
+                }
+                inner_field += <E::Wide as ReduceTo<E>>::reduce(chunk_acc);
+            }
+
+            acc + E::Wide::from(eq_second[x_out] * inner_field)
+        },
+        |a, b| a + b
+    );
+    Ok(<E::Wide as ReduceTo<E>>::reduce(outer_accum))
 }
