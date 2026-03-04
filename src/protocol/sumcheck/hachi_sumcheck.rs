@@ -154,12 +154,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
     /// `accum[pos_idx]` gets the product when `w_int >= 0`,
     /// `accum[pos_idx + 1]` gets it when `w_int < 0`.
     #[inline]
-    fn accum_signed_mul(
-        accum: &mut [E::MulU64Accum],
-        pos_idx: usize,
-        am: E,
-        w_int: i32,
-    ) {
+    fn accum_signed_mul(accum: &mut [E::MulU64Accum], pos_idx: usize, am: E, w_int: i32) {
         let prod = am.mul_u64_unreduced(w_int.unsigned_abs() as u64);
         if w_int < 0 {
             accum[pos_idx + 1] += prod;
@@ -180,10 +175,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
     /// relation. Relation uses split pos/neg accumulators to avoid
     /// wrapping-neg overflow in the unsigned limbed accumulators.
     #[tracing::instrument(skip_all, name = "HachiSumcheckProver::compute_round_compact_fused")]
-    fn compute_round_compact_fused(
-        &self,
-        w_compact: &[i8],
-    ) -> (UniPoly<E>, UniPoly<E>) {
+    fn compute_round_compact_fused(&self, w_compact: &[i8]) -> (UniPoly<E>, UniPoly<E>) {
         let half = w_compact.len() / 2;
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
@@ -215,8 +207,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
                 let degree_q = 2 * b - 1;
                 let num_points_q = degree_q + 1;
 
-                let _span =
-                    tracing::info_span!("fused_compact_point_eval").entered();
+                let _span = tracing::info_span!("fused_compact_point_eval").entered();
                 let (q_evals, rel_accum) = cfg_fold_reduce!(
                     0..half,
                     || (vec![E::zero(); num_points_q], rel_zero()),
@@ -268,14 +259,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
                 let rp = self.range_precomp.as_ref().unwrap();
                 let num_coeffs_q = rp.degree_q + 1;
 
-                let _span =
-                    tracing::info_span!("fused_compact_affine_coeff").entered();
+                let _span = tracing::info_span!("fused_compact_affine_coeff").entered();
                 let (mut q_coeffs, rel_accum) = cfg_fold_reduce!(
                     0..e_second.len(),
-                    || (
-                        vec![E::ProductAccum::ZERO; num_coeffs_q],
-                        rel_zero()
-                    ),
+                    || (vec![E::ProductAccum::ZERO; num_coeffs_q], rel_zero()),
                     |(mut outer_accum, mut rel), j_high| {
                         debug_assert!(num_coeffs_q <= MAX_AFFINE_COEFFS);
                         let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
@@ -323,10 +310,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
                     }
                 );
 
-                let q_coeffs_reduced: Vec<E> = q_coeffs
-                    .drain(..)
-                    .map(E::reduce_product_accum)
-                    .collect();
+                let q_coeffs_reduced: Vec<E> =
+                    q_coeffs.drain(..).map(E::reduce_product_accum).collect();
                 let mut q_coeffs = q_coeffs_reduced;
                 trim_trailing_zeros(&mut q_coeffs);
                 let q_poly = UniPoly::from_coeffs(q_coeffs);
@@ -493,13 +478,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
 
                         let (mut q_coeffs, rel_evals) = cfg_fold_reduce!(
                             0..e_second.len(),
-                            || (
-                                vec![E::ProductAccum::ZERO; num_coeffs_q],
-                                [E::zero(); 3]
-                            ),
+                            || (vec![E::ProductAccum::ZERO; num_coeffs_q], [E::zero(); 3]),
                             |(mut outer_accum, mut rel_evals), j_high| {
-                                let mut inner_accum =
-                                    [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                                let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
                                 let base_j = j_high * num_first;
                                 let full_chunks = num_first / 4;
                                 let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
@@ -508,9 +489,18 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
                                     let jl = chunk * 4;
                                     let w = [
                                         (w_full[2 * (base_j + jl)], w_full[2 * (base_j + jl) + 1]),
-                                        (w_full[2 * (base_j + jl + 1)], w_full[2 * (base_j + jl + 1) + 1]),
-                                        (w_full[2 * (base_j + jl + 2)], w_full[2 * (base_j + jl + 2) + 1]),
-                                        (w_full[2 * (base_j + jl + 3)], w_full[2 * (base_j + jl + 3) + 1]),
+                                        (
+                                            w_full[2 * (base_j + jl + 1)],
+                                            w_full[2 * (base_j + jl + 1) + 1],
+                                        ),
+                                        (
+                                            w_full[2 * (base_j + jl + 2)],
+                                            w_full[2 * (base_j + jl + 2) + 1],
+                                        ),
+                                        (
+                                            w_full[2 * (base_j + jl + 3)],
+                                            w_full[2 * (base_j + jl + 3) + 1],
+                                        ),
                                     ];
                                     compute_entry_coeffs_x4(
                                         &mut batch_out,
@@ -535,8 +525,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
                                     for (b, &(w_0, w_1)) in w.iter().enumerate() {
                                         let j = base_j + jl + b;
                                         let a_0 = alpha_compact[(2 * j) >> current_x_width];
-                                        let a_1 =
-                                            alpha_compact[(2 * j + 1) >> current_x_width];
+                                        let a_1 = alpha_compact[(2 * j + 1) >> current_x_width];
                                         let m_0 = m_compact[(2 * j) & current_x_mask];
                                         let m_1 = m_compact[(2 * j + 1) & current_x_mask];
                                         rel_evals[0] += w_0 * a_0 * m_0;
@@ -570,8 +559,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
                                         *acc += e_in.mul_to_product_accum(entry);
                                     }
                                     let a_0 = alpha_compact[(2 * j) >> current_x_width];
-                                    let a_1 =
-                                        alpha_compact[(2 * j + 1) >> current_x_width];
+                                    let a_1 = alpha_compact[(2 * j + 1) >> current_x_width];
                                     let m_0 = m_compact[(2 * j) & current_x_mask];
                                     let m_1 = m_compact[(2 * j + 1) & current_x_mask];
                                     rel_evals[0] += w_0 * a_0 * m_0;
@@ -584,10 +572,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
 
                                 let e_out = e_second[j_high];
                                 for k in 0..num_coeffs_q {
-                                    let inner_reduced =
-                                        E::reduce_product_accum(inner_accum[k]);
-                                    outer_accum[k] +=
-                                        e_out.mul_to_product_accum(inner_reduced);
+                                    let inner_reduced = E::reduce_product_accum(inner_accum[k]);
+                                    outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
                                 }
                                 (outer_accum, rel_evals)
                             },
@@ -602,10 +588,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
                             }
                         );
 
-                        let mut q_coeffs: Vec<E> = q_coeffs
-                            .drain(..)
-                            .map(E::reduce_product_accum)
-                            .collect();
+                        let mut q_coeffs: Vec<E> =
+                            q_coeffs.drain(..).map(E::reduce_product_accum).collect();
                         trim_trailing_zeros(&mut q_coeffs);
                         let q_poly = UniPoly::from_coeffs(q_coeffs);
                         (
