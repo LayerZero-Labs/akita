@@ -16,25 +16,25 @@ use crate::protocol::opening_point::{BasisMode, RingOpeningPoint};
 use crate::protocol::proof::{
     DigitLut, HachiCommitmentHint, HachiLevelProof, HachiProof, PackedDigits,
 };
-use crate::protocol::quadratic_equation::QuadraticEquation;
+use crate::protocol::quadratic_equation::{compute_m_a_streaming, QuadraticEquation};
 use crate::protocol::ring_switch::{
-    build_w_evals, ring_switch_prover, ring_switch_verifier, w_ring_element_count,
-    WCommitmentConfig,
+    build_w_evals, eval_ring_at, m_row_count, ring_switch_prover, ring_switch_verifier,
+    w_ring_element_count, WCommitmentConfig,
 };
+use crate::protocol::sumcheck::eq_poly::EqPolynomial;
 use crate::protocol::sumcheck::hachi_sumcheck::{HachiSumcheckProver, HachiSumcheckVerifier};
 use crate::protocol::sumcheck::{
-    multilinear_eval, multilinear_eval_small, prove_sumcheck, verify_sumcheck,
+    multilinear_eval, multilinear_eval_small, prove_sumcheck, range_check_eval, verify_sumcheck,
 };
 use crate::protocol::transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
+use std::iter;
 use std::marker::PhantomData;
 use std::time::Instant;
 
-#[cfg(test)]
-use crate::protocol::quadratic_equation::compute_m_a_streaming;
 #[cfg(test)]
 use crate::protocol::ring_switch::expand_m_a;
 #[cfg(test)]
@@ -173,11 +173,6 @@ where
     // Per-row diagnostic: compute M[i] * w_at_alpha for each row i
     // and compare against y[i](alpha) to find which sub-relation fails.
     {
-        use super::quadratic_equation::compute_m_a_streaming;
-        use super::ring_switch::{eval_ring_at, m_row_count};
-        use super::sumcheck::eq_poly::EqPolynomial;
-        use std::iter;
-
         let m_a = compute_m_a_streaming::<F, D, Cfg>(
             &setup.expanded,
             quad_eq.opening_point(),
@@ -301,12 +296,11 @@ where
     };
 
     {
-        use super::sumcheck::{eq_poly::EqPolynomial, multilinear_eval as mle, range_check_eval};
         let eq_val = EqPolynomial::mle(&rs.tau0, &sumcheck_challenges);
         let norm_oracle = eq_val * range_check_eval(w_eval, rs.b);
         let (x_ch, y_ch) = sumcheck_challenges.split_at(num_u);
-        let alpha_val = mle(&rs.alpha_evals_y, y_ch).unwrap();
-        let m_val = mle(&rs.m_evals_x, x_ch).unwrap();
+        let alpha_val = multilinear_eval(&rs.alpha_evals_y, y_ch).unwrap();
+        let m_val = multilinear_eval(&rs.m_evals_x, x_ch).unwrap();
         let relation_oracle = w_eval * alpha_val * m_val;
         let prover_expected = batching_coeff * norm_oracle + relation_oracle;
         if prover_expected != _final_claim {
@@ -384,7 +378,7 @@ where
     Cfg: CommitmentConfig,
 {
     type ProverSetup = HachiProverSetup<F, D>;
-    type VerifierSetup = HachiVerifierSetup<F, D>;
+    type VerifierSetup = HachiVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
     type Proof = HachiProof<F, D>;
     type CommitHint = HachiCommitmentHint<F, D>;
@@ -612,7 +606,7 @@ where
 #[allow(clippy::too_many_arguments)]
 fn verify_one_level<F, T, const D: usize, Cfg>(
     level_proof: &HachiLevelProof<F, D>,
-    setup: &HachiVerifierSetup<F, D>,
+    setup: &HachiVerifierSetup<F>,
     transcript: &mut T,
     opening_point: &[F],
     opening: &F,
@@ -740,7 +734,7 @@ where
 #[cfg(test)]
 pub(crate) fn rederive_alpha_and_m_a<F, const D: usize, Cfg>(
     proof: &HachiProof<F, D>,
-    setup: &HachiVerifierSetup<F, D>,
+    setup: &HachiVerifierSetup<F>,
     opening_point: &[F],
     commitment: &RingCommitment<F, D>,
 ) -> Result<(F, Vec<F>), HachiError>

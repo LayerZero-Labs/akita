@@ -23,7 +23,7 @@ use crate::protocol::proof::HachiCommitmentHint;
 use crate::protocol::ring_switch::eval_ring_at;
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use crate::protocol::transcript::Transcript;
-use crate::{cfg_iter, CanonicalField, FieldCore};
+use crate::{cfg_into_iter, CanonicalField, FieldCore};
 use std::iter::repeat_n;
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -371,7 +371,7 @@ fn add_sparse_ring_product<F: FieldCore + CanonicalField, const D: usize>(
 #[tracing::instrument(skip_all, name = "compute_r_split_eq")]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_r_split_eq<F, const D: usize, Cfg>(
-    _setup: &HachiExpandedSetup<F, D>,
+    _setup: &HachiExpandedSetup<F>,
     opening_point: &RingOpeningPoint<F>,
     challenges: &[SparseChallenge],
     w_hat_flat: &[[i8; D]],
@@ -509,7 +509,7 @@ where
 /// organized as rows of field elements, without materializing M.
 #[tracing::instrument(skip_all, name = "compute_m_a_streaming")]
 pub(crate) fn compute_m_a_streaming<F, const D: usize, Cfg>(
-    setup: &HachiExpandedSetup<F, D>,
+    setup: &HachiExpandedSetup<F>,
     opening_point: &RingOpeningPoint<F>,
     challenges: &[SparseChallenge],
     alpha: &F,
@@ -539,8 +539,12 @@ where
         .map(|c| eval_ring_at(&c.to_dense::<F, D>().expect("valid challenge"), alpha))
         .collect();
 
-    let d_rows: Vec<Vec<F>> = cfg_iter!(setup.D)
-        .map(|d_row| {
+    let d_view = setup.D_mat.view::<D>();
+    let b_view = setup.B.view::<D>();
+
+    let d_rows: Vec<Vec<F>> = cfg_into_iter!(0..d_view.num_rows())
+        .map(|i| {
+            let d_row = d_view.row(i);
             let mut full = vec![F::zero(); total_cols];
             for (j, ring) in d_row.iter().take(w_len).enumerate() {
                 full[j] = eval_ring_at(ring, alpha);
@@ -549,8 +553,9 @@ where
         })
         .collect();
 
-    let b_rows: Vec<Vec<F>> = cfg_iter!(setup.B)
-        .map(|b_row| {
+    let b_rows: Vec<Vec<F>> = cfg_into_iter!(0..b_view.num_rows())
+        .map(|i| {
+            let b_row = b_view.row(i);
             let mut full = vec![F::zero(); total_cols];
             for (j, ring) in b_row.iter().take(t_len).enumerate() {
                 full[w_len + j] = eval_ring_at(ring, alpha);
@@ -606,7 +611,8 @@ where
             }
         }
         let z_offset = w_len + t_len;
-        let a_row = &setup.A[a_idx];
+        let a_view = setup.A.view::<D>();
+        let a_row = a_view.row(a_idx);
         let inner_width = block_len * depth_commit;
         for (k, ring) in a_row.iter().take(inner_width).enumerate() {
             let ring_alpha = eval_ring_at(ring, alpha);
@@ -771,7 +777,7 @@ mod tests {
                 .flat_map(|v| v.iter().copied())
                 .collect::<Vec<_>>(),
         );
-        let lhs = mat_vec_mul(&f.setup.expanded.D, &w_hat_flat);
+        let lhs = mat_vec_mul(&f.setup.expanded.D_mat, &w_hat_flat);
 
         assert_eq!(lhs, f.quad_eq.v(), "Row 1 failed: D · ŵ ≠ v");
     }
@@ -787,7 +793,7 @@ mod tests {
             .iter()
             .flat_map(|v| v.iter())
             .map(|plane| {
-                let coeffs: [F; D] = std::array::from_fn(|k| F::from_i64(plane[k] as i64));
+                let coeffs: [F; D] = from_fn(|k| F::from_i64(plane[k] as i64));
                 CyclotomicRing::from_coefficients(coeffs)
             })
             .collect();

@@ -7,6 +7,7 @@ use hachi_pcs::protocol::commitment::{
 };
 use hachi_pcs::test_utils::*;
 use hachi_pcs::{FromSmallInt, HachiError};
+use std::array::from_fn;
 
 #[derive(Clone)]
 struct BadDegreeConfig;
@@ -42,10 +43,10 @@ fn setup_shape_is_consistent() {
     assert_eq!(v1.expanded.seed.max_num_vars, 16);
     assert_eq!(p2.expanded.seed.max_num_vars, 16);
     assert_eq!(v2.expanded.seed.max_num_vars, 16);
-    assert_eq!(p1.expanded.A.len(), TinyConfig::N_A);
-    assert!(p1.expanded.A[0].len() >= BLOCK_LEN * num_digits_commit());
-    assert_eq!(p1.expanded.B.len(), TinyConfig::N_B);
-    assert!(p1.expanded.B[0].len() >= TinyConfig::N_A * num_digits_open() * NUM_BLOCKS);
+    assert_eq!(p1.expanded.A.num_rows(), TinyConfig::N_A);
+    assert!(p1.expanded.A.num_cols_at::<D>() >= BLOCK_LEN * num_digits_commit());
+    assert_eq!(p1.expanded.B.num_rows(), TinyConfig::N_B);
+    assert!(p1.expanded.B.num_cols_at::<D>() >= TinyConfig::N_A * num_digits_open() * NUM_BLOCKS);
 }
 
 #[test]
@@ -129,7 +130,7 @@ fn opening_satisfies_inner_and_outer_equations() {
         .iter()
         .flat_map(|x| x.iter())
         .map(|plane| {
-            let coeffs: [F; D] = std::array::from_fn(|k| F::from_i64(plane[k] as i64));
+            let coeffs: [F; D] = from_fn(|k| F::from_i64(plane[k] as i64));
             CyclotomicRing::from_coefficients(coeffs)
         })
         .collect();

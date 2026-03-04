@@ -25,6 +25,7 @@ use crate::protocol::commitment::onehot::{
     inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks, SparseBlockEntry,
 };
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
+use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::linear::{decompose_rows_i8, mat_vec_mul_ntt_i8};
 use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
 use std::array::from_fn;
@@ -233,7 +234,7 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// Returns an error if the cached matrix-vector multiply fails.
     fn commit_inner(
         &self,
-        a_matrix: &[Vec<CyclotomicRing<F, D>>],
+        a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
         block_len: usize,
         num_digits_commit: usize,
@@ -427,7 +428,7 @@ where
     #[tracing::instrument(skip_all, name = "DensePoly::commit_inner")]
     fn commit_inner(
         &self,
-        _a_matrix: &[Vec<CyclotomicRing<F, D>>],
+        _a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
         block_len: usize,
         num_digits_commit: usize,
@@ -641,14 +642,15 @@ where
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner")]
     fn commit_inner(
         &self,
-        a_matrix: &[Vec<CyclotomicRing<F, D>>],
+        a_matrix: &FlatMatrix<F>,
         _ntt_a: &NttSlotCache<D>,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
     ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
-        let n_a = a_matrix.len();
+        let a_view = a_matrix.view::<D>();
+        let n_a = a_view.num_rows();
         let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
 
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(self.sparse_blocks)
@@ -657,7 +659,7 @@ where
                     vec![[0i8; D]; zero_block_len]
                 } else {
                     let t_i = inner_ajtai_onehot_wide(
-                        a_matrix,
+                        &a_view,
                         block_entries,
                         block_len,
                         num_digits_commit,

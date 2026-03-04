@@ -74,7 +74,7 @@ pub struct RingSwitchOutput<F: FieldCore, const D: usize> {
 #[allow(clippy::too_many_arguments)]
 pub fn ring_switch_prover<F, T, const D: usize, Cfg>(
     quad_eq: &mut QuadraticEquation<F, D, Cfg>,
-    setup: &HachiExpandedSetup<F, D>,
+    setup: &HachiExpandedSetup<F>,
     transcript: &mut T,
     ntt_a: &NttSlotCache<D>,
     ntt_b: &NttSlotCache<D>,
@@ -213,7 +213,7 @@ where
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 pub fn ring_switch_verifier<F, T, const D: usize, Cfg>(
     quad_eq: &QuadraticEquation<F, D, Cfg>,
-    setup: &HachiExpandedSetup<F, D>,
+    setup: &HachiExpandedSetup<F>,
     w_len: usize,
     w_commitment: &RingCommitment<F, D>,
     transcript: &mut T,
@@ -417,8 +417,20 @@ pub(crate) fn w_commitment_layout<F: CanonicalField, const D: usize, Cfg: Commit
     WCommitmentConfig::<D, Cfg>::commitment_layout(max_num_vars)
 }
 
+/// Commit the witness vector `w` (D-agnostic `Vec<i8>`) into `D`-sized ring
+/// elements and compute the ring commitment.
+///
+/// This is the **D-boundary** in the protocol: the ring switch at level k
+/// produces `w` using D_k operations, but `commit_w` re-chunks `w` into
+/// D_{k+1}-sized ring elements and commits using D_{k+1} NTT caches.
+///
+/// For constant-D configs, D_k = D_{k+1} = D and the distinction is moot.
+///
+/// # Errors
+///
+/// Returns an error if the commitment layout derivation or NTT mat-vec fails.
 #[tracing::instrument(skip_all, name = "commit_w")]
-fn commit_w<F, const D: usize, Cfg>(
+pub fn commit_w<F, const D: usize, Cfg>(
     w: &[i8],
     ntt_a: &NttSlotCache<D>,
     ntt_b: &NttSlotCache<D>,

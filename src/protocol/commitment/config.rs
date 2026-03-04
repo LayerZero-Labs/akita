@@ -1,5 +1,6 @@
 //! Configuration presets for ring-native commitment construction.
 
+use super::utils::flat_matrix::FlatMatrix;
 use super::utils::math::checked_pow2;
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
@@ -408,6 +409,25 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn beta_bound(layout: HachiCommitmentLayout) -> Result<u128, HachiError> {
         beta_linf_fold_bound(layout.r_vars, Self::CHALLENGE_WEIGHT, layout.log_basis)
     }
+
+    /// Ring dimension to use at a given fold level.
+    ///
+    /// `level` is 0-indexed (level 0 is the initial polynomial).
+    /// `_w_num_vars` is the number of variables in the witness at this level.
+    ///
+    /// The default implementation returns `Self::D` at all levels (constant D).
+    /// Override for decreasing-D schedules.
+    fn d_at_level(_level: usize, _w_num_vars: usize) -> usize {
+        Self::D
+    }
+
+    /// Module rank (inner Ajtai row count) at a given fold level.
+    ///
+    /// Must satisfy `d_at_level(level) * n_a_at_level(level) >= security_dim`
+    /// for the target security level. The default returns `Self::N_A` at all levels.
+    fn n_a_at_level(_level: usize) -> usize {
+        Self::N_A
+    }
 }
 
 /// Deterministic upper bound for the stage-1 folded-witness infinity norm.
@@ -510,25 +530,23 @@ pub(super) fn ensure_block_layout<F: FieldCore, const D: usize>(
 /// # Errors
 ///
 /// Returns an error if row count mismatches or any row is too narrow.
-pub(super) fn ensure_matrix_shape_ge<T>(
-    mat: &[Vec<T>],
+pub(super) fn ensure_matrix_shape_ge<F: FieldCore, const D: usize>(
+    mat: &FlatMatrix<F>,
     expected_rows: usize,
     min_cols: usize,
     name: &str,
 ) -> Result<(), HachiError> {
-    if mat.len() != expected_rows {
+    if mat.num_rows() != expected_rows {
         return Err(HachiError::InvalidSize {
             expected: expected_rows,
-            actual: mat.len(),
+            actual: mat.num_rows(),
         });
     }
-    for (row_idx, row) in mat.iter().enumerate() {
-        if row.len() < min_cols {
-            return Err(HachiError::InvalidSetup(format!(
-                "{name} row {row_idx} has width {}, expected >= {min_cols}",
-                row.len()
-            )));
-        }
+    let actual_cols = mat.num_cols_at::<D>();
+    if actual_cols < min_cols {
+        return Err(HachiError::InvalidSetup(format!(
+            "{name} has width {actual_cols}, expected >= {min_cols}",
+        )));
     }
     Ok(())
 }
@@ -684,3 +702,62 @@ pub type Fp128LogBasisCommitmentConfig = Fp128BoundedCommitmentConfig<3>;
 
 /// Backward-compatible alias for [`Fp128FullCommitmentConfig`].
 pub type Fp128CommitmentConfig = Fp128FullCommitmentConfig;
+
+/// Halving-D commitment config for Fp128 (D=512 → 256 → 128 → 64).
+///
+/// Uses `d_at_level` and `n_a_at_level` to halve the ring dimension at each
+/// fold level while doubling the module rank to maintain D×N_A ≥ 512 for
+/// security. Stops halving at D=64.
+///
+/// This config can be used with the constant-D prove loop (at D=512), or with
+/// a future varying-D prove loop that calls `dispatch_ring_dim!` per level.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Fp128HalvingDCommitmentConfig;
+
+impl CommitmentConfig for Fp128HalvingDCommitmentConfig {
+    const D: usize = 512;
+    const N_A: usize = 1;
+    const N_B: usize = 1;
+    const N_D: usize = 1;
+    const CHALLENGE_WEIGHT: usize = 19;
+
+    fn decomposition() -> DecompositionParams {
+        DecompositionParams {
+            log_basis: 3,
+            log_commit_bound: 128,
+            log_open_bound: None,
+        }
+    }
+
+    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        let alpha = Self::D.trailing_zeros() as usize;
+        let reduced_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
+            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
+        })?;
+        if reduced_vars == 0 {
+            return Err(HachiError::InvalidSetup(
+                "max_num_vars must leave at least one outer variable".to_string(),
+            ));
+        }
+        let (m_vars, r_vars) = optimal_m_r_split::<Self>(reduced_vars);
+        HachiCommitmentLayout::new::<Self>(m_vars, r_vars, &Self::decomposition())
+    }
+
+    fn d_at_level(level: usize, _w_num_vars: usize) -> usize {
+        match level {
+            0 => 512,
+            1 => 256,
+            2 => 128,
+            _ => 64,
+        }
+    }
+
+    fn n_a_at_level(level: usize) -> usize {
+        match level {
+            0 => 1,
+            1 => 2,
+            2 => 4,
+            _ => 8,
+        }
+    }
+}
