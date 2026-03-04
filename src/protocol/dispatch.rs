@@ -55,8 +55,8 @@ macro_rules! dispatch_ring_dim {
 }
 
 /// Like [`dispatch_ring_dim!`] but also lazily builds NTT caches for the
-/// matched ring dimension from a [`MultiDNttBundle`] and
-/// [`HachiExpandedSetup`].
+/// matched ring dimension from a [`crate::protocol::commitment::utils::ntt_cache::MultiDNttBundle`] and
+/// [`crate::protocol::commitment::HachiExpandedSetup`].
 ///
 /// Inside the body, `$D` is a const ring dimension and `$ntt_a`, `$ntt_b`,
 /// `$ntt_d` are `&NttSlotCache<D>` references.

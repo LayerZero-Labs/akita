@@ -419,8 +419,8 @@ mod tests {
 
         assert_eq!(sub.num_rows(), 2);
         assert_eq!(sub.num_cols(), 5);
-        for r in 0..2 {
-            assert_eq!(sub.row(r), &mat[r][..5]);
+        for (r, row) in mat.iter().enumerate().take(2) {
+            assert_eq!(sub.row(r), &row[..5]);
         }
     }
 }
