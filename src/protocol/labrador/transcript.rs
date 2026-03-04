@@ -218,6 +218,7 @@ mod tests {
     // Fixed test nonces for deterministic replay.
     const TEST_NONCE_LOW: u64 = 1;
     const TEST_NONCE_HIGH: u64 = 2;
+    const TEST_NONCE_REPLAY: u64 = 42;
 
     #[test]
     fn greyhound_context_replay_is_deterministic() {
@@ -307,7 +308,7 @@ mod tests {
             prg_backend_id: 1,
         };
         let projection = std::array::from_fn(|i| i as i32 - 127);
-        let nonce = 42u64;
+        let nonce = TEST_NONCE_REPLAY;
 
         let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_PROTOCOL);
         absorb_labrador_level_context::<F, _>(&mut t1, &ctx).unwrap();
