@@ -2,6 +2,8 @@
 
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::protocol::commitment::utils::linear::decompose_rows_with_carry;
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
 use crate::protocol::labrador::types::{LabradorReductionConfig, LabradorWitness};
@@ -51,29 +53,39 @@ where
         ));
     }
 
-    let mut decomposed_witness = Vec::with_capacity(witness.rows().len());
-    let mut u_inner = Vec::with_capacity(witness.rows().len());
-    let mut decomposed_inner = Vec::with_capacity(witness.rows().len());
+    #[allow(clippy::type_complexity)]
+    let per_row: Vec<(
+        Vec<CyclotomicRing<F, D>>,
+        Vec<CyclotomicRing<F, D>>,
+        Vec<CyclotomicRing<F, D>>,
+    )> = cfg_iter!(witness.rows())
+        .map(|row| {
+            let a = derive_extendable_comkey_matrix::<F, D>(
+                config.kappa,
+                row.len(),
+                comkey_seed,
+                b"labrador/comkey/A",
+                backend,
+            );
+            let t = mat_vec_mul(&a, row);
+            let t_hat = decompose_rows_with_carry(&t, config.fu, config.bu as u32);
+            let s_hat = decompose_rows_with_carry(row, config.f, config.b as u32);
+            (t, t_hat, s_hat)
+        })
+        .collect();
 
-    for (row_idx, row) in witness.rows().iter().enumerate() {
-        let a = derive_extendable_comkey_matrix::<F, D>(
-            config.kappa,
-            row.len(),
-            comkey_seed,
-            b"labrador/comkey/A",
-            backend,
-        );
-        let t = mat_vec_mul(&a, row);
+    let mut u_inner = Vec::with_capacity(per_row.len());
+    let mut decomposed_inner = Vec::with_capacity(per_row.len());
+    let mut decomposed_witness = Vec::with_capacity(per_row.len());
+    for (t, t_hat, s_hat) in per_row {
         if t.is_empty() {
-            return Err(HachiError::InvalidInput(format!(
-                "inner commitment row {row_idx} produced empty vector"
-            )));
+            return Err(HachiError::InvalidInput(
+                "inner commitment row produced empty vector".to_string(),
+            ));
         }
-        let t_hat = decompose_rows_with_carry(&t, config.fu, config.bu as u32);
-        let s_hat = decompose_rows_with_carry(row, config.f, config.b as u32);
-        decomposed_witness.push(s_hat);
-        decomposed_inner.push(t_hat);
         u_inner.push(t);
+        decomposed_inner.push(t_hat);
+        decomposed_witness.push(s_hat);
     }
 
     let mut t_hat_flat = Vec::new();
@@ -121,20 +133,18 @@ where
 fn build_linear_garbage<F: FieldCore, const D: usize>(
     witness: &LabradorWitness<F, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
-    let mut out = Vec::with_capacity(
-        (witness.rows().len() * witness.rows().len() + witness.rows().len()) / 2,
-    );
-    for i in 0..witness.rows().len() {
-        for j in i..witness.rows().len() {
+    let r = witness.rows().len();
+    let pairs: Vec<(usize, usize)> = (0..r).flat_map(|i| (i..r).map(move |j| (i, j))).collect();
+    cfg_iter!(pairs)
+        .map(|&(i, j)| {
             let len = witness.rows()[i].len().min(witness.rows()[j].len());
             let mut acc = CyclotomicRing::<F, D>::zero();
             for k in 0..len {
                 acc += witness.rows()[i][k] * witness.rows()[j][k];
             }
-            out.push(acc);
-        }
-    }
-    out
+            acc
+        })
+        .collect()
 }
 
 #[cfg(test)]

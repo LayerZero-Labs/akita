@@ -2,6 +2,8 @@
 
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_JL_NONCE_RETRIES;
 use crate::protocol::labrador::types::LabradorWitness;
 use crate::protocol::prg::{MatrixPrgBackendChoice, MatrixPrgContext};
@@ -42,31 +44,31 @@ impl LabradorJlMatrix {
         }
         let prg_seed = derive_jl_prg_seed(seed, nonce);
         let byte_len = cols.div_ceil(8);
-        let mut signs = Vec::with_capacity(JL_ROWS);
-        for row in 0..JL_ROWS {
-            let context = MatrixPrgContext {
-                seed: &prg_seed,
-                matrix_label: b"labrador/jl",
-                rows: JL_ROWS,
-                cols,
-                row,
-                col: 0,
-            };
-            let mut rng = backend.entry_rng(&context);
-            let mut bytes = vec![0u8; byte_len];
-            rng.fill_bytes(&mut bytes);
-            let row_signs = (0..cols)
-                .map(|c| {
-                    let bit = (bytes[c / 8] >> (c % 8)) & 1;
-                    if bit == 0 {
-                        -1
-                    } else {
-                        1
-                    }
-                })
-                .collect();
-            signs.push(row_signs);
-        }
+        let signs: Vec<Vec<i8>> = cfg_into_iter!(0..JL_ROWS)
+            .map(|row| {
+                let context = MatrixPrgContext {
+                    seed: &prg_seed,
+                    matrix_label: b"labrador/jl",
+                    rows: JL_ROWS,
+                    cols,
+                    row,
+                    col: 0,
+                };
+                let mut rng = backend.entry_rng(&context);
+                let mut bytes = vec![0u8; byte_len];
+                rng.fill_bytes(&mut bytes);
+                (0..cols)
+                    .map(|c| {
+                        let bit = (bytes[c / 8] >> (c % 8)) & 1;
+                        if bit == 0 {
+                            -1
+                        } else {
+                            1
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
         Ok(Self {
             rows: JL_ROWS,
             cols,
@@ -153,36 +155,44 @@ fn flatten_witness_coeffs<F: FieldCore + CanonicalField, const D: usize>(
 ) -> Vec<i64> {
     let q = (-F::one()).to_canonical_u128() + 1;
     let half_q = q / 2;
-    witness
-        .rows()
-        .iter()
-        .flat_map(|row| row.iter())
-        .flat_map(|ring| ring.coefficients().iter())
-        .map(|coeff| {
-            let c = coeff.to_canonical_u128();
-            if c > half_q {
-                -((q - c) as i64)
-            } else {
-                c as i64
-            }
+    let per_row: Vec<Vec<i64>> = cfg_iter!(witness.rows())
+        .map(|row| {
+            row.iter()
+                .flat_map(|ring| ring.coefficients().iter())
+                .map(|coeff| {
+                    let c = coeff.to_canonical_u128();
+                    if c > half_q {
+                        -((q - c) as i64)
+                    } else {
+                        c as i64
+                    }
+                })
+                .collect()
         })
-        .collect()
+        .collect();
+    per_row.into_iter().flatten().collect()
 }
 
 fn project_with_matrix(matrix: &LabradorJlMatrix, vector: &[i64]) -> Option<[i32; 256]> {
     if matrix.cols != vector.len() || matrix.rows != JL_ROWS {
         return None;
     }
+    let results: Vec<Option<i32>> = cfg_iter!(matrix.signs)
+        .map(|row| {
+            let mut acc = 0i128;
+            for (&sign, &value) in row.iter().zip(vector.iter()) {
+                acc += (sign as i128) * (value as i128);
+            }
+            if acc < i32::MIN as i128 || acc > i32::MAX as i128 {
+                None
+            } else {
+                Some(acc as i32)
+            }
+        })
+        .collect();
     let mut out = [0i32; 256];
-    for (row_idx, row) in matrix.signs.iter().enumerate() {
-        let mut acc = 0i128;
-        for (&sign, &value) in row.iter().zip(vector.iter()) {
-            acc += (sign as i128) * (value as i128);
-        }
-        if acc < i32::MIN as i128 || acc > i32::MAX as i128 {
-            return None;
-        }
-        out[row_idx] = acc as i32;
+    for (i, val) in results.into_iter().enumerate() {
+        out[i] = val?;
     }
     Some(out)
 }

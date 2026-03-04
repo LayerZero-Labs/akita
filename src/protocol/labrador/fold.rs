@@ -2,6 +2,8 @@
 
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::protocol::commitment::utils::linear::decompose_rows_with_carry;
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
 use crate::protocol::labrador::johnson_lindenstrauss::{
@@ -84,14 +86,16 @@ where
         b"labrador/comkey/A",
         backend,
     );
-    let mut t_hat = Vec::new();
-    for row in witness.rows() {
-        let mut padded = Vec::with_capacity(max_len);
-        padded.extend_from_slice(row);
-        padded.resize(max_len, CyclotomicRing::<F, D>::zero());
-        let t = mat_vec_mul(&a, &padded);
-        t_hat.extend(decompose_rows_with_carry(&t, config.fu, config.bu as u32));
-    }
+    let t_hat_per_row: Vec<Vec<CyclotomicRing<F, D>>> = cfg_iter!(witness.rows())
+        .map(|row| {
+            let mut padded = Vec::with_capacity(max_len);
+            padded.extend_from_slice(row);
+            padded.resize(max_len, CyclotomicRing::<F, D>::zero());
+            let t = mat_vec_mul(&a, &padded);
+            decompose_rows_with_carry(&t, config.fu, config.bu as u32)
+        })
+        .collect();
+    let t_hat: Vec<CyclotomicRing<F, D>> = t_hat_per_row.into_iter().flatten().collect();
 
     let u1 = if config.kappa1 > 0 && !config.tail {
         let b = derive_extendable_comkey_matrix::<F, D>(
@@ -408,14 +412,15 @@ fn jl_collapse_phi_from_weights<F: FieldCore + CanonicalField + FromSmallInt, co
     }
 
     let ring_elems = matrix.cols / D;
-    let mut phi = Vec::with_capacity(ring_elems);
-    for idx in 0..ring_elems {
-        let coeffs = std::array::from_fn(|k| {
-            let w = weights[idx * D + k];
-            F::from_i64(w)
-        });
-        phi.push(CyclotomicRing::from_coefficients(coeffs).sigma_m1());
-    }
+    let phi: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..ring_elems)
+        .map(|idx| {
+            let coeffs = std::array::from_fn(|k| {
+                let w = weights[idx * D + k];
+                F::from_i64(w)
+            });
+            CyclotomicRing::from_coefficients(coeffs).sigma_m1()
+        })
+        .collect();
     Ok(phi)
 }
 
@@ -493,34 +498,31 @@ fn compute_linear_garbage<F: FieldCore + CanonicalField + FromSmallInt, const D:
     phi: &[Vec<CyclotomicRing<F, D>>],
     witness: &LabradorWitness<F, D>,
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-    if phi.len() != witness.rows().len() {
+    let r = witness.rows().len();
+    if phi.len() != r {
         return Err(HachiError::InvalidInput(
             "phi row count mismatch".to_string(),
         ));
     }
-    let mut out = Vec::with_capacity((witness.rows().len() * (witness.rows().len() + 1)) / 2);
-    for i in 0..witness.rows().len() {
-        if phi[i].len() != witness.rows()[i].len() {
+    for (phi_row, witness_row) in phi.iter().zip(witness.rows().iter()) {
+        if phi_row.len() != witness_row.len() {
             return Err(HachiError::InvalidInput(
                 "phi row length mismatch".to_string(),
             ));
         }
-        for j in i..witness.rows().len() {
-            if phi[j].len() != witness.rows()[j].len() {
-                return Err(HachiError::InvalidInput(
-                    "phi row length mismatch".to_string(),
-                ));
-            }
-            let entry = if i == j {
+    }
+    let pairs: Vec<(usize, usize)> = (0..r).flat_map(|i| (i..r).map(move |j| (i, j))).collect();
+    let out: Vec<CyclotomicRing<F, D>> = cfg_iter!(pairs)
+        .map(|&(i, j)| {
+            if i == j {
                 dot_product(&phi[i], &witness.rows()[i])
             } else {
                 let lhs = dot_product(&phi[i], &witness.rows()[j]);
                 let rhs = dot_product(&phi[j], &witness.rows()[i]);
                 lhs + rhs
-            };
-            out.push(entry);
-        }
-    }
+            }
+        })
+        .collect();
     Ok(out)
 }
 
@@ -749,13 +751,17 @@ fn amortize_witness<F: FieldCore + CanonicalField, const D: usize>(
     challenges: &[CyclotomicRing<F, D>],
     max_len: usize,
 ) -> Vec<CyclotomicRing<F, D>> {
-    let mut z = vec![CyclotomicRing::<F, D>::zero(); max_len];
-    for (row, challenge) in witness.rows().iter().zip(challenges.iter()) {
-        for (j, elem) in row.iter().enumerate() {
-            z[j] += *challenge * *elem;
-        }
-    }
-    z
+    cfg_into_iter!(0..max_len)
+        .map(|j| {
+            let mut acc = CyclotomicRing::<F, D>::zero();
+            for (row, challenge) in witness.rows().iter().zip(challenges.iter()) {
+                if let Some(elem) = row.get(j) {
+                    acc += *challenge * *elem;
+                }
+            }
+            acc
+        })
+        .collect()
 }
 
 #[cfg(test)]

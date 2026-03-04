@@ -5,6 +5,8 @@
 //! previously derived prefix exactly.
 
 use crate::algebra::ring::CyclotomicRing;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::protocol::prg::{MatrixPrgBackendChoice, MatrixPrgContext};
 use crate::{FieldCore, FieldSampling};
 
@@ -23,12 +25,10 @@ pub fn derive_extendable_comkey_matrix<F: FieldCore + FieldSampling, const D: us
     matrix_label: &[u8],
     backend: MatrixPrgBackendChoice,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    (0..rows)
+    cfg_into_iter!(0..rows)
         .map(|r| {
             (0..cols)
                 .map(|c| {
-                    // Dedicated key path: keep shape fields constant, bind only
-                    // entry indices and matrix label.
                     let context = MatrixPrgContext {
                         seed,
                         matrix_label,

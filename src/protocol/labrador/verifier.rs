@@ -2,6 +2,8 @@
 
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
 use crate::protocol::labrador::johnson_lindenstrauss::{
@@ -964,14 +966,15 @@ fn jl_collapse_phi_from_weights<F: FieldCore + CanonicalField + FromSmallInt, co
     }
 
     let ring_elems = matrix.cols / D;
-    let mut phi = Vec::with_capacity(ring_elems);
-    for idx in 0..ring_elems {
-        let coeffs = std::array::from_fn(|k| {
-            let w = weights[idx * D + k];
-            F::from_i64(w)
-        });
-        phi.push(CyclotomicRing::from_coefficients(coeffs).sigma_m1());
-    }
+    let phi: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..ring_elems)
+        .map(|idx| {
+            let coeffs = std::array::from_fn(|k| {
+                let w = weights[idx * D + k];
+                F::from_i64(w)
+            });
+            CyclotomicRing::from_coefficients(coeffs).sigma_m1()
+        })
+        .collect();
     Ok(phi)
 }
 
