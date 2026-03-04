@@ -7,8 +7,11 @@
 pub mod challenges;
 pub mod commitment;
 pub mod commitment_scheme;
+pub mod greyhound;
 pub mod hachi_poly_ops;
+pub mod labrador;
 pub mod opening_point;
+pub mod prg;
 pub mod proof;
 pub mod quadratic_equation;
 pub mod ring_switch;

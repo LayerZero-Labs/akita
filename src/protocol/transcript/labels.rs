@@ -46,6 +46,41 @@ pub const CHALLENGE_TAU0: &[u8] = b"hachi/challenge/tau0";
 /// Challenge for sampling `τ₁` (F_α evaluation-relation batching point, paper §4.3).
 pub const CHALLENGE_TAU1: &[u8] = b"hachi/challenge/tau1";
 
+/// Labrador protocol domain label (used for recursive reduction stages).
+pub const DOMAIN_LABRADOR_PROTOCOL: &[u8] = b"hachi/labrador/protocol";
+/// Greyhound evaluation-reduction domain label.
+pub const DOMAIN_GREYHOUND_EVAL: &[u8] = b"hachi/greyhound/eval";
+/// Absorb canonical Greyhound evaluation context bytes (dimensions/backend id).
+pub const ABSORB_GREYHOUND_EVAL_CONTEXT: &[u8] = b"hachi/absorb/greyhound-eval-context";
+/// Absorb canonicalized evaluation-point coordinates for Greyhound reduction.
+pub const ABSORB_GREYHOUND_EVAL_POINT: &[u8] = b"hachi/absorb/greyhound-eval-point";
+/// Absorb the claimed evaluation value for Greyhound reduction.
+pub const ABSORB_GREYHOUND_EVAL_VALUE: &[u8] = b"hachi/absorb/greyhound-eval-value";
+/// Absorb the Greyhound second outer commitment `u2`.
+pub const ABSORB_GREYHOUND_U2: &[u8] = b"hachi/absorb/greyhound-u2";
+/// Challenge for Greyhound column-fold coefficients.
+pub const CHALLENGE_GREYHOUND_FOLD: &[u8] = b"hachi/challenge/greyhound-fold";
+/// Absorb canonical Labrador level metadata (shape/config/tail/backend id).
+pub const ABSORB_LABRADOR_LEVEL_CONTEXT: &[u8] = b"hachi/absorb/labrador-level-context";
+/// Absorb Labrador JL projection vector `p`.
+pub const ABSORB_LABRADOR_JL_PROJECTION: &[u8] = b"hachi/absorb/labrador-jl-projection";
+/// Absorb Labrador JL nonce.
+pub const ABSORB_LABRADOR_JL_NONCE: &[u8] = b"hachi/absorb/labrador-jl-nonce";
+/// Challenge for Labrador aggregation/lift stage.
+pub const CHALLENGE_LABRADOR_AGGREGATION: &[u8] = b"hachi/challenge/labrador-aggregation";
+/// Challenge for Labrador JL collapse coefficients.
+pub const CHALLENGE_LABRADOR_JL_COLLAPSE: &[u8] = b"hachi/challenge/labrador-jl-collapse";
+/// Absorb Labrador inner commitment u1 at each recursion level.
+pub const ABSORB_LABRADOR_U1: &[u8] = b"hachi/absorb/labrador-u1";
+/// Absorb Labrador outer commitment u2 at each recursion level.
+pub const ABSORB_LABRADOR_U2: &[u8] = b"hachi/absorb/labrador-u2";
+/// Absorb Labrador lift polynomials (constant-term-removed).
+pub const ABSORB_LABRADOR_BB: &[u8] = b"hachi/absorb/labrador-bb";
+/// Absorb Labrador squared norm bound at each level.
+pub const ABSORB_LABRADOR_NORM: &[u8] = b"hachi/absorb/labrador-norm";
+/// Challenge for Labrador amortization fold (ring-element challenges).
+pub const CHALLENGE_LABRADOR_AMORTIZE: &[u8] = b"hachi/challenge/labrador-amortize";
+
 /// Return all Hachi-core transcript labels.
 pub fn all_labels() -> &'static [&'static [u8]] {
     &[
@@ -68,5 +103,22 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         ABSORB_SUMCHECK_W,
         CHALLENGE_TAU0,
         CHALLENGE_TAU1,
+        DOMAIN_LABRADOR_PROTOCOL,
+        DOMAIN_GREYHOUND_EVAL,
+        ABSORB_GREYHOUND_EVAL_CONTEXT,
+        ABSORB_GREYHOUND_EVAL_POINT,
+        ABSORB_GREYHOUND_EVAL_VALUE,
+        ABSORB_GREYHOUND_U2,
+        CHALLENGE_GREYHOUND_FOLD,
+        ABSORB_LABRADOR_LEVEL_CONTEXT,
+        ABSORB_LABRADOR_JL_PROJECTION,
+        ABSORB_LABRADOR_JL_NONCE,
+        CHALLENGE_LABRADOR_AGGREGATION,
+        CHALLENGE_LABRADOR_JL_COLLAPSE,
+        ABSORB_LABRADOR_U1,
+        ABSORB_LABRADOR_U2,
+        ABSORB_LABRADOR_BB,
+        ABSORB_LABRADOR_NORM,
+        CHALLENGE_LABRADOR_AMORTIZE,
     ]
 }

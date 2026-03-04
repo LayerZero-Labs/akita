@@ -22,6 +22,7 @@ use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
 use crate::protocol::hachi_poly_ops::OneHotIndex;
+use crate::protocol::prg::MatrixPrgBackendId;
 use crate::protocol::ring_switch::w_commitment_layout;
 use crate::{cfg_into_iter, cfg_iter, CanonicalField, FieldCore, FieldSampling};
 use std::io::{Read, Write};
@@ -35,6 +36,8 @@ pub struct HachiSetupSeed {
     pub layout: HachiCommitmentLayout,
     /// Public seed used to derive commitment matrices.
     pub public_matrix_seed: PublicMatrixSeed,
+    /// PRG backend used for matrix derivation (Greyhound/Labrador).
+    pub public_matrix_prg_backend: MatrixPrgBackendId,
 }
 
 /// Expanded setup stage containing coefficient-form matrices.
@@ -123,11 +126,12 @@ impl HachiSerialize for HachiSetupSeed {
             .serialize_with_mode(&mut writer, compress)?;
         self.layout.serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.public_matrix_seed)?;
+        writer.write_all(&[u8::from(self.public_matrix_prg_backend)])?;
         Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.max_num_vars.serialized_size(compress) + self.layout.serialized_size(compress) + 32
+        self.max_num_vars.serialized_size(compress) + self.layout.serialized_size(compress) + 32 + 1
     }
 }
 
@@ -141,10 +145,15 @@ impl HachiDeserialize for HachiSetupSeed {
         let layout = HachiCommitmentLayout::deserialize_with_mode(&mut reader, compress, validate)?;
         let mut public_matrix_seed = [0u8; 32];
         reader.read_exact(&mut public_matrix_seed)?;
+        let mut backend_byte = [0u8; 1];
+        reader.read_exact(&mut backend_byte)?;
+        let public_matrix_prg_backend = MatrixPrgBackendId::try_from(backend_byte[0])
+            .map_err(|_| SerializationError::InvalidData("unknown PRG backend id".into()))?;
         let out = Self {
             max_num_vars,
             layout,
             public_matrix_seed,
+            public_matrix_prg_backend,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -305,6 +314,7 @@ where
                 max_num_vars,
                 layout,
                 public_matrix_seed,
+                public_matrix_prg_backend: MatrixPrgBackendId::Shake256,
             },
             A: a_matrix,
             B: b_matrix,
@@ -527,6 +537,7 @@ impl HachiCommitmentCore {
                 max_num_vars,
                 layout: new_layout,
                 public_matrix_seed: seed,
+                public_matrix_prg_backend: MatrixPrgBackendId::Shake256,
             },
             A: existing.A.clone(),
             B: b_matrix,
@@ -568,6 +579,7 @@ impl HachiCommitmentCore {
                 max_num_vars,
                 layout,
                 public_matrix_seed,
+                public_matrix_prg_backend: MatrixPrgBackendId::Shake256,
             },
             A: a_matrix,
             B: b_matrix,

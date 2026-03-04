@@ -352,6 +352,19 @@ pub fn decompose_rows<F: FieldCore + CanonicalField, const D: usize>(
     out
 }
 
+/// Decompose each ring element where the last digit carries the remainder.
+pub fn decompose_rows_with_carry<F: FieldCore + CanonicalField, const D: usize>(
+    rows: &[CyclotomicRing<F, D>],
+    delta: usize,
+    log_basis: u32,
+) -> Vec<CyclotomicRing<F, D>> {
+    let mut out = Vec::with_capacity(rows.len() * delta);
+    for row in rows {
+        out.extend(row.balanced_decompose_pow2_with_carry(delta, log_basis));
+    }
+    out
+}
+
 /// Like [`decompose_block`] but outputs `[i8; D]` digit planes instead of ring elements.
 pub fn decompose_block_i8<F: FieldCore + CanonicalField, const D: usize>(
     block: &[CyclotomicRing<F, D>],

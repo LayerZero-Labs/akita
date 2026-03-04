@@ -514,4 +514,14 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         }
         Self { limbs: out }
     }
+
+    /// Apply `sigma_{-1}` directly in NTT domain (`slot[j] -> slot[D-1-j]`).
+    ///
+    /// This is a pure index permutation per CRT limb and does not negate values.
+    pub fn conjugation_automorphism_ntt(&self) -> Self {
+        let limbs = std::array::from_fn(|k| {
+            std::array::from_fn(|j| self.limbs[k][D.saturating_sub(1) - j])
+        });
+        Self { limbs }
+    }
 }
