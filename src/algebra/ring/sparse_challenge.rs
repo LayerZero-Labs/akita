@@ -12,6 +12,7 @@
 use super::CyclotomicRing;
 use crate::algebra::fields::LiftBase;
 use crate::{CanonicalField, FieldCore};
+use rand_core::RngCore;
 
 /// Configuration for sampling a sparse challenge.
 ///
@@ -162,4 +163,50 @@ impl SparseChallenge {
         }
         Ok(acc)
     }
+}
+
+/// Sample a dense ternary ring element with coefficients in `{-1, 0, 1}`.
+///
+/// Distribution matches Labrador C's ternary nibble LUT (`0xA815`), yielding
+/// probabilities `5/16, 6/16, 5/16` for `-1, 0, 1` respectively.
+pub fn sample_ternary<F: FieldCore + CanonicalField, R: RngCore, const D: usize>(
+    rng: &mut R,
+) -> CyclotomicRing<F, D> {
+    const LUT: u16 = 0xA815;
+    let mut coeffs = [F::zero(); D];
+    let mut i = 0usize;
+    while i < D {
+        let byte = (rng.next_u32() & 0xFF) as u8;
+        let lo = (((LUT >> (byte & 0x0F)) & 0x3) as i16) - 1;
+        coeffs[i] = F::from_i64(lo as i64);
+        i += 1;
+        if i < D {
+            let hi = (((LUT >> (byte >> 4)) & 0x3) as i16) - 1;
+            coeffs[i] = F::from_i64(hi as i64);
+            i += 1;
+        }
+    }
+    CyclotomicRing::from_coefficients(coeffs)
+}
+
+/// Sample a dense quaternary ring element with coefficients in `{-2, -1, 0, 1}`.
+///
+/// Coefficients are sampled uniformly from two-bit chunks and shifted by `-2`.
+pub fn sample_quaternary<F: FieldCore + CanonicalField, R: RngCore, const D: usize>(
+    rng: &mut R,
+) -> CyclotomicRing<F, D> {
+    let mut coeffs = [F::zero(); D];
+    let mut i = 0usize;
+    while i < D {
+        let bits = rng.next_u32();
+        for lane in 0..16 {
+            if i >= D {
+                break;
+            }
+            let val = (((bits >> (2 * lane)) & 0x3) as i16) - 2;
+            coeffs[i] = F::from_i64(val as i64);
+            i += 1;
+        }
+    }
+    CyclotomicRing::from_coefficients(coeffs)
 }
