@@ -15,7 +15,7 @@ use crate::protocol::commitment::utils::linear::{
 };
 use crate::protocol::commitment::utils::norm::{detect_field_modulus, vec_inf_norm};
 use crate::protocol::commitment::{
-    CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiProverSetup, RingCommitment,
+    CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, RingCommitment,
 };
 use crate::protocol::hachi_poly_ops::HachiPolyOps;
 use crate::protocol::opening_point::RingOpeningPoint;
@@ -120,8 +120,9 @@ where
     /// generation fails.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "QuadraticEquation::new_prover")]
+    #[inline(never)]
     pub fn new_prover<T: Transcript<F>, P: HachiPolyOps<F, D>>(
-        setup: &HachiProverSetup<F, D>,
+        ntt_d: &NttSlotCache<D>,
         ring_opening_point: RingOpeningPoint<F>,
         poly: &P,
         pre_folded: Vec<CyclotomicRing<F, D>>,
@@ -131,6 +132,13 @@ where
         y_ring: &CyclotomicRing<F, D>,
         layout: HachiCommitmentLayout,
     ) -> Result<Self, HachiError> {
+        {
+            let x: u8 = 0;
+            eprintln!(
+                "  [QuadraticEquation::new_prover] stack ~= {:#x}",
+                &x as *const u8 as usize
+            );
+        }
         let t_wh = Instant::now();
         let (w_hat, w_hat_flat) = {
             let _span = tracing::info_span!("decompose_w_hat").entered();
@@ -153,7 +161,7 @@ where
         let t_v = Instant::now();
         let v = {
             let _span = tracing::info_span!("compute_v").entered();
-            compute_v(&setup.ntt_D, &w_hat_flat)
+            compute_v(ntt_d, &w_hat_flat)
         };
         eprintln!(
             "    [quad_eq] compute_v (D*w_hat): {:.2}s (w_hat_flat_len={})",
@@ -164,7 +172,7 @@ where
         transcript.append_serde(ABSORB_PROVER_V, &v);
 
         let challenge_cfg = SparseChallengeConfig {
-            weight: Cfg::CHALLENGE_WEIGHT,
+            weight: Cfg::challenge_weight_for_ring_dim(D),
             nonzero_coeffs: vec![-1, 1],
         };
         let challenges = sample_sparse_challenges::<F, T, D>(
@@ -207,6 +215,7 @@ where
     ///
     /// Returns an error if challenge derivation fails.
     #[tracing::instrument(skip_all, name = "QuadraticEquation::new_verifier")]
+    #[inline(never)]
     pub fn new_verifier<T: Transcript<F>>(
         ring_opening_point: RingOpeningPoint<F>,
         v: Vec<CyclotomicRing<F, D>>,
@@ -299,7 +308,7 @@ where
     T: Transcript<F>,
 {
     let challenge_cfg = SparseChallengeConfig {
-        weight: Cfg::CHALLENGE_WEIGHT,
+        weight: Cfg::challenge_weight_for_ring_dim(D),
         nonzero_coeffs: vec![-1, 1],
     };
     transcript.append_serde(ABSORB_PROVER_V, v);
@@ -388,6 +397,13 @@ where
     F: FieldCore + CanonicalField,
     Cfg: CommitmentConfig,
 {
+    {
+        let x: u8 = 0;
+        eprintln!(
+            "  [compute_r_split_eq] stack ~= {:#x}",
+            &x as *const u8 as usize
+        );
+    }
     let decomp_commit = layout.num_digits_commit;
     let decomp_open = layout.num_digits_open;
     let log_basis = layout.log_basis;
@@ -665,6 +681,7 @@ mod tests {
 
     use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
     use crate::protocol::challenges::sparse::sample_sparse_challenges;
+    use crate::protocol::commitment::HachiProverSetup;
     use crate::protocol::commitment::{HachiCommitmentCore, RingCommitmentScheme};
     use crate::protocol::hachi_poly_ops::DensePoly;
     use crate::protocol::proof::HachiCommitmentHint;
@@ -731,7 +748,7 @@ mod tests {
         let layout = setup.layout();
         let w_folded = poly.fold_blocks(&point.a, layout.block_len);
         let quad_eq = QuadraticEquation::<F, D, TinyConfig>::new_prover(
-            &setup,
+            &setup.ntt_D,
             point.clone(),
             &poly,
             w_folded,

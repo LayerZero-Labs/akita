@@ -18,7 +18,7 @@ use crate::protocol::commitment::{
     optimal_m_r_split, CommitmentConfig, DecompositionParams, HachiCommitmentLayout,
     HachiExpandedSetup, RingCommitment,
 };
-use crate::protocol::proof::{DigitLut, HachiCommitmentHint};
+use crate::protocol::proof::{DigitLut, FlatCommitmentHint, FlatRingVec, HachiCommitmentHint};
 use crate::protocol::quadratic_equation::{
     compute_m_a_streaming, compute_r_split_eq, QuadraticEquation,
 };
@@ -27,20 +27,21 @@ use crate::protocol::transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
 use crate::protocol::transcript::Transcript;
-use crate::{CanonicalField, FieldCore, FieldSampling};
+use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 #[cfg(test)]
 use std::array::from_fn;
 use std::marker::PhantomData;
 use std::time::Instant;
 
-/// Output of the ring switch protocol, containing everything needed for sumchecks.
-pub struct RingSwitchOutput<F: FieldCore, const D: usize> {
+/// D-agnostic output of the ring switch protocol, containing everything
+/// needed for sumchecks and level chaining.
+pub struct RingSwitchOutput<F: FieldCore> {
     /// The witness vector w as balanced digits in `[-b/2, b/2)`.
     pub w: Vec<i8>,
-    /// Commitment to w.
-    pub w_commitment: RingCommitment<F, D>,
-    /// Prover hint for the w-commitment (t_hat blocks), needed for recursive opening.
-    pub w_hint: HachiCommitmentHint<F, D>,
+    /// D-erased commitment to w.
+    pub w_commitment: FlatRingVec<F>,
+    /// D-erased prover hint for the w-commitment.
+    pub w_hint: FlatCommitmentHint,
     /// Compact evaluation table of w (all entries in [-b/2, b/2), reordered for sumcheck).
     /// Populated by the prover; empty on the verifier side.
     pub w_evals: Vec<i8>,
@@ -65,27 +66,37 @@ pub struct RingSwitchOutput<F: FieldCore, const D: usize> {
     pub alpha: F,
 }
 
-/// Execute the prover side of the ring switching protocol (Section 4.3).
+/// Build the witness vector `w` from the quadratic equation state.
+///
+/// This is the first half of the ring switch: it computes `r` and assembles
+/// `w` as a flat `Vec<i8>`. The resulting `w` is D-agnostic and can be
+/// committed at any ring dimension via [`commit_w`].
 ///
 /// # Errors
 ///
-/// Returns an error if z_pre/w_hat is missing, commitment fails, or matrix expansion fails.
-#[tracing::instrument(skip_all, name = "ring_switch_prover")]
+/// Returns an error if the quadratic equation is missing prover-side data.
+#[tracing::instrument(skip_all, name = "ring_switch_build_w")]
 #[allow(clippy::too_many_arguments)]
-pub fn ring_switch_prover<F, T, const D: usize, Cfg>(
+#[inline(never)]
+pub fn ring_switch_build_w<F, const D: usize, Cfg>(
     quad_eq: &mut QuadraticEquation<F, D, Cfg>,
     setup: &HachiExpandedSetup<F>,
-    transcript: &mut T,
     ntt_a: &NttSlotCache<D>,
     ntt_b: &NttSlotCache<D>,
     ntt_d: &NttSlotCache<D>,
     layout: HachiCommitmentLayout,
-) -> Result<RingSwitchOutput<F, D>, HachiError>
+) -> Result<Vec<i8>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
-    T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
+    {
+        let x: u8 = 0;
+        eprintln!(
+            "  [ring_switch_build_w] stack ~= {:#x}",
+            &x as *const u8 as usize
+        );
+    }
     let w_hat = quad_eq
         .w_hat()
         .ok_or_else(|| HachiError::InvalidInput("missing w_hat in prover".to_string()))?;
@@ -131,14 +142,39 @@ where
         "    [ring_switch] build_w_coeffs: {:.2}s",
         t_wc.elapsed().as_secs_f64()
     );
+    Ok(w)
+}
 
-    let t_cw = Instant::now();
-    let (w_commitment, w_hint) = commit_w::<F, D, Cfg>(&w, ntt_a, ntt_b)?;
-    eprintln!(
-        "    [ring_switch] commit_w: {:.2}s (w_len={})",
-        t_cw.elapsed().as_secs_f64(),
-        w.len()
-    );
+/// Complete the ring switch after `w` has been committed.
+///
+/// Takes the already-committed `w` (with its D-erased commitment and hint)
+/// and finishes the protocol: absorbs the commitment into the transcript,
+/// samples challenges, and builds the evaluation tables for the fused sumcheck.
+///
+/// Only the current level's `D` is needed (for M_alpha expansion and
+/// alpha_evals_y). The commitment's ring dimension is encoded in the
+/// `FlatRingVec` and does not require a separate const generic.
+///
+/// # Errors
+///
+/// Returns an error if matrix expansion or evaluation-table construction fails.
+#[tracing::instrument(skip_all, name = "ring_switch_finalize")]
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn ring_switch_finalize<F, T, const D: usize, Cfg>(
+    quad_eq: &QuadraticEquation<F, D, Cfg>,
+    setup: &HachiExpandedSetup<F>,
+    transcript: &mut T,
+    w: Vec<i8>,
+    w_commitment: FlatRingVec<F>,
+    w_hint: FlatCommitmentHint,
+    layout: HachiCommitmentLayout,
+) -> Result<RingSwitchOutput<F>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig,
+{
     transcript.append_serde(ABSORB_SUMCHECK_W, &w_commitment);
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
@@ -205,20 +241,73 @@ where
     })
 }
 
+/// Execute the prover side of the ring switching protocol (Section 4.3).
+///
+/// Convenience wrapper that calls [`ring_switch_build_w`], [`commit_w`], and
+/// [`ring_switch_finalize`] in sequence, all at the same ring dimension `D`.
+///
+/// # Errors
+///
+/// Returns an error if z_pre/w_hat is missing, commitment fails, or matrix expansion fails.
+#[tracing::instrument(skip_all, name = "ring_switch_prover")]
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn ring_switch_prover<F, T, const D: usize, Cfg>(
+    quad_eq: &mut QuadraticEquation<F, D, Cfg>,
+    setup: &HachiExpandedSetup<F>,
+    transcript: &mut T,
+    ntt_a: &NttSlotCache<D>,
+    ntt_b: &NttSlotCache<D>,
+    ntt_d: &NttSlotCache<D>,
+    layout: HachiCommitmentLayout,
+) -> Result<RingSwitchOutput<F>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig,
+{
+    let w = ring_switch_build_w::<F, D, Cfg>(quad_eq, setup, ntt_a, ntt_b, ntt_d, layout)?;
+
+    let t_cw = Instant::now();
+    let (w_commitment, w_hint) = commit_w::<F, D, Cfg>(&w, ntt_a, ntt_b)?;
+    eprintln!(
+        "    [ring_switch] commit_w: {:.2}s (w_len={})",
+        t_cw.elapsed().as_secs_f64(),
+        w.len()
+    );
+
+    let w_commitment_flat = FlatRingVec::from_commitment(&w_commitment);
+    let w_hint_flat = FlatCommitmentHint::from_typed(w_hint);
+
+    ring_switch_finalize::<F, T, D, Cfg>(
+        quad_eq,
+        setup,
+        transcript,
+        w,
+        w_commitment_flat,
+        w_hint_flat,
+        layout,
+    )
+}
+
 /// Replay the verifier side of ring switching to reconstruct evaluation tables.
+///
+/// Takes the w-commitment as a [`FlatRingVec`] so the verifier does not need
+/// to know D_COMMIT (the commitment's ring dimension).
 ///
 /// # Errors
 ///
 /// Returns an error if matrix expansion fails.
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
+#[inline(never)]
 pub fn ring_switch_verifier<F, T, const D: usize, Cfg>(
     quad_eq: &QuadraticEquation<F, D, Cfg>,
     setup: &HachiExpandedSetup<F>,
     w_len: usize,
-    w_commitment: &RingCommitment<F, D>,
+    w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
     layout: HachiCommitmentLayout,
-) -> Result<RingSwitchOutput<F, D>, HachiError>
+) -> Result<RingSwitchOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
@@ -251,7 +340,7 @@ where
     Ok(RingSwitchOutput {
         w: Vec::new(),
         w_commitment: w_commitment.clone(),
-        w_hint: HachiCommitmentHint::new(Vec::new()),
+        w_hint: FlatCommitmentHint::empty(),
         w_evals: Vec::new(),
         w_evals_field: Vec::new(),
         m_evals_x,
@@ -361,6 +450,10 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
     const N_D: usize = Cfg::N_D;
     const CHALLENGE_WEIGHT: usize = Cfg::CHALLENGE_WEIGHT;
 
+    fn challenge_weight_for_ring_dim(d: usize) -> usize {
+        Cfg::challenge_weight_for_ring_dim(d)
+    }
+
     fn decomposition() -> DecompositionParams {
         let parent = Cfg::decomposition();
         let parent_open = parent.log_open_bound.unwrap_or(parent.log_commit_bound);
@@ -430,6 +523,7 @@ pub(crate) fn w_commitment_layout<F: CanonicalField, const D: usize, Cfg: Commit
 ///
 /// Returns an error if the commitment layout derivation or NTT mat-vec fails.
 #[tracing::instrument(skip_all, name = "commit_w")]
+#[inline(never)]
 pub fn commit_w<F, const D: usize, Cfg>(
     w: &[i8],
     ntt_a: &NttSlotCache<D>,
@@ -617,7 +711,7 @@ pub(crate) fn build_w_evals<F: FieldCore>(
 
 /// Produce both compact `Vec<i8>` and field `Vec<F>` eval tables in one pass
 /// over `w`, sharing the index computation.
-pub(crate) fn build_w_evals_dual<F: FieldCore + crate::FromSmallInt>(
+pub(crate) fn build_w_evals_dual<F: FieldCore + FromSmallInt>(
     w: &[i8],
     d: usize,
     log_basis: u32,

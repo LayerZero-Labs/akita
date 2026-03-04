@@ -12,18 +12,21 @@ use crate::{CanonicalField, FieldCore};
 /// Per-matrix NTT caches for multiple ring dimensions.
 ///
 /// Each field is lazily populated by the `get_or_build_*` methods.
+/// Fields use `Box<NttSlotCache<D>>` to keep the struct's inline size
+/// small: `NttSlotCache<1024>` alone is ~80 KB due to inline twiddle
+/// arrays, so storing them unboxed would make this struct ~155 KB.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultiDNttCaches {
     /// Cache for D=64.
-    pub d64: Option<NttSlotCache<64>>,
+    pub d64: Option<Box<NttSlotCache<64>>>,
     /// Cache for D=128.
-    pub d128: Option<NttSlotCache<128>>,
+    pub d128: Option<Box<NttSlotCache<128>>>,
     /// Cache for D=256.
-    pub d256: Option<NttSlotCache<256>>,
+    pub d256: Option<Box<NttSlotCache<256>>>,
     /// Cache for D=512.
-    pub d512: Option<NttSlotCache<512>>,
+    pub d512: Option<Box<NttSlotCache<512>>>,
     /// Cache for D=1024.
-    pub d1024: Option<NttSlotCache<1024>>,
+    pub d1024: Option<Box<NttSlotCache<1024>>>,
 }
 
 macro_rules! impl_get_or_build {
@@ -38,9 +41,9 @@ macro_rules! impl_get_or_build {
             mat: &FlatMatrix<F>,
         ) -> Result<&NttSlotCache<$d_val>, HachiError> {
             if self.$field.is_none() {
-                self.$field = Some(build_ntt_slot(mat.view::<$d_val>())?);
+                self.$field = Some(Box::new(build_ntt_slot(mat.view::<$d_val>())?));
             }
-            Ok(self.$field.as_ref().unwrap())
+            Ok(self.$field.as_deref().unwrap())
         }
     };
 }

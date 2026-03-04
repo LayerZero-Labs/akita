@@ -151,7 +151,11 @@ pub fn optimal_m_r_split<Cfg: CommitmentConfig>(reduced_vars: usize) -> (usize, 
 
     for r in 1..reduced_vars {
         let m = reduced_vars - r;
-        let delta_fold = compute_num_digits_fold(r, Cfg::CHALLENGE_WEIGHT, decomp.log_basis) as u64;
+        let delta_fold = compute_num_digits_fold(
+            r,
+            Cfg::challenge_weight_for_ring_dim(Cfg::D),
+            decomp.log_basis,
+        ) as u64;
         let cost = c1 * (1u64 << r) + delta_commit * delta_fold * (1u64 << m);
         if cost < best_cost {
             best_cost = cost;
@@ -215,7 +219,11 @@ impl HachiCommitmentLayout {
         let depth_commit = compute_num_digits(decomp.log_commit_bound, decomp.log_basis);
         let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
         let depth_open = compute_num_digits(open_bound, decomp.log_basis);
-        let depth_fold = compute_num_digits_fold(r_vars, Cfg::CHALLENGE_WEIGHT, decomp.log_basis);
+        let depth_fold = compute_num_digits_fold(
+            r_vars,
+            Cfg::challenge_weight_for_ring_dim(Cfg::D),
+            decomp.log_basis,
+        );
         Self::new_with_decomp(
             m_vars,
             r_vars,
@@ -407,7 +415,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// Returns an error on invalid parameters or arithmetic overflow.
     fn beta_bound(layout: HachiCommitmentLayout) -> Result<u128, HachiError> {
-        beta_linf_fold_bound(layout.r_vars, Self::CHALLENGE_WEIGHT, layout.log_basis)
+        beta_linf_fold_bound(
+            layout.r_vars,
+            Self::challenge_weight_for_ring_dim(Self::D),
+            layout.log_basis,
+        )
     }
 
     /// Ring dimension to use at a given fold level.
@@ -427,6 +439,16 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// for the target security level. The default returns `Self::N_A` at all levels.
     fn n_a_at_level(_level: usize) -> usize {
         Self::N_A
+    }
+
+    /// Challenge weight (Hamming weight ω) appropriate for ring dimension `d`.
+    ///
+    /// The default returns `Self::CHALLENGE_WEIGHT` for any `d`, which is
+    /// correct for constant-D configs. Override for varying-D schedules where
+    /// the optimal weight depends on the ring dimension (e.g., to maintain
+    /// ≥128 bits of challenge entropy as D decreases).
+    fn challenge_weight_for_ring_dim(_d: usize) -> usize {
+        Self::CHALLENGE_WEIGHT
     }
 }
 
@@ -703,14 +725,16 @@ pub type Fp128LogBasisCommitmentConfig = Fp128BoundedCommitmentConfig<3>;
 /// Backward-compatible alias for [`Fp128FullCommitmentConfig`].
 pub type Fp128CommitmentConfig = Fp128FullCommitmentConfig;
 
-/// Halving-D commitment config for Fp128 (D=512 → 256 → 128 → 64).
+/// Halving-D commitment config for Fp128 (D=512 → 256 → 128).
 ///
 /// Uses `d_at_level` and `n_a_at_level` to halve the ring dimension at each
 /// fold level while doubling the module rank to maintain D×N_A ≥ 512 for
-/// security. Stops halving at D=64.
+/// security. Stops halving at D=128, which is the minimum ring dimension
+/// for which sparse ternary challenges provide sufficient security.
 ///
-/// This config can be used with the constant-D prove loop (at D=512), or with
-/// a future varying-D prove loop that calls `dispatch_ring_dim!` per level.
+/// Challenge weights are scaled per ring dimension to maintain ≥128 bits
+/// of challenge entropy (log₂(C(D,ω) · 2^ω) ≥ 128):
+///   D=512: ω=19 (~131 bits), D=256: ω=23 (~131 bits), D=128: ω=31 (~130 bits).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Fp128HalvingDCommitmentConfig;
 
@@ -747,8 +771,7 @@ impl CommitmentConfig for Fp128HalvingDCommitmentConfig {
         match level {
             0 => 512,
             1 => 256,
-            2 => 128,
-            _ => 64,
+            _ => 128,
         }
     }
 
@@ -756,8 +779,16 @@ impl CommitmentConfig for Fp128HalvingDCommitmentConfig {
         match level {
             0 => 1,
             1 => 2,
-            2 => 4,
-            _ => 8,
+            _ => 4,
+        }
+    }
+
+    fn challenge_weight_for_ring_dim(d: usize) -> usize {
+        match d {
+            512 => 19,
+            256 => 23,
+            128 => 31,
+            _ => panic!("Fp128HalvingDCommitmentConfig: unsupported ring dim {d}"),
         }
     }
 }

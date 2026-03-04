@@ -177,6 +177,212 @@ impl HachiDeserialize for PackedDigits {
     }
 }
 
+/// D-erased storage for a sequence of ring elements as raw field-element
+/// coefficients.
+///
+/// Each ring element of dimension `ring_dim` is stored as `ring_dim`
+/// contiguous field elements in `coeffs`. The total number of ring elements
+/// is `coeffs.len() / ring_dim`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatRingVec<F> {
+    coeffs: Vec<F>,
+    ring_dim: usize,
+}
+
+impl<F: FieldCore> FlatRingVec<F> {
+    /// Wrap a single ring element.
+    pub fn from_single<const D: usize>(r: &CyclotomicRing<F, D>) -> Self {
+        Self {
+            coeffs: r.coefficients().to_vec(),
+            ring_dim: D,
+        }
+    }
+
+    /// Wrap a slice of ring elements.
+    pub fn from_ring_elems<const D: usize>(elems: &[CyclotomicRing<F, D>]) -> Self {
+        let mut coeffs = Vec::with_capacity(elems.len() * D);
+        for e in elems {
+            coeffs.extend_from_slice(e.coefficients());
+        }
+        Self {
+            coeffs,
+            ring_dim: D,
+        }
+    }
+
+    /// Wrap a `RingCommitment`.
+    pub fn from_commitment<const D: usize>(c: &RingCommitment<F, D>) -> Self {
+        Self::from_ring_elems(&c.u)
+    }
+
+    /// Ring dimension (number of field-element coefficients per ring element).
+    pub fn ring_dim(&self) -> usize {
+        self.ring_dim
+    }
+
+    /// Number of ring elements stored.
+    pub fn count(&self) -> usize {
+        if self.ring_dim == 0 {
+            0
+        } else {
+            self.coeffs.len() / self.ring_dim
+        }
+    }
+
+    /// Raw coefficient slice.
+    pub fn coeffs(&self) -> &[F] {
+        &self.coeffs
+    }
+
+    /// Reconstruct a single ring element.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D != ring_dim` or `count() != 1`.
+    pub fn to_single<const D: usize>(&self) -> CyclotomicRing<F, D> {
+        assert_eq!(D, self.ring_dim, "D mismatch in to_single");
+        assert_eq!(self.count(), 1, "expected exactly one ring element");
+        CyclotomicRing::from_slice(&self.coeffs)
+    }
+
+    /// Reconstruct a vector of ring elements.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D != ring_dim`.
+    pub fn to_vec<const D: usize>(&self) -> Vec<CyclotomicRing<F, D>> {
+        assert_eq!(D, self.ring_dim, "D mismatch in to_vec");
+        self.coeffs
+            .chunks_exact(D)
+            .map(CyclotomicRing::from_slice)
+            .collect()
+    }
+
+    /// Reconstruct a `RingCommitment`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D != ring_dim`.
+    pub fn to_ring_commitment<const D: usize>(&self) -> RingCommitment<F, D> {
+        RingCommitment { u: self.to_vec() }
+    }
+}
+
+impl<F: FieldCore> HachiSerialize for FlatRingVec<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        (self.ring_dim as u32).serialize_with_mode(&mut writer, compress)?;
+        self.coeffs.serialize_with_mode(&mut writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        4 + self.coeffs.serialized_size(compress)
+    }
+}
+
+impl<F: FieldCore> Valid for FlatRingVec<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        if self.ring_dim == 0 {
+            return Err(SerializationError::InvalidData(
+                "ring_dim must be > 0".to_string(),
+            ));
+        }
+        if self.coeffs.len() % self.ring_dim != 0 {
+            return Err(SerializationError::InvalidData(
+                "coeffs length not a multiple of ring_dim".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl<F: FieldCore + Valid> HachiDeserialize for FlatRingVec<F> {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let ring_dim = u32::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+        let coeffs = Vec::<F>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let out = Self { coeffs, ring_dim };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
+/// D-erased commitment hint for cross-level storage.
+///
+/// Stores the decomposed `t̂_i` blocks as a flat `Vec<i8>` with metadata
+/// about block sizes and ring dimension. Convert to/from the typed
+/// [`HachiCommitmentHint`] via [`from_typed`](Self::from_typed) and
+/// [`to_typed`](Self::to_typed).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatCommitmentHint {
+    data: Vec<i8>,
+    block_sizes: Vec<usize>,
+    ring_dim: usize,
+}
+
+impl FlatCommitmentHint {
+    /// Convert from a typed hint, consuming it.
+    pub fn from_typed<F: FieldCore, const D: usize>(hint: HachiCommitmentHint<F, D>) -> Self {
+        let block_sizes: Vec<usize> = hint.t_hat.iter().map(|b| b.len()).collect();
+        let total_planes: usize = block_sizes.iter().sum();
+        let mut data = Vec::with_capacity(total_planes * D);
+        for block in &hint.t_hat {
+            for plane in block {
+                data.extend_from_slice(plane);
+            }
+        }
+        Self {
+            data,
+            block_sizes,
+            ring_dim: D,
+        }
+    }
+
+    /// Reconstruct a typed hint.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D != ring_dim`.
+    pub fn to_typed<F: FieldCore, const D: usize>(&self) -> HachiCommitmentHint<F, D> {
+        assert_eq!(D, self.ring_dim, "D mismatch in to_typed");
+        let mut t_hat = Vec::with_capacity(self.block_sizes.len());
+        let mut offset = 0;
+        for &block_size in &self.block_sizes {
+            let mut block = Vec::with_capacity(block_size);
+            for _ in 0..block_size {
+                let mut plane = [0i8; D];
+                plane.copy_from_slice(&self.data[offset..offset + D]);
+                offset += D;
+                block.push(plane);
+            }
+            t_hat.push(block);
+        }
+        HachiCommitmentHint::new(t_hat)
+    }
+
+    /// Ring dimension stored in this hint.
+    pub fn ring_dim(&self) -> usize {
+        self.ring_dim
+    }
+
+    /// Empty hint (verifier side, where hint data is not available).
+    pub fn empty() -> Self {
+        Self {
+            data: Vec::new(),
+            block_sizes: Vec::new(),
+            ring_dim: 0,
+        }
+    }
+}
+
 /// Prover-side hint produced at commitment time.
 ///
 /// Contains the decomposed inner-Ajtai outputs `t̂_i` needed by the
@@ -200,20 +406,83 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
 }
 
 /// Proof for a single fold level (quad_eq + ring_switch + sumcheck).
+///
+/// D-agnostic: ring elements are stored as [`FlatRingVec`] with their
+/// ring dimension recorded. Use [`y_ring_typed`](Self::y_ring_typed),
+/// [`v_typed`](Self::v_typed), and
+/// [`w_commitment_typed`](Self::w_commitment_typed) to reconstruct
+/// typed ring elements.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiLevelProof<F: FieldCore, const D: usize> {
-    /// `y_ring` from the §3.1 reduction.
-    pub y_ring: CyclotomicRing<F, D>,
-    /// `v = D · ŵ`.
-    pub v: Vec<CyclotomicRing<F, D>>,
+pub struct HachiLevelProof<F: FieldCore> {
+    /// `y_ring` from the §3.1 reduction (ring dim = current level's D).
+    pub y_ring: FlatRingVec<F>,
+    /// `v = D · ŵ` (ring dim = current level's D).
+    pub v: FlatRingVec<F>,
     /// Batched sumcheck proof (F_0 norm + F_α relation, §4.3).
     pub sumcheck_proof: SumcheckProof<F>,
-    /// Commitment to the sumcheck witness `w`.
-    pub w_commitment: RingCommitment<F, D>,
+    /// Commitment to the sumcheck witness `w`
+    /// (ring dim = next level's D, may differ from y_ring/v).
+    pub w_commitment: FlatRingVec<F>,
     /// Claimed evaluation of w at the sumcheck challenge point.
-    /// Used by the verifier to check the expected output claim without
-    /// needing the full w vector.
     pub w_eval: F,
+}
+
+impl<F: FieldCore> HachiLevelProof<F> {
+    /// Construct from typed ring elements for the current level and a
+    /// pre-erased `FlatRingVec` for the w-commitment (which may be at a
+    /// different D).
+    pub fn new<const D: usize>(
+        y_ring: CyclotomicRing<F, D>,
+        v: Vec<CyclotomicRing<F, D>>,
+        sumcheck_proof: SumcheckProof<F>,
+        w_commitment: FlatRingVec<F>,
+        w_eval: F,
+    ) -> Self {
+        Self {
+            y_ring: FlatRingVec::from_single(&y_ring),
+            v: FlatRingVec::from_ring_elems(&v),
+            sumcheck_proof,
+            w_commitment,
+            w_eval,
+        }
+    }
+
+    /// Ring dimension of y_ring and v (current level).
+    pub fn level_d(&self) -> usize {
+        self.y_ring.ring_dim()
+    }
+
+    /// Ring dimension of the w_commitment (next level).
+    pub fn w_commit_d(&self) -> usize {
+        self.w_commitment.ring_dim()
+    }
+
+    /// Reconstruct typed `y_ring`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D` does not match the stored ring dimension.
+    pub fn y_ring_typed<const D: usize>(&self) -> CyclotomicRing<F, D> {
+        self.y_ring.to_single()
+    }
+
+    /// Reconstruct typed `v`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D` does not match the stored ring dimension.
+    pub fn v_typed<const D: usize>(&self) -> Vec<CyclotomicRing<F, D>> {
+        self.v.to_vec()
+    }
+
+    /// Reconstruct typed `w_commitment`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D` does not match the stored ring dimension.
+    pub fn w_commitment_typed<const D: usize>(&self) -> RingCommitment<F, D> {
+        self.w_commitment.to_ring_commitment()
+    }
 }
 
 /// Hachi PCS proof with multi-level folding.
@@ -221,18 +490,21 @@ pub struct HachiLevelProof<F: FieldCore, const D: usize> {
 /// Each level runs the full protocol (quadratic equation, ring switch,
 /// sumcheck) on the previous level's witness `w`. The final level sends
 /// `w` directly for the verifier to check, packed as balanced digits.
+///
+/// D-agnostic: per-level ring dimensions are recorded in each
+/// [`HachiLevelProof`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiProof<F: FieldCore, const D: usize> {
+pub struct HachiProof<F: FieldCore> {
     /// Per-level proofs, from the original polynomial (level 0) through
     /// recursive w-openings.
-    pub levels: Vec<HachiLevelProof<F, D>>,
+    pub levels: Vec<HachiLevelProof<F>>,
     /// The witness vector at the deepest fold level, bit-packed as balanced
     /// digits in `[-b/2, b/2)`. Use [`PackedDigits::to_field_elems`] to
     /// reconstruct `Vec<F>`.
     pub final_w: PackedDigits,
 }
 
-impl<F: FieldCore + HachiSerialize, const D: usize> HachiProof<F, D> {
+impl<F: FieldCore + HachiSerialize> HachiProof<F> {
     /// Returns the proof size in bytes (uncompressed).
     pub fn size(&self) -> usize {
         let levels_size: usize = self
@@ -260,7 +532,6 @@ impl<F: FieldCore, const D: usize> HachiSerialize for HachiCommitmentHint<F, D> 
         for block in &self.t_hat {
             (block.len() as u64).serialize_with_mode(&mut writer, compress)?;
             for plane in block {
-                // Safety: i8 and u8 have identical layout.
                 let bytes: &[u8] =
                     unsafe { std::slice::from_raw_parts(plane.as_ptr().cast::<u8>(), D) };
                 writer.write_all(bytes)?;
@@ -296,7 +567,6 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiCommitmentH
             let mut block = Vec::with_capacity(block_len);
             for _ in 0..block_len {
                 let mut plane = [0i8; D];
-                // Safety: i8 and u8 have identical layout.
                 let bytes: &mut [u8] =
                     unsafe { std::slice::from_raw_parts_mut(plane.as_mut_ptr().cast::<u8>(), D) };
                 reader.read_exact(bytes)?;
@@ -308,7 +578,7 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiCommitmentH
     }
 }
 
-impl<F: FieldCore, const D: usize> HachiSerialize for HachiLevelProof<F, D> {
+impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -331,29 +601,31 @@ impl<F: FieldCore, const D: usize> HachiSerialize for HachiLevelProof<F, D> {
     }
 }
 
-impl<F: FieldCore + Valid, const D: usize> Valid for HachiLevelProof<F, D> {
+impl<F: FieldCore> Valid for HachiLevelProof<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
+        self.y_ring.check()?;
+        self.v.check()?;
+        self.w_commitment.check()
     }
 }
 
-impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiLevelProof<F, D> {
+impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
         Ok(Self {
-            y_ring: CyclotomicRing::deserialize_with_mode(&mut reader, compress, validate)?,
-            v: Vec::deserialize_with_mode(&mut reader, compress, validate)?,
+            y_ring: FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?,
+            v: FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?,
             sumcheck_proof: SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?,
-            w_commitment: RingCommitment::deserialize_with_mode(&mut reader, compress, validate)?,
+            w_commitment: FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?,
             w_eval: F::deserialize_with_mode(&mut reader, compress, validate)?,
         })
     }
 }
 
-impl<F: FieldCore, const D: usize> HachiSerialize for HachiProof<F, D> {
+impl<F: FieldCore> HachiSerialize for HachiProof<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -375,13 +647,16 @@ impl<F: FieldCore, const D: usize> HachiSerialize for HachiProof<F, D> {
     }
 }
 
-impl<F: FieldCore + Valid, const D: usize> Valid for HachiProof<F, D> {
+impl<F: FieldCore> Valid for HachiProof<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
+        for lp in &self.levels {
+            lp.check()?;
+        }
+        self.final_w.check()
     }
 }
 
-impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiProof<F, D> {
+impl<F: FieldCore + Valid> HachiDeserialize for HachiProof<F> {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,

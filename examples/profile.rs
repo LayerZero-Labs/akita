@@ -13,7 +13,8 @@ use hachi_pcs::protocol::proof::HachiProof;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
-    BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, HachiSerialize, Transcript,
+    BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, HachiPolyOps, HachiSerialize,
+    Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -25,7 +26,7 @@ use tracing_subscriber::prelude::*;
 
 type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
 
-fn run_prove<const D: usize, Cfg: CommitmentConfig, P: hachi_pcs::HachiPolyOps<F, D>>(
+fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
     label: &str,
     setup: &<HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::ProverSetup,
     poly: &P,
@@ -54,7 +55,7 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig, P: hachi_pcs::HachiPolyOps<F
     )
     .unwrap();
     eprintln!("[{label}] prove: {:.3}s", t0.elapsed().as_secs_f64());
-    print_proof_summary::<D>(label, &proof);
+    print_proof_summary(label, &proof);
 
     let t0 = Instant::now();
     let verifier_setup = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(setup);
@@ -77,7 +78,7 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig, P: hachi_pcs::HachiPolyOps<F
     }
 }
 
-fn print_proof_summary<const D: usize>(label: &str, proof: &HachiProof<F, D>) {
+fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
     eprintln!(
         "[{label}]   levels: {}, proof size: {} bytes",
         proof.levels.len(),
@@ -87,8 +88,9 @@ fn print_proof_summary<const D: usize>(label: &str, proof: &HachiProof<F, D>) {
         let w_comm_size = lp.w_commitment.serialized_size(Compress::No);
         let sc_size = lp.sumcheck_proof.serialized_size(Compress::No);
         eprintln!(
-            "[{label}]   L{i}: w_commitment={} ring elems ({} bytes), sumcheck={} bytes",
-            lp.w_commitment.u.len(),
+            "[{label}]   L{i}: w_commitment={} ring elems (D={}, {} bytes), sumcheck={} bytes",
+            lp.w_commitment.count(),
+            lp.w_commit_d(),
             w_comm_size,
             sc_size,
         );
