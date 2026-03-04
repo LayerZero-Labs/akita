@@ -16,7 +16,7 @@ fn dense_eval<E: FieldCore + LiftBase<F>>(alpha: E, x: &CyclotomicRing<F, D>) ->
     let mut acc = E::zero();
     let mut pow = E::one();
     for c in x.coefficients().iter().copied() {
-        acc = acc + E::lift_base(c) * pow;
+        acc += E::lift_base(c) * pow;
         pow = pow * alpha;
     }
     acc

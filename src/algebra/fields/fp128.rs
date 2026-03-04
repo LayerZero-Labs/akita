@@ -11,7 +11,7 @@
 //! `Prime128M13M4P0` denotes `p = 2^128 − 2^13 − 2^4 + 2^0`.
 
 use std::io::{Read, Write};
-use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use rand_core::RngCore;
 
@@ -278,7 +278,7 @@ impl<const P: u128> Fp128<P> {
         let mut acc = Self::one();
         while exp > 0 {
             if (exp & 1) == 1 {
-                acc = acc * base;
+                acc *= base;
             }
             base = Self(Self::sqr_raw(base.0));
             exp >>= 1;
@@ -707,6 +707,13 @@ impl<const P: u128> SubAssign for Fp128<P> {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
         *self = *self - rhs;
+    }
+}
+
+impl<const P: u128> MulAssign for Fp128<P> {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
     }
 }
 

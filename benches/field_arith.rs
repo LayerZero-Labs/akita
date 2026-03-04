@@ -132,7 +132,7 @@ fn bench_mul_only(c: &mut Criterion) {
         b.iter(|| {
             let mut acc = F13::one();
             for x in inputs_f13.iter() {
-                acc = acc * *x;
+                acc *= *x;
             }
             black_box(acc)
         })
@@ -143,7 +143,7 @@ fn bench_mul_only(c: &mut Criterion) {
             let mut acc = F13::one();
             for _ in 0..8 {
                 for x in inputs_f13.iter() {
-                    acc = acc * *x;
+                    acc *= *x;
                 }
             }
             black_box(acc)
@@ -154,7 +154,7 @@ fn bench_mul_only(c: &mut Criterion) {
         b.iter(|| {
             let mut sum = F13::zero();
             for pair in inputs_f13.chunks_exact(2) {
-                sum = sum + pair[0] * pair[1];
+                sum += pair[0] * pair[1];
             }
             black_box(sum)
         })
@@ -164,7 +164,7 @@ fn bench_mul_only(c: &mut Criterion) {
         b.iter(|| {
             let mut acc = F2p18p1::one();
             for x in inputs_f2p18p1.iter() {
-                acc = acc * *x;
+                acc *= *x;
             }
             black_box(acc)
         })
@@ -174,7 +174,7 @@ fn bench_mul_only(c: &mut Criterion) {
         b.iter(|| {
             let mut acc = F2p54m1::one();
             for x in inputs_f2p54m1.iter() {
-                acc = acc * *x;
+                acc *= *x;
             }
             black_box(acc)
         })
@@ -347,7 +347,7 @@ fn bench_inv(c: &mut Criterion) {
         b.iter(|| {
             let mut acc = F13::one();
             for x in inputs.iter() {
-                acc = acc * x.inv_or_zero();
+                acc *= x.inv_or_zero();
             }
             black_box(acc)
         })
@@ -500,7 +500,7 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
         let mut out = lhs.clone();
         b.iter(|| {
             for (dst, src) in out.iter_mut().zip(rhs.iter()) {
-                *dst = *dst + *src;
+                *dst += *src;
             }
             black_box(out[0])
         })
@@ -511,7 +511,7 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
         let mut out = packed_lhs.clone();
         b.iter(|| {
             for (dst, src) in out.iter_mut().zip(packed_rhs.iter()) {
-                *dst = *dst + *src;
+                *dst += *src;
             }
             black_box(out[0].extract(0))
         })
@@ -522,7 +522,7 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
         b.iter(|| {
             let mut acc = F::one();
             for x in scalar_latency_inputs.iter() {
-                acc = acc * *x;
+                acc *= *x;
             }
             black_box(acc)
         })
@@ -533,7 +533,7 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
         b.iter(|| {
             let mut acc = PF::broadcast(F::one());
             for x in packed_latency_inputs.iter() {
-                acc = acc * *x;
+                acc *= *x;
             }
             black_box(acc.extract(0))
         })
@@ -548,7 +548,7 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
             let mut acc: Vec<F> = lanes.iter().map(|(a, b)| *a * *b).collect();
             for _ in 0..throughput_iters {
                 for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
-                    *acc_i = *acc_i * lane.0;
+                    *acc_i *= lane.0;
                 }
             }
             black_box(acc[0])
@@ -564,7 +564,7 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
             let mut acc: Vec<PF> = lanes.iter().map(|(a, b)| *a * *b).collect();
             for _ in 0..throughput_iters {
                 for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
-                    *acc_i = *acc_i * lane.0;
+                    *acc_i *= lane.0;
                 }
             }
             black_box(acc[0].extract(0))
@@ -582,13 +582,13 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
                 for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
                     let (x, y) = *lane;
                     for _ in 0..mix_muls {
-                        *acc_i = *acc_i * x;
+                        *acc_i *= x;
                     }
                     for _ in 0..mix_adds {
-                        *acc_i = *acc_i + y;
+                        *acc_i += y;
                     }
                     for _ in 0..mix_subs {
-                        *acc_i = *acc_i - x;
+                        *acc_i -= x;
                     }
                 }
             }
@@ -607,13 +607,13 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
                 for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
                     let (x, y) = *lane;
                     for _ in 0..mix_muls {
-                        *acc_i = *acc_i * x;
+                        *acc_i *= x;
                     }
                     for _ in 0..mix_adds {
-                        *acc_i = *acc_i + y;
+                        *acc_i += y;
                     }
                     for _ in 0..mix_subs {
-                        *acc_i = *acc_i - x;
+                        *acc_i -= x;
                     }
                 }
             }
@@ -813,7 +813,7 @@ fn bench_accumulator_pattern(c: &mut Criterion) {
                 let b_s = black_box(&inputs_b_u64[..n]);
                 let mut acc = F::zero();
                 for i in 0..n {
-                    acc = acc + a_s[i] * F::from_u64(b_s[i]);
+                    acc += a_s[i] * F::from_u64(b_s[i]);
                 }
                 black_box(acc)
             })
@@ -848,7 +848,7 @@ fn bench_accumulator_pattern(c: &mut Criterion) {
                 let b_s = black_box(&inputs_b_f[..n]);
                 let mut acc = F::zero();
                 for i in 0..n {
-                    acc = acc + a_s[i] * b_s[i];
+                    acc += a_s[i] * b_s[i];
                 }
                 black_box(acc)
             })
@@ -1389,7 +1389,7 @@ fn bench_packed_sumcheck_mix(c: &mut Criterion) {
                     let p_v = black_box(&poly_p);
                     acc = <$packing>::broadcast(<$field>::zero());
                     for i in 0..e.len() {
-                        acc = acc + e[i] * p_v[i];
+                        acc += e[i] * p_v[i];
                     }
                     black_box(acc)
                 })

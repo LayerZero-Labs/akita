@@ -26,7 +26,7 @@ impl DummyPoly {
         assert_eq!(point.len(), self.num_vars());
         let mut acc = self.coeffs[0];
         for (i, r_i) in point.iter().enumerate() {
-            acc = acc + self.coeffs[i + 1] * *r_i;
+            acc += self.coeffs[i + 1] * *r_i;
         }
         acc
     }
@@ -46,7 +46,7 @@ impl HachiPolyOps<F, 1> for DummyPoly {
     fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, 1> {
         let mut acc = F::zero();
         for (c, &s) in self.coeffs.iter().zip(scalars.iter()) {
-            acc = acc + *c * s;
+            acc += *c * s;
         }
         CyclotomicRing::from_coefficients([acc])
     }
