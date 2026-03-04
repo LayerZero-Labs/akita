@@ -4,8 +4,6 @@ use crate::algebra::CyclotomicRing;
 use crate::primitives::serialization::{Compress, SerializationError};
 use crate::primitives::serialization::{Valid, Validate};
 use crate::protocol::commitment::RingCommitment;
-use crate::protocol::greyhound::GreyhoundEvalProof;
-use crate::protocol::labrador::LabradorProof;
 use crate::protocol::sumcheck::SumcheckProof;
 use crate::{FieldCore, FromSmallInt, HachiDeserialize, HachiSerialize};
 use std::io::{Read, Write};
@@ -232,10 +230,6 @@ pub struct HachiProof<F: FieldCore, const D: usize> {
     /// digits in `[-b/2, b/2)`. Use [`PackedDigits::to_field_elems`] to
     /// reconstruct `Vec<F>`.
     pub final_w: PackedDigits,
-    /// Greyhound evaluation proof (populated when D >= 64).
-    pub greyhound_eval_proof: Option<GreyhoundEvalProof<F, D>>,
-    /// Labrador recursive lattice proof (populated when D >= 64).
-    pub labrador_proof: Option<LabradorProof<F, D>>,
 }
 
 impl<F: FieldCore + HachiSerialize, const D: usize> HachiProof<F, D> {
@@ -252,8 +246,7 @@ impl<F: FieldCore + HachiSerialize, const D: usize> HachiProof<F, D> {
                     + lp.w_eval.serialized_size(Compress::No)
             })
             .sum();
-        let labrador_size = self.labrador_proof.as_ref().map_or(0, |p| p.size());
-        levels_size + self.final_w.serialized_size(Compress::No) + labrador_size
+        levels_size + self.final_w.serialized_size(Compress::No)
     }
 }
 
@@ -371,8 +364,6 @@ impl<F: FieldCore, const D: usize> HachiSerialize for HachiProof<F, D> {
             level.serialize_with_mode(&mut writer, compress)?;
         }
         self.final_w.serialize_with_mode(&mut writer, compress)
-        // greyhound_eval_proof and labrador_proof are not yet serialized;
-        // they are optional and only used at D >= 64 in the protocol layer.
     }
     fn serialized_size(&self, compress: Compress) -> usize {
         4 + self
@@ -406,11 +397,6 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiProof<F, D>
             )?);
         }
         let final_w = PackedDigits::deserialize_with_mode(&mut reader, compress, validate)?;
-        Ok(Self {
-            levels,
-            final_w,
-            greyhound_eval_proof: None,
-            labrador_proof: None,
-        })
+        Ok(Self { levels, final_w })
     }
 }

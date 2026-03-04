@@ -11,15 +11,8 @@ use crate::protocol::commitment::{
     HachiCommitmentLayout, HachiProverSetup, HachiVerifierSetup, RingCommitment,
     RingCommitmentScheme,
 };
-use crate::protocol::greyhound::{greyhound_eval, greyhound_reduce};
 use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
-use crate::protocol::labrador;
-use crate::protocol::labrador::transcript::{
-    absorb_greyhound_eval_claim, absorb_greyhound_eval_context, absorb_greyhound_u2,
-    sample_greyhound_fold_challenge, GreyhoundEvalTranscriptContext,
-};
 use crate::protocol::opening_point::{BasisMode, RingOpeningPoint};
-use crate::protocol::prg::{MatrixPrgBackendChoice, MatrixPrgBackendId};
 use crate::protocol::proof::{
     DigitLut, HachiCommitmentHint, HachiLevelProof, HachiProof, PackedDigits,
 };
@@ -423,43 +416,7 @@ where
         let log_basis = Cfg::decomposition().log_basis;
         let final_w = PackedDigits::from_i8_digits(&current_w, log_basis);
 
-        let (greyhound_eval_proof, labrador_proof) = if labrador_enabled::<D>() {
-            let lut = DigitLut::<F>::new(log_basis);
-            let w_field: Vec<F> = current_w.iter().map(|&d| lut.get(d)).collect();
-            let last_level = levels.last().unwrap();
-            let comkey_seed = &setup.expanded.seed.public_matrix_seed;
-            let jl_seed = derive_jl_seed(comkey_seed);
-            let backend = matrix_backend_from_id(setup.expanded.seed.public_matrix_prg_backend);
-
-            let (gh_proof, labrador_witness, statement) = greyhound_eval(
-                &w_field,
-                &current_challenges,
-                last_level.w_eval,
-                &last_level.w_commitment.u,
-                comkey_seed,
-                backend,
-                transcript,
-            )?;
-            let lab_proof = labrador::prove_with_config(
-                labrador_witness,
-                &statement,
-                &gh_proof.config,
-                comkey_seed,
-                &jl_seed,
-                backend,
-                transcript,
-            )?;
-            (Some(gh_proof), Some(lab_proof))
-        } else {
-            (None, None)
-        };
-
-        Ok(HachiProof {
-            levels,
-            final_w,
-            greyhound_eval_proof,
-            labrador_proof,
-        })
+        Ok(HachiProof { levels, final_w })
     }
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::verify")]
@@ -534,83 +491,12 @@ where
             }
         }
 
-        if labrador_enabled::<D>() {
-            if let (Some(gh_proof), Some(lab_proof)) =
-                (&proof.greyhound_eval_proof, &proof.labrador_proof)
-            {
-                let last_level = proof.levels.last().unwrap();
-                let comkey_seed = &setup.expanded.seed.public_matrix_seed;
-                let jl_seed = derive_jl_seed(comkey_seed);
-                let backend_v =
-                    matrix_backend_from_id(setup.expanded.seed.public_matrix_prg_backend);
-
-                absorb_greyhound_eval_context(
-                    transcript,
-                    &GreyhoundEvalTranscriptContext {
-                        m_rows: gh_proof.m_rows,
-                        n_cols: gh_proof.n_cols,
-                        inner_vars: gh_proof.inner_vars,
-                        eval_point_len: current_point.len(),
-                        prg_backend_id: backend_v as u8,
-                    },
-                )?;
-                let w_eval = last_level.w_eval;
-                absorb_greyhound_eval_claim(transcript, &current_point, &w_eval);
-                absorb_greyhound_u2(transcript, &gh_proof.u2);
-                let fold_challenges: Vec<F> = (0..gh_proof.n_cols)
-                    .map(|_| sample_greyhound_fold_challenge(transcript))
-                    .collect();
-
-                let labrador_statement = greyhound_reduce(
-                    gh_proof,
-                    &last_level.w_commitment.u,
-                    &current_point,
-                    w_eval,
-                    &fold_challenges,
-                    comkey_seed,
-                    backend_v,
-                )?;
-                labrador::verify(
-                    &labrador_statement,
-                    lab_proof,
-                    comkey_seed,
-                    &jl_seed,
-                    backend_v,
-                    transcript,
-                )?;
-            }
-        }
-
         Ok(())
     }
 
     fn protocol_name() -> &'static [u8] {
         unimplemented!()
     }
-}
-
-/// Greyhound/Labrador is enabled only for production ring degrees (D >= 64).
-const fn labrador_enabled<const D: usize>() -> bool {
-    D >= 64
-}
-
-fn matrix_backend_from_id(id: MatrixPrgBackendId) -> MatrixPrgBackendChoice {
-    match id {
-        MatrixPrgBackendId::Shake256 => MatrixPrgBackendChoice::Shake256,
-        MatrixPrgBackendId::Aes128Ctr => MatrixPrgBackendChoice::Aes128Ctr,
-    }
-}
-
-fn derive_jl_seed(comkey_seed: &[u8; 32]) -> [u8; 16] {
-    use sha3::digest::{ExtendableOutput, Update, XofReader};
-    use sha3::Shake256;
-
-    let mut xof = Shake256::default();
-    xof.update(b"hachi/labrador/jl-seed");
-    xof.update(comkey_seed);
-    let mut out = [0u8; 16];
-    xof.finalize_xof().read(&mut out);
-    out
 }
 
 /// Verify one fold level.
