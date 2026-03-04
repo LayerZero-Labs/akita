@@ -7,3 +7,5 @@
 PUBLISH_CHECKLIST.md
 
 profile_traces/
+
+.cursor/
