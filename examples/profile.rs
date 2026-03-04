@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
 
+use hachi_pcs::algebra::poly::multilinear_eval;
 use hachi_pcs::algebra::Fp128;
 use hachi_pcs::error::HachiError;
 use hachi_pcs::primitives::serialization::Compress;
@@ -12,7 +13,9 @@ use hachi_pcs::protocol::proof::HachiProof;
 use hachi_pcs::protocol::sumcheck::norm_sumcheck::choose_round_kernel;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
-use hachi_pcs::{BasisMode, CommitmentScheme, FromSmallInt, HachiSerialize, Transcript};
+use hachi_pcs::{
+    BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, HachiSerialize, Transcript,
+};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
@@ -35,23 +38,19 @@ impl CommitmentConfig for ProfileCfg {
     const CHALLENGE_WEIGHT: usize = Fp128CommitmentConfig::CHALLENGE_WEIGHT;
 
     fn decomposition() -> DecompositionParams {
-        DecompositionParams {
-            log_basis: 4,
-            log_commit_bound: 128,
-            log_open_bound: None,
-        }
+        Fp128CommitmentConfig::decomposition()
     }
 
-    fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        let m = env::var("HACHI_M_VARS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(8);
-        let r = env::var("HACHI_R_VARS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(8);
-        HachiCommitmentLayout::new::<Self>(m, r, &Self::decomposition())
+    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        match (env::var("HACHI_M_VARS"), env::var("HACHI_R_VARS")) {
+            (Ok(m_str), Ok(r_str)) => {
+                let m: usize = m_str.parse().expect("HACHI_M_VARS must be a number");
+                let r: usize = r_str.parse().expect("HACHI_R_VARS must be a number");
+                eprintln!("  [layout] override: m_vars={m}, r_vars={r}");
+                HachiCommitmentLayout::new::<Self>(m, r, &Self::decomposition())
+            }
+            _ => Fp128CommitmentConfig::commitment_layout(max_num_vars),
+        }
     }
 }
 
@@ -131,7 +130,6 @@ fn run_prove_onehot(
     label: &str,
     setup: &<Scheme as CommitmentScheme<F, D>>::ProverSetup,
     onehot_poly: &OneHotPoly<F, D>,
-    _dense_poly: &DensePoly<F, D>,
     pt: &[F],
     opening: F,
     layout: &HachiCommitmentLayout,
@@ -186,13 +184,20 @@ fn main() {
     let trace_dir = "profile_traces";
     fs::create_dir_all(trace_dir).ok();
 
-    let log_basis: u32 = 3;
+    let log_basis = ProfileCfg::decomposition().log_basis;
     let b = 1u32 << log_basis;
 
-    let nv = {
-        let alpha = D.trailing_zeros() as usize;
-        let layout = ProfileCfg::commitment_layout(0).expect("layout");
-        layout.m_vars + layout.r_vars + alpha
+    let alpha = D.trailing_zeros() as usize;
+    let nv: usize = match (env::var("HACHI_M_VARS"), env::var("HACHI_R_VARS")) {
+        (Ok(m_str), Ok(r_str)) => {
+            let m: usize = m_str.parse().expect("HACHI_M_VARS must be a number");
+            let r: usize = r_str.parse().expect("HACHI_R_VARS must be a number");
+            m + r + alpha
+        }
+        _ => env::var("HACHI_NUM_VARS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(25),
     };
 
     let timestamp = SystemTime::now()
@@ -212,26 +217,18 @@ fn main() {
     eprintln!("Open at https://ui.perfetto.dev/");
     eprintln!("num_vars = {nv}, b = {b}");
 
-    let len = 1usize << nv;
-    let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
-    let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
-    let pt: Vec<F> = (0..nv).map(|i| F::from_u64((i + 2) as u64)).collect();
+    let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
 
-    let opening = {
-        let mut weights = vec![F::from_u64(0); len];
-        weights[0] = F::from_u64(1);
-        for (k, &x) in pt.iter().enumerate() {
-            let half = 1usize << k;
-            for i in (0..half).rev() {
-                weights[i + half] = weights[i] * x;
-                weights[i] = weights[i] - weights[i + half];
-            }
-        }
-        evals
-            .iter()
-            .zip(weights.iter())
-            .fold(F::from_u64(0), |a, (&e, &w)| a + e * w)
-    };
+    let len = 1usize << nv;
+    let evals: Vec<F> = (0..len)
+        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .collect();
+    let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
+    let pt: Vec<F> = (0..nv)
+        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .collect();
+
+    let opening = multilinear_eval(&evals, &pt).unwrap();
 
     let t0 = Instant::now();
     let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(nv);
@@ -239,7 +236,7 @@ fn main() {
 
     let ab_mode = env::var("HACHI_AB_TEST").unwrap_or_default();
 
-    let layout = ProfileCfg::commitment_layout(0).expect("layout");
+    let layout = ProfileCfg::commitment_layout(nv).expect("layout");
 
     if ab_mode == "1" {
         eprintln!("\n=== A/B TEST: running both kernels ===\n");
@@ -264,17 +261,15 @@ fn main() {
     eprintln!("\n--- one-hot commit path ---");
     let total_ring = layout.num_blocks * layout.block_len;
     let onehot_k = D;
-    let num_chunks = total_ring; // K == D, so each ring element is one chunk
 
-    let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
-    let indices: Vec<Option<usize>> = (0..num_chunks)
+    let indices: Vec<Option<usize>> = (0..total_ring)
         .map(|_| Some(rng.gen_range(0..onehot_k)))
         .collect();
     let onehot_poly =
         OneHotPoly::<F, D>::new(onehot_k, indices.clone(), layout.r_vars, layout.m_vars).unwrap();
 
-    let dense_evals: Vec<F> = {
-        let mut evals = vec![F::from_u64(0); num_chunks * onehot_k];
+    let onehot_evals: Vec<F> = {
+        let mut evals = vec![F::from_u64(0); total_ring * onehot_k];
         for (ci, opt_idx) in indices.iter().enumerate() {
             if let Some(idx) = opt_idx {
                 evals[ci * onehot_k + idx] = F::from_u64(1);
@@ -282,28 +277,15 @@ fn main() {
         }
         evals
     };
-    let dense_poly_oh = DensePoly::<F, D>::from_field_evals(nv, &dense_evals).unwrap();
-    let opening_oh = {
-        let mut weights = vec![F::from_u64(0); len];
-        weights[0] = F::from_u64(1);
-        for (k, &x) in pt.iter().enumerate() {
-            let half = 1usize << k;
-            for i in (0..half).rev() {
-                weights[i + half] = weights[i] * x;
-                weights[i] = weights[i] - weights[i + half];
-            }
-        }
-        dense_evals
-            .iter()
-            .zip(weights.iter())
-            .fold(F::from_u64(0), |a, (&e, &w)| a + e * w)
-    };
+    let onehot_pt: Vec<F> = (0..nv)
+        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .collect();
+    let opening_oh = multilinear_eval(&onehot_evals, &onehot_pt).unwrap();
     run_prove_onehot(
         "onehot",
         &setup,
         &onehot_poly,
-        &dense_poly_oh,
-        &pt,
+        &onehot_pt,
         opening_oh,
         &layout,
     );

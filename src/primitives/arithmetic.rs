@@ -118,6 +118,25 @@ pub trait FromSmallInt: FieldCore {
     /// Embed an `i64` into the field (reduce mod characteristic).
     fn from_i64(val: i64) -> Self;
 
+    /// Embed an `i128` into the field.
+    ///
+    /// Default implementation splits into u64 limbs with field multiplication
+    /// by `2^64`. Override for base fields that have a direct path.
+    fn from_i128(val: i128) -> Self {
+        if val >= 0 {
+            let lo = val as u64;
+            let hi = (val >> 64) as u64;
+            if hi == 0 {
+                Self::from_u64(lo)
+            } else {
+                let two_64 = Self::from_u64(1u64 << 32) * Self::from_u64(1u64 << 32);
+                Self::from_u64(lo) + Self::from_u64(hi) * two_64
+            }
+        } else {
+            -Self::from_i128(-val)
+        }
+    }
+
     /// Lookup table mapping balanced digit index → field element.
     ///
     /// For `log_basis` in `1..=4`, returns a 16-entry table where

@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 
 use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
+use hachi_pcs::algebra::poly::multilinear_eval;
 use hachi_pcs::algebra::Fp128;
 use hachi_pcs::error::HachiError;
 use hachi_pcs::protocol::commitment::{
@@ -64,24 +65,6 @@ fn opening_point(nv: usize) -> Vec<F> {
     (0..nv).map(|i| F::from_u64((i + 2) as u64)).collect()
 }
 
-fn lagrange_eval(evals: &[F], point: &[F]) -> F {
-    let n = point.len();
-    let len = 1usize << n;
-    let mut weights = vec![F::from_u64(0); len];
-    weights[0] = F::from_u64(1);
-    for (k, &x) in point.iter().enumerate() {
-        let half = 1usize << k;
-        for i in (0..half).rev() {
-            weights[i + half] = weights[i] * x;
-            weights[i] = weights[i] - weights[i + half];
-        }
-    }
-    evals
-        .iter()
-        .zip(weights.iter())
-        .fold(F::from_u64(0), |a, (&e, &w)| a + e * w)
-}
-
 fn bench_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
     let nv = num_vars::<Cfg>();
     let poly = make_dense_poly(nv);
@@ -141,7 +124,7 @@ fn bench_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
 
     let verifier_setup = <Scheme<Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
     let evals: Vec<F> = (0..(1usize << nv)).map(|i| F::from_u64(i as u64)).collect();
-    let opening = lagrange_eval(&evals, &pt);
+    let opening = multilinear_eval(&evals, &pt).unwrap();
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench");
     let proof = <Scheme<Cfg> as CommitmentScheme<F, D>>::prove(
         &setup,
@@ -275,7 +258,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
     });
 
     let verifier_setup = <Scheme<Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
-    let opening = lagrange_eval(&dense_evals, &pt);
+    let opening = multilinear_eval(&dense_evals, &pt).unwrap();
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench");
     let proof = <Scheme<Cfg> as CommitmentScheme<F, D>>::prove(
         &setup,

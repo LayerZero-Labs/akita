@@ -26,7 +26,7 @@ use crate::protocol::commitment::onehot::{
 };
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{decompose_rows_i8, mat_vec_mul_ntt_i8};
-use crate::{cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
+use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
 use std::array::from_fn;
 use std::marker::PhantomData;
 
@@ -536,42 +536,41 @@ where
 
     fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
         let block_len = 1usize << self.m_vars;
-        let mut coeffs_acc = [F::zero(); D];
-
-        for (block_idx, entries) in self.sparse_blocks.iter().enumerate() {
-            let block_offset = block_idx * block_len;
-            for entry in entries {
-                let ring_idx = block_offset + entry.pos_in_block;
-                if ring_idx < scalars.len() {
-                    let s = scalars[ring_idx];
-                    for &ci in &entry.nonzero_coeffs {
-                        coeffs_acc[ci] += s;
+        cfg_fold_reduce!(
+            0..self.sparse_blocks.len(),
+            || CyclotomicRing::<F, D>::zero(),
+            |mut acc: CyclotomicRing<F, D>, block_idx: usize| {
+                let block_offset = block_idx * block_len;
+                for entry in &self.sparse_blocks[block_idx] {
+                    let ring_idx = block_offset + entry.pos_in_block;
+                    if ring_idx < scalars.len() {
+                        let s = scalars[ring_idx];
+                        for &ci in &entry.nonzero_coeffs {
+                            acc.coeffs[ci] += s;
+                        }
                     }
                 }
-            }
-        }
-
-        CyclotomicRing::from_coefficients(coeffs_acc)
+                acc
+            },
+            |a, b| a + b
+        )
     }
 
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
-        let num_blocks = self.sparse_blocks.len();
-        let mut results = vec![CyclotomicRing::<F, D>::zero(); num_blocks];
-
-        for (block_idx, entries) in self.sparse_blocks.iter().enumerate() {
-            let mut coeffs_acc = [F::zero(); D];
-            for entry in entries {
-                if entry.pos_in_block < scalars.len() && entry.pos_in_block < block_len {
-                    let s = scalars[entry.pos_in_block];
-                    for &ci in &entry.nonzero_coeffs {
-                        coeffs_acc[ci] += s;
+        cfg_iter!(self.sparse_blocks)
+            .map(|entries| {
+                let mut coeffs_acc = [F::zero(); D];
+                for entry in entries {
+                    if entry.pos_in_block < scalars.len() && entry.pos_in_block < block_len {
+                        let s = scalars[entry.pos_in_block];
+                        for &ci in &entry.nonzero_coeffs {
+                            coeffs_acc[ci] += s;
+                        }
                     }
                 }
-            }
-            results[block_idx] = CyclotomicRing::from_coefficients(coeffs_acc);
-        }
-
-        results
+                CyclotomicRing::from_coefficients(coeffs_acc)
+            })
+            .collect()
     }
 
     fn decompose_fold(
@@ -582,7 +581,7 @@ where
         _log_basis: u32,
     ) -> Vec<CyclotomicRing<F, D>> {
         let inner_width = block_len * num_digits;
-        let mut z = vec![CyclotomicRing::<F, D>::zero(); inner_width];
+        let num_blocks = self.sparse_blocks.len();
 
         // One-hot coefficients are {0,1}: balanced_decompose_pow2 produces
         // nonzero output only in digit plane 0 (the value itself).
@@ -591,28 +590,35 @@ where
         // position `ci` and each challenge term `(pos, coeff)`, we know the
         // exact output position in the cyclotomic ring (X^D + 1).
         // O(omega * |nonzero_coeffs|) per entry instead of O(omega * D).
-        for (i, c_i) in challenges.iter().enumerate() {
-            if i >= self.sparse_blocks.len() {
-                continue;
-            }
-            for entry in &self.sparse_blocks[i] {
-                let j = entry.pos_in_block * num_digits;
-                let z_coeffs = &mut z[j].coeffs;
-                for (&pos, &coeff) in c_i.positions.iter().zip(c_i.coeffs.iter()) {
-                    let c_val = F::from_i64(coeff as i64);
-                    for &ci in &entry.nonzero_coeffs {
-                        let target = ci + pos as usize;
-                        if target < D {
-                            z_coeffs[target] += c_val;
-                        } else {
-                            z_coeffs[target - D] -= c_val;
+        cfg_fold_reduce!(
+            0..challenges.len().min(num_blocks),
+            || vec![CyclotomicRing::<F, D>::zero(); inner_width],
+            |mut z: Vec<CyclotomicRing<F, D>>, i: usize| {
+                let c_i = &challenges[i];
+                for entry in &self.sparse_blocks[i] {
+                    let j = entry.pos_in_block * num_digits;
+                    let z_coeffs = &mut z[j].coeffs;
+                    for (&pos, &coeff) in c_i.positions.iter().zip(c_i.coeffs.iter()) {
+                        let c_val = F::from_i64(coeff as i64);
+                        for &ci in &entry.nonzero_coeffs {
+                            let target = ci + pos as usize;
+                            if target < D {
+                                z_coeffs[target] += c_val;
+                            } else {
+                                z_coeffs[target - D] -= c_val;
+                            }
                         }
                     }
                 }
+                z
+            },
+            |mut a: Vec<CyclotomicRing<F, D>>, b: Vec<CyclotomicRing<F, D>>| {
+                for (ai, bi) in a.iter_mut().zip(b.into_iter()) {
+                    *ai += bi;
+                }
+                a
             }
-        }
-
-        z
+        )
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner")]

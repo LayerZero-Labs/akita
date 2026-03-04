@@ -1,6 +1,7 @@
 //! Commitment scheme trait implementation.
 
 use crate::algebra::fields::wide::HasWide;
+use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::primitives::poly::multilinear_lagrange_basis;
@@ -86,7 +87,7 @@ fn prove_one_level<F, T, const D: usize, Cfg, P>(
     layout: HachiCommitmentLayout,
 ) -> Result<ProveLevelOutput<F, D>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps,
     T: Transcript<F>,
     Cfg: CommitmentConfig,
     P: HachiPolyOps<F, D>,
@@ -156,11 +157,11 @@ where
         layout,
     )?;
     eprintln!(
-        "  [hachi prove L{level}] ring_switch_prover: {:.2}s, w.len()={}, num_u={}, num_l={}",
+        "  [hachi prove L{level}] ring_switch_prover: {:.2}s (w.len()={}, num_u={}, num_l={})",
         t2.elapsed().as_secs_f64(),
         rs.w.len(),
         rs.num_u,
-        rs.num_l,
+        rs.num_l
     );
 
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
@@ -193,6 +194,22 @@ where
         multilinear_eval(&rs.w_evals_field, &sumcheck_challenges)?
     };
 
+    {
+        use super::sumcheck::{eq_poly::EqPolynomial, multilinear_eval as mle, range_check_eval};
+        let eq_val = EqPolynomial::mle(&rs.tau0, &sumcheck_challenges);
+        let norm_oracle = eq_val * range_check_eval(w_eval, rs.b);
+        let (x_ch, y_ch) = sumcheck_challenges.split_at(num_u);
+        let alpha_val = mle(&rs.alpha_evals_y, y_ch).unwrap();
+        let m_val = mle(&rs.m_evals_x, x_ch).unwrap();
+        let relation_oracle = w_eval * alpha_val * m_val;
+        let prover_expected = batching_coeff * norm_oracle + relation_oracle;
+        if prover_expected != _final_claim {
+            eprintln!("  [hachi prove L{level}] PROVER self-check FAILED: expected != final_claim");
+        } else {
+            eprintln!("  [hachi prove L{level}] PROVER self-check OK");
+        }
+    }
+
     Ok(ProveLevelOutput {
         level_proof: HachiLevelProof {
             v: quad_eq.v,
@@ -217,7 +234,6 @@ fn should_stop_folding(w_len: usize, prev_w_len: usize) -> bool {
     if w_len <= MIN_W_LEN_FOR_FOLDING {
         return true;
     }
-    // Stop if w didn't shrink enough relative to the input.
     let ratio = w_len as f64 / prev_w_len as f64;
     ratio > MIN_SHRINK_RATIO
 }
@@ -258,7 +274,7 @@ fn dense_poly_from_w<F: FieldCore + FromSmallInt, const D: usize>(
 
 impl<F, const D: usize, Cfg> CommitmentScheme<F, D> for HachiCommitmentScheme<D, Cfg>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasWide,
+    F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps,
     Cfg: CommitmentConfig,
 {
     type ProverSetup = HachiProverSetup<F, D>;
@@ -342,6 +358,28 @@ where
             let w_poly = dense_poly_from_w::<F, D>(&current_w, Cfg::decomposition().log_basis)?;
             let opening_point =
                 next_level_opening_point(&current_challenges, current_num_u, current_num_l);
+
+            {
+                let prev_w_eval = levels.last().unwrap().w_eval;
+                let field_evals: Vec<F> = w_poly
+                    .coeffs
+                    .iter()
+                    .flat_map(|r| r.coeffs.iter().copied())
+                    .collect();
+                let direct_eval = multilinear_eval(&field_evals, &opening_point).unwrap();
+                if prev_w_eval != direct_eval {
+                    eprintln!("  [hachi prove L{level}] BUG: w_eval mismatch! prev_level w_eval != w_poly eval at opening_point");
+                    eprintln!(
+                        "    w_poly ring_elems={}, field_len={}, opening_point.len()={}",
+                        w_poly.coeffs.len(),
+                        field_evals.len(),
+                        opening_point.len()
+                    );
+                } else {
+                    eprintln!("  [hachi prove L{level}] w_eval consistency OK");
+                }
+            }
+
             let w_commitment = &levels.last().unwrap().w_commitment;
 
             let w_layout = <WCommitmentConfig<D, Cfg>>::commitment_layout(opening_point.len())?;
@@ -404,11 +442,13 @@ where
 
         for (i, level_proof) in proof.levels.iter().enumerate() {
             let is_last = i == num_levels - 1;
-
-            eprintln!("[verify] level {i}/{num_levels}, is_last={is_last}, point_len={}, basis={current_basis:?}", current_point.len());
+            eprintln!(
+                "  [verify] level {i}, is_last={is_last}, point_len={}",
+                current_point.len()
+            );
 
             let challenges = if i == 0 {
-                match verify_one_level::<F, T, D, Cfg>(
+                verify_one_level::<F, T, D, Cfg>(
                     level_proof,
                     setup,
                     transcript,
@@ -419,14 +459,10 @@ where
                     is_last,
                     if is_last { Some(&final_w_elems) } else { None },
                     *layout,
-                ) {
-                    Ok(c) => { eprintln!("[verify] level {i} OK, {} challenges", c.len()); c }
-                    Err(e) => { eprintln!("[verify] level {i} FAILED: {e:?}"); return Err(e); }
-                }
+                )?
             } else {
                 let w_layout = <WCommitmentConfig<D, Cfg>>::commitment_layout(current_point.len())?;
-                eprintln!("[verify] level {i} w_layout: m={}, r={}", w_layout.m_vars, w_layout.r_vars);
-                match verify_one_level::<F, T, D, WCommitmentConfig<D, Cfg>>(
+                verify_one_level::<F, T, D, WCommitmentConfig<D, Cfg>>(
                     level_proof,
                     setup,
                     transcript,
@@ -437,10 +473,7 @@ where
                     is_last,
                     if is_last { Some(&final_w_elems) } else { None },
                     w_layout,
-                ) {
-                    Ok(c) => { eprintln!("[verify] level {i} OK, {} challenges", c.len()); c }
-                    Err(e) => { eprintln!("[verify] level {i} FAILED: {e:?}"); return Err(e); }
-                }
+                )?
             };
 
             if !is_last {
@@ -511,10 +544,8 @@ where
     let trace_lhs = trace::<F, { D }>(&(level_proof.y_ring * v.sigma_m1()));
     let trace_rhs = d * *opening;
     if trace_lhs != trace_rhs {
-        eprintln!("[verify_one_level] TRACE CHECK FAILED");
         return Err(HachiError::InvalidProof);
     }
-    eprintln!("[verify_one_level] trace check passed, w_len calc next...");
 
     let ring_opening_point = ring_opening_point_from_field::<F>(
         reduced_opening_point,
@@ -536,7 +567,7 @@ where
     } else {
         w_ring_element_count::<F, Cfg>(layout) * D
     };
-    eprintln!("[verify_one_level] w_len={w_len}, is_last={is_last}, layout m={} r={} inner_width={} num_digits_open={} num_digits_commit={} num_digits_fold={}", layout.m_vars, layout.r_vars, layout.inner_width, layout.num_digits_open, layout.num_digits_commit, layout.num_digits_fold);
+    eprintln!("  [verify] w_len={w_len}, is_last={is_last}");
 
     let rs = ring_switch_verifier::<F, T, { D }, Cfg>(
         &quad_eq,

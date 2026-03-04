@@ -293,7 +293,7 @@ pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D
                     } else {
                         for t in 0..D {
                             for s in 0..D {
-                                local[t + s] = local[t + s] + a[t] * b[s];
+                                local[t + s] += a[t] * b[s];
                             }
                         }
                     }
@@ -302,7 +302,7 @@ pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D
 
             let pointwise_add = |mut a: Vec<F>, b: Vec<F>| -> Vec<F> {
                 for (ai, bi) in a.iter_mut().zip(b.iter()) {
-                    *ai = *ai + *bi;
+                    *ai += *bi;
                 }
                 a
             };
@@ -326,13 +326,13 @@ pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D
                 });
             let y_coeffs = y_i.coefficients();
             for k in 0..D {
-                poly[k] = poly[k] - y_coeffs[k];
+                poly[k] -= y_coeffs[k];
             }
             let mut quotient = vec![F::zero(); D];
             for k in (D..poly_len).rev() {
                 let q = poly[k];
                 quotient[k - D] = q;
-                poly[k - D] = poly[k - D] - q;
+                poly[k - D] -= q;
             }
             let coeffs: [F; D] = from_fn(|k| quotient[k]);
             CyclotomicRing::from_coefficients(coeffs)
@@ -393,7 +393,7 @@ pub(crate) fn w_ring_element_count<F: CanonicalField, Cfg: CommitmentConfig>(
     let w_hat_count = layout.num_blocks * layout.num_digits_open;
     let t_hat_count = layout.num_blocks * Cfg::N_A * layout.num_digits_commit;
     let z_pre_count = layout.inner_width * layout.num_digits_fold;
-    let r_count = (Cfg::N_D + Cfg::N_B + 2) * r_decomp_levels::<F>(layout.log_basis);
+    let r_count = m_row_count::<Cfg>() * r_decomp_levels::<F>(layout.log_basis);
     w_hat_count + t_hat_count + z_pre_count + r_count
 }
 
@@ -786,25 +786,25 @@ mod tests {
                     if is_scalar {
                         let scalar = a[0];
                         for s in 0..D {
-                            poly[s] = poly[s] + scalar * b[s];
+                            poly[s] += scalar * b[s];
                         }
                     } else {
                         for t in 0..D {
                             for s in 0..D {
-                                poly[t + s] = poly[t + s] + a[t] * b[s];
+                                poly[t + s] += a[t] * b[s];
                             }
                         }
                     }
                 }
                 let y_coeffs = y_i.coefficients();
                 for k in 0..D {
-                    poly[k] = poly[k] - y_coeffs[k];
+                    poly[k] -= y_coeffs[k];
                 }
                 let mut quotient = vec![F::zero(); D];
                 for k in (D..poly_len).rev() {
                     let q = poly[k];
                     quotient[k - D] = q;
-                    poly[k - D] = poly[k - D] - q;
+                    poly[k - D] -= q;
                 }
                 let coeffs: [F; D] = from_fn(|k| quotient[k]);
                 CyclotomicRing::from_coefficients(coeffs)

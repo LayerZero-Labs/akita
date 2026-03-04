@@ -191,6 +191,12 @@ where
 
     let expected = verifier.expected_output_claim(&challenges)?;
     if final_claim != expected {
+        eprintln!(
+            "[verify_sumcheck] MISMATCH: rounds={}, degree_bound={}",
+            verifier.num_rounds(),
+            verifier.degree_bound(),
+        );
+        eprintln!("  diff_is_zero = {}", (final_claim - expected).is_zero());
         return Err(HachiError::InvalidProof);
     }
 

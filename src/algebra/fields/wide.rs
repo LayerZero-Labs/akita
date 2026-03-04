@@ -136,8 +136,6 @@ impl Fp64x4i32 {
     }
 }
 
-// --- Fp64x4i32 arithmetic: NEON (aarch64) ---
-
 #[cfg(target_arch = "aarch64")]
 impl Add for Fp64x4i32 {
     type Output = Self;
@@ -200,8 +198,6 @@ impl Neg for Fp64x4i32 {
         }
     }
 }
-
-// --- Fp64x4i32 arithmetic: scalar fallback ---
 
 #[cfg(not(target_arch = "aarch64"))]
 impl Add for Fp64x4i32 {
@@ -351,8 +347,6 @@ impl Fp128x8i32 {
     }
 }
 
-// --- Fp128x8i32 arithmetic: NEON (aarch64) ---
-
 #[cfg(target_arch = "aarch64")]
 impl Add for Fp128x8i32 {
     type Output = Self;
@@ -423,8 +417,6 @@ impl Neg for Fp128x8i32 {
         }
     }
 }
-
-// --- Fp128x8i32 arithmetic: scalar fallback ---
 
 #[cfg(not(target_arch = "aarch64"))]
 impl Add for Fp128x8i32 {
@@ -516,6 +508,303 @@ impl AdditiveGroup for Fp128x8i32 {
     const ZERO: Self = Self([0; 8]);
 }
 
+/// Accumulator for `Fp64 × u64` products (also used for `Fp64 × Fp64`).
+///
+/// Each product is ≤ 128 bits, split into two u64 halves stored as u128 slots.
+/// Headroom: 2^64 additions per slot before overflow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fp64ProductAccum(pub [u128; 2]);
+
+impl Fp64ProductAccum {
+    /// Reduce accumulated products to a canonical `Fp64<P>`.
+    #[inline]
+    pub fn reduce<const P: u64>(self) -> Fp64<P> {
+        let [s0, s1] = self.0;
+        // s0 = Σ lo_i, s1 = Σ hi_i; value = s0 + s1 * 2^64
+        let a = Fp64::<P>::solinas_reduce(s0);
+        let b = Fp64::<P>::solinas_reduce(s1);
+        let shift = Fp64::<P>::solinas_reduce(1u128 << 64);
+        let b_shifted = Fp64::<P>::solinas_reduce(b.mul_wide_u64(shift.to_limbs()));
+        a + b_shifted
+    }
+}
+
+impl<const P: u64> From<Fp64<P>> for Fp64ProductAccum {
+    #[inline]
+    fn from(x: Fp64<P>) -> Self {
+        Self([x.to_limbs() as u128, 0])
+    }
+}
+
+impl AdditiveGroup for Fp64ProductAccum {
+    const ZERO: Self = Self([0; 2]);
+}
+
+impl Add for Fp64ProductAccum {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        Self([self.0[0] + rhs.0[0], self.0[1] + rhs.0[1]])
+    }
+}
+impl AddAssign for Fp64ProductAccum {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.0[0] += rhs.0[0];
+        self.0[1] += rhs.0[1];
+    }
+}
+impl Sub for Fp64ProductAccum {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        Self([
+            self.0[0].wrapping_sub(rhs.0[0]),
+            self.0[1].wrapping_sub(rhs.0[1]),
+        ])
+    }
+}
+impl SubAssign for Fp64ProductAccum {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0[0] = self.0[0].wrapping_sub(rhs.0[0]);
+        self.0[1] = self.0[1].wrapping_sub(rhs.0[1]);
+    }
+}
+impl Neg for Fp64ProductAccum {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        Self([self.0[0].wrapping_neg(), self.0[1].wrapping_neg()])
+    }
+}
+
+/// Accumulator for `Fp128 × u64` products.
+///
+/// Each `mul_wide_u64` produces 3 u64 limbs; stored as `[u128; 3]`.
+/// Headroom: 2^64 additions per slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fp128MulU64Accum(pub [u128; 3]);
+
+impl Fp128MulU64Accum {
+    /// Reduce to canonical `Fp128<P>`.
+    #[inline]
+    pub fn reduce<const P: u128>(self) -> Fp128<P> {
+        let [s0, s1, s2] = self.0;
+        let c0 = s0 >> 64;
+        let r0 = s0 as u64;
+        let t1 = s1 + c0;
+        let r1 = t1 as u64;
+        let c1 = t1 >> 64;
+        let t2 = s2 + c1;
+        let r2 = t2 as u64;
+        let r3 = (t2 >> 64) as u64;
+        Fp128::<P>::solinas_reduce(&[r0, r1, r2, r3])
+    }
+}
+
+impl<const P: u128> From<Fp128<P>> for Fp128MulU64Accum {
+    #[inline]
+    fn from(x: Fp128<P>) -> Self {
+        let [lo, hi] = x.to_limbs();
+        Self([lo as u128, hi as u128, 0])
+    }
+}
+
+impl AdditiveGroup for Fp128MulU64Accum {
+    const ZERO: Self = Self([0; 3]);
+}
+
+impl Add for Fp128MulU64Accum {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        Self([
+            self.0[0] + rhs.0[0],
+            self.0[1] + rhs.0[1],
+            self.0[2] + rhs.0[2],
+        ])
+    }
+}
+impl AddAssign for Fp128MulU64Accum {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.0[0] += rhs.0[0];
+        self.0[1] += rhs.0[1];
+        self.0[2] += rhs.0[2];
+    }
+}
+impl Sub for Fp128MulU64Accum {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        Self([
+            self.0[0].wrapping_sub(rhs.0[0]),
+            self.0[1].wrapping_sub(rhs.0[1]),
+            self.0[2].wrapping_sub(rhs.0[2]),
+        ])
+    }
+}
+impl SubAssign for Fp128MulU64Accum {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0[0] = self.0[0].wrapping_sub(rhs.0[0]);
+        self.0[1] = self.0[1].wrapping_sub(rhs.0[1]);
+        self.0[2] = self.0[2].wrapping_sub(rhs.0[2]);
+    }
+}
+impl Neg for Fp128MulU64Accum {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        Self([
+            self.0[0].wrapping_neg(),
+            self.0[1].wrapping_neg(),
+            self.0[2].wrapping_neg(),
+        ])
+    }
+}
+
+/// Accumulator for `Fp128 × Fp128` products.
+///
+/// Each `mul_wide` produces 4 u64 limbs; stored as `[u128; 4]`.
+/// Headroom: 2^64 additions per slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fp128ProductAccum(pub [u128; 4]);
+
+impl Fp128ProductAccum {
+    /// Reduce to canonical `Fp128<P>`.
+    #[inline]
+    pub fn reduce<const P: u128>(self) -> Fp128<P> {
+        let [s0, s1, s2, s3] = self.0;
+        let c0 = s0 >> 64;
+        let r0 = s0 as u64;
+        let t1 = s1 + c0;
+        let r1 = t1 as u64;
+        let c1 = t1 >> 64;
+        let t2 = s2 + c1;
+        let r2 = t2 as u64;
+        let c2 = t2 >> 64;
+        let t3 = s3 + c2;
+        let r3 = t3 as u64;
+        let r4 = (t3 >> 64) as u64;
+        Fp128::<P>::solinas_reduce(&[r0, r1, r2, r3, r4])
+    }
+}
+
+impl<const P: u128> From<Fp128<P>> for Fp128ProductAccum {
+    #[inline]
+    fn from(x: Fp128<P>) -> Self {
+        let [lo, hi] = x.to_limbs();
+        Self([lo as u128, hi as u128, 0, 0])
+    }
+}
+
+impl AdditiveGroup for Fp128ProductAccum {
+    const ZERO: Self = Self([0; 4]);
+}
+
+impl Add for Fp128ProductAccum {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        Self([
+            self.0[0] + rhs.0[0],
+            self.0[1] + rhs.0[1],
+            self.0[2] + rhs.0[2],
+            self.0[3] + rhs.0[3],
+        ])
+    }
+}
+impl AddAssign for Fp128ProductAccum {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.0[0] += rhs.0[0];
+        self.0[1] += rhs.0[1];
+        self.0[2] += rhs.0[2];
+        self.0[3] += rhs.0[3];
+    }
+}
+impl Sub for Fp128ProductAccum {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        Self([
+            self.0[0].wrapping_sub(rhs.0[0]),
+            self.0[1].wrapping_sub(rhs.0[1]),
+            self.0[2].wrapping_sub(rhs.0[2]),
+            self.0[3].wrapping_sub(rhs.0[3]),
+        ])
+    }
+}
+impl SubAssign for Fp128ProductAccum {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0[0] = self.0[0].wrapping_sub(rhs.0[0]);
+        self.0[1] = self.0[1].wrapping_sub(rhs.0[1]);
+        self.0[2] = self.0[2].wrapping_sub(rhs.0[2]);
+        self.0[3] = self.0[3].wrapping_sub(rhs.0[3]);
+    }
+}
+impl Neg for Fp128ProductAccum {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        Self([
+            self.0[0].wrapping_neg(),
+            self.0[1].wrapping_neg(),
+            self.0[2].wrapping_neg(),
+            self.0[3].wrapping_neg(),
+        ])
+    }
+}
+
+/// Pair accumulator for extension fields.
+///
+/// Wraps two base-field accumulators `(c0, c1)` component-wise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccumPair<A>(pub A, pub A);
+
+impl<A: AdditiveGroup> AdditiveGroup for AccumPair<A> {
+    const ZERO: Self = Self(A::ZERO, A::ZERO);
+}
+
+impl<A: AdditiveGroup> Add for AccumPair<A> {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        Self(self.0 + rhs.0, self.1 + rhs.1)
+    }
+}
+impl<A: AdditiveGroup> AddAssign for AccumPair<A> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.0 += rhs.0;
+        self.1 += rhs.1;
+    }
+}
+impl<A: AdditiveGroup> Sub for AccumPair<A> {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        Self(self.0 - rhs.0, self.1 - rhs.1)
+    }
+}
+impl<A: AdditiveGroup> SubAssign for AccumPair<A> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0 -= rhs.0;
+        self.1 -= rhs.1;
+    }
+}
+impl<A: AdditiveGroup> Neg for AccumPair<A> {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        Self(-self.0, -self.1)
+    }
+}
+
 /// Reduce a wide unreduced accumulator back to a canonical field element.
 pub trait ReduceTo<F> {
     /// Carry-propagate and reduce to a canonical field element.
@@ -543,6 +832,82 @@ impl<const P: u128> ReduceTo<Fp128<P>> for Fp128x8i32 {
     }
 }
 
+/// Multi-level unreduced multiplication hierarchy.
+///
+/// Provides `field × u64` and `field × field` widening multiplies that return
+/// accumulator types supporting carry-free addition. Reduction back to a
+/// canonical field element happens once after accumulation.
+pub trait HasUnreducedOps: FieldCore {
+    /// Accumulator for `self × u64` products (narrower than full product).
+    type MulU64Accum: AdditiveGroup;
+    /// Accumulator for `self × self` products.
+    type ProductAccum: AdditiveGroup;
+
+    /// Widening `self × small` with no reduction.
+    fn mul_u64_unreduced(self, small: u64) -> Self::MulU64Accum;
+    /// Widening `self × other` with no reduction.
+    fn mul_to_product_accum(self, other: Self) -> Self::ProductAccum;
+
+    /// Reduce a narrow-mul accumulator to a canonical field element.
+    fn reduce_mul_u64_accum(accum: Self::MulU64Accum) -> Self;
+    /// Reduce a full-product accumulator to a canonical field element.
+    fn reduce_product_accum(accum: Self::ProductAccum) -> Self;
+}
+
+impl<const P: u64> HasUnreducedOps for Fp64<P> {
+    type MulU64Accum = Fp64ProductAccum;
+    type ProductAccum = Fp64ProductAccum;
+
+    #[inline]
+    fn mul_u64_unreduced(self, small: u64) -> Fp64ProductAccum {
+        let wide = self.mul_wide_u64(small);
+        Fp64ProductAccum([wide & u64::MAX as u128, wide >> 64])
+    }
+
+    #[inline]
+    fn mul_to_product_accum(self, other: Self) -> Fp64ProductAccum {
+        let wide = self.mul_wide(other);
+        Fp64ProductAccum([wide & u64::MAX as u128, wide >> 64])
+    }
+
+    #[inline]
+    fn reduce_mul_u64_accum(accum: Fp64ProductAccum) -> Self {
+        accum.reduce::<P>()
+    }
+
+    #[inline]
+    fn reduce_product_accum(accum: Fp64ProductAccum) -> Self {
+        accum.reduce::<P>()
+    }
+}
+
+impl<const P: u128> HasUnreducedOps for Fp128<P> {
+    type MulU64Accum = Fp128MulU64Accum;
+    type ProductAccum = Fp128ProductAccum;
+
+    #[inline]
+    fn mul_u64_unreduced(self, small: u64) -> Fp128MulU64Accum {
+        let [lo, mid, hi] = self.mul_wide_u64(small);
+        Fp128MulU64Accum([lo as u128, mid as u128, hi as u128])
+    }
+
+    #[inline]
+    fn mul_to_product_accum(self, other: Self) -> Fp128ProductAccum {
+        let [r0, r1, r2, r3] = self.mul_wide(other);
+        Fp128ProductAccum([r0 as u128, r1 as u128, r2 as u128, r3 as u128])
+    }
+
+    #[inline]
+    fn reduce_mul_u64_accum(accum: Fp128MulU64Accum) -> Self {
+        accum.reduce::<P>()
+    }
+
+    #[inline]
+    fn reduce_product_accum(accum: Fp128ProductAccum) -> Self {
+        accum.reduce::<P>()
+    }
+}
+
 /// Associates a field type with its wide unreduced accumulator.
 pub trait HasWide: FieldCore {
     /// The wide accumulator type.
@@ -565,9 +930,10 @@ impl<const P: u128> HasWide for Fp128<P> {
 mod tests {
     use super::*;
     use crate::algebra::fields::{Pow2Offset24Field, Pow2Offset40Field, Prime128M8M4M1M0};
-    use crate::{FieldCore, FieldSampling};
+    use crate::{FieldCore, FieldSampling, FromSmallInt};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use rand_core::RngCore;
 
     type F128 = Prime128M8M4M1M0;
     type F32 = Pow2Offset24Field;
@@ -631,10 +997,10 @@ mod tests {
         for (i, &v) in vals.iter().enumerate() {
             let wv = Fp128x8i32::from(v);
             if i % 3 == 0 {
-                scalar = scalar - v;
+                scalar -= v;
                 wide -= wv;
             } else {
-                scalar = scalar + v;
+                scalar += v;
                 wide += wv;
             }
         }
@@ -687,5 +1053,113 @@ mod tests {
             .iter()
             .fold(Fp64x4i32::zero(), |acc, &x| acc + Fp64x4i32::from(x));
         assert_eq!(wide_sum.reduce::<P64>(), scalar_sum);
+    }
+
+    #[test]
+    fn fp64_product_accum_matches_scalar() {
+        let mut rng = StdRng::seed_from_u64(0x6464_4444);
+        let n = 500;
+        let a_vals: Vec<F64> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let b_vals: Vec<F64> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+
+        let scalar_sum: F64 = a_vals
+            .iter()
+            .zip(b_vals.iter())
+            .fold(F64::zero(), |acc, (&a, &b)| acc + a * b);
+
+        let accum_sum = a_vals
+            .iter()
+            .zip(b_vals.iter())
+            .fold(Fp64ProductAccum::ZERO, |acc, (&a, &b)| {
+                acc + a.mul_to_product_accum(b)
+            });
+        assert_eq!(F64::reduce_product_accum(accum_sum), scalar_sum);
+    }
+
+    #[test]
+    fn fp64_mul_u64_accum_matches_scalar() {
+        let mut rng = StdRng::seed_from_u64(0x6464_5555);
+        let n = 500;
+        let a_vals: Vec<F64> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let b_vals: Vec<u64> = (0..n).map(|_| rng.next_u64() >> 32).collect();
+
+        let scalar_sum: F64 = a_vals
+            .iter()
+            .zip(b_vals.iter())
+            .fold(F64::zero(), |acc, (&a, &b)| acc + a * F64::from_u64(b));
+
+        let accum_sum = a_vals
+            .iter()
+            .zip(b_vals.iter())
+            .fold(Fp64ProductAccum::ZERO, |acc, (&a, &b)| {
+                acc + a.mul_u64_unreduced(b)
+            });
+        assert_eq!(F64::reduce_mul_u64_accum(accum_sum), scalar_sum);
+    }
+
+    #[test]
+    fn fp128_product_accum_matches_scalar() {
+        let mut rng = StdRng::seed_from_u64(0x0128_6666);
+        let n = 500;
+        let a_vals: Vec<F128> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let b_vals: Vec<F128> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+
+        let scalar_sum: F128 = a_vals
+            .iter()
+            .zip(b_vals.iter())
+            .fold(F128::zero(), |acc, (&a, &b)| acc + a * b);
+
+        let accum_sum = a_vals
+            .iter()
+            .zip(b_vals.iter())
+            .fold(Fp128ProductAccum::ZERO, |acc, (&a, &b)| {
+                acc + a.mul_to_product_accum(b)
+            });
+        assert_eq!(F128::reduce_product_accum(accum_sum), scalar_sum);
+    }
+
+    #[test]
+    fn fp128_mul_u64_accum_matches_scalar() {
+        let mut rng = StdRng::seed_from_u64(0x0128_7777);
+        let n = 500;
+        let a_vals: Vec<F128> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let b_vals: Vec<u64> = (0..n).map(|_| rng.next_u64()).collect();
+
+        let scalar_sum: F128 = a_vals
+            .iter()
+            .zip(b_vals.iter())
+            .fold(F128::zero(), |acc, (&a, &b)| acc + a * F128::from_u64(b));
+
+        let accum_sum = a_vals
+            .iter()
+            .zip(b_vals.iter())
+            .fold(Fp128MulU64Accum::ZERO, |acc, (&a, &b)| {
+                acc + a.mul_u64_unreduced(b)
+            });
+        assert_eq!(F128::reduce_mul_u64_accum(accum_sum), scalar_sum);
+    }
+
+    #[test]
+    fn fp128_product_accum_sub_neg() {
+        let mut rng = StdRng::seed_from_u64(0x0128_8888);
+        let n = 500;
+        let a_vals: Vec<F128> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let b_vals: Vec<F128> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+
+        let mut scalar_sum = F128::zero();
+        let mut accum_pos = Fp128ProductAccum::ZERO;
+        let mut accum_neg = Fp128ProductAccum::ZERO;
+        for (i, (&a, &b)) in a_vals.iter().zip(b_vals.iter()).enumerate() {
+            let prod = a.mul_to_product_accum(b);
+            if i % 2 == 0 {
+                scalar_sum += a * b;
+                accum_pos += prod;
+            } else {
+                scalar_sum -= a * b;
+                accum_neg += prod;
+            }
+        }
+        let result = F128::reduce_product_accum(accum_pos) - F128::reduce_product_accum(accum_neg);
+        assert_eq!(result, scalar_sum);
     }
 }

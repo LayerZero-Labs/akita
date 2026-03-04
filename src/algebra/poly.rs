@@ -151,6 +151,7 @@ pub fn multilinear_eval<E: FieldCore>(evals: &[E], point: &[E]) -> Result<E, Hac
 /// Panics if the evaluation table length is not a power of two or has fewer
 /// than 2 elements. This is a prover-only helper where the caller guarantees
 /// well-formed input.
+#[tracing::instrument(skip_all, name = "fold_evals_in_place")]
 pub fn fold_evals_in_place<E: FieldCore>(evals: &mut Vec<E>, r: E) {
     assert!(
         evals.len().is_power_of_two(),

@@ -1,5 +1,6 @@
 //! Quadratic and quartic extension fields.
 
+use super::wide::{AccumPair, HasUnreducedOps};
 use crate::algebra::module::VectorModule;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
@@ -279,6 +280,46 @@ impl<F: FieldCore + FromSmallInt + Valid, C: Fp2Config<F>> FromSmallInt for Fp2<
 
     fn from_i64(val: i64) -> Self {
         Self::new(F::from_i64(val), F::zero())
+    }
+}
+
+impl<F: HasUnreducedOps + Valid, C: Fp2Config<F>> HasUnreducedOps for Fp2<F, C> {
+    type MulU64Accum = AccumPair<F::MulU64Accum>;
+    type ProductAccum = AccumPair<F::ProductAccum>;
+
+    #[inline]
+    fn mul_u64_unreduced(self, small: u64) -> AccumPair<F::MulU64Accum> {
+        AccumPair(
+            self.c0.mul_u64_unreduced(small),
+            self.c1.mul_u64_unreduced(small),
+        )
+    }
+
+    #[inline]
+    fn mul_to_product_accum(self, other: Self) -> AccumPair<F::ProductAccum> {
+        // Karatsuba: (c0 + c1·u)(d0 + d1·u) = (c0·d0 + NR·c1·d1) + (c0·d1 + c1·d0)·u
+        let v0 = self.c0.mul_to_product_accum(other.c0);
+        let v1 = self.c1.mul_to_product_accum(other.c1);
+        let cross = (self.c0 + self.c1).mul_to_product_accum(other.c0 + other.c1);
+
+        let nr_v1 = if C::IS_NEG_ONE { -v1 } else { v1 + v1 };
+        AccumPair(v0 + nr_v1, cross - v0 - v1)
+    }
+
+    #[inline]
+    fn reduce_mul_u64_accum(accum: AccumPair<F::MulU64Accum>) -> Self {
+        Self::new(
+            F::reduce_mul_u64_accum(accum.0),
+            F::reduce_mul_u64_accum(accum.1),
+        )
+    }
+
+    #[inline]
+    fn reduce_product_accum(accum: AccumPair<F::ProductAccum>) -> Self {
+        Self::new(
+            F::reduce_product_accum(accum.0),
+            F::reduce_product_accum(accum.1),
+        )
     }
 }
 
