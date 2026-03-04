@@ -36,6 +36,9 @@ pub struct LabradorFoldResult<F: FieldCore, const D: usize> {
 
 use crate::protocol::labrador::config::jl_lifts;
 
+use crate::protocol::ajtai::ajtai_commit::AjtaiCommitmentScheme;
+use crate::protocol::ajtai::coeff::{CoeffAjtai, CoeffAjtaiConfig};
+
 /// Perform one Labrador fold level (standard or tail, determined by `config.tail`).
 ///
 /// Follows the C Labrador protocol phases:
@@ -86,29 +89,28 @@ where
         b"labrador/comkey/A",
         backend,
     );
-    let t_hat_per_row: Vec<Vec<CyclotomicRing<F, D>>> = cfg_iter!(witness.rows())
-        .map(|row| {
-            let mut padded = Vec::with_capacity(max_len);
-            padded.extend_from_slice(row);
-            padded.resize(max_len, CyclotomicRing::<F, D>::zero());
-            let t = mat_vec_mul(&a, &padded);
-            decompose_rows_with_carry(&t, config.fu, config.bu as u32)
-        })
-        .collect();
-    let t_hat: Vec<CyclotomicRing<F, D>> = t_hat_per_row.into_iter().flatten().collect();
-
-    let u1 = if config.kappa1 > 0 && !config.tail {
-        let b = derive_extendable_comkey_matrix::<F, D>(
+    let b = if config.kappa1 > 0 && !config.tail {
+        let t_hat_len = r * config.kappa * config.fu;
+        derive_extendable_comkey_matrix::<F, D>(
             config.kappa1,
-            t_hat.len(),
+            t_hat_len,
             comkey_seed,
             b"labrador/comkey/B",
             backend,
-        );
-        mat_vec_mul(&b, &t_hat)
+        )
     } else {
-        t_hat.clone()
+        Vec::new()
     };
+
+    let coeff_config = CoeffAjtaiConfig {
+        inner_rows: config.kappa,
+        outer_rows: config.kappa1,
+        num_digits: config.fu,
+        decompose_modulus: config.bu as u32,
+        comkey_seed: *comkey_seed,
+    };
+
+    let (t_hat, u1) = CoeffAjtai::two_tier_commit(&a, &b, witness.rows(), &coeff_config)?;
 
     // Phase 2: JL Projection
     let (jl_projection, jl_nonce) = project(witness, jl_seed, backend)?;
@@ -164,6 +166,10 @@ where
             b"labrador/comkey/U2",
             backend,
         );
+        // Note: h_hat is already flattened, so we wrap it in a vec to match commit_inner signature if we were using it for h_hat too.
+        // But here we can just use NaiveAjtai::commit_inner with a single-row "inner commitment" that is just h.
+        // Or simply use mat_vec_mul since h_hat is already decomposed.
+        // Let's stick to the direct call for now since h calculation is custom (linear garbage).
         mat_vec_mul(&b2, &h_hat)
     } else {
         h_hat.clone()

@@ -4,6 +4,7 @@
 //! proof logic. It intentionally stays independent from external integration
 //! details (for example, Jolt wiring).
 
+pub mod ajtai;
 pub mod challenges;
 pub mod commitment;
 pub mod commitment_scheme;

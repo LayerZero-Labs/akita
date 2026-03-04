@@ -2,16 +2,15 @@
 
 use crate::error::HachiError;
 use crate::protocol::labrador::comkey::LabradorComKeySeed;
-use crate::protocol::labrador::fold::prove_level;
 use crate::protocol::labrador::config::logq_bits;
+use crate::protocol::labrador::fold::prove_level;
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
-use crate::protocol::labrador::{select_config, select_config_with_mode};
 use crate::protocol::labrador::types::{LabradorProof, LabradorStatement, LabradorWitness};
 use crate::protocol::labrador::LabradorReductionConfig;
+use crate::protocol::labrador::{select_config, select_config_with_mode};
 use crate::protocol::prg::MatrixPrgBackendChoice;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
-
 
 /// Build a recursive Labrador proof with optional tail acceptance.
 ///
@@ -178,15 +177,14 @@ where
     }
 
     if level_idx + 1 < LABRADOR_MAX_LEVELS {
-        let tail_cfg = select_config_with_mode(&witness, true).unwrap_or_else(|_| {
-            LabradorReductionConfig {
+        let tail_cfg =
+            select_config_with_mode(&witness, true).unwrap_or_else(|_| LabradorReductionConfig {
                 tail: true,
                 kappa1: 0,
                 fu: 1,
                 bu: logq_bits::<F>(),
                 ..fallback_cfg
-            }
-        });
+            });
 
         let baseline_bits = witness_size_bits::<F, D>(&witness)
             + levels

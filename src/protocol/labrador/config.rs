@@ -36,6 +36,11 @@ pub fn select_config<F: FieldCore + CanonicalField, const D: usize>(
 ///
 /// Mirrors the C `init_proof` parameter path with `quadratic=0` and the
 /// caller-provided `tail` setting.
+///
+/// # Errors
+///
+/// Returns an error if witness metadata is empty/invalid or if no secure
+/// commitment ranks are found within supported bounds.
 pub fn select_config_with_mode<F: FieldCore + CanonicalField, const D: usize>(
     witness: &LabradorWitness<F, D>,
     tail: bool,
@@ -70,7 +75,8 @@ pub fn select_config_with_mode<F: FieldCore + CanonicalField, const D: usize>(
                 * (2.0 * (LABRADOR_TAU1 + 4.0 * LABRADOR_TAU2) * varz * nn * (D as f64)).sqrt(),
             logq,
             D as f64,
-        ) || 64.0 * varz > (1u64 << 28) as f64;
+        )
+        || 64.0 * varz > (1u64 << 28) as f64;
 
     let f = if decompose { 2usize } else { 1usize };
     let mut b = if decompose {
@@ -98,8 +104,7 @@ pub fn select_config_with_mode<F: FieldCore + CanonicalField, const D: usize>(
         if !tail {
             let hi_exp = logq_bits as isize - (fu.saturating_sub(1) * bu) as isize;
             let hi_exp = hi_exp.max(0) as i32;
-            normsq += ((2f64.powi(2 * bu as i32) * ((fu - 1) as f64)
-                + 2f64.powi(2 * hi_exp))
+            normsq += ((2f64.powi(2 * bu as i32) * ((fu - 1) as f64) + 2f64.powi(2 * hi_exp))
                 / 12.0)
                 * (rr * (kappa as f64) + (rr * rr + rr) / 2.0);
         }
@@ -163,8 +168,7 @@ fn sis_secure_with_params(rank: usize, norm: f64, logq: f64, ring_degree: f64) -
     if rank == 0 || !norm.is_finite() || norm <= 0.0 {
         return false;
     }
-    let mut maxlog =
-        2.0 * (logq * LABRADOR_LOGDELTA * ring_degree).sqrt() * (rank as f64).sqrt();
+    let mut maxlog = 2.0 * (logq * LABRADOR_LOGDELTA * ring_degree).sqrt() * (rank as f64).sqrt();
     maxlog = maxlog.min(logq);
     norm.log2() < maxlog
 }
