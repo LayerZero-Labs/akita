@@ -183,18 +183,25 @@ mod tests {
     type F = Fp32<4294967197>;
     const D: usize = 64;
 
+    // Fixed test seeds and nonces for deterministic replay.
+    const TEST_SEED_A: [u8; 16] = [7u8; 16];
+    const TEST_SEED_B: [u8; 16] = [11u8; 16];
+    const TEST_SEED_C: [u8; 16] = [5u8; 16];
+    const TEST_NONCE_A: u64 = 9;
+    const TEST_NONCE_B: u64 = 17;
+    const TEST_NONCE_C: u64 = 4;
+    const TEST_NONCE_REF: u64 = 7;
+
     #[test]
     fn challenge_sampler_is_deterministic() {
-        let seed = [7u8; 16];
-        let c1 = sample_labrador_challenge_coeffs::<D>(3, &seed, 9).unwrap();
-        let c2 = sample_labrador_challenge_coeffs::<D>(3, &seed, 9).unwrap();
+        let c1 = sample_labrador_challenge_coeffs::<D>(3, &TEST_SEED_A, TEST_NONCE_A).unwrap();
+        let c2 = sample_labrador_challenge_coeffs::<D>(3, &TEST_SEED_A, TEST_NONCE_A).unwrap();
         assert_eq!(c1, c2);
     }
 
     #[test]
     fn challenge_sampler_obeys_operator_norm_bound() {
-        let seed = [11u8; 16];
-        let samples = sample_labrador_challenge_coeffs::<D>(8, &seed, 17).unwrap();
+        let samples = sample_labrador_challenge_coeffs::<D>(8, &TEST_SEED_B, TEST_NONCE_B).unwrap();
         assert_eq!(samples.len(), 8);
         for poly in &samples {
             assert!(challenge_operator_norm(poly) <= LABRADOR_CHALLENGE_OPNORM_BOUND);
@@ -203,8 +210,7 @@ mod tests {
 
     #[test]
     fn challenge_sampler_supports_dense_ring_conversion() {
-        let seed = [5u8; 16];
-        let dense = sample_labrador_challenges::<F, D>(2, &seed, 4).unwrap();
+        let dense = sample_labrador_challenges::<F, D>(2, &TEST_SEED_C, TEST_NONCE_C).unwrap();
         assert_eq!(dense.len(), 2);
     }
 
@@ -212,8 +218,8 @@ mod tests {
     fn challenge_sampler_matches_transliterated_reference_vector() {
         // Captured from the C-reference algorithm semantics (`polyvec_challenge`)
         // for seed = [0,1,2,...,15], nonce = 7, len = 1.
-        let seed = std::array::from_fn(|i| i as u8);
-        let coeffs = sample_labrador_challenge_coeffs::<D>(1, &seed, 7).unwrap();
+        let seed: [u8; 16] = std::array::from_fn(|i| i as u8);
+        let coeffs = sample_labrador_challenge_coeffs::<D>(1, &seed, TEST_NONCE_REF).unwrap();
         let got = coeffs[0];
         let expected: [i16; D] = [
             1, 1, 0, 1, 0, 0, 2, -1, 0, 0, 2, 1, 1, -1, -1, 1, -2, 0, 1, 0, -1, -1, 1, 0, 1, -1, 1,

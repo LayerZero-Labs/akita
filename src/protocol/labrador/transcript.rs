@@ -215,6 +215,10 @@ mod tests {
 
     type F = Fp64<4294967197>;
 
+    // Fixed test nonces for deterministic replay.
+    const TEST_NONCE_LOW: u64 = 1;
+    const TEST_NONCE_HIGH: u64 = 2;
+
     #[test]
     fn greyhound_context_replay_is_deterministic() {
         let ctx = GreyhoundEvalTranscriptContext {
@@ -340,13 +344,13 @@ mod tests {
         let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_PROTOCOL);
         absorb_labrador_level_context::<F, _>(&mut t1, &ctx).unwrap();
         absorb_labrador_jl_projection::<F, _>(&mut t1, &projection);
-        absorb_labrador_jl_nonce::<F, _>(&mut t1, 1);
+        absorb_labrador_jl_nonce::<F, _>(&mut t1, TEST_NONCE_LOW);
         let c1 = sample_labrador_aggregation_challenge::<F, _>(&mut t1);
 
         let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_PROTOCOL);
         absorb_labrador_level_context::<F, _>(&mut t2, &ctx).unwrap();
         absorb_labrador_jl_projection::<F, _>(&mut t2, &projection);
-        absorb_labrador_jl_nonce::<F, _>(&mut t2, 2);
+        absorb_labrador_jl_nonce::<F, _>(&mut t2, TEST_NONCE_HIGH);
         let c2 = sample_labrador_aggregation_challenge::<F, _>(&mut t2);
 
         assert_ne!(c1, c2, "nonce must be transcript-binding");

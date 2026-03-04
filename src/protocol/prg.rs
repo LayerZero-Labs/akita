@@ -266,10 +266,8 @@ fn derive_aes_key_iv(context: &MatrixPrgContext<'_>) -> ([u8; 16], [u8; 16]) {
     absorb_matrix_context(&mut xof, MATRIX_PRG_AES_DOMAIN, context);
     let mut out = [0u8; 32];
     xof.finalize_xof().read(&mut out);
-    let mut key = [0u8; 16];
-    let mut iv = [0u8; 16];
-    key.copy_from_slice(&out[..16]);
-    iv.copy_from_slice(&out[16..]);
+    let key: [u8; 16] = out[..16].try_into().expect("XOF produced 32 bytes");
+    let iv: [u8; 16] = out[16..].try_into().expect("XOF produced 32 bytes");
     (key, iv)
 }
 

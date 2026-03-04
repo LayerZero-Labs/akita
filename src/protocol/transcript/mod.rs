@@ -11,6 +11,12 @@ use crate::{CanonicalField, FieldCore, FromSmallInt, HachiSerialize};
 
 pub use hash::{Blake2bTranscript, HashTranscript, KeccakTranscript};
 
+/// Fixed nonce for single-polynomial rejection sampling. The seed is
+/// already transcript-derived and unique per challenge invocation, so
+/// the nonce is only needed for batching (`len > 1`). When sampling a
+/// single polynomial the nonce carries no additional entropy.
+const REJECTION_SAMPLER_SINGLE_NONCE: u64 = 0;
+
 /// Transcript interface for protocol Fiat-Shamir transforms.
 ///
 /// The protocol layer is label-aware and uses deterministic byte encoding for
@@ -90,7 +96,7 @@ where
         let len = chunk.len();
         chunk.copy_from_slice(&v.to_le_bytes()[..len]);
     }
-    let coeffs = sample_labrador_challenge_coeffs::<D>(1, &seed, 0)?;
+    let coeffs = sample_labrador_challenge_coeffs::<D>(1, &seed, REJECTION_SAMPLER_SINGLE_NONCE)?;
     let poly = coeffs
         .into_iter()
         .next()
