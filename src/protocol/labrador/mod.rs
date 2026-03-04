@@ -11,6 +11,7 @@ pub mod fold;
 pub mod guardrails;
 pub mod johnson_lindenstrauss;
 pub mod prover;
+pub mod setup;
 pub mod transcript;
 pub mod types;
 pub mod utils;
@@ -23,6 +24,7 @@ pub use johnson_lindenstrauss::{
     collapse, project, restore_constant_term, zero_constant_term_for_proof, LabradorJlMatrix,
 };
 pub use prover::{prove, prove_with_config};
+pub use setup::LabradorSetup;
 pub use types::{
     LabradorConstraint, LabradorLevelProof, LabradorProof, LabradorReductionConfig,
     LabradorStatement, LabradorWitness,

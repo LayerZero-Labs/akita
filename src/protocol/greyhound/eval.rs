@@ -447,11 +447,26 @@ mod tests {
         .unwrap();
         statement.beta_sq = witness.norm();
 
+        let r = witness.rows().len();
+        let max_len = witness
+            .rows()
+            .iter()
+            .map(|row| row.len())
+            .max()
+            .unwrap_or(0);
+        let setup = crate::protocol::labrador::LabradorSetup::new(
+            &proof.config,
+            r,
+            max_len,
+            &comkey_seed,
+            backend,
+        );
         let mut prover_transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
         let fold = prove_level(
             &witness,
             &statement,
             &proof.config,
+            &setup,
             &comkey_seed,
             &jl_seed,
             backend,

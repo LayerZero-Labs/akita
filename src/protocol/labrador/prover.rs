@@ -5,6 +5,7 @@ use crate::protocol::labrador::comkey::LabradorComKeySeed;
 use crate::protocol::labrador::config::logq_bits;
 use crate::protocol::labrador::fold::prove_level;
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
+use crate::protocol::labrador::setup::LabradorSetup;
 use crate::protocol::labrador::types::{LabradorProof, LabradorStatement, LabradorWitness};
 use crate::protocol::labrador::LabradorReductionConfig;
 use crate::protocol::labrador::{select_config, select_config_with_mode};
@@ -50,10 +51,19 @@ where
         }
 
         let cfg = select_config(&witness)?;
+        let r = witness.rows().len();
+        let max_len = witness
+            .rows()
+            .iter()
+            .map(|row| row.len())
+            .max()
+            .unwrap_or(0);
+        let setup = LabradorSetup::new(&cfg, r, max_len, comkey_seed, backend);
         let fold = prove_level(
             &witness,
             &_statement,
             &cfg,
+            &setup,
             comkey_seed,
             jl_seed,
             backend,
@@ -80,11 +90,20 @@ where
                 .sum::<usize>();
 
         // Clone transcript so we can roll back if tail doesn't help.
+        let r = witness.rows().len();
+        let max_len = witness
+            .rows()
+            .iter()
+            .map(|row| row.len())
+            .max()
+            .unwrap_or(0);
+        let tail_setup = LabradorSetup::new(&tail_cfg, r, max_len, comkey_seed, backend);
         let mut tail_transcript = transcript.clone();
         if let Ok(tail) = prove_level(
             &witness,
             &_statement,
             &tail_cfg,
+            &tail_setup,
             comkey_seed,
             jl_seed,
             backend,
@@ -153,10 +172,19 @@ where
         }
 
         let cfg = select_config(&witness).unwrap_or(fallback_cfg);
+        let r = witness.rows().len();
+        let max_len = witness
+            .rows()
+            .iter()
+            .map(|row| row.len())
+            .max()
+            .unwrap_or(0);
+        let setup = LabradorSetup::new(&cfg, r, max_len, comkey_seed, backend);
         let fold = prove_level(
             &witness,
             &statement,
             &cfg,
+            &setup,
             comkey_seed,
             jl_seed,
             backend,
@@ -192,11 +220,20 @@ where
                 .map(level_payload_size_bits::<F, D>)
                 .sum::<usize>();
 
+        let r = witness.rows().len();
+        let max_len = witness
+            .rows()
+            .iter()
+            .map(|row| row.len())
+            .max()
+            .unwrap_or(0);
+        let tail_setup = LabradorSetup::new(&tail_cfg, r, max_len, comkey_seed, backend);
         let mut tail_transcript = transcript.clone();
         if let Ok(tail) = prove_level(
             &witness,
             &statement,
             &tail_cfg,
+            &tail_setup,
             comkey_seed,
             jl_seed,
             backend,

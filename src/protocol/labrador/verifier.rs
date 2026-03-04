@@ -4,11 +4,12 @@ use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
+use crate::protocol::labrador::comkey::LabradorComKeySeed;
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
 use crate::protocol::labrador::johnson_lindenstrauss::{
     collapse, restore_constant_term, LabradorJlMatrix,
 };
+use crate::protocol::labrador::setup::LabradorSetup;
 use crate::protocol::labrador::transcript::{
     absorb_labrador_jl_nonce, absorb_labrador_jl_projection, absorb_labrador_level_context,
     LabradorLevelTranscriptContext,
@@ -189,6 +190,7 @@ where
         )?);
     }
 
+    let setup = LabradorSetup::new(&level.config, r, max_len, comkey_seed, backend);
     let next_constraints = build_next_constraints(
         &phi_total,
         &b_total,
@@ -198,8 +200,7 @@ where
         &level.config,
         &level.u1,
         &level.u2,
-        comkey_seed,
-        backend,
+        &setup,
     )?;
 
     Ok(LabradorStatement {
@@ -318,14 +319,8 @@ where
         return Err(HachiError::InvalidProof);
     }
 
-    let a = derive_extendable_comkey_matrix::<F, D>(
-        level.config.kappa,
-        z.len(),
-        comkey_seed,
-        b"labrador/comkey/A",
-        backend,
-    );
-    let az = mat_vec_mul(&a, &z);
+    let setup = LabradorSetup::new(&level.config, r, max_len, comkey_seed, backend);
+    let az = mat_vec_mul(&setup.a_mat, &z);
     let mut rhs = vec![CyclotomicRing::<F, D>::zero(); level.config.kappa];
     for (i, t_row) in t_flat.chunks(level.config.kappa).enumerate() {
         let c = challenges[i];
@@ -492,26 +487,14 @@ where
         return Err(HachiError::InvalidProof);
     }
 
+    let setup = LabradorSetup::new(&level.config, r, max_len, comkey_seed, backend);
+
     if level.config.kappa1 > 0 {
-        let b = derive_extendable_comkey_matrix::<F, D>(
-            level.config.kappa1,
-            t_hat.len(),
-            comkey_seed,
-            b"labrador/comkey/B",
-            backend,
-        );
-        let u1_check = mat_vec_mul(&b, t_hat);
+        let u1_check = mat_vec_mul(&setup.b_mat, t_hat);
         if u1_check != level.u1 {
             return Err(HachiError::InvalidProof);
         }
-        let b2 = derive_extendable_comkey_matrix::<F, D>(
-            level.config.kappa1,
-            h_hat.len(),
-            comkey_seed,
-            b"labrador/comkey/U2",
-            backend,
-        );
-        let u2_check = mat_vec_mul(&b2, h_hat);
+        let u2_check = mat_vec_mul(&setup.d_mat, h_hat);
         if u2_check != level.u2 {
             return Err(HachiError::InvalidProof);
         }
@@ -533,14 +516,7 @@ where
         return Err(HachiError::InvalidProof);
     }
 
-    let a = derive_extendable_comkey_matrix::<F, D>(
-        level.config.kappa,
-        z.len(),
-        comkey_seed,
-        b"labrador/comkey/A",
-        backend,
-    );
-    let az = mat_vec_mul(&a, &z);
+    let az = mat_vec_mul(&setup.a_mat, &z);
     let mut rhs = vec![CyclotomicRing::<F, D>::zero(); level.config.kappa];
     for (i, t_row) in t_by_row.iter().enumerate() {
         let c = challenges[i];
@@ -648,8 +624,7 @@ fn build_next_constraints<
     config: &LabradorReductionConfig,
     u1: &[CyclotomicRing<F, D>],
     u2: &[CyclotomicRing<F, D>],
-    comkey_seed: &LabradorComKeySeed,
-    backend: MatrixPrgBackendChoice,
+    setup: &LabradorSetup<F, D>,
 ) -> Result<Vec<LabradorConstraint<F, D>>, HachiError> {
     let r = row_lengths.len();
     if r == 0 || challenges.len() != r {
@@ -688,15 +663,8 @@ fn build_next_constraints<
         }
 
         // B · t_hat = u1
-        let b = derive_extendable_comkey_matrix::<F, D>(
-            config.kappa1,
-            t_hat_len,
-            comkey_seed,
-            b"labrador/comkey/B",
-            backend,
-        );
         let mut aux_coeffs = vec![CyclotomicRing::<F, D>::zero(); config.kappa1 * aux_row_len];
-        for (out_idx, b_row) in b.iter().enumerate() {
+        for (out_idx, b_row) in setup.b_mat.iter().enumerate() {
             let start = out_idx * aux_row_len;
             for (j, val) in b_row.iter().enumerate() {
                 aux_coeffs[start + j] = *val;
@@ -709,18 +677,11 @@ fn build_next_constraints<
             target: u1.to_vec(),
         });
 
-        // B2 · h_hat = u2
-        let b2 = derive_extendable_comkey_matrix::<F, D>(
-            config.kappa1,
-            h_hat_len,
-            comkey_seed,
-            b"labrador/comkey/U2",
-            backend,
-        );
+        // D · h_hat = u2
         let mut aux_coeffs = vec![CyclotomicRing::<F, D>::zero(); config.kappa1 * aux_row_len];
-        for (out_idx, b2_row) in b2.iter().enumerate() {
+        for (out_idx, d_row) in setup.d_mat.iter().enumerate() {
             let start = out_idx * aux_row_len + t_hat_len;
-            for (j, val) in b2_row.iter().enumerate() {
+            for (j, val) in d_row.iter().enumerate() {
                 aux_coeffs[start + j] = *val;
             }
         }
@@ -733,18 +694,11 @@ fn build_next_constraints<
     }
 
     // A·z - c·t = 0
-    let a = derive_extendable_comkey_matrix::<F, D>(
-        config.kappa,
-        max_len,
-        comkey_seed,
-        b"labrador/comkey/A",
-        backend,
-    );
     let mut az_coefficients = vec![vec![]; num_rows];
     for part_idx in 0..config.f {
         let scale = pow_b[part_idx];
         let mut coeffs = Vec::with_capacity(config.kappa * max_len);
-        for a_row in &a {
+        for a_row in &setup.a_mat {
             for elem in a_row.iter() {
                 coeffs.push(elem.scale(&scale));
             }

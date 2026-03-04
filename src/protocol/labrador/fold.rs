@@ -5,10 +5,11 @@ use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::utils::linear::decompose_rows_with_carry;
-use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
+use crate::protocol::labrador::comkey::LabradorComKeySeed;
 use crate::protocol::labrador::johnson_lindenstrauss::{
     collapse, project, zero_constant_term_for_proof, LabradorJlMatrix,
 };
+use crate::protocol::labrador::setup::LabradorSetup;
 use crate::protocol::labrador::transcript::{
     absorb_labrador_jl_nonce, absorb_labrador_jl_projection, absorb_labrador_level_context,
     LabradorLevelTranscriptContext,
@@ -57,6 +58,7 @@ pub fn prove_level<F, T, const D: usize>(
     witness: &LabradorWitness<F, D>,
     statement: &LabradorStatement<F, D>,
     config: &LabradorReductionConfig,
+    setup: &LabradorSetup<F, D>,
     comkey_seed: &LabradorComKeySeed,
     jl_seed: &[u8; 16],
     backend: MatrixPrgBackendChoice,
@@ -77,31 +79,8 @@ where
             "Labrador fold requires f > 0".to_string(),
         ));
     }
-    let r = witness.rows().len();
-    let row_lengths: Vec<usize> = witness.rows().iter().map(|row| row.len()).collect();
-    let max_len = row_lengths.iter().copied().max().unwrap_or(0);
 
     // Phase 1: Inner commitments (t_i) and outer commitment u1.
-    let a = derive_extendable_comkey_matrix::<F, D>(
-        config.kappa,
-        max_len,
-        comkey_seed,
-        b"labrador/comkey/A",
-        backend,
-    );
-    let b = if config.kappa1 > 0 && !config.tail {
-        let t_hat_len = r * config.kappa * config.fu;
-        derive_extendable_comkey_matrix::<F, D>(
-            config.kappa1,
-            t_hat_len,
-            comkey_seed,
-            b"labrador/comkey/B",
-            backend,
-        )
-    } else {
-        Vec::new()
-    };
-
     let coeff_config = CoeffAjtaiConfig {
         inner_rows: config.kappa,
         outer_rows: config.kappa1,
@@ -110,10 +89,15 @@ where
         comkey_seed: *comkey_seed,
     };
 
-    let (t_hat, u1) = CoeffAjtai::two_tier_commit(&a, &b, witness.rows(), &coeff_config)?;
+    let (t_hat, u1) =
+        CoeffAjtai::two_tier_commit(&setup.a_mat, &setup.b_mat, witness.rows(), &coeff_config)?;
 
     // Phase 2: JL Projection
     let (jl_projection, jl_nonce) = project(witness, jl_seed, backend)?;
+
+    let r = witness.rows().len();
+    let row_lengths: Vec<usize> = witness.rows().iter().map(|row| row.len()).collect();
+    let max_len = row_lengths.iter().copied().max().unwrap_or(0);
 
     // Transcript: absorb level context, commitments, JL.
     absorb_labrador_level_context(
@@ -158,19 +142,8 @@ where
     let h = compute_linear_garbage(&phi_total, witness)?;
     let h_hat = decompose_rows_with_carry(&h, config.fu, config.bu as u32);
 
-    let u2 = if config.kappa1 > 0 && !config.tail {
-        let b2 = derive_extendable_comkey_matrix::<F, D>(
-            config.kappa1,
-            h_hat.len(),
-            comkey_seed,
-            b"labrador/comkey/U2",
-            backend,
-        );
-        // Note: h_hat is already flattened, so we wrap it in a vec to match commit_inner signature if we were using it for h_hat too.
-        // But here we can just use NaiveAjtai::commit_inner with a single-row "inner commitment" that is just h.
-        // Or simply use mat_vec_mul since h_hat is already decomposed.
-        // Let's stick to the direct call for now since h calculation is custom (linear garbage).
-        mat_vec_mul(&b2, &h_hat)
+    let u2 = if !setup.d_mat.is_empty() {
+        mat_vec_mul(&setup.d_mat, &h_hat)
     } else {
         h_hat.clone()
     };
@@ -215,8 +188,7 @@ where
             config,
             &u1,
             &u2,
-            comkey_seed,
-            backend,
+            setup,
         )?
     };
 
@@ -546,8 +518,7 @@ fn build_next_constraints<
     config: &LabradorReductionConfig,
     u1: &[CyclotomicRing<F, D>],
     u2: &[CyclotomicRing<F, D>],
-    comkey_seed: &LabradorComKeySeed,
-    backend: MatrixPrgBackendChoice,
+    setup: &LabradorSetup<F, D>,
 ) -> Result<Vec<LabradorConstraint<F, D>>, HachiError> {
     let r = row_lengths.len();
     if r == 0 || challenges.len() != r {
@@ -592,15 +563,8 @@ fn build_next_constraints<
         }
 
         // B · t_hat = u1
-        let b = derive_extendable_comkey_matrix::<F, D>(
-            config.kappa1,
-            t_hat_len,
-            comkey_seed,
-            b"labrador/comkey/B",
-            backend,
-        );
         let mut aux_coeffs = vec![CyclotomicRing::<F, D>::zero(); config.kappa1 * aux_row_len];
-        for (out_idx, b_row) in b.iter().enumerate() {
+        for (out_idx, b_row) in setup.b_mat.iter().enumerate() {
             let start = out_idx * aux_row_len;
             for (j, val) in b_row.iter().enumerate() {
                 aux_coeffs[start + j] = *val;
@@ -613,18 +577,11 @@ fn build_next_constraints<
             target: u1.to_vec(),
         });
 
-        // B2 · h_hat = u2
-        let b2 = derive_extendable_comkey_matrix::<F, D>(
-            config.kappa1,
-            h_hat_len,
-            comkey_seed,
-            b"labrador/comkey/U2",
-            backend,
-        );
+        // D · h_hat = u2
         let mut aux_coeffs = vec![CyclotomicRing::<F, D>::zero(); config.kappa1 * aux_row_len];
-        for (out_idx, b2_row) in b2.iter().enumerate() {
+        for (out_idx, d_row) in setup.d_mat.iter().enumerate() {
             let start = out_idx * aux_row_len + t_hat_len;
-            for (j, val) in b2_row.iter().enumerate() {
+            for (j, val) in d_row.iter().enumerate() {
                 aux_coeffs[start + j] = *val;
             }
         }
@@ -637,18 +594,11 @@ fn build_next_constraints<
     }
 
     // A·z - c·t = 0  (inner commitment relation)
-    let a = derive_extendable_comkey_matrix::<F, D>(
-        config.kappa,
-        max_len,
-        comkey_seed,
-        b"labrador/comkey/A",
-        backend,
-    );
     let mut az_coefficients = vec![vec![]; num_rows];
     for part_idx in 0..config.f {
         let scale = pow_b[part_idx];
         let mut coeffs = Vec::with_capacity(config.kappa * max_len);
-        for a_row in &a {
+        for a_row in &setup.a_mat {
             for elem in a_row.iter() {
                 coeffs.push(elem.scale(&scale));
             }
@@ -819,11 +769,20 @@ mod tests {
         };
         let seed = [1u8; 32];
         let jl_seed = [2u8; 16];
+        let r = witness.rows().len();
+        let max_len = witness
+            .rows()
+            .iter()
+            .map(|row| row.len())
+            .max()
+            .unwrap_or(0);
+        let setup = LabradorSetup::new(&cfg, r, max_len, &seed, MatrixPrgBackendChoice::Shake256);
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
         let out = prove_level(
             &witness,
             &statement,
             &cfg,
+            &setup,
             &seed,
             &jl_seed,
             MatrixPrgBackendChoice::Shake256,
@@ -861,11 +820,20 @@ mod tests {
         };
         let seed = [3u8; 32];
         let jl_seed = [4u8; 16];
+        let r = witness.rows().len();
+        let max_len = witness
+            .rows()
+            .iter()
+            .map(|row| row.len())
+            .max()
+            .unwrap_or(0);
+        let setup = LabradorSetup::new(&cfg, r, max_len, &seed, MatrixPrgBackendChoice::Shake256);
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
         let out = prove_level(
             &witness,
             &statement,
             &cfg,
+            &setup,
             &seed,
             &jl_seed,
             MatrixPrgBackendChoice::Shake256,
@@ -941,11 +909,26 @@ mod tests {
         };
         let comkey_seed = [9u8; 32];
         let jl_seed = [7u8; 16];
+        let r = witness.rows().len();
+        let max_len = witness
+            .rows()
+            .iter()
+            .map(|row| row.len())
+            .max()
+            .unwrap_or(0);
+        let setup = LabradorSetup::new(
+            &cfg,
+            r,
+            max_len,
+            &comkey_seed,
+            MatrixPrgBackendChoice::Shake256,
+        );
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
         let fold = prove_level(
             &witness,
             &statement,
             &cfg,
+            &setup,
             &comkey_seed,
             &jl_seed,
             MatrixPrgBackendChoice::Shake256,
@@ -1023,11 +1006,26 @@ mod tests {
         };
         let comkey_seed = [9u8; 32];
         let jl_seed = [7u8; 16];
+        let r1 = witness.rows().len();
+        let max_len1 = witness
+            .rows()
+            .iter()
+            .map(|row| row.len())
+            .max()
+            .unwrap_or(0);
+        let setup1 = LabradorSetup::new(
+            &cfg,
+            r1,
+            max_len1,
+            &comkey_seed,
+            MatrixPrgBackendChoice::Shake256,
+        );
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
         let fold1 = prove_level(
             &witness,
             &statement,
             &cfg,
+            &setup1,
             &comkey_seed,
             &jl_seed,
             MatrixPrgBackendChoice::Shake256,
@@ -1035,10 +1033,26 @@ mod tests {
             &mut transcript,
         )
         .unwrap();
+        let r2 = fold1.next_witness.rows().len();
+        let max_len2 = fold1
+            .next_witness
+            .rows()
+            .iter()
+            .map(|row| row.len())
+            .max()
+            .unwrap_or(0);
+        let setup2 = LabradorSetup::new(
+            &cfg,
+            r2,
+            max_len2,
+            &comkey_seed,
+            MatrixPrgBackendChoice::Shake256,
+        );
         let fold2 = prove_level(
             &fold1.next_witness,
             &fold1.statement,
             &cfg,
+            &setup2,
             &comkey_seed,
             &jl_seed,
             MatrixPrgBackendChoice::Shake256,
@@ -1065,14 +1079,7 @@ mod tests {
             }
             z.push(CyclotomicRing::gadget_recompose_pow2(&slice, cfg.b as u32));
         }
-        let a = derive_extendable_comkey_matrix::<F, D>(
-            cfg.kappa,
-            z.len(),
-            &comkey_seed,
-            b"labrador/comkey/A",
-            MatrixPrgBackendChoice::Shake256,
-        );
-        let az = mat_vec_mul(&a, &z);
+        let az = mat_vec_mul(&setup2.a_mat, &z);
         let mut rhs = vec![CyclotomicRing::<F, D>::zero(); cfg.kappa];
         for (row_idx, t_row) in t_flat.chunks(cfg.kappa).enumerate() {
             let c = challenges[row_idx];
