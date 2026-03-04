@@ -4,7 +4,7 @@
 //! Uses Solinas-style two-fold reduction.  For `c = 2^a ± 1` the fold
 //! multiply is replaced by shift+add/sub, saving a u128 widening multiply.
 
-use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use rand_core::RngCore;
 
@@ -255,7 +255,7 @@ impl<const P: u64> Fp64<P> {
         let mut acc = Self::one();
         while exp > 0 {
             if (exp & 1) == 1 {
-                acc = acc * base;
+                acc *= base;
             }
             base = base.square();
             exp >>= 1;
@@ -334,6 +334,13 @@ impl<const P: u64> SubAssign for Fp64<P> {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
         *self = *self - rhs;
+    }
+}
+
+impl<const P: u64> MulAssign for Fp64<P> {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
     }
 }
 

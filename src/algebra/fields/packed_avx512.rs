@@ -9,7 +9,7 @@ use crate::FieldCore;
 use core::arch::x86_64::*;
 use core::fmt;
 use core::mem::transmute;
-use core::ops::{Add, Mul, Sub};
+use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 
 #[inline(always)]
 unsafe fn movehdup_epi32_512(x: __m512i) -> __m512i {
@@ -251,6 +251,27 @@ impl<const P: u32> PackedValue for PackedFp32Avx512<P> {
     }
 }
 
+impl<const P: u32> AddAssign for PackedFp32Avx512<P> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl<const P: u32> SubAssign for PackedFp32Avx512<P> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl<const P: u32> MulAssign for PackedFp32Avx512<P> {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
+    }
+}
+
 impl<const P: u32> PackedField for PackedFp32Avx512<P> {
     type Scalar = Fp32<P>;
 
@@ -475,6 +496,27 @@ impl<const P: u64> PackedValue for PackedFp64Avx512<P> {
     }
 }
 
+impl<const P: u64> AddAssign for PackedFp64Avx512<P> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl<const P: u64> SubAssign for PackedFp64Avx512<P> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl<const P: u64> MulAssign for PackedFp64Avx512<P> {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
+    }
+}
+
 impl<const P: u64> PackedField for PackedFp64Avx512<P> {
     type Scalar = Fp64<P>;
 
@@ -650,6 +692,27 @@ impl<const P: u128> PackedValue for PackedFp128Avx512<P> {
     fn extract(&self, lane: usize) -> Self::Value {
         debug_assert!(lane < FP128_WIDTH);
         Fp128([self.lo[lane], self.hi[lane]])
+    }
+}
+
+impl<const P: u128> AddAssign for PackedFp128Avx512<P> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl<const P: u128> SubAssign for PackedFp128Avx512<P> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl<const P: u128> MulAssign for PackedFp128Avx512<P> {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
     }
 }
 

@@ -4,7 +4,7 @@
 //! Uses Solinas-style two-fold reduction: the offset `c` and fold point `k`
 //! are computed at compile time from the const-generic modulus `P`.
 
-use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use rand_core::RngCore;
 
@@ -153,7 +153,7 @@ impl<const P: u32> Fp32<P> {
         let mut acc = Self::one();
         while exp > 0 {
             if (exp & 1) == 1 {
-                acc = acc * base;
+                acc *= base;
             }
             base = base.square();
             exp >>= 1;
@@ -230,6 +230,13 @@ impl<const P: u32> SubAssign for Fp32<P> {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
         *self = *self - rhs;
+    }
+}
+
+impl<const P: u32> MulAssign for Fp32<P> {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
     }
 }
 

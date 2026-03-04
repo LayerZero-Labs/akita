@@ -375,7 +375,7 @@ mod tests {
         let mut power = F::one();
         for val in alpha_evals_y.iter_mut() {
             *val = power;
-            power = power * alpha;
+            power *= alpha;
         }
 
         let x_mask = x_len - 1;

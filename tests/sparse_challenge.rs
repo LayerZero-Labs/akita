@@ -53,7 +53,7 @@ fn sparse_eval_at_alpha_matches_dense_eval() {
         let mut acc = F::one();
         for _ in 0..D {
             out.push(acc);
-            acc = acc * alpha;
+            acc *= alpha;
         }
         out
     };

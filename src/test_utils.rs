@@ -124,7 +124,7 @@ pub fn field_gadget_recompose(
     let mut b_power = F::one();
     for part in parts {
         result += part.scale(&b_power);
-        b_power = b_power * b;
+        b_power *= b;
     }
     result
 }

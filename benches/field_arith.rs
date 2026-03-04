@@ -649,7 +649,7 @@ fn bench_fp32_fp64_mul(c: &mut Criterion) {
                 b.iter(|| {
                     let mut acc = <$ty>::one();
                     for x in $inputs.iter() {
-                        acc = acc * *x;
+                        acc *= *x;
                     }
                     black_box(acc)
                 })

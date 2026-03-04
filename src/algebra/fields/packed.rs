@@ -2,7 +2,7 @@
 
 use crate::algebra::fields::{Fp128, Fp32, Fp64};
 use crate::FieldCore;
-use core::ops::{Add, Mul, Sub};
+use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 
 /// Array-like packed values over a scalar type.
 pub trait PackedValue: 'static + Copy + Send + Sync {
@@ -118,6 +118,27 @@ impl<T: FieldCore> Mul for NoPacking<T> {
     #[inline]
     fn mul(self, rhs: Self) -> Self {
         Self([self.0[0] * rhs.0[0]])
+    }
+}
+
+impl<T: FieldCore> AddAssign for NoPacking<T> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl<T: FieldCore> SubAssign for NoPacking<T> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl<T: FieldCore> MulAssign for NoPacking<T> {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
     }
 }
 
