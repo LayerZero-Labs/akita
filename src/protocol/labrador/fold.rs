@@ -34,7 +34,7 @@ pub struct LabradorFoldResult<F: FieldCore, const D: usize> {
     pub statement: LabradorStatement<F, D>,
 }
 
-use crate::protocol::labrador::config::JL_LIFTS;
+use crate::protocol::labrador::config::jl_lifts;
 
 /// Perform one Labrador fold level (standard or tail, determined by `config.tail`).
 ///
@@ -462,9 +462,10 @@ where
         .map(|row| vec![CyclotomicRing::zero(); row.len()])
         .collect();
     let mut b_total = CyclotomicRing::<F, D>::zero();
-    let mut bb = Vec::with_capacity(JL_LIFTS);
+    let jl_lifts = jl_lifts::<F>();
+    let mut bb = Vec::with_capacity(jl_lifts);
 
-    for _ in 0..JL_LIFTS {
+    for _ in 0..jl_lifts {
         let omega = sample_jl_collapse_challenge::<F, T>(transcript);
         let phi_flat = jl_collapse_phi_from_weights::<F, D>(&matrix, &omega)?;
         let b_full = dot_product(&phi_flat, &flat);

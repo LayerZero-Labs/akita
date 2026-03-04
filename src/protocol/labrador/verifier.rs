@@ -32,7 +32,7 @@ pub struct LabradorVerifyResult<F: FieldCore, const D: usize> {
     pub final_opening_witness: LabradorWitness<F, D>,
 }
 
-use crate::protocol::labrador::config::JL_LIFTS;
+use crate::protocol::labrador::config::jl_lifts;
 
 /// Verify Labrador proof and return terminal reduction state.
 ///
@@ -992,7 +992,8 @@ where
     F: FieldCore + CanonicalField + FromSmallInt,
     T: Transcript<F>,
 {
-    if bb.len() != JL_LIFTS {
+    let jl_lifts = jl_lifts::<F>();
+    if bb.len() != jl_lifts {
         return Err(HachiError::InvalidProof);
     }
     let total_len: usize = row_lengths.iter().sum();

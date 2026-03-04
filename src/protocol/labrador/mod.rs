@@ -17,7 +17,7 @@ pub mod utils;
 pub mod verifier;
 
 pub use commit::{commit_linear_only, LabradorCommitmentArtifacts};
-pub use config::{select_config, sis_secure};
+pub use config::{select_config, select_config_with_mode, sis_secure};
 pub use fold::{prove_level, LabradorFoldResult};
 pub use johnson_lindenstrauss::{
     collapse, project, restore_constant_term, zero_constant_term_for_proof, LabradorJlMatrix,

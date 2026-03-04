@@ -3,15 +3,15 @@
 use crate::error::HachiError;
 use crate::protocol::labrador::comkey::LabradorComKeySeed;
 use crate::protocol::labrador::fold::prove_level;
+use crate::protocol::labrador::config::logq_bits;
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
-use crate::protocol::labrador::select_config;
+use crate::protocol::labrador::{select_config, select_config_with_mode};
 use crate::protocol::labrador::types::{LabradorProof, LabradorStatement, LabradorWitness};
 use crate::protocol::labrador::LabradorReductionConfig;
 use crate::protocol::prg::MatrixPrgBackendChoice;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 
-const ESTIMATED_LOGQ_BITS: usize = 32;
 
 /// Build a recursive Labrador proof with optional tail acceptance.
 ///
@@ -72,14 +72,7 @@ where
     }
 
     if level_idx + 1 < LABRADOR_MAX_LEVELS {
-        let mut tail_cfg = select_config(&witness)?;
-        tail_cfg = LabradorReductionConfig {
-            tail: true,
-            kappa1: 0,
-            fu: 1,
-            bu: ESTIMATED_LOGQ_BITS,
-            ..tail_cfg
-        };
+        let tail_cfg = select_config_with_mode(&witness, true)?;
 
         let baseline_bits = witness_size_bits::<F, D>(&witness)
             + levels
@@ -185,14 +178,15 @@ where
     }
 
     if level_idx + 1 < LABRADOR_MAX_LEVELS {
-        let mut tail_cfg = select_config(&witness).unwrap_or(fallback_cfg);
-        tail_cfg = LabradorReductionConfig {
-            tail: true,
-            kappa1: 0,
-            fu: 1,
-            bu: ESTIMATED_LOGQ_BITS,
-            ..tail_cfg
-        };
+        let tail_cfg = select_config_with_mode(&witness, true).unwrap_or_else(|_| {
+            LabradorReductionConfig {
+                tail: true,
+                kappa1: 0,
+                fu: 1,
+                bu: logq_bits::<F>(),
+                ..fallback_cfg
+            }
+        });
 
         let baseline_bits = witness_size_bits::<F, D>(&witness)
             + levels
@@ -231,19 +225,23 @@ where
     })
 }
 
-fn witness_size_bits<F: FieldCore, const D: usize>(witness: &LabradorWitness<F, D>) -> usize {
+fn witness_size_bits<F: FieldCore + CanonicalField, const D: usize>(
+    witness: &LabradorWitness<F, D>,
+) -> usize {
+    let logq_bits = logq_bits::<F>();
     witness
         .rows()
         .iter()
-        .map(|row| row.len() * D * ESTIMATED_LOGQ_BITS)
+        .map(|row| row.len() * D * logq_bits)
         .sum()
 }
 
-fn level_payload_size_bits<F: FieldCore, const D: usize>(
+fn level_payload_size_bits<F: FieldCore + CanonicalField, const D: usize>(
     level: &crate::protocol::labrador::LabradorLevelProof<F, D>,
 ) -> usize {
+    let logq_bits = logq_bits::<F>();
     let ring_elems = level.u1.len() + level.u2.len() + level.bb.len();
-    let ring_bits = ring_elems * D * ESTIMATED_LOGQ_BITS;
+    let ring_bits = ring_elems * D * logq_bits;
     let jl_bits = level.jl_projection.len() * 32;
     ring_bits + jl_bits + 64
 }
