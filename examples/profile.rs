@@ -25,26 +25,24 @@ use tracing_subscriber::prelude::*;
 
 type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
 
-const D: usize = Fp128FullCommitmentConfig::D;
-
-type Scheme<Cfg> = HachiCommitmentScheme<D, Cfg>;
-
-fn run_prove<Cfg: CommitmentConfig, P: hachi_pcs::HachiPolyOps<F, D>>(
+fn run_prove<const D: usize, Cfg: CommitmentConfig, P: hachi_pcs::HachiPolyOps<F, D>>(
     label: &str,
-    setup: &<Scheme<Cfg> as CommitmentScheme<F, D>>::ProverSetup,
+    setup: &<HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::ProverSetup,
     poly: &P,
     pt: &[F],
     opening: F,
     layout: &HachiCommitmentLayout,
 ) {
+    type Scheme<const D: usize, Cfg> = HachiCommitmentScheme<D, Cfg>;
+
     let t0 = Instant::now();
     let (commitment, hint) =
-        <Scheme<Cfg> as CommitmentScheme<F, D>>::commit(poly, setup, layout).unwrap();
+        <Scheme<D, Cfg> as CommitmentScheme<F, D>>::commit(poly, setup, layout).unwrap();
     eprintln!("[{label}] commit: {:.3}s", t0.elapsed().as_secs_f64());
 
     let t0 = Instant::now();
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
-    let proof = <Scheme<Cfg> as CommitmentScheme<F, D>>::prove(
+    let proof = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
         setup,
         poly,
         pt,
@@ -56,12 +54,12 @@ fn run_prove<Cfg: CommitmentConfig, P: hachi_pcs::HachiPolyOps<F, D>>(
     )
     .unwrap();
     eprintln!("[{label}] prove: {:.3}s", t0.elapsed().as_secs_f64());
-    print_proof_summary(label, &proof);
+    print_proof_summary::<D>(label, &proof);
 
     let t0 = Instant::now();
-    let verifier_setup = <Scheme<Cfg> as CommitmentScheme<F, D>>::setup_verifier(setup);
+    let verifier_setup = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(setup);
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
-    match <Scheme<Cfg> as CommitmentScheme<F, D>>::verify(
+    match <Scheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -79,7 +77,7 @@ fn run_prove<Cfg: CommitmentConfig, P: hachi_pcs::HachiPolyOps<F, D>>(
     }
 }
 
-fn print_proof_summary(label: &str, proof: &HachiProof<F, D>) {
+fn print_proof_summary<const D: usize>(label: &str, proof: &HachiProof<F, D>) {
     eprintln!(
         "[{label}]   levels: {}, proof size: {} bytes",
         proof.levels.len(),
@@ -118,18 +116,18 @@ fn print_layout(layout: &HachiCommitmentLayout) {
     );
 }
 
-fn run_dense<Cfg: CommitmentConfig>(nv: usize, layout: &HachiCommitmentLayout) {
+fn run_dense<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCommitmentLayout) {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let len = 1usize << nv;
     let decomp = Cfg::decomposition();
+    let half_bound = 1i64 << (decomp.log_commit_bound.min(62) - 1);
     let evals: Vec<F> = if decomp.log_commit_bound >= 128 {
         (0..len)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect()
     } else {
-        let half_b = 1u64 << (decomp.log_basis - 1);
         (0..len)
-            .map(|_| F::from_u64(rng.gen_range(0..half_b)))
+            .map(|_| F::from_i64(rng.gen_range(-half_bound..half_bound)))
             .collect()
     };
     let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
@@ -139,13 +137,13 @@ fn run_dense<Cfg: CommitmentConfig>(nv: usize, layout: &HachiCommitmentLayout) {
     let opening = multilinear_eval(&evals, &pt).unwrap();
 
     let t0 = Instant::now();
-    let setup = <Scheme<Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
     eprintln!("  setup: {:.3}s", t0.elapsed().as_secs_f64());
 
-    run_prove::<Cfg, _>("dense", &setup, &poly, &pt, opening, layout);
+    run_prove::<D, Cfg, _>("dense", &setup, &poly, &pt, opening, layout);
 }
 
-fn run_onehot<Cfg: CommitmentConfig>(nv: usize, layout: &HachiCommitmentLayout) {
+fn run_onehot<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCommitmentLayout) {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let total_ring = layout.num_blocks * layout.block_len;
     let onehot_k = D;
@@ -171,10 +169,10 @@ fn run_onehot<Cfg: CommitmentConfig>(nv: usize, layout: &HachiCommitmentLayout) 
     let opening = multilinear_eval(&onehot_evals, &pt).unwrap();
 
     let t0 = Instant::now();
-    let setup = <Scheme<Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
     eprintln!("  setup: {:.3}s", t0.elapsed().as_secs_f64());
 
-    run_prove::<Cfg, _>("onehot", &setup, &onehot_poly, &pt, opening, layout);
+    run_prove::<D, Cfg, _>("onehot", &setup, &onehot_poly, &pt, opening, layout);
 }
 
 fn main() {
@@ -217,21 +215,21 @@ fn main() {
             let layout = resolve_layout::<Cfg>(nv);
             eprintln!("=== full (dense, log_commit_bound=128) ===");
             print_layout(&layout);
-            run_dense::<Cfg>(nv, &layout);
+            run_dense::<{ Fp128FullCommitmentConfig::D }, Cfg>(nv, &layout);
         }
         "onehot" => {
             type Cfg = Fp128OneHotCommitmentConfig;
             let layout = resolve_layout::<Cfg>(nv);
             eprintln!("=== onehot (log_commit_bound=1) ===");
             print_layout(&layout);
-            run_onehot::<Cfg>(nv, &layout);
+            run_onehot::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(nv, &layout);
         }
         "logbasis" => {
             type Cfg = Fp128LogBasisCommitmentConfig;
             let layout = resolve_layout::<Cfg>(nv);
             eprintln!("=== logbasis (dense, log_commit_bound=3) ===");
             print_layout(&layout);
-            run_dense::<Cfg>(nv, &layout);
+            run_dense::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(nv, &layout);
         }
         "all" => {
             {
@@ -239,7 +237,7 @@ fn main() {
                 let layout = resolve_layout::<Cfg>(nv);
                 eprintln!("=== full (dense, log_commit_bound=128) ===");
                 print_layout(&layout);
-                run_dense::<Cfg>(nv, &layout);
+                run_dense::<{ Fp128FullCommitmentConfig::D }, Cfg>(nv, &layout);
                 eprintln!();
             }
             {
@@ -247,7 +245,7 @@ fn main() {
                 let layout = resolve_layout::<Cfg>(nv);
                 eprintln!("=== onehot (log_commit_bound=1) ===");
                 print_layout(&layout);
-                run_onehot::<Cfg>(nv, &layout);
+                run_onehot::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(nv, &layout);
                 eprintln!();
             }
             {
@@ -255,7 +253,7 @@ fn main() {
                 let layout = resolve_layout::<Cfg>(nv);
                 eprintln!("=== logbasis (dense, log_commit_bound=3) ===");
                 print_layout(&layout);
-                run_dense::<Cfg>(nv, &layout);
+                run_dense::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(nv, &layout);
             }
         }
         other => {
