@@ -312,6 +312,11 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     /// This matches the C `polz_decompose` behavior: the first `levels-1`
     /// digits are balanced in `[-b/2, b/2)`, while the final digit is the
     /// remaining (possibly larger) centered value.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `levels` is zero, `log_basis` is zero or >= 128, or
+    /// `levels * log_basis > 128`.
     pub fn balanced_decompose_pow2_with_carry(&self, levels: usize, log_basis: u32) -> Vec<Self> {
         assert!(levels > 0, "levels must be positive");
         assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");

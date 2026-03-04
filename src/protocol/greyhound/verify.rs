@@ -20,6 +20,13 @@ use crate::{CanonicalField, FieldCore, FieldSampling};
 /// This stage performs direct checks of the linear system `Pz = h` and a
 /// smallness bound on the transmitted `z` witness. Labrador recursion is
 /// intentionally skipped.
+///
+/// # Errors
+///
+/// Returns [`HachiError::InvalidInput`] on dimension mismatches, norm bound
+/// violations, commitment mismatches, or constraint failures.
+/// Propagates transcript replay failures from Fiat-Shamir operations.
+#[allow(clippy::too_many_arguments)]
 pub fn greyhound_verify_stage1<F, T, const D: usize>(
     eval_proof: &GreyhoundEvalProof<F, D>,
     w_commitment_u1: &[CyclotomicRing<F, D>],
@@ -235,7 +242,7 @@ fn reconstruct_z<F: FieldCore, const D: usize>(
 ) -> Vec<CyclotomicRing<F, D>> {
     let mut out = vec![CyclotomicRing::<F, D>::zero(); m];
     let bu_scale = pow2::<F>(bu);
-    for j in 0..m {
+    for (j, out_elem) in out.iter_mut().enumerate() {
         let mut acc = CyclotomicRing::<F, D>::zero();
         for k in 0..f {
             let idx = j * f + k;
@@ -244,7 +251,7 @@ fn reconstruct_z<F: FieldCore, const D: usize>(
             let scale = pow2::<F>(k * b);
             acc += digit.scale(&scale);
         }
-        out[j] = acc;
+        *out_elem = acc;
     }
     out
 }
@@ -256,14 +263,14 @@ fn reconstruct_v<F: FieldCore, const D: usize>(
     bu: usize,
 ) -> Vec<CyclotomicRing<F, D>> {
     let mut out = vec![CyclotomicRing::<F, D>::zero(); n];
-    for i in 0..n {
+    for (i, out_elem) in out.iter_mut().enumerate() {
         let mut acc = CyclotomicRing::<F, D>::zero();
         for l in 0..fu {
             let idx = i * fu + l;
             let scale = pow2::<F>(l * bu);
             acc += v_hat[idx].scale(&scale);
         }
-        out[i] = acc;
+        *out_elem = acc;
     }
     out
 }
@@ -277,15 +284,15 @@ fn reconstruct_t_cols<F: FieldCore, const D: usize>(
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     let mut out = vec![vec![CyclotomicRing::<F, D>::zero(); kappa]; n];
     let per_col = kappa * fu;
-    for i in 0..n {
-        for r in 0..kappa {
+    for (i, out_row) in out.iter_mut().enumerate() {
+        for (r, out_elem) in out_row.iter_mut().enumerate() {
             let mut acc = CyclotomicRing::<F, D>::zero();
             for l in 0..fu {
                 let idx = i * per_col + r * fu + l;
                 let scale = pow2::<F>(l * bu);
                 acc += t_hat[idx].scale(&scale);
             }
-            out[i][r] = acc;
+            *out_elem = acc;
         }
     }
     out

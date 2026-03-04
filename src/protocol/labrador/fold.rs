@@ -38,7 +38,7 @@ use crate::protocol::labrador::config::JL_LIFTS;
 ///
 /// Follows the C Labrador protocol phases:
 ///   1. Commit: inner + outer Ajtai commitment → u1
-///   2. Project: JL projection → p[256], nonce
+///   2. Project: JL projection → p\[256\], nonce
 ///   3. LIFTS × (collapse + lift): build linear constraints from JL
 ///   4. Amortize: absorb into transcript, sample ring-element challenges,
 ///      fold z = sum_i c_i * s_i, decompose z → output witness
@@ -300,6 +300,7 @@ fn dot_product<F: FieldCore, const D: usize>(
     acc
 }
 
+#[allow(clippy::type_complexity)]
 fn aggregate_statement_constraints<F, T, const D: usize>(
     constraints: &[LabradorConstraint<F, D>],
     row_lengths: &[usize],
@@ -418,6 +419,7 @@ fn jl_collapse_phi_from_weights<F: FieldCore + CanonicalField + FromSmallInt, co
     Ok(phi)
 }
 
+#[allow(clippy::type_complexity)]
 fn aggregate_jl_constraints_prover<F, T, const D: usize>(
     witness: &LabradorWitness<F, D>,
     jl_projection: &[i32; 256],
@@ -522,6 +524,7 @@ fn compute_linear_garbage<F: FieldCore + CanonicalField + FromSmallInt, const D:
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_next_constraints<
     F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
     const D: usize,
@@ -646,8 +649,7 @@ fn build_next_constraints<
 
     let mut t_coeffs = vec![CyclotomicRing::<F, D>::zero(); config.kappa * t_hat_len];
     for (row_idx, challenge) in challenges.iter().enumerate() {
-        for part_idx in 0..config.fu {
-            let scale = pow_bu[part_idx];
+        for (part_idx, &scale) in pow_bu.iter().enumerate() {
             let scaled = challenge.scale(&scale);
             for k in 0..config.kappa {
                 let idx = row_idx * config.kappa * config.fu + k * config.fu + part_idx;
@@ -682,8 +684,7 @@ fn build_next_constraints<
         for j in i..r {
             let coeff = challenges[i] * challenges[j];
             let pair = pair_index(i, j, r);
-            for part_idx in 0..config.fu {
-                let scale = pow_bu[part_idx];
+            for (part_idx, &scale) in pow_bu.iter().enumerate() {
                 let idx = pair * config.fu + part_idx;
                 h_coeffs[idx] = -(coeff.scale(&scale));
             }
@@ -701,8 +702,7 @@ fn build_next_constraints<
     let mut diag_coeffs = vec![CyclotomicRing::<F, D>::zero(); aux_row_len];
     for i in 0..r {
         let pair = pair_index(i, i, r);
-        for part_idx in 0..config.fu {
-            let scale = pow_bu[part_idx];
+        for (part_idx, &scale) in pow_bu.iter().enumerate() {
             let idx = pair * config.fu + part_idx;
             diag_coeffs[t_hat_len + idx] = constant_poly(scale);
         }
@@ -876,7 +876,7 @@ mod tests {
         let max_len = witness.rows().iter().map(|r| r.len()).max().unwrap();
         let z = amortize_witness(&witness, &challenges, max_len);
 
-        for j in 0..max_len {
+        for (j, z_elem) in z.iter().enumerate().take(max_len) {
             let expected = witness
                 .rows()
                 .iter()
@@ -886,7 +886,7 @@ mod tests {
                         .unwrap_or_else(CyclotomicRing::<F, D>::zero)
                 })
                 .fold(CyclotomicRing::<F, D>::zero(), |a, b| a + b);
-            assert_eq!(z[j], expected);
+            assert_eq!(*z_elem, expected);
         }
     }
 

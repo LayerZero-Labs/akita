@@ -234,7 +234,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123);
         let sample = sample_ternary::<F, _, D>(&mut rng);
         for &c in sample.coefficients().iter() {
-            assert!(matches!(centered(c), -1 | 0 | 1));
+            assert!(matches!(centered(c), -1..=1));
         }
     }
 
@@ -243,7 +243,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(456);
         let sample = sample_quaternary::<F, _, D>(&mut rng);
         for &c in sample.coefficients().iter() {
-            assert!(matches!(centered(c), -2 | -1 | 0 | 1));
+            assert!(matches!(centered(c), -2..=1));
         }
     }
 }

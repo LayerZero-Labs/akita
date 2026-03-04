@@ -210,7 +210,7 @@ where
     })
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 fn verify_tail_level<F, T, const D: usize>(
     statement: &LabradorStatement<F, D>,
     level: &LabradorLevelProof<F, D>,
@@ -633,6 +633,7 @@ fn recompose_flat<F: FieldCore + CanonicalField, const D: usize>(
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_next_constraints<
     F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
     const D: usize,
@@ -751,8 +752,7 @@ fn build_next_constraints<
 
     let mut t_coeffs = vec![CyclotomicRing::<F, D>::zero(); config.kappa * t_hat_len];
     for (row_idx, challenge) in challenges.iter().enumerate() {
-        for part_idx in 0..config.fu {
-            let scale = pow_bu[part_idx];
+        for (part_idx, &scale) in pow_bu.iter().enumerate() {
             let scaled = challenge.scale(&scale);
             for k in 0..config.kappa {
                 let idx = row_idx * config.kappa * config.fu + k * config.fu + part_idx;
@@ -787,8 +787,7 @@ fn build_next_constraints<
         for j in i..r {
             let coeff = challenges[i] * challenges[j];
             let pair = pair_index(i, j, r);
-            for part_idx in 0..config.fu {
-                let scale = pow_bu[part_idx];
+            for (part_idx, &scale) in pow_bu.iter().enumerate() {
                 let idx = pair * config.fu + part_idx;
                 h_coeffs[idx] = -(coeff.scale(&scale));
             }
@@ -806,8 +805,7 @@ fn build_next_constraints<
     let mut diag_coeffs = vec![CyclotomicRing::<F, D>::zero(); aux_row_len];
     for i in 0..r {
         let pair = pair_index(i, i, r);
-        for part_idx in 0..config.fu {
-            let scale = pow_bu[part_idx];
+        for (part_idx, &scale) in pow_bu.iter().enumerate() {
             let idx = pair * config.fu + part_idx;
             diag_coeffs[t_hat_len + idx] = constant_poly(scale);
         }
@@ -878,6 +876,7 @@ fn dot_product<F: FieldCore, const D: usize>(
     acc
 }
 
+#[allow(clippy::type_complexity)]
 fn aggregate_statement_constraints<F, T, const D: usize>(
     constraints: &[LabradorConstraint<F, D>],
     row_lengths: &[usize],
@@ -976,6 +975,7 @@ fn jl_collapse_phi_from_weights<F: FieldCore + CanonicalField + FromSmallInt, co
     Ok(phi)
 }
 
+#[allow(clippy::type_complexity)]
 fn aggregate_jl_constraints_verifier<F, T, const D: usize>(
     row_lengths: &[usize],
     jl_projection: &[i32; 256],
@@ -993,9 +993,7 @@ where
         return Err(HachiError::InvalidProof);
     }
     let total_len: usize = row_lengths.iter().sum();
-    let cols = total_len
-        .checked_mul(D)
-        .ok_or_else(|| HachiError::InvalidProof)?;
+    let cols = total_len.checked_mul(D).ok_or(HachiError::InvalidProof)?;
     if cols == 0 {
         return Err(HachiError::InvalidProof);
     }
@@ -1054,7 +1052,7 @@ fn verify_constraints<F: FieldCore + CanonicalField + FromSmallInt, const D: usi
             }
             let row = &witness.rows()[row_idx];
             let row_len = coeffs.len() / outputs;
-            for out_idx in 0..outputs {
+            for (out_idx, lhs_elem) in lhs.iter_mut().enumerate() {
                 let coeff_start = out_idx * row_len;
                 let coeff_slice = &coeffs[coeff_start..coeff_start + row_len];
                 let mut inner = CyclotomicRing::<F, D>::zero();
@@ -1065,17 +1063,17 @@ fn verify_constraints<F: FieldCore + CanonicalField + FromSmallInt, const D: usi
                         .unwrap_or_else(CyclotomicRing::<F, D>::zero);
                     inner += *coeff * w_elem;
                 }
-                lhs[out_idx] += inner;
+                *lhs_elem += inner;
             }
         }
 
-        for out_idx in 0..outputs {
+        for (out_idx, lhs_elem) in lhs.iter().enumerate() {
             let target = cnst
                 .target
                 .get(out_idx)
                 .copied()
                 .unwrap_or_else(CyclotomicRing::<F, D>::zero);
-            if lhs[out_idx] != target {
+            if *lhs_elem != target {
                 return Err(HachiError::InvalidInput(format!(
                     "Labrador constraint {idx} not satisfied"
                 )));

@@ -123,6 +123,11 @@ where
 /// Build a recursive Labrador proof using a caller-supplied initial config.
 ///
 /// Falls back to the provided config if `select_config` fails for a level.
+///
+/// # Errors
+///
+/// Returns [`HachiError`] if any fold level fails (e.g. empty witness,
+/// invalid config, or transcript errors).
 pub fn prove_with_config<F, T, const D: usize>(
     initial_witness: LabradorWitness<F, D>,
     initial_statement: &LabradorStatement<F, D>,
