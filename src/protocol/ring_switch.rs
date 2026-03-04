@@ -15,8 +15,8 @@ use crate::protocol::commitment::utils::linear::{
 };
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
-    CommitmentConfig, DecompositionParams, HachiCommitmentLayout, HachiExpandedSetup,
-    RingCommitment,
+    optimal_m_r_split, CommitmentConfig, DecompositionParams, HachiCommitmentLayout,
+    HachiExpandedSetup, RingCommitment,
 };
 use crate::protocol::proof::{DigitLut, HachiCommitmentHint};
 use crate::protocol::quadratic_equation::{
@@ -341,6 +341,14 @@ pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D
     Ok(out)
 }
 
+/// Derived commitment config for recursive w-openings.
+///
+/// Sets `log_commit_bound = log_basis` (w's entries are balanced digits) and
+/// `log_open_bound = parent's open bound` (opening folds produce full-field
+/// coefficients).
+///
+/// For `D=512, Cfg=Fp128FullCommitmentConfig`, this is equivalent to
+/// [`Fp128LogBasisCommitmentConfig`](super::commitment::Fp128LogBasisCommitmentConfig).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
@@ -378,8 +386,7 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
                 "max_num_vars must leave at least one outer variable".to_string(),
             ));
         }
-        let r_vars = reduced_vars / 2;
-        let m_vars = reduced_vars - r_vars;
+        let (m_vars, r_vars) = optimal_m_r_split::<Self>(reduced_vars);
         HachiCommitmentLayout::new::<Self>(m_vars, r_vars, &Self::decomposition())
     }
 }
@@ -391,7 +398,7 @@ pub(crate) fn w_ring_element_count<F: CanonicalField, Cfg: CommitmentConfig>(
     layout: HachiCommitmentLayout,
 ) -> usize {
     let w_hat_count = layout.num_blocks * layout.num_digits_open;
-    let t_hat_count = layout.num_blocks * Cfg::N_A * layout.num_digits_commit;
+    let t_hat_count = layout.num_blocks * Cfg::N_A * layout.num_digits_open;
     let z_pre_count = layout.inner_width * layout.num_digits_fold;
     let r_count = m_row_count::<Cfg>() * r_decomp_levels::<F>(layout.log_basis);
     w_hat_count + t_hat_count + z_pre_count + r_count
@@ -440,7 +447,8 @@ where
 
     let num_blocks = w_layout.num_blocks;
     let block_len = w_layout.block_len;
-    let depth = w_layout.num_digits_commit;
+    let depth_commit = w_layout.num_digits_commit;
+    let depth_open = w_layout.num_digits_open;
     let log_basis = w_layout.log_basis;
     let coeff_len = ring_elems.len();
 
@@ -455,9 +463,9 @@ where
         })
         .collect();
 
-    let t_all = mat_vec_mul_ntt_i8(ntt_a, &block_slices, depth, log_basis);
+    let t_all = mat_vec_mul_ntt_i8(ntt_a, &block_slices, depth_commit, log_basis);
     let t_hat_per_block: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
-        .map(|t_i| decompose_rows_i8(&t_i, depth, log_basis))
+        .map(|t_i| decompose_rows_i8(&t_i, depth_open, log_basis))
         .collect();
 
     let t_hat_flat = flatten_i8_blocks(&t_hat_per_block);
@@ -732,10 +740,14 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
 
     let t_hat_flat = t_hat.iter().flat_map(|v| v.iter());
 
-    let z_count = w_hat.iter().map(|v| v.len()).sum::<usize>()
-        + t_hat.iter().map(|v| v.len()).sum::<usize>()
-        + z_pre.len() * num_digits_fold;
+    let w_hat_planes: usize = w_hat.iter().map(|v| v.len()).sum();
+    let t_hat_planes: usize = t_hat.iter().map(|v| v.len()).sum();
+    let z_count = w_hat_planes + t_hat_planes + z_pre.len() * num_digits_fold;
     let r_hat_count = r.len() * levels;
+    eprintln!(
+        "    [build_w_coeffs] w_hat_planes={w_hat_planes}, t_hat_planes={t_hat_planes}, z_pre_elems={}, z_pre_planes={}, r_elems={}, r_planes={r_hat_count}, total_ring={}, total_field={}",
+        z_pre.len(), z_pre.len() * num_digits_fold, r.len(), z_count + r_hat_count, (z_count + r_hat_count) * D,
+    );
     let mut out = Vec::with_capacity((z_count + r_hat_count) * D);
     for block in w_hat {
         for digits in block {

@@ -116,12 +116,13 @@ where
         let _span = tracing::info_span!("outer_basis_weights", level).entered();
         basis_weights(outer_point, basis)
     };
-    let y_ring = {
-        let _span = tracing::info_span!("evaluate_ring", level).entered();
-        poly.evaluate_ring(&outer_weights)
+    let fold_scalars = &ring_opening_point.a;
+    let (y_ring, w_folded) = {
+        let _span = tracing::info_span!("evaluate_and_fold", level).entered();
+        poly.evaluate_and_fold(&outer_weights, fold_scalars, layout.block_len)
     };
     eprintln!(
-        "  [hachi prove L{level}] eval ring poly: {:.2}s (num_ring_elems={})",
+        "  [hachi prove L{level}] evaluate_and_fold: {:.2}s (num_ring_elems={})",
         t0.elapsed().as_secs_f64(),
         poly.num_ring_elems()
     );
@@ -137,6 +138,7 @@ where
         setup,
         ring_opening_point,
         poly,
+        w_folded,
         hint,
         transcript,
         commitment,
@@ -167,6 +169,107 @@ where
     );
 
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+
+    // Per-row diagnostic: compute M[i] * w_at_alpha for each row i
+    // and compare against y[i](alpha) to find which sub-relation fails.
+    {
+        use super::quadratic_equation::compute_m_a_streaming;
+        use super::ring_switch::{eval_ring_at, m_row_count};
+        use super::sumcheck::eq_poly::EqPolynomial;
+        use std::iter;
+
+        let m_a = compute_m_a_streaming::<F, D, Cfg>(
+            &setup.expanded,
+            quad_eq.opening_point(),
+            &quad_eq.challenges,
+            &rs.alpha,
+            layout,
+        )
+        .expect("compute_m_a diagnostic failed");
+
+        let x_len = 1usize << rs.num_u;
+        let d = D;
+
+        // Compute w_at_alpha[x] = eval_ring_at(w_ring[x], alpha) for each ring elem x
+        let mut w_at_alpha = vec![F::zero(); x_len];
+        for (x, w_at_alpha_x) in w_at_alpha.iter_mut().enumerate() {
+            let mut val = F::zero();
+            for y in 0..d {
+                let idx = x + y * x_len;
+                if idx < rs.w_evals.len() {
+                    val += rs.alpha_evals_y[y] * F::from_i64(rs.w_evals[idx] as i64);
+                }
+            }
+            *w_at_alpha_x = val;
+        }
+
+        let num_rows = m_row_count::<Cfg>();
+        let y_full: Vec<F> = quad_eq
+            .v
+            .iter()
+            .chain(commitment.u.iter())
+            .chain(iter::once(&y_ring))
+            .map(|r| eval_ring_at(r, &rs.alpha))
+            .collect();
+
+        eprintln!(
+            "  [hachi prove L{level}] per-row M*w=y diagnostic (num_rows={num_rows}, x_len={x_len}, m_a_cols={}):",
+            m_a.first().map_or(0, |r| r.len()),
+        );
+        for i in 0..num_rows {
+            let mw_i: F = m_a[i]
+                .iter()
+                .enumerate()
+                .fold(F::zero(), |acc, (x, &m_ix)| {
+                    acc + m_ix * w_at_alpha.get(x).copied().unwrap_or(F::zero())
+                });
+            let y_i = if i < y_full.len() {
+                y_full[i]
+            } else {
+                F::zero()
+            };
+            let residual = mw_i - y_i;
+            let row_name = match i {
+                _ if i < Cfg::N_D => "D",
+                _ if i < Cfg::N_D + Cfg::N_B => "B",
+                _ if i == Cfg::N_D + Cfg::N_B => "bTw",
+                _ if i == Cfg::N_D + Cfg::N_B + 1 => "challenge_fold",
+                _ => "A",
+            };
+            eprintln!(
+                "    row {i} ({row_name}): match={}, residual_is_zero={}, mw_is_zero={}, y_is_zero={}",
+                residual.is_zero(),
+                residual.is_zero(),
+                mw_i.is_zero(),
+                y_i.is_zero(),
+            );
+        }
+
+        // Also compute aggregate cross-check
+        let eq_tau1 = EqPolynomial::evals(&rs.tau1);
+        let mut verifier_claim = F::zero();
+        for (i, eq_i) in eq_tau1.iter().enumerate() {
+            let y_i = if i < y_full.len() {
+                y_full[i]
+            } else {
+                F::zero()
+            };
+            verifier_claim += *eq_i * y_i;
+        }
+        let x_mask = x_len - 1;
+        let mut prover_claim = F::zero();
+        for (idx, &w) in rs.w_evals.iter().enumerate() {
+            prover_claim += F::from_i64(w as i64)
+                * rs.alpha_evals_y[idx >> rs.num_u]
+                * rs.m_evals_x[idx & x_mask];
+        }
+        eprintln!(
+            "  [hachi prove L{level}] relation_claim cross-check: match={}, prover_is_zero={}, verifier_is_zero={}",
+            verifier_claim == prover_claim,
+            prover_claim.is_zero(),
+            verifier_claim.is_zero(),
+        );
+    }
 
     let t3 = Instant::now();
     let num_u = rs.num_u;
@@ -312,6 +415,7 @@ where
             &setup.ntt_A,
             layout.block_len,
             layout.num_digits_commit,
+            layout.num_digits_open,
             layout.log_basis,
         )?;
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);

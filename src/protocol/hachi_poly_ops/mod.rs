@@ -189,6 +189,20 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// `scalars` has length `block_len`.
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>>;
 
+    /// Fused evaluate_ring + fold_blocks in a single pass over the polynomial.
+    /// These two operations are in the same Fiat-Shamir round (no challenge
+    /// between them), so implementations can share a single data iteration.
+    fn evaluate_and_fold(
+        &self,
+        eval_scalars: &[F],
+        fold_scalars: &[F],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        let eval = self.evaluate_ring(eval_scalars);
+        let folded = self.fold_blocks(fold_scalars, block_len);
+        (eval, folded)
+    }
+
     /// **Op 3 — prove: decompose + challenge-fold.**
     ///
     /// For each block of `block_len` ring elements:
@@ -207,9 +221,10 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// **Op 4 — commit: per-block inner Ajtai.**
     ///
     /// For each block of `block_len` ring elements:
-    /// 1. `sᵢ = G⁻¹(blockᵢ)` (balanced decomposition to i8 digits).
+    /// 1. `sᵢ = G⁻¹(blockᵢ)` with `num_digits_commit` levels.
     /// 2. `tᵢ = A · sᵢ` (matrix-vector multiply via NTT cache or sparse path).
-    /// 3. `t̂ᵢ = G⁻¹(tᵢ)` (decompose rows to i8 digits).
+    /// 3. `t̂ᵢ = G⁻¹(tᵢ)` with `num_digits_open` levels (t has full-field
+    ///    coefficients regardless of s's digit count).
     ///
     /// Returns one `t̂ᵢ` vector per block as `[i8; D]` digit planes.
     ///
@@ -221,7 +236,8 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         a_matrix: &[Vec<CyclotomicRing<F, D>>],
         ntt_a: &NttSlotCache<D>,
         block_len: usize,
-        num_digits: usize,
+        num_digits_commit: usize,
+        num_digits_open: usize,
         log_basis: u32,
     ) -> Result<Vec<Vec<[i8; D]>>, HachiError>;
 }
@@ -414,7 +430,8 @@ where
         _a_matrix: &[Vec<CyclotomicRing<F, D>>],
         ntt_a: &NttSlotCache<D>,
         block_len: usize,
-        num_digits: usize,
+        num_digits_commit: usize,
+        num_digits_open: usize,
         log_basis: u32,
     ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
         let n = self.coeffs.len();
@@ -431,10 +448,10 @@ where
             })
             .collect();
 
-        let t_all = mat_vec_mul_ntt_i8(ntt_a, &block_slices, num_digits, log_basis);
+        let t_all = mat_vec_mul_ntt_i8(ntt_a, &block_slices, num_digits_commit, log_basis);
 
         let results: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
-            .map(|t_i| decompose_rows_i8(&t_i, num_digits, log_basis))
+            .map(|t_i| decompose_rows_i8(&t_i, num_digits_open, log_basis))
             .collect();
 
         Ok(results)
@@ -627,20 +644,25 @@ where
         a_matrix: &[Vec<CyclotomicRing<F, D>>],
         _ntt_a: &NttSlotCache<D>,
         block_len: usize,
-        num_digits: usize,
+        num_digits_commit: usize,
+        num_digits_open: usize,
         log_basis: u32,
     ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
         let n_a = a_matrix.len();
-        let zero_block_len = n_a.checked_mul(num_digits).unwrap();
+        let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
 
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(self.sparse_blocks)
             .map(|block_entries| {
                 if block_entries.is_empty() {
                     vec![[0i8; D]; zero_block_len]
                 } else {
-                    let t_i =
-                        inner_ajtai_onehot_wide(a_matrix, block_entries, block_len, num_digits);
-                    decompose_rows_i8(&t_i, num_digits, log_basis)
+                    let t_i = inner_ajtai_onehot_wide(
+                        a_matrix,
+                        block_entries,
+                        block_len,
+                        num_digits_commit,
+                    );
+                    decompose_rows_i8(&t_i, num_digits_open, log_basis)
                 }
             })
             .collect();
@@ -686,6 +708,7 @@ mod tests {
                 &setup.ntt_A,
                 layout.block_len,
                 layout.num_digits_commit,
+                layout.num_digits_open,
                 layout.log_basis,
             )
             .unwrap();
@@ -725,6 +748,7 @@ mod tests {
                 &setup.ntt_A,
                 layout.block_len,
                 layout.num_digits_commit,
+                layout.num_digits_open,
                 layout.log_basis,
             )
             .unwrap();

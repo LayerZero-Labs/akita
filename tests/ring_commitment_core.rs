@@ -42,11 +42,10 @@ fn setup_shape_is_consistent() {
     assert_eq!(v1.expanded.seed.max_num_vars, 16);
     assert_eq!(p2.expanded.seed.max_num_vars, 16);
     assert_eq!(v2.expanded.seed.max_num_vars, 16);
-    let depth = num_digits_commit();
     assert_eq!(p1.expanded.A.len(), TinyConfig::N_A);
-    assert_eq!(p1.expanded.A[0].len(), BLOCK_LEN * depth);
+    assert!(p1.expanded.A[0].len() >= BLOCK_LEN * num_digits_commit());
     assert_eq!(p1.expanded.B.len(), TinyConfig::N_B);
-    assert_eq!(p1.expanded.B[0].len(), TinyConfig::N_A * depth * NUM_BLOCKS);
+    assert!(p1.expanded.B[0].len() >= TinyConfig::N_A * num_digits_open() * NUM_BLOCKS);
 }
 
 #[test]

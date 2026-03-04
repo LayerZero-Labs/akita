@@ -60,6 +60,13 @@ pub fn num_digits_commit() -> usize {
     compute_num_digits(d.log_commit_bound, d.log_basis)
 }
 
+/// Decomposition depth for opening / full-field coefficients under `TinyConfig`.
+pub fn num_digits_open() -> usize {
+    let d = TinyConfig::decomposition();
+    let log_open = d.log_open_bound.unwrap_or(d.log_commit_bound);
+    compute_num_digits(log_open, d.log_basis)
+}
+
 /// Decomposition depth for the folded witness `z_pre` under `TinyConfig`.
 pub fn num_digits_fold() -> usize {
     let d = TinyConfig::decomposition();

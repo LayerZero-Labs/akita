@@ -346,13 +346,14 @@ where
         ensure_matrix_shape_ge(&setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
         ensure_matrix_shape_ge(&setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
 
-        let depth = layout.num_digits_commit;
+        let depth_commit = layout.num_digits_commit;
+        let depth_open = layout.num_digits_open;
         let log_basis = layout.log_basis;
         let block_slices: Vec<&[CyclotomicRing<F, D>]> =
             f_blocks.iter().map(|b| b.as_slice()).collect();
-        let t_all = mat_vec_mul_ntt_i8(&setup.ntt_A, &block_slices, depth, log_basis);
+        let t_all = mat_vec_mul_ntt_i8(&setup.ntt_A, &block_slices, depth_commit, log_basis);
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
-            .map(|t_i| decompose_rows_i8(&t_i, depth, log_basis))
+            .map(|t_i| decompose_rows_i8(&t_i, depth_open, log_basis))
             .collect();
 
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
@@ -379,7 +380,8 @@ where
             });
         }
 
-        let depth = layout.num_digits_commit;
+        let depth_commit = layout.num_digits_commit;
+        let depth_open = layout.num_digits_open;
         let log_basis = layout.log_basis;
         let coeff_len = f_coeffs.len();
 
@@ -394,9 +396,9 @@ where
             })
             .collect();
 
-        let t_all = mat_vec_mul_ntt_i8(&setup.ntt_A, &block_slices, depth, log_basis);
+        let t_all = mat_vec_mul_ntt_i8(&setup.ntt_A, &block_slices, depth_commit, log_basis);
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
-            .map(|t_i| decompose_rows_i8(&t_i, depth, log_basis))
+            .map(|t_i| decompose_rows_i8(&t_i, depth_open, log_basis))
             .collect();
 
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
@@ -422,9 +424,10 @@ where
         let sparse_blocks =
             map_onehot_to_sparse_blocks(onehot_k, indices, layout.r_vars, layout.m_vars, D)?;
 
-        let depth = layout.num_digits_commit;
+        let depth_commit = layout.num_digits_commit;
+        let depth_open = layout.num_digits_open;
         let log_basis = layout.log_basis;
-        let zero_block_len = Cfg::N_A.checked_mul(depth).unwrap();
+        let zero_block_len = Cfg::N_A.checked_mul(depth_open).unwrap();
         let a_matrix = &setup.expanded.A;
         let block_len = layout.block_len;
 
@@ -433,8 +436,9 @@ where
                 if block_entries.is_empty() {
                     vec![[0i8; D]; zero_block_len]
                 } else {
-                    let t_i = inner_ajtai_onehot_wide(a_matrix, block_entries, block_len, depth);
-                    decompose_rows_i8(&t_i, depth, log_basis)
+                    let t_i =
+                        inner_ajtai_onehot_wide(a_matrix, block_entries, block_len, depth_commit);
+                    decompose_rows_i8(&t_i, depth_open, log_basis)
                 }
             })
             .collect();

@@ -28,37 +28,6 @@ use std::iter::repeat_n;
 use std::marker::PhantomData;
 use std::time::Instant;
 
-/// **Steps 1–3.** Compute `w_i = a^T G_{2^m} s_i` and decompose: `ŵ_i = G_1^{-1}(w_i)`.
-///
-/// Uses `HachiPolyOps::fold_blocks` to compute the per-block dot products,
-/// then decomposes each result into i8 digit planes.
-///
-/// Returns `(w_hat, w_folded)`: both the i8 digits and the pre-decomposition
-/// folded ring elements (kept to avoid a recompose roundtrip later).
-fn compute_w_hat<F, const D: usize, P>(
-    opening_point: &RingOpeningPoint<F>,
-    poly: &P,
-    layout: HachiCommitmentLayout,
-) -> (Vec<Vec<[i8; D]>>, Vec<CyclotomicRing<F, D>>)
-where
-    F: FieldCore + CanonicalField,
-    P: HachiPolyOps<F, D>,
-{
-    let a = &opening_point.a;
-    let block_len = layout.block_len;
-    let depth_open = layout.num_digits_open;
-    let log_basis = layout.log_basis;
-
-    debug_assert_eq!(a.len(), block_len);
-
-    let folded = poly.fold_blocks(a, block_len);
-    let w_hat = folded
-        .iter()
-        .map(|w_i| w_i.balanced_decompose_pow2_i8(depth_open, log_basis))
-        .collect();
-    (w_hat, folded)
-}
-
 /// **Step 4.** Compute `v = D · ŵ` (first prover message).
 fn compute_v<F: FieldCore + CanonicalField, const D: usize>(
     ntt_d: &NttSlotCache<D>,
@@ -155,6 +124,7 @@ where
         setup: &HachiProverSetup<F, D>,
         ring_opening_point: RingOpeningPoint<F>,
         poly: &P,
+        pre_folded: Vec<CyclotomicRing<F, D>>,
         hint: HachiCommitmentHint<F, D>,
         transcript: &mut T,
         commitment: &RingCommitment<F, D>,
@@ -162,14 +132,19 @@ where
         layout: HachiCommitmentLayout,
     ) -> Result<Self, HachiError> {
         let t_wh = Instant::now();
-        let (w_hat, w_hat_flat, w_folded) = {
-            let _span = tracing::info_span!("compute_w_hat").entered();
-            let (w_hat, w_folded) = compute_w_hat::<F, D, P>(&ring_opening_point, poly, layout);
+        let (w_hat, w_hat_flat) = {
+            let _span = tracing::info_span!("decompose_w_hat").entered();
+            let depth_open = layout.num_digits_open;
+            let log_basis = layout.log_basis;
+            let w_hat: Vec<Vec<[i8; D]>> = pre_folded
+                .iter()
+                .map(|w_i| w_i.balanced_decompose_pow2_i8(depth_open, log_basis))
+                .collect();
             let w_hat_flat = flatten_w_hat(&w_hat);
-            (w_hat, w_hat_flat, w_folded)
+            (w_hat, w_hat_flat)
         };
         eprintln!(
-            "    [quad_eq] compute_w_hat+flatten: {:.2}s (blocks={}, depth={})",
+            "    [quad_eq] decompose_w_hat+flatten: {:.2}s (blocks={}, depth={})",
             t_wh.elapsed().as_secs_f64(),
             w_hat.len(),
             w_hat.first().map_or(0, |v| v.len())
@@ -220,7 +195,7 @@ where
             z_pre: Some(z_pre),
             w_hat: Some(w_hat),
             w_hat_flat: Some(w_hat_flat),
-            w_folded: Some(w_folded),
+            w_folded: Some(pre_folded),
             hint: Some(hint),
             _marker: PhantomData,
         })
@@ -414,6 +389,7 @@ where
     Cfg: CommitmentConfig,
 {
     let decomp_commit = layout.num_digits_commit;
+    let decomp_open = layout.num_digits_open;
     let log_basis = layout.log_basis;
     let poly_len = 2 * D - 1;
     let num_rows = Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A;
@@ -460,8 +436,8 @@ where
 
             poly_buf.fill(F::zero());
             for (i, t_hat_i) in t_hat.iter().enumerate() {
-                let start = a_idx * decomp_commit;
-                let end = start + decomp_commit;
+                let start = a_idx * decomp_open;
+                let end = start + decomp_open;
                 if end <= t_hat_i.len() {
                     let t_recomp =
                         CyclotomicRing::gadget_recompose_pow2_i8(&t_hat_i[start..end], log_basis);
@@ -550,7 +526,7 @@ where
     let num_blocks = opening_point.b.len();
     let block_len = layout.block_len;
     let w_len = depth_open * num_blocks;
-    let t_len = depth_commit * Cfg::N_A * num_blocks;
+    let t_len = depth_open * Cfg::N_A * num_blocks;
     let z_len = depth_fold * depth_commit * block_len;
     let total_cols = w_len + t_len + z_len;
 
@@ -619,12 +595,13 @@ where
         rows.push(full);
     }
 
-    // Row 5: (c^T ⊗ G_{N_A}) · t̂ = A · J · ẑ (t̂ and ẑ use delta_commit)
+    // Row 5: (c^T ⊗ G_open) · t̂ = A · J · ẑ
+    // t̂ uses delta_open (t = A*s has full-field coefficients); ẑ uses delta_commit
     for a_idx in 0..Cfg::N_A {
         let mut full = vec![F::zero(); total_cols];
         for (i, &c_alpha) in c_alphas.iter().enumerate() {
-            for (d, &g) in g1_commit.iter().enumerate() {
-                let t_idx = i * (Cfg::N_A * depth_commit) + a_idx * depth_commit + d;
+            for (d, &g) in g1_open.iter().enumerate() {
+                let t_idx = i * (Cfg::N_A * depth_open) + a_idx * depth_open + d;
                 full[w_len + t_idx] = c_alpha * g;
             }
         }
@@ -746,10 +723,12 @@ mod tests {
         let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_SEED);
         let y_ring = CyclotomicRing::<F, D>::zero();
         let layout = setup.layout();
+        let w_folded = poly.fold_blocks(&point.a, layout.block_len);
         let quad_eq = QuadraticEquation::<F, D, TinyConfig>::new_prover(
             &setup,
             point.clone(),
             &poly,
+            w_folded,
             hint,
             &mut transcript,
             &w.commitment,
@@ -918,14 +897,14 @@ mod tests {
 
         let w_hat = f.quad_eq.w_hat().unwrap();
         assert_eq!(w_hat.len(), NUM_BLOCKS);
-        assert!(w_hat.iter().all(|v| v.len() == num_digits_commit()));
+        assert!(w_hat.iter().all(|v| v.len() == num_digits_open()));
 
         let hint = f.quad_eq.hint().unwrap();
         assert_eq!(hint.t_hat.len(), NUM_BLOCKS);
         assert!(hint
             .t_hat
             .iter()
-            .all(|v| v.len() == N_A * num_digits_commit()));
+            .all(|v| v.len() == N_A * num_digits_open()));
 
         assert_eq!(
             f.quad_eq.z_pre().unwrap().len(),
