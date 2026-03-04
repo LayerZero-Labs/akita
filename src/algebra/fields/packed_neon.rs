@@ -11,7 +11,7 @@ use core::arch::aarch64::{
 };
 use core::fmt;
 use core::mem::transmute;
-use core::ops::{Add, Mul, Sub};
+use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 
 /// Number of packed `Fp128` lanes in this backend.
 pub const WIDTH: usize = 2;
@@ -315,6 +315,27 @@ impl<const P: u128> Mul for PackedFp128Neon<P> {
     }
 }
 
+impl<const P: u128> AddAssign for PackedFp128Neon<P> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl<const P: u128> SubAssign for PackedFp128Neon<P> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl<const P: u128> MulAssign for PackedFp128Neon<P> {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
+    }
+}
+
 impl<const P: u128> PackedField for PackedFp128Neon<P> {
     type Scalar = Fp128<P>;
 
@@ -530,6 +551,27 @@ impl<const P: u32> PackedValue for PackedFp32Neon<P> {
     }
 }
 
+impl<const P: u32> AddAssign for PackedFp32Neon<P> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl<const P: u32> SubAssign for PackedFp32Neon<P> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl<const P: u32> MulAssign for PackedFp32Neon<P> {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
+    }
+}
+
 impl<const P: u32> PackedField for PackedFp32Neon<P> {
     type Scalar = Fp32<P>;
 
@@ -705,6 +747,27 @@ impl<const P: u64> PackedValue for PackedFp64Neon<P> {
     fn extract(&self, lane: usize) -> Self::Value {
         debug_assert!(lane < FP64_WIDTH);
         Fp64(self.vals[lane])
+    }
+}
+
+impl<const P: u64> AddAssign for PackedFp64Neon<P> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl<const P: u64> SubAssign for PackedFp64Neon<P> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl<const P: u64> MulAssign for PackedFp64Neon<P> {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
     }
 }
 

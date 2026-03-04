@@ -115,8 +115,8 @@ impl<E: FieldCore + FromSmallInt> UniPoly<E> {
 
             new_coeffs[0] = divided_diffs[k];
             for i in 0..old_len {
-                new_coeffs[i + 1] = new_coeffs[i + 1] + coeffs[i];
-                new_coeffs[i] = new_coeffs[i] - shift * coeffs[i];
+                new_coeffs[i + 1] += coeffs[i];
+                new_coeffs[i] -= shift * coeffs[i];
             }
 
             coeffs = new_coeffs;
@@ -201,7 +201,7 @@ impl<E: FieldCore> CompressedUniPoly<E> {
         let c0 = self.coeffs_except_linear_term[0];
         let mut linear = *hint - c0 - c0;
         for c in self.coeffs_except_linear_term.iter().skip(1) {
-            linear = linear - *c;
+            linear -= *c;
         }
         linear
     }
@@ -232,7 +232,7 @@ impl<E: FieldCore> CompressedUniPoly<E> {
 
         let mut pow = *x * *x;
         for c in self.coeffs_except_linear_term.iter().skip(1) {
-            acc = acc + (*c * pow);
+            acc += *c * pow;
             pow = pow * *x;
         }
         acc

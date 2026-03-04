@@ -4,7 +4,7 @@
 //! Uses Solinas-style two-fold reduction.  For `c = 2^a ± 1` the fold
 //! multiply is replaced by shift+add/sub, saving a u128 widening multiply.
 
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use rand_core::RngCore;
 
@@ -12,7 +12,8 @@ use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
 use crate::{
-    CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, PseudoMersenneField,
+    AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible,
+    PseudoMersenneField,
 };
 use std::io::{Read, Write};
 
@@ -31,7 +32,7 @@ impl<const P: u64> Fp64<P> {
     const BITS: u32 = 64 - P.leading_zeros();
 
     /// Offset `c = 2^k − P`.
-    const C: u64 = {
+    pub const C: u64 = {
         let c = if Self::BITS == 64 {
             0u64.wrapping_sub(P)
         } else {
@@ -254,7 +255,7 @@ impl<const P: u64> Fp64<P> {
         let mut acc = Self::one();
         while exp > 0 {
             if (exp & 1) == 1 {
-                acc = acc * base;
+                acc *= base;
             }
             base = base.square();
             exp >>= 1;
@@ -319,6 +320,27 @@ impl<const P: u64> Neg for Fp64<P> {
     #[inline]
     fn neg(self) -> Self::Output {
         Self(Self::sub_raw(0, self.0))
+    }
+}
+
+impl<const P: u64> AddAssign for Fp64<P> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl<const P: u64> SubAssign for Fp64<P> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl<const P: u64> MulAssign for Fp64<P> {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
     }
 }
 
@@ -392,11 +414,11 @@ impl<const P: u64> HachiDeserialize for Fp64<P> {
     }
 }
 
-impl<const P: u64> FieldCore for Fp64<P> {
-    fn zero() -> Self {
-        Self(0)
-    }
+impl<const P: u64> AdditiveGroup for Fp64<P> {
+    const ZERO: Self = Self(0);
+}
 
+impl<const P: u64> FieldCore for Fp64<P> {
     fn one() -> Self {
         Self(if P > 1 { 1 } else { 0 })
     }
@@ -413,6 +435,8 @@ impl<const P: u64> FieldCore for Fp64<P> {
             Some(inv)
         }
     }
+
+    const TWO_INV: Self = Self((P as u128).div_ceil(2) as u64);
 }
 
 impl<const P: u64> Invertible for Fp64<P> {

@@ -16,7 +16,7 @@ fn dense_eval<E: FieldCore + LiftBase<F>>(alpha: E, x: &CyclotomicRing<F, D>) ->
     let mut acc = E::zero();
     let mut pow = E::one();
     for c in x.coefficients().iter().copied() {
-        acc = acc + E::lift_base(c) * pow;
+        acc += E::lift_base(c) * pow;
         pow = pow * alpha;
     }
     acc
@@ -53,7 +53,7 @@ fn sparse_eval_at_alpha_matches_dense_eval() {
         let mut acc = F::one();
         for _ in 0..D {
             out.push(acc);
-            acc = acc * alpha;
+            acc *= alpha;
         }
         out
     };

@@ -4,27 +4,41 @@ use super::config::{CommitmentConfig, HachiCommitmentLayout};
 use super::transcript_append::AppendToTranscript;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
+use crate::protocol::hachi_poly_ops::{HachiPolyOps, OneHotIndex};
+use crate::protocol::opening_point::BasisMode;
 use crate::protocol::transcript::Transcript;
-use crate::{CanonicalField, FieldCore, Polynomial};
-
-/// Output type for batched commitments.
-pub(crate) type BatchCommitOutput<C, H> = Result<Vec<(C, H)>, HachiError>;
+use crate::{CanonicalField, FieldCore};
 
 /// Witness data produced alongside a ring-native commitment.
 ///
 /// Contains the commitment itself plus `t_hat` (basis-decomposed inner Ajtai
 /// output) from the two-layer Ajtai construction (§4.1). The decomposed input
-/// vectors `s` are NOT stored; they are recomputed from `ring_coeffs` during
-/// proving to avoid multi-GB memory usage at production parameters.
+/// vectors `s` are NOT stored; they are recomputed from the polynomial during
+/// proving via `HachiPolyOps`.
 pub struct CommitWitness<C, F: FieldCore, const D: usize> {
     /// The ring commitment (outer Ajtai output `u = B · t̂`).
     pub commitment: C,
-    /// Per-block basis-decomposed inner Ajtai output vectors.
-    pub t_hat: Vec<Vec<CyclotomicRing<F, D>>>,
+    /// Per-block basis-decomposed inner Ajtai output vectors as i8 digit planes.
+    pub t_hat: Vec<Vec<[i8; D]>>,
+    _marker: std::marker::PhantomData<F>,
 }
 
-/// Generic commitment-scheme interface used by Hachi protocol code.
-pub trait CommitmentScheme<F>: Clone + Send + Sync + 'static
+impl<C, F: FieldCore, const D: usize> CommitWitness<C, F, D> {
+    /// Construct a new commit witness.
+    pub fn new(commitment: C, t_hat: Vec<Vec<[i8; D]>>) -> Self {
+        Self {
+            commitment,
+            t_hat,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+/// Commitment-scheme interface used by Hachi protocol code.
+///
+/// Generic over field `F` and cyclotomic ring degree `D`.
+/// Polynomials are provided as `impl HachiPolyOps<F, D>`.
+pub trait CommitmentScheme<F, const D: usize>: Clone + Send + Sync + 'static
 where
     F: FieldCore + CanonicalField,
 {
@@ -36,8 +50,8 @@ where
     type Commitment: Clone + PartialEq + Send + Sync + AppendToTranscript<F>;
     /// Evaluation/opening proof object.
     type Proof: Clone + Send + Sync;
-    /// Optional prover-side hint produced at commitment time.
-    type OpeningProofHint: Clone + Send + Sync;
+    /// Prover-side hint produced at commitment time.
+    type CommitHint: Clone + Send + Sync;
 
     /// Build prover setup for maximum polynomial dimension.
     ///
@@ -49,47 +63,55 @@ where
     /// Derive verifier setup from prover setup.
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;
 
-    /// Commit to one polynomial.
+    /// Commit to one polynomial with a caller-specified layout.
+    ///
+    /// The layout's matrix dimensions must not exceed the setup's max dimensions.
+    /// Callers control `num_digits_commit` via the layout to reduce decomposition
+    /// depth for polynomials with bounded coefficients (e.g. delta=1 for {0,1}).
     ///
     /// # Errors
     ///
     /// Returns an error when setup/parameter constraints are not satisfied.
-    fn commit<P: Polynomial<F>>(
+    fn commit<P: HachiPolyOps<F, D>>(
         poly: &P,
         setup: &Self::ProverSetup,
-    ) -> Result<(Self::Commitment, Self::OpeningProofHint), HachiError>;
+        layout: &HachiCommitmentLayout,
+    ) -> Result<(Self::Commitment, Self::CommitHint), HachiError>;
 
-    /// Commit to many polynomials.
+    /// Produce an opening proof at `opening_point` with a caller-specified layout.
     ///
-    /// # Errors
+    /// The layout must match the one used during commitment. Recursive w-opening
+    /// levels derive their own layouts internally via `WCommitmentConfig`.
     ///
-    /// Returns an error if any per-polynomial commitment fails.
-    fn batch_commit<P: Polynomial<F>>(
-        polys: &[P],
-        setup: &Self::ProverSetup,
-    ) -> BatchCommitOutput<Self::Commitment, Self::OpeningProofHint> {
-        polys.iter().map(|p| Self::commit(p, setup)).collect()
-    }
-
-    /// Produce an opening proof at `opening_point`.
+    /// `basis` selects the polynomial representation (see [`BasisMode`]).
     ///
     /// # Errors
     ///
     /// Returns an error if the opening point is invalid or proof generation fails.
-    fn prove<T: Transcript<F>, P: Polynomial<F>>(
+    #[allow(clippy::too_many_arguments)]
+    fn prove<T: Transcript<F>, P: HachiPolyOps<F, D>>(
         setup: &Self::ProverSetup,
         poly: &P,
         opening_point: &[F],
-        hint: Option<Self::OpeningProofHint>,
+        hint: Self::CommitHint,
         transcript: &mut T,
         commitment: &Self::Commitment,
+        basis: BasisMode,
+        layout: &HachiCommitmentLayout,
     ) -> Result<Self::Proof, HachiError>;
 
-    /// Verify an opening proof.
+    /// Verify an opening proof with a caller-specified layout.
+    ///
+    /// The layout must be reconstructed deterministically by the verifier —
+    /// never deserialized from the proof. It must match the layout used by the
+    /// prover for commitment and proving.
+    ///
+    /// `basis` must match the mode used by the prover (see [`BasisMode`]).
     ///
     /// # Errors
     ///
     /// Returns an error when verification fails.
+    #[allow(clippy::too_many_arguments)]
     fn verify<T: Transcript<F>>(
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
@@ -97,42 +119,12 @@ where
         opening_point: &[F],
         opening: &F,
         commitment: &Self::Commitment,
+        basis: BasisMode,
+        layout: &HachiCommitmentLayout,
     ) -> Result<(), HachiError>;
-
-    /// Homomorphic commitment combination.
-    fn combine_commitments(commitments: &[Self::Commitment], coeffs: &[F]) -> Self::Commitment;
-
-    /// Homomorphic hint combination.
-    fn combine_hints(hints: Vec<Self::OpeningProofHint>, coeffs: &[F]) -> Self::OpeningProofHint;
 
     /// Protocol identifier.
     fn protocol_name() -> &'static [u8];
-}
-
-/// Streaming extension for chunked commitment workflows.
-pub trait StreamingCommitmentScheme<F>: CommitmentScheme<F>
-where
-    F: FieldCore + CanonicalField,
-{
-    /// Intermediate chunk state.
-    type ChunkState: Clone + Send + Sync + PartialEq + std::fmt::Debug;
-
-    /// Process one chunk of field elements.
-    fn process_chunk(setup: &Self::ProverSetup, chunk: &[F]) -> Self::ChunkState;
-
-    /// Process one chunk of one-hot values.
-    fn process_chunk_onehot(
-        setup: &Self::ProverSetup,
-        onehot_k: usize,
-        chunk: &[Option<usize>],
-    ) -> Self::ChunkState;
-
-    /// Aggregate chunk states into one commitment + hint.
-    fn aggregate_chunks(
-        setup: &Self::ProverSetup,
-        onehot_k: Option<usize>,
-        chunks: &[Self::ChunkState],
-    ) -> (Self::Commitment, Self::OpeningProofHint);
 }
 
 /// Ring-native commitment interface for §4.1 implementation work.
@@ -164,9 +156,6 @@ where
 
     /// Commit to ring blocks arranged as `2^R` vectors of length `2^M`.
     ///
-    /// Returns `(commitment, s, t_hat)` where `s` and `t_hat` are the
-    /// decomposed witness vectors from §4.1.
-    ///
     /// # Errors
     ///
     /// Returns an error if block layout mismatches config or commitment fails.
@@ -176,12 +165,6 @@ where
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError>;
 
     /// Commit to a flat coefficient table `(f_i)_{i∈{0,1}^ℓ}` in ring form.
-    ///
-    /// The input uses sequential block layout: ring elements
-    /// `[0, block_len)` form block 0, `[block_len, 2*block_len)` form
-    /// block 1, and so on. This matches the sequential variable ordering
-    /// where M variables (position in block) are lower-order and R variables
-    /// (block selection) are higher-order.
     ///
     /// # Errors
     ///
@@ -214,25 +197,13 @@ where
 
     /// Commit to a regular one-hot witness.
     ///
-    /// The witness represents `T` chunks of `onehot_k` field elements, each
-    /// chunk containing exactly one 1 and all other entries 0. `indices[c]`
-    /// gives the hot position in chunk `c` (must be in `[0, onehot_k)`).
-    ///
-    /// Requires `D` and `onehot_k` to be "nicely matched": one must divide
-    /// the other.
-    ///
-    /// The default implementation materializes the full one-hot field vector,
-    /// packs it into ring elements via coefficient embedding, and delegates
-    /// to `commit_coeffs`. Implementations may override this with a
-    /// sparse-aware path that avoids all inner ring multiplications.
-    ///
     /// # Errors
     ///
     /// Returns an error if dimensions are inconsistent or any index is out
     /// of range.
-    fn commit_onehot(
+    fn commit_onehot<I: OneHotIndex>(
         onehot_k: usize,
-        indices: &[Option<usize>],
+        indices: &[Option<I>],
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let num_chunks = indices.len();
@@ -245,11 +216,13 @@ where
             )));
         }
 
-        // Materialize the full one-hot vector as ring elements.
         let total_ring_elems = total_field_elems / D;
         let mut ring_coeffs = vec![CyclotomicRing::<F, D>::zero(); total_ring_elems];
         for (c, opt) in indices.iter().enumerate() {
-            let Some(&idx) = opt.as_ref() else { continue };
+            let Some(&idx_raw) = opt.as_ref() else {
+                continue;
+            };
+            let idx = idx_raw.as_usize();
             if idx >= onehot_k {
                 return Err(HachiError::InvalidInput(format!(
                     "index {idx} out of range for chunk size K={onehot_k} at position {c}"

@@ -82,7 +82,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtReconstruct<W, K, D> for 
             let mut result = F::from_i64(v[0]);
             let mut partial_prod = F::from_i64(primes[0].p.to_i64());
             for i in 1..K {
-                result = result + F::from_i64(v[i]) * partial_prod;
+                result += F::from_i64(v[i]) * partial_prod;
                 if i + 1 < K {
                     partial_prod = partial_prod * F::from_i64(primes[i].p.to_i64());
                 }

@@ -10,6 +10,7 @@
 //! - and efficient to evaluate at a point `α` using precomputed powers.
 
 use super::CyclotomicRing;
+use crate::algebra::fields::LiftBase;
 use crate::{CanonicalField, FieldCore};
 
 /// Configuration for sampling a sparse challenge.
@@ -131,7 +132,7 @@ impl SparseChallenge {
         self.validate::<D>()?;
         let mut out = [F::zero(); D];
         for (&pos, &c) in self.positions.iter().zip(self.coeffs.iter()) {
-            out[pos as usize] = out[pos as usize] + F::from_i64(c as i64);
+            out[pos as usize] += F::from_i64(c as i64);
         }
         Ok(CyclotomicRing::from_coefficients(out))
     }
@@ -148,7 +149,7 @@ impl SparseChallenge {
     pub fn eval_at_alpha<F, E, const D: usize>(&self, alpha_pows: &[E]) -> Result<E, &'static str>
     where
         F: FieldCore + CanonicalField,
-        E: FieldCore + crate::algebra::fields::LiftBase<F>,
+        E: FieldCore + LiftBase<F>,
     {
         self.validate::<D>()?;
         if alpha_pows.len() != D {
@@ -157,7 +158,7 @@ impl SparseChallenge {
         let mut acc = E::zero();
         for (&pos, &c) in self.positions.iter().zip(self.coeffs.iter()) {
             let coeff_f = F::from_i64(c as i64);
-            acc = acc + (E::lift_base(coeff_f) * alpha_pows[pos as usize]);
+            acc += E::lift_base(coeff_f) * alpha_pows[pos as usize];
         }
         Ok(acc)
     }

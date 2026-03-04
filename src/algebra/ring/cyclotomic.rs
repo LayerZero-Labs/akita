@@ -1,11 +1,13 @@
 //! Cyclotomic ring `Z_q[X]/(X^D + 1)` in coefficient form.
 
 use super::sparse_challenge::SparseChallenge;
+use crate::algebra::fields::wide::ReduceTo;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::{CanonicalField, FieldCore, FieldSampling};
+use crate::{AdditiveGroup, CanonicalField, FieldCore, FieldSampling};
 use rand_core::RngCore;
+use std::array::from_fn;
 use std::io::{Read, Write};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
@@ -25,6 +27,17 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     /// Construct from a coefficient array.
     #[inline]
     pub fn from_coefficients(coeffs: [F; D]) -> Self {
+        Self { coeffs }
+    }
+
+    /// Construct from a slice, zero-padding if shorter than `D`.
+    ///
+    /// Avoids creating a `[F; D]` stack temporary when `D` is large.
+    #[inline]
+    pub fn from_slice(slice: &[F]) -> Self {
+        let mut coeffs = [F::zero(); D];
+        let len = slice.len().min(D);
+        coeffs[..len].copy_from_slice(&slice[..len]);
         Self { coeffs }
     }
 
@@ -91,9 +104,9 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
         for (j, coeff) in self.coeffs.iter().copied().enumerate() {
             let idx = (j * k_mod) % two_d;
             if idx < D {
-                out[idx] = out[idx] + coeff;
+                out[idx] += coeff;
             } else {
-                out[idx - D] = out[idx - D] - coeff;
+                out[idx - D] -= coeff;
             }
         }
         Self { coeffs: out }
@@ -137,9 +150,66 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     pub fn mul_by_monomial_sum(&self, nonzero_positions: &[usize]) -> Self {
         let mut result = Self::zero();
         for &k in nonzero_positions {
-            result += self.negacyclic_shift(k);
+            self.shift_accumulate_into(&mut result, k);
         }
         result
+    }
+
+    /// Fused negacyclic shift + accumulate: `dst += self * X^k`.
+    ///
+    /// Equivalent to `*dst += self.negacyclic_shift(k)` but avoids
+    /// allocating a temporary ring element.
+    #[inline]
+    pub fn shift_accumulate_into(&self, dst: &mut Self, k: usize) {
+        let k = k % D;
+        if k == 0 {
+            for i in 0..D {
+                dst.coeffs[i] += self.coeffs[i];
+            }
+            return;
+        }
+        for i in 0..D {
+            let target = i + k;
+            if target < D {
+                dst.coeffs[target] += self.coeffs[i];
+            } else {
+                dst.coeffs[target - D] -= self.coeffs[i];
+            }
+        }
+    }
+
+    /// Fused negacyclic shift + subtract: `dst -= self * X^k`.
+    ///
+    /// Equivalent to `*dst -= self.negacyclic_shift(k)` but avoids
+    /// allocating a temporary ring element.
+    #[inline]
+    pub fn shift_sub_into(&self, dst: &mut Self, k: usize) {
+        let k = k % D;
+        if k == 0 {
+            for i in 0..D {
+                dst.coeffs[i] -= self.coeffs[i];
+            }
+            return;
+        }
+        for i in 0..D {
+            let target = i + k;
+            if target < D {
+                dst.coeffs[target] -= self.coeffs[i];
+            } else {
+                dst.coeffs[target - D] += self.coeffs[i];
+            }
+        }
+    }
+
+    /// Fused multiply-by-monomial-sum + accumulate:
+    /// `dst += self * (X^{k_1} + X^{k_2} + ...)`.
+    ///
+    /// Equivalent to `*dst += self.mul_by_monomial_sum(positions)` but avoids
+    /// all intermediate temporaries.
+    pub fn mul_by_monomial_sum_into(&self, dst: &mut Self, nonzero_positions: &[usize]) {
+        for &k in nonzero_positions {
+            self.shift_accumulate_into(dst, k);
+        }
     }
 
     /// Multiply `self` by a sparse challenge element.
@@ -152,11 +222,13 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     {
         let mut result = Self::zero();
         for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-            let shifted = self.negacyclic_shift(pos as usize);
             match coeff {
-                1 => result += shifted,
-                -1 => result -= shifted,
-                c => result += shifted.scale(&F::from_i64(c as i64)),
+                1 => self.shift_accumulate_into(&mut result, pos as usize),
+                -1 => self.shift_sub_into(&mut result, pos as usize),
+                c => {
+                    let shifted = self.negacyclic_shift(pos as usize);
+                    result += shifted.scale(&F::from_i64(c as i64));
+                }
             }
         }
         result
@@ -201,6 +273,53 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
 }
 
 impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
+    /// Balanced decomposition writing directly into a pre-allocated output slice.
+    ///
+    /// `out` must have length exactly `levels`. Each element receives one digit plane.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `log_basis == 0`, `log_basis >= 128`, or `out.len() * log_basis > 128 + log_basis`.
+    pub fn balanced_decompose_pow2_into(&self, out: &mut [Self], log_basis: u32) {
+        let levels = out.len();
+        assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
+        assert!(
+            (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
+            "levels * log_basis must be <= 128 + log_basis"
+        );
+
+        let half_b = 1i128 << (log_basis - 1);
+        let b = half_b << 1;
+        let mask = b - 1;
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let half_q = q / 2;
+
+        for plane in out.iter_mut() {
+            *plane = Self::zero();
+        }
+
+        for i in 0..D {
+            let canonical = self.coeffs[i].to_canonical_u128();
+            let mut c: i128 = if canonical > half_q {
+                -((q - canonical) as i128)
+            } else {
+                canonical as i128
+            };
+
+            for plane in out.iter_mut() {
+                let d = c & mask;
+                let balanced = if d >= half_b { d - b } else { d };
+                c = (c - balanced) >> log_basis;
+
+                plane.coeffs[i] = if balanced >= 0 {
+                    F::from_canonical_u128_reduced(balanced as u128)
+                } else {
+                    F::from_canonical_u128_reduced(q - ((-balanced) as u128))
+                };
+            }
+        }
+    }
+
     /// Functional gadget recomposition (`G * digits`) for base `2^log_basis`.
     ///
     /// Coefficients from each part are interpreted as one digit plane and
@@ -217,11 +336,38 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
 
         let b = F::from_canonical_u128_reduced(1u128 << log_basis);
-        let coeffs = std::array::from_fn(|i| {
+        let coeffs = from_fn(|i| {
             let mut acc = F::zero();
             let mut power = F::one();
             for part in parts.iter() {
-                acc = acc + part.coeffs[i] * power;
+                acc += part.coeffs[i] * power;
+                power = power * b;
+            }
+            acc
+        });
+        Self { coeffs }
+    }
+
+    /// Recompose from i8 digit planes (output of `balanced_decompose_pow2_i8`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `log_basis` is zero or >= 128.
+    pub fn gadget_recompose_pow2_i8(digits: &[[i8; D]], log_basis: u32) -> Self
+    where
+        F: CanonicalField,
+    {
+        if digits.is_empty() {
+            return Self::zero();
+        }
+        assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
+
+        let b = F::from_canonical_u128_reduced(1u128 << log_basis);
+        let coeffs = from_fn(|i| {
+            let mut acc = F::zero();
+            let mut power = F::one();
+            for plane in digits {
+                acc += F::from_i64(plane[i] as i64) * power;
                 power = power * b;
             }
             acc
@@ -247,8 +393,9 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             "levels * log_basis must be <= 128 + log_basis"
         );
 
-        let b = 1i128 << log_basis;
-        let half_b = b / 2;
+        let half_b = 1i128 << (log_basis - 1);
+        let b = half_b << 1;
+        let mask = b - 1;
         let q = (-F::one()).to_canonical_u128() + 1;
         let half_q = q / 2;
 
@@ -263,9 +410,9 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             };
 
             for plane in digit_planes.iter_mut() {
-                let d = c.rem_euclid(b);
+                let d = c & mask;
                 let balanced = if d >= half_b { d - b } else { d };
-                c = (c - balanced) / b;
+                c = (c - balanced) >> log_basis;
 
                 plane[i] = if balanced >= 0 {
                     F::from_canonical_u128_reduced(balanced as u128)
@@ -280,13 +427,71 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             .map(Self::from_coefficients)
             .collect()
     }
+
+    /// Balanced gadget decomposition into native `i8` digits.
+    ///
+    /// Same semantics as [`balanced_decompose_pow2`](Self::balanced_decompose_pow2)
+    /// but stores each digit as `i8` instead of a field element, avoiding
+    /// the cost of `F::from_canonical_u128_reduced`.
+    ///
+    /// Requires `log_basis <= 7` so digits fit in `[-64, 63]` (i8 range).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `log_basis` is 0 or > 7, or if `levels * log_basis > 128 + log_basis`.
+    pub fn balanced_decompose_pow2_i8_into(&self, out: &mut [[i8; D]], log_basis: u32)
+    where
+        F: CanonicalField,
+    {
+        let levels = out.len();
+        assert!(
+            log_basis > 0 && log_basis <= 7,
+            "log_basis must be in 1..=7 for i8 output"
+        );
+        assert!(
+            (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
+            "levels * log_basis must be <= 128 + log_basis"
+        );
+
+        let half_b = 1i128 << (log_basis - 1);
+        let b = half_b << 1;
+        let mask = b - 1;
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let half_q = q / 2;
+
+        for i in 0..D {
+            let canonical = self.coeffs[i].to_canonical_u128();
+            let mut c: i128 = if canonical > half_q {
+                -((q - canonical) as i128)
+            } else {
+                canonical as i128
+            };
+
+            for plane in out.iter_mut() {
+                let d = c & mask;
+                let balanced = if d >= half_b { d - b } else { d };
+                c = (c - balanced) >> log_basis;
+                plane[i] = balanced as i8;
+            }
+        }
+    }
+
+    /// Allocating variant of [`balanced_decompose_pow2_i8_into`](Self::balanced_decompose_pow2_i8_into).
+    pub fn balanced_decompose_pow2_i8(&self, levels: usize, log_basis: u32) -> Vec<[i8; D]>
+    where
+        F: CanonicalField,
+    {
+        let mut digit_planes: Vec<[i8; D]> = vec![[0i8; D]; levels];
+        self.balanced_decompose_pow2_i8_into(&mut digit_planes, log_basis);
+        digit_planes
+    }
 }
 
 impl<F: FieldCore + FieldSampling, const D: usize> CyclotomicRing<F, D> {
     /// Generate a random ring element.
     pub fn random<R: RngCore>(rng: &mut R) -> Self {
         Self {
-            coeffs: std::array::from_fn(|_| F::sample(rng)),
+            coeffs: from_fn(|_| F::sample(rng)),
         }
     }
 }
@@ -375,9 +580,9 @@ impl<F: FieldCore, const D: usize> Mul for CyclotomicRing<F, D> {
                 let product = self.coeffs[i] * rhs.coeffs[j];
                 let idx = i + j;
                 if idx < D {
-                    out[idx] = out[idx] + product;
+                    out[idx] += product;
                 } else {
-                    out[idx - D] = out[idx - D] - product;
+                    out[idx - D] -= product;
                 }
             }
         }
@@ -435,5 +640,238 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for CyclotomicRing<F
 impl<F: FieldCore, const D: usize> Default for CyclotomicRing<F, D> {
     fn default() -> Self {
         Self::zero()
+    }
+}
+
+/// Wide (unreduced) cyclotomic ring element for carry-free accumulation.
+///
+/// Coefficients are wide accumulators (`W: AdditiveGroup`) that support
+/// addition/subtraction without modular reduction. After accumulation,
+/// call [`reduce`](Self::reduce) to convert back to `CyclotomicRing<F, D>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WideCyclotomicRing<W: AdditiveGroup, const D: usize> {
+    pub(crate) coeffs: [W; D],
+}
+
+impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
+    /// The additive identity (all-zero coefficients).
+    pub const ZERO: Self = Self {
+        coeffs: [W::ZERO; D],
+    };
+
+    /// Returns the zero ring element.
+    #[inline]
+    pub fn zero() -> Self {
+        Self::ZERO
+    }
+
+    /// Convert a reduced `CyclotomicRing<F, D>` into wide form.
+    #[inline]
+    pub fn from_ring<F: FieldCore>(ring: &CyclotomicRing<F, D>) -> Self
+    where
+        W: From<F>,
+    {
+        Self {
+            coeffs: from_fn(|i| W::from(ring.coeffs[i])),
+        }
+    }
+
+    /// Reduce all coefficients back to canonical field form.
+    #[inline]
+    pub fn reduce<F: FieldCore>(&self) -> CyclotomicRing<F, D>
+    where
+        W: ReduceTo<F>,
+    {
+        CyclotomicRing {
+            coeffs: from_fn(|i| self.coeffs[i].reduce()),
+        }
+    }
+
+    /// Fused negacyclic shift + accumulate: `dst += self * X^k`.
+    #[inline]
+    pub fn shift_accumulate_into(&self, dst: &mut Self, k: usize) {
+        let k = k % D;
+        if k == 0 {
+            for i in 0..D {
+                dst.coeffs[i] += self.coeffs[i];
+            }
+            return;
+        }
+        for i in 0..D {
+            let target = i + k;
+            if target < D {
+                dst.coeffs[target] += self.coeffs[i];
+            } else {
+                dst.coeffs[target - D] -= self.coeffs[i];
+            }
+        }
+    }
+
+    /// Fused negacyclic shift + subtract: `dst -= self * X^k`.
+    #[inline]
+    pub fn shift_sub_into(&self, dst: &mut Self, k: usize) {
+        let k = k % D;
+        if k == 0 {
+            for i in 0..D {
+                dst.coeffs[i] -= self.coeffs[i];
+            }
+            return;
+        }
+        for i in 0..D {
+            let target = i + k;
+            if target < D {
+                dst.coeffs[target] -= self.coeffs[i];
+            } else {
+                dst.coeffs[target - D] += self.coeffs[i];
+            }
+        }
+    }
+
+    /// Fused multiply-by-monomial-sum + accumulate:
+    /// `dst += self * (X^{k_1} + X^{k_2} + ...)`.
+    pub fn mul_by_monomial_sum_into(&self, dst: &mut Self, nonzero_positions: &[usize]) {
+        for &k in nonzero_positions {
+            self.shift_accumulate_into(dst, k);
+        }
+    }
+}
+
+impl<W: AdditiveGroup, const D: usize> Add for WideCyclotomicRing<W, D> {
+    type Output = Self;
+    fn add(mut self, rhs: Self) -> Self {
+        for i in 0..D {
+            self.coeffs[i] += rhs.coeffs[i];
+        }
+        self
+    }
+}
+
+impl<W: AdditiveGroup, const D: usize> AddAssign for WideCyclotomicRing<W, D> {
+    fn add_assign(&mut self, rhs: Self) {
+        for i in 0..D {
+            self.coeffs[i] += rhs.coeffs[i];
+        }
+    }
+}
+
+impl<W: AdditiveGroup, const D: usize> Sub for WideCyclotomicRing<W, D> {
+    type Output = Self;
+    fn sub(mut self, rhs: Self) -> Self {
+        for i in 0..D {
+            self.coeffs[i] -= rhs.coeffs[i];
+        }
+        self
+    }
+}
+
+impl<W: AdditiveGroup, const D: usize> SubAssign for WideCyclotomicRing<W, D> {
+    fn sub_assign(&mut self, rhs: Self) {
+        for i in 0..D {
+            self.coeffs[i] -= rhs.coeffs[i];
+        }
+    }
+}
+
+impl<W: AdditiveGroup, const D: usize> Neg for WideCyclotomicRing<W, D> {
+    type Output = Self;
+    fn neg(self) -> Self {
+        Self {
+            coeffs: from_fn(|i| -self.coeffs[i]),
+        }
+    }
+}
+
+impl<W: AdditiveGroup, const D: usize> Default for WideCyclotomicRing<W, D> {
+    fn default() -> Self {
+        Self::zero()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::algebra::fields::{Fp128x8i32, Fp64, Fp64x4i32, Prime128M8M4M1M0};
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+
+    type F64 = Fp64<4294967197>;
+    type F128 = Prime128M8M4M1M0;
+    const D: usize = 64;
+
+    #[test]
+    fn wide_shift_accumulate_matches_narrow_fp64() {
+        let mut rng = StdRng::seed_from_u64(0x1234);
+        let src = CyclotomicRing::<F64, D>::random(&mut rng);
+        let initial = CyclotomicRing::<F64, D>::random(&mut rng);
+
+        for k in [0, 1, 7, 31, 63] {
+            let mut narrow = initial;
+            src.shift_accumulate_into(&mut narrow, k);
+
+            let wide_src = WideCyclotomicRing::<Fp64x4i32, D>::from_ring(&src);
+            let mut wide_dst = WideCyclotomicRing::<Fp64x4i32, D>::from_ring(&initial);
+            wide_src.shift_accumulate_into(&mut wide_dst, k);
+            let wide_reduced: CyclotomicRing<F64, D> = wide_dst.reduce();
+
+            assert_eq!(narrow, wide_reduced, "shift_accumulate k={k}");
+        }
+    }
+
+    #[test]
+    fn wide_shift_sub_matches_narrow_fp64() {
+        let mut rng = StdRng::seed_from_u64(0x5678);
+        let src = CyclotomicRing::<F64, D>::random(&mut rng);
+        let initial = CyclotomicRing::<F64, D>::random(&mut rng);
+
+        for k in [0, 1, 15, 32, 63] {
+            let mut narrow = initial;
+            src.shift_sub_into(&mut narrow, k);
+
+            let wide_src = WideCyclotomicRing::<Fp64x4i32, D>::from_ring(&src);
+            let mut wide_dst = WideCyclotomicRing::<Fp64x4i32, D>::from_ring(&initial);
+            wide_src.shift_sub_into(&mut wide_dst, k);
+            let wide_reduced: CyclotomicRing<F64, D> = wide_dst.reduce();
+
+            assert_eq!(narrow, wide_reduced, "shift_sub k={k}");
+        }
+    }
+
+    #[test]
+    fn wide_mul_by_monomial_sum_matches_narrow_fp64() {
+        let mut rng = StdRng::seed_from_u64(0xabcd);
+        let src = CyclotomicRing::<F64, D>::random(&mut rng);
+        let positions = vec![0, 5, 17, 42, 63];
+
+        let mut narrow = CyclotomicRing::<F64, D>::zero();
+        src.mul_by_monomial_sum_into(&mut narrow, &positions);
+
+        let wide_src = WideCyclotomicRing::<Fp64x4i32, D>::from_ring(&src);
+        let mut wide_dst = WideCyclotomicRing::<Fp64x4i32, D>::zero();
+        wide_src.mul_by_monomial_sum_into(&mut wide_dst, &positions);
+        let wide_reduced: CyclotomicRing<F64, D> = wide_dst.reduce();
+
+        assert_eq!(narrow, wide_reduced);
+    }
+
+    #[test]
+    fn wide_many_accumulations_fp128() {
+        let mut rng = StdRng::seed_from_u64(0xbeef);
+        let src = CyclotomicRing::<F128, D>::random(&mut rng);
+
+        let mut narrow = CyclotomicRing::<F128, D>::zero();
+        let wide_src = WideCyclotomicRing::<Fp128x8i32, D>::from_ring(&src);
+        let mut wide_dst = WideCyclotomicRing::<Fp128x8i32, D>::zero();
+
+        for k in 0..50 {
+            src.shift_accumulate_into(&mut narrow, k % D);
+            wide_src.shift_accumulate_into(&mut wide_dst, k % D);
+        }
+        for k in 0..30 {
+            src.shift_sub_into(&mut narrow, k % D);
+            wide_src.shift_sub_into(&mut wide_dst, k % D);
+        }
+
+        let wide_reduced: CyclotomicRing<F128, D> = wide_dst.reduce();
+        assert_eq!(narrow, wide_reduced);
     }
 }

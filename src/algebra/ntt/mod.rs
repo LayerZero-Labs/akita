@@ -2,6 +2,8 @@
 
 pub mod butterfly;
 pub mod crt;
+#[cfg(target_arch = "aarch64")]
+pub(crate) mod neon;
 pub mod prime;
 pub mod tables;
 

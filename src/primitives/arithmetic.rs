@@ -3,26 +3,42 @@
 use super::{HachiDeserialize, HachiSerialize};
 use rand_core::RngCore;
 
-/// Core field operations required across algebra backends.
-pub trait FieldCore:
+/// Minimal additive group: add, sub, neg, zero.
+///
+/// Satisfied by both reduced field elements (`FieldCore`) and wide unreduced
+/// accumulators (`Fp128x8i32`, etc.), enabling generic shift-accumulate
+/// operations on `WideCyclotomicRing<W, D>`.
+pub trait AdditiveGroup:
     Sized
     + Clone
     + Copy
-    + PartialEq
     + Send
     + Sync
-    + HachiSerialize
-    + HachiDeserialize
     + std::ops::Add<Output = Self>
     + std::ops::Sub<Output = Self>
-    + std::ops::Mul<Output = Self>
     + std::ops::Neg<Output = Self>
+    + std::ops::AddAssign
+    + std::ops::SubAssign
+{
+    /// Additive identity.
+    const ZERO: Self;
+}
+
+/// Core field operations required across algebra backends.
+pub trait FieldCore:
+    AdditiveGroup
+    + PartialEq
+    + HachiSerialize
+    + HachiDeserialize
+    + std::ops::Mul<Output = Self>
     + for<'a> std::ops::Add<&'a Self, Output = Self>
     + for<'a> std::ops::Sub<&'a Self, Output = Self>
     + for<'a> std::ops::Mul<&'a Self, Output = Self>
 {
-    /// Additive identity
-    fn zero() -> Self;
+    /// Additive identity.
+    fn zero() -> Self {
+        Self::ZERO
+    }
 
     /// Multiplicative identity
     fn one() -> Self;
@@ -43,6 +59,9 @@ pub trait FieldCore:
     /// This API may branch on zero-check and is intended for public/non-secret
     /// values. For secret-bearing paths, use [`Invertible::inv_or_zero`].
     fn inv(self) -> Option<Self>;
+
+    /// Multiplicative inverse of 2: `(p + 1) / 2` for odd-characteristic fields.
+    const TWO_INV: Self;
 }
 
 /// Constant-time inversion helper for secret-bearing code paths.
@@ -98,6 +117,45 @@ pub trait FromSmallInt: FieldCore {
 
     /// Embed an `i64` into the field (reduce mod characteristic).
     fn from_i64(val: i64) -> Self;
+
+    /// Embed an `i128` into the field.
+    ///
+    /// Default implementation splits into u64 limbs with field multiplication
+    /// by `2^64`. Override for base fields that have a direct path.
+    fn from_i128(val: i128) -> Self {
+        if val >= 0 {
+            let lo = val as u64;
+            let hi = (val >> 64) as u64;
+            if hi == 0 {
+                Self::from_u64(lo)
+            } else {
+                let two_64 = Self::from_u64(1u64 << 32) * Self::from_u64(1u64 << 32);
+                Self::from_u64(lo) + Self::from_u64(hi) * two_64
+            }
+        } else {
+            -Self::from_i128(-val)
+        }
+    }
+
+    /// Lookup table mapping balanced digit index → field element.
+    ///
+    /// For `log_basis` in `1..=4`, returns a 16-entry table where
+    /// `table[i]` = `from_i64(i - b/2)` for `i < b = 2^log_basis`,
+    /// and zero for `i >= b`.
+    ///
+    /// Index a digit `d ∈ [-b/2, b/2)` as `table[(d + b/2) as usize]`.
+    fn digit_lut(log_basis: u32) -> [Self; 16] {
+        debug_assert!(log_basis > 0 && log_basis <= 4);
+        let b = 1usize << log_basis;
+        let half_b = (b >> 1) as i64;
+        std::array::from_fn(|i| {
+            if i < b {
+                Self::from_i64(i as i64 - half_b)
+            } else {
+                Self::zero()
+            }
+        })
+    }
 }
 
 /// Canonical integer representation for prime (base) field elements.

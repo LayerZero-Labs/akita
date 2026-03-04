@@ -9,17 +9,15 @@ mod types;
 pub mod utils;
 
 pub use commit::{
-    HachiCommitmentCore, HachiExpandedSetup, HachiPreparedSetup, HachiProverSetup, HachiSetupSeed,
-    HachiVerifierSetup, MegaPolyBlock,
+    HachiCommitmentCore, HachiExpandedSetup, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup,
 };
 pub use config::{
-    CommitmentConfig, DynamicSmallTestCommitmentConfig, HachiCommitmentLayout,
-    ProductionFp128CommitmentConfig, SmallTestCommitmentConfig,
+    compute_num_digits, compute_num_digits_fold, CommitmentConfig, DecompositionParams,
+    DynamicSmallTestCommitmentConfig, Fp128CommitmentConfig, HachiCommitmentLayout,
+    SmallTestCommitmentConfig,
 };
 pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
-pub use scheme::{
-    CommitWitness, CommitmentScheme, RingCommitmentScheme, StreamingCommitmentScheme,
-};
+pub use scheme::{CommitWitness, CommitmentScheme, RingCommitmentScheme};
 pub use transcript_append::AppendToTranscript;
 pub use types::{
     DummyProof, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint, RingCommitment,
