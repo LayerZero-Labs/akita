@@ -19,6 +19,7 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 /// Multiplication is negacyclic convolution: `X^D = -1`, so a product
 /// term at index `i + j >= D` wraps to index `(i + j) - D` with a sign flip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
 pub struct CyclotomicRing<F: FieldCore, const D: usize> {
     pub(crate) coeffs: [F; D],
 }
@@ -649,6 +650,7 @@ impl<F: FieldCore, const D: usize> Default for CyclotomicRing<F, D> {
 /// addition/subtraction without modular reduction. After accumulation,
 /// call [`reduce`](Self::reduce) to convert back to `CyclotomicRing<F, D>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
 pub struct WideCyclotomicRing<W: AdditiveGroup, const D: usize> {
     pub(crate) coeffs: [W; D],
 }

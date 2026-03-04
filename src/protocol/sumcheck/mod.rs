@@ -21,6 +21,7 @@ pub mod split_eq;
 pub mod types;
 
 use crate::error::HachiError;
+use crate::primitives::serialization::Compress;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
@@ -100,6 +101,7 @@ pub trait SumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
 ///
 /// Returns an error if any per-round polynomial exceeds the instance's degree bound.
 #[tracing::instrument(skip_all, name = "prove_sumcheck")]
+#[inline(never)]
 pub fn prove_sumcheck<F, T, E, S, Inst>(
     instance: &mut Inst,
     transcript: &mut T,
@@ -113,6 +115,16 @@ where
     Inst: SumcheckInstanceProver<E>,
 {
     let mut claim = instance.input_claim();
+    {
+        let mut buf = Vec::new();
+        claim.serialize_with_mode(&mut buf, Compress::No).ok();
+        eprintln!(
+            "  [prove_sumcheck] input_claim is_zero={}, bytes={:02x?}, num_rounds={}",
+            claim.is_zero(),
+            &buf[..buf.len().min(16)],
+            instance.num_rounds()
+        );
+    }
     transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &claim);
 
     let num_rounds = instance.num_rounds();
@@ -168,6 +180,7 @@ where
 /// match the oracle evaluation, or propagates any error from the per-round
 /// verification (e.g. degree-bound violation, round-count mismatch).
 #[tracing::instrument(skip_all, name = "verify_sumcheck")]
+#[inline(never)]
 pub fn verify_sumcheck<F, T, E, S, V>(
     proof: &SumcheckProof<E>,
     verifier: &V,
@@ -182,6 +195,16 @@ where
     V: SumcheckInstanceVerifier<E>,
 {
     let claim = verifier.input_claim();
+    {
+        let mut buf = Vec::new();
+        claim.serialize_with_mode(&mut buf, Compress::No).ok();
+        eprintln!(
+            "  [verify_sumcheck] input_claim is_zero={}, bytes={:02x?}, num_rounds={}",
+            claim.is_zero(),
+            &buf[..buf.len().min(16)],
+            verifier.num_rounds()
+        );
+    }
     transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &claim);
     let (final_claim, challenges) = proof.verify::<F, T, S>(
         claim,
