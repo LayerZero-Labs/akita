@@ -1,5 +1,6 @@
 //! Configuration presets for ring-native commitment construction.
 
+use super::utils::flat_matrix::FlatMatrix;
 use super::utils::math::checked_pow2;
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
@@ -112,6 +113,59 @@ pub fn compute_num_digits_fold(r_vars: usize, challenge_weight: usize, log_basis
     compute_num_digits(log_beta, log_basis)
 }
 
+/// Find the `(m_vars, r_vars)` split that minimizes the level-0
+/// witness-to-polynomial ratio for a given config.
+///
+/// The witness ring element count is dominated by:
+/// ```text
+/// w ≈ 2^r · (δ_open + N_A · δ_commit) + 2^m · δ_commit · δ_fold(r)
+/// ```
+/// Multiplying the ratio by `2^(m+r)` (constant for fixed `reduced_vars`)
+/// gives an equivalent integer cost:
+/// ```text
+/// C1 · 2^r  +  δ_commit · δ_fold(r) · 2^m
+/// ```
+/// where `C1 = δ_open + N_A · δ_commit`. This function searches all valid
+/// `(m, r)` pairs for the minimum using pure integer arithmetic (no
+/// floating-point), so it is safe to run inside a zkVM guest.
+///
+/// For the full-field config (`δ_commit = 43`), z_pre dominates and the
+/// result is near-balanced (`m ≈ r`). For narrow configs (`δ_commit = 1`),
+/// the w_hat/t_hat term matters more and the result skews to `m ≈ r + 4`.
+pub fn optimal_m_r_split<Cfg: CommitmentConfig>(reduced_vars: usize) -> (usize, usize) {
+    // Guard: for S >= 53, shifts could overflow u64. Fall back to balanced
+    // split (this threshold is far beyond any practical polynomial size).
+    if reduced_vars <= 2 || reduced_vars >= 53 {
+        let r = reduced_vars / 2;
+        return (reduced_vars - r, r);
+    }
+
+    let decomp = Cfg::decomposition();
+    let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
+    let delta_open = compute_num_digits(open_bound, decomp.log_basis) as u64;
+    let delta_commit = compute_num_digits(decomp.log_commit_bound, decomp.log_basis) as u64;
+    let c1 = delta_open + Cfg::N_A as u64 * delta_commit;
+
+    let mut best_r = reduced_vars / 2;
+    let mut best_cost = u64::MAX;
+
+    for r in 1..reduced_vars {
+        let m = reduced_vars - r;
+        let delta_fold = compute_num_digits_fold(
+            r,
+            Cfg::challenge_weight_for_ring_dim(Cfg::D),
+            decomp.log_basis,
+        ) as u64;
+        let cost = c1 * (1u64 << r) + delta_commit * delta_fold * (1u64 << m);
+        if cost < best_cost {
+            best_cost = cost;
+            best_r = r;
+        }
+    }
+
+    (reduced_vars - best_r, best_r)
+}
+
 /// Runtime commitment layout authority for ring-native commitments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HachiCommitmentLayout {
@@ -125,7 +179,7 @@ pub struct HachiCommitmentLayout {
     pub block_len: usize,
     /// Width of inner matrix `A` (`block_len * num_digits_commit`).
     pub inner_width: usize,
-    /// Width of outer matrix `B` (`n_a * num_digits_commit * num_blocks`).
+    /// Width of outer matrix `B` (`n_a * num_digits_open * num_blocks`).
     pub outer_width: usize,
     /// Width of prover matrix `D` (`num_digits_open * num_blocks`).
     pub d_matrix_width: usize,
@@ -165,7 +219,11 @@ impl HachiCommitmentLayout {
         let depth_commit = compute_num_digits(decomp.log_commit_bound, decomp.log_basis);
         let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
         let depth_open = compute_num_digits(open_bound, decomp.log_basis);
-        let depth_fold = compute_num_digits_fold(r_vars, Cfg::CHALLENGE_WEIGHT, decomp.log_basis);
+        let depth_fold = compute_num_digits_fold(
+            r_vars,
+            Cfg::challenge_weight_for_ring_dim(Cfg::D),
+            decomp.log_basis,
+        );
         Self::new_with_decomp(
             m_vars,
             r_vars,
@@ -200,7 +258,7 @@ impl HachiCommitmentLayout {
             .checked_mul(num_digits_commit)
             .ok_or_else(|| HachiError::InvalidSetup("inner width overflow".to_string()))?;
         let outer_width = n_a
-            .checked_mul(num_digits_commit)
+            .checked_mul(num_digits_open)
             .and_then(|x| x.checked_mul(num_blocks))
             .ok_or_else(|| HachiError::InvalidSetup("outer width overflow".to_string()))?;
         let d_matrix_width = num_digits_open
@@ -357,7 +415,40 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// Returns an error on invalid parameters or arithmetic overflow.
     fn beta_bound(layout: HachiCommitmentLayout) -> Result<u128, HachiError> {
-        beta_linf_fold_bound(layout.r_vars, Self::CHALLENGE_WEIGHT, layout.log_basis)
+        beta_linf_fold_bound(
+            layout.r_vars,
+            Self::challenge_weight_for_ring_dim(Self::D),
+            layout.log_basis,
+        )
+    }
+
+    /// Ring dimension to use at a given fold level.
+    ///
+    /// `level` is 0-indexed (level 0 is the initial polynomial).
+    /// `_w_num_vars` is the number of variables in the witness at this level.
+    ///
+    /// The default implementation returns `Self::D` at all levels (constant D).
+    /// Override for decreasing-D schedules.
+    fn d_at_level(_level: usize, _w_num_vars: usize) -> usize {
+        Self::D
+    }
+
+    /// Module rank (inner Ajtai row count) at a given fold level.
+    ///
+    /// Must satisfy `d_at_level(level) * n_a_at_level(level) >= security_dim`
+    /// for the target security level. The default returns `Self::N_A` at all levels.
+    fn n_a_at_level(_level: usize) -> usize {
+        Self::N_A
+    }
+
+    /// Challenge weight (Hamming weight ω) appropriate for ring dimension `d`.
+    ///
+    /// The default returns `Self::CHALLENGE_WEIGHT` for any `d`, which is
+    /// correct for constant-D configs. Override for varying-D schedules where
+    /// the optimal weight depends on the ring dimension (e.g., to maintain
+    /// ≥128 bits of challenge entropy as D decreases).
+    fn challenge_weight_for_ring_dim(_d: usize) -> usize {
+        Self::CHALLENGE_WEIGHT
     }
 }
 
@@ -461,25 +552,23 @@ pub(super) fn ensure_block_layout<F: FieldCore, const D: usize>(
 /// # Errors
 ///
 /// Returns an error if row count mismatches or any row is too narrow.
-pub(super) fn ensure_matrix_shape_ge<T>(
-    mat: &[Vec<T>],
+pub(super) fn ensure_matrix_shape_ge<F: FieldCore, const D: usize>(
+    mat: &FlatMatrix<F>,
     expected_rows: usize,
     min_cols: usize,
     name: &str,
 ) -> Result<(), HachiError> {
-    if mat.len() != expected_rows {
+    if mat.num_rows() != expected_rows {
         return Err(HachiError::InvalidSize {
             expected: expected_rows,
-            actual: mat.len(),
+            actual: mat.num_rows(),
         });
     }
-    for (row_idx, row) in mat.iter().enumerate() {
-        if row.len() < min_cols {
-            return Err(HachiError::InvalidSetup(format!(
-                "{name} row {row_idx} has width {}, expected >= {min_cols}",
-                row.len()
-            )));
-        }
+    let actual_cols = mat.num_cols_at::<D>();
+    if actual_cols < min_cols {
+        return Err(HachiError::InvalidSetup(format!(
+            "{name} has width {actual_cols}, expected >= {min_cols}",
+        )));
     }
     Ok(())
 }
@@ -544,30 +633,112 @@ impl CommitmentConfig for DynamicSmallTestCommitmentConfig {
                 "max_num_vars must leave at least one outer variable".to_string(),
             ));
         }
-        let r_vars = reduced_vars / 2;
-        let m_vars = reduced_vars - r_vars;
+        let (m_vars, r_vars) = optimal_m_r_split::<Self>(reduced_vars);
         HachiCommitmentLayout::new::<Self>(m_vars, r_vars, &Self::decomposition())
     }
 }
 
-/// Production-oriented profile for 128-bit base fields (`Fp128<P>`).
+/// Production-oriented profile for 128-bit base fields (`Fp128<P>`),
+/// parameterized by the coefficient bound used at commit time.
 ///
 /// This profile targets the `D = 512`, `n_A = n_B = n_D = 1` regime with
-/// base-16 decomposition over ~128-bit moduli.
+/// base-8 balanced decomposition (`log_basis = 3`) over ~128-bit moduli.
 ///
-/// Rigorous β derivation for the stage-1 folded witness `z`:
+/// `LOG_COMMIT_BOUND` is the bit-width of the largest polynomial coefficient
+/// the commitment decomposition must represent. Smaller bounds yield fewer
+/// decomposition levels (`delta_commit = ceil(LOG_COMMIT_BOUND / log_basis)`)
+/// and proportionally smaller witnesses.
+///
+/// Opening always uses the full field modulus (128 bits) because folding with
+/// arbitrary field-element weights produces full-field-size coefficients.
+///
+/// # Aliases
+///
+/// - [`Fp128FullCommitmentConfig`] = `<128>` — arbitrary field-element polys
+/// - [`Fp128OneHotCommitmentConfig`] = `<1>` — binary / one-hot polys
+/// - [`Fp128LogBasisCommitmentConfig`] = `<3>` — balanced-digit witnesses
+/// - [`Fp128CommitmentConfig`] — backward-compatible alias for `<128>`
+///
+/// # β derivation (stage-1 folded witness `z`)
+///
 /// - In `compute_z_hat`, each coordinate is `z[j] = Σ_i s_i[j].mul_by_sparse(c_i)`.
-/// - `balanced_decompose_pow2` yields per-coefficient digits in `[-b/2, b/2)` where
-///   `b = 2^LOG_BASIS`, so each input coefficient has `|·| <= b/2`.
+/// - `balanced_decompose_pow2` yields per-coefficient digits in `[-b/2, b/2)`
+///   where `b = 2^LOG_BASIS`, so each input coefficient has `|·| <= b/2`.
 /// - Challenges use exactly `ω = CHALLENGE_WEIGHT` nonzeros in `{±1}`.
-/// - Therefore each `mul_by_sparse` output coefficient is a signed sum of `ω`
-///   shifted digits, hence bounded by `ω * (b/2)`.
+/// - Therefore each `mul_by_sparse` output coefficient is bounded by `ω * (b/2)`.
 /// - Summing over `2^R` blocks (R = r_vars) gives:
 ///   `||z||_inf <= 2^R * ω * (b/2)`.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct Fp128CommitmentConfig;
+pub struct Fp128BoundedCommitmentConfig<const LOG_COMMIT_BOUND: u32>;
 
-impl CommitmentConfig for Fp128CommitmentConfig {
+impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
+    for Fp128BoundedCommitmentConfig<LOG_COMMIT_BOUND>
+{
+    const D: usize = 512;
+    const N_A: usize = 1;
+    const N_B: usize = 1;
+    const N_D: usize = 1;
+    const CHALLENGE_WEIGHT: usize = 19;
+
+    fn decomposition() -> DecompositionParams {
+        DecompositionParams {
+            log_basis: 3,
+            log_commit_bound: LOG_COMMIT_BOUND,
+            log_open_bound: if LOG_COMMIT_BOUND < 128 {
+                Some(128)
+            } else {
+                None
+            },
+        }
+    }
+
+    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        let alpha = Self::D.trailing_zeros() as usize;
+        let reduced_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
+            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
+        })?;
+        if reduced_vars == 0 {
+            return Err(HachiError::InvalidSetup(
+                "max_num_vars must leave at least one outer variable".to_string(),
+            ));
+        }
+        let (m_vars, r_vars) = optimal_m_r_split::<Self>(reduced_vars);
+        HachiCommitmentLayout::new::<Self>(m_vars, r_vars, &Self::decomposition())
+    }
+}
+
+/// Full-field (128-bit) coefficient bound for arbitrary field-element polynomials.
+pub type Fp128FullCommitmentConfig = Fp128BoundedCommitmentConfig<128>;
+
+/// Binary (1-bit) coefficient bound for one-hot or binary polynomials.
+///
+/// Reduces `delta_commit` from 43 to 1 compared to [`Fp128FullCommitmentConfig`],
+/// shrinking the dominant `z_pre` witness component by ~43x.
+pub type Fp128OneHotCommitmentConfig = Fp128BoundedCommitmentConfig<1>;
+
+/// Log-basis (3-bit) coefficient bound for balanced-digit witnesses.
+///
+/// Functionally equivalent to `WCommitmentConfig<512, Fp128FullCommitmentConfig>`
+/// for recursive w-openings.
+pub type Fp128LogBasisCommitmentConfig = Fp128BoundedCommitmentConfig<3>;
+
+/// Backward-compatible alias for [`Fp128FullCommitmentConfig`].
+pub type Fp128CommitmentConfig = Fp128FullCommitmentConfig;
+
+/// Halving-D commitment config for Fp128 (D=512 → 256 → 128).
+///
+/// Uses `d_at_level` and `n_a_at_level` to halve the ring dimension at each
+/// fold level while doubling the module rank to maintain D×N_A ≥ 512 for
+/// security. Stops halving at D=128, which is the minimum ring dimension
+/// for which sparse ternary challenges provide sufficient security.
+///
+/// Challenge weights are scaled per ring dimension to maintain ≥128 bits
+/// of challenge entropy (log₂(C(D,ω) · 2^ω) ≥ 128):
+///   D=512: ω=19 (~131 bits), D=256: ω=23 (~131 bits), D=128: ω=31 (~130 bits).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Fp128HalvingDCommitmentConfig;
+
+impl CommitmentConfig for Fp128HalvingDCommitmentConfig {
     const D: usize = 512;
     const N_A: usize = 1;
     const N_B: usize = 1;
@@ -592,8 +763,32 @@ impl CommitmentConfig for Fp128CommitmentConfig {
                 "max_num_vars must leave at least one outer variable".to_string(),
             ));
         }
-        let r_vars = reduced_vars / 2;
-        let m_vars = reduced_vars - r_vars;
+        let (m_vars, r_vars) = optimal_m_r_split::<Self>(reduced_vars);
         HachiCommitmentLayout::new::<Self>(m_vars, r_vars, &Self::decomposition())
+    }
+
+    fn d_at_level(level: usize, _w_num_vars: usize) -> usize {
+        match level {
+            0 => 512,
+            1 => 256,
+            _ => 128,
+        }
+    }
+
+    fn n_a_at_level(level: usize) -> usize {
+        match level {
+            0 => 1,
+            1 => 2,
+            _ => 4,
+        }
+    }
+
+    fn challenge_weight_for_ring_dim(d: usize) -> usize {
+        match d {
+            512 => 19,
+            256 => 23,
+            128 => 31,
+            _ => panic!("Fp128HalvingDCommitmentConfig: unsupported ring dim {d}"),
+        }
     }
 }

@@ -2,19 +2,19 @@
 
 use hachi_pcs::algebra::poly::multilinear_eval;
 use hachi_pcs::algebra::Fp128;
-use hachi_pcs::error::HachiError;
 use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
-    DecompositionParams, Fp128CommitmentConfig, HachiCommitmentLayout,
+    Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig,
+    HachiCommitmentLayout,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::proof::HachiProof;
-use hachi_pcs::protocol::sumcheck::norm_sumcheck::choose_round_kernel;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
-    BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, HachiSerialize, Transcript,
+    BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, HachiPolyOps, HachiSerialize,
+    Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -26,52 +26,24 @@ use tracing_subscriber::prelude::*;
 
 type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
 
-const D: usize = Fp128CommitmentConfig::D;
-
-#[derive(Clone, Copy, Debug)]
-struct ProfileCfg;
-impl CommitmentConfig for ProfileCfg {
-    const D: usize = D;
-    const N_A: usize = Fp128CommitmentConfig::N_A;
-    const N_B: usize = Fp128CommitmentConfig::N_B;
-    const N_D: usize = Fp128CommitmentConfig::N_D;
-    const CHALLENGE_WEIGHT: usize = Fp128CommitmentConfig::CHALLENGE_WEIGHT;
-
-    fn decomposition() -> DecompositionParams {
-        Fp128CommitmentConfig::decomposition()
-    }
-
-    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        match (env::var("HACHI_M_VARS"), env::var("HACHI_R_VARS")) {
-            (Ok(m_str), Ok(r_str)) => {
-                let m: usize = m_str.parse().expect("HACHI_M_VARS must be a number");
-                let r: usize = r_str.parse().expect("HACHI_R_VARS must be a number");
-                eprintln!("  [layout] override: m_vars={m}, r_vars={r}");
-                HachiCommitmentLayout::new::<Self>(m, r, &Self::decomposition())
-            }
-            _ => Fp128CommitmentConfig::commitment_layout(max_num_vars),
-        }
-    }
-}
-
-type Scheme = HachiCommitmentScheme<D, ProfileCfg>;
-
-fn run_prove(
+fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
     label: &str,
-    setup: &<Scheme as CommitmentScheme<F, D>>::ProverSetup,
-    poly: &DensePoly<F, D>,
+    setup: &<HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::ProverSetup,
+    poly: &P,
     pt: &[F],
     opening: F,
     layout: &HachiCommitmentLayout,
 ) {
+    type Scheme<const D: usize, Cfg> = HachiCommitmentScheme<D, Cfg>;
+
     let t0 = Instant::now();
     let (commitment, hint) =
-        <Scheme as CommitmentScheme<F, D>>::commit(poly, setup, layout).unwrap();
+        <Scheme<D, Cfg> as CommitmentScheme<F, D>>::commit(poly, setup, layout).unwrap();
     eprintln!("[{label}] commit: {:.3}s", t0.elapsed().as_secs_f64());
 
     let t0 = Instant::now();
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
-    let proof = <Scheme as CommitmentScheme<F, D>>::prove(
+    let proof = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
         setup,
         poly,
         pt,
@@ -86,9 +58,9 @@ fn run_prove(
     print_proof_summary(label, &proof);
 
     let t0 = Instant::now();
-    let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(setup);
+    let verifier_setup = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(setup);
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
-    <Scheme as CommitmentScheme<F, D>>::verify(
+    match <Scheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -97,12 +69,16 @@ fn run_prove(
         &commitment,
         BasisMode::Lagrange,
         layout,
-    )
-    .unwrap();
-    eprintln!("[{label}] verify: {:.3}s", t0.elapsed().as_secs_f64());
+    ) {
+        Ok(()) => eprintln!("[{label}] verify: {:.3}s OK", t0.elapsed().as_secs_f64()),
+        Err(e) => eprintln!(
+            "[{label}] verify: {:.3}s FAILED ({e})",
+            t0.elapsed().as_secs_f64()
+        ),
+    }
 }
 
-fn print_proof_summary(label: &str, proof: &HachiProof<F, D>) {
+fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
     eprintln!(
         "[{label}]   levels: {}, proof size: {} bytes",
         proof.levels.len(),
@@ -112,8 +88,9 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F, D>) {
         let w_comm_size = lp.w_commitment.serialized_size(Compress::No);
         let sc_size = lp.sumcheck_proof.serialized_size(Compress::No);
         eprintln!(
-            "[{label}]   L{i}: w_commitment={} ring elems ({} bytes), sumcheck={} bytes",
-            lp.w_commitment.u.len(),
+            "[{label}]   L{i}: w_commitment={} ring elems (D={}, {} bytes), sumcheck={} bytes",
+            lp.w_commitment.count(),
+            lp.w_commit_d(),
             w_comm_size,
             sc_size,
         );
@@ -126,140 +103,50 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F, D>) {
     );
 }
 
-fn run_prove_onehot(
-    label: &str,
-    setup: &<Scheme as CommitmentScheme<F, D>>::ProverSetup,
-    onehot_poly: &OneHotPoly<F, D>,
-    pt: &[F],
-    opening: F,
-    layout: &HachiCommitmentLayout,
-) {
-    let t0 = Instant::now();
-    let (commitment, hint) =
-        <Scheme as CommitmentScheme<F, D>>::commit(onehot_poly, setup, layout).unwrap();
+fn print_layout(layout: &HachiCommitmentLayout) {
     eprintln!(
-        "[{label}] onehot commit: {:.3}s",
-        t0.elapsed().as_secs_f64()
+        "  layout: m_vars={}, r_vars={}, num_blocks={}, block_len={}, \
+         delta_commit={}, delta_open={}, delta_fold={}, log_basis={}",
+        layout.m_vars,
+        layout.r_vars,
+        layout.num_blocks,
+        layout.block_len,
+        layout.num_digits_commit,
+        layout.num_digits_open,
+        layout.num_digits_fold,
+        layout.log_basis,
     );
-
-    let t0 = Instant::now();
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
-    let proof = <Scheme as CommitmentScheme<F, D>>::prove(
-        setup,
-        onehot_poly,
-        pt,
-        hint,
-        &mut prover_transcript,
-        &commitment,
-        BasisMode::Lagrange,
-        layout,
-    )
-    .unwrap();
-    eprintln!("[{label}] prove: {:.3}s", t0.elapsed().as_secs_f64());
-    print_proof_summary(label, &proof);
-
-    let t0 = Instant::now();
-    let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(setup);
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
-    <Scheme as CommitmentScheme<F, D>>::verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        pt,
-        &opening,
-        &commitment,
-        BasisMode::Lagrange,
-        layout,
-    )
-    .unwrap();
-    eprintln!("[{label}] verify: {:.3}s", t0.elapsed().as_secs_f64());
 }
 
-fn main() {
-    #[cfg(feature = "parallel")]
-    rayon::ThreadPoolBuilder::new()
-        .stack_size(64 * 1024 * 1024)
-        .build_global()
-        .ok();
-
-    let trace_dir = "profile_traces";
-    fs::create_dir_all(trace_dir).ok();
-
-    let log_basis = ProfileCfg::decomposition().log_basis;
-    let b = 1u32 << log_basis;
-
-    let alpha = D.trailing_zeros() as usize;
-    let nv: usize = match (env::var("HACHI_M_VARS"), env::var("HACHI_R_VARS")) {
-        (Ok(m_str), Ok(r_str)) => {
-            let m: usize = m_str.parse().expect("HACHI_M_VARS must be a number");
-            let r: usize = r_str.parse().expect("HACHI_R_VARS must be a number");
-            m + r + alpha
-        }
-        _ => env::var("HACHI_NUM_VARS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(25),
-    };
-
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let trace_file = format!("{trace_dir}/hachi_nv{nv}_b{b}_{timestamp}.json");
-
-    let (chrome_layer, _guard) = ChromeLayerBuilder::new()
-        .include_args(true)
-        .file(&trace_file)
-        .build();
-
-    tracing_subscriber::registry().with(chrome_layer).init();
-
-    eprintln!("Perfetto trace will be written to: {trace_file}");
-    eprintln!("Open at https://ui.perfetto.dev/");
-    eprintln!("num_vars = {nv}, b = {b}");
-
+fn run_dense<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCommitmentLayout) {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
-
     let len = 1usize << nv;
-    let evals: Vec<F> = (0..len)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-        .collect();
+    let decomp = Cfg::decomposition();
+    let half_bound = 1i64 << (decomp.log_commit_bound.min(62) - 1);
+    let evals: Vec<F> = if decomp.log_commit_bound >= 128 {
+        (0..len)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect()
+    } else {
+        (0..len)
+            .map(|_| F::from_i64(rng.gen_range(-half_bound..half_bound)))
+            .collect()
+    };
     let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
     let pt: Vec<F> = (0..nv)
         .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
         .collect();
-
     let opening = multilinear_eval(&evals, &pt).unwrap();
 
     let t0 = Instant::now();
-    let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(nv);
-    eprintln!("setup: {:.3}s", t0.elapsed().as_secs_f64());
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+    eprintln!("  setup: {:.3}s", t0.elapsed().as_secs_f64());
 
-    let ab_mode = env::var("HACHI_AB_TEST").unwrap_or_default();
+    run_prove::<D, Cfg, _>("dense", &setup, &poly, &pt, opening, layout);
+}
 
-    let layout = ProfileCfg::commitment_layout(nv).expect("layout");
-
-    if ab_mode == "1" {
-        eprintln!("\n=== A/B TEST: running both kernels ===\n");
-
-        env::set_var("HACHI_NORM_KERNEL", "affine_coeff");
-        eprintln!("--- kernel: affine_coeff ---");
-        run_prove("affine", &setup, &poly, &pt, opening, &layout);
-
-        env::set_var("HACHI_NORM_KERNEL", "point_eval");
-        eprintln!("\n--- kernel: point_eval ---");
-        run_prove("point", &setup, &poly, &pt, opening, &layout);
-
-        env::remove_var("HACHI_NORM_KERNEL");
-    } else {
-        eprintln!(
-            "kernel: {:?} (set HACHI_AB_TEST=1 to compare both)",
-            choose_round_kernel(b as usize)
-        );
-        run_prove("default", &setup, &poly, &pt, opening, &layout);
-    }
-
-    eprintln!("\n--- one-hot commit path ---");
+fn run_onehot<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCommitmentLayout) {
+    let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let total_ring = layout.num_blocks * layout.block_len;
     let onehot_k = D;
 
@@ -278,18 +165,108 @@ fn main() {
         }
         evals
     };
-    let onehot_pt: Vec<F> = (0..nv)
+    let pt: Vec<F> = (0..nv)
         .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
         .collect();
-    let opening_oh = multilinear_eval(&onehot_evals, &onehot_pt).unwrap();
-    run_prove_onehot(
-        "onehot",
-        &setup,
-        &onehot_poly,
-        &onehot_pt,
-        opening_oh,
-        &layout,
-    );
+    let opening = multilinear_eval(&onehot_evals, &pt).unwrap();
+
+    let t0 = Instant::now();
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+    eprintln!("  setup: {:.3}s", t0.elapsed().as_secs_f64());
+
+    run_prove::<D, Cfg, _>("onehot", &setup, &onehot_poly, &pt, opening, layout);
+}
+
+fn main() {
+    #[cfg(feature = "parallel")]
+    rayon::ThreadPoolBuilder::new()
+        .stack_size(64 * 1024 * 1024)
+        .build_global()
+        .ok();
+
+    let trace_dir = "profile_traces";
+    fs::create_dir_all(trace_dir).ok();
+
+    let nv: usize = env::var("HACHI_NUM_VARS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(25);
+
+    let mode = env::var("HACHI_MODE").unwrap_or_else(|_| "full".to_string());
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let trace_file = format!("{trace_dir}/hachi_nv{nv}_{mode}_{timestamp}.json");
+
+    let (chrome_layer, _guard) = ChromeLayerBuilder::new()
+        .include_args(true)
+        .file(&trace_file)
+        .build();
+
+    tracing_subscriber::registry().with(chrome_layer).init();
+
+    eprintln!("Perfetto trace: {trace_file}");
+    eprintln!("num_vars={nv}, mode={mode}");
+    eprintln!();
+
+    match mode.as_str() {
+        "full" => {
+            type Cfg = Fp128FullCommitmentConfig;
+            let layout = resolve_layout::<Cfg>(nv);
+            eprintln!("=== full (dense, log_commit_bound=128) ===");
+            print_layout(&layout);
+            run_dense::<{ Fp128FullCommitmentConfig::D }, Cfg>(nv, &layout);
+        }
+        "onehot" => {
+            type Cfg = Fp128OneHotCommitmentConfig;
+            let layout = resolve_layout::<Cfg>(nv);
+            eprintln!("=== onehot (log_commit_bound=1) ===");
+            print_layout(&layout);
+            run_onehot::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(nv, &layout);
+        }
+        "logbasis" => {
+            type Cfg = Fp128LogBasisCommitmentConfig;
+            let layout = resolve_layout::<Cfg>(nv);
+            eprintln!("=== logbasis (dense, log_commit_bound=3) ===");
+            print_layout(&layout);
+            run_dense::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(nv, &layout);
+        }
+        "all" => {
+            {
+                type Cfg = Fp128FullCommitmentConfig;
+                let layout = resolve_layout::<Cfg>(nv);
+                eprintln!("=== full (dense, log_commit_bound=128) ===");
+                print_layout(&layout);
+                run_dense::<{ Fp128FullCommitmentConfig::D }, Cfg>(nv, &layout);
+                eprintln!();
+            }
+            {
+                type Cfg = Fp128OneHotCommitmentConfig;
+                let layout = resolve_layout::<Cfg>(nv);
+                eprintln!("=== onehot (log_commit_bound=1) ===");
+                print_layout(&layout);
+                run_onehot::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(nv, &layout);
+                eprintln!();
+            }
+            {
+                type Cfg = Fp128LogBasisCommitmentConfig;
+                let layout = resolve_layout::<Cfg>(nv);
+                eprintln!("=== logbasis (dense, log_commit_bound=3) ===");
+                print_layout(&layout);
+                run_dense::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(nv, &layout);
+            }
+        }
+        other => {
+            eprintln!("Unknown HACHI_MODE={other}. Use: full, onehot, logbasis, all");
+            std::process::exit(1);
+        }
+    }
 
     eprintln!("\nDone. Trace saved to {trace_file}");
+}
+
+fn resolve_layout<Cfg: CommitmentConfig>(nv: usize) -> HachiCommitmentLayout {
+    Cfg::commitment_layout(nv).expect("layout")
 }

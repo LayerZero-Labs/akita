@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use crate::algebra::fields::wide::{HasWide, ReduceTo};
 use crate::algebra::ring::{CyclotomicRing, WideCyclotomicRing};
 use crate::error::HachiError;
+use crate::protocol::commitment::utils::flat_matrix::RingMatrixView;
 use crate::protocol::hachi_poly_ops::OneHotIndex;
 use crate::{AdditiveGroup, CanonicalField, FieldCore};
 
@@ -145,7 +146,7 @@ pub(crate) fn inner_ajtai_onehot_t_only<F: FieldCore + CanonicalField, const D: 
 /// then reduces once at the end. This avoids per-addition modular reduction.
 #[allow(non_snake_case)]
 pub(crate) fn inner_ajtai_onehot_wide<F, const D: usize>(
-    A: &[Vec<CyclotomicRing<F, D>>],
+    A: &RingMatrixView<'_, F, D>,
     sparse_entries: &[SparseBlockEntry],
     _block_len: usize,
     num_digits: usize,
@@ -154,14 +155,14 @@ where
     F: FieldCore + CanonicalField + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
 {
-    let n_a = A.len();
+    let n_a = A.num_rows();
     let mut t_wide = vec![WideCyclotomicRing::<F::Wide, D>::zero(); n_a];
 
     for entry in sparse_entries {
         let col = entry.pos_in_block * num_digits;
-        for a in 0..n_a {
-            let a_wide = WideCyclotomicRing::from_ring(&A[a][col]);
-            a_wide.mul_by_monomial_sum_into(&mut t_wide[a], &entry.nonzero_coeffs);
+        for (a_idx, t_w) in t_wide.iter_mut().enumerate() {
+            let a_wide = WideCyclotomicRing::from_ring(&A.row(a_idx)[col]);
+            a_wide.mul_by_monomial_sum_into(t_w, &entry.nonzero_coeffs);
         }
     }
 
@@ -172,6 +173,7 @@ where
 mod tests {
     use super::*;
     use crate::algebra::fields::{Fp64, Prime128M8M4M1M0};
+    use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
@@ -282,8 +284,10 @@ mod tests {
             },
         ];
 
+        let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
+        let a_view = a_flat.view::<D>();
         let ref_result = inner_ajtai_onehot_t_only(&a_matrix, &entries, block_len, num_digits);
-        let wide_result = inner_ajtai_onehot_wide(&a_matrix, &entries, block_len, num_digits);
+        let wide_result = inner_ajtai_onehot_wide(&a_view, &entries, block_len, num_digits);
 
         assert_eq!(ref_result.len(), wide_result.len());
         for (r, w) in ref_result.iter().zip(wide_result.iter()) {
@@ -319,8 +323,10 @@ mod tests {
             },
         ];
 
+        let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
+        let a_view = a_flat.view::<D>();
         let ref_result = inner_ajtai_onehot_t_only(&a_matrix, &entries, block_len, num_digits);
-        let wide_result = inner_ajtai_onehot_wide(&a_matrix, &entries, block_len, num_digits);
+        let wide_result = inner_ajtai_onehot_wide(&a_view, &entries, block_len, num_digits);
 
         assert_eq!(ref_result.len(), wide_result.len());
         for (r, w) in ref_result.iter().zip(wide_result.iter()) {

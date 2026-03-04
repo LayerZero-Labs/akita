@@ -1,96 +1,83 @@
 #![allow(missing_docs)]
 
-use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
+use criterion::measurement::WallTime;
+use criterion::{black_box, criterion_group, BatchSize, BenchmarkGroup, Criterion};
 use hachi_pcs::algebra::poly::multilinear_eval;
 use hachi_pcs::algebra::Fp128;
-use hachi_pcs::error::HachiError;
 use hachi_pcs::protocol::commitment::{
-    DecompositionParams, Fp128CommitmentConfig, HachiCommitmentLayout,
+    Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
-use hachi_pcs::{BasisMode, CommitmentScheme, FromSmallInt, Transcript};
+use hachi_pcs::{BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, Transcript};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use std::time::Duration;
 
 type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
 
-const D: usize = Fp128CommitmentConfig::D;
-
-macro_rules! bench_config {
-    ($name:ident, M = $m:expr, R = $r:expr) => {
-        #[derive(Clone, Copy, Debug)]
-        struct $name;
-        impl CommitmentConfig for $name {
-            const D: usize = D;
-            const N_A: usize = Fp128CommitmentConfig::N_A;
-            const N_B: usize = Fp128CommitmentConfig::N_B;
-            const N_D: usize = Fp128CommitmentConfig::N_D;
-            const CHALLENGE_WEIGHT: usize = Fp128CommitmentConfig::CHALLENGE_WEIGHT;
-
-            fn decomposition() -> DecompositionParams {
-                Fp128CommitmentConfig::decomposition()
-            }
-
-            fn commitment_layout(
-                _max_num_vars: usize,
-            ) -> Result<HachiCommitmentLayout, HachiError> {
-                HachiCommitmentLayout::new::<Self>($m, $r, &Self::decomposition())
-            }
-        }
-    };
-}
-
-bench_config!(CfgNv10, M = 4, R = 2);
-bench_config!(CfgNv14, M = 6, R = 4);
-bench_config!(CfgNv18, M = 8, R = 6);
-bench_config!(CfgNv20, M = 8, R = 8);
-
-type Scheme<Cfg> = HachiCommitmentScheme<D, Cfg>;
-
-fn num_vars<Cfg: CommitmentConfig>() -> usize {
-    let alpha = Cfg::D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(0).expect("benchmark layout");
-    layout.m_vars + layout.r_vars + alpha
-}
-
-fn make_dense_poly(nv: usize) -> DensePoly<F, D> {
+fn make_dense_evals<Cfg: CommitmentConfig>(nv: usize) -> Vec<F> {
+    let mut rng = StdRng::seed_from_u64(0xdead_beef);
     let len = 1usize << nv;
-    let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
-    DensePoly::from_field_evals(nv, &evals).unwrap()
+    let decomp = Cfg::decomposition();
+    if decomp.log_commit_bound >= 128 {
+        (0..len)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect()
+    } else {
+        let half_bound = 1i64 << (decomp.log_commit_bound.min(62) - 1);
+        (0..len)
+            .map(|_| F::from_i64(rng.gen_range(-half_bound..half_bound)))
+            .collect()
+    }
 }
 
-fn opening_point(nv: usize) -> Vec<F> {
-    (0..nv).map(|i| F::from_u64((i + 2) as u64)).collect()
+fn random_point(nv: usize) -> Vec<F> {
+    let mut rng = StdRng::seed_from_u64(0xcafe_babe);
+    (0..nv)
+        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .collect()
 }
 
-fn bench_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
-    let nv = num_vars::<Cfg>();
-    let poly = make_dense_poly(nv);
-    let pt = opening_point(nv);
-    let layout = Cfg::commitment_layout(nv).expect("benchmark layout");
-
-    let mut group = c.benchmark_group(format!("hachi/{label}/nv{nv}"));
-    if nv >= 18 {
+fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>, nv: usize) {
+    if nv >= 20 {
         group.sample_size(10);
         group.measurement_time(Duration::from_secs(30));
     }
+}
+
+fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig>(
+    c: &mut Criterion,
+    label: &str,
+    nv: usize,
+) {
+    let layout = Cfg::commitment_layout(nv).expect("benchmark layout");
+    let evals = make_dense_evals::<Cfg>(nv);
+    let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
+    let pt = random_point(nv);
+    let opening = multilinear_eval(&evals, &pt).unwrap();
+
+    let mut group = c.benchmark_group(format!("hachi/{label}/nv{nv}"));
+    configure_group(&mut group, nv);
 
     group.bench_function("setup", |b| {
         b.iter(|| {
-            black_box(<Scheme<Cfg> as CommitmentScheme<F, D>>::setup_prover(
-                black_box(nv),
-            ))
+            black_box(
+                <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(black_box(
+                    nv,
+                )),
+            )
         })
     });
 
-    let setup = <Scheme<Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
 
     group.bench_function("commit", |b| {
         b.iter(|| {
             black_box(
-                <Scheme<Cfg> as CommitmentScheme<F, D>>::commit(
+                <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
                     black_box(&poly),
                     black_box(&setup),
                     black_box(&layout),
@@ -101,32 +88,36 @@ fn bench_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
     });
 
     let (commitment, hint) =
-        <Scheme<Cfg> as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout).unwrap();
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout)
+            .unwrap();
 
     group.bench_function("prove", |b| {
-        b.iter(|| {
-            let mut transcript = Blake2bTranscript::<F>::new(b"bench");
-            black_box(
-                <Scheme<Cfg> as CommitmentScheme<F, D>>::prove(
-                    black_box(&setup),
-                    black_box(&poly),
-                    black_box(&pt),
-                    hint.clone(),
-                    &mut transcript,
-                    black_box(&commitment),
-                    BasisMode::Lagrange,
-                    black_box(&layout),
+        b.iter_batched(
+            || hint.clone(),
+            |h| {
+                let mut transcript = Blake2bTranscript::<F>::new(b"bench");
+                black_box(
+                    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
+                        &setup,
+                        &poly,
+                        &pt,
+                        h,
+                        &mut transcript,
+                        &commitment,
+                        BasisMode::Lagrange,
+                        &layout,
+                    )
+                    .unwrap(),
                 )
-                .unwrap(),
-            )
-        })
+            },
+            BatchSize::LargeInput,
+        )
     });
 
-    let verifier_setup = <Scheme<Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
-    let evals: Vec<F> = (0..(1usize << nv)).map(|i| F::from_u64(i as u64)).collect();
-    let opening = multilinear_eval(&evals, &pt).unwrap();
+    let verifier_setup =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench");
-    let proof = <Scheme<Cfg> as CommitmentScheme<F, D>>::prove(
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
         &setup,
         &poly,
         &pt,
@@ -141,7 +132,7 @@ fn bench_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
     group.bench_function("verify", |b| {
         b.iter(|| {
             let mut transcript = Blake2bTranscript::<F>::new(b"bench");
-            <Scheme<Cfg> as CommitmentScheme<F, D>>::verify(
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
                 black_box(&proof),
                 black_box(&verifier_setup),
                 &mut transcript,
@@ -155,12 +146,14 @@ fn bench_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
         })
     });
 
-    group.bench_function(BenchmarkId::new("e2e", nv), |b| {
+    group.bench_function("e2e", |b| {
         b.iter(|| {
-            let (cm, h) =
-                <Scheme<Cfg> as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout).unwrap();
+            let (cm, h) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+                &poly, &setup, &layout,
+            )
+            .unwrap();
             let mut pt_tr = Blake2bTranscript::<F>::new(b"bench");
-            let pf = <Scheme<Cfg> as CommitmentScheme<F, D>>::prove(
+            let pf = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
                 &setup,
                 &poly,
                 &pt,
@@ -172,7 +165,7 @@ fn bench_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
             )
             .unwrap();
             let mut vt_tr = Blake2bTranscript::<F>::new(b"bench");
-            <Scheme<Cfg> as CommitmentScheme<F, D>>::verify(
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
                 &pf,
                 &verifier_setup,
                 &mut vt_tr,
@@ -190,20 +183,25 @@ fn bench_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
     group.finish();
 }
 
-fn bench_onehot_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
-    let nv = num_vars::<Cfg>();
+fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
+    c: &mut Criterion,
+    label: &str,
+    nv: usize,
+) {
     let layout = Cfg::commitment_layout(nv).expect("benchmark layout");
     let total_ring = layout.num_blocks * layout.block_len;
     let onehot_k = D;
-    let num_chunks = total_ring;
 
-    let indices: Vec<Option<usize>> = (0..num_chunks).map(|i| Some(i % onehot_k)).collect();
+    let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
+    let indices: Vec<Option<usize>> = (0..total_ring)
+        .map(|_| Some(rng.gen_range(0..onehot_k)))
+        .collect();
 
     let onehot_poly =
         OneHotPoly::<F, D>::new(onehot_k, indices.clone(), layout.r_vars, layout.m_vars).unwrap();
 
     let dense_evals: Vec<F> = {
-        let mut evals = vec![F::from_u64(0); total_ring * D];
+        let mut evals = vec![F::from_u64(0); total_ring * onehot_k];
         for (ci, opt_idx) in indices.iter().enumerate() {
             if let Some(idx) = opt_idx {
                 evals[ci * onehot_k + idx] = F::from_u64(1);
@@ -212,20 +210,18 @@ fn bench_onehot_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
         evals
     };
     let dense_poly = DensePoly::<F, D>::from_field_evals(nv, &dense_evals).unwrap();
-    let pt = opening_point(nv);
+    let pt = random_point(nv);
+    let opening = multilinear_eval(&dense_evals, &pt).unwrap();
 
-    let setup = <Scheme<Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
 
-    let mut group = c.benchmark_group(format!("hachi_onehot/{label}/nv{nv}"));
-    if nv >= 18 {
-        group.sample_size(10);
-        group.measurement_time(Duration::from_secs(30));
-    }
+    let mut group = c.benchmark_group(format!("hachi/{label}/nv{nv}"));
+    configure_group(&mut group, nv);
 
     group.bench_function("commit_onehot", |b| {
         b.iter(|| {
             black_box(
-                <Scheme<Cfg> as CommitmentScheme<F, D>>::commit(
+                <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
                     black_box(&onehot_poly),
                     black_box(&setup),
                     black_box(&layout),
@@ -235,36 +231,44 @@ fn bench_onehot_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
         })
     });
 
-    let (commitment, hint) =
-        <Scheme<Cfg> as CommitmentScheme<F, D>>::commit(&onehot_poly, &setup, &layout).unwrap();
+    let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+        &onehot_poly,
+        &setup,
+        &layout,
+    )
+    .unwrap();
 
     group.bench_function("prove", |b| {
-        b.iter(|| {
-            let mut transcript = Blake2bTranscript::<F>::new(b"bench");
-            black_box(
-                <Scheme<Cfg> as CommitmentScheme<F, D>>::prove(
-                    black_box(&setup),
-                    black_box(&dense_poly),
-                    black_box(&pt),
-                    hint.clone(),
-                    &mut transcript,
-                    black_box(&commitment),
-                    BasisMode::Lagrange,
-                    black_box(&layout),
+        b.iter_batched(
+            || hint.clone(),
+            |h| {
+                let mut transcript = Blake2bTranscript::<F>::new(b"bench");
+                black_box(
+                    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
+                        &setup,
+                        &dense_poly,
+                        &pt,
+                        h,
+                        &mut transcript,
+                        &commitment,
+                        BasisMode::Lagrange,
+                        &layout,
+                    )
+                    .unwrap(),
                 )
-                .unwrap(),
-            )
-        })
+            },
+            BatchSize::LargeInput,
+        )
     });
 
-    let verifier_setup = <Scheme<Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
-    let opening = multilinear_eval(&dense_evals, &pt).unwrap();
+    let verifier_setup =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench");
-    let proof = <Scheme<Cfg> as CommitmentScheme<F, D>>::prove(
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
         &setup,
         &dense_poly,
         &pt,
-        hint.clone(),
+        hint,
         &mut prover_transcript,
         &commitment,
         BasisMode::Lagrange,
@@ -275,7 +279,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
     group.bench_function("verify", |b| {
         b.iter(|| {
             let mut transcript = Blake2bTranscript::<F>::new(b"bench");
-            <Scheme<Cfg> as CommitmentScheme<F, D>>::verify(
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
                 black_box(&proof),
                 black_box(&verifier_setup),
                 &mut transcript,
@@ -289,13 +293,16 @@ fn bench_onehot_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
         })
     });
 
-    group.bench_function(BenchmarkId::new("e2e", nv), |b| {
+    group.bench_function("e2e", |b| {
         b.iter(|| {
-            let (cm, h) =
-                <Scheme<Cfg> as CommitmentScheme<F, D>>::commit(&onehot_poly, &setup, &layout)
-                    .unwrap();
+            let (cm, h) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+                &onehot_poly,
+                &setup,
+                &layout,
+            )
+            .unwrap();
             let mut pt_tr = Blake2bTranscript::<F>::new(b"bench");
-            let pf = <Scheme<Cfg> as CommitmentScheme<F, D>>::prove(
+            let pf = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
                 &setup,
                 &dense_poly,
                 &pt,
@@ -307,7 +314,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
             )
             .unwrap();
             let mut vt_tr = Blake2bTranscript::<F>::new(b"bench");
-            <Scheme<Cfg> as CommitmentScheme<F, D>>::verify(
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
                 &pf,
                 &verifier_setup,
                 &mut vt_tr,
@@ -325,37 +332,86 @@ fn bench_onehot_phases<Cfg: CommitmentConfig>(c: &mut Criterion, label: &str) {
     group.finish();
 }
 
-fn bench_nv10(c: &mut Criterion) {
-    bench_phases::<CfgNv10>(c, "fp128_p275");
+fn bench_full_nv15(c: &mut Criterion) {
+    bench_dense_phases::<{ Fp128FullCommitmentConfig::D }, Fp128FullCommitmentConfig>(
+        c, "full", 15,
+    );
 }
-fn bench_nv14(c: &mut Criterion) {
-    bench_phases::<CfgNv14>(c, "fp128_p275");
+fn bench_full_nv20(c: &mut Criterion) {
+    bench_dense_phases::<{ Fp128FullCommitmentConfig::D }, Fp128FullCommitmentConfig>(
+        c, "full", 20,
+    );
 }
-fn bench_nv18(c: &mut Criterion) {
-    bench_phases::<CfgNv18>(c, "fp128_p275");
+fn bench_full_nv25(c: &mut Criterion) {
+    bench_dense_phases::<{ Fp128FullCommitmentConfig::D }, Fp128FullCommitmentConfig>(
+        c, "full", 25,
+    );
 }
-fn bench_nv20(c: &mut Criterion) {
-    bench_phases::<CfgNv20>(c, "fp128_p275");
+
+fn bench_onehot_nv15(c: &mut Criterion) {
+    bench_onehot_phases::<{ Fp128OneHotCommitmentConfig::D }, Fp128OneHotCommitmentConfig>(
+        c, "onehot", 15,
+    );
 }
-fn bench_onehot_nv14(c: &mut Criterion) {
-    bench_onehot_phases::<CfgNv14>(c, "fp128_p275");
+fn bench_onehot_nv20(c: &mut Criterion) {
+    bench_onehot_phases::<{ Fp128OneHotCommitmentConfig::D }, Fp128OneHotCommitmentConfig>(
+        c, "onehot", 20,
+    );
+}
+fn bench_onehot_nv25(c: &mut Criterion) {
+    bench_onehot_phases::<{ Fp128OneHotCommitmentConfig::D }, Fp128OneHotCommitmentConfig>(
+        c, "onehot", 25,
+    );
+}
+
+fn bench_logbasis_nv15(c: &mut Criterion) {
+    bench_dense_phases::<{ Fp128LogBasisCommitmentConfig::D }, Fp128LogBasisCommitmentConfig>(
+        c, "logbasis", 15,
+    );
+}
+fn bench_logbasis_nv20(c: &mut Criterion) {
+    bench_dense_phases::<{ Fp128LogBasisCommitmentConfig::D }, Fp128LogBasisCommitmentConfig>(
+        c, "logbasis", 20,
+    );
+}
+fn bench_logbasis_nv25(c: &mut Criterion) {
+    bench_dense_phases::<{ Fp128LogBasisCommitmentConfig::D }, Fp128LogBasisCommitmentConfig>(
+        c, "logbasis", 25,
+    );
 }
 
 criterion_group!(
     hachi_benches,
-    bench_nv10,
-    bench_nv14,
-    bench_nv18,
-    bench_nv20,
-    bench_onehot_nv14,
+    bench_full_nv15,
+    bench_full_nv20,
+    bench_full_nv25,
+    bench_onehot_nv15,
+    bench_onehot_nv20,
+    bench_onehot_nv25,
+    bench_logbasis_nv15,
+    bench_logbasis_nv20,
+    bench_logbasis_nv25,
 );
 
+/// Set `HACHI_PARALLEL=0` to run benchmarks single-threaded.
 fn main() {
     #[cfg(feature = "parallel")]
-    rayon::ThreadPoolBuilder::new()
-        .stack_size(64 * 1024 * 1024)
-        .build_global()
-        .ok();
+    {
+        let num_threads = if std::env::var("HACHI_PARALLEL")
+            .map(|v| v == "0")
+            .unwrap_or(false)
+        {
+            eprintln!("HACHI_PARALLEL=0: running single-threaded");
+            1
+        } else {
+            0
+        };
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .stack_size(64 * 1024 * 1024)
+            .build_global()
+            .ok();
+    }
 
     hachi_benches();
     criterion::Criterion::default()

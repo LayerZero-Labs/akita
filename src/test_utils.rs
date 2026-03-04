@@ -8,6 +8,7 @@ use std::array::from_fn;
 
 use crate::algebra::{CyclotomicRing, Fp64};
 use crate::error::HachiError;
+use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::{
     compute_num_digits, compute_num_digits_fold, CommitmentConfig, DecompositionParams,
     HachiCommitmentLayout,
@@ -60,6 +61,13 @@ pub fn num_digits_commit() -> usize {
     compute_num_digits(d.log_commit_bound, d.log_basis)
 }
 
+/// Decomposition depth for opening / full-field coefficients under `TinyConfig`.
+pub fn num_digits_open() -> usize {
+    let d = TinyConfig::decomposition();
+    let log_open = d.log_open_bound.unwrap_or(d.log_commit_bound);
+    compute_num_digits(log_open, d.log_basis)
+}
+
 /// Decomposition depth for the folded witness `z_pre` under `TinyConfig`.
 pub fn num_digits_fold() -> usize {
     let d = TinyConfig::decomposition();
@@ -70,12 +78,11 @@ pub fn num_digits_fold() -> usize {
 ///
 /// Matrix rows may be wider than `vec` (e.g. when matrices are widened for
 /// multi-level folding); extra columns are treated as multiplying zero.
-pub fn mat_vec_mul(
-    mat: &[Vec<CyclotomicRing<F, D>>],
-    vec: &[CyclotomicRing<F, D>],
-) -> Vec<CyclotomicRing<F, D>> {
-    mat.iter()
-        .map(|row| {
+pub fn mat_vec_mul(mat: &FlatMatrix<F>, vec: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
+    let view = mat.view::<D>();
+    (0..view.num_rows())
+        .map(|i| {
+            let row = view.row(i);
             assert!(row.len() >= vec.len());
             row.iter()
                 .zip(vec.iter())

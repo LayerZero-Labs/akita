@@ -8,6 +8,7 @@ use super::onehot::{inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks};
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
 use super::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
+use super::utils::flat_matrix::FlatMatrix;
 use super::utils::linear::{
     decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_single_i8,
 };
@@ -37,26 +38,33 @@ pub struct HachiSetupSeed {
     pub public_matrix_seed: PublicMatrixSeed,
 }
 
-/// Expanded setup stage containing coefficient-form matrices.
+/// Expanded setup stage containing coefficient-form matrices stored as
+/// D-agnostic flat field-element arrays.
+///
+/// The same `HachiExpandedSetup` can be viewed at different ring dimensions by
+/// calling [`FlatMatrix::view`] or [`FlatMatrix::row`] with the desired
+/// const-generic `D`.
 #[allow(non_snake_case)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiExpandedSetup<F: FieldCore, const D: usize> {
+pub struct HachiExpandedSetup<F: FieldCore> {
     /// Setup seed and runtime layout metadata.
     pub seed: HachiSetupSeed,
     /// Inner matrix `A`.
-    pub A: Vec<Vec<CyclotomicRing<F, D>>>,
+    pub A: FlatMatrix<F>,
     /// Outer matrix `B`.
-    pub B: Vec<Vec<CyclotomicRing<F, D>>>,
+    pub B: FlatMatrix<F>,
     /// Prover matrix `D ∈ R_q^{n_D × δ·2^R}` (§4.2).
-    pub D: Vec<Vec<CyclotomicRing<F, D>>>,
+    pub D_mat: FlatMatrix<F>,
 }
 
 /// Prover setup artifact (expanded setup + per-matrix NTT caches).
+///
+/// The NTT caches are tied to a specific ring dimension D.
 #[allow(non_snake_case)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiProverSetup<F: FieldCore, const D: usize> {
     /// Expanded matrix stage used by both prover and verifier.
-    pub expanded: HachiExpandedSetup<F, D>,
+    pub expanded: HachiExpandedSetup<F>,
     /// NTT cache for the A matrix.
     pub ntt_A: NttSlotCache<D>,
     /// NTT cache for the B matrix.
@@ -67,15 +75,22 @@ pub struct HachiProverSetup<F: FieldCore, const D: usize> {
 
 /// Verifier setup artifact derived from prover setup.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiVerifierSetup<F: FieldCore, const D: usize> {
+pub struct HachiVerifierSetup<F: FieldCore> {
     /// Expanded matrix stage used for verification.
-    pub expanded: HachiExpandedSetup<F, D>,
+    pub expanded: HachiExpandedSetup<F>,
+}
+
+impl<F: FieldCore> HachiExpandedSetup<F> {
+    /// Runtime layout carried by this setup (the max-dimension layout).
+    pub fn layout(&self) -> HachiCommitmentLayout {
+        self.seed.layout
+    }
 }
 
 impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
     /// Runtime layout carried by this setup (the max-dimension layout).
     pub fn layout(&self) -> HachiCommitmentLayout {
-        self.expanded.seed.layout
+        self.expanded.layout()
     }
 
     /// Panic if `layout`'s matrix dimensions exceed this setup's maximums.
@@ -153,17 +168,17 @@ impl HachiDeserialize for HachiSetupSeed {
     }
 }
 
-impl<F: FieldCore + Valid, const D: usize> Valid for HachiExpandedSetup<F, D> {
+impl<F: FieldCore + Valid> Valid for HachiExpandedSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.seed.check()?;
         self.A.check()?;
         self.B.check()?;
-        self.D.check()?;
+        self.D_mat.check()?;
         Ok(())
     }
 }
 
-impl<F: FieldCore, const D: usize> HachiSerialize for HachiExpandedSetup<F, D> {
+impl<F: FieldCore> HachiSerialize for HachiExpandedSetup<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -172,7 +187,7 @@ impl<F: FieldCore, const D: usize> HachiSerialize for HachiExpandedSetup<F, D> {
         self.seed.serialize_with_mode(&mut writer, compress)?;
         self.A.serialize_with_mode(&mut writer, compress)?;
         self.B.serialize_with_mode(&mut writer, compress)?;
-        self.D.serialize_with_mode(&mut writer, compress)?;
+        self.D_mat.serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
@@ -180,11 +195,11 @@ impl<F: FieldCore, const D: usize> HachiSerialize for HachiExpandedSetup<F, D> {
         self.seed.serialized_size(compress)
             + self.A.serialized_size(compress)
             + self.B.serialized_size(compress)
-            + self.D.serialized_size(compress)
+            + self.D_mat.serialized_size(compress)
     }
 }
 
-impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiExpandedSetup<F, D> {
+impl<F: FieldCore + Valid> HachiDeserialize for HachiExpandedSetup<F> {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
@@ -192,21 +207,9 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiExpandedSet
     ) -> Result<Self, SerializationError> {
         let out = Self {
             seed: HachiSetupSeed::deserialize_with_mode(&mut reader, compress, validate)?,
-            A: Vec::<Vec<CyclotomicRing<F, D>>>::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-            )?,
-            B: Vec::<Vec<CyclotomicRing<F, D>>>::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-            )?,
-            D: Vec::<Vec<CyclotomicRing<F, D>>>::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-            )?,
+            A: FlatMatrix::deserialize_with_mode(&mut reader, compress, validate)?,
+            B: FlatMatrix::deserialize_with_mode(&mut reader, compress, validate)?,
+            D_mat: FlatMatrix::deserialize_with_mode(&mut reader, compress, validate)?,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -237,13 +240,13 @@ impl<F: FieldCore, const D: usize> HachiSerialize for HachiProverSetup<F, D> {
     }
 }
 
-impl<F: FieldCore + Valid, const D: usize> Valid for HachiVerifierSetup<F, D> {
+impl<F: FieldCore + Valid> Valid for HachiVerifierSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()
     }
 }
 
-impl<F: FieldCore, const D: usize> HachiSerialize for HachiVerifierSetup<F, D> {
+impl<F: FieldCore> HachiSerialize for HachiVerifierSetup<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         writer: W,
@@ -257,7 +260,7 @@ impl<F: FieldCore, const D: usize> HachiSerialize for HachiVerifierSetup<F, D> {
     }
 }
 
-impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiVerifierSetup<F, D> {
+impl<F: FieldCore + Valid> HachiDeserialize for HachiVerifierSetup<F> {
     fn deserialize_with_mode<R: Read>(
         reader: R,
         compress: Compress,
@@ -279,7 +282,7 @@ where
     Cfg: CommitmentConfig,
 {
     type ProverSetup = HachiProverSetup<F, D>;
-    type VerifierSetup = HachiVerifierSetup<F, D>;
+    type VerifierSetup = HachiVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
 
     #[tracing::instrument(skip_all, name = "RingCommitmentScheme::setup")]
@@ -297,18 +300,22 @@ where
         let b_matrix = derive_public_matrix::<F, D>(Cfg::N_B, b_cols, &public_matrix_seed, b"B");
         let d_matrix = derive_public_matrix::<F, D>(Cfg::N_D, d_cols, &public_matrix_seed, b"D");
 
-        let ntt_a = build_ntt_slot::<F, D>(&a_matrix)?;
-        let ntt_b = build_ntt_slot::<F, D>(&b_matrix)?;
-        let ntt_d = build_ntt_slot::<F, D>(&d_matrix)?;
+        let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
+        let b_flat = FlatMatrix::from_ring_matrix(&b_matrix);
+        let d_flat = FlatMatrix::from_ring_matrix(&d_matrix);
+
+        let ntt_a = build_ntt_slot(a_flat.view::<D>())?;
+        let ntt_b = build_ntt_slot(b_flat.view::<D>())?;
+        let ntt_d = build_ntt_slot(d_flat.view::<D>())?;
         let expanded = HachiExpandedSetup {
             seed: HachiSetupSeed {
                 max_num_vars,
                 layout,
                 public_matrix_seed,
             },
-            A: a_matrix,
-            B: b_matrix,
-            D: d_matrix,
+            A: a_flat,
+            B: b_flat,
+            D_mat: d_flat,
         };
         let prover_setup = HachiProverSetup {
             expanded: expanded.clone(),
@@ -317,10 +324,20 @@ where
             ntt_D: ntt_d,
         };
         let verifier_setup = HachiVerifierSetup { expanded };
-        ensure_matrix_shape_ge(&prover_setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
-        ensure_matrix_shape_ge(&prover_setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
-        ensure_matrix_shape_ge(
-            &prover_setup.expanded.D,
+        ensure_matrix_shape_ge::<F, D>(
+            &prover_setup.expanded.A,
+            Cfg::N_A,
+            layout.inner_width,
+            "A",
+        )?;
+        ensure_matrix_shape_ge::<F, D>(
+            &prover_setup.expanded.B,
+            Cfg::N_B,
+            layout.outer_width,
+            "B",
+        )?;
+        ensure_matrix_shape_ge::<F, D>(
+            &prover_setup.expanded.D_mat,
             Cfg::N_D,
             layout.d_matrix_width,
             "D",
@@ -343,16 +360,17 @@ where
             layout.required_num_vars::<D>()?,
         )?;
         ensure_block_layout(f_blocks, layout)?;
-        ensure_matrix_shape_ge(&setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
-        ensure_matrix_shape_ge(&setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
+        ensure_matrix_shape_ge::<F, D>(&setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
+        ensure_matrix_shape_ge::<F, D>(&setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
 
-        let depth = layout.num_digits_commit;
+        let depth_commit = layout.num_digits_commit;
+        let depth_open = layout.num_digits_open;
         let log_basis = layout.log_basis;
         let block_slices: Vec<&[CyclotomicRing<F, D>]> =
             f_blocks.iter().map(|b| b.as_slice()).collect();
-        let t_all = mat_vec_mul_ntt_i8(&setup.ntt_A, &block_slices, depth, log_basis);
+        let t_all = mat_vec_mul_ntt_i8(&setup.ntt_A, &block_slices, depth_commit, log_basis);
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
-            .map(|t_i| decompose_rows_i8(&t_i, depth, log_basis))
+            .map(|t_i| decompose_rows_i8(&t_i, depth_open, log_basis))
             .collect();
 
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
@@ -379,7 +397,8 @@ where
             });
         }
 
-        let depth = layout.num_digits_commit;
+        let depth_commit = layout.num_digits_commit;
+        let depth_open = layout.num_digits_open;
         let log_basis = layout.log_basis;
         let coeff_len = f_coeffs.len();
 
@@ -394,9 +413,9 @@ where
             })
             .collect();
 
-        let t_all = mat_vec_mul_ntt_i8(&setup.ntt_A, &block_slices, depth, log_basis);
+        let t_all = mat_vec_mul_ntt_i8(&setup.ntt_A, &block_slices, depth_commit, log_basis);
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
-            .map(|t_i| decompose_rows_i8(&t_i, depth, log_basis))
+            .map(|t_i| decompose_rows_i8(&t_i, depth_open, log_basis))
             .collect();
 
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
@@ -416,16 +435,17 @@ where
             setup.expanded.seed.max_num_vars,
             layout.required_num_vars::<D>()?,
         )?;
-        ensure_matrix_shape_ge(&setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
-        ensure_matrix_shape_ge(&setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
+        ensure_matrix_shape_ge::<F, D>(&setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
+        ensure_matrix_shape_ge::<F, D>(&setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
 
         let sparse_blocks =
             map_onehot_to_sparse_blocks(onehot_k, indices, layout.r_vars, layout.m_vars, D)?;
 
-        let depth = layout.num_digits_commit;
+        let depth_commit = layout.num_digits_commit;
+        let depth_open = layout.num_digits_open;
         let log_basis = layout.log_basis;
-        let zero_block_len = Cfg::N_A.checked_mul(depth).unwrap();
-        let a_matrix = &setup.expanded.A;
+        let zero_block_len = Cfg::N_A.checked_mul(depth_open).unwrap();
+        let a_view = setup.expanded.A.view::<D>();
         let block_len = layout.block_len;
 
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(sparse_blocks)
@@ -433,8 +453,9 @@ where
                 if block_entries.is_empty() {
                     vec![[0i8; D]; zero_block_len]
                 } else {
-                    let t_i = inner_ajtai_onehot_wide(a_matrix, block_entries, block_len, depth);
-                    decompose_rows_i8(&t_i, depth, log_basis)
+                    let t_i =
+                        inner_ajtai_onehot_wide(&a_view, block_entries, block_len, depth_commit);
+                    decompose_rows_i8(&t_i, depth_open, log_basis)
                 }
             })
             .collect();
@@ -459,7 +480,7 @@ impl HachiCommitmentCore {
     /// Returns `HachiError` on invalid layout or matrix generation failures.
     pub fn setup_with_layout<F, const D: usize, Cfg>(
         layout: HachiCommitmentLayout,
-    ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F, D>), HachiError>
+    ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError>
     where
         F: FieldCore + CanonicalField + FieldSampling,
         Cfg: CommitmentConfig,
@@ -482,9 +503,9 @@ impl HachiCommitmentCore {
     /// Returns `HachiError` if the new layout is incompatible with the existing
     /// setup or matrix shapes are inconsistent.
     pub fn setup_from_existing<F, const D: usize, Cfg>(
-        existing: &HachiExpandedSetup<F, D>,
+        existing: &HachiExpandedSetup<F>,
         new_r_vars: usize,
-    ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F, D>), HachiError>
+    ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError>
     where
         F: FieldCore + CanonicalField + FieldSampling,
         Cfg: CommitmentConfig,
@@ -503,7 +524,7 @@ impl HachiCommitmentCore {
         }
 
         let w_layout = w_commitment_layout::<F, D, Cfg>(new_layout)?;
-        let a_width = existing.A.first().map_or(0, |r| r.len());
+        let a_width = existing.A.first_row_len::<D>();
         if a_width < w_layout.inner_width {
             return Err(HachiError::InvalidSetup(format!(
                 "existing A width {a_width} < w inner_width {}",
@@ -519,9 +540,12 @@ impl HachiCommitmentCore {
         let b_matrix = derive_public_matrix::<F, D>(Cfg::N_B, b_cols, &seed, b"B");
         let d_matrix = derive_public_matrix::<F, D>(Cfg::N_D, d_cols, &seed, b"D");
 
-        let ntt_a = build_ntt_slot::<F, D>(&existing.A)?;
-        let ntt_b = build_ntt_slot::<F, D>(&b_matrix)?;
-        let ntt_d = build_ntt_slot::<F, D>(&d_matrix)?;
+        let b_flat = FlatMatrix::from_ring_matrix(&b_matrix);
+        let d_flat = FlatMatrix::from_ring_matrix(&d_matrix);
+
+        let ntt_a = build_ntt_slot(existing.A.view::<D>())?;
+        let ntt_b = build_ntt_slot(b_flat.view::<D>())?;
+        let ntt_d = build_ntt_slot(d_flat.view::<D>())?;
         let expanded = HachiExpandedSetup {
             seed: HachiSetupSeed {
                 max_num_vars,
@@ -529,8 +553,8 @@ impl HachiCommitmentCore {
                 public_matrix_seed: seed,
             },
             A: existing.A.clone(),
-            B: b_matrix,
-            D: d_matrix,
+            B: b_flat,
+            D_mat: d_flat,
         };
         let prover_setup = HachiProverSetup {
             expanded: expanded.clone(),
@@ -546,7 +570,7 @@ impl HachiCommitmentCore {
         layout: HachiCommitmentLayout,
         max_num_vars: usize,
         public_matrix_seed: PublicMatrixSeed,
-    ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F, D>), HachiError>
+    ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError>
     where
         F: FieldCore + CanonicalField + FieldSampling,
         Cfg: CommitmentConfig,
@@ -560,18 +584,22 @@ impl HachiCommitmentCore {
         let b_matrix = derive_public_matrix::<F, D>(Cfg::N_B, b_cols, &public_matrix_seed, b"B");
         let d_matrix = derive_public_matrix::<F, D>(Cfg::N_D, d_cols, &public_matrix_seed, b"D");
 
-        let ntt_a = build_ntt_slot::<F, D>(&a_matrix)?;
-        let ntt_b = build_ntt_slot::<F, D>(&b_matrix)?;
-        let ntt_d = build_ntt_slot::<F, D>(&d_matrix)?;
+        let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
+        let b_flat = FlatMatrix::from_ring_matrix(&b_matrix);
+        let d_flat = FlatMatrix::from_ring_matrix(&d_matrix);
+
+        let ntt_a = build_ntt_slot(a_flat.view::<D>())?;
+        let ntt_b = build_ntt_slot(b_flat.view::<D>())?;
+        let ntt_d = build_ntt_slot(d_flat.view::<D>())?;
         let expanded = HachiExpandedSetup {
             seed: HachiSetupSeed {
                 max_num_vars,
                 layout,
                 public_matrix_seed,
             },
-            A: a_matrix,
-            B: b_matrix,
-            D: d_matrix,
+            A: a_flat,
+            B: b_flat,
+            D_mat: d_flat,
         };
         let prover_setup = HachiProverSetup {
             expanded: expanded.clone(),
@@ -580,10 +608,20 @@ impl HachiCommitmentCore {
             ntt_D: ntt_d,
         };
         let verifier_setup = HachiVerifierSetup { expanded };
-        ensure_matrix_shape_ge(&prover_setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
-        ensure_matrix_shape_ge(&prover_setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
-        ensure_matrix_shape_ge(
-            &prover_setup.expanded.D,
+        ensure_matrix_shape_ge::<F, D>(
+            &prover_setup.expanded.A,
+            Cfg::N_A,
+            layout.inner_width,
+            "A",
+        )?;
+        ensure_matrix_shape_ge::<F, D>(
+            &prover_setup.expanded.B,
+            Cfg::N_B,
+            layout.outer_width,
+            "B",
+        )?;
+        ensure_matrix_shape_ge::<F, D>(
+            &prover_setup.expanded.D_mat,
             Cfg::N_D,
             layout.d_matrix_width,
             "D",
@@ -596,12 +634,13 @@ impl HachiCommitmentCore {
 mod tests {
     use super::*;
     use crate::primitives::{HachiDeserialize, HachiSerialize};
-    use crate::test_utils::{TinyConfig, D as TestD, F as TestF};
+    use crate::test_utils::{TinyConfig, F as TestF};
 
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
+        const TEST_D: usize = 64;
         let (prover_setup, verifier_setup) =
-            <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16)
+            <HachiCommitmentCore as RingCommitmentScheme<TestF, TEST_D, TinyConfig>>::setup(16)
                 .unwrap();
 
         let mut bytes = Vec::new();
@@ -609,8 +648,7 @@ mod tests {
             .expanded
             .serialize_compressed(&mut bytes)
             .unwrap();
-        let decoded =
-            HachiExpandedSetup::<TestF, TestD>::deserialize_compressed(&bytes[..]).unwrap();
+        let decoded = HachiExpandedSetup::<TestF>::deserialize_compressed(&bytes[..]).unwrap();
 
         assert_eq!(decoded, prover_setup.expanded);
 

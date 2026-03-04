@@ -5,13 +5,14 @@ use crate::algebra::ntt::tables::{
     q128_primes, q64_primes, MAX_CRT_RING_DEGREE, Q128_MODULUS, Q128_NUM_PRIMES, Q32_MODULUS,
     Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES, RING_DEGREE,
 };
-use crate::algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
-use crate::cfg_iter;
+use crate::algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
+use crate::cfg_into_iter;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::{CanonicalField, FieldCore};
 
+use super::flat_matrix::RingMatrixView;
 use super::norm::detect_field_modulus;
 
 /// Supported protocol CRT+NTT parameter families.
@@ -94,16 +95,17 @@ pub enum NttSlotCache<const D: usize> {
 }
 
 fn convert_mat<F, W, const K: usize, const D: usize>(
-    mat: &[Vec<CyclotomicRing<F, D>>],
+    mat: RingMatrixView<'_, F, D>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicCrtNtt<W, K, D>>>
 where
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
 {
-    cfg_iter!(mat)
-        .map(|row| {
-            row.iter()
+    cfg_into_iter!(0..mat.num_rows())
+        .map(|i| {
+            mat.row(i)
+                .iter()
                 .map(|a| CyclotomicCrtNtt::from_ring_with_params(a, params))
                 .collect()
         })
@@ -111,16 +113,17 @@ where
 }
 
 fn convert_mat_cyclic<F, W, const K: usize, const D: usize>(
-    mat: &[Vec<CyclotomicRing<F, D>>],
+    mat: RingMatrixView<'_, F, D>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicCrtNtt<W, K, D>>>
 where
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
 {
-    cfg_iter!(mat)
-        .map(|row| {
-            row.iter()
+    cfg_into_iter!(0..mat.num_rows())
+        .map(|i| {
+            mat.row(i)
+                .iter()
                 .map(|a| CyclotomicCrtNtt::from_ring_cyclic(a, params))
                 .collect()
         })
@@ -134,14 +137,14 @@ where
 /// Returns an error if no CRT+NTT parameter set matches the field modulus and ring degree.
 #[tracing::instrument(skip_all, name = "build_ntt_slot")]
 pub fn build_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
-    mat: &[Vec<CyclotomicRing<F, D>>],
+    mat: RingMatrixView<'_, F, D>,
 ) -> Result<NttSlotCache<D>, HachiError> {
     let params = select_crt_ntt_params::<F, D>()?;
     Ok(build_ntt_slot_from_params(mat, params))
 }
 
 fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
-    mat: &[Vec<CyclotomicRing<F, D>>],
+    mat: RingMatrixView<'_, F, D>,
     params: ProtocolCrtNttParams<D>,
 ) -> NttSlotCache<D> {
     match params {
@@ -171,9 +174,9 @@ fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
 #[tracing::instrument(skip_all, name = "build_ntt_slots")]
 #[allow(non_snake_case)]
 pub fn build_ntt_slots<F: FieldCore + CanonicalField, const D: usize>(
-    A: &[Vec<CyclotomicRing<F, D>>],
-    B: &[Vec<CyclotomicRing<F, D>>],
-    D_mat: &[Vec<CyclotomicRing<F, D>>],
+    A: RingMatrixView<'_, F, D>,
+    B: RingMatrixView<'_, F, D>,
+    D_mat: RingMatrixView<'_, F, D>,
 ) -> Result<(NttSlotCache<D>, NttSlotCache<D>, NttSlotCache<D>), HachiError> {
     let params = select_crt_ntt_params::<F, D>()?;
     let slot_a = build_ntt_slot_from_params(A, params.clone());
