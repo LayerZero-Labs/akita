@@ -161,7 +161,7 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for RelationSumcheck
                     let w_t = w_0 + t_e * (w_1 - w_0);
                     let a_t = a_0 + t_e * (a_1 - a_0);
                     let m_t = m_0 + t_e * (m_1 - m_0);
-                    *eval = *eval + w_t * a_t * m_t;
+                    *eval += w_t * a_t * m_t;
                 }
             }
             evals

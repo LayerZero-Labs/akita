@@ -105,7 +105,7 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for BaselineNormSumc
                 for (t, eval) in q_evals.iter_mut().enumerate() {
                     let t_e = E::from_u64(t as u64);
                     let w_t = w_0 + t_e * (w_1 - w_0);
-                    *eval = *eval + eq_rem * range_check_eval(w_t, b);
+                    *eval += eq_rem * range_check_eval(w_t, b);
                 }
             }
             q_evals

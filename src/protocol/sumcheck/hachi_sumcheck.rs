@@ -189,6 +189,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
         // 6-element array: [pos0, neg0, pos1, neg1, pos2, neg2]
         type RelAccum<E> = [<E as HasUnreducedOps>::MulU64Accum; 6];
         let rel_zero = || -> RelAccum<E> { [E::MulU64Accum::ZERO; 6] };
+        #[allow(unused_variables)]
         let rel_combine = |a: &mut RelAccum<E>, b: &RelAccum<E>| {
             for i in 0..6 {
                 a[i] += b[i];

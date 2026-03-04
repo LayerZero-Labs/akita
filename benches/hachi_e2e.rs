@@ -351,6 +351,7 @@ criterion_group!(
 );
 
 fn main() {
+    #[cfg(feature = "parallel")]
     rayon::ThreadPoolBuilder::new()
         .stack_size(64 * 1024 * 1024)
         .build_global()

@@ -391,6 +391,7 @@ const TARGET_L2_CACHE_BYTES: usize = 1024 * 1024;
 const TARGET_L2_CACHE_BYTES: usize = 1024 * 1024;
 
 #[inline]
+#[allow(dead_code)]
 fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
     acc: &mut CyclotomicCrtNtt<W, K, D>,
     other: &CyclotomicCrtNtt<W, K, D>,
