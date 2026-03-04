@@ -366,7 +366,7 @@ mod tests {
                 } else {
                     F::zero()
                 };
-                acc = acc + eq_tau1[i] * row_val;
+                acc += eq_tau1[i] * row_val;
             }
             m_evals_x[x] = acc;
         }

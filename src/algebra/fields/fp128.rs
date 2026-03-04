@@ -1028,7 +1028,7 @@ mod tests {
                 carry = (sum >> 64) as u64;
             }
             assert_eq!(carry, 0);
-            expected = expected + a * F::from_u64(b);
+            expected += a * F::from_u64(b);
         }
 
         assert_eq!(F::solinas_reduce(&acc), expected);
