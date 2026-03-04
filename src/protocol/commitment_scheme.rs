@@ -5,6 +5,7 @@ use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::{CyclotomicRing, SparseChallenge};
 use crate::error::HachiError;
 use crate::primitives::poly::multilinear_lagrange_basis;
+use crate::primitives::serialization::Valid;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{flatten_i8_blocks, mat_vec_mul_ntt_single_i8};
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttBundle;
@@ -698,7 +699,7 @@ where
 
 impl<F, const D: usize, Cfg> CommitmentScheme<F, D> for HachiCommitmentScheme<D, Cfg>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps,
+    F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
     Cfg: CommitmentConfig,
 {
     type ProverSetup = HachiProverSetup<F, D>;

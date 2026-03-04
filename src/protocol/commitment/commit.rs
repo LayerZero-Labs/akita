@@ -7,6 +7,8 @@ use super::config::{
 use super::onehot::{inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks};
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
+#[cfg(feature = "disk-persistence")]
+use super::utils::crt_ntt::build_ntt_slots;
 use super::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use super::utils::flat_matrix::FlatMatrix;
 use super::utils::linear::{
@@ -25,7 +27,11 @@ use crate::primitives::serialization::{
 use crate::protocol::hachi_poly_ops::OneHotIndex;
 use crate::protocol::ring_switch::w_commitment_layout;
 use crate::{cfg_into_iter, cfg_iter, CanonicalField, FieldCore, FieldSampling};
+#[cfg(feature = "disk-persistence")]
+use std::fs;
 use std::io::{Read, Write};
+#[cfg(feature = "disk-persistence")]
+use std::path::PathBuf;
 
 /// Seed-only stage for deterministic setup expansion.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -272,13 +278,117 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiVerifierSetup<F> {
     }
 }
 
+#[cfg(feature = "disk-persistence")]
+fn get_storage_path(max_num_vars: usize) -> Option<PathBuf> {
+    let cache_directory = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        Some(PathBuf::from(local_app_data))
+    } else if let Ok(home) = std::env::var("HOME") {
+        let mut path = PathBuf::from(&home);
+        let macos_cache = {
+            let mut test_path = PathBuf::from(&home);
+            test_path.push("Library");
+            test_path.push("Caches");
+            test_path.exists()
+        };
+        if macos_cache {
+            path.push("Library");
+            path.push("Caches");
+        } else {
+            path.push(".cache");
+        }
+        Some(path)
+    } else {
+        None
+    };
+
+    cache_directory.map(|mut path| {
+        path.push("hachi");
+        path.push(format!("hachi_{max_num_vars}.setup"));
+        path
+    })
+}
+
+#[cfg(feature = "disk-persistence")]
+fn save_expanded_setup<F: FieldCore>(setup: &HachiExpandedSetup<F>, max_num_vars: usize) {
+    let Some(storage_path) = get_storage_path(max_num_vars) else {
+        tracing::warn!("Could not determine storage directory; skipping setup save");
+        return;
+    };
+
+    if let Some(parent) = storage_path.parent() {
+        fs::create_dir_all(parent)
+            .unwrap_or_else(|e| panic!("Failed to create storage directory: {e}"));
+    }
+
+    tracing::info!("Saving setup to {}", storage_path.display());
+
+    let file = fs::File::create(&storage_path)
+        .unwrap_or_else(|e| panic!("Failed to create setup file: {e}"));
+    let mut writer = std::io::BufWriter::new(file);
+
+    setup
+        .serialize_compressed(&mut writer)
+        .unwrap_or_else(|e| panic!("Failed to serialize setup: {e}"));
+
+    tracing::info!("Successfully saved setup to disk");
+}
+
+#[cfg(feature = "disk-persistence")]
+fn load_expanded_setup<F: FieldCore + Valid>(
+    max_num_vars: usize,
+) -> Result<HachiExpandedSetup<F>, HachiError> {
+    let storage_path = get_storage_path(max_num_vars).ok_or_else(|| {
+        HachiError::InvalidSetup("Failed to determine storage directory".to_string())
+    })?;
+
+    if !storage_path.exists() {
+        return Err(HachiError::InvalidSetup(format!(
+            "Setup file not found at {}",
+            storage_path.display()
+        )));
+    }
+
+    tracing::info!("Loading setup from {}", storage_path.display());
+
+    let file = fs::File::open(&storage_path)
+        .map_err(|e| HachiError::InvalidSetup(format!("Failed to open setup file: {e}")))?;
+    let mut reader = std::io::BufReader::new(file);
+
+    let setup = HachiExpandedSetup::deserialize_compressed(&mut reader)
+        .map_err(|e| HachiError::InvalidSetup(format!("Failed to deserialize setup: {e}")))?;
+
+    tracing::info!("Loaded setup for max_num_vars={max_num_vars}");
+    Ok(setup)
+}
+
+/// Build prover and verifier setup from a pre-existing expanded setup by
+/// reconstructing the NTT caches.
+#[cfg(feature = "disk-persistence")]
+pub(crate) fn setup_from_expanded<F: FieldCore + CanonicalField, const D: usize>(
+    expanded: HachiExpandedSetup<F>,
+) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError> {
+    let (ntt_a, ntt_b, ntt_d) = build_ntt_slots(
+        expanded.A.view::<D>(),
+        expanded.B.view::<D>(),
+        expanded.D_mat.view::<D>(),
+    )?;
+    let prover_setup = HachiProverSetup {
+        expanded: expanded.clone(),
+        ntt_A: ntt_a,
+        ntt_B: ntt_b,
+        ntt_D: ntt_d,
+    };
+    let verifier_setup = HachiVerifierSetup { expanded };
+    Ok((prover_setup, verifier_setup))
+}
+
 /// Concrete §4.1 commitment core.
 #[derive(Clone, Copy, Default)]
 pub struct HachiCommitmentCore;
 
 impl<F, const D: usize, Cfg> RingCommitmentScheme<F, D, Cfg> for HachiCommitmentCore
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasWide,
+    F: FieldCore + CanonicalField + FieldSampling + HasWide + Valid,
     Cfg: CommitmentConfig,
 {
     type ProverSetup = HachiProverSetup<F, D>;
@@ -289,6 +399,22 @@ where
     fn setup(max_num_vars: usize) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError> {
         let layout = validate_and_derive_layout::<Cfg, D>(max_num_vars)?;
         ensure_supported_num_vars(max_num_vars, layout.required_num_vars::<D>()?)?;
+
+        #[cfg(feature = "disk-persistence")]
+        {
+            match load_expanded_setup::<F>(max_num_vars) {
+                Ok(expanded) => {
+                    tracing::info!("Loaded setup from disk, rebuilding NTT caches");
+                    return setup_from_expanded(expanded);
+                }
+                Err(HachiError::InvalidSetup(msg)) if msg.contains("not found") => {
+                    tracing::debug!("Setup file not found, will generate new one");
+                }
+                Err(e) => {
+                    panic!("Failed to load setup from disk: {e}");
+                }
+            }
+        }
 
         let w_layout = w_commitment_layout::<F, D, Cfg>(layout)?;
         let a_cols = layout.inner_width.max(w_layout.inner_width);
@@ -317,6 +443,10 @@ where
             B: b_flat,
             D_mat: d_flat,
         };
+
+        #[cfg(feature = "disk-persistence")]
+        save_expanded_setup(&expanded, max_num_vars);
+
         let prover_setup = HachiProverSetup {
             expanded: expanded.clone(),
             ntt_A: ntt_a,
@@ -656,5 +786,100 @@ mod tests {
             expanded: decoded.clone(),
         };
         assert_eq!(derived_verifier, verifier_setup);
+    }
+
+    #[cfg(feature = "disk-persistence")]
+    mod disk_persistence {
+        use super::*;
+        use std::fs;
+
+        fn cleanup_setup_file(max_num_vars: usize) {
+            if let Some(path) = get_storage_path(max_num_vars) {
+                let _ = fs::remove_file(path);
+            }
+        }
+
+        #[test]
+        fn save_and_load_roundtrips() {
+            const TEST_D: usize = 64;
+            const MAX_VARS: usize = 100;
+
+            cleanup_setup_file(MAX_VARS);
+
+            let (prover_setup, _) =
+                <HachiCommitmentCore as RingCommitmentScheme<TestF, TEST_D, TinyConfig>>::setup(
+                    MAX_VARS,
+                )
+                .unwrap();
+
+            let loaded = load_expanded_setup::<TestF>(MAX_VARS).unwrap();
+            assert_eq!(loaded, prover_setup.expanded);
+
+            cleanup_setup_file(MAX_VARS);
+        }
+
+        #[test]
+        fn setup_uses_cache_on_second_call() {
+            const TEST_D: usize = 64;
+            const MAX_VARS: usize = 101;
+
+            cleanup_setup_file(MAX_VARS);
+
+            let (first, _) =
+                <HachiCommitmentCore as RingCommitmentScheme<TestF, TEST_D, TinyConfig>>::setup(
+                    MAX_VARS,
+                )
+                .unwrap();
+
+            let (second, _) =
+                <HachiCommitmentCore as RingCommitmentScheme<TestF, TEST_D, TinyConfig>>::setup(
+                    MAX_VARS,
+                )
+                .unwrap();
+
+            assert_eq!(first.expanded, second.expanded);
+
+            cleanup_setup_file(MAX_VARS);
+        }
+
+        #[test]
+        fn ntt_caches_rebuilt_correctly_from_disk() {
+            use crate::algebra::CyclotomicRing;
+
+            const TEST_D: usize = 64;
+            const MAX_VARS: usize = 102;
+
+            cleanup_setup_file(MAX_VARS);
+
+            let (fresh_setup, _) =
+                <HachiCommitmentCore as RingCommitmentScheme<TestF, TEST_D, TinyConfig>>::setup(
+                    MAX_VARS,
+                )
+                .unwrap();
+
+            let loaded_expanded = load_expanded_setup::<TestF>(MAX_VARS).unwrap();
+            let (disk_setup, _) = setup_from_expanded::<TestF, TEST_D>(loaded_expanded).unwrap();
+
+            let layout = fresh_setup.layout();
+            let num_coeffs = layout.num_blocks * layout.block_len;
+            let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
+
+            let fresh_commit = <HachiCommitmentCore as RingCommitmentScheme<
+                TestF,
+                TEST_D,
+                TinyConfig,
+            >>::commit_coeffs(&coeffs, &fresh_setup)
+            .unwrap();
+            let disk_commit = <HachiCommitmentCore as RingCommitmentScheme<
+                TestF,
+                TEST_D,
+                TinyConfig,
+            >>::commit_coeffs(&coeffs, &disk_setup)
+            .unwrap();
+
+            assert_eq!(fresh_commit.commitment, disk_commit.commitment);
+
+            cleanup_setup_file(MAX_VARS);
+        }
     }
 }
