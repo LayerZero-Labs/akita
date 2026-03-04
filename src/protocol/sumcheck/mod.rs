@@ -25,7 +25,9 @@ use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
 
-pub use crate::algebra::poly::{fold_evals_in_place, multilinear_eval, range_check_eval};
+pub use crate::algebra::poly::{
+    fold_evals_in_place, multilinear_eval, multilinear_eval_small, range_check_eval,
+};
 pub use types::{CompressedUniPoly, SumcheckProof, UniPoly};
 
 /// Prover-side sumcheck instance interface.

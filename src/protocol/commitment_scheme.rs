@@ -22,7 +22,9 @@ use crate::protocol::ring_switch::{
     WCommitmentConfig,
 };
 use crate::protocol::sumcheck::hachi_sumcheck::{HachiSumcheckProver, HachiSumcheckVerifier};
-use crate::protocol::sumcheck::{multilinear_eval, prove_sumcheck, verify_sumcheck};
+use crate::protocol::sumcheck::{
+    multilinear_eval, multilinear_eval_small, prove_sumcheck, verify_sumcheck,
+};
 use crate::protocol::transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
@@ -87,7 +89,7 @@ fn prove_one_level<F, T, const D: usize, Cfg, P>(
     layout: HachiCommitmentLayout,
 ) -> Result<ProveLevelOutput<F, D>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps,
+    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
     T: Transcript<F>,
     Cfg: CommitmentConfig,
     P: HachiPolyOps<F, D>,
@@ -169,6 +171,7 @@ where
     let t3 = Instant::now();
     let num_u = rs.num_u;
     let num_l = rs.num_l;
+    let w_evals_small = rs.w_evals.clone();
     let mut fused_prover = HachiSumcheckProver::new(
         batching_coeff,
         rs.w_evals,
@@ -191,7 +194,7 @@ where
 
     let w_eval = {
         let _span = tracing::info_span!("multilinear_eval", level).entered();
-        multilinear_eval(&rs.w_evals_field, &sumcheck_challenges)?
+        multilinear_eval_small(&w_evals_small, &sumcheck_challenges)?
     };
 
     {

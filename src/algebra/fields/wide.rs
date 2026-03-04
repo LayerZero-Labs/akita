@@ -38,6 +38,17 @@ impl<const P: u32> From<Fp32<P>> for Fp32x2i32 {
 }
 
 impl Fp32x2i32 {
+    /// Multiply every limb by a small signed scalar.
+    ///
+    /// Safe when `|small| * max_limb_magnitude` fits in i32. After `From`,
+    /// limbs are in `[0, 0xFFFF]`, so `|small| ≤ 32_767` is safe for a single
+    /// product.  For accumulation of `k` scaled values, require
+    /// `k * |small| * 0xFFFF < i32::MAX`, i.e. roughly `k * |small| < 32_768`.
+    #[inline]
+    pub fn scale_i32(self, small: i32) -> Self {
+        Self([self.0[0] * small, self.0[1] * small])
+    }
+
     /// Reduce back to canonical `Fp32<P>`.
     ///
     /// Carry-propagates the i32 limbs into a signed value, normalizes to
@@ -121,6 +132,17 @@ impl<const P: u64> From<Fp64<P>> for Fp64x4i32 {
 }
 
 impl Fp64x4i32 {
+    /// Multiply every limb by a small signed scalar. See [`Fp32x2i32::scale_i32`].
+    #[inline]
+    pub fn scale_i32(self, small: i32) -> Self {
+        Self([
+            self.0[0] * small,
+            self.0[1] * small,
+            self.0[2] * small,
+            self.0[3] * small,
+        ])
+    }
+
     /// Reduce back to canonical `Fp64<P>`.
     #[inline]
     pub fn reduce<const P: u64>(self) -> Fp64<P> {
@@ -294,6 +316,21 @@ impl<const P: u128> From<Fp128<P>> for Fp128x8i32 {
 }
 
 impl Fp128x8i32 {
+    /// Multiply every limb by a small signed scalar. See [`Fp32x2i32::scale_i32`].
+    #[inline]
+    pub fn scale_i32(self, small: i32) -> Self {
+        Self([
+            self.0[0] * small,
+            self.0[1] * small,
+            self.0[2] * small,
+            self.0[3] * small,
+            self.0[4] * small,
+            self.0[5] * small,
+            self.0[6] * small,
+            self.0[7] * small,
+        ])
+    }
+
     /// Reduce back to canonical `Fp128<P>`.
     ///
     /// Carry-propagates the 8 × i32 limbs into unsigned u64 limbs, then
@@ -908,10 +945,46 @@ impl<const P: u128> HasUnreducedOps for Fp128<P> {
     }
 }
 
+/// Element-wise scaling of a wide accumulator by a small signed integer.
+pub trait ScaleI32 {
+    /// Scale each element by `small`.
+    fn scale_i32(self, small: i32) -> Self;
+}
+
+impl ScaleI32 for Fp32x2i32 {
+    #[inline]
+    fn scale_i32(self, small: i32) -> Self {
+        self.scale_i32(small)
+    }
+}
+
+impl ScaleI32 for Fp64x4i32 {
+    #[inline]
+    fn scale_i32(self, small: i32) -> Self {
+        self.scale_i32(small)
+    }
+}
+
+impl ScaleI32 for Fp128x8i32 {
+    #[inline]
+    fn scale_i32(self, small: i32) -> Self {
+        self.scale_i32(small)
+    }
+}
+
 /// Associates a field type with its wide unreduced accumulator.
 pub trait HasWide: FieldCore {
     /// The wide accumulator type.
-    type Wide: AdditiveGroup + From<Self> + ReduceTo<Self>;
+    type Wide: AdditiveGroup + From<Self> + ReduceTo<Self> + ScaleI32;
+
+    /// Convert `self` to wide form and scale every limb by `small`.
+    ///
+    /// Equivalent to `Self::Wide::from(self).scale_i32(small)` but avoids
+    /// the trait-method ambiguity at call sites.
+    #[inline]
+    fn mul_small_to_wide(self, small: i32) -> Self::Wide {
+        Self::Wide::from(self).scale_i32(small)
+    }
 }
 
 impl<const P: u32> HasWide for Fp32<P> {

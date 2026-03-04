@@ -1,11 +1,14 @@
 //! Polynomial containers and evaluation utilities.
 
+use crate::algebra::fields::wide::{HasWide, ReduceTo};
 use crate::error::HachiError;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::FieldCore;
-use crate::FromSmallInt;
+use crate::protocol::sumcheck::eq_poly::EqPolynomial;
+use crate::{cfg_fold_reduce, AdditiveGroup, FieldCore, FromSmallInt};
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use std::io::{Read, Write};
 use std::ops::{Add, Neg, Sub};
 
@@ -163,4 +166,68 @@ pub fn fold_evals_in_place<E: FieldCore>(evals: &mut Vec<E>, r: E) {
         evals[i] = evals[2 * i] + r * (evals[2 * i + 1] - evals[2 * i]);
     }
     evals.truncate(half);
+}
+
+/// Evaluate a multilinear polynomial with small integer evaluations at a
+/// field point, using the split-eq structure with unreduced accumulation.
+///
+/// Uses `HasWide::mul_small_to_wide` in the inner loop: each eq table entry
+/// is widened, scaled by the small witness value, and accumulated without
+/// reduction. The inner sum is reduced once per outer iteration, then
+/// multiplied by the outer eq factor and accumulated again in wide form.
+///
+/// Overflow budget: each inner accumulation adds at most `0xFFFF * |small|`
+/// to each i32 limb. For `|small| ≤ 128` (b ≤ 256), we can safely
+/// accumulate 256 products before an i32 limb overflows.
+///
+/// # Errors
+///
+/// Returns an error if the table length does not match `2^point.len()`.
+#[tracing::instrument(skip_all, name = "multilinear_eval_small")]
+pub fn multilinear_eval_small<E: FieldCore + HasWide + FromSmallInt>(
+    evals_small: &[i8],
+    point: &[E],
+) -> Result<E, HachiError> {
+    let n = point.len();
+    if evals_small.len() != 1 << n {
+        return Err(HachiError::InvalidSize {
+            expected: 1 << n,
+            actual: evals_small.len(),
+        });
+    }
+    if n == 0 {
+        return Ok(E::from_i64(evals_small[0] as i64));
+    }
+
+    let m = n / 2;
+    let (r_first, r_second) = point.split_at(m);
+    let eq_first = EqPolynomial::evals(r_first);
+    let eq_second = EqPolynomial::evals(r_second);
+    let in_len = eq_first.len();
+
+    // Max safe accumulations per chunk before i32 overflow.
+    // Limbs are 16-bit (0..0xFFFF), scaled by |small| ≤ 128 → 23-bit products.
+    // i32::MAX / (0xFFFF * 128) ≈ 256.
+    const CHUNK: usize = 256;
+
+    let outer_accum = cfg_fold_reduce!(
+        0..eq_second.len(),
+        || E::Wide::ZERO,
+        |acc, x_out| {
+            let base = x_out * in_len;
+            let mut inner_field = E::zero();
+            for chunk_start in (0..in_len).step_by(CHUNK) {
+                let chunk_end = (chunk_start + CHUNK).min(in_len);
+                let mut chunk_acc = E::Wide::ZERO;
+                for x_in in chunk_start..chunk_end {
+                    chunk_acc += eq_first[x_in].mul_small_to_wide(evals_small[base + x_in] as i32);
+                }
+                inner_field += <E::Wide as ReduceTo<E>>::reduce(chunk_acc);
+            }
+
+            acc + E::Wide::from(eq_second[x_out] * inner_field)
+        },
+        |a, b| a + b
+    );
+    Ok(<E::Wide as ReduceTo<E>>::reduce(outer_accum))
 }

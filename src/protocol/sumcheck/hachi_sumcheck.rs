@@ -489,36 +489,29 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
                     NormRoundKernel::AffineCoeffComposition => {
                         let range_pc = self.range_precomp.as_ref().unwrap();
                         let num_coeffs_q = range_pc.degree_q + 1;
-
                         debug_assert!(num_coeffs_q <= MAX_AFFINE_COEFFS);
-                        let num_batches = half.div_ceil(4);
+
                         let (mut q_coeffs, rel_evals) = cfg_fold_reduce!(
-                            0..num_batches,
-                            || (vec![E::zero(); num_coeffs_q], [E::zero(); 3]),
-                            |(mut coeffs, mut rel_evals), batch_idx| {
-                                let j_start = batch_idx * 4;
-                                let j_end = (j_start + 4).min(half);
-                                let batch_size = j_end - j_start;
+                            0..e_second.len(),
+                            || (
+                                vec![E::ProductAccum::ZERO; num_coeffs_q],
+                                [E::zero(); 3]
+                            ),
+                            |(mut outer_accum, mut rel_evals), j_high| {
+                                let mut inner_accum =
+                                    [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                                let base_j = j_high * num_first;
+                                let full_chunks = num_first / 4;
+                                let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
 
-                                if batch_size == 4 {
+                                for chunk in 0..full_chunks {
+                                    let jl = chunk * 4;
                                     let w = [
-                                        (w_full[2 * j_start], w_full[2 * j_start + 1]),
-                                        (w_full[2 * (j_start + 1)], w_full[2 * (j_start + 1) + 1]),
-                                        (w_full[2 * (j_start + 2)], w_full[2 * (j_start + 2) + 1]),
-                                        (w_full[2 * (j_start + 3)], w_full[2 * (j_start + 3) + 1]),
+                                        (w_full[2 * (base_j + jl)], w_full[2 * (base_j + jl) + 1]),
+                                        (w_full[2 * (base_j + jl + 1)], w_full[2 * (base_j + jl + 1) + 1]),
+                                        (w_full[2 * (base_j + jl + 2)], w_full[2 * (base_j + jl + 2) + 1]),
+                                        (w_full[2 * (base_j + jl + 3)], w_full[2 * (base_j + jl + 3) + 1]),
                                     ];
-                                    let eq_rem = [
-                                        e_first[j_start & (num_first - 1)]
-                                            * e_second[j_start >> first_bits],
-                                        e_first[(j_start + 1) & (num_first - 1)]
-                                            * e_second[(j_start + 1) >> first_bits],
-                                        e_first[(j_start + 2) & (num_first - 1)]
-                                            * e_second[(j_start + 2) >> first_bits],
-                                        e_first[(j_start + 3) & (num_first - 1)]
-                                            * e_second[(j_start + 3) >> first_bits],
-                                    ];
-
-                                    let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
                                     compute_entry_coeffs_x4(
                                         &mut batch_out,
                                         range_pc,
@@ -530,49 +523,20 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
                                             w[3].1 - w[3].0,
                                         ],
                                     );
-
-                                    for (b, eq_r) in eq_rem.iter().enumerate() {
-                                        for (coeff, entry) in coeffs
+                                    for (b, bo) in batch_out.iter().enumerate() {
+                                        let e_in = e_first[jl + b];
+                                        for (acc, &entry) in inner_accum[..num_coeffs_q]
                                             .iter_mut()
-                                            .zip(batch_out[b][..num_coeffs_q].iter())
+                                            .zip(bo[..num_coeffs_q].iter())
                                         {
-                                            *coeff += *eq_r * *entry;
+                                            *acc += e_in.mul_to_product_accum(entry);
                                         }
                                     }
-
                                     for (b, &(w_0, w_1)) in w.iter().enumerate() {
-                                        let j = j_start + b;
+                                        let j = base_j + jl + b;
                                         let a_0 = alpha_compact[(2 * j) >> current_x_width];
-                                        let a_1 = alpha_compact[(2 * j + 1) >> current_x_width];
-                                        let m_0 = m_compact[(2 * j) & current_x_mask];
-                                        let m_1 = m_compact[(2 * j + 1) & current_x_mask];
-                                        rel_evals[0] += w_0 * a_0 * m_0;
-                                        rel_evals[1] += w_1 * a_1 * m_1;
-                                        let w_2 = w_1 + w_1 - w_0;
-                                        let a_2 = a_1 + a_1 - a_0;
-                                        let m_2 = m_1 + m_1 - m_0;
-                                        rel_evals[2] += w_2 * a_2 * m_2;
-                                    }
-                                } else {
-                                    let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
-                                    let mut w_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
-                                    for j in j_start..j_end {
-                                        let w_0 = w_full[2 * j];
-                                        let w_1 = w_full[2 * j + 1];
-                                        let eq_rem = e_first[j & (num_first - 1)]
-                                            * e_second[j >> first_bits];
-                                        compute_entry_coeffs(
-                                            &mut entry_buf,
-                                            &mut w_pows_buf,
-                                            range_pc,
-                                            w_0,
-                                            w_1 - w_0,
-                                        );
-                                        for k in 0..num_coeffs_q {
-                                            coeffs[k] += eq_rem * entry_buf[k];
-                                        }
-                                        let a_0 = alpha_compact[(2 * j) >> current_x_width];
-                                        let a_1 = alpha_compact[(2 * j + 1) >> current_x_width];
+                                        let a_1 =
+                                            alpha_compact[(2 * j + 1) >> current_x_width];
                                         let m_0 = m_compact[(2 * j) & current_x_mask];
                                         let m_1 = m_compact[(2 * j + 1) & current_x_mask];
                                         rel_evals[0] += w_0 * a_0 * m_0;
@@ -584,7 +548,48 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
                                     }
                                 }
 
-                                (coeffs, rel_evals)
+                                let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
+                                let mut w_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
+                                for (tail_idx, &e_in) in
+                                    e_first[full_chunks * 4..].iter().enumerate()
+                                {
+                                    let j = base_j + full_chunks * 4 + tail_idx;
+                                    let w_0 = w_full[2 * j];
+                                    let w_1 = w_full[2 * j + 1];
+                                    compute_entry_coeffs(
+                                        &mut entry_buf,
+                                        &mut w_pows_buf,
+                                        range_pc,
+                                        w_0,
+                                        w_1 - w_0,
+                                    );
+                                    for (acc, &entry) in inner_accum[..num_coeffs_q]
+                                        .iter_mut()
+                                        .zip(entry_buf[..num_coeffs_q].iter())
+                                    {
+                                        *acc += e_in.mul_to_product_accum(entry);
+                                    }
+                                    let a_0 = alpha_compact[(2 * j) >> current_x_width];
+                                    let a_1 =
+                                        alpha_compact[(2 * j + 1) >> current_x_width];
+                                    let m_0 = m_compact[(2 * j) & current_x_mask];
+                                    let m_1 = m_compact[(2 * j + 1) & current_x_mask];
+                                    rel_evals[0] += w_0 * a_0 * m_0;
+                                    rel_evals[1] += w_1 * a_1 * m_1;
+                                    let w_2 = w_1 + w_1 - w_0;
+                                    let a_2 = a_1 + a_1 - a_0;
+                                    let m_2 = m_1 + m_1 - m_0;
+                                    rel_evals[2] += w_2 * a_2 * m_2;
+                                }
+
+                                let e_out = e_second[j_high];
+                                for k in 0..num_coeffs_q {
+                                    let inner_reduced =
+                                        E::reduce_product_accum(inner_accum[k]);
+                                    outer_accum[k] +=
+                                        e_out.mul_to_product_accum(inner_reduced);
+                                }
+                                (outer_accum, rel_evals)
                             },
                             |(mut ca, mut ra), (cb, rb)| {
                                 for (ai, bi) in ca.iter_mut().zip(cb.iter()) {
@@ -597,6 +602,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
                             }
                         );
 
+                        let mut q_coeffs: Vec<E> = q_coeffs
+                            .drain(..)
+                            .map(E::reduce_product_accum)
+                            .collect();
                         trim_trailing_zeros(&mut q_coeffs);
                         let q_poly = UniPoly::from_coeffs(q_coeffs);
                         (
