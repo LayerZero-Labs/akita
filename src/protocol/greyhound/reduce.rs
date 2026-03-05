@@ -10,7 +10,6 @@ use crate::primitives::poly::multilinear_lagrange_basis;
 use crate::protocol::greyhound::types::GreyhoundEvalProof;
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
 use crate::protocol::labrador::types::{LabradorConstraint, LabradorStatement};
-use crate::protocol::prg::MatrixPrgBackendChoice;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 
 /// Rebuild a Labrador statement from Greyhound proof data and fold challenges.
@@ -32,7 +31,6 @@ pub fn greyhound_reduce<F, const D: usize>(
     eval_value: F,
     fold_challenges: &[F],
     comkey_seed: &LabradorComKeySeed,
-    backend: MatrixPrgBackendChoice,
 ) -> Result<LabradorStatement<F, D>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -79,7 +77,6 @@ where
         eval_value,
         fold_challenges,
         comkey_seed,
-        backend,
     );
 
     Ok(LabradorStatement {
@@ -113,7 +110,6 @@ fn build_constraints<F: FieldCore + CanonicalField + FieldSampling, const D: usi
     eval_value: F,
     fold_challenges: &[F],
     comkey_seed: &LabradorComKeySeed,
-    backend: MatrixPrgBackendChoice,
 ) -> Vec<LabradorConstraint<F, D>> {
     let m = proof.m_rows;
     let n = proof.n_cols;
@@ -157,7 +153,6 @@ fn build_constraints<F: FieldCore + CanonicalField + FieldSampling, const D: usi
             t_hat_len,
             comkey_seed,
             b"labrador/comkey/B",
-            backend,
         );
         let coeffs: Vec<CyclotomicRing<F, D>> = b_mat.into_iter().flatten().collect();
         let mut coefficients = vec![vec![]; num_rows];
@@ -183,7 +178,6 @@ fn build_constraints<F: FieldCore + CanonicalField + FieldSampling, const D: usi
             v_hat_len,
             comkey_seed,
             b"greyhound/comkey/B_eval",
-            backend,
         );
         let coeffs: Vec<CyclotomicRing<F, D>> = b_eval.into_iter().flatten().collect();
         let mut coefficients = vec![vec![]; num_rows];
@@ -225,13 +219,8 @@ fn build_constraints<F: FieldCore + CanonicalField + FieldSampling, const D: usi
     };
 
     // cnst3: inner commitment relation  A·z - c·t = 0
-    let a_mat = derive_extendable_comkey_matrix::<F, D>(
-        kappa,
-        m,
-        comkey_seed,
-        b"labrador/comkey/A",
-        backend,
-    );
+    let a_mat =
+        derive_extendable_comkey_matrix::<F, D>(kappa, m, comkey_seed, b"labrador/comkey/A");
     let mut phi_z0 = vec![CyclotomicRing::<F, D>::zero(); kappa * z_group_len];
     let mut phi_z1 = vec![CyclotomicRing::<F, D>::zero(); kappa * z_group_len];
     for r in 0..kappa {
@@ -324,7 +313,6 @@ mod tests {
             F::from_i64(7),
             &fold_challenges,
             &[8u8; 32],
-            MatrixPrgBackendChoice::Shake256,
         )
         .unwrap();
         assert_eq!(st.constraints.len(), 5);

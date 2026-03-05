@@ -8,7 +8,6 @@ use crate::protocol::commitment::utils::linear::decompose_rows_with_carry;
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
 use crate::protocol::labrador::types::{LabradorReductionConfig, LabradorWitness};
 use crate::protocol::labrador::utils::mat_vec_mul;
-use crate::protocol::prg::MatrixPrgBackendChoice;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 
 /// Commitment artifacts needed by downstream Labrador/Greyhound flows.
@@ -37,7 +36,6 @@ pub fn commit_linear_only<F, const D: usize>(
     witness: &LabradorWitness<F, D>,
     config: &LabradorReductionConfig,
     comkey_seed: &LabradorComKeySeed,
-    backend: MatrixPrgBackendChoice,
 ) -> Result<LabradorCommitmentArtifacts<F, D>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -65,7 +63,6 @@ where
                 row.len(),
                 comkey_seed,
                 b"labrador/comkey/A",
-                backend,
             );
             let t = mat_vec_mul(&a, row);
             let t_hat = decompose_rows_with_carry(&t, config.fu, config.bu as u32);
@@ -101,7 +98,6 @@ where
             t_hat_flat.len(),
             comkey_seed,
             b"labrador/comkey/B",
-            backend,
         );
         mat_vec_mul(&b, &t_hat_flat)
     };
@@ -115,7 +111,6 @@ where
             linear_garbage.len(),
             comkey_seed,
             b"labrador/comkey/U2",
-            backend,
         );
         mat_vec_mul(&b2, &linear_garbage)
     };
@@ -183,10 +178,8 @@ mod tests {
             tail: false,
         };
         let seed = [3u8; 32];
-        let a =
-            commit_linear_only(&witness, &cfg, &seed, MatrixPrgBackendChoice::Shake256).unwrap();
-        let b =
-            commit_linear_only(&witness, &cfg, &seed, MatrixPrgBackendChoice::Shake256).unwrap();
+        let a = commit_linear_only(&witness, &cfg, &seed).unwrap();
+        let b = commit_linear_only(&witness, &cfg, &seed).unwrap();
         assert_eq!(a, b);
         assert!(!a.u2.is_empty(), "linear garbage commitment u2 must exist");
     }

@@ -5,10 +5,10 @@ use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::utils::linear::decompose_rows_with_carry;
-use crate::protocol::labrador::comkey::LabradorComKeySeed;
-use crate::protocol::labrador::johnson_lindenstrauss::{
-    collapse, project, zero_constant_term_for_proof, LabradorJlMatrix,
+use crate::protocol::labrador::aggregation::{
+    add_phi_in_place, aggregate_jl_constraints_prover, aggregate_statement_constraints, dot_product,
 };
+use crate::protocol::labrador::johnson_lindenstrauss::project;
 use crate::protocol::labrador::setup::LabradorSetup;
 use crate::protocol::labrador::transcript::{
     absorb_labrador_jl_projection, absorb_labrador_level_context, LabradorLevelTranscriptContext,
@@ -18,7 +18,6 @@ use crate::protocol::labrador::types::{
     LabradorWitness,
 };
 use crate::protocol::labrador::utils::mat_vec_mul;
-use crate::protocol::prg::MatrixPrgBackendChoice;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::{challenge_ring_element_rejection_sampled, Transcript};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
@@ -33,8 +32,6 @@ pub struct LabradorFoldResult<F: FieldCore, const D: usize> {
     /// Reduced statement consumed by the next verifier step.
     pub statement: LabradorStatement<F, D>,
 }
-
-use crate::protocol::labrador::config::jl_lifts;
 
 use crate::protocol::ajtai::ajtai_commit::AjtaiCommitmentScheme;
 use crate::protocol::ajtai::coeff::{CoeffAjtai, CoeffAjtaiConfig};
@@ -52,14 +49,11 @@ use crate::protocol::ajtai::coeff::{CoeffAjtai, CoeffAjtaiConfig};
 ///
 /// Returns `HachiError::InvalidInput` if the witness is empty or `config.f` is zero.
 /// Propagates errors from commitment, projection, or hashing.
-#[allow(clippy::too_many_arguments)]
 pub fn prove_level<F, T, const D: usize>(
     witness: &LabradorWitness<F, D>,
     statement: &LabradorStatement<F, D>,
     config: &LabradorReductionConfig,
     setup: &LabradorSetup<F, D>,
-    comkey_seed: &LabradorComKeySeed,
-    backend: MatrixPrgBackendChoice,
     level_index: usize,
     transcript: &mut T,
 ) -> Result<LabradorFoldResult<F, D>, HachiError>
@@ -84,7 +78,6 @@ where
         outer_rows: config.kappa1,
         num_digits: config.fu,
         decompose_modulus: config.bu as u32,
-        comkey_seed: *comkey_seed,
     };
 
     let (t_hat, u1) =
@@ -108,7 +101,6 @@ where
             bu: config.bu,
             kappa: config.kappa,
             kappa1: config.kappa1,
-            prg_backend_id: backend as u8,
         },
     )?;
     transcript.append_serde(labels::ABSORB_LABRADOR_U1, &u1);
@@ -238,219 +230,6 @@ fn split_decomposed_rows<F: FieldCore, const D: usize>(
         }
     }
     Ok(rows)
-}
-
-fn add_phi_in_place<F: FieldCore, const D: usize>(
-    acc: &mut [Vec<CyclotomicRing<F, D>>],
-    other: &[Vec<CyclotomicRing<F, D>>],
-) -> Result<(), HachiError> {
-    if acc.len() != other.len() {
-        return Err(HachiError::InvalidInput(
-            "phi row count mismatch".to_string(),
-        ));
-    }
-    for (row_acc, row_other) in acc.iter_mut().zip(other.iter()) {
-        if row_acc.len() != row_other.len() {
-            return Err(HachiError::InvalidInput(
-                "phi row length mismatch".to_string(),
-            ));
-        }
-        for (a, b) in row_acc.iter_mut().zip(row_other.iter()) {
-            *a += *b;
-        }
-    }
-    Ok(())
-}
-
-fn dot_product<F: FieldCore, const D: usize>(
-    lhs: &[CyclotomicRing<F, D>],
-    rhs: &[CyclotomicRing<F, D>],
-) -> CyclotomicRing<F, D> {
-    let mut acc = CyclotomicRing::<F, D>::zero();
-    let len = lhs.len().min(rhs.len());
-    for i in 0..len {
-        acc += lhs[i] * rhs[i];
-    }
-    acc
-}
-
-#[allow(clippy::type_complexity)]
-fn aggregate_statement_constraints<F, T, const D: usize>(
-    constraints: &[LabradorConstraint<F, D>],
-    row_lengths: &[usize],
-    transcript: &mut T,
-) -> Result<(Vec<Vec<CyclotomicRing<F, D>>>, CyclotomicRing<F, D>), HachiError>
-where
-    F: FieldCore + CanonicalField + FromSmallInt,
-    T: Transcript<F>,
-{
-    let mut phi_total: Vec<Vec<CyclotomicRing<F, D>>> = row_lengths
-        .iter()
-        .map(|&len| vec![CyclotomicRing::zero(); len])
-        .collect();
-    let mut b_total = CyclotomicRing::<F, D>::zero();
-
-    if constraints.is_empty() {
-        return Ok((phi_total, b_total));
-    }
-
-    for cnst in constraints {
-        let outputs = cnst.target.len().max(1);
-        for out_idx in 0..outputs {
-            let alpha = challenge_ring_element_rejection_sampled(
-                transcript,
-                labels::CHALLENGE_LABRADOR_AGGREGATION,
-            )?;
-            let target = cnst
-                .target
-                .get(out_idx)
-                .copied()
-                .unwrap_or_else(CyclotomicRing::<F, D>::zero);
-            b_total += alpha * target;
-
-            for (row_idx, coeffs) in cnst.coefficients.iter().enumerate() {
-                if coeffs.is_empty() {
-                    continue;
-                }
-                if row_idx >= phi_total.len() {
-                    return Err(HachiError::InvalidInput(
-                        "constraint row index out of bounds".to_string(),
-                    ));
-                }
-                let row_len = coeffs.len() / outputs;
-                let coeff_start = out_idx * row_len;
-                let coeff_slice = &coeffs[coeff_start..coeff_start + row_len];
-
-                for (j, coeff) in coeff_slice.iter().enumerate() {
-                    phi_total[row_idx][j] += alpha * *coeff;
-                }
-            }
-        }
-    }
-
-    Ok((phi_total, b_total))
-}
-
-fn flatten_witness<F: FieldCore, const D: usize>(
-    witness: &LabradorWitness<F, D>,
-) -> (Vec<CyclotomicRing<F, D>>, Vec<(usize, usize)>) {
-    let mut flat = Vec::new();
-    let mut ranges = Vec::with_capacity(witness.rows().len());
-    let mut cursor = 0usize;
-    for row in witness.rows() {
-        let start = cursor;
-        flat.extend(row.iter().copied());
-        cursor += row.len();
-        ranges.push((start, cursor));
-    }
-    (flat, ranges)
-}
-
-fn sample_jl_collapse_challenge<F, T>(transcript: &mut T) -> [i64; 256]
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    std::array::from_fn(|_| {
-        let s = transcript.challenge_scalar(labels::CHALLENGE_LABRADOR_JL_COLLAPSE);
-        let c = s.to_canonical_u128();
-        if c > half_q {
-            -((q - c) as i64)
-        } else {
-            c as i64
-        }
-    })
-}
-
-fn jl_collapse_phi_from_weights<F: FieldCore + CanonicalField + FromSmallInt, const D: usize>(
-    matrix: &LabradorJlMatrix,
-    omega: &[i64; 256],
-) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-    if matrix.cols() % D != 0 {
-        return Err(HachiError::InvalidInput(
-            "JL matrix cols not divisible by ring degree".to_string(),
-        ));
-    }
-    let cols = matrix.cols();
-    let mut weights = vec![0i64; cols];
-    for (row_idx, row) in matrix.signs.iter().enumerate() {
-        let alpha = omega[row_idx];
-        for (col_idx, &sign) in row.iter().enumerate() {
-            weights[col_idx] += alpha * (sign as i64);
-        }
-    }
-
-    let ring_elems = cols / D;
-    let phi: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..ring_elems)
-        .map(|idx| {
-            let coeffs = std::array::from_fn(|k| {
-                let w = weights[idx * D + k];
-                F::from_i64(w)
-            });
-            CyclotomicRing::from_coefficients(coeffs).sigma_m1()
-        })
-        .collect();
-    Ok(phi)
-}
-
-#[allow(clippy::type_complexity)]
-fn aggregate_jl_constraints_prover<F, T, const D: usize>(
-    witness: &LabradorWitness<F, D>,
-    jl_projection: &[i32; 256],
-    matrix: &LabradorJlMatrix,
-    transcript: &mut T,
-) -> Result<
-    (
-        Vec<Vec<CyclotomicRing<F, D>>>,
-        CyclotomicRing<F, D>,
-        Vec<CyclotomicRing<F, D>>,
-    ),
-    HachiError,
->
-where
-    F: FieldCore + CanonicalField + FromSmallInt,
-    T: Transcript<F>,
-{
-    let (flat, ranges) = flatten_witness(witness);
-    let mut phi_total: Vec<Vec<CyclotomicRing<F, D>>> = witness
-        .rows()
-        .iter()
-        .map(|row| vec![CyclotomicRing::zero(); row.len()])
-        .collect();
-    let mut b_total = CyclotomicRing::<F, D>::zero();
-    let jl_lifts = jl_lifts::<F>();
-    let mut bb = Vec::with_capacity(jl_lifts);
-
-    for _ in 0..jl_lifts {
-        let omega = sample_jl_collapse_challenge::<F, T>(transcript);
-        let phi_flat = jl_collapse_phi_from_weights::<F, D>(matrix, &omega)?;
-        let b_full = dot_product(&phi_flat, &flat);
-        let target = collapse(jl_projection, &omega);
-        let expected_c0 = F::from_i64(target);
-        if b_full.coefficients()[0] != expected_c0 {
-            return Err(HachiError::InvalidProof);
-        }
-        let (b_tx, _c0) = zero_constant_term_for_proof(b_full);
-        bb.push(b_tx);
-        transcript.append_serde(labels::ABSORB_LABRADOR_BB, &b_tx);
-
-        let beta = challenge_ring_element_rejection_sampled(
-            transcript,
-            labels::CHALLENGE_LABRADOR_AGGREGATION,
-        )?;
-        b_total += beta * b_full;
-
-        for (row_idx, (start, end)) in ranges.iter().enumerate() {
-            let row = &phi_flat[*start..*end];
-            for (j, elem) in row.iter().enumerate() {
-                phi_total[row_idx][j] += beta * *elem;
-            }
-        }
-    }
-
-    Ok((phi_total, b_total, bb))
 }
 
 fn compute_linear_garbage<F: FieldCore + CanonicalField + FromSmallInt, const D: usize>(
@@ -755,19 +534,9 @@ mod tests {
             .map(|row| row.len())
             .max()
             .unwrap_or(0);
-        let setup = LabradorSetup::new(&cfg, r, max_len, &seed, MatrixPrgBackendChoice::Shake256);
+        let setup = LabradorSetup::new(&cfg, r, max_len, &seed);
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
-        let out = prove_level(
-            &witness,
-            &statement,
-            &cfg,
-            &setup,
-            &seed,
-            MatrixPrgBackendChoice::Shake256,
-            0,
-            &mut transcript,
-        )
-        .unwrap();
+        let out = prove_level(&witness, &statement, &cfg, &setup, 0, &mut transcript).unwrap();
         assert!(
             !out.next_witness.rows().is_empty(),
             "fold must produce output witness"
@@ -804,19 +573,9 @@ mod tests {
             .map(|row| row.len())
             .max()
             .unwrap_or(0);
-        let setup = LabradorSetup::new(&cfg, r, max_len, &seed, MatrixPrgBackendChoice::Shake256);
+        let setup = LabradorSetup::new(&cfg, r, max_len, &seed);
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
-        let out = prove_level(
-            &witness,
-            &statement,
-            &cfg,
-            &setup,
-            &seed,
-            MatrixPrgBackendChoice::Shake256,
-            1,
-            &mut transcript,
-        )
-        .unwrap();
+        let out = prove_level(&witness, &statement, &cfg, &setup, 1, &mut transcript).unwrap();
         assert!(
             !out.next_witness.rows().is_empty(),
             "tail fold must produce output"
@@ -891,39 +650,16 @@ mod tests {
             .map(|row| row.len())
             .max()
             .unwrap_or(0);
-        let setup = LabradorSetup::new(
-            &cfg,
-            r,
-            max_len,
-            &comkey_seed,
-            MatrixPrgBackendChoice::Shake256,
-        );
+        let setup = LabradorSetup::new(&cfg, r, max_len, &comkey_seed);
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
-        let fold = prove_level(
-            &witness,
-            &statement,
-            &cfg,
-            &setup,
-            &comkey_seed,
-            MatrixPrgBackendChoice::Shake256,
-            0,
-            &mut transcript,
-        )
-        .unwrap();
+        let fold = prove_level(&witness, &statement, &cfg, &setup, 0, &mut transcript).unwrap();
 
         let proof = LabradorProof {
             levels: vec![fold.level_proof],
             final_opening_witness: fold.next_witness,
         };
         let mut verify_transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
-        verify(
-            &statement,
-            &proof,
-            &comkey_seed,
-            MatrixPrgBackendChoice::Shake256,
-            &mut verify_transcript,
-        )
-        .unwrap();
+        verify(&statement, &proof, &comkey_seed, &mut verify_transcript).unwrap();
 
         let base_proof = LabradorProof {
             levels: Vec::new(),
@@ -934,7 +670,6 @@ mod tests {
             &fold.statement,
             &base_proof,
             &comkey_seed,
-            MatrixPrgBackendChoice::Shake256,
             &mut base_transcript,
         )
         .unwrap();
@@ -984,25 +719,9 @@ mod tests {
             .map(|row| row.len())
             .max()
             .unwrap_or(0);
-        let setup1 = LabradorSetup::new(
-            &cfg,
-            r1,
-            max_len1,
-            &comkey_seed,
-            MatrixPrgBackendChoice::Shake256,
-        );
+        let setup1 = LabradorSetup::new(&cfg, r1, max_len1, &comkey_seed);
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
-        let fold1 = prove_level(
-            &witness,
-            &statement,
-            &cfg,
-            &setup1,
-            &comkey_seed,
-            MatrixPrgBackendChoice::Shake256,
-            0,
-            &mut transcript,
-        )
-        .unwrap();
+        let fold1 = prove_level(&witness, &statement, &cfg, &setup1, 0, &mut transcript).unwrap();
         let r2 = fold1.next_witness.rows().len();
         let max_len2 = fold1
             .next_witness
@@ -1011,20 +730,12 @@ mod tests {
             .map(|row| row.len())
             .max()
             .unwrap_or(0);
-        let setup2 = LabradorSetup::new(
-            &cfg,
-            r2,
-            max_len2,
-            &comkey_seed,
-            MatrixPrgBackendChoice::Shake256,
-        );
+        let setup2 = LabradorSetup::new(&cfg, r2, max_len2, &comkey_seed);
         let fold2 = prove_level(
             &fold1.next_witness,
             &fold1.statement,
             &cfg,
             &setup2,
-            &comkey_seed,
-            MatrixPrgBackendChoice::Shake256,
             1,
             &mut transcript,
         )
@@ -1063,13 +774,6 @@ mod tests {
             final_opening_witness: fold2.next_witness,
         };
         let mut verify_transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
-        verify(
-            &statement,
-            &proof,
-            &comkey_seed,
-            MatrixPrgBackendChoice::Shake256,
-            &mut verify_transcript,
-        )
-        .unwrap();
+        verify(&statement, &proof, &comkey_seed, &mut verify_transcript).unwrap();
     }
 }

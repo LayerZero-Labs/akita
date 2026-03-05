@@ -1,7 +1,7 @@
 //! Canonical transcript schedule helpers for Greyhound/Labrador.
 //!
 //! These helpers centralize byte-level encoding for prover/verifier replay:
-//! dimension binding, backend binding, and nonce encoding.
+//! dimension binding and nonce encoding.
 
 use crate::error::HachiError;
 use crate::protocol::labrador::guardrails::checked_usize_to_u64;
@@ -20,8 +20,6 @@ pub struct GreyhoundEvalTranscriptContext {
     pub inner_vars: usize,
     /// Length of the evaluation point vector.
     pub eval_point_len: usize,
-    /// Matrix-PRG backend id bound into Fiat-Shamir.
-    pub prg_backend_id: u8,
 }
 
 /// Labrador level transcript context.
@@ -47,8 +45,6 @@ pub struct LabradorLevelTranscriptContext {
     pub kappa: usize,
     /// Outer commitment rank.
     pub kappa1: usize,
-    /// Matrix-PRG backend id bound into Fiat-Shamir.
-    pub prg_backend_id: u8,
 }
 
 fn append_u64_le(buf: &mut Vec<u8>, value: u64) {
@@ -69,7 +65,7 @@ fn encode_greyhound_eval_context(
     let mut bytes = Vec::with_capacity(2 + 8 * 4);
     // Versioned payload for deterministic replay stability.
     bytes.push(1u8);
-    bytes.push(ctx.prg_backend_id);
+    bytes.push(0u8); // backend id removed
     append_u64_le(&mut bytes, checked_usize_to_u64(ctx.m_rows, "m_rows")?);
     append_u64_le(&mut bytes, checked_usize_to_u64(ctx.n_cols, "n_cols")?);
     append_u64_le(
@@ -87,11 +83,11 @@ fn encode_labrador_level_context(
     ctx: &LabradorLevelTranscriptContext,
 ) -> Result<Vec<u8>, HachiError> {
     let mut bytes =
-        Vec::with_capacity(4 + 8 * (8 + ctx.input_row_lengths.len() + ctx.input_row_chunks.len()));
+        Vec::with_capacity(4 + 8 * (7 + ctx.input_row_lengths.len() + ctx.input_row_chunks.len()));
     // Versioned payload for deterministic replay stability.
     bytes.push(1u8);
     bytes.push(u8::from(ctx.tail));
-    bytes.push(ctx.prg_backend_id);
+    bytes.push(0u8); // backend id removed
     bytes.push(0u8); // reserved
     append_u64_le(
         &mut bytes,
@@ -227,7 +223,6 @@ mod tests {
             n_cols: 128,
             inner_vars: 6,
             eval_point_len: 13,
-            prg_backend_id: 1,
         };
         let eval_point: Vec<F> = (0..13).map(|i| F::from_u64((i + 3) as u64)).collect();
         let eval_value = F::from_u64(77);
@@ -262,7 +257,6 @@ mod tests {
                 n_cols: 32,
                 inner_vars: 5,
                 eval_point_len: 10,
-                prg_backend_id: 1,
             },
         )
         .unwrap();
@@ -278,7 +272,6 @@ mod tests {
                 n_cols: 64, // dimension changed
                 inner_vars: 5,
                 eval_point_len: 10,
-                prg_backend_id: 1,
             },
         )
         .unwrap();
@@ -305,7 +298,6 @@ mod tests {
             bu: 10,
             kappa: 12,
             kappa1: 6,
-            prg_backend_id: 1,
         };
         let projection = std::array::from_fn(|i| i as i32 - 127);
         let nonce = TEST_NONCE_REPLAY;
@@ -338,7 +330,6 @@ mod tests {
             bu: 10,
             kappa: 4,
             kappa1: 0,
-            prg_backend_id: 0,
         };
         let projection = [0i32; 256];
 

@@ -2,13 +2,12 @@
 
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
-#[cfg(feature = "parallel")]
-use crate::parallel::*;
+use crate::protocol::labrador::aggregation::{
+    aggregate_jl_constraints_verifier, aggregate_statement_constraints,
+};
 use crate::protocol::labrador::comkey::LabradorComKeySeed;
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
-use crate::protocol::labrador::johnson_lindenstrauss::{
-    collapse, restore_constant_term, LabradorJlMatrix,
-};
+use crate::protocol::labrador::johnson_lindenstrauss::LabradorJlMatrix;
 use crate::protocol::labrador::setup::LabradorSetup;
 use crate::protocol::labrador::transcript::{
     absorb_labrador_jl_projection, absorb_labrador_level_context, LabradorLevelTranscriptContext,
@@ -18,7 +17,6 @@ use crate::protocol::labrador::types::{
     LabradorStatement, LabradorWitness,
 };
 use crate::protocol::labrador::utils::mat_vec_mul;
-use crate::protocol::prg::MatrixPrgBackendChoice;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::{challenge_ring_element_rejection_sampled, Transcript};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
@@ -31,8 +29,6 @@ pub struct LabradorVerifyResult<F: FieldCore, const D: usize> {
     /// Final clear opening witness from the proof payload.
     pub final_opening_witness: LabradorWitness<F, D>,
 }
-
-use crate::protocol::labrador::config::jl_lifts;
 
 /// Verify Labrador proof and return terminal reduction state.
 ///
@@ -47,7 +43,6 @@ pub fn verify<F, T, const D: usize>(
     initial_statement: &LabradorStatement<F, D>,
     proof: &LabradorProof<F, D>,
     comkey_seed: &LabradorComKeySeed,
-    backend: MatrixPrgBackendChoice,
     transcript: &mut T,
 ) -> Result<LabradorVerifyResult<F, D>, HachiError>
 where
@@ -82,7 +77,6 @@ where
                 level,
                 &proof.final_opening_witness,
                 comkey_seed,
-                backend,
                 transcript,
                 idx,
             )?;
@@ -91,7 +85,7 @@ where
                 final_opening_witness: proof.final_opening_witness.clone(),
             });
         }
-        statement = reduce_statement(&statement, level, comkey_seed, backend, transcript, idx)?;
+        statement = reduce_statement(&statement, level, comkey_seed, transcript, idx)?;
     }
 
     let final_norm = proof.final_opening_witness.norm();
@@ -110,7 +104,6 @@ fn reduce_statement<F, T, const D: usize>(
     statement: &LabradorStatement<F, D>,
     level: &LabradorLevelProof<F, D>,
     comkey_seed: &LabradorComKeySeed,
-    backend: MatrixPrgBackendChoice,
     transcript: &mut T,
     level_index: usize,
 ) -> Result<LabradorStatement<F, D>, HachiError>
@@ -143,7 +136,6 @@ where
             bu: level.config.bu,
             kappa: level.config.kappa,
             kappa1: level.config.kappa1,
-            prg_backend_id: backend as u8,
         },
     )?;
     transcript.append_serde(labels::ABSORB_LABRADOR_U1, &level.u1);
@@ -180,7 +172,7 @@ where
         )?);
     }
 
-    let setup = LabradorSetup::new(&level.config, r, max_len, comkey_seed, backend);
+    let setup = LabradorSetup::new(&level.config, r, max_len, comkey_seed);
     let next_constraints = build_next_constraints(
         &phi_total,
         &b_total,
@@ -209,7 +201,6 @@ fn verify_tail_level<F, T, const D: usize>(
     level: &LabradorLevelProof<F, D>,
     witness: &LabradorWitness<F, D>,
     comkey_seed: &LabradorComKeySeed,
-    backend: MatrixPrgBackendChoice,
     transcript: &mut T,
     level_index: usize,
 ) -> Result<(), HachiError>
@@ -258,7 +249,6 @@ where
             bu: level.config.bu,
             kappa: level.config.kappa,
             kappa1: level.config.kappa1,
-            prg_backend_id: backend as u8,
         },
     )?;
     transcript.append_serde(labels::ABSORB_LABRADOR_U1, &level.u1);
@@ -310,7 +300,7 @@ where
         return Err(HachiError::InvalidProof);
     }
 
-    let setup = LabradorSetup::new(&level.config, r, max_len, comkey_seed, backend);
+    let setup = LabradorSetup::new(&level.config, r, max_len, comkey_seed);
     let az = mat_vec_mul(&setup.a_mat, &z);
     let mut rhs = vec![CyclotomicRing::<F, D>::zero(); level.config.kappa];
     for (i, t_row) in t_flat.chunks(level.config.kappa).enumerate() {
@@ -362,7 +352,6 @@ fn verify_single_level<F, T, const D: usize>(
     level: &LabradorLevelProof<F, D>,
     witness: &LabradorWitness<F, D>,
     comkey_seed: &LabradorComKeySeed,
-    backend: MatrixPrgBackendChoice,
     transcript: &mut T,
 ) -> Result<(), HachiError>
 where
@@ -413,7 +402,6 @@ where
             bu: level.config.bu,
             kappa: level.config.kappa,
             kappa1: level.config.kappa1,
-            prg_backend_id: backend as u8,
         },
     )?;
     transcript.append_serde(labels::ABSORB_LABRADOR_U1, &level.u1);
@@ -479,7 +467,7 @@ where
         return Err(HachiError::InvalidProof);
     }
 
-    let setup = LabradorSetup::new(&level.config, r, max_len, comkey_seed, backend);
+    let setup = LabradorSetup::new(&level.config, r, max_len, comkey_seed);
 
     if level.config.kappa1 > 0 {
         let u1_check = mat_vec_mul(&setup.b_mat, t_hat);
@@ -824,159 +812,6 @@ fn dot_product<F: FieldCore, const D: usize>(
     acc
 }
 
-#[allow(clippy::type_complexity)]
-fn aggregate_statement_constraints<F, T, const D: usize>(
-    constraints: &[LabradorConstraint<F, D>],
-    row_lengths: &[usize],
-    transcript: &mut T,
-) -> Result<(Vec<Vec<CyclotomicRing<F, D>>>, CyclotomicRing<F, D>), HachiError>
-where
-    F: FieldCore + CanonicalField + FromSmallInt,
-    T: Transcript<F>,
-{
-    let mut phi_total: Vec<Vec<CyclotomicRing<F, D>>> = row_lengths
-        .iter()
-        .map(|&len| vec![CyclotomicRing::zero(); len])
-        .collect();
-    let mut b_total = CyclotomicRing::<F, D>::zero();
-
-    if constraints.is_empty() {
-        return Ok((phi_total, b_total));
-    }
-
-    for cnst in constraints {
-        let outputs = cnst.target.len().max(1);
-        for out_idx in 0..outputs {
-            let alpha = challenge_ring_element_rejection_sampled(
-                transcript,
-                labels::CHALLENGE_LABRADOR_AGGREGATION,
-            )?;
-            let target = cnst
-                .target
-                .get(out_idx)
-                .copied()
-                .unwrap_or_else(CyclotomicRing::<F, D>::zero);
-            b_total += alpha * target;
-
-            for (row_idx, coeffs) in cnst.coefficients.iter().enumerate() {
-                if coeffs.is_empty() {
-                    continue;
-                }
-                if row_idx >= phi_total.len() {
-                    return Err(HachiError::InvalidProof);
-                }
-                let row_len = coeffs.len() / outputs;
-                let coeff_start = out_idx * row_len;
-                let coeff_slice = &coeffs[coeff_start..coeff_start + row_len];
-                for (j, coeff) in coeff_slice.iter().enumerate() {
-                    phi_total[row_idx][j] += alpha * *coeff;
-                }
-            }
-        }
-    }
-
-    Ok((phi_total, b_total))
-}
-
-fn sample_jl_collapse_challenge<F, T>(transcript: &mut T) -> [i64; 256]
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    std::array::from_fn(|_| {
-        let s = transcript.challenge_scalar(labels::CHALLENGE_LABRADOR_JL_COLLAPSE);
-        let c = s.to_canonical_u128();
-        if c > half_q {
-            -((q - c) as i64)
-        } else {
-            c as i64
-        }
-    })
-}
-
-fn jl_collapse_phi_from_weights<F: FieldCore + CanonicalField + FromSmallInt, const D: usize>(
-    matrix: &LabradorJlMatrix,
-    omega: &[i64; 256],
-) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-    let cols = matrix.cols();
-    if cols % D != 0 {
-        return Err(HachiError::InvalidProof);
-    }
-    let mut weights = vec![0i64; cols];
-    for (row_idx, row) in matrix.signs.iter().enumerate() {
-        let alpha = omega[row_idx];
-        for (col_idx, &sign) in row.iter().enumerate() {
-            weights[col_idx] += alpha * (sign as i64);
-        }
-    }
-
-    let ring_elems = cols / D;
-    let phi: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..ring_elems)
-        .map(|idx| {
-            let coeffs = std::array::from_fn(|k| {
-                let w = weights[idx * D + k];
-                F::from_i64(w)
-            });
-            CyclotomicRing::from_coefficients(coeffs).sigma_m1()
-        })
-        .collect();
-    Ok(phi)
-}
-
-#[allow(clippy::type_complexity)]
-fn aggregate_jl_constraints_verifier<F, T, const D: usize>(
-    row_lengths: &[usize],
-    jl_projection: &[i32; 256],
-    matrix: &LabradorJlMatrix,
-    bb: &[CyclotomicRing<F, D>],
-    transcript: &mut T,
-) -> Result<(Vec<Vec<CyclotomicRing<F, D>>>, CyclotomicRing<F, D>), HachiError>
-where
-    F: FieldCore + CanonicalField + FromSmallInt,
-    T: Transcript<F>,
-{
-    let jl_lifts = jl_lifts::<F>();
-    if bb.len() != jl_lifts {
-        return Err(HachiError::InvalidProof);
-    }
-    let mut ranges = Vec::with_capacity(row_lengths.len());
-    let mut cursor = 0usize;
-    for &len in row_lengths {
-        let start = cursor;
-        cursor += len;
-        ranges.push((start, cursor));
-    }
-
-    let mut phi_total: Vec<Vec<CyclotomicRing<F, D>>> = row_lengths
-        .iter()
-        .map(|&len| vec![CyclotomicRing::zero(); len])
-        .collect();
-    let mut b_total = CyclotomicRing::<F, D>::zero();
-
-    for bb_lift in bb.iter() {
-        let omega = sample_jl_collapse_challenge::<F, T>(transcript);
-        let phi_flat = jl_collapse_phi_from_weights::<F, D>(matrix, &omega)?;
-        let target = collapse(jl_projection, &omega);
-        let b_full = restore_constant_term(*bb_lift, F::from_i64(target));
-        transcript.append_serde(labels::ABSORB_LABRADOR_BB, bb_lift);
-        let beta = challenge_ring_element_rejection_sampled(
-            transcript,
-            labels::CHALLENGE_LABRADOR_AGGREGATION,
-        )?;
-        b_total += beta * b_full;
-        for (row_idx, (start, end)) in ranges.iter().enumerate() {
-            let row = &phi_flat[*start..*end];
-            for (j, elem) in row.iter().enumerate() {
-                phi_total[row_idx][j] += beta * *elem;
-            }
-        }
-    }
-
-    Ok((phi_total, b_total))
-}
-
 fn verify_constraints<F: FieldCore + CanonicalField + FromSmallInt, const D: usize>(
     constraints: &[LabradorConstraint<F, D>],
     witness: &LabradorWitness<F, D>,
@@ -1065,14 +900,7 @@ mod tests {
             final_opening_witness: witness.clone(),
         };
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
-        let out = verify(
-            &statement,
-            &proof,
-            &[1u8; 32],
-            MatrixPrgBackendChoice::Shake256,
-            &mut transcript,
-        )
-        .unwrap();
+        let out = verify(&statement, &proof, &[1u8; 32], &mut transcript).unwrap();
         assert_eq!(out.final_opening_witness, witness);
     }
 }

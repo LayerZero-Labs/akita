@@ -11,7 +11,6 @@ use crate::protocol::labrador::transcript::{
 };
 use crate::protocol::labrador::types::LabradorWitness;
 use crate::protocol::labrador::utils::mat_vec_mul;
-use crate::protocol::prg::MatrixPrgBackendChoice;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 
@@ -35,7 +34,6 @@ pub fn greyhound_verify_stage1<F, T, const D: usize>(
     witness: &LabradorWitness<F, D>,
     z_beta_sq: u128,
     comkey_seed: &LabradorComKeySeed,
-    backend: MatrixPrgBackendChoice,
     transcript: &mut T,
 ) -> Result<(), HachiError>
 where
@@ -100,7 +98,6 @@ where
             t_hat_len,
             comkey_seed,
             b"labrador/comkey/B",
-            backend,
         );
         mat_vec_mul(&b_mat, t_hat)
     } else {
@@ -118,7 +115,6 @@ where
             v_hat_len,
             comkey_seed,
             b"greyhound/comkey/B_eval",
-            backend,
         );
         mat_vec_mul(&b_eval, v_hat)
     } else {
@@ -138,7 +134,6 @@ where
             n_cols: n,
             inner_vars: eval_proof.inner_vars,
             eval_point_len: eval_point.len(),
-            prg_backend_id: backend as u8,
         },
     )?;
     absorb_greyhound_eval_claim(transcript, eval_point, &eval_value);
@@ -183,13 +178,8 @@ where
     }
 
     // Constraint 3: A * z = sum_i c_i * t_i.
-    let a_mat = derive_extendable_comkey_matrix::<F, D>(
-        cfg.kappa,
-        m,
-        comkey_seed,
-        b"labrador/comkey/A",
-        backend,
-    );
+    let a_mat =
+        derive_extendable_comkey_matrix::<F, D>(cfg.kappa, m, comkey_seed, b"labrador/comkey/A");
     let lhs_vec = mat_vec_mul(&a_mat, &z);
     let mut rhs_vec = vec![CyclotomicRing::<F, D>::zero(); cfg.kappa];
     for (i, c_i) in fold_challenges.iter().enumerate() {

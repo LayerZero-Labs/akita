@@ -7,7 +7,7 @@
 use crate::algebra::ring::CyclotomicRing;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::protocol::prg::{MatrixPrgBackendChoice, MatrixPrgContext};
+use crate::protocol::prg::{MatrixPrgContext, Shake256Backend};
 use crate::{FieldCore, FieldSampling};
 
 /// Public seed used to derive extendable Labrador commitment keys.
@@ -23,8 +23,9 @@ pub fn derive_extendable_comkey_matrix<F: FieldCore + FieldSampling, const D: us
     cols: usize,
     seed: &LabradorComKeySeed,
     matrix_label: &[u8],
-    backend: MatrixPrgBackendChoice,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    use crate::protocol::prg::MatrixPrgBackend;
+
     cfg_into_iter!(0..rows)
         .map(|r| {
             (0..cols)
@@ -37,7 +38,7 @@ pub fn derive_extendable_comkey_matrix<F: FieldCore + FieldSampling, const D: us
                         row: r,
                         col: c,
                     };
-                    let mut rng = backend.entry_rng(&context);
+                    let mut rng = Shake256Backend.entry_rng(&context);
                     CyclotomicRing::random(&mut rng)
                 })
                 .collect()
@@ -56,9 +57,8 @@ mod tests {
     #[test]
     fn extendable_derivation_has_prefix_stability() {
         let seed = [19u8; 32];
-        let backend = MatrixPrgBackendChoice::Shake256;
-        let small = derive_extendable_comkey_matrix::<F, D>(3, 4, &seed, b"comkey/A", backend);
-        let large = derive_extendable_comkey_matrix::<F, D>(5, 7, &seed, b"comkey/A", backend);
+        let small = derive_extendable_comkey_matrix::<F, D>(3, 4, &seed, b"comkey/A");
+        let large = derive_extendable_comkey_matrix::<F, D>(5, 7, &seed, b"comkey/A");
 
         for r in 0..3 {
             for c in 0..4 {
@@ -70,9 +70,8 @@ mod tests {
     #[test]
     fn extendable_derivation_domain_separates_labels() {
         let seed = [7u8; 32];
-        let backend = MatrixPrgBackendChoice::Aes128Ctr;
-        let a = derive_extendable_comkey_matrix::<F, D>(2, 3, &seed, b"comkey/A", backend);
-        let b = derive_extendable_comkey_matrix::<F, D>(2, 3, &seed, b"comkey/B", backend);
+        let a = derive_extendable_comkey_matrix::<F, D>(2, 3, &seed, b"comkey/A");
+        let b = derive_extendable_comkey_matrix::<F, D>(2, 3, &seed, b"comkey/B");
         assert_ne!(a, b);
     }
 }

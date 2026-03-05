@@ -17,7 +17,6 @@ use crate::protocol::labrador::transcript::{
 };
 use crate::protocol::labrador::types::{LabradorStatement, LabradorWitness};
 use crate::protocol::labrador::utils::mat_vec_mul;
-use crate::protocol::prg::MatrixPrgBackendChoice;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 
@@ -45,7 +44,6 @@ pub fn greyhound_eval<F, T, const D: usize>(
     eval_value: F,
     w_commitment_u1: &[CyclotomicRing<F, D>],
     comkey_seed: &LabradorComKeySeed,
-    backend: MatrixPrgBackendChoice,
     transcript: &mut T,
 ) -> Result<GreyhoundEvalResult<F, D>, HachiError>
 where
@@ -87,7 +85,6 @@ where
             v_hat.len(),
             comkey_seed,
             b"greyhound/comkey/B_eval",
-            backend,
         );
         mat_vec_mul(&b_eval, &v_hat)
     } else {
@@ -102,7 +99,6 @@ where
             n_cols,
             inner_vars,
             eval_point_len: eval_point.len(),
-            prg_backend_id: backend as u8,
         },
     )?;
     absorb_greyhound_eval_claim(transcript, eval_point, &eval_value);
@@ -141,7 +137,6 @@ where
             column.len(),
             comkey_seed,
             b"labrador/comkey/A",
-            backend,
         );
         let t_j = mat_vec_mul(&a, column);
         t_hat_flat.extend(decompose_rows_with_carry(&t_j, cfg.fu, cfg.bu as u32));
@@ -164,7 +159,6 @@ where
         eval_value,
         &fold_challenges,
         comkey_seed,
-        backend,
     )?;
     statement.beta_sq = greyhound_witness.norm();
 
@@ -265,7 +259,6 @@ mod tests {
             eval_value,
             &u1,
             &[8u8; 32],
-            MatrixPrgBackendChoice::Shake256,
             &mut transcript,
         )
         .unwrap();
@@ -276,7 +269,6 @@ mod tests {
 
     #[test]
     fn stage1_constraints_verify_with_full_witness() {
-        let backend = MatrixPrgBackendChoice::Shake256;
         let comkey_seed = [42u8; 32];
 
         let ring_elems = 16;
@@ -311,7 +303,6 @@ mod tests {
             eval_value,
             &[],
             &comkey_seed,
-            backend,
             &mut transcript,
         )
         .unwrap();
@@ -324,7 +315,6 @@ mod tests {
             t_hat.len(),
             &comkey_seed,
             b"labrador/comkey/B",
-            backend,
         );
         let u1 = mat_vec_mul(&b_mat, t_hat);
 
@@ -342,7 +332,6 @@ mod tests {
             &witness,
             z_norm_sq,
             &comkey_seed,
-            backend,
             &mut verifier_transcript,
         )
         .unwrap();
@@ -350,7 +339,6 @@ mod tests {
 
     #[test]
     fn stage2_single_labrador_fold_verifies() {
-        let backend = MatrixPrgBackendChoice::Shake256;
         let comkey_seed = [42u8; 32];
 
         let ring_elems = 16;
@@ -384,7 +372,6 @@ mod tests {
             eval_value,
             &[],
             &comkey_seed,
-            backend,
             &mut gh_transcript,
         )
         .unwrap();
@@ -400,7 +387,6 @@ mod tests {
             t_hat.len(),
             &comkey_seed,
             b"labrador/comkey/B",
-            backend,
         );
         let u1 = mat_vec_mul(&b_mat, t_hat);
         let mut gh_verify_transcript = Blake2bTranscript::<F>::new(DOMAIN_GREYHOUND_EVAL);
@@ -412,7 +398,6 @@ mod tests {
             &witness,
             z_norm_sq,
             &comkey_seed,
-            backend,
             &mut gh_verify_transcript,
         )
         .unwrap();
@@ -425,7 +410,6 @@ mod tests {
                 n_cols: proof.n_cols,
                 inner_vars: proof.inner_vars,
                 eval_point_len: eval_point.len(),
-                prg_backend_id: backend as u8,
             },
         )
         .unwrap();
@@ -441,7 +425,6 @@ mod tests {
             eval_value,
             &fold_challenges,
             &comkey_seed,
-            backend,
         )
         .unwrap();
         statement.beta_sq = witness.norm();
@@ -453,21 +436,14 @@ mod tests {
             .map(|row| row.len())
             .max()
             .unwrap_or(0);
-        let setup = crate::protocol::labrador::LabradorSetup::new(
-            &proof.config,
-            r,
-            max_len,
-            &comkey_seed,
-            backend,
-        );
+        let setup =
+            crate::protocol::labrador::LabradorSetup::new(&proof.config, r, max_len, &comkey_seed);
         let mut prover_transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
         let fold = prove_level(
             &witness,
             &statement,
             &proof.config,
             &setup,
-            &comkey_seed,
-            backend,
             0,
             &mut prover_transcript,
         )
@@ -482,7 +458,6 @@ mod tests {
             &statement,
             &labrador_proof,
             &comkey_seed,
-            backend,
             &mut verify_transcript,
         )
         .unwrap();
@@ -492,7 +467,6 @@ mod tests {
 
     #[test]
     fn stage3_full_labrador_recursion_verifies() {
-        let backend = MatrixPrgBackendChoice::Shake256;
         let comkey_seed = [42u8; 32];
 
         let ring_elems = 16;
@@ -526,7 +500,6 @@ mod tests {
             eval_value,
             &[],
             &comkey_seed,
-            backend,
             &mut gh_transcript,
         )
         .unwrap();
@@ -542,7 +515,6 @@ mod tests {
             t_hat.len(),
             &comkey_seed,
             b"labrador/comkey/B",
-            backend,
         );
         let u1 = mat_vec_mul(&b_mat, t_hat);
         let mut gh_verify_transcript = Blake2bTranscript::<F>::new(DOMAIN_GREYHOUND_EVAL);
@@ -554,7 +526,6 @@ mod tests {
             &witness,
             z_norm_sq,
             &comkey_seed,
-            backend,
             &mut gh_verify_transcript,
         )
         .unwrap();
@@ -567,7 +538,6 @@ mod tests {
                 n_cols: proof.n_cols,
                 inner_vars: proof.inner_vars,
                 eval_point_len: eval_point.len(),
-                prg_backend_id: backend as u8,
             },
         )
         .unwrap();
@@ -583,7 +553,6 @@ mod tests {
             eval_value,
             &fold_challenges,
             &comkey_seed,
-            backend,
         )
         .unwrap();
         statement.beta_sq = witness.norm();
@@ -594,7 +563,6 @@ mod tests {
             &statement,
             &proof.config,
             &comkey_seed,
-            backend,
             &mut prover_transcript,
         )
         .unwrap();
@@ -608,7 +576,6 @@ mod tests {
             &statement,
             &labrador_proof,
             &comkey_seed,
-            backend,
             &mut verify_transcript,
         )
         .unwrap();

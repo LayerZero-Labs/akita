@@ -34,7 +34,7 @@ impl<F: FieldCore, const D: usize> LabradorWitness<F, D> {
     }
 
     /// Borrow the underlying row slices.
-    pub(crate) fn rows(&self) -> &[Vec<CyclotomicRing<F, D>>] {
+    pub fn rows(&self) -> &[Vec<CyclotomicRing<F, D>>] {
         &self.rows
     }
 }

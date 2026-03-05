@@ -26,8 +26,6 @@ pub struct CoeffAjtaiConfig {
     pub num_digits: usize,
     /// Decomposition modulus.
     pub decompose_modulus: u32,
-    /// Seed for generating public matrices.
-    pub comkey_seed: [u8; 32],
 }
 
 impl<F: FieldCore + CanonicalField, const D: usize> AjtaiCommitmentScheme<F, D> for CoeffAjtai {
@@ -99,8 +97,6 @@ mod tests {
     use super::*;
     use crate::algebra::fields::Fp64;
     use crate::protocol::labrador::comkey::derive_extendable_comkey_matrix;
-    use crate::protocol::prg::MatrixPrgBackendChoice;
-
     type F = Fp64<4294967197>;
     const D: usize = 64;
     const WITNESS_SEED: u8 = 42;
@@ -116,7 +112,6 @@ mod tests {
             outer_rows: 30,
             num_digits: 4,
             decompose_modulus: 8,
-            comkey_seed: [1u8; 32],
         }
     }
 
@@ -126,13 +121,7 @@ mod tests {
         cols: usize,
     ) -> Vec<Vec<CyclotomicRing<F, D>>> {
         let comkey_seed = [seed; 32];
-        derive_extendable_comkey_matrix::<F, D>(
-            rows,
-            cols,
-            &comkey_seed,
-            b"test/random",
-            MatrixPrgBackendChoice::Shake256,
-        )
+        derive_extendable_comkey_matrix::<F, D>(rows, cols, &comkey_seed, b"test/random")
     }
 
     #[test]

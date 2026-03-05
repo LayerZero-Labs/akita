@@ -3,6 +3,7 @@
 //! This module will host the Greyhound/Labrador integration used by Hachi's
 //! recursive handoff path.
 
+pub mod aggregation;
 pub mod challenge;
 pub mod comkey;
 pub mod commit;

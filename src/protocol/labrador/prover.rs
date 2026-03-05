@@ -9,7 +9,6 @@ use crate::protocol::labrador::setup::LabradorSetup;
 use crate::protocol::labrador::types::{LabradorProof, LabradorStatement, LabradorWitness};
 use crate::protocol::labrador::LabradorReductionConfig;
 use crate::protocol::labrador::{select_config, select_config_with_mode};
-use crate::protocol::prg::MatrixPrgBackendChoice;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 
@@ -25,7 +24,6 @@ pub fn prove<F, T, const D: usize>(
     initial_witness: LabradorWitness<F, D>,
     initial_statement: &LabradorStatement<F, D>,
     comkey_seed: &LabradorComKeySeed,
-    backend: MatrixPrgBackendChoice,
     transcript: &mut T,
 ) -> Result<LabradorProof<F, D>, HachiError>
 where
@@ -57,17 +55,8 @@ where
             .map(|row| row.len())
             .max()
             .unwrap_or(0);
-        let setup = LabradorSetup::new(&cfg, r, max_len, comkey_seed, backend);
-        let fold = prove_level(
-            &witness,
-            &_statement,
-            &cfg,
-            &setup,
-            comkey_seed,
-            backend,
-            level_idx,
-            transcript,
-        )?;
+        let setup = LabradorSetup::new(&cfg, r, max_len, comkey_seed);
+        let fold = prove_level(&witness, &_statement, &cfg, &setup, level_idx, transcript)?;
         let after_size = witness_size_bits::<F, D>(&fold.next_witness);
         if after_size >= before_size {
             break;
@@ -95,15 +84,13 @@ where
             .map(|row| row.len())
             .max()
             .unwrap_or(0);
-        let tail_setup = LabradorSetup::new(&tail_cfg, r, max_len, comkey_seed, backend);
+        let tail_setup = LabradorSetup::new(&tail_cfg, r, max_len, comkey_seed);
         let mut tail_transcript = transcript.clone();
         if let Ok(tail) = prove_level(
             &witness,
             &_statement,
             &tail_cfg,
             &tail_setup,
-            comkey_seed,
-            backend,
             level_idx,
             &mut tail_transcript,
         ) {
@@ -141,7 +128,6 @@ pub fn prove_with_config<F, T, const D: usize>(
     initial_statement: &LabradorStatement<F, D>,
     initial_config: &LabradorReductionConfig,
     comkey_seed: &LabradorComKeySeed,
-    backend: MatrixPrgBackendChoice,
     transcript: &mut T,
 ) -> Result<LabradorProof<F, D>, HachiError>
 where
@@ -175,17 +161,8 @@ where
             .map(|row| row.len())
             .max()
             .unwrap_or(0);
-        let setup = LabradorSetup::new(&cfg, r, max_len, comkey_seed, backend);
-        let fold = prove_level(
-            &witness,
-            &statement,
-            &cfg,
-            &setup,
-            comkey_seed,
-            backend,
-            level_idx,
-            transcript,
-        )?;
+        let setup = LabradorSetup::new(&cfg, r, max_len, comkey_seed);
+        let fold = prove_level(&witness, &statement, &cfg, &setup, level_idx, transcript)?;
         let after_size = witness_size_bits::<F, D>(&fold.next_witness);
         if after_size >= before_size && !force_first_level {
             break;
@@ -222,15 +199,13 @@ where
             .map(|row| row.len())
             .max()
             .unwrap_or(0);
-        let tail_setup = LabradorSetup::new(&tail_cfg, r, max_len, comkey_seed, backend);
+        let tail_setup = LabradorSetup::new(&tail_cfg, r, max_len, comkey_seed);
         let mut tail_transcript = transcript.clone();
         if let Ok(tail) = prove_level(
             &witness,
             &statement,
             &tail_cfg,
             &tail_setup,
-            comkey_seed,
-            backend,
             level_idx,
             &mut tail_transcript,
         ) {
@@ -311,14 +286,7 @@ mod tests {
             hash: [0u8; 16],
         };
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
-        let proof = prove(
-            sample_witness(),
-            &statement,
-            &[1u8; 32],
-            MatrixPrgBackendChoice::Shake256,
-            &mut transcript,
-        )
-        .unwrap();
+        let proof = prove(sample_witness(), &statement, &[1u8; 32], &mut transcript).unwrap();
         assert!(!proof.final_opening_witness.rows().is_empty());
         assert!(proof.levels.len() <= LABRADOR_MAX_LEVELS);
     }
@@ -334,23 +302,10 @@ mod tests {
             hash: [0u8; 16],
         };
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
-        let proof = prove(
-            sample_witness(),
-            &statement,
-            &[1u8; 32],
-            MatrixPrgBackendChoice::Shake256,
-            &mut transcript,
-        )
-        .unwrap();
+        let proof = prove(sample_witness(), &statement, &[1u8; 32], &mut transcript).unwrap();
 
         let mut verify_transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
-        crate::protocol::labrador::verify(
-            &statement,
-            &proof,
-            &[1u8; 32],
-            MatrixPrgBackendChoice::Shake256,
-            &mut verify_transcript,
-        )
-        .unwrap();
+        crate::protocol::labrador::verify(&statement, &proof, &[1u8; 32], &mut verify_transcript)
+            .unwrap();
     }
 }
