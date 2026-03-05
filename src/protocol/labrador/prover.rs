@@ -25,7 +25,6 @@ pub fn prove<F, T, const D: usize>(
     initial_witness: LabradorWitness<F, D>,
     initial_statement: &LabradorStatement<F, D>,
     comkey_seed: &LabradorComKeySeed,
-    jl_seed: &[u8; 16],
     backend: MatrixPrgBackendChoice,
     transcript: &mut T,
 ) -> Result<LabradorProof<F, D>, HachiError>
@@ -65,7 +64,6 @@ where
             &cfg,
             &setup,
             comkey_seed,
-            jl_seed,
             backend,
             level_idx,
             transcript,
@@ -105,7 +103,6 @@ where
             &tail_cfg,
             &tail_setup,
             comkey_seed,
-            jl_seed,
             backend,
             level_idx,
             &mut tail_transcript,
@@ -144,7 +141,6 @@ pub fn prove_with_config<F, T, const D: usize>(
     initial_statement: &LabradorStatement<F, D>,
     initial_config: &LabradorReductionConfig,
     comkey_seed: &LabradorComKeySeed,
-    jl_seed: &[u8; 16],
     backend: MatrixPrgBackendChoice,
     transcript: &mut T,
 ) -> Result<LabradorProof<F, D>, HachiError>
@@ -186,7 +182,6 @@ where
             &cfg,
             &setup,
             comkey_seed,
-            jl_seed,
             backend,
             level_idx,
             transcript,
@@ -235,7 +230,6 @@ where
             &tail_cfg,
             &tail_setup,
             comkey_seed,
-            jl_seed,
             backend,
             level_idx,
             &mut tail_transcript,
@@ -321,7 +315,6 @@ mod tests {
             sample_witness(),
             &statement,
             &[1u8; 32],
-            &[2u8; 16],
             MatrixPrgBackendChoice::Shake256,
             &mut transcript,
         )
@@ -345,7 +338,6 @@ mod tests {
             sample_witness(),
             &statement,
             &[1u8; 32],
-            &[2u8; 16],
             MatrixPrgBackendChoice::Shake256,
             &mut transcript,
         )
@@ -356,7 +348,6 @@ mod tests {
             &statement,
             &proof,
             &[1u8; 32],
-            &[2u8; 16],
             MatrixPrgBackendChoice::Shake256,
             &mut verify_transcript,
         )

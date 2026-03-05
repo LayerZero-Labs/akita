@@ -11,8 +11,7 @@ use crate::protocol::labrador::johnson_lindenstrauss::{
 };
 use crate::protocol::labrador::setup::LabradorSetup;
 use crate::protocol::labrador::transcript::{
-    absorb_labrador_jl_nonce, absorb_labrador_jl_projection, absorb_labrador_level_context,
-    LabradorLevelTranscriptContext,
+    absorb_labrador_jl_projection, absorb_labrador_level_context, LabradorLevelTranscriptContext,
 };
 use crate::protocol::labrador::types::{
     LabradorConstraint, LabradorLevelProof, LabradorProof, LabradorReductionConfig,
@@ -48,7 +47,6 @@ pub fn verify<F, T, const D: usize>(
     initial_statement: &LabradorStatement<F, D>,
     proof: &LabradorProof<F, D>,
     comkey_seed: &LabradorComKeySeed,
-    jl_seed: &[u8; 16],
     backend: MatrixPrgBackendChoice,
     transcript: &mut T,
 ) -> Result<LabradorVerifyResult<F, D>, HachiError>
@@ -84,7 +82,6 @@ where
                 level,
                 &proof.final_opening_witness,
                 comkey_seed,
-                jl_seed,
                 backend,
                 transcript,
                 idx,
@@ -94,15 +91,7 @@ where
                 final_opening_witness: proof.final_opening_witness.clone(),
             });
         }
-        statement = reduce_statement(
-            &statement,
-            level,
-            comkey_seed,
-            jl_seed,
-            backend,
-            transcript,
-            idx,
-        )?;
+        statement = reduce_statement(&statement, level, comkey_seed, backend, transcript, idx)?;
     }
 
     let final_norm = proof.final_opening_witness.norm();
@@ -121,7 +110,6 @@ fn reduce_statement<F, T, const D: usize>(
     statement: &LabradorStatement<F, D>,
     level: &LabradorLevelProof<F, D>,
     comkey_seed: &LabradorComKeySeed,
-    jl_seed: &[u8; 16],
     backend: MatrixPrgBackendChoice,
     transcript: &mut T,
     level_index: usize,
@@ -159,16 +147,18 @@ where
         },
     )?;
     transcript.append_serde(labels::ABSORB_LABRADOR_U1, &level.u1);
+
+    let total_len: usize = level.input_row_lengths.iter().sum();
+    let jl_cols = total_len * D;
+    let jl_matrix =
+        LabradorJlMatrix::replay_nonce_search::<F, T>(transcript, level.jl_nonce, jl_cols)?;
     absorb_labrador_jl_projection(transcript, &level.jl_projection);
-    absorb_labrador_jl_nonce(transcript, level.jl_nonce);
 
     let (phi_jl, b_jl) = aggregate_jl_constraints_verifier(
         &level.input_row_lengths,
         &level.jl_projection,
-        jl_seed,
-        level.jl_nonce,
+        &jl_matrix,
         &level.bb,
-        backend,
         transcript,
     )?;
     let (phi_stmt, b_stmt) = aggregate_statement_constraints(
@@ -219,7 +209,6 @@ fn verify_tail_level<F, T, const D: usize>(
     level: &LabradorLevelProof<F, D>,
     witness: &LabradorWitness<F, D>,
     comkey_seed: &LabradorComKeySeed,
-    jl_seed: &[u8; 16],
     backend: MatrixPrgBackendChoice,
     transcript: &mut T,
     level_index: usize,
@@ -273,16 +262,18 @@ where
         },
     )?;
     transcript.append_serde(labels::ABSORB_LABRADOR_U1, &level.u1);
+
+    let total_len: usize = level.input_row_lengths.iter().sum();
+    let jl_cols = total_len * D;
+    let jl_matrix =
+        LabradorJlMatrix::replay_nonce_search::<F, T>(transcript, level.jl_nonce, jl_cols)?;
     absorb_labrador_jl_projection(transcript, &level.jl_projection);
-    absorb_labrador_jl_nonce(transcript, level.jl_nonce);
 
     let (phi_jl, b_jl) = aggregate_jl_constraints_verifier(
         &level.input_row_lengths,
         &level.jl_projection,
-        jl_seed,
-        level.jl_nonce,
+        &jl_matrix,
         &level.bb,
-        backend,
         transcript,
     )?;
     let (phi_stmt, b_stmt) = aggregate_statement_constraints(
@@ -371,7 +362,6 @@ fn verify_single_level<F, T, const D: usize>(
     level: &LabradorLevelProof<F, D>,
     witness: &LabradorWitness<F, D>,
     comkey_seed: &LabradorComKeySeed,
-    jl_seed: &[u8; 16],
     backend: MatrixPrgBackendChoice,
     transcript: &mut T,
 ) -> Result<(), HachiError>
@@ -427,16 +417,18 @@ where
         },
     )?;
     transcript.append_serde(labels::ABSORB_LABRADOR_U1, &level.u1);
+
+    let total_len: usize = level.input_row_lengths.iter().sum();
+    let jl_cols = total_len * D;
+    let jl_matrix =
+        LabradorJlMatrix::replay_nonce_search::<F, T>(transcript, level.jl_nonce, jl_cols)?;
     absorb_labrador_jl_projection(transcript, &level.jl_projection);
-    absorb_labrador_jl_nonce(transcript, level.jl_nonce);
 
     let (phi_jl, b_jl) = aggregate_jl_constraints_verifier(
         &level.input_row_lengths,
         &level.jl_projection,
-        jl_seed,
-        level.jl_nonce,
+        &jl_matrix,
         &level.bb,
-        backend,
         transcript,
     )?;
     let (phi_stmt, b_stmt) = aggregate_statement_constraints(
@@ -908,10 +900,11 @@ fn jl_collapse_phi_from_weights<F: FieldCore + CanonicalField + FromSmallInt, co
     matrix: &LabradorJlMatrix,
     omega: &[i64; 256],
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-    if matrix.cols % D != 0 {
+    let cols = matrix.cols();
+    if cols % D != 0 {
         return Err(HachiError::InvalidProof);
     }
-    let mut weights = vec![0i64; matrix.cols];
+    let mut weights = vec![0i64; cols];
     for (row_idx, row) in matrix.signs.iter().enumerate() {
         let alpha = omega[row_idx];
         for (col_idx, &sign) in row.iter().enumerate() {
@@ -919,7 +912,7 @@ fn jl_collapse_phi_from_weights<F: FieldCore + CanonicalField + FromSmallInt, co
         }
     }
 
-    let ring_elems = matrix.cols / D;
+    let ring_elems = cols / D;
     let phi: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..ring_elems)
         .map(|idx| {
             let coeffs = std::array::from_fn(|k| {
@@ -936,10 +929,8 @@ fn jl_collapse_phi_from_weights<F: FieldCore + CanonicalField + FromSmallInt, co
 fn aggregate_jl_constraints_verifier<F, T, const D: usize>(
     row_lengths: &[usize],
     jl_projection: &[i32; 256],
-    jl_seed: &[u8; 16],
-    jl_nonce: u64,
+    matrix: &LabradorJlMatrix,
     bb: &[CyclotomicRing<F, D>],
-    backend: MatrixPrgBackendChoice,
     transcript: &mut T,
 ) -> Result<(Vec<Vec<CyclotomicRing<F, D>>>, CyclotomicRing<F, D>), HachiError>
 where
@@ -950,11 +941,6 @@ where
     if bb.len() != jl_lifts {
         return Err(HachiError::InvalidProof);
     }
-    let total_len: usize = row_lengths.iter().sum();
-    let cols = total_len.checked_mul(D).ok_or(HachiError::InvalidProof)?;
-    if cols == 0 {
-        return Err(HachiError::InvalidProof);
-    }
     let mut ranges = Vec::with_capacity(row_lengths.len());
     let mut cursor = 0usize;
     for &len in row_lengths {
@@ -962,8 +948,6 @@ where
         cursor += len;
         ranges.push((start, cursor));
     }
-
-    let matrix = LabradorJlMatrix::generate(jl_seed, jl_nonce, cols, backend)?;
 
     let mut phi_total: Vec<Vec<CyclotomicRing<F, D>>> = row_lengths
         .iter()
@@ -973,7 +957,7 @@ where
 
     for bb_lift in bb.iter() {
         let omega = sample_jl_collapse_challenge::<F, T>(transcript);
-        let phi_flat = jl_collapse_phi_from_weights::<F, D>(&matrix, &omega)?;
+        let phi_flat = jl_collapse_phi_from_weights::<F, D>(matrix, &omega)?;
         let target = collapse(jl_projection, &omega);
         let b_full = restore_constant_term(*bb_lift, F::from_i64(target));
         transcript.append_serde(labels::ABSORB_LABRADOR_BB, bb_lift);
@@ -1085,7 +1069,6 @@ mod tests {
             &statement,
             &proof,
             &[1u8; 32],
-            &[2u8; 16],
             MatrixPrgBackendChoice::Shake256,
             &mut transcript,
         )

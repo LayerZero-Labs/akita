@@ -80,6 +80,8 @@ pub const ABSORB_LABRADOR_BB: &[u8] = b"hachi/absorb/labrador-bb";
 pub const ABSORB_LABRADOR_NORM: &[u8] = b"hachi/absorb/labrador-norm";
 /// Challenge for Labrador amortization fold (ring-element challenges).
 pub const CHALLENGE_LABRADOR_AMORTIZE: &[u8] = b"hachi/challenge/labrador-amortize";
+/// Challenge for deriving the JL projection seed from the transcript.
+pub const CHALLENGE_LABRADOR_JL_SEED: &[u8] = b"hachi/challenge/labrador-jl-seed";
 
 /// Return all Hachi-core transcript labels.
 pub fn all_labels() -> &'static [&'static [u8]] {
@@ -120,5 +122,6 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         ABSORB_LABRADOR_BB,
         ABSORB_LABRADOR_NORM,
         CHALLENGE_LABRADOR_AMORTIZE,
+        CHALLENGE_LABRADOR_JL_SEED,
     ]
 }

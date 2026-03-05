@@ -6,57 +6,45 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_JL_NONCE_RETRIES;
 use crate::protocol::labrador::types::LabradorWitness;
-use crate::protocol::prg::{MatrixPrgBackendChoice, MatrixPrgContext};
+use crate::protocol::transcript::{labels, Transcript};
 use crate::{CanonicalField, FieldCore};
-use rand_core::RngCore;
-use sha3::digest::{ExtendableOutput, Update, XofReader};
-use sha3::Shake256;
 
 const JL_ROWS: usize = 256;
 
 /// Binary JL matrix with entries in `{-1, +1}`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabradorJlMatrix {
-    /// Number of rows (fixed at 256 in Labrador).
-    pub rows: usize,
-    /// Number of columns.
-    pub cols: usize,
-    /// Matrix entries as `-1/+1`.
+    /// Matrix entries as `-1/+1`, one inner vec per row.
     pub signs: Vec<Vec<i8>>,
 }
 
 impl LabradorJlMatrix {
-    /// Deterministically generate a JL matrix from seed/nonce.
+    /// Number of columns (derived from the first row).
+    pub fn cols(&self) -> usize {
+        self.signs.first().map_or(0, |r| r.len())
+    }
+
+    /// Squeeze a JL matrix directly from the transcript.
     ///
     /// # Errors
     ///
     /// Returns an error if `cols` is zero.
-    pub fn generate(
-        seed: &[u8; 16],
-        nonce: u64,
-        cols: usize,
-        backend: MatrixPrgBackendChoice,
-    ) -> Result<Self, HachiError> {
+    pub fn generate<F, T>(transcript: &mut T, cols: usize) -> Result<Self, HachiError>
+    where
+        F: FieldCore + CanonicalField,
+        T: Transcript<F>,
+    {
         if cols == 0 {
             return Err(HachiError::InvalidInput(
                 "JL matrix requires non-zero column count".to_string(),
             ));
         }
-        let prg_seed = derive_jl_prg_seed(seed, nonce);
-        let byte_len = cols.div_ceil(8);
-        let signs: Vec<Vec<i8>> = cfg_into_iter!(0..JL_ROWS)
-            .map(|row| {
-                let context = MatrixPrgContext {
-                    seed: &prg_seed,
-                    matrix_label: b"labrador/jl",
-                    rows: JL_ROWS,
-                    cols,
-                    row,
-                    col: 0,
-                };
-                let mut rng = backend.entry_rng(&context);
-                let mut bytes = vec![0u8; byte_len];
-                rng.fill_bytes(&mut bytes);
+        let byte_len_per_row = cols.div_ceil(8);
+        let total_bytes = JL_ROWS * byte_len_per_row;
+        let all_bytes = transcript.challenge_bytes(labels::CHALLENGE_LABRADOR_JL_SEED, total_bytes);
+        let signs: Vec<Vec<i8>> = all_bytes
+            .chunks(byte_len_per_row)
+            .map(|bytes| {
                 (0..cols)
                     .map(|c| {
                         let bit = (bytes[c / 8] >> (c % 8)) & 1;
@@ -69,38 +57,65 @@ impl LabradorJlMatrix {
                     .collect()
             })
             .collect();
-        Ok(Self {
-            rows: JL_ROWS,
-            cols,
-            signs,
-        })
+        Ok(Self { signs })
+    }
+
+    /// Replay the prover's nonce loop to reconstruct the JL matrix.
+    ///
+    /// Absorbs nonces `1..=jl_nonce` and squeezes a matrix for each, returning
+    /// the final matrix. Leaves the transcript in the same state the prover
+    /// had after `project` returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `cols` is zero.
+    pub fn replay_nonce_search<F, T>(
+        transcript: &mut T,
+        jl_nonce: u64,
+        cols: usize,
+    ) -> Result<Self, HachiError>
+    where
+        F: FieldCore + CanonicalField,
+        T: Transcript<F>,
+    {
+        let mut matrix = None;
+        for nonce in 1..=jl_nonce {
+            transcript.append_bytes(labels::ABSORB_LABRADOR_JL_NONCE, &nonce.to_le_bytes());
+            matrix = Some(Self::generate::<F, T>(transcript, cols)?);
+        }
+        matrix.ok_or_else(|| HachiError::InvalidInput("JL nonce must be at least 1".to_string()))
     }
 }
 
 /// Project a witness into 256 JL coordinates and return the nonce used.
 ///
-/// Nonce search starts from `1` and stops at the first projection that fits
-/// signed 32-bit coordinates, up to `LABRADOR_MAX_JL_NONCE_RETRIES`.
+/// Each nonce attempt absorbs the nonce and squeezes the matrix from the
+/// transcript. The verifier must replay the same loop from 1 to the
+/// returned nonce to keep the transcript in sync.
 ///
 /// # Errors
 ///
 /// Returns an error if the witness is empty or if no valid projection is found
 /// within the nonce search limit.
-pub fn project<F: FieldCore + CanonicalField, const D: usize>(
+pub fn project<F, T, const D: usize>(
     witness: &LabradorWitness<F, D>,
-    seed: &[u8; 16],
-    backend: MatrixPrgBackendChoice,
-) -> Result<([i32; 256], u64), HachiError> {
-    let vector = flatten_witness_coeffs(witness);
-    if vector.is_empty() {
+    transcript: &mut T,
+) -> Result<([i32; 256], u64, LabradorJlMatrix), HachiError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    let total_coeffs: usize = witness.rows().iter().map(|row| row.len() * D).sum();
+    if total_coeffs == 0 {
         return Err(HachiError::InvalidInput(
             "cannot JL-project empty witness".to_string(),
         ));
     }
     for nonce in 1..=LABRADOR_MAX_JL_NONCE_RETRIES {
-        let matrix = LabradorJlMatrix::generate(seed, nonce, vector.len(), backend)?;
-        if let Some(proj) = project_with_matrix(&matrix, &vector) {
-            return Ok((proj, nonce));
+        transcript.append_bytes(labels::ABSORB_LABRADOR_JL_NONCE, &nonce.to_le_bytes());
+        let matrix = LabradorJlMatrix::generate::<F, T>(transcript, total_coeffs)?;
+        if let Some(proj) = project_streaming(&matrix, witness) {
+            return Ok((proj, nonce, matrix));
         }
     }
     Err(HachiError::InvalidInput(format!(
@@ -140,48 +155,35 @@ pub fn restore_constant_term<F: FieldCore, const D: usize>(
     transmitted
 }
 
-fn derive_jl_prg_seed(seed: &[u8; 16], nonce: u64) -> [u8; 32] {
-    let mut xof = Shake256::default();
-    xof.update(b"hachi/labrador/jl");
-    xof.update(seed);
-    xof.update(&nonce.to_le_bytes());
-    let mut out = [0u8; 32];
-    xof.finalize_xof().read(&mut out);
-    out
-}
-
-fn flatten_witness_coeffs<F: FieldCore + CanonicalField, const D: usize>(
+/// Compute the JL projection by streaming over witness coefficients without
+/// materializing the full flattened vector.
+fn project_streaming<F: FieldCore + CanonicalField, const D: usize>(
+    matrix: &LabradorJlMatrix,
     witness: &LabradorWitness<F, D>,
-) -> Vec<i64> {
-    let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    let per_row: Vec<Vec<i64>> = cfg_iter!(witness.rows())
-        .map(|row| {
-            row.iter()
-                .flat_map(|ring| ring.coefficients().iter())
-                .map(|coeff| {
-                    let c = coeff.to_canonical_u128();
-                    if c > half_q {
-                        -((q - c) as i64)
-                    } else {
-                        c as i64
-                    }
-                })
-                .collect()
-        })
-        .collect();
-    per_row.into_iter().flatten().collect()
-}
-
-fn project_with_matrix(matrix: &LabradorJlMatrix, vector: &[i64]) -> Option<[i32; 256]> {
-    if matrix.cols != vector.len() || matrix.rows != JL_ROWS {
+) -> Option<[i32; 256]> {
+    if matrix.signs.len() != JL_ROWS {
         return None;
     }
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let half_q = q / 2;
+
     let results: Vec<Option<i32>> = cfg_iter!(matrix.signs)
         .map(|row| {
             let mut acc = 0i128;
-            for (&sign, &value) in row.iter().zip(vector.iter()) {
-                acc += (sign as i128) * (value as i128);
+            let mut col = 0;
+            for witness_row in witness.rows() {
+                for ring in witness_row {
+                    for coeff in ring.coefficients() {
+                        let c = coeff.to_canonical_u128();
+                        let value = if c > half_q {
+                            -((q - c) as i128)
+                        } else {
+                            c as i128
+                        };
+                        acc += (row[col] as i128) * value;
+                        col += 1;
+                    }
+                }
             }
             if acc < i32::MIN as i128 || acc > i32::MAX as i128 {
                 None
@@ -201,32 +203,85 @@ fn project_with_matrix(matrix: &LabradorJlMatrix, vector: &[i64]) -> Option<[i32
 mod tests {
     use super::*;
     use crate::algebra::fields::Fp64;
+    use crate::protocol::transcript::labels::DOMAIN_LABRADOR_PROTOCOL;
+    use crate::protocol::transcript::Blake2bTranscript;
     use crate::FromSmallInt;
 
     type F = Fp64<4294967197>;
     const D: usize = 64;
 
-    fn sample_witness() -> LabradorWitness<F, D> {
-        let row = |len: usize| -> Vec<CyclotomicRing<F, D>> {
-            (0..len)
-                .map(|i| {
-                    CyclotomicRing::from_coefficients(std::array::from_fn(|j| {
-                        F::from_i64(((i + j) as i64 % 7) - 3)
-                    }))
-                })
-                .collect()
-        };
-        LabradorWitness::new(vec![row(4), row(4)])
+    fn sample_witness_from_seed(seed: u64) -> LabradorWitness<F, D> {
+        let num_rows = 2 + (seed % 3) as usize;
+        let row_len = 3 + (seed % 5) as usize;
+        let rows: Vec<Vec<CyclotomicRing<F, D>>> = (0..num_rows)
+            .map(|r| {
+                (0..row_len)
+                    .map(|i| {
+                        CyclotomicRing::from_coefficients(std::array::from_fn(|j| {
+                            let mix = seed
+                                .wrapping_mul(6364136223846793005)
+                                .wrapping_add(r as u64 * 997 + i as u64 * 31 + j as u64);
+                            F::from_i64(((mix % 11) as i64) - 5)
+                        }))
+                    })
+                    .collect()
+            })
+            .collect();
+        LabradorWitness::new(rows)
+    }
+
+    fn witness_squared_norm(witness: &LabradorWitness<F, D>) -> i128 {
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let half_q = q / 2;
+        let mut norm_sq = 0i128;
+        for row in witness.rows() {
+            for ring in row {
+                for coeff in ring.coefficients() {
+                    let c = coeff.to_canonical_u128();
+                    let v = if c > half_q {
+                        -((q - c) as i128)
+                    } else {
+                        c as i128
+                    };
+                    norm_sq += v * v;
+                }
+            }
+        }
+        norm_sq
     }
 
     #[test]
     fn project_is_deterministic_and_replayable() {
-        let witness = sample_witness();
-        let seed = [9u8; 16];
-        let (p1, n1) = project(&witness, &seed, MatrixPrgBackendChoice::Shake256).unwrap();
-        let (p2, n2) = project(&witness, &seed, MatrixPrgBackendChoice::Shake256).unwrap();
+        let witness = sample_witness_from_seed(42);
+        let mut t1 = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let mut t2 = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let (p1, n1, _) = project(&witness, &mut t1).unwrap();
+        let (p2, n2, _) = project(&witness, &mut t2).unwrap();
         assert_eq!(p1, p2);
         assert_eq!(n1, n2);
+    }
+
+    #[test]
+    fn project_norm_bound_over_multiple_witnesses() {
+        for seed in 1..=10u64 {
+            let witness = sample_witness_from_seed(seed);
+            let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+            let (projection, nonce, _) = project(&witness, &mut transcript).unwrap();
+
+            let beta = witness_squared_norm(&witness);
+            let p_norm_sq: i128 = projection.iter().map(|&v| (v as i128) * (v as i128)).sum();
+            let p_inf: i128 = projection.iter().map(|&v| (v as i128).abs()).max().unwrap();
+            let entry_bound = ((128.0 * beta as f64).sqrt()) as i128;
+
+            println!(
+                "seed={seed}: nonce={nonce}, ||p||²={p_norm_sq}, ||p||_inf={p_inf}, \
+                 sqrt(128β)={entry_bound}, β={beta}"
+            );
+            assert!(
+                p_inf <= entry_bound,
+                "seed={seed}: ||p||_inf={p_inf} exceeds sqrt(128β)={entry_bound}"
+            );
+        }
     }
 
     #[test]

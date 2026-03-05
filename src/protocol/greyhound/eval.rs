@@ -352,7 +352,6 @@ mod tests {
     fn stage2_single_labrador_fold_verifies() {
         let backend = MatrixPrgBackendChoice::Shake256;
         let comkey_seed = [42u8; 32];
-        let jl_seed = [7u8; 16];
 
         let ring_elems = 16;
         let coeffs = vec![F::zero(); ring_elems * D];
@@ -468,7 +467,6 @@ mod tests {
             &proof.config,
             &setup,
             &comkey_seed,
-            &jl_seed,
             backend,
             0,
             &mut prover_transcript,
@@ -484,7 +482,6 @@ mod tests {
             &statement,
             &labrador_proof,
             &comkey_seed,
-            &jl_seed,
             backend,
             &mut verify_transcript,
         )
@@ -497,7 +494,6 @@ mod tests {
     fn stage3_full_labrador_recursion_verifies() {
         let backend = MatrixPrgBackendChoice::Shake256;
         let comkey_seed = [42u8; 32];
-        let jl_seed = [7u8; 16];
 
         let ring_elems = 16;
         let coeffs = vec![F::zero(); ring_elems * D];
@@ -598,7 +594,6 @@ mod tests {
             &statement,
             &proof.config,
             &comkey_seed,
-            &jl_seed,
             backend,
             &mut prover_transcript,
         )
@@ -613,7 +608,6 @@ mod tests {
             &statement,
             &labrador_proof,
             &comkey_seed,
-            &jl_seed,
             backend,
             &mut verify_transcript,
         )

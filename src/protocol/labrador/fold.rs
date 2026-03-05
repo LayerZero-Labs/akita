@@ -11,8 +11,7 @@ use crate::protocol::labrador::johnson_lindenstrauss::{
 };
 use crate::protocol::labrador::setup::LabradorSetup;
 use crate::protocol::labrador::transcript::{
-    absorb_labrador_jl_nonce, absorb_labrador_jl_projection, absorb_labrador_level_context,
-    LabradorLevelTranscriptContext,
+    absorb_labrador_jl_projection, absorb_labrador_level_context, LabradorLevelTranscriptContext,
 };
 use crate::protocol::labrador::types::{
     LabradorConstraint, LabradorLevelProof, LabradorReductionConfig, LabradorStatement,
@@ -60,7 +59,6 @@ pub fn prove_level<F, T, const D: usize>(
     config: &LabradorReductionConfig,
     setup: &LabradorSetup<F, D>,
     comkey_seed: &LabradorComKeySeed,
-    jl_seed: &[u8; 16],
     backend: MatrixPrgBackendChoice,
     level_index: usize,
     transcript: &mut T,
@@ -92,14 +90,11 @@ where
     let (t_hat, u1) =
         CoeffAjtai::two_tier_commit(&setup.a_mat, &setup.b_mat, witness.rows(), &coeff_config)?;
 
-    // Phase 2: JL Projection
-    let (jl_projection, jl_nonce) = project(witness, jl_seed, backend)?;
-
     let r = witness.rows().len();
     let row_lengths: Vec<usize> = witness.rows().iter().map(|row| row.len()).collect();
     let max_len = row_lengths.iter().copied().max().unwrap_or(0);
 
-    // Transcript: absorb level context, commitments, JL.
+    // Absorb level context and u1 before deriving JL seed.
     absorb_labrador_level_context(
         transcript,
         &LabradorLevelTranscriptContext {
@@ -117,18 +112,15 @@ where
         },
     )?;
     transcript.append_serde(labels::ABSORB_LABRADOR_U1, &u1);
+
+    // Phase 2: JL Projection — nonce + matrix squeezed from transcript.
+    let (jl_projection, jl_nonce, jl_matrix) = project(witness, transcript)?;
+
     absorb_labrador_jl_projection(transcript, &jl_projection);
-    absorb_labrador_jl_nonce(transcript, jl_nonce);
 
     // Phase 3: JL lift constraints and aggregation.
-    let (phi_jl, b_jl, bb) = aggregate_jl_constraints_prover(
-        witness,
-        &jl_projection,
-        jl_seed,
-        jl_nonce,
-        backend,
-        transcript,
-    )?;
+    let (phi_jl, b_jl, bb) =
+        aggregate_jl_constraints_prover(witness, &jl_projection, &jl_matrix, transcript)?;
 
     // Aggregate statement constraints (after JL lifts).
     let (phi_stmt, b_stmt) =
@@ -376,12 +368,13 @@ fn jl_collapse_phi_from_weights<F: FieldCore + CanonicalField + FromSmallInt, co
     matrix: &LabradorJlMatrix,
     omega: &[i64; 256],
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-    if matrix.cols % D != 0 {
+    if matrix.cols() % D != 0 {
         return Err(HachiError::InvalidInput(
             "JL matrix cols not divisible by ring degree".to_string(),
         ));
     }
-    let mut weights = vec![0i64; matrix.cols];
+    let cols = matrix.cols();
+    let mut weights = vec![0i64; cols];
     for (row_idx, row) in matrix.signs.iter().enumerate() {
         let alpha = omega[row_idx];
         for (col_idx, &sign) in row.iter().enumerate() {
@@ -389,7 +382,7 @@ fn jl_collapse_phi_from_weights<F: FieldCore + CanonicalField + FromSmallInt, co
         }
     }
 
-    let ring_elems = matrix.cols / D;
+    let ring_elems = cols / D;
     let phi: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..ring_elems)
         .map(|idx| {
             let coeffs = std::array::from_fn(|k| {
@@ -406,9 +399,7 @@ fn jl_collapse_phi_from_weights<F: FieldCore + CanonicalField + FromSmallInt, co
 fn aggregate_jl_constraints_prover<F, T, const D: usize>(
     witness: &LabradorWitness<F, D>,
     jl_projection: &[i32; 256],
-    jl_seed: &[u8; 16],
-    jl_nonce: u64,
-    backend: MatrixPrgBackendChoice,
+    matrix: &LabradorJlMatrix,
     transcript: &mut T,
 ) -> Result<
     (
@@ -423,17 +414,6 @@ where
     T: Transcript<F>,
 {
     let (flat, ranges) = flatten_witness(witness);
-    let cols = flat
-        .len()
-        .checked_mul(D)
-        .ok_or_else(|| HachiError::InvalidInput("JL column count overflow".into()))?;
-    if cols == 0 {
-        return Err(HachiError::InvalidInput(
-            "JL collapse requires non-empty witness".to_string(),
-        ));
-    }
-
-    let matrix = LabradorJlMatrix::generate(jl_seed, jl_nonce, cols, backend)?;
     let mut phi_total: Vec<Vec<CyclotomicRing<F, D>>> = witness
         .rows()
         .iter()
@@ -445,7 +425,7 @@ where
 
     for _ in 0..jl_lifts {
         let omega = sample_jl_collapse_challenge::<F, T>(transcript);
-        let phi_flat = jl_collapse_phi_from_weights::<F, D>(&matrix, &omega)?;
+        let phi_flat = jl_collapse_phi_from_weights::<F, D>(matrix, &omega)?;
         let b_full = dot_product(&phi_flat, &flat);
         let target = collapse(jl_projection, &omega);
         let expected_c0 = F::from_i64(target);
@@ -768,7 +748,6 @@ mod tests {
             tail: false,
         };
         let seed = [1u8; 32];
-        let jl_seed = [2u8; 16];
         let r = witness.rows().len();
         let max_len = witness
             .rows()
@@ -784,7 +763,6 @@ mod tests {
             &cfg,
             &setup,
             &seed,
-            &jl_seed,
             MatrixPrgBackendChoice::Shake256,
             0,
             &mut transcript,
@@ -819,7 +797,6 @@ mod tests {
             tail: true,
         };
         let seed = [3u8; 32];
-        let jl_seed = [4u8; 16];
         let r = witness.rows().len();
         let max_len = witness
             .rows()
@@ -835,7 +812,6 @@ mod tests {
             &cfg,
             &setup,
             &seed,
-            &jl_seed,
             MatrixPrgBackendChoice::Shake256,
             1,
             &mut transcript,
@@ -908,7 +884,6 @@ mod tests {
             tail: false,
         };
         let comkey_seed = [9u8; 32];
-        let jl_seed = [7u8; 16];
         let r = witness.rows().len();
         let max_len = witness
             .rows()
@@ -930,7 +905,6 @@ mod tests {
             &cfg,
             &setup,
             &comkey_seed,
-            &jl_seed,
             MatrixPrgBackendChoice::Shake256,
             0,
             &mut transcript,
@@ -946,7 +920,6 @@ mod tests {
             &statement,
             &proof,
             &comkey_seed,
-            &jl_seed,
             MatrixPrgBackendChoice::Shake256,
             &mut verify_transcript,
         )
@@ -961,7 +934,6 @@ mod tests {
             &fold.statement,
             &base_proof,
             &comkey_seed,
-            &jl_seed,
             MatrixPrgBackendChoice::Shake256,
             &mut base_transcript,
         )
@@ -1005,7 +977,6 @@ mod tests {
             tail: false,
         };
         let comkey_seed = [9u8; 32];
-        let jl_seed = [7u8; 16];
         let r1 = witness.rows().len();
         let max_len1 = witness
             .rows()
@@ -1027,7 +998,6 @@ mod tests {
             &cfg,
             &setup1,
             &comkey_seed,
-            &jl_seed,
             MatrixPrgBackendChoice::Shake256,
             0,
             &mut transcript,
@@ -1054,7 +1024,6 @@ mod tests {
             &cfg,
             &setup2,
             &comkey_seed,
-            &jl_seed,
             MatrixPrgBackendChoice::Shake256,
             1,
             &mut transcript,
@@ -1098,7 +1067,6 @@ mod tests {
             &statement,
             &proof,
             &comkey_seed,
-            &jl_seed,
             MatrixPrgBackendChoice::Shake256,
             &mut verify_transcript,
         )
