@@ -5,6 +5,7 @@ use hachi_pcs::algebra::fields::Fp32;
 use hachi_pcs::algebra::ring::CyclotomicRing;
 use hachi_pcs::protocol::labrador::comkey::LabradorComKeySeed;
 use hachi_pcs::protocol::labrador::fold::prove_level;
+use hachi_pcs::protocol::labrador::select_config;
 use hachi_pcs::protocol::labrador::setup::LabradorSetup;
 use hachi_pcs::protocol::labrador::types::{
     LabradorConstraint, LabradorProof, LabradorReductionConfig, LabradorStatement, LabradorWitness,
@@ -37,8 +38,8 @@ struct BenchInstance {
 }
 
 fn build_instance(num_constraints: usize) -> BenchInstance {
-    let row_len = 1 << 5;
-    let num_rows = 4;
+    let row_len = 1 << 10;
+    let num_rows = 8;
 
     let rows: Vec<Vec<CyclotomicRing<F, D>>> = (0..num_rows)
         .map(|r| {
@@ -90,15 +91,7 @@ fn build_instance(num_constraints: usize) -> BenchInstance {
         hash: [0u8; 16],
     };
 
-    let config = LabradorReductionConfig {
-        f: 4,
-        b: 8,
-        fu: 4,
-        bu: 8,
-        kappa: 4,
-        kappa1: 4,
-        tail: false,
-    };
+    let config = select_config::<F, D>(&witness).expect("select_config failed");
 
     let comkey_seed: LabradorComKeySeed = [42u8; 32];
     let r = witness.rows().len();
@@ -169,7 +162,7 @@ fn report_sizes(inst: &BenchInstance) {
 }
 
 fn bench_labrador_single_fold(c: &mut Criterion) {
-    let num_constraints = 1 << 15;
+    let num_constraints = 1 << 4;
     let inst = build_instance(num_constraints);
 
     report_sizes(&inst);
