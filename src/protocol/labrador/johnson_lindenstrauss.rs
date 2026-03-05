@@ -39,7 +39,7 @@ impl LabradorJlMatrix {
                 "JL matrix requires non-zero column count".to_string(),
             ));
         }
-        let byte_len_per_row = cols.div_ceil(8);
+        let byte_len_per_row = (cols * 2).div_ceil(8);
         let total_bytes = JL_ROWS * byte_len_per_row;
         let all_bytes = transcript.challenge_bytes(labels::CHALLENGE_LABRADOR_JL_SEED, total_bytes);
         let signs: Vec<Vec<i8>> = all_bytes
@@ -47,11 +47,14 @@ impl LabradorJlMatrix {
             .map(|bytes| {
                 (0..cols)
                     .map(|c| {
-                        let bit = (bytes[c / 8] >> (c % 8)) & 1;
-                        if bit == 0 {
-                            -1
-                        } else {
-                            1
+                        let bit_offset = c * 2;
+                        let byte_idx = bit_offset / 8;
+                        let shift = bit_offset % 8;
+                        let pair = (bytes[byte_idx] >> shift) & 0b11;
+                        match pair {
+                            0b00 => -1,
+                            0b11 => 1,
+                            _ => 0,
                         }
                     })
                     .collect()
