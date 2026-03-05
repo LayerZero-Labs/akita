@@ -8,14 +8,14 @@ use crate::protocol::commitment::utils::linear::decompose_rows_with_carry;
 use crate::protocol::labrador::aggregation::{
     add_phi_in_place, aggregate_jl_constraints_prover, aggregate_statement_constraints, dot_product,
 };
+use crate::protocol::labrador::constraints::build_next_constraints;
 use crate::protocol::labrador::johnson_lindenstrauss::project;
 use crate::protocol::labrador::setup::LabradorSetup;
 use crate::protocol::labrador::transcript::{
     absorb_labrador_jl_projection, absorb_labrador_level_context, LabradorLevelTranscriptContext,
 };
 use crate::protocol::labrador::types::{
-    LabradorConstraint, LabradorLevelProof, LabradorReductionConfig, LabradorStatement,
-    LabradorWitness,
+    LabradorLevelProof, LabradorReductionConfig, LabradorStatement, LabradorWitness,
 };
 use crate::protocol::labrador::utils::mat_vec_mul;
 use crate::protocol::transcript::labels;
@@ -264,203 +264,6 @@ fn compute_linear_garbage<F: FieldCore + CanonicalField + FromSmallInt, const D:
     Ok(out)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_next_constraints<
-    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
-    const D: usize,
->(
-    phi_total: &[Vec<CyclotomicRing<F, D>>],
-    b_total: &CyclotomicRing<F, D>,
-    challenges: &[CyclotomicRing<F, D>],
-    row_lengths: &[usize],
-    max_len: usize,
-    config: &LabradorReductionConfig,
-    u1: &[CyclotomicRing<F, D>],
-    u2: &[CyclotomicRing<F, D>],
-    setup: &LabradorSetup<F, D>,
-) -> Result<Vec<LabradorConstraint<F, D>>, HachiError> {
-    let r = row_lengths.len();
-    if r == 0 || challenges.len() != r {
-        return Err(HachiError::InvalidInput(
-            "challenge row count mismatch".to_string(),
-        ));
-    }
-    if config.f == 0 {
-        return Err(HachiError::InvalidInput(
-            "cannot build next constraints with f=0".to_string(),
-        ));
-    }
-
-    let pow_b: Vec<F> = (0..config.f)
-        .map(|idx| pow2_field::<F>(config.b * idx))
-        .collect();
-    let pow_bu: Vec<F> = (0..config.fu)
-        .map(|idx| pow2_field::<F>(config.bu * idx))
-        .collect();
-
-    let mut combined_phi = vec![CyclotomicRing::<F, D>::zero(); max_len];
-    for (row_idx, row_phi) in phi_total.iter().enumerate() {
-        let c = challenges[row_idx];
-        for (j, elem) in row_phi.iter().enumerate() {
-            combined_phi[j] += c * *elem;
-        }
-    }
-
-    let mut constraints = Vec::new();
-    let t_hat_len = r * config.kappa * config.fu;
-    let h_len = r * (r + 1) / 2;
-    let h_hat_len = h_len * config.fu;
-    let aux_row = config.f;
-    let aux_row_len = t_hat_len + h_hat_len;
-    let num_rows = config.f + 1;
-
-    if config.kappa1 > 0 {
-        if u1.len() != config.kappa1 || u2.len() != config.kappa1 {
-            return Err(HachiError::InvalidInput(
-                "u1/u2 length mismatch for next statement".to_string(),
-            ));
-        }
-
-        // B · t_hat = u1
-        let mut aux_coeffs = vec![CyclotomicRing::<F, D>::zero(); config.kappa1 * aux_row_len];
-        for (out_idx, b_row) in setup.b_mat.iter().enumerate() {
-            let start = out_idx * aux_row_len;
-            for (j, val) in b_row.iter().enumerate() {
-                aux_coeffs[start + j] = *val;
-            }
-        }
-        let mut coefficients = vec![vec![]; num_rows];
-        coefficients[aux_row] = aux_coeffs;
-        constraints.push(LabradorConstraint {
-            coefficients,
-            target: u1.to_vec(),
-        });
-
-        // D · h_hat = u2
-        let mut aux_coeffs = vec![CyclotomicRing::<F, D>::zero(); config.kappa1 * aux_row_len];
-        for (out_idx, d_row) in setup.d_mat.iter().enumerate() {
-            let start = out_idx * aux_row_len + t_hat_len;
-            for (j, val) in d_row.iter().enumerate() {
-                aux_coeffs[start + j] = *val;
-            }
-        }
-        let mut coefficients = vec![vec![]; num_rows];
-        coefficients[aux_row] = aux_coeffs;
-        constraints.push(LabradorConstraint {
-            coefficients,
-            target: u2.to_vec(),
-        });
-    }
-
-    // A·z - c·t = 0  (inner commitment relation)
-    let mut az_coefficients = vec![vec![]; num_rows];
-    for part_idx in 0..config.f {
-        let scale = pow_b[part_idx];
-        let mut coeffs = Vec::with_capacity(config.kappa * max_len);
-        for a_row in &setup.a_mat {
-            for elem in a_row.iter() {
-                coeffs.push(elem.scale(&scale));
-            }
-        }
-        az_coefficients[part_idx] = coeffs;
-    }
-
-    let mut t_coeffs = vec![CyclotomicRing::<F, D>::zero(); config.kappa * t_hat_len];
-    for (row_idx, challenge) in challenges.iter().enumerate() {
-        for (part_idx, &scale) in pow_bu.iter().enumerate() {
-            let scaled = challenge.scale(&scale);
-            for k in 0..config.kappa {
-                let idx = row_idx * config.kappa * config.fu + k * config.fu + part_idx;
-                let slot = k * t_hat_len + idx;
-                t_coeffs[slot] = -scaled;
-            }
-        }
-    }
-    let mut aux_az = vec![CyclotomicRing::<F, D>::zero(); config.kappa * aux_row_len];
-    for k in 0..config.kappa {
-        let src_start = k * t_hat_len;
-        let dst_start = k * aux_row_len;
-        aux_az[dst_start..dst_start + t_hat_len]
-            .copy_from_slice(&t_coeffs[src_start..src_start + t_hat_len]);
-    }
-    az_coefficients[aux_row] = aux_az;
-    constraints.push(LabradorConstraint {
-        coefficients: az_coefficients,
-        target: vec![CyclotomicRing::<F, D>::zero(); config.kappa],
-    });
-
-    // linear garbage constraint
-    let mut lg_coefficients = vec![vec![]; num_rows];
-    for part_idx in 0..config.f {
-        let scale = pow_b[part_idx];
-        let coeffs: Vec<CyclotomicRing<F, D>> =
-            combined_phi.iter().map(|elem| elem.scale(&scale)).collect();
-        lg_coefficients[part_idx] = coeffs;
-    }
-    let mut h_coeffs = vec![CyclotomicRing::<F, D>::zero(); h_hat_len];
-    for i in 0..r {
-        for j in i..r {
-            let coeff = challenges[i] * challenges[j];
-            let pair = pair_index(i, j, r);
-            for (part_idx, &scale) in pow_bu.iter().enumerate() {
-                let idx = pair * config.fu + part_idx;
-                h_coeffs[idx] = -(coeff.scale(&scale));
-            }
-        }
-    }
-    let mut aux_lg = vec![CyclotomicRing::<F, D>::zero(); aux_row_len];
-    aux_lg[t_hat_len..t_hat_len + h_hat_len].copy_from_slice(&h_coeffs);
-    lg_coefficients[aux_row] = aux_lg;
-    constraints.push(LabradorConstraint {
-        coefficients: lg_coefficients,
-        target: vec![CyclotomicRing::<F, D>::zero()],
-    });
-
-    // diagonal (norm) constraint
-    let mut diag_coeffs = vec![CyclotomicRing::<F, D>::zero(); aux_row_len];
-    for i in 0..r {
-        let pair = pair_index(i, i, r);
-        for (part_idx, &scale) in pow_bu.iter().enumerate() {
-            let idx = pair * config.fu + part_idx;
-            diag_coeffs[t_hat_len + idx] = constant_poly(scale);
-        }
-    }
-    let mut diag_coefficients = vec![vec![]; num_rows];
-    diag_coefficients[aux_row] = diag_coeffs;
-    constraints.push(LabradorConstraint {
-        coefficients: diag_coefficients,
-        target: vec![*b_total],
-    });
-
-    Ok(constraints)
-}
-
-fn pow2_field<F: FieldCore + FromSmallInt>(exp: usize) -> F {
-    let two = F::from_u64(2);
-    let mut acc = F::one();
-    for _ in 0..exp {
-        acc = acc * two;
-    }
-    acc
-}
-
-fn constant_poly<F: FieldCore, const D: usize>(value: F) -> CyclotomicRing<F, D> {
-    CyclotomicRing::from_coefficients(std::array::from_fn(
-        |i| {
-            if i == 0 {
-                value
-            } else {
-                F::zero()
-            }
-        },
-    ))
-}
-
-fn pair_index(i: usize, j: usize, r: usize) -> usize {
-    debug_assert!(i <= j && j < r);
-    i * (2 * r - i + 1) / 2 + (j - i)
-}
-
 /// Compute z = sum_i c_i * s_i (all-row linear combination).
 fn amortize_witness<F: FieldCore + CanonicalField, const D: usize>(
     witness: &LabradorWitness<F, D>,
@@ -484,6 +287,7 @@ fn amortize_witness<F: FieldCore + CanonicalField, const D: usize>(
 mod tests {
     use super::*;
     use crate::algebra::fields::Fp64;
+    use crate::protocol::labrador::constraints::{LabradorConstraint, LabradorConstraintTerm};
     use crate::protocol::labrador::types::LabradorReductionConfig;
     use crate::protocol::labrador::{verify, LabradorProof};
     use crate::protocol::transcript::labels::DOMAIN_LABRADOR_PROTOCOL;
@@ -626,10 +430,13 @@ mod tests {
             u1: Vec::new(),
             u2: Vec::new(),
             challenges: Vec::new(),
-            constraints: vec![LabradorConstraint {
-                coefficients: vec![vec![mk_ring(1), mk_ring(0)], vec![mk_ring(0), mk_ring(1)]],
-                target: vec![target],
-            }],
+            constraints: vec![LabradorConstraint::new(
+                vec![
+                    LabradorConstraintTerm::new(0, 0, vec![mk_ring(1), mk_ring(0)]),
+                    LabradorConstraintTerm::new(1, 0, vec![mk_ring(0), mk_ring(1)]),
+                ],
+                target,
+            )],
             beta_sq: 1 << 40,
             hash: [0u8; 16],
         };
@@ -695,10 +502,13 @@ mod tests {
             u1: Vec::new(),
             u2: Vec::new(),
             challenges: Vec::new(),
-            constraints: vec![LabradorConstraint {
-                coefficients: vec![vec![mk_ring(1), mk_ring(0)], vec![mk_ring(0), mk_ring(1)]],
-                target: vec![target],
-            }],
+            constraints: vec![LabradorConstraint::new(
+                vec![
+                    LabradorConstraintTerm::new(0, 0, vec![mk_ring(1), mk_ring(0)]),
+                    LabradorConstraintTerm::new(1, 0, vec![mk_ring(0), mk_ring(1)]),
+                ],
+                target,
+            )],
             beta_sq: 1 << 40,
             hash: [0u8; 16],
         };

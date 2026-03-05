@@ -1,7 +1,7 @@
 //! Greyhound prover-side evaluation reduction.
 //!
 //! Produces a 4-row witness matching the C reference structure (adapted for
-//! multilinear evaluation) and 5 constraints via `greyhound_reduce`.
+//! multilinear evaluation) and scalar Labrador constraints via `greyhound_reduce`.
 
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
@@ -247,7 +247,7 @@ mod tests {
     const D: usize = 64;
 
     #[test]
-    fn eval_outputs_four_row_witness_and_five_constraints() {
+    fn eval_outputs_four_row_witness_and_scalar_constraints() {
         let coeffs: Vec<F> = (0..256).map(|i| F::from_i64((i as i64 % 13) - 6)).collect();
         let eval_point: Vec<F> = (0..8).map(|i| F::from_i64(i as i64 + 1)).collect();
         let eval_value = F::from_i64(9);
@@ -264,7 +264,10 @@ mod tests {
         .unwrap();
         assert_eq!(proof.u2, statement.u2);
         assert_eq!(witness.rows().len(), 4);
-        assert_eq!(statement.constraints.len(), 5);
+        assert_eq!(
+            statement.constraints.len(),
+            statement.u1.len() + statement.u2.len() + proof.config.kappa + 2
+        );
     }
 
     #[test]

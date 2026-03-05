@@ -7,10 +7,11 @@ use hachi_pcs::protocol::labrador::comkey::LabradorComKeySeed;
 use hachi_pcs::protocol::labrador::fold::prove_level;
 use hachi_pcs::protocol::labrador::select_config;
 use hachi_pcs::protocol::labrador::setup::LabradorSetup;
-use hachi_pcs::protocol::labrador::types::{
-    LabradorConstraint, LabradorProof, LabradorReductionConfig, LabradorStatement, LabradorWitness,
-};
 use hachi_pcs::protocol::labrador::verifier::verify;
+use hachi_pcs::protocol::labrador::{
+    LabradorConstraint, LabradorConstraintTerm, LabradorProof, LabradorReductionConfig,
+    LabradorStatement, LabradorWitness,
+};
 use hachi_pcs::protocol::transcript::labels::DOMAIN_LABRADOR_PROTOCOL;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::{FieldCore, FromSmallInt, Transcript};
@@ -75,10 +76,12 @@ fn build_instance(num_constraints: usize) -> BenchInstance {
                     target += *coeff * witness.rows()[r][j];
                 }
             }
-            LabradorConstraint {
-                coefficients: coeffs,
-                target: vec![target],
-            }
+            let terms = coeffs
+                .into_iter()
+                .enumerate()
+                .map(|(row_idx, row_coeffs)| LabradorConstraintTerm::new(row_idx, 0, row_coeffs))
+                .collect();
+            LabradorConstraint::new(terms, target)
         })
         .collect();
 

@@ -1,25 +1,26 @@
 //! Greyhound verifier-side reduction to Labrador statement.
 //!
-//! Builds 5 constraints matching the C reference, adapted for multilinear
-//! evaluation. The fold challenges are passed in (sampled by the caller from
-//! the transcript) so this function is transcript-free.
+//! Builds scalar Labrador constraints matching the C reference relations,
+//! adapted for multilinear evaluation. The fold challenges are passed in
+//! (sampled by the caller from the transcript) so this function is transcript-free.
 
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 use crate::primitives::poly::multilinear_lagrange_basis;
 use crate::protocol::greyhound::types::GreyhoundEvalProof;
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
-use crate::protocol::labrador::types::{LabradorConstraint, LabradorStatement};
+use crate::protocol::labrador::types::LabradorStatement;
+use crate::protocol::labrador::{LabradorConstraint, LabradorConstraintTerm};
 use crate::{CanonicalField, FieldCore, FieldSampling};
 
 /// Rebuild a Labrador statement from Greyhound proof data and fold challenges.
 ///
-/// The 5 constraints encode (multilinear adaptation of C's `polcom_reduce`):
-///   0. Outer commitment: B · group2 = u1
-///   1. Eval-witness commitment: B_eval · group3 = u2
-///   2. Amortization consistency: <inner_basis, z> = <challenges, v>
-///   3. Inner commitment relation: A · z = <challenges, t> (mult=kappa)
-///   4. Evaluation check: <outer_basis, v> = eval_value
+/// The scalar constraints encode (multilinear adaptation of C's `polcom_reduce`):
+///   - one outer-commitment equation per entry of `u1`
+///   - one eval-witness equation per entry of `u2`
+///   - one amortization consistency equation
+///   - one inner-commitment equation per row of `A`
+///   - one evaluation equation
 ///
 /// # Errors
 ///
@@ -89,7 +90,7 @@ where
     })
 }
 
-/// Build the 5 constraints for the 4-row Greyhound witness.
+/// Build the scalar constraints for the 4-row Greyhound witness.
 ///
 /// Witness layout (element-major decomposition ordering):
 ///   row0: z_low   — m*f elements, z_low[j*f+k] = low part of k-th decomp of z[j]
@@ -141,60 +142,67 @@ fn build_constraints<F: FieldCore + CanonicalField + FieldSampling, const D: usi
     };
 
     // cnst0: B · row2 = u1  (outer commitment of decomposed inner commitments)
-    let num_rows = 4; // z_low, z_high, t_hat, v_hat
     let t_hat_len = kappa * fu * n;
     let v_hat_len = fu * n;
     let z_group_len = m * f;
 
+    let mut constraints = Vec::new();
+
     // cnst0: B · row2 = u1
-    let c0 = if kappa1 > 0 {
+    if kappa1 > 0 {
         let b_mat = derive_extendable_comkey_matrix::<F, D>(
             kappa1,
             t_hat_len,
             comkey_seed,
             b"labrador/comkey/B",
         );
-        let coeffs: Vec<CyclotomicRing<F, D>> = b_mat.into_iter().flatten().collect();
-        let mut coefficients = vec![vec![]; num_rows];
-        coefficients[2] = coeffs;
-        LabradorConstraint {
-            coefficients,
-            target: u1.to_vec(),
-        }
+        constraints.extend(
+            b_mat
+                .into_iter()
+                .zip(u1.iter().copied())
+                .map(|(coeffs, target)| {
+                    LabradorConstraint::new(vec![LabradorConstraintTerm::new(2, 0, coeffs)], target)
+                }),
+        );
     } else {
         let one = CyclotomicRing::<F, D>::one();
-        let mut coefficients = vec![vec![]; num_rows];
-        coefficients[2] = vec![one; u1.len()];
-        LabradorConstraint {
-            coefficients,
-            target: u1.to_vec(),
-        }
-    };
+        constraints.extend(u1.iter().copied().enumerate().map(|(out_idx, target)| {
+            LabradorConstraint::new(
+                vec![LabradorConstraintTerm::new(2, out_idx, vec![one])],
+                target,
+            )
+        }));
+    }
 
     // cnst1: B_eval · row3 = u2
-    let c1 = if kappa1 > 0 {
+    if kappa1 > 0 {
         let b_eval = derive_extendable_comkey_matrix::<F, D>(
             kappa1,
             v_hat_len,
             comkey_seed,
             b"greyhound/comkey/B_eval",
         );
-        let coeffs: Vec<CyclotomicRing<F, D>> = b_eval.into_iter().flatten().collect();
-        let mut coefficients = vec![vec![]; num_rows];
-        coefficients[3] = coeffs;
-        LabradorConstraint {
-            coefficients,
-            target: proof.u2.clone(),
-        }
+        constraints.extend(b_eval.into_iter().zip(proof.u2.iter().copied()).map(
+            |(coeffs, target)| {
+                LabradorConstraint::new(vec![LabradorConstraintTerm::new(3, 0, coeffs)], target)
+            },
+        ));
     } else {
         let one = CyclotomicRing::<F, D>::one();
-        let mut coefficients = vec![vec![]; num_rows];
-        coefficients[3] = vec![one; proof.u2.len()];
-        LabradorConstraint {
-            coefficients,
-            target: proof.u2.clone(),
-        }
-    };
+        constraints.extend(
+            proof
+                .u2
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(out_idx, target)| {
+                    LabradorConstraint::new(
+                        vec![LabradorConstraintTerm::new(3, out_idx, vec![one])],
+                        target,
+                    )
+                }),
+        );
+    }
 
     // cnst2: amortization consistency
     let mut phi0 = vec![CyclotomicRing::<F, D>::zero(); z_group_len];
@@ -213,39 +221,49 @@ fn build_constraints<F: FieldCore + CanonicalField + FieldSampling, const D: usi
             phi_v[i * fu + l] = scalar_ring(-(fold_challenges[i] * pow2(l * bu)));
         }
     }
-    let c2 = LabradorConstraint {
-        coefficients: vec![phi0, phi1, vec![], phi_v],
-        target: vec![CyclotomicRing::<F, D>::zero()],
-    };
+    constraints.push(LabradorConstraint::new(
+        vec![
+            LabradorConstraintTerm::new(0, 0, phi0),
+            LabradorConstraintTerm::new(1, 0, phi1),
+            LabradorConstraintTerm::new(3, 0, phi_v),
+        ],
+        CyclotomicRing::<F, D>::zero(),
+    ));
 
     // cnst3: inner commitment relation  A·z - c·t = 0
     let a_mat =
         derive_extendable_comkey_matrix::<F, D>(kappa, m, comkey_seed, b"labrador/comkey/A");
-    let mut phi_z0 = vec![CyclotomicRing::<F, D>::zero(); kappa * z_group_len];
-    let mut phi_z1 = vec![CyclotomicRing::<F, D>::zero(); kappa * z_group_len];
+    let mut phi_z0 = vec![vec![CyclotomicRing::<F, D>::zero(); z_group_len]; kappa];
+    let mut phi_z1 = vec![vec![CyclotomicRing::<F, D>::zero(); z_group_len]; kappa];
     for r in 0..kappa {
         for j in 0..m {
             for k in 0..f {
                 let w = a_mat[r][j].scale(&pow2(k * b));
-                phi_z0[r * z_group_len + j * f + k] = w;
-                phi_z1[r * z_group_len + j * f + k] = w.scale(&bu_scale);
+                phi_z0[r][j * f + k] = w;
+                phi_z1[r][j * f + k] = w.scale(&bu_scale);
             }
         }
     }
     let t_hat_per_col = kappa * fu;
-    let mut phi_t = vec![CyclotomicRing::<F, D>::zero(); kappa * t_hat_len];
+    let mut phi_t = vec![vec![CyclotomicRing::<F, D>::zero(); t_hat_len]; kappa];
     for i in 0..n {
         for l in 0..fu {
             let neg_ci_scale = scalar_ring(-(fold_challenges[i] * pow2(l * bu)));
             for r in 0..kappa {
-                phi_t[r * t_hat_len + i * t_hat_per_col + r * fu + l] = neg_ci_scale;
+                phi_t[r][i * t_hat_per_col + r * fu + l] = neg_ci_scale;
             }
         }
     }
-    let c3 = LabradorConstraint {
-        coefficients: vec![phi_z0, phi_z1, phi_t, vec![]],
-        target: vec![CyclotomicRing::<F, D>::zero(); kappa],
-    };
+    constraints.extend((0..kappa).map(|row_idx| {
+        LabradorConstraint::new(
+            vec![
+                LabradorConstraintTerm::new(0, 0, phi_z0[row_idx].clone()),
+                LabradorConstraintTerm::new(1, 0, phi_z1[row_idx].clone()),
+                LabradorConstraintTerm::new(2, 0, phi_t[row_idx].clone()),
+            ],
+            CyclotomicRing::<F, D>::zero(),
+        )
+    }));
 
     // cnst4: evaluation check
     let mut phi_eval = vec![CyclotomicRing::<F, D>::zero(); v_hat_len];
@@ -255,14 +273,12 @@ fn build_constraints<F: FieldCore + CanonicalField + FieldSampling, const D: usi
             phi_eval[i * fu + l] = scalar_ring(ob * pow2(l * bu));
         }
     }
-    let mut coefficients = vec![vec![]; num_rows];
-    coefficients[3] = phi_eval;
-    let c4 = LabradorConstraint {
-        coefficients,
-        target: vec![scalar_ring(eval_value)],
-    };
+    constraints.push(LabradorConstraint::new(
+        vec![LabradorConstraintTerm::new(3, 0, phi_eval)],
+        scalar_ring(eval_value),
+    ));
 
-    vec![c0, c1, c2, c3, c4]
+    constraints
 }
 
 #[cfg(test)]
@@ -276,7 +292,7 @@ mod tests {
     const D: usize = 64;
 
     #[test]
-    fn reduce_builds_five_constraints() {
+    fn reduce_builds_scalar_constraints() {
         let cfg = LabradorReductionConfig {
             f: 1,
             b: 8,
@@ -315,6 +331,9 @@ mod tests {
             &[8u8; 32],
         )
         .unwrap();
-        assert_eq!(st.constraints.len(), 5);
+        assert_eq!(
+            st.constraints.len(),
+            st.u1.len() + st.u2.len() + cfg.kappa + 2
+        );
     }
 }

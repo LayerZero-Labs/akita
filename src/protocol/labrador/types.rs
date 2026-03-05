@@ -1,6 +1,7 @@
 //! Core Labrador witness/statement/proof types.
 
 use crate::algebra::ring::CyclotomicRing;
+use crate::protocol::labrador::constraints::LabradorConstraint;
 use crate::{CanonicalField, FieldCore};
 
 /// Witness object for a Labrador statement, holding the `s_i` row vectors.
@@ -48,21 +49,6 @@ impl<F: FieldCore + CanonicalField, const D: usize> LabradorWitness<F, D> {
             .map(|ring| ring.coeff_norm_sq())
             .fold(0u128, |acc, v| acc.saturating_add(v))
     }
-}
-
-/// Linear constraint: `sum_i <coefficients[i], witness_row_i> = target`.
-///
-/// `coefficients[i]` holds the φ_i vector for witness row `i`.
-/// For multi-output constraints (`target.len() > 1`), each coefficient
-/// vector is `outputs * row_len` long: output `k` occupies
-/// `coefficients[i][k*row_len..(k+1)*row_len]`.
-/// An empty inner vec means the row does not participate.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LabradorConstraint<F: FieldCore, const D: usize> {
-    /// Per-row coefficient vectors (one per witness row).
-    pub coefficients: Vec<Vec<CyclotomicRing<F, D>>>,
-    /// Right-hand side target vector.
-    pub target: Vec<CyclotomicRing<F, D>>,
 }
 
 /// Public statement reduced to Labrador recursion.
