@@ -40,7 +40,7 @@ struct BenchInstance {
 
 fn build_instance(num_constraints: usize) -> BenchInstance {
     let row_len = 1 << 10;
-    let num_rows = 8;
+    let num_rows = 16;
 
     let rows: Vec<Vec<CyclotomicRing<F, D>>> = (0..num_rows)
         .map(|r| {
@@ -151,16 +151,15 @@ fn report_sizes(inst: &BenchInstance) {
         inst.witness.rows().len(),
         inst.witness.rows()[0].len()
     );
-    eprintln!("  witness size        : {} bytes", witness_bytes);
-    eprintln!("  witness ||s||²      : {}", witness_norm);
+    eprintln!("  witness size        : {witness_bytes} bytes");
+    eprintln!("  witness ||s||²      : {witness_norm}");
     eprintln!(
-        "  output rows x lens  : {} rows, {} total ring elems",
+        "  output rows x lens  : {} rows, {out_rings} total ring elems",
         fold.next_witness.rows().len(),
-        out_rings,
     );
-    eprintln!("  output witness size : {} bytes", out_bytes);
-    eprintln!("  output ||s'||²     : {}", out_norm);
-    eprintln!("  proof size          : {} bytes", proof_bytes);
+    eprintln!("  output witness size : {out_bytes} bytes");
+    eprintln!("  output ||s'||²     : {out_norm}");
+    eprintln!("  proof size          : {proof_bytes} bytes");
     eprintln!("===================================");
 }
 
@@ -224,7 +223,152 @@ fn bench_labrador_single_fold(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(labrador_benches, bench_labrador_single_fold,);
+fn bench_labrador_two_level_fold(c: &mut Criterion) {
+    let num_constraints = 1 << 4;
+    let inst = build_instance(num_constraints);
+
+    let mut prover_transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+    let fold1 = prove_level(
+        &inst.witness,
+        &inst.statement,
+        &inst.config,
+        &inst.setup,
+        0,
+        &mut prover_transcript,
+    )
+    .unwrap();
+
+    let r2 = fold1.next_witness.rows().len();
+    let max_len2 = fold1
+        .next_witness
+        .rows()
+        .iter()
+        .map(|row| row.len())
+        .max()
+        .unwrap_or(0);
+    let config2 = select_config::<F, D>(&fold1.next_witness).expect("select_config level 2");
+    let setup2 = LabradorSetup::new(&config2, r2, max_len2, &inst.comkey_seed);
+
+    let fold2 = prove_level(
+        &fold1.next_witness,
+        &fold1.statement,
+        &config2,
+        &setup2,
+        1,
+        &mut prover_transcript,
+    )
+    .unwrap();
+
+    let proof = LabradorProof {
+        levels: vec![fold1.level_proof.clone(), fold2.level_proof],
+        final_opening_witness: fold2.next_witness.clone(),
+    };
+
+    {
+        let w1_rings: usize = inst.witness.rows().iter().map(|r| r.len()).sum();
+        let w1_bytes = w1_rings * std::mem::size_of::<CyclotomicRing<F, D>>();
+        let w2_rings: usize = fold1.next_witness.rows().iter().map(|r| r.len()).sum();
+        let w2_bytes = w2_rings * std::mem::size_of::<CyclotomicRing<F, D>>();
+        let final_rings: usize = fold2.next_witness.rows().iter().map(|r| r.len()).sum();
+        let final_bytes = final_rings * std::mem::size_of::<CyclotomicRing<F, D>>();
+
+        eprintln!("=== Labrador two-level fold report ===");
+        eprintln!(
+            "  constraints          : {}",
+            inst.statement.constraints.len()
+        );
+        eprintln!(
+            "  L0 witness rows x len: {} x {}",
+            inst.witness.rows().len(),
+            inst.witness.rows()[0].len()
+        );
+        eprintln!("  L0 witness size      : {w1_bytes} bytes");
+        let c0 = &inst.config;
+        eprintln!(
+            "  L0 config            : f={} b={} fu={} bu={} kappa={} kappa1={}",
+            c0.f, c0.b, c0.fu, c0.bu, c0.kappa, c0.kappa1
+        );
+        eprintln!(
+            "  L1 witness rows      : {} rows, {w2_rings} total ring elems",
+            fold1.next_witness.rows().len(),
+        );
+        eprintln!("  L1 witness size      : {w2_bytes} bytes");
+        eprintln!(
+            "  L1 config            : f={} b={} fu={} bu={} kappa={} kappa1={}",
+            config2.f, config2.b, config2.fu, config2.bu, config2.kappa, config2.kappa1
+        );
+        eprintln!(
+            "  final witness        : {} rows, {final_rings} total ring elems",
+            fold2.next_witness.rows().len(),
+        );
+        eprintln!("  final witness size   : {final_bytes} bytes");
+        eprintln!("  total proof size     : {} bytes", proof.size());
+        eprintln!("======================================");
+    }
+
+    let mut group = c.benchmark_group(format!("labrador/fold_2x/{num_constraints}c"));
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(60));
+
+    group.bench_function("prove", |b| {
+        b.iter(|| {
+            let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+            let f1 = prove_level(
+                black_box(&inst.witness),
+                black_box(&inst.statement),
+                black_box(&inst.config),
+                black_box(&inst.setup),
+                0,
+                &mut transcript,
+            )
+            .unwrap();
+            let r = f1.next_witness.rows().len();
+            let ml = f1
+                .next_witness
+                .rows()
+                .iter()
+                .map(|row| row.len())
+                .max()
+                .unwrap_or(0);
+            let cfg2 = select_config::<F, D>(&f1.next_witness).unwrap();
+            let s2 = LabradorSetup::new(&cfg2, r, ml, &inst.comkey_seed);
+            black_box(
+                prove_level(
+                    black_box(&f1.next_witness),
+                    black_box(&f1.statement),
+                    black_box(&cfg2),
+                    black_box(&s2),
+                    1,
+                    &mut transcript,
+                )
+                .unwrap(),
+            )
+        })
+    });
+
+    group.bench_function("verify", |b| {
+        b.iter(|| {
+            let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+            black_box(
+                verify(
+                    black_box(&inst.statement),
+                    black_box(&proof),
+                    black_box(&inst.comkey_seed),
+                    &mut transcript,
+                )
+                .unwrap(),
+            )
+        })
+    });
+
+    group.finish();
+}
+
+criterion_group!(
+    labrador_benches,
+    bench_labrador_single_fold,
+    bench_labrador_two_level_fold,
+);
 
 fn main() {
     #[cfg(feature = "parallel")]
