@@ -190,17 +190,27 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// `scalars` has length `block_len`.
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>>;
 
-    /// Fused evaluate_ring + fold_blocks in a single pass over the polynomial.
-    /// These two operations are in the same Fiat-Shamir round (no challenge
-    /// between them), so implementations can share a single data iteration.
+    /// Fused fold + evaluation in a single pass over the polynomial.
+    ///
+    /// `eval_outer_scalars` is the per-block weight vector `b` (size `num_blocks`).
+    /// `fold_scalars` is the per-element-in-block weight vector `a` (size `block_len`).
+    ///
+    /// The full evaluation scalars factor as `outer_weights[i*block_len + j] = b[i] * a[j]`,
+    /// so `eval = Σ_i b[i] * fold(a)[i]` — derived from the fold result without
+    /// materializing the full `2^(m_vars + r_vars)` weight vector.
     fn evaluate_and_fold(
         &self,
-        eval_scalars: &[F],
+        eval_outer_scalars: &[F],
         fold_scalars: &[F],
         block_len: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        let eval = self.evaluate_ring(eval_scalars);
         let folded = self.fold_blocks(fold_scalars, block_len);
+        let eval = folded
+            .iter()
+            .zip(eval_outer_scalars.iter())
+            .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
+                acc + f_i.scale(s_i)
+            });
         (eval, folded)
     }
 
