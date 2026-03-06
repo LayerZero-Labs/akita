@@ -899,10 +899,9 @@ where
             let mut acc = (row3_weight * opening_point.b[block_idx]
                 + row4_weight * c_alphas[block_idx])
                 * g1_open[digit_idx];
-            for row_idx in 0..Cfg::N_D {
-                let eq_i = eq_tau1[row_idx];
+            for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(Cfg::N_D) {
                 if !eq_i.is_zero() {
-                    acc += eq_i * eval_ring_at_pows(&d_view.row(row_idx)[x], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&d_view.row(row_idx)[x], alpha_pows);
                 }
             }
             acc
@@ -917,10 +916,9 @@ where
             let a_idx = rem / depth_open;
             let digit_idx = rem % depth_open;
             let mut acc = a_weights[a_idx] * c_alphas[block_idx] * g1_open[digit_idx];
-            for row_idx in 0..Cfg::N_B {
-                let eq_i = eq_tau1[Cfg::N_D + row_idx];
+            for (row_idx, eq_i) in eq_tau1[Cfg::N_D..(Cfg::N_D + Cfg::N_B)].iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc += eq_i * eval_ring_at_pows(&b_view.row(row_idx)[x], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[x], alpha_pows);
                 }
             }
             acc

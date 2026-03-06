@@ -598,6 +598,7 @@ where
 }
 
 impl HachiCommitmentCore {
+    #[allow(clippy::too_many_arguments)]
     fn layout_envelope<const D: usize>(
         max_num_vars: usize,
         inner_width: usize,
