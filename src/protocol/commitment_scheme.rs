@@ -2,7 +2,9 @@
 
 use crate::algebra::fields::wide::HasWide;
 use crate::algebra::fields::HasUnreducedOps;
-use crate::algebra::{CyclotomicRing, SparseChallenge};
+use crate::algebra::CyclotomicRing;
+#[cfg(debug_assertions)]
+use crate::algebra::SparseChallenge;
 use crate::error::HachiError;
 use crate::primitives::poly::multilinear_lagrange_basis;
 use crate::primitives::serialization::Valid;
@@ -20,22 +22,28 @@ use crate::protocol::proof::{
     DigitLut, FlatCommitmentHint, FlatRingVec, HachiCommitmentHint, HachiLevelProof, HachiProof,
     PackedDigits,
 };
-use crate::protocol::quadratic_equation::{compute_m_a_streaming, QuadraticEquation};
+#[cfg(debug_assertions)]
+use crate::protocol::quadratic_equation::compute_m_a_streaming;
+use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::ring_switch::{
-    build_w_evals, commit_w, eval_ring_at, m_row_count, ring_switch_build_w, ring_switch_finalize,
-    ring_switch_verifier, w_ring_element_count, RingSwitchOutput, WCommitmentConfig,
+    build_w_evals, commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_verifier,
+    w_ring_element_count, WCommitmentConfig,
 };
+#[cfg(debug_assertions)]
+use crate::protocol::ring_switch::{eval_ring_at, m_row_count, RingSwitchOutput};
+#[cfg(debug_assertions)]
 use crate::protocol::sumcheck::eq_poly::EqPolynomial;
 use crate::protocol::sumcheck::hachi_sumcheck::{HachiSumcheckProver, HachiSumcheckVerifier};
-use crate::protocol::sumcheck::{
-    multilinear_eval, multilinear_eval_small, prove_sumcheck, range_check_eval, verify_sumcheck,
-};
+#[cfg(debug_assertions)]
+use crate::protocol::sumcheck::{multilinear_eval, range_check_eval};
+use crate::protocol::sumcheck::{multilinear_eval_small, prove_sumcheck, verify_sumcheck};
 use crate::protocol::transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use crate::protocol::transcript::Transcript;
 use crate::{dispatch_ring_dim, dispatch_with_ntt};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
+#[cfg(debug_assertions)]
 use std::iter;
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -87,6 +95,7 @@ struct ProveLevelOutput<F: FieldCore> {
 type CommitFn<'a, F> =
     Box<dyn FnOnce(&[i8]) -> Result<(FlatRingVec<F>, FlatCommitmentHint), HachiError> + 'a>;
 
+#[cfg(debug_assertions)]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn prove_level_diagnostic<F, const D: usize, Cfg>(
@@ -187,6 +196,7 @@ fn prove_level_diagnostic<F, const D: usize, Cfg>(
     );
 }
 
+#[cfg(debug_assertions)]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn prove_level_selfcheck<F: FieldCore + FromSmallInt>(
@@ -263,14 +273,11 @@ where
     };
 
     let t0 = Instant::now();
-    let outer_weights = {
-        let _span = tracing::info_span!("outer_basis_weights", level).entered();
-        basis_weights(outer_point, basis)
-    };
     let fold_scalars = &ring_opening_point.a;
+    let eval_outer_scalars = &ring_opening_point.b;
     let (y_ring, w_folded) = {
         let _span = tracing::info_span!("evaluate_and_fold", level).entered();
-        poly.evaluate_and_fold(&outer_weights, fold_scalars, layout.block_len)
+        poly.evaluate_and_fold(eval_outer_scalars, fold_scalars, layout.block_len)
     };
     eprintln!(
         "  [hachi prove L{level}] evaluate_and_fold: {:.2}s (num_ring_elems={})",
@@ -336,6 +343,7 @@ where
 
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
 
+    #[cfg(debug_assertions)]
     prove_level_diagnostic::<F, D, Cfg>(
         expanded,
         quad_eq.opening_point(),
@@ -377,6 +385,7 @@ where
         multilinear_eval_small(&w_evals_small, &sumcheck_challenges)?
     };
 
+    #[cfg(debug_assertions)]
     prove_level_selfcheck(
         &rs.tau0,
         &sumcheck_challenges,
@@ -622,7 +631,7 @@ fn prove_subsequent_level<F, T, const D_LEVEL: usize, Cfg>(
     current_num_u: usize,
     current_num_l: usize,
     last_w_commitment: &FlatRingVec<F>,
-    last_w_eval: F,
+    #[cfg_attr(not(debug_assertions), allow(unused_variables))] last_w_eval: F,
     transcript: &mut T,
     level: usize,
 ) -> Result<ProveLevelOutput<F>, HachiError>
@@ -634,6 +643,7 @@ where
     let w_poly = dense_poly_from_w::<F, { D_LEVEL }>(current_w, Cfg::decomposition().log_basis)?;
     let opening_point = next_level_opening_point(current_challenges, current_num_u, current_num_l);
 
+    #[cfg(debug_assertions)]
     {
         let field_evals: Vec<F> = w_poly
             .coeffs
