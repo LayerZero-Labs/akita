@@ -4,8 +4,10 @@
 //! the quadratic equation components M, y, z, and v.
 
 use crate::algebra::{CyclotomicRing, SparseChallenge, SparseChallengeConfig};
+#[cfg(any(test, debug_assertions))]
+use crate::cfg_into_iter;
 use crate::error::HachiError;
-#[cfg(feature = "parallel")]
+#[cfg(all(feature = "parallel", any(test, debug_assertions)))]
 use crate::parallel::*;
 use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
@@ -20,10 +22,11 @@ use crate::protocol::commitment::{
 use crate::protocol::hachi_poly_ops::HachiPolyOps;
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::HachiCommitmentHint;
+#[cfg(any(test, debug_assertions))]
 use crate::protocol::ring_switch::eval_ring_at;
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use crate::protocol::transcript::Transcript;
-use crate::{cfg_into_iter, CanonicalField, FieldCore};
+use crate::{CanonicalField, FieldCore};
 use std::iter::repeat_n;
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -78,8 +81,9 @@ where
 /// Encapsulates the relation $M(x) \cdot z = y(x) + (X^D + 1) \cdot r(x)$
 /// along with intermediate prover witness data (`w_hat`, `z_pre`, `hint`).
 ///
-/// M and z are never materialized — split-eq factoring computes their
-/// products on-the-fly via `compute_r_split_eq` and `compute_m_a_streaming`.
+/// M and z are never materialized on the hot path — split-eq factoring computes
+/// their products on-the-fly via `compute_r_split_eq`, while debug/test code
+/// can reconstruct reference `M_a` rows when needed.
 pub struct QuadraticEquation<F: FieldCore, const D: usize, Cfg: CommitmentConfig> {
     /// Stage-1 proof vector `v = D · ŵ`.
     pub v: Vec<CyclotomicRing<F, D>>,
@@ -320,6 +324,7 @@ where
     )
 }
 
+#[cfg(any(test, debug_assertions))]
 fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basis: u32) -> Vec<F> {
     let base = F::from_canonical_u128_reduced(1u128 << log_basis);
     let mut out = Vec::with_capacity(levels);
@@ -519,12 +524,14 @@ where
     Ok(result)
 }
 
-/// Split-eq replacement for `generate_m` + `eval_ring_matrix_at`.
+/// Reference helper for tests/debug diagnostics: split-eq replacement for
+/// `generate_m` + `eval_ring_matrix_at`.
 ///
 /// Computes the field-element evaluations of each M entry at `alpha`,
-/// organized as rows of field elements, without materializing M.
-#[tracing::instrument(skip_all, name = "compute_m_a_streaming")]
-pub(crate) fn compute_m_a_streaming<F, const D: usize, Cfg>(
+/// organized as rows of field elements, without materializing ring-valued `M`.
+#[cfg(any(test, debug_assertions))]
+#[tracing::instrument(skip_all, name = "compute_m_a_reference")]
+pub(crate) fn compute_m_a_reference<F, const D: usize, Cfg>(
     setup: &HachiExpandedSetup<F>,
     opening_point: &RingOpeningPoint<F>,
     challenges: &[SparseChallenge],
