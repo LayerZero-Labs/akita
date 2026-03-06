@@ -164,6 +164,12 @@ where
     Ok(constraints)
 }
 
+/// Build the paper's outer-commitment check (Fig. 3, line 19)
+/// `u1 = B * t_hat`, with the quadratic `g_ij` contribution omitted.
+///
+/// The paper writes this as one vector equation. Here it is scalarized into one
+/// `LabradorConstraint` per row of `B` / entry of `u1`, all reading the
+/// `t_hat` prefix of the auxiliary witness row.
 fn build_outer_commitment_constraints<F: FieldCore, const D: usize>(
     layout: NextWitnessLayout,
     setup: &LabradorSetup<F, D>,
@@ -186,6 +192,12 @@ fn build_outer_commitment_constraints<F: FieldCore, const D: usize>(
         .collect()
 }
 
+/// Build the linear-garbage commitment check (Fig. 3, line 20)
+/// `u2 = D * h_hat`.
+///
+/// As with `u1`, the paper presents a vector equation; this implementation
+/// expands it into one scalar constraint per row of `D` / entry of `u2`,
+/// reading the `h_hat` suffix of the auxiliary witness row.
 fn build_linear_garbage_commitment_constraints<F: FieldCore, const D: usize>(
     layout: NextWitnessLayout,
     setup: &LabradorSetup<F, D>,
@@ -208,6 +220,13 @@ fn build_linear_garbage_commitment_constraints<F: FieldCore, const D: usize>(
         .collect()
 }
 
+/// Build the amortized opening relation (Fig. 3, line 15)
+/// `A * z_tilde = sum_i c_i * t_tilde_i`.
+///
+/// The paper's equation is `kappa`-dimensional, so this function emits one
+/// scalar constraint per row of `A`. The first `f` witness rows reconstruct the
+/// decomposed `z_tilde = sum_k 2^(k b) z^(k)`, while the `t_hat` slice of the
+/// auxiliary row reconstructs each decomposed `t_tilde_i`.
 fn build_amortized_opening_constraints<F: FieldCore, const D: usize>(
     layout: NextWitnessLayout,
     challenges: &[CyclotomicRing<F, D>],
@@ -246,6 +265,13 @@ fn build_amortized_opening_constraints<F: FieldCore, const D: usize>(
         .collect()
 }
 
+/// Build the linear-only garbage relation (Fig. 3, line 17)
+/// `sum_i c_i * <phi_i, z_tilde> = sum_{i <= j} c_i c_j * h_ij`.
+///
+/// `combined_phi` already equals `sum_i c_i * phi_i`, so the left-hand side is
+/// reconstructed from the decomposed `z_tilde` rows. The right-hand side is
+/// reconstructed from the packed upper-triangular `h_hat` entries stored in the
+/// auxiliary row.
 fn build_linear_garbage_constraint<F: FieldCore, const D: usize>(
     layout: NextWitnessLayout,
     challenges: &[CyclotomicRing<F, D>],
@@ -280,6 +306,12 @@ fn build_linear_garbage_constraint<F: FieldCore, const D: usize>(
     LabradorConstraint::new(terms, CyclotomicRing::<F, D>::zero())
 }
 
+/// Build the linear-only diagonal relation (Fig. 3, line 18 with no `a_ij`
+/// or `g_ij`)
+/// `sum_i h_ii = b_total`.
+///
+/// Only diagonal packed `h_hat` entries contribute here. Their decomposed
+/// digits are reweighted by powers of `2^bu` to reconstruct each `h_ii`.
 fn build_diagonal_constraint<F: FieldCore, const D: usize>(
     layout: NextWitnessLayout,
     b_total: &CyclotomicRing<F, D>,
