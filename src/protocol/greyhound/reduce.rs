@@ -86,7 +86,6 @@ where
         challenges: Vec::new(),
         constraints,
         beta_sq: 0,
-        hash: [0u8; 16],
     })
 }
 

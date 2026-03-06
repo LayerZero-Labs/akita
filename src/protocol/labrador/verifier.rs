@@ -117,7 +117,7 @@ where
         return Err(HachiError::InvalidProof);
     }
     let r = level.input_row_lengths.len();
-    if r == 0 || level.input_row_chunks.len() != r {
+    if r == 0 {
         return Err(HachiError::InvalidProof);
     }
     if level.config.f == 0 || level.config.fu == 0 {
@@ -131,7 +131,6 @@ where
             level_index,
             tail: level.tail,
             input_row_lengths: level.input_row_lengths.clone(),
-            input_row_chunks: level.input_row_chunks.clone(),
             f: level.config.f,
             b: level.config.b,
             fu: level.config.fu,
@@ -194,7 +193,6 @@ where
         challenges,
         constraints: next_constraints,
         beta_sq: level.norm_sq,
-        hash: [0u8; 16],
     })
 }
 
@@ -215,7 +213,7 @@ where
         return Err(HachiError::InvalidProof);
     }
     let r = level.input_row_lengths.len();
-    if r == 0 || level.input_row_chunks.len() != r {
+    if r == 0 {
         return Err(HachiError::InvalidProof);
     }
     if level.config.f == 0 || level.config.fu == 0 {
@@ -245,7 +243,6 @@ where
             level_index,
             tail: level.tail,
             input_row_lengths: level.input_row_lengths.clone(),
-            input_row_chunks: level.input_row_chunks.clone(),
             f: level.config.f,
             b: level.config.b,
             fu: level.config.fu,
@@ -365,7 +362,7 @@ where
         return Err(HachiError::InvalidProof);
     }
     let r = level.input_row_lengths.len();
-    if r == 0 || level.input_row_chunks.len() != r {
+    if r == 0 {
         return Err(HachiError::InvalidProof);
     }
     if level.config.f == 0 || level.config.fu == 0 {
@@ -390,14 +387,12 @@ where
     }
     let (t_hat, h_hat) = aux.split_at(layout.t_hat_len);
 
-    // Transcript: absorb level context, commitments, JL.
     absorb_labrador_level_context(
         transcript,
         &LabradorLevelTranscriptContext {
             level_index: 0,
             tail: level.tail,
             input_row_lengths: level.input_row_lengths.clone(),
-            input_row_chunks: level.input_row_chunks.clone(),
             f: level.config.f,
             b: level.config.b,
             fu: level.config.fu,
@@ -682,7 +677,6 @@ mod tests {
             challenges: Vec::new(),
             constraints: vec![constraint],
             beta_sq: 1000,
-            hash: [0u8; 16],
         };
         let proof = LabradorProof {
             levels: Vec::new(),

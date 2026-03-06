@@ -283,7 +283,6 @@ mod tests {
             challenges: Vec::new(),
             constraints: Vec::new(),
             beta_sq: 1024,
-            hash: [0u8; 16],
         };
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
         let proof = prove(sample_witness(), &statement, &[1u8; 32], &mut transcript).unwrap();
@@ -299,7 +298,6 @@ mod tests {
             challenges: Vec::new(),
             constraints: Vec::new(),
             beta_sq: 1 << 30,
-            hash: [0u8; 16],
         };
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
         let proof = prove(sample_witness(), &statement, &[1u8; 32], &mut transcript).unwrap();

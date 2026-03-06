@@ -64,8 +64,6 @@ pub struct LabradorStatement<F: FieldCore, const D: usize> {
     pub constraints: Vec<LabradorConstraint<F, D>>,
     /// Squared norm bound.
     pub beta_sq: u128,
-    /// Statement hash binding.
-    pub hash: [u8; 16],
 }
 
 /// Per-level reduction parameters.
@@ -94,8 +92,6 @@ pub struct LabradorLevelProof<F: FieldCore, const D: usize> {
     pub tail: bool,
     /// Input row lengths (`n[i]` in C).
     pub input_row_lengths: Vec<usize>,
-    /// Input row chunk counts (`nu[i]` in C).
-    pub input_row_chunks: Vec<usize>,
     /// Configuration selected for this level.
     pub config: LabradorReductionConfig,
     /// First outer commitment.

@@ -31,8 +31,6 @@ pub struct LabradorLevelTranscriptContext {
     pub tail: bool,
     /// Input witness row lengths (`n[i]` in the C reference).
     pub input_row_lengths: Vec<usize>,
-    /// Input row chunk counts (`nu[i]` in the C reference).
-    pub input_row_chunks: Vec<usize>,
     /// Witness decomposition parts.
     pub f: usize,
     /// Witness decomposition basis log2.
@@ -82,8 +80,7 @@ fn encode_greyhound_eval_context(
 fn encode_labrador_level_context(
     ctx: &LabradorLevelTranscriptContext,
 ) -> Result<Vec<u8>, HachiError> {
-    let mut bytes =
-        Vec::with_capacity(4 + 8 * (7 + ctx.input_row_lengths.len() + ctx.input_row_chunks.len()));
+    let mut bytes = Vec::with_capacity(4 + 8 * (7 + ctx.input_row_lengths.len()));
     // Versioned payload for deterministic replay stability.
     bytes.push(1u8);
     bytes.push(u8::from(ctx.tail));
@@ -100,7 +97,6 @@ fn encode_labrador_level_context(
     append_u64_le(&mut bytes, checked_usize_to_u64(ctx.kappa, "kappa")?);
     append_u64_le(&mut bytes, checked_usize_to_u64(ctx.kappa1, "kappa1")?);
     encode_usize_slice(&mut bytes, &ctx.input_row_lengths)?;
-    encode_usize_slice(&mut bytes, &ctx.input_row_chunks)?;
     Ok(bytes)
 }
 
@@ -291,7 +287,6 @@ mod tests {
             level_index: 2,
             tail: false,
             input_row_lengths: vec![1024, 2048, 128, 64],
-            input_row_chunks: vec![16, 32, 4, 2],
             f: 2,
             b: 8,
             fu: 3,
@@ -323,7 +318,6 @@ mod tests {
             level_index: 0,
             tail: true,
             input_row_lengths: vec![64, 32],
-            input_row_chunks: vec![2, 1],
             f: 1,
             b: 8,
             fu: 2,
