@@ -4,24 +4,24 @@
 //! sumcheck instances by expanding the ring elements into their coefficient
 //! vectors and setting up the evaluation tables.
 
-use crate::algebra::CyclotomicRing;
+use crate::algebra::{CyclotomicRing, SparseChallenge};
 use crate::cfg_into_iter;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
-    decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_single_i8,
+    decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
+    mat_vec_mul_ntt_single_i8,
 };
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
     optimal_m_r_split, CommitmentConfig, DecompositionParams, HachiCommitmentLayout,
     HachiExpandedSetup, RingCommitment,
 };
+use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{DigitLut, FlatCommitmentHint, FlatRingVec, HachiCommitmentHint};
-use crate::protocol::quadratic_equation::{
-    compute_m_a_streaming, compute_r_split_eq, QuadraticEquation,
-};
+use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::protocol::sumcheck::eq_poly::EqPolynomial;
 use crate::protocol::transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
@@ -197,22 +197,29 @@ where
     #[cfg(feature = "parallel")]
     let (m_evals_x_result, w_result) = rayon::join(
         || {
-            let m_a = compute_m_a_streaming::<F, D, Cfg>(
+            compute_m_evals_x::<F, D, Cfg>(
                 setup,
                 opening_point,
                 challenges,
-                &alpha,
+                alpha,
+                &alpha_evals_y,
                 layout,
-            )?;
-            build_m_evals_x_fused::<F, D>(&m_a, alpha, layout.log_basis, &tau1)
+                &tau1,
+            )
         },
         || build_w_evals_dual::<F>(&w, D, layout.log_basis),
     );
     #[cfg(not(feature = "parallel"))]
     let (m_evals_x_result, w_result) = {
-        let m_a =
-            compute_m_a_streaming::<F, D, Cfg>(setup, opening_point, challenges, &alpha, layout)?;
-        let m_evals_x = build_m_evals_x_fused::<F, D>(&m_a, alpha, layout.log_basis, &tau1)?;
+        let m_evals_x = compute_m_evals_x::<F, D, Cfg>(
+            setup,
+            opening_point,
+            challenges,
+            alpha,
+            &alpha_evals_y,
+            layout,
+            &tau1,
+        )?;
         let w_dual = build_w_evals_dual::<F>(&w, D, layout.log_basis);
         (Ok(m_evals_x), w_dual)
     };
@@ -220,7 +227,7 @@ where
     let m_evals_x = m_evals_x_result?;
     let (w_evals, w_evals_field, _, _) = w_result?;
     eprintln!(
-        "    [ring_switch] m_a+w_evals parallel: {:.2}s",
+        "    [ring_switch] m_evals_x+w_evals parallel: {:.2}s",
         t_par.elapsed().as_secs_f64()
     );
 
@@ -328,14 +335,15 @@ where
     let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
 
-    let m_a = compute_m_a_streaming::<F, D, Cfg>(
+    let m_evals_x = compute_m_evals_x::<F, D, Cfg>(
         setup,
         quad_eq.opening_point(),
         &quad_eq.challenges,
-        &alpha,
+        alpha,
+        &alpha_evals_y,
         layout,
+        &tau1,
     )?;
-    let m_evals_x = build_m_evals_x_fused::<F, D>(&m_a, alpha, layout.log_basis, &tau1)?;
 
     Ok(RingSwitchOutput {
         w: Vec::new(),
@@ -533,19 +541,15 @@ where
     F: FieldCore + CanonicalField + FieldSampling,
     Cfg: CommitmentConfig,
 {
-    let lut = DigitLut::<F>::new(Cfg::decomposition().log_basis);
-    let ring_elems: Vec<CyclotomicRing<F, D>> = w
-        .chunks(D)
-        .map(|chunk| {
-            let mut coeffs = [F::zero(); D];
-            for (c, &d) in coeffs.iter_mut().zip(chunk.iter()) {
-                *c = lut.get(d);
-            }
-            CyclotomicRing::from_coefficients(coeffs)
-        })
-        .collect();
+    let (w_digits, remainder) = w.as_chunks::<D>();
+    if !remainder.is_empty() {
+        return Err(HachiError::InvalidSize {
+            expected: D,
+            actual: w.len(),
+        });
+    }
 
-    let total = ring_elems.len().next_power_of_two().max(1);
+    let total = w_digits.len().next_power_of_two().max(1);
     let alpha = D.trailing_zeros() as usize;
     let m_vars_total = total.trailing_zeros() as usize;
     let max_num_vars = m_vars_total + alpha;
@@ -556,20 +560,44 @@ where
     let depth_commit = w_layout.num_digits_commit;
     let depth_open = w_layout.num_digits_open;
     let log_basis = w_layout.log_basis;
-    let coeff_len = ring_elems.len();
+    let coeff_len = w_digits.len();
 
-    let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
-        .map(|i| {
-            let start = i * block_len;
-            if start >= coeff_len {
-                &[] as &[CyclotomicRing<F, D>]
-            } else {
-                &ring_elems[start..(start + block_len).min(coeff_len)]
-            }
-        })
-        .collect();
-
-    let t_all = mat_vec_mul_ntt_i8(ntt_a, &block_slices, depth_commit, log_basis);
+    let t_all = if depth_commit == 1 {
+        // `build_w_coeffs` already emits balanced base-`2^log_basis` digits, so
+        // the recursive w-commitment can skip the field conversion and feed those
+        // planes directly into the tiled NTT mat-vec.
+        let block_slices: Vec<&[[i8; D]]> = (0..num_blocks)
+            .map(|i| {
+                let start = i * block_len;
+                if start >= coeff_len {
+                    &[] as &[[i8; D]]
+                } else {
+                    &w_digits[start..(start + block_len).min(coeff_len)]
+                }
+            })
+            .collect();
+        mat_vec_mul_ntt_digits_i8(ntt_a, &block_slices)
+    } else {
+        let lut = DigitLut::<F>::new(log_basis);
+        let ring_elems: Vec<CyclotomicRing<F, D>> = w_digits
+            .iter()
+            .map(|digit| {
+                let coeffs = std::array::from_fn(|k| lut.get(digit[k]));
+                CyclotomicRing::from_coefficients(coeffs)
+            })
+            .collect();
+        let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
+            .map(|i| {
+                let start = i * block_len;
+                if start >= coeff_len {
+                    &[] as &[CyclotomicRing<F, D>]
+                } else {
+                    &ring_elems[start..(start + block_len).min(coeff_len)]
+                }
+            })
+            .collect();
+        mat_vec_mul_ntt_i8(ntt_a, &block_slices, depth_commit, log_basis)
+    };
     let t_hat_per_block: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
         .map(|t_i| decompose_rows_i8(&t_i, depth_open, log_basis))
         .collect();
@@ -588,6 +616,56 @@ pub(crate) fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D
         power = power * *alpha;
     }
     acc
+}
+
+#[inline]
+fn eval_ring_at_pows<F: FieldCore, const D: usize>(
+    r: &CyclotomicRing<F, D>,
+    alpha_pows: &[F],
+) -> F {
+    debug_assert_eq!(alpha_pows.len(), D);
+    r.coefficients()
+        .iter()
+        .zip(alpha_pows.iter())
+        .fold(F::zero(), |acc, (coeff, alpha_pow)| {
+            acc + *coeff * *alpha_pow
+        })
+}
+
+#[inline]
+fn eval_sparse_challenge_at_pows<F: FieldCore + CanonicalField, const D: usize>(
+    challenge: &SparseChallenge,
+    alpha_pows: &[F],
+) -> Result<F, HachiError> {
+    if alpha_pows.len() != D {
+        return Err(HachiError::InvalidSize {
+            expected: D,
+            actual: alpha_pows.len(),
+        });
+    }
+
+    debug_assert_eq!(challenge.positions.len(), challenge.coeffs.len());
+
+    let mut acc = F::zero();
+    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+        let idx = pos as usize;
+        debug_assert!(idx < D);
+        debug_assert_ne!(coeff, 0);
+        acc += F::from_i64(coeff as i64) * alpha_pows[idx];
+    }
+    Ok(acc)
+}
+
+#[inline]
+fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basis: u32) -> Vec<F> {
+    let base = F::from_canonical_u128_reduced(1u128 << log_basis);
+    let mut out = Vec::with_capacity(levels);
+    let mut power = F::one();
+    for _ in 0..levels {
+        out.push(power);
+        power = power * base;
+    }
+    out
 }
 
 pub(crate) fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
@@ -749,69 +827,140 @@ pub(crate) fn m_row_count<Cfg: CommitmentConfig>() -> usize {
     Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A
 }
 
-pub(crate) fn build_m_evals_x_fused<F: FieldCore + CanonicalField, const D: usize>(
-    m_a: &[Vec<F>],
+pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize, Cfg>(
+    setup: &HachiExpandedSetup<F>,
+    opening_point: &RingOpeningPoint<F>,
+    challenges: &[SparseChallenge],
     alpha: F,
-    log_basis: u32,
+    alpha_pows: &[F],
+    layout: HachiCommitmentLayout,
     tau1: &[F],
-) -> Result<Vec<F>, HachiError> {
-    if m_a.is_empty() {
-        return Ok(Vec::new());
-    }
-    let rows = m_a.len();
-    let orig_cols = m_a[0].len();
-    for row in m_a.iter() {
-        if row.len() != orig_cols {
-            return Err(HachiError::InvalidSize {
-                expected: orig_cols,
-                actual: row.len(),
-            });
-        }
+) -> Result<Vec<F>, HachiError>
+where
+    Cfg: CommitmentConfig,
+{
+    if alpha_pows.len() != D {
+        return Err(HachiError::InvalidSize {
+            expected: D,
+            actual: alpha_pows.len(),
+        });
     }
 
+    let depth_commit = layout.num_digits_commit;
+    let depth_open = layout.num_digits_open;
+    let depth_fold = layout.num_digits_fold;
+    let log_basis = layout.log_basis;
+    let num_blocks = opening_point.b.len();
+    let block_len = layout.block_len;
+    let w_len = depth_open * num_blocks;
+    let t_len = depth_open * Cfg::N_A * num_blocks;
+    let inner_width = block_len * depth_commit;
+    let z_len = depth_fold * inner_width;
+    let rows = m_row_count::<Cfg>();
     let levels = r_decomp_levels::<F>(log_basis);
-    let total_cols = orig_cols
-        .checked_add(
-            rows.checked_mul(levels)
-                .ok_or_else(|| HachiError::InvalidSetup("expanded M width overflow".to_string()))?,
-        )
+    let total_cols = w_len
+        .checked_add(t_len)
+        .and_then(|cols| cols.checked_add(z_len))
+        .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
         .ok_or_else(|| HachiError::InvalidSetup("expanded M width overflow".to_string()))?;
 
-    let base = F::from_canonical_u128_reduced(1u128 << log_basis);
-    let mut gadget_row = Vec::with_capacity(levels);
-    let mut power = F::one();
-    for _ in 0..levels {
-        gadget_row.push(power);
-        power = power * base;
-    }
-
-    let mut alpha_pow = F::one();
-    for _ in 0..D {
-        alpha_pow = alpha_pow * alpha;
-    }
-    let denom = alpha_pow + F::one();
-
     let eq_tau1 = EqPolynomial::evals(tau1);
-    let x_len = total_cols.next_power_of_two();
+    if eq_tau1.len() < rows {
+        return Err(HachiError::InvalidSize {
+            expected: rows,
+            actual: eq_tau1.len(),
+        });
+    }
 
-    let out = cfg_into_iter!(0..x_len)
+    let g1_open = gadget_row_scalars::<F>(depth_open, log_basis);
+    let g1_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
+    let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
+    let r_gadget = gadget_row_scalars::<F>(levels, log_basis);
+    let x_len = total_cols.next_power_of_two();
+    let mut out = Vec::with_capacity(x_len);
+
+    let c_alphas: Vec<F> = challenges
+        .iter()
+        .map(|challenge| eval_sparse_challenge_at_pows::<F, D>(challenge, alpha_pows))
+        .collect::<Result<_, _>>()?;
+
+    let d_view = setup.D_mat.view::<D>();
+    let b_view = setup.B.view::<D>();
+    let a_view = setup.A.view::<D>();
+
+    let row3_weight = eq_tau1[Cfg::N_D + Cfg::N_B];
+    let row4_weight = eq_tau1[Cfg::N_D + Cfg::N_B + 1];
+    let a_weights = &eq_tau1[(Cfg::N_D + Cfg::N_B + 2)..rows];
+
+    let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
         .map(|x| {
-            let mut acc = F::zero();
-            if x < orig_cols {
-                for (i, eq_i) in eq_tau1.iter().enumerate().take(rows) {
-                    acc += *eq_i * m_a[i][x];
-                }
-            } else if x < total_cols {
-                let offset = x - orig_cols;
-                let i = offset / levels;
-                let j = offset % levels;
-                if i < rows && i < eq_tau1.len() {
-                    acc = eq_tau1[i] * (-denom * gadget_row[j]);
+            let block_idx = x / depth_open;
+            let digit_idx = x % depth_open;
+            let mut acc = (row3_weight * opening_point.b[block_idx]
+                + row4_weight * c_alphas[block_idx])
+                * g1_open[digit_idx];
+            for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(Cfg::N_D) {
+                if !eq_i.is_zero() {
+                    acc += *eq_i * eval_ring_at_pows(&d_view.row(row_idx)[x], alpha_pows);
                 }
             }
             acc
         })
         .collect();
+    out.extend(w_segment);
+
+    let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
+        .map(|x| {
+            let block_idx = x / (Cfg::N_A * depth_open);
+            let rem = x % (Cfg::N_A * depth_open);
+            let a_idx = rem / depth_open;
+            let digit_idx = rem % depth_open;
+            let mut acc = a_weights[a_idx] * c_alphas[block_idx] * g1_open[digit_idx];
+            for (row_idx, eq_i) in eq_tau1[Cfg::N_D..(Cfg::N_D + Cfg::N_B)].iter().enumerate() {
+                if !eq_i.is_zero() {
+                    acc += *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[x], alpha_pows);
+                }
+            }
+            acc
+        })
+        .collect();
+    out.extend(t_segment);
+
+    let z_base: Vec<F> = cfg_into_iter!(0..inner_width)
+        .map(|k| {
+            let block_idx = k / depth_commit;
+            let digit_idx = k % depth_commit;
+            let mut acc = row4_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
+            for (a_idx, eq_i) in a_weights.iter().enumerate() {
+                if !eq_i.is_zero() {
+                    acc += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[k], alpha_pows);
+                }
+            }
+            acc
+        })
+        .collect();
+
+    let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
+        .map(|idx| {
+            let k = idx / depth_fold;
+            let fold_idx = idx % depth_fold;
+            -(z_base[k] * fold_gadget[fold_idx])
+        })
+        .collect();
+    out.extend(z_segment);
+
+    let alpha_pow_d = alpha_pows[D - 1] * alpha;
+    let denom = alpha_pow_d + F::one();
+    let r_tail_len = rows * levels;
+    let r_tail: Vec<F> = cfg_into_iter!(0..r_tail_len)
+        .map(|idx| {
+            let row_idx = idx / levels;
+            let level_idx = idx % levels;
+            -(eq_tau1[row_idx] * denom * r_gadget[level_idx])
+        })
+        .collect();
+    out.extend(r_tail);
+    out.resize(x_len, F::zero());
     Ok(out)
 }
 

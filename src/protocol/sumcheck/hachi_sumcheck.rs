@@ -80,10 +80,11 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
         w_evals_compact: Vec<i8>,
         tau0: &[E],
         b: usize,
-        alpha_evals_y: &[E],
-        m_evals_x: &[E],
+        alpha_evals_y: Vec<E>,
+        m_evals_x: Vec<E>,
         num_u: usize,
         num_l: usize,
+        relation_claim: E,
     ) -> Self {
         assert!(b >= 1, "b must be at least 1");
         let num_vars = num_u + num_l;
@@ -92,18 +93,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
         assert_eq!(tau0.len(), num_vars);
         assert_eq!(alpha_evals_y.len(), 1 << num_l);
         assert_eq!(m_evals_x.len(), 1 << num_u);
-
-        let alpha_compact = alpha_evals_y.to_vec();
-        let m_compact = m_evals_x.to_vec();
-
-        let x_mask = (1usize << num_u) - 1;
-        let relation_claim = Self::compute_relation_claim_compact(
-            &w_evals_compact,
-            &alpha_compact,
-            &m_compact,
-            num_u,
-            x_mask,
-        );
 
         let round_kernel = choose_round_kernel(b);
         let point_precomp = match round_kernel {
@@ -123,8 +112,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
             point_precomp,
             range_precomp,
             b,
-            alpha_compact,
-            m_compact,
+            alpha_compact: alpha_evals_y,
+            m_compact: m_evals_x,
             num_u,
             num_vars,
             relation_claim,
@@ -133,21 +122,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
             fold_time_total: 0.0,
             rounds_completed: 0,
         }
-    }
-
-    fn compute_relation_claim_compact(
-        w_compact: &[i8],
-        alpha_compact: &[E],
-        m_compact: &[E],
-        num_u: usize,
-        x_mask: usize,
-    ) -> E {
-        w_compact
-            .iter()
-            .enumerate()
-            .fold(E::zero(), |acc, (idx, &w)| {
-                acc + E::from_i64(w as i64) * alpha_compact[idx >> num_u] * m_compact[idx & x_mask]
-            })
     }
 
     /// Accumulate `am * w_int` into split pos/neg accumulators.

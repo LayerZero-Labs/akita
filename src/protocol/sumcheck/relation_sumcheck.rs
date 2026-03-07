@@ -272,7 +272,9 @@ impl<F: FieldCore, const D: usize> SumcheckInstanceVerifier<F> for RelationSumch
 mod tests {
     use super::*;
     use crate::algebra::Fp64;
-    use crate::protocol::commitment_scheme::rederive_alpha_and_m_a;
+    use crate::protocol::commitment_scheme::{
+        rederive_alpha_and_m_a, rederive_alpha_and_m_evals_x,
+    };
     use crate::protocol::hachi_poly_ops::DensePoly;
     use crate::protocol::opening_point::BasisMode;
     use crate::protocol::sumcheck::eq_poly::EqPolynomial;
@@ -357,7 +359,7 @@ mod tests {
         let tau1: Vec<F> = (0..num_i).map(|i| F::from_u64((i + 5) as u64)).collect();
         let eq_tau1 = EqPolynomial::evals(&tau1);
 
-        let mut m_evals_x = vec![F::zero(); x_len];
+        let mut m_evals_x_reference = vec![F::zero(); x_len];
         for x in 0..x_len {
             let mut acc = F::zero();
             for i in 0..(1usize << num_i) {
@@ -368,8 +370,22 @@ mod tests {
                 };
                 acc += eq_tau1[i] * row_val;
             }
-            m_evals_x[x] = acc;
+            m_evals_x_reference[x] = acc;
         }
+
+        let (alpha_check, m_evals_x) = rederive_alpha_and_m_evals_x::<F, { Cfg::D }, Cfg>(
+            &proof,
+            &Scheme::setup_verifier(&setup),
+            &opening_point,
+            &commitment,
+            &tau1,
+        )
+        .unwrap();
+        assert_eq!(alpha_check, alpha);
+        assert_eq!(
+            m_evals_x, m_evals_x_reference,
+            "fused m_evals_x should match expanded-matrix contraction",
+        );
 
         let mut alpha_evals_y = vec![F::zero(); y_len];
         let mut power = F::one();
