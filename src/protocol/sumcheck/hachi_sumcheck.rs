@@ -56,6 +56,7 @@ pub struct HachiSumcheckProver<E: FieldCore> {
     // Relation state (compact — not expanded to full domain)
     alpha_compact: Vec<E>,
     m_compact: Vec<E>,
+    live_x_cols: usize,
     num_u: usize,
 
     num_vars: usize,
@@ -82,16 +83,22 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
         b: usize,
         alpha_evals_y: Vec<E>,
         m_evals_x: Vec<E>,
+        live_x_cols: usize,
         num_u: usize,
         num_l: usize,
         relation_claim: E,
     ) -> Self {
         assert!(b >= 1, "b must be at least 1");
         let num_vars = num_u + num_l;
-        let n = 1usize << num_vars;
-        assert_eq!(w_evals_compact.len(), n);
+        assert!(live_x_cols >= 1, "live_x_cols must be at least 1");
+        assert!(
+            live_x_cols <= (1usize << num_u),
+            "live_x_cols exceeds x width"
+        );
+        let y_len = 1usize << num_l;
+        assert_eq!(w_evals_compact.len(), live_x_cols * y_len);
         assert_eq!(tau0.len(), num_vars);
-        assert_eq!(alpha_evals_y.len(), 1 << num_l);
+        assert_eq!(alpha_evals_y.len(), y_len);
         assert_eq!(m_evals_x.len(), 1 << num_u);
 
         let round_kernel = choose_round_kernel(b);
@@ -113,7 +120,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
             range_precomp,
             b,
             alpha_compact: alpha_evals_y,
-            m_compact: m_evals_x,
+            m_compact: m_evals_x[..live_x_cols].to_vec(),
+            live_x_cols,
             num_u,
             num_vars,
             relation_claim,
@@ -413,6 +421,540 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
         }
     }
 
+    #[inline]
+    fn current_x_width(&self) -> usize {
+        self.num_u.saturating_sub(self.rounds_completed)
+    }
+
+    #[inline]
+    fn current_x_len(&self) -> usize {
+        1usize << self.current_x_width()
+    }
+
+    #[inline]
+    fn use_prefix_x_round(&self) -> bool {
+        self.rounds_completed < self.num_u && self.live_x_cols < self.current_x_len()
+    }
+
+    #[tracing::instrument(skip_all, name = "HachiSumcheckProver::compute_round_compact_prefix_x")]
+    fn compute_round_compact_prefix_x(&self, w_compact: &[i8]) -> (UniPoly<E>, UniPoly<E>) {
+        debug_assert!(self.rounds_completed < self.num_u);
+        debug_assert_eq!(w_compact.len(), self.live_x_cols * self.alpha_compact.len());
+
+        let (e_first, e_second) = self.split_eq.remaining_eq_tables();
+        let num_first = e_first.len();
+        let first_bits = num_first.trailing_zeros();
+        let current_x_half = 1usize << (self.current_x_width() - 1);
+        let live_pairs = self.live_x_cols.div_ceil(2);
+        let alpha_compact = &self.alpha_compact;
+        let m_compact = &self.m_compact;
+        let b = self.b;
+
+        type RelAccum<E> = [<E as HasUnreducedOps>::MulU64Accum; 6];
+        let rel_zero = || -> RelAccum<E> { [E::MulU64Accum::ZERO; 6] };
+        let rel_combine = |a: &mut RelAccum<E>, b: &RelAccum<E>| {
+            for i in 0..6 {
+                a[i] += b[i];
+            }
+        };
+        let rel_reduce = |r: RelAccum<E>| -> [E; 3] {
+            [
+                Self::reduce_signed_accum(r[0], r[1]),
+                Self::reduce_signed_accum(r[2], r[3]),
+                Self::reduce_signed_accum(r[4], r[5]),
+            ]
+        };
+
+        match self.round_kernel {
+            NormRoundKernel::PointEvalInterpolation => {
+                let degree_q = b;
+                let num_points_q = degree_q + 1;
+
+                let _span = tracing::info_span!("fused_compact_prefix_point_eval").entered();
+                let (q_evals, rel_accum) = cfg_fold_reduce!(
+                    0..alpha_compact.len(),
+                    || (vec![E::zero(); num_points_q], rel_zero()),
+                    |(mut norm_evals, mut rel), y| {
+                        let row_start = y * self.live_x_cols;
+                        let row = &w_compact[row_start..row_start + self.live_x_cols];
+                        let alpha = alpha_compact[y];
+                        for pair_x in 0..live_pairs {
+                            let j = y * current_x_half + pair_x;
+                            let j_low = j & (num_first - 1);
+                            let j_high = j >> first_bits;
+                            let eq_rem = e_first[j_low] * e_second[j_high];
+
+                            let left = 2 * pair_x;
+                            let w0_i = row[left] as i32;
+                            let w1_i = if left + 1 < self.live_x_cols {
+                                row[left + 1] as i32
+                            } else {
+                                0
+                            };
+                            let delta_i = w1_i - w0_i;
+                            let mut w_t_i = w0_i;
+                            for eval in &mut norm_evals {
+                                *eval +=
+                                    eq_rem * field_from_i128::<E>(range_check_eval_i128(w_t_i, b));
+                                w_t_i += delta_i;
+                            }
+
+                            let m_0 = m_compact[left];
+                            let m_1 = if left + 1 < self.live_x_cols {
+                                m_compact[left + 1]
+                            } else {
+                                E::zero()
+                            };
+                            let am_0 = alpha * m_0;
+                            let am_1 = alpha * m_1;
+                            let am_2 = alpha * (m_1 + m_1 - m_0);
+                            let w2_i = 2 * w1_i - w0_i;
+
+                            Self::accum_signed_mul(&mut rel, 0, am_0, w0_i);
+                            Self::accum_signed_mul(&mut rel, 2, am_1, w1_i);
+                            Self::accum_signed_mul(&mut rel, 4, am_2, w2_i);
+                        }
+                        (norm_evals, rel)
+                    },
+                    |(mut na, mut ra), (nb, rb)| {
+                        for (ai, bi) in na.iter_mut().zip(nb.iter()) {
+                            *ai += *bi;
+                        }
+                        rel_combine(&mut ra, &rb);
+                        (na, ra)
+                    }
+                );
+
+                let q_poly = UniPoly::from_evals(&q_evals);
+                let norm_poly = self.split_eq.gruen_mul(&q_poly);
+                let rel_evals = rel_reduce(rel_accum);
+                (norm_poly, UniPoly::from_evals(&rel_evals))
+            }
+            NormRoundKernel::AffineCoeffComposition => {
+                let rp = self.range_precomp.as_ref().unwrap();
+                let num_coeffs_q = rp.degree_q + 1;
+                let compact_lut_available = rp
+                    .compact_coeffs_lut(-(b as i8 / 2), -(b as i8 / 2))
+                    .is_some();
+
+                let _span = tracing::info_span!("fused_compact_prefix_affine_coeff").entered();
+                let (mut q_coeffs, rel_accum) = if compact_lut_available {
+                    let (pos_accum, neg_accum, rel_accum) = cfg_fold_reduce!(
+                        0..alpha_compact.len(),
+                        || (
+                            vec![E::MulU64Accum::ZERO; num_coeffs_q],
+                            vec![E::MulU64Accum::ZERO; num_coeffs_q],
+                            rel_zero(),
+                        ),
+                        |(mut pos_accum, mut neg_accum, mut rel), y| {
+                            let row_start = y * self.live_x_cols;
+                            let row = &w_compact[row_start..row_start + self.live_x_cols];
+                            let alpha = alpha_compact[y];
+                            for pair_x in 0..live_pairs {
+                                let j = y * current_x_half + pair_x;
+                                let j_low = j & (num_first - 1);
+                                let j_high = j >> first_bits;
+                                let eq_rem = e_first[j_low] * e_second[j_high];
+
+                                let left = 2 * pair_x;
+                                let w0_int = row[left];
+                                let w1_int = if left + 1 < self.live_x_cols {
+                                    row[left + 1]
+                                } else {
+                                    0
+                                };
+                                let coeffs = rp
+                                    .compact_coeffs_lut(w0_int, w1_int)
+                                    .expect("missing compact coefficient LUT");
+                                accumulate_compact_coeffs(
+                                    &mut pos_accum,
+                                    &mut neg_accum,
+                                    eq_rem,
+                                    coeffs,
+                                );
+
+                                let m_0 = m_compact[left];
+                                let m_1 = if left + 1 < self.live_x_cols {
+                                    m_compact[left + 1]
+                                } else {
+                                    E::zero()
+                                };
+                                let am_0 = alpha * m_0;
+                                let am_1 = alpha * m_1;
+                                let am_2 = alpha * (m_1 + m_1 - m_0);
+                                let w2_i = 2 * w1_int as i32 - w0_int as i32;
+
+                                Self::accum_signed_mul(&mut rel, 0, am_0, w0_int as i32);
+                                Self::accum_signed_mul(&mut rel, 2, am_1, w1_int as i32);
+                                Self::accum_signed_mul(&mut rel, 4, am_2, w2_i);
+                            }
+                            (pos_accum, neg_accum, rel)
+                        },
+                        |(mut pa, mut na, mut ra), (pb, nb, rb)| {
+                            for (ai, bi) in pa.iter_mut().zip(pb.iter()) {
+                                *ai += *bi;
+                            }
+                            for (ai, bi) in na.iter_mut().zip(nb.iter()) {
+                                *ai += *bi;
+                            }
+                            rel_combine(&mut ra, &rb);
+                            (pa, na, ra)
+                        }
+                    );
+
+                    let q_coeffs = pos_accum
+                        .into_iter()
+                        .zip(neg_accum)
+                        .map(|(pos, neg)| reduce_small_coeff_accum(pos, neg))
+                        .collect();
+                    (q_coeffs, rel_accum)
+                } else {
+                    let (q_coeffs_accum, rel_accum) = cfg_fold_reduce!(
+                        0..alpha_compact.len(),
+                        || (vec![E::ProductAccum::ZERO; num_coeffs_q], rel_zero()),
+                        |(mut q_coeffs, mut rel), y| {
+                            let row_start = y * self.live_x_cols;
+                            let row = &w_compact[row_start..row_start + self.live_x_cols];
+                            let alpha = alpha_compact[y];
+                            let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
+                            let mut w_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
+                            for pair_x in 0..live_pairs {
+                                let j = y * current_x_half + pair_x;
+                                let j_low = j & (num_first - 1);
+                                let j_high = j >> first_bits;
+                                let eq_rem = e_first[j_low] * e_second[j_high];
+
+                                let left = 2 * pair_x;
+                                let w0_int = row[left];
+                                let w1_int = if left + 1 < self.live_x_cols {
+                                    row[left + 1]
+                                } else {
+                                    0
+                                };
+                                compute_entry_coeffs(
+                                    &mut entry_buf,
+                                    &mut w_pows_buf,
+                                    rp,
+                                    E::from_i64(w0_int as i64),
+                                    E::from_i64((w1_int as i32 - w0_int as i32) as i64),
+                                );
+                                for (acc, &entry) in
+                                    q_coeffs.iter_mut().zip(entry_buf[..num_coeffs_q].iter())
+                                {
+                                    *acc += eq_rem.mul_to_product_accum(entry);
+                                }
+
+                                let m_0 = m_compact[left];
+                                let m_1 = if left + 1 < self.live_x_cols {
+                                    m_compact[left + 1]
+                                } else {
+                                    E::zero()
+                                };
+                                let am_0 = alpha * m_0;
+                                let am_1 = alpha * m_1;
+                                let am_2 = alpha * (m_1 + m_1 - m_0);
+                                let w2_i = 2 * w1_int as i32 - w0_int as i32;
+
+                                Self::accum_signed_mul(&mut rel, 0, am_0, w0_int as i32);
+                                Self::accum_signed_mul(&mut rel, 2, am_1, w1_int as i32);
+                                Self::accum_signed_mul(&mut rel, 4, am_2, w2_i);
+                            }
+                            (q_coeffs, rel)
+                        },
+                        |(mut ca, mut ra), (cb, rb)| {
+                            for (ai, bi) in ca.iter_mut().zip(cb.iter()) {
+                                *ai += *bi;
+                            }
+                            rel_combine(&mut ra, &rb);
+                            (ca, ra)
+                        }
+                    );
+                    let q_coeffs = q_coeffs_accum
+                        .into_iter()
+                        .map(E::reduce_product_accum)
+                        .collect();
+                    (q_coeffs, rel_accum)
+                };
+
+                trim_trailing_zeros(&mut q_coeffs);
+                let q_poly = UniPoly::from_coeffs(q_coeffs);
+                let norm_poly = self.split_eq.gruen_mul(&q_poly);
+                let rel_evals = rel_reduce(rel_accum);
+                (norm_poly, UniPoly::from_evals(&rel_evals))
+            }
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "HachiSumcheckProver::compute_round_full_prefix_x")]
+    fn compute_round_full_prefix_x(&self, w_full: &[E]) -> (UniPoly<E>, UniPoly<E>) {
+        debug_assert!(self.rounds_completed < self.num_u);
+        debug_assert_eq!(w_full.len(), self.live_x_cols * self.alpha_compact.len());
+
+        let (e_first, e_second) = self.split_eq.remaining_eq_tables();
+        let num_first = e_first.len();
+        let first_bits = num_first.trailing_zeros();
+        let current_x_half = 1usize << (self.current_x_width() - 1);
+        let live_pairs = self.live_x_cols.div_ceil(2);
+        let alpha_compact = &self.alpha_compact;
+        let m_compact = &self.m_compact;
+
+        let _span = tracing::info_span!("fused_full_prefix").entered();
+        match self.round_kernel {
+            NormRoundKernel::PointEvalInterpolation => {
+                let degree_q = self.b;
+                let num_points_q = degree_q + 1;
+                let pair_offsets = &self.point_precomp.as_ref().unwrap().pair_offsets;
+
+                let (q_evals, rel_evals) = cfg_fold_reduce!(
+                    0..alpha_compact.len(),
+                    || (vec![E::zero(); num_points_q], [E::zero(); 3]),
+                    |(mut norm_evals, mut rel_evals), y| {
+                        let row_start = y * self.live_x_cols;
+                        let row = &w_full[row_start..row_start + self.live_x_cols];
+                        let alpha = alpha_compact[y];
+                        for pair_x in 0..live_pairs {
+                            let j = y * current_x_half + pair_x;
+                            let j_low = j & (num_first - 1);
+                            let j_high = j >> first_bits;
+                            let eq_rem = e_first[j_low] * e_second[j_high];
+
+                            let left = 2 * pair_x;
+                            let w_0 = row[left];
+                            let w_1 = if left + 1 < self.live_x_cols {
+                                row[left + 1]
+                            } else {
+                                E::zero()
+                            };
+                            let delta = w_1 - w_0;
+                            let mut w_t = w_0;
+                            for eval in &mut norm_evals {
+                                *eval += eq_rem * range_check_eval_precomputed(w_t, pair_offsets);
+                                w_t += delta;
+                            }
+
+                            let m_0 = m_compact[left];
+                            let m_1 = if left + 1 < self.live_x_cols {
+                                m_compact[left + 1]
+                            } else {
+                                E::zero()
+                            };
+                            rel_evals[0] += w_0 * alpha * m_0;
+                            rel_evals[1] += w_1 * alpha * m_1;
+                            rel_evals[2] += (w_1 + w_1 - w_0) * alpha * (m_1 + m_1 - m_0);
+                        }
+                        (norm_evals, rel_evals)
+                    },
+                    |(mut na, mut ra), (nb, rb)| {
+                        for (ai, bi) in na.iter_mut().zip(nb.iter()) {
+                            *ai += *bi;
+                        }
+                        for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
+                            *ai += *bi;
+                        }
+                        (na, ra)
+                    }
+                );
+
+                let q_poly = UniPoly::from_evals(&q_evals);
+                (
+                    self.split_eq.gruen_mul(&q_poly),
+                    UniPoly::from_evals(&rel_evals),
+                )
+            }
+            NormRoundKernel::AffineCoeffComposition => {
+                let range_pc = self.range_precomp.as_ref().unwrap();
+                let num_coeffs_q = range_pc.degree_q + 1;
+                debug_assert!(num_coeffs_q <= MAX_AFFINE_COEFFS);
+
+                let (mut q_coeffs, rel_evals) = cfg_fold_reduce!(
+                    0..alpha_compact.len(),
+                    || (vec![E::ProductAccum::ZERO; num_coeffs_q], [E::zero(); 3]),
+                    |(mut q_coeffs, mut rel_evals), y| {
+                        let row_start = y * self.live_x_cols;
+                        let row = &w_full[row_start..row_start + self.live_x_cols];
+                        let alpha = alpha_compact[y];
+                        let base_j = y * current_x_half;
+                        let full_chunks = live_pairs / 4;
+                        let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
+
+                        for chunk in 0..full_chunks {
+                            let pair_base = chunk * 4;
+                            let mut pairs = [(E::zero(), E::zero()); 4];
+                            for (slot, pair_x) in (pair_base..pair_base + 4).enumerate() {
+                                let left = 2 * pair_x;
+                                let w_0 = row[left];
+                                let w_1 = if left + 1 < self.live_x_cols {
+                                    row[left + 1]
+                                } else {
+                                    E::zero()
+                                };
+                                pairs[slot] = (w_0, w_1);
+                            }
+
+                            compute_entry_coeffs_x4(
+                                &mut batch_out,
+                                range_pc,
+                                [pairs[0].0, pairs[1].0, pairs[2].0, pairs[3].0],
+                                [
+                                    pairs[0].1 - pairs[0].0,
+                                    pairs[1].1 - pairs[1].0,
+                                    pairs[2].1 - pairs[2].0,
+                                    pairs[3].1 - pairs[3].0,
+                                ],
+                            );
+
+                            for (slot, &(w_0, w_1)) in pairs.iter().enumerate() {
+                                let pair_x = pair_base + slot;
+                                let j = base_j + pair_x;
+                                let j_low = j & (num_first - 1);
+                                let j_high = j >> first_bits;
+                                let eq_rem = e_first[j_low] * e_second[j_high];
+                                for (acc, &entry) in q_coeffs
+                                    .iter_mut()
+                                    .zip(batch_out[slot][..num_coeffs_q].iter())
+                                {
+                                    *acc += eq_rem.mul_to_product_accum(entry);
+                                }
+
+                                let left = 2 * pair_x;
+                                let m_0 = m_compact[left];
+                                let m_1 = if left + 1 < self.live_x_cols {
+                                    m_compact[left + 1]
+                                } else {
+                                    E::zero()
+                                };
+                                rel_evals[0] += w_0 * alpha * m_0;
+                                rel_evals[1] += w_1 * alpha * m_1;
+                                rel_evals[2] += (w_1 + w_1 - w_0) * alpha * (m_1 + m_1 - m_0);
+                            }
+                        }
+
+                        let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
+                        let mut w_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
+                        for pair_x in full_chunks * 4..live_pairs {
+                            let left = 2 * pair_x;
+                            let w_0 = row[left];
+                            let w_1 = if left + 1 < self.live_x_cols {
+                                row[left + 1]
+                            } else {
+                                E::zero()
+                            };
+                            compute_entry_coeffs(
+                                &mut entry_buf,
+                                &mut w_pows_buf,
+                                range_pc,
+                                w_0,
+                                w_1 - w_0,
+                            );
+
+                            let j = base_j + pair_x;
+                            let j_low = j & (num_first - 1);
+                            let j_high = j >> first_bits;
+                            let eq_rem = e_first[j_low] * e_second[j_high];
+                            for (acc, &entry) in
+                                q_coeffs.iter_mut().zip(entry_buf[..num_coeffs_q].iter())
+                            {
+                                *acc += eq_rem.mul_to_product_accum(entry);
+                            }
+
+                            let m_0 = m_compact[left];
+                            let m_1 = if left + 1 < self.live_x_cols {
+                                m_compact[left + 1]
+                            } else {
+                                E::zero()
+                            };
+                            rel_evals[0] += w_0 * alpha * m_0;
+                            rel_evals[1] += w_1 * alpha * m_1;
+                            rel_evals[2] += (w_1 + w_1 - w_0) * alpha * (m_1 + m_1 - m_0);
+                        }
+
+                        (q_coeffs, rel_evals)
+                    },
+                    |(mut ca, mut ra), (cb, rb)| {
+                        for (ai, bi) in ca.iter_mut().zip(cb.iter()) {
+                            *ai += *bi;
+                        }
+                        for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
+                            *ai += *bi;
+                        }
+                        (ca, ra)
+                    }
+                );
+
+                let mut q_coeffs: Vec<E> =
+                    q_coeffs.drain(..).map(E::reduce_product_accum).collect();
+                trim_trailing_zeros(&mut q_coeffs);
+                let q_poly = UniPoly::from_coeffs(q_coeffs);
+                (
+                    self.split_eq.gruen_mul(&q_poly),
+                    UniPoly::from_evals(&rel_evals),
+                )
+            }
+        }
+    }
+
+    fn fold_compact_prefix_x(w_compact: &[i8], live_x_cols: usize, y_len: usize, r: E) -> Vec<E> {
+        let next_live_x_cols = live_x_cols.div_ceil(2);
+        let rows: Vec<Vec<E>> = cfg_into_iter!(0..y_len)
+            .map(|y| {
+                let row_start = y * live_x_cols;
+                let row = &w_compact[row_start..row_start + live_x_cols];
+                let mut folded = Vec::with_capacity(next_live_x_cols);
+                for pair_x in 0..next_live_x_cols {
+                    let left = 2 * pair_x;
+                    let w_0 = E::from_i64(row[left] as i64);
+                    let w_1 = if left + 1 < live_x_cols {
+                        E::from_i64(row[left + 1] as i64)
+                    } else {
+                        E::zero()
+                    };
+                    folded.push(w_0 + r * (w_1 - w_0));
+                }
+                folded
+            })
+            .collect();
+        rows.into_iter().flatten().collect()
+    }
+
+    fn fold_full_prefix_x(w_full: &[E], live_x_cols: usize, y_len: usize, r: E) -> Vec<E> {
+        let next_live_x_cols = live_x_cols.div_ceil(2);
+        let rows: Vec<Vec<E>> = cfg_into_iter!(0..y_len)
+            .map(|y| {
+                let row_start = y * live_x_cols;
+                let row = &w_full[row_start..row_start + live_x_cols];
+                let mut folded = Vec::with_capacity(next_live_x_cols);
+                for pair_x in 0..next_live_x_cols {
+                    let left = 2 * pair_x;
+                    let w_0 = row[left];
+                    let w_1 = if left + 1 < live_x_cols {
+                        row[left + 1]
+                    } else {
+                        E::zero()
+                    };
+                    folded.push(w_0 + r * (w_1 - w_0));
+                }
+                folded
+            })
+            .collect();
+        rows.into_iter().flatten().collect()
+    }
+
+    fn fold_m_prefix(m_compact: &[E], live_x_cols: usize, r: E) -> Vec<E> {
+        let next_live_x_cols = live_x_cols.div_ceil(2);
+        cfg_into_iter!(0..next_live_x_cols)
+            .map(|pair_x| {
+                let left = 2 * pair_x;
+                let m_0 = m_compact[left];
+                let m_1 = if left + 1 < live_x_cols {
+                    m_compact[left + 1]
+                } else {
+                    E::zero()
+                };
+                m_0 + r * (m_1 - m_0)
+            })
+            .collect()
+    }
+
     fn fold_compact_to_full(w_compact: &[i8], r: E) -> Vec<E> {
         cfg_into_iter!(0..w_compact.len() / 2)
             .map(|j| {
@@ -449,11 +991,30 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
         let t_norm = Instant::now();
         let (norm_poly, relation_poly) = match &self.w_table {
             WTable::Compact(w_compact) => {
-                let result = self.compute_round_compact_fused(w_compact);
+                let result = if self.use_prefix_x_round() {
+                    self.compute_round_compact_prefix_x(w_compact)
+                } else {
+                    self.compute_round_compact_fused(w_compact)
+                };
                 self.norm_time_total += t_norm.elapsed().as_secs_f64();
                 result
             }
             WTable::Full(w_full) => {
+                if self.use_prefix_x_round() {
+                    let result = self.compute_round_full_prefix_x(w_full);
+                    self.norm_time_total += t_norm.elapsed().as_secs_f64();
+                    return {
+                        let max_len = result.0.coeffs.len().max(result.1.coeffs.len());
+                        let mut combined = vec![E::zero(); max_len];
+                        for (i, c) in result.0.coeffs.iter().enumerate() {
+                            combined[i] += self.batching_coeff * *c;
+                        }
+                        for (i, c) in result.1.coeffs.iter().enumerate() {
+                            combined[i] += *c;
+                        }
+                        UniPoly::from_coeffs(combined)
+                    };
+                }
                 let half = w_full.len() / 2;
                 let (e_first, e_second) = self.split_eq.remaining_eq_tables();
                 let num_first = e_first.len();
@@ -667,17 +1228,36 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
         let t_fold = Instant::now();
         let _span = tracing::info_span!("fold_round").entered();
         self.split_eq.bind(r);
+        let folding_x_round = self.rounds_completed < self.num_u;
+        let use_prefix_x_round = self.use_prefix_x_round();
+        let y_len = self.alpha_compact.len();
 
         self.w_table = match mem::replace(&mut self.w_table, WTable::Full(Vec::new())) {
-            WTable::Compact(w_compact) => WTable::Full(Self::fold_compact_to_full(&w_compact, r)),
+            WTable::Compact(w_compact) => {
+                let w_full = if use_prefix_x_round {
+                    Self::fold_compact_prefix_x(&w_compact, self.live_x_cols, y_len, r)
+                } else {
+                    Self::fold_compact_to_full(&w_compact, r)
+                };
+                WTable::Full(w_full)
+            }
             WTable::Full(mut w_full) => {
-                fold_evals_in_place(&mut w_full, r);
+                if use_prefix_x_round {
+                    w_full = Self::fold_full_prefix_x(&w_full, self.live_x_cols, y_len, r);
+                } else {
+                    fold_evals_in_place(&mut w_full, r);
+                }
                 WTable::Full(w_full)
             }
         };
 
-        if self.rounds_completed < self.num_u {
-            fold_evals_in_place(&mut self.m_compact, r);
+        if folding_x_round {
+            if use_prefix_x_round {
+                self.m_compact = Self::fold_m_prefix(&self.m_compact, self.live_x_cols, r);
+            } else {
+                fold_evals_in_place(&mut self.m_compact, r);
+            }
+            self.live_x_cols = self.live_x_cols.div_ceil(2);
         } else {
             fold_evals_in_place(&mut self.alpha_compact, r);
         }
@@ -814,7 +1394,7 @@ mod tests {
 
     type F = Fp64<4294967197>;
 
-    fn new_test_prover(
+    fn new_test_prover_with_live_x_cols(
         round_kernel: NormRoundKernel,
         batching_coeff: F,
         w_compact: Vec<i8>,
@@ -822,6 +1402,7 @@ mod tests {
         b: usize,
         alpha_evals_y: Vec<F>,
         m_evals_x: Vec<F>,
+        live_x_cols: usize,
         num_u: usize,
         num_l: usize,
     ) -> HachiSumcheckProver<F> {
@@ -843,7 +1424,8 @@ mod tests {
             range_precomp,
             b,
             alpha_compact: alpha_evals_y,
-            m_compact: m_evals_x,
+            m_compact: m_evals_x[..live_x_cols].to_vec(),
+            live_x_cols,
             num_u,
             num_vars: num_u + num_l,
             relation_claim: F::zero(),
@@ -852,6 +1434,31 @@ mod tests {
             fold_time_total: 0.0,
             rounds_completed: 0,
         }
+    }
+
+    fn new_test_prover(
+        round_kernel: NormRoundKernel,
+        batching_coeff: F,
+        w_compact: Vec<i8>,
+        tau0: &[F],
+        b: usize,
+        alpha_evals_y: Vec<F>,
+        m_evals_x: Vec<F>,
+        num_u: usize,
+        num_l: usize,
+    ) -> HachiSumcheckProver<F> {
+        new_test_prover_with_live_x_cols(
+            round_kernel,
+            batching_coeff,
+            w_compact,
+            tau0,
+            b,
+            alpha_evals_y,
+            m_evals_x,
+            1usize << num_u,
+            num_u,
+            num_l,
+        )
     }
 
     fn relation_round_reference(
@@ -933,6 +1540,99 @@ mod tests {
                 relation_poly, relation_ref,
                 "compact relation round mismatch for kernel {kernel:?}"
             );
+        }
+    }
+
+    fn pad_compact_rows(
+        w_prefix: &[i8],
+        live_x_cols: usize,
+        num_u: usize,
+        num_l: usize,
+    ) -> Vec<i8> {
+        let x_len = 1usize << num_u;
+        let y_len = 1usize << num_l;
+        let mut padded = vec![0i8; x_len * y_len];
+        for y in 0..y_len {
+            let src_start = y * live_x_cols;
+            let dst_start = y * x_len;
+            padded[dst_start..dst_start + live_x_cols]
+                .copy_from_slice(&w_prefix[src_start..src_start + live_x_cols]);
+        }
+        padded
+    }
+
+    #[test]
+    fn prefix_aware_rounds_match_explicit_zero_padding() {
+        let num_l = 2usize;
+        let b = 8usize;
+        let half = (b / 2) as i8;
+
+        for live_x_cols in [5usize, 6usize] {
+            let num_u = live_x_cols.next_power_of_two().trailing_zeros() as usize;
+            let x_len = 1usize << num_u;
+            let y_len = 1usize << num_l;
+            let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+                .map(|i| ((i * 7 + 5) % b) as i8 - half)
+                .collect();
+            let w_padded = pad_compact_rows(&w_prefix, live_x_cols, num_u, num_l);
+            let tau0: Vec<F> = (0..(num_u + num_l))
+                .map(|i| F::from_u64((i as u64) + 19))
+                .collect();
+            let alpha_evals_y: Vec<F> = (0..y_len)
+                .map(|i| F::from_u64((5 * i as u64) + 7))
+                .collect();
+            let mut m_evals_x: Vec<F> = (0..live_x_cols)
+                .map(|i| F::from_u64((11 * i as u64) + 13))
+                .collect();
+            m_evals_x.resize(x_len, F::zero());
+
+            for kernel in [
+                NormRoundKernel::PointEvalInterpolation,
+                NormRoundKernel::AffineCoeffComposition,
+            ] {
+                let mut prefix_prover = new_test_prover_with_live_x_cols(
+                    kernel,
+                    F::from_u64(17),
+                    w_prefix.clone(),
+                    &tau0,
+                    b,
+                    alpha_evals_y.clone(),
+                    m_evals_x.clone(),
+                    live_x_cols,
+                    num_u,
+                    num_l,
+                );
+                let mut padded_prover = new_test_prover(
+                    kernel,
+                    F::from_u64(17),
+                    w_padded.clone(),
+                    &tau0,
+                    b,
+                    alpha_evals_y.clone(),
+                    m_evals_x.clone(),
+                    num_u,
+                    num_l,
+                );
+
+                for round in 0..(num_u + num_l) {
+                    let prefix_poly = prefix_prover.compute_round_univariate(round, F::zero());
+                    let padded_poly = padded_prover.compute_round_univariate(round, F::zero());
+                    assert_eq!(
+                        prefix_poly, padded_poly,
+                        "round {round} polynomial mismatch for kernel {kernel:?} live_x_cols={live_x_cols}"
+                    );
+
+                    let challenge = F::from_u64((round as u64) + 29);
+                    prefix_prover.ingest_challenge(round, challenge);
+                    padded_prover.ingest_challenge(round, challenge);
+                }
+
+                assert_eq!(
+                    prefix_prover.final_w_eval(),
+                    padded_prover.final_w_eval(),
+                    "final folded witness mismatch for kernel {kernel:?} live_x_cols={live_x_cols}"
+                );
+            }
         }
     }
 }

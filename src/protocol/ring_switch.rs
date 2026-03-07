@@ -42,9 +42,11 @@ pub struct RingSwitchOutput<F: FieldCore> {
     pub w_commitment: FlatRingVec<F>,
     /// D-erased prover hint for the w-commitment.
     pub w_hint: FlatCommitmentHint,
-    /// Compact evaluation table of w (all entries in [-b/2, b/2), reordered for sumcheck).
+    /// Compact evaluation table of w, stored as y-major slices of the live x prefix.
     /// Populated by the prover; empty on the verifier side.
     pub w_evals: Vec<i8>,
+    /// Physical x width before zero-extension to the next power of two.
+    pub live_x_cols: usize,
     /// Evaluation table of M_alpha(x) (tau1-weighted).
     pub m_evals_x: Vec<F>,
     /// Evaluation table of alpha powers (y dimension).
@@ -182,6 +184,7 @@ where
 
     let num_l = D.trailing_zeros() as usize;
     let num_ring_elems = w.len() / D;
+    let live_x_cols = num_ring_elems;
     let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
     let m_rows = m_row_count::<Cfg>();
     let num_sc_vars = num_u + num_l;
@@ -237,6 +240,7 @@ where
         w_commitment,
         w_hint,
         w_evals,
+        live_x_cols,
         m_evals_x,
         alpha_evals_y,
         num_u,
@@ -350,6 +354,7 @@ where
         w_commitment: w_commitment.clone(),
         w_hint: FlatCommitmentHint::empty(),
         w_evals: Vec::new(),
+        live_x_cols: w_len / D,
         m_evals_x,
         alpha_evals_y,
         num_u,
@@ -792,7 +797,8 @@ pub(crate) fn build_w_evals<F: FieldCore>(
     Ok((evals, num_u, num_l))
 }
 
-/// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
+/// Produce the compact `Vec<i8>` eval table of `w` for the fused prover,
+/// storing only the physical x prefix for each y slice.
 pub(crate) fn build_w_evals_compact(
     w: &[i8],
     d: usize,
@@ -804,23 +810,17 @@ pub(crate) fn build_w_evals_compact(
         });
     }
     let num_l = d.trailing_zeros() as usize;
-    let num_ring_elems = w.len() / d;
-    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    let x_len = 1usize << num_u;
-    let n = x_len << num_l;
+    let live_x_cols = w.len() / d;
+    let num_u = live_x_cols.next_power_of_two().trailing_zeros() as usize;
 
-    let compact: Vec<i8> = cfg_into_iter!(0..n)
-        .map(|dst| {
-            let x = dst & (x_len - 1);
-            let y = dst >> num_u;
-            let src = y + (x << num_l);
-            if src < w.len() {
-                w[src]
-            } else {
-                0i8
-            }
+    let rows: Vec<Vec<i8>> = cfg_into_iter!(0..d)
+        .map(|y| {
+            (0..live_x_cols)
+                .map(|x| w[y + (x << num_l)])
+                .collect::<Vec<_>>()
         })
         .collect();
+    let compact = rows.into_iter().flatten().collect();
     Ok((compact, num_u, num_l))
 }
 
