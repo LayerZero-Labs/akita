@@ -13,16 +13,34 @@ use hachi_pcs::protocol::{prove_sumcheck, verify_sumcheck, Blake2bTranscript, Tr
 use hachi_pcs::{FieldCore, FieldSampling, FromSmallInt};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
+use std::sync::Mutex;
 use std::time::Instant;
 
 type F = Fp64<4294967197>;
+
+static NORM_KERNEL_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+fn with_norm_kernel_override<T>(value: &str, f: impl FnOnce() -> T) -> T {
+    let _guard = NORM_KERNEL_ENV_LOCK.lock().unwrap();
+    let old = std::env::var("HACHI_NORM_KERNEL").ok();
+    std::env::set_var("HACHI_NORM_KERNEL", value);
+    let result = f();
+    match old {
+        Some(old_value) => std::env::set_var("HACHI_NORM_KERNEL", old_value),
+        None => std::env::remove_var("HACHI_NORM_KERNEL"),
+    }
+    result
+}
 
 fn run_f0_e2e(num_u: usize, num_l: usize, b: usize) {
     let num_vars = num_u + num_l;
     let n = 1usize << num_vars;
     let mut rng = StdRng::seed_from_u64(0xF0);
 
-    let w_evals: Vec<F> = (0..n).map(|i| F::from_u64((i % b) as u64)).collect();
+    let half = (b / 2) as i64;
+    let w_evals: Vec<F> = (0..n)
+        .map(|i| F::from_i64((i as i64 % b as i64) - half))
+        .collect();
     let tau0: Vec<F> = (0..num_vars).map(|_| F::sample(&mut rng)).collect();
 
     let t0 = Instant::now();
@@ -58,7 +76,7 @@ fn run_f0_e2e(num_u: usize, num_l: usize, b: usize) {
          prove={prove_time:.2?}  verify={verify_time:.2?}  \
          rounds={} degree={}",
         proof.round_polys.len(),
-        2 * b,
+        b + 1,
     );
 }
 
@@ -74,7 +92,17 @@ fn f0_sumcheck_e2e() {
 
 #[test]
 fn f0_sumcheck_e2e_larger_b() {
-    run_f0_e2e(3, 3, 3);
+    run_f0_e2e(3, 3, 4);
+}
+
+#[test]
+fn f0_sumcheck_e2e_forced_point_eval_kernel() {
+    with_norm_kernel_override("point_eval", || run_f0_e2e(3, 3, 8));
+}
+
+#[test]
+fn f0_sumcheck_e2e_forced_affine_coeff_kernel() {
+    with_norm_kernel_override("affine_coeff", || run_f0_e2e(3, 3, 8));
 }
 
 fn run_f_alpha_e2e<const D: usize>(num_u: usize, num_i: usize) {

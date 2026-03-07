@@ -100,16 +100,16 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for Poly<F, D> {
     }
 }
 
-/// Evaluate the range-check polynomial `w · Π_{k=1}^{b−1} (w − k)(w + k)`.
+/// Evaluate the range-check polynomial `Π_{k=−b/2}^{b/2−1} (w − k)`.
 ///
-/// This polynomial vanishes exactly when `w ∈ {−(b−1), …, b−1}`.
-/// Total degree in `w` is `2b − 1`.
+/// This polynomial vanishes exactly on the balanced-digit set `{−b/2, …, b/2−1}`,
+/// matching the output of `balanced_decompose_pow2`.
+/// Total degree in `w` is `b`.
 pub fn range_check_eval<E: FieldCore + FromSmallInt>(w: E, b: usize) -> E {
-    let s = w * w;
-    let mut acc = w;
-    for k in 1..b {
-        let k_e = E::from_u64(k as u64);
-        acc = acc * (s - k_e * k_e);
+    let half = (b / 2) as i64;
+    let mut acc = E::one();
+    for k in -half..half {
+        acc = acc * (w - E::from_i64(k));
     }
     acc
 }
