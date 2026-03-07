@@ -462,14 +462,20 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::challenge_weight_for_ring_dim(d)
     }
 
+    fn w_log_basis() -> u32 {
+        Cfg::w_log_basis()
+    }
+
     fn decomposition() -> DecompositionParams {
         let parent = Cfg::decomposition();
+        let w_basis = Cfg::w_log_basis();
         let parent_open = parent.log_open_bound.unwrap_or(parent.log_commit_bound);
         DecompositionParams {
-            log_basis: parent.log_basis,
-            // w's entries are balanced digits in [-b/2, b/2), so commitment
-            // decomposition needs only one level.
-            log_commit_bound: parent.log_basis,
+            log_basis: w_basis,
+            // w entries come from a balanced decomposition; use w_basis for
+            // the commit bound since that's the widest digit range at any
+            // recursive level (level-0 entries fit in parent.log_basis <= w_basis).
+            log_commit_bound: w_basis,
             // Opening folds w with arbitrary field-element weights, producing
             // full-field-size coefficients that need the same decomposition
             // depth as the parent's opening bound.

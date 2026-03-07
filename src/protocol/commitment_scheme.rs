@@ -885,8 +885,12 @@ where
             t_prove_total.elapsed().as_secs_f64()
         );
 
-        let log_basis = Cfg::decomposition().log_basis;
-        let final_w = PackedDigits::from_i8_digits(&current_w, log_basis);
+        let final_w_basis = if level > 1 {
+            Cfg::w_log_basis()
+        } else {
+            Cfg::decomposition().log_basis
+        };
+        let final_w = PackedDigits::from_i8_digits(&current_w, final_w_basis);
 
         Ok(HachiProof { levels, final_w })
     }

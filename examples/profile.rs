@@ -4,8 +4,8 @@ use hachi_pcs::algebra::poly::multilinear_eval;
 use hachi_pcs::algebra::Fp128;
 use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
-    Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig,
-    HachiCommitmentLayout,
+    Fp128BoundedCommitmentConfig, Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig,
+    Fp128OneHotCommitmentConfig, HachiCommitmentLayout,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
@@ -258,8 +258,109 @@ fn main() {
                 run_dense::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(nv, &layout);
             }
         }
+        "compare_onehot" => {
+            {
+                type Cfg = Fp128BoundedCommitmentConfig<1, 3, 3>;
+                let layout = resolve_layout::<Cfg>(nv);
+                eprintln!("=== [A] onehot, basis=3 everywhere ===");
+                print_layout(&layout);
+                run_onehot::<{ Cfg::D }, Cfg>(nv, &layout);
+                eprintln!();
+            }
+            {
+                type Cfg = Fp128BoundedCommitmentConfig<1, 2, 2>;
+                let layout = resolve_layout::<Cfg>(nv);
+                eprintln!("=== [B] onehot, basis=2 everywhere ===");
+                print_layout(&layout);
+                run_onehot::<{ Cfg::D }, Cfg>(nv, &layout);
+                eprintln!();
+            }
+            {
+                type Cfg = Fp128BoundedCommitmentConfig<1, 2, 3>;
+                let layout = resolve_layout::<Cfg>(nv);
+                eprintln!("=== [C] onehot, L0 basis=2, w-levels basis=3 ===");
+                print_layout(&layout);
+                run_onehot::<{ Cfg::D }, Cfg>(nv, &layout);
+                eprintln!();
+            }
+            {
+                type Cfg = Fp128BoundedCommitmentConfig<1, 2, 4>;
+                let layout = resolve_layout::<Cfg>(nv);
+                eprintln!("=== [D] onehot, L0 basis=2, w-levels basis=4 ===");
+                print_layout(&layout);
+                run_onehot::<{ Cfg::D }, Cfg>(nv, &layout);
+            }
+        }
+        "compare_logbasis" => {
+            {
+                type Cfg = Fp128BoundedCommitmentConfig<3, 3, 3>;
+                let layout = resolve_layout::<Cfg>(nv);
+                eprintln!("=== [A] logbasis coeffs, basis=3 everywhere ===");
+                print_layout(&layout);
+                run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
+                eprintln!();
+            }
+            {
+                type Cfg = Fp128BoundedCommitmentConfig<3, 2, 2>;
+                let layout = resolve_layout::<Cfg>(nv);
+                eprintln!("=== [B] logbasis coeffs, basis=2 everywhere ===");
+                print_layout(&layout);
+                run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
+                eprintln!();
+            }
+            {
+                type Cfg = Fp128BoundedCommitmentConfig<3, 2, 3>;
+                let layout = resolve_layout::<Cfg>(nv);
+                eprintln!("=== [C] logbasis coeffs, L0 basis=2, w-levels basis=3 ===");
+                print_layout(&layout);
+                run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
+                eprintln!();
+            }
+            {
+                type Cfg = Fp128BoundedCommitmentConfig<3, 2, 4>;
+                let layout = resolve_layout::<Cfg>(nv);
+                eprintln!("=== [D] logbasis coeffs, L0 basis=2, w-levels basis=4 ===");
+                print_layout(&layout);
+                run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
+            }
+        }
+        "compare_basis" => {
+            {
+                type Cfg = Fp128BoundedCommitmentConfig<128, 3, 3>;
+                let layout = resolve_layout::<Cfg>(nv);
+                eprintln!("=== [A] baseline: log_basis=3 everywhere ===");
+                print_layout(&layout);
+                run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
+                eprintln!();
+            }
+            {
+                type Cfg = Fp128BoundedCommitmentConfig<128, 2, 2>;
+                let layout = resolve_layout::<Cfg>(nv);
+                eprintln!("=== [B] log_basis=2 everywhere ===");
+                print_layout(&layout);
+                run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
+                eprintln!();
+            }
+            {
+                type Cfg = Fp128BoundedCommitmentConfig<128, 2, 3>;
+                let layout = resolve_layout::<Cfg>(nv);
+                eprintln!("=== [C] L0 basis=2, w-levels basis=3 ===");
+                print_layout(&layout);
+                run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
+                eprintln!();
+            }
+            {
+                type Cfg = Fp128BoundedCommitmentConfig<128, 2, 4>;
+                let layout = resolve_layout::<Cfg>(nv);
+                eprintln!("=== [D] L0 basis=2, w-levels basis=4 ===");
+                print_layout(&layout);
+                run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
+            }
+        }
         other => {
-            eprintln!("Unknown HACHI_MODE={other}. Use: full, onehot, logbasis, all");
+            eprintln!(
+                "Unknown HACHI_MODE={other}. Use: full, onehot, logbasis, compare_basis, all"
+            );
             std::process::exit(1);
         }
     }
