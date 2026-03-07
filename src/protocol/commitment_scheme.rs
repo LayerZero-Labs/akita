@@ -37,7 +37,7 @@ use crate::protocol::sumcheck::eq_poly::EqPolynomial;
 use crate::protocol::sumcheck::hachi_sumcheck::{HachiSumcheckProver, HachiSumcheckVerifier};
 #[cfg(debug_assertions)]
 use crate::protocol::sumcheck::{multilinear_eval, range_check_eval};
-use crate::protocol::sumcheck::{multilinear_eval_small, prove_sumcheck, verify_sumcheck};
+use crate::protocol::sumcheck::{prove_sumcheck, verify_sumcheck};
 use crate::protocol::transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
@@ -388,7 +388,6 @@ where
         w_commitment,
         w_hint,
         w_evals,
-        w_evals_field: _,
         m_evals_x,
         alpha_evals_y,
         num_u,
@@ -398,7 +397,6 @@ where
         b,
         alpha: _,
     } = rs;
-    let w_evals_small = w_evals.clone();
     #[cfg(debug_assertions)]
     let alpha_evals_y_debug = alpha_evals_y.clone();
     #[cfg(debug_assertions)]
@@ -426,7 +424,7 @@ where
 
     let w_eval = {
         let _span = tracing::info_span!("multilinear_eval", level).entered();
-        multilinear_eval_small(&w_evals_small, &sumcheck_challenges)?
+        fused_prover.final_w_eval()
     };
 
     #[cfg(debug_assertions)]
@@ -759,7 +757,7 @@ where
         layout: &HachiCommitmentLayout,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError> {
         setup.assert_layout_fits(layout);
-        let t_hat_all = poly.commit_inner(
+        let inner = poly.commit_inner_witness(
             &setup.expanded.A,
             &setup.ntt_A,
             layout.block_len,
@@ -767,9 +765,9 @@ where
             layout.num_digits_open,
             layout.log_basis,
         )?;
-        let t_hat_flat = flatten_i8_blocks(&t_hat_all);
+        let t_hat_flat = flatten_i8_blocks(&inner.t_hat);
         let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(&setup.ntt_B, &t_hat_flat);
-        let hint = HachiCommitmentHint::new(t_hat_all);
+        let hint = HachiCommitmentHint::with_t(inner.t_hat, inner.t);
         Ok((RingCommitment { u }, hint))
     }
 

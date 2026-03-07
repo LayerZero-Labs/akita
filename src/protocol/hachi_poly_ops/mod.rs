@@ -161,6 +161,41 @@ fn sparse_mul_acc<const D: usize>(
     sparse_mul_acc_scalar::<D>(digit_plane, challenge, acc);
 }
 
+fn recompose_commit_inner_blocks<F: CanonicalField, const D: usize>(
+    t_hat_blocks: &[Vec<[i8; D]>],
+    num_digits_open: usize,
+    log_basis: u32,
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError> {
+    if num_digits_open == 0 {
+        return Err(HachiError::InvalidSetup(
+            "num_digits_open must be nonzero when recomposing commit witness".to_string(),
+        ));
+    }
+    t_hat_blocks
+        .iter()
+        .map(|block| {
+            if block.len() % num_digits_open != 0 {
+                return Err(HachiError::InvalidSetup(format!(
+                    "t_hat block has {} planes, expected a multiple of num_digits_open={num_digits_open}",
+                    block.len()
+                )));
+            }
+            Ok(block
+                .chunks(num_digits_open)
+                .map(|digits| CyclotomicRing::gadget_recompose_pow2_i8(digits, log_basis))
+                .collect())
+        })
+        .collect()
+}
+
+/// Prover-side output of the inner Ajtai commit step.
+pub struct CommitInnerWitness<F: FieldCore, const D: usize> {
+    /// Undecomposed `t_i = A * s_i` rows, grouped by block.
+    pub t: Vec<Vec<CyclotomicRing<F, D>>>,
+    /// Decomposed `t_hat_i = G^{-1}(t_i)` rows, grouped by block.
+    pub t_hat: Vec<Vec<[i8; D]>>,
+}
+
 /// Operations the Hachi commitment scheme needs from a polynomial.
 ///
 /// The four methods correspond to the four places in commit/prove that consume
@@ -253,6 +288,38 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         num_digits_open: usize,
         log_basis: u32,
     ) -> Result<Vec<Vec<[i8; D]>>, HachiError>;
+
+    /// Like [`commit_inner`](Self::commit_inner), but also preserves the
+    /// undecomposed `t_i` rows for prover-side consumers that would otherwise
+    /// need to recompose `t_hat`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if [`commit_inner`](Self::commit_inner) fails or if the
+    /// resulting `t_hat` blocks cannot be recomposed into full `t_i` rows.
+    fn commit_inner_witness(
+        &self,
+        a_matrix: &FlatMatrix<F>,
+        ntt_a: &NttSlotCache<D>,
+        block_len: usize,
+        num_digits_commit: usize,
+        num_digits_open: usize,
+        log_basis: u32,
+    ) -> Result<CommitInnerWitness<F, D>, HachiError>
+    where
+        F: CanonicalField,
+    {
+        let t_hat = self.commit_inner(
+            a_matrix,
+            ntt_a,
+            block_len,
+            num_digits_commit,
+            num_digits_open,
+            log_basis,
+        )?;
+        let t = recompose_commit_inner_blocks::<F, D>(&t_hat, num_digits_open, log_basis)?;
+        Ok(CommitInnerWitness { t, t_hat })
+    }
 }
 
 /// Dense polynomial: all ring coefficients materialized in memory.
@@ -469,6 +536,36 @@ where
 
         Ok(results)
     }
+
+    fn commit_inner_witness(
+        &self,
+        _a_matrix: &FlatMatrix<F>,
+        ntt_a: &NttSlotCache<D>,
+        block_len: usize,
+        num_digits_commit: usize,
+        num_digits_open: usize,
+        log_basis: u32,
+    ) -> Result<CommitInnerWitness<F, D>, HachiError> {
+        let n = self.coeffs.len();
+        let num_blocks = n.div_ceil(block_len);
+
+        let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
+            .map(|i| {
+                let start = i * block_len;
+                if start >= n {
+                    &[] as &[CyclotomicRing<F, D>]
+                } else {
+                    &self.coeffs[start..(start + block_len).min(n)]
+                }
+            })
+            .collect();
+
+        let t = mat_vec_mul_ntt_i8(ntt_a, &block_slices, num_digits_commit, log_basis);
+        let t_hat = cfg_iter!(t)
+            .map(|t_i| decompose_rows_i8(t_i, num_digits_open, log_basis))
+            .collect();
+        Ok(CommitInnerWitness { t, t_hat })
+    }
 }
 
 /// Ring polynomial whose coefficients are already balanced base-`2^log_basis`
@@ -662,6 +759,51 @@ where
             .map(|t_i| decompose_rows_i8(&t_i, num_digits_open, log_basis))
             .collect();
         Ok(results)
+    }
+
+    fn commit_inner_witness(
+        &self,
+        _a_matrix: &FlatMatrix<F>,
+        ntt_a: &NttSlotCache<D>,
+        block_len: usize,
+        num_digits_commit: usize,
+        num_digits_open: usize,
+        log_basis: u32,
+    ) -> Result<CommitInnerWitness<F, D>, HachiError> {
+        let num_blocks = self.num_ring_elems().div_ceil(block_len);
+        let coeff_len = self.coeffs.len();
+
+        let t = if num_digits_commit == 1 {
+            let block_slices: Vec<&[[i8; D]]> = (0..num_blocks)
+                .map(|block_idx| self.block_slice(block_idx, block_len))
+                .collect();
+            mat_vec_mul_ntt_digits_i8(ntt_a, &block_slices)
+        } else {
+            let ring_elems: Vec<CyclotomicRing<F, D>> = self
+                .coeffs
+                .iter()
+                .map(|digit| {
+                    let coeffs = from_fn(|k| F::from_i8(digit[k]));
+                    CyclotomicRing::from_coefficients(coeffs)
+                })
+                .collect();
+            let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
+                .map(|block_idx| {
+                    let start = block_idx * block_len;
+                    if start >= coeff_len {
+                        &[] as &[CyclotomicRing<F, D>]
+                    } else {
+                        &ring_elems[start..(start + block_len).min(coeff_len)]
+                    }
+                })
+                .collect();
+            mat_vec_mul_ntt_i8(ntt_a, &block_slices, num_digits_commit, log_basis)
+        };
+
+        let t_hat = cfg_iter!(t)
+            .map(|t_i| decompose_rows_i8(t_i, num_digits_open, log_basis))
+            .collect();
+        Ok(CommitInnerWitness { t, t_hat })
     }
 }
 
@@ -876,6 +1018,42 @@ where
             .collect();
 
         Ok(t_hat_all)
+    }
+
+    fn commit_inner_witness(
+        &self,
+        a_matrix: &FlatMatrix<F>,
+        _ntt_a: &NttSlotCache<D>,
+        block_len: usize,
+        num_digits_commit: usize,
+        num_digits_open: usize,
+        log_basis: u32,
+    ) -> Result<CommitInnerWitness<F, D>, HachiError> {
+        let a_view = a_matrix.view::<D>();
+        let n_a = a_view.num_rows();
+        let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
+
+        let per_block = cfg_iter!(self.sparse_blocks)
+            .map(|block_entries| {
+                if block_entries.is_empty() {
+                    (
+                        vec![CyclotomicRing::<F, D>::zero(); n_a],
+                        vec![[0i8; D]; zero_block_len],
+                    )
+                } else {
+                    let t_i = inner_ajtai_onehot_wide(
+                        &a_view,
+                        block_entries,
+                        block_len,
+                        num_digits_commit,
+                    );
+                    let t_hat_i = decompose_rows_i8(&t_i, num_digits_open, log_basis);
+                    (t_i, t_hat_i)
+                }
+            })
+            .collect::<Vec<_>>();
+        let (t, t_hat): (Vec<_>, Vec<_>) = per_block.into_iter().unzip();
+        Ok(CommitInnerWitness { t, t_hat })
     }
 }
 

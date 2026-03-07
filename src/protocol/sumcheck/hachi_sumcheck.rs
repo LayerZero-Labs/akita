@@ -124,6 +124,22 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
         }
     }
 
+    /// Return the fully folded witness evaluation after the final round.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called before the witness table has been fully folded to a
+    /// single field element.
+    pub fn final_w_eval(&self) -> E {
+        match &self.w_table {
+            WTable::Full(w_full) => {
+                assert_eq!(w_full.len(), 1, "w_table not fully folded");
+                w_full[0]
+            }
+            WTable::Compact(_) => panic!("w_table remained compact after final fold"),
+        }
+    }
+
     /// Accumulate `am * w_int` into split pos/neg accumulators.
     /// `accum[pos_idx]` gets the product when `w_int >= 0`,
     /// `accum[pos_idx + 1]` gets it when `w_int < 0`.

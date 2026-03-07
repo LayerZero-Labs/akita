@@ -1,11 +1,12 @@
 //! Proof structures for the Hachi protocol.
 
 use crate::algebra::CyclotomicRing;
+use crate::error::HachiError;
 use crate::primitives::serialization::{Compress, SerializationError};
 use crate::primitives::serialization::{Valid, Validate};
 use crate::protocol::commitment::RingCommitment;
 use crate::protocol::sumcheck::SumcheckProof;
-use crate::{FieldCore, FromSmallInt, HachiDeserialize, HachiSerialize};
+use crate::{CanonicalField, FieldCore, FromSmallInt, HachiDeserialize, HachiSerialize};
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 
@@ -388,10 +389,12 @@ impl FlatCommitmentHint {
 /// Contains the decomposed inner-Ajtai outputs `t̂_i` needed by the
 /// ring-switch step of the prover. The polynomial itself (ring coefficients)
 /// is passed separately to `prove` via `HachiPolyOps`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct HachiCommitmentHint<F: FieldCore, const D: usize> {
     /// Decomposed `t̂_i` blocks from the commitment phase as i8 digit planes.
     pub t_hat: Vec<Vec<[i8; D]>>,
+    /// Optional recomposed `t_i` rows cached for prover-side A-row work.
+    t: Option<Vec<Vec<CyclotomicRing<F, D>>>>,
     _marker: PhantomData<F>,
 }
 
@@ -400,10 +403,76 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
     pub fn new(t_hat: Vec<Vec<[i8; D]>>) -> Self {
         Self {
             t_hat,
+            t: None,
             _marker: PhantomData,
         }
     }
+
+    /// Construct a hint that also preserves the undecomposed `t_i` rows.
+    pub fn with_t(t_hat: Vec<Vec<[i8; D]>>, t: Vec<Vec<CyclotomicRing<F, D>>>) -> Self {
+        Self {
+            t_hat,
+            t: Some(t),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Get the optional recomposed `t_i` rows.
+    pub fn t(&self) -> Option<&[Vec<CyclotomicRing<F, D>>]> {
+        self.t.as_deref()
+    }
+
+    /// Populate the recomposed `t_i` rows from `t_hat` when they are absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `num_digits_open` is zero or if any `t_hat` block
+    /// length is not a multiple of `num_digits_open`.
+    pub fn ensure_t_recomposed(
+        &mut self,
+        num_digits_open: usize,
+        log_basis: u32,
+    ) -> Result<(), HachiError>
+    where
+        F: CanonicalField,
+    {
+        if self.t.is_some() {
+            return Ok(());
+        }
+        if num_digits_open == 0 {
+            return Err(HachiError::InvalidSetup(
+                "num_digits_open must be nonzero when recomposing t_hat".to_string(),
+            ));
+        }
+
+        let t = self
+            .t_hat
+            .iter()
+            .map(|block| {
+                if block.len() % num_digits_open != 0 {
+                    return Err(HachiError::InvalidSetup(format!(
+                        "t_hat block has {} planes, expected a multiple of num_digits_open={num_digits_open}",
+                        block.len()
+                    )));
+                }
+                Ok(block
+                    .chunks(num_digits_open)
+                    .map(|digits| CyclotomicRing::gadget_recompose_pow2_i8(digits, log_basis))
+                    .collect())
+            })
+            .collect::<Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError>>()?;
+        self.t = Some(t);
+        Ok(())
+    }
 }
+
+impl<F: FieldCore, const D: usize> PartialEq for HachiCommitmentHint<F, D> {
+    fn eq(&self, other: &Self) -> bool {
+        self.t_hat == other.t_hat
+    }
+}
+
+impl<F: FieldCore, const D: usize> Eq for HachiCommitmentHint<F, D> {}
 
 /// Proof for a single fold level (quad_eq + ring_switch + sumcheck).
 ///
