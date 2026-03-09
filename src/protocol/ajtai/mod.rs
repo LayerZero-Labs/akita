@@ -7,3 +7,5 @@
 pub mod ajtai_commit;
 /// Coefficient-based (non-NTT) Ajtai commitment implementation.
 pub mod coeff;
+/// NTT-based Ajtai commitment implementation.
+pub mod ntt_backend;

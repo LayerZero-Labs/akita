@@ -1,22 +1,28 @@
 //! Labrador commitment key setup.
 
 use crate::algebra::ring::CyclotomicRing;
+use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
+use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
 use crate::protocol::labrador::types::LabradorReductionConfig;
-use crate::{FieldCore, FieldSampling};
+use crate::{CanonicalField, FieldCore, FieldSampling};
 
 /// Pre-derived commitment-key matrices for one Labrador level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabradorSetup<F: FieldCore, const D: usize> {
     /// Inner commitment matrix A.
     pub a_mat: Vec<Vec<CyclotomicRing<F, D>>>,
+    /// Cached CRT+NTT representation of A for NTT-based witness commitment.
+    pub a_ntt: NttSlotCache<D>,
     /// Outer commitment matrix B. Not needed for the last fold proof.
     pub b_mat: Vec<Vec<CyclotomicRing<F, D>>>,
+    /// Cached CRT+NTT representation of B for NTT-based outer commitment.
+    pub b_ntt: NttSlotCache<D>,
     /// Linear-garbage commitment matrix D. Not needed for the last fold proof.
     pub d_mat: Vec<Vec<CyclotomicRing<F, D>>>,
 }
 
-impl<F: FieldCore + FieldSampling, const D: usize> LabradorSetup<F, D> {
+impl<F: FieldCore + CanonicalField + FieldSampling, const D: usize> LabradorSetup<F, D> {
     /// Derive all commitment-key matrices for a single Labrador level.
     pub fn new(
         config: &LabradorReductionConfig,
@@ -30,6 +36,9 @@ impl<F: FieldCore + FieldSampling, const D: usize> LabradorSetup<F, D> {
             comkey_seed,
             b"labrador/comkey/A",
         );
+        let a_flat = FlatMatrix::from_ring_matrix(&a_mat);
+        let a_ntt =
+            build_ntt_slot(a_flat.view::<D>()).expect("failed to build LabradorSetup A NTT slot");
 
         let (b_mat, d_mat) = if config.kappa1 > 0 && !config.tail {
             let t_hat_len = num_witness_rows * config.kappa * config.fu;
@@ -51,10 +60,15 @@ impl<F: FieldCore + FieldSampling, const D: usize> LabradorSetup<F, D> {
         } else {
             (Vec::new(), Vec::new())
         };
+        let b_flat = FlatMatrix::from_ring_matrix(&b_mat);
+        let b_ntt =
+            build_ntt_slot(b_flat.view::<D>()).expect("failed to build LabradorSetup B NTT slot");
 
         Self {
             a_mat,
+            a_ntt,
             b_mat,
+            b_ntt,
             d_mat,
         }
     }

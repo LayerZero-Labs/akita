@@ -28,6 +28,21 @@ pub struct CoeffAjtaiConfig {
     pub decompose_modulus: u32,
 }
 
+fn mat_vec_mul_prefix<F: FieldCore, const D: usize>(
+    matrix: &[Vec<CyclotomicRing<F, D>>],
+    witness_row: &[CyclotomicRing<F, D>],
+) -> Vec<CyclotomicRing<F, D>> {
+    cfg_iter!(matrix)
+        .map(|matrix_row| {
+            let mut acc = CyclotomicRing::<F, D>::zero();
+            for (a, x) in matrix_row.iter().zip(witness_row.iter()) {
+                acc += *a * *x;
+            }
+            acc
+        })
+        .collect()
+}
+
 impl<F: FieldCore + CanonicalField, const D: usize> AjtaiCommitmentScheme<F, D> for CoeffAjtai {
     /// For the coefficient implementation, we pass the fully derived matrix as `PublicMatrix`.
     /// The caller is responsible for deriving it.
@@ -48,6 +63,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> AjtaiCommitmentScheme<F, D> 
 
     type Params = CoeffAjtaiConfig;
 
+    #[tracing::instrument(skip_all, name = "CoeffAjtai::commit_witness")]
     fn commit_witness(
         matrix: &Self::PublicMatrix,
         witness: &Self::Witness,
@@ -57,20 +73,17 @@ impl<F: FieldCore + CanonicalField, const D: usize> AjtaiCommitmentScheme<F, D> 
             return Ok(vec![vec![]; witness.len()]);
         }
 
-        let max_len = matrix.first().map(|r| r.len()).unwrap_or(0);
-
-        let t_per_row: Vec<Vec<CyclotomicRing<F, D>>> = cfg_iter!(witness)
-            .map(|row| {
-                let mut padded = Vec::with_capacity(max_len);
-                padded.extend_from_slice(row);
-                padded.resize(max_len, CyclotomicRing::<F, D>::zero());
-                mat_vec_mul(matrix, &padded)
-            })
+        // Keep witness rows sequential here and parallelize over matrix rows inside
+        // mat-vec, so each worker owns chunks of `matrix`.
+        let t_per_row: Vec<Vec<CyclotomicRing<F, D>>> = witness
+            .iter()
+            .map(|row| mat_vec_mul_prefix(matrix, row))
             .collect();
 
         Ok(t_per_row)
     }
 
+    #[tracing::instrument(skip_all, name = "CoeffAjtai::commit_inner")]
     fn commit_inner(
         matrix: &Self::PublicMatrix,
         inner_commitment: &Self::InnerCommitment,
@@ -80,15 +93,23 @@ impl<F: FieldCore + CanonicalField, const D: usize> AjtaiCommitmentScheme<F, D> 
             .map(|t| decompose_rows_with_carry(t, params.num_digits, params.decompose_modulus))
             .collect();
 
-        let t_hat: Vec<CyclotomicRing<F, D>> = t_hat_per_row.into_iter().flatten().collect();
-
-        let u = if !matrix.is_empty() && params.outer_rows > 0 {
-            mat_vec_mul(matrix, &t_hat)
-        } else {
-            t_hat.clone()
+        let t_hat: Vec<CyclotomicRing<F, D>> = {
+            let total_t_hat_len: usize = t_hat_per_row.iter().map(Vec::len).sum();
+            let mut out = Vec::with_capacity(total_t_hat_len);
+            for mut row in t_hat_per_row {
+                out.append(&mut row);
+            }
+            out
         };
 
-        Ok((t_hat, u))
+        if !matrix.is_empty() && params.outer_rows > 0 {
+            let u = mat_vec_mul(matrix, &t_hat);
+            Ok((t_hat, u))
+        } else {
+            let mut u = Vec::with_capacity(t_hat.len());
+            u.extend_from_slice(&t_hat);
+            Ok((t_hat, u))
+        }
     }
 }
 

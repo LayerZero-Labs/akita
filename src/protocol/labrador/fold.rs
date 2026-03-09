@@ -34,7 +34,8 @@ pub struct LabradorFoldResult<F: FieldCore, const D: usize> {
 }
 
 use crate::protocol::ajtai::ajtai_commit::AjtaiCommitmentScheme;
-use crate::protocol::ajtai::coeff::{CoeffAjtai, CoeffAjtaiConfig};
+use crate::protocol::ajtai::coeff::CoeffAjtaiConfig;
+use crate::protocol::ajtai::ntt_backend::NttAjtaiBackend;
 
 /// Perform one Labrador fold level (standard or tail, determined by `config.tail`).
 ///
@@ -95,7 +96,12 @@ where
 
     let (t_hat, u1) = {
         let _span = tracing::info_span!("phase1_commit_u1").entered();
-        CoeffAjtai::two_tier_commit(&setup.a_mat, &setup.b_mat, witness.rows(), &coeff_config)
+        <NttAjtaiBackend as AjtaiCommitmentScheme<F, D>>::two_tier_commit(
+            &setup.a_ntt,
+            &setup.b_ntt,
+            witness.rows(),
+            &coeff_config,
+        )
     }?;
 
     // Absorb level context and u1 before deriving JL seed.
