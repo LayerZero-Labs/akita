@@ -184,10 +184,7 @@ mod tests {
                 let norm = poly.coeff_norm_sq();
                 assert!(
                     norm <= max_norm,
-                    "Digit {} norm {} exceeds max {}",
-                    i,
-                    norm,
-                    max_norm
+                    "Digit {i} norm {norm} exceeds max {max_norm}"
                 );
             }
         }

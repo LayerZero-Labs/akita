@@ -374,10 +374,7 @@ fn profile_single_fold() {
         .duration_since(UNIX_EPOCH)
         .expect("system clock before UNIX_EPOCH")
         .as_secs();
-    let trace_file = format!(
-        "{trace_dir}/labrador_fold_{}v_{timestamp}.json",
-        GREYHOUND_POLY_VARS
-    );
+    let trace_file = format!("{trace_dir}/labrador_fold_{GREYHOUND_POLY_VARS}v_{timestamp}.json");
     let (chrome_layer, guard) = ChromeLayerBuilder::new()
         .include_args(true)
         .file(&trace_file)
@@ -423,10 +420,7 @@ fn bench_labrador_single_fold(c: &mut Criterion) {
 
     report_sizes(&inst);
 
-    let mut group = c.benchmark_group(format!(
-        "labrador/fold_1x/greyhound_{}v",
-        GREYHOUND_POLY_VARS
-    ));
+    let mut group = c.benchmark_group(format!("labrador/fold_1x/greyhound_{GREYHOUND_POLY_VARS}v"));
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(30));
 
@@ -563,10 +557,7 @@ fn bench_labrador_two_level_fold(c: &mut Criterion) {
         eprintln!("======================================");
     }
 
-    let mut group = c.benchmark_group(format!(
-        "labrador/fold_2x/greyhound_{}v",
-        GREYHOUND_POLY_VARS
-    ));
+    let mut group = c.benchmark_group(format!("labrador/fold_2x/greyhound_{GREYHOUND_POLY_VARS}v"));
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(60));
 

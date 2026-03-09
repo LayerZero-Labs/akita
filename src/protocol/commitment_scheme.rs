@@ -2,9 +2,12 @@
 
 use crate::algebra::fields::wide::HasWide;
 use crate::algebra::fields::HasUnreducedOps;
-use crate::algebra::{CyclotomicRing, SparseChallenge};
+use crate::algebra::CyclotomicRing;
+#[cfg(debug_assertions)]
+use crate::algebra::SparseChallenge;
 use crate::error::HachiError;
 use crate::primitives::poly::multilinear_lagrange_basis;
+use crate::primitives::serialization::Valid;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{flatten_i8_blocks, mat_vec_mul_ntt_single_i8};
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttBundle;
@@ -13,28 +16,35 @@ use crate::protocol::commitment::{
     HachiCommitmentLayout, HachiExpandedSetup, HachiProverSetup, HachiVerifierSetup,
     RingCommitment, RingCommitmentScheme,
 };
-use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
+use crate::protocol::hachi_poly_ops::{BalancedDigitPoly, HachiPolyOps};
 use crate::protocol::opening_point::{BasisMode, RingOpeningPoint};
 use crate::protocol::proof::{
-    DigitLut, FlatCommitmentHint, FlatRingVec, HachiCommitmentHint, HachiLevelProof, HachiProof,
-    PackedDigits,
+    FlatCommitmentHint, FlatRingVec, HachiCommitmentHint, HachiLevelProof, HachiProof, PackedDigits,
 };
-use crate::protocol::quadratic_equation::{compute_m_a_streaming, QuadraticEquation};
+#[cfg(any(test, debug_assertions))]
+use crate::protocol::quadratic_equation::compute_m_a_reference;
+use crate::protocol::quadratic_equation::QuadraticEquation;
+use crate::protocol::ring_switch::eval_ring_at;
+#[cfg(debug_assertions)]
+use crate::protocol::ring_switch::m_row_count;
+#[cfg(test)]
+use crate::protocol::ring_switch::{build_alpha_evals_y, compute_m_evals_x};
 use crate::protocol::ring_switch::{
-    build_w_evals, commit_w, eval_ring_at, m_row_count, ring_switch_build_w, ring_switch_finalize,
-    ring_switch_verifier, w_ring_element_count, RingSwitchOutput, WCommitmentConfig,
+    build_w_evals, commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_verifier,
+    w_ring_element_count, RingSwitchOutput, WCommitmentConfig,
 };
 use crate::protocol::sumcheck::eq_poly::EqPolynomial;
 use crate::protocol::sumcheck::hachi_sumcheck::{HachiSumcheckProver, HachiSumcheckVerifier};
-use crate::protocol::sumcheck::{
-    multilinear_eval, multilinear_eval_small, prove_sumcheck, range_check_eval, verify_sumcheck,
-};
+#[cfg(debug_assertions)]
+use crate::protocol::sumcheck::{multilinear_eval, range_check_eval};
+use crate::protocol::sumcheck::{multilinear_eval_small, prove_sumcheck, verify_sumcheck};
 use crate::protocol::transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use crate::protocol::transcript::Transcript;
 use crate::{dispatch_ring_dim, dispatch_with_ntt};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
+#[cfg(debug_assertions)]
 use std::iter;
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -59,6 +69,38 @@ const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 /// stops being worthwhile.  If the w vector doesn't shrink by at least
 /// this factor, the overhead of another fold level outweighs the saving.
 const MIN_SHRINK_RATIO: f64 = 0.5;
+
+#[inline]
+fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
+    tau1: &[F],
+    alpha: F,
+    v: &[CyclotomicRing<F, D>],
+    u: &[CyclotomicRing<F, D>],
+    y_ring: &CyclotomicRing<F, D>,
+) -> F {
+    let eq_tau1 = EqPolynomial::evals(tau1);
+    let mut acc = F::zero();
+    let mut row_idx = 0usize;
+
+    for r in v {
+        if row_idx >= eq_tau1.len() {
+            return acc;
+        }
+        acc += eq_tau1[row_idx] * eval_ring_at(r, &alpha);
+        row_idx += 1;
+    }
+    for r in u {
+        if row_idx >= eq_tau1.len() {
+            return acc;
+        }
+        acc += eq_tau1[row_idx] * eval_ring_at(r, &alpha);
+        row_idx += 1;
+    }
+    if row_idx < eq_tau1.len() {
+        acc += eq_tau1[row_idx] * eval_ring_at(y_ring, &alpha);
+    }
+    acc
+}
 
 /// End-to-end PCS wrapper, generic over ring degree `D` and config `Cfg`.
 #[derive(Clone, Copy, Debug, Default)]
@@ -86,6 +128,7 @@ struct ProveLevelOutput<F: FieldCore> {
 type CommitFn<'a, F> =
     Box<dyn FnOnce(&[i8]) -> Result<(FlatRingVec<F>, FlatCommitmentHint), HachiError> + 'a>;
 
+#[cfg(debug_assertions)]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn prove_level_diagnostic<F, const D: usize, Cfg>(
@@ -103,7 +146,7 @@ fn prove_level_diagnostic<F, const D: usize, Cfg>(
     Cfg: CommitmentConfig,
 {
     let m_a =
-        compute_m_a_streaming::<F, D, Cfg>(expanded, opening_point, challenges, &rs.alpha, layout)
+        compute_m_a_reference::<F, D, Cfg>(expanded, opening_point, challenges, &rs.alpha, layout)
             .expect("compute_m_a diagnostic failed");
 
     let x_len = 1usize << rs.num_u;
@@ -162,16 +205,7 @@ fn prove_level_diagnostic<F, const D: usize, Cfg>(
         );
     }
 
-    let eq_tau1 = EqPolynomial::evals(&rs.tau1);
-    let mut verifier_claim = F::zero();
-    for (i, eq_i) in eq_tau1.iter().enumerate() {
-        let y_i = if i < y_full.len() {
-            y_full[i]
-        } else {
-            F::zero()
-        };
-        verifier_claim += *eq_i * y_i;
-    }
+    let verifier_claim = relation_claim_from_rows::<F, D>(&rs.tau1, rs.alpha, v, u, y_ring);
     let x_mask = x_len - 1;
     let mut prover_claim = F::zero();
     for (idx, &w) in rs.w_evals.iter().enumerate() {
@@ -186,6 +220,7 @@ fn prove_level_diagnostic<F, const D: usize, Cfg>(
     );
 }
 
+#[cfg(debug_assertions)]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn prove_level_selfcheck<F: FieldCore + FromSmallInt>(
@@ -262,14 +297,11 @@ where
     };
 
     let t0 = Instant::now();
-    let outer_weights = {
-        let _span = tracing::info_span!("outer_basis_weights", level).entered();
-        basis_weights(outer_point, basis)
-    };
     let fold_scalars = &ring_opening_point.a;
+    let eval_outer_scalars = &ring_opening_point.b;
     let (y_ring, w_folded) = {
         let _span = tracing::info_span!("evaluate_and_fold", level).entered();
-        poly.evaluate_and_fold(&outer_weights, fold_scalars, layout.block_len)
+        poly.evaluate_and_fold(eval_outer_scalars, fold_scalars, layout.block_len)
     };
     eprintln!(
         "  [hachi prove L{level}] evaluate_and_fold: {:.2}s (num_ring_elems={})",
@@ -335,6 +367,7 @@ where
 
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
 
+    #[cfg(debug_assertions)]
     prove_level_diagnostic::<F, D, Cfg>(
         expanded,
         quad_eq.opening_point(),
@@ -348,18 +381,38 @@ where
     );
 
     let t3 = Instant::now();
-    let num_u = rs.num_u;
-    let num_l = rs.num_l;
-    let w_evals_small = rs.w_evals.clone();
-    let mut fused_prover = HachiSumcheckProver::new(
-        batching_coeff,
-        rs.w_evals,
-        &rs.tau0,
-        rs.b,
-        &rs.alpha_evals_y,
-        &rs.m_evals_x,
+    let relation_claim =
+        relation_claim_from_rows::<F, D>(&rs.tau1, rs.alpha, &quad_eq.v, &commitment.u, &y_ring);
+    let RingSwitchOutput {
+        w,
+        w_commitment,
+        w_hint,
+        w_evals,
+        w_evals_field: _,
+        m_evals_x,
+        alpha_evals_y,
         num_u,
         num_l,
+        tau0,
+        tau1: _,
+        b,
+        alpha: _,
+    } = rs;
+    let w_evals_small = w_evals.clone();
+    #[cfg(debug_assertions)]
+    let alpha_evals_y_debug = alpha_evals_y.clone();
+    #[cfg(debug_assertions)]
+    let m_evals_x_debug = m_evals_x.clone();
+    let mut fused_prover = HachiSumcheckProver::new(
+        batching_coeff,
+        w_evals,
+        &tau0,
+        b,
+        alpha_evals_y,
+        m_evals_x,
+        num_u,
+        num_l,
+        relation_claim,
     );
 
     let (sumcheck_proof, sumcheck_challenges, _final_claim) =
@@ -376,14 +429,15 @@ where
         multilinear_eval_small(&w_evals_small, &sumcheck_challenges)?
     };
 
+    #[cfg(debug_assertions)]
     prove_level_selfcheck(
-        &rs.tau0,
+        &tau0,
         &sumcheck_challenges,
         w_eval,
-        rs.b,
+        b,
         batching_coeff,
-        &rs.alpha_evals_y,
-        &rs.m_evals_x,
+        &alpha_evals_y_debug,
+        &m_evals_x_debug,
         num_u,
         _final_claim,
         level,
@@ -394,11 +448,11 @@ where
             y_ring,
             quad_eq.v,
             sumcheck_proof,
-            rs.w_commitment,
+            w_commitment,
             w_eval,
         ),
-        w: rs.w,
-        w_hint: rs.w_hint,
+        w,
+        w_hint,
         sumcheck_challenges,
         num_u,
         num_l,
@@ -434,21 +488,6 @@ fn next_level_opening_point<F: FieldCore>(
     point.extend_from_slice(y);
     point.extend_from_slice(x);
     point
-}
-
-/// Build a `DensePoly` from the flat w digit vector, converting i8 -> F
-/// via lookup table and padding to the next power of two.
-#[tracing::instrument(skip_all, name = "dense_poly_from_w")]
-fn dense_poly_from_w<F: FieldCore + FromSmallInt, const D: usize>(
-    w: &[i8],
-    log_basis: u32,
-) -> Result<DensePoly<F, D>, HachiError> {
-    let lut = DigitLut::<F>::new(log_basis);
-    let total_coeffs = w.len().next_power_of_two().max(D);
-    let num_vars = total_coeffs.trailing_zeros() as usize;
-    let mut padded: Vec<F> = w.iter().map(|&d| lut.get(d)).collect();
-    padded.resize(total_coeffs, F::zero());
-    DensePoly::from_field_evals(num_vars, &padded)
 }
 
 /// Dispatch a commit-w operation to the correct ring dimension.
@@ -621,7 +660,7 @@ fn prove_subsequent_level<F, T, const D_LEVEL: usize, Cfg>(
     current_num_u: usize,
     current_num_l: usize,
     last_w_commitment: &FlatRingVec<F>,
-    last_w_eval: F,
+    #[cfg_attr(not(debug_assertions), allow(unused_variables))] last_w_eval: F,
     transcript: &mut T,
     level: usize,
 ) -> Result<ProveLevelOutput<F>, HachiError>
@@ -630,21 +669,19 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
-    let w_poly = dense_poly_from_w::<F, { D_LEVEL }>(current_w, Cfg::decomposition().log_basis)?;
+    let w_poly = BalancedDigitPoly::<F, { D_LEVEL }>::from_i8_digits(current_w)?;
     let opening_point = next_level_opening_point(current_challenges, current_num_u, current_num_l);
 
+    #[cfg(debug_assertions)]
     {
-        let field_evals: Vec<F> = w_poly
-            .coeffs
-            .iter()
-            .flat_map(|r| r.coeffs.iter().copied())
-            .collect();
+        let mut field_evals: Vec<F> = current_w.iter().map(|&d| F::from_i8(d)).collect();
+        field_evals.resize(w_poly.num_ring_elems() * D_LEVEL, F::zero());
         let direct_eval = multilinear_eval(&field_evals, &opening_point).unwrap();
         if last_w_eval != direct_eval {
             eprintln!("  [hachi prove L{level}] BUG: w_eval mismatch! prev_level w_eval != w_poly eval at opening_point");
             eprintln!(
                 "    w_poly ring_elems={}, field_len={}, opening_point.len()={}",
-                w_poly.coeffs.len(),
+                w_poly.num_ring_elems(),
                 field_evals.len(),
                 opening_point.len()
             );
@@ -673,13 +710,7 @@ where
     );
 
     let w_layout = <WCommitmentConfig<{ D_LEVEL }, Cfg>>::commitment_layout(opening_point.len())?;
-    prove_one_level::<
-        F,
-        T,
-        { D_LEVEL },
-        WCommitmentConfig<{ D_LEVEL }, Cfg>,
-        DensePoly<F, { D_LEVEL }>,
-    >(
+    prove_one_level::<F, T, { D_LEVEL }, WCommitmentConfig<{ D_LEVEL }, Cfg>, _>(
         expanded,
         ntt_a,
         ntt_b,
@@ -698,7 +729,7 @@ where
 
 impl<F, const D: usize, Cfg> CommitmentScheme<F, D> for HachiCommitmentScheme<D, Cfg>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps,
+    F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
     Cfg: CommitmentConfig,
 {
     type ProverSetup = HachiProverSetup<F, D>;
@@ -1126,7 +1157,7 @@ where
     )?;
     transcript.append_serde(ABSORB_SUMCHECK_W, &level0.w_commitment);
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
-    let m_a = compute_m_a_streaming::<F, D, Cfg>(
+    let m_a = compute_m_a_reference::<F, D, Cfg>(
         &setup.expanded,
         quad_eq.opening_point(),
         &quad_eq.challenges,
@@ -1135,6 +1166,68 @@ where
     )?;
     let m_a_vec = expand_m_a::<F, D>(&m_a, alpha, layout.log_basis)?;
     Ok((alpha, m_a_vec))
+}
+
+/// Re-derive the ring-switch challenge `alpha` and the fused `m_evals_x`
+/// table by replaying the verifier transcript from the proof data and setup.
+#[cfg(test)]
+pub(crate) fn rederive_alpha_and_m_evals_x<F, const D: usize, Cfg>(
+    proof: &HachiProof<F>,
+    setup: &HachiVerifierSetup<F>,
+    opening_point: &[F],
+    commitment: &RingCommitment<F, D>,
+    tau1: &[F],
+) -> Result<(F, Vec<F>), HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + 'static,
+    Cfg: CommitmentConfig,
+{
+    let level0 = proof.levels.first().ok_or(HachiError::InvalidProof)?;
+    let y_ring: CyclotomicRing<F, D> = level0.y_ring_typed();
+    let v_typed: Vec<CyclotomicRing<F, D>> = level0.v_typed();
+
+    let alpha_bits = Cfg::D.trailing_zeros() as usize;
+    if opening_point.len() < alpha_bits {
+        return Err(HachiError::InvalidSetup(
+            "opening point length underflow".to_string(),
+        ));
+    }
+    let layout = Cfg::commitment_layout(opening_point.len())?;
+    let ring_opening_point = ring_opening_point_from_field::<F>(
+        &opening_point[alpha_bits..],
+        layout.r_vars,
+        layout.m_vars,
+        BasisMode::Lagrange,
+    )?;
+    let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_HACHI_PROTOCOL);
+
+    commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+    for pt in opening_point {
+        transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+    }
+    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+
+    let quad_eq = QuadraticEquation::<F, D, Cfg>::new_verifier(
+        ring_opening_point,
+        v_typed,
+        &mut transcript,
+        commitment,
+        &y_ring,
+        layout,
+    )?;
+    transcript.append_serde(ABSORB_SUMCHECK_W, &level0.w_commitment);
+    let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
+    let alpha_evals_y = build_alpha_evals_y(alpha, D);
+    let m_evals_x = compute_m_evals_x::<F, D, Cfg>(
+        &setup.expanded,
+        quad_eq.opening_point(),
+        &quad_eq.challenges,
+        alpha,
+        &alpha_evals_y,
+        layout,
+        tau1,
+    )?;
+    Ok((alpha, m_evals_x))
 }
 
 fn lagrange_weights<F: FieldCore>(point: &[F]) -> Vec<F> {

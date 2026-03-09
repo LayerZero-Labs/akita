@@ -245,11 +245,11 @@ fn build_constraints<F: FieldCore + CanonicalField + FieldSampling, const D: usi
     }
     let t_hat_per_col = kappa * fu;
     let mut phi_t = vec![vec![CyclotomicRing::<F, D>::zero(); t_hat_len]; kappa];
-    for i in 0..n {
+    for (i, &challenge_i) in fold_challenges.iter().enumerate().take(n) {
         for l in 0..fu {
-            let neg_ci_scale = scalar_ring(-(fold_challenges[i] * pow2(l * bu)));
-            for r in 0..kappa {
-                phi_t[r][i * t_hat_per_col + r * fu + l] = neg_ci_scale;
+            let neg_ci_scale = scalar_ring(-(challenge_i * pow2(l * bu)));
+            for (r, phi_t_row) in phi_t.iter_mut().enumerate().take(kappa) {
+                phi_t_row[i * t_hat_per_col + r * fu + l] = neg_ci_scale;
             }
         }
     }

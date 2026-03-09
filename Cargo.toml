@@ -9,6 +9,8 @@ edition = "2021"
 rust-version = "1.88"
 authors = [
     "Markos Georghiades <mgeorghiades@a16z.com>",
+    "Quang Dao <qvd@andrew.cmu.edu>",
+    "Omid Bodaghi <omibo@layerzero.foundation>",
 ]
 license = "Apache-2.0 OR MIT"
 description = "A high performance and modular implementation of the Hachi polynomial commitment scheme."
@@ -34,6 +36,7 @@ all-features = true
 [features]
 default = ["parallel"]
 parallel = ["dep:rayon"]
+disk-persistence = []
 
 [dependencies]
 thiserror = "2.0"

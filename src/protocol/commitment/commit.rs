@@ -7,6 +7,8 @@ use super::config::{
 use super::onehot::{inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks};
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
+#[cfg(feature = "disk-persistence")]
+use super::utils::crt_ntt::build_ntt_slots;
 use super::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use super::utils::flat_matrix::FlatMatrix;
 use super::utils::linear::{
@@ -25,7 +27,11 @@ use crate::primitives::serialization::{
 use crate::protocol::hachi_poly_ops::OneHotIndex;
 use crate::protocol::ring_switch::w_commitment_layout;
 use crate::{cfg_into_iter, cfg_iter, CanonicalField, FieldCore, FieldSampling};
+#[cfg(feature = "disk-persistence")]
+use std::fs;
 use std::io::{Read, Write};
+#[cfg(feature = "disk-persistence")]
+use std::path::PathBuf;
 
 /// Seed-only stage for deterministic setup expansion.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -272,13 +278,117 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiVerifierSetup<F> {
     }
 }
 
+#[cfg(feature = "disk-persistence")]
+fn get_storage_path(max_num_vars: usize) -> Option<PathBuf> {
+    let cache_directory = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        Some(PathBuf::from(local_app_data))
+    } else if let Ok(home) = std::env::var("HOME") {
+        let mut path = PathBuf::from(&home);
+        let macos_cache = {
+            let mut test_path = PathBuf::from(&home);
+            test_path.push("Library");
+            test_path.push("Caches");
+            test_path.exists()
+        };
+        if macos_cache {
+            path.push("Library");
+            path.push("Caches");
+        } else {
+            path.push(".cache");
+        }
+        Some(path)
+    } else {
+        None
+    };
+
+    cache_directory.map(|mut path| {
+        path.push("hachi");
+        path.push(format!("hachi_{max_num_vars}.setup"));
+        path
+    })
+}
+
+#[cfg(feature = "disk-persistence")]
+fn save_expanded_setup<F: FieldCore>(setup: &HachiExpandedSetup<F>, max_num_vars: usize) {
+    let Some(storage_path) = get_storage_path(max_num_vars) else {
+        tracing::warn!("Could not determine storage directory; skipping setup save");
+        return;
+    };
+
+    if let Some(parent) = storage_path.parent() {
+        fs::create_dir_all(parent)
+            .unwrap_or_else(|e| panic!("Failed to create storage directory: {e}"));
+    }
+
+    tracing::info!("Saving setup to {}", storage_path.display());
+
+    let file = fs::File::create(&storage_path)
+        .unwrap_or_else(|e| panic!("Failed to create setup file: {e}"));
+    let mut writer = std::io::BufWriter::new(file);
+
+    setup
+        .serialize_compressed(&mut writer)
+        .unwrap_or_else(|e| panic!("Failed to serialize setup: {e}"));
+
+    tracing::info!("Successfully saved setup to disk");
+}
+
+#[cfg(feature = "disk-persistence")]
+fn load_expanded_setup<F: FieldCore + Valid>(
+    max_num_vars: usize,
+) -> Result<HachiExpandedSetup<F>, HachiError> {
+    let storage_path = get_storage_path(max_num_vars).ok_or_else(|| {
+        HachiError::InvalidSetup("Failed to determine storage directory".to_string())
+    })?;
+
+    if !storage_path.exists() {
+        return Err(HachiError::InvalidSetup(format!(
+            "Setup file not found at {}",
+            storage_path.display()
+        )));
+    }
+
+    tracing::info!("Loading setup from {}", storage_path.display());
+
+    let file = fs::File::open(&storage_path)
+        .map_err(|e| HachiError::InvalidSetup(format!("Failed to open setup file: {e}")))?;
+    let mut reader = std::io::BufReader::new(file);
+
+    let setup = HachiExpandedSetup::deserialize_compressed(&mut reader)
+        .map_err(|e| HachiError::InvalidSetup(format!("Failed to deserialize setup: {e}")))?;
+
+    tracing::info!("Loaded setup for max_num_vars={max_num_vars}");
+    Ok(setup)
+}
+
+/// Build prover and verifier setup from a pre-existing expanded setup by
+/// reconstructing the NTT caches.
+#[cfg(feature = "disk-persistence")]
+pub(crate) fn setup_from_expanded<F: FieldCore + CanonicalField, const D: usize>(
+    expanded: HachiExpandedSetup<F>,
+) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError> {
+    let (ntt_a, ntt_b, ntt_d) = build_ntt_slots(
+        expanded.A.view::<D>(),
+        expanded.B.view::<D>(),
+        expanded.D_mat.view::<D>(),
+    )?;
+    let prover_setup = HachiProverSetup {
+        expanded: expanded.clone(),
+        ntt_A: ntt_a,
+        ntt_B: ntt_b,
+        ntt_D: ntt_d,
+    };
+    let verifier_setup = HachiVerifierSetup { expanded };
+    Ok((prover_setup, verifier_setup))
+}
+
 /// Concrete §4.1 commitment core.
 #[derive(Clone, Copy, Default)]
 pub struct HachiCommitmentCore;
 
 impl<F, const D: usize, Cfg> RingCommitmentScheme<F, D, Cfg> for HachiCommitmentCore
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasWide,
+    F: FieldCore + CanonicalField + FieldSampling + HasWide + Valid,
     Cfg: CommitmentConfig,
 {
     type ProverSetup = HachiProverSetup<F, D>;
@@ -289,6 +399,22 @@ where
     fn setup(max_num_vars: usize) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError> {
         let layout = validate_and_derive_layout::<Cfg, D>(max_num_vars)?;
         ensure_supported_num_vars(max_num_vars, layout.required_num_vars::<D>()?)?;
+
+        #[cfg(feature = "disk-persistence")]
+        {
+            match load_expanded_setup::<F>(max_num_vars) {
+                Ok(expanded) => {
+                    tracing::info!("Loaded setup from disk, rebuilding NTT caches");
+                    return setup_from_expanded(expanded);
+                }
+                Err(HachiError::InvalidSetup(msg)) if msg.contains("not found") => {
+                    tracing::debug!("Setup file not found, will generate new one");
+                }
+                Err(e) => {
+                    panic!("Failed to load setup from disk: {e}");
+                }
+            }
+        }
 
         let w_layout = w_commitment_layout::<F, D, Cfg>(layout)?;
         let a_cols = layout.inner_width.max(w_layout.inner_width);
@@ -317,6 +443,10 @@ where
             B: b_flat,
             D_mat: d_flat,
         };
+
+        #[cfg(feature = "disk-persistence")]
+        save_expanded_setup(&expanded, max_num_vars);
+
         let prover_setup = HachiProverSetup {
             expanded: expanded.clone(),
             ntt_A: ntt_a,
@@ -468,6 +598,47 @@ where
 }
 
 impl HachiCommitmentCore {
+    #[allow(clippy::too_many_arguments)]
+    fn layout_envelope<const D: usize>(
+        max_num_vars: usize,
+        inner_width: usize,
+        outer_width: usize,
+        d_matrix_width: usize,
+        preferred_r_vars: usize,
+        num_digits_open: usize,
+        num_digits_fold: usize,
+        log_basis: u32,
+    ) -> Result<HachiCommitmentLayout, HachiError> {
+        let alpha = D.trailing_zeros() as usize;
+        let outer_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
+            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
+        })?;
+        let r_vars = preferred_r_vars.min(outer_vars);
+        let m_vars = outer_vars - r_vars;
+        let num_blocks = 1usize
+            .checked_shl(r_vars as u32)
+            .ok_or_else(|| HachiError::InvalidSetup("num_blocks overflow".to_string()))?;
+        let block_len = 1usize
+            .checked_shl(m_vars as u32)
+            .ok_or_else(|| HachiError::InvalidSetup("block_len overflow".to_string()))?;
+
+        Ok(HachiCommitmentLayout {
+            m_vars,
+            r_vars,
+            num_blocks,
+            block_len,
+            inner_width,
+            outer_width,
+            d_matrix_width,
+            // Setup metadata only tracks width envelopes; runtime commits/proofs
+            // carry their own exact decomposition parameters.
+            num_digits_commit: 1,
+            num_digits_open,
+            num_digits_fold,
+            log_basis,
+        })
+    }
+
     /// Create a setup with a caller-specified layout, bypassing
     /// `CommitmentConfig::commitment_layout`.
     ///
@@ -488,6 +659,91 @@ impl HachiCommitmentCore {
         let max_num_vars = layout.required_num_vars::<D>()?;
         let public_matrix_seed = sample_public_matrix_seed();
         Self::setup_with_layout_and_seed::<F, D, Cfg>(layout, max_num_vars, public_matrix_seed)
+    }
+
+    /// Create a setup that supports any of the provided runtime layouts.
+    ///
+    /// This sizes the public matrices from the exact per-layout maxima
+    /// (including recursive `w` commitments) instead of inflating through a
+    /// synthetic max layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns `HachiError` if `layouts` is empty, uses inconsistent
+    /// decomposition parameters, or matrix generation fails.
+    pub fn setup_with_layouts<F, const D: usize, Cfg>(
+        layouts: &[HachiCommitmentLayout],
+    ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError>
+    where
+        F: FieldCore + CanonicalField + FieldSampling,
+        Cfg: CommitmentConfig,
+    {
+        let Some((&first_layout, _)) = layouts.split_first() else {
+            return Err(HachiError::InvalidSetup(
+                "setup_with_layouts requires at least one layout".to_string(),
+            ));
+        };
+
+        let mut max_num_vars = 0usize;
+        let mut max_inner_width = 0usize;
+        let mut max_outer_width = 0usize;
+        let mut max_d_matrix_width = 0usize;
+        let mut max_r_vars = 0usize;
+        let mut max_num_digits_open = 0usize;
+        let mut max_num_digits_fold = 0usize;
+
+        for &layout in layouts {
+            if layout.log_basis != first_layout.log_basis {
+                return Err(HachiError::InvalidSetup(format!(
+                    "setup_with_layouts requires a shared log_basis (expected {}, got {})",
+                    first_layout.log_basis, layout.log_basis
+                )));
+            }
+
+            max_num_vars = max_num_vars.max(layout.required_num_vars::<D>()?);
+            max_inner_width = max_inner_width.max(layout.inner_width);
+            max_outer_width = max_outer_width.max(layout.outer_width);
+            max_d_matrix_width = max_d_matrix_width.max(layout.d_matrix_width);
+            max_r_vars = max_r_vars.max(layout.r_vars);
+            max_num_digits_open = max_num_digits_open.max(layout.num_digits_open);
+            max_num_digits_fold = max_num_digits_fold.max(layout.num_digits_fold);
+
+            let w_layout = w_commitment_layout::<F, D, Cfg>(layout)?;
+            if std::env::var_os("HACHI_SETUP_DIAGNOSTICS").is_some() {
+                eprintln!("[hachi setup] layout={layout:?}");
+                eprintln!("[hachi setup] w_layout={w_layout:?}");
+            }
+            max_inner_width = max_inner_width.max(w_layout.inner_width);
+            max_outer_width = max_outer_width.max(w_layout.outer_width);
+            max_d_matrix_width = max_d_matrix_width.max(w_layout.d_matrix_width);
+            max_r_vars = max_r_vars.max(w_layout.r_vars);
+            max_num_digits_open = max_num_digits_open.max(w_layout.num_digits_open);
+            max_num_digits_fold = max_num_digits_fold.max(w_layout.num_digits_fold);
+        }
+
+        let envelope_layout = Self::layout_envelope::<D>(
+            max_num_vars,
+            max_inner_width,
+            max_outer_width,
+            max_d_matrix_width,
+            max_r_vars,
+            max_num_digits_open,
+            max_num_digits_fold,
+            first_layout.log_basis,
+        )?;
+        if std::env::var_os("HACHI_SETUP_DIAGNOSTICS").is_some() {
+            eprintln!("[hachi setup] envelope_layout={envelope_layout:?}");
+            eprintln!("[hachi setup] max_num_vars={max_num_vars}");
+        }
+        let public_matrix_seed = sample_public_matrix_seed();
+        Self::setup_with_matrix_widths_and_seed::<F, D, Cfg>(
+            envelope_layout,
+            max_num_vars,
+            public_matrix_seed,
+            max_inner_width,
+            max_outer_width,
+            max_d_matrix_width,
+        )
     }
 
     /// Like `setup_with_layout` but reuses an existing setup's random seed and
@@ -580,6 +836,41 @@ impl HachiCommitmentCore {
         let b_cols = layout.outer_width.max(w_layout.outer_width);
         let d_cols = layout.d_matrix_width.max(w_layout.d_matrix_width);
 
+        Self::setup_with_matrix_widths_and_seed::<F, D, Cfg>(
+            layout,
+            max_num_vars,
+            public_matrix_seed,
+            a_cols,
+            b_cols,
+            d_cols,
+        )
+    }
+
+    fn setup_with_matrix_widths_and_seed<F, const D: usize, Cfg>(
+        layout: HachiCommitmentLayout,
+        max_num_vars: usize,
+        public_matrix_seed: PublicMatrixSeed,
+        a_cols: usize,
+        b_cols: usize,
+        d_cols: usize,
+    ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError>
+    where
+        F: FieldCore + CanonicalField + FieldSampling,
+        Cfg: CommitmentConfig,
+    {
+        if std::env::var_os("HACHI_SETUP_DIAGNOSTICS").is_some() {
+            let ring_bytes = std::mem::size_of::<CyclotomicRing<F, D>>();
+            let a_raw_mb = (Cfg::N_A * a_cols * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
+            let b_raw_mb = (Cfg::N_B * b_cols * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
+            let d_raw_mb = (Cfg::N_D * d_cols * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
+            eprintln!(
+                "[hachi setup] a_cols={a_cols}, b_cols={b_cols}, d_cols={d_cols}, ring_bytes={ring_bytes}"
+            );
+            eprintln!(
+                "[hachi setup] raw_matrix_mb: A={a_raw_mb:.1}, B={b_raw_mb:.1}, D={d_raw_mb:.1}, total={:.1}",
+                a_raw_mb + b_raw_mb + d_raw_mb
+            );
+        }
         let a_matrix = derive_public_matrix::<F, D>(Cfg::N_A, a_cols, &public_matrix_seed, b"A");
         let b_matrix = derive_public_matrix::<F, D>(Cfg::N_B, b_cols, &public_matrix_seed, b"B");
         let d_matrix = derive_public_matrix::<F, D>(Cfg::N_D, d_cols, &public_matrix_seed, b"D");
@@ -656,5 +947,161 @@ mod tests {
             expanded: decoded.clone(),
         };
         assert_eq!(derived_verifier, verifier_setup);
+    }
+
+    #[test]
+    fn setup_with_layouts_uses_exact_width_envelope() {
+        const TEST_D: usize = 64;
+
+        let layout_a =
+            HachiCommitmentLayout::new::<TinyConfig>(4, 2, &TinyConfig::decomposition()).unwrap();
+        let layout_b =
+            HachiCommitmentLayout::new::<TinyConfig>(1, 6, &TinyConfig::decomposition()).unwrap();
+        let w_layout_a = w_commitment_layout::<TestF, TEST_D, TinyConfig>(layout_a).unwrap();
+        let w_layout_b = w_commitment_layout::<TestF, TEST_D, TinyConfig>(layout_b).unwrap();
+
+        let expected_inner = [
+            layout_a.inner_width,
+            layout_b.inner_width,
+            w_layout_a.inner_width,
+            w_layout_b.inner_width,
+        ]
+        .into_iter()
+        .max()
+        .unwrap();
+        let expected_outer = [
+            layout_a.outer_width,
+            layout_b.outer_width,
+            w_layout_a.outer_width,
+            w_layout_b.outer_width,
+        ]
+        .into_iter()
+        .max()
+        .unwrap();
+        let expected_d = [
+            layout_a.d_matrix_width,
+            layout_b.d_matrix_width,
+            w_layout_a.d_matrix_width,
+            w_layout_b.d_matrix_width,
+        ]
+        .into_iter()
+        .max()
+        .unwrap();
+        let expected_max_num_vars = [
+            layout_a.required_num_vars::<TEST_D>().unwrap(),
+            layout_b.required_num_vars::<TEST_D>().unwrap(),
+        ]
+        .into_iter()
+        .max()
+        .unwrap();
+
+        let (setup, _) = HachiCommitmentCore::setup_with_layouts::<TestF, TEST_D, TinyConfig>(&[
+            layout_a, layout_b,
+        ])
+        .unwrap();
+        let envelope = setup.layout();
+
+        assert_eq!(setup.expanded.seed.max_num_vars, expected_max_num_vars);
+        assert_eq!(envelope.inner_width, expected_inner);
+        assert_eq!(envelope.outer_width, expected_outer);
+        assert_eq!(envelope.d_matrix_width, expected_d);
+        assert_eq!(setup.expanded.A.first_row_len::<TEST_D>(), expected_inner);
+        assert_eq!(setup.expanded.B.first_row_len::<TEST_D>(), expected_outer);
+        assert_eq!(setup.expanded.D_mat.first_row_len::<TEST_D>(), expected_d);
+    }
+
+    #[cfg(feature = "disk-persistence")]
+    mod disk_persistence {
+        use super::*;
+        use std::fs;
+
+        fn cleanup_setup_file(max_num_vars: usize) {
+            if let Some(path) = get_storage_path(max_num_vars) {
+                let _ = fs::remove_file(path);
+            }
+        }
+
+        #[test]
+        fn save_and_load_roundtrips() {
+            const TEST_D: usize = 64;
+            const MAX_VARS: usize = 100;
+
+            cleanup_setup_file(MAX_VARS);
+
+            let (prover_setup, _) =
+                <HachiCommitmentCore as RingCommitmentScheme<TestF, TEST_D, TinyConfig>>::setup(
+                    MAX_VARS,
+                )
+                .unwrap();
+
+            let loaded = load_expanded_setup::<TestF>(MAX_VARS).unwrap();
+            assert_eq!(loaded, prover_setup.expanded);
+
+            cleanup_setup_file(MAX_VARS);
+        }
+
+        #[test]
+        fn setup_uses_cache_on_second_call() {
+            const TEST_D: usize = 64;
+            const MAX_VARS: usize = 101;
+
+            cleanup_setup_file(MAX_VARS);
+
+            let (first, _) =
+                <HachiCommitmentCore as RingCommitmentScheme<TestF, TEST_D, TinyConfig>>::setup(
+                    MAX_VARS,
+                )
+                .unwrap();
+
+            let (second, _) =
+                <HachiCommitmentCore as RingCommitmentScheme<TestF, TEST_D, TinyConfig>>::setup(
+                    MAX_VARS,
+                )
+                .unwrap();
+
+            assert_eq!(first.expanded, second.expanded);
+
+            cleanup_setup_file(MAX_VARS);
+        }
+
+        #[test]
+        fn ntt_caches_rebuilt_correctly_from_disk() {
+            use crate::algebra::CyclotomicRing;
+
+            const TEST_D: usize = 64;
+            const MAX_VARS: usize = 102;
+
+            cleanup_setup_file(MAX_VARS);
+
+            let (fresh_setup, _) =
+                <HachiCommitmentCore as RingCommitmentScheme<TestF, TEST_D, TinyConfig>>::setup(
+                    MAX_VARS,
+                )
+                .unwrap();
+
+            let loaded_expanded = load_expanded_setup::<TestF>(MAX_VARS).unwrap();
+            let (disk_setup, _) = setup_from_expanded::<TestF, TEST_D>(loaded_expanded).unwrap();
+
+            let layout = fresh_setup.layout();
+            let num_coeffs = layout.num_blocks * layout.block_len;
+            let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
+
+            let fresh_commit = <HachiCommitmentCore as RingCommitmentScheme<
+                TestF,
+                TEST_D,
+                TinyConfig,
+            >>::commit_coeffs(&coeffs, &fresh_setup)
+            .unwrap();
+            let disk_commit = <HachiCommitmentCore as RingCommitmentScheme<
+                TestF,
+                TEST_D,
+                TinyConfig,
+            >>::commit_coeffs(&coeffs, &disk_setup)
+            .unwrap();
+
+            assert_eq!(fresh_commit.commitment, disk_commit.commitment);
+
+            cleanup_setup_file(MAX_VARS);
+        }
     }
 }

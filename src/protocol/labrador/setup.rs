@@ -24,6 +24,10 @@ pub struct LabradorSetup<F: FieldCore, const D: usize> {
 
 impl<F: FieldCore + CanonicalField + FieldSampling, const D: usize> LabradorSetup<F, D> {
     /// Derive all commitment-key matrices for a single Labrador level.
+    ///
+    /// # Panics
+    ///
+    /// Panics if deriving the cached CRT+NTT slots for matrix `A` or `B` fails.
     pub fn new(
         config: &LabradorReductionConfig,
         num_witness_rows: usize,
