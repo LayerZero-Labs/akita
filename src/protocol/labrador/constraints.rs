@@ -100,6 +100,7 @@ impl NextWitnessLayout {
 
 /// Build the recursive target relation for the next Labrador level.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "labrador::build_next_constraints")]
 pub(crate) fn build_next_constraints<F, const D: usize>(
     phi_total: &[Vec<CyclotomicRing<F, D>>],
     b_total: &CyclotomicRing<F, D>,

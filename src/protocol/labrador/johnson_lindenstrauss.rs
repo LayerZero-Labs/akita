@@ -29,6 +29,7 @@ impl LabradorJlMatrix {
     /// # Errors
     ///
     /// Returns an error if `cols` is zero.
+    #[tracing::instrument(skip_all, name = "labrador::jl_matrix_generate")]
     pub fn generate<F, T>(transcript: &mut T, cols: usize) -> Result<Self, HachiError>
     where
         F: FieldCore + CanonicalField,
@@ -100,6 +101,7 @@ impl LabradorJlMatrix {
 ///
 /// Returns an error if the witness is empty or if no valid projection is found
 /// within the nonce search limit.
+#[tracing::instrument(skip_all, name = "labrador::project")]
 pub fn project<F, T, const D: usize>(
     witness: &LabradorWitness<F, D>,
     transcript: &mut T,
@@ -160,6 +162,7 @@ pub fn restore_constant_term<F: FieldCore, const D: usize>(
 
 /// Compute the JL projection by streaming over witness coefficients without
 /// materializing the full flattened vector.
+#[tracing::instrument(skip_all, name = "labrador::project_streaming")]
 fn project_streaming<F: FieldCore + CanonicalField, const D: usize>(
     matrix: &LabradorJlMatrix,
     witness: &LabradorWitness<F, D>,

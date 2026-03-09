@@ -47,6 +47,7 @@ pub(crate) fn dot_product<F: FieldCore, const D: usize>(
 }
 
 /// Element-wise accumulate `other` into `acc`.
+#[tracing::instrument(skip_all, name = "labrador::add_phi_in_place")]
 pub(crate) fn add_phi_in_place<F: FieldCore, const D: usize>(
     acc: &mut [Vec<CyclotomicRing<F, D>>],
     other: &[Vec<CyclotomicRing<F, D>>],
@@ -191,6 +192,7 @@ fn accumulate_phi<F: FieldCore, const D: usize>(
 /// Returns `(phi_total, b_total, bb)` where `bb` holds the transmitted
 /// polynomials.
 #[allow(clippy::type_complexity)]
+#[tracing::instrument(skip_all, name = "labrador::aggregate_jl_constraints_prover")]
 pub(crate) fn aggregate_jl_constraints_prover<F, T, const D: usize>(
     witness: &LabradorWitness<F, D>,
     jl_projection: &[i32; 256],
@@ -252,6 +254,7 @@ where
 /// polynomial b^''(k) by restoring the constant term from the projection
 /// and the transmitted `bb[k]`.
 #[allow(clippy::type_complexity)]
+#[tracing::instrument(skip_all, name = "labrador::aggregate_jl_constraints_verifier")]
 pub(crate) fn aggregate_jl_constraints_verifier<F, T, const D: usize>(
     row_lengths: &[usize],
     jl_projection: &[i32; 256],
@@ -303,6 +306,7 @@ where
 /// coefficient terms are added into `phi_total`, while `α · target` is
 /// accumulated into `b_total`.
 #[allow(clippy::type_complexity)]
+#[tracing::instrument(skip_all, name = "labrador::aggregate_statement_constraints")]
 pub(crate) fn aggregate_statement_constraints<F, T, const D: usize>(
     constraints: &[LabradorConstraint<F, D>],
     row_lengths: &[usize],

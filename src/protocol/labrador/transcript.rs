@@ -154,6 +154,7 @@ where
 /// # Errors
 ///
 /// Returns an error if any dimension does not fit in `u64`.
+#[tracing::instrument(skip_all, name = "labrador::absorb_level_context")]
 pub fn absorb_labrador_level_context<F, T>(
     transcript: &mut T,
     ctx: &LabradorLevelTranscriptContext,
@@ -168,6 +169,7 @@ where
 }
 
 /// Absorb Labrador JL projection vector bytes (`i32` little-endian).
+#[tracing::instrument(skip_all, name = "labrador::absorb_jl_projection")]
 pub fn absorb_labrador_jl_projection<F, T>(transcript: &mut T, projection: &[i32; 256])
 where
     F: FieldCore + CanonicalField,

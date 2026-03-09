@@ -50,6 +50,7 @@ use crate::protocol::ajtai::ntt_backend::NttAjtaiBackend;
 ///
 /// Returns `HachiError::InvalidInput` if the witness is empty or `config.f` is zero.
 /// Propagates errors from commitment, projection, or hashing.
+#[tracing::instrument(skip_all, name = "labrador::prove_level")]
 pub fn prove_level<F, T, const D: usize>(
     witness: &LabradorWitness<F, D>,
     statement: &LabradorStatement<F, D>,
@@ -76,16 +77,6 @@ where
     let row_lengths: Vec<usize> = witness.rows().iter().map(|row| row.len()).collect();
     let r = row_lengths.len();
     let max_len = row_lengths.iter().copied().max().unwrap_or(0);
-    let _span = tracing::info_span!(
-        "labrador_prove_level",
-        level_index,
-        rows = r,
-        max_len,
-        constraints = statement.constraints.len(),
-        tail = config.tail,
-    )
-    .entered();
-
     // Phase 1: Inner commitments (t_i) and outer commitment u1.
     let coeff_config = CoeffAjtaiConfig {
         inner_rows: config.kappa,
@@ -94,137 +85,67 @@ where
         decompose_modulus: config.bu as u32,
     };
 
-    let (t_hat, u1) = {
-        let _span = tracing::info_span!("phase1_commit_u1").entered();
-        <NttAjtaiBackend as AjtaiCommitmentScheme<F, D>>::two_tier_commit(
-            &setup.a_ntt,
-            &setup.b_ntt,
-            witness.rows(),
-            &coeff_config,
-        )
-    }?;
+    let (t_hat, u1) = <NttAjtaiBackend as AjtaiCommitmentScheme<F, D>>::two_tier_commit(
+        &setup.a_ntt,
+        &setup.b_ntt,
+        witness.rows(),
+        &coeff_config,
+    )?;
 
     // Absorb level context and u1 before deriving JL seed.
-    {
-        let _span = tracing::info_span!("phase1_absorb_context").entered();
-        absorb_labrador_level_context(
-            transcript,
-            &LabradorLevelTranscriptContext {
-                level_index,
-                tail: config.tail,
-                input_row_lengths: row_lengths.clone(),
-                f: config.f,
-                b: config.b,
-                fu: config.fu,
-                bu: config.bu,
-                kappa: config.kappa,
-                kappa1: config.kappa1,
-            },
-        )?;
-        transcript.append_serde(labels::ABSORB_LABRADOR_U1, &u1);
-    }
+    absorb_labrador_level_context(
+        transcript,
+        &LabradorLevelTranscriptContext {
+            level_index,
+            tail: config.tail,
+            input_row_lengths: row_lengths.clone(),
+            f: config.f,
+            b: config.b,
+            fu: config.fu,
+            bu: config.bu,
+            kappa: config.kappa,
+            kappa1: config.kappa1,
+        },
+    )?;
+    transcript.append_serde(labels::ABSORB_LABRADOR_U1, &u1);
 
     // Phase 2: JL Projection — nonce + matrix squeezed from transcript.
-    let (jl_projection, jl_nonce, jl_matrix) = {
-        let _span = tracing::info_span!("phase2_project").entered();
-        project(witness, transcript)
-    }?;
+    let (jl_projection, jl_nonce, jl_matrix) = project(witness, transcript)?;
 
-    {
-        let _span = tracing::info_span!("phase2_absorb_projection").entered();
-        absorb_labrador_jl_projection(transcript, &jl_projection);
-    }
+    absorb_labrador_jl_projection(transcript, &jl_projection);
 
     // Phase 3: JL lift constraints and aggregation.
-    let (phi_jl, b_jl, bb) = {
-        let _span = tracing::info_span!("phase3_aggregate_jl").entered();
-        aggregate_jl_constraints_prover(witness, &jl_projection, &jl_matrix, transcript)
-    }?;
+    let (phi_jl, b_jl, bb) =
+        aggregate_jl_constraints_prover(witness, &jl_projection, &jl_matrix, transcript)?;
 
     // Aggregate statement constraints (after JL lifts).
-    let (phi_stmt, b_stmt) = {
-        let _span = tracing::info_span!("phase3_aggregate_statement").entered();
-        aggregate_statement_constraints(&statement.constraints, &row_lengths, transcript)
-    }?;
+    let (phi_stmt, b_stmt) =
+        aggregate_statement_constraints(&statement.constraints, &row_lengths, transcript)?;
 
-    let (phi_total, b_total) = {
-        let _span = tracing::info_span!("phase3_merge_constraints").entered();
-        let mut phi_total = phi_stmt;
-        add_phi_in_place(&mut phi_total, &phi_jl)?;
-        (phi_total, b_stmt + b_jl)
-    };
+    let mut phi_total = phi_stmt;
+    add_phi_in_place(&mut phi_total, &phi_jl)?;
+    let b_total = b_stmt + b_jl;
 
     // Linear garbage h_ij from aggregated phi and witness.
-    let h = {
-        let _span = tracing::info_span!("phase3_compute_linear_garbage").entered();
-        compute_linear_garbage(&phi_total, witness)
-    }?;
-    let h_hat = {
-        let _span = tracing::info_span!("phase3_decompose_h").entered();
-        decompose_rows_with_carry(&h, config.fu, config.bu as u32)
-    };
-
-    let u2 = {
-        let _span = tracing::info_span!("phase3_build_u2").entered();
-        if !setup.d_mat.is_empty() {
-            mat_vec_mul(&setup.d_mat, &h_hat)
-        } else {
-            h_hat.clone()
-        }
-    };
+    let h = compute_linear_garbage(&phi_total, witness)?;
+    let h_hat = decompose_rows_with_carry(&h, config.fu, config.bu as u32);
+    let u2 = build_u2(setup, &h_hat);
 
     // Absorb u2 before amortization challenges.
-    {
-        let _span = tracing::info_span!("phase4_absorb_u2").entered();
-        transcript.append_serde(labels::ABSORB_LABRADOR_U2, &u2);
-    }
+    transcript.append_serde(labels::ABSORB_LABRADOR_U2, &u2);
 
     // Phase 4: Amortize — sample r challenge ring-elements from transcript, fold.
-    let challenges = {
-        let _span = tracing::info_span!("phase4_sample_challenges").entered();
-        let mut challenges = Vec::with_capacity(r);
-        for _ in 0..r {
-            challenges.push(challenge_ring_element_rejection_sampled(
-                transcript,
-                labels::CHALLENGE_LABRADOR_AMORTIZE,
-            )?);
-        }
-        challenges
-    };
-
-    let z = {
-        let _span = tracing::info_span!("phase4_amortize_witness").entered();
-        amortize_witness(witness, &challenges, max_len)
-    };
-    let decomposed_z = {
-        let _span = tracing::info_span!("phase4_decompose_z").entered();
-        decompose_rows_with_carry(&z, config.f, config.b as u32)
-    };
-    let z_rows = {
-        let _span = tracing::info_span!("phase4_split_z_rows").entered();
-        split_decomposed_rows(&decomposed_z, config.f, z.len())
-    }?;
-
-    let next_witness = {
-        let _span = tracing::info_span!("phase4_assemble_output_witness").entered();
-        let mut output_rows: Vec<Vec<CyclotomicRing<F, D>>> = z_rows;
-
-        if !config.tail {
-            let mut aux = Vec::with_capacity(t_hat.len() + h_hat.len());
-            aux.extend_from_slice(&t_hat);
-            aux.extend_from_slice(&h_hat);
-            output_rows.push(aux);
-        }
-
-        LabradorWitness::new_unchecked(output_rows)
-    };
+    let challenges = sample_amortize_challenges(transcript, r)?;
+    let z = amortize_witness(witness, &challenges, max_len);
+    let decomposed_z = decompose_rows_with_carry(&z, config.f, config.b as u32);
+    let z_rows = split_decomposed_rows(&decomposed_z, config.f, z.len())?;
+    let next_witness = assemble_output_witness(z_rows, &t_hat, &h_hat, config.tail);
 
     let out_norm_sq: u128 = next_witness.norm();
 
     let next_constraints = if config.tail {
         Vec::new()
     } else {
-        let _span = tracing::info_span!("phase4_build_next_constraints").entered();
         build_next_constraints(
             &phi_total,
             &b_total,
@@ -266,6 +187,7 @@ where
     })
 }
 
+#[tracing::instrument(skip_all, name = "labrador::split_decomposed_rows")]
 fn split_decomposed_rows<F: FieldCore, const D: usize>(
     flat: &[CyclotomicRing<F, D>],
     parts: usize,
@@ -292,6 +214,7 @@ fn split_decomposed_rows<F: FieldCore, const D: usize>(
     Ok(rows)
 }
 
+#[tracing::instrument(skip_all, name = "labrador::compute_linear_garbage")]
 fn compute_linear_garbage<F: FieldCore + CanonicalField + FromSmallInt, const D: usize>(
     phi: &[Vec<CyclotomicRing<F, D>>],
     witness: &LabradorWitness<F, D>,
@@ -325,6 +248,7 @@ fn compute_linear_garbage<F: FieldCore + CanonicalField + FromSmallInt, const D:
 }
 
 /// Compute z = sum_i c_i * s_i (all-row linear combination).
+#[tracing::instrument(skip_all, name = "labrador::amortize_witness")]
 fn amortize_witness<F: FieldCore + CanonicalField, const D: usize>(
     witness: &LabradorWitness<F, D>,
     challenges: &[CyclotomicRing<F, D>],
@@ -341,6 +265,53 @@ fn amortize_witness<F: FieldCore + CanonicalField, const D: usize>(
             acc
         })
         .collect()
+}
+
+#[tracing::instrument(skip_all, name = "labrador::build_u2")]
+fn build_u2<F: FieldCore, const D: usize>(
+    setup: &LabradorSetup<F, D>,
+    h_hat: &[CyclotomicRing<F, D>],
+) -> Vec<CyclotomicRing<F, D>> {
+    if !setup.d_mat.is_empty() {
+        mat_vec_mul(&setup.d_mat, h_hat)
+    } else {
+        h_hat.to_vec()
+    }
+}
+
+#[tracing::instrument(skip_all, name = "labrador::sample_amortize_challenges")]
+fn sample_amortize_challenges<F, T, const D: usize>(
+    transcript: &mut T,
+    rows: usize,
+) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
+where
+    F: FieldCore + CanonicalField + FromSmallInt,
+    T: Transcript<F>,
+{
+    let mut challenges = Vec::with_capacity(rows);
+    for _ in 0..rows {
+        challenges.push(challenge_ring_element_rejection_sampled(
+            transcript,
+            labels::CHALLENGE_LABRADOR_AMORTIZE,
+        )?);
+    }
+    Ok(challenges)
+}
+
+#[tracing::instrument(skip_all, name = "labrador::assemble_output_witness")]
+fn assemble_output_witness<F: FieldCore, const D: usize>(
+    mut z_rows: Vec<Vec<CyclotomicRing<F, D>>>,
+    t_hat: &[CyclotomicRing<F, D>],
+    h_hat: &[CyclotomicRing<F, D>],
+    tail: bool,
+) -> LabradorWitness<F, D> {
+    if !tail {
+        let mut aux = Vec::with_capacity(t_hat.len() + h_hat.len());
+        aux.extend_from_slice(t_hat);
+        aux.extend_from_slice(h_hat);
+        z_rows.push(aux);
+    }
+    LabradorWitness::new_unchecked(z_rows)
 }
 
 #[cfg(test)]

@@ -56,6 +56,7 @@ pub trait AjtaiCommitmentScheme<F: FieldCore, const D: usize> {
     ///
     /// # Errors
     /// Returns `HachiError` on matrix shape mismatch or invalid inputs.
+    #[tracing::instrument(skip_all, name = "AjtaiCommitmentScheme::two_tier_commit")]
     fn two_tier_commit(
         matrix_a: &Self::PublicMatrix,
         matrix_b: &Self::PublicMatrix,
