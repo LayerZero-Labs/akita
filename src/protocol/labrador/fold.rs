@@ -643,3 +643,121 @@ mod tests {
         verify(&statement, &proof, &comkey_seed, &mut verify_transcript).unwrap();
     }
 }
+
+#[cfg(test)]
+mod malicious_prover {
+    use super::*;
+    use crate::algebra::fields::Fp64;
+    use crate::protocol::labrador::constraints::{LabradorConstraint, LabradorConstraintTerm};
+    use crate::protocol::labrador::types::LabradorReductionConfig;
+    use crate::protocol::labrador::{verify, LabradorProof};
+    use crate::protocol::transcript::labels::DOMAIN_LABRADOR_PROTOCOL;
+    use crate::protocol::transcript::Blake2bTranscript;
+    use crate::FromSmallInt;
+
+    type F = Fp64<4294967197>;
+    const D: usize = 64;
+
+    fn mk_ring(c: i64) -> CyclotomicRing<F, D> {
+        CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|i| {
+            if i == 0 {
+                F::from_i64(c)
+            } else {
+                F::zero()
+            }
+        }))
+    }
+
+    fn valid_single_level_proof() -> (LabradorStatement<F, D>, LabradorProof<F, D>, [u8; 32]) {
+        let witness = LabradorWitness::new(vec![
+            vec![mk_ring(1), mk_ring(2)],
+            vec![mk_ring(3), mk_ring(-1)],
+        ]);
+        let target = witness.rows()[0][0] + witness.rows()[1][1];
+        let statement = LabradorStatement {
+            u1: Vec::new(),
+            u2: Vec::new(),
+            challenges: Vec::new(),
+            constraints: vec![LabradorConstraint::new(
+                vec![
+                    LabradorConstraintTerm::new(0, 0, vec![mk_ring(1), mk_ring(0)]),
+                    LabradorConstraintTerm::new(1, 0, vec![mk_ring(0), mk_ring(1)]),
+                ],
+                target,
+            )],
+            beta_sq: 1 << 40,
+        };
+        let cfg = LabradorReductionConfig {
+            f: 4,
+            b: 8,
+            fu: 4,
+            bu: 8,
+            kappa: 2,
+            kappa1: 2,
+            tail: false,
+        };
+        let comkey_seed = [9u8; 32];
+        let r = witness.rows().len();
+        let max_len = witness
+            .rows()
+            .iter()
+            .map(|row| row.len())
+            .max()
+            .unwrap_or(0);
+        let setup = LabradorSetup::new(&cfg, r, max_len, &comkey_seed);
+        let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let fold = prove_level(&witness, &statement, &cfg, &setup, 0, &mut transcript).unwrap();
+        let proof = LabradorProof {
+            levels: vec![fold.level_proof],
+            final_opening_witness: fold.next_witness,
+        };
+        (statement, proof, comkey_seed)
+    }
+
+    fn assert_verification_fails(
+        statement: &LabradorStatement<F, D>,
+        proof: &LabradorProof<F, D>,
+        comkey_seed: &[u8; 32],
+    ) {
+        let mut verify_transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+        assert!(
+            verify(statement, proof, comkey_seed, &mut verify_transcript).is_err(),
+            "maliciously altered proof should fail verification"
+        );
+    }
+
+    #[test]
+    fn malicious_u1_fails_verification() {
+        let (statement, mut proof, comkey_seed) = valid_single_level_proof();
+        proof.levels[0].u1[0].coefficients_mut()[0] += F::one();
+        assert_verification_fails(&statement, &proof, &comkey_seed);
+    }
+
+    #[test]
+    fn malicious_u2_fails_verification() {
+        let (statement, mut proof, comkey_seed) = valid_single_level_proof();
+        proof.levels[0].u2[0].coefficients_mut()[0] += F::one();
+        assert_verification_fails(&statement, &proof, &comkey_seed);
+    }
+
+    #[test]
+    fn malicious_jl_projection_fails_verification() {
+        let (statement, mut proof, comkey_seed) = valid_single_level_proof();
+        proof.levels[0].jl_projection[0] = i32::MAX;
+        assert_verification_fails(&statement, &proof, &comkey_seed);
+    }
+
+    #[test]
+    fn malicious_jl_nonce_fails_verification() {
+        let (statement, mut proof, comkey_seed) = valid_single_level_proof();
+        proof.levels[0].jl_nonce += 1;
+        assert_verification_fails(&statement, &proof, &comkey_seed);
+    }
+
+    #[test]
+    fn malicious_bb_fails_verification() {
+        let (statement, mut proof, comkey_seed) = valid_single_level_proof();
+        proof.levels[0].bb[0].coefficients_mut()[0] += F::one();
+        assert_verification_fails(&statement, &proof, &comkey_seed);
+    }
+}
