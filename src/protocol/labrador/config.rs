@@ -10,6 +10,19 @@ const LABRADOR_SLACK: f64 = 2.0;
 const LABRADOR_TAU1: f64 = 32.0;
 const LABRADOR_TAU2: f64 = 8.0;
 
+/// Full fold-level plan: security parameters plus witness reshaping layout.
+#[derive(Debug, Clone)]
+pub struct LabradorFoldPlan {
+    /// Security parameters (f, b, fu, bu, kappa, kappa1, tail).
+    pub config: LabradorReductionConfig,
+    /// Virtual row length after nu-reshaping.
+    pub nn: usize,
+    /// Per-original-row split count. `0` = continuation (concatenate with next
+    /// row), `>0` = boundary that terminates a group and splits it into this
+    /// many virtual rows of length `nn`.
+    pub nu: Vec<usize>,
+}
+
 /// Module-SIS security check used by the C reference.
 ///
 /// Returns `true` when `log2(norm) < min(LOGQ, 2*sqrt(LOGQ*LOGDELTA*N)*sqrt(rank))`.
@@ -17,10 +30,11 @@ pub fn sis_secure<F: CanonicalField, const D: usize>(rank: usize, norm: f64) -> 
     sis_secure_with_params(rank, norm, logq_bits::<F>() as f64, D as f64)
 }
 
-/// Select a linear-only Labrador reduction config (non-tail mode).
+/// Select a linear-only Labrador fold plan (non-tail mode).
 ///
-/// Mirrors the C `init_proof` parameter selection path with `quadratic=0`
-/// and non-tail mode.
+/// Mirrors the C `init_proof` parameter selection path with `quadratic=0`,
+/// including the nu-partitioning k-loop that determines the optimal virtual
+/// row length `nn`.
 ///
 /// # Errors
 ///
@@ -29,13 +43,10 @@ pub fn sis_secure<F: CanonicalField, const D: usize>(rank: usize, norm: f64) -> 
 pub fn select_config<F: FieldCore + CanonicalField, const D: usize>(
     witness: &LabradorWitness<F, D>,
 ) -> Result<LabradorReductionConfig, HachiError> {
-    select_config_with_mode(witness, false)
+    plan_fold::<F, D>(witness, false).map(|p| p.config)
 }
 
-/// Select a linear-only Labrador reduction config with explicit tail flag.
-///
-/// Mirrors the C `init_proof` parameter path with `quadratic=0` and the
-/// caller-provided `tail` setting.
+/// Select a linear-only Labrador fold plan with explicit tail flag.
 ///
 /// # Errors
 ///
@@ -45,111 +56,212 @@ pub fn select_config_with_mode<F: FieldCore + CanonicalField, const D: usize>(
     witness: &LabradorWitness<F, D>,
     tail: bool,
 ) -> Result<LabradorReductionConfig, HachiError> {
+    plan_fold::<F, D>(witness, tail).map(|p| p.config)
+}
+
+/// Compute a full Labrador fold plan (config + reshaping layout).
+///
+/// Mirrors the C `init_proof` algorithm with `quadratic=0`: all input rows
+/// are placed in a single group (boundary at the last row only). The k-loop
+/// searches from k=15 down to k=1, choosing the largest k such that the
+/// commitment overhead fits within `1.1 × nn`.
+///
+/// # Errors
+///
+/// Returns an error if the witness is empty or no secure parameters exist.
+pub fn plan_fold<F: FieldCore + CanonicalField, const D: usize>(
+    witness: &LabradorWitness<F, D>,
+    tail: bool,
+) -> Result<LabradorFoldPlan, HachiError> {
     if witness.rows().is_empty() {
         return Err(HachiError::InvalidInput(
             "cannot select config for empty Labrador witness".to_string(),
         ));
     }
 
-    let max_len: usize = witness.rows().iter().map(|r| r.len()).max().unwrap_or(0);
-    if max_len == 0 {
+    let row_lengths: Vec<usize> = witness.rows().iter().map(|r| r.len()).collect();
+    let r = row_lengths.len();
+    let total_len: usize = row_lengths.iter().sum();
+    if total_len == 0 {
         return Err(HachiError::InvalidInput(
             "cannot select config for zero-length Labrador witness".to_string(),
         ));
     }
-    let nn = max_len as f64;
+
+    let norm_sum: f64 = witness.norm() as f64;
     let logq_bits = logq_bits::<F>();
     let logq = logq_bits as f64;
-    let norm_sum: f64 = witness.norm() as f64;
-    let mut varz = norm_sum / (nn * (D as f64));
-    varz *= LABRADOR_TAU1 + 4.0 * LABRADOR_TAU2;
-    if !varz.is_finite() || varz <= 0.0 {
-        varz = 1.0;
-    }
+    let d = D as f64;
 
-    let decompose = !tail
-        && !sis_secure_with_params(
-            13,
-            6.0 * LABRADOR_T
-                * LABRADOR_SLACK
-                * (2.0 * (LABRADOR_TAU1 + 4.0 * LABRADOR_TAU2) * varz * nn * (D as f64)).sqrt(),
-            logq,
-            D as f64,
-        )
-        || 64.0 * varz > (1u64 << 28) as f64;
+    // For quadratic=0: single group with boundary at last row.
+    // k-loop: try aggressive splitting (large k) first, fall back to less.
+    let mut last_config = None;
 
-    let f = if decompose { 2usize } else { 1usize };
-    let mut b = if decompose {
-        ((12.0f64.log2() + varz.log2()) / 4.0).round() as isize
-    } else {
-        ((12.0f64.log2() + varz.log2()) / 2.0).round() as isize
-    };
-    b = b.clamp(1, logq_bits as isize);
+    for k in (1..=15usize).rev() {
+        let nn = total_len.div_ceil(k);
+        let rr = k;
+        let rr_f = rr as f64;
 
-    let (fu, bu) = if tail {
-        (1usize, logq_bits.max(1))
-    } else {
-        let fu = ((logq_bits + 2 * (b as usize) / 3) / (b as usize)).max(1);
-        let bu = ((logq_bits + fu / 2) / fu).max(1);
-        (fu, bu)
-    };
-
-    let rr = witness.rows().len() as f64;
-    let mut selected: Option<(usize, usize)> = None;
-
-    for kappa in 1..=32usize {
-        let mut normsq = ((2f64.powi(2 * b as i32) / 12.0) * ((f - 1) as f64)
-            + varz / 2f64.powi((2 * (f - 1) as isize * b) as i32))
-            * nn;
-        if !tail {
-            let hi_exp = logq_bits as isize - (fu.saturating_sub(1) * bu) as isize;
-            let hi_exp = hi_exp.max(0) as i32;
-            normsq += ((2f64.powi(2 * bu as i32) * ((fu - 1) as f64) + 2f64.powi(2 * hi_exp))
-                / 12.0)
-                * (rr * (kappa as f64) + (rr * rr + rr) / 2.0);
+        let mut varz = norm_sum / (nn as f64 * d);
+        varz *= LABRADOR_TAU1 + 4.0 * LABRADOR_TAU2;
+        if !varz.is_finite() || varz <= 0.0 {
+            varz = 1.0;
         }
-        normsq *= D as f64;
 
-        let inner_ok = sis_secure_with_params(
-            kappa,
-            6.0 * LABRADOR_T
-                * LABRADOR_SLACK
-                * 2f64.powi(((f - 1) * (b as usize)) as i32)
-                * normsq.sqrt(),
-            logq,
-            D as f64,
-        );
-        if !inner_ok {
-            continue;
+        let decompose = !tail
+            && (!sis_secure_with_params(
+                13,
+                6.0 * LABRADOR_T
+                    * LABRADOR_SLACK
+                    * (2.0 * (LABRADOR_TAU1 + 4.0 * LABRADOR_TAU2) * varz * nn as f64 * d).sqrt(),
+                logq,
+                d,
+            ) || 64.0 * varz > (1u64 << 28) as f64);
+
+        let f: usize = if decompose { 2 } else { 1 };
+        let mut b = if decompose {
+            ((12.0f64.log2() + varz.log2()) / 4.0).round() as isize
+        } else {
+            ((12.0f64.log2() + varz.log2()) / 2.0).round() as isize
+        };
+        b = b.clamp(1, logq_bits as isize);
+
+        let (fu, bu) = if tail {
+            (1usize, logq_bits.max(1))
+        } else {
+            let fu = ((logq_bits + 2 * (b as usize) / 3) / (b as usize)).max(1);
+            let bu = ((logq_bits + fu / 2) / fu).max(1);
+            (fu, bu)
+        };
+
+        let fg: usize = 0; // quadratic=0
+
+        let mut found_kappa = None;
+        let mut last_normsq = 0.0f64;
+
+        for kappa in 1..=32usize {
+            let mut normsq = (2f64.powi(2 * b as i32) / 12.0 * ((f - 1) as f64)
+                + varz / 2f64.powi(2 * (f - 1) as i32 * b as i32))
+                * nn as f64;
+            if !tail {
+                let hi_exp = logq_bits as isize - (fu.saturating_sub(1) * bu) as isize;
+                let hi_exp = hi_exp.max(0) as i32;
+                normsq += (2f64.powi(2 * bu as i32) * ((fu - 1) as f64) + 2f64.powi(2 * hi_exp))
+                    / 12.0
+                    * (rr_f * kappa as f64 + (rr_f * rr_f + rr_f) / 2.0);
+            }
+            normsq *= d;
+            last_normsq = normsq;
+
+            if sis_secure_with_params(
+                kappa,
+                6.0 * LABRADOR_T
+                    * LABRADOR_SLACK
+                    * 2f64.powi(((f - 1) * b as usize) as i32)
+                    * normsq.sqrt(),
+                logq,
+                d,
+            ) {
+                found_kappa = Some(kappa);
+                break;
+            }
         }
+
+        let kappa = match found_kappa {
+            Some(k) => k,
+            None => {
+                let c = LabradorReductionConfig {
+                    f,
+                    b: b as usize,
+                    fu,
+                    bu,
+                    kappa: 32,
+                    kappa1: 0,
+                    tail,
+                };
+                last_config = Some(build_plan(c, nn, r, rr));
+                continue;
+            }
+        };
 
         if tail {
-            selected = Some((kappa, 0));
-            break;
-        }
+            let u1len = rr * kappa;
+            let u2len = 2 * rr - 1;
+            let varz_log = if varz > 0.0 { varz.log2() } else { 0.0 };
+            let tc = LabradorReductionConfig {
+                f,
+                b: b as usize,
+                fu,
+                bu,
+                kappa,
+                kappa1: 0,
+                tail: true,
+            };
+            if kappa <= 32
+                && (u1len + u2len) as f64 * logq <= 1.1 * nn as f64 * (varz_log / 2.0 + 2.05)
+            {
+                return Ok(build_plan(tc, nn, r, rr));
+            }
+            last_config = Some(build_plan(tc, nn, r, rr));
+        } else {
+            let kappa1 = (1..=32usize).find(|&k1| {
+                sis_secure_with_params(k1, 2.0 * LABRADOR_SLACK * last_normsq.sqrt(), logq, d)
+            });
+            let kappa1 = match kappa1 {
+                Some(k1) => k1,
+                None => {
+                    let c = LabradorReductionConfig {
+                        f,
+                        b: b as usize,
+                        fu,
+                        bu,
+                        kappa,
+                        kappa1: 32,
+                        tail: false,
+                    };
+                    last_config = Some(build_plan(c, nn, r, rr));
+                    continue;
+                }
+            };
 
-        let kappa1 = (1..=32usize).find(|&k1| {
-            sis_secure_with_params(k1, 2.0 * LABRADOR_SLACK * normsq.sqrt(), logq, D as f64)
-        });
-        if let Some(k1) = kappa1 {
-            selected = Some((kappa, k1));
-            break;
+            let c = LabradorReductionConfig {
+                f,
+                b: b as usize,
+                fu,
+                bu,
+                kappa,
+                kappa1,
+                tail: false,
+            };
+            let lab_m = fu * rr * kappa + (fu + fg) * (rr * rr + rr) / 2;
+            if (lab_m as f64) <= 1.1 * nn as f64 {
+                return Ok(build_plan(c, nn, r, rr));
+            }
+            last_config = Some(build_plan(c, nn, r, rr));
         }
     }
 
-    let (kappa, kappa1) = selected.ok_or_else(|| {
-        HachiError::InvalidInput("failed to find secure Labrador commitment ranks".to_string())
-    })?;
-
-    Ok(LabradorReductionConfig {
-        f,
-        b: b as usize,
-        fu,
-        bu,
-        kappa,
-        kappa1,
-        tail,
+    last_config.ok_or_else(|| {
+        HachiError::InvalidInput("failed to find secure Labrador fold parameters".to_string())
     })
+}
+
+fn build_plan(config: LabradorReductionConfig, nn: usize, r: usize, rr: usize) -> LabradorFoldPlan {
+    let mut nu = vec![0usize; r];
+    if !nu.is_empty() {
+        nu[r - 1] = rr;
+    }
+    LabradorFoldPlan { config, nn, nu }
+}
+
+/// Build a trivial fold plan (no reshaping) from a config and row lengths.
+///
+/// All rows keep their original lengths; `nn = max(row_lengths)` and `nu`
+/// marks each row as its own virtual row.
+pub fn trivial_plan(config: LabradorReductionConfig, row_lengths: &[usize]) -> LabradorFoldPlan {
+    let nn = row_lengths.iter().copied().max().unwrap_or(0);
+    let nu: Vec<usize> = row_lengths.iter().map(|_| 1).collect();
+    LabradorFoldPlan { config, nn, nu }
 }
 
 pub(crate) fn logq_bits<F: CanonicalField>() -> usize {

@@ -5,7 +5,7 @@ pub mod reduce;
 pub mod types;
 pub mod verify;
 
-pub use eval::greyhound_eval;
+pub use eval::{greyhound_eval, greyhound_select_config};
 pub use reduce::greyhound_reduce;
 pub use types::{GreyhoundDimensions, GreyhoundEvalProof};
 pub use verify::greyhound_verify_stage1;

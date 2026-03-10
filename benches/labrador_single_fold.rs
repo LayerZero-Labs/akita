@@ -8,7 +8,6 @@ use hachi_pcs::protocol::greyhound::{
 };
 use hachi_pcs::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
 use hachi_pcs::protocol::labrador::fold::prove_level;
-use hachi_pcs::protocol::labrador::select_config;
 use hachi_pcs::protocol::labrador::setup::LabradorSetup;
 use hachi_pcs::protocol::labrador::transcript::{
     absorb_greyhound_eval_claim, absorb_greyhound_eval_context, absorb_greyhound_u2,
@@ -16,7 +15,8 @@ use hachi_pcs::protocol::labrador::transcript::{
 };
 use hachi_pcs::protocol::labrador::verifier::verify;
 use hachi_pcs::protocol::labrador::{
-    LabradorProof, LabradorReductionConfig, LabradorStatement, LabradorWitness,
+    plan_fold, LabradorFoldPlan, LabradorProof, LabradorReductionConfig, LabradorStatement,
+    LabradorWitness,
 };
 use hachi_pcs::protocol::transcript::labels::{DOMAIN_GREYHOUND_EVAL, DOMAIN_LABRADOR_PROTOCOL};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
@@ -28,12 +28,13 @@ use tracing_subscriber::prelude::*;
 
 type F = Fp32<4294967197>;
 const D: usize = 64;
-const GREYHOUND_POLY_VARS: usize = 23;
+const GREYHOUND_POLY_VARS: usize = 17;
 
 struct BenchInstance {
     witness: LabradorWitness<F, D>,
     statement: LabradorStatement<F, D>,
     config: LabradorReductionConfig,
+    plan: LabradorFoldPlan,
     setup: LabradorSetup<F, D>,
     comkey_seed: LabradorComKeySeed,
     greyhound_proof: GreyhoundEvalProof<F, D>,
@@ -268,15 +269,10 @@ fn derive_real_greyhound_instance(
 fn build_instance(poly_vars: usize) -> BenchInstance {
     let (greyhound_proof, witness, statement, comkey_seed, coeff_count, ring_witness_len) =
         derive_real_greyhound_instance(poly_vars);
-    let config = greyhound_proof.config;
-    let r = witness.rows().len();
-    let max_len = witness
-        .rows()
-        .iter()
-        .map(|row| row.len())
-        .max()
-        .unwrap_or(0);
-    let setup = LabradorSetup::new(&config, r, max_len, &comkey_seed);
+    let plan = plan_fold::<F, D>(&witness, false).expect("plan_fold for Labrador fold");
+    let config = plan.config;
+    let rr: usize = plan.nu.iter().sum();
+    let setup = LabradorSetup::new(&config, rr, plan.nn, &comkey_seed);
     let eval_point_len =
         greyhound_proof.inner_vars + greyhound_proof.n_cols.trailing_zeros() as usize;
 
@@ -284,6 +280,7 @@ fn build_instance(poly_vars: usize) -> BenchInstance {
         witness,
         statement,
         config,
+        plan,
         setup,
         comkey_seed,
         greyhound_proof,
@@ -303,12 +300,14 @@ fn report_sizes(inst: &BenchInstance) {
     let witness_rings: usize = inst.witness.rows().iter().map(|r| r.len()).sum();
     let witness_bytes = witness_rings * std::mem::size_of::<CyclotomicRing<F, D>>();
     let witness_norm = inst.witness.norm();
+    let rr: usize = inst.plan.nu.iter().sum();
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
     let fold = prove_level(
         &inst.witness,
         &inst.statement,
         &inst.config,
+        &inst.plan,
         &inst.setup,
         0,
         &mut prover_transcript,
@@ -344,14 +343,23 @@ fn report_sizes(inst: &BenchInstance) {
         "  witness row lens    : {}",
         row_lengths_string(inst.witness.rows())
     );
+    let gh = &inst.greyhound_proof.config;
     eprintln!(
-        "  L0 config           : f={} b={} fu={} bu={} kappa={} kappa1={}",
+        "  greyhound config    : f={} b={} fu={} bu={} kappa={} kappa1={}",
+        gh.f, gh.b, gh.fu, gh.bu, gh.kappa, gh.kappa1
+    );
+    eprintln!(
+        "  labrador L0 config  : f={} b={} fu={} bu={} kappa={} kappa1={}",
         inst.config.f,
         inst.config.b,
         inst.config.fu,
         inst.config.bu,
         inst.config.kappa,
         inst.config.kappa1
+    );
+    eprintln!(
+        "  labrador L0 reshape : nn={} rr={} nu={:?}",
+        inst.plan.nn, rr, &inst.plan.nu
     );
     eprintln!("  witness size        : {witness_bytes} bytes");
     eprintln!("  witness ||s||²      : {witness_norm}");
@@ -398,6 +406,7 @@ fn profile_single_fold() {
         &inst.witness,
         &inst.statement,
         &inst.config,
+        &inst.plan,
         &inst.setup,
         0,
         &mut transcript,
@@ -432,6 +441,7 @@ fn bench_labrador_single_fold(c: &mut Criterion) {
                     black_box(&inst.witness),
                     black_box(&inst.statement),
                     black_box(&inst.config),
+                    black_box(&inst.plan),
                     black_box(&inst.setup),
                     0,
                     &mut transcript,
@@ -446,6 +456,7 @@ fn bench_labrador_single_fold(c: &mut Criterion) {
         &inst.witness,
         &inst.statement,
         &inst.config,
+        &inst.plan,
         &inst.setup,
         0,
         &mut prover_transcript,
@@ -483,27 +494,23 @@ fn bench_labrador_two_level_fold(c: &mut Criterion) {
         &inst.witness,
         &inst.statement,
         &inst.config,
+        &inst.plan,
         &inst.setup,
         0,
         &mut prover_transcript,
     )
     .unwrap();
 
-    let r2 = fold1.next_witness.rows().len();
-    let max_len2 = fold1
-        .next_witness
-        .rows()
-        .iter()
-        .map(|row| row.len())
-        .max()
-        .unwrap_or(0);
-    let config2 = select_config::<F, D>(&fold1.next_witness).expect("select_config level 2");
-    let setup2 = LabradorSetup::new(&config2, r2, max_len2, &inst.comkey_seed);
+    let plan2 = plan_fold::<F, D>(&fold1.next_witness, false).expect("plan_fold level 2");
+    let config2 = plan2.config;
+    let rr2: usize = plan2.nu.iter().sum();
+    let setup2 = LabradorSetup::new(&config2, rr2, plan2.nn, &inst.comkey_seed);
 
     let fold2 = prove_level(
         &fold1.next_witness,
         &fold1.statement,
         &config2,
+        &plan2,
         &setup2,
         1,
         &mut prover_transcript,
@@ -522,6 +529,7 @@ fn bench_labrador_two_level_fold(c: &mut Criterion) {
         let w2_bytes = w2_rings * std::mem::size_of::<CyclotomicRing<F, D>>();
         let final_rings: usize = fold2.next_witness.rows().iter().map(|r| r.len()).sum();
         let final_bytes = final_rings * std::mem::size_of::<CyclotomicRing<F, D>>();
+        let rr0: usize = inst.plan.nu.iter().sum();
 
         eprintln!("=== Labrador two-level fold report ===");
         eprintln!(
@@ -539,6 +547,7 @@ fn bench_labrador_two_level_fold(c: &mut Criterion) {
             "  L0 config            : f={} b={} fu={} bu={} kappa={} kappa1={}",
             c0.f, c0.b, c0.fu, c0.bu, c0.kappa, c0.kappa1
         );
+        eprintln!("  L0 reshape           : nn={} rr={}", inst.plan.nn, rr0);
         eprintln!(
             "  L1 witness rows      : {} rows, {w2_rings} total ring elems",
             fold1.next_witness.rows().len(),
@@ -548,6 +557,7 @@ fn bench_labrador_two_level_fold(c: &mut Criterion) {
             "  L1 config            : f={} b={} fu={} bu={} kappa={} kappa1={}",
             config2.f, config2.b, config2.fu, config2.bu, config2.kappa, config2.kappa1
         );
+        eprintln!("  L1 reshape           : nn={} rr={}", plan2.nn, rr2);
         eprintln!(
             "  final witness        : {} rows, {final_rings} total ring elems",
             fold2.next_witness.rows().len(),
@@ -568,26 +578,22 @@ fn bench_labrador_two_level_fold(c: &mut Criterion) {
                 black_box(&inst.witness),
                 black_box(&inst.statement),
                 black_box(&inst.config),
+                black_box(&inst.plan),
                 black_box(&inst.setup),
                 0,
                 &mut transcript,
             )
             .unwrap();
-            let r = f1.next_witness.rows().len();
-            let ml = f1
-                .next_witness
-                .rows()
-                .iter()
-                .map(|row| row.len())
-                .max()
-                .unwrap_or(0);
-            let cfg2 = select_config::<F, D>(&f1.next_witness).unwrap();
-            let s2 = LabradorSetup::new(&cfg2, r, ml, &inst.comkey_seed);
+            let p2 = plan_fold::<F, D>(&f1.next_witness, false).unwrap();
+            let c2 = p2.config;
+            let r2: usize = p2.nu.iter().sum();
+            let s2 = LabradorSetup::new(&c2, r2, p2.nn, &inst.comkey_seed);
             black_box(
                 prove_level(
                     black_box(&f1.next_witness),
                     black_box(&f1.statement),
-                    black_box(&cfg2),
+                    black_box(&c2),
+                    black_box(&p2),
                     black_box(&s2),
                     1,
                     &mut transcript,
@@ -615,12 +621,12 @@ fn bench_labrador_two_level_fold(c: &mut Criterion) {
     group.finish();
 }
 
-// criterion_group!(
-//     labrador_benches,
-//     bench_labrador_single_fold,
-//     bench_labrador_two_level_fold,
-// );
-criterion_group!(labrador_benches, bench_labrador_single_fold,);
+criterion_group!(
+    labrador_benches,
+    bench_labrador_single_fold,
+    bench_labrador_two_level_fold,
+);
+// criterion_group!(labrador_benches, bench_labrador_single_fold,);
 
 fn main() {
     #[cfg(feature = "parallel")]

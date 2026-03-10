@@ -10,12 +10,15 @@ use crate::protocol::commitment::utils::linear::decompose_rows_with_carry;
 use crate::protocol::greyhound::reduce::greyhound_reduce;
 use crate::protocol::greyhound::types::GreyhoundEvalProof;
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
-use crate::protocol::labrador::select_config;
+use crate::protocol::labrador::config::logq_bits;
+use crate::protocol::labrador::sis_secure;
 use crate::protocol::labrador::transcript::{
     absorb_greyhound_eval_claim, absorb_greyhound_eval_context, absorb_greyhound_u2,
     sample_greyhound_fold_challenge, GreyhoundEvalTranscriptContext,
 };
-use crate::protocol::labrador::types::{LabradorStatement, LabradorWitness};
+use crate::protocol::labrador::types::{
+    LabradorReductionConfig, LabradorStatement, LabradorWitness,
+};
 use crate::protocol::labrador::utils::mat_vec_mul;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling};
@@ -26,6 +29,87 @@ pub type GreyhoundEvalResult<F, const D: usize> = (
     LabradorWitness<F, D>,
     LabradorStatement<F, D>,
 );
+
+const GH_T: f64 = 14.0;
+const GH_SLACK: f64 = 2.0;
+const GH_TAU1: f64 = 32.0;
+const GH_TAU2: f64 = 8.0;
+
+/// Greyhound-specific parameter selection mirroring the C `init_polcomctx`.
+///
+/// Given fixed matrix dimensions `m` (rows) and `n` (columns), searches over
+/// `f` (2..=8) and `kappa` (1..=32) to find the smallest SIS-secure parameter
+/// set for the polynomial commitment.
+///
+/// # Errors
+///
+/// Returns an error if no secure parameter combination exists within the
+/// supported bounds.
+pub fn greyhound_select_config<F: CanonicalField, const D: usize>(
+    m: usize,
+    n: usize,
+) -> Result<LabradorReductionConfig, HachiError> {
+    let logq = logq_bits::<F>();
+    let d = D as f64;
+    let mf = m as f64;
+    let nf = n as f64;
+
+    for f in 2..=8usize {
+        let b = (logq + f / 2) / f;
+
+        let varz = 2f64.powi(2 * b as i32) / 12.0 * nf * (GH_TAU1 + 4.0 * GH_TAU2);
+        let bu = ((0.25 * (12.0 * varz).log2()).round() as usize)
+            .max(1)
+            .min(logq);
+        let fu = ((logq as f64 / bu as f64).round() as usize).max(1);
+
+        let mut found = None;
+        for kappa in 1..=32usize {
+            let mut normsq =
+                (2f64.powi(2 * bu as i32) / 12.0 + varz / 2f64.powi(2 * bu as i32)) * mf * f as f64;
+            let hi_exp = logq as i32 - (fu.saturating_sub(1) * bu) as i32;
+            normsq += (2f64.powi(2 * bu as i32) * (fu as f64 - 1.0) + 2f64.powi(2 * hi_exp.max(0)))
+                / 12.0
+                * (kappa as f64 + 1.0)
+                * nf;
+            normsq *= d;
+
+            if sis_secure::<F, D>(
+                kappa,
+                6.0 * GH_T * GH_SLACK * 2f64.powi(bu as i32) * normsq.sqrt(),
+            ) {
+                found = Some((kappa, normsq));
+                break;
+            }
+        }
+
+        let (kappa, _normsq) = match found {
+            Some(v) => v,
+            None => continue,
+        };
+
+        let kappa1 =
+            (1..=32usize).find(|&k1| sis_secure::<F, D>(k1, 2.0 * GH_SLACK * _normsq.sqrt()));
+        let kappa1 = match kappa1 {
+            Some(k1) => k1,
+            None => continue,
+        };
+
+        return Ok(LabradorReductionConfig {
+            f,
+            b,
+            fu,
+            bu,
+            kappa,
+            kappa1,
+            tail: false,
+        });
+    }
+
+    Err(HachiError::InvalidInput(
+        "greyhound_select_config: no secure parameters found".to_string(),
+    ))
+}
 
 /// Build Greyhound evaluation proof and reduced Labrador witness/statement.
 ///
@@ -71,9 +155,7 @@ where
     let matrix = reshape_columns(&ring_witness, m_rows, n_cols);
     let partial_evals = partial_evaluate_columns(&matrix, &inner_basis);
 
-    // Select Labrador config from columns (pre-amortization dimensions).
-    let column_witness = columns_to_witness(&matrix);
-    let cfg = select_config(&column_witness)?;
+    let cfg = greyhound_select_config::<F, D>(m_rows, n_cols)?;
 
     // Decompose partial evaluations v → v_hat (group 3).
     let v_hat = decompose_rows_with_carry(&partial_evals, cfg.fu, cfg.bu as u32);
@@ -223,13 +305,6 @@ fn partial_evaluate_columns<F: FieldCore, const D: usize>(
             acc
         })
         .collect()
-}
-
-/// Build a temporary witness from columns for config selection.
-fn columns_to_witness<F: FieldCore, const D: usize>(
-    matrix: &[Vec<CyclotomicRing<F, D>>],
-) -> LabradorWitness<F, D> {
-    LabradorWitness::new_unchecked(matrix.to_vec())
 }
 
 #[cfg(test)]
@@ -432,20 +507,17 @@ mod tests {
         .unwrap();
         statement.beta_sq = witness.norm();
 
-        let r = witness.rows().len();
-        let max_len = witness
-            .rows()
-            .iter()
-            .map(|row| row.len())
-            .max()
-            .unwrap_or(0);
+        let row_lengths: Vec<usize> = witness.rows().iter().map(|r| r.len()).collect();
+        let plan = crate::protocol::labrador::config::trivial_plan(proof.config, &row_lengths);
+        let rr: usize = plan.nu.iter().sum();
         let setup =
-            crate::protocol::labrador::LabradorSetup::new(&proof.config, r, max_len, &comkey_seed);
+            crate::protocol::labrador::LabradorSetup::new(&proof.config, rr, plan.nn, &comkey_seed);
         let mut prover_transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
         let fold = prove_level(
             &witness,
             &statement,
             &proof.config,
+            &plan,
             &setup,
             0,
             &mut prover_transcript,

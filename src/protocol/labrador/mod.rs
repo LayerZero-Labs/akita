@@ -20,7 +20,7 @@ pub mod utils;
 pub mod verifier;
 
 pub use commit::{commit_linear_only, LabradorCommitmentArtifacts};
-pub use config::{select_config, select_config_with_mode, sis_secure};
+pub use config::{plan_fold, select_config, select_config_with_mode, sis_secure, LabradorFoldPlan};
 pub use constraints::{LabradorConstraint, LabradorConstraintTerm};
 pub use fold::{prove_level, LabradorFoldResult};
 pub use johnson_lindenstrauss::{

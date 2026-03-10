@@ -94,6 +94,10 @@ pub struct LabradorLevelProof<F: FieldCore, const D: usize> {
     pub input_row_lengths: Vec<usize>,
     /// Configuration selected for this level.
     pub config: LabradorReductionConfig,
+    /// Virtual row length after nu-reshaping.
+    pub nn: usize,
+    /// Per-original-row split counts from the fold plan.
+    pub nu: Vec<usize>,
     /// First outer commitment.
     pub u1: Vec<CyclotomicRing<F, D>>,
     /// Second outer commitment.

@@ -123,7 +123,10 @@ where
     if level.config.f == 0 || level.config.fu == 0 {
         return Err(HachiError::InvalidProof);
     }
-    let max_len = level.input_row_lengths.iter().copied().max().unwrap_or(0);
+
+    let nn = level.nn;
+    let rr: usize = level.nu.iter().sum();
+    let virt_row_lengths = vec![nn; rr];
 
     absorb_labrador_level_context(
         transcript,
@@ -141,45 +144,46 @@ where
     )?;
     transcript.append_serde(labels::ABSORB_LABRADOR_U1, &level.u1);
 
-    let total_len: usize = level.input_row_lengths.iter().sum();
+    let total_len: usize = virt_row_lengths.iter().sum();
     let jl_cols = total_len * D;
     let jl_matrix =
         LabradorJlMatrix::replay_nonce_search::<F, T>(transcript, level.jl_nonce, jl_cols)?;
     absorb_labrador_jl_projection(transcript, &level.jl_projection);
 
     let (phi_jl, b_jl) = aggregate_jl_constraints_verifier(
-        &level.input_row_lengths,
+        &virt_row_lengths,
         &level.jl_projection,
         &jl_matrix,
         &level.bb,
         transcript,
     )?;
-    let (phi_stmt, b_stmt) = aggregate_statement_constraints(
+    let (phi_stmt_orig, b_stmt) = aggregate_statement_constraints(
         &statement.constraints,
         &level.input_row_lengths,
         transcript,
     )?;
+    let phi_stmt = reshape_phi_verifier::<F, D>(&phi_stmt_orig, &level.nu, nn);
 
     let mut phi_total = phi_stmt;
     add_phi_in_place(&mut phi_total, &phi_jl)?;
     let b_total = b_stmt + b_jl;
 
     transcript.append_serde(labels::ABSORB_LABRADOR_U2, &level.u2);
-    let mut challenges = Vec::with_capacity(r);
-    for _ in 0..r {
+    let mut challenges = Vec::with_capacity(rr);
+    for _ in 0..rr {
         challenges.push(challenge_ring_element_rejection_sampled(
             transcript,
             labels::CHALLENGE_LABRADOR_AMORTIZE,
         )?);
     }
 
-    let setup = LabradorSetup::new(&level.config, r, max_len, comkey_seed);
+    let setup = LabradorSetup::new(&level.config, rr, nn, comkey_seed);
     let next_constraints = build_next_constraints(
         &phi_total,
         &b_total,
         &challenges,
-        &level.input_row_lengths,
-        max_len,
+        &virt_row_lengths,
+        nn,
         &level.config,
         &level.u1,
         &level.u2,
@@ -194,6 +198,32 @@ where
         constraints: next_constraints,
         beta_sq: level.norm_sq,
     })
+}
+
+fn reshape_phi_verifier<F: FieldCore, const D: usize>(
+    phi: &[Vec<CyclotomicRing<F, D>>],
+    nu: &[usize],
+    nn: usize,
+) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    let mut result = Vec::new();
+    let mut group: Vec<CyclotomicRing<F, D>> = Vec::new();
+
+    for (i, row) in phi.iter().enumerate() {
+        group.extend(row.iter().copied());
+        let splits = if i < nu.len() { nu[i] } else { 0 };
+        if splits > 0 {
+            for chunk_idx in 0..splits {
+                let start = chunk_idx * nn;
+                let mut virtual_row = vec![CyclotomicRing::<F, D>::zero(); nn];
+                for (j, val) in group.iter().enumerate().skip(start).take(nn) {
+                    virtual_row[j - start] = *val;
+                }
+                result.push(virtual_row);
+            }
+            group.clear();
+        }
+    }
+    result
 }
 
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
@@ -219,18 +249,21 @@ where
     if level.config.f == 0 || level.config.fu == 0 {
         return Err(HachiError::InvalidProof);
     }
-    let max_len = level.input_row_lengths.iter().copied().max().unwrap_or(0);
+
+    let nn = level.nn;
+    let rr: usize = level.nu.iter().sum();
+
     if witness.rows().len() != level.config.f {
         return Err(HachiError::InvalidProof);
     }
     for row in witness.rows() {
-        if row.len() != max_len {
+        if row.len() != nn {
             return Err(HachiError::InvalidProof);
         }
     }
 
-    let t_hat_len = r * level.config.kappa * level.config.fu;
-    let h_hat_len = r * (r + 1) / 2 * level.config.fu;
+    let t_hat_len = rr * level.config.kappa * level.config.fu;
+    let h_hat_len = rr * (rr + 1) / 2 * level.config.fu;
     if level.u1.len() != t_hat_len || level.u2.len() != h_hat_len {
         return Err(HachiError::InvalidProof);
     }
@@ -253,31 +286,34 @@ where
     )?;
     transcript.append_serde(labels::ABSORB_LABRADOR_U1, &level.u1);
 
-    let total_len: usize = level.input_row_lengths.iter().sum();
-    let jl_cols = total_len * D;
+    let virt_total_len = rr * nn;
+    let jl_cols = virt_total_len * D;
     let jl_matrix =
         LabradorJlMatrix::replay_nonce_search::<F, T>(transcript, level.jl_nonce, jl_cols)?;
     absorb_labrador_jl_projection(transcript, &level.jl_projection);
 
+    let virt_row_lengths = vec![nn; rr];
     let (phi_jl, b_jl) = aggregate_jl_constraints_verifier(
-        &level.input_row_lengths,
+        &virt_row_lengths,
         &level.jl_projection,
         &jl_matrix,
         &level.bb,
         transcript,
     )?;
-    let (phi_stmt, b_stmt) = aggregate_statement_constraints(
+    let (phi_stmt_orig, b_stmt) = aggregate_statement_constraints(
         &statement.constraints,
         &level.input_row_lengths,
         transcript,
     )?;
+    let phi_stmt = reshape_phi_verifier::<F, D>(&phi_stmt_orig, &level.nu, nn);
+
     let mut phi_total = phi_stmt;
     add_phi_in_place(&mut phi_total, &phi_jl)?;
     let b_total = b_stmt + b_jl;
 
     transcript.append_serde(labels::ABSORB_LABRADOR_U2, &level.u2);
-    let mut challenges = Vec::with_capacity(r);
-    for _ in 0..r {
+    let mut challenges = Vec::with_capacity(rr);
+    for _ in 0..rr {
         challenges.push(challenge_ring_element_rejection_sampled(
             transcript,
             labels::CHALLENGE_LABRADOR_AMORTIZE,
@@ -288,7 +324,7 @@ where
     let z = recompose_from_parts(&z_parts, level.config.b as u32)?;
     let t_flat = recompose_flat(t_hat, level.config.fu, level.config.bu as u32)?;
     let h_flat = recompose_flat(h_hat, level.config.fu, level.config.bu as u32)?;
-    if t_flat.len() != r * level.config.kappa || h_flat.len() != r * (r + 1) / 2 {
+    if t_flat.len() != rr * level.config.kappa || h_flat.len() != rr * (rr + 1) / 2 {
         return Err(HachiError::InvalidProof);
     }
 
@@ -296,11 +332,11 @@ where
     if computed_norm > level.norm_sq {
         return Err(HachiError::InvalidProof);
     }
-    if projection_norm_sq(&level.jl_projection) > 128u128.saturating_mul(statement.beta_sq) {
+    if projection_norm_sq(&level.jl_projection) > 256u128.saturating_mul(statement.beta_sq) {
         return Err(HachiError::InvalidProof);
     }
 
-    let setup = LabradorSetup::new(&level.config, r, max_len, comkey_seed);
+    let setup = LabradorSetup::new(&level.config, rr, nn, comkey_seed);
     let az = mat_vec_mul(&setup.a_mat, &z);
     let mut rhs = vec![CyclotomicRing::<F, D>::zero(); level.config.kappa];
     for (i, t_row) in t_flat.chunks(level.config.kappa).enumerate() {
@@ -313,7 +349,7 @@ where
         return Err(HachiError::InvalidProof);
     }
 
-    let mut combined_phi = vec![CyclotomicRing::<F, D>::zero(); max_len];
+    let mut combined_phi = vec![CyclotomicRing::<F, D>::zero(); nn];
     for (i, phi_row) in phi_total.iter().enumerate() {
         let c = challenges[i];
         for (j, elem) in phi_row.iter().enumerate() {
@@ -323,8 +359,8 @@ where
     let lhs = dot_product(&combined_phi, &z);
     let mut rhs = CyclotomicRing::<F, D>::zero();
     let mut idx = 0usize;
-    for i in 0..r {
-        for j in i..r {
+    for i in 0..rr {
+        for j in i..rr {
             rhs += challenges[i] * challenges[j] * h_flat[idx];
             idx += 1;
         }
@@ -334,8 +370,8 @@ where
     }
 
     let mut diag_sum = CyclotomicRing::<F, D>::zero();
-    for i in 0..r {
-        let idx = pair_index(i, i, r);
+    for i in 0..rr {
+        let idx = pair_index(i, i, rr);
         diag_sum += h_flat[idx];
     }
     if diag_sum - b_total != CyclotomicRing::<F, D>::zero() {
@@ -369,14 +405,15 @@ where
         return Err(HachiError::InvalidProof);
     }
 
-    let max_len = level.input_row_lengths.iter().copied().max().unwrap_or(0);
-    let layout = NextWitnessLayout::new(r, &level.config);
+    let nn = level.nn;
+    let rr: usize = level.nu.iter().sum();
+    let layout = NextWitnessLayout::new(rr, &level.config);
     let expected_rows = layout.num_rows();
     if witness.rows().len() != expected_rows {
         return Err(HachiError::InvalidProof);
     }
     for row in witness.rows().iter().take(level.config.f) {
-        if row.len() != max_len {
+        if row.len() != nn {
             return Err(HachiError::InvalidProof);
         }
     }
@@ -403,24 +440,26 @@ where
     )?;
     transcript.append_serde(labels::ABSORB_LABRADOR_U1, &level.u1);
 
-    let total_len: usize = level.input_row_lengths.iter().sum();
-    let jl_cols = total_len * D;
+    let virt_total_len = rr * nn;
+    let jl_cols = virt_total_len * D;
     let jl_matrix =
         LabradorJlMatrix::replay_nonce_search::<F, T>(transcript, level.jl_nonce, jl_cols)?;
     absorb_labrador_jl_projection(transcript, &level.jl_projection);
 
+    let virt_row_lengths = vec![nn; rr];
     let (phi_jl, b_jl) = aggregate_jl_constraints_verifier(
-        &level.input_row_lengths,
+        &virt_row_lengths,
         &level.jl_projection,
         &jl_matrix,
         &level.bb,
         transcript,
     )?;
-    let (phi_stmt, b_stmt) = aggregate_statement_constraints(
+    let (phi_stmt_orig, b_stmt) = aggregate_statement_constraints(
         &statement.constraints,
         &level.input_row_lengths,
         transcript,
     )?;
+    let phi_stmt = reshape_phi_verifier::<F, D>(&phi_stmt_orig, &level.nu, nn);
 
     let mut phi_total = phi_stmt;
     add_phi_in_place(&mut phi_total, &phi_jl)?;
@@ -428,8 +467,8 @@ where
 
     transcript.append_serde(labels::ABSORB_LABRADOR_U2, &level.u2);
 
-    let mut challenges = Vec::with_capacity(r);
-    for _ in 0..r {
+    let mut challenges = Vec::with_capacity(rr);
+    for _ in 0..rr {
         challenges.push(challenge_ring_element_rejection_sampled(
             transcript,
             labels::CHALLENGE_LABRADOR_AMORTIZE,
@@ -446,13 +485,13 @@ where
 
     let t_flat = recompose_flat(t_hat, level.config.fu, level.config.bu as u32)?;
     let h_flat = recompose_flat(h_hat, level.config.fu, level.config.bu as u32)?;
-    if t_flat.len() != r * level.config.kappa {
+    if t_flat.len() != rr * level.config.kappa {
         return Err(HachiError::InvalidProof);
     }
-    if h_flat.len() != r * (r + 1) / 2 {
+    if h_flat.len() != rr * (rr + 1) / 2 {
         return Err(HachiError::InvalidProof);
     }
-    let mut t_by_row = Vec::with_capacity(r);
+    let mut t_by_row = Vec::with_capacity(rr);
     for chunk in t_flat.chunks(level.config.kappa) {
         t_by_row.push(chunk.to_vec());
     }
@@ -464,7 +503,7 @@ where
         return Err(HachiError::InvalidProof);
     }
 
-    let setup = LabradorSetup::new(&level.config, r, max_len, comkey_seed);
+    let setup = LabradorSetup::new(&level.config, rr, nn, comkey_seed);
 
     if level.config.kappa1 > 0 {
         let u1_check = mat_vec_mul(&setup.b_mat, t_hat);
@@ -489,7 +528,7 @@ where
         return Err(HachiError::InvalidProof);
     }
 
-    if projection_norm_sq(&level.jl_projection) > 128u128.saturating_mul(statement.beta_sq) {
+    if projection_norm_sq(&level.jl_projection) > 256u128.saturating_mul(statement.beta_sq) {
         return Err(HachiError::InvalidProof);
     }
 
@@ -505,7 +544,7 @@ where
         return Err(HachiError::InvalidProof);
     }
 
-    let mut combined_phi = vec![CyclotomicRing::<F, D>::zero(); max_len];
+    let mut combined_phi = vec![CyclotomicRing::<F, D>::zero(); nn];
     for (i, phi_row) in phi_total.iter().enumerate() {
         let c = challenges[i];
         for (j, elem) in phi_row.iter().enumerate() {
@@ -515,8 +554,8 @@ where
     let lhs = dot_product(&combined_phi, &z);
     let mut rhs = CyclotomicRing::<F, D>::zero();
     let mut idx = 0usize;
-    for i in 0..r {
-        for j in i..r {
+    for i in 0..rr {
+        for j in i..rr {
             rhs += challenges[i] * challenges[j] * h_flat[idx];
             idx += 1;
         }
@@ -526,8 +565,8 @@ where
     }
 
     let mut diag_sum = CyclotomicRing::<F, D>::zero();
-    for i in 0..r {
-        let idx = pair_index(i, i, r);
+    for i in 0..rr {
+        let idx = pair_index(i, i, rr);
         diag_sum += h_flat[idx];
     }
     if diag_sum - b_total != CyclotomicRing::<F, D>::zero() {

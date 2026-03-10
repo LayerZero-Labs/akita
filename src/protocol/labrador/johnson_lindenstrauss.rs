@@ -236,16 +236,44 @@ where
             "centered witness length mismatch".to_string(),
         ));
     }
+
+    let witness_norm: u128 = witness.norm();
+    let norm_bound = 256u128.saturating_mul(witness_norm);
+    let component_bound = next_power_of_two_u64(4.0 * (witness_norm as f64).sqrt());
+
     for nonce in 1..=LABRADOR_MAX_JL_NONCE_RETRIES {
         transcript.append_bytes(labels::ABSORB_LABRADOR_JL_NONCE, &nonce.to_le_bytes());
         let matrix = LabradorJlMatrix::generate::<F, T>(transcript, total_coeffs)?;
         if let Some(proj) = project_streaming::<D>(&matrix, &centered_witness, total_coeffs) {
+            if proj
+                .iter()
+                .any(|&p| (p as i64).unsigned_abs() >= component_bound)
+            {
+                continue;
+            }
+            let proj_norm: u128 = proj.iter().fold(0u128, |acc, &p| {
+                acc + (p as i64).unsigned_abs() as u128 * (p as i64).unsigned_abs() as u128
+            });
+            if proj_norm > norm_bound {
+                continue;
+            }
             return Ok((proj, nonce, matrix));
         }
     }
     Err(HachiError::InvalidInput(format!(
         "failed JL projection nonce search after {LABRADOR_MAX_JL_NONCE_RETRIES} attempts"
     )))
+}
+
+fn next_power_of_two_u64(x: f64) -> u64 {
+    if x <= 1.0 {
+        return 1;
+    }
+    let bits = x.log2().ceil() as u32;
+    if bits >= 64 {
+        return u64::MAX;
+    }
+    1u64 << bits
 }
 
 /// Collapse a JL projection with challenge coefficients.

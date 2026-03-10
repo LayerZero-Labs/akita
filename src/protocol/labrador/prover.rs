@@ -2,13 +2,12 @@
 
 use crate::error::HachiError;
 use crate::protocol::labrador::comkey::LabradorComKeySeed;
-use crate::protocol::labrador::config::logq_bits;
+use crate::protocol::labrador::config::{logq_bits, plan_fold, trivial_plan};
 use crate::protocol::labrador::fold::prove_level;
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
 use crate::protocol::labrador::setup::LabradorSetup;
 use crate::protocol::labrador::types::{LabradorProof, LabradorStatement, LabradorWitness};
 use crate::protocol::labrador::LabradorReductionConfig;
-use crate::protocol::labrador::{select_config, select_config_with_mode};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 
@@ -47,16 +46,19 @@ where
             break;
         }
 
-        let cfg = select_config(&witness)?;
-        let r = witness.rows().len();
-        let max_len = witness
-            .rows()
-            .iter()
-            .map(|row| row.len())
-            .max()
-            .unwrap_or(0);
-        let setup = LabradorSetup::new(&cfg, r, max_len, comkey_seed);
-        let fold = prove_level(&witness, &_statement, &cfg, &setup, level_idx, transcript)?;
+        let plan = plan_fold::<F, D>(&witness, false)?;
+        let cfg = plan.config;
+        let rr: usize = plan.nu.iter().sum();
+        let setup = LabradorSetup::new(&cfg, rr, plan.nn, comkey_seed);
+        let fold = prove_level(
+            &witness,
+            &_statement,
+            &cfg,
+            &plan,
+            &setup,
+            level_idx,
+            transcript,
+        )?;
         let after_size = witness_size_bits::<F, D>(&fold.next_witness);
         if after_size >= before_size {
             break;
@@ -68,7 +70,8 @@ where
     }
 
     if level_idx + 1 < LABRADOR_MAX_LEVELS {
-        let tail_cfg = select_config_with_mode(&witness, true)?;
+        let tail_plan = plan_fold::<F, D>(&witness, true)?;
+        let tail_cfg = tail_plan.config;
 
         let baseline_bits = witness_size_bits::<F, D>(&witness)
             + levels
@@ -76,20 +79,14 @@ where
                 .map(level_payload_size_bits::<F, D>)
                 .sum::<usize>();
 
-        // Clone transcript so we can roll back if tail doesn't help.
-        let r = witness.rows().len();
-        let max_len = witness
-            .rows()
-            .iter()
-            .map(|row| row.len())
-            .max()
-            .unwrap_or(0);
-        let tail_setup = LabradorSetup::new(&tail_cfg, r, max_len, comkey_seed);
+        let rr: usize = tail_plan.nu.iter().sum();
+        let tail_setup = LabradorSetup::new(&tail_cfg, rr, tail_plan.nn, comkey_seed);
         let mut tail_transcript = transcript.clone();
         if let Ok(tail) = prove_level(
             &witness,
             &_statement,
             &tail_cfg,
+            &tail_plan,
             &tail_setup,
             level_idx,
             &mut tail_transcript,
@@ -153,16 +150,16 @@ where
             break;
         }
 
-        let cfg = select_config(&witness).unwrap_or(fallback_cfg);
-        let r = witness.rows().len();
-        let max_len = witness
-            .rows()
-            .iter()
-            .map(|row| row.len())
-            .max()
-            .unwrap_or(0);
-        let setup = LabradorSetup::new(&cfg, r, max_len, comkey_seed);
-        let fold = prove_level(&witness, &statement, &cfg, &setup, level_idx, transcript)?;
+        let plan = plan_fold::<F, D>(&witness, false).unwrap_or_else(|_| {
+            let row_lengths: Vec<usize> = witness.rows().iter().map(|r| r.len()).collect();
+            trivial_plan(fallback_cfg, &row_lengths)
+        });
+        let cfg = plan.config;
+        let rr: usize = plan.nu.iter().sum();
+        let setup = LabradorSetup::new(&cfg, rr, plan.nn, comkey_seed);
+        let fold = prove_level(
+            &witness, &statement, &cfg, &plan, &setup, level_idx, transcript,
+        )?;
         let after_size = witness_size_bits::<F, D>(&fold.next_witness);
         if after_size >= before_size && !force_first_level {
             break;
@@ -177,14 +174,20 @@ where
     }
 
     if level_idx + 1 < LABRADOR_MAX_LEVELS {
-        let tail_cfg =
-            select_config_with_mode(&witness, true).unwrap_or_else(|_| LabradorReductionConfig {
-                tail: true,
-                kappa1: 0,
-                fu: 1,
-                bu: logq_bits::<F>(),
-                ..fallback_cfg
-            });
+        let tail_plan = plan_fold::<F, D>(&witness, true).unwrap_or_else(|_| {
+            let row_lengths: Vec<usize> = witness.rows().iter().map(|r| r.len()).collect();
+            trivial_plan(
+                LabradorReductionConfig {
+                    tail: true,
+                    kappa1: 0,
+                    fu: 1,
+                    bu: logq_bits::<F>(),
+                    ..fallback_cfg
+                },
+                &row_lengths,
+            )
+        });
+        let tail_cfg = tail_plan.config;
 
         let baseline_bits = witness_size_bits::<F, D>(&witness)
             + levels
@@ -192,19 +195,14 @@ where
                 .map(level_payload_size_bits::<F, D>)
                 .sum::<usize>();
 
-        let r = witness.rows().len();
-        let max_len = witness
-            .rows()
-            .iter()
-            .map(|row| row.len())
-            .max()
-            .unwrap_or(0);
-        let tail_setup = LabradorSetup::new(&tail_cfg, r, max_len, comkey_seed);
+        let rr: usize = tail_plan.nu.iter().sum();
+        let tail_setup = LabradorSetup::new(&tail_cfg, rr, tail_plan.nn, comkey_seed);
         let mut tail_transcript = transcript.clone();
         if let Ok(tail) = prove_level(
             &witness,
             &statement,
             &tail_cfg,
+            &tail_plan,
             &tail_setup,
             level_idx,
             &mut tail_transcript,
