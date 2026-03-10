@@ -346,9 +346,9 @@ fn combine_phi<F: FieldCore, const D: usize>(
 ) -> Vec<CyclotomicRing<F, D>> {
     let mut combined_phi = vec![CyclotomicRing::<F, D>::zero(); max_len];
     for (row_idx, row_phi) in phi_total.iter().enumerate() {
-        let c = challenges[row_idx];
+        let c = &challenges[row_idx];
         for (j, elem) in row_phi.iter().enumerate() {
-            combined_phi[j] += c * *elem;
+            c.mul_accumulate_into(elem, &mut combined_phi[j]);
         }
     }
     combined_phi

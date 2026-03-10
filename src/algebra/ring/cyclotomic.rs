@@ -241,6 +241,26 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
         result
     }
 
+    /// Fused `dst += self * rhs` via schoolbook negacyclic convolution.
+    ///
+    /// Accumulates the product directly into `dst` without allocating a
+    /// temporary ring element, saving D additions and one memory pass.
+    #[inline]
+    pub fn mul_accumulate_into(&self, rhs: &Self, dst: &mut Self) {
+        for i in 0..D {
+            let ai = self.coeffs[i];
+            for j in 0..D {
+                let product = ai * rhs.coeffs[j];
+                let idx = i + j;
+                if idx < D {
+                    dst.coeffs[idx] += product;
+                } else {
+                    dst.coeffs[idx - D] -= product;
+                }
+            }
+        }
+    }
+
     /// Check whether all coefficients are zero.
     #[inline]
     pub fn is_zero(&self) -> bool {

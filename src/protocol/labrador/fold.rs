@@ -115,8 +115,7 @@ where
     absorb_labrador_jl_projection(transcript, &jl_projection);
 
     // Phase 3: JL lift constraints and aggregation.
-    let (phi_jl, b_jl, bb) =
-        aggregate_jl_constraints_prover(witness, &jl_projection, &jl_matrix, transcript)?;
+    let (phi_jl, b_jl, bb) = aggregate_jl_constraints_prover(witness, &jl_matrix, transcript)?;
 
     // Aggregate statement constraints (after JL lifts).
     let (phi_stmt, b_stmt) =

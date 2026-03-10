@@ -8,8 +8,121 @@ use crate::protocol::labrador::guardrails::LABRADOR_MAX_JL_NONCE_RETRIES;
 use crate::protocol::labrador::types::LabradorWitness;
 use crate::protocol::transcript::{labels, Transcript};
 use crate::{CanonicalField, FieldCore};
+use sha3::digest::{ExtendableOutput, Update, XofReader};
+use sha3::Shake128;
 
 const JL_ROWS: usize = 256;
+const JL_XOF_DOMAIN: &[u8] = b"hachi/labrador-jl-matrix";
+
+fn expand_jl_seed(seed: &[u8], len: usize) -> Vec<u8> {
+    let mut xof = Shake128::default();
+    xof.update(JL_XOF_DOMAIN);
+    xof.update(seed);
+    let mut reader = xof.finalize_xof();
+    let mut out = vec![0u8; len];
+    reader.read(&mut out);
+    out
+}
+
+fn centered_from_canonical(
+    canonical: u128,
+    modulus: u128,
+    half_modulus: u128,
+) -> Result<i128, HachiError> {
+    let magnitude = centered_magnitude(canonical, modulus, half_modulus);
+    let magnitude = i128::try_from(magnitude).map_err(|_| {
+        HachiError::InvalidInput("JL centered coefficient exceeds i128 range".to_string())
+    })?;
+    Ok(if canonical > half_modulus {
+        -magnitude
+    } else {
+        magnitude
+    })
+}
+
+fn centered_magnitude(canonical: u128, modulus: u128, half_modulus: u128) -> u128 {
+    if canonical > half_modulus {
+        modulus - canonical
+    } else {
+        canonical
+    }
+}
+
+enum CenteredWitness<const D: usize> {
+    I64 {
+        coeffs: Vec<i64>,
+    },
+    I128 {
+        rings: Vec<[i128; D]>,
+        sum_abs: u128,
+    },
+}
+
+impl<const D: usize> CenteredWitness<D> {
+    fn ring_len(&self) -> usize {
+        match self {
+            Self::I64 { coeffs, .. } => coeffs.len() / D,
+            Self::I128 { rings, .. } => rings.len(),
+        }
+    }
+}
+
+fn center_witness_by_ring<F: FieldCore + CanonicalField, const D: usize>(
+    witness: &LabradorWitness<F, D>,
+) -> Result<CenteredWitness<D>, HachiError> {
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let half_q = q / 2;
+    let total_rings: usize = witness.rows().iter().map(Vec::len).sum();
+
+    let mut requires_i128 = false;
+    'detect_width: for row in witness.rows() {
+        for ring in row {
+            for coeff in ring.coefficients() {
+                let canonical = coeff.to_canonical_u128();
+                let magnitude = centered_magnitude(canonical, q, half_q);
+                if magnitude > i64::MAX as u128 {
+                    requires_i128 = true;
+                    break 'detect_width;
+                }
+            }
+        }
+    }
+
+    if requires_i128 {
+        let mut centered = Vec::with_capacity(total_rings);
+        let mut sum_abs = 0u128;
+        for row in witness.rows() {
+            for ring in row {
+                let mut coeffs = [0i128; D];
+                for (idx, coeff) in ring.coefficients().iter().enumerate() {
+                    coeffs[idx] = centered_from_canonical(coeff.to_canonical_u128(), q, half_q)?;
+                    sum_abs = sum_abs.saturating_add(coeffs[idx].unsigned_abs());
+                }
+                centered.push(coeffs);
+            }
+        }
+        Ok(CenteredWitness::I128 {
+            rings: centered,
+            sum_abs,
+        })
+    } else {
+        let mut centered = Vec::with_capacity(total_rings * D);
+        for row in witness.rows() {
+            for ring in row {
+                for coeff in ring.coefficients() {
+                    let centered_i128 =
+                        centered_from_canonical(coeff.to_canonical_u128(), q, half_q)?;
+                    centered.push(i64::try_from(centered_i128).map_err(|_| {
+                        HachiError::InvalidInput(
+                            "JL centered coefficient unexpectedly exceeds i64 range".to_string(),
+                        )
+                    })?);
+                }
+            }
+        }
+        Ok(CenteredWitness::I64 { coeffs: centered })
+    }
+}
 
 /// Binary JL matrix with entries in `{-1, +1}`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,7 +155,8 @@ impl LabradorJlMatrix {
         }
         let byte_len_per_row = (cols * 2).div_ceil(8);
         let total_bytes = JL_ROWS * byte_len_per_row;
-        let all_bytes = transcript.challenge_bytes(labels::CHALLENGE_LABRADOR_JL_SEED, total_bytes);
+        let seed = transcript.challenge_bytes(labels::CHALLENGE_LABRADOR_JL_SEED, 32);
+        let all_bytes = expand_jl_seed(&seed, total_bytes);
         let signs: Vec<Vec<i8>> = all_bytes
             .chunks(byte_len_per_row)
             .map(|bytes| {
@@ -116,10 +230,16 @@ where
             "cannot JL-project empty witness".to_string(),
         ));
     }
+    let centered_witness = center_witness_by_ring(witness)?;
+    if centered_witness.ring_len() * D != total_coeffs {
+        return Err(HachiError::InvalidInput(
+            "centered witness length mismatch".to_string(),
+        ));
+    }
     for nonce in 1..=LABRADOR_MAX_JL_NONCE_RETRIES {
         transcript.append_bytes(labels::ABSORB_LABRADOR_JL_NONCE, &nonce.to_le_bytes());
         let matrix = LabradorJlMatrix::generate::<F, T>(transcript, total_coeffs)?;
-        if let Some(proj) = project_streaming(&matrix, witness) {
+        if let Some(proj) = project_streaming::<D>(&matrix, &centered_witness, total_coeffs) {
             return Ok((proj, nonce, matrix));
         }
     }
@@ -163,41 +283,71 @@ pub fn restore_constant_term<F: FieldCore, const D: usize>(
 /// Compute the JL projection by streaming over witness coefficients without
 /// materializing the full flattened vector.
 #[tracing::instrument(skip_all, name = "labrador::project_streaming")]
-fn project_streaming<F: FieldCore + CanonicalField, const D: usize>(
+fn project_streaming<const D: usize>(
     matrix: &LabradorJlMatrix,
-    witness: &LabradorWitness<F, D>,
+    centered_witness: &CenteredWitness<D>,
+    total_coeffs: usize,
 ) -> Option<[i32; 256]> {
-    if matrix.signs.len() != JL_ROWS {
+    if matrix.signs.len() != JL_ROWS || centered_witness.ring_len() * D != total_coeffs {
         return None;
     }
-    let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-
-    let results: Vec<Option<i32>> = cfg_iter!(matrix.signs)
-        .map(|row| {
-            let mut acc = 0i128;
-            let mut col = 0;
-            for witness_row in witness.rows() {
-                for ring in witness_row {
-                    for coeff in ring.coefficients() {
-                        let c = coeff.to_canonical_u128();
-                        let value = if c > half_q {
-                            -((q - c) as i128)
-                        } else {
-                            c as i128
-                        };
-                        acc += (row[col] as i128) * value;
-                        col += 1;
+    if matrix.signs.iter().any(|row| row.len() != total_coeffs) {
+        return None;
+    }
+    let results: Vec<Option<i32>> = match centered_witness {
+        CenteredWitness::I64 { coeffs } => cfg_iter!(matrix.signs)
+            .map(|row| {
+                let mut acc = 0i128;
+                for (&sign, &value) in row.iter().zip(coeffs.iter()) {
+                    match sign {
+                        -1 => acc -= value as i128,
+                        0 => {}
+                        1 => acc += value as i128,
+                        _ => return None,
                     }
                 }
-            }
-            if acc < i32::MIN as i128 || acc > i32::MAX as i128 {
-                None
-            } else {
-                Some(acc as i32)
-            }
-        })
-        .collect();
+                if acc < i32::MIN as i128 || acc > i32::MAX as i128 {
+                    None
+                } else {
+                    Some(acc as i32)
+                }
+            })
+            .collect(),
+        CenteredWitness::I128 { rings, sum_abs } => {
+            let use_checked = *sum_abs > i128::MAX as u128;
+            cfg_iter!(matrix.signs)
+                .map(|row| {
+                    let mut acc = 0i128;
+                    for (ring_idx, coeff_chunk) in rings.iter().enumerate() {
+                        let base = ring_idx * D;
+                        for (offset, &value) in coeff_chunk.iter().enumerate() {
+                            let sign = row[base + offset];
+                            if use_checked {
+                                match sign {
+                                    -1 => acc = acc.checked_sub(value)?,
+                                    0 => {}
+                                    1 => acc = acc.checked_add(value)?,
+                                    _ => return None,
+                                }
+                            } else {
+                                match sign {
+                                    -1 => acc -= value,
+                                    0 => {}
+                                    1 => acc += value,
+                                    _ => return None,
+                                }
+                            }
+                        }
+                    }
+                    if acc < i32::MIN as i128 || acc > i32::MAX as i128 {
+                        None
+                    } else {
+                        Some(acc as i32)
+                    }
+                })
+                .collect()
+        }
+    };
     let mut out = [0i32; 256];
     for (i, val) in results.into_iter().enumerate() {
         out[i] = val?;
@@ -208,18 +358,22 @@ fn project_streaming<F: FieldCore + CanonicalField, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::fields::Fp64;
+    use crate::algebra::fields::{Fp64, Prime128M13M4P0};
     use crate::protocol::transcript::labels::DOMAIN_LABRADOR_PROTOCOL;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::FromSmallInt;
 
     type F = Fp64<4294967197>;
+    type F128 = Prime128M13M4P0;
     const D: usize = 64;
 
-    fn sample_witness_from_seed(seed: u64) -> LabradorWitness<F, D> {
+    fn sample_witness_from_seed_generic<G>(seed: u64) -> LabradorWitness<G, D>
+    where
+        G: FieldCore + CanonicalField + FromSmallInt,
+    {
         let num_rows = 2 + (seed % 3) as usize;
         let row_len = 3 + (seed % 5) as usize;
-        let rows: Vec<Vec<CyclotomicRing<F, D>>> = (0..num_rows)
+        let rows: Vec<Vec<CyclotomicRing<G, D>>> = (0..num_rows)
             .map(|r| {
                 (0..row_len)
                     .map(|i| {
@@ -227,7 +381,7 @@ mod tests {
                             let mix = seed
                                 .wrapping_mul(6364136223846793005)
                                 .wrapping_add(r as u64 * 997 + i as u64 * 31 + j as u64);
-                            F::from_i64(((mix % 11) as i64) - 5)
+                            G::from_i64(((mix % 11) as i64) - 5)
                         }))
                     })
                     .collect()
@@ -236,8 +390,14 @@ mod tests {
         LabradorWitness::new(rows)
     }
 
-    fn witness_squared_norm(witness: &LabradorWitness<F, D>) -> i128 {
-        let q = (-F::one()).to_canonical_u128() + 1;
+    fn sample_witness_from_seed(seed: u64) -> LabradorWitness<F, D> {
+        sample_witness_from_seed_generic::<F>(seed)
+    }
+
+    fn witness_squared_norm<G: FieldCore + CanonicalField>(
+        witness: &LabradorWitness<G, D>,
+    ) -> i128 {
+        let q = (-G::one()).to_canonical_u128() + 1;
         let half_q = q / 2;
         let mut norm_sq = 0i128;
         for row in witness.rows() {
@@ -265,6 +425,52 @@ mod tests {
         let (p2, n2, _) = project(&witness, &mut t2).unwrap();
         assert_eq!(p1, p2);
         assert_eq!(n1, n2);
+    }
+
+    #[test]
+    fn project_fp128_is_deterministic_and_replayable() {
+        let witness = sample_witness_from_seed_generic::<F128>(42);
+        let mut t1 = Blake2bTranscript::<F128>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let mut t2 = Blake2bTranscript::<F128>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let (p1, n1, _) = project(&witness, &mut t1).unwrap();
+        let (p2, n2, _) = project(&witness, &mut t2).unwrap();
+        assert_eq!(p1, p2);
+        assert_eq!(n1, n2);
+    }
+
+    #[test]
+    fn project_streaming_handles_fp128_centered_values_beyond_i64() {
+        let q = (-F128::one()).to_canonical_u128() + 1;
+        let large = q / 2 + 17;
+        let ring = CyclotomicRing::<F128, D>::from_coefficients(std::array::from_fn(|idx| {
+            if idx == 0 || idx == 1 {
+                F128::from_canonical_u128_reduced(large)
+            } else {
+                F128::zero()
+            }
+        }));
+        let witness = LabradorWitness::new(vec![vec![ring]]);
+        let centered = center_witness_by_ring(&witness).unwrap();
+        let centered_abs = match &centered {
+            CenteredWitness::I64 { coeffs, .. } => coeffs[0].unsigned_abs() as u128,
+            CenteredWitness::I128 { rings, .. } => rings[0][0].unsigned_abs(),
+        };
+        assert!(centered_abs > i64::MAX as u128);
+
+        let signs: Vec<Vec<i8>> = (0..JL_ROWS)
+            .map(|row_idx| {
+                let mut row = vec![0i8; D];
+                if row_idx == 0 {
+                    row[0] = 1;
+                    row[1] = -1;
+                }
+                row
+            })
+            .collect();
+        let matrix = LabradorJlMatrix { signs };
+        let projection = project_streaming::<D>(&matrix, &centered, D).unwrap();
+        assert_eq!(projection[0], 0);
+        assert!(projection.iter().skip(1).all(|&v| v == 0));
     }
 
     #[test]

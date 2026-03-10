@@ -7,10 +7,19 @@ use hachi_pcs::protocol::ajtai::ntt_backend::NttAjtaiBackend;
 use hachi_pcs::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use hachi_pcs::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use hachi_pcs::{CanonicalField, FieldCore, FromSmallInt};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 const WITNESS_LEN: usize = 40;
 const NUM_WITNESS_ROWS: usize = 12;
 const TEST_SALT_BASE: usize = 11;
+
+fn derive_salt(label: u64, base: usize) -> usize {
+    let mut hasher = DefaultHasher::new();
+    label.hash(&mut hasher);
+    base.hash(&mut hasher);
+    hasher.finish() as usize
+}
 
 fn test_config() -> CoeffAjtaiConfig {
     CoeffAjtaiConfig {
@@ -49,11 +58,15 @@ fn build_slot<F: FieldCore + CanonicalField, const D: usize>(
 
 fn assert_ntt_matches_coeff<F: FieldCore + CanonicalField + FromSmallInt, const D: usize>() {
     let cfg = test_config();
-    let witness = sample_small_instances::<F, D>(NUM_WITNESS_ROWS, WITNESS_LEN, TEST_SALT_BASE);
-    let matrix_a = sample_small_instances::<F, D>(cfg.inner_rows, WITNESS_LEN, TEST_SALT_BASE + 1);
+    let witness_salt = derive_salt(0, TEST_SALT_BASE);
+    let matrix_a_salt = derive_salt(1, TEST_SALT_BASE);
+    let matrix_b_salt = derive_salt(2, TEST_SALT_BASE);
+
+    let witness = sample_small_instances::<F, D>(NUM_WITNESS_ROWS, WITNESS_LEN, witness_salt);
+    let matrix_a = sample_small_instances::<F, D>(cfg.inner_rows, WITNESS_LEN, matrix_a_salt);
 
     let decomp_len = NUM_WITNESS_ROWS * cfg.inner_rows * cfg.num_digits;
-    let matrix_b = sample_small_instances::<F, D>(cfg.outer_rows, decomp_len, TEST_SALT_BASE + 2);
+    let matrix_b = sample_small_instances::<F, D>(cfg.outer_rows, decomp_len, matrix_b_salt);
 
     let a_ntt = build_slot::<F, D>(&matrix_a);
     let b_ntt = build_slot::<F, D>(&matrix_b);
