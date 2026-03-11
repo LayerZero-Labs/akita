@@ -264,6 +264,87 @@ pub fn trivial_plan(config: LabradorReductionConfig, row_lengths: &[usize]) -> L
     LabradorFoldPlan { config, nn, nu }
 }
 
+/// Parameter selection for the Hachi→Labrador handoff witness.
+///
+/// Given fixed matrix dimensions `m` (rows) and `n` (columns), searches over
+/// `f` (2..=8) and `kappa` (1..=32) to find the smallest SIS-secure parameter
+/// set for the polynomial commitment.
+///
+/// # Errors
+///
+/// Returns an error if no secure parameter combination exists within the
+/// supported bounds.
+pub fn select_handoff_config<F: CanonicalField, const D: usize>(
+    m: usize,
+    n: usize,
+) -> Result<LabradorReductionConfig, HachiError> {
+    let logq = logq_bits::<F>();
+    let d = D as f64;
+    let mf = m as f64;
+    let nf = n as f64;
+
+    const GH_T: f64 = 14.0;
+    const GH_SLACK: f64 = 2.0;
+    const GH_TAU1: f64 = 32.0;
+    const GH_TAU2: f64 = 8.0;
+
+    for f in 2..=8usize {
+        let b = (logq + f / 2) / f;
+
+        let varz = 2f64.powi(2 * b as i32) / 12.0 * nf * (GH_TAU1 + 4.0 * GH_TAU2);
+        let bu = ((0.25 * (12.0 * varz).log2()).round() as usize)
+            .max(1)
+            .min(logq);
+        let fu = ((logq as f64 / bu as f64).round() as usize).max(1);
+
+        let mut found = None;
+        for kappa in 1..=32usize {
+            let mut normsq =
+                (2f64.powi(2 * bu as i32) / 12.0 + varz / 2f64.powi(2 * bu as i32)) * mf * f as f64;
+            let hi_exp = logq as i32 - (fu.saturating_sub(1) * bu) as i32;
+            normsq += (2f64.powi(2 * bu as i32) * (fu as f64 - 1.0) + 2f64.powi(2 * hi_exp.max(0)))
+                / 12.0
+                * (kappa as f64 + 1.0)
+                * nf;
+            normsq *= d;
+
+            if sis_secure::<F, D>(
+                kappa,
+                6.0 * GH_T * GH_SLACK * 2f64.powi(bu as i32) * normsq.sqrt(),
+            ) {
+                found = Some((kappa, normsq));
+                break;
+            }
+        }
+
+        let (kappa, _normsq) = match found {
+            Some(v) => v,
+            None => continue,
+        };
+
+        let kappa1 =
+            (1..=32usize).find(|&k1| sis_secure::<F, D>(k1, 2.0 * GH_SLACK * _normsq.sqrt()));
+        let kappa1 = match kappa1 {
+            Some(k1) => k1,
+            None => continue,
+        };
+
+        return Ok(LabradorReductionConfig {
+            f,
+            b,
+            fu,
+            bu,
+            kappa,
+            kappa1,
+            tail: false,
+        });
+    }
+
+    Err(HachiError::InvalidInput(
+        "select_handoff_config: no secure parameters found".to_string(),
+    ))
+}
+
 pub(crate) fn logq_bits<F: CanonicalField>() -> usize {
     let modulus = detect_field_modulus::<F>();
     if modulus <= 1 {

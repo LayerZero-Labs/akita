@@ -452,11 +452,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     }
 
     /// Witness length (in i8 digits) above which the prover hands off to
-    /// Greyhound/Labrador (D'=64) instead of sending the witness directly.
+    /// Labrador (D'=64) instead of sending the witness directly.
     ///
     /// The default returns 65 536 (64 Ki). Override to a lower value in test
-    /// configs to exercise the Greyhound tail path with smaller polynomials.
-    fn greyhound_handoff_threshold() -> usize {
+    /// configs to exercise the Labrador tail path with smaller polynomials.
+    fn labrador_handoff_threshold() -> usize {
         65_536
     }
 }

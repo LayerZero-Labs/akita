@@ -74,11 +74,7 @@ pub const Q64_NUM_PRIMES: usize = 5;
 pub const Q64_MODULUS: u64 = u64::MAX - 58;
 
 /// Number of CRT primes for the `logq = 128` parameter set.
-///
-/// Nine 30-bit primes give a product P ≈ 2^270, which exceeds the maximum
-/// negacyclic convolution coefficient 2·D·(q/2)² ≈ 2^265 for D ≤ 1024 and
-/// q ≤ 2^128 − 275.
-pub const Q128_NUM_PRIMES: usize = 9;
+pub const Q128_NUM_PRIMES: usize = 5;
 
 /// The modulus `q = 2^128 - 275`.
 pub const Q128_MODULUS: u128 = u128::MAX - 274;
@@ -86,7 +82,7 @@ pub const Q128_MODULUS: u128 = u128::MAX - 274;
 /// Raw 30-bit primes for D≤1024, each satisfying `2048 | (p - 1)`.
 ///
 /// They are ordered descending by value.
-pub const D1024_RAW_PRIMES: [i32; Q64_NUM_PRIMES] =
+pub const D1024_RAW_PRIMES: [i32; Q128_NUM_PRIMES] =
     [1073707009, 1073698817, 1073692673, 1073682433, 1073668097];
 
 /// Raw 30-bit primes for Q64 fast profile (`K=3`, `P > q`).
@@ -100,14 +96,7 @@ pub const Q64_RAW_PRIMES_FAST: [i32; Q64_NUM_PRIMES_FAST] = [
 pub const Q64_RAW_PRIMES: [i32; Q64_NUM_PRIMES] = D1024_RAW_PRIMES;
 
 /// Raw 30-bit primes for Q128, each satisfying `2048 | (p - 1)`.
-///
-/// The first 5 match [`D1024_RAW_PRIMES`]; the remaining 4 extend the
-/// product to ≈ 2^270, sufficient for negacyclic convolution of two
-/// full-range Fp128 ring elements with D ≤ 1024.
-pub const Q128_RAW_PRIMES: [i32; Q128_NUM_PRIMES] = [
-    1073707009, 1073698817, 1073692673, 1073682433, 1073668097, 1073655809, 1073651713, 1073643521,
-    1073620993,
-];
+pub const Q128_RAW_PRIMES: [i32; Q128_NUM_PRIMES] = D1024_RAW_PRIMES;
 
 /// CRT primes and per-prime Montgomery constants for `logq = 64` fast profile.
 pub fn q64_primes_fast() -> [NttPrime<i32>; Q64_NUM_PRIMES_FAST] {

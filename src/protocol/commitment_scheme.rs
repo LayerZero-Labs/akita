@@ -70,14 +70,8 @@ const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 /// this factor, the overhead of another fold level outweighs the saving.
 const MIN_SHRINK_RATIO: f64 = 0.5;
 
-/// Default witness length (in i8 digits) above which the prover hands off
-/// to Greyhound/Labrador (D'=64) instead of sending the witness directly.
-/// Individual configs can override via [`CommitmentConfig::greyhound_handoff_threshold`].
-#[allow(dead_code)]
-const DEFAULT_GREYHOUND_HANDOFF_THRESHOLD: usize = 65_536;
-
-/// Ring dimension used for the Greyhound/Labrador tail.
-const GREYHOUND_D: usize = 64;
+/// Ring dimension used for the Labrador handoff tail.
+const HANDOFF_D: usize = 64;
 
 #[inline]
 fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
@@ -499,248 +493,6 @@ pub(crate) fn next_level_opening_point<F: FieldCore>(
     point
 }
 
-/// Execute the Greyhound/Labrador handoff after Hachi folding stops.
-///
-/// Converts the i8-digit witness to field elements, runs Greyhound evaluation
-/// reduction at D'=64, computes the correct Labrador statement with u1, and
-/// runs Labrador recursive proving.
-///
-/// # Errors
-///
-/// Propagates errors from Greyhound evaluation, reduce, or Labrador proving.
-#[allow(dead_code)]
-fn greyhound_handoff_prove<F, T>(
-    current_w: &[i8],
-    current_challenges: &[F],
-    current_num_u: usize,
-    current_num_l: usize,
-    _w_eval: F,
-    expanded_setup: &HachiExpandedSetup<F>,
-    transcript: &mut T,
-) -> Result<crate::protocol::proof::HachiProofTail<F>, HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt + Valid,
-    T: Transcript<F>,
-{
-    use crate::algebra::ring::CyclotomicRing;
-    use crate::primitives::poly::multilinear_lagrange_basis;
-    use crate::protocol::greyhound::{greyhound_eval, greyhound_reduce};
-    use crate::protocol::labrador::comkey::derive_extendable_comkey_matrix;
-    use crate::protocol::labrador::prove_with_config;
-    use crate::protocol::labrador::utils::mat_vec_mul;
-    use crate::protocol::proof::{
-        FlatGreyhoundEvalProof, FlatLabradorProof, FlatRingVec, GreyhoundTail, HachiProofTail,
-    };
-
-    let opening_point = next_level_opening_point(current_challenges, current_num_u, current_num_l);
-
-    let witness_coeffs: Vec<F> = current_w.iter().map(|&d| F::from_i64(d as i64)).collect();
-
-    let comkey_seed = expanded_setup.labrador_comkey_seed();
-
-    // Section 4.5 ring dimension switch: split opening_point into
-    // coeff_point (within-ring coefficient vars) and ring_point (ring-element index vars).
-    let alpha_prime = GREYHOUND_D.trailing_zeros() as usize;
-    let ring_point = &opening_point[alpha_prime..];
-
-    // Compute eval_ring = ring_mle(ring_point): evaluate the ring-element MLE.
-    let ring_witness: Vec<CyclotomicRing<F, GREYHOUND_D>> = {
-        let mut out = Vec::with_capacity(witness_coeffs.len().div_ceil(GREYHOUND_D));
-        for chunk in witness_coeffs.chunks(GREYHOUND_D) {
-            out.push(CyclotomicRing::from_coefficients(std::array::from_fn(
-                |i| chunk.get(i).copied().unwrap_or_else(F::zero),
-            )));
-        }
-        out
-    };
-    let n_ring = ring_witness.len().next_power_of_two();
-    let k_total = n_ring.trailing_zeros() as usize;
-    assert_eq!(
-        ring_point.len(),
-        k_total,
-        "ring_point length must equal log2(n_ring)"
-    );
-    let mut ring_basis = vec![F::zero(); n_ring];
-    multilinear_lagrange_basis(&mut ring_basis, ring_point);
-    let mut eval_ring = CyclotomicRing::<F, GREYHOUND_D>::zero();
-    for (elem, &basis) in ring_witness.iter().zip(ring_basis.iter()) {
-        eval_ring += elem.scale(&basis);
-    }
-
-    let (gh_proof, gh_witness, _initial_statement, fold_challenges) =
-        greyhound_eval::<F, T, GREYHOUND_D>(
-            &witness_coeffs,
-            ring_point,
-            eval_ring,
-            &[],
-            &comkey_seed,
-            transcript,
-        )?;
-
-    let t_hat = &gh_witness.rows()[2];
-    let u1 = if gh_proof.config.kappa1 > 0 {
-        let b_mat = derive_extendable_comkey_matrix::<F, GREYHOUND_D>(
-            gh_proof.config.kappa1,
-            t_hat.len(),
-            &comkey_seed,
-            b"labrador/comkey/B",
-        );
-        mat_vec_mul(&b_mat, t_hat)
-    } else {
-        t_hat.clone()
-    };
-
-    let beta_sq = gh_witness.norm();
-    let mut statement = greyhound_reduce::<F, GREYHOUND_D>(
-        &gh_proof,
-        &u1,
-        ring_point,
-        eval_ring,
-        &fold_challenges,
-        &comkey_seed,
-    )?;
-    statement.beta_sq = beta_sq;
-
-    let labrador_proof = prove_with_config::<F, T, GREYHOUND_D>(
-        gh_witness,
-        &statement,
-        &gh_proof.config,
-        &comkey_seed,
-        transcript,
-    )?;
-
-    Ok(HachiProofTail::Greyhound(GreyhoundTail {
-        greyhound_proof: FlatGreyhoundEvalProof::from_typed(&gh_proof),
-        labrador_proof: FlatLabradorProof::from_typed(&labrador_proof),
-        u1: FlatRingVec::from_ring_elems(&u1),
-        eval_ring: FlatRingVec::from_ring_elems(&[eval_ring]),
-        beta_sq,
-    }))
-}
-
-/// Verify the Greyhound/Labrador tail of a Hachi proof.
-///
-/// Replays the Greyhound transcript operations (absorb context, claim, u2;
-/// sample fold challenges), rebuilds the Labrador statement via
-/// `greyhound_reduce`, and verifies the Labrador recursive proof.
-///
-/// # Errors
-///
-/// Returns an error if transcript replay, statement reduction, or Labrador
-/// verification fails.
-fn greyhound_handoff_verify<F, T>(
-    tail: &crate::protocol::proof::GreyhoundTail<F>,
-    opening_point: &[F],
-    opening_value: &F,
-    expanded_setup: &HachiExpandedSetup<F>,
-    transcript: &mut T,
-) -> Result<(), HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt + Valid,
-    T: Transcript<F>,
-{
-    use crate::algebra::ring::CyclotomicRing;
-    use crate::primitives::poly::multilinear_lagrange_basis;
-    use crate::protocol::greyhound::greyhound_reduce;
-    use crate::protocol::labrador::transcript::{
-        absorb_greyhound_eval_claim, absorb_greyhound_eval_context, absorb_greyhound_u2,
-        sample_greyhound_fold_challenge, GreyhoundEvalTranscriptContext,
-    };
-    use crate::protocol::labrador::verify;
-
-    let gh_proof = tail.greyhound_proof.to_typed::<GREYHOUND_D>();
-    let u1 = tail.u1.to_vec::<GREYHOUND_D>();
-    let labrador_proof = tail.labrador_proof.to_typed::<GREYHOUND_D>();
-
-    let eval_ring_vec = tail.eval_ring.to_vec::<GREYHOUND_D>();
-    if eval_ring_vec.len() != 1 {
-        return Err(HachiError::InvalidInput(
-            "greyhound tail: expected exactly one eval_ring element".to_string(),
-        ));
-    }
-    let eval_ring: CyclotomicRing<F, GREYHOUND_D> = eval_ring_vec[0];
-
-    // Section 4.5: split opening_point into coeff_point and ring_point.
-    let alpha_prime = GREYHOUND_D.trailing_zeros() as usize;
-    if opening_point.len() < alpha_prime {
-        return Err(HachiError::InvalidPointDimension {
-            expected: alpha_prime,
-            actual: opening_point.len(),
-        });
-    }
-    let coeff_point = &opening_point[..alpha_prime];
-    let ring_point = &opening_point[alpha_prime..];
-
-    eprintln!(
-        "  [greyhound_handoff_verify] opening_point.len={}, alpha'={}, ring_point.len={}, coeff_point.len={}",
-        opening_point.len(), alpha_prime, ring_point.len(), coeff_point.len(),
-    );
-
-    // Consistency check: w_eval == sum_{p=0}^{D'-1} eq(bits(p), coeff_point) * eval_ring.coeff[p]
-    let mut coeff_basis = vec![F::zero(); GREYHOUND_D];
-    multilinear_lagrange_basis(&mut coeff_basis, coeff_point);
-    let mut reconstructed = F::zero();
-    for (p, &basis_p) in coeff_basis.iter().enumerate() {
-        reconstructed += basis_p * eval_ring.coefficients()[p];
-    }
-    eprintln!(
-        "  [greyhound_handoff_verify] consistency check: reconstructed==opening_value? {}",
-        reconstructed == *opening_value,
-    );
-    if reconstructed != *opening_value {
-        return Err(HachiError::InvalidInput(
-            "ring dimension switch: eval_ring inconsistent with w_eval".to_string(),
-        ));
-    }
-
-    let comkey_seed = expanded_setup.labrador_comkey_seed();
-
-    absorb_greyhound_eval_context(
-        transcript,
-        &GreyhoundEvalTranscriptContext {
-            m_rows: gh_proof.m_rows,
-            n_cols: gh_proof.n_cols,
-            inner_vars: gh_proof.inner_vars,
-            eval_point_len: ring_point.len(),
-        },
-    )?;
-    absorb_greyhound_eval_claim(transcript, ring_point, &eval_ring);
-    absorb_greyhound_u2(transcript, &gh_proof.u2);
-
-    let fold_challenges: Vec<F> = (0..gh_proof.n_cols)
-        .map(|_| sample_greyhound_fold_challenge(transcript))
-        .collect();
-
-    let mut statement = greyhound_reduce::<F, GREYHOUND_D>(
-        &gh_proof,
-        &u1,
-        ring_point,
-        eval_ring,
-        &fold_challenges,
-        &comkey_seed,
-    )?;
-    statement.beta_sq = tail.beta_sq;
-
-    eprintln!(
-        "  [greyhound_handoff_verify] statement: u1.len={}, u2.len={}, constraints.len={}, beta_sq={}",
-        statement.u1.len(), statement.u2.len(), statement.constraints.len(), statement.beta_sq,
-    );
-    eprintln!(
-        "  [greyhound_handoff_verify] labrador_proof: levels={}, final_witness_rows={}",
-        labrador_proof.levels.len(),
-        labrador_proof.final_opening_witness.rows().len(),
-    );
-
-    let result = verify::<F, T, GREYHOUND_D>(&statement, &labrador_proof, &comkey_seed, transcript);
-    eprintln!(
-        "  [greyhound_handoff_verify] labrador verify result: {}",
-        if result.is_ok() { "OK" } else { "FAIL" }
-    );
-    result?;
-
-    Ok(())
-}
-
 /// Dispatch a commit-w operation to the correct ring dimension.
 ///
 /// Each match arm builds NTT caches for the target D and calls `commit_w`.
@@ -1136,12 +888,12 @@ where
             t_prove_total.elapsed().as_secs_f64()
         );
 
-        let labrador_enabled = current_w.len() > Cfg::greyhound_handoff_threshold()
+        let labrador_enabled = current_w.len() > Cfg::labrador_handoff_threshold()
             && std::env::var("HACHI_NO_LABRADOR").as_deref() != Ok("1");
 
         let tail = if labrador_enabled {
             eprintln!("[labrador handoff started]");
-            crate::protocol::labrador_handoff::labrador_handoff_prove::<F, T, GREYHOUND_D, Cfg>(
+            crate::protocol::labrador_handoff::labrador_handoff_prove::<F, T, HANDOFF_D, Cfg>(
                 &current_w,
                 &current_challenges,
                 current_num_u,
@@ -1181,7 +933,7 @@ where
 
         let final_w_elems: Option<Vec<F>> = match &proof.tail {
             HachiProofTail::Direct(pw) => Some(pw.to_field_elems()),
-            HachiProofTail::Greyhound(_) | HachiProofTail::Labrador(_) => None,
+            HachiProofTail::Labrador(_) => None,
         };
 
         // State carried between levels.
@@ -1246,17 +998,8 @@ where
         }
 
         match &proof.tail {
-            HachiProofTail::Greyhound(ref tail) => {
-                greyhound_handoff_verify::<F, T>(
-                    tail,
-                    &current_point,
-                    &current_opening,
-                    &setup.expanded,
-                    transcript,
-                )?;
-            }
             HachiProofTail::Labrador(ref tail) => {
-                crate::protocol::labrador_handoff::labrador_handoff_verify::<F, T, GREYHOUND_D, Cfg>(
+                crate::protocol::labrador_handoff::labrador_handoff_verify::<F, T, HANDOFF_D, Cfg>(
                     tail,
                     &current_point,
                     &current_opening,
@@ -1781,11 +1524,11 @@ mod tests {
     }
 
     /// A config identical to `DynamicSmallTestCommitmentConfig` but with a
-    /// Greyhound handoff threshold of 0 (always hand off).
+    /// handoff threshold of 0 (always hand off to Labrador).
     #[derive(Clone, Copy, Debug, Default)]
-    struct GreyhoundTestConfig;
+    struct HandoffTestConfig;
 
-    impl CommitmentConfig for GreyhoundTestConfig {
+    impl CommitmentConfig for HandoffTestConfig {
         const D: usize = 64;
         const N_A: usize = 8;
         const N_B: usize = 4;
@@ -1824,15 +1567,15 @@ mod tests {
             )
         }
 
-        fn greyhound_handoff_threshold() -> usize {
+        fn labrador_handoff_threshold() -> usize {
             0
         }
     }
 
     #[test]
-    fn greyhound_tail_prove_verify_round_trip() {
+    fn labrador_tail_prove_verify_round_trip() {
         type GF = crate::algebra::Fp128<0xfffffffffffffffffffffffffffffeed>;
-        type GCfg = GreyhoundTestConfig;
+        type GCfg = HandoffTestConfig;
         const GD: usize = GCfg::D;
         type GScheme = HachiCommitmentScheme<GD, GCfg>;
 
@@ -1883,7 +1626,7 @@ mod tests {
             .zip(lw.iter())
             .fold(GF::zero(), |a, (&c, &w)| a + c * w);
 
-        let mut prover_transcript = Blake2bTranscript::<GF>::new(b"test/greyhound-tail");
+        let mut prover_transcript = Blake2bTranscript::<GF>::new(b"test/labrador-tail");
         let proof = <GScheme as CommitmentScheme<GF, GD>>::prove(
             &setup,
             &poly,
@@ -1896,17 +1639,9 @@ mod tests {
         )
         .unwrap();
 
-        assert!(
-            proof.has_labrador_tail(),
-            "expected Labrador tail, got {:?}",
-            if proof.has_greyhound_tail() {
-                "Greyhound"
-            } else {
-                "Direct"
-            }
-        );
+        assert!(proof.has_labrador_tail(), "expected Labrador tail");
 
-        let mut verifier_transcript = Blake2bTranscript::<GF>::new(b"test/greyhound-tail");
+        let mut verifier_transcript = Blake2bTranscript::<GF>::new(b"test/labrador-tail");
         let result = <GScheme as CommitmentScheme<GF, GD>>::verify(
             &proof,
             &verifier_setup,
@@ -1920,7 +1655,7 @@ mod tests {
 
         assert!(
             result.is_ok(),
-            "Greyhound-tail proof should verify: {result:?}"
+            "Labrador-tail proof should verify: {result:?}"
         );
     }
 }

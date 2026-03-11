@@ -1,7 +1,7 @@
 //! Labrador recursive proof sub-protocol.
 //!
-//! This module will host the Greyhound/Labrador integration used by Hachi's
-//! recursive handoff path.
+//! This module hosts the Labrador recursive proof sub-protocol used by Hachi's
+//! handoff path.
 
 pub mod aggregation;
 pub mod challenge;

@@ -1,16 +1,18 @@
-//! Two-tier Ajtai commitment helpers for Labrador (linear-only mode).
+//! Two-tier commitment helpers for Labrador.
 
 use crate::algebra::ring::CyclotomicRing;
+use crate::algebra::{CrtNttParamSet, CyclotomicCrtNtt, MontCoeff, PrimeWidth};
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
+use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::decompose_rows_with_carry;
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
 use crate::protocol::labrador::types::{LabradorReductionConfig, LabradorWitness};
 use crate::protocol::labrador::utils::mat_vec_mul;
-use crate::{CanonicalField, FieldCore, FieldSampling};
+use crate::{cfg_iter, CanonicalField, FieldCore, FieldSampling};
 
-/// Commitment artifacts needed by downstream Labrador/Greyhound flows.
+/// Commitment artifacts needed by downstream Labrador flows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabradorCommitmentArtifacts<F: FieldCore, const D: usize> {
     /// Per-row inner commitments.
@@ -123,6 +125,124 @@ where
         decomposed_inner,
         linear_garbage,
     })
+}
+
+// ---------------------------------------------------------------------------
+// NTT-accelerated two-tier commitment (used by Labrador fold levels)
+// ---------------------------------------------------------------------------
+
+type RingVec<F, const D: usize> = Vec<CyclotomicRing<F, D>>;
+type TwoTierResult<F, const D: usize> = Result<(RingVec<F, D>, RingVec<F, D>), HachiError>;
+
+fn mat_vec_mul_ntt_ring_many<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    vecs: &[Vec<CyclotomicRing<F, D>>],
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    let ntt_vecs: Vec<Vec<CyclotomicCrtNtt<W, K, D>>> = cfg_iter!(vecs)
+        .map(|vec| {
+            vec.iter()
+                .map(|v| CyclotomicCrtNtt::from_ring_with_params(v, params))
+                .collect()
+        })
+        .collect();
+
+    cfg_iter!(&ntt_vecs)
+        .map(|ntt_vec| {
+            cfg_iter!(ntt_mat)
+                .map(|row_ntt| {
+                    let n = row_ntt.len().min(ntt_vec.len());
+                    let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
+                    for j in 0..n {
+                        let prod = row_ntt[j].pointwise_mul_with_params(&ntt_vec[j], params);
+                        for (k, prime) in params.primes.iter().copied().enumerate() {
+                            for d in 0..D {
+                                let sum = MontCoeff::from_raw(
+                                    acc.limbs[k][d].raw().wrapping_add(prod.limbs[k][d].raw()),
+                                );
+                                acc.limbs[k][d] = prime.reduce_range(sum);
+                            }
+                        }
+                    }
+                    acc.to_ring_with_params(params)
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn ntt_slot_num_rows<const D: usize>(slot: &NttSlotCache<D>) -> usize {
+    match slot {
+        NttSlotCache::Q32 { neg, .. } => neg.len(),
+        NttSlotCache::Q64 { neg, .. } => neg.len(),
+        NttSlotCache::Q128 { neg, .. } => neg.len(),
+    }
+}
+
+fn commit_witness_ntt<F: FieldCore + CanonicalField, const D: usize>(
+    matrix: &NttSlotCache<D>,
+    witness: &[Vec<CyclotomicRing<F, D>>],
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError> {
+    if ntt_slot_num_rows(matrix) == 0 {
+        return Ok(vec![vec![]; witness.len()]);
+    }
+    let out = match matrix {
+        NttSlotCache::Q32 { neg, params, .. } => mat_vec_mul_ntt_ring_many(neg, witness, params),
+        NttSlotCache::Q64 { neg, params, .. } => mat_vec_mul_ntt_ring_many(neg, witness, params),
+        NttSlotCache::Q128 { neg, params, .. } => mat_vec_mul_ntt_ring_many(neg, witness, params),
+    };
+    Ok(out)
+}
+
+fn commit_inner_ntt<F: FieldCore + CanonicalField, const D: usize>(
+    matrix: &NttSlotCache<D>,
+    inner_commitment: &[Vec<CyclotomicRing<F, D>>],
+    num_digits: usize,
+    decompose_modulus: u32,
+    outer_rows: usize,
+) -> TwoTierResult<F, D> {
+    let t_hat_per_row: Vec<Vec<CyclotomicRing<F, D>>> = cfg_iter!(inner_commitment)
+        .map(|t| decompose_rows_with_carry(t, num_digits, decompose_modulus))
+        .collect();
+    let t_hat: Vec<CyclotomicRing<F, D>> = t_hat_per_row.into_iter().flatten().collect();
+
+    if ntt_slot_num_rows(matrix) == 0 || outer_rows == 0 {
+        return Ok((t_hat.clone(), t_hat));
+    }
+    let one_vec = vec![t_hat.clone()];
+    let u = match matrix {
+        NttSlotCache::Q32 { neg, params, .. } => mat_vec_mul_ntt_ring_many(neg, &one_vec, params),
+        NttSlotCache::Q64 { neg, params, .. } => mat_vec_mul_ntt_ring_many(neg, &one_vec, params),
+        NttSlotCache::Q128 { neg, params, .. } => mat_vec_mul_ntt_ring_many(neg, &one_vec, params),
+    };
+    let u0 = u.into_iter().next().unwrap_or_default();
+    Ok((t_hat, u0))
+}
+
+/// NTT-accelerated two-tier commitment: `witness → t = A·w → t̂ → u = B·t̂`.
+///
+/// Returns `(t̂, u)` where `t̂` is the flattened decomposed inner commitment
+/// and `u` is the outer commitment.
+///
+/// # Errors
+///
+/// Propagates NTT or matrix shape errors.
+#[tracing::instrument(skip_all, name = "ntt_two_tier_commit")]
+pub fn ntt_two_tier_commit<F: FieldCore + CanonicalField, const D: usize>(
+    a_ntt: &NttSlotCache<D>,
+    b_ntt: &NttSlotCache<D>,
+    witness: &[Vec<CyclotomicRing<F, D>>],
+    num_digits: usize,
+    decompose_modulus: u32,
+    outer_rows: usize,
+) -> TwoTierResult<F, D> {
+    let t = commit_witness_ntt(a_ntt, witness)?;
+    commit_inner_ntt(b_ntt, &t, num_digits, decompose_modulus, outer_rows)
 }
 
 fn build_linear_garbage<F: FieldCore, const D: usize>(

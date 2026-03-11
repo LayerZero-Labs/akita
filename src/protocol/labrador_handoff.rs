@@ -223,21 +223,21 @@ where
 }
 
 /// Select Labrador reduction config for the Hachi handoff witness.
-///
-/// Uses the same SIS-security search as `greyhound_select_config` but
-/// adapts to the Hachi witness structure (3 rows).
 pub(crate) fn hachi_labrador_select_config<F: CanonicalField, const D: usize>(
     witness: &LabradorWitness<F, D>,
 ) -> Result<LabradorReductionConfig, HachiError> {
     let max_row_len = witness.rows().iter().map(|r| r.len()).max().unwrap_or(0);
-    crate::protocol::greyhound::greyhound_select_config::<F, D>(max_row_len, witness.rows().len())
+    crate::protocol::labrador::config::select_handoff_config::<F, D>(
+        max_row_len,
+        witness.rows().len(),
+    )
 }
 
 /// Execute the Labrador direct handoff from the Hachi folding loop.
 ///
-/// Replaces `greyhound_handoff_prove`: instead of computing the quotient `r`,
-/// evaluating at alpha, and running sumcheck, this function runs the quadratic
-/// equation at D' and hands the ring-level `Mz = y` directly to Labrador.
+/// Instead of computing the quotient `r`, evaluating at alpha, and running
+/// sumcheck, this function runs the quadratic equation at D' and hands the
+/// ring-level `Mz = y` directly to Labrador.
 ///
 /// # Errors
 ///
@@ -441,7 +441,7 @@ where
         eval_ring += elem.scale(&basis);
     }
 
-    Ok(HachiProofTail::Labrador(LabradorTail {
+    Ok(HachiProofTail::Labrador(Box::new(LabradorTail {
         labrador_proof: FlatLabradorProof::from_typed(&labrador_proof),
         v: FlatRingVec::from_ring_elems(&quad_eq.v),
         u: FlatRingVec::from_ring_elems(&w_commitment.u),
@@ -449,7 +449,7 @@ where
         eval_ring: FlatRingVec::from_ring_elems(&[eval_ring]),
         config: cfg,
         beta_sq,
-    }))
+    })))
 }
 
 /// Verify the direct Labrador tail of a Hachi proof.

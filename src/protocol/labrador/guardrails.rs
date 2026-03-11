@@ -1,4 +1,4 @@
-//! Guardrails for Labrador/Greyhound protocol plumbing.
+//! Guardrails for Labrador protocol plumbing.
 
 use crate::error::HachiError;
 

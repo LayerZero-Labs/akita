@@ -34,15 +34,13 @@ pub struct LabradorFoldResult<F: FieldCore, const D: usize> {
     pub statement: LabradorStatement<F, D>,
 }
 
-use crate::protocol::ajtai::ajtai_commit::AjtaiCommitmentScheme;
-use crate::protocol::ajtai::coeff::CoeffAjtaiConfig;
-use crate::protocol::ajtai::ntt_backend::NttAjtaiBackend;
+use crate::protocol::labrador::commit::ntt_two_tier_commit;
 
 /// Perform one Labrador fold level (standard or tail, determined by `config.tail`).
 ///
 /// Follows the C Labrador protocol phases:
 ///   1. Reshape witness according to `plan.nu` into virtual rows of length `plan.nn`
-///   2. Commit: inner + outer Ajtai commitment → u1
+///   2. Commit: inner + outer two-tier commitment → u1
 ///   3. Project: JL projection → p\[256\], nonce
 ///   4. LIFTS × (collapse + lift): build linear constraints from JL
 ///   5. Amortize: absorb into transcript, sample ring-element challenges,
@@ -87,18 +85,13 @@ where
     let nn = plan.nn;
 
     // Phase 1: Inner commitments (t_i) and outer commitment u1.
-    let coeff_config = CoeffAjtaiConfig {
-        inner_rows: config.kappa,
-        outer_rows: config.kappa1,
-        num_digits: config.fu,
-        decompose_modulus: config.bu as u32,
-    };
-
-    let (t_hat, u1) = <NttAjtaiBackend as AjtaiCommitmentScheme<F, D>>::two_tier_commit(
+    let (t_hat, u1) = ntt_two_tier_commit(
         &setup.a_ntt,
         &setup.b_ntt,
         virtual_witness.rows(),
-        &coeff_config,
+        config.fu,
+        config.bu as u32,
+        config.kappa1,
     )?;
 
     // Absorb level context and u1 before deriving JL seed.
