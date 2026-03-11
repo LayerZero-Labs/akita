@@ -2,9 +2,7 @@
 
 use hachi_pcs::algebra::poly::multilinear_eval;
 use hachi_pcs::algebra::Fp128;
-use hachi_pcs::protocol::commitment::{
-    Fp128FullCommitmentConfig, Fp128OneHotCommitmentConfig,
-};
+use hachi_pcs::protocol::commitment::{Fp128FullCommitmentConfig, Fp128OneHotCommitmentConfig};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
@@ -34,6 +32,30 @@ fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
+/// Remove any stale disk-persistence cache for `max_num_vars` so that a setup
+/// written by a different `CommitmentConfig` doesn't get loaded by mistake.
+#[cfg(feature = "disk-persistence")]
+fn purge_setup_cache(max_num_vars: usize) {
+    let cache_dir = std::env::var("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .or_else(|_| {
+            std::env::var("HOME").map(|home| {
+                let mut p = std::path::PathBuf::from(&home);
+                if p.join("Library/Caches").exists() {
+                    p.push("Library/Caches");
+                } else {
+                    p.push(".cache");
+                }
+                p
+            })
+        });
+    if let Ok(mut path) = cache_dir {
+        path.push("hachi");
+        path.push(format!("hachi_{max_num_vars}.setup"));
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
 #[test]
 fn full_nv25_prove_verify_and_proof_size() {
     run_on_large_stack(full_nv25_inner);
@@ -61,6 +83,9 @@ fn full_nv25_inner() {
     let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).unwrap();
     let pt = random_point(NV);
     let opening = multilinear_eval(&evals, &pt).unwrap();
+
+    #[cfg(feature = "disk-persistence")]
+    purge_setup_cache(NV);
 
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV);
     let (commitment, hint) =
@@ -143,14 +168,16 @@ fn onehot_nv25_inner() {
     let pt = random_point(NV);
     let opening = multilinear_eval(&dense_evals, &pt).unwrap();
 
+    #[cfg(feature = "disk-persistence")]
+    purge_setup_cache(NV);
+
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV);
-    let (commitment, hint) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-            &onehot_poly,
-            &setup,
-            &layout,
-        )
-        .unwrap();
+    let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+        &onehot_poly,
+        &setup,
+        &layout,
+    )
+    .unwrap();
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"proof_size_test");
     let prove_start = Instant::now();

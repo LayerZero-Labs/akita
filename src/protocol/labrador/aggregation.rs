@@ -612,7 +612,7 @@ where
     }
 
     let phi_total: Vec<Vec<CyclotomicRing<F, D>>> = cfg_into_iter!(row_work)
-        .zip(cfg_into_iter!(row_lengths.to_vec()))
+        .zip(cfg_iter!(row_lengths).copied())
         .map(|(work, len)| {
             let mut row = vec![CyclotomicRing::<F, D>::zero(); len];
             for &(ci, ti) in &work {

@@ -1786,7 +1786,7 @@ mod tests {
     struct GreyhoundTestConfig;
 
     impl CommitmentConfig for GreyhoundTestConfig {
-        const D: usize = 16;
+        const D: usize = 64;
         const N_A: usize = 8;
         const N_B: usize = 4;
         const N_D: usize = 4;
@@ -1815,7 +1815,7 @@ mod tests {
                     "need at least 1 reduced variable".to_string(),
                 ));
             }
-            let m_vars = (reduced_vars + 1) / 2;
+            let m_vars = reduced_vars.div_ceil(2);
             let r_vars = reduced_vars - m_vars;
             crate::protocol::commitment::HachiCommitmentLayout::new::<Self>(
                 m_vars,
@@ -1839,6 +1839,30 @@ mod tests {
         let layout = GCfg::commitment_layout(16).unwrap();
         let alpha = GD.trailing_zeros() as usize;
         let num_vars = layout.m_vars + layout.r_vars + alpha;
+
+        // Purge any stale disk cache written by a different CommitmentConfig
+        // that happens to share the same max_num_vars key.
+        #[cfg(feature = "disk-persistence")]
+        {
+            let cache_dir = std::env::var("LOCALAPPDATA")
+                .map(std::path::PathBuf::from)
+                .or_else(|_| {
+                    std::env::var("HOME").map(|home| {
+                        let mut p = std::path::PathBuf::from(&home);
+                        if p.join("Library/Caches").exists() {
+                            p.push("Library/Caches");
+                        } else {
+                            p.push(".cache");
+                        }
+                        p
+                    })
+                });
+            if let Ok(mut path) = cache_dir {
+                path.push("hachi");
+                path.push(format!("hachi_{num_vars}.setup"));
+                let _ = std::fs::remove_file(&path);
+            }
+        }
 
         let len = 1usize << num_vars;
         let evals: Vec<GF> = (0..len).map(|i| GF::from_u64(i as u64)).collect();
