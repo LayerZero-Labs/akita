@@ -486,7 +486,7 @@ fn should_stop_folding(w_len: usize, prev_w_len: usize) -> bool {
 /// Sumcheck challenges are ordered `[x_0..x_{num_u-1}, y_0..y_{num_l-1}]`
 /// where x selects ring elements and y selects coefficients.
 /// The PCS opening point is `[inner, outer]` = `[y, x]`.
-fn next_level_opening_point<F: FieldCore>(
+pub(crate) fn next_level_opening_point<F: FieldCore>(
     sumcheck_challenges: &[F],
     num_u: usize,
     num_l: usize,
@@ -508,6 +508,7 @@ fn next_level_opening_point<F: FieldCore>(
 /// # Errors
 ///
 /// Propagates errors from Greyhound evaluation, reduce, or Labrador proving.
+#[allow(dead_code)]
 fn greyhound_handoff_prove<F, T>(
     current_w: &[i8],
     current_challenges: &[F],
@@ -1135,9 +1136,12 @@ where
             t_prove_total.elapsed().as_secs_f64()
         );
 
-        let tail = if current_w.len() > Cfg::greyhound_handoff_threshold() {
-            eprintln!("[greyhound handoff started");
-            greyhound_handoff_prove::<F, T>(
+        let labrador_enabled = current_w.len() > Cfg::greyhound_handoff_threshold()
+            && std::env::var("HACHI_NO_LABRADOR").as_deref() != Ok("1");
+
+        let tail = if labrador_enabled {
+            eprintln!("[labrador handoff started]");
+            crate::protocol::labrador_handoff::labrador_handoff_prove::<F, T, GREYHOUND_D, Cfg>(
                 &current_w,
                 &current_challenges,
                 current_num_u,
@@ -1173,11 +1177,11 @@ where
         }
 
         let num_levels = proof.levels.len();
-        let has_greyhound_tail = proof.has_greyhound_tail();
+        let has_handoff_tail = proof.has_handoff_tail();
 
         let final_w_elems: Option<Vec<F>> = match &proof.tail {
             HachiProofTail::Direct(pw) => Some(pw.to_field_elems()),
-            HachiProofTail::Greyhound(_) => None,
+            HachiProofTail::Greyhound(_) | HachiProofTail::Labrador(_) => None,
         };
 
         // State carried between levels.
@@ -1189,9 +1193,9 @@ where
 
         for (i, level_proof) in proof.levels.iter().enumerate() {
             let is_last_hachi = i == num_levels - 1;
-            // With a Greyhound tail, the last Hachi level is NOT the
-            // final level -- verification continues in Greyhound/Labrador.
-            let is_last = is_last_hachi && !has_greyhound_tail;
+            // With a handoff tail, the last Hachi level is NOT the
+            // final level -- verification continues in Labrador.
+            let is_last = is_last_hachi && !has_handoff_tail;
             let level_d = Cfg::d_at_level(i, current_point.len());
             eprintln!(
                 "  [verify] level {i}, is_last={is_last}, point_len={}, D={level_d}",
@@ -1241,14 +1245,26 @@ where
             }
         }
 
-        if let HachiProofTail::Greyhound(ref tail) = proof.tail {
-            greyhound_handoff_verify::<F, T>(
-                tail,
-                &current_point,
-                &current_opening,
-                &setup.expanded,
-                transcript,
-            )?;
+        match &proof.tail {
+            HachiProofTail::Greyhound(ref tail) => {
+                greyhound_handoff_verify::<F, T>(
+                    tail,
+                    &current_point,
+                    &current_opening,
+                    &setup.expanded,
+                    transcript,
+                )?;
+            }
+            HachiProofTail::Labrador(ref tail) => {
+                crate::protocol::labrador_handoff::labrador_handoff_verify::<F, T, GREYHOUND_D, Cfg>(
+                    tail,
+                    &current_point,
+                    &current_opening,
+                    &setup.expanded,
+                    transcript,
+                )?;
+            }
+            HachiProofTail::Direct(_) => {}
         }
 
         Ok(())
@@ -1545,7 +1561,7 @@ fn basis_weights<F: FieldCore>(point: &[F], mode: BasisMode) -> Vec<F> {
     }
 }
 
-fn ring_opening_point_from_field<F: FieldCore>(
+pub(crate) fn ring_opening_point_from_field<F: FieldCore>(
     opening_point: &[F],
     r_vars: usize,
     m_vars: usize,
@@ -1857,8 +1873,13 @@ mod tests {
         .unwrap();
 
         assert!(
-            proof.has_greyhound_tail(),
-            "expected Greyhound tail, got Direct"
+            proof.has_labrador_tail(),
+            "expected Labrador tail, got {:?}",
+            if proof.has_greyhound_tail() {
+                "Greyhound"
+            } else {
+                "Direct"
+            }
         );
 
         let mut verifier_transcript = Blake2bTranscript::<GF>::new(b"test/greyhound-tail");

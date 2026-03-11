@@ -704,6 +704,29 @@ pub struct GreyhoundTail<F: FieldCore> {
     pub beta_sq: u128,
 }
 
+/// Direct Labrador tail proof data.
+///
+/// Produced when Hachi's folding loop stops and the ring-level `Mz = y`
+/// relation from the quadratic equation is handed directly to Labrador
+/// without computing quotient `r`, evaluating at alpha, or running sumcheck.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LabradorTail<F: FieldCore> {
+    /// D-erased full Labrador recursive proof.
+    pub labrador_proof: FlatLabradorProof<F>,
+    /// Ring-valued prover message `v = D * w_hat` (public, used to rebuild constraints).
+    pub v: FlatRingVec<F>,
+    /// Ring-valued commitment `u = B * t_hat` at D_HANDOFF (fresh, used to rebuild constraints).
+    pub u: FlatRingVec<F>,
+    /// Ring-valued evaluation `y_ring` (public, used to rebuild constraints).
+    pub y_ring: FlatRingVec<F>,
+    /// Ring-valued evaluation target from the Section 4.5 ring dimension switch.
+    pub eval_ring: FlatRingVec<F>,
+    /// Labrador reduction config selected for the handoff witness.
+    pub config: LabradorReductionConfig,
+    /// Squared L2 norm bound of the Labrador witness.
+    pub beta_sq: u128,
+}
+
 /// Proof tail: either a direct witness or a Greyhound/Labrador handoff.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HachiProofTail<F: FieldCore> {
@@ -711,6 +734,8 @@ pub enum HachiProofTail<F: FieldCore> {
     Direct(PackedDigits),
     /// Greyhound evaluation proof + Labrador recursive proof.
     Greyhound(GreyhoundTail<F>),
+    /// Direct Labrador handoff from the quadratic equation.
+    Labrador(LabradorTail<F>),
 }
 
 /// Hachi PCS proof with multi-level folding.
@@ -739,15 +764,28 @@ impl<F: FieldCore> HachiProof<F> {
     pub fn final_w(&self) -> &PackedDigits {
         match &self.tail {
             HachiProofTail::Direct(pw) => pw,
-            HachiProofTail::Greyhound(_) => {
-                panic!("final_w called on proof with Greyhound tail")
+            HachiProofTail::Greyhound(_) | HachiProofTail::Labrador(_) => {
+                panic!("final_w called on proof with non-direct tail")
             }
         }
+    }
+
+    /// Whether this proof uses a Greyhound or Labrador tail (not a direct witness).
+    pub fn has_handoff_tail(&self) -> bool {
+        matches!(
+            &self.tail,
+            HachiProofTail::Greyhound(_) | HachiProofTail::Labrador(_)
+        )
     }
 
     /// Whether this proof uses the Greyhound/Labrador tail.
     pub fn has_greyhound_tail(&self) -> bool {
         matches!(&self.tail, HachiProofTail::Greyhound(_))
+    }
+
+    /// Whether this proof uses the direct Labrador tail.
+    pub fn has_labrador_tail(&self) -> bool {
+        matches!(&self.tail, HachiProofTail::Labrador(_))
     }
 }
 
@@ -770,6 +808,36 @@ impl<F: FieldCore + HachiSerialize> HachiProof<F> {
             HachiProofTail::Greyhound(_tail) => {
                 // TODO: implement proper size calculation for Greyhound tail
                 levels_size
+            }
+            HachiProofTail::Labrador(tail) => {
+                let nc = Compress::No;
+                let labrador_size = tail
+                    .labrador_proof
+                    .levels
+                    .iter()
+                    .map(|lv| {
+                        lv.u1.serialized_size(nc)
+                            + lv.u2.serialized_size(nc)
+                            + lv.bb.serialized_size(nc)
+                            + 8 // jl_nonce
+                            + 256 * 8 // jl_projection
+                            + 16 // norm_sq
+                    })
+                    .sum::<usize>()
+                    + tail
+                        .labrador_proof
+                        .final_opening_witness
+                        .rows
+                        .iter()
+                        .map(|r| r.serialized_size(nc))
+                        .sum::<usize>();
+                levels_size
+                    + tail.v.serialized_size(nc)
+                    + tail.u.serialized_size(nc)
+                    + tail.y_ring.serialized_size(nc)
+                    + tail.eval_ring.serialized_size(nc)
+                    + 16 // beta_sq
+                    + labrador_size
             }
         }
     }
@@ -898,6 +966,11 @@ impl<F: FieldCore> HachiSerialize for HachiProof<F> {
                 // TODO: serialize Greyhound tail
                 Ok(())
             }
+            HachiProofTail::Labrador(_tail) => {
+                2u8.serialize_with_mode(&mut writer, compress)?;
+                // TODO: serialize Labrador tail
+                Ok(())
+            }
         }
     }
     fn serialized_size(&self, compress: Compress) -> usize {
@@ -911,6 +984,7 @@ impl<F: FieldCore> HachiSerialize for HachiProof<F> {
         match &self.tail {
             HachiProofTail::Direct(pw) => base + pw.serialized_size(compress),
             HachiProofTail::Greyhound(_tail) => base, // TODO
+            HachiProofTail::Labrador(_tail) => base,  // TODO
         }
     }
 }
@@ -923,6 +997,7 @@ impl<F: FieldCore> Valid for HachiProof<F> {
         match &self.tail {
             HachiProofTail::Direct(pw) => pw.check(),
             HachiProofTail::Greyhound(_) => Ok(()),
+            HachiProofTail::Labrador(_) => Ok(()),
         }
     }
 }
@@ -952,6 +1027,12 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiProof<F> {
                 // TODO: deserialize Greyhound tail
                 return Err(SerializationError::InvalidData(
                     "Greyhound tail deserialization not yet implemented".to_string(),
+                ));
+            }
+            2 => {
+                // TODO: deserialize Labrador tail
+                return Err(SerializationError::InvalidData(
+                    "Labrador tail deserialization not yet implemented".to_string(),
                 ));
             }
             _ => {

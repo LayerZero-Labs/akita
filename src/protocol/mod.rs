@@ -12,6 +12,7 @@ pub mod dispatch;
 pub mod greyhound;
 pub mod hachi_poly_ops;
 pub mod labrador;
+pub mod labrador_handoff;
 pub mod opening_point;
 pub mod prg;
 pub mod proof;

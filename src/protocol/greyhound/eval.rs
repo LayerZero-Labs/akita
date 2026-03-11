@@ -6,6 +6,11 @@
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 use crate::primitives::poly::multilinear_lagrange_basis;
+use crate::protocol::ajtai::ajtai_commit::AjtaiCommitmentScheme;
+use crate::protocol::ajtai::coeff::CoeffAjtaiConfig;
+use crate::protocol::ajtai::ntt_backend::NttAjtaiBackend;
+use crate::protocol::commitment::utils::crt_ntt::build_ntt_slot;
+use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::linear::decompose_rows_with_carry;
 use crate::protocol::greyhound::reduce::greyhound_reduce;
 use crate::protocol::greyhound::types::GreyhoundEvalProof;
@@ -19,7 +24,6 @@ use crate::protocol::labrador::transcript::{
 use crate::protocol::labrador::types::{
     LabradorReductionConfig, LabradorStatement, LabradorWitness,
 };
-use crate::protocol::labrador::utils::mat_vec_mul;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 
@@ -126,6 +130,10 @@ pub fn greyhound_select_config<F: CanonicalField, const D: usize>(
 /// # Errors
 ///
 /// Returns an error if reshaping, config selection, or commitment fails.
+///
+/// # Panics
+///
+/// Panics if internal dimension invariants are violated (debug only).
 pub fn greyhound_eval<F, T, const D: usize>(
     witness_coeffs: &[F],
     eval_point: &[F],
@@ -172,7 +180,21 @@ where
             comkey_seed,
             b"greyhound/comkey/B_eval",
         );
-        mat_vec_mul(&b_eval, &v_hat)
+        let b_flat = FlatMatrix::from_ring_matrix(&b_eval);
+        let b_ntt = build_ntt_slot(b_flat.view::<D>())
+            .expect("failed to build NTT slot for B_eval in greyhound_eval");
+        let dummy_cfg = CoeffAjtaiConfig {
+            inner_rows: cfg.kappa1,
+            outer_rows: 0,
+            num_digits: 0,
+            decompose_modulus: 0,
+        };
+        let result = <NttAjtaiBackend as AjtaiCommitmentScheme<F, D>>::commit_witness(
+            &b_ntt,
+            &[v_hat.clone()],
+            &dummy_cfg,
+        )?;
+        result.into_iter().next().unwrap_or_default()
     } else {
         v_hat.clone()
     };
@@ -216,16 +238,28 @@ where
     }
 
     // Compute inner commitments t_j = A * column_j, decompose → t_hat (group 2).
+    // Derive A once and batch all column multiplications via NTT.
+    let a_mat = derive_extendable_comkey_matrix::<F, D>(
+        cfg.kappa,
+        m_rows,
+        comkey_seed,
+        b"labrador/comkey/A",
+    );
+    let a_flat = FlatMatrix::from_ring_matrix(&a_mat);
+    let a_ntt = build_ntt_slot(a_flat.view::<D>())
+        .expect("failed to build NTT slot for A in greyhound_eval");
+    let dummy_cfg = CoeffAjtaiConfig {
+        inner_rows: cfg.kappa,
+        outer_rows: 0,
+        num_digits: 0,
+        decompose_modulus: 0,
+    };
+    let t_all = <NttAjtaiBackend as AjtaiCommitmentScheme<F, D>>::commit_witness(
+        &a_ntt, &matrix, &dummy_cfg,
+    )?;
     let mut t_hat_flat = Vec::new();
-    for column in &matrix {
-        let a = derive_extendable_comkey_matrix::<F, D>(
-            cfg.kappa,
-            column.len(),
-            comkey_seed,
-            b"labrador/comkey/A",
-        );
-        let t_j = mat_vec_mul(&a, column);
-        t_hat_flat.extend(decompose_rows_with_carry(&t_j, cfg.fu, cfg.bu as u32));
+    for t_j in &t_all {
+        t_hat_flat.extend(decompose_rows_with_carry(t_j, cfg.fu, cfg.bu as u32));
     }
 
     let greyhound_witness = LabradorWitness::new_unchecked(vec![z_low, z_high, t_hat_flat, v_hat]);
@@ -316,6 +350,7 @@ mod tests {
     use super::*;
     use crate::algebra::fields::Fp64;
     use crate::protocol::greyhound::greyhound_verify_stage1;
+    use crate::protocol::labrador::utils::mat_vec_mul;
     use crate::protocol::labrador::{prove_level, prove_with_config, verify, LabradorProof};
     use crate::protocol::transcript::labels::DOMAIN_GREYHOUND_EVAL;
     use crate::protocol::transcript::labels::DOMAIN_LABRADOR_PROTOCOL;
