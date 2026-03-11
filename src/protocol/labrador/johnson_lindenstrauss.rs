@@ -219,7 +219,7 @@ impl LabradorJlMatrix {
 pub fn project<F, T, const D: usize>(
     witness: &LabradorWitness<F, D>,
     transcript: &mut T,
-) -> Result<([i32; 256], u64, LabradorJlMatrix), HachiError>
+) -> Result<([i64; 256], u64, LabradorJlMatrix), HachiError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
@@ -245,14 +245,11 @@ where
         transcript.append_bytes(labels::ABSORB_LABRADOR_JL_NONCE, &nonce.to_le_bytes());
         let matrix = LabradorJlMatrix::generate::<F, T>(transcript, total_coeffs)?;
         if let Some(proj) = project_streaming::<D>(&matrix, &centered_witness, total_coeffs) {
-            if proj
-                .iter()
-                .any(|&p| (p as i64).unsigned_abs() >= component_bound)
-            {
+            if proj.iter().any(|&p| p.unsigned_abs() >= component_bound) {
                 continue;
             }
             let proj_norm: u128 = proj.iter().fold(0u128, |acc, &p| {
-                acc + (p as i64).unsigned_abs() as u128 * (p as i64).unsigned_abs() as u128
+                acc + p.unsigned_abs() as u128 * p.unsigned_abs() as u128
             });
             if proj_norm > norm_bound {
                 continue;
@@ -279,7 +276,7 @@ fn next_power_of_two_u64(x: f64) -> u64 {
 /// Collapse a JL projection with challenge coefficients.
 ///
 /// Returns the linear target value `sum_i alpha[i] * projection[i]`.
-pub fn collapse(projection: &[i32; 256], alpha: &[i64; 256]) -> i64 {
+pub fn collapse(projection: &[i64; 256], alpha: &[i64; 256]) -> i64 {
     projection
         .iter()
         .zip(alpha.iter())
@@ -315,14 +312,14 @@ fn project_streaming<const D: usize>(
     matrix: &LabradorJlMatrix,
     centered_witness: &CenteredWitness<D>,
     total_coeffs: usize,
-) -> Option<[i32; 256]> {
+) -> Option<[i64; 256]> {
     if matrix.signs.len() != JL_ROWS || centered_witness.ring_len() * D != total_coeffs {
         return None;
     }
     if matrix.signs.iter().any(|row| row.len() != total_coeffs) {
         return None;
     }
-    let results: Vec<Option<i32>> = match centered_witness {
+    let results: Vec<Option<i64>> = match centered_witness {
         CenteredWitness::I64 { coeffs } => cfg_iter!(matrix.signs)
             .map(|row| {
                 let mut acc = 0i128;
@@ -334,10 +331,10 @@ fn project_streaming<const D: usize>(
                         _ => return None,
                     }
                 }
-                if acc < i32::MIN as i128 || acc > i32::MAX as i128 {
+                if acc < i64::MIN as i128 || acc > i64::MAX as i128 {
                     None
                 } else {
-                    Some(acc as i32)
+                    Some(acc as i64)
                 }
             })
             .collect(),
@@ -367,16 +364,16 @@ fn project_streaming<const D: usize>(
                             }
                         }
                     }
-                    if acc < i32::MIN as i128 || acc > i32::MAX as i128 {
+                    if acc < i64::MIN as i128 || acc > i64::MAX as i128 {
                         None
                     } else {
-                        Some(acc as i32)
+                        Some(acc as i64)
                     }
                 })
                 .collect()
         }
     };
-    let mut out = [0i32; 256];
+    let mut out = [0i64; 256];
     for (i, val) in results.into_iter().enumerate() {
         out[i] = val?;
     }
@@ -526,13 +523,13 @@ mod tests {
 
     #[test]
     fn collapse_matches_dot_product() {
-        let projection = std::array::from_fn(|i| i as i32 - 10);
+        let projection = std::array::from_fn(|i| i as i64 - 10);
         let alpha = std::array::from_fn(|i| (2 * i as i64) - 7);
         let got = collapse(&projection, &alpha);
         let expected = projection
             .iter()
             .zip(alpha.iter())
-            .fold(0i64, |acc, (&p, &a)| acc + (p as i64) * a);
+            .fold(0i64, |acc, (&p, &a)| acc + p * a);
         assert_eq!(got, expected);
     }
 

@@ -143,7 +143,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> AjtaiCommitmentScheme<F, D>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::fields::Fp64;
+    use crate::algebra::fields::{Fp64, Prime128M8M4M1M0};
     use crate::protocol::commitment::utils::crt_ntt::build_ntt_slot;
     use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
     use crate::protocol::commitment::utils::linear::decompose_rows_with_carry;
@@ -266,5 +266,106 @@ mod tests {
 
         assert_eq!(t_hat_full, t_hat_step);
         assert_eq!(u_full, u_step);
+    }
+
+    mod fp128 {
+        use super::*;
+
+        type F128 = Prime128M8M4M1M0;
+        const D128: usize = 64;
+
+        fn fp128_config() -> CoeffAjtaiConfig {
+            CoeffAjtaiConfig {
+                inner_rows: 11,
+                outer_rows: 3,
+                num_digits: 8,
+                decompose_modulus: 16,
+            }
+        }
+
+        #[test]
+        fn commit_witness_ntt_matches_coeff() {
+            let config = fp128_config();
+            let witness = sample_random_instances::<F128, D128>(WITNESS_SEED, 8, 100);
+            let matrix_a =
+                sample_random_instances::<F128, D128>(MATRIX_A_SEED, config.inner_rows, 100);
+            let a_ntt = build_slot::<F128, D128>(&matrix_a);
+
+            let t = <NttAjtaiBackend as AjtaiCommitmentScheme<F128, D128>>::commit_witness(
+                &a_ntt, &witness, &config,
+            )
+            .unwrap();
+
+            assert_eq!(t.len(), 8);
+            for i in 0..8 {
+                let expected = mat_vec_mul(&matrix_a, &witness[i]);
+                assert_eq!(t[i], expected, "mismatch at witness row {i}");
+            }
+        }
+
+        #[test]
+        fn commit_inner_ntt_matches_coeff() {
+            let config = fp128_config();
+            let inner_len = config.inner_rows;
+            let inner_comm = sample_random_instances::<F128, D128>(WITNESS_SEED, 8, inner_len);
+
+            let decomp_len = 8 * inner_len * config.num_digits;
+            let matrix_b =
+                sample_random_instances::<F128, D128>(MATRIX_B_SEED, config.outer_rows, decomp_len);
+            let b_ntt = build_slot::<F128, D128>(&matrix_b);
+
+            let (t_hat, u) = <NttAjtaiBackend as AjtaiCommitmentScheme<F128, D128>>::commit_inner(
+                &b_ntt,
+                &inner_comm,
+                &config,
+            )
+            .unwrap();
+
+            let mut expected_t_hat = Vec::new();
+            for row in &inner_comm {
+                expected_t_hat.extend(decompose_rows_with_carry(
+                    row,
+                    config.num_digits,
+                    config.decompose_modulus,
+                ));
+            }
+
+            assert_eq!(t_hat, expected_t_hat);
+
+            let expected_u = mat_vec_mul(&matrix_b, &expected_t_hat);
+            assert_eq!(u, expected_u);
+        }
+
+        #[test]
+        fn two_tier_ntt_matches_coeff() {
+            let config = fp128_config();
+            let witness = sample_random_instances::<F128, D128>(WITNESS_SEED, 8, 100);
+            let matrix_a =
+                sample_random_instances::<F128, D128>(MATRIX_A_SEED, config.inner_rows, 100);
+            let a_ntt = build_slot::<F128, D128>(&matrix_a);
+
+            let decomp_len = 8 * config.inner_rows * config.num_digits;
+            let matrix_b =
+                sample_random_instances::<F128, D128>(MATRIX_B_SEED, config.outer_rows, decomp_len);
+            let b_ntt = build_slot::<F128, D128>(&matrix_b);
+
+            let (ntt_t_hat, ntt_u) =
+                <NttAjtaiBackend as AjtaiCommitmentScheme<F128, D128>>::two_tier_commit(
+                    &a_ntt, &b_ntt, &witness, &config,
+                )
+                .unwrap();
+
+            let coeff_t = crate::protocol::ajtai::coeff::CoeffAjtai::commit_witness(
+                &matrix_a, &witness, &config,
+            )
+            .unwrap();
+            let (coeff_t_hat, coeff_u) = crate::protocol::ajtai::coeff::CoeffAjtai::commit_inner(
+                &matrix_b, &coeff_t, &config,
+            )
+            .unwrap();
+
+            assert_eq!(ntt_t_hat, coeff_t_hat);
+            assert_eq!(ntt_u, coeff_u);
+        }
     }
 }

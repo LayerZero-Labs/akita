@@ -4,6 +4,9 @@ use crate::algebra::CyclotomicRing;
 use crate::primitives::serialization::{Compress, SerializationError};
 use crate::primitives::serialization::{Valid, Validate};
 use crate::protocol::commitment::RingCommitment;
+use crate::protocol::labrador::types::{
+    LabradorLevelProof, LabradorProof, LabradorReductionConfig, LabradorWitness,
+};
 use crate::protocol::sumcheck::SumcheckProof;
 use crate::{FieldCore, FromSmallInt, HachiDeserialize, HachiSerialize};
 use std::io::{Read, Write};
@@ -485,11 +488,236 @@ impl<F: FieldCore> HachiLevelProof<F> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// D-erased Greyhound / Labrador proof types for HachiProofTail
+// ---------------------------------------------------------------------------
+
+/// D-erased Greyhound evaluation proof.
+///
+/// Mirrors [`GreyhoundEvalProof`](crate::protocol::greyhound::GreyhoundEvalProof)
+/// with ring elements stored as [`FlatRingVec`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatGreyhoundEvalProof<F: FieldCore> {
+    /// Outer commitment to decomposed partial evaluations.
+    pub u2: FlatRingVec<F>,
+    /// Matrix row count from the Greyhound reshape.
+    pub m_rows: usize,
+    /// Matrix column count from the Greyhound reshape.
+    pub n_cols: usize,
+    /// Number of inner variables in the evaluation split.
+    pub inner_vars: usize,
+    /// Labrador reduction config selected by Greyhound.
+    pub config: LabradorReductionConfig,
+}
+
+impl<F: FieldCore> FlatGreyhoundEvalProof<F> {
+    /// Convert from the typed `GreyhoundEvalProof<F, D>`.
+    pub fn from_typed<const D: usize>(
+        p: &crate::protocol::greyhound::GreyhoundEvalProof<F, D>,
+    ) -> Self {
+        Self {
+            u2: FlatRingVec::from_ring_elems(&p.u2),
+            m_rows: p.m_rows,
+            n_cols: p.n_cols,
+            inner_vars: p.inner_vars,
+            config: p.config,
+        }
+    }
+
+    /// Reconstruct the typed `GreyhoundEvalProof<F, D>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D` does not match the stored ring dimension.
+    pub fn to_typed<const D: usize>(&self) -> crate::protocol::greyhound::GreyhoundEvalProof<F, D> {
+        crate::protocol::greyhound::GreyhoundEvalProof {
+            u2: self.u2.to_vec(),
+            m_rows: self.m_rows,
+            n_cols: self.n_cols,
+            inner_vars: self.inner_vars,
+            config: self.config,
+        }
+    }
+
+    /// Ring dimension of the stored proof elements.
+    pub fn ring_dim(&self) -> usize {
+        self.u2.ring_dim()
+    }
+}
+
+/// D-erased Labrador level proof.
+///
+/// Mirrors [`LabradorLevelProof`] with ring elements stored as [`FlatRingVec`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatLabradorLevelProof<F: FieldCore> {
+    /// Whether this level uses tail semantics.
+    pub tail: bool,
+    /// Input row lengths per witness row.
+    pub input_row_lengths: Vec<usize>,
+    /// Configuration selected for this level.
+    pub config: LabradorReductionConfig,
+    /// Virtual row length after nu-reshaping.
+    pub nn: usize,
+    /// Per-original-row split counts from the fold plan.
+    pub nu: Vec<usize>,
+    /// First outer commitment.
+    pub u1: FlatRingVec<F>,
+    /// Second outer commitment.
+    pub u2: FlatRingVec<F>,
+    /// JL projection vector.
+    pub jl_projection: [i64; 256],
+    /// JL nonce used to regenerate projection matrix.
+    pub jl_nonce: u64,
+    /// Lift polynomials (constant term zeroed in proof).
+    pub bb: FlatRingVec<F>,
+    /// Output witness norm bound after reduction.
+    pub norm_sq: u128,
+}
+
+impl<F: FieldCore> FlatLabradorLevelProof<F> {
+    /// Convert from the typed `LabradorLevelProof<F, D>`.
+    pub fn from_typed<const D: usize>(p: &LabradorLevelProof<F, D>) -> Self {
+        Self {
+            tail: p.tail,
+            input_row_lengths: p.input_row_lengths.clone(),
+            config: p.config,
+            nn: p.nn,
+            nu: p.nu.clone(),
+            u1: FlatRingVec::from_ring_elems(&p.u1),
+            u2: FlatRingVec::from_ring_elems(&p.u2),
+            jl_projection: p.jl_projection,
+            jl_nonce: p.jl_nonce,
+            bb: FlatRingVec::from_ring_elems(&p.bb),
+            norm_sq: p.norm_sq,
+        }
+    }
+
+    /// Reconstruct the typed `LabradorLevelProof<F, D>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D` does not match the stored ring dimension.
+    pub fn to_typed<const D: usize>(&self) -> LabradorLevelProof<F, D> {
+        LabradorLevelProof {
+            tail: self.tail,
+            input_row_lengths: self.input_row_lengths.clone(),
+            config: self.config,
+            nn: self.nn,
+            nu: self.nu.clone(),
+            u1: self.u1.to_vec(),
+            u2: self.u2.to_vec(),
+            jl_projection: self.jl_projection,
+            jl_nonce: self.jl_nonce,
+            bb: self.bb.to_vec(),
+            norm_sq: self.norm_sq,
+        }
+    }
+}
+
+/// D-erased Labrador witness (rows of ring elements).
+///
+/// Mirrors [`LabradorWitness`] with rows stored as [`FlatRingVec`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatLabradorWitness<F: FieldCore> {
+    /// Per-row ring element vectors.
+    pub rows: Vec<FlatRingVec<F>>,
+}
+
+impl<F: FieldCore> FlatLabradorWitness<F> {
+    /// Convert from the typed `LabradorWitness<F, D>`.
+    pub fn from_typed<const D: usize>(w: &LabradorWitness<F, D>) -> Self {
+        Self {
+            rows: w
+                .rows()
+                .iter()
+                .map(|r| FlatRingVec::from_ring_elems(r))
+                .collect(),
+        }
+    }
+
+    /// Reconstruct the typed `LabradorWitness<F, D>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D` does not match the stored ring dimension.
+    pub fn to_typed<const D: usize>(&self) -> LabradorWitness<F, D> {
+        let rows: Vec<Vec<CyclotomicRing<F, D>>> = self.rows.iter().map(|r| r.to_vec()).collect();
+        LabradorWitness::new_unchecked(rows)
+    }
+}
+
+/// D-erased Labrador proof (levels + final witness).
+///
+/// Mirrors [`LabradorProof`] with all ring data stored as [`FlatRingVec`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatLabradorProof<F: FieldCore> {
+    /// Recursive level payloads.
+    pub levels: Vec<FlatLabradorLevelProof<F>>,
+    /// Final clear witness opened at recursion termination.
+    pub final_opening_witness: FlatLabradorWitness<F>,
+}
+
+impl<F: FieldCore> FlatLabradorProof<F> {
+    /// Convert from the typed `LabradorProof<F, D>`.
+    pub fn from_typed<const D: usize>(p: &LabradorProof<F, D>) -> Self {
+        Self {
+            levels: p
+                .levels
+                .iter()
+                .map(FlatLabradorLevelProof::from_typed)
+                .collect(),
+            final_opening_witness: FlatLabradorWitness::from_typed(&p.final_opening_witness),
+        }
+    }
+
+    /// Reconstruct the typed `LabradorProof<F, D>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D` does not match the stored ring dimension.
+    pub fn to_typed<const D: usize>(&self) -> LabradorProof<F, D> {
+        LabradorProof {
+            levels: self.levels.iter().map(|l| l.to_typed()).collect(),
+            final_opening_witness: self.final_opening_witness.to_typed(),
+        }
+    }
+}
+
+/// Greyhound/Labrador tail proof data for the ring dimension switch.
+///
+/// Produced when Hachi's folding loop stops and the remaining witness
+/// is handed off to Greyhound (D'=64) + Labrador recursion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GreyhoundTail<F: FieldCore> {
+    /// D-erased Greyhound evaluation proof.
+    pub greyhound_proof: FlatGreyhoundEvalProof<F>,
+    /// D-erased full Labrador recursive proof.
+    pub labrador_proof: FlatLabradorProof<F>,
+    /// Outer commitment `u1 = B * t_hat` for Labrador statement reconstruction.
+    pub u1: FlatRingVec<F>,
+    /// Ring-valued evaluation target from the Section 4.5 ring dimension switch.
+    ///
+    /// Contains D' coefficients of `ring_mle(ring_point)` where `ring_point`
+    /// is the subset of the opening point indexing ring elements.
+    pub eval_ring: FlatRingVec<F>,
+    /// Squared L2 norm of the Greyhound witness (public bound for Labrador).
+    pub beta_sq: u128,
+}
+
+/// Proof tail: either a direct witness or a Greyhound/Labrador handoff.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HachiProofTail<F: FieldCore> {
+    /// Final witness sent in clear as packed balanced digits.
+    Direct(PackedDigits),
+    /// Greyhound evaluation proof + Labrador recursive proof.
+    Greyhound(GreyhoundTail<F>),
+}
+
 /// Hachi PCS proof with multi-level folding.
 ///
 /// Each level runs the full protocol (quadratic equation, ring switch,
-/// sumcheck) on the previous level's witness `w`. The final level sends
-/// `w` directly for the verifier to check, packed as balanced digits.
+/// sumcheck) on the previous level's witness `w`. The tail is either
+/// a direct witness (packed digits) or a Greyhound/Labrador handoff.
 ///
 /// D-agnostic: per-level ring dimensions are recorded in each
 /// [`HachiLevelProof`].
@@ -498,10 +726,29 @@ pub struct HachiProof<F: FieldCore> {
     /// Per-level proofs, from the original polynomial (level 0) through
     /// recursive w-openings.
     pub levels: Vec<HachiLevelProof<F>>,
-    /// The witness vector at the deepest fold level, bit-packed as balanced
-    /// digits in `[-b/2, b/2)`. Use [`PackedDigits::to_field_elems`] to
-    /// reconstruct `Vec<F>`.
-    pub final_w: PackedDigits,
+    /// Proof tail: direct witness or Greyhound/Labrador.
+    pub tail: HachiProofTail<F>,
+}
+
+impl<F: FieldCore> HachiProof<F> {
+    /// Access the direct final witness.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the proof uses a Greyhound tail instead of a direct witness.
+    pub fn final_w(&self) -> &PackedDigits {
+        match &self.tail {
+            HachiProofTail::Direct(pw) => pw,
+            HachiProofTail::Greyhound(_) => {
+                panic!("final_w called on proof with Greyhound tail")
+            }
+        }
+    }
+
+    /// Whether this proof uses the Greyhound/Labrador tail.
+    pub fn has_greyhound_tail(&self) -> bool {
+        matches!(&self.tail, HachiProofTail::Greyhound(_))
+    }
 }
 
 impl<F: FieldCore + HachiSerialize> HachiProof<F> {
@@ -518,7 +765,13 @@ impl<F: FieldCore + HachiSerialize> HachiProof<F> {
                     + lp.w_eval.serialized_size(Compress::No)
             })
             .sum();
-        levels_size + self.final_w.serialized_size(Compress::No)
+        match &self.tail {
+            HachiProofTail::Direct(pw) => levels_size + pw.serialized_size(Compress::No),
+            HachiProofTail::Greyhound(_tail) => {
+                // TODO: implement proper size calculation for Greyhound tail
+                levels_size
+            }
+        }
     }
 }
 
@@ -635,15 +888,30 @@ impl<F: FieldCore> HachiSerialize for HachiProof<F> {
         for level in &self.levels {
             level.serialize_with_mode(&mut writer, compress)?;
         }
-        self.final_w.serialize_with_mode(&mut writer, compress)
+        match &self.tail {
+            HachiProofTail::Direct(pw) => {
+                0u8.serialize_with_mode(&mut writer, compress)?;
+                pw.serialize_with_mode(&mut writer, compress)
+            }
+            HachiProofTail::Greyhound(_tail) => {
+                1u8.serialize_with_mode(&mut writer, compress)?;
+                // TODO: serialize Greyhound tail
+                Ok(())
+            }
+        }
     }
     fn serialized_size(&self, compress: Compress) -> usize {
-        4 + self
-            .levels
-            .iter()
-            .map(|l| l.serialized_size(compress))
-            .sum::<usize>()
-            + self.final_w.serialized_size(compress)
+        let base = 4
+            + self
+                .levels
+                .iter()
+                .map(|l| l.serialized_size(compress))
+                .sum::<usize>()
+            + 1; // tag byte
+        match &self.tail {
+            HachiProofTail::Direct(pw) => base + pw.serialized_size(compress),
+            HachiProofTail::Greyhound(_tail) => base, // TODO
+        }
     }
 }
 
@@ -652,7 +920,10 @@ impl<F: FieldCore> Valid for HachiProof<F> {
         for lp in &self.levels {
             lp.check()?;
         }
-        self.final_w.check()
+        match &self.tail {
+            HachiProofTail::Direct(pw) => pw.check(),
+            HachiProofTail::Greyhound(_) => Ok(()),
+        }
     }
 }
 
@@ -671,7 +942,24 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiProof<F> {
                 validate,
             )?);
         }
-        let final_w = PackedDigits::deserialize_with_mode(&mut reader, compress, validate)?;
-        Ok(Self { levels, final_w })
+        let tag = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+        let tail = match tag {
+            0 => {
+                let pw = PackedDigits::deserialize_with_mode(&mut reader, compress, validate)?;
+                HachiProofTail::Direct(pw)
+            }
+            1 => {
+                // TODO: deserialize Greyhound tail
+                return Err(SerializationError::InvalidData(
+                    "Greyhound tail deserialization not yet implemented".to_string(),
+                ));
+            }
+            _ => {
+                return Err(SerializationError::InvalidData(format!(
+                    "unknown proof tail tag: {tag}"
+                )));
+            }
+        };
+        Ok(Self { levels, tail })
     }
 }

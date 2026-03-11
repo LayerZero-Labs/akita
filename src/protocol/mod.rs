@@ -31,7 +31,11 @@ pub use commitment::{
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly};
 pub use opening_point::{BasisMode, RingOpeningPoint};
-pub use proof::{FlatCommitmentHint, FlatRingVec, HachiLevelProof, HachiProof, PackedDigits};
+pub use proof::{
+    FlatCommitmentHint, FlatGreyhoundEvalProof, FlatLabradorLevelProof, FlatLabradorProof,
+    FlatLabradorWitness, FlatRingVec, GreyhoundTail, HachiLevelProof, HachiProof, HachiProofTail,
+    PackedDigits,
+};
 pub use quadratic_equation::QuadraticEquation;
 pub use sumcheck::batched_sumcheck::{prove_batched_sumcheck, verify_batched_sumcheck};
 pub use sumcheck::{

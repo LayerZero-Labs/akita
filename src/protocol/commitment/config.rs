@@ -450,6 +450,15 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn challenge_weight_for_ring_dim(_d: usize) -> usize {
         Self::CHALLENGE_WEIGHT
     }
+
+    /// Witness length (in i8 digits) above which the prover hands off to
+    /// Greyhound/Labrador (D'=64) instead of sending the witness directly.
+    ///
+    /// The default returns 65 536 (64 Ki). Override to a lower value in test
+    /// configs to exercise the Greyhound tail path with smaller polynomials.
+    fn greyhound_handoff_threshold() -> usize {
+        65_536
+    }
 }
 
 /// Deterministic upper bound for the stage-1 folded-witness infinity norm.

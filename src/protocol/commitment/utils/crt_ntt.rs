@@ -17,6 +17,7 @@ use super::norm::detect_field_modulus;
 
 /// Supported protocol CRT+NTT parameter families.
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum ProtocolCrtNttParams<const D: usize> {
     Q32(CrtNttParamSet<i16, Q32_NUM_PRIMES, D>),
     Q64(CrtNttParamSet<i32, Q64_NUM_PRIMES, D>),
@@ -28,7 +29,7 @@ pub(crate) enum ProtocolCrtNttParams<const D: usize> {
 /// Dispatch policy:
 /// - `q <= 2^32-99` and `D <= 64`: Q32 (`i16`)
 /// - `q <= 2^64-59` and `D <= 1024`: Q64 (`i32`, conservative K=5)
-/// - `q == 2^128-275` and `D <= 1024`: Q128 (`i32`, K=5)
+/// - `q <= 2^128-275` and `D <= 1024`: Q128 (`i32`, K=5)
 /// - otherwise: explicit setup error
 pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
 ) -> Result<ProtocolCrtNttParams<D>, HachiError> {
@@ -45,12 +46,6 @@ pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
 
     let modulus = detect_field_modulus::<F>();
 
-    if modulus == Q128_MODULUS {
-        return Ok(ProtocolCrtNttParams::Q128(CrtNttParamSet::new(
-            q128_primes(),
-        )));
-    }
-
     if modulus <= Q32_MODULUS as u128 {
         if D <= RING_DEGREE {
             return Ok(ProtocolCrtNttParams::Q32(CrtNttParamSet::new(Q32_PRIMES)));
@@ -62,8 +57,14 @@ pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
         return Ok(ProtocolCrtNttParams::Q64(CrtNttParamSet::new(q64_primes())));
     }
 
+    if modulus <= Q128_MODULUS {
+        return Ok(ProtocolCrtNttParams::Q128(CrtNttParamSet::new(
+            q128_primes(),
+        )));
+    }
+
     Err(HachiError::InvalidSetup(format!(
-        "no CRT+NTT parameter set for modulus {modulus} and D={D}; supported ranges: <= {Q64_MODULUS} (with Q32/Q64 dispatch) or exactly {Q128_MODULUS}"
+        "no CRT+NTT parameter set for modulus {modulus} and D={D}; supported ranges: <= {Q64_MODULUS} (with Q32/Q64 dispatch) or <= {Q128_MODULUS} (Q128)"
     )))
 }
 
@@ -72,7 +73,7 @@ pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
 /// Stores both negacyclic (for mat-vec) and cyclic (for quotient) representations
 /// to avoid repeated coefficient-to-NTT conversion.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(missing_docs)]
+#[allow(missing_docs, clippy::large_enum_variant)]
 pub enum NttSlotCache<const D: usize> {
     /// 32-bit CRT primes.
     Q32 {

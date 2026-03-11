@@ -97,9 +97,9 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
     }
     eprintln!(
         "[{label}]   final_w: {} elems, {} bits/elem, packed {} bytes",
-        proof.final_w.num_elems,
-        proof.final_w.bits_per_elem,
-        proof.final_w.serialized_size(Compress::No),
+        proof.final_w().num_elems,
+        proof.final_w().bits_per_elem,
+        proof.final_w().serialized_size(Compress::No),
     );
 }
 

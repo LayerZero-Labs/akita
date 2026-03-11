@@ -157,14 +157,23 @@ where
         let cfg = plan.config;
         let rr: usize = plan.nu.iter().sum();
         let setup = LabradorSetup::new(&cfg, rr, plan.nn, comkey_seed);
+
+        let mut attempt_transcript = transcript.clone();
         let fold = prove_level(
-            &witness, &statement, &cfg, &plan, &setup, level_idx, transcript,
+            &witness,
+            &statement,
+            &cfg,
+            &plan,
+            &setup,
+            level_idx,
+            &mut attempt_transcript,
         )?;
         let after_size = witness_size_bits::<F, D>(&fold.next_witness);
         if after_size >= before_size && !force_first_level {
             break;
         }
 
+        *transcript = attempt_transcript;
         levels.push(fold.level_proof);
         statement = fold.statement;
         witness = fold.next_witness;
@@ -244,7 +253,7 @@ fn level_payload_size_bits<F: FieldCore + CanonicalField, const D: usize>(
     let logq_bits = logq_bits::<F>();
     let ring_elems = level.u1.len() + level.u2.len() + level.bb.len();
     let ring_bits = ring_elems * D * logq_bits;
-    let jl_bits = level.jl_projection.len() * 32;
+    let jl_bits = level.jl_projection.len() * 64;
     ring_bits + jl_bits + 64
 }
 

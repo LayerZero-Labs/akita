@@ -161,7 +161,7 @@ fn derive_real_greyhound_instance(
     let coeffs = sample_coefficients(coeff_count);
     let comkey_seed: LabradorComKeySeed = [42u8; 32];
 
-    let (eval_point, eval_value, ring_witness_len) = {
+    let (eval_point, eval_target, ring_witness_len) = {
         let ring_witness = pack_coefficients_to_ring(&coeffs);
         let (m_rows, n_cols, inner_vars) = choose_dimensions(ring_witness.len());
         let outer_vars = n_cols.trailing_zeros() as usize;
@@ -169,27 +169,27 @@ fn derive_real_greyhound_instance(
             .map(|i| F::from_i64((i as i64 % 29) + 2))
             .collect();
 
-        let inner_point = &eval_point[eval_point.len() - inner_vars..];
+        let inner_point = &eval_point[..inner_vars];
         let mut inner_basis = vec![F::zero(); 1usize << inner_vars];
         multilinear_lagrange_basis(&mut inner_basis, inner_point);
         let matrix = reshape_columns(&ring_witness, m_rows, n_cols);
         let partial_evals = partial_evaluate_columns(&matrix, &inner_basis);
 
         let mut outer_basis = vec![F::zero(); 1usize << outer_vars];
-        multilinear_lagrange_basis(&mut outer_basis, &eval_point[..outer_vars]);
+        multilinear_lagrange_basis(&mut outer_basis, &eval_point[inner_vars..]);
         let mut eval_ring = CyclotomicRing::<F, D>::zero();
         for (v, basis) in partial_evals.iter().zip(outer_basis.iter()) {
             eval_ring += v.scale(basis);
         }
 
-        (eval_point, eval_ring.coefficients()[0], ring_witness.len())
+        (eval_point, eval_ring, ring_witness.len())
     };
 
     let mut gh_transcript = Blake2bTranscript::<F>::new(DOMAIN_GREYHOUND_EVAL);
-    let (proof, witness, _statement) = greyhound_eval(
+    let (proof, witness, _statement, _fold_ch) = greyhound_eval(
         &coeffs,
         &eval_point,
-        eval_value,
+        eval_target,
         &[],
         &comkey_seed,
         &mut gh_transcript,
@@ -220,7 +220,7 @@ fn derive_real_greyhound_instance(
         &proof,
         &u1,
         &eval_point,
-        eval_value,
+        eval_target,
         &witness,
         z_norm_sq,
         &comkey_seed,
@@ -239,7 +239,7 @@ fn derive_real_greyhound_instance(
         },
     )
     .expect("failed to absorb Greyhound context");
-    absorb_greyhound_eval_claim(&mut transcript_replay, &eval_point, &eval_value);
+    absorb_greyhound_eval_claim(&mut transcript_replay, &eval_point, &eval_target);
     absorb_greyhound_u2(&mut transcript_replay, &proof.u2);
     let fold_challenges: Vec<F> = (0..proof.n_cols)
         .map(|_| sample_greyhound_fold_challenge(&mut transcript_replay))
@@ -249,7 +249,7 @@ fn derive_real_greyhound_instance(
         &proof,
         &u1,
         &eval_point,
-        eval_value,
+        eval_target,
         &fold_challenges,
         &comkey_seed,
     )

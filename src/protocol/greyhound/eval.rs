@@ -23,11 +23,15 @@ use crate::protocol::labrador::utils::mat_vec_mul;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 
-/// Output of `greyhound_eval`: proof, witness, and reduced statement.
+/// Output of `greyhound_eval`: proof, witness, reduced statement, and fold challenges.
+///
+/// The fold challenges are returned so the caller can rebuild the statement
+/// with the correct `u1` (outer commitment) via [`greyhound_reduce`].
 pub type GreyhoundEvalResult<F, const D: usize> = (
     GreyhoundEvalProof<F, D>,
     LabradorWitness<F, D>,
     LabradorStatement<F, D>,
+    Vec<F>,
 );
 
 const GH_T: f64 = 14.0;
@@ -125,7 +129,7 @@ pub fn greyhound_select_config<F: CanonicalField, const D: usize>(
 pub fn greyhound_eval<F, T, const D: usize>(
     witness_coeffs: &[F],
     eval_point: &[F],
-    eval_value: F,
+    eval_target: CyclotomicRing<F, D>,
     w_commitment_u1: &[CyclotomicRing<F, D>],
     comkey_seed: &LabradorComKeySeed,
     transcript: &mut T,
@@ -148,7 +152,7 @@ where
         });
     }
 
-    let inner_point = &eval_point[eval_point.len() - inner_vars..];
+    let inner_point = &eval_point[..inner_vars];
     let mut inner_basis = vec![F::zero(); 1usize << inner_vars];
     multilinear_lagrange_basis(&mut inner_basis, inner_point);
 
@@ -183,7 +187,7 @@ where
             eval_point_len: eval_point.len(),
         },
     )?;
-    absorb_greyhound_eval_claim(transcript, eval_point, &eval_value);
+    absorb_greyhound_eval_claim(transcript, eval_point, &eval_target);
     absorb_greyhound_u2(transcript, &u2);
 
     // Sample n_cols fold challenges from transcript.
@@ -238,13 +242,13 @@ where
         &proof,
         w_commitment_u1,
         eval_point,
-        eval_value,
+        eval_target,
         &fold_challenges,
         comkey_seed,
     )?;
     statement.beta_sq = greyhound_witness.norm();
 
-    Ok((proof, greyhound_witness, statement))
+    Ok((proof, greyhound_witness, statement, fold_challenges))
 }
 
 fn pack_coefficients_to_ring<F: FieldCore, const D: usize>(
@@ -321,17 +325,29 @@ mod tests {
     type F = Fp64<4294967197>;
     const D: usize = 64;
 
+    fn scalar_ring(s: F) -> CyclotomicRing<F, D> {
+        CyclotomicRing::from_coefficients(std::array::from_fn(
+            |i| {
+                if i == 0 {
+                    s
+                } else {
+                    F::zero()
+                }
+            },
+        ))
+    }
+
     #[test]
     fn eval_outputs_four_row_witness_and_scalar_constraints() {
         let coeffs: Vec<F> = (0..256).map(|i| F::from_i64((i as i64 % 13) - 6)).collect();
         let eval_point: Vec<F> = (0..8).map(|i| F::from_i64(i as i64 + 1)).collect();
-        let eval_value = F::from_i64(9);
+        let eval_target = scalar_ring(F::from_i64(9));
         let u1 = vec![CyclotomicRing::<F, D>::one(), CyclotomicRing::<F, D>::one()];
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_GREYHOUND_EVAL);
-        let (proof, witness, statement) = greyhound_eval(
+        let (proof, witness, statement, _fold_challenges) = greyhound_eval(
             &coeffs,
             &eval_point,
-            eval_value,
+            eval_target,
             &u1,
             &[8u8; 32],
             &mut transcript,
@@ -359,26 +375,25 @@ mod tests {
             .map(|i| F::from_i64(i as i64 + 2))
             .collect();
 
-        let inner_point = &eval_point[eval_point.len() - inner_vars..];
+        let inner_point = &eval_point[..inner_vars];
         let mut inner_basis = vec![F::zero(); 1usize << inner_vars];
         multilinear_lagrange_basis(&mut inner_basis, inner_point);
         let matrix = reshape_columns(&ring_witness, m_rows, n_cols);
         let partial_evals = partial_evaluate_columns(&matrix, &inner_basis);
 
         let mut outer_basis = vec![F::zero(); 1usize << outer_vars];
-        multilinear_lagrange_basis(&mut outer_basis, &eval_point[..outer_vars]);
+        multilinear_lagrange_basis(&mut outer_basis, &eval_point[inner_vars..]);
         let mut eval_ring = CyclotomicRing::<F, D>::zero();
         for (v, basis) in partial_evals.iter().zip(outer_basis.iter()) {
             eval_ring += v.scale(basis);
         }
         assert!(eval_ring.coefficients()[1..].iter().all(|c| c.is_zero()));
-        let eval_value = eval_ring.coefficients()[0];
 
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_GREYHOUND_EVAL);
-        let (proof, witness, _statement) = greyhound_eval(
+        let (proof, witness, _statement, _fold_challenges) = greyhound_eval(
             &coeffs,
             &eval_point,
-            eval_value,
+            eval_ring,
             &[],
             &comkey_seed,
             &mut transcript,
@@ -406,7 +421,7 @@ mod tests {
             &proof,
             &u1,
             &eval_point,
-            eval_value,
+            eval_ring,
             &witness,
             z_norm_sq,
             &comkey_seed,
@@ -429,25 +444,23 @@ mod tests {
             .map(|i| F::from_i64(i as i64 + 2))
             .collect();
 
-        let inner_point = &eval_point[eval_point.len() - inner_vars..];
+        let inner_point = &eval_point[..inner_vars];
         let mut inner_basis = vec![F::zero(); 1usize << inner_vars];
         multilinear_lagrange_basis(&mut inner_basis, inner_point);
         let matrix = reshape_columns(&ring_witness, m_rows, n_cols);
         let partial_evals = partial_evaluate_columns(&matrix, &inner_basis);
 
         let mut outer_basis = vec![F::zero(); 1usize << outer_vars];
-        multilinear_lagrange_basis(&mut outer_basis, &eval_point[..outer_vars]);
+        multilinear_lagrange_basis(&mut outer_basis, &eval_point[inner_vars..]);
         let mut eval_ring = CyclotomicRing::<F, D>::zero();
         for (v, basis) in partial_evals.iter().zip(outer_basis.iter()) {
             eval_ring += v.scale(basis);
         }
-        let eval_value = eval_ring.coefficients()[0];
-
         let mut gh_transcript = Blake2bTranscript::<F>::new(DOMAIN_GREYHOUND_EVAL);
-        let (proof, witness, _statement) = greyhound_eval(
+        let (proof, witness, _statement, _fold_ch) = greyhound_eval(
             &coeffs,
             &eval_point,
-            eval_value,
+            eval_ring,
             &[],
             &comkey_seed,
             &mut gh_transcript,
@@ -472,7 +485,7 @@ mod tests {
             &proof,
             &u1,
             &eval_point,
-            eval_value,
+            eval_ring,
             &witness,
             z_norm_sq,
             &comkey_seed,
@@ -491,7 +504,7 @@ mod tests {
             },
         )
         .unwrap();
-        absorb_greyhound_eval_claim(&mut transcript_replay, &eval_point, &eval_value);
+        absorb_greyhound_eval_claim(&mut transcript_replay, &eval_point, &eval_ring);
         absorb_greyhound_u2(&mut transcript_replay, &proof.u2);
         let fold_challenges: Vec<F> = (0..proof.n_cols)
             .map(|_| sample_greyhound_fold_challenge(&mut transcript_replay))
@@ -500,7 +513,7 @@ mod tests {
             &proof,
             &u1,
             &eval_point,
-            eval_value,
+            eval_ring,
             &fold_challenges,
             &comkey_seed,
         )
@@ -554,25 +567,23 @@ mod tests {
             .map(|i| F::from_i64(i as i64 + 3))
             .collect();
 
-        let inner_point = &eval_point[eval_point.len() - inner_vars..];
+        let inner_point = &eval_point[..inner_vars];
         let mut inner_basis = vec![F::zero(); 1usize << inner_vars];
         multilinear_lagrange_basis(&mut inner_basis, inner_point);
         let matrix = reshape_columns(&ring_witness, m_rows, n_cols);
         let partial_evals = partial_evaluate_columns(&matrix, &inner_basis);
 
         let mut outer_basis = vec![F::zero(); 1usize << outer_vars];
-        multilinear_lagrange_basis(&mut outer_basis, &eval_point[..outer_vars]);
+        multilinear_lagrange_basis(&mut outer_basis, &eval_point[inner_vars..]);
         let mut eval_ring = CyclotomicRing::<F, D>::zero();
         for (v, basis) in partial_evals.iter().zip(outer_basis.iter()) {
             eval_ring += v.scale(basis);
         }
-        let eval_value = eval_ring.coefficients()[0];
-
         let mut gh_transcript = Blake2bTranscript::<F>::new(DOMAIN_GREYHOUND_EVAL);
-        let (proof, witness, _statement) = greyhound_eval(
+        let (proof, witness, _statement, _fold_ch2) = greyhound_eval(
             &coeffs,
             &eval_point,
-            eval_value,
+            eval_ring,
             &[],
             &comkey_seed,
             &mut gh_transcript,
@@ -597,7 +608,7 @@ mod tests {
             &proof,
             &u1,
             &eval_point,
-            eval_value,
+            eval_ring,
             &witness,
             z_norm_sq,
             &comkey_seed,
@@ -616,7 +627,7 @@ mod tests {
             },
         )
         .unwrap();
-        absorb_greyhound_eval_claim(&mut transcript_replay, &eval_point, &eval_value);
+        absorb_greyhound_eval_claim(&mut transcript_replay, &eval_point, &eval_ring);
         absorb_greyhound_u2(&mut transcript_replay, &proof.u2);
         let fold_challenges: Vec<F> = (0..proof.n_cols)
             .map(|_| sample_greyhound_fold_challenge(&mut transcript_replay))
@@ -625,7 +636,7 @@ mod tests {
             &proof,
             &u1,
             &eval_point,
-            eval_value,
+            eval_ring,
             &fold_challenges,
             &comkey_seed,
         )

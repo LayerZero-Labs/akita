@@ -85,14 +85,14 @@ where
 
 /// Collapse JL projection coordinates with signed challenge weights directly in
 /// the field, avoiding host-integer saturation.
-fn collapse_to_field<F>(projection: &[i32; 256], alpha: &[F; 256]) -> F
+fn collapse_to_field<F>(projection: &[i64; 256], alpha: &[F; 256]) -> F
 where
     F: FieldCore + FromSmallInt,
 {
     projection
         .iter()
         .zip(alpha.iter())
-        .fold(F::zero(), |acc, (&p, &a)| acc + a * F::from_i64(p as i64))
+        .fold(F::zero(), |acc, (&p, &a)| acc + a * F::from_i64(p))
 }
 
 // ---------------------------------------------------------------------------
@@ -500,7 +500,7 @@ where
 #[tracing::instrument(skip_all, name = "labrador::aggregate_jl_constraints_verifier")]
 pub(crate) fn aggregate_jl_constraints_verifier<F, T, const D: usize>(
     row_lengths: &[usize],
-    jl_projection: &[i32; 256],
+    jl_projection: &[i64; 256],
     matrix: &LabradorJlMatrix,
     bb: &[CyclotomicRing<F, D>],
     transcript: &mut T,

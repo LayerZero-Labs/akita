@@ -91,6 +91,14 @@ impl<F: FieldCore> HachiExpandedSetup<F> {
     pub fn layout(&self) -> HachiCommitmentLayout {
         self.seed.layout
     }
+
+    /// Derive the Labrador commitment-key seed from this setup's public
+    /// matrix seed via domain-separated BLAKE2b.
+    pub fn labrador_comkey_seed(&self) -> crate::protocol::labrador::comkey::LabradorComKeySeed {
+        crate::protocol::labrador::comkey::derive_labrador_comkey_seed(
+            &self.seed.public_matrix_seed,
+        )
+    }
 }
 
 impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {

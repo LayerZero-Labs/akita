@@ -1044,7 +1044,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut w_evals: Vec<F> = proof.final_w.to_field_elems();
+        let mut w_evals: Vec<F> = proof.final_w().to_field_elems();
         let target_len = w_evals.len().next_power_of_two();
         w_evals.resize(target_len, F::zero());
         let num_sumcheck_vars = target_len.trailing_zeros() as usize;

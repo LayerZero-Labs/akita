@@ -116,6 +116,7 @@ where
             kappa1: config.kappa1,
         },
     )?;
+
     transcript.append_serde(labels::ABSORB_LABRADOR_U1, &u1);
 
     // Phase 2: JL Projection — nonce + matrix squeezed from transcript.
@@ -138,7 +139,9 @@ where
 
     // Linear garbage h_ij from aggregated phi and virtual witness.
     let h = compute_linear_garbage(&phi_total, &virtual_witness)?;
+
     let h_hat = decompose_rows_with_carry(&h, config.fu, config.bu as u32);
+
     let u2 = build_u2(setup, &h_hat);
 
     // Absorb u2 before amortization challenges.
@@ -147,6 +150,7 @@ where
     // Phase 4: Amortize — sample rr challenge ring-elements from transcript, fold.
     let challenges = sample_amortize_challenges(transcript, rr)?;
     let z = amortize_witness(&virtual_witness, &challenges, nn);
+
     let decomposed_z = decompose_rows_with_carry(&z, config.f, config.b as u32);
     let z_rows = split_decomposed_rows(&decomposed_z, config.f, z.len())?;
     let next_witness = assemble_output_witness(z_rows, &t_hat, &h_hat, config.tail);
@@ -787,7 +791,7 @@ mod malicious_prover {
     #[test]
     fn malicious_jl_projection_fails_verification() {
         let (statement, mut proof, comkey_seed) = valid_single_level_proof();
-        proof.levels[0].jl_projection[0] = i32::MAX;
+        proof.levels[0].jl_projection[0] = i64::MAX;
         assert_verification_fails(&statement, &proof, &comkey_seed);
     }
 

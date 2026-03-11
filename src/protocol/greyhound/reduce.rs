@@ -29,7 +29,7 @@ pub fn greyhound_reduce<F, const D: usize>(
     eval_proof: &GreyhoundEvalProof<F, D>,
     w_commitment_u1: &[CyclotomicRing<F, D>],
     eval_point: &[F],
-    eval_value: F,
+    eval_target: CyclotomicRing<F, D>,
     fold_challenges: &[F],
     comkey_seed: &LabradorComKeySeed,
 ) -> Result<LabradorStatement<F, D>, HachiError>
@@ -59,13 +59,10 @@ where
 
     let outer_vars = eval_point.len() - eval_proof.inner_vars;
     let mut outer_basis = vec![F::zero(); 1usize << outer_vars];
-    multilinear_lagrange_basis(&mut outer_basis, &eval_point[..outer_vars]);
+    multilinear_lagrange_basis(&mut outer_basis, &eval_point[eval_proof.inner_vars..]);
     let mut inner_basis = vec![F::zero(); 1usize << eval_proof.inner_vars];
     if eval_proof.inner_vars > 0 {
-        multilinear_lagrange_basis(
-            &mut inner_basis,
-            &eval_point[eval_point.len() - eval_proof.inner_vars..],
-        );
+        multilinear_lagrange_basis(&mut inner_basis, &eval_point[..eval_proof.inner_vars]);
     } else if !inner_basis.is_empty() {
         inner_basis[0] = F::one();
     }
@@ -75,7 +72,7 @@ where
         w_commitment_u1,
         &outer_basis,
         &inner_basis,
-        eval_value,
+        eval_target,
         fold_challenges,
         comkey_seed,
     );
@@ -107,7 +104,7 @@ fn build_constraints<F: FieldCore + CanonicalField + FieldSampling, const D: usi
     u1: &[CyclotomicRing<F, D>],
     outer_basis: &[F],
     inner_basis: &[F],
-    eval_value: F,
+    eval_target: CyclotomicRing<F, D>,
     fold_challenges: &[F],
     comkey_seed: &LabradorComKeySeed,
 ) -> Vec<LabradorConstraint<F, D>> {
@@ -274,7 +271,7 @@ fn build_constraints<F: FieldCore + CanonicalField + FieldSampling, const D: usi
     }
     constraints.push(LabradorConstraint::new(
         vec![LabradorConstraintTerm::new(3, 0, phi_eval)],
-        scalar_ring(eval_value),
+        eval_target,
     ));
 
     constraints
@@ -321,11 +318,21 @@ mod tests {
             F::from_i64(3),
             F::from_i64(4),
         ];
+        let eval_target = {
+            let s = F::from_i64(7);
+            CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                if k == 0 {
+                    s
+                } else {
+                    F::zero()
+                }
+            }))
+        };
         let st = greyhound_reduce(
             &proof,
             &u1,
             &eval_point,
-            F::from_i64(7),
+            eval_target,
             &fold_challenges,
             &[8u8; 32],
         )

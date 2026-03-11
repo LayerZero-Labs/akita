@@ -30,7 +30,7 @@ pub fn greyhound_verify_stage1<F, T, const D: usize>(
     eval_proof: &GreyhoundEvalProof<F, D>,
     w_commitment_u1: &[CyclotomicRing<F, D>],
     eval_point: &[F],
-    eval_value: F,
+    eval_target: CyclotomicRing<F, D>,
     witness: &LabradorWitness<F, D>,
     z_beta_sq: u128,
     comkey_seed: &LabradorComKeySeed,
@@ -136,7 +136,7 @@ where
             eval_point_len: eval_point.len(),
         },
     )?;
-    absorb_greyhound_eval_claim(transcript, eval_point, &eval_value);
+    absorb_greyhound_eval_claim(transcript, eval_point, &eval_target);
     absorb_greyhound_u2(transcript, &eval_proof.u2);
     let fold_challenges: Vec<F> = (0..n)
         .map(|_| sample_greyhound_fold_challenge(transcript))
@@ -145,13 +145,10 @@ where
     // Basis vectors.
     let outer_vars = eval_point.len() - eval_proof.inner_vars;
     let mut outer_basis = vec![F::zero(); 1usize << outer_vars];
-    multilinear_lagrange_basis(&mut outer_basis, &eval_point[..outer_vars]);
+    multilinear_lagrange_basis(&mut outer_basis, &eval_point[eval_proof.inner_vars..]);
     let mut inner_basis = vec![F::zero(); 1usize << eval_proof.inner_vars];
     if eval_proof.inner_vars > 0 {
-        multilinear_lagrange_basis(
-            &mut inner_basis,
-            &eval_point[eval_point.len() - eval_proof.inner_vars..],
-        );
+        multilinear_lagrange_basis(&mut inner_basis, &eval_point[..eval_proof.inner_vars]);
     } else if !inner_basis.is_empty() {
         inner_basis[0] = F::one();
     }
@@ -195,13 +192,13 @@ where
         ));
     }
 
-    // Constraint 4: <outer_basis, v> = eval_value.
+    // Constraint 4: <outer_basis, v> = eval_target (ring-valued).
     let mut eval_check = CyclotomicRing::<F, D>::zero();
     for (i, basis) in outer_basis.iter().enumerate() {
         let v_i = v.get(i).copied().unwrap_or_else(CyclotomicRing::zero);
         eval_check += v_i.scale(basis);
     }
-    if eval_check != scalar_ring(eval_value) {
+    if eval_check != eval_target {
         return Err(HachiError::InvalidInput(
             "greyhound: evaluation constraint failed".to_string(),
         ));
@@ -216,10 +213,6 @@ fn pow2<F: FieldCore>(exp: usize) -> F {
         v = v + v;
     }
     v
-}
-
-fn scalar_ring<F: FieldCore, const D: usize>(s: F) -> CyclotomicRing<F, D> {
-    CyclotomicRing::from_coefficients(std::array::from_fn(|i| if i == 0 { s } else { F::zero() }))
 }
 
 fn reconstruct_z<F: FieldCore, const D: usize>(

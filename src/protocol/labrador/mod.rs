@@ -19,6 +19,7 @@ pub mod types;
 pub mod utils;
 pub mod verifier;
 
+pub use comkey::{derive_labrador_comkey_seed, LabradorComKeySeed};
 pub use commit::{commit_linear_only, LabradorCommitmentArtifacts};
 pub use config::{plan_fold, select_config, select_config_with_mode, sis_secure, LabradorFoldPlan};
 pub use constraints::{LabradorConstraint, LabradorConstraintTerm};

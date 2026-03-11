@@ -3,6 +3,7 @@
 //! These helpers centralize byte-level encoding for prover/verifier replay:
 //! dimension binding and nonce encoding.
 
+use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::labrador::guardrails::checked_usize_to_u64;
 use crate::protocol::transcript::labels;
@@ -118,16 +119,24 @@ where
     Ok(())
 }
 
-/// Absorb canonical Greyhound evaluation claim bytes (`r` and `v`).
-pub fn absorb_greyhound_eval_claim<F, T>(transcript: &mut T, eval_point: &[F], eval_value: &F)
-where
+/// Absorb canonical Greyhound evaluation claim bytes (`r` and ring-valued `v`).
+///
+/// Absorbs each coordinate of the evaluation point, then all D coefficients of
+/// the ring-valued evaluation target.
+pub fn absorb_greyhound_eval_claim<F, T, const D: usize>(
+    transcript: &mut T,
+    eval_point: &[F],
+    eval_target: &CyclotomicRing<F, D>,
+) where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
     for coord in eval_point {
         transcript.append_field(labels::ABSORB_GREYHOUND_EVAL_POINT, coord);
     }
-    transcript.append_field(labels::ABSORB_GREYHOUND_EVAL_VALUE, eval_value);
+    for coeff in eval_target.coefficients() {
+        transcript.append_field(labels::ABSORB_GREYHOUND_EVAL_VALUE, coeff);
+    }
 }
 
 /// Absorb Greyhound commitment payload `u2`.
@@ -168,14 +177,14 @@ where
     Ok(())
 }
 
-/// Absorb Labrador JL projection vector bytes (`i32` little-endian).
+/// Absorb Labrador JL projection vector bytes (`i64` little-endian).
 #[tracing::instrument(skip_all, name = "labrador::absorb_jl_projection")]
-pub fn absorb_labrador_jl_projection<F, T>(transcript: &mut T, projection: &[i32; 256])
+pub fn absorb_labrador_jl_projection<F, T>(transcript: &mut T, projection: &[i64; 256])
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    let mut bytes = Vec::with_capacity(256 * std::mem::size_of::<i32>());
+    let mut bytes = Vec::with_capacity(256 * std::mem::size_of::<i64>());
     for coeff in projection {
         bytes.extend_from_slice(&coeff.to_le_bytes());
     }
@@ -208,6 +217,19 @@ mod tests {
     use crate::FromSmallInt;
 
     type F = Fp64<4294967197>;
+    const D: usize = 64;
+
+    fn scalar_ring(s: F) -> CyclotomicRing<F, D> {
+        CyclotomicRing::from_coefficients(std::array::from_fn(
+            |i| {
+                if i == 0 {
+                    s
+                } else {
+                    F::zero()
+                }
+            },
+        ))
+    }
 
     // Fixed test nonces for deterministic replay.
     const TEST_NONCE_LOW: u64 = 1;
@@ -223,18 +245,18 @@ mod tests {
             eval_point_len: 13,
         };
         let eval_point: Vec<F> = (0..13).map(|i| F::from_u64((i + 3) as u64)).collect();
-        let eval_value = F::from_u64(77);
+        let eval_target = scalar_ring(F::from_u64(77));
         let u2 = vec![F::from_u64(9), F::from_u64(11), F::from_u64(13)];
 
         let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_GREYHOUND_EVAL);
         absorb_greyhound_eval_context::<F, _>(&mut t1, &ctx).unwrap();
-        absorb_greyhound_eval_claim::<F, _>(&mut t1, &eval_point, &eval_value);
+        absorb_greyhound_eval_claim::<F, _, D>(&mut t1, &eval_point, &eval_target);
         absorb_greyhound_u2::<F, _, _>(&mut t1, &u2);
         let c1 = sample_greyhound_fold_challenge::<F, _>(&mut t1);
 
         let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_GREYHOUND_EVAL);
         absorb_greyhound_eval_context::<F, _>(&mut t2, &ctx).unwrap();
-        absorb_greyhound_eval_claim::<F, _>(&mut t2, &eval_point, &eval_value);
+        absorb_greyhound_eval_claim::<F, _, D>(&mut t2, &eval_point, &eval_target);
         absorb_greyhound_u2::<F, _, _>(&mut t2, &u2);
         let c2 = sample_greyhound_fold_challenge::<F, _>(&mut t2);
 
@@ -244,7 +266,7 @@ mod tests {
     #[test]
     fn greyhound_context_binds_dimensions() {
         let eval_point: Vec<F> = (0..10).map(|i| F::from_u64((i + 5) as u64)).collect();
-        let eval_value = F::from_u64(17);
+        let eval_target = scalar_ring(F::from_u64(17));
         let u2 = vec![F::from_u64(1), F::from_u64(2)];
 
         let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_GREYHOUND_EVAL);
@@ -258,7 +280,7 @@ mod tests {
             },
         )
         .unwrap();
-        absorb_greyhound_eval_claim::<F, _>(&mut t1, &eval_point, &eval_value);
+        absorb_greyhound_eval_claim::<F, _, D>(&mut t1, &eval_point, &eval_target);
         absorb_greyhound_u2::<F, _, _>(&mut t1, &u2);
         let c1 = sample_greyhound_fold_challenge::<F, _>(&mut t1);
 
@@ -273,7 +295,7 @@ mod tests {
             },
         )
         .unwrap();
-        absorb_greyhound_eval_claim::<F, _>(&mut t2, &eval_point, &eval_value);
+        absorb_greyhound_eval_claim::<F, _, D>(&mut t2, &eval_point, &eval_target);
         absorb_greyhound_u2::<F, _, _>(&mut t2, &u2);
         let c2 = sample_greyhound_fold_challenge::<F, _>(&mut t2);
 
@@ -296,7 +318,7 @@ mod tests {
             kappa: 12,
             kappa1: 6,
         };
-        let projection = std::array::from_fn(|i| i as i32 - 127);
+        let projection = std::array::from_fn(|i| i as i64 - 127);
         let nonce = TEST_NONCE_REPLAY;
 
         let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_PROTOCOL);
@@ -327,7 +349,7 @@ mod tests {
             kappa: 4,
             kappa1: 0,
         };
-        let projection = [0i32; 256];
+        let projection = [0i64; 256];
 
         let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_PROTOCOL);
         absorb_labrador_level_context::<F, _>(&mut t1, &ctx).unwrap();

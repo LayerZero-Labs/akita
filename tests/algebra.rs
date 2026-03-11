@@ -1146,6 +1146,34 @@ mod tests {
     }
 
     #[test]
+    fn crt_ntt_mul_large_coeffs_q128() {
+        type F = Fp128<{ Q128_MODULUS }>;
+        type R = CyclotomicRing<F, 64>;
+        type N = CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, 64>;
+
+        let primes = q128_primes();
+        let twiddles: [NttTwiddles<i32, 64>; Q128_NUM_PRIMES] =
+            std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
+        let garner = q128_garner();
+
+        let a = R::from_coefficients(std::array::from_fn(|i| {
+            F::from_canonical_u128_reduced((Q128_MODULUS / 2 - 100 + i as u128 * 31) % Q128_MODULUS)
+        }));
+        let b = R::from_coefficients(std::array::from_fn(|i| {
+            F::from_canonical_u128_reduced((Q128_MODULUS / 2 - 200 + i as u128 * 47) % Q128_MODULUS)
+        }));
+
+        let schoolbook = a * b;
+
+        let ntt_a = N::from_ring(&a, &primes, &twiddles);
+        let ntt_b = N::from_ring(&b, &primes, &twiddles);
+        let ntt_prod = ntt_a.pointwise_mul(&ntt_b, &primes);
+        let ntt_result: R = ntt_prod.to_ring(&primes, &twiddles, &garner);
+
+        assert_eq!(schoolbook, ntt_result);
+    }
+
+    #[test]
     fn q64_ntt_round_trip() {
         type F = Fp64<{ Q64_MODULUS }>;
         type R = CyclotomicRing<F, 64>;

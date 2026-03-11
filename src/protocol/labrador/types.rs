@@ -103,7 +103,7 @@ pub struct LabradorLevelProof<F: FieldCore, const D: usize> {
     /// Second outer commitment.
     pub u2: Vec<CyclotomicRing<F, D>>,
     /// JL projection vector.
-    pub jl_projection: [i32; 256],
+    pub jl_projection: [i64; 256],
     /// JL nonce used to regenerate projection matrix.
     pub jl_nonce: u64,
     /// Lift polynomials (constant term zeroed in proof).
@@ -127,7 +127,7 @@ impl<F: FieldCore, const D: usize> LabradorLevelProof<F, D> {
         let ring_bytes = std::mem::size_of::<CyclotomicRing<F, D>>();
         let ring_count = self.u1.len() + self.u2.len() + self.bb.len();
         ring_count * ring_bytes
-            + self.jl_projection.len() * std::mem::size_of::<i32>()
+            + self.jl_projection.len() * std::mem::size_of::<i64>()
             + std::mem::size_of::<u64>() // jl_nonce
             + std::mem::size_of::<u128>() // norm_sq
     }

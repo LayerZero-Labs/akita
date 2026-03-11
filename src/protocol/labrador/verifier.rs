@@ -256,7 +256,7 @@ where
     if witness.rows().len() != level.config.f {
         return Err(HachiError::InvalidProof);
     }
-    for row in witness.rows() {
+    for row in witness.rows().iter() {
         if row.len() != nn {
             return Err(HachiError::InvalidProof);
         }
@@ -284,12 +284,14 @@ where
             kappa1: level.config.kappa1,
         },
     )?;
+
     transcript.append_serde(labels::ABSORB_LABRADOR_U1, &level.u1);
 
     let virt_total_len = rr * nn;
     let jl_cols = virt_total_len * D;
     let jl_matrix =
         LabradorJlMatrix::replay_nonce_search::<F, T>(transcript, level.jl_nonce, jl_cols)?;
+
     absorb_labrador_jl_projection(transcript, &level.jl_projection);
 
     let virt_row_lengths = vec![nn; rr];
@@ -300,6 +302,7 @@ where
         &level.bb,
         transcript,
     )?;
+
     let (phi_stmt_orig, b_stmt) = aggregate_statement_constraints(
         &statement.constraints,
         &level.input_row_lengths,
@@ -332,11 +335,13 @@ where
     if computed_norm > level.norm_sq {
         return Err(HachiError::InvalidProof);
     }
-    if projection_norm_sq(&level.jl_projection) > 256u128.saturating_mul(statement.beta_sq) {
+    let proj_norm = projection_norm_sq(&level.jl_projection);
+    let proj_bound = 256u128.saturating_mul(statement.beta_sq);
+    if proj_norm > proj_bound {
         return Err(HachiError::InvalidProof);
     }
 
-    let setup = LabradorSetup::new(&level.config, rr, nn, comkey_seed);
+    let setup: LabradorSetup<F, D> = LabradorSetup::new(&level.config, rr, nn, comkey_seed);
     let az = mat_vec_mul(&setup.a_mat, &z);
     let mut rhs = vec![CyclotomicRing::<F, D>::zero(); level.config.kappa];
     for (i, t_row) in t_flat.chunks(level.config.kappa).enumerate() {
@@ -575,7 +580,7 @@ where
 
     Ok(())
 }
-fn projection_norm_sq(projection: &[i32; 256]) -> u128 {
+fn projection_norm_sq(projection: &[i64; 256]) -> u128 {
     projection.iter().fold(0u128, |acc, &v| {
         let x = v as i128;
         let sq = x * x;
