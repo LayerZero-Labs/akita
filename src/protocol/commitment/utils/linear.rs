@@ -3,7 +3,9 @@
 #[cfg(target_arch = "aarch64")]
 use crate::algebra::ntt::neon;
 use crate::algebra::ntt::{MontCoeff, PrimeWidth};
-use crate::algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut};
+use crate::algebra::{
+    CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
+};
 #[cfg(test)]
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
@@ -302,6 +304,36 @@ pub fn unreduced_quotient_rows_ntt_cached<F: FieldCore + CanonicalField, const D
     )
 }
 
+/// Like [`unreduced_quotient_rows_ntt_cached`] but accepts centered i32
+/// coefficient rows instead of field-backed ring elements.
+#[tracing::instrument(skip_all, name = "unreduced_quotient_rows_ntt_cached_centered_i32")]
+pub fn unreduced_quotient_rows_ntt_cached_centered_i32<
+    F: FieldCore + CanonicalField,
+    const D: usize,
+>(
+    slot: &NttSlotCache<D>,
+    vec: &[[i32; D]],
+    max_abs: u32,
+) -> Vec<CyclotomicRing<F, D>> {
+    match slot {
+        NttSlotCache::Q32 {
+            neg,
+            cyc,
+            params: p,
+        } => quotient_single_centered_i32_with_params(neg, cyc, vec, max_abs, p),
+        NttSlotCache::Q64 {
+            neg,
+            cyc,
+            params: p,
+        } => quotient_single_centered_i32_with_params(neg, cyc, vec, max_abs, p),
+        NttSlotCache::Q128 {
+            neg,
+            cyc,
+            params: p,
+        } => quotient_single_centered_i32_with_params(neg, cyc, vec, max_abs, p),
+    }
+}
+
 macro_rules! dispatch_slot {
     ($slot:expr, $func:ident $(, $arg:expr)*) => {{
         match $slot {
@@ -396,12 +428,18 @@ fn is_zero_plane<const D: usize>(plane: &[i8; D]) -> bool {
     plane.iter().all(|&d| d == 0)
 }
 
+#[inline]
+fn is_zero_centered_row<const D: usize>(row: &[i32; D]) -> bool {
+    row.iter().all(|&d| d == 0)
+}
+
 #[cfg(target_arch = "aarch64")]
 const TARGET_L2_CACHE_BYTES: usize = 4 * 1024 * 1024;
 #[cfg(target_arch = "x86_64")]
 const TARGET_L2_CACHE_BYTES: usize = 1024 * 1024;
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
 const TARGET_L2_CACHE_BYTES: usize = 1024 * 1024;
+const CENTERED_LUT_MAX_ABS: u32 = (1 << 16) - 1;
 
 #[inline]
 #[allow(dead_code)]
@@ -659,7 +697,30 @@ pub fn mat_vec_mul_ntt_single_i8<F: FieldCore + CanonicalField, const D: usize>(
     slot: &NttSlotCache<D>,
     vec: &[[i8; D]],
 ) -> Vec<CyclotomicRing<F, D>> {
-    dispatch_slot!(slot, mat_vec_mul_single_i8_with_params, vec)
+    match slot {
+        NttSlotCache::Q32 { neg, params: p, .. } => mat_vec_mul_single_i8_with_params(neg, vec, p),
+        NttSlotCache::Q64 { neg, params: p, .. } => mat_vec_mul_single_i8_with_params(neg, vec, p),
+        NttSlotCache::Q128 { neg, params: p, .. } => mat_vec_mul_single_i8_with_params(neg, vec, p),
+    }
+}
+
+/// Cyclic-domain variant of [`mat_vec_mul_ntt_single_i8`].
+#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_single_i8_cyclic")]
+pub fn mat_vec_mul_ntt_single_i8_cyclic<F: FieldCore + CanonicalField, const D: usize>(
+    slot: &NttSlotCache<D>,
+    vec: &[[i8; D]],
+) -> Vec<CyclotomicRing<F, D>> {
+    match slot {
+        NttSlotCache::Q32 { cyc, params: p, .. } => {
+            mat_vec_mul_single_i8_cyclic_with_params(cyc, vec, p)
+        }
+        NttSlotCache::Q64 { cyc, params: p, .. } => {
+            mat_vec_mul_single_i8_cyclic_with_params(cyc, vec, p)
+        }
+        NttSlotCache::Q128 { cyc, params: p, .. } => {
+            mat_vec_mul_single_i8_cyclic_with_params(cyc, vec, p)
+        }
+    }
 }
 
 fn mat_vec_mul_single_i8_with_params<
@@ -716,6 +777,63 @@ fn mat_vec_mul_single_i8_with_params<
     final_accs
         .into_iter()
         .map(|acc| acc.to_ring_with_params(params))
+        .collect()
+}
+
+fn mat_vec_mul_single_i8_cyclic_with_params<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    vec: &[[i8; D]],
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<CyclotomicRing<F, D>> {
+    let n_a = ntt_mat.len();
+    let inner_width = ntt_mat.first().map_or(0, |row| row.len());
+    if inner_width == 0 || n_a == 0 {
+        return vec![CyclotomicRing::<F, D>::zero(); n_a];
+    }
+
+    let lut = DigitMontLut::new(params);
+    let vec_len = vec.len().min(inner_width);
+    let tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
+    let num_tiles = vec_len.div_ceil(tw);
+
+    let final_accs: Vec<CyclotomicCrtNtt<W, K, D>> = cfg_fold_reduce!(
+        0..num_tiles,
+        || vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a],
+        |mut accs: Vec<CyclotomicCrtNtt<W, K, D>>, tile_idx| {
+            let tile_start = tile_idx * tw;
+            let tile_end = (tile_start + tw).min(vec_len);
+            for (j, digit) in vec[tile_start..tile_end].iter().enumerate() {
+                if is_zero_plane(digit) {
+                    continue;
+                }
+                let ntt_d = CyclotomicCrtNtt::from_i8_cyclic_with_lut(digit, params, &lut);
+                for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
+                    accumulate_pointwise_product_into(
+                        acc,
+                        &mat_row[tile_start + j],
+                        &ntt_d,
+                        params,
+                    );
+                }
+            }
+            accs
+        },
+        |mut a: Vec<CyclotomicCrtNtt<W, K, D>>, b| {
+            for row in 0..n_a {
+                add_ntt_into(&mut a[row], &b[row], params);
+            }
+            a
+        }
+    );
+
+    final_accs
+        .into_iter()
+        .map(|acc| acc.to_ring_cyclic(params))
         .collect()
 }
 
@@ -789,6 +907,100 @@ fn quotient_single_i8_with_params<
                 }
                 let ntt_d_neg = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
                 let ntt_d_cyc = CyclotomicCrtNtt::from_i8_cyclic_with_lut(digit, params, &lut);
+                let col = tile_start + j;
+                for (row, (acc_neg, acc_cyc)) in
+                    accs.0.iter_mut().zip(accs.1.iter_mut()).enumerate()
+                {
+                    accumulate_pointwise_product_into(
+                        acc_neg,
+                        &ntt_neg[row][col],
+                        &ntt_d_neg,
+                        params,
+                    );
+                    accumulate_pointwise_product_into(
+                        acc_cyc,
+                        &ntt_cyc[row][col],
+                        &ntt_d_cyc,
+                        params,
+                    );
+                }
+            }
+            accs
+        },
+        |mut a: (
+            Vec<CyclotomicCrtNtt<W, K, D>>,
+            Vec<CyclotomicCrtNtt<W, K, D>>
+        ),
+         b| {
+            for row in 0..n_a {
+                add_ntt_into(&mut a.0[row], &b.0[row], params);
+                add_ntt_into(&mut a.1[row], &b.1[row], params);
+            }
+            a
+        }
+    );
+
+    final_neg
+        .into_iter()
+        .zip(final_cyc)
+        .map(|(neg_acc, cyc_acc)| {
+            let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring_with_params(params);
+            let cyc_ring: CyclotomicRing<F, D> = cyc_acc.to_ring_cyclic(params);
+            let neg_c = neg_ring.coefficients();
+            let cyc_c = cyc_ring.coefficients();
+            let q: [F; D] = from_fn(|k| (cyc_c[k] - neg_c[k]) * F::TWO_INV);
+            CyclotomicRing::from_coefficients(q)
+        })
+        .collect()
+}
+
+fn quotient_single_centered_i32_with_params<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    ntt_neg: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_cyc: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    vec: &[[i32; D]],
+    max_abs: u32,
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<CyclotomicRing<F, D>> {
+    let n_a = ntt_neg.len();
+    let inner_width = ntt_neg.first().map_or(0, |row| row.len());
+    if inner_width == 0 || n_a == 0 {
+        return vec![CyclotomicRing::<F, D>::zero(); n_a];
+    }
+
+    let vec_len = vec.len().min(inner_width);
+    let tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
+    let num_tiles = vec_len.div_ceil(tw);
+    let zero = CyclotomicCrtNtt::<W, K, D>::zero();
+    let centered_lut = (max_abs <= CENTERED_LUT_MAX_ABS)
+        .then(|| CenteredMontLut::<W, K>::new(params, max_abs as i32));
+
+    let (final_neg, final_cyc): (
+        Vec<CyclotomicCrtNtt<W, K, D>>,
+        Vec<CyclotomicCrtNtt<W, K, D>>,
+    ) = cfg_fold_reduce!(
+        0..num_tiles,
+        || (vec![zero.clone(); n_a], vec![zero.clone(); n_a]),
+        |mut accs: (
+            Vec<CyclotomicCrtNtt<W, K, D>>,
+            Vec<CyclotomicCrtNtt<W, K, D>>
+        ),
+         tile_idx| {
+            let tile_start = tile_idx * tw;
+            let tile_end = (tile_start + tw).min(vec_len);
+            for (j, coeffs) in vec[tile_start..tile_end].iter().enumerate() {
+                if is_zero_centered_row(coeffs) {
+                    continue;
+                }
+                let (ntt_d_neg, ntt_d_cyc) = if let Some(lut) = centered_lut.as_ref() {
+                    CyclotomicCrtNtt::from_centered_i32_pair_with_lut(coeffs, params, lut)
+                } else {
+                    CyclotomicCrtNtt::from_centered_i32_pair_with_params(coeffs, params)
+                };
                 let col = tile_start + j;
                 for (row, (acc_neg, acc_cyc)) in
                     accs.0.iter_mut().zip(accs.1.iter_mut()).enumerate()
