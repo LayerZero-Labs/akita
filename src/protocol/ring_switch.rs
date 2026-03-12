@@ -5,7 +5,6 @@
 //! vectors and setting up the evaluation tables.
 
 use crate::algebra::{CyclotomicRing, SparseChallenge};
-use crate::cfg_into_iter;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
@@ -27,7 +26,8 @@ use crate::protocol::transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
 use crate::protocol::transcript::Transcript;
-use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
+use crate::{cfg_into_iter, cfg_iter};
+use crate::{CanonicalField, FieldCore, FieldSampling};
 #[cfg(test)]
 use std::array::from_fn;
 use std::marker::PhantomData;
@@ -42,12 +42,11 @@ pub struct RingSwitchOutput<F: FieldCore> {
     pub w_commitment: FlatRingVec<F>,
     /// D-erased prover hint for the w-commitment.
     pub w_hint: FlatCommitmentHint,
-    /// Compact evaluation table of w (all entries in [-b/2, b/2), reordered for sumcheck).
+    /// Compact evaluation table of w, stored as y-major slices of the live x prefix.
     /// Populated by the prover; empty on the verifier side.
     pub w_evals: Vec<i8>,
-    /// Field-element evaluation table of w (same reordering as `w_evals`).
-    /// Produced alongside `w_evals` in a single pass to avoid a duplicate scan.
-    pub w_evals_field: Vec<F>,
+    /// Physical x width before zero-extension to the next power of two.
+    pub live_x_cols: usize,
     /// Evaluation table of M_alpha(x) (tau1-weighted).
     pub m_evals_x: Vec<F>,
     /// Evaluation table of alpha powers (y dimension).
@@ -110,6 +109,9 @@ where
         .hint()
         .ok_or_else(|| HachiError::InvalidInput("missing hint in prover".to_string()))?;
     let t_hat = &hint.t_hat;
+    let t = hint.t().ok_or_else(|| {
+        HachiError::InvalidInput("missing recomposed t in prover hint".to_string())
+    })?;
     let w_folded = quad_eq
         .w_folded()
         .ok_or_else(|| HachiError::InvalidInput("missing w_folded in prover".to_string()))?;
@@ -121,6 +123,7 @@ where
         &quad_eq.challenges,
         w_hat_flat,
         t_hat,
+        t,
         w_folded,
         z_pre,
         quad_eq.y(),
@@ -181,6 +184,7 @@ where
 
     let num_l = D.trailing_zeros() as usize;
     let num_ring_elems = w.len() / D;
+    let live_x_cols = num_ring_elems;
     let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
     let m_rows = m_row_count::<Cfg>();
     let num_sc_vars = num_u + num_l;
@@ -207,7 +211,7 @@ where
                 &tau1,
             )
         },
-        || build_w_evals_dual::<F>(&w, D, layout.log_basis),
+        || build_w_evals_compact(&w, D),
     );
     #[cfg(not(feature = "parallel"))]
     let (m_evals_x_result, w_result) = {
@@ -220,12 +224,12 @@ where
             layout,
             &tau1,
         )?;
-        let w_dual = build_w_evals_dual::<F>(&w, D, layout.log_basis);
-        (Ok(m_evals_x), w_dual)
+        let w_compact = build_w_evals_compact(&w, D);
+        (Ok(m_evals_x), w_compact)
     };
 
     let m_evals_x = m_evals_x_result?;
-    let (w_evals, w_evals_field, _, _) = w_result?;
+    let (w_evals, _, _) = w_result?;
     eprintln!(
         "    [ring_switch] m_evals_x+w_evals parallel: {:.2}s",
         t_par.elapsed().as_secs_f64()
@@ -236,7 +240,7 @@ where
         w_commitment,
         w_hint,
         w_evals,
-        w_evals_field,
+        live_x_cols,
         m_evals_x,
         alpha_evals_y,
         num_u,
@@ -350,7 +354,7 @@ where
         w_commitment: w_commitment.clone(),
         w_hint: FlatCommitmentHint::empty(),
         w_evals: Vec::new(),
-        w_evals_field: Vec::new(),
+        live_x_cols: w_len / D,
         m_evals_x,
         alpha_evals_y,
         num_u,
@@ -462,14 +466,20 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::challenge_weight_for_ring_dim(d)
     }
 
+    fn w_log_basis() -> u32 {
+        Cfg::w_log_basis()
+    }
+
     fn decomposition() -> DecompositionParams {
         let parent = Cfg::decomposition();
+        let w_basis = Cfg::w_log_basis();
         let parent_open = parent.log_open_bound.unwrap_or(parent.log_commit_bound);
         DecompositionParams {
-            log_basis: parent.log_basis,
-            // w's entries are balanced digits in [-b/2, b/2), so commitment
-            // decomposition needs only one level.
-            log_commit_bound: parent.log_basis,
+            log_basis: w_basis,
+            // w entries come from a balanced decomposition; use w_basis for
+            // the commit bound since that's the widest digit range at any
+            // recursive level (level-0 entries fit in parent.log_basis <= w_basis).
+            log_commit_bound: w_basis,
             // Opening folds w with arbitrary field-element weights, producing
             // full-field-size coefficients that need the same decomposition
             // depth as the parent's opening bound.
@@ -598,13 +608,13 @@ where
             .collect();
         mat_vec_mul_ntt_i8(ntt_a, &block_slices, depth_commit, log_basis)
     };
-    let t_hat_per_block: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
-        .map(|t_i| decompose_rows_i8(&t_i, depth_open, log_basis))
+    let t_hat_per_block: Vec<Vec<[i8; D]>> = cfg_iter!(t_all)
+        .map(|t_i| decompose_rows_i8(t_i, depth_open, log_basis))
         .collect();
 
     let t_hat_flat = flatten_i8_blocks(&t_hat_per_block);
     let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(ntt_b, &t_hat_flat);
-    let hint = HachiCommitmentHint::new(t_hat_per_block);
+    let hint = HachiCommitmentHint::with_t(t_hat_per_block, t_all);
     Ok((RingCommitment { u }, hint))
 }
 
@@ -787,13 +797,12 @@ pub(crate) fn build_w_evals<F: FieldCore>(
     Ok((evals, num_u, num_l))
 }
 
-/// Produce both compact `Vec<i8>` and field `Vec<F>` eval tables in one pass
-/// over `w`, sharing the index computation.
-pub(crate) fn build_w_evals_dual<F: FieldCore + FromSmallInt>(
+/// Produce the compact `Vec<i8>` eval table of `w` for the fused prover,
+/// storing only the physical x prefix for each y slice.
+pub(crate) fn build_w_evals_compact(
     w: &[i8],
     d: usize,
-    log_basis: u32,
-) -> Result<(Vec<i8>, Vec<F>, usize, usize), HachiError> {
+) -> Result<(Vec<i8>, usize, usize), HachiError> {
     if d == 0 || w.len() % d != 0 {
         return Err(HachiError::InvalidSize {
             expected: d,
@@ -801,26 +810,18 @@ pub(crate) fn build_w_evals_dual<F: FieldCore + FromSmallInt>(
         });
     }
     let num_l = d.trailing_zeros() as usize;
-    let num_ring_elems = w.len() / d;
-    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    let x_len = 1usize << num_u;
-    let n = x_len << num_l;
+    let live_x_cols = w.len() / d;
+    let num_u = live_x_cols.next_power_of_two().trailing_zeros() as usize;
 
-    let lut = DigitLut::<F>::new(log_basis);
-    let (compact, field): (Vec<i8>, Vec<F>) = cfg_into_iter!(0..n)
-        .map(|dst| {
-            let x = dst & (x_len - 1);
-            let y = dst >> num_u;
-            let src = y + (x << num_l);
-            if src < w.len() {
-                let d = w[src];
-                (d, lut.get(d))
-            } else {
-                (0i8, F::zero())
-            }
+    let rows: Vec<Vec<i8>> = cfg_into_iter!(0..d)
+        .map(|y| {
+            (0..live_x_cols)
+                .map(|x| w[y + (x << num_l)])
+                .collect::<Vec<_>>()
         })
-        .unzip();
-    Ok((compact, field, num_u, num_l))
+        .collect();
+    let compact = rows.into_iter().flatten().collect();
+    Ok((compact, num_u, num_l))
 }
 
 pub(crate) fn m_row_count<Cfg: CommitmentConfig>() -> usize {
@@ -1004,6 +1005,7 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
         z_pre.len(), z_pre.len() * num_digits_fold, r.len(), z_count + r_hat_count, (z_count + r_hat_count) * D,
     );
     let mut out = Vec::with_capacity((z_count + r_hat_count) * D);
+    let mut digit_scratch = vec![[0i8; D]; num_digits_fold.max(levels)];
     for block in w_hat {
         for digits in block {
             out.extend_from_slice(digits);
@@ -1013,13 +1015,17 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
         out.extend_from_slice(digits);
     }
     for z_j in z_pre {
-        for plane in z_j.balanced_decompose_pow2_i8(num_digits_fold, log_basis) {
-            out.extend_from_slice(&plane);
+        let z_planes = &mut digit_scratch[..num_digits_fold];
+        z_j.balanced_decompose_pow2_i8_into(z_planes, log_basis);
+        for plane in z_planes.iter() {
+            out.extend_from_slice(plane);
         }
     }
     for ri in r {
-        for plane in ri.balanced_decompose_pow2_i8(levels, log_basis) {
-            out.extend_from_slice(&plane);
+        let r_planes = &mut digit_scratch[..levels];
+        ri.balanced_decompose_pow2_i8_into(r_planes, log_basis);
+        for plane in r_planes.iter() {
+            out.extend_from_slice(plane);
         }
     }
     out

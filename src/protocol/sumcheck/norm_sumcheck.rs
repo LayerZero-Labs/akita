@@ -1,9 +1,9 @@
 //! Norm (range-check) sumcheck instance (F_0).
 //!
-//! **F_{0,τ₀}(x, y)** = ẽq(τ₀,(x,y)) · w̃(x,y) · (w̃−1)(w̃+1)···(w̃−b+1)(w̃+b−1)
+//! **F_{0,τ₀}(x, y)** = ẽq(τ₀,(x,y)) · Π_{k=−b/2}^{b/2−1}(w̃(x,y) − k)
 //!
-//! Proves that all entries of w̃ lie in {−(b−1), …, b−1}; the sum over the
-//! boolean hypercube should equal zero when the range constraint holds.
+//! Proves that all entries of w̃ lie in the balanced-digit set {−b/2, …, b/2−1};
+//! the sum over the boolean hypercube should equal zero when the range constraint holds.
 
 use super::eq_poly::EqPolynomial;
 use super::split_eq::GruenSplitEq;
@@ -15,8 +15,10 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::{cfg_fold_reduce, AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
 
-/// Max number of affine coefficient rows (degree_q + 1) for `b <= 8`.
-pub(crate) const MAX_AFFINE_COEFFS: usize = 16;
+/// Max number of affine coefficient rows (degree_q + 1) for `b <= 16`.
+/// With the balanced range-check polynomial (degree b), degree_q = b,
+/// so num_rows = b + 1 <= 17 fits comfortably.
+pub(crate) const MAX_AFFINE_COEFFS: usize = 17;
 
 /// Which kernel to use for the norm sumcheck accumulation loop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,6 +58,13 @@ pub(crate) struct SparseCoeffEntry {
     pub is_neg: bool,
 }
 
+/// Signed coefficient for the compact round-0 affine LUT.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct CompactCoeffEntry {
+    pub abs_coeff: u64,
+    pub is_neg: bool,
+}
+
 #[derive(Clone)]
 pub(crate) struct RangeAffinePrecomp<E: FieldCore> {
     /// Flat storage of nonzero `coeff_mix[i][k]` entries.
@@ -63,23 +72,26 @@ pub(crate) struct RangeAffinePrecomp<E: FieldCore> {
     /// `sparse_row_offsets[i]..sparse_row_offsets[i+1]` indexes into `sparse_entries`.
     sparse_row_offsets: Vec<usize>,
     pub(crate) degree_q: usize,
-    /// Precomputed `h_i(w_0)` for all small-integer `w_0 ∈ {-(b-1),...,b-1}`.
-    /// Indexed as `small_w_lut[(w_0 + b - 1) * num_rows + i]`.
+    /// Precomputed `h_i(w_0)` for all balanced-digit `w_0 ∈ {-b/2,...,b/2-1}`.
+    /// Indexed as `small_w_lut[(w_0 + b/2) * num_rows + i]`.
     small_w_lut: Vec<E>,
+    /// Dense `(w_0, w_1)` coefficient LUT for the compact round-0 path.
+    /// Indexed as `compact_coeff_lut[((w0_idx * b) + w1_idx) * num_rows + i]`.
+    compact_coeff_lut: Option<Vec<CompactCoeffEntry>>,
     b: usize,
 }
 
 /// Integer version of `range_check_coeffs`: returns the polynomial coefficients
-/// of `R(w) = w * Π_{k=1}^{b-1}(w² - k²)` as exact i64 values.
+/// of `R(w) = Π_{k=−b/2}^{b/2−1}(w − k)` as exact i64 values.
 fn range_check_coeffs_int(b: usize) -> Vec<i64> {
-    assert!(b >= 1, "b must be at least 1");
-    let mut coeffs: Vec<i64> = vec![0, 1];
-    for k in 1..b as i64 {
-        let k_sq = k * k;
-        let mut next = vec![0i64; coeffs.len() + 2];
+    assert!(b >= 2, "b must be at least 2");
+    let half = (b / 2) as i64;
+    let mut coeffs: Vec<i64> = vec![1];
+    for k in -half..half {
+        let mut next = vec![0i64; coeffs.len() + 1];
         for (idx, &c) in coeffs.iter().enumerate() {
-            next[idx] -= c * k_sq;
-            next[idx + 2] += c;
+            next[idx] -= c * k;
+            next[idx + 1] += c;
         }
         coeffs = next;
     }
@@ -126,30 +138,71 @@ impl<E: FieldCore + FromSmallInt> RangeAffinePrecomp<E> {
         sparse_row_offsets.push(sparse_entries.len());
 
         // Precompute LUT using i128 integer Horner.
-        let num_w_vals = 2 * b - 1;
+        let half = (b / 2) as i64;
+        let num_w_vals = b;
         let mut small_w_lut = vec![E::zero(); num_w_vals * num_rows];
-        for (w_idx, w_0_int) in (-(b as i64 - 1)..=(b as i64 - 1)).enumerate() {
+        let mut small_w_lut_int = vec![0i128; num_w_vals * num_rows];
+        for (w_idx, w_0_int) in (-half..half).enumerate() {
             for i in 0..num_rows {
                 let row = &dense_int[dense_row_offsets[i]..dense_row_offsets[i + 1]];
                 let mut h: i128 = 0;
                 for &c in row.iter().rev() {
                     h = h * w_0_int as i128 + c as i128;
                 }
+                small_w_lut_int[w_idx * num_rows + i] = h;
                 small_w_lut[w_idx * num_rows + i] = E::from_i128(h);
             }
         }
+
+        let compact_coeff_lut = if b <= 8 {
+            let mut lut = Vec::with_capacity(num_w_vals * num_w_vals * num_rows);
+            for w0_idx in 0..num_w_vals {
+                let w_0_int = w0_idx as i64 - half;
+                let h_base = w0_idx * num_rows;
+                for w_1_int in -half..half {
+                    let delta = (w_1_int - w_0_int) as i128;
+                    let mut delta_pow = 1i128;
+                    for &h_i in &small_w_lut_int[h_base..h_base + num_rows] {
+                        let coeff = h_i
+                            .checked_mul(delta_pow)
+                            .expect("compact affine coefficient overflow");
+                        let abs_coeff = coeff.unsigned_abs();
+                        assert!(
+                            abs_coeff <= u64::MAX as u128,
+                            "compact affine coefficient exceeds u64"
+                        );
+                        lut.push(CompactCoeffEntry {
+                            abs_coeff: abs_coeff as u64,
+                            is_neg: coeff < 0,
+                        });
+                        delta_pow = delta_pow
+                            .checked_mul(delta)
+                            .expect("compact affine power overflow");
+                    }
+                }
+            }
+            Some(lut)
+        } else {
+            None
+        };
 
         Self {
             sparse_entries,
             sparse_row_offsets,
             degree_q,
             small_w_lut,
+            compact_coeff_lut,
             b,
         }
     }
 }
 
 impl<E: FieldCore> RangeAffinePrecomp<E> {
+    #[inline]
+    fn digit_index(&self, w_0_int: i8) -> usize {
+        (w_0_int as i16 + (self.b / 2) as i16) as usize
+    }
+
     #[inline]
     pub(crate) fn sparse_row(&self, i: usize) -> &[SparseCoeffEntry] {
         &self.sparse_entries[self.sparse_row_offsets[i]..self.sparse_row_offsets[i + 1]]
@@ -161,42 +214,53 @@ impl<E: FieldCore> RangeAffinePrecomp<E> {
 
     #[inline]
     pub(crate) fn h_i_lut(&self, w_0_int: i8, i: usize) -> E {
-        let w_idx = (w_0_int as i16 + self.b as i16 - 1) as usize;
+        let w_idx = self.digit_index(w_0_int);
         self.small_w_lut[w_idx * self.num_rows() + i]
+    }
+
+    #[inline]
+    pub(crate) fn compact_coeffs_lut(
+        &self,
+        w_0_int: i8,
+        w_1_int: i8,
+    ) -> Option<&[CompactCoeffEntry]> {
+        let lut = self.compact_coeff_lut.as_ref()?;
+        let num_rows = self.num_rows();
+        let pair_idx = self.digit_index(w_0_int) * self.b + self.digit_index(w_1_int);
+        let start = pair_idx * num_rows;
+        Some(&lut[start..start + num_rows])
     }
 }
 
 #[derive(Clone)]
 pub(crate) struct PointEvalPrecomp<E: FieldCore> {
-    pub(crate) range_offsets_sq: Vec<E>,
+    /// Precomputed offsets `k(k + 1)` for `k ∈ {0, ..., b/2 - 1}`.
+    pub(crate) pair_offsets: Vec<E>,
 }
 
 impl<E: FieldCore + FromSmallInt> PointEvalPrecomp<E> {
     pub(crate) fn new(b: usize) -> Self {
-        assert!(b >= 1, "b must be at least 1");
-        let range_offsets_sq = (1..b)
-            .map(|k| {
-                let k_e = E::from_u64(k as u64);
-                k_e * k_e
-            })
-            .collect();
-        Self { range_offsets_sq }
+        assert!(b >= 2, "b must be at least 2");
+        let half = (b / 2) as i64;
+        let pair_offsets = (0..half).map(|k| E::from_i64(k * (k + 1))).collect();
+        Self { pair_offsets }
     }
 }
 
-/// Evaluate `R(w) = w · Π_{k=1}^{b-1}(w² - k²)` in native `i128` arithmetic.
+/// Evaluate `R(w) = Π_{k=0}^{b/2−1}(w(w+1) − k(k+1))` in native `i128` arithmetic.
 ///
-/// Only valid for `b <= 10` (intermediates fit i128; verified up to ~2^117 for b=8).
-/// Panics in debug mode if an intermediate overflows.
+/// Vanishes exactly on the balanced-digit set `{−b/2, …, b/2−1}`.
 #[inline]
 pub(crate) fn range_check_eval_i128(w: i32, b: usize) -> i128 {
-    debug_assert!(b <= 10, "i128 range-check only valid for b <= 10");
-    let s = (w as i128) * (w as i128);
-    let mut acc = w as i128;
-    for k in 1..b as i128 {
+    let half = (b / 2) as i128;
+    let s = (w as i128) * (w as i128 + 1);
+    let mut acc: i128 = 1;
+    let mut offset = 0i128;
+    for k in 0..half {
         acc = acc
-            .checked_mul(s - k * k)
+            .checked_mul(s - offset)
             .expect("i128 overflow in range-check");
+        offset += 2 * k + 2;
     }
     acc
 }
@@ -211,13 +275,43 @@ pub(crate) fn field_from_i128<E: CanonicalField>(val: i128) -> E {
     }
 }
 
-pub(crate) fn range_check_eval_precomputed<E: FieldCore>(w: E, offsets_sq: &[E]) -> E {
-    let s = w * w;
-    let mut acc = w;
-    for &k_sq in offsets_sq {
-        acc = acc * (s - k_sq);
+pub(crate) fn range_check_eval_precomputed<E: FieldCore>(w: E, pair_offsets: &[E]) -> E {
+    let s = w * (w + E::one());
+    let mut acc = E::one();
+    for &offset in pair_offsets {
+        acc = acc * (s - offset);
     }
     acc
+}
+
+#[inline]
+pub(crate) fn accumulate_compact_coeffs<E: FieldCore + HasUnreducedOps>(
+    pos_accum: &mut [E::MulU64Accum],
+    neg_accum: &mut [E::MulU64Accum],
+    e_in: E,
+    coeffs: &[CompactCoeffEntry],
+) {
+    debug_assert!(pos_accum.len() >= coeffs.len());
+    debug_assert!(neg_accum.len() >= coeffs.len());
+    for (idx, coeff) in coeffs.iter().enumerate() {
+        if coeff.abs_coeff == 0 {
+            continue;
+        }
+        let prod = e_in.mul_u64_unreduced(coeff.abs_coeff);
+        if coeff.is_neg {
+            neg_accum[idx] += prod;
+        } else {
+            pos_accum[idx] += prod;
+        }
+    }
+}
+
+#[inline]
+pub(crate) fn reduce_small_coeff_accum<E: FieldCore + HasUnreducedOps>(
+    pos: E::MulU64Accum,
+    neg: E::MulU64Accum,
+) -> E {
+    E::reduce_mul_u64_accum(pos) - E::reduce_mul_u64_accum(neg)
 }
 
 /// Compute per-entry affine range-check coefficients using power-table +
@@ -359,9 +453,9 @@ pub(crate) fn compute_norm_round_poly<E: FieldCore + FromSmallInt + HasUnreduced
 
     match round_kernel {
         NormRoundKernel::PointEvalInterpolation => {
-            let degree_q = 2 * b - 1;
+            let degree_q = b;
             let num_points_q = degree_q + 1;
-            let offsets_sq = &point_precomp.unwrap().range_offsets_sq;
+            let pair_offsets = &point_precomp.unwrap().pair_offsets;
 
             let q_evals = {
                 let _span = tracing::info_span!("norm_accumulate", kernel = "point_eval").entered();
@@ -376,7 +470,7 @@ pub(crate) fn compute_norm_round_poly<E: FieldCore + FromSmallInt + HasUnreduced
                         let delta = w_1 - w_0;
                         let mut w_t = w_0;
                         for eval in evals.iter_mut() {
-                            *eval += eq_rem * range_check_eval_precomputed(w_t, offsets_sq);
+                            *eval += eq_rem * range_check_eval_precomputed(w_t, pair_offsets);
                             w_t += delta;
                         }
                         evals
@@ -506,7 +600,7 @@ pub(crate) fn compute_norm_round_poly_compact<
 
     match round_kernel {
         NormRoundKernel::PointEvalInterpolation if b <= 10 => {
-            let degree_q = 2 * b - 1;
+            let degree_q = b;
             let num_points_q = degree_q + 1;
 
             let q_evals = {
@@ -545,10 +639,50 @@ pub(crate) fn compute_norm_round_poly_compact<
             let rp = range_precomp.unwrap();
             let num_coeffs_q = rp.degree_q + 1;
 
-            let mut q_coeffs = {
-                let _span =
-                    tracing::info_span!("norm_accumulate", kernel = "affine_coeff_lut").entered();
-
+            let mut q_coeffs = if rp
+                .compact_coeffs_lut(-(b as i8 / 2), -(b as i8 / 2))
+                .is_some()
+            {
+                cfg_fold_reduce!(
+                    0..e_second.len(),
+                    || vec![E::ProductAccum::ZERO; num_coeffs_q],
+                    |mut outer_accum, j_high| {
+                        debug_assert!(num_coeffs_q <= MAX_AFFINE_COEFFS);
+                        let mut inner_pos = [E::MulU64Accum::ZERO; MAX_AFFINE_COEFFS];
+                        let mut inner_neg = [E::MulU64Accum::ZERO; MAX_AFFINE_COEFFS];
+                        for (j_low, &e_in) in e_first.iter().enumerate() {
+                            let j = j_high * num_first + j_low;
+                            let w_0_int = w_compact[2 * j];
+                            let w_1_int = w_compact[2 * j + 1];
+                            let coeffs = rp
+                                .compact_coeffs_lut(w_0_int, w_1_int)
+                                .expect("missing compact coefficient LUT");
+                            accumulate_compact_coeffs(
+                                &mut inner_pos[..num_coeffs_q],
+                                &mut inner_neg[..num_coeffs_q],
+                                e_in,
+                                coeffs,
+                            );
+                        }
+                        let e_out = e_second[j_high];
+                        for k in 0..num_coeffs_q {
+                            let inner_reduced =
+                                reduce_small_coeff_accum(inner_pos[k], inner_neg[k]);
+                            outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                        }
+                        outer_accum
+                    },
+                    |mut a, b_vec| {
+                        for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
+                            *ai += *bi;
+                        }
+                        a
+                    }
+                )
+                .into_iter()
+                .map(E::reduce_product_accum)
+                .collect::<Vec<_>>()
+            } else {
                 cfg_fold_reduce!(
                     0..e_second.len(),
                     || vec![E::ProductAccum::ZERO; num_coeffs_q],
@@ -582,10 +716,10 @@ pub(crate) fn compute_norm_round_poly_compact<
                         a
                     }
                 )
-            }
-            .into_iter()
-            .map(E::reduce_product_accum)
-            .collect::<Vec<_>>();
+                .into_iter()
+                .map(E::reduce_product_accum)
+                .collect::<Vec<_>>()
+            };
 
             trim_trailing_zeros(&mut q_coeffs);
             let q_poly = UniPoly::from_coeffs(q_coeffs);
@@ -676,7 +810,7 @@ impl<E: FieldCore + FromSmallInt + HasUnreducedOps> SumcheckInstanceProver<E>
     }
 
     fn degree_bound(&self) -> usize {
-        2 * self.b
+        self.b + 1
     }
 
     fn input_claim(&self) -> E {
@@ -735,7 +869,7 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceVerifier<E> for NormSumcheckVe
     }
 
     fn degree_bound(&self) -> usize {
-        2 * self.b
+        self.b + 1
     }
 
     fn input_claim(&self) -> E {
@@ -770,11 +904,26 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::SeedableRng;
     use std::array::from_fn;
+    use std::sync::Mutex;
 
     type F = Fp64<4294967197>;
     type Cfg = SmallTestCommitmentConfig;
     const D: usize = Cfg::D;
     type Scheme = HachiCommitmentScheme<D, Cfg>;
+
+    static NORM_KERNEL_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_norm_kernel_override<T>(value: &str, f: impl FnOnce() -> T) -> T {
+        let _guard = NORM_KERNEL_ENV_LOCK.lock().unwrap();
+        let old = std::env::var("HACHI_NORM_KERNEL").ok();
+        std::env::set_var("HACHI_NORM_KERNEL", value);
+        let result = f();
+        match old {
+            Some(old_value) => std::env::set_var("HACHI_NORM_KERNEL", old_value),
+            None => std::env::remove_var("HACHI_NORM_KERNEL"),
+        }
+        result
+    }
 
     struct PointEvalReferenceNormSumcheckProver<E: FieldCore> {
         split_eq: GruenSplitEq<E>,
@@ -804,7 +953,7 @@ mod tests {
         }
 
         fn degree_bound(&self) -> usize {
-            2 * self.b
+            self.b + 1
         }
 
         fn input_claim(&self) -> E {
@@ -813,7 +962,7 @@ mod tests {
 
         fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
             let half = self.w_table.len() / 2;
-            let degree_q = 2 * self.b - 1;
+            let degree_q = self.b;
             let num_points_q = degree_q + 1;
 
             let (e_first, e_second) = self.split_eq.remaining_eq_tables();
@@ -857,8 +1006,12 @@ mod tests {
             let case_idx = case_idx as u64;
             let num_vars = 6;
             let n = 1usize << num_vars;
+            let half = (b / 2) as i64;
             let w_evals: Vec<F> = (0..n)
-                .map(|i| F::from_u64((i as u64 * 31 + case_idx * 17) % b as u64))
+                .map(|i| {
+                    let v = ((i as i64 * 31 + case_idx as i64 * 17) % b as i64) - half;
+                    F::from_i64(v)
+                })
                 .collect();
             let tau: Vec<F> = (0..num_vars)
                 .map(|_| F::from_u64(rand::Rng::gen_range(&mut rng, 1u64..=257)))
@@ -961,6 +1114,51 @@ mod tests {
                     "final affine claim mismatch for case {case_idx}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn norm_sumcheck_env_kernel_override_matches_explicit_kernel() {
+        let num_vars = 5usize;
+        let n = 1usize << num_vars;
+        let b = 8usize;
+        let half = (b / 2) as i64;
+        let w_evals: Vec<F> = (0..n)
+            .map(|i| F::from_i64(((i as i64 * 9 + 5) % b as i64) - half))
+            .collect();
+        let tau: Vec<F> = (0..num_vars)
+            .map(|i| F::from_u64((2 * i as u64) + 3))
+            .collect();
+
+        for (override_value, kernel) in [
+            ("point_eval", NormRoundKernel::PointEvalInterpolation),
+            ("affine_coeff", NormRoundKernel::AffineCoeffComposition),
+        ] {
+            with_norm_kernel_override(override_value, || {
+                let mut overridden = NormSumcheckProver::new(&tau, w_evals.clone(), b);
+                let mut explicit =
+                    NormSumcheckProver::new_with_kernel(&tau, w_evals.clone(), b, kernel);
+                let mut claim_overridden = F::zero();
+                let mut claim_explicit = F::zero();
+                for round in 0..num_vars {
+                    let g_override = overridden.compute_round_univariate(round, claim_overridden);
+                    let g_explicit = explicit.compute_round_univariate(round, claim_explicit);
+                    assert_eq!(
+                        g_override, g_explicit,
+                        "env override mismatch for kernel {kernel:?} round {round}"
+                    );
+
+                    let r = F::from_u64((round as u64) + 19);
+                    claim_overridden = g_override.evaluate(&r);
+                    claim_explicit = g_explicit.evaluate(&r);
+                    overridden.ingest_challenge(round, r);
+                    explicit.ingest_challenge(round, r);
+                }
+                assert_eq!(
+                    claim_overridden, claim_explicit,
+                    "final claim mismatch for kernel {kernel:?}"
+                );
+            });
         }
     }
 
@@ -1088,7 +1286,9 @@ mod tests {
         let num_vars = 3;
         let n = 1usize << num_vars;
         let b = 2;
-        let w_evals_f: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 % b as u64)).collect();
+        let w_evals_f: Vec<F> = (0..n)
+            .map(|i| F::from_i64((i as i64 % b as i64) - (b as i64 / 2)))
+            .collect();
         let tau_f: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
 
         let w_evals_e: Vec<E2> = w_evals_f.iter().map(|&f| E2::lift_base(f)).collect();
@@ -1121,7 +1321,8 @@ mod tests {
     #[test]
     fn range_check_eval_i128_matches_field() {
         for b in [2, 4, 8, 10] {
-            for w in -(b as i32 - 1)..=(b as i32 - 1) {
+            let half = (b / 2) as i32;
+            for w in -(half + 2)..=(half + 2) {
                 let i128_val = range_check_eval_i128(w, b);
                 let field_val: F = range_check_eval(F::from_i64(w as i64), b);
                 let field_from_i128_val: F = field_from_i128(i128_val);
@@ -1130,6 +1331,17 @@ mod tests {
                     "i128 range-check mismatch for b={b}, w={w}: \
                      i128={i128_val}, field_from_i128={field_from_i128_val:?}, field={field_val:?}"
                 );
+                if (-half..half).contains(&w) {
+                    assert_eq!(
+                        i128_val, 0,
+                        "range-check should vanish at balanced digit w={w} for b={b}"
+                    );
+                } else {
+                    assert_ne!(
+                        i128_val, 0,
+                        "range-check should not vanish outside the balanced range for w={w} and b={b}"
+                    );
+                }
             }
         }
     }

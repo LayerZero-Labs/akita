@@ -451,6 +451,19 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         Self::CHALLENGE_WEIGHT
     }
 
+    /// Gadget base for recursive w-opening levels (levels 1+).
+    ///
+    /// At level 0, the decomposition uses `Self::decomposition().log_basis`.
+    /// At recursive levels, the `WCommitmentConfig` uses this value instead.
+    /// A larger basis at w-levels reduces decomposition depth (`delta_open`)
+    /// at the cost of a higher-degree norm sumcheck — acceptable because the
+    /// w-level witness is much smaller than the level-0 witness.
+    ///
+    /// Default: same as the level-0 basis.
+    fn w_log_basis() -> u32 {
+        Self::decomposition().log_basis
+    }
+
     /// Witness length (in i8 digits) above which the prover hands off to
     /// Labrador (D'=64) instead of sending the witness directly.
     ///
@@ -648,40 +661,38 @@ impl CommitmentConfig for DynamicSmallTestCommitmentConfig {
 }
 
 /// Production-oriented profile for 128-bit base fields (`Fp128<P>`),
-/// parameterized by the coefficient bound used at commit time.
+/// parameterized by the coefficient bound and gadget basis.
 ///
 /// This profile targets the `D = 256`, `n_A = n_B = n_D = 1` regime with
-/// base-8 balanced decomposition (`log_basis = 3`) over ~128-bit moduli.
+/// balanced decomposition over ~128-bit moduli.
 ///
-/// `LOG_COMMIT_BOUND` is the bit-width of the largest polynomial coefficient
-/// the commitment decomposition must represent. Smaller bounds yield fewer
-/// decomposition levels (`delta_commit = ceil(LOG_COMMIT_BOUND / log_basis)`)
-/// and proportionally smaller witnesses.
-///
-/// Opening always uses the full field modulus (128 bits) because folding with
-/// arbitrary field-element weights produces full-field-size coefficients.
+/// - `LOG_COMMIT_BOUND`: bit-width of the largest polynomial coefficient the
+///   commitment decomposition must represent.
+/// - `LOG_BASIS`: base-2 log of the gadget base at level 0.
+/// - `W_LOG_BASIS`: base-2 log of the gadget base at recursive w-opening
+///   levels (levels 1+). A larger w-basis reduces `delta_open` (fewer
+///   decomposition digits) at the cost of a higher-degree norm sumcheck at
+///   those levels — acceptable because the w-level witness is much smaller.
 ///
 /// # Aliases
 ///
-/// - [`Fp128FullCommitmentConfig`] = `<128>` — arbitrary field-element polys
-/// - [`Fp128OneHotCommitmentConfig`] = `<1>` — binary / one-hot polys
-/// - [`Fp128LogBasisCommitmentConfig`] = `<3>` — balanced-digit witnesses
-/// - [`Fp128CommitmentConfig`] — backward-compatible alias for `<128>`
+/// - [`Fp128FullCommitmentConfig`] = `<128, 3, 3>`
+/// - [`Fp128OneHotCommitmentConfig`] = `<1, 3, 3>`
+/// - [`Fp128LogBasisCommitmentConfig`] = `<3, 3, 3>`
+/// - [`Fp128CommitmentConfig`] — alias for `Fp128FullCommitmentConfig`
 ///
 /// # β derivation (stage-1 folded witness `z`)
 ///
-/// - In `compute_z_hat`, each coordinate is `z[j] = Σ_i s_i[j].mul_by_sparse(c_i)`.
-/// - `balanced_decompose_pow2` yields per-coefficient digits in `[-b/2, b/2)`
-///   where `b = 2^LOG_BASIS`, so each input coefficient has `|·| <= b/2`.
-/// - Challenges use exactly `ω = CHALLENGE_WEIGHT` nonzeros in `{±1}`.
-/// - Therefore each `mul_by_sparse` output coefficient is bounded by `ω * (b/2)`.
-/// - Summing over `2^R` blocks (R = r_vars) gives:
-///   `||z||_inf <= 2^R * ω * (b/2)`.
+/// `||z||_inf <= 2^R * ω * (b/2)` where `b = 2^LOG_BASIS`.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct Fp128BoundedCommitmentConfig<const LOG_COMMIT_BOUND: u32>;
+pub struct Fp128BoundedCommitmentConfig<
+    const LOG_COMMIT_BOUND: u32,
+    const LOG_BASIS: u32,
+    const W_LOG_BASIS: u32 = LOG_BASIS,
+>;
 
-impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
-    for Fp128BoundedCommitmentConfig<LOG_COMMIT_BOUND>
+impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> CommitmentConfig
+    for Fp128BoundedCommitmentConfig<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>
 {
     const D: usize = 256;
     const N_A: usize = 1;
@@ -691,7 +702,7 @@ impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
 
     fn decomposition() -> DecompositionParams {
         DecompositionParams {
-            log_basis: 3,
+            log_basis: LOG_BASIS,
             log_commit_bound: LOG_COMMIT_BOUND,
             log_open_bound: if LOG_COMMIT_BOUND < 128 {
                 Some(128)
@@ -699,6 +710,10 @@ impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
                 None
             },
         }
+    }
+
+    fn w_log_basis() -> u32 {
+        W_LOG_BASIS
     }
 
     fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
@@ -716,22 +731,21 @@ impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
     }
 }
 
-/// Full-field (128-bit) coefficient bound for arbitrary field-element polynomials.
-pub type Fp128FullCommitmentConfig = Fp128BoundedCommitmentConfig<128>;
+/// Full-field (128-bit) coefficient bound, base-8 decomposition.
+pub type Fp128FullCommitmentConfig = Fp128BoundedCommitmentConfig<128, 3>;
 
-/// Binary (1-bit) coefficient bound for one-hot or binary polynomials.
+/// Binary (1-bit) coefficient bound, base-8 decomposition.
 ///
 /// Reduces `delta_commit` from 43 to 1 compared to [`Fp128FullCommitmentConfig`],
 /// shrinking the dominant `z_pre` witness component by ~43x.
-pub type Fp128OneHotCommitmentConfig = Fp128BoundedCommitmentConfig<1>;
+pub type Fp128OneHotCommitmentConfig = Fp128BoundedCommitmentConfig<1, 3>;
 
-/// Log-basis (3-bit) coefficient bound for balanced-digit witnesses.
+/// Log-basis (3-bit) coefficient bound, base-8 decomposition.
 ///
-/// Functionally equivalent to `WCommitmentConfig<256, Fp128FullCommitmentConfig>`
-/// for recursive w-openings.
-pub type Fp128LogBasisCommitmentConfig = Fp128BoundedCommitmentConfig<3>;
+/// For recursive w-openings where entries are already balanced digits.
+pub type Fp128LogBasisCommitmentConfig = Fp128BoundedCommitmentConfig<3, 3>;
 
-/// Backward-compatible alias for [`Fp128FullCommitmentConfig`].
+/// Alias for [`Fp128FullCommitmentConfig`].
 pub type Fp128CommitmentConfig = Fp128FullCommitmentConfig;
 
 /// Halving-D commitment config for Fp128 (D=256 → 128).
