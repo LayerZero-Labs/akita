@@ -184,6 +184,7 @@ fn ntt_slot_num_rows<const D: usize>(slot: &NttSlotCache<D>) -> usize {
     }
 }
 
+#[tracing::instrument(skip_all, name = "labrador::commit_witness_ntt")]
 fn commit_witness_ntt<F: FieldCore + CanonicalField, const D: usize>(
     matrix: &NttSlotCache<D>,
     witness: &[Vec<CyclotomicRing<F, D>>],
@@ -199,6 +200,7 @@ fn commit_witness_ntt<F: FieldCore + CanonicalField, const D: usize>(
     Ok(out)
 }
 
+#[tracing::instrument(skip_all, name = "labrador::commit_inner_ntt")]
 fn commit_inner_ntt<F: FieldCore + CanonicalField, const D: usize>(
     matrix: &NttSlotCache<D>,
     inner_commitment: &[Vec<CyclotomicRing<F, D>>],
@@ -232,7 +234,7 @@ fn commit_inner_ntt<F: FieldCore + CanonicalField, const D: usize>(
 /// # Errors
 ///
 /// Propagates NTT or matrix shape errors.
-#[tracing::instrument(skip_all, name = "ntt_two_tier_commit")]
+#[tracing::instrument(skip_all, name = "labrador::ntt_two_tier_commit")]
 pub fn ntt_two_tier_commit<F: FieldCore + CanonicalField, const D: usize>(
     a_ntt: &NttSlotCache<D>,
     b_ntt: &NttSlotCache<D>,

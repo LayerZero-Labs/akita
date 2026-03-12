@@ -69,6 +69,7 @@ pub fn select_config_with_mode<F: FieldCore + CanonicalField, const D: usize>(
 /// # Errors
 ///
 /// Returns an error if the witness is empty or no secure parameters exist.
+#[tracing::instrument(skip_all, name = "labrador::plan_fold")]
 pub fn plan_fold<F: FieldCore + CanonicalField, const D: usize>(
     witness: &LabradorWitness<F, D>,
     tail: bool,

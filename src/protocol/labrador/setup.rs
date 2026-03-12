@@ -28,6 +28,7 @@ impl<F: FieldCore + CanonicalField + FieldSampling, const D: usize> LabradorSetu
     /// # Panics
     ///
     /// Panics if deriving the cached CRT+NTT slots for matrix `A` or `B` fails.
+    #[tracing::instrument(skip_all, name = "labrador::setup")]
     pub fn new(
         config: &LabradorReductionConfig,
         num_witness_rows: usize,
