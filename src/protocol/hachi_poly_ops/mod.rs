@@ -252,6 +252,26 @@ fn signed_accum_to_ring<F: CanonicalField, const D: usize>(
     CyclotomicRing::from_coefficients(coeffs)
 }
 
+fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
+    centered_coeffs: Vec<[i32; D]>,
+    modulus: u128,
+) -> DecomposeFoldWitness<F, D> {
+    let centered_inf_norm = centered_coeffs
+        .iter()
+        .flat_map(|row| row.iter())
+        .map(|coeff| coeff.unsigned_abs())
+        .max()
+        .unwrap_or(0);
+    let z_pre = cfg_iter!(centered_coeffs)
+        .map(|coeff_accum| signed_accum_to_ring::<F, D>(*coeff_accum, modulus))
+        .collect();
+    DecomposeFoldWitness {
+        z_pre,
+        centered_coeffs,
+        centered_inf_norm,
+    }
+}
+
 fn recompose_commit_inner_blocks<F: CanonicalField, const D: usize>(
     t_hat_blocks: &[Vec<[i8; D]>],
     num_digits_open: usize,
@@ -277,6 +297,17 @@ fn recompose_commit_inner_blocks<F: CanonicalField, const D: usize>(
                 .collect())
         })
         .collect()
+}
+
+/// Prover-side output of the decompose + challenge-fold step.
+#[derive(Debug, Clone)]
+pub struct DecomposeFoldWitness<F: FieldCore, const D: usize> {
+    /// Folded witness rows in ring form.
+    pub z_pre: Vec<CyclotomicRing<F, D>>,
+    /// Centered integer coefficients for each `z_pre` row.
+    pub centered_coeffs: Vec<[i32; D]>,
+    /// Infinity norm of `centered_coeffs`.
+    pub centered_inf_norm: u32,
 }
 
 /// Prover-side output of the inner Ajtai commit step.
@@ -348,14 +379,15 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// 1. Decompose: `sᵢ = G⁻¹(blockᵢ)` via `balanced_decompose_pow2(num_digits, log_basis)`.
     /// 2. Accumulate: `z += cᵢ ⊗ sᵢ` (sparse challenge multiplication).
     ///
-    /// Returns `z` of length `block_len · num_digits`.
+    /// Returns the folded witness `z_pre` of length `block_len · num_digits`
+    /// together with centered coefficient rows that later prover steps can reuse.
     fn decompose_fold(
         &self,
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
-    ) -> Vec<CyclotomicRing<F, D>>;
+    ) -> DecomposeFoldWitness<F, D>;
 
     /// **Op 4 — commit: per-block inner Ajtai.**
     ///
@@ -553,7 +585,7 @@ where
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
-    ) -> Vec<CyclotomicRing<F, D>> {
+    ) -> DecomposeFoldWitness<F, D> {
         let n = self.coeffs.len();
         let coeffs = &self.coeffs;
 
@@ -593,9 +625,7 @@ where
                 };
 
                 let _span = tracing::info_span!("dense_single_digit_convert").entered();
-                return cfg_into_iter!(coeff_accum)
-                    .map(|arr| signed_accum_to_ring::<F, D>(arr, params.q))
-                    .collect();
+                return build_decompose_fold_witness::<F, D>(coeff_accum, params.q);
             }
 
             let coeff_accum: Vec<[i32; D]> = {
@@ -621,9 +651,7 @@ where
             };
 
             let _span = tracing::info_span!("dense_single_digit_convert").entered();
-            return cfg_into_iter!(coeff_accum)
-                .map(|arr| signed_accum_to_ring::<F, D>(arr, params.q))
-                .collect();
+            return build_decompose_fold_witness::<F, D>(coeff_accum, params.q);
         }
 
         // Two-phase approach: decompose ring element coefficients into i8 digit
@@ -659,13 +687,11 @@ where
         };
 
         let _span = tracing::info_span!("dense_multi_digit_convert").entered();
-        let mut z = Vec::with_capacity(block_len * num_digits);
+        let mut centered_coeffs = Vec::with_capacity(block_len * num_digits);
         for chunk in z_chunks {
-            for arr in chunk {
-                z.push(signed_accum_to_ring::<F, D>(arr, params.q));
-            }
+            centered_coeffs.extend(chunk);
         }
-        z
+        build_decompose_fold_witness::<F, D>(centered_coeffs, params.q)
     }
 
     #[tracing::instrument(skip_all, name = "DensePoly::commit_inner")]
@@ -835,12 +861,12 @@ where
         block_len: usize,
         num_digits: usize,
         _log_basis: u32,
-    ) -> Vec<CyclotomicRing<F, D>> {
+    ) -> DecomposeFoldWitness<F, D> {
         let inner_width = block_len * num_digits;
         let num_blocks = self.num_ring_elems().div_ceil(block_len);
 
         let q = (-F::one()).to_canonical_u128() + 1;
-        cfg_fold_reduce!(
+        let coeff_accum = cfg_fold_reduce!(
             0..challenges.len().min(num_blocks),
             || vec![[0i32; D]; inner_width],
             |mut z_local: Vec<[i32; D]>, block_idx| {
@@ -864,20 +890,8 @@ where
                 }
                 a
             }
-        )
-        .into_iter()
-        .map(|arr| {
-            let coeffs = from_fn(|k| {
-                let v = arr[k];
-                if v >= 0 {
-                    F::from_canonical_u128_reduced(v as u128)
-                } else {
-                    F::from_canonical_u128_reduced(q - ((-v) as u128))
-                }
-            });
-            CyclotomicRing::from_coefficients(coeffs)
-        })
-        .collect()
+        );
+        build_decompose_fold_witness::<F, D>(coeff_accum, q)
     }
 
     fn commit_inner(
@@ -1057,7 +1071,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         &self,
         challenges: &[SparseChallenge],
         block_len: usize,
-    ) -> Vec<CyclotomicRing<F, D>>
+    ) -> DecomposeFoldWitness<F, D>
     where
         F: CanonicalField,
     {
@@ -1084,9 +1098,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         };
 
         let _span = tracing::info_span!("onehot_regular_convert").entered();
-        cfg_into_iter!(coeff_accum)
-            .map(|coeffs| signed_accum_to_ring::<F, D>(coeffs, modulus))
-            .collect()
+        build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
     }
 
     fn decompose_fold_sparse_onehot(
@@ -1094,7 +1106,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
-    ) -> Vec<CyclotomicRing<F, D>>
+    ) -> DecomposeFoldWitness<F, D>
     where
         F: CanonicalField,
     {
@@ -1127,9 +1139,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         };
 
         let _span = tracing::info_span!("onehot_sparse_convert").entered();
-        cfg_into_iter!(coeff_accum)
-            .map(|coeffs| signed_accum_to_ring::<F, D>(coeffs, modulus))
-            .collect()
+        build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
     }
 }
 
@@ -1189,7 +1199,7 @@ where
         block_len: usize,
         num_digits: usize,
         _log_basis: u32,
-    ) -> Vec<CyclotomicRing<F, D>> {
+    ) -> DecomposeFoldWitness<F, D> {
         // In the common regular one-hot case used by the large onehot profile,
         // each chunk is exactly one ring element with one hot coefficient.
         // Build each output ring independently instead of reducing full z

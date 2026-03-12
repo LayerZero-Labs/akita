@@ -14,6 +14,7 @@ pub(crate) fn detect_field_modulus<F: CanonicalField>() -> u128 {
 ///
 /// Maps canonical representation `v ∈ [0, q)` to `min(v, q − v)`.
 #[inline]
+#[allow(dead_code)]
 pub(crate) fn centered_abs<F: CanonicalField>(x: F, modulus: u128) -> u128 {
     let v = x.to_canonical_u128();
     let half = modulus / 2;
@@ -25,6 +26,7 @@ pub(crate) fn centered_abs<F: CanonicalField>(x: F, modulus: u128) -> u128 {
 }
 
 /// L∞ norm of a single ring element (maximum centered coefficient magnitude).
+#[allow(dead_code)]
 pub(crate) fn ring_inf_norm<F: CanonicalField, const D: usize>(
     r: &CyclotomicRing<F, D>,
     modulus: u128,
@@ -37,6 +39,7 @@ pub(crate) fn ring_inf_norm<F: CanonicalField, const D: usize>(
 }
 
 /// L∞ norm of a vector of ring elements.
+#[allow(dead_code)]
 pub(crate) fn vec_inf_norm<F: CanonicalField, const D: usize>(
     v: &[CyclotomicRing<F, D>],
     modulus: u128,
