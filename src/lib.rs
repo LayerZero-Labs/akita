@@ -42,12 +42,13 @@ pub mod primitives;
 /// Concrete algebra backends (prime fields, extensions, rings)
 pub mod algebra;
 
-/// Protocol-layer transcript and commitment abstractions
-pub mod protocol;
-
 /// Conditional parallelism utilities (`cfg_iter!`, `cfg_into_iter!`, etc.)
+#[macro_use]
 #[doc(hidden)]
 pub mod parallel;
+
+/// Protocol-layer transcript and commitment abstractions
+pub mod protocol;
 
 /// Shared test configuration and helpers.
 #[doc(hidden)]

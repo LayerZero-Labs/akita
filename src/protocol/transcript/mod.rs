@@ -33,6 +33,9 @@ where
 
     /// Derive a challenge scalar under the provided label.
     fn challenge_scalar(&mut self, label: &[u8]) -> F;
+
+    /// Squeeze `len` challenge bytes under the provided label.
+    fn challenge_bytes(&mut self, label: &[u8], len: usize) -> Vec<u8>;
 }
 
 /// Sample an extension field challenge by drawing `EXT_DEGREE` base-field

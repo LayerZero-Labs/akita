@@ -78,6 +78,16 @@ where
         let sampled = u128::from_le_bytes(lo);
         F::from_canonical_u128_reduced(sampled)
     }
+
+    fn challenge_bytes(&mut self, label: &[u8], len: usize) -> Vec<u8> {
+        let mut out = Vec::with_capacity(len);
+        while out.len() < len {
+            let chunk = self.challenge_and_chain(label);
+            let take = (len - out.len()).min(chunk.len());
+            out.extend_from_slice(&chunk[..take]);
+        }
+        out
+    }
 }
 
 impl<D: Digest + Clone, F> HashTranscript<D, F>

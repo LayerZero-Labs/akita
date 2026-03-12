@@ -5,6 +5,9 @@ use crate::error::HachiError;
 use crate::primitives::serialization::{Compress, SerializationError};
 use crate::primitives::serialization::{Valid, Validate};
 use crate::protocol::commitment::RingCommitment;
+use crate::protocol::labrador::types::{
+    LabradorLevelProof, LabradorProof, LabradorReductionConfig, LabradorWitness,
+};
 use crate::protocol::sumcheck::SumcheckProof;
 use crate::{CanonicalField, FieldCore, FromSmallInt, HachiDeserialize, HachiSerialize};
 use std::io::{Read, Write};
@@ -554,11 +557,179 @@ impl<F: FieldCore> HachiLevelProof<F> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// D-erased Labrador proof types for HachiProofTail
+// ---------------------------------------------------------------------------
+
+/// D-erased Labrador level proof.
+///
+/// Mirrors [`LabradorLevelProof`] with ring elements stored as [`FlatRingVec`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatLabradorLevelProof<F: FieldCore> {
+    /// Whether this level uses tail semantics.
+    pub tail: bool,
+    /// Input row lengths per witness row.
+    pub input_row_lengths: Vec<usize>,
+    /// Configuration selected for this level.
+    pub config: LabradorReductionConfig,
+    /// Virtual row length after nu-reshaping.
+    pub nn: usize,
+    /// Per-original-row split counts from the fold plan.
+    pub nu: Vec<usize>,
+    /// First outer commitment.
+    pub u1: FlatRingVec<F>,
+    /// Second outer commitment.
+    pub u2: FlatRingVec<F>,
+    /// JL projection vector.
+    pub jl_projection: [i64; 256],
+    /// JL nonce used to regenerate projection matrix.
+    pub jl_nonce: u64,
+    /// Lift polynomials (constant term zeroed in proof).
+    pub bb: FlatRingVec<F>,
+    /// Output witness norm bound after reduction.
+    pub norm_sq: u128,
+}
+
+impl<F: FieldCore> FlatLabradorLevelProof<F> {
+    /// Convert from the typed `LabradorLevelProof<F, D>`.
+    pub fn from_typed<const D: usize>(p: &LabradorLevelProof<F, D>) -> Self {
+        Self {
+            tail: p.tail,
+            input_row_lengths: p.input_row_lengths.clone(),
+            config: p.config,
+            nn: p.nn,
+            nu: p.nu.clone(),
+            u1: FlatRingVec::from_ring_elems(&p.u1),
+            u2: FlatRingVec::from_ring_elems(&p.u2),
+            jl_projection: p.jl_projection,
+            jl_nonce: p.jl_nonce,
+            bb: FlatRingVec::from_ring_elems(&p.bb),
+            norm_sq: p.norm_sq,
+        }
+    }
+
+    /// Reconstruct the typed `LabradorLevelProof<F, D>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D` does not match the stored ring dimension.
+    pub fn to_typed<const D: usize>(&self) -> LabradorLevelProof<F, D> {
+        LabradorLevelProof {
+            tail: self.tail,
+            input_row_lengths: self.input_row_lengths.clone(),
+            config: self.config,
+            nn: self.nn,
+            nu: self.nu.clone(),
+            u1: self.u1.to_vec(),
+            u2: self.u2.to_vec(),
+            jl_projection: self.jl_projection,
+            jl_nonce: self.jl_nonce,
+            bb: self.bb.to_vec(),
+            norm_sq: self.norm_sq,
+        }
+    }
+}
+
+/// D-erased Labrador witness (rows of ring elements).
+///
+/// Mirrors [`LabradorWitness`] with rows stored as [`FlatRingVec`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatLabradorWitness<F: FieldCore> {
+    /// Per-row ring element vectors.
+    pub rows: Vec<FlatRingVec<F>>,
+}
+
+impl<F: FieldCore> FlatLabradorWitness<F> {
+    /// Convert from the typed `LabradorWitness<F, D>`.
+    pub fn from_typed<const D: usize>(w: &LabradorWitness<F, D>) -> Self {
+        Self {
+            rows: w
+                .rows()
+                .iter()
+                .map(|r| FlatRingVec::from_ring_elems(r))
+                .collect(),
+        }
+    }
+
+    /// Reconstruct the typed `LabradorWitness<F, D>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D` does not match the stored ring dimension.
+    pub fn to_typed<const D: usize>(&self) -> LabradorWitness<F, D> {
+        let rows: Vec<Vec<CyclotomicRing<F, D>>> = self.rows.iter().map(|r| r.to_vec()).collect();
+        LabradorWitness::new_unchecked(rows)
+    }
+}
+
+/// D-erased Labrador proof (levels + final witness).
+///
+/// Mirrors [`LabradorProof`] with all ring data stored as [`FlatRingVec`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatLabradorProof<F: FieldCore> {
+    /// Recursive level payloads.
+    pub levels: Vec<FlatLabradorLevelProof<F>>,
+    /// Final clear witness opened at recursion termination.
+    pub final_opening_witness: FlatLabradorWitness<F>,
+}
+
+impl<F: FieldCore> FlatLabradorProof<F> {
+    /// Convert from the typed `LabradorProof<F, D>`.
+    pub fn from_typed<const D: usize>(p: &LabradorProof<F, D>) -> Self {
+        Self {
+            levels: p
+                .levels
+                .iter()
+                .map(FlatLabradorLevelProof::from_typed)
+                .collect(),
+            final_opening_witness: FlatLabradorWitness::from_typed(&p.final_opening_witness),
+        }
+    }
+
+    /// Reconstruct the typed `LabradorProof<F, D>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D` does not match the stored ring dimension.
+    pub fn to_typed<const D: usize>(&self) -> LabradorProof<F, D> {
+        LabradorProof {
+            levels: self.levels.iter().map(|l| l.to_typed()).collect(),
+            final_opening_witness: self.final_opening_witness.to_typed(),
+        }
+    }
+}
+
+/// Labrador tail proof data.
+///
+/// Produced when Hachi's folding loop stops and the ring-level `Mz = y`
+/// relation from the quadratic equation is handed directly to Labrador
+/// without computing quotient `r`, evaluating at alpha, or running sumcheck.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LabradorTail<F: FieldCore> {
+    /// D-erased full Labrador recursive proof.
+    pub labrador_proof: FlatLabradorProof<F>,
+    /// Ring-valued prover message `v = D * w_hat` (public, used to rebuild constraints).
+    pub v: FlatRingVec<F>,
+    /// Ring-valued evaluation `y_ring` (public, used to rebuild constraints).
+    pub y_ring: FlatRingVec<F>,
+    /// Squared L2 norm bound of the Labrador witness.
+    pub beta_sq: u128,
+}
+
+/// Proof tail: either a direct witness or a Labrador handoff.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HachiProofTail<F: FieldCore> {
+    /// Final witness sent in clear as packed balanced digits.
+    Direct(PackedDigits),
+    /// Direct Labrador handoff from the quadratic equation.
+    Labrador(Box<LabradorTail<F>>),
+}
+
 /// Hachi PCS proof with multi-level folding.
 ///
 /// Each level runs the full protocol (quadratic equation, ring switch,
-/// sumcheck) on the previous level's witness `w`. The final level sends
-/// `w` directly for the verifier to check, packed as balanced digits.
+/// sumcheck) on the previous level's witness `w`. The tail is either
+/// a direct witness (packed digits) or a Labrador handoff.
 ///
 /// D-agnostic: per-level ring dimensions are recorded in each
 /// [`HachiLevelProof`].
@@ -567,27 +738,421 @@ pub struct HachiProof<F: FieldCore> {
     /// Per-level proofs, from the original polynomial (level 0) through
     /// recursive w-openings.
     pub levels: Vec<HachiLevelProof<F>>,
-    /// The witness vector at the deepest fold level, bit-packed as balanced
-    /// digits in `[-b/2, b/2)`. Use [`PackedDigits::to_field_elems`] to
-    /// reconstruct `Vec<F>`.
-    pub final_w: PackedDigits,
+    /// Proof tail: direct witness or Labrador handoff.
+    pub tail: HachiProofTail<F>,
+}
+
+impl<F: FieldCore> HachiProof<F> {
+    /// Access the direct final witness when the proof ends with a clear tail.
+    pub fn final_w(&self) -> Option<&PackedDigits> {
+        match &self.tail {
+            HachiProofTail::Direct(pw) => Some(pw),
+            HachiProofTail::Labrador(_) => None,
+        }
+    }
+
+    /// Whether this proof uses a Labrador tail (not a direct witness).
+    pub fn has_handoff_tail(&self) -> bool {
+        matches!(&self.tail, HachiProofTail::Labrador(_))
+    }
+
+    /// Whether this proof uses the direct Labrador tail.
+    pub fn has_labrador_tail(&self) -> bool {
+        matches!(&self.tail, HachiProofTail::Labrador(_))
+    }
 }
 
 impl<F: FieldCore + HachiSerialize> HachiProof<F> {
     /// Returns the proof size in bytes (uncompressed).
     pub fn size(&self) -> usize {
-        let levels_size: usize = self
+        self.serialized_size(Compress::No)
+    }
+}
+
+impl HachiSerialize for LabradorReductionConfig {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.f.serialize_with_mode(&mut writer, compress)?;
+        self.b.serialize_with_mode(&mut writer, compress)?;
+        self.fu.serialize_with_mode(&mut writer, compress)?;
+        self.bu.serialize_with_mode(&mut writer, compress)?;
+        self.kappa.serialize_with_mode(&mut writer, compress)?;
+        self.kappa1.serialize_with_mode(&mut writer, compress)?;
+        (self.tail as u8).serialize_with_mode(&mut writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.f.serialized_size(compress)
+            + self.b.serialized_size(compress)
+            + self.fu.serialized_size(compress)
+            + self.bu.serialized_size(compress)
+            + self.kappa.serialized_size(compress)
+            + self.kappa1.serialized_size(compress)
+            + 1
+    }
+}
+
+impl Valid for LabradorReductionConfig {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl HachiDeserialize for LabradorReductionConfig {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let f = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let b = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let fu = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let bu = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let kappa = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let kappa1 = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let tail = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+        if tail > 1 {
+            return Err(SerializationError::InvalidData(
+                "invalid LabradorReductionConfig tail flag".to_string(),
+            ));
+        }
+        Ok(Self {
+            f,
+            b,
+            fu,
+            bu,
+            kappa,
+            kappa1,
+            tail: tail != 0,
+        })
+    }
+}
+
+impl<F: FieldCore> HachiSerialize for FlatLabradorLevelProof<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        (self.tail as u8).serialize_with_mode(&mut writer, compress)?;
+        self.input_row_lengths
+            .serialize_with_mode(&mut writer, compress)?;
+        self.config.serialize_with_mode(&mut writer, compress)?;
+        self.nn.serialize_with_mode(&mut writer, compress)?;
+        self.nu.serialize_with_mode(&mut writer, compress)?;
+        self.u1.serialize_with_mode(&mut writer, compress)?;
+        self.u2.serialize_with_mode(&mut writer, compress)?;
+        for coeff in &self.jl_projection {
+            coeff.serialize_with_mode(&mut writer, compress)?;
+        }
+        self.jl_nonce.serialize_with_mode(&mut writer, compress)?;
+        self.bb.serialize_with_mode(&mut writer, compress)?;
+        self.norm_sq.serialize_with_mode(&mut writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        1 + self.input_row_lengths.serialized_size(compress)
+            + self.config.serialized_size(compress)
+            + self.nn.serialized_size(compress)
+            + self.nu.serialized_size(compress)
+            + self.u1.serialized_size(compress)
+            + self.u2.serialized_size(compress)
+            + self.jl_projection.len() * std::mem::size_of::<i64>()
+            + self.jl_nonce.serialized_size(compress)
+            + self.bb.serialized_size(compress)
+            + self.norm_sq.serialized_size(compress)
+    }
+}
+
+impl<F: FieldCore> Valid for FlatLabradorLevelProof<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        if self.tail != self.config.tail {
+            return Err(SerializationError::InvalidData(
+                "FlatLabradorLevelProof tail/config mismatch".to_string(),
+            ));
+        }
+        if self.tail && self.config.kappa1 != 0 {
+            return Err(SerializationError::InvalidData(
+                "FlatLabradorLevelProof tail level must have kappa1 = 0".to_string(),
+            ));
+        }
+        if !self.tail && self.config.kappa1 == 0 {
+            return Err(SerializationError::InvalidData(
+                "FlatLabradorLevelProof non-tail level must have kappa1 > 0".to_string(),
+            ));
+        }
+        self.config.check()?;
+        self.u1.check()?;
+        self.u2.check()?;
+        if self.u1.ring_dim() != self.u2.ring_dim() || self.u1.ring_dim() != self.bb.ring_dim() {
+            return Err(SerializationError::InvalidData(
+                "FlatLabradorLevelProof ring-dimension mismatch".to_string(),
+            ));
+        }
+        self.bb.check()
+    }
+}
+
+impl<F: FieldCore + Valid> HachiDeserialize for FlatLabradorLevelProof<F> {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let tail = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+        if tail > 1 {
+            return Err(SerializationError::InvalidData(
+                "invalid FlatLabradorLevelProof tail flag".to_string(),
+            ));
+        }
+
+        let mut jl_projection = [0i64; 256];
+        let input_row_lengths =
+            Vec::<usize>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let config =
+            LabradorReductionConfig::deserialize_with_mode(&mut reader, compress, validate)?;
+        let nn = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let nu = Vec::<usize>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let u1 = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?;
+        let u2 = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?;
+        for coeff in &mut jl_projection {
+            *coeff = i64::deserialize_with_mode(&mut reader, compress, validate)?;
+        }
+        let jl_nonce = u64::deserialize_with_mode(&mut reader, compress, validate)?;
+        let bb = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?;
+        let norm_sq = u128::deserialize_with_mode(&mut reader, compress, validate)?;
+
+        let out = Self {
+            tail: tail != 0,
+            input_row_lengths,
+            config,
+            nn,
+            nu,
+            u1,
+            u2,
+            jl_projection,
+            jl_nonce,
+            bb,
+            norm_sq,
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
+impl<F: FieldCore> HachiSerialize for FlatLabradorWitness<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        (self.rows.len() as u32).serialize_with_mode(&mut writer, compress)?;
+        for row in &self.rows {
+            row.serialize_with_mode(&mut writer, compress)?;
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        4 + self
+            .rows
+            .iter()
+            .map(|row| row.serialized_size(compress))
+            .sum::<usize>()
+    }
+}
+
+impl<F: FieldCore> Valid for FlatLabradorWitness<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        let expected_ring_dim = self.rows.first().map(FlatRingVec::ring_dim);
+        for row in &self.rows {
+            row.check()?;
+            if expected_ring_dim.is_some_and(|d| row.ring_dim() != d) {
+                return Err(SerializationError::InvalidData(
+                    "FlatLabradorWitness ring-dimension mismatch".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<F: FieldCore + Valid> HachiDeserialize for FlatLabradorWitness<F> {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let num_rows = u32::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+        let mut rows = Vec::with_capacity(num_rows);
+        for _ in 0..num_rows {
+            rows.push(FlatRingVec::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?);
+        }
+        let out = Self { rows };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
+impl<F: FieldCore> HachiSerialize for FlatLabradorProof<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        (self.levels.len() as u32).serialize_with_mode(&mut writer, compress)?;
+        for level in &self.levels {
+            level.serialize_with_mode(&mut writer, compress)?;
+        }
+        self.final_opening_witness
+            .serialize_with_mode(&mut writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        4 + self
             .levels
             .iter()
-            .map(|lp| {
-                lp.y_ring.serialized_size(Compress::No)
-                    + lp.v.serialized_size(Compress::No)
-                    + lp.sumcheck_proof.serialized_size(Compress::No)
-                    + lp.w_commitment.serialized_size(Compress::No)
-                    + lp.w_eval.serialized_size(Compress::No)
-            })
-            .sum();
-        levels_size + self.final_w.serialized_size(Compress::No)
+            .map(|level| level.serialized_size(compress))
+            .sum::<usize>()
+            + self.final_opening_witness.serialized_size(compress)
+    }
+}
+
+impl<F: FieldCore> Valid for FlatLabradorProof<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        let mut expected_ring_dim = self
+            .final_opening_witness
+            .rows
+            .first()
+            .map(FlatRingVec::ring_dim);
+        for level in &self.levels {
+            level.check()?;
+            if let Some(d) = expected_ring_dim {
+                if level.u1.ring_dim() != d {
+                    return Err(SerializationError::InvalidData(
+                        "FlatLabradorProof ring-dimension mismatch".to_string(),
+                    ));
+                }
+            } else {
+                expected_ring_dim = Some(level.u1.ring_dim());
+            }
+        }
+        self.final_opening_witness.check()
+    }
+}
+
+impl<F: FieldCore + Valid> HachiDeserialize for FlatLabradorProof<F> {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let num_levels = u32::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+        let mut levels = Vec::with_capacity(num_levels);
+        for _ in 0..num_levels {
+            levels.push(FlatLabradorLevelProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?);
+        }
+        let final_opening_witness =
+            FlatLabradorWitness::deserialize_with_mode(&mut reader, compress, validate)?;
+        let out = Self {
+            levels,
+            final_opening_witness,
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
+impl<F: FieldCore> HachiSerialize for LabradorTail<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.labrador_proof
+            .serialize_with_mode(&mut writer, compress)?;
+        self.v.serialize_with_mode(&mut writer, compress)?;
+        self.y_ring.serialize_with_mode(&mut writer, compress)?;
+        self.beta_sq.serialize_with_mode(&mut writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.labrador_proof.serialized_size(compress)
+            + self.v.serialized_size(compress)
+            + self.y_ring.serialized_size(compress)
+            + self.beta_sq.serialized_size(compress)
+    }
+}
+
+impl<F: FieldCore> Valid for LabradorTail<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.labrador_proof.check()?;
+        self.v.check()?;
+        self.y_ring.check()?;
+        if self.v.ring_dim() != self.y_ring.ring_dim() {
+            return Err(SerializationError::InvalidData(
+                "LabradorTail ring-dimension mismatch".to_string(),
+            ));
+        }
+        if self
+            .labrador_proof
+            .final_opening_witness
+            .rows
+            .first()
+            .is_some_and(|row| row.ring_dim() != self.v.ring_dim())
+        {
+            return Err(SerializationError::InvalidData(
+                "LabradorTail witness ring-dimension mismatch".to_string(),
+            ));
+        }
+        for level in &self.labrador_proof.levels {
+            if level.u1.ring_dim() != self.v.ring_dim() {
+                return Err(SerializationError::InvalidData(
+                    "LabradorTail level ring-dimension mismatch".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<F: FieldCore + Valid> HachiDeserialize for LabradorTail<F> {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let out = Self {
+            labrador_proof: FlatLabradorProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            v: FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?,
+            y_ring: FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?,
+            beta_sq: u128::deserialize_with_mode(&mut reader, compress, validate)?,
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
     }
 }
 
@@ -704,15 +1269,29 @@ impl<F: FieldCore> HachiSerialize for HachiProof<F> {
         for level in &self.levels {
             level.serialize_with_mode(&mut writer, compress)?;
         }
-        self.final_w.serialize_with_mode(&mut writer, compress)
+        match &self.tail {
+            HachiProofTail::Direct(pw) => {
+                0u8.serialize_with_mode(&mut writer, compress)?;
+                pw.serialize_with_mode(&mut writer, compress)
+            }
+            HachiProofTail::Labrador(tail) => {
+                1u8.serialize_with_mode(&mut writer, compress)?;
+                tail.serialize_with_mode(&mut writer, compress)
+            }
+        }
     }
     fn serialized_size(&self, compress: Compress) -> usize {
-        4 + self
-            .levels
-            .iter()
-            .map(|l| l.serialized_size(compress))
-            .sum::<usize>()
-            + self.final_w.serialized_size(compress)
+        let base = 4
+            + self
+                .levels
+                .iter()
+                .map(|l| l.serialized_size(compress))
+                .sum::<usize>()
+            + 1; // tag byte
+        match &self.tail {
+            HachiProofTail::Direct(pw) => base + pw.serialized_size(compress),
+            HachiProofTail::Labrador(tail) => base + tail.serialized_size(compress),
+        }
     }
 }
 
@@ -721,7 +1300,10 @@ impl<F: FieldCore> Valid for HachiProof<F> {
         for lp in &self.levels {
             lp.check()?;
         }
-        self.final_w.check()
+        match &self.tail {
+            HachiProofTail::Direct(pw) => pw.check(),
+            HachiProofTail::Labrador(tail) => tail.check(),
+        }
     }
 }
 
@@ -740,7 +1322,23 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiProof<F> {
                 validate,
             )?);
         }
-        let final_w = PackedDigits::deserialize_with_mode(&mut reader, compress, validate)?;
-        Ok(Self { levels, final_w })
+        let tag = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+        let tail = match tag {
+            0 => {
+                let pw = PackedDigits::deserialize_with_mode(&mut reader, compress, validate)?;
+                HachiProofTail::Direct(pw)
+            }
+            1 => HachiProofTail::Labrador(Box::new(LabradorTail::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?)),
+            _ => {
+                return Err(SerializationError::InvalidData(format!(
+                    "unknown proof tail tag: {tag}"
+                )));
+            }
+        };
+        Ok(Self { levels, tail })
     }
 }

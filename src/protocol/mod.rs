@@ -8,9 +8,9 @@ pub mod challenges;
 pub mod commitment;
 pub mod commitment_scheme;
 pub mod dispatch;
-pub mod greyhound;
 pub mod hachi_poly_ops;
 pub mod labrador;
+pub mod labrador_handoff;
 pub mod opening_point;
 pub mod prg;
 pub mod proof;
@@ -30,7 +30,10 @@ pub use commitment::{
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly};
 pub use opening_point::{BasisMode, RingOpeningPoint};
-pub use proof::{FlatCommitmentHint, FlatRingVec, HachiLevelProof, HachiProof, PackedDigits};
+pub use proof::{
+    FlatCommitmentHint, FlatLabradorLevelProof, FlatLabradorProof, FlatLabradorWitness,
+    FlatRingVec, HachiLevelProof, HachiProof, HachiProofTail, PackedDigits,
+};
 pub use quadratic_equation::QuadraticEquation;
 pub use sumcheck::batched_sumcheck::{prove_batched_sumcheck, verify_batched_sumcheck};
 pub use sumcheck::{

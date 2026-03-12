@@ -4,7 +4,7 @@ mod commit;
 mod config;
 pub mod onehot;
 mod scheme;
-mod transcript_append;
+pub(crate) mod transcript_append;
 mod types;
 pub mod utils;
 
