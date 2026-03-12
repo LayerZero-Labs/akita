@@ -6,10 +6,10 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::protocol::commitment::utils::linear::decompose_rows_with_carry;
 use crate::protocol::labrador::aggregation::{
-    add_phi_in_place, aggregate_jl_constraints_prover, aggregate_statement_constraints, dot_product,
+    add_phi_in_place, aggregate_jl_constraints_prover, aggregate_statement, dot_product,
 };
 use crate::protocol::labrador::config::LabradorFoldPlan;
-use crate::protocol::labrador::constraints::build_next_constraints;
+use crate::protocol::labrador::constraints::build_next_constraint_plan;
 use crate::protocol::labrador::johnson_lindenstrauss::project;
 use crate::protocol::labrador::setup::LabradorSetup;
 use crate::protocol::labrador::transcript::{
@@ -22,6 +22,7 @@ use crate::protocol::labrador::utils::mat_vec_mul;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::{challenge_ring_element_rejection_sampled, Transcript};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
+use std::sync::Arc;
 
 /// Output of one Labrador fold transition.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,13 +51,17 @@ use crate::protocol::labrador::commit::ntt_two_tier_commit;
 ///
 /// Returns `HachiError::InvalidInput` if the witness is empty or `config.f` is zero.
 /// Propagates errors from commitment, projection, or hashing.
-#[tracing::instrument(skip_all, name = "labrador::prove_level")]
+#[tracing::instrument(
+    skip_all,
+    name = "labrador::prove_level",
+    fields(level_index, tail = config.tail)
+)]
 pub fn prove_level<F, T, const D: usize>(
     witness: &LabradorWitness<F, D>,
     statement: &LabradorStatement<F, D>,
     config: &LabradorReductionConfig,
     plan: &LabradorFoldPlan,
-    setup: &LabradorSetup<F, D>,
+    setup: &Arc<LabradorSetup<F, D>>,
     level_index: usize,
     transcript: &mut T,
 ) -> Result<LabradorFoldResult<F, D>, HachiError>
@@ -122,8 +127,7 @@ where
         aggregate_jl_constraints_prover(&virtual_witness, &jl_matrix, transcript)?;
 
     // Aggregate statement constraints on ORIGINAL rows, then reshape phi.
-    let (phi_stmt_orig, b_stmt) =
-        aggregate_statement_constraints(&statement.constraints, &orig_row_lengths, transcript)?;
+    let (phi_stmt_orig, b_stmt) = aggregate_statement(statement, &orig_row_lengths, transcript)?;
     let phi_stmt = reshape_phi::<F, D>(&phi_stmt_orig, &plan.nu, nn);
 
     let mut phi_total = phi_stmt;
@@ -133,7 +137,8 @@ where
     // Linear garbage h_ij from aggregated phi and virtual witness.
     let h = compute_linear_garbage(&phi_total, &virtual_witness)?;
 
-    let h_hat = decompose_rows_with_carry(&h, config.fu, config.bu as u32);
+    let h_hat = tracing::info_span!("labrador::decompose_linear_garbage")
+        .in_scope(|| decompose_rows_with_carry(&h, config.fu, config.bu as u32));
 
     let u2 = build_u2(setup, &h_hat);
 
@@ -144,26 +149,26 @@ where
     let challenges = sample_amortize_challenges(transcript, rr)?;
     let z = amortize_witness(&virtual_witness, &challenges, nn);
 
-    let decomposed_z = decompose_rows_with_carry(&z, config.f, config.b as u32);
+    let decomposed_z = tracing::info_span!("labrador::decompose_amortized_witness")
+        .in_scope(|| decompose_rows_with_carry(&z, config.f, config.b as u32));
     let z_rows = split_decomposed_rows(&decomposed_z, config.f, z.len())?;
     let next_witness = assemble_output_witness(z_rows, &t_hat, &h_hat, config.tail);
 
-    let out_norm_sq: u128 = next_witness.norm();
+    let out_norm_sq: u128 =
+        tracing::info_span!("labrador::next_witness_norm").in_scope(|| next_witness.norm());
 
-    let next_constraints = if config.tail {
-        Vec::new()
+    let reduced_constraints = if config.tail {
+        None
     } else {
-        build_next_constraints(
+        Some(Box::new(build_next_constraint_plan(
             &phi_total,
             &b_total,
             &challenges,
             &virt_row_lengths,
             nn,
             config,
-            &u1,
-            &u2,
-            setup,
-        )?
+            Arc::clone(setup),
+        )?))
     };
 
     let level_proof = LabradorLevelProof {
@@ -184,7 +189,8 @@ where
         u1,
         u2,
         challenges: challenges.clone(),
-        constraints: next_constraints,
+        constraints: Vec::new(),
+        reduced_constraints,
         beta_sq: out_norm_sq,
     };
 
@@ -196,6 +202,7 @@ where
 }
 
 /// Reshape witness rows according to nu-partition into virtual rows of length `nn`.
+#[tracing::instrument(skip_all, name = "labrador::reshape_rows")]
 fn reshape_rows<F: FieldCore, const D: usize>(
     rows: &[Vec<CyclotomicRing<F, D>>],
     nu: &[usize],
@@ -402,6 +409,7 @@ mod tests {
             u2: Vec::new(),
             challenges: Vec::new(),
             constraints: Vec::new(),
+            reduced_constraints: None,
             beta_sq: 1 << 20,
         };
         let cfg = LabradorReductionConfig {
@@ -416,7 +424,7 @@ mod tests {
         let plan = make_plan(&cfg, &witness);
         let seed = [1u8; 32];
         let rr = plan.nu.iter().sum::<usize>();
-        let setup = LabradorSetup::new(&cfg, rr, plan.nn, &seed);
+        let setup = std::sync::Arc::new(LabradorSetup::new(&cfg, rr, plan.nn, &seed));
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
         let out = prove_level(
             &witness,
@@ -444,6 +452,7 @@ mod tests {
             u2: Vec::new(),
             challenges: Vec::new(),
             constraints: Vec::new(),
+            reduced_constraints: None,
             beta_sq: 1 << 20,
         };
         let cfg = LabradorReductionConfig {
@@ -458,7 +467,7 @@ mod tests {
         let plan = make_plan(&cfg, &witness);
         let seed = [3u8; 32];
         let rr = plan.nu.iter().sum::<usize>();
-        let setup = LabradorSetup::new(&cfg, rr, plan.nn, &seed);
+        let setup = std::sync::Arc::new(LabradorSetup::new(&cfg, rr, plan.nn, &seed));
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
         let out = prove_level(
             &witness,
@@ -527,6 +536,7 @@ mod tests {
                 ],
                 target,
             )],
+            reduced_constraints: None,
             beta_sq: 1 << 40,
         };
         let cfg = LabradorReductionConfig {
@@ -541,7 +551,7 @@ mod tests {
         let plan = make_plan(&cfg, &witness);
         let comkey_seed = [9u8; 32];
         let rr = plan.nu.iter().sum::<usize>();
-        let setup = LabradorSetup::new(&cfg, rr, plan.nn, &comkey_seed);
+        let setup = std::sync::Arc::new(LabradorSetup::new(&cfg, rr, plan.nn, &comkey_seed));
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
         let fold = prove_level(
             &witness,
@@ -602,6 +612,7 @@ mod tests {
                 ],
                 target,
             )],
+            reduced_constraints: None,
             beta_sq: 1 << 40,
         };
         let cfg = LabradorReductionConfig {
@@ -616,7 +627,7 @@ mod tests {
         let comkey_seed = [9u8; 32];
         let plan1 = make_plan(&cfg, &witness);
         let rr1 = plan1.nu.iter().sum::<usize>();
-        let setup1 = LabradorSetup::new(&cfg, rr1, plan1.nn, &comkey_seed);
+        let setup1 = std::sync::Arc::new(LabradorSetup::new(&cfg, rr1, plan1.nn, &comkey_seed));
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
         let fold1 = prove_level(
             &witness,
@@ -630,7 +641,7 @@ mod tests {
         .unwrap();
         let plan2 = make_plan(&cfg, &fold1.next_witness);
         let rr2 = plan2.nu.iter().sum::<usize>();
-        let setup2 = LabradorSetup::new(&cfg, rr2, plan2.nn, &comkey_seed);
+        let setup2 = std::sync::Arc::new(LabradorSetup::new(&cfg, rr2, plan2.nn, &comkey_seed));
         let fold2 = prove_level(
             &fold1.next_witness,
             &fold1.statement,
@@ -721,6 +732,7 @@ mod malicious_prover {
                 ],
                 target,
             )],
+            reduced_constraints: None,
             beta_sq: 1 << 40,
         };
         let cfg = LabradorReductionConfig {
@@ -736,7 +748,7 @@ mod malicious_prover {
         let row_lengths: Vec<usize> = witness.rows().iter().map(|r| r.len()).collect();
         let plan = trivial_plan(cfg, &row_lengths);
         let rr = plan.nu.iter().sum::<usize>();
-        let setup = LabradorSetup::new(&cfg, rr, plan.nn, &comkey_seed);
+        let setup = std::sync::Arc::new(LabradorSetup::new(&cfg, rr, plan.nn, &comkey_seed));
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
         let fold = prove_level(
             &witness,

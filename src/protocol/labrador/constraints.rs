@@ -3,9 +3,13 @@
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::labrador::setup::LabradorSetup;
-use crate::protocol::labrador::types::LabradorReductionConfig;
+use crate::protocol::labrador::types::{LabradorReducedConstraintPlan, LabradorReductionConfig};
 use crate::{CanonicalField, FieldCore, FromSmallInt};
 use std::ops::Range;
+use std::sync::Arc;
+
+type PreparedNextConstraintInputs<F, const D: usize> =
+    (NextWitnessLayout, Vec<F>, Vec<F>, Vec<CyclotomicRing<F, D>>);
 
 /// One sparse linear term in a Labrador constraint.
 ///
@@ -99,19 +103,13 @@ impl NextWitnessLayout {
 }
 
 /// Build the recursive target relation for the next Labrador level.
-#[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip_all, name = "labrador::build_next_constraints")]
-pub(crate) fn build_next_constraints<F, const D: usize>(
+fn prepare_next_constraint_inputs<F, const D: usize>(
     phi_total: &[Vec<CyclotomicRing<F, D>>],
-    b_total: &CyclotomicRing<F, D>,
     challenges: &[CyclotomicRing<F, D>],
     row_lengths: &[usize],
     max_len: usize,
     config: &LabradorReductionConfig,
-    u1: &[CyclotomicRing<F, D>],
-    u2: &[CyclotomicRing<F, D>],
-    setup: &LabradorSetup<F, D>,
-) -> Result<Vec<LabradorConstraint<F, D>>, HachiError>
+) -> Result<PreparedNextConstraintInputs<F, D>, HachiError>
 where
     F: FieldCore + CanonicalField + FromSmallInt,
 {
@@ -135,7 +133,25 @@ where
         .map(|idx| pow2_field::<F>(config.bu * idx))
         .collect();
     let combined_phi = combine_phi(phi_total, challenges, max_len);
+    Ok((layout, pow_b, pow_bu, combined_phi))
+}
 
+#[allow(clippy::too_many_arguments)]
+fn build_constraints_from_prepared<F, const D: usize>(
+    layout: NextWitnessLayout,
+    config: &LabradorReductionConfig,
+    challenges: &[CyclotomicRing<F, D>],
+    pow_b: &[F],
+    pow_bu: &[F],
+    combined_phi: &[CyclotomicRing<F, D>],
+    b_total: &CyclotomicRing<F, D>,
+    u1: &[CyclotomicRing<F, D>],
+    u2: &[CyclotomicRing<F, D>],
+    setup: &LabradorSetup<F, D>,
+) -> Result<Vec<LabradorConstraint<F, D>>, HachiError>
+where
+    F: FieldCore + CanonicalField + FromSmallInt,
+{
     let mut constraints = Vec::new();
     if config.kappa1 > 0 {
         if u1.len() != config.kappa1 || u2.len() != config.kappa1 {
@@ -149,20 +165,114 @@ where
         ));
     }
     constraints.extend(build_amortized_opening_constraints(
-        layout, challenges, config, &pow_b, &pow_bu, setup,
+        layout, challenges, config, pow_b, pow_bu, setup,
     ));
     constraints.push(build_linear_garbage_constraint(
         layout,
         challenges,
         config,
+        pow_b,
+        pow_bu,
+        combined_phi,
+    ));
+    constraints.push(build_diagonal_constraint(
+        layout,
+        b_total,
+        challenges.len(),
+        config,
+        pow_bu,
+    ));
+    Ok(constraints)
+}
+
+/// Build the recursive target relation for the next Labrador level.
+#[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
+#[tracing::instrument(skip_all, name = "labrador::build_next_constraints")]
+pub(crate) fn build_next_constraints<F, const D: usize>(
+    phi_total: &[Vec<CyclotomicRing<F, D>>],
+    b_total: &CyclotomicRing<F, D>,
+    challenges: &[CyclotomicRing<F, D>],
+    row_lengths: &[usize],
+    max_len: usize,
+    config: &LabradorReductionConfig,
+    u1: &[CyclotomicRing<F, D>],
+    u2: &[CyclotomicRing<F, D>],
+    setup: &LabradorSetup<F, D>,
+) -> Result<Vec<LabradorConstraint<F, D>>, HachiError>
+where
+    F: FieldCore + CanonicalField + FromSmallInt,
+{
+    let (layout, pow_b, pow_bu, combined_phi) =
+        prepare_next_constraint_inputs(phi_total, challenges, row_lengths, max_len, config)?;
+    build_constraints_from_prepared(
+        layout,
+        config,
+        challenges,
         &pow_b,
         &pow_bu,
         &combined_phi,
-    ));
-    constraints.push(build_diagonal_constraint(
-        layout, b_total, r, config, &pow_bu,
-    ));
-    Ok(constraints)
+        b_total,
+        u1,
+        u2,
+        setup,
+    )
+}
+
+#[tracing::instrument(skip_all, name = "labrador::build_next_constraint_plan")]
+pub(crate) fn build_next_constraint_plan<F, const D: usize>(
+    phi_total: &[Vec<CyclotomicRing<F, D>>],
+    b_total: &CyclotomicRing<F, D>,
+    challenges: &[CyclotomicRing<F, D>],
+    row_lengths: &[usize],
+    max_len: usize,
+    config: &LabradorReductionConfig,
+    setup: Arc<LabradorSetup<F, D>>,
+) -> Result<LabradorReducedConstraintPlan<F, D>, HachiError>
+where
+    F: FieldCore + CanonicalField + FromSmallInt,
+{
+    let (_layout, _pow_b, _pow_bu, combined_phi) =
+        prepare_next_constraint_inputs(phi_total, challenges, row_lengths, max_len, config)?;
+    Ok(LabradorReducedConstraintPlan {
+        row_count: row_lengths.len(),
+        max_len,
+        config: *config,
+        challenges: challenges.to_vec(),
+        combined_phi,
+        b_total: *b_total,
+        setup,
+    })
+}
+
+#[tracing::instrument(skip_all, name = "labrador::materialize_reduced_constraints")]
+pub(crate) fn materialize_reduced_constraints<F, const D: usize>(
+    plan: &LabradorReducedConstraintPlan<F, D>,
+    u1: &[CyclotomicRing<F, D>],
+    u2: &[CyclotomicRing<F, D>],
+) -> Result<Vec<LabradorConstraint<F, D>>, HachiError>
+where
+    F: FieldCore + CanonicalField + FromSmallInt,
+{
+    let layout = NextWitnessLayout::new(plan.row_count, &plan.config);
+    let pow_b: Vec<F> = (0..plan.config.f)
+        .map(|idx| pow2_field::<F>(plan.config.b * idx))
+        .collect();
+    let pow_bu: Vec<F> = (0..plan.config.fu)
+        .map(|idx| pow2_field::<F>(plan.config.bu * idx))
+        .collect();
+    build_constraints_from_prepared(
+        layout,
+        &plan.config,
+        &plan.challenges,
+        &pow_b,
+        &pow_bu,
+        &plan.combined_phi,
+        &plan.b_total,
+        u1,
+        u2,
+        plan.setup.as_ref(),
+    )
 }
 
 /// Build the paper's outer-commitment check (Fig. 3, line 19)

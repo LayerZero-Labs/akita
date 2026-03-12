@@ -47,6 +47,7 @@ use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 ///   - 1 constraint:    `c^T * G_open * w_hat - a^T * G_commit * J * z_pre = 0`
 ///   - N_A constraints: `c^T * G_open * t_hat_slice - A * J * z_pre = 0`
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "labrador::handoff_build_constraints")]
 pub(crate) fn build_hachi_labrador_constraints<F, const D: usize, Cfg>(
     a_mat: &FlatMatrix<F>,
     b_mat: &FlatMatrix<F>,
@@ -194,6 +195,7 @@ where
 /// Assemble the Labrador witness from the quad-eq prover state.
 ///
 /// Converts i8-digit planes to ring elements and decomposes `z_pre`.
+#[tracing::instrument(skip_all, name = "labrador::handoff_build_witness")]
 pub(crate) fn build_labrador_witness<F, const D: usize>(
     w_hat_flat: &[[i8; D]],
     t_hat_flat: &[[i8; D]],
@@ -224,6 +226,7 @@ where
 }
 
 /// Select Labrador reduction config for the Hachi handoff witness.
+#[tracing::instrument(skip_all, name = "labrador::handoff_select_config")]
 pub(crate) fn hachi_labrador_select_config<F: CanonicalField, const D: usize>(
     witness: &LabradorWitness<F, D>,
 ) -> Result<LabradorReductionConfig, HachiError> {
@@ -242,6 +245,7 @@ pub(crate) fn hachi_labrador_select_config<F: CanonicalField, const D: usize>(
 ///
 /// Propagates errors from the quad eq, Labrador config selection, or Labrador proving.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "labrador::handoff_prove")]
 pub(crate) fn labrador_handoff_prove<F, T, const D_HANDOFF: usize, Cfg>(
     current_w: &[i8],
     current_hint: &HachiCommitmentHint<F, D_HANDOFF>,
@@ -261,11 +265,14 @@ where
 
     let t0 = Instant::now();
 
-    let opening_point = super::commitment_scheme::next_level_opening_point(
-        current_challenges,
-        current_num_u,
-        current_num_l,
-    );
+    let opening_point =
+        tracing::info_span!("labrador::handoff_prepare_opening_point").in_scope(|| {
+            super::commitment_scheme::next_level_opening_point(
+                current_challenges,
+                current_num_u,
+                current_num_l,
+            )
+        });
 
     let alpha = D_HANDOFF.trailing_zeros() as usize;
     if opening_point.len() < alpha {
@@ -281,48 +288,57 @@ where
     padded_point.resize(target_num_vars, F::zero());
     let outer_point = &padded_point[alpha..];
 
-    let ring_opening_point = super::commitment_scheme::ring_opening_point_from_field::<F>(
-        outer_point,
-        w_layout.r_vars,
-        w_layout.m_vars,
-        BasisMode::Lagrange,
-    )?;
+    let ring_opening_point =
+        tracing::info_span!("labrador::handoff_ring_opening_point").in_scope(|| {
+            super::commitment_scheme::ring_opening_point_from_field::<F>(
+                outer_point,
+                w_layout.r_vars,
+                w_layout.m_vars,
+                BasisMode::Lagrange,
+            )
+        })?;
 
     let a_flat = &expanded_setup.A;
     let b_flat = &expanded_setup.B;
     let d_flat = &expanded_setup.D_mat;
-
     let ntt_d = build_ntt_slot(d_flat.view::<D_HANDOFF>())?;
 
-    let w_poly = BalancedDigitPoly::<F, D_HANDOFF>::from_i8_digits(current_w)?;
+    let (w_poly, y_ring, w_folded) = tracing::info_span!("labrador::handoff_fold_witness")
+        .in_scope(|| {
+            let w_poly = BalancedDigitPoly::<F, D_HANDOFF>::from_i8_digits(current_w)?;
+            let (y_ring, w_folded) = w_poly.evaluate_and_fold(
+                &ring_opening_point.b,
+                &ring_opening_point.a,
+                w_layout.block_len,
+            );
+            Ok::<_, HachiError>((w_poly, y_ring, w_folded))
+        })?;
 
-    let (y_ring, w_folded) = w_poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        w_layout.block_len,
-    );
+    tracing::info_span!("labrador::handoff_absorb_claims").in_scope(|| {
+        current_commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+        for pt in &padded_point {
+            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+        }
+        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+    });
 
-    current_commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
-    for pt in &padded_point {
-        transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
-    }
-    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
-
-    let quad_eq = Box::new(QuadraticEquation::<
-        F,
-        D_HANDOFF,
-        WCommitmentConfig<D_HANDOFF, Cfg>,
-    >::new_prover(
-        &ntt_d,
-        ring_opening_point.clone(),
-        &w_poly,
-        w_folded,
-        current_hint.clone(),
-        transcript,
-        current_commitment,
-        &y_ring,
-        w_layout,
-    )?);
+    let quad_eq = tracing::info_span!("labrador::handoff_quad_eq").in_scope(|| {
+        Ok::<_, HachiError>(Box::new(QuadraticEquation::<
+            F,
+            D_HANDOFF,
+            WCommitmentConfig<D_HANDOFF, Cfg>,
+        >::new_prover(
+            &ntt_d,
+            ring_opening_point.clone(),
+            &w_poly,
+            w_folded,
+            current_hint.clone(),
+            transcript,
+            current_commitment,
+            &y_ring,
+            w_layout,
+        )?))
+    })?;
 
     eprintln!(
         "  [labrador_handoff] quad_eq: {:.2}s",
@@ -366,6 +382,7 @@ where
         u2: Vec::new(),
         challenges: Vec::new(),
         constraints,
+        reduced_constraints: None,
         beta_sq,
     };
 
@@ -406,6 +423,7 @@ where
 ///
 /// Propagates errors from constraint reconstruction or Labrador verification.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "labrador::handoff_verify")]
 pub(crate) fn labrador_handoff_verify<F, T, const D_HANDOFF: usize, Cfg>(
     tail: &LabradorTail<F>,
     opening_point: &[F],
@@ -431,7 +449,9 @@ where
     let y_ring: CyclotomicRing<F, D_HANDOFF> = tail.y_ring.to_single();
     let labrador_proof = tail.labrador_proof.to_typed::<D_HANDOFF>();
 
-    if !matches_opening_claim::<F, D_HANDOFF>(&y_ring, opening_point, opening_value) {
+    if !tracing::info_span!("labrador::handoff_match_opening_claim")
+        .in_scope(|| matches_opening_claim::<F, D_HANDOFF>(&y_ring, opening_point, opening_value))
+    {
         return Err(HachiError::InvalidProof);
     }
 
@@ -441,22 +461,27 @@ where
     padded_point.resize(target_num_vars, F::zero());
     let outer_point = &padded_point[alpha_prime..];
 
-    let ring_opening_point = super::commitment_scheme::ring_opening_point_from_field::<F>(
-        outer_point,
-        w_layout.r_vars,
-        w_layout.m_vars,
-        BasisMode::Lagrange,
-    )?;
+    let ring_opening_point =
+        tracing::info_span!("labrador::handoff_ring_opening_point").in_scope(|| {
+            super::commitment_scheme::ring_opening_point_from_field::<F>(
+                outer_point,
+                w_layout.r_vars,
+                w_layout.m_vars,
+                BasisMode::Lagrange,
+            )
+        })?;
 
     // Replay transcript against the carried Hachi commitment.
-    current_commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
-    for pt in &padded_point {
-        transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
-    }
-    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+    tracing::info_span!("labrador::handoff_absorb_claims").in_scope(|| {
+        current_commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+        for pt in &padded_point {
+            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+        }
+        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+    });
 
     // Derive challenges via verifier-side quad eq (absorbs v, samples challenges).
-    let quad_eq =
+    let quad_eq = tracing::info_span!("labrador::handoff_quad_eq").in_scope(|| {
         QuadraticEquation::<F, D_HANDOFF, WCommitmentConfig<D_HANDOFF, Cfg>>::new_verifier(
             ring_opening_point.clone(),
             v.clone(),
@@ -464,9 +489,9 @@ where
             current_commitment,
             &y_ring,
             w_layout,
-        )?;
+        )
+    })?;
 
-    // Reuse the setup matrices viewed at D_HANDOFF (same as prover).
     let a_flat = &expanded_setup.A;
     let b_flat = &expanded_setup.B;
     let d_flat = &expanded_setup.D_mat;
@@ -490,6 +515,7 @@ where
         u2: Vec::new(),
         challenges: Vec::new(),
         constraints,
+        reduced_constraints: None,
         beta_sq: tail.beta_sq,
     };
 

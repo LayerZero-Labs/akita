@@ -2,7 +2,9 @@
 
 use crate::algebra::ring::CyclotomicRing;
 use crate::protocol::labrador::constraints::LabradorConstraint;
+use crate::protocol::labrador::setup::LabradorSetup;
 use crate::{CanonicalField, FieldCore};
+use std::sync::Arc;
 
 /// Witness object for a Labrador statement, holding the `s_i` row vectors.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -51,6 +53,30 @@ impl<F: FieldCore + CanonicalField, const D: usize> LabradorWitness<F, D> {
     }
 }
 
+/// Compact recipe for the next-level Labrador statement.
+///
+/// This keeps the dominant recursive structure factored so the next level can
+/// aggregate it directly without first materializing a full sparse constraint
+/// vector. Explicit constraints are only reconstructed when they are actually
+/// needed (for example, at terminal verification).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LabradorReducedConstraintPlan<F: FieldCore, const D: usize> {
+    /// Number of virtual input rows reduced at the previous level.
+    pub row_count: usize,
+    /// Length of each decomposed z-row in the next witness.
+    pub max_len: usize,
+    /// Reduction parameters that define the next witness layout.
+    pub config: LabradorReductionConfig,
+    /// Amortization challenges from the previous level.
+    pub challenges: Vec<CyclotomicRing<F, D>>,
+    /// Combined `sum_i c_i * phi_i` relation carried into the next level.
+    pub combined_phi: Vec<CyclotomicRing<F, D>>,
+    /// Aggregated right-hand side for the diagonal relation.
+    pub b_total: CyclotomicRing<F, D>,
+    /// Commitment matrices needed to replay the reduced statement.
+    pub setup: Arc<LabradorSetup<F, D>>,
+}
+
 /// Public statement reduced to Labrador recursion.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabradorStatement<F: FieldCore, const D: usize> {
@@ -62,6 +88,8 @@ pub struct LabradorStatement<F: FieldCore, const D: usize> {
     pub challenges: Vec<CyclotomicRing<F, D>>,
     /// Sparse constraints checked by reducer/verifier.
     pub constraints: Vec<LabradorConstraint<F, D>>,
+    /// Compact recursive statement representation used between Labrador levels.
+    pub reduced_constraints: Option<Box<LabradorReducedConstraintPlan<F, D>>>,
     /// Squared norm bound.
     pub beta_sq: u128,
 }

@@ -3,11 +3,12 @@
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::labrador::aggregation::{
-    aggregate_jl_constraints_verifier, aggregate_statement_constraints,
+    aggregate_jl_constraints_verifier, aggregate_statement,
 };
 use crate::protocol::labrador::comkey::LabradorComKeySeed;
 use crate::protocol::labrador::constraints::{
-    build_next_constraints, pair_index, LabradorConstraint, NextWitnessLayout,
+    build_next_constraint_plan, materialize_reduced_constraints, pair_index, LabradorConstraint,
+    NextWitnessLayout,
 };
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
 use crate::protocol::labrador::johnson_lindenstrauss::LabradorJlMatrix;
@@ -22,6 +23,7 @@ use crate::protocol::labrador::utils::mat_vec_mul;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::{challenge_ring_element_rejection_sampled, Transcript};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
+use std::sync::Arc;
 
 /// Output of verifier-side Labrador reduction.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +43,7 @@ pub struct LabradorVerifyResult<F: FieldCore, const D: usize> {
 ///
 /// Returns [`HachiError::InvalidProof`] on structural inconsistencies,
 /// norm bound violations, or constraint failures.
+#[tracing::instrument(skip_all, name = "labrador::verify")]
 pub fn verify<F, T, const D: usize>(
     initial_statement: &LabradorStatement<F, D>,
     proof: &LabradorProof<F, D>,
@@ -60,7 +63,8 @@ where
         if final_norm > initial_statement.beta_sq {
             return Err(HachiError::InvalidProof);
         }
-        verify_constraints(&initial_statement.constraints, &proof.final_opening_witness)?;
+        let constraints = explicit_constraints(initial_statement)?;
+        verify_constraints(&constraints, &proof.final_opening_witness)?;
         return Ok(LabradorVerifyResult {
             terminal_statement: initial_statement.clone(),
             final_opening_witness: proof.final_opening_witness.clone(),
@@ -94,7 +98,8 @@ where
     if final_norm > statement.beta_sq {
         return Err(HachiError::InvalidProof);
     }
-    verify_constraints(&statement.constraints, &proof.final_opening_witness)?;
+    let constraints = explicit_constraints(&statement)?;
+    verify_constraints(&constraints, &proof.final_opening_witness)?;
 
     Ok(LabradorVerifyResult {
         terminal_statement: statement,
@@ -102,6 +107,25 @@ where
     })
 }
 
+#[tracing::instrument(skip_all, name = "labrador::explicit_constraints")]
+fn explicit_constraints<F, const D: usize>(
+    statement: &LabradorStatement<F, D>,
+) -> Result<Vec<LabradorConstraint<F, D>>, HachiError>
+where
+    F: FieldCore + CanonicalField + FromSmallInt,
+{
+    if let Some(plan) = statement.reduced_constraints.as_deref() {
+        materialize_reduced_constraints(plan, &statement.u1, &statement.u2)
+    } else {
+        Ok(statement.constraints.clone())
+    }
+}
+
+#[tracing::instrument(
+    skip_all,
+    name = "labrador::reduce_statement",
+    fields(level_index, tail = level.tail)
+)]
 fn reduce_statement<F, T, const D: usize>(
     statement: &LabradorStatement<F, D>,
     level: &LabradorLevelProof<F, D>,
@@ -146,11 +170,8 @@ where
         &level.bb,
         transcript,
     )?;
-    let (phi_stmt_orig, b_stmt) = aggregate_statement_constraints(
-        &statement.constraints,
-        &level.input_row_lengths,
-        transcript,
-    )?;
+    let (phi_stmt_orig, b_stmt) =
+        aggregate_statement(statement, &level.input_row_lengths, transcript)?;
     let phi_stmt =
         reshape_phi_verifier::<F, D>(&phi_stmt_orig, &level.input_row_lengths, &level.nu, nn)?;
 
@@ -159,25 +180,17 @@ where
     let b_total = b_stmt + b_jl;
 
     transcript.append_serde(labels::ABSORB_LABRADOR_U2, &level.u2);
-    let mut challenges = Vec::with_capacity(rr);
-    for _ in 0..rr {
-        challenges.push(challenge_ring_element_rejection_sampled(
-            transcript,
-            labels::CHALLENGE_LABRADOR_AMORTIZE,
-        )?);
-    }
+    let challenges = replay_amortize_challenges(transcript, rr)?;
 
-    let setup = LabradorSetup::new(&level.config, rr, nn, comkey_seed);
-    let next_constraints = build_next_constraints(
+    let setup = Arc::new(LabradorSetup::new(&level.config, rr, nn, comkey_seed));
+    let reduced_constraints = build_next_constraint_plan(
         &phi_total,
         &b_total,
         &challenges,
         &virt_row_lengths,
         nn,
         &level.config,
-        &level.u1,
-        &level.u2,
-        &setup,
+        Arc::clone(&setup),
     )
     .map_err(|_| HachiError::InvalidProof)?;
 
@@ -185,11 +198,13 @@ where
         u1: level.u1.clone(),
         u2: level.u2.clone(),
         challenges,
-        constraints: next_constraints,
+        constraints: Vec::new(),
+        reduced_constraints: Some(Box::new(reduced_constraints)),
         beta_sq: level.norm_sq,
     })
 }
 
+#[tracing::instrument(skip_all, name = "labrador::reshape_phi_verifier")]
 fn reshape_phi_verifier<F: FieldCore, const D: usize>(
     phi: &[Vec<CyclotomicRing<F, D>>],
     row_lengths: &[usize],
@@ -227,7 +242,31 @@ fn reshape_phi_verifier<F: FieldCore, const D: usize>(
     Ok(result)
 }
 
+#[tracing::instrument(skip_all, name = "labrador::replay_amortize_challenges")]
+fn replay_amortize_challenges<F, T, const D: usize>(
+    transcript: &mut T,
+    rows: usize,
+) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
+where
+    F: FieldCore + CanonicalField + FromSmallInt,
+    T: Transcript<F>,
+{
+    let mut challenges = Vec::with_capacity(rows);
+    for _ in 0..rows {
+        challenges.push(challenge_ring_element_rejection_sampled(
+            transcript,
+            labels::CHALLENGE_LABRADOR_AMORTIZE,
+        )?);
+    }
+    Ok(challenges)
+}
+
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+#[tracing::instrument(
+    skip_all,
+    name = "labrador::verify_tail_level",
+    fields(level_index, tail = level.tail)
+)]
 fn verify_tail_level<F, T, const D: usize>(
     statement: &LabradorStatement<F, D>,
     level: &LabradorLevelProof<F, D>,
@@ -293,11 +332,8 @@ where
         transcript,
     )?;
 
-    let (phi_stmt_orig, b_stmt) = aggregate_statement_constraints(
-        &statement.constraints,
-        &level.input_row_lengths,
-        transcript,
-    )?;
+    let (phi_stmt_orig, b_stmt) =
+        aggregate_statement(statement, &level.input_row_lengths, transcript)?;
     let phi_stmt =
         reshape_phi_verifier::<F, D>(&phi_stmt_orig, &level.input_row_lengths, &level.nu, nn)?;
 
@@ -306,13 +342,7 @@ where
     let b_total = b_stmt + b_jl;
 
     transcript.append_serde(labels::ABSORB_LABRADOR_U2, &level.u2);
-    let mut challenges = Vec::with_capacity(rr);
-    for _ in 0..rr {
-        challenges.push(challenge_ring_element_rejection_sampled(
-            transcript,
-            labels::CHALLENGE_LABRADOR_AMORTIZE,
-        )?);
-    }
+    let challenges = replay_amortize_challenges(transcript, rr)?;
 
     let z_parts: Vec<Vec<CyclotomicRing<F, D>>> = witness.rows().to_vec();
     let z = recompose_from_parts(&z_parts, level.config.b as u32)?;
@@ -439,11 +469,8 @@ where
         &level.bb,
         transcript,
     )?;
-    let (phi_stmt_orig, b_stmt) = aggregate_statement_constraints(
-        &statement.constraints,
-        &level.input_row_lengths,
-        transcript,
-    )?;
+    let (phi_stmt_orig, b_stmt) =
+        aggregate_statement(statement, &level.input_row_lengths, transcript)?;
     let phi_stmt =
         reshape_phi_verifier::<F, D>(&phi_stmt_orig, &level.input_row_lengths, &level.nu, nn)?;
 
@@ -452,14 +479,7 @@ where
     let b_total = b_stmt + b_jl;
 
     transcript.append_serde(labels::ABSORB_LABRADOR_U2, &level.u2);
-
-    let mut challenges = Vec::with_capacity(rr);
-    for _ in 0..rr {
-        challenges.push(challenge_ring_element_rejection_sampled(
-            transcript,
-            labels::CHALLENGE_LABRADOR_AMORTIZE,
-        )?);
-    }
+    let challenges = replay_amortize_challenges(transcript, rr)?;
 
     let z_parts: Vec<Vec<CyclotomicRing<F, D>>> = witness
         .rows()
@@ -569,6 +589,7 @@ fn projection_norm_sq(projection: &[i64; 256]) -> u128 {
     })
 }
 
+#[tracing::instrument(skip_all, name = "labrador::validate_level_shape")]
 fn validate_level_shape<F: FieldCore, const D: usize>(
     level: &LabradorLevelProof<F, D>,
     expect_tail: bool,
@@ -621,6 +642,7 @@ fn validate_reshape_metadata(
     Ok(rr)
 }
 
+#[tracing::instrument(skip_all, name = "labrador::recompose_from_parts")]
 fn recompose_from_parts<F: FieldCore + CanonicalField, const D: usize>(
     parts: &[Vec<CyclotomicRing<F, D>>],
     log_basis: u32,
@@ -645,6 +667,7 @@ fn recompose_from_parts<F: FieldCore + CanonicalField, const D: usize>(
     Ok(out)
 }
 
+#[tracing::instrument(skip_all, name = "labrador::recompose_flat")]
 fn recompose_flat<F: FieldCore + CanonicalField, const D: usize>(
     flat: &[CyclotomicRing<F, D>],
     parts: usize,
@@ -660,6 +683,7 @@ fn recompose_flat<F: FieldCore + CanonicalField, const D: usize>(
     Ok(out)
 }
 
+#[tracing::instrument(skip_all, name = "labrador::add_phi_in_place_verifier")]
 fn add_phi_in_place<F: FieldCore, const D: usize>(
     acc: &mut [Vec<CyclotomicRing<F, D>>],
     other: &[Vec<CyclotomicRing<F, D>>],
@@ -690,6 +714,7 @@ fn dot_product<F: FieldCore, const D: usize>(
     acc
 }
 
+#[tracing::instrument(skip_all, name = "labrador::verify_constraints")]
 fn verify_constraints<F: FieldCore + CanonicalField + FromSmallInt, const D: usize>(
     constraints: &[LabradorConstraint<F, D>],
     witness: &LabradorWitness<F, D>,
@@ -753,6 +778,7 @@ mod tests {
             u2: Vec::new(),
             challenges: Vec::new(),
             constraints: vec![constraint],
+            reduced_constraints: None,
             beta_sq: 1000,
         };
         let proof = LabradorProof {

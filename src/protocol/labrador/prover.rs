@@ -10,6 +10,7 @@ use crate::protocol::labrador::types::{LabradorProof, LabradorStatement, Labrado
 use crate::protocol::labrador::LabradorReductionConfig;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
+use std::sync::Arc;
 
 /// Build a recursive Labrador proof with optional tail acceptance.
 ///
@@ -19,6 +20,7 @@ use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 /// # Errors
 ///
 /// Returns an error if folding fails or if recursion limits are exceeded.
+#[tracing::instrument(skip_all, name = "labrador::prove")]
 pub fn prove<F, T, const D: usize>(
     initial_witness: LabradorWitness<F, D>,
     initial_statement: &LabradorStatement<F, D>,
@@ -49,7 +51,7 @@ where
         let plan = plan_fold::<F, D>(&witness, false)?;
         let cfg = plan.config;
         let rr: usize = plan.nu.iter().sum();
-        let setup = LabradorSetup::new(&cfg, rr, plan.nn, comkey_seed);
+        let setup = Arc::new(LabradorSetup::new(&cfg, rr, plan.nn, comkey_seed));
         let fold = prove_level(
             &witness,
             &_statement,
@@ -80,7 +82,7 @@ where
                 .sum::<usize>();
 
         let rr: usize = tail_plan.nu.iter().sum();
-        let tail_setup = LabradorSetup::new(&tail_cfg, rr, tail_plan.nn, comkey_seed);
+        let tail_setup = Arc::new(LabradorSetup::new(&tail_cfg, rr, tail_plan.nn, comkey_seed));
         let mut tail_transcript = transcript.clone();
         if let Ok(tail) = prove_level(
             &witness,
@@ -120,6 +122,7 @@ where
 ///
 /// Returns [`HachiError`] if any fold level fails (e.g. empty witness,
 /// invalid config, or transcript errors).
+#[tracing::instrument(skip_all, name = "labrador::prove_with_config")]
 pub fn prove_with_config<F, T, const D: usize>(
     initial_witness: LabradorWitness<F, D>,
     initial_statement: &LabradorStatement<F, D>,
@@ -156,7 +159,7 @@ where
         });
         let cfg = plan.config;
         let rr: usize = plan.nu.iter().sum();
-        let setup = LabradorSetup::new(&cfg, rr, plan.nn, comkey_seed);
+        let setup = Arc::new(LabradorSetup::new(&cfg, rr, plan.nn, comkey_seed));
 
         let mut attempt_transcript = transcript.clone();
         let fold = prove_level(
@@ -205,7 +208,7 @@ where
                 .sum::<usize>();
 
         let rr: usize = tail_plan.nu.iter().sum();
-        let tail_setup = LabradorSetup::new(&tail_cfg, rr, tail_plan.nn, comkey_seed);
+        let tail_setup = Arc::new(LabradorSetup::new(&tail_cfg, rr, tail_plan.nn, comkey_seed));
         let mut tail_transcript = transcript.clone();
         if let Ok(tail) = prove_level(
             &witness,
@@ -289,6 +292,7 @@ mod tests {
             u2: Vec::new(),
             challenges: Vec::new(),
             constraints: Vec::new(),
+            reduced_constraints: None,
             beta_sq: 1024,
         };
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
@@ -304,6 +308,7 @@ mod tests {
             u2: Vec::new(),
             challenges: Vec::new(),
             constraints: Vec::new(),
+            reduced_constraints: None,
             beta_sq: 1 << 30,
         };
         let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);

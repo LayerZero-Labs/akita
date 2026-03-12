@@ -67,6 +67,18 @@ impl<const D: usize> CenteredWitness<D> {
     }
 }
 
+#[inline]
+fn jl_pair_to_sign(pair: u8) -> i8 {
+    ((pair == 0b11) as i8) - ((pair == 0b00) as i8)
+}
+
+#[inline]
+fn jl_pair_at(row: &[u8], col: usize) -> u8 {
+    let shift = (col & 0b11) << 1;
+    (row[col >> 2] >> shift) & 0b11
+}
+
+#[tracing::instrument(skip_all, name = "labrador::center_witness")]
 fn center_witness_by_ring<F: FieldCore + CanonicalField, const D: usize>(
     witness: &LabradorWitness<F, D>,
 ) -> Result<CenteredWitness<D>, HachiError> {
@@ -124,17 +136,84 @@ fn center_witness_by_ring<F: FieldCore + CanonicalField, const D: usize>(
     }
 }
 
-/// Binary JL matrix with entries in `{-1, +1}`.
+/// Packed ternary JL matrix with entries in `{-1, 0, +1}`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabradorJlMatrix {
-    /// Matrix entries as `-1/+1`, one inner vec per row.
-    pub signs: Vec<Vec<i8>>,
+    cols: usize,
+    row_bytes: usize,
+    packed_rows: Vec<u8>,
 }
 
 impl LabradorJlMatrix {
-    /// Number of columns (derived from the first row).
+    /// Number of columns in each JL row.
     pub fn cols(&self) -> usize {
-        self.signs.first().map_or(0, |r| r.len())
+        self.cols
+    }
+
+    pub(crate) fn is_well_formed(&self) -> bool {
+        self.cols > 0 && self.packed_rows.len() == JL_ROWS * self.row_bytes
+    }
+
+    pub(crate) fn row_bytes(&self, row_idx: usize) -> &[u8] {
+        debug_assert!(row_idx < JL_ROWS);
+        let start = row_idx * self.row_bytes;
+        &self.packed_rows[start..start + self.row_bytes]
+    }
+
+    #[cfg(test)]
+    fn from_sign_rows(signs: Vec<Vec<i8>>) -> Result<Self, HachiError> {
+        if signs.len() != JL_ROWS {
+            return Err(HachiError::InvalidInput(format!(
+                "JL matrix requires exactly {JL_ROWS} rows"
+            )));
+        }
+        let cols = signs.first().map_or(0, Vec::len);
+        if cols == 0 {
+            return Err(HachiError::InvalidInput(
+                "JL matrix requires non-zero column count".to_string(),
+            ));
+        }
+        if signs.iter().any(|row| row.len() != cols) {
+            return Err(HachiError::InvalidInput(
+                "JL matrix row length mismatch".to_string(),
+            ));
+        }
+
+        let row_bytes = (cols * 2).div_ceil(8);
+        let mut packed_rows = vec![0u8; JL_ROWS * row_bytes];
+        for (row_idx, row) in signs.iter().enumerate() {
+            let start = row_idx * row_bytes;
+            for (col_idx, &sign) in row.iter().enumerate() {
+                let pair = match sign {
+                    -1 => 0b00,
+                    0 => 0b01,
+                    1 => 0b11,
+                    _ => {
+                        return Err(HachiError::InvalidInput(
+                            "JL matrix entries must be in {-1, 0, +1}".to_string(),
+                        ))
+                    }
+                };
+                packed_rows[start + (col_idx >> 2)] |= pair << ((col_idx & 0b11) << 1);
+            }
+        }
+
+        Ok(Self {
+            cols,
+            row_bytes,
+            packed_rows,
+        })
+    }
+
+    #[cfg(test)]
+    fn sign_at(&self, row_idx: usize, col_idx: usize) -> Option<i8> {
+        if row_idx >= JL_ROWS || col_idx >= self.cols {
+            return None;
+        }
+        Some(jl_pair_to_sign(jl_pair_at(
+            self.row_bytes(row_idx),
+            col_idx,
+        )))
     }
 
     /// Squeeze a JL matrix directly from the transcript.
@@ -153,29 +232,15 @@ impl LabradorJlMatrix {
                 "JL matrix requires non-zero column count".to_string(),
             ));
         }
-        let byte_len_per_row = (cols * 2).div_ceil(8);
-        let total_bytes = JL_ROWS * byte_len_per_row;
+        let row_bytes = (cols * 2).div_ceil(8);
+        let total_bytes = JL_ROWS * row_bytes;
         let seed = transcript.challenge_bytes(labels::CHALLENGE_LABRADOR_JL_SEED, 32);
-        let all_bytes = expand_jl_seed(&seed, total_bytes);
-        let signs: Vec<Vec<i8>> = all_bytes
-            .chunks(byte_len_per_row)
-            .map(|bytes| {
-                (0..cols)
-                    .map(|c| {
-                        let bit_offset = c * 2;
-                        let byte_idx = bit_offset / 8;
-                        let shift = bit_offset % 8;
-                        let pair = (bytes[byte_idx] >> shift) & 0b11;
-                        match pair {
-                            0b00 => -1,
-                            0b11 => 1,
-                            _ => 0,
-                        }
-                    })
-                    .collect()
-            })
-            .collect();
-        Ok(Self { signs })
+        let packed_rows = expand_jl_seed(&seed, total_bytes);
+        Ok(Self {
+            cols,
+            row_bytes,
+            packed_rows,
+        })
     }
 
     /// Reconstruct the accepted JL matrix from the prover-chosen nonce.
@@ -187,6 +252,7 @@ impl LabradorJlMatrix {
     /// # Errors
     ///
     /// Returns an error if `cols` is zero or `jl_nonce` is out of range.
+    #[tracing::instrument(skip_all, name = "labrador::jl_matrix_replay")]
     pub fn replay_nonce_search<F, T>(
         transcript: &mut T,
         jl_nonce: u64,
@@ -311,68 +377,88 @@ pub fn restore_constant_term<F: FieldCore, const D: usize>(
 
 /// Compute the JL projection by streaming over witness coefficients without
 /// materializing the full flattened vector.
+#[inline]
+fn project_row_i64(row: &[u8], coeffs: &[i64], cols: usize) -> Option<i64> {
+    let full_bytes = cols >> 2;
+    let remainder = cols & 0b11;
+    let mut coeff_idx = 0usize;
+    let mut acc = 0i128;
+
+    for &byte in row.iter().take(full_bytes) {
+        let pair0 = byte & 0b11;
+        let pair1 = (byte >> 2) & 0b11;
+        let pair2 = (byte >> 4) & 0b11;
+        let pair3 = (byte >> 6) & 0b11;
+
+        acc += (jl_pair_to_sign(pair0) as i128) * (coeffs[coeff_idx] as i128);
+        acc += (jl_pair_to_sign(pair1) as i128) * (coeffs[coeff_idx + 1] as i128);
+        acc += (jl_pair_to_sign(pair2) as i128) * (coeffs[coeff_idx + 2] as i128);
+        acc += (jl_pair_to_sign(pair3) as i128) * (coeffs[coeff_idx + 3] as i128);
+        coeff_idx += 4;
+    }
+
+    if remainder > 0 {
+        let byte = row[full_bytes];
+        for lane in 0..remainder {
+            let pair = (byte >> (lane << 1)) & 0b11;
+            acc += (jl_pair_to_sign(pair) as i128) * (coeffs[coeff_idx] as i128);
+            coeff_idx += 1;
+        }
+    }
+
+    i64::try_from(acc).ok()
+}
+
+fn project_row_i128<const D: usize>(
+    row: &[u8],
+    rings: &[[i128; D]],
+    cols: usize,
+    use_checked: bool,
+) -> Option<i64> {
+    let mut acc = 0i128;
+    let mut col_idx = 0usize;
+
+    for coeff_chunk in rings {
+        for &value in coeff_chunk {
+            let pair = jl_pair_at(row, col_idx);
+            if use_checked {
+                match jl_pair_to_sign(pair) {
+                    -1 => acc = acc.checked_sub(value)?,
+                    0 => {}
+                    1 => acc = acc.checked_add(value)?,
+                    _ => unreachable!(),
+                }
+            } else {
+                acc += (jl_pair_to_sign(pair) as i128) * value;
+            }
+            col_idx += 1;
+        }
+    }
+    debug_assert_eq!(col_idx, cols);
+    i64::try_from(acc).ok()
+}
+
 #[tracing::instrument(skip_all, name = "labrador::project_streaming")]
 fn project_streaming<const D: usize>(
     matrix: &LabradorJlMatrix,
     centered_witness: &CenteredWitness<D>,
     total_coeffs: usize,
 ) -> Option<[i64; 256]> {
-    if matrix.signs.len() != JL_ROWS || centered_witness.ring_len() * D != total_coeffs {
-        return None;
-    }
-    if matrix.signs.iter().any(|row| row.len() != total_coeffs) {
+    if !matrix.is_well_formed()
+        || matrix.cols() != total_coeffs
+        || centered_witness.ring_len() * D != total_coeffs
+    {
         return None;
     }
     let results: Vec<Option<i64>> = match centered_witness {
-        CenteredWitness::I64 { coeffs } => cfg_iter!(matrix.signs)
-            .map(|row| {
-                let mut acc = 0i128;
-                for (&sign, &value) in row.iter().zip(coeffs.iter()) {
-                    match sign {
-                        -1 => acc -= value as i128,
-                        0 => {}
-                        1 => acc += value as i128,
-                        _ => return None,
-                    }
-                }
-                if acc < i64::MIN as i128 || acc > i64::MAX as i128 {
-                    None
-                } else {
-                    Some(acc as i64)
-                }
-            })
+        CenteredWitness::I64 { coeffs } => cfg_into_iter!(0..JL_ROWS)
+            .map(|row_idx| project_row_i64(matrix.row_bytes(row_idx), coeffs, total_coeffs))
             .collect(),
         CenteredWitness::I128 { rings, sum_abs } => {
             let use_checked = *sum_abs > i128::MAX as u128;
-            cfg_iter!(matrix.signs)
-                .map(|row| {
-                    let mut acc = 0i128;
-                    for (ring_idx, coeff_chunk) in rings.iter().enumerate() {
-                        let base = ring_idx * D;
-                        for (offset, &value) in coeff_chunk.iter().enumerate() {
-                            let sign = row[base + offset];
-                            if use_checked {
-                                match sign {
-                                    -1 => acc = acc.checked_sub(value)?,
-                                    0 => {}
-                                    1 => acc = acc.checked_add(value)?,
-                                    _ => return None,
-                                }
-                            } else {
-                                match sign {
-                                    -1 => acc -= value,
-                                    0 => {}
-                                    1 => acc += value,
-                                    _ => return None,
-                                }
-                            }
-                        }
-                    }
-                    if acc < i64::MIN as i128 || acc > i64::MAX as i128 {
-                        None
-                    } else {
-                        Some(acc as i64)
-                    }
+            cfg_into_iter!(0..JL_ROWS)
+                .map(|row_idx| {
+                    project_row_i128(matrix.row_bytes(row_idx), rings, total_coeffs, use_checked)
                 })
                 .collect()
         }
@@ -496,10 +582,31 @@ mod tests {
                 row
             })
             .collect();
-        let matrix = LabradorJlMatrix { signs };
+        let matrix = LabradorJlMatrix::from_sign_rows(signs).unwrap();
         let projection = project_streaming::<D>(&matrix, &centered, D).unwrap();
         assert_eq!(projection[0], 0);
         assert!(projection.iter().skip(1).all(|&v| v == 0));
+    }
+
+    #[test]
+    fn packed_matrix_roundtrips_manual_signs() {
+        let signs: Vec<Vec<i8>> = (0..JL_ROWS)
+            .map(|row_idx| {
+                (0..7)
+                    .map(|col_idx| match (row_idx + col_idx) % 3 {
+                        0 => -1,
+                        1 => 0,
+                        _ => 1,
+                    })
+                    .collect()
+            })
+            .collect();
+        let matrix = LabradorJlMatrix::from_sign_rows(signs.clone()).unwrap();
+        for (row_idx, row) in signs.iter().enumerate() {
+            for (col_idx, &sign) in row.iter().enumerate() {
+                assert_eq!(matrix.sign_at(row_idx, col_idx), Some(sign));
+            }
+        }
     }
 
     #[test]
