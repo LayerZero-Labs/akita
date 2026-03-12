@@ -130,7 +130,7 @@ where
         ring_opening_point: RingOpeningPoint<F>,
         poly: &P,
         pre_folded: Vec<CyclotomicRing<F, D>>,
-        hint: HachiCommitmentHint<F, D>,
+        mut hint: HachiCommitmentHint<F, D>,
         transcript: &mut T,
         commitment: &RingCommitment<F, D>,
         y_ring: &CyclotomicRing<F, D>,
@@ -161,6 +161,7 @@ where
             w_hat.len(),
             w_hat.first().map_or(0, |v| v.len())
         );
+        hint.ensure_t_recomposed(layout.num_digits_open, layout.log_basis)?;
 
         let t_v = Instant::now();
         let v = {
@@ -377,6 +378,23 @@ fn add_sparse_ring_product<F: FieldCore + CanonicalField, const D: usize>(
     }
 }
 
+/// Add only the high-half quotient contribution of `challenge * ring`.
+fn add_sparse_ring_product_high_half<F: FieldCore + CanonicalField, const D: usize>(
+    quotient: &mut [F],
+    challenge: &SparseChallenge,
+    ring: &CyclotomicRing<F, D>,
+) {
+    let rc = ring.coefficients();
+    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+        let c = F::from_i64(coeff as i64);
+        let p = pos as usize;
+        let start = D.saturating_sub(p);
+        for (s, &r_s) in rc.iter().enumerate().skip(start) {
+            quotient[p + s - D] += c * r_s;
+        }
+    }
+}
+
 /// Split-eq replacement for `generate_m` + `compute_r_via_poly_division`.
 ///
 /// Computes `r` such that `M·z = y + (X^D+1)·r` without materializing M or z.
@@ -390,6 +408,7 @@ pub(crate) fn compute_r_split_eq<F, const D: usize, Cfg>(
     challenges: &[SparseChallenge],
     w_hat_flat: &[[i8; D]],
     t_hat: &[Vec<[i8; D]>],
+    t: &[Vec<CyclotomicRing<F, D>>],
     w_folded: &[CyclotomicRing<F, D>],
     z_pre: &[CyclotomicRing<F, D>],
     y: &[CyclotomicRing<F, D>],
@@ -410,7 +429,6 @@ where
         );
     }
     let decomp_commit = layout.num_digits_commit;
-    let decomp_open = layout.num_digits_open;
     let log_basis = layout.log_basis;
     let poly_len = 2 * D - 1;
     let num_rows = Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A;
@@ -455,20 +473,14 @@ where
             let _span = tracing::info_span!("A_row").entered();
             let a_idx = row_idx - (Cfg::N_D + Cfg::N_B + 2);
 
-            poly_buf.fill(F::zero());
-            for (i, t_hat_i) in t_hat.iter().enumerate() {
-                let start = a_idx * decomp_open;
-                let end = start + decomp_open;
-                if end <= t_hat_i.len() {
-                    let t_recomp =
-                        CyclotomicRing::gadget_recompose_pow2_i8(&t_hat_i[start..end], log_basis);
-                    add_sparse_ring_product(&mut poly_buf, &challenges[i], &t_recomp);
+            quotient_buf.fill(F::zero());
+            for (i, t_rows_i) in t.iter().enumerate() {
+                if let Some(t_row_i) = t_rows_i.get(a_idx) {
+                    add_sparse_ring_product_high_half(&mut quotient_buf, &challenges[i], t_row_i);
                 }
             }
 
             let a_q = a_quotients[a_idx].coefficients();
-            quotient_buf.fill(F::zero());
-            quotient_buf[..(poly_len - D)].copy_from_slice(&poly_buf[D..poly_len]);
             for k in 0..D {
                 quotient_buf[k] -= a_q[k];
             }
