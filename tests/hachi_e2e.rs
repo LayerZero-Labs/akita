@@ -3,15 +3,14 @@
 use hachi_pcs::algebra::poly::multilinear_eval;
 use hachi_pcs::algebra::Fp128;
 use hachi_pcs::protocol::commitment::{
-    DecompositionParams, Fp128FullCommitmentConfig, Fp128OneHotCommitmentConfig,
-    HachiCommitmentLayout,
+    Fp128FullCommitmentConfig, Fp128OneHotCommitmentConfig,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
-    BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, HachiError, Transcript,
+    BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -20,11 +19,12 @@ use std::time::Instant;
 
 type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
 // Keep the default e2e tests small enough for `cargo test`; the larger nv=25
-// workloads remain covered by `benches/hachi_e2e.rs`.
-const FULL_TEST_NV: usize = 17;
+// workloads remain covered by `benches/hachi_e2e.rs`, while still triggering
+// the standard Labrador handoff path.
+const FULL_TEST_NV: usize = 14;
 // The one-hot witness grows much faster than the dense path, so use a smaller
-// default size here while still exercising the Labrador handoff.
-const ONEHOT_TEST_NV: usize = 16;
+// default size here while still exercising the standard Labrador handoff.
+const ONEHOT_TEST_NV: usize = 15;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
 static INIT_RAYON: Once = Once::new();
@@ -81,109 +81,6 @@ fn purge_setup_cache(max_num_vars: usize) {
 }
 
 // ---------------------------------------------------------------------------
-// Configs that halve D down to 64 for Labrador handoff.
-//
-// The Labrador challenge sampler requires D <= 256, and the handoff guard
-// requires D <= 64. These configs use d_at_level to halve the ring dimension
-// (512 -> 256 -> 128 -> 64) while keeping all other parameters from the
-// standard Fp128 configs.
-// ---------------------------------------------------------------------------
-
-fn halving_d(base_d: usize, level: usize) -> usize {
-    let mut d = base_d;
-    for _ in 0..level {
-        if d > 64 {
-            d /= 2;
-        }
-    }
-    d
-}
-
-fn halving_n_a(base_d: usize, level: usize) -> usize {
-    base_d / halving_d(base_d, level)
-}
-
-fn halving_challenge_weight(d: usize) -> usize {
-    match d {
-        512 => 19,
-        256 => 23,
-        128 => 31,
-        64 | 0 => 31,
-        _ => 19,
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct FullLabradorConfig;
-
-impl CommitmentConfig for FullLabradorConfig {
-    const D: usize = Fp128FullCommitmentConfig::D;
-    const N_A: usize = Fp128FullCommitmentConfig::N_A;
-    const N_B: usize = Fp128FullCommitmentConfig::N_B;
-    const N_D: usize = Fp128FullCommitmentConfig::N_D;
-    const CHALLENGE_WEIGHT: usize = Fp128FullCommitmentConfig::CHALLENGE_WEIGHT;
-
-    fn decomposition() -> DecompositionParams {
-        Fp128FullCommitmentConfig::decomposition()
-    }
-
-    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        Fp128FullCommitmentConfig::commitment_layout(max_num_vars)
-    }
-
-    fn d_at_level(level: usize, _w_num_vars: usize) -> usize {
-        halving_d(Self::D, level)
-    }
-
-    fn n_a_at_level(level: usize) -> usize {
-        halving_n_a(Self::D, level)
-    }
-
-    fn challenge_weight_for_ring_dim(d: usize) -> usize {
-        halving_challenge_weight(d)
-    }
-
-    fn labrador_handoff_threshold() -> usize {
-        0
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct OneHotLabradorConfig;
-
-impl CommitmentConfig for OneHotLabradorConfig {
-    const D: usize = Fp128OneHotCommitmentConfig::D;
-    const N_A: usize = Fp128OneHotCommitmentConfig::N_A;
-    const N_B: usize = Fp128OneHotCommitmentConfig::N_B;
-    const N_D: usize = Fp128OneHotCommitmentConfig::N_D;
-    const CHALLENGE_WEIGHT: usize = Fp128OneHotCommitmentConfig::CHALLENGE_WEIGHT;
-
-    fn decomposition() -> DecompositionParams {
-        Fp128OneHotCommitmentConfig::decomposition()
-    }
-
-    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        Fp128OneHotCommitmentConfig::commitment_layout(max_num_vars)
-    }
-
-    fn d_at_level(level: usize, _w_num_vars: usize) -> usize {
-        halving_d(Self::D, level)
-    }
-
-    fn n_a_at_level(level: usize) -> usize {
-        halving_n_a(Self::D, level)
-    }
-
-    fn challenge_weight_for_ring_dim(d: usize) -> usize {
-        halving_challenge_weight(d)
-    }
-
-    fn labrador_handoff_threshold() -> usize {
-        0
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Dense ("full") prove/verify
 // ---------------------------------------------------------------------------
 
@@ -192,7 +89,7 @@ fn full_labrador_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = FullLabradorConfig;
+        type Cfg = Fp128FullCommitmentConfig;
         const D: usize = Cfg::D;
 
         let layout = Cfg::commitment_layout(FULL_TEST_NV).expect("layout");
@@ -297,7 +194,7 @@ fn onehot_labrador_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = OneHotLabradorConfig;
+        type Cfg = Fp128OneHotCommitmentConfig;
         const D: usize = Cfg::D;
 
         let layout = Cfg::commitment_layout(ONEHOT_TEST_NV).expect("layout");
@@ -322,7 +219,6 @@ fn onehot_labrador_prove_verify() {
             }
             evals
         };
-        let dense_poly = DensePoly::<F, D>::from_field_evals(ONEHOT_TEST_NV, &dense_evals).unwrap();
         let pt = random_point(ONEHOT_TEST_NV);
         let expected_opening = multilinear_eval(&dense_evals, &pt).unwrap();
 
@@ -342,7 +238,7 @@ fn onehot_labrador_prove_verify() {
         let prove_start = Instant::now();
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
             &setup,
-            &dense_poly,
+            &onehot_poly,
             &pt,
             hint,
             &mut prover_transcript,
