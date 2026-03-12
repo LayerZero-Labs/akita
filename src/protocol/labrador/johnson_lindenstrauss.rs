@@ -178,15 +178,15 @@ impl LabradorJlMatrix {
         Ok(Self { signs })
     }
 
-    /// Replay the prover's nonce loop to reconstruct the JL matrix.
+    /// Reconstruct the accepted JL matrix from the prover-chosen nonce.
     ///
-    /// Absorbs nonces `1..=jl_nonce` and squeezes a matrix for each, returning
-    /// the final matrix. Leaves the transcript in the same state the prover
-    /// had after `project` returned.
+    /// The prover now performs nonce search on cloned transcript states and
+    /// only commits the accepted nonce back into the real transcript. The
+    /// verifier therefore absorbs exactly that accepted nonce once.
     ///
     /// # Errors
     ///
-    /// Returns an error if `cols` is zero.
+    /// Returns an error if `cols` is zero or `jl_nonce` is out of range.
     pub fn replay_nonce_search<F, T>(
         transcript: &mut T,
         jl_nonce: u64,
@@ -196,20 +196,22 @@ impl LabradorJlMatrix {
         F: FieldCore + CanonicalField,
         T: Transcript<F>,
     {
-        let mut matrix = None;
-        for nonce in 1..=jl_nonce {
-            transcript.append_bytes(labels::ABSORB_LABRADOR_JL_NONCE, &nonce.to_le_bytes());
-            matrix = Some(Self::generate::<F, T>(transcript, cols)?);
+        if !(1..=LABRADOR_MAX_JL_NONCE_RETRIES).contains(&jl_nonce) {
+            return Err(HachiError::InvalidInput(format!(
+                "JL nonce out of range: {jl_nonce}"
+            )));
         }
-        matrix.ok_or_else(|| HachiError::InvalidInput("JL nonce must be at least 1".to_string()))
+
+        transcript.append_bytes(labels::ABSORB_LABRADOR_JL_NONCE, &jl_nonce.to_le_bytes());
+        Self::generate::<F, T>(transcript, cols)
     }
 }
 
 /// Project a witness into 256 JL coordinates and return the nonce used.
 ///
-/// Each nonce attempt absorbs the nonce and squeezes the matrix from the
-/// transcript. The verifier must replay the same loop from 1 to the
-/// returned nonce to keep the transcript in sync.
+/// Each nonce attempt runs on a cloned transcript. Only the accepted nonce
+/// is committed to the real transcript, which keeps verifier replay bounded
+/// and prevents rejected attempts from perturbing later challenges.
 ///
 /// # Errors
 ///
@@ -242,8 +244,9 @@ where
     let component_bound = next_power_of_two_u64(4.0 * (witness_norm as f64).sqrt());
 
     for nonce in 1..=LABRADOR_MAX_JL_NONCE_RETRIES {
-        transcript.append_bytes(labels::ABSORB_LABRADOR_JL_NONCE, &nonce.to_le_bytes());
-        let matrix = LabradorJlMatrix::generate::<F, T>(transcript, total_coeffs)?;
+        let mut nonce_transcript = transcript.clone();
+        nonce_transcript.append_bytes(labels::ABSORB_LABRADOR_JL_NONCE, &nonce.to_le_bytes());
+        let matrix = LabradorJlMatrix::generate::<F, T>(&mut nonce_transcript, total_coeffs)?;
         if let Some(proj) = project_streaming::<D>(&matrix, &centered_witness, total_coeffs) {
             if proj.iter().any(|&p| p.unsigned_abs() >= component_bound) {
                 continue;
@@ -254,6 +257,7 @@ where
             if proj_norm > norm_bound {
                 continue;
             }
+            *transcript = nonce_transcript;
             return Ok((proj, nonce, matrix));
         }
     }

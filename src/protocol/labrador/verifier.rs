@@ -113,19 +113,8 @@ where
     F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
     T: Transcript<F>,
 {
-    if level.tail {
-        return Err(HachiError::InvalidProof);
-    }
-    let r = level.input_row_lengths.len();
-    if r == 0 {
-        return Err(HachiError::InvalidProof);
-    }
-    if level.config.f == 0 || level.config.fu == 0 {
-        return Err(HachiError::InvalidProof);
-    }
-
+    let rr = validate_level_shape(level, false)?;
     let nn = level.nn;
-    let rr: usize = level.nu.iter().sum();
     let virt_row_lengths = vec![nn; rr];
 
     absorb_labrador_level_context(
@@ -162,7 +151,8 @@ where
         &level.input_row_lengths,
         transcript,
     )?;
-    let phi_stmt = reshape_phi_verifier::<F, D>(&phi_stmt_orig, &level.nu, nn);
+    let phi_stmt =
+        reshape_phi_verifier::<F, D>(&phi_stmt_orig, &level.input_row_lengths, &level.nu, nn)?;
 
     let mut phi_total = phi_stmt;
     add_phi_in_place(&mut phi_total, &phi_jl)?;
@@ -202,16 +192,24 @@ where
 
 fn reshape_phi_verifier<F: FieldCore, const D: usize>(
     phi: &[Vec<CyclotomicRing<F, D>>],
+    row_lengths: &[usize],
     nu: &[usize],
     nn: usize,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError> {
+    let rr = validate_reshape_metadata(row_lengths, nu, nn)?;
     let mut result = Vec::new();
     let mut group: Vec<CyclotomicRing<F, D>> = Vec::new();
 
     for (i, row) in phi.iter().enumerate() {
+        if i >= row_lengths.len() || row.len() != row_lengths[i] {
+            return Err(HachiError::InvalidProof);
+        }
         group.extend(row.iter().copied());
         let splits = if i < nu.len() { nu[i] } else { 0 };
         if splits > 0 {
+            if group.len() > splits * nn {
+                return Err(HachiError::InvalidProof);
+            }
             for chunk_idx in 0..splits {
                 let start = chunk_idx * nn;
                 let mut virtual_row = vec![CyclotomicRing::<F, D>::zero(); nn];
@@ -223,7 +221,10 @@ fn reshape_phi_verifier<F: FieldCore, const D: usize>(
             group.clear();
         }
     }
-    result
+    if !group.is_empty() || result.len() != rr {
+        return Err(HachiError::InvalidProof);
+    }
+    Ok(result)
 }
 
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
@@ -239,19 +240,8 @@ where
     F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
     T: Transcript<F>,
 {
-    if !level.tail {
-        return Err(HachiError::InvalidProof);
-    }
-    let r = level.input_row_lengths.len();
-    if r == 0 {
-        return Err(HachiError::InvalidProof);
-    }
-    if level.config.f == 0 || level.config.fu == 0 {
-        return Err(HachiError::InvalidProof);
-    }
-
     let nn = level.nn;
-    let rr: usize = level.nu.iter().sum();
+    let rr = validate_level_shape(level, true)?;
 
     if witness.rows().len() != level.config.f {
         return Err(HachiError::InvalidProof);
@@ -308,7 +298,8 @@ where
         &level.input_row_lengths,
         transcript,
     )?;
-    let phi_stmt = reshape_phi_verifier::<F, D>(&phi_stmt_orig, &level.nu, nn);
+    let phi_stmt =
+        reshape_phi_verifier::<F, D>(&phi_stmt_orig, &level.input_row_lengths, &level.nu, nn)?;
 
     let mut phi_total = phi_stmt;
     add_phi_in_place(&mut phi_total, &phi_jl)?;
@@ -399,19 +390,8 @@ where
     F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
     T: Transcript<F>,
 {
-    if level.tail {
-        return Err(HachiError::InvalidProof);
-    }
-    let r = level.input_row_lengths.len();
-    if r == 0 {
-        return Err(HachiError::InvalidProof);
-    }
-    if level.config.f == 0 || level.config.fu == 0 {
-        return Err(HachiError::InvalidProof);
-    }
-
     let nn = level.nn;
-    let rr: usize = level.nu.iter().sum();
+    let rr = validate_level_shape(level, false)?;
     let layout = NextWitnessLayout::new(rr, &level.config);
     let expected_rows = layout.num_rows();
     if witness.rows().len() != expected_rows {
@@ -464,7 +444,8 @@ where
         &level.input_row_lengths,
         transcript,
     )?;
-    let phi_stmt = reshape_phi_verifier::<F, D>(&phi_stmt_orig, &level.nu, nn);
+    let phi_stmt =
+        reshape_phi_verifier::<F, D>(&phi_stmt_orig, &level.input_row_lengths, &level.nu, nn)?;
 
     let mut phi_total = phi_stmt;
     add_phi_in_place(&mut phi_total, &phi_jl)?;
@@ -586,6 +567,58 @@ fn projection_norm_sq(projection: &[i64; 256]) -> u128 {
         let sq = x * x;
         acc.saturating_add(sq as u128)
     })
+}
+
+fn validate_level_shape<F: FieldCore, const D: usize>(
+    level: &LabradorLevelProof<F, D>,
+    expect_tail: bool,
+) -> Result<usize, HachiError> {
+    if level.tail != expect_tail || level.config.tail != expect_tail {
+        return Err(HachiError::InvalidProof);
+    }
+    if level.config.f == 0 || level.config.fu == 0 {
+        return Err(HachiError::InvalidProof);
+    }
+    if expect_tail {
+        if level.config.kappa1 != 0 {
+            return Err(HachiError::InvalidProof);
+        }
+    } else if level.config.kappa1 == 0 {
+        return Err(HachiError::InvalidProof);
+    }
+    validate_reshape_metadata(&level.input_row_lengths, &level.nu, level.nn)
+}
+
+fn validate_reshape_metadata(
+    row_lengths: &[usize],
+    nu: &[usize],
+    nn: usize,
+) -> Result<usize, HachiError> {
+    if row_lengths.is_empty() || nu.len() != row_lengths.len() || nn == 0 {
+        return Err(HachiError::InvalidProof);
+    }
+
+    let mut rr = 0usize;
+    let mut grouped_len = 0usize;
+    for (&row_len, &splits) in row_lengths.iter().zip(nu.iter()) {
+        grouped_len = grouped_len
+            .checked_add(row_len)
+            .ok_or(HachiError::InvalidProof)?;
+        if splits > 0 {
+            let capacity = splits.checked_mul(nn).ok_or(HachiError::InvalidProof)?;
+            if grouped_len > capacity {
+                return Err(HachiError::InvalidProof);
+            }
+            rr = rr.checked_add(splits).ok_or(HachiError::InvalidProof)?;
+            grouped_len = 0;
+        }
+    }
+
+    if grouped_len != 0 || rr == 0 {
+        return Err(HachiError::InvalidProof);
+    }
+
+    Ok(rr)
 }
 
 fn recompose_from_parts<F: FieldCore + CanonicalField, const D: usize>(

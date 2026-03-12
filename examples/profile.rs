@@ -95,12 +95,16 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
             sc_size,
         );
     }
-    eprintln!(
-        "[{label}]   final_w: {} elems, {} bits/elem, packed {} bytes",
-        proof.final_w().num_elems,
-        proof.final_w().bits_per_elem,
-        proof.final_w().serialized_size(Compress::No),
-    );
+    if let Some(final_w) = proof.final_w() {
+        eprintln!(
+            "[{label}]   final_w: {} elems, {} bits/elem, packed {} bytes",
+            final_w.num_elems,
+            final_w.bits_per_elem,
+            final_w.serialized_size(Compress::No),
+        );
+    } else {
+        eprintln!("[{label}]   final_w: Labrador tail");
+    }
 }
 
 fn print_layout(layout: &HachiCommitmentLayout) {

@@ -2,19 +2,35 @@
 
 use hachi_pcs::algebra::poly::multilinear_eval;
 use hachi_pcs::algebra::Fp128;
+use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{Fp128FullCommitmentConfig, Fp128OneHotCommitmentConfig};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
-use hachi_pcs::{BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, Transcript};
+use hachi_pcs::{
+    BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, HachiSerialize, Transcript,
+};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+#[cfg(feature = "parallel")]
+use std::sync::Once;
 use std::time::Instant;
 
 type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
 const NV: usize = 25;
 const STACK_SIZE: usize = 64 * 1024 * 1024;
+
+#[cfg(feature = "parallel")]
+fn init_large_stack_rayon_pool() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        rayon::ThreadPoolBuilder::new()
+            .stack_size(STACK_SIZE)
+            .build_global()
+            .expect("failed to build global Rayon pool");
+    });
+}
 
 fn random_point(nv: usize) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(0xcafe_babe);
@@ -24,6 +40,9 @@ fn random_point(nv: usize) -> Vec<F> {
 }
 
 fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
+    #[cfg(feature = "parallel")]
+    init_large_stack_rayon_pool();
+
     std::thread::Builder::new()
         .stack_size(STACK_SIZE)
         .spawn(f)
@@ -108,6 +127,13 @@ fn full_nv25_inner() {
     let prove_time = prove_start.elapsed();
 
     let proof_bytes = proof.size();
+    let mut proof_bytes_actual = Vec::new();
+    proof
+        .serialize_uncompressed(&mut proof_bytes_actual)
+        .unwrap();
+    assert_eq!(proof.final_w().is_none(), proof.has_labrador_tail());
+    assert_eq!(proof_bytes, proof.serialized_size(Compress::No));
+    assert_eq!(proof_bytes_actual.len(), proof_bytes);
 
     let verifier_setup =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
@@ -195,6 +221,13 @@ fn onehot_nv25_inner() {
     let prove_time = prove_start.elapsed();
 
     let proof_bytes = proof.size();
+    let mut proof_bytes_actual = Vec::new();
+    proof
+        .serialize_uncompressed(&mut proof_bytes_actual)
+        .unwrap();
+    assert_eq!(proof.final_w().is_none(), proof.has_labrador_tail());
+    assert_eq!(proof_bytes, proof.serialized_size(Compress::No));
+    assert_eq!(proof_bytes_actual.len(), proof_bytes);
 
     let verifier_setup =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);

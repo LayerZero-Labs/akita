@@ -24,7 +24,9 @@ use crate::protocol::labrador::types::{
 };
 use crate::protocol::labrador::{prove_with_config, LabradorConstraint, LabradorConstraintTerm};
 use crate::protocol::opening_point::{BasisMode, RingOpeningPoint};
-use crate::protocol::proof::{FlatLabradorProof, FlatRingVec, HachiProofTail, LabradorTail};
+use crate::protocol::proof::{
+    FlatLabradorProof, FlatRingVec, HachiCommitmentHint, HachiProofTail, LabradorTail,
+};
 use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::ring_switch::WCommitmentConfig;
 use crate::protocol::transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
@@ -226,11 +228,9 @@ where
 pub(crate) fn hachi_labrador_select_config<F: CanonicalField, const D: usize>(
     witness: &LabradorWitness<F, D>,
 ) -> Result<LabradorReductionConfig, HachiError> {
+    let row_count = witness.rows().len();
     let max_row_len = witness.rows().iter().map(|r| r.len()).max().unwrap_or(0);
-    crate::protocol::labrador::config::select_handoff_config::<F, D>(
-        max_row_len,
-        witness.rows().len(),
-    )
+    crate::protocol::labrador::config::select_handoff_config::<F, D>(row_count, max_row_len)
 }
 
 /// Execute the Labrador direct handoff from the Hachi folding loop.
@@ -245,10 +245,11 @@ pub(crate) fn hachi_labrador_select_config<F: CanonicalField, const D: usize>(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn labrador_handoff_prove<F, T, const D_HANDOFF: usize, Cfg>(
     current_w: &[i8],
+    current_hint: &HachiCommitmentHint<F, D_HANDOFF>,
+    current_commitment: &RingCommitment<F, D_HANDOFF>,
     current_challenges: &[F],
     current_num_u: usize,
     current_num_l: usize,
-    _w_eval: F,
     expanded_setup: &HachiExpandedSetup<F>,
     transcript: &mut T,
 ) -> Result<HachiProofTail<F>, HachiError>
@@ -288,22 +289,8 @@ where
         BasisMode::Lagrange,
     )?;
 
-    // Pad current_w to a multiple of D_HANDOFF (Hachi levels may use a different D).
-    let padded_w: Vec<i8>;
-    let w_digits = if current_w.len() % D_HANDOFF != 0 {
-        let padded_len = current_w.len().div_ceil(D_HANDOFF) * D_HANDOFF;
-        padded_w = {
-            let mut v = current_w.to_vec();
-            v.resize(padded_len, 0);
-            v
-        };
-        &padded_w[..]
-    } else {
-        current_w
-    };
-
-    // Derive fresh commitment key matrices at D_HANDOFF from the public seed.
-    // The Hachi-level matrices live at a different D and cannot be viewed at D_HANDOFF.
+    // Reuse the already-committed witness at this level's D so the handoff
+    // stays bound to the preceding Hachi proof state.
     let public_seed = &expanded_setup.seed.public_matrix_seed;
     let a_matrix =
         derive_public_matrix::<F, D_HANDOFF>(Cfg::N_A, w_layout.inner_width, public_seed, b"A");
@@ -315,17 +302,9 @@ where
     let b_flat = FlatMatrix::from_ring_matrix(&b_matrix);
     let d_flat = FlatMatrix::from_ring_matrix(&d_matrix);
 
-    let ntt_a = build_ntt_slot(a_flat.view::<D_HANDOFF>())?;
-    let ntt_b = build_ntt_slot(b_flat.view::<D_HANDOFF>())?;
     let ntt_d = build_ntt_slot(d_flat.view::<D_HANDOFF>())?;
 
-    // Create a fresh commitment at D_HANDOFF (Hachi levels may use a different D).
-    let (w_commitment, typed_hint) = {
-        use crate::protocol::ring_switch::commit_w;
-        commit_w::<F, D_HANDOFF, WCommitmentConfig<D_HANDOFF, Cfg>>(w_digits, &ntt_a, &ntt_b)?
-    };
-
-    let w_poly = BalancedDigitPoly::<F, D_HANDOFF>::from_i8_digits(w_digits)?;
+    let w_poly = BalancedDigitPoly::<F, D_HANDOFF>::from_i8_digits(current_w)?;
 
     let (y_ring, w_folded) = w_poly.evaluate_and_fold(
         &ring_opening_point.b,
@@ -333,7 +312,7 @@ where
         w_layout.block_len,
     );
 
-    w_commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+    current_commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
     for pt in &padded_point {
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
     }
@@ -348,9 +327,9 @@ where
         ring_opening_point.clone(),
         &w_poly,
         w_folded,
-        typed_hint,
+        current_hint.clone(),
         transcript,
-        &w_commitment,
+        current_commitment,
         &y_ring,
         w_layout,
     )?);
@@ -382,7 +361,7 @@ where
             quad_eq.opening_point(),
             &quad_eq.challenges,
             &quad_eq.v,
-            &w_commitment.u,
+            &current_commitment.u,
             &y_ring,
             w_layout,
         )?;
@@ -419,35 +398,10 @@ where
         labrador_proof.levels.len(),
     );
 
-    // Section 4.5 ring dimension switch: compute eval_ring for the verifier's
-    // consistency check (opening_value == sum basis_p * eval_ring.coeff[p]).
-    let alpha_prime = D_HANDOFF.trailing_zeros() as usize;
-    let ring_point = &opening_point[alpha_prime..];
-    let witness_coeffs: Vec<F> = w_digits.iter().map(|&d| F::from_i64(d as i64)).collect();
-    let ring_witness: Vec<CyclotomicRing<F, D_HANDOFF>> = {
-        let mut out = Vec::with_capacity(witness_coeffs.len().div_ceil(D_HANDOFF));
-        for chunk in witness_coeffs.chunks(D_HANDOFF) {
-            out.push(CyclotomicRing::from_coefficients(std::array::from_fn(
-                |i| chunk.get(i).copied().unwrap_or_else(F::zero),
-            )));
-        }
-        out
-    };
-    let n_ring = ring_witness.len().next_power_of_two();
-    let mut ring_basis = vec![F::zero(); n_ring];
-    multilinear_lagrange_basis(&mut ring_basis, ring_point);
-    let mut eval_ring = CyclotomicRing::<F, D_HANDOFF>::zero();
-    for (elem, &basis) in ring_witness.iter().zip(ring_basis.iter()) {
-        eval_ring += elem.scale(&basis);
-    }
-
     Ok(HachiProofTail::Labrador(Box::new(LabradorTail {
         labrador_proof: FlatLabradorProof::from_typed(&labrador_proof),
         v: FlatRingVec::from_ring_elems(&quad_eq.v),
-        u: FlatRingVec::from_ring_elems(&w_commitment.u),
         y_ring: FlatRingVec::from_single(&y_ring),
-        eval_ring: FlatRingVec::from_ring_elems(&[eval_ring]),
-        config: cfg,
         beta_sq,
     })))
 }
@@ -466,6 +420,7 @@ pub(crate) fn labrador_handoff_verify<F, T, const D_HANDOFF: usize, Cfg>(
     tail: &LabradorTail<F>,
     opening_point: &[F],
     opening_value: &F,
+    current_commitment: &RingCommitment<F, D_HANDOFF>,
     expanded_setup: &HachiExpandedSetup<F>,
     transcript: &mut T,
 ) -> Result<(), HachiError>
@@ -474,15 +429,6 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
-    let eval_ring_vec = tail.eval_ring.to_vec::<D_HANDOFF>();
-    if eval_ring_vec.len() != 1 {
-        return Err(HachiError::InvalidInput(
-            "labrador tail: expected exactly one eval_ring element".into(),
-        ));
-    }
-    let eval_ring: CyclotomicRing<F, D_HANDOFF> = eval_ring_vec[0];
-
-    // Consistency check: opening_value == sum basis_p * eval_ring.coeff[p]
     let alpha_prime = D_HANDOFF.trailing_zeros() as usize;
     if opening_point.len() < alpha_prime {
         return Err(HachiError::InvalidPointDimension {
@@ -490,22 +436,14 @@ where
             actual: opening_point.len(),
         });
     }
-    let coeff_point = &opening_point[..alpha_prime];
-    let mut coeff_basis = vec![F::zero(); D_HANDOFF];
-    multilinear_lagrange_basis(&mut coeff_basis, coeff_point);
-    let mut reconstructed = F::zero();
-    for (p, &basis_p) in coeff_basis.iter().enumerate() {
-        reconstructed += basis_p * eval_ring.coefficients()[p];
-    }
-    if reconstructed != *opening_value {
-        return Err(HachiError::InvalidInput(
-            "labrador handoff: eval_ring inconsistent with opening_value".into(),
-        ));
-    }
 
     let v: Vec<CyclotomicRing<F, D_HANDOFF>> = tail.v.to_vec();
     let y_ring: CyclotomicRing<F, D_HANDOFF> = tail.y_ring.to_single();
     let labrador_proof = tail.labrador_proof.to_typed::<D_HANDOFF>();
+
+    if !matches_opening_claim::<F, D_HANDOFF>(&y_ring, opening_point, opening_value) {
+        return Err(HachiError::InvalidProof);
+    }
 
     let w_layout = <WCommitmentConfig<D_HANDOFF, Cfg>>::commitment_layout(opening_point.len())?;
     let target_num_vars = w_layout.m_vars + w_layout.r_vars + alpha_prime;
@@ -520,9 +458,8 @@ where
         BasisMode::Lagrange,
     )?;
 
-    // Replay transcript: absorb commitment (from the tail), padded_point, y_ring.
-    let typed_commitment: RingCommitment<F, D_HANDOFF> = tail.u.to_ring_commitment();
-    typed_commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+    // Replay transcript against the carried Hachi commitment.
+    current_commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
     for pt in &padded_point {
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
     }
@@ -534,7 +471,7 @@ where
             ring_opening_point.clone(),
             v.clone(),
             transcript,
-            &typed_commitment,
+            current_commitment,
             &y_ring,
             w_layout,
         )?;
@@ -569,7 +506,7 @@ where
             quad_eq.opening_point(),
             &quad_eq.challenges,
             &v,
-            &typed_commitment.u,
+            &current_commitment.u,
             &y_ring,
             w_layout,
         )?;
@@ -608,6 +545,21 @@ fn gadget_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basis: u32) 
         power = power * base;
     }
     out
+}
+
+fn matches_opening_claim<F: FieldCore + CanonicalField, const D: usize>(
+    y_ring: &CyclotomicRing<F, D>,
+    opening_point: &[F],
+    opening_value: &F,
+) -> bool {
+    let alpha = D.trailing_zeros() as usize;
+    let coeff_point = &opening_point[..alpha];
+    let mut coeff_basis = vec![F::zero(); D];
+    multilinear_lagrange_basis(&mut coeff_basis, coeff_point);
+    let inner_ring = CyclotomicRing::from_slice(&coeff_basis);
+    let d = F::from_u64(D as u64);
+    let trace_lhs = (*y_ring * inner_ring.sigma_m1()).coefficients()[0] * d;
+    trace_lhs == d * *opening_value
 }
 
 #[cfg(test)]

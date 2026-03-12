@@ -324,7 +324,7 @@ mod tests {
         )
         .unwrap();
 
-        let final_w: Vec<F> = proof.final_w().to_field_elems();
+        let final_w: Vec<F> = proof.final_w().expect("direct tail").to_field_elems();
         let d = SmallTestCommitmentConfig::D;
         assert_eq!(final_w.len() % d, 0);
         let w_u = final_w.len() / d;
