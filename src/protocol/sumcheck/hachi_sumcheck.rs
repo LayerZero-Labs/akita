@@ -1394,71 +1394,50 @@ mod tests {
 
     type F = Fp64<4294967197>;
 
-    fn new_test_prover_with_live_x_cols(
-        round_kernel: NormRoundKernel,
-        batching_coeff: F,
-        w_compact: Vec<i8>,
-        tau0: &[F],
+    struct TestProverParams<'a> {
+        tau0: &'a [F],
         b: usize,
-        alpha_evals_y: Vec<F>,
-        m_evals_x: Vec<F>,
         live_x_cols: usize,
         num_u: usize,
         num_l: usize,
-    ) -> HachiSumcheckProver<F> {
-        let point_precomp = match round_kernel {
-            NormRoundKernel::PointEvalInterpolation => Some(PointEvalPrecomp::new(b)),
-            NormRoundKernel::AffineCoeffComposition => None,
-        };
-        let range_precomp = match round_kernel {
-            NormRoundKernel::PointEvalInterpolation => None,
-            NormRoundKernel::AffineCoeffComposition => Some(RangeAffinePrecomp::new(b)),
-        };
-
-        HachiSumcheckProver {
-            w_table: WTable::Compact(w_compact),
-            batching_coeff,
-            split_eq: GruenSplitEq::new(tau0),
-            round_kernel,
-            point_precomp,
-            range_precomp,
-            b,
-            alpha_compact: alpha_evals_y,
-            m_compact: m_evals_x[..live_x_cols].to_vec(),
-            live_x_cols,
-            num_u,
-            num_vars: num_u + num_l,
-            relation_claim: F::zero(),
-            norm_time_total: 0.0,
-            relation_time_total: 0.0,
-            fold_time_total: 0.0,
-            rounds_completed: 0,
-        }
     }
 
     fn new_test_prover(
         round_kernel: NormRoundKernel,
         batching_coeff: F,
         w_compact: Vec<i8>,
-        tau0: &[F],
-        b: usize,
         alpha_evals_y: Vec<F>,
         m_evals_x: Vec<F>,
-        num_u: usize,
-        num_l: usize,
+        params: TestProverParams<'_>,
     ) -> HachiSumcheckProver<F> {
-        new_test_prover_with_live_x_cols(
-            round_kernel,
+        let point_precomp = match round_kernel {
+            NormRoundKernel::PointEvalInterpolation => Some(PointEvalPrecomp::new(params.b)),
+            NormRoundKernel::AffineCoeffComposition => None,
+        };
+        let range_precomp = match round_kernel {
+            NormRoundKernel::PointEvalInterpolation => None,
+            NormRoundKernel::AffineCoeffComposition => Some(RangeAffinePrecomp::new(params.b)),
+        };
+
+        HachiSumcheckProver {
+            w_table: WTable::Compact(w_compact),
             batching_coeff,
-            w_compact,
-            tau0,
-            b,
-            alpha_evals_y,
-            m_evals_x,
-            1usize << num_u,
-            num_u,
-            num_l,
-        )
+            split_eq: GruenSplitEq::new(params.tau0),
+            round_kernel,
+            point_precomp,
+            range_precomp,
+            b: params.b,
+            alpha_compact: alpha_evals_y,
+            m_compact: m_evals_x[..params.live_x_cols].to_vec(),
+            live_x_cols: params.live_x_cols,
+            num_u: params.num_u,
+            num_vars: params.num_u + params.num_l,
+            relation_claim: F::zero(),
+            norm_time_total: 0.0,
+            relation_time_total: 0.0,
+            fold_time_total: 0.0,
+            rounds_completed: 0,
+        }
     }
 
     fn relation_round_reference(
@@ -1513,12 +1492,15 @@ mod tests {
                 kernel,
                 F::from_u64(13),
                 w_compact.clone(),
-                &tau0,
-                b,
                 alpha_evals_y.clone(),
                 m_evals_x.clone(),
-                num_u,
-                num_l,
+                TestProverParams {
+                    tau0: &tau0,
+                    b,
+                    live_x_cols: 1usize << num_u,
+                    num_u,
+                    num_l,
+                },
             );
             let (norm_poly, relation_poly) = prover.compute_round_compact_fused(&w_compact);
             let norm_ref = compute_norm_round_poly_compact(
@@ -1590,28 +1572,33 @@ mod tests {
                 NormRoundKernel::PointEvalInterpolation,
                 NormRoundKernel::AffineCoeffComposition,
             ] {
-                let mut prefix_prover = new_test_prover_with_live_x_cols(
+                let mut prefix_prover = new_test_prover(
                     kernel,
                     F::from_u64(17),
                     w_prefix.clone(),
-                    &tau0,
-                    b,
                     alpha_evals_y.clone(),
                     m_evals_x.clone(),
-                    live_x_cols,
-                    num_u,
-                    num_l,
+                    TestProverParams {
+                        tau0: &tau0,
+                        b,
+                        live_x_cols,
+                        num_u,
+                        num_l,
+                    },
                 );
                 let mut padded_prover = new_test_prover(
                     kernel,
                     F::from_u64(17),
                     w_padded.clone(),
-                    &tau0,
-                    b,
                     alpha_evals_y.clone(),
                     m_evals_x.clone(),
-                    num_u,
-                    num_l,
+                    TestProverParams {
+                        tau0: &tau0,
+                        b,
+                        live_x_cols: 1usize << num_u,
+                        num_u,
+                        num_l,
+                    },
                 );
 
                 for round in 0..(num_u + num_l) {
