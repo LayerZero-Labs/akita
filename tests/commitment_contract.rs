@@ -6,7 +6,7 @@ use hachi_pcs::algebra::SparseChallenge;
 use hachi_pcs::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use hachi_pcs::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use hachi_pcs::protocol::commitment::{DummyProof, HachiCommitment};
-use hachi_pcs::protocol::hachi_poly_ops::HachiPolyOps;
+use hachi_pcs::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps};
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
     AppendToTranscript, BasisMode, Blake2bTranscript, CommitmentScheme, HachiCommitmentLayout,
@@ -62,8 +62,12 @@ impl HachiPolyOps<F, 1> for DummyPoly {
         _block_len: usize,
         _num_digits: usize,
         _log_basis: u32,
-    ) -> Vec<CyclotomicRing<F, 1>> {
-        vec![]
+    ) -> DecomposeFoldWitness<F, 1> {
+        DecomposeFoldWitness {
+            z_pre: vec![],
+            centered_coeffs: vec![],
+            centered_inf_norm: 0,
+        }
     }
 
     fn commit_inner(

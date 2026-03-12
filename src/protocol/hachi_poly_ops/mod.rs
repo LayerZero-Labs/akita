@@ -300,7 +300,7 @@ fn recompose_commit_inner_blocks<F: CanonicalField, const D: usize>(
 }
 
 /// Prover-side output of the decompose + challenge-fold step.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecomposeFoldWitness<F: FieldCore, const D: usize> {
     /// Folded witness rows in ring form.
     pub z_pre: Vec<CyclotomicRing<F, D>>,
@@ -1416,10 +1416,11 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(
-            poly.decompose_fold(&challenges, layout.block_len, 1, layout.log_basis),
-            dense.decompose_fold(&challenges, layout.block_len, 1, layout.log_basis)
-        );
+        let got = poly.decompose_fold(&challenges, layout.block_len, 1, layout.log_basis);
+        let expected = dense.decompose_fold(&challenges, layout.block_len, 1, layout.log_basis);
+        assert_eq!(got.z_pre, expected.z_pre);
+        assert_eq!(got.centered_coeffs, expected.centered_coeffs);
+        assert_eq!(got.centered_inf_norm, expected.centered_inf_norm);
     }
 
     #[test]
@@ -1464,10 +1465,11 @@ mod tests {
                 coeffs: vec![1, -1],
             })
             .collect();
-        assert_eq!(
-            digit_poly.decompose_fold(&challenges, block_len, 1, log_basis),
-            dense.decompose_fold(&challenges, block_len, 1, log_basis)
-        );
+        let got = digit_poly.decompose_fold(&challenges, block_len, 1, log_basis);
+        let expected = dense.decompose_fold(&challenges, block_len, 1, log_basis);
+        assert_eq!(got.z_pre, expected.z_pre);
+        assert_eq!(got.centered_coeffs, expected.centered_coeffs);
+        assert_eq!(got.centered_inf_norm, expected.centered_inf_norm);
 
         let (setup, _) =
             <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16)
