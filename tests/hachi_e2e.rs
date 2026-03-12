@@ -15,14 +15,20 @@ use hachi_pcs::{
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use std::sync::Once;
+use std::sync::{Mutex, Once};
 use std::time::Instant;
 
 type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
-const NV: usize = 25;
+// Keep the default e2e tests small enough for `cargo test`; the larger nv=25
+// workloads remain covered by `benches/hachi_e2e.rs`.
+const FULL_TEST_NV: usize = 17;
+// The one-hot witness grows much faster than the dense path, so use a smaller
+// default size here while still exercising the Labrador handoff.
+const ONEHOT_TEST_NV: usize = 16;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
 static INIT_RAYON: Once = Once::new();
+static E2E_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn init_rayon_pool() {
     INIT_RAYON.call_once(|| {
@@ -83,22 +89,18 @@ fn purge_setup_cache(max_num_vars: usize) {
 // standard Fp128 configs.
 // ---------------------------------------------------------------------------
 
-fn halving_d(level: usize) -> usize {
-    match level {
-        0 => 512,
-        1 => 256,
-        2 => 128,
-        _ => 64,
+fn halving_d(base_d: usize, level: usize) -> usize {
+    let mut d = base_d;
+    for _ in 0..level {
+        if d > 64 {
+            d /= 2;
+        }
     }
+    d
 }
 
-fn halving_n_a(level: usize) -> usize {
-    match level {
-        0 => 1,
-        1 => 2,
-        2 => 4,
-        _ => 8,
-    }
+fn halving_n_a(base_d: usize, level: usize) -> usize {
+    base_d / halving_d(base_d, level)
 }
 
 fn halving_challenge_weight(d: usize) -> usize {
@@ -130,11 +132,11 @@ impl CommitmentConfig for FullLabradorConfig {
     }
 
     fn d_at_level(level: usize, _w_num_vars: usize) -> usize {
-        halving_d(level)
+        halving_d(Self::D, level)
     }
 
     fn n_a_at_level(level: usize) -> usize {
-        halving_n_a(level)
+        halving_n_a(Self::D, level)
     }
 
     fn challenge_weight_for_ring_dim(d: usize) -> usize {
@@ -165,11 +167,11 @@ impl CommitmentConfig for OneHotLabradorConfig {
     }
 
     fn d_at_level(level: usize, _w_num_vars: usize) -> usize {
-        halving_d(level)
+        halving_d(Self::D, level)
     }
 
     fn n_a_at_level(level: usize) -> usize {
-        halving_n_a(level)
+        halving_n_a(Self::D, level)
     }
 
     fn challenge_weight_for_ring_dim(d: usize) -> usize {
@@ -186,27 +188,29 @@ impl CommitmentConfig for OneHotLabradorConfig {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn full_nv25_prove_verify() {
+fn full_labrador_prove_verify() {
     init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         type Cfg = FullLabradorConfig;
         const D: usize = Cfg::D;
 
-        let layout = Cfg::commitment_layout(NV).expect("layout");
+        let layout = Cfg::commitment_layout(FULL_TEST_NV).expect("layout");
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
-        let evals: Vec<F> = (0..1usize << NV)
+        let evals: Vec<F> = (0..1usize << FULL_TEST_NV)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).unwrap();
-        let pt = random_point(NV);
+        let poly = DensePoly::<F, D>::from_field_evals(FULL_TEST_NV, &evals).unwrap();
+        let pt = random_point(FULL_TEST_NV);
         let expected_opening = multilinear_eval(&evals, &pt).unwrap();
 
         #[cfg(feature = "disk-persistence")]
-        purge_setup_cache(NV);
+        purge_setup_cache(FULL_TEST_NV);
 
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV);
+        let setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(FULL_TEST_NV);
         let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
             &poly, &setup, &layout,
         )
@@ -275,7 +279,7 @@ fn full_nv25_prove_verify() {
         assert!(bad_result.is_err(), "must reject incorrect opening");
 
         eprintln!(
-            "[full/nv{NV}] prove: {:.3}s | verify: {:.3}s | proof: {proof_bytes} bytes ({:.2} KiB) | levels: {}",
+            "[full/nv{FULL_TEST_NV}] prove: {:.3}s | verify: {:.3}s | proof: {proof_bytes} bytes ({:.2} KiB) | levels: {}",
             prove_time.as_secs_f64(),
             verify_time.as_secs_f64(),
             proof_bytes as f64 / 1024.0,
@@ -289,13 +293,14 @@ fn full_nv25_prove_verify() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn onehot_nv25_prove_verify() {
+fn onehot_labrador_prove_verify() {
     init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         type Cfg = OneHotLabradorConfig;
         const D: usize = Cfg::D;
 
-        let layout = Cfg::commitment_layout(NV).expect("layout");
+        let layout = Cfg::commitment_layout(ONEHOT_TEST_NV).expect("layout");
         let total_ring = layout.num_blocks * layout.block_len;
         let onehot_k = D;
 
@@ -317,14 +322,15 @@ fn onehot_nv25_prove_verify() {
             }
             evals
         };
-        let dense_poly = DensePoly::<F, D>::from_field_evals(NV, &dense_evals).unwrap();
-        let pt = random_point(NV);
+        let dense_poly = DensePoly::<F, D>::from_field_evals(ONEHOT_TEST_NV, &dense_evals).unwrap();
+        let pt = random_point(ONEHOT_TEST_NV);
         let expected_opening = multilinear_eval(&dense_evals, &pt).unwrap();
 
         #[cfg(feature = "disk-persistence")]
-        purge_setup_cache(NV);
+        purge_setup_cache(ONEHOT_TEST_NV);
 
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV);
+        let setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(ONEHOT_TEST_NV);
         let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
             &onehot_poly,
             &setup,
@@ -395,7 +401,7 @@ fn onehot_nv25_prove_verify() {
         assert!(bad_result.is_err(), "must reject incorrect opening");
 
         eprintln!(
-            "[onehot/nv{NV}] prove: {:.3}s | verify: {:.3}s | proof: {proof_bytes} bytes ({:.2} KiB) | levels: {}",
+            "[onehot/nv{ONEHOT_TEST_NV}] prove: {:.3}s | verify: {:.3}s | proof: {proof_bytes} bytes ({:.2} KiB) | levels: {}",
             prove_time.as_secs_f64(),
             verify_time.as_secs_f64(),
             proof_bytes as f64 / 1024.0,
