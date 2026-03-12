@@ -14,7 +14,6 @@ use crate::protocol::commitment::transcript_append::AppendToTranscript;
 use crate::protocol::commitment::utils::crt_ntt::build_ntt_slot;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::linear::flatten_i8_blocks;
-use crate::protocol::commitment::utils::matrix::derive_public_matrix;
 use crate::protocol::commitment::{
     CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, RingCommitment,
 };
@@ -289,18 +288,9 @@ where
         BasisMode::Lagrange,
     )?;
 
-    // Reuse the already-committed witness at this level's D so the handoff
-    // stays bound to the preceding Hachi proof state.
-    let public_seed = &expanded_setup.seed.public_matrix_seed;
-    let a_matrix =
-        derive_public_matrix::<F, D_HANDOFF>(Cfg::N_A, w_layout.inner_width, public_seed, b"A");
-    let b_matrix =
-        derive_public_matrix::<F, D_HANDOFF>(Cfg::N_B, w_layout.outer_width, public_seed, b"B");
-    let d_matrix =
-        derive_public_matrix::<F, D_HANDOFF>(Cfg::N_D, w_layout.d_matrix_width, public_seed, b"D");
-    let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
-    let b_flat = FlatMatrix::from_ring_matrix(&b_matrix);
-    let d_flat = FlatMatrix::from_ring_matrix(&d_matrix);
+    let a_flat = &expanded_setup.A;
+    let b_flat = &expanded_setup.B;
+    let d_flat = &expanded_setup.D_mat;
 
     let ntt_d = build_ntt_slot(d_flat.view::<D_HANDOFF>())?;
 
@@ -355,9 +345,9 @@ where
 
     let constraints =
         build_hachi_labrador_constraints::<F, D_HANDOFF, WCommitmentConfig<D_HANDOFF, Cfg>>(
-            &a_flat,
-            &b_flat,
-            &d_flat,
+            a_flat,
+            b_flat,
+            d_flat,
             quad_eq.opening_point(),
             &quad_eq.challenges,
             &quad_eq.v,
@@ -476,33 +466,17 @@ where
             w_layout,
         )?;
 
-    // Derive fresh matrices at D_HANDOFF from the public seed (same as prover).
-    let public_seed = &expanded_setup.seed.public_matrix_seed;
-    let a_flat = FlatMatrix::from_ring_matrix(&derive_public_matrix::<F, D_HANDOFF>(
-        Cfg::N_A,
-        w_layout.inner_width,
-        public_seed,
-        b"A",
-    ));
-    let b_flat = FlatMatrix::from_ring_matrix(&derive_public_matrix::<F, D_HANDOFF>(
-        Cfg::N_B,
-        w_layout.outer_width,
-        public_seed,
-        b"B",
-    ));
-    let d_flat = FlatMatrix::from_ring_matrix(&derive_public_matrix::<F, D_HANDOFF>(
-        Cfg::N_D,
-        w_layout.d_matrix_width,
-        public_seed,
-        b"D",
-    ));
+    // Reuse the setup matrices viewed at D_HANDOFF (same as prover).
+    let a_flat = &expanded_setup.A;
+    let b_flat = &expanded_setup.B;
+    let d_flat = &expanded_setup.D_mat;
 
     // Rebuild constraints from public data.
     let constraints =
         build_hachi_labrador_constraints::<F, D_HANDOFF, WCommitmentConfig<D_HANDOFF, Cfg>>(
-            &a_flat,
-            &b_flat,
-            &d_flat,
+            a_flat,
+            b_flat,
+            d_flat,
             quad_eq.opening_point(),
             &quad_eq.challenges,
             &v,

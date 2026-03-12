@@ -979,9 +979,9 @@ where
             t_prove_total.elapsed().as_secs_f64()
         );
 
-        let handoff_ring_dim = current_hint.ring_dim();
+        // let handoff_ring_dim = current_hint.ring_dim();
         let labrador_enabled = current_w.len() > Cfg::labrador_handoff_threshold()
-            && handoff_ring_dim <= 256
+            // && handoff_ring_dim <= 64
             && std::env::var("HACHI_NO_LABRADOR").as_deref() != Ok("1");
 
         let tail = if labrador_enabled {
