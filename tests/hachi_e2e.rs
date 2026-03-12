@@ -2,16 +2,12 @@
 
 use hachi_pcs::algebra::poly::multilinear_eval;
 use hachi_pcs::algebra::Fp128;
-use hachi_pcs::protocol::commitment::{
-    Fp128FullCommitmentConfig, Fp128OneHotCommitmentConfig,
-};
+use hachi_pcs::protocol::commitment::{Fp128FullCommitmentConfig, Fp128OneHotCommitmentConfig};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
-use hachi_pcs::{
-    BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, Transcript,
-};
+use hachi_pcs::{BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, Transcript};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::sync::{Mutex, Once};
