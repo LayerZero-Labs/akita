@@ -50,7 +50,7 @@ pub const CHALLENGE_TAU1: &[u8] = b"hachi/challenge/tau1";
 pub const DOMAIN_LABRADOR_PROTOCOL: &[u8] = b"hachi/labrador/protocol";
 /// Greyhound evaluation-reduction domain label.
 pub const DOMAIN_GREYHOUND_EVAL: &[u8] = b"hachi/greyhound/eval";
-/// Absorb canonical Greyhound evaluation context bytes (dimensions/backend id).
+/// Absorb canonical Greyhound evaluation context bytes (dimensions).
 pub const ABSORB_GREYHOUND_EVAL_CONTEXT: &[u8] = b"hachi/absorb/greyhound-eval-context";
 /// Absorb canonicalized evaluation-point coordinates for Greyhound reduction.
 pub const ABSORB_GREYHOUND_EVAL_POINT: &[u8] = b"hachi/absorb/greyhound-eval-point";
@@ -60,7 +60,7 @@ pub const ABSORB_GREYHOUND_EVAL_VALUE: &[u8] = b"hachi/absorb/greyhound-eval-val
 pub const ABSORB_GREYHOUND_U2: &[u8] = b"hachi/absorb/greyhound-u2";
 /// Challenge for Greyhound column-fold coefficients.
 pub const CHALLENGE_GREYHOUND_FOLD: &[u8] = b"hachi/challenge/greyhound-fold";
-/// Absorb canonical Labrador level metadata (shape/config/tail/backend id).
+/// Absorb canonical Labrador level metadata (shape/config/tail).
 pub const ABSORB_LABRADOR_LEVEL_CONTEXT: &[u8] = b"hachi/absorb/labrador-level-context";
 /// Absorb Labrador JL projection vector `p`.
 pub const ABSORB_LABRADOR_JL_PROJECTION: &[u8] = b"hachi/absorb/labrador-jl-projection";
@@ -80,6 +80,8 @@ pub const ABSORB_LABRADOR_BB: &[u8] = b"hachi/absorb/labrador-bb";
 pub const ABSORB_LABRADOR_NORM: &[u8] = b"hachi/absorb/labrador-norm";
 /// Challenge for Labrador amortization fold (ring-element challenges).
 pub const CHALLENGE_LABRADOR_AMORTIZE: &[u8] = b"hachi/challenge/labrador-amortize";
+/// Challenge for deriving the JL projection seed from the transcript.
+pub const CHALLENGE_LABRADOR_JL_SEED: &[u8] = b"hachi/challenge/labrador-jl-seed";
 
 /// Return all Hachi-core transcript labels.
 pub fn all_labels() -> &'static [&'static [u8]] {
@@ -120,5 +122,6 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         ABSORB_LABRADOR_BB,
         ABSORB_LABRADOR_NORM,
         CHALLENGE_LABRADOR_AMORTIZE,
+        CHALLENGE_LABRADOR_JL_SEED,
     ]
 }

@@ -91,6 +91,14 @@ impl<F: FieldCore> HachiExpandedSetup<F> {
     pub fn layout(&self) -> HachiCommitmentLayout {
         self.seed.layout
     }
+
+    /// Derive the Labrador commitment-key seed from this setup's public
+    /// matrix seed via domain-separated BLAKE2b.
+    pub fn labrador_comkey_seed(&self) -> crate::protocol::labrador::comkey::LabradorComKeySeed {
+        crate::protocol::labrador::comkey::derive_labrador_comkey_seed(
+            &self.seed.public_matrix_seed,
+        )
+    }
 }
 
 impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
@@ -407,11 +415,16 @@ where
                     tracing::info!("Loaded setup from disk, rebuilding NTT caches");
                     return setup_from_expanded(expanded);
                 }
-                Err(HachiError::InvalidSetup(msg)) if msg.contains("not found") => {
-                    tracing::debug!("Setup file not found, will generate new one");
-                }
                 Err(e) => {
-                    panic!("Failed to load setup from disk: {e}");
+                    if let Some(storage_path) = get_storage_path(max_num_vars) {
+                        let _ = fs::remove_file(&storage_path);
+                        tracing::warn!(
+                            "Failed to load cached setup from {}: {e}; regenerating",
+                            storage_path.display()
+                        );
+                    } else {
+                        tracing::warn!("Failed to load cached setup: {e}; regenerating");
+                    }
                 }
             }
         }

@@ -17,6 +17,7 @@ use super::norm::detect_field_modulus;
 
 /// Supported protocol CRT+NTT parameter families.
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum ProtocolCrtNttParams<const D: usize> {
     Q32(CrtNttParamSet<i16, Q32_NUM_PRIMES, D>),
     Q64(CrtNttParamSet<i32, Q64_NUM_PRIMES, D>),
@@ -63,7 +64,7 @@ pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
     }
 
     Err(HachiError::InvalidSetup(format!(
-        "no CRT+NTT parameter set for modulus {modulus} and D={D}; supported ranges: <= {Q64_MODULUS} (with Q32/Q64 dispatch) or exactly {Q128_MODULUS}"
+        "no CRT+NTT parameter set for modulus {modulus} and D={D}; supported ranges: <= {Q64_MODULUS} (with Q32/Q64 dispatch) or {Q128_MODULUS}"
     )))
 }
 
@@ -72,7 +73,7 @@ pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
 /// Stores both negacyclic (for mat-vec) and cyclic (for quotient) representations
 /// to avoid repeated coefficient-to-NTT conversion.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(missing_docs)]
+#[allow(missing_docs, clippy::large_enum_variant)]
 pub enum NttSlotCache<const D: usize> {
     /// 32-bit CRT primes.
     Q32 {

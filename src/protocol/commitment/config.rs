@@ -463,6 +463,15 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn w_log_basis() -> u32 {
         Self::decomposition().log_basis
     }
+
+    /// Witness length (in i8 digits) above which the prover hands off to
+    /// Labrador (D'=64) instead of sending the witness directly.
+    ///
+    /// The default returns 65 536 (64 Ki). Override to a lower value in test
+    /// configs to exercise the Labrador tail path with smaller polynomials.
+    fn labrador_handoff_threshold() -> usize {
+        65_536
+    }
 }
 
 /// Deterministic upper bound for the stage-1 folded-witness infinity norm.
@@ -654,7 +663,7 @@ impl CommitmentConfig for DynamicSmallTestCommitmentConfig {
 /// Production-oriented profile for 128-bit base fields (`Fp128<P>`),
 /// parameterized by the coefficient bound and gadget basis.
 ///
-/// This profile targets the `D = 512`, `n_A = n_B = n_D = 1` regime with
+/// This profile targets the `D = 256`, `n_A = n_B = n_D = 1` regime with
 /// balanced decomposition over ~128-bit moduli.
 ///
 /// - `LOG_COMMIT_BOUND`: bit-width of the largest polynomial coefficient the
@@ -685,11 +694,11 @@ pub struct Fp128BoundedCommitmentConfig<
 impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> CommitmentConfig
     for Fp128BoundedCommitmentConfig<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>
 {
-    const D: usize = 512;
+    const D: usize = 256;
     const N_A: usize = 1;
     const N_B: usize = 1;
     const N_D: usize = 1;
-    const CHALLENGE_WEIGHT: usize = 19;
+    const CHALLENGE_WEIGHT: usize = 23;
 
     fn decomposition() -> DecompositionParams {
         DecompositionParams {
@@ -739,25 +748,25 @@ pub type Fp128LogBasisCommitmentConfig = Fp128BoundedCommitmentConfig<3, 3>;
 /// Alias for [`Fp128FullCommitmentConfig`].
 pub type Fp128CommitmentConfig = Fp128FullCommitmentConfig;
 
-/// Halving-D commitment config for Fp128 (D=512 → 256 → 128).
+/// Halving-D commitment config for Fp128 (D=256 → 128).
 ///
 /// Uses `d_at_level` and `n_a_at_level` to halve the ring dimension at each
-/// fold level while doubling the module rank to maintain D×N_A ≥ 512 for
-/// security. Stops halving at D=128, which is the minimum ring dimension
+/// fold level while doubling the module rank to maintain D×N_A ≥ 256.
+/// Stops halving at D=128, which is the minimum ring dimension
 /// for which sparse ternary challenges provide sufficient security.
 ///
 /// Challenge weights are scaled per ring dimension to maintain ≥128 bits
 /// of challenge entropy (log₂(C(D,ω) · 2^ω) ≥ 128):
-///   D=512: ω=19 (~131 bits), D=256: ω=23 (~131 bits), D=128: ω=31 (~130 bits).
+///   D=256: ω=23 (~131 bits), D=128: ω=31 (~130 bits).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Fp128HalvingDCommitmentConfig;
 
 impl CommitmentConfig for Fp128HalvingDCommitmentConfig {
-    const D: usize = 512;
+    const D: usize = 256;
     const N_A: usize = 1;
     const N_B: usize = 1;
     const N_D: usize = 1;
-    const CHALLENGE_WEIGHT: usize = 19;
+    const CHALLENGE_WEIGHT: usize = 23;
 
     fn decomposition() -> DecompositionParams {
         DecompositionParams {
@@ -783,8 +792,7 @@ impl CommitmentConfig for Fp128HalvingDCommitmentConfig {
 
     fn d_at_level(level: usize, _w_num_vars: usize) -> usize {
         match level {
-            0 => 512,
-            1 => 256,
+            0 => 256,
             _ => 128,
         }
     }
@@ -792,14 +800,12 @@ impl CommitmentConfig for Fp128HalvingDCommitmentConfig {
     fn n_a_at_level(level: usize) -> usize {
         match level {
             0 => 1,
-            1 => 2,
-            _ => 4,
+            _ => 2,
         }
     }
 
     fn challenge_weight_for_ring_dim(d: usize) -> usize {
         match d {
-            512 => 19,
             256 => 23,
             128 => 31,
             _ => panic!("Fp128HalvingDCommitmentConfig: unsupported ring dim {d}"),

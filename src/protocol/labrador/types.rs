@@ -1,7 +1,10 @@
 //! Core Labrador witness/statement/proof types.
 
 use crate::algebra::ring::CyclotomicRing;
+use crate::protocol::labrador::constraints::LabradorConstraint;
+use crate::protocol::labrador::setup::LabradorSetup;
 use crate::{CanonicalField, FieldCore};
+use std::sync::Arc;
 
 /// Witness object for a Labrador statement, holding the `s_i` row vectors.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -34,7 +37,7 @@ impl<F: FieldCore, const D: usize> LabradorWitness<F, D> {
     }
 
     /// Borrow the underlying row slices.
-    pub(crate) fn rows(&self) -> &[Vec<CyclotomicRing<F, D>>] {
+    pub fn rows(&self) -> &[Vec<CyclotomicRing<F, D>>] {
         &self.rows
     }
 }
@@ -50,19 +53,28 @@ impl<F: FieldCore + CanonicalField, const D: usize> LabradorWitness<F, D> {
     }
 }
 
-/// Linear constraint: `sum_i <coefficients[i], witness_row_i> = target`.
+/// Compact recipe for the next-level Labrador statement.
 ///
-/// `coefficients[i]` holds the φ_i vector for witness row `i`.
-/// For multi-output constraints (`target.len() > 1`), each coefficient
-/// vector is `outputs * row_len` long: output `k` occupies
-/// `coefficients[i][k*row_len..(k+1)*row_len]`.
-/// An empty inner vec means the row does not participate.
+/// This keeps the dominant recursive structure factored so the next level can
+/// aggregate it directly without first materializing a full sparse constraint
+/// vector. Explicit constraints are only reconstructed when they are actually
+/// needed (for example, at terminal verification).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LabradorConstraint<F: FieldCore, const D: usize> {
-    /// Per-row coefficient vectors (one per witness row).
-    pub coefficients: Vec<Vec<CyclotomicRing<F, D>>>,
-    /// Right-hand side target vector.
-    pub target: Vec<CyclotomicRing<F, D>>,
+pub struct LabradorReducedConstraintPlan<F: FieldCore, const D: usize> {
+    /// Number of virtual input rows reduced at the previous level.
+    pub row_count: usize,
+    /// Length of each decomposed z-row in the next witness.
+    pub max_len: usize,
+    /// Reduction parameters that define the next witness layout.
+    pub config: LabradorReductionConfig,
+    /// Amortization challenges from the previous level.
+    pub challenges: Vec<CyclotomicRing<F, D>>,
+    /// Combined `sum_i c_i * phi_i` relation carried into the next level.
+    pub combined_phi: Vec<CyclotomicRing<F, D>>,
+    /// Aggregated right-hand side for the diagonal relation.
+    pub b_total: CyclotomicRing<F, D>,
+    /// Commitment matrices needed to replay the reduced statement.
+    pub setup: Arc<LabradorSetup<F, D>>,
 }
 
 /// Public statement reduced to Labrador recursion.
@@ -76,10 +88,10 @@ pub struct LabradorStatement<F: FieldCore, const D: usize> {
     pub challenges: Vec<CyclotomicRing<F, D>>,
     /// Sparse constraints checked by reducer/verifier.
     pub constraints: Vec<LabradorConstraint<F, D>>,
+    /// Compact recursive statement representation used between Labrador levels.
+    pub reduced_constraints: Option<Box<LabradorReducedConstraintPlan<F, D>>>,
     /// Squared norm bound.
     pub beta_sq: u128,
-    /// Statement hash binding.
-    pub hash: [u8; 16],
 }
 
 /// Per-level reduction parameters.
@@ -108,16 +120,18 @@ pub struct LabradorLevelProof<F: FieldCore, const D: usize> {
     pub tail: bool,
     /// Input row lengths (`n[i]` in C).
     pub input_row_lengths: Vec<usize>,
-    /// Input row chunk counts (`nu[i]` in C).
-    pub input_row_chunks: Vec<usize>,
     /// Configuration selected for this level.
     pub config: LabradorReductionConfig,
+    /// Virtual row length after nu-reshaping.
+    pub nn: usize,
+    /// Per-original-row split counts from the fold plan.
+    pub nu: Vec<usize>,
     /// First outer commitment.
     pub u1: Vec<CyclotomicRing<F, D>>,
     /// Second outer commitment.
     pub u2: Vec<CyclotomicRing<F, D>>,
     /// JL projection vector.
-    pub jl_projection: [i32; 256],
+    pub jl_projection: [i64; 256],
     /// JL nonce used to regenerate projection matrix.
     pub jl_nonce: u64,
     /// Lift polynomials (constant term zeroed in proof).
@@ -141,7 +155,7 @@ impl<F: FieldCore, const D: usize> LabradorLevelProof<F, D> {
         let ring_bytes = std::mem::size_of::<CyclotomicRing<F, D>>();
         let ring_count = self.u1.len() + self.u2.len() + self.bb.len();
         ring_count * ring_bytes
-            + self.jl_projection.len() * std::mem::size_of::<i32>()
+            + self.jl_projection.len() * std::mem::size_of::<i64>()
             + std::mem::size_of::<u64>() // jl_nonce
             + std::mem::size_of::<u128>() // norm_sq
     }

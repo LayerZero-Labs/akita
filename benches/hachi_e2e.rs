@@ -209,7 +209,6 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
         }
         evals
     };
-    let dense_poly = DensePoly::<F, D>::from_field_evals(nv, &dense_evals).unwrap();
     let pt = random_point(nv);
     let opening = multilinear_eval(&dense_evals, &pt).unwrap();
 
@@ -246,7 +245,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
                 black_box(
                     <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
                         &setup,
-                        &dense_poly,
+                        &onehot_poly,
                         &pt,
                         h,
                         &mut transcript,
@@ -266,7 +265,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
         &setup,
-        &dense_poly,
+        &onehot_poly,
         &pt,
         hint,
         &mut prover_transcript,
@@ -304,7 +303,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
             let mut pt_tr = Blake2bTranscript::<F>::new(b"bench");
             let pf = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
                 &setup,
-                &dense_poly,
+                &onehot_poly,
                 &pt,
                 h,
                 &mut pt_tr,

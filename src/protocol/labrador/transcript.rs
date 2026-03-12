@@ -1,8 +1,9 @@
 //! Canonical transcript schedule helpers for Greyhound/Labrador.
 //!
 //! These helpers centralize byte-level encoding for prover/verifier replay:
-//! dimension binding, backend binding, and nonce encoding.
+//! dimension binding and nonce encoding.
 
+use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::labrador::guardrails::checked_usize_to_u64;
 use crate::protocol::transcript::labels;
@@ -20,8 +21,6 @@ pub struct GreyhoundEvalTranscriptContext {
     pub inner_vars: usize,
     /// Length of the evaluation point vector.
     pub eval_point_len: usize,
-    /// Matrix-PRG backend id bound into Fiat-Shamir.
-    pub prg_backend_id: u8,
 }
 
 /// Labrador level transcript context.
@@ -33,8 +32,6 @@ pub struct LabradorLevelTranscriptContext {
     pub tail: bool,
     /// Input witness row lengths (`n[i]` in the C reference).
     pub input_row_lengths: Vec<usize>,
-    /// Input row chunk counts (`nu[i]` in the C reference).
-    pub input_row_chunks: Vec<usize>,
     /// Witness decomposition parts.
     pub f: usize,
     /// Witness decomposition basis log2.
@@ -47,8 +44,6 @@ pub struct LabradorLevelTranscriptContext {
     pub kappa: usize,
     /// Outer commitment rank.
     pub kappa1: usize,
-    /// Matrix-PRG backend id bound into Fiat-Shamir.
-    pub prg_backend_id: u8,
 }
 
 fn append_u64_le(buf: &mut Vec<u8>, value: u64) {
@@ -69,7 +64,7 @@ fn encode_greyhound_eval_context(
     let mut bytes = Vec::with_capacity(2 + 8 * 4);
     // Versioned payload for deterministic replay stability.
     bytes.push(1u8);
-    bytes.push(ctx.prg_backend_id);
+    bytes.push(0u8); // backend id removed
     append_u64_le(&mut bytes, checked_usize_to_u64(ctx.m_rows, "m_rows")?);
     append_u64_le(&mut bytes, checked_usize_to_u64(ctx.n_cols, "n_cols")?);
     append_u64_le(
@@ -86,12 +81,11 @@ fn encode_greyhound_eval_context(
 fn encode_labrador_level_context(
     ctx: &LabradorLevelTranscriptContext,
 ) -> Result<Vec<u8>, HachiError> {
-    let mut bytes =
-        Vec::with_capacity(4 + 8 * (8 + ctx.input_row_lengths.len() + ctx.input_row_chunks.len()));
+    let mut bytes = Vec::with_capacity(4 + 8 * (7 + ctx.input_row_lengths.len()));
     // Versioned payload for deterministic replay stability.
     bytes.push(1u8);
     bytes.push(u8::from(ctx.tail));
-    bytes.push(ctx.prg_backend_id);
+    bytes.push(0u8); // backend id removed
     bytes.push(0u8); // reserved
     append_u64_le(
         &mut bytes,
@@ -104,7 +98,6 @@ fn encode_labrador_level_context(
     append_u64_le(&mut bytes, checked_usize_to_u64(ctx.kappa, "kappa")?);
     append_u64_le(&mut bytes, checked_usize_to_u64(ctx.kappa1, "kappa1")?);
     encode_usize_slice(&mut bytes, &ctx.input_row_lengths)?;
-    encode_usize_slice(&mut bytes, &ctx.input_row_chunks)?;
     Ok(bytes)
 }
 
@@ -126,16 +119,24 @@ where
     Ok(())
 }
 
-/// Absorb canonical Greyhound evaluation claim bytes (`r` and `v`).
-pub fn absorb_greyhound_eval_claim<F, T>(transcript: &mut T, eval_point: &[F], eval_value: &F)
-where
+/// Absorb canonical Greyhound evaluation claim bytes (`r` and ring-valued `v`).
+///
+/// Absorbs each coordinate of the evaluation point, then all D coefficients of
+/// the ring-valued evaluation target.
+pub fn absorb_greyhound_eval_claim<F, T, const D: usize>(
+    transcript: &mut T,
+    eval_point: &[F],
+    eval_target: &CyclotomicRing<F, D>,
+) where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
     for coord in eval_point {
         transcript.append_field(labels::ABSORB_GREYHOUND_EVAL_POINT, coord);
     }
-    transcript.append_field(labels::ABSORB_GREYHOUND_EVAL_VALUE, eval_value);
+    for coeff in eval_target.coefficients() {
+        transcript.append_field(labels::ABSORB_GREYHOUND_EVAL_VALUE, coeff);
+    }
 }
 
 /// Absorb Greyhound commitment payload `u2`.
@@ -162,6 +163,7 @@ where
 /// # Errors
 ///
 /// Returns an error if any dimension does not fit in `u64`.
+#[tracing::instrument(skip_all, name = "labrador::absorb_level_context")]
 pub fn absorb_labrador_level_context<F, T>(
     transcript: &mut T,
     ctx: &LabradorLevelTranscriptContext,
@@ -175,13 +177,14 @@ where
     Ok(())
 }
 
-/// Absorb Labrador JL projection vector bytes (`i32` little-endian).
-pub fn absorb_labrador_jl_projection<F, T>(transcript: &mut T, projection: &[i32; 256])
+/// Absorb Labrador JL projection vector bytes (`i64` little-endian).
+#[tracing::instrument(skip_all, name = "labrador::absorb_jl_projection")]
+pub fn absorb_labrador_jl_projection<F, T>(transcript: &mut T, projection: &[i64; 256])
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    let mut bytes = Vec::with_capacity(256 * std::mem::size_of::<i32>());
+    let mut bytes = Vec::with_capacity(256 * std::mem::size_of::<i64>());
     for coeff in projection {
         bytes.extend_from_slice(&coeff.to_le_bytes());
     }
@@ -214,6 +217,19 @@ mod tests {
     use crate::FromSmallInt;
 
     type F = Fp64<4294967197>;
+    const D: usize = 64;
+
+    fn scalar_ring(s: F) -> CyclotomicRing<F, D> {
+        CyclotomicRing::from_coefficients(std::array::from_fn(
+            |i| {
+                if i == 0 {
+                    s
+                } else {
+                    F::zero()
+                }
+            },
+        ))
+    }
 
     // Fixed test nonces for deterministic replay.
     const TEST_NONCE_LOW: u64 = 1;
@@ -227,21 +243,20 @@ mod tests {
             n_cols: 128,
             inner_vars: 6,
             eval_point_len: 13,
-            prg_backend_id: 1,
         };
         let eval_point: Vec<F> = (0..13).map(|i| F::from_u64((i + 3) as u64)).collect();
-        let eval_value = F::from_u64(77);
+        let eval_target = scalar_ring(F::from_u64(77));
         let u2 = vec![F::from_u64(9), F::from_u64(11), F::from_u64(13)];
 
         let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_GREYHOUND_EVAL);
         absorb_greyhound_eval_context::<F, _>(&mut t1, &ctx).unwrap();
-        absorb_greyhound_eval_claim::<F, _>(&mut t1, &eval_point, &eval_value);
+        absorb_greyhound_eval_claim::<F, _, D>(&mut t1, &eval_point, &eval_target);
         absorb_greyhound_u2::<F, _, _>(&mut t1, &u2);
         let c1 = sample_greyhound_fold_challenge::<F, _>(&mut t1);
 
         let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_GREYHOUND_EVAL);
         absorb_greyhound_eval_context::<F, _>(&mut t2, &ctx).unwrap();
-        absorb_greyhound_eval_claim::<F, _>(&mut t2, &eval_point, &eval_value);
+        absorb_greyhound_eval_claim::<F, _, D>(&mut t2, &eval_point, &eval_target);
         absorb_greyhound_u2::<F, _, _>(&mut t2, &u2);
         let c2 = sample_greyhound_fold_challenge::<F, _>(&mut t2);
 
@@ -251,7 +266,7 @@ mod tests {
     #[test]
     fn greyhound_context_binds_dimensions() {
         let eval_point: Vec<F> = (0..10).map(|i| F::from_u64((i + 5) as u64)).collect();
-        let eval_value = F::from_u64(17);
+        let eval_target = scalar_ring(F::from_u64(17));
         let u2 = vec![F::from_u64(1), F::from_u64(2)];
 
         let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_GREYHOUND_EVAL);
@@ -262,11 +277,10 @@ mod tests {
                 n_cols: 32,
                 inner_vars: 5,
                 eval_point_len: 10,
-                prg_backend_id: 1,
             },
         )
         .unwrap();
-        absorb_greyhound_eval_claim::<F, _>(&mut t1, &eval_point, &eval_value);
+        absorb_greyhound_eval_claim::<F, _, D>(&mut t1, &eval_point, &eval_target);
         absorb_greyhound_u2::<F, _, _>(&mut t1, &u2);
         let c1 = sample_greyhound_fold_challenge::<F, _>(&mut t1);
 
@@ -278,11 +292,10 @@ mod tests {
                 n_cols: 64, // dimension changed
                 inner_vars: 5,
                 eval_point_len: 10,
-                prg_backend_id: 1,
             },
         )
         .unwrap();
-        absorb_greyhound_eval_claim::<F, _>(&mut t2, &eval_point, &eval_value);
+        absorb_greyhound_eval_claim::<F, _, D>(&mut t2, &eval_point, &eval_target);
         absorb_greyhound_u2::<F, _, _>(&mut t2, &u2);
         let c2 = sample_greyhound_fold_challenge::<F, _>(&mut t2);
 
@@ -298,16 +311,14 @@ mod tests {
             level_index: 2,
             tail: false,
             input_row_lengths: vec![1024, 2048, 128, 64],
-            input_row_chunks: vec![16, 32, 4, 2],
             f: 2,
             b: 8,
             fu: 3,
             bu: 10,
             kappa: 12,
             kappa1: 6,
-            prg_backend_id: 1,
         };
-        let projection = std::array::from_fn(|i| i as i32 - 127);
+        let projection = std::array::from_fn(|i| i as i64 - 127);
         let nonce = TEST_NONCE_REPLAY;
 
         let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_PROTOCOL);
@@ -331,16 +342,14 @@ mod tests {
             level_index: 0,
             tail: true,
             input_row_lengths: vec![64, 32],
-            input_row_chunks: vec![2, 1],
             f: 1,
             b: 8,
             fu: 2,
             bu: 10,
             kappa: 4,
             kappa1: 0,
-            prg_backend_id: 0,
         };
-        let projection = [0i32; 256];
+        let projection = [0i64; 256];
 
         let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_PROTOCOL);
         absorb_labrador_level_context::<F, _>(&mut t1, &ctx).unwrap();

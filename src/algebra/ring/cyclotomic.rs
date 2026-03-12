@@ -241,6 +241,26 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
         result
     }
 
+    /// Fused `dst += self * rhs` via schoolbook negacyclic convolution.
+    ///
+    /// Accumulates the product directly into `dst` without allocating a
+    /// temporary ring element, saving D additions and one memory pass.
+    #[inline]
+    pub fn mul_accumulate_into(&self, rhs: &Self, dst: &mut Self) {
+        for i in 0..D {
+            let ai = self.coeffs[i];
+            for j in 0..D {
+                let product = ai * rhs.coeffs[j];
+                let idx = i + j;
+                if idx < D {
+                    dst.coeffs[idx] += product;
+                } else {
+                    dst.coeffs[idx - D] -= product;
+                }
+            }
+        }
+    }
+
     /// Check whether all coefficients are zero.
     #[inline]
     pub fn is_zero(&self) -> bool {
@@ -363,7 +383,14 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             return Self::zero();
         }
 
-        assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
+        assert!(
+            log_basis > 0 && log_basis <= 128,
+            "invalid log_basis: {log_basis}"
+        );
+
+        if parts.len() == 1 {
+            return parts[0];
+        }
 
         let b = F::from_canonical_u128_reduced(1u128 << log_basis);
         let coeffs = from_fn(|i| {
@@ -390,7 +417,15 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         if digits.is_empty() {
             return Self::zero();
         }
-        assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
+        assert!(
+            log_basis > 0 && log_basis <= 128,
+            "invalid log_basis: {log_basis}"
+        );
+
+        if digits.len() == 1 {
+            let coeffs = from_fn(|i| F::from_i64(digits[0][i] as i64));
+            return Self { coeffs };
+        }
 
         let b = F::from_canonical_u128_reduced(1u128 << log_basis);
         let coeffs = from_fn(|i| {
@@ -524,20 +559,29 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     /// # Panics
     ///
     /// Panics if `levels` is zero, `log_basis` is zero or >= 128, or
-    /// `levels * log_basis > 128`.
+    /// `(levels - 1) * log_basis >= 128`.
     pub fn balanced_decompose_pow2_with_carry(&self, levels: usize, log_basis: u32) -> Vec<Self>
     where
         F: CanonicalField,
     {
         assert!(levels > 0, "levels must be positive");
-        assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
         assert!(
-            (levels as u32).saturating_mul(log_basis) <= 128,
-            "levels * log_basis must be <= 128"
+            log_basis > 0 && log_basis <= 128,
+            "invalid log_basis: {log_basis}"
+        );
+        assert!(
+            ((levels - 1) as u32).saturating_mul(log_basis) < 128,
+            "(levels-1) * log_basis must be < 128"
         );
 
-        let b = 1i128 << log_basis;
-        let half_b = b / 2;
+        // When levels==1 every coefficient takes the carry path and b/half_b
+        // are unused, so skip the shift that would overflow at log_basis==128.
+        let (b, half_b) = if levels == 1 {
+            (0i128, 0i128)
+        } else {
+            let b = 1i128 << log_basis;
+            (b, b / 2)
+        };
         let q = (-F::one()).to_canonical_u128() + 1;
         let half_q = q / 2;
 
