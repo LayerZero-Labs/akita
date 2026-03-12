@@ -36,7 +36,7 @@ const SINGLE_CHALLENGE_BLOCK_BYTES: usize = SINGLE_CHALLENGE_BLOCKS * SHAKE128_R
 pub fn sample_labrador_challenge_coeffs<const D: usize>(
     len: usize,
     seed: &[u8; 16],
-    nonce: u64,
+    stream_id: u64,
 ) -> Result<Vec<[i16; D]>, HachiError> {
     validate_challenge_params::<D>()?;
     if len > LABRADOR_MAX_CHALLENGE_POLYS {
@@ -47,7 +47,7 @@ pub fn sample_labrador_challenge_coeffs<const D: usize>(
 
     let mut xof = Shake128::default();
     xof.update(seed);
-    xof.update(&nonce.to_le_bytes());
+    xof.update(&stream_id.to_le_bytes());
     let mut reader = xof.finalize_xof();
 
     let mut out = Vec::with_capacity(len);
@@ -95,12 +95,12 @@ pub fn sample_labrador_challenge_coeffs<const D: usize>(
 pub fn sample_labrador_challenges<F, const D: usize>(
     len: usize,
     seed: &[u8; 16],
-    nonce: u64,
+    stream_id: u64,
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
 where
     F: FieldCore + CanonicalField + FromSmallInt,
 {
-    let coeffs = sample_labrador_challenge_coeffs::<D>(len, seed, nonce)?;
+    let coeffs = sample_labrador_challenge_coeffs::<D>(len, seed, stream_id)?;
     Ok(coeffs
         .into_iter()
         .map(|poly| {
@@ -302,25 +302,26 @@ mod tests {
     type F = Fp32<4294967197>;
     const D: usize = 64;
 
-    // Fixed test seeds and nonces for deterministic replay.
+    // Fixed test seeds and stream IDs for deterministic replay.
     const TEST_SEED_A: [u8; 16] = [7u8; 16];
     const TEST_SEED_B: [u8; 16] = [11u8; 16];
     const TEST_SEED_C: [u8; 16] = [5u8; 16];
-    const TEST_NONCE_A: u64 = 9;
-    const TEST_NONCE_B: u64 = 17;
-    const TEST_NONCE_C: u64 = 4;
-    const TEST_NONCE_REF: u64 = 7;
+    const TEST_STREAM_ID_A: u64 = 9;
+    const TEST_STREAM_ID_B: u64 = 17;
+    const TEST_STREAM_ID_C: u64 = 4;
+    const TEST_STREAM_ID_REF: u64 = 7;
 
     #[test]
     fn challenge_sampler_is_deterministic() {
-        let c1 = sample_labrador_challenge_coeffs::<D>(3, &TEST_SEED_A, TEST_NONCE_A).unwrap();
-        let c2 = sample_labrador_challenge_coeffs::<D>(3, &TEST_SEED_A, TEST_NONCE_A).unwrap();
+        let c1 = sample_labrador_challenge_coeffs::<D>(3, &TEST_SEED_A, TEST_STREAM_ID_A).unwrap();
+        let c2 = sample_labrador_challenge_coeffs::<D>(3, &TEST_SEED_A, TEST_STREAM_ID_A).unwrap();
         assert_eq!(c1, c2);
     }
 
     #[test]
     fn challenge_sampler_obeys_operator_norm_bound() {
-        let samples = sample_labrador_challenge_coeffs::<D>(8, &TEST_SEED_B, TEST_NONCE_B).unwrap();
+        let samples =
+            sample_labrador_challenge_coeffs::<D>(8, &TEST_SEED_B, TEST_STREAM_ID_B).unwrap();
         assert_eq!(samples.len(), 8);
         for poly in &samples {
             assert!(challenge_operator_norm(poly) <= LABRADOR_CHALLENGE_OPNORM_BOUND);
@@ -329,16 +330,16 @@ mod tests {
 
     #[test]
     fn challenge_sampler_supports_dense_ring_conversion() {
-        let dense = sample_labrador_challenges::<F, D>(2, &TEST_SEED_C, TEST_NONCE_C).unwrap();
+        let dense = sample_labrador_challenges::<F, D>(2, &TEST_SEED_C, TEST_STREAM_ID_C).unwrap();
         assert_eq!(dense.len(), 2);
     }
 
     #[test]
     fn challenge_sampler_matches_transliterated_reference_vector() {
         // Captured from the C-reference algorithm semantics (`polyvec_challenge`)
-        // for seed = [0,1,2,...,15], nonce = 7, len = 1.
+        // for seed = [0,1,2,...,15], stream ID = 7, len = 1.
         let seed: [u8; 16] = std::array::from_fn(|i| i as u8);
-        let coeffs = sample_labrador_challenge_coeffs::<D>(1, &seed, TEST_NONCE_REF).unwrap();
+        let coeffs = sample_labrador_challenge_coeffs::<D>(1, &seed, TEST_STREAM_ID_REF).unwrap();
         let got = coeffs[0];
         let expected: [i16; D] = [
             1, 1, 0, 1, 0, 0, 2, -1, 0, 0, 2, 1, 1, -1, -1, 1, -2, 0, 1, 0, -1, -1, 1, 0, 1, -1, 1,
@@ -350,9 +351,9 @@ mod tests {
 
     #[test]
     fn sparse_operator_norm_matches_dense_reference() {
-        for nonce in [1u64, 3, 7, 9, 17, 29] {
+        for stream_id in [1u64, 3, 7, 9, 17, 29] {
             let polys =
-                sample_labrador_challenge_coeffs::<D>(6, &TEST_SEED_A, nonce).expect("sample");
+                sample_labrador_challenge_coeffs::<D>(6, &TEST_SEED_A, stream_id).expect("sample");
             for poly in polys {
                 let sparse = challenge_operator_norm(&poly);
                 let dense = challenge_operator_norm_dense_reference(&poly);
