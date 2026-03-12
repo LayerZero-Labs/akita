@@ -11,6 +11,7 @@ use crate::protocol::labrador::guardrails::{
 use crate::{CanonicalField, FieldCore, FromSmallInt};
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake128;
+use std::sync::OnceLock;
 
 /// Number of `±1` coefficients in a challenge polynomial.
 pub const LABRADOR_TAU1: usize = 32;
@@ -20,6 +21,8 @@ pub const LABRADOR_TAU2: usize = 8;
 pub const LABRADOR_CHALLENGE_OPNORM_BOUND: f64 = 14.0;
 
 const SHAKE128_RATE: usize = 168;
+const SINGLE_CHALLENGE_BLOCKS: usize = 2;
+const SINGLE_CHALLENGE_BLOCK_BYTES: usize = SINGLE_CHALLENGE_BLOCKS * SHAKE128_RATE;
 
 /// Sample Labrador challenge polynomials as signed coefficient arrays.
 ///
@@ -49,6 +52,16 @@ pub fn sample_labrador_challenge_coeffs<const D: usize>(
 
     let mut out = Vec::with_capacity(len);
     let mut remaining = len;
+
+    if remaining == 1 {
+        while remaining > 0 {
+            let mut buf = [0u8; SINGLE_CHALLENGE_BLOCK_BYTES];
+            reader.read(&mut buf);
+            let produced = consume_challenge_buffer::<D>(&mut out, remaining, &buf);
+            remaining -= produced;
+        }
+        return Ok(out);
+    }
 
     while remaining >= 10 {
         let bytes = checked_mul(17, SHAKE128_RATE, "challenge block bytes")?;
@@ -154,7 +167,70 @@ fn consume_challenge_buffer<const D: usize>(
     produced
 }
 
-fn challenge_operator_norm<const D: usize>(coeffs: &[i16; D]) -> f64 {
+struct ChallengeOpNormTable {
+    cos: Vec<f64>,
+    sin: Vec<f64>,
+}
+
+fn build_challenge_opnorm_table(d: usize) -> ChallengeOpNormTable {
+    let mut cos = Vec::with_capacity(d * d);
+    let mut sin = Vec::with_capacity(d * d);
+    let d_f = d as f64;
+    for i in 0..d {
+        let theta = ((2 * i + 1) as f64) * std::f64::consts::PI / d_f;
+        for j in 0..d {
+            let angle = theta * (j as f64);
+            cos.push(angle.cos());
+            sin.push(angle.sin());
+        }
+    }
+    ChallengeOpNormTable { cos, sin }
+}
+
+fn challenge_opnorm_table<const D: usize>() -> &'static ChallengeOpNormTable {
+    match D {
+        1 => {
+            static TABLE: OnceLock<ChallengeOpNormTable> = OnceLock::new();
+            TABLE.get_or_init(|| build_challenge_opnorm_table(1))
+        }
+        2 => {
+            static TABLE: OnceLock<ChallengeOpNormTable> = OnceLock::new();
+            TABLE.get_or_init(|| build_challenge_opnorm_table(2))
+        }
+        4 => {
+            static TABLE: OnceLock<ChallengeOpNormTable> = OnceLock::new();
+            TABLE.get_or_init(|| build_challenge_opnorm_table(4))
+        }
+        8 => {
+            static TABLE: OnceLock<ChallengeOpNormTable> = OnceLock::new();
+            TABLE.get_or_init(|| build_challenge_opnorm_table(8))
+        }
+        16 => {
+            static TABLE: OnceLock<ChallengeOpNormTable> = OnceLock::new();
+            TABLE.get_or_init(|| build_challenge_opnorm_table(16))
+        }
+        32 => {
+            static TABLE: OnceLock<ChallengeOpNormTable> = OnceLock::new();
+            TABLE.get_or_init(|| build_challenge_opnorm_table(32))
+        }
+        64 => {
+            static TABLE: OnceLock<ChallengeOpNormTable> = OnceLock::new();
+            TABLE.get_or_init(|| build_challenge_opnorm_table(64))
+        }
+        128 => {
+            static TABLE: OnceLock<ChallengeOpNormTable> = OnceLock::new();
+            TABLE.get_or_init(|| build_challenge_opnorm_table(128))
+        }
+        256 => {
+            static TABLE: OnceLock<ChallengeOpNormTable> = OnceLock::new();
+            TABLE.get_or_init(|| build_challenge_opnorm_table(256))
+        }
+        _ => panic!("unsupported challenge sampler degree {D}"),
+    }
+}
+
+#[cfg(test)]
+fn challenge_operator_norm_dense_reference<const D: usize>(coeffs: &[i16; D]) -> f64 {
     let mut max_norm = 0.0f64;
     let d_f = D as f64;
     for i in 0..D {
@@ -166,6 +242,49 @@ fn challenge_operator_norm<const D: usize>(coeffs: &[i16; D]) -> f64 {
             let c = coeff as f64;
             re += c * angle.cos();
             im += c * angle.sin();
+        }
+        let norm = (re * re + im * im).sqrt();
+        if norm > max_norm {
+            max_norm = norm;
+        }
+    }
+    max_norm
+}
+
+fn challenge_operator_norm<const D: usize>(coeffs: &[i16; D]) -> f64 {
+    let table = challenge_opnorm_table::<D>();
+    let mut support_idx = [0usize; LABRADOR_TAU1 + LABRADOR_TAU2];
+    let mut support_coeff = [0.0f64; LABRADOR_TAU1 + LABRADOR_TAU2];
+    let mut support_len = 0usize;
+    for (idx, &coeff) in coeffs.iter().enumerate() {
+        if coeff == 0 {
+            continue;
+        }
+        if support_len == support_idx.len() {
+            #[cfg(test)]
+            {
+                return challenge_operator_norm_dense_reference(coeffs);
+            }
+            #[cfg(not(test))]
+            {
+                panic!("challenge support exceeded expected sparsity");
+            }
+        }
+        support_idx[support_len] = idx;
+        support_coeff[support_len] = coeff as f64;
+        support_len += 1;
+    }
+
+    let mut max_norm = 0.0f64;
+    for i in 0..D {
+        let row_base = i * D;
+        let mut re = 0.0f64;
+        let mut im = 0.0f64;
+        for idx in 0..support_len {
+            let coeff = support_coeff[idx];
+            let col = support_idx[idx];
+            re += coeff * table.cos[row_base + col];
+            im += coeff * table.sin[row_base + col];
         }
         let norm = (re * re + im * im).sqrt();
         if norm > max_norm {
@@ -227,5 +346,22 @@ mod tests {
             -1, -1, 2, -1, 0, 1, -2, 1, 0, 0,
         ];
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn sparse_operator_norm_matches_dense_reference() {
+        for nonce in [1u64, 3, 7, 9, 17, 29] {
+            let polys =
+                sample_labrador_challenge_coeffs::<D>(6, &TEST_SEED_A, nonce).expect("sample");
+            for poly in polys {
+                let sparse = challenge_operator_norm(&poly);
+                let dense = challenge_operator_norm_dense_reference(&poly);
+                assert_eq!(sparse.to_bits(), dense.to_bits());
+                assert_eq!(
+                    sparse <= LABRADOR_CHALLENGE_OPNORM_BOUND,
+                    dense <= LABRADOR_CHALLENGE_OPNORM_BOUND
+                );
+            }
+        }
     }
 }
