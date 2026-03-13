@@ -21,7 +21,6 @@ pub mod split_eq;
 pub mod types;
 
 use crate::error::HachiError;
-use crate::primitives::serialization::Compress;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
@@ -115,16 +114,11 @@ where
     Inst: SumcheckInstanceProver<E>,
 {
     let mut claim = instance.input_claim();
-    {
-        let mut buf = Vec::new();
-        claim.serialize_with_mode(&mut buf, Compress::No).ok();
-        eprintln!(
-            "  [prove_sumcheck] input_claim is_zero={}, bytes={:02x?}, num_rounds={}",
-            claim.is_zero(),
-            &buf[..buf.len().min(16)],
-            instance.num_rounds()
-        );
-    }
+    tracing::debug!(
+        is_zero = claim.is_zero(),
+        num_rounds = instance.num_rounds(),
+        "prove_sumcheck input_claim"
+    );
     transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &claim);
 
     let num_rounds = instance.num_rounds();
@@ -195,16 +189,11 @@ where
     V: SumcheckInstanceVerifier<E>,
 {
     let claim = verifier.input_claim();
-    {
-        let mut buf = Vec::new();
-        claim.serialize_with_mode(&mut buf, Compress::No).ok();
-        eprintln!(
-            "  [verify_sumcheck] input_claim is_zero={}, bytes={:02x?}, num_rounds={}",
-            claim.is_zero(),
-            &buf[..buf.len().min(16)],
-            verifier.num_rounds()
-        );
-    }
+    tracing::debug!(
+        is_zero = claim.is_zero(),
+        num_rounds = verifier.num_rounds(),
+        "verify_sumcheck input_claim"
+    );
     transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &claim);
     let (final_claim, challenges) = proof.verify::<F, T, S>(
         claim,
@@ -216,12 +205,12 @@ where
 
     let expected = verifier.expected_output_claim(&challenges)?;
     if final_claim != expected {
-        eprintln!(
-            "[verify_sumcheck] MISMATCH: rounds={}, degree_bound={}",
-            verifier.num_rounds(),
-            verifier.degree_bound(),
+        tracing::error!(
+            rounds = verifier.num_rounds(),
+            degree_bound = verifier.degree_bound(),
+            diff_is_zero = (final_claim - expected).is_zero(),
+            "verify_sumcheck MISMATCH"
         );
-        eprintln!("  diff_is_zero = {}", (final_claim - expected).is_zero());
         return Err(HachiError::InvalidProof);
     }
 

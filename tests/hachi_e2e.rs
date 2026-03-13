@@ -171,12 +171,13 @@ fn full_labrador_prove_verify() {
         );
         assert!(bad_result.is_err(), "must reject incorrect opening");
 
-        eprintln!(
-            "[full/nv{FULL_TEST_NV}] prove: {:.3}s | verify: {:.3}s | proof: {proof_bytes} bytes ({:.2} KiB) | levels: {}",
-            prove_time.as_secs_f64(),
-            verify_time.as_secs_f64(),
-            proof_bytes as f64 / 1024.0,
-            proof.levels.len(),
+        tracing::info!(
+            prove_s = prove_time.as_secs_f64(),
+            verify_s = verify_time.as_secs_f64(),
+            proof_bytes,
+            proof_kib = proof_bytes as f64 / 1024.0,
+            levels = proof.levels.len(),
+            "full/nv{FULL_TEST_NV} e2e"
         );
     });
 }
@@ -292,12 +293,13 @@ fn onehot_labrador_prove_verify() {
         );
         assert!(bad_result.is_err(), "must reject incorrect opening");
 
-        eprintln!(
-            "[onehot/nv{ONEHOT_TEST_NV}] prove: {:.3}s | verify: {:.3}s | proof: {proof_bytes} bytes ({:.2} KiB) | levels: {}",
-            prove_time.as_secs_f64(),
-            verify_time.as_secs_f64(),
-            proof_bytes as f64 / 1024.0,
-            proof.levels.len(),
+        tracing::info!(
+            prove_s = prove_time.as_secs_f64(),
+            verify_s = verify_time.as_secs_f64(),
+            proof_bytes,
+            proof_kib = proof_bytes as f64 / 1024.0,
+            levels = proof.levels.len(),
+            "onehot/nv{ONEHOT_TEST_NV} e2e"
         );
     });
 }

@@ -1268,9 +1268,12 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
         self.rounds_completed += 1;
 
         if self.rounds_completed == self.num_vars {
-            eprintln!(
-                "    [fused_sc] {} rounds: norm={:.2}s, relation={:.2}s, fold={:.2}s",
-                self.num_vars, self.norm_time_total, self.relation_time_total, self.fold_time_total
+            tracing::debug!(
+                rounds = self.num_vars,
+                norm_s = self.norm_time_total,
+                relation_s = self.relation_time_total,
+                fold_s = self.fold_time_total,
+                "fused sumcheck rounds complete"
             );
         }
     }
@@ -1377,10 +1380,15 @@ impl<F: FieldCore + FromSmallInt, const D: usize> SumcheckInstanceVerifier<F>
         let m_val = multilinear_eval(&self.m_evals_x, x_challenges)?;
         let relation_oracle = w_val * alpha_val * m_val;
 
-        eprintln!(
-            "  [expected_output] num_u={}, num_l={}, w_override={}, b={}, tau0.len={}, m_evals_x.len={}, alpha_evals_y.len={}",
-            self.num_u, self.num_l, self.w_val_override.is_some(), self.b,
-            self.tau0.len(), self.m_evals_x.len(), self.alpha_evals_y.len()
+        tracing::debug!(
+            num_u = self.num_u,
+            num_l = self.num_l,
+            w_override = self.w_val_override.is_some(),
+            b = self.b,
+            tau0_len = self.tau0.len(),
+            m_evals_x_len = self.m_evals_x.len(),
+            alpha_evals_y_len = self.alpha_evals_y.len(),
+            "expected_output_claim"
         );
 
         Ok(self.batching_coeff * norm_oracle + relation_oracle)

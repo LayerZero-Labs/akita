@@ -722,10 +722,7 @@ impl HachiCommitmentCore {
             max_num_digits_fold = max_num_digits_fold.max(layout.num_digits_fold);
 
             let w_layout = w_commitment_layout::<F, D, Cfg>(layout)?;
-            if std::env::var_os("HACHI_SETUP_DIAGNOSTICS").is_some() {
-                eprintln!("[hachi setup] layout={layout:?}");
-                eprintln!("[hachi setup] w_layout={w_layout:?}");
-            }
+            tracing::debug!(?layout, ?w_layout, "setup layout");
             max_inner_width = max_inner_width.max(w_layout.inner_width);
             max_outer_width = max_outer_width.max(w_layout.outer_width);
             max_d_matrix_width = max_d_matrix_width.max(w_layout.d_matrix_width);
@@ -744,10 +741,7 @@ impl HachiCommitmentCore {
             max_num_digits_fold,
             first_layout.log_basis,
         )?;
-        if std::env::var_os("HACHI_SETUP_DIAGNOSTICS").is_some() {
-            eprintln!("[hachi setup] envelope_layout={envelope_layout:?}");
-            eprintln!("[hachi setup] max_num_vars={max_num_vars}");
-        }
+        tracing::debug!(?envelope_layout, max_num_vars, "setup envelope");
         let public_matrix_seed = sample_public_matrix_seed();
         Self::setup_with_matrix_widths_and_seed::<F, D, Cfg>(
             envelope_layout,
@@ -871,17 +865,21 @@ impl HachiCommitmentCore {
         F: FieldCore + CanonicalField + FieldSampling,
         Cfg: CommitmentConfig,
     {
-        if std::env::var_os("HACHI_SETUP_DIAGNOSTICS").is_some() {
+        {
             let ring_bytes = std::mem::size_of::<CyclotomicRing<F, D>>();
             let a_raw_mb = (Cfg::N_A * a_cols * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
             let b_raw_mb = (Cfg::N_B * b_cols * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
             let d_raw_mb = (Cfg::N_D * d_cols * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
-            eprintln!(
-                "[hachi setup] a_cols={a_cols}, b_cols={b_cols}, d_cols={d_cols}, ring_bytes={ring_bytes}"
-            );
-            eprintln!(
-                "[hachi setup] raw_matrix_mb: A={a_raw_mb:.1}, B={b_raw_mb:.1}, D={d_raw_mb:.1}, total={:.1}",
-                a_raw_mb + b_raw_mb + d_raw_mb
+            tracing::debug!(
+                a_cols,
+                b_cols,
+                d_cols,
+                ring_bytes,
+                a_mb = a_raw_mb,
+                b_mb = b_raw_mb,
+                d_mb = d_raw_mb,
+                total_mb = a_raw_mb + b_raw_mb + d_raw_mb,
+                "setup matrix sizes"
             );
         }
         let a_matrix = derive_public_matrix::<F, D>(Cfg::N_A, a_cols, &public_matrix_seed, b"A");

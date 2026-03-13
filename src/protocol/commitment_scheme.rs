@@ -177,9 +177,12 @@ fn prove_level_diagnostic<F, const D: usize, Cfg>(
         .map(|r| eval_ring_at(r, &rs.alpha))
         .collect();
 
-    eprintln!(
-        "  [hachi prove L{level}] per-row M*w=y diagnostic (num_rows={num_rows}, x_len={x_len}, m_a_cols={}):",
-        m_a.first().map_or(0, |r| r.len()),
+    tracing::debug!(
+        level,
+        num_rows,
+        x_len,
+        m_a_cols = m_a.first().map_or(0, |r| r.len()),
+        "per-row M*w=y diagnostic"
     );
     for i in 0..num_rows {
         let mw_i: F = m_a[i]
@@ -201,12 +204,14 @@ fn prove_level_diagnostic<F, const D: usize, Cfg>(
             _ if i == Cfg::N_D + Cfg::N_B + 1 => "challenge_fold",
             _ => "A",
         };
-        eprintln!(
-            "    row {i} ({row_name}): match={}, residual_is_zero={}, mw_is_zero={}, y_is_zero={}",
-            residual.is_zero(),
-            residual.is_zero(),
-            mw_i.is_zero(),
-            y_i.is_zero(),
+        tracing::debug!(
+            row = i,
+            row_name,
+            matches = residual.is_zero(),
+            residual_is_zero = residual.is_zero(),
+            mw_is_zero = mw_i.is_zero(),
+            y_is_zero = y_i.is_zero(),
+            "diagnostic row"
         );
     }
 
@@ -217,11 +222,12 @@ fn prove_level_diagnostic<F, const D: usize, Cfg>(
         prover_claim +=
             F::from_i64(w as i64) * rs.alpha_evals_y[idx >> rs.num_u] * rs.m_evals_x[idx & x_mask];
     }
-    eprintln!(
-        "  [hachi prove L{level}] relation_claim cross-check: match={}, prover_is_zero={}, verifier_is_zero={}",
-        verifier_claim == prover_claim,
-        prover_claim.is_zero(),
-        verifier_claim.is_zero(),
+    tracing::debug!(
+        level,
+        claims_match = (verifier_claim == prover_claim),
+        prover_is_zero = prover_claim.is_zero(),
+        verifier_is_zero = verifier_claim.is_zero(),
+        "relation_claim cross-check"
     );
 }
 
@@ -248,9 +254,9 @@ fn prove_level_selfcheck<F: FieldCore + FromSmallInt>(
     let relation_oracle = w_eval * alpha_val * m_val;
     let prover_expected = batching_coeff * norm_oracle + relation_oracle;
     if prover_expected != final_claim {
-        eprintln!("  [hachi prove L{level}] PROVER self-check FAILED: expected != final_claim");
+        tracing::warn!(level, "PROVER self-check FAILED: expected != final_claim");
     } else {
-        eprintln!("  [hachi prove L{level}] PROVER self-check OK");
+        tracing::debug!(level, "PROVER self-check OK");
     }
 }
 
@@ -279,9 +285,10 @@ where
 {
     {
         let x: u8 = 0;
-        eprintln!(
-            "  [prove_one_level L{level}] stack ~= {:#x}",
-            &x as *const u8 as usize
+        tracing::trace!(
+            stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
+            level,
+            "prove_one_level"
         );
     }
     let alpha = Cfg::D.trailing_zeros() as usize;
@@ -301,18 +308,17 @@ where
         ring_opening_point_from_field::<F>(outer_point, layout.r_vars, layout.m_vars, basis)?
     };
 
-    let t0 = Instant::now();
     let fold_scalars = &ring_opening_point.a;
     let eval_outer_scalars = &ring_opening_point.b;
     let (y_ring, w_folded) = {
-        let _span = tracing::info_span!("evaluate_and_fold", level).entered();
+        let _span = tracing::info_span!(
+            "evaluate_and_fold",
+            level,
+            num_ring_elems = poly.num_ring_elems()
+        )
+        .entered();
         poly.evaluate_and_fold(eval_outer_scalars, fold_scalars, layout.block_len)
     };
-    eprintln!(
-        "  [hachi prove L{level}] evaluate_and_fold: {:.2}s (num_ring_elems={})",
-        t0.elapsed().as_secs_f64(),
-        poly.num_ring_elems()
-    );
 
     commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
     for pt in &padded_point {
@@ -320,7 +326,6 @@ where
     }
     transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
 
-    let t1 = Instant::now();
     let mut quad_eq = Box::new(QuadraticEquation::<F, { D }, Cfg>::new_prover(
         ntt_d,
         ring_opening_point,
@@ -332,27 +337,14 @@ where
         &y_ring,
         layout,
     )?);
-    eprintln!(
-        "  [hachi prove L{level}] quad_eq new_prover: {:.2}s",
-        t1.elapsed().as_secs_f64()
-    );
 
-    let t2 = Instant::now();
     let w =
         ring_switch_build_w::<F, { D }, Cfg>(&mut quad_eq, expanded, ntt_a, ntt_b, ntt_d, layout)?;
-    eprintln!(
-        "  [hachi prove L{level}] ring_switch_build_w: {:.2}s (w.len()={})",
-        t2.elapsed().as_secs_f64(),
-        w.len()
-    );
 
-    let t_cw = Instant::now();
-    let (w_commitment_flat, w_hint_flat) = commit_w_fn(&w)?;
-    eprintln!(
-        "  [hachi prove L{level}] commit_w: {:.2}s (ring_dim={})",
-        t_cw.elapsed().as_secs_f64(),
-        w_commitment_flat.ring_dim()
-    );
+    let (w_commitment_flat, w_hint_flat) = {
+        let _span = tracing::info_span!("commit_w_level", level).entered();
+        commit_w_fn(&w)?
+    };
 
     let rs = ring_switch_finalize::<F, T, { D }, Cfg>(
         &quad_eq,
@@ -363,12 +355,6 @@ where
         w_hint_flat,
         layout,
     )?;
-    eprintln!(
-        "  [hachi prove L{level}] ring_switch_finalize: {:.2}s (num_u={}, num_l={})",
-        t2.elapsed().as_secs_f64(),
-        rs.num_u,
-        rs.num_l
-    );
 
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
 
@@ -385,7 +371,6 @@ where
         level,
     );
 
-    let t3 = Instant::now();
     let relation_claim =
         relation_claim_from_rows::<F, D>(&rs.tau1, rs.alpha, &quad_eq.v, &commitment.u, &y_ring);
     let RingSwitchOutput {
@@ -424,10 +409,6 @@ where
         prove_sumcheck::<F, _, F, _, _>(&mut fused_prover, transcript, |tr| {
             tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
         })?;
-    eprintln!(
-        "  [hachi prove L{level}] fused sumcheck: {:.2}s",
-        t3.elapsed().as_secs_f64()
-    );
 
     let w_eval = {
         let _span = tracing::info_span!("multilinear_eval", level).entered();
@@ -772,15 +753,15 @@ where
         field_evals.resize(w_poly.num_ring_elems() * D_LEVEL, F::zero());
         let direct_eval = multilinear_eval(&field_evals, &opening_point).unwrap();
         if last_w_eval != direct_eval {
-            eprintln!("  [hachi prove L{level}] BUG: w_eval mismatch! prev_level w_eval != w_poly eval at opening_point");
-            eprintln!(
-                "    w_poly ring_elems={}, field_len={}, opening_point.len()={}",
-                w_poly.num_ring_elems(),
-                field_evals.len(),
-                opening_point.len()
+            tracing::error!(
+                level,
+                ring_elems = w_poly.num_ring_elems(),
+                field_len = field_evals.len(),
+                point_len = opening_point.len(),
+                "BUG: w_eval mismatch! prev_level w_eval != w_poly eval at opening_point"
             );
         } else {
-            eprintln!("  [hachi prove L{level}] w_eval consistency OK");
+            tracing::debug!(level, "w_eval consistency OK");
         }
     }
 
@@ -974,9 +955,10 @@ where
             level += 1;
         }
 
-        eprintln!(
-            "  [hachi prove] total ({level} levels): {:.2}s",
-            t_prove_total.elapsed().as_secs_f64()
+        tracing::info!(
+            levels = level,
+            elapsed_s = t_prove_total.elapsed().as_secs_f64(),
+            "hachi prove complete"
         );
 
         // let handoff_ring_dim = current_hint.ring_dim();
@@ -990,7 +972,7 @@ where
         };
 
         let tail = if labrador_enabled {
-            eprintln!("[labrador handoff started]");
+            tracing::info!("labrador handoff started");
             dispatch_labrador_handoff_prove::<F, T, Cfg>(
                 &current_w,
                 &current_hint,
@@ -1047,9 +1029,12 @@ where
             // final level -- verification continues in Labrador.
             let is_last = is_last_hachi && !has_handoff_tail;
             let level_d = Cfg::d_at_level(i, current_point.len());
-            eprintln!(
-                "  [verify] level {i}, is_last={is_last}, point_len={}, D={level_d}",
-                current_point.len()
+            tracing::debug!(
+                level = i,
+                is_last,
+                point_len = current_point.len(),
+                D = level_d,
+                "verify level"
             );
 
             let fw_ref = final_w_elems.as_deref();
@@ -1191,7 +1176,7 @@ where
     } else {
         w_ring_element_count::<F, Cfg>(layout) * D
     };
-    eprintln!("  [verify] w_len={w_len}, is_last={is_last}");
+    tracing::debug!(w_len, is_last, "verify ring_switch");
 
     let rs = ring_switch_verifier::<F, T, { D }, Cfg>(
         &quad_eq,

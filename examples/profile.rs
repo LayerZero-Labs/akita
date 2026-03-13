@@ -22,6 +22,7 @@ use std::env;
 use std::fs;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing_chrome::ChromeLayerBuilder;
+use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::prelude::*;
 
 type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
@@ -39,7 +40,7 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
     let t0 = Instant::now();
     let (commitment, hint) =
         <Scheme<D, Cfg> as CommitmentScheme<F, D>>::commit(poly, setup, layout).unwrap();
-    eprintln!("[{label}] commit: {:.3}s", t0.elapsed().as_secs_f64());
+    tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "commit");
 
     let t0 = Instant::now();
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
@@ -54,7 +55,7 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
         layout,
     )
     .unwrap();
-    eprintln!("[{label}] prove: {:.3}s", t0.elapsed().as_secs_f64());
+    tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "prove");
     print_proof_summary(label, &proof);
 
     let t0 = Instant::now();
@@ -70,55 +71,57 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
         BasisMode::Lagrange,
         layout,
     ) {
-        Ok(()) => eprintln!("[{label}] verify: {:.3}s OK", t0.elapsed().as_secs_f64()),
-        Err(e) => eprintln!(
-            "[{label}] verify: {:.3}s FAILED ({e})",
-            t0.elapsed().as_secs_f64()
-        ),
+        Ok(()) => tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "verify OK"),
+        Err(e) => {
+            tracing::error!(label, elapsed_s = t0.elapsed().as_secs_f64(), error = %e, "verify FAILED")
+        }
     }
 }
 
 fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
-    eprintln!(
-        "[{label}]   levels: {}, proof size: {} bytes",
-        proof.levels.len(),
-        proof.size()
+    tracing::info!(
+        label,
+        levels = proof.levels.len(),
+        proof_size_bytes = proof.size(),
+        "proof summary"
     );
     for (i, lp) in proof.levels.iter().enumerate() {
         let w_comm_size = lp.w_commitment.serialized_size(Compress::No);
         let sc_size = lp.sumcheck_proof.serialized_size(Compress::No);
-        eprintln!(
-            "[{label}]   L{i}: w_commitment={} ring elems (D={}, {} bytes), sumcheck={} bytes",
-            lp.w_commitment.count(),
-            lp.w_commit_d(),
-            w_comm_size,
-            sc_size,
+        tracing::debug!(
+            label,
+            level = i,
+            w_commitment_elems = lp.w_commitment.count(),
+            D = lp.w_commit_d(),
+            w_commitment_bytes = w_comm_size,
+            sumcheck_bytes = sc_size,
+            "level detail"
         );
     }
     if let Some(final_w) = proof.final_w() {
-        eprintln!(
-            "[{label}]   final_w: {} elems, {} bits/elem, packed {} bytes",
-            final_w.num_elems,
-            final_w.bits_per_elem,
-            final_w.serialized_size(Compress::No),
+        tracing::debug!(
+            label,
+            num_elems = final_w.num_elems,
+            bits_per_elem = final_w.bits_per_elem,
+            packed_bytes = final_w.serialized_size(Compress::No),
+            "final_w"
         );
     } else {
-        eprintln!("[{label}]   final_w: Labrador tail");
+        tracing::debug!(label, "final_w: Labrador tail");
     }
 }
 
 fn print_layout(layout: &HachiCommitmentLayout) {
-    eprintln!(
-        "  layout: m_vars={}, r_vars={}, num_blocks={}, block_len={}, \
-         delta_commit={}, delta_open={}, delta_fold={}, log_basis={}",
-        layout.m_vars,
-        layout.r_vars,
-        layout.num_blocks,
-        layout.block_len,
-        layout.num_digits_commit,
-        layout.num_digits_open,
-        layout.num_digits_fold,
-        layout.log_basis,
+    tracing::debug!(
+        m_vars = layout.m_vars,
+        r_vars = layout.r_vars,
+        num_blocks = layout.num_blocks,
+        block_len = layout.block_len,
+        delta_commit = layout.num_digits_commit,
+        delta_open = layout.num_digits_open,
+        delta_fold = layout.num_digits_fold,
+        log_basis = layout.log_basis,
+        "layout"
     );
 }
 
@@ -144,7 +147,7 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCom
 
     let t0 = Instant::now();
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
-    eprintln!("  setup: {:.3}s", t0.elapsed().as_secs_f64());
+    tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "setup");
 
     run_prove::<D, Cfg, _>("dense", &setup, &poly, &pt, opening, layout);
 }
@@ -176,7 +179,7 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCo
 
     let t0 = Instant::now();
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
-    eprintln!("  setup: {:.3}s", t0.elapsed().as_secs_f64());
+    tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "setup");
 
     run_prove::<D, Cfg, _>("onehot", &setup, &onehot_poly, &pt, opening, layout);
 }
@@ -209,31 +212,38 @@ fn main() {
         .file(&trace_file)
         .build();
 
-    tracing_subscriber::registry().with(chrome_layer).init();
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_span_events(FmtSpan::CLOSE)
+        .compact()
+        .with_target(false);
 
-    eprintln!("Perfetto trace: {trace_file}");
-    eprintln!("num_vars={nv}, mode={mode}");
-    eprintln!();
+    tracing_subscriber::registry()
+        .with(fmt_layer)
+        .with(chrome_layer)
+        .init();
+
+    tracing::info!(trace_file = %trace_file, "Perfetto trace");
+    tracing::info!(num_vars = nv, mode = %mode, "profile config");
 
     match mode.as_str() {
         "full" => {
             type Cfg = Fp128FullCommitmentConfig;
             let layout = resolve_layout::<Cfg>(nv);
-            eprintln!("=== full (dense, log_commit_bound=128) ===");
+            tracing::info!("=== full (dense, log_commit_bound=128) ===");
             print_layout(&layout);
             run_dense::<{ Fp128FullCommitmentConfig::D }, Cfg>(nv, &layout);
         }
         "onehot" => {
             type Cfg = Fp128OneHotCommitmentConfig;
             let layout = resolve_layout::<Cfg>(nv);
-            eprintln!("=== onehot (log_commit_bound=1) ===");
+            tracing::info!("=== onehot (log_commit_bound=1) ===");
             print_layout(&layout);
             run_onehot::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(nv, &layout);
         }
         "logbasis" => {
             type Cfg = Fp128LogBasisCommitmentConfig;
             let layout = resolve_layout::<Cfg>(nv);
-            eprintln!("=== logbasis (dense, log_commit_bound=3) ===");
+            tracing::info!("=== logbasis (dense, log_commit_bound=3) ===");
             print_layout(&layout);
             run_dense::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(nv, &layout);
         }
@@ -241,23 +251,21 @@ fn main() {
             {
                 type Cfg = Fp128FullCommitmentConfig;
                 let layout = resolve_layout::<Cfg>(nv);
-                eprintln!("=== full (dense, log_commit_bound=128) ===");
+                tracing::info!("=== full (dense, log_commit_bound=128) ===");
                 print_layout(&layout);
                 run_dense::<{ Fp128FullCommitmentConfig::D }, Cfg>(nv, &layout);
-                eprintln!();
             }
             {
                 type Cfg = Fp128OneHotCommitmentConfig;
                 let layout = resolve_layout::<Cfg>(nv);
-                eprintln!("=== onehot (log_commit_bound=1) ===");
+                tracing::info!("=== onehot (log_commit_bound=1) ===");
                 print_layout(&layout);
                 run_onehot::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(nv, &layout);
-                eprintln!();
             }
             {
                 type Cfg = Fp128LogBasisCommitmentConfig;
                 let layout = resolve_layout::<Cfg>(nv);
-                eprintln!("=== logbasis (dense, log_commit_bound=3) ===");
+                tracing::info!("=== logbasis (dense, log_commit_bound=3) ===");
                 print_layout(&layout);
                 run_dense::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(nv, &layout);
             }
@@ -266,31 +274,28 @@ fn main() {
             {
                 type Cfg = Fp128BoundedCommitmentConfig<1, 3, 3>;
                 let layout = resolve_layout::<Cfg>(nv);
-                eprintln!("=== [A] onehot, basis=3 everywhere ===");
+                tracing::info!("=== [A] onehot, basis=3 everywhere ===");
                 print_layout(&layout);
                 run_onehot::<{ Cfg::D }, Cfg>(nv, &layout);
-                eprintln!();
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<1, 2, 2>;
                 let layout = resolve_layout::<Cfg>(nv);
-                eprintln!("=== [B] onehot, basis=2 everywhere ===");
+                tracing::info!("=== [B] onehot, basis=2 everywhere ===");
                 print_layout(&layout);
                 run_onehot::<{ Cfg::D }, Cfg>(nv, &layout);
-                eprintln!();
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<1, 2, 3>;
                 let layout = resolve_layout::<Cfg>(nv);
-                eprintln!("=== [C] onehot, L0 basis=2, w-levels basis=3 ===");
+                tracing::info!("=== [C] onehot, L0 basis=2, w-levels basis=3 ===");
                 print_layout(&layout);
                 run_onehot::<{ Cfg::D }, Cfg>(nv, &layout);
-                eprintln!();
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<1, 2, 4>;
                 let layout = resolve_layout::<Cfg>(nv);
-                eprintln!("=== [D] onehot, L0 basis=2, w-levels basis=4 ===");
+                tracing::info!("=== [D] onehot, L0 basis=2, w-levels basis=4 ===");
                 print_layout(&layout);
                 run_onehot::<{ Cfg::D }, Cfg>(nv, &layout);
             }
@@ -299,31 +304,28 @@ fn main() {
             {
                 type Cfg = Fp128BoundedCommitmentConfig<3, 3, 3>;
                 let layout = resolve_layout::<Cfg>(nv);
-                eprintln!("=== [A] logbasis coeffs, basis=3 everywhere ===");
+                tracing::info!("=== [A] logbasis coeffs, basis=3 everywhere ===");
                 print_layout(&layout);
                 run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
-                eprintln!();
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<3, 2, 2>;
                 let layout = resolve_layout::<Cfg>(nv);
-                eprintln!("=== [B] logbasis coeffs, basis=2 everywhere ===");
+                tracing::info!("=== [B] logbasis coeffs, basis=2 everywhere ===");
                 print_layout(&layout);
                 run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
-                eprintln!();
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<3, 2, 3>;
                 let layout = resolve_layout::<Cfg>(nv);
-                eprintln!("=== [C] logbasis coeffs, L0 basis=2, w-levels basis=3 ===");
+                tracing::info!("=== [C] logbasis coeffs, L0 basis=2, w-levels basis=3 ===");
                 print_layout(&layout);
                 run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
-                eprintln!();
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<3, 2, 4>;
                 let layout = resolve_layout::<Cfg>(nv);
-                eprintln!("=== [D] logbasis coeffs, L0 basis=2, w-levels basis=4 ===");
+                tracing::info!("=== [D] logbasis coeffs, L0 basis=2, w-levels basis=4 ===");
                 print_layout(&layout);
                 run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
             }
@@ -332,44 +334,42 @@ fn main() {
             {
                 type Cfg = Fp128BoundedCommitmentConfig<128, 3, 3>;
                 let layout = resolve_layout::<Cfg>(nv);
-                eprintln!("=== [A] baseline: log_basis=3 everywhere ===");
+                tracing::info!("=== [A] baseline: log_basis=3 everywhere ===");
                 print_layout(&layout);
                 run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
-                eprintln!();
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<128, 2, 2>;
                 let layout = resolve_layout::<Cfg>(nv);
-                eprintln!("=== [B] log_basis=2 everywhere ===");
+                tracing::info!("=== [B] log_basis=2 everywhere ===");
                 print_layout(&layout);
                 run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
-                eprintln!();
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<128, 2, 3>;
                 let layout = resolve_layout::<Cfg>(nv);
-                eprintln!("=== [C] L0 basis=2, w-levels basis=3 ===");
+                tracing::info!("=== [C] L0 basis=2, w-levels basis=3 ===");
                 print_layout(&layout);
                 run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
-                eprintln!();
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<128, 2, 4>;
                 let layout = resolve_layout::<Cfg>(nv);
-                eprintln!("=== [D] L0 basis=2, w-levels basis=4 ===");
+                tracing::info!("=== [D] L0 basis=2, w-levels basis=4 ===");
                 print_layout(&layout);
                 run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
             }
         }
         other => {
-            eprintln!(
-                "Unknown HACHI_MODE={other}. Use: full, onehot, logbasis, compare_basis, all"
+            tracing::error!(
+                mode = other,
+                "Unknown HACHI_MODE. Use: full, onehot, logbasis, compare_basis, all"
             );
             std::process::exit(1);
         }
     }
 
-    eprintln!("\nDone. Trace saved to {trace_file}");
+    tracing::info!(trace_file = %trace_file, "Done. Trace saved");
 }
 
 fn resolve_layout<Cfg: CommitmentConfig>(nv: usize) -> HachiCommitmentLayout {
