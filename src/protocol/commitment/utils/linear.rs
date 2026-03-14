@@ -358,10 +358,27 @@ pub fn decompose_rows_with_carry<F: FieldCore + CanonicalField, const D: usize>(
     delta: usize,
     log_basis: u32,
 ) -> Vec<CyclotomicRing<F, D>> {
-    let mut out = Vec::with_capacity(rows.len() * delta);
-    for row in rows {
-        out.extend(row.balanced_decompose_pow2_with_carry(delta, log_basis));
+    if rows.is_empty() {
+        return Vec::new();
     }
+    assert!(delta > 0, "levels must be positive");
+
+    let mut out = vec![CyclotomicRing::<F, D>::zero(); rows.len() * delta];
+
+    #[cfg(feature = "parallel")]
+    out.par_chunks_mut(delta)
+        .zip(rows.par_iter())
+        .for_each(|(dst_chunk, row)| {
+            row.balanced_decompose_pow2_with_carry_into(dst_chunk, log_basis)
+        });
+
+    #[cfg(not(feature = "parallel"))]
+    out.chunks_mut(delta)
+        .zip(rows.iter())
+        .for_each(|(dst_chunk, row)| {
+            row.balanced_decompose_pow2_with_carry_into(dst_chunk, log_basis)
+        });
+
     out
 }
 

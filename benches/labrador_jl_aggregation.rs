@@ -32,11 +32,9 @@ fn bench_aggregate_jl_contraints_one_lift_for_field<F: FieldCore + CanonicalFiel
         &format!("labrador/aggregate_jl_contraints_one_lift/{field_name}"),
         |b| {
             b.iter(|| {
-                let got = aggregate_jl_contraints_one_lift::<F, D>(
-                    black_box(&matrix),
-                    black_box(&omega),
-                )
-                .unwrap();
+                let got =
+                    aggregate_jl_contraints_one_lift::<F, D>(black_box(&matrix), black_box(&omega))
+                        .unwrap();
                 black_box(got);
             })
         },

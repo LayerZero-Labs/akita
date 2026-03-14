@@ -208,20 +208,25 @@ fn reshape_rows<F: FieldCore, const D: usize>(
     nu: &[usize],
     nn: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    let mut result = Vec::new();
+    let mut result = Vec::with_capacity(nu.iter().copied().sum());
     let mut group: Vec<CyclotomicRing<F, D>> = Vec::new();
 
     for (i, row) in rows.iter().enumerate() {
-        group.extend(row.iter().copied());
+        group.extend_from_slice(row);
         let splits = if i < nu.len() { nu[i] } else { 0 };
         if splits > 0 {
             for chunk_idx in 0..splits {
                 let start = chunk_idx * nn;
-                let mut virtual_row = vec![CyclotomicRing::<F, D>::zero(); nn];
-                for (j, val) in group.iter().enumerate().skip(start).take(nn) {
-                    virtual_row[j - start] = *val;
+                if start + nn <= group.len() {
+                    result.push(group[start..start + nn].to_vec());
+                } else {
+                    let mut virtual_row = vec![CyclotomicRing::<F, D>::zero(); nn];
+                    let available = group.len().saturating_sub(start).min(nn);
+                    if available > 0 {
+                        virtual_row[..available].copy_from_slice(&group[start..start + available]);
+                    }
+                    result.push(virtual_row);
                 }
-                result.push(virtual_row);
             }
             group.clear();
         }
@@ -256,12 +261,15 @@ fn split_decomposed_rows<F: FieldCore, const D: usize>(
             len * parts
         )));
     }
-    let mut rows = vec![Vec::with_capacity(len); parts];
-    for idx in 0..len {
-        for part in 0..parts {
-            rows[part].push(flat[idx * parts + part]);
-        }
-    }
+    let rows: Vec<Vec<CyclotomicRing<F, D>>> = cfg_into_iter!(0..parts)
+        .map(|part| {
+            let mut row = Vec::with_capacity(len);
+            for idx in 0..len {
+                row.push(flat[idx * parts + part]);
+            }
+            row
+        })
+        .collect();
     Ok(rows)
 }
 

@@ -250,7 +250,7 @@ fn apply_four_russians_group4<F: FieldCore, const D: usize>(
 pub fn aggregate_jl_contraints_one_lift<F: CanonicalField, const D: usize>(
     matrix: &LabradorJlMatrix,
     omega: &[F; 256],
- ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
+) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
     let cols = matrix.cols();
     validate_matrix_cols(matrix, cols)?;
     if D % 4 != 0 {

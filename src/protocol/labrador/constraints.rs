@@ -2,9 +2,11 @@
 
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::protocol::labrador::setup::LabradorSetup;
 use crate::protocol::labrador::types::{LabradorReducedConstraintPlan, LabradorReductionConfig};
-use crate::{CanonicalField, FieldCore, FromSmallInt};
+use crate::{cfg_into_iter, CanonicalField, FieldCore, FromSmallInt};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -454,14 +456,17 @@ fn combine_phi<F: FieldCore, const D: usize>(
     challenges: &[CyclotomicRing<F, D>],
     max_len: usize,
 ) -> Vec<CyclotomicRing<F, D>> {
-    let mut combined_phi = vec![CyclotomicRing::<F, D>::zero(); max_len];
-    for (row_idx, row_phi) in phi_total.iter().enumerate() {
-        let c = &challenges[row_idx];
-        for (j, elem) in row_phi.iter().enumerate() {
-            c.mul_accumulate_into(elem, &mut combined_phi[j]);
-        }
-    }
-    combined_phi
+    cfg_into_iter!(0..max_len)
+        .map(|j| {
+            let mut acc = CyclotomicRing::<F, D>::zero();
+            for (row_phi, challenge) in phi_total.iter().zip(challenges.iter()) {
+                if let Some(elem) = row_phi.get(j) {
+                    challenge.mul_accumulate_into(elem, &mut acc);
+                }
+            }
+            acc
+        })
+        .collect()
 }
 
 fn pow2_field<F: FieldCore + FromSmallInt>(exp: usize) -> F {

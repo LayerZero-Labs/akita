@@ -1,9 +1,11 @@
 //! Core Labrador witness/statement/proof types.
 
 use crate::algebra::ring::CyclotomicRing;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::protocol::labrador::constraints::LabradorConstraint;
 use crate::protocol::labrador::setup::LabradorSetup;
-use crate::{CanonicalField, FieldCore};
+use crate::{cfg_fold_reduce, CanonicalField, FieldCore};
 use std::sync::Arc;
 
 /// Witness object for a Labrador statement, holding the `s_i` row vectors.
@@ -45,11 +47,18 @@ impl<F: FieldCore, const D: usize> LabradorWitness<F, D> {
 impl<F: FieldCore + CanonicalField, const D: usize> LabradorWitness<F, D> {
     /// Squared coefficient norm summed over every ring element in the witness.
     pub fn norm(&self) -> u128 {
-        self.rows
-            .iter()
-            .flat_map(|row| row.iter())
-            .map(|ring| ring.coeff_norm_sq())
-            .fold(0u128, |acc, v| acc.saturating_add(v))
+        cfg_fold_reduce!(
+            (0..self.rows.len()),
+            || 0u128,
+            |acc, i| {
+                let row_sum = self.rows[i]
+                    .iter()
+                    .map(|ring| ring.coeff_norm_sq())
+                    .fold(0u128, |a, v| a.saturating_add(v));
+                acc.saturating_add(row_sum)
+            },
+            |a, b| a.saturating_add(b)
+        )
     }
 }
 
