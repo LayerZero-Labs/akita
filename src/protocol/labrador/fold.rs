@@ -6,7 +6,7 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::protocol::commitment::utils::linear::decompose_rows_with_carry;
 use crate::protocol::labrador::aggregation::{
-    add_phi_in_place, aggregate_jl_constraints_prover, aggregate_statement, dot_product,
+    add_phi_flat_in_place, aggregate_jl_constraints_prover, aggregate_statement, dot_product,
 };
 use crate::protocol::labrador::config::LabradorFoldPlan;
 use crate::protocol::labrador::constraints::build_next_constraint_plan;
@@ -123,7 +123,7 @@ where
     absorb_labrador_jl_projection(transcript, &jl_projection);
 
     // Phase 3: JL lift constraints and aggregation (on virtual rows).
-    let (phi_jl, b_jl, bb) =
+    let (phi_jl_flat, b_jl, bb) =
         aggregate_jl_constraints_prover(&virtual_witness, &jl_matrix, transcript)?;
 
     // Aggregate statement constraints on ORIGINAL rows, then reshape phi.
@@ -131,7 +131,7 @@ where
     let phi_stmt = reshape_phi::<F, D>(&phi_stmt_orig, &plan.nu, nn);
 
     let mut phi_total = phi_stmt;
-    add_phi_in_place(&mut phi_total, &phi_jl)?;
+    add_phi_flat_in_place(&mut phi_total, &phi_jl_flat)?;
     let b_total = b_stmt + b_jl;
 
     // Linear garbage h_ij from aggregated phi and virtual witness.

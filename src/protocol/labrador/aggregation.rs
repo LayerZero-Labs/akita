@@ -51,29 +51,30 @@ pub(crate) fn dot_product<F: FieldCore, const D: usize>(
     )
 }
 
-/// Element-wise accumulate `other` into `acc`.
-#[tracing::instrument(skip_all, name = "labrador::add_phi_in_place")]
-pub(crate) fn add_phi_in_place<F: FieldCore, const D: usize>(
+/// Element-wise accumulate a flat `other` view into row-structured `acc`.
+#[tracing::instrument(skip_all, name = "labrador::add_phi_flat_in_place")]
+pub(crate) fn add_phi_flat_in_place<F: FieldCore, const D: usize>(
     acc: &mut [Vec<CyclotomicRing<F, D>>],
-    other: &[Vec<CyclotomicRing<F, D>>],
+    other_flat: &[CyclotomicRing<F, D>],
 ) -> Result<(), HachiError> {
-    if acc.len() != other.len() {
+    let mut ranges = Vec::with_capacity(acc.len());
+    let mut cursor = 0usize;
+    for row in acc.iter() {
+        let start = cursor;
+        cursor += row.len();
+        ranges.push((start, cursor));
+    }
+    if cursor != other_flat.len() {
         return Err(HachiError::InvalidInput(
-            "phi row count mismatch".to_string(),
+            "flat phi length mismatch".to_string(),
         ));
     }
-    for (row_acc, row_other) in acc.iter().zip(other.iter()) {
-        if row_acc.len() != row_other.len() {
-            return Err(HachiError::InvalidInput(
-                "phi row length mismatch".to_string(),
-            ));
-        }
-    }
+
     cfg_iter_mut!(acc)
-        .zip(cfg_iter!(other))
-        .for_each(|(row_acc, row_other)| {
-            for (a, b) in row_acc.iter_mut().zip(row_other.iter()) {
-                *a += *b;
+        .zip(cfg_iter!(ranges))
+        .for_each(|(row_acc, &(start, end))| {
+            for (dst, src) in row_acc.iter_mut().zip(other_flat[start..end].iter()) {
+                *dst += *src;
             }
         });
     Ok(())
@@ -101,96 +102,8 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Width-dispatched JL weight collapse
-// ---------------------------------------------------------------------------
-
-/// Collapsed JL weights in the narrowest representation that avoids overflow.
-#[allow(missing_docs)]
-pub enum CollapseWeights<F: FieldCore, const D: usize> {
-    I64(Vec<i64>),
-    I128(Vec<i128>),
-    FieldPhi(Vec<CyclotomicRing<F, D>>),
-}
-
-impl<F: FieldCore + CanonicalField + FromSmallInt, const D: usize> CollapseWeights<F, D> {
-    fn cols(&self) -> usize {
-        match self {
-            Self::I64(w) => w.len(),
-            Self::I128(w) => w.len(),
-            Self::FieldPhi(phi) => phi.len() * D,
-        }
-    }
-
-    /// Build φ ring-elements: convert each D-coefficient block and apply σ_{-1}.
-    fn into_phi(self) -> Vec<CyclotomicRing<F, D>> {
-        let cols = self.cols();
-        debug_assert!(cols % D == 0, "cols ({cols}) not divisible by D ({D})");
-        let ring_elems = cols / D;
-        match self {
-            Self::I64(w) => cfg_into_iter!(0..ring_elems)
-                .map(|idx| {
-                    let coeffs = std::array::from_fn(|k| F::from_i64(w[idx * D + k]));
-                    CyclotomicRing::from_coefficients(coeffs).sigma_m1()
-                })
-                .collect(),
-            Self::I128(w) => cfg_into_iter!(0..ring_elems)
-                .map(|idx| {
-                    let coeffs = std::array::from_fn(|k| F::from_i128(w[idx * D + k]));
-                    CyclotomicRing::from_coefficients(coeffs).sigma_m1()
-                })
-                .collect(),
-            Self::FieldPhi(phi) => phi,
-        }
-    }
-
-    /// Compute b = ⟨φ, s⟩, using the integer fast path when available.
-    fn compute_b(&self, witness: &FlatWitness<F, D>) -> CyclotomicRing<F, D> {
-        if let (Self::I64(weights), Some(wi64)) = (self, &witness.centered_i64) {
-            integer_ring_dot_sigma_m1::<F, D>(weights, wi64, self.cols() / D)
-        } else if let Self::FieldPhi(phi) = self {
-            dot_product(phi, &witness.rings)
-        } else {
-            let phi = match self {
-                Self::I128(weights) => cfg_into_iter!(0..self.cols() / D)
-                    .map(|idx| {
-                        let coeffs = std::array::from_fn(|k| F::from_i128(weights[idx * D + k]));
-                        CyclotomicRing::from_coefficients(coeffs).sigma_m1()
-                    })
-                    .collect::<Vec<_>>(),
-                Self::I64(_) | Self::FieldPhi(_) => unreachable!(),
-            };
-            dot_product(&phi, &witness.rings)
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Collapse helpers
 // ---------------------------------------------------------------------------
-
-/// Center 256 omega field elements to i128 and return the maximum magnitude.
-fn center_omega_to_i128<F: CanonicalField>(omega: &[F; 256]) -> ([i128; 256], u128) {
-    let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    let mut centered = [0i128; 256];
-    let mut max_mag: u128 = 0;
-    for (i, &val) in omega.iter().enumerate() {
-        let canonical = val.to_canonical_u128();
-        if canonical > half_q {
-            let mag = q - canonical;
-            centered[i] = -(mag as i128);
-            if mag > max_mag {
-                max_mag = mag;
-            }
-        } else {
-            centered[i] = canonical as i128;
-            if canonical > max_mag {
-                max_mag = canonical;
-            }
-        }
-    }
-    (centered, max_mag)
-}
 
 fn validate_matrix_cols(matrix: &LabradorJlMatrix, cols: usize) -> Result<(), HachiError> {
     if !matrix.is_well_formed() || matrix.cols() != cols {
@@ -199,16 +112,6 @@ fn validate_matrix_cols(matrix: &LabradorJlMatrix, cols: usize) -> Result<(), Ha
         ));
     }
     Ok(())
-}
-
-#[inline]
-fn jl_pair_unit_i64(pair: u8) -> i64 {
-    ((pair == 0b11) as i64) - ((pair == 0b00) as i64)
-}
-
-#[inline]
-fn jl_pair_unit_i128(pair: u8) -> i128 {
-    ((pair == 0b11) as i128) - ((pair == 0b00) as i128)
 }
 
 #[inline]
@@ -267,12 +170,89 @@ fn accumulate_field_weight_contribution<F: FieldCore, const D: usize>(
     }
 }
 
-#[tracing::instrument(skip_all, name = "labrador::collapse_weights_field_four_russians")]
-fn collapse_weights_field_four_russians<F: FieldCore, const D: usize>(
+#[inline]
+fn apply_four_russians_group4<F: FieldCore, const D: usize>(
+    phi: &mut [CyclotomicRing<F, D>],
+    row0: &[u8],
+    row1: &[u8],
+    row2: &[u8],
+    row3: &[u8],
+    lookup: &[F; 256],
+    bytes_per_ring: usize,
+) {
+    debug_assert_eq!(row0.len(), phi.len() * bytes_per_ring);
+    debug_assert_eq!(row1.len(), phi.len() * bytes_per_ring);
+    debug_assert_eq!(row2.len(), phi.len() * bytes_per_ring);
+    debug_assert_eq!(row3.len(), phi.len() * bytes_per_ring);
+
+    cfg_iter_mut!(phi).enumerate().for_each(|(elem_idx, elem)| {
+        let start = elem_idx * bytes_per_ring;
+        let end = start + bytes_per_ring;
+        let sign_bytes0 = &row0[start..end];
+        let sign_bytes1 = &row1[start..end];
+        let sign_bytes2 = &row2[start..end];
+        let sign_bytes3 = &row3[start..end];
+
+        let coeffs = elem.coefficients_mut();
+        let mut local_idx = 0usize;
+
+        for (((&byte0, &byte1), &byte2), &byte3) in sign_bytes0
+            .iter()
+            .zip(sign_bytes1.iter())
+            .zip(sign_bytes2.iter())
+            .zip(sign_bytes3.iter())
+        {
+            let packed0 = (byte0 & 0b11)
+                | ((byte1 & 0b11) << 2)
+                | ((byte2 & 0b11) << 4)
+                | ((byte3 & 0b11) << 6);
+            let packed1 = ((byte0 >> 2) & 0b11)
+                | (((byte1 >> 2) & 0b11) << 2)
+                | (((byte2 >> 2) & 0b11) << 4)
+                | (((byte3 >> 2) & 0b11) << 6);
+            let packed2 = ((byte0 >> 4) & 0b11)
+                | (((byte1 >> 4) & 0b11) << 2)
+                | (((byte2 >> 4) & 0b11) << 4)
+                | (((byte3 >> 4) & 0b11) << 6);
+            let packed3 = ((byte0 >> 6) & 0b11)
+                | (((byte1 >> 6) & 0b11) << 2)
+                | (((byte2 >> 6) & 0b11) << 4)
+                | (((byte3 >> 6) & 0b11) << 6);
+
+            accumulate_field_weight_contribution::<F, D>(
+                coeffs,
+                local_idx,
+                lookup[packed0 as usize],
+            );
+            accumulate_field_weight_contribution::<F, D>(
+                coeffs,
+                local_idx + 1,
+                lookup[packed1 as usize],
+            );
+            accumulate_field_weight_contribution::<F, D>(
+                coeffs,
+                local_idx + 2,
+                lookup[packed2 as usize],
+            );
+            accumulate_field_weight_contribution::<F, D>(
+                coeffs,
+                local_idx + 3,
+                lookup[packed3 as usize],
+            );
+            local_idx += 4;
+        }
+    });
+}
+
+/// Collapse 256 JL rows × omega into JL phi coefficients using
+/// field arithmetic only.
+#[tracing::instrument(skip_all, name = "labrador::aggregate_jl_contraints_one_lift")]
+pub fn aggregate_jl_contraints_one_lift<F: CanonicalField, const D: usize>(
     matrix: &LabradorJlMatrix,
     omega: &[F; 256],
-    cols: usize,
-) -> Vec<CyclotomicRing<F, D>> {
+ ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
+    let cols = matrix.cols();
+    validate_matrix_cols(matrix, cols)?;
     if D % 4 != 0 {
         panic!("Four Russians field collapse requires D divisible by 4, got D={D}");
     }
@@ -280,9 +260,6 @@ fn collapse_weights_field_four_russians<F: FieldCore, const D: usize>(
     let bytes_per_ring = D / 4;
     debug_assert_eq!(omega.len() % 4, 0);
 
-    // Four Russians with row-block size 4:
-    // for each 4-row block, precompute all 2-bit-packed pattern sums once
-    // and then consume 4 columns (one byte) at a time.
     for group_start in (0..omega.len()).step_by(4) {
         let row0 = matrix.row_bytes(group_start);
         let row1 = matrix.row_bytes(group_start + 1);
@@ -294,305 +271,54 @@ fn collapse_weights_field_four_russians<F: FieldCore, const D: usize>(
             omega[group_start + 2],
             omega[group_start + 3],
         );
-
-        for ((((elem, sign_bytes0), sign_bytes1), sign_bytes2), sign_bytes3) in phi
-            .iter_mut()
-            .zip(row0.chunks_exact(bytes_per_ring))
-            .zip(row1.chunks_exact(bytes_per_ring))
-            .zip(row2.chunks_exact(bytes_per_ring))
-            .zip(row3.chunks_exact(bytes_per_ring))
-        {
-            let coeffs = elem.coefficients_mut();
-            let mut local_idx = 0usize;
-
-            for (((&byte0, &byte1), &byte2), &byte3) in sign_bytes0
-                .iter()
-                .zip(sign_bytes1.iter())
-                .zip(sign_bytes2.iter())
-                .zip(sign_bytes3.iter())
-            {
-                let idx0 = (byte0 & 0b11)
-                    | ((byte1 & 0b11) << 2)
-                    | ((byte2 & 0b11) << 4)
-                    | ((byte3 & 0b11) << 6);
-                let idx1 = ((byte0 >> 2) & 0b11)
-                    | (((byte1 >> 2) & 0b11) << 2)
-                    | (((byte2 >> 2) & 0b11) << 4)
-                    | (((byte3 >> 2) & 0b11) << 6);
-                let idx2 = ((byte0 >> 4) & 0b11)
-                    | (((byte1 >> 4) & 0b11) << 2)
-                    | (((byte2 >> 4) & 0b11) << 4)
-                    | (((byte3 >> 4) & 0b11) << 6);
-                let idx3 = ((byte0 >> 6) & 0b11)
-                    | (((byte1 >> 6) & 0b11) << 2)
-                    | (((byte2 >> 6) & 0b11) << 4)
-                    | (((byte3 >> 6) & 0b11) << 6);
-
-                accumulate_field_weight_contribution::<F, D>(
-                    coeffs,
-                    local_idx,
-                    lookup[idx0 as usize],
-                );
-                accumulate_field_weight_contribution::<F, D>(
-                    coeffs,
-                    local_idx + 1,
-                    lookup[idx1 as usize],
-                );
-                accumulate_field_weight_contribution::<F, D>(
-                    coeffs,
-                    local_idx + 2,
-                    lookup[idx2 as usize],
-                );
-                accumulate_field_weight_contribution::<F, D>(
-                    coeffs,
-                    local_idx + 3,
-                    lookup[idx3 as usize],
-                );
-                local_idx += 4;
-            }
-        }
+        apply_four_russians_group4::<F, D>(
+            &mut phi,
+            row0,
+            row1,
+            row2,
+            row3,
+            &lookup,
+            bytes_per_ring,
+        );
     }
 
-    phi
-}
-
-/// Branchless i64 collapse. Caller guarantees `256 * max|omega|` fits in i64.
-#[tracing::instrument(skip_all, name = "labrador::collapse_weights_i64")]
-fn collapse_weights_i64(matrix: &LabradorJlMatrix, omega: &[i64; 256], cols: usize) -> Vec<i64> {
-    let mut weights = vec![0i64; cols];
-    let full_bytes = cols >> 2;
-    let remainder = cols & 0b11;
-    for (row_idx, &alpha) in omega.iter().enumerate() {
-        let row = matrix.row_bytes(row_idx);
-        let mut col_idx = 0usize;
-        for &byte in row.iter().take(full_bytes) {
-            weights[col_idx] += alpha * jl_pair_unit_i64(byte & 0b11);
-            weights[col_idx + 1] += alpha * jl_pair_unit_i64((byte >> 2) & 0b11);
-            weights[col_idx + 2] += alpha * jl_pair_unit_i64((byte >> 4) & 0b11);
-            weights[col_idx + 3] += alpha * jl_pair_unit_i64((byte >> 6) & 0b11);
-            col_idx += 4;
-        }
-        if remainder > 0 {
-            let byte = row[full_bytes];
-            for lane in 0..remainder {
-                let pair = (byte >> (lane << 1)) & 0b11;
-                weights[col_idx] += alpha * jl_pair_unit_i64(pair);
-                col_idx += 1;
-            }
-        }
-    }
-    weights
-}
-
-/// Branchless i128 collapse. Caller guarantees `256 * max|omega|` fits in i128.
-#[tracing::instrument(skip_all, name = "labrador::collapse_weights_i128")]
-fn collapse_weights_i128_unchecked(
-    matrix: &LabradorJlMatrix,
-    omega: &[i128; 256],
-    cols: usize,
-) -> Vec<i128> {
-    let mut weights = vec![0i128; cols];
-    let full_bytes = cols >> 2;
-    let remainder = cols & 0b11;
-    for (row_idx, &alpha) in omega.iter().enumerate() {
-        let row = matrix.row_bytes(row_idx);
-        let mut col_idx = 0usize;
-        for &byte in row.iter().take(full_bytes) {
-            weights[col_idx] += alpha * jl_pair_unit_i128(byte & 0b11);
-            weights[col_idx + 1] += alpha * jl_pair_unit_i128((byte >> 2) & 0b11);
-            weights[col_idx + 2] += alpha * jl_pair_unit_i128((byte >> 4) & 0b11);
-            weights[col_idx + 3] += alpha * jl_pair_unit_i128((byte >> 6) & 0b11);
-            col_idx += 4;
-        }
-        if remainder > 0 {
-            let byte = row[full_bytes];
-            for lane in 0..remainder {
-                let pair = (byte >> (lane << 1)) & 0b11;
-                weights[col_idx] += alpha * jl_pair_unit_i128(pair);
-                col_idx += 1;
-            }
-        }
-    }
-    weights
-}
-
-/// Collapse 256 JL rows × omega into weights, dispatching to the narrowest
-/// integer type that avoids overflow.
-#[tracing::instrument(skip_all, name = "labrador::aggregate_jl_functions")]
-pub fn aggregate_jl_functions<F: CanonicalField, const D: usize>(
-    matrix: &LabradorJlMatrix,
-    omega: &[F; 256],
-) -> Result<CollapseWeights<F, D>, HachiError> {
-    let cols = matrix.cols();
-    validate_matrix_cols(matrix, cols)?;
-    let (omega_centered, max_mag) = center_omega_to_i128(omega);
-
-    const HEADROOM_I64: u128 = (i64::MAX as u128) / 256;
-    const HEADROOM_I128: u128 = (i128::MAX as u128) / 256;
-
-    if max_mag <= HEADROOM_I64 {
-        let omega_i64: [i64; 256] = std::array::from_fn(|i| omega_centered[i] as i64);
-        Ok(CollapseWeights::I64(collapse_weights_i64(
-            matrix, &omega_i64, cols,
-        )))
-    } else if max_mag <= HEADROOM_I128 {
-        Ok(CollapseWeights::I128(collapse_weights_i128_unchecked(
-            matrix,
-            &omega_centered,
-            cols,
-        )))
-    } else {
-        Ok(CollapseWeights::FieldPhi(
-            collapse_weights_field_four_russians::<F, D>(matrix, omega, cols),
-        ))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Integer ring dot product for b computation
-// ---------------------------------------------------------------------------
-
-fn i128_to_field<F: CanonicalField>(val: i128) -> F {
-    if val >= 0 {
-        F::from_canonical_u128_reduced(val as u128)
-    } else {
-        -F::from_canonical_u128_reduced(val.unsigned_abs())
-    }
-}
-
-/// Center witness coefficients to flat i64 values in the same order as
-/// [`flatten_witness`]. Returns `None` if any coefficient exceeds i64 range.
-fn center_flat_witness_i64<F: FieldCore + CanonicalField, const D: usize>(
-    witness: &LabradorWitness<F, D>,
-) -> Option<Vec<i64>> {
-    let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    let total_coeffs: usize = witness.rows().iter().map(|r| r.len() * D).sum();
-    let mut centered = Vec::with_capacity(total_coeffs);
-    for row in witness.rows() {
-        for ring in row {
-            for &coeff in ring.coefficients() {
-                let canonical = coeff.to_canonical_u128();
-                if canonical > half_q {
-                    let mag = q - canonical;
-                    if mag > i64::MAX as u128 {
-                        return None;
-                    }
-                    centered.push(-(mag as i64));
-                } else {
-                    if canonical > i64::MAX as u128 {
-                        return None;
-                    }
-                    centered.push(canonical as i64);
-                }
-            }
-        }
-    }
-    Some(centered)
-}
-
-/// Compute `b = Σ_c σ_{-1}(w_c) · s_c` in the negacyclic ring using integer
-/// arithmetic (i64 × i64 → i128 accumulation, reduced mod q once at the end).
-///
-/// `weights` and `witness_flat` are both `ring_elems * D` long, laid out as
-/// consecutive D-coefficient blocks per ring element.
-#[tracing::instrument(skip_all, name = "labrador::integer_ring_dot_sigma_m1")]
-fn integer_ring_dot_sigma_m1<F: CanonicalField, const D: usize>(
-    weights: &[i64],
-    witness_flat: &[i64],
-    ring_elems: usize,
-) -> CyclotomicRing<F, D> {
-    debug_assert_eq!(weights.len(), ring_elems * D);
-    debug_assert_eq!(witness_flat.len(), ring_elems * D);
-
-    let mut result = [0i128; D];
-    for c in 0..ring_elems {
-        let w = &weights[c * D..(c + 1) * D];
-        let s = &witness_flat[c * D..(c + 1) * D];
-
-        // sigma_m1(w) = [w[0], -w[D-1], -w[D-2], ..., -w[1]]
-        // Negacyclic convolution: X^D = -1
-
-        // m = 0 contribution: sigma_m1(w)[0] = w[0], no wrap for any k
-        let a0 = w[0] as i128;
-        for k in 0..D {
-            result[k] += a0 * (s[k] as i128);
-        }
-
-        for m in 1..D {
-            let a_m = -(w[D - m] as i128); // sigma_m1(w)[m]
-                                           // k = m..D-1: no wrap (positive sign)
-            for k in m..D {
-                result[k] += a_m * (s[k - m] as i128);
-            }
-            // k = 0..m-1: wrap (negacyclic negative sign)
-            for k in 0..m {
-                result[k] -= a_m * (s[k + D - m] as i128);
-            }
-        }
-    }
-
-    CyclotomicRing::from_coefficients(std::array::from_fn(|k| i128_to_field::<F>(result[k])))
+    Ok(phi)
 }
 
 // ---------------------------------------------------------------------------
 // Witness flattening
 // ---------------------------------------------------------------------------
 
-/// Pre-flattened witness with optional i64 centering for the integer fast path.
+/// Pre-flattened witness layout used during JL aggregation.
 struct FlatWitness<F: FieldCore, const D: usize> {
     rings: Vec<CyclotomicRing<F, D>>,
-    centered_i64: Option<Vec<i64>>,
-    ranges: Vec<(usize, usize)>,
 }
 
 impl<F: FieldCore + CanonicalField, const D: usize> FlatWitness<F, D> {
     #[tracing::instrument(skip_all, name = "labrador::flat_witness_new")]
     fn new(witness: &LabradorWitness<F, D>) -> Self {
         let mut rings = Vec::new();
-        let mut ranges = Vec::with_capacity(witness.rows().len());
-        let mut cursor = 0usize;
         for row in witness.rows() {
-            let start = cursor;
             rings.extend(row.iter().copied());
-            cursor += row.len();
-            ranges.push((start, cursor));
         }
-        let centered_i64 = center_flat_witness_i64::<F, D>(witness);
-        Self {
-            rings,
-            centered_i64,
-            ranges,
-        }
+        Self { rings }
     }
 }
 
-/// Build index ranges from row lengths (verifier variant of [`flatten_witness`]).
-fn ranges_from_row_lengths(row_lengths: &[usize]) -> Vec<(usize, usize)> {
-    let mut ranges = Vec::with_capacity(row_lengths.len());
-    let mut cursor = 0usize;
-    for &len in row_lengths {
-        let start = cursor;
-        cursor += len;
-        ranges.push((start, cursor));
-    }
-    ranges
-}
-
-/// Fold `phi_flat` into per-row accumulators scaled by `beta`.
-fn accumulate_phi<F: FieldCore, const D: usize>(
-    phi_total: &mut [Vec<CyclotomicRing<F, D>>],
+/// Fold `phi_flat` into a flat accumulator scaled by `beta`.
+fn accumulate_phi_flat<F: FieldCore, const D: usize>(
+    phi_total_flat: &mut [CyclotomicRing<F, D>],
     phi_flat: &[CyclotomicRing<F, D>],
-    ranges: &[(usize, usize)],
     beta: CyclotomicRing<F, D>,
 ) {
-    cfg_iter_mut!(phi_total)
-        .zip(cfg_iter!(ranges))
-        .for_each(|(row, &(start, end))| {
-            for (dst, src) in row.iter_mut().zip(phi_flat[start..end].iter()) {
-                beta.mul_accumulate_into(src, dst);
-            }
-        });
+    debug_assert_eq!(phi_total_flat.len(), phi_flat.len());
+    // In-place accumulation on destination:
+    //   phi_total_flat[i] += beta * phi_flat[i]
+    // Capture beta by reference so rayon workers don't copy the full ring value.
+    let beta_ref = &beta;
+    cfg_iter_mut!(phi_total_flat)
+        .zip(cfg_iter!(phi_flat))
+        .for_each(|(dst, src)| beta_ref.mul_accumulate_into(src, dst));
 }
 
 // ---------------------------------------------------------------------------
@@ -608,8 +334,8 @@ fn accumulate_phi<F: FieldCore, const D: usize>(
 ///   4. Transmit b^''(k) (constant term zeroed) and absorb into transcript.
 ///   5. Sample ring-element β_k and accumulate into (φ_total, b_total).
 ///
-/// Returns `(phi_total, b_total, bb)` where `bb` holds the transmitted
-/// polynomials.
+/// Returns `(phi_total_flat, b_total, bb)` where `phi_total_flat` is flattened
+/// in row-major order and `bb` holds the transmitted polynomials.
 #[allow(clippy::type_complexity)]
 #[tracing::instrument(skip_all, name = "labrador::aggregate_jl_constraints_prover")]
 pub(crate) fn aggregate_jl_constraints_prover<F, T, const D: usize>(
@@ -618,7 +344,7 @@ pub(crate) fn aggregate_jl_constraints_prover<F, T, const D: usize>(
     transcript: &mut T,
 ) -> Result<
     (
-        Vec<Vec<CyclotomicRing<F, D>>>,
+        Vec<CyclotomicRing<F, D>>,
         CyclotomicRing<F, D>,
         Vec<CyclotomicRing<F, D>>,
     ),
@@ -630,20 +356,15 @@ where
 {
     let flat_witness = FlatWitness::new(witness);
 
-    let mut phi_total: Vec<Vec<CyclotomicRing<F, D>>> = witness
-        .rows()
-        .iter()
-        .map(|row| vec![CyclotomicRing::zero(); row.len()])
-        .collect();
+    let mut phi_total_flat = vec![CyclotomicRing::<F, D>::zero(); flat_witness.rings.len()];
     let mut b_total = CyclotomicRing::<F, D>::zero();
     let lifts = jl_lifts::<F>();
     let mut bb = Vec::with_capacity(lifts);
 
     for _ in 0..lifts {
         let omega = sample_jl_collapse_challenge::<F, T>(transcript);
-        let cw = aggregate_jl_functions::<F, D>(matrix, &omega)?;
-        let b_full = cw.compute_b(&flat_witness);
-        let phi_flat = cw.into_phi();
+        let phi_flat = aggregate_jl_contraints_one_lift::<F, D>(matrix, &omega)?;
+        let b_full = dot_product(&phi_flat, &flat_witness.rings);
 
         let (b_tx, _c0) = zero_constant_term_for_proof(b_full);
         bb.push(b_tx);
@@ -652,10 +373,10 @@ where
         let beta: CyclotomicRing<F, D> =
             challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
         b_total += beta * b_full;
-        accumulate_phi(&mut phi_total, &phi_flat, &flat_witness.ranges, beta);
+        accumulate_phi_flat(&mut phi_total_flat, &phi_flat, beta);
     }
 
-    Ok((phi_total, b_total, bb))
+    Ok((phi_total_flat, b_total, bb))
 }
 
 // ---------------------------------------------------------------------------
@@ -666,7 +387,7 @@ where
 ///
 /// Same transcript flow as the prover variant, but reconstructs the full
 /// polynomial b^''(k) by restoring the constant term from the projection
-/// and the transmitted `bb[k]`.
+/// and the transmitted `bb[k]`. Returns a flattened `phi_total`.
 #[allow(clippy::type_complexity)]
 #[tracing::instrument(skip_all, name = "labrador::aggregate_jl_constraints_verifier")]
 pub(crate) fn aggregate_jl_constraints_verifier<F, T, const D: usize>(
@@ -675,7 +396,7 @@ pub(crate) fn aggregate_jl_constraints_verifier<F, T, const D: usize>(
     matrix: &LabradorJlMatrix,
     bb: &[CyclotomicRing<F, D>],
     transcript: &mut T,
-) -> Result<(Vec<Vec<CyclotomicRing<F, D>>>, CyclotomicRing<F, D>), HachiError>
+) -> Result<(Vec<CyclotomicRing<F, D>>, CyclotomicRing<F, D>), HachiError>
 where
     F: FieldCore + CanonicalField + FromSmallInt,
     T: Transcript<F>,
@@ -684,27 +405,22 @@ where
     if bb.len() != lifts {
         return Err(HachiError::InvalidProof);
     }
-    let ranges = ranges_from_row_lengths(row_lengths);
-
-    let mut phi_total: Vec<Vec<CyclotomicRing<F, D>>> = row_lengths
-        .iter()
-        .map(|&len| vec![CyclotomicRing::zero(); len])
-        .collect();
+    let total_phi_elems: usize = row_lengths.iter().sum();
+    let mut phi_total_flat = vec![CyclotomicRing::<F, D>::zero(); total_phi_elems];
     let mut b_total = CyclotomicRing::<F, D>::zero();
 
     for bb_lift in bb.iter() {
         let omega = sample_jl_collapse_challenge::<F, T>(transcript);
-        let cw = aggregate_jl_functions::<F, D>(matrix, &omega)?;
-        let phi_flat = cw.into_phi();
+        let phi_flat = aggregate_jl_contraints_one_lift::<F, D>(matrix, &omega)?;
         let b_full = restore_constant_term(*bb_lift, collapse_to_field::<F>(jl_projection, &omega));
         transcript.append_serde(labels::ABSORB_LABRADOR_BB, bb_lift);
         let beta: CyclotomicRing<F, D> =
             challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
         b_total += beta * b_full;
-        accumulate_phi(&mut phi_total, &phi_flat, &ranges, beta);
+        accumulate_phi_flat(&mut phi_total_flat, &phi_flat, beta);
     }
 
-    Ok((phi_total, b_total))
+    Ok((phi_total_flat, b_total))
 }
 
 // ---------------------------------------------------------------------------
@@ -967,16 +683,16 @@ mod tests {
     const TEST_RING_ELEMS: usize = 16;
     const TEST_COLS: usize = TEST_RING_ELEMS * D;
 
-    fn assert_aggregate_jl_functions_matches_naive<F: FieldCore + CanonicalField + FromSmallInt>(
+    fn assert_aggregate_jl_contraints_one_lift_matches_naive<
+        F: FieldCore + CanonicalField + FromSmallInt,
+    >(
         matrix: &LabradorJlMatrix,
         omega: [F; 256],
     ) {
         let cols = matrix.cols();
         assert_eq!(cols, TEST_COLS);
 
-        let got = aggregate_jl_functions::<F, D>(&matrix, &omega)
-            .unwrap()
-            .into_phi();
+        let got = aggregate_jl_contraints_one_lift::<F, D>(&matrix, &omega).unwrap();
         let mut expected = vec![CyclotomicRing::<F, D>::zero(); cols / D];
         // Naive paper-style reference:
         // φ''_i = Σ_j ω_j · σ_{-1}(π_i^(j))
@@ -1004,29 +720,29 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_jl_functions_matches_naive_fp32() {
+    fn aggregate_jl_contraints_one_lift_matches_naive_fp32() {
         let mut transcript = Blake2bTranscript::<Pow2Offset32Field>::new(DOMAIN_LABRADOR_PROTOCOL);
         let matrix =
             LabradorJlMatrix::generate::<Pow2Offset32Field, _>(&mut transcript, TEST_COLS).unwrap();
         let omega = sample_jl_collapse_challenge::<Pow2Offset32Field, _>(&mut transcript);
-        assert_aggregate_jl_functions_matches_naive::<Pow2Offset32Field>(&matrix, omega);
+        assert_aggregate_jl_contraints_one_lift_matches_naive::<Pow2Offset32Field>(&matrix, omega);
     }
 
     #[test]
-    fn aggregate_jl_functions_matches_naive_fp64() {
+    fn aggregate_jl_contraints_one_lift_matches_naive_fp64() {
         type F64 = Pow2Offset64Field;
         let mut transcript = Blake2bTranscript::<F64>::new(DOMAIN_LABRADOR_PROTOCOL);
         let matrix = LabradorJlMatrix::generate::<F64, _>(&mut transcript, TEST_COLS).unwrap();
         let omega = sample_jl_collapse_challenge::<F64, _>(&mut transcript);
-        assert_aggregate_jl_functions_matches_naive::<F64>(&matrix, omega);
+        assert_aggregate_jl_contraints_one_lift_matches_naive::<F64>(&matrix, omega);
     }
 
     #[test]
-    fn aggregate_jl_functions_matches_naive_fp128() {
+    fn aggregate_jl_contraints_one_lift_matches_naive_fp128() {
         type F128 = Prime128M13M4P0;
         let mut transcript = Blake2bTranscript::<F128>::new(DOMAIN_LABRADOR_PROTOCOL);
         let matrix = LabradorJlMatrix::generate::<F128, _>(&mut transcript, TEST_COLS).unwrap();
         let omega = sample_jl_collapse_challenge::<F128, _>(&mut transcript);
-        assert_aggregate_jl_functions_matches_naive::<F128>(&matrix, omega);
+        assert_aggregate_jl_contraints_one_lift_matches_naive::<F128>(&matrix, omega);
     }
 }

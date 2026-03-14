@@ -163,7 +163,7 @@ where
         LabradorJlMatrix::replay_nonce_search::<F, T>(transcript, level.jl_nonce, jl_cols)?;
     absorb_labrador_jl_projection(transcript, &level.jl_projection);
 
-    let (phi_jl, b_jl) = aggregate_jl_constraints_verifier(
+    let (phi_jl_flat, b_jl) = aggregate_jl_constraints_verifier(
         &virt_row_lengths,
         &level.jl_projection,
         &jl_matrix,
@@ -176,7 +176,7 @@ where
         reshape_phi_verifier::<F, D>(&phi_stmt_orig, &level.input_row_lengths, &level.nu, nn)?;
 
     let mut phi_total = phi_stmt;
-    add_phi_in_place(&mut phi_total, &phi_jl)?;
+    add_phi_flat_in_place(&mut phi_total, &phi_jl_flat)?;
     let b_total = b_stmt + b_jl;
 
     transcript.append_serde(labels::ABSORB_LABRADOR_U2, &level.u2);
@@ -324,7 +324,7 @@ where
     absorb_labrador_jl_projection(transcript, &level.jl_projection);
 
     let virt_row_lengths = vec![nn; rr];
-    let (phi_jl, b_jl) = aggregate_jl_constraints_verifier(
+    let (phi_jl_flat, b_jl) = aggregate_jl_constraints_verifier(
         &virt_row_lengths,
         &level.jl_projection,
         &jl_matrix,
@@ -338,7 +338,7 @@ where
         reshape_phi_verifier::<F, D>(&phi_stmt_orig, &level.input_row_lengths, &level.nu, nn)?;
 
     let mut phi_total = phi_stmt;
-    add_phi_in_place(&mut phi_total, &phi_jl)?;
+    add_phi_flat_in_place(&mut phi_total, &phi_jl_flat)?;
     let b_total = b_stmt + b_jl;
 
     transcript.append_serde(labels::ABSORB_LABRADOR_U2, &level.u2);
@@ -462,7 +462,7 @@ where
     absorb_labrador_jl_projection(transcript, &level.jl_projection);
 
     let virt_row_lengths = vec![nn; rr];
-    let (phi_jl, b_jl) = aggregate_jl_constraints_verifier(
+    let (phi_jl_flat, b_jl) = aggregate_jl_constraints_verifier(
         &virt_row_lengths,
         &level.jl_projection,
         &jl_matrix,
@@ -475,7 +475,7 @@ where
         reshape_phi_verifier::<F, D>(&phi_stmt_orig, &level.input_row_lengths, &level.nu, nn)?;
 
     let mut phi_total = phi_stmt;
-    add_phi_in_place(&mut phi_total, &phi_jl)?;
+    add_phi_flat_in_place(&mut phi_total, &phi_jl_flat)?;
     let b_total = b_stmt + b_jl;
 
     transcript.append_serde(labels::ABSORB_LABRADOR_U2, &level.u2);
@@ -683,21 +683,24 @@ fn recompose_flat<F: FieldCore + CanonicalField, const D: usize>(
     Ok(out)
 }
 
-#[tracing::instrument(skip_all, name = "labrador::add_phi_in_place_verifier")]
-fn add_phi_in_place<F: FieldCore, const D: usize>(
+#[tracing::instrument(skip_all, name = "labrador::add_phi_flat_in_place_verifier")]
+fn add_phi_flat_in_place<F: FieldCore, const D: usize>(
     acc: &mut [Vec<CyclotomicRing<F, D>>],
-    other: &[Vec<CyclotomicRing<F, D>>],
+    other_flat: &[CyclotomicRing<F, D>],
 ) -> Result<(), HachiError> {
-    if acc.len() != other.len() {
-        return Err(HachiError::InvalidProof);
-    }
-    for (row_acc, row_other) in acc.iter_mut().zip(other.iter()) {
-        if row_acc.len() != row_other.len() {
+    let mut cursor = 0usize;
+    for row_acc in acc.iter_mut() {
+        let end = cursor + row_acc.len();
+        if end > other_flat.len() {
             return Err(HachiError::InvalidProof);
         }
-        for (a, b) in row_acc.iter_mut().zip(row_other.iter()) {
+        for (a, b) in row_acc.iter_mut().zip(other_flat[cursor..end].iter()) {
             *a += *b;
         }
+        cursor = end;
+    }
+    if cursor != other_flat.len() {
+        return Err(HachiError::InvalidProof);
     }
     Ok(())
 }
