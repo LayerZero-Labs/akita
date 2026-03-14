@@ -208,6 +208,30 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
         }
     }
 
+    /// Fused negacyclic shift + scaled accumulate: `dst += scale * self * X^k`.
+    #[inline]
+    pub fn shift_scale_accumulate_into(&self, dst: &mut Self, k: usize, scale: F) {
+        if scale.is_zero() {
+            return;
+        }
+        let k = k % D;
+        if k == 0 {
+            for i in 0..D {
+                dst.coeffs[i] += self.coeffs[i] * scale;
+            }
+            return;
+        }
+        for i in 0..D {
+            let target = i + k;
+            let product = self.coeffs[i] * scale;
+            if target < D {
+                dst.coeffs[target] += product;
+            } else {
+                dst.coeffs[target - D] -= product;
+            }
+        }
+    }
+
     /// Fused multiply-by-monomial-sum + accumulate:
     /// `dst += self * (X^{k_1} + X^{k_2} + ...)`.
     ///
@@ -228,17 +252,44 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
         F: CanonicalField,
     {
         let mut result = Self::zero();
+        self.mul_by_sparse_into(challenge, &mut result);
+        result
+    }
+
+    /// Fused `dst += self * challenge` for a sparse challenge element.
+    pub fn mul_by_sparse_into(&self, challenge: &SparseChallenge, dst: &mut Self)
+    where
+        F: CanonicalField,
+    {
         for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
             match coeff {
-                1 => self.shift_accumulate_into(&mut result, pos as usize),
-                -1 => self.shift_sub_into(&mut result, pos as usize),
-                c => {
-                    let shifted = self.negacyclic_shift(pos as usize);
-                    result += shifted.scale(&F::from_i64(c as i64));
-                }
+                1 => self.shift_accumulate_into(dst, pos as usize),
+                -1 => self.shift_sub_into(dst, pos as usize),
+                c => self.shift_scale_accumulate_into(dst, pos as usize, F::from_i64(c as i64)),
             }
         }
-        result
+    }
+
+    /// Fused `dst += self * rhs` when `rhs` is coefficient-sparse.
+    ///
+    /// This is exact for any field coefficients in `rhs`, but runs in
+    /// `O(hw(rhs) * D)` instead of `O(D^2)`.
+    pub fn mul_accumulate_sparse_rhs_into(&self, rhs: &Self, dst: &mut Self)
+    where
+        F: CanonicalField,
+    {
+        for (pos, coeff) in rhs.coeffs.iter().copied().enumerate() {
+            if coeff.is_zero() {
+                continue;
+            }
+            if coeff == F::one() {
+                self.shift_accumulate_into(dst, pos);
+            } else if coeff == -F::one() {
+                self.shift_sub_into(dst, pos);
+            } else {
+                self.shift_scale_accumulate_into(dst, pos, coeff);
+            }
+        }
     }
 
     /// Fused `dst += self * rhs` via schoolbook negacyclic convolution.

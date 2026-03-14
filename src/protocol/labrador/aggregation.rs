@@ -18,6 +18,9 @@ use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
+use crate::protocol::commitment::utils::linear::{
+    mat_vec_mul_crt_ntt_i8_many, try_centered_i8_cache_from_ring_coeffs,
+};
 use crate::protocol::labrador::config::jl_lifts;
 use crate::protocol::labrador::constraints::{pair_index, LabradorConstraint, NextWitnessLayout};
 use crate::protocol::labrador::johnson_lindenstrauss::{
@@ -33,7 +36,9 @@ use crate::{CanonicalField, FieldCore, FromSmallInt};
 type AggregatedConstraintSystem<F, const D: usize> =
     (Vec<Vec<CyclotomicRing<F, D>>>, CyclotomicRing<F, D>);
 
+#[cfg(feature = "parallel")]
 const STATEMENT_ROW_CHUNK_LEN: usize = 256;
+const SPARSE_RING_MUL_MAX_WEIGHT: usize = 48;
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -352,19 +357,19 @@ impl<F: FieldCore + CanonicalField, const D: usize> FlatWitness<F, D> {
 }
 
 /// Fold `phi_flat` into a flat accumulator scaled by `beta`.
-fn accumulate_phi_flat<F: FieldCore, const D: usize>(
+fn accumulate_phi_flat<F: FieldCore + CanonicalField, const D: usize>(
     phi_total_flat: &mut [CyclotomicRing<F, D>],
     phi_flat: &[CyclotomicRing<F, D>],
     beta: CyclotomicRing<F, D>,
 ) {
     debug_assert_eq!(phi_total_flat.len(), phi_flat.len());
+    let beta_ref = &beta;
     // In-place accumulation on destination:
     //   phi_total_flat[i] += beta * phi_flat[i]
     // Capture beta by reference so rayon workers don't copy the full ring value.
-    let beta_ref = &beta;
     cfg_iter_mut!(phi_total_flat)
         .zip(cfg_iter!(phi_flat))
-        .for_each(|(dst, src)| beta_ref.mul_accumulate_into(src, dst));
+        .for_each(|(dst, src)| mul_accumulate_term_coeff(beta_ref, src, dst));
 }
 
 // ---------------------------------------------------------------------------
@@ -401,6 +406,7 @@ where
     T: Transcript<F>,
 {
     let flat_witness = FlatWitness::new(witness);
+    let flat_witness_i8 = try_centered_i8_cache_from_ring_coeffs(&flat_witness.rings);
 
     let mut phi_total_flat = vec![CyclotomicRing::<F, D>::zero(); flat_witness.rings.len()];
     let mut b_total = CyclotomicRing::<F, D>::zero();
@@ -410,7 +416,18 @@ where
     for _ in 0..lifts {
         let omega = sample_jl_collapse_challenge::<F, T>(transcript);
         let phi_flat = aggregate_jl_contraints_one_lift::<F, D>(matrix, &omega)?;
-        let b_full = dot_product(&phi_flat, &flat_witness.rings);
+        let b_full = if let Some(witness_i8) = flat_witness_i8.as_ref() {
+            mat_vec_mul_crt_ntt_i8_many(
+                std::slice::from_ref(&phi_flat),
+                std::slice::from_ref(witness_i8),
+            )
+            .ok()
+            .and_then(|mut blocks| blocks.pop())
+            .and_then(|mut row| row.pop())
+            .unwrap_or_else(|| dot_product(&phi_flat, &flat_witness.rings))
+        } else {
+            dot_product(&phi_flat, &flat_witness.rings)
+        };
 
         let (b_tx, _c0) = zero_constant_term_for_proof(b_full);
         bb.push(b_tx);
@@ -524,7 +541,20 @@ fn pow2_field<F: FieldCore + FromSmallInt>(exp: usize) -> F {
     acc
 }
 
-fn accumulate_scaled_row<F: FieldCore, const D: usize>(
+#[inline]
+fn mul_accumulate_term_coeff<F: FieldCore + CanonicalField, const D: usize>(
+    alpha: &CyclotomicRing<F, D>,
+    coeff: &CyclotomicRing<F, D>,
+    dst: &mut CyclotomicRing<F, D>,
+) {
+    if coeff.hamming_weight() <= SPARSE_RING_MUL_MAX_WEIGHT {
+        alpha.mul_accumulate_sparse_rhs_into(coeff, dst);
+    } else {
+        alpha.mul_accumulate_into(coeff, dst);
+    }
+}
+
+fn accumulate_scaled_row<F: FieldCore + CanonicalField, const D: usize>(
     dst: &mut [CyclotomicRing<F, D>],
     src: &[CyclotomicRing<F, D>],
     alpha: &CyclotomicRing<F, D>,
@@ -534,10 +564,12 @@ fn accumulate_scaled_row<F: FieldCore, const D: usize>(
     let scaled_alpha = alpha.scale(&scale);
     cfg_iter_mut!(dst)
         .zip(cfg_iter!(src))
-        .for_each(|(dst_elem, src_elem)| scaled_alpha.mul_accumulate_into(src_elem, dst_elem));
+        .for_each(|(dst_elem, src_elem)| {
+            mul_accumulate_term_coeff(&scaled_alpha, src_elem, dst_elem)
+        });
 }
 
-fn accumulate_statement_row_work<F: FieldCore, const D: usize>(
+fn accumulate_statement_row_work<F: FieldCore + CanonicalField, const D: usize>(
     row: &mut [CyclotomicRing<F, D>],
     work: &[(usize, usize)],
     constraints: &[LabradorConstraint<F, D>],
@@ -561,7 +593,7 @@ fn accumulate_statement_row_work<F: FieldCore, const D: usize>(
                 let src = &term.coefficients[start - term.offset..end - term.offset];
                 let dst = &mut chunk[start - chunk_start..end - chunk_start];
                 for (dst_elem, src_elem) in dst.iter_mut().zip(src.iter()) {
-                    alpha.mul_accumulate_into(src_elem, dst_elem);
+                    mul_accumulate_term_coeff(alpha, src_elem, dst_elem);
                 }
             }
         });
@@ -574,7 +606,7 @@ fn accumulate_statement_row_work<F: FieldCore, const D: usize>(
             .iter_mut()
             .zip(term.coefficients.iter())
         {
-            alpha.mul_accumulate_into(src_elem, dst_elem);
+            mul_accumulate_term_coeff(alpha, src_elem, dst_elem);
         }
     }
 }
@@ -634,19 +666,18 @@ where
     for (b_row, target) in plan.setup.b_mat.iter().zip(statement.u1.iter()) {
         let alpha = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
         b_total += alpha * *target;
-        for (dst, src) in aux_row[t_hat_start..h_hat_start]
-            .iter_mut()
-            .zip(b_row.iter())
-        {
-            alpha.mul_accumulate_into(src, dst);
+        let dst = &mut aux_row[t_hat_start..h_hat_start];
+        for (dst, src) in dst.iter_mut().zip(b_row.iter()) {
+            mul_accumulate_term_coeff(&alpha, src, dst);
         }
     }
 
     for (d_row, target) in plan.setup.d_mat.iter().zip(statement.u2.iter()) {
         let alpha = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
         b_total += alpha * *target;
-        for (dst, src) in aux_row[h_hat_start..].iter_mut().zip(d_row.iter()) {
-            alpha.mul_accumulate_into(src, dst);
+        let dst = &mut aux_row[h_hat_start..];
+        for (dst, src) in dst.iter_mut().zip(d_row.iter()) {
+            mul_accumulate_term_coeff(&alpha, src, dst);
         }
     }
 
@@ -658,7 +689,7 @@ where
         }
 
         for (row_idx, challenge) in plan.challenges.iter().enumerate() {
-            let base = alpha * *challenge;
+            let base = alpha.mul_by_sparse(challenge);
             for (part_idx, &scale) in pow_bu.iter().enumerate() {
                 let idx = t_hat_start
                     + row_idx * plan.config.kappa * plan.config.fu
@@ -675,7 +706,9 @@ where
     }
     for i in 0..plan.challenges.len() {
         for j in i..plan.challenges.len() {
-            let base = alpha_lg * plan.challenges[i] * plan.challenges[j];
+            let base = alpha_lg
+                .mul_by_sparse(&plan.challenges[i])
+                .mul_by_sparse(&plan.challenges[j]);
             let pair = pair_index(i, j, plan.challenges.len());
             for (part_idx, &scale) in pow_bu.iter().enumerate() {
                 let idx = h_hat_start + pair * plan.config.fu + part_idx;
@@ -817,7 +850,7 @@ mod tests {
         let cols = matrix.cols();
         assert_eq!(cols, TEST_COLS);
 
-        let got = aggregate_jl_contraints_one_lift::<F, D>(&matrix, &omega).unwrap();
+        let got = aggregate_jl_contraints_one_lift::<F, D>(matrix, &omega).unwrap();
         let mut expected = vec![CyclotomicRing::<F, D>::zero(); cols / D];
         // Naive paper-style reference:
         // φ''_i = Σ_j ω_j · σ_{-1}(π_i^(j))

@@ -1,6 +1,7 @@
 //! Labrador constraint types and shared recursive builders.
 
 use crate::algebra::ring::CyclotomicRing;
+use crate::algebra::SparseChallenge;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
@@ -107,7 +108,7 @@ impl NextWitnessLayout {
 /// Build the recursive target relation for the next Labrador level.
 fn prepare_next_constraint_inputs<F, const D: usize>(
     phi_total: &[Vec<CyclotomicRing<F, D>>],
-    challenges: &[CyclotomicRing<F, D>],
+    challenges: &[SparseChallenge],
     row_lengths: &[usize],
     max_len: usize,
     config: &LabradorReductionConfig,
@@ -142,7 +143,7 @@ where
 fn build_constraints_from_prepared<F, const D: usize>(
     layout: NextWitnessLayout,
     config: &LabradorReductionConfig,
-    challenges: &[CyclotomicRing<F, D>],
+    challenges: &[SparseChallenge],
     pow_b: &[F],
     pow_bu: &[F],
     combined_phi: &[CyclotomicRing<F, D>],
@@ -155,6 +156,14 @@ where
     F: FieldCore + CanonicalField + FromSmallInt,
 {
     let mut constraints = Vec::new();
+    let dense_challenges: Vec<CyclotomicRing<F, D>> = challenges
+        .iter()
+        .map(|challenge| {
+            challenge
+                .to_dense::<F, D>()
+                .expect("sampler outputs valid challenges")
+        })
+        .collect();
     if config.kappa1 > 0 {
         if u1.len() != config.kappa1 || u2.len() != config.kappa1 {
             return Err(HachiError::InvalidInput(
@@ -167,11 +176,16 @@ where
         ));
     }
     constraints.extend(build_amortized_opening_constraints(
-        layout, challenges, config, pow_b, pow_bu, setup,
+        layout,
+        &dense_challenges,
+        config,
+        pow_b,
+        pow_bu,
+        setup,
     ));
     constraints.push(build_linear_garbage_constraint(
         layout,
-        challenges,
+        &dense_challenges,
         config,
         pow_b,
         pow_bu,
@@ -194,7 +208,7 @@ where
 pub(crate) fn build_next_constraints<F, const D: usize>(
     phi_total: &[Vec<CyclotomicRing<F, D>>],
     b_total: &CyclotomicRing<F, D>,
-    challenges: &[CyclotomicRing<F, D>],
+    challenges: &[SparseChallenge],
     row_lengths: &[usize],
     max_len: usize,
     config: &LabradorReductionConfig,
@@ -225,7 +239,7 @@ where
 pub(crate) fn build_next_constraint_plan<F, const D: usize>(
     phi_total: &[Vec<CyclotomicRing<F, D>>],
     b_total: &CyclotomicRing<F, D>,
-    challenges: &[CyclotomicRing<F, D>],
+    challenges: &[SparseChallenge],
     row_lengths: &[usize],
     max_len: usize,
     config: &LabradorReductionConfig,
@@ -451,9 +465,9 @@ fn build_diagonal_constraint<F: FieldCore, const D: usize>(
     )
 }
 
-fn combine_phi<F: FieldCore, const D: usize>(
+fn combine_phi<F: FieldCore + CanonicalField, const D: usize>(
     phi_total: &[Vec<CyclotomicRing<F, D>>],
-    challenges: &[CyclotomicRing<F, D>],
+    challenges: &[SparseChallenge],
     max_len: usize,
 ) -> Vec<CyclotomicRing<F, D>> {
     cfg_into_iter!(0..max_len)
@@ -461,7 +475,7 @@ fn combine_phi<F: FieldCore, const D: usize>(
             let mut acc = CyclotomicRing::<F, D>::zero();
             for (row_phi, challenge) in phi_total.iter().zip(challenges.iter()) {
                 if let Some(elem) = row_phi.get(j) {
-                    challenge.mul_accumulate_into(elem, &mut acc);
+                    elem.mul_by_sparse_into(challenge, &mut acc);
                 }
             }
             acc

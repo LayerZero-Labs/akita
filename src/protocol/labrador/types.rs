@@ -1,6 +1,7 @@
 //! Core Labrador witness/statement/proof types.
 
 use crate::algebra::ring::CyclotomicRing;
+use crate::algebra::SparseChallenge;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::labrador::constraints::LabradorConstraint;
@@ -77,7 +78,7 @@ pub struct LabradorReducedConstraintPlan<F: FieldCore, const D: usize> {
     /// Reduction parameters that define the next witness layout.
     pub config: LabradorReductionConfig,
     /// Amortization challenges from the previous level.
-    pub challenges: Vec<CyclotomicRing<F, D>>,
+    pub challenges: Vec<SparseChallenge>,
     /// Combined `sum_i c_i * phi_i` relation carried into the next level.
     pub combined_phi: Vec<CyclotomicRing<F, D>>,
     /// Aggregated right-hand side for the diagonal relation.
@@ -94,7 +95,7 @@ pub struct LabradorStatement<F: FieldCore, const D: usize> {
     /// Outer commitment for linear-garbage relation.
     pub u2: Vec<CyclotomicRing<F, D>>,
     /// Amortization challenges (per input witness row).
-    pub challenges: Vec<CyclotomicRing<F, D>>,
+    pub challenges: Vec<SparseChallenge>,
     /// Sparse constraints checked by reducer/verifier.
     pub constraints: Vec<LabradorConstraint<F, D>>,
     /// Compact recursive statement representation used between Labrador levels.

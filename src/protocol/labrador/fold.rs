@@ -1,10 +1,13 @@
 //! Labrador amortization transitions (standard and tail levels).
 
 use crate::algebra::ring::CyclotomicRing;
+use crate::algebra::SparseChallenge;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::protocol::commitment::utils::linear::decompose_rows_with_carry;
+use crate::protocol::commitment::utils::linear::{
+    decompose_rows_with_carry, mat_vec_mul_crt_ntt_i8_many, try_centered_i8_cache_from_ring_coeffs,
+};
 use crate::protocol::labrador::aggregation::{
     add_phi_flat_in_place, aggregate_jl_constraints_prover, aggregate_statement,
 };
@@ -20,7 +23,7 @@ use crate::protocol::labrador::types::{
 };
 use crate::protocol::labrador::utils::mat_vec_mul;
 use crate::protocol::transcript::labels;
-use crate::protocol::transcript::{challenge_ring_elements_rejection_sampled, Transcript};
+use crate::protocol::transcript::{challenge_sparse_ring_elements_rejection_sampled, Transcript};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 use std::sync::Arc;
 
@@ -146,7 +149,7 @@ where
     transcript.append_serde(labels::ABSORB_LABRADOR_U2, &u2);
 
     // Phase 4: Amortize — sample rr challenge ring-elements from transcript, fold.
-    let challenges = sample_amortize_challenges(transcript, rr)?;
+    let challenges = sample_amortize_challenges::<F, T, D>(transcript, rr)?;
     let z = amortize_witness(&virtual_witness, &challenges, nn);
 
     let decomposed_z = tracing::info_span!("labrador::decompose_amortized_witness")
@@ -273,6 +276,14 @@ fn split_decomposed_rows<F: FieldCore, const D: usize>(
     Ok(rows)
 }
 
+fn try_centered_i8_rows<F: CanonicalField, const D: usize>(
+    rows: &[Vec<CyclotomicRing<F, D>>],
+) -> Option<Vec<Vec<[i8; D]>>> {
+    rows.iter()
+        .map(|row| try_centered_i8_cache_from_ring_coeffs(row))
+        .collect()
+}
+
 #[tracing::instrument(skip_all, name = "labrador::compute_linear_garbage")]
 fn compute_linear_garbage<F: FieldCore + CanonicalField + FromSmallInt, const D: usize>(
     phi: &[Vec<CyclotomicRing<F, D>>],
@@ -294,6 +305,21 @@ fn compute_linear_garbage<F: FieldCore + CanonicalField + FromSmallInt, const D:
     let rows = witness.rows();
     let nn = phi.first().map_or(0, Vec::len);
     let pair_count = r * (r + 1) / 2;
+
+    if let Some(rows_i8) = try_centered_i8_rows(rows) {
+        if let Ok(cross) = mat_vec_mul_crt_ntt_i8_many(phi, &rows_i8) {
+            let mut out = vec![CyclotomicRing::<F, D>::zero(); pair_count];
+            for i in 0..r {
+                out[pair_index(i, i, r)] = cross[i][i];
+                for j in i + 1..r {
+                    let pair = pair_index(i, j, r);
+                    out[pair] = cross[i][j] + cross[j][i];
+                }
+            }
+            return Ok(out);
+        }
+    }
+
     const LINEAR_GARBAGE_COL_BLOCK: usize = 32;
     let out = cfg_fold_reduce!(
         (0..nn.div_ceil(LINEAR_GARBAGE_COL_BLOCK)),
@@ -327,7 +353,7 @@ fn compute_linear_garbage<F: FieldCore + CanonicalField + FromSmallInt, const D:
 #[tracing::instrument(skip_all, name = "labrador::amortize_witness")]
 fn amortize_witness<F: FieldCore + CanonicalField, const D: usize>(
     witness: &LabradorWitness<F, D>,
-    challenges: &[CyclotomicRing<F, D>],
+    challenges: &[SparseChallenge],
     max_len: usize,
 ) -> Vec<CyclotomicRing<F, D>> {
     cfg_into_iter!(0..max_len)
@@ -335,7 +361,7 @@ fn amortize_witness<F: FieldCore + CanonicalField, const D: usize>(
             let mut acc = CyclotomicRing::<F, D>::zero();
             for (row, challenge) in witness.rows().iter().zip(challenges.iter()) {
                 if let Some(elem) = row.get(j) {
-                    acc += *challenge * *elem;
+                    elem.mul_by_sparse_into(challenge, &mut acc);
                 }
             }
             acc
@@ -359,12 +385,16 @@ fn build_u2<F: FieldCore, const D: usize>(
 fn sample_amortize_challenges<F, T, const D: usize>(
     transcript: &mut T,
     rows: usize,
-) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
+) -> Result<Vec<SparseChallenge>, HachiError>
 where
     F: FieldCore + CanonicalField + FromSmallInt,
     T: Transcript<F>,
 {
-    challenge_ring_elements_rejection_sampled(transcript, labels::CHALLENGE_LABRADOR_AMORTIZE, rows)
+    challenge_sparse_ring_elements_rejection_sampled::<F, T, D>(
+        transcript,
+        labels::CHALLENGE_LABRADOR_AMORTIZE,
+        rows,
+    )
 }
 
 #[tracing::instrument(skip_all, name = "labrador::assemble_output_witness")]
@@ -424,7 +454,7 @@ mod tests {
     fn replay_amortize_challenges_for_level(
         statement: &LabradorStatement<F, D>,
         level: &LabradorLevelProof<F, D>,
-    ) -> Vec<CyclotomicRing<F, D>> {
+    ) -> Vec<SparseChallenge> {
         let rr = level.nu.iter().sum::<usize>();
         let virt_row_lengths = vec![level.nn; rr];
         let jl_cols = rr * level.nn * D;
@@ -462,7 +492,7 @@ mod tests {
         .unwrap();
         aggregate_statement(statement, &level.input_row_lengths, &mut transcript).unwrap();
         transcript.append_serde(labels::ABSORB_LABRADOR_U2, &level.u2);
-        sample_amortize_challenges(&mut transcript, rr).unwrap()
+        sample_amortize_challenges::<F, Blake2bTranscript<F>, D>(&mut transcript, rr).unwrap()
     }
 
     #[test]
@@ -623,7 +653,10 @@ mod tests {
     #[test]
     fn amortize_is_linear_combination() {
         let witness = sample_witness();
-        let one = CyclotomicRing::<F, D>::one();
+        let one = SparseChallenge {
+            positions: vec![0],
+            coeffs: vec![1],
+        };
         let challenges = vec![one; witness.rows().len()];
         let max_len = witness.rows().iter().map(|r| r.len()).max().unwrap();
         let z = amortize_witness(&witness, &challenges, max_len);
@@ -807,9 +840,8 @@ mod tests {
         let az = mat_vec_mul(&setup2.matrices.a_mat, &z);
         let mut rhs = vec![CyclotomicRing::<F, D>::zero(); cfg.kappa];
         for (row_idx, t_row) in t_flat.chunks(cfg.kappa).enumerate() {
-            let c = challenges[row_idx];
             for k in 0..cfg.kappa {
-                rhs[k] += c * t_row[k];
+                t_row[k].mul_by_sparse_into(&challenges[row_idx], &mut rhs[k]);
             }
         }
         assert_eq!(az, rhs);
