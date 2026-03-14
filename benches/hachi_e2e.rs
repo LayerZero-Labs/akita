@@ -400,7 +400,7 @@ fn main() {
             .map(|v| v == "0")
             .unwrap_or(false)
         {
-            eprintln!("HACHI_PARALLEL=0: running single-threaded");
+            tracing::info!("HACHI_PARALLEL=0: running single-threaded");
             1
         } else {
             0

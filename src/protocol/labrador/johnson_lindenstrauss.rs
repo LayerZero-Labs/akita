@@ -621,9 +621,14 @@ mod tests {
             let p_inf: i128 = projection.iter().map(|&v| (v as i128).abs()).max().unwrap();
             let entry_bound = ((128.0 * beta as f64).sqrt()) as i128;
 
-            println!(
-                "seed={seed}: nonce={nonce}, ||p||²={p_norm_sq}, ||p||_inf={p_inf}, \
-                 sqrt(128β)={entry_bound}, β={beta}"
+            tracing::debug!(
+                seed,
+                nonce,
+                p_norm_sq,
+                p_inf,
+                entry_bound,
+                beta,
+                "JL projection check"
             );
             assert!(
                 p_inf <= entry_bound,

@@ -132,12 +132,11 @@ where
     ) -> Result<Self, HachiError> {
         {
             let x: u8 = 0;
-            eprintln!(
-                "  [QuadraticEquation::new_prover] stack ~= {:#x}",
-                &x as *const u8 as usize
+            tracing::trace!(
+                stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
+                "QuadraticEquation::new_prover"
             );
         }
-        let t_wh = Instant::now();
         let (w_hat, w_hat_flat) = {
             let _span = tracing::info_span!("decompose_w_hat").entered();
             let depth_open = layout.num_digits_open;
@@ -149,24 +148,13 @@ where
             let w_hat_flat = flatten_w_hat(&w_hat);
             (w_hat, w_hat_flat)
         };
-        eprintln!(
-            "    [quad_eq] decompose_w_hat+flatten: {:.2}s (blocks={}, depth={})",
-            t_wh.elapsed().as_secs_f64(),
-            w_hat.len(),
-            w_hat.first().map_or(0, |v| v.len())
-        );
         hint.ensure_t_recomposed(layout.num_digits_open, layout.log_basis)?;
 
-        let t_v = Instant::now();
         let v = {
-            let _span = tracing::info_span!("compute_v").entered();
+            let _span =
+                tracing::info_span!("compute_v", w_hat_flat_len = w_hat_flat.len()).entered();
             compute_v(ntt_d, &w_hat_flat)
         };
-        eprintln!(
-            "    [quad_eq] compute_v (D*w_hat): {:.2}s (w_hat_flat_len={})",
-            t_v.elapsed().as_secs_f64(),
-            w_hat_flat.len()
-        );
 
         transcript.append_serde(ABSORB_PROVER_V, &v);
 
@@ -181,16 +169,10 @@ where
             &challenge_cfg,
         )?;
 
-        let t_zp = Instant::now();
         let z_pre = {
             let _span = tracing::info_span!("compute_z_pre").entered();
             compute_z_pre::<F, D, Cfg, P>(poly, &challenges, layout)?
         };
-        eprintln!(
-            "    [quad_eq] compute_z_pre: {:.2}s (z_pre_len={})",
-            t_zp.elapsed().as_secs_f64(),
-            z_pre.z_pre.len()
-        );
 
         let y = generate_y::<F, D>(&v, &commitment.u, y_ring, Cfg::N_D, Cfg::N_B, Cfg::N_A)?;
 
@@ -395,13 +377,6 @@ where
     F: FieldCore + CanonicalField,
     Cfg: CommitmentConfig,
 {
-    {
-        let x: u8 = 0;
-        eprintln!(
-            "  [compute_r_split_eq] stack ~= {:#x}",
-            &x as *const u8 as usize
-        );
-    }
     let num_rows = Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A;
 
     let t_hat_flat = flatten_i8_blocks(t_hat);
@@ -488,8 +463,12 @@ where
         }
     }
 
-    eprintln!(
-        "      [compute_r] D(NTT): {d_time:.2}s, B(NTT): {b_time:.2}s, A(NTT): {a_time:.2}s, other: {other_time:.2}s",
+    tracing::debug!(
+        d_ntt_s = d_time,
+        b_ntt_s = b_time,
+        a_ntt_s = a_time,
+        other_s = other_time,
+        "compute_r breakdown"
     );
 
     Ok(result)

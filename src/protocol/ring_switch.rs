@@ -31,7 +31,6 @@ use crate::{CanonicalField, FieldCore, FieldSampling};
 #[cfg(test)]
 use std::array::from_fn;
 use std::marker::PhantomData;
-use std::time::Instant;
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
@@ -91,9 +90,9 @@ where
 {
     {
         let x: u8 = 0;
-        eprintln!(
-            "  [ring_switch_build_w] stack ~= {:#x}",
-            &x as *const u8 as usize
+        tracing::trace!(
+            stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
+            "ring_switch_build_w"
         );
     }
     let w_hat = quad_eq
@@ -119,7 +118,6 @@ where
         .w_folded()
         .ok_or_else(|| HachiError::InvalidInput("missing w_folded in prover".to_string()))?;
 
-    let t_rs = Instant::now();
     let r = compute_r_split_eq::<F, D, Cfg>(
         setup,
         &quad_eq.challenges,
@@ -134,19 +132,10 @@ where
         ntt_b,
         ntt_d,
     )?;
-    eprintln!(
-        "    [ring_switch] compute_r_split_eq: {:.2}s",
-        t_rs.elapsed().as_secs_f64()
-    );
-    let t_wc = Instant::now();
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
         build_w_coeffs::<F, D>(w_hat, t_hat, z_pre_centered, &r, layout)
     };
-    eprintln!(
-        "    [ring_switch] build_w_coeffs: {:.2}s",
-        t_wc.elapsed().as_secs_f64()
-    );
     Ok(w)
 }
 
@@ -196,7 +185,6 @@ where
     let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
 
-    let t_par = Instant::now();
     let opening_point = quad_eq.opening_point();
     let challenges = &quad_eq.challenges;
 
@@ -232,10 +220,6 @@ where
 
     let m_evals_x = m_evals_x_result?;
     let (w_evals, _, _) = w_result?;
-    eprintln!(
-        "    [ring_switch] m_evals_x+w_evals parallel: {:.2}s",
-        t_par.elapsed().as_secs_f64()
-    );
 
     Ok(RingSwitchOutput {
         w,
@@ -281,13 +265,7 @@ where
 {
     let w = ring_switch_build_w::<F, D, Cfg>(quad_eq, setup, ntt_a, ntt_b, ntt_d, layout)?;
 
-    let t_cw = Instant::now();
     let (w_commitment, w_hint) = commit_w::<F, D, Cfg>(&w, ntt_a, ntt_b)?;
-    eprintln!(
-        "    [ring_switch] commit_w: {:.2}s (w_len={})",
-        t_cw.elapsed().as_secs_f64(),
-        w.len()
-    );
 
     let w_commitment_flat = FlatRingVec::from_commitment(&w_commitment);
     let w_hint_flat = FlatCommitmentHint::from_typed(w_hint);
@@ -1032,9 +1010,16 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     let t_hat_planes: usize = t_hat.iter().map(|v| v.len()).sum();
     let z_count = w_hat_planes + t_hat_planes + z_pre_centered.len() * num_digits_fold;
     let r_hat_count = r.len() * levels;
-    eprintln!(
-        "    [build_w_coeffs] w_hat_planes={w_hat_planes}, t_hat_planes={t_hat_planes}, z_pre_elems={}, z_pre_planes={}, r_elems={}, r_planes={r_hat_count}, total_ring={}, total_field={}",
-        z_pre_centered.len(), z_pre_centered.len() * num_digits_fold, r.len(), z_count + r_hat_count, (z_count + r_hat_count) * D,
+    tracing::debug!(
+        w_hat_planes,
+        t_hat_planes,
+        z_pre_elems = z_pre_centered.len(),
+        z_pre_planes = z_pre_centered.len() * num_digits_fold,
+        r_elems = r.len(),
+        r_planes = r_hat_count,
+        total_ring = z_count + r_hat_count,
+        total_field = (z_count + r_hat_count) * D,
+        "build_w_coeffs"
     );
     let mut out = Vec::with_capacity((z_count + r_hat_count) * D);
     let mut digit_scratch = vec![[0i8; D]; num_digits_fold.max(levels)];

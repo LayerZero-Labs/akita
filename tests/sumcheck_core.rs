@@ -281,10 +281,12 @@ fn e2e_sumcheck_2_pow_20() {
 
     assert_eq!(prover_challenges, verifier_challenges);
 
-    eprintln!(
-        "[e2e_sumcheck_2_pow_20] n=2^{num_vars}={n}  \
-         prove={prove_time:.2?}  verify={verify_time:.2?}  \
-         rounds={} degree=1",
-        proof.round_polys.len()
+    tracing::info!(
+        n,
+        prove_ms = prove_time.as_millis(),
+        verify_ms = verify_time.as_millis(),
+        rounds = proof.round_polys.len(),
+        degree = 1,
+        "e2e_sumcheck_2_pow_20"
     );
 }

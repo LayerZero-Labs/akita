@@ -71,12 +71,16 @@ fn run_f0_e2e(num_u: usize, num_l: usize, b: usize) {
 
     assert_eq!(prover_challenges, verifier_challenges);
 
-    eprintln!(
-        "[F0 e2e] num_u={num_u} num_l={num_l} b={b} n=2^{num_vars}={n}  \
-         prove={prove_time:.2?}  verify={verify_time:.2?}  \
-         rounds={} degree={}",
-        proof.round_polys.len(),
-        b + 1,
+    tracing::info!(
+        num_u,
+        num_l,
+        b,
+        n,
+        prove_ms = prove_time.as_millis(),
+        verify_ms = verify_time.as_millis(),
+        rounds = proof.round_polys.len(),
+        degree = b + 1,
+        "F0 e2e"
     );
 }
 
@@ -202,11 +206,16 @@ fn run_f_alpha_e2e<const D: usize>(num_u: usize, num_i: usize) {
 
     assert_eq!(prover_challenges, verifier_challenges);
 
-    eprintln!(
-        "[Fα e2e] num_u={num_u} num_l={num_l} num_i={num_i} n=2^{num_vars}={n}  \
-         prove={prove_time:.2?}  verify={verify_time:.2?}  \
-         rounds={} degree=2",
-        proof.round_polys.len(),
+    tracing::info!(
+        num_u,
+        num_l,
+        num_i,
+        n,
+        prove_ms = prove_time.as_millis(),
+        verify_ms = verify_time.as_millis(),
+        rounds = proof.round_polys.len(),
+        degree = 2,
+        "Fα e2e"
     );
 }
 
