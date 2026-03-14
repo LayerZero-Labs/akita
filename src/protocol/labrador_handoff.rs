@@ -9,28 +9,30 @@ use crate::algebra::ring::CyclotomicRing;
 use crate::algebra::SparseChallenge;
 use crate::error::HachiError;
 use crate::primitives::poly::multilinear_lagrange_basis;
-use crate::primitives::serialization::Valid;
+use crate::primitives::serialization::{Compress, Valid};
 use crate::protocol::commitment::transcript_append::AppendToTranscript;
-use crate::protocol::commitment::utils::crt_ntt::build_ntt_slot;
+use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::linear::flatten_i8_blocks;
 use crate::protocol::commitment::{
     CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, RingCommitment,
 };
 use crate::protocol::hachi_poly_ops::{BalancedDigitPoly, HachiPolyOps};
+use crate::protocol::labrador::config::logq_bits;
 use crate::protocol::labrador::types::{
     LabradorReductionConfig, LabradorStatement, LabradorWitness,
 };
 use crate::protocol::labrador::{prove_with_config, LabradorConstraint, LabradorConstraintTerm};
 use crate::protocol::opening_point::{BasisMode, RingOpeningPoint};
 use crate::protocol::proof::{
-    FlatLabradorProof, FlatRingVec, HachiCommitmentHint, HachiProofTail, LabradorTail,
+    FlatLabradorProof, FlatLabradorWitness, FlatRingVec, HachiCommitmentHint, HachiProofTail,
+    LabradorTail,
 };
 use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::ring_switch::WCommitmentConfig;
 use crate::protocol::transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use crate::protocol::transcript::Transcript;
-use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
+use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt, HachiSerialize};
 
 /// Build Labrador constraints that encode the ring-level relation `Mz = y` from
 /// the Hachi quadratic equation.
@@ -254,6 +256,7 @@ pub(crate) fn labrador_handoff_prove<F, T, const D_HANDOFF: usize, Cfg>(
     current_num_u: usize,
     current_num_l: usize,
     expanded_setup: &HachiExpandedSetup<F>,
+    ntt_d: &NttSlotCache<D_HANDOFF>,
     transcript: &mut T,
 ) -> Result<HachiProofTail<F>, HachiError>
 where
@@ -301,7 +304,6 @@ where
     let a_flat = &expanded_setup.A;
     let b_flat = &expanded_setup.B;
     let d_flat = &expanded_setup.D_mat;
-    let ntt_d = build_ntt_slot(d_flat.view::<D_HANDOFF>())?;
 
     let (w_poly, y_ring, w_folded) = tracing::info_span!("labrador::handoff_fold_witness")
         .in_scope(|| {
@@ -328,7 +330,7 @@ where
             D_HANDOFF,
             WCommitmentConfig<D_HANDOFF, Cfg>,
         >::new_prover(
-            &ntt_d,
+            ntt_d,
             ring_opening_point.clone(),
             &w_poly,
             w_folded,
@@ -376,6 +378,13 @@ where
     let beta_sq = witness.norm();
 
     let cfg = hachi_labrador_select_config::<F, D_HANDOFF>(&witness)?;
+    let handoff_row_lengths: Vec<usize> = witness.rows().iter().map(|row| row.len()).collect();
+    let handoff_ring_elems: usize = handoff_row_lengths.iter().sum();
+    let handoff_witness_bits = handoff_ring_elems * D_HANDOFF * logq_bits::<F>();
+    let handoff_witness_bytes =
+        FlatLabradorWitness::from_typed(&witness).serialized_size(Compress::No);
+    let direct_hachi_tail_bytes =
+        8 + 1 + (current_w.len() * w_layout.log_basis as usize).div_ceil(8);
 
     let statement = LabradorStatement {
         u1: Vec::new(),
@@ -388,6 +397,33 @@ where
 
     let comkey_seed = expanded_setup.labrador_comkey_seed();
 
+    eprintln!(
+        "  [labrador_handoff] incoming hachi w: digits={}, log_basis={}, raw_i8={} bytes, packed_direct={} bytes",
+        current_w.len(),
+        w_layout.log_basis,
+        current_w.len(),
+        direct_hachi_tail_bytes,
+    );
+    eprintln!(
+        "  [labrador_handoff] labrador witness: row_lengths={:?}, total_ring_elems={}, witness_bits={}, serialized={} bytes, beta_sq={}",
+        handoff_row_lengths,
+        handoff_ring_elems,
+        handoff_witness_bits,
+        handoff_witness_bytes,
+        beta_sq,
+    );
+    eprintln!(
+        "  [labrador_handoff] selected cfg: row_count={}, max_row_len={}, f={}, b={}, fu={}, bu={}, kappa={}, kappa1={}, tail={}",
+        witness.rows().len(),
+        handoff_row_lengths.iter().copied().max().unwrap_or(0),
+        cfg.f,
+        cfg.b,
+        cfg.fu,
+        cfg.bu,
+        cfg.kappa,
+        cfg.kappa1,
+        cfg.tail,
+    );
     eprintln!(
         "  [labrador_handoff] witness/constraints: {:.2}s (rows={}, constraint_count={})",
         t1.elapsed().as_secs_f64(),

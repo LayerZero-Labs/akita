@@ -10,7 +10,7 @@ use crate::primitives::poly::multilinear_lagrange_basis;
 use crate::primitives::serialization::Valid;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{flatten_i8_blocks, mat_vec_mul_ntt_single_i8};
-use crate::protocol::commitment::utils::ntt_cache::MultiDNttBundle;
+use crate::protocol::commitment::utils::ntt_cache::{MultiDNttBundle, MultiDNttCaches};
 use crate::protocol::commitment::{
     AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore,
     HachiCommitmentLayout, HachiExpandedSetup, HachiProverSetup, HachiVerifierSetup,
@@ -43,15 +43,13 @@ use crate::protocol::transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use crate::protocol::transcript::Transcript;
-use crate::{dispatch_ring_dim, dispatch_with_ntt};
+use crate::{dispatch_ring_dim, dispatch_with_d_ntt, dispatch_with_ntt};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 #[cfg(debug_assertions)]
 use std::iter;
 use std::marker::PhantomData;
 use std::time::Instant;
 
-#[cfg(test)]
-use crate::primitives::serialization::Compress;
 #[cfg(test)]
 use crate::protocol::ring_switch::expand_m_a;
 #[cfg(test)]
@@ -650,14 +648,15 @@ where
 
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn dispatch_labrador_handoff_prove<F, T, Cfg>(
+fn dispatch_labrador_handoff_prove<F, T, const D: usize, Cfg>(
     current_w: &[i8],
     current_hint: &FlatCommitmentHint,
     current_challenges: &[F],
     current_num_u: usize,
     current_num_l: usize,
     current_commitment: &FlatRingVec<F>,
-    expanded_setup: &HachiExpandedSetup<F>,
+    setup: &HachiProverSetup<F, D>,
+    handoff_ntt_d_cache: &mut MultiDNttCaches,
     transcript: &mut T,
 ) -> Result<HachiProofTail<F>, HachiError>
 where
@@ -673,21 +672,43 @@ where
         )));
     }
 
-    dispatch_ring_dim!(handoff_d, |D_HANDOFF| {
-        let typed_hint: HachiCommitmentHint<F, { D_HANDOFF }> = current_hint.to_typed();
-        let typed_commitment: RingCommitment<F, { D_HANDOFF }> =
-            current_commitment.to_ring_commitment();
-        crate::protocol::labrador_handoff::labrador_handoff_prove::<F, T, { D_HANDOFF }, Cfg>(
+    if handoff_d == D {
+        let typed_hint: HachiCommitmentHint<F, D> = current_hint.to_typed();
+        let typed_commitment: RingCommitment<F, D> = current_commitment.to_ring_commitment();
+        return crate::protocol::labrador_handoff::labrador_handoff_prove::<F, T, D, Cfg>(
             current_w,
             &typed_hint,
             &typed_commitment,
             current_challenges,
             current_num_u,
             current_num_l,
-            expanded_setup,
+            &setup.expanded,
+            &setup.ntt_D,
             transcript,
-        )
-    })
+        );
+    }
+
+    dispatch_with_d_ntt!(
+        handoff_d,
+        handoff_ntt_d_cache,
+        &setup.expanded,
+        |D_HANDOFF, ntt_d| {
+            let typed_hint: HachiCommitmentHint<F, { D_HANDOFF }> = current_hint.to_typed();
+            let typed_commitment: RingCommitment<F, { D_HANDOFF }> =
+                current_commitment.to_ring_commitment();
+            crate::protocol::labrador_handoff::labrador_handoff_prove::<F, T, { D_HANDOFF }, Cfg>(
+                current_w,
+                &typed_hint,
+                &typed_commitment,
+                current_challenges,
+                current_num_u,
+                current_num_l,
+                &setup.expanded,
+                ntt_d,
+                transcript,
+            )
+        }
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -991,14 +1012,15 @@ where
 
         let tail = if labrador_enabled {
             eprintln!("[labrador handoff started]");
-            dispatch_labrador_handoff_prove::<F, T, Cfg>(
+            dispatch_labrador_handoff_prove::<F, T, D, Cfg>(
                 &current_w,
                 &current_hint,
                 &current_challenges,
                 current_num_u,
                 current_num_l,
                 &levels.last().unwrap().w_commitment,
-                &setup.expanded,
+                setup,
+                &mut commit_ntt_bundle.D_mat,
                 transcript,
             )?
         } else {

@@ -110,6 +110,52 @@ macro_rules! dispatch_with_ntt {
     }};
 }
 
+/// Like [`dispatch_ring_dim!`] but lazily builds only the `D_mat` NTT cache for
+/// the matched ring dimension from a
+/// [`crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches`] and
+/// [`crate::protocol::commitment::HachiExpandedSetup`].
+///
+/// Inside the body, `$D` is a const ring dimension and `$ntt_d` is a
+/// `&NttSlotCache<D>` reference.
+///
+/// # Panics
+///
+/// Panics at runtime if `d` is not one of the supported values.
+#[macro_export]
+macro_rules! dispatch_with_d_ntt {
+    ($d:expr, $ntt_d_cache:expr, $expanded:expr, |$D:ident, $ntt_d:ident| $body:expr) => {{
+        let __d = $d;
+        match __d {
+            64 => {
+                const $D: usize = 64;
+                let $ntt_d = ($ntt_d_cache).get_or_build_64(&($expanded).D_mat)?;
+                $body
+            }
+            128 => {
+                const $D: usize = 128;
+                let $ntt_d = ($ntt_d_cache).get_or_build_128(&($expanded).D_mat)?;
+                $body
+            }
+            256 => {
+                const $D: usize = 256;
+                let $ntt_d = ($ntt_d_cache).get_or_build_256(&($expanded).D_mat)?;
+                $body
+            }
+            512 => {
+                const $D: usize = 512;
+                let $ntt_d = ($ntt_d_cache).get_or_build_512(&($expanded).D_mat)?;
+                $body
+            }
+            1024 => {
+                const $D: usize = 1024;
+                let $ntt_d = ($ntt_d_cache).get_or_build_1024(&($expanded).D_mat)?;
+                $body
+            }
+            _ => panic!("unsupported ring dimension: {__d}"),
+        }
+    }};
+}
+
 /// The set of supported ring dimensions for [`dispatch_ring_dim!`].
 pub const SUPPORTED_RING_DIMS: &[usize] = &[64, 128, 256, 512, 1024];
 
