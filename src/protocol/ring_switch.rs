@@ -101,9 +101,12 @@ where
     let w_hat_flat = quad_eq
         .w_hat_flat()
         .ok_or_else(|| HachiError::InvalidInput("missing w_hat_flat in prover".to_string()))?;
-    let z_pre = quad_eq
-        .z_pre()
-        .ok_or_else(|| HachiError::InvalidInput("missing z_pre in prover".to_string()))?;
+    let z_pre_centered = quad_eq
+        .z_pre_centered()
+        .ok_or_else(|| HachiError::InvalidInput("missing centered z_pre in prover".to_string()))?;
+    let z_pre_centered_inf_norm = quad_eq.z_pre_centered_inf_norm().ok_or_else(|| {
+        HachiError::InvalidInput("missing centered z_pre norm in prover".to_string())
+    })?;
     let hint = quad_eq
         .hint()
         .ok_or_else(|| HachiError::InvalidInput("missing hint in prover".to_string()))?;
@@ -117,22 +120,21 @@ where
 
     let r = compute_r_split_eq::<F, D, Cfg>(
         setup,
-        quad_eq.opening_point(),
         &quad_eq.challenges,
         w_hat_flat,
         t_hat,
         t,
         w_folded,
-        z_pre,
+        z_pre_centered,
+        z_pre_centered_inf_norm,
         quad_eq.y(),
         ntt_a,
         ntt_b,
         ntt_d,
-        layout,
     )?;
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
-        build_w_coeffs::<F, D>(w_hat, t_hat, z_pre, &r, layout)
+        build_w_coeffs::<F, D>(w_hat, t_hat, z_pre_centered, &r, layout)
     };
     Ok(w)
 }
@@ -961,10 +963,40 @@ pub(crate) fn sample_tau<F: FieldCore + CanonicalField, T: Transcript<F>>(
     (0..n).map(|_| transcript.challenge_scalar(label)).collect()
 }
 
+fn balanced_decompose_centered_i32_i8_into<const D: usize>(
+    centered: &[i32; D],
+    out: &mut [[i8; D]],
+    log_basis: u32,
+) {
+    let levels = out.len();
+    assert!(
+        log_basis > 0 && log_basis <= 7,
+        "log_basis must be in 1..=7 for i8 output"
+    );
+    assert!(
+        (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
+        "levels * log_basis must be <= 128 + log_basis"
+    );
+
+    let half_b = 1i128 << (log_basis - 1);
+    let b = half_b << 1;
+    let mask = b - 1;
+
+    for coeff_idx in 0..D {
+        let mut c = centered[coeff_idx] as i128;
+        for plane in out.iter_mut() {
+            let d = c & mask;
+            let balanced = if d >= half_b { d - b } else { d };
+            c = (c - balanced) >> log_basis;
+            plane[coeff_idx] = balanced as i8;
+        }
+    }
+}
+
 pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     w_hat: &[Vec<[i8; D]>],
     t_hat: &[Vec<[i8; D]>],
-    z_pre: &[CyclotomicRing<F, D>],
+    z_pre_centered: &[[i32; D]],
     r: &[CyclotomicRing<F, D>],
     layout: HachiCommitmentLayout,
 ) -> Vec<i8> {
@@ -976,13 +1008,13 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
 
     let w_hat_planes: usize = w_hat.iter().map(|v| v.len()).sum();
     let t_hat_planes: usize = t_hat.iter().map(|v| v.len()).sum();
-    let z_count = w_hat_planes + t_hat_planes + z_pre.len() * num_digits_fold;
+    let z_count = w_hat_planes + t_hat_planes + z_pre_centered.len() * num_digits_fold;
     let r_hat_count = r.len() * levels;
     tracing::debug!(
         w_hat_planes,
         t_hat_planes,
-        z_pre_elems = z_pre.len(),
-        z_pre_planes = z_pre.len() * num_digits_fold,
+        z_pre_elems = z_pre_centered.len(),
+        z_pre_planes = z_pre_centered.len() * num_digits_fold,
         r_elems = r.len(),
         r_planes = r_hat_count,
         total_ring = z_count + r_hat_count,
@@ -999,9 +1031,9 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     for digits in t_hat_flat {
         out.extend_from_slice(digits);
     }
-    for z_j in z_pre {
+    for z_j in z_pre_centered {
         let z_planes = &mut digit_scratch[..num_digits_fold];
-        z_j.balanced_decompose_pow2_i8_into(z_planes, log_basis);
+        balanced_decompose_centered_i32_i8_into(z_j, z_planes, log_basis);
         for plane in z_planes.iter() {
             out.extend_from_slice(plane);
         }

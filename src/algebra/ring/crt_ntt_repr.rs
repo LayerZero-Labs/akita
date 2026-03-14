@@ -58,6 +58,14 @@ pub struct DigitMontLut<W: PrimeWidth, const K: usize> {
     vals: [[MontCoeff<W>; 16]; K],
 }
 
+/// Precomputed Montgomery forms for centered integer coefficients in
+/// `[-max_abs, max_abs]`.
+#[derive(Debug, Clone)]
+pub struct CenteredMontLut<W: PrimeWidth, const K: usize> {
+    vals: [Vec<MontCoeff<W>>; K],
+    offset: i32,
+}
+
 const DIGIT_LUT_HALF_B: i16 = 8;
 
 impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
@@ -84,6 +92,33 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
                 .vals
                 .get_unchecked(k)
                 .get_unchecked((digit as i16 + DIGIT_LUT_HALF_B) as usize)
+        }
+    }
+}
+
+impl<W: PrimeWidth, const K: usize> CenteredMontLut<W, K> {
+    /// Build a lookup table for all centered coefficients in `[-max_abs, max_abs]`.
+    pub fn new<const D: usize>(params: &CrtNttParamSet<W, K, D>, max_abs: i32) -> Self {
+        let vals = from_fn(|k| {
+            let prime = params.primes[k];
+            (-max_abs..=max_abs)
+                .map(|v| prime.from_canonical(W::from_i64(v as i64)))
+                .collect()
+        });
+        Self {
+            vals,
+            offset: max_abs,
+        }
+    }
+
+    /// Look up the Montgomery form of a centered coefficient for CRT prime `k`.
+    #[inline(always)]
+    pub fn get(&self, k: usize, coeff: i32) -> MontCoeff<W> {
+        unsafe {
+            *self
+                .vals
+                .get_unchecked(k)
+                .get_unchecked((coeff + self.offset) as usize)
         }
     }
 }
@@ -181,6 +216,14 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         Self::from_i8_negacyclic_backend::<ScalarBackend>(digits, params)
     }
 
+    /// Convert centered i32 coefficients into negacyclic CRT+NTT domain.
+    pub fn from_centered_i32_with_params(
+        coeffs: &[i32; D],
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Self {
+        Self::from_centered_i32_negacyclic_backend::<ScalarBackend>(coeffs, params)
+    }
+
     /// Like [`Self::from_i8_with_params`] but uses a precomputed
     /// [`DigitMontLut`] to replace per-coefficient `from_canonical`
     /// (Montgomery multiply) with a table lookup.
@@ -217,6 +260,33 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         Self { limbs }
     }
 
+    /// Convert centered i32 coefficients into cyclic CRT+NTT domain.
+    pub fn from_centered_i32_cyclic_with_params(
+        coeffs: &[i32; D],
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Self {
+        Self::from_centered_i32_cyclic_backend::<ScalarBackend>(coeffs, params)
+    }
+
+    /// Convert centered i32 coefficients into both negacyclic and cyclic
+    /// CRT+NTT domains while sharing the coefficient preparation step.
+    pub fn from_centered_i32_pair_with_params(
+        coeffs: &[i32; D],
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> (Self, Self) {
+        Self::from_centered_i32_pair_backend::<ScalarBackend>(coeffs, params, None)
+    }
+
+    /// Like [`Self::from_centered_i32_pair_with_params`] but uses a precomputed
+    /// [`CenteredMontLut`] for the coefficient-to-Montgomery conversion.
+    pub fn from_centered_i32_pair_with_lut(
+        coeffs: &[i32; D],
+        params: &CrtNttParamSet<W, K, D>,
+        lut: &CenteredMontLut<W, K>,
+    ) -> (Self, Self) {
+        Self::from_centered_i32_pair_backend::<ScalarBackend>(coeffs, params, Some(lut))
+    }
+
     fn from_i8_negacyclic_backend<B: NttPrimeOps<W, D> + NttTransform<W, D>>(
         digits: &[i8; D],
         params: &CrtNttParamSet<W, K, D>,
@@ -229,6 +299,30 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         {
             for (dst, &d) in limb.iter_mut().zip(digits.iter()) {
                 *dst = B::from_canonical(*prime, W::from_i64(d as i64));
+            }
+            B::forward_ntt(limb, *prime, tw);
+        }
+        Self { limbs }
+    }
+
+    fn from_centered_i32_negacyclic_backend<B: NttPrimeOps<W, D> + NttTransform<W, D>>(
+        coeffs: &[i32; D],
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Self {
+        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for ((limb, prime), tw) in limbs
+            .iter_mut()
+            .zip(params.primes.iter())
+            .zip(params.twiddles.iter())
+        {
+            let p = prime.p.to_i64();
+            let half_p = p / 2;
+            for (dst, &coeff) in limb.iter_mut().zip(coeffs.iter()) {
+                let mut r = (coeff as i64).rem_euclid(p);
+                if r >= half_p {
+                    r -= p;
+                }
+                *dst = B::from_canonical(*prime, W::from_i64(r));
             }
             B::forward_ntt(limb, *prime, tw);
         }
@@ -257,6 +351,66 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             forward_ntt_cyclic(limb, *prime, tw);
         }
         Self { limbs }
+    }
+
+    fn from_centered_i32_cyclic_backend<B: NttPrimeOps<W, D>>(
+        coeffs: &[i32; D],
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Self {
+        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for ((limb, prime), tw) in limbs
+            .iter_mut()
+            .zip(params.primes.iter())
+            .zip(params.twiddles.iter())
+        {
+            let p = prime.p.to_i64();
+            let half_p = p / 2;
+            for (dst, &coeff) in limb.iter_mut().zip(coeffs.iter()) {
+                let mut r = (coeff as i64).rem_euclid(p);
+                if r >= half_p {
+                    r -= p;
+                }
+                *dst = B::from_canonical(*prime, W::from_i64(r));
+            }
+            forward_ntt_cyclic(limb, *prime, tw);
+        }
+        Self { limbs }
+    }
+
+    fn from_centered_i32_pair_backend<B: NttPrimeOps<W, D>>(
+        coeffs: &[i32; D],
+        params: &CrtNttParamSet<W, K, D>,
+        lut: Option<&CenteredMontLut<W, K>>,
+    ) -> (Self, Self) {
+        let mut neg_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        let mut cyc_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for (k, (((neg_limb, cyc_limb), prime), tw)) in neg_limbs
+            .iter_mut()
+            .zip(cyc_limbs.iter_mut())
+            .zip(params.primes.iter())
+            .zip(params.twiddles.iter())
+            .enumerate()
+        {
+            if let Some(lut) = lut {
+                for (dst, &coeff) in neg_limb.iter_mut().zip(coeffs.iter()) {
+                    *dst = lut.get(k, coeff);
+                }
+            } else {
+                let p = prime.p.to_i64();
+                let half_p = p / 2;
+                for (dst, &coeff) in neg_limb.iter_mut().zip(coeffs.iter()) {
+                    let mut r = (coeff as i64).rem_euclid(p);
+                    if r >= half_p {
+                        r -= p;
+                    }
+                    *dst = B::from_canonical(*prime, W::from_i64(r));
+                }
+            }
+            *cyc_limb = *neg_limb;
+            forward_ntt(neg_limb, *prime, tw);
+            forward_ntt_cyclic(cyc_limb, *prime, tw);
+        }
+        (Self { limbs: neg_limbs }, Self { limbs: cyc_limbs })
     }
 
     /// Convert from CRT+NTT domain back to coefficient form
