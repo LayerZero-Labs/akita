@@ -300,14 +300,18 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     pub fn mul_accumulate_into(&self, rhs: &Self, dst: &mut Self) {
         for i in 0..D {
             let ai = self.coeffs[i];
-            for j in 0..D {
-                let product = ai * rhs.coeffs[j];
-                let idx = i + j;
-                if idx < D {
-                    dst.coeffs[idx] += product;
-                } else {
-                    dst.coeffs[idx - D] -= product;
-                }
+            if ai.is_zero() {
+                continue;
+            }
+
+            let (dst_wrap, dst_direct) = dst.coeffs.split_at_mut(i);
+            let (rhs_direct, rhs_wrap) = rhs.coeffs.split_at(D - i);
+
+            for (dst_coeff, rhs_coeff) in dst_direct.iter_mut().zip(rhs_direct.iter()) {
+                *dst_coeff += ai * *rhs_coeff;
+            }
+            for (dst_coeff, rhs_coeff) in dst_wrap.iter_mut().zip(rhs_wrap.iter()) {
+                *dst_coeff -= ai * *rhs_coeff;
             }
         }
     }

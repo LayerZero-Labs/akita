@@ -33,31 +33,6 @@ fn jl_row_bytes(cols: usize) -> Result<usize, HachiError> {
     Ok((cols * 2).div_ceil(8))
 }
 
-fn jl_seed_reader(seed: &[u8; 32]) -> impl XofReader {
-    let mut xof = Shake128::default();
-    xof.update(JL_XOF_DOMAIN);
-    xof.update(seed);
-    xof.finalize_xof()
-}
-
-pub(crate) fn for_each_jl_group4_bytes<E>(
-    seed: &[u8; 32],
-    row_bytes: usize,
-    mut f: impl FnMut(usize, &[u8], &[u8], &[u8], &[u8]) -> Result<(), E>,
-) -> Result<(), E> {
-    let mut reader = jl_seed_reader(seed);
-    let mut rows = vec![0u8; row_bytes * 4];
-    for group_start in (0..JL_ROWS).step_by(4) {
-        reader.read(&mut rows);
-        let row0 = &rows[..row_bytes];
-        let row1 = &rows[row_bytes..2 * row_bytes];
-        let row2 = &rows[2 * row_bytes..3 * row_bytes];
-        let row3 = &rows[3 * row_bytes..];
-        f(group_start, row0, row1, row2, row3)?;
-    }
-    Ok(())
-}
-
 pub(crate) fn replay_nonce_search_seed<F, T>(
     transcript: &mut T,
     jl_nonce: u64,

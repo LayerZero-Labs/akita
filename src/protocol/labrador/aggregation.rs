@@ -24,7 +24,7 @@ use crate::protocol::commitment::utils::linear::{
 use crate::protocol::labrador::config::jl_lifts;
 use crate::protocol::labrador::constraints::{pair_index, LabradorConstraint, NextWitnessLayout};
 use crate::protocol::labrador::johnson_lindenstrauss::{
-    for_each_jl_group4_bytes, restore_constant_term, zero_constant_term_for_proof, LabradorJlMatrix,
+    restore_constant_term, zero_constant_term_for_proof, LabradorJlMatrix,
 };
 use crate::protocol::labrador::types::{
     LabradorReducedConstraintPlan, LabradorStatement, LabradorWitness,
@@ -177,78 +177,65 @@ fn accumulate_field_weight_contribution<F: FieldCore, const D: usize>(
     }
 }
 
+type JlGroupRows<'a> = [&'a [u8]; 4];
+
 #[inline]
-fn apply_four_russians_group4<F: FieldCore, const D: usize>(
-    phi: &mut [CyclotomicRing<F, D>],
-    row0: &[u8],
-    row1: &[u8],
-    row2: &[u8],
-    row3: &[u8],
+fn apply_four_russians_group4_to_elem<F: FieldCore, const D: usize>(
+    elem: &mut CyclotomicRing<F, D>,
+    elem_idx: usize,
+    rows: JlGroupRows<'_>,
     lookup: &[F; 256],
     bytes_per_ring: usize,
 ) {
-    debug_assert_eq!(row0.len(), phi.len() * bytes_per_ring);
-    debug_assert_eq!(row1.len(), phi.len() * bytes_per_ring);
-    debug_assert_eq!(row2.len(), phi.len() * bytes_per_ring);
-    debug_assert_eq!(row3.len(), phi.len() * bytes_per_ring);
+    let start = elem_idx * bytes_per_ring;
+    let end = start + bytes_per_ring;
+    let sign_bytes0 = &rows[0][start..end];
+    let sign_bytes1 = &rows[1][start..end];
+    let sign_bytes2 = &rows[2][start..end];
+    let sign_bytes3 = &rows[3][start..end];
 
-    cfg_iter_mut!(phi).enumerate().for_each(|(elem_idx, elem)| {
-        let start = elem_idx * bytes_per_ring;
-        let end = start + bytes_per_ring;
-        let sign_bytes0 = &row0[start..end];
-        let sign_bytes1 = &row1[start..end];
-        let sign_bytes2 = &row2[start..end];
-        let sign_bytes3 = &row3[start..end];
+    let coeffs = elem.coefficients_mut();
+    let mut local_idx = 0usize;
 
-        let coeffs = elem.coefficients_mut();
-        let mut local_idx = 0usize;
+    for (((&byte0, &byte1), &byte2), &byte3) in sign_bytes0
+        .iter()
+        .zip(sign_bytes1.iter())
+        .zip(sign_bytes2.iter())
+        .zip(sign_bytes3.iter())
+    {
+        let packed0 =
+            (byte0 & 0b11) | ((byte1 & 0b11) << 2) | ((byte2 & 0b11) << 4) | ((byte3 & 0b11) << 6);
+        let packed1 = ((byte0 >> 2) & 0b11)
+            | (((byte1 >> 2) & 0b11) << 2)
+            | (((byte2 >> 2) & 0b11) << 4)
+            | (((byte3 >> 2) & 0b11) << 6);
+        let packed2 = ((byte0 >> 4) & 0b11)
+            | (((byte1 >> 4) & 0b11) << 2)
+            | (((byte2 >> 4) & 0b11) << 4)
+            | (((byte3 >> 4) & 0b11) << 6);
+        let packed3 = ((byte0 >> 6) & 0b11)
+            | (((byte1 >> 6) & 0b11) << 2)
+            | (((byte2 >> 6) & 0b11) << 4)
+            | (((byte3 >> 6) & 0b11) << 6);
 
-        for (((&byte0, &byte1), &byte2), &byte3) in sign_bytes0
-            .iter()
-            .zip(sign_bytes1.iter())
-            .zip(sign_bytes2.iter())
-            .zip(sign_bytes3.iter())
-        {
-            let packed0 = (byte0 & 0b11)
-                | ((byte1 & 0b11) << 2)
-                | ((byte2 & 0b11) << 4)
-                | ((byte3 & 0b11) << 6);
-            let packed1 = ((byte0 >> 2) & 0b11)
-                | (((byte1 >> 2) & 0b11) << 2)
-                | (((byte2 >> 2) & 0b11) << 4)
-                | (((byte3 >> 2) & 0b11) << 6);
-            let packed2 = ((byte0 >> 4) & 0b11)
-                | (((byte1 >> 4) & 0b11) << 2)
-                | (((byte2 >> 4) & 0b11) << 4)
-                | (((byte3 >> 4) & 0b11) << 6);
-            let packed3 = ((byte0 >> 6) & 0b11)
-                | (((byte1 >> 6) & 0b11) << 2)
-                | (((byte2 >> 6) & 0b11) << 4)
-                | (((byte3 >> 6) & 0b11) << 6);
-
-            accumulate_field_weight_contribution::<F, D>(
-                coeffs,
-                local_idx,
-                lookup[packed0 as usize],
-            );
-            accumulate_field_weight_contribution::<F, D>(
-                coeffs,
-                local_idx + 1,
-                lookup[packed1 as usize],
-            );
-            accumulate_field_weight_contribution::<F, D>(
-                coeffs,
-                local_idx + 2,
-                lookup[packed2 as usize],
-            );
-            accumulate_field_weight_contribution::<F, D>(
-                coeffs,
-                local_idx + 3,
-                lookup[packed3 as usize],
-            );
-            local_idx += 4;
-        }
-    });
+        accumulate_field_weight_contribution::<F, D>(coeffs, local_idx, lookup[packed0 as usize]);
+        accumulate_field_weight_contribution::<F, D>(
+            coeffs,
+            local_idx + 1,
+            lookup[packed1 as usize],
+        );
+        accumulate_field_weight_contribution::<F, D>(
+            coeffs,
+            local_idx + 2,
+            lookup[packed2 as usize],
+        );
+        accumulate_field_weight_contribution::<F, D>(
+            coeffs,
+            local_idx + 3,
+            lookup[packed3 as usize],
+        );
+        local_idx += 4;
+    }
 }
 
 /// Collapse 256 JL rows × omega into JL phi coefficients using
@@ -272,68 +259,47 @@ pub fn aggregate_jl_contraints_one_lift<F: CanonicalField, const D: usize>(
     if D % 4 != 0 {
         panic!("Four Russians field collapse requires D divisible by 4, got D={D}");
     }
-    let mut phi = vec![CyclotomicRing::<F, D>::zero(); cols / D];
+    let num_elems = cols / D;
     let bytes_per_ring = D / 4;
     debug_assert_eq!(omega.len() % 4, 0);
+    let group_rows: Vec<JlGroupRows<'_>> = (0..omega.len())
+        .step_by(4)
+        .map(|group_start| {
+            [
+                matrix.row_bytes(group_start),
+                matrix.row_bytes(group_start + 1),
+                matrix.row_bytes(group_start + 2),
+                matrix.row_bytes(group_start + 3),
+            ]
+        })
+        .collect();
+    let lookups: Vec<[F; 256]> = (0..omega.len())
+        .step_by(4)
+        .map(|group_start| {
+            build_four_russians_lookup_field(
+                omega[group_start],
+                omega[group_start + 1],
+                omega[group_start + 2],
+                omega[group_start + 3],
+            )
+        })
+        .collect();
 
-    for group_start in (0..omega.len()).step_by(4) {
-        let row0 = matrix.row_bytes(group_start);
-        let row1 = matrix.row_bytes(group_start + 1);
-        let row2 = matrix.row_bytes(group_start + 2);
-        let row3 = matrix.row_bytes(group_start + 3);
-        let lookup = build_four_russians_lookup_field(
-            omega[group_start],
-            omega[group_start + 1],
-            omega[group_start + 2],
-            omega[group_start + 3],
-        );
-        apply_four_russians_group4::<F, D>(
-            &mut phi,
-            row0,
-            row1,
-            row2,
-            row3,
-            &lookup,
-            bytes_per_ring,
-        );
-    }
-
-    Ok(phi)
-}
-
-#[tracing::instrument(skip_all, name = "labrador::aggregate_jl_contraints_one_lift_seeded")]
-fn aggregate_jl_contraints_one_lift_seeded<F: CanonicalField, const D: usize>(
-    cols: usize,
-    row_bytes: usize,
-    seed: &[u8; 32],
-    omega: &[F; 256],
-) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-    if D % 4 != 0 {
-        panic!("Four Russians field collapse requires D divisible by 4, got D={D}");
-    }
-    let mut phi = vec![CyclotomicRing::<F, D>::zero(); cols / D];
-    let bytes_per_ring = D / 4;
-
-    for_each_jl_group4_bytes(seed, row_bytes, |group_start, row0, row1, row2, row3| {
-        let lookup = build_four_russians_lookup_field(
-            omega[group_start],
-            omega[group_start + 1],
-            omega[group_start + 2],
-            omega[group_start + 3],
-        );
-        apply_four_russians_group4::<F, D>(
-            &mut phi,
-            row0,
-            row1,
-            row2,
-            row3,
-            &lookup,
-            bytes_per_ring,
-        );
-        Ok::<(), HachiError>(())
-    })?;
-
-    Ok(phi)
+    Ok(cfg_into_iter!(0..num_elems)
+        .map(|elem_idx| {
+            let mut elem = CyclotomicRing::<F, D>::zero();
+            for (rows, lookup) in group_rows.iter().zip(lookups.iter()) {
+                apply_four_russians_group4_to_elem::<F, D>(
+                    &mut elem,
+                    elem_idx,
+                    *rows,
+                    lookup,
+                    bytes_per_ring,
+                );
+            }
+            elem
+        })
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -451,7 +417,6 @@ where
 /// Same transcript flow as the prover variant, but reconstructs the full
 /// polynomial b^''(k) by restoring the constant term from the projection
 /// and the transmitted `bb[k]`. Returns a flattened `phi_total`.
-#[cfg(test)]
 #[allow(clippy::type_complexity)]
 #[tracing::instrument(skip_all, name = "labrador::aggregate_jl_constraints_verifier")]
 pub(crate) fn aggregate_jl_constraints_verifier<F, T, const D: usize>(
@@ -476,47 +441,6 @@ where
     for bb_lift in bb.iter() {
         let omega = sample_jl_collapse_challenge::<F, T>(transcript);
         let phi_flat = aggregate_jl_contraints_one_lift::<F, D>(matrix, &omega)?;
-        let b_full = restore_constant_term(*bb_lift, collapse_to_field::<F>(jl_projection, &omega));
-        transcript.append_serde(labels::ABSORB_LABRADOR_BB, bb_lift);
-        let beta: CyclotomicRing<F, D> =
-            challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
-        b_total += beta * b_full;
-        accumulate_phi_flat(&mut phi_total_flat, &phi_flat, beta);
-    }
-
-    Ok((phi_total_flat, b_total))
-}
-
-#[allow(clippy::type_complexity)]
-#[tracing::instrument(skip_all, name = "labrador::aggregate_jl_constraints_verifier_seeded")]
-pub(crate) fn aggregate_jl_constraints_verifier_seeded<F, T, const D: usize>(
-    row_lengths: &[usize],
-    jl_projection: &[i64; 256],
-    cols: usize,
-    row_bytes: usize,
-    seed: &[u8; 32],
-    bb: &[CyclotomicRing<F, D>],
-    transcript: &mut T,
-) -> Result<(Vec<CyclotomicRing<F, D>>, CyclotomicRing<F, D>), HachiError>
-where
-    F: FieldCore + CanonicalField + FromSmallInt,
-    T: Transcript<F>,
-{
-    let lifts = jl_lifts::<F>();
-    if bb.len() != lifts {
-        return Err(HachiError::InvalidProof);
-    }
-    let total_phi_elems: usize = row_lengths.iter().sum();
-    if total_phi_elems * D != cols {
-        return Err(HachiError::InvalidProof);
-    }
-    let mut phi_total_flat = vec![CyclotomicRing::<F, D>::zero(); total_phi_elems];
-    let mut b_total = CyclotomicRing::<F, D>::zero();
-
-    for bb_lift in bb.iter() {
-        let omega = sample_jl_collapse_challenge::<F, T>(transcript);
-        let phi_flat =
-            aggregate_jl_contraints_one_lift_seeded::<F, D>(cols, row_bytes, seed, &omega)?;
         let b_full = restore_constant_term(*bb_lift, collapse_to_field::<F>(jl_projection, &omega));
         transcript.append_serde(labels::ABSORB_LABRADOR_BB, bb_lift);
         let beta: CyclotomicRing<F, D> =

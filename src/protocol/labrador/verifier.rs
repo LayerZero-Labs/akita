@@ -9,14 +9,14 @@ use crate::protocol::commitment::utils::linear::{
     mat_vec_mul_crt_ntt_i8_many, try_centered_i8_cache_from_ring_coeffs,
 };
 use crate::protocol::labrador::aggregation::{
-    aggregate_jl_constraints_verifier_seeded, aggregate_statement,
+    aggregate_jl_constraints_verifier, aggregate_statement,
 };
 use crate::protocol::labrador::comkey::LabradorComKeySeed;
 use crate::protocol::labrador::constraints::{
     materialize_reduced_constraints, pair_index, LabradorConstraint, NextWitnessLayout,
 };
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
-use crate::protocol::labrador::johnson_lindenstrauss::replay_nonce_search_seed;
+use crate::protocol::labrador::johnson_lindenstrauss::LabradorJlMatrix;
 use crate::protocol::labrador::setup::LabradorSetupMatrices;
 use crate::protocol::labrador::transcript::{
     absorb_labrador_jl_projection, absorb_labrador_level_context, LabradorLevelTranscriptContext,
@@ -167,16 +167,14 @@ where
 
     let total_len: usize = virt_row_lengths.iter().sum();
     let jl_cols = total_len * D;
-    let (jl_row_bytes, jl_seed) =
-        replay_nonce_search_seed::<F, T>(transcript, level.jl_nonce, jl_cols)?;
+    let jl_matrix =
+        LabradorJlMatrix::replay_nonce_search::<F, T>(transcript, level.jl_nonce, jl_cols)?;
     absorb_labrador_jl_projection(transcript, &level.jl_projection);
 
-    let (phi_jl_flat, b_jl) = aggregate_jl_constraints_verifier_seeded(
+    let (phi_jl_flat, b_jl) = aggregate_jl_constraints_verifier(
         &virt_row_lengths,
         &level.jl_projection,
-        jl_cols,
-        jl_row_bytes,
-        &jl_seed,
+        &jl_matrix,
         &level.bb,
         transcript,
     )?;
@@ -770,18 +768,16 @@ where
 
     let virt_total_len = rr * nn;
     let jl_cols = virt_total_len * D;
-    let (jl_row_bytes, jl_seed) =
-        replay_nonce_search_seed::<F, T>(transcript, level.jl_nonce, jl_cols)?;
+    let jl_matrix =
+        LabradorJlMatrix::replay_nonce_search::<F, T>(transcript, level.jl_nonce, jl_cols)?;
 
     absorb_labrador_jl_projection(transcript, &level.jl_projection);
 
     let virt_row_lengths = vec![nn; rr];
-    let (phi_jl_flat, b_jl) = aggregate_jl_constraints_verifier_seeded(
+    let (phi_jl_flat, b_jl) = aggregate_jl_constraints_verifier(
         &virt_row_lengths,
         &level.jl_projection,
-        jl_cols,
-        jl_row_bytes,
-        &jl_seed,
+        &jl_matrix,
         &level.bb,
         transcript,
     )?;
@@ -851,9 +847,16 @@ where
 
     let setup = tracing::info_span!("labrador::verify_tail_setup")
         .in_scope(|| LabradorSetupMatrices::new(&level.config, rr, nn, comkey_seed));
+    let witness_i8 = tracing::info_span!("labrador::verify_tail_digit_cache")
+        .in_scope(|| try_centered_i8_rows(witness.rows()));
     let (az, rhs) = tracing::info_span!("labrador::verify_tail_linear_check").in_scope(
         || -> Result<_, HachiError> {
-            let az = mat_vec_mul_decomposed::<F, D>(&setup.a_mat, witness.rows(), level.config.b)?;
+            let az = mat_vec_mul_decomposed::<F, D>(
+                &setup.a_mat,
+                witness.rows(),
+                witness_i8.as_deref(),
+                level.config.b,
+            )?;
             let rhs = accumulate_decomposed_t_rhs::<F, D>(
                 t_hat,
                 rr,
@@ -871,8 +874,12 @@ where
 
     let (lhs, rhs, diag_sum) = tracing::info_span!("labrador::verify_tail_quadratic_check")
         .in_scope(|| -> Result<_, HachiError> {
-            let lhs =
-                decomposed_dot_product::<F, D>(&combined_phi, witness.rows(), level.config.b)?;
+            let lhs = decomposed_dot_product::<F, D>(
+                &combined_phi,
+                witness.rows(),
+                witness_i8.as_deref(),
+                level.config.b,
+            )?;
             let (rhs, diag_sum) = accumulate_decomposed_h_rhs::<F, D>(
                 h_hat,
                 rr,
@@ -943,17 +950,15 @@ where
 
     let virt_total_len = rr * nn;
     let jl_cols = virt_total_len * D;
-    let (jl_row_bytes, jl_seed) =
-        replay_nonce_search_seed::<F, T>(transcript, level.jl_nonce, jl_cols)?;
+    let jl_matrix =
+        LabradorJlMatrix::replay_nonce_search::<F, T>(transcript, level.jl_nonce, jl_cols)?;
     absorb_labrador_jl_projection(transcript, &level.jl_projection);
 
     let virt_row_lengths = vec![nn; rr];
-    let (phi_jl_flat, b_jl) = aggregate_jl_constraints_verifier_seeded(
+    let (phi_jl_flat, b_jl) = aggregate_jl_constraints_verifier(
         &virt_row_lengths,
         &level.jl_projection,
-        jl_cols,
-        jl_row_bytes,
-        &jl_seed,
+        &jl_matrix,
         &level.bb,
         transcript,
     )?;
@@ -1134,6 +1139,7 @@ fn validate_reshape_metadata(
 fn mat_vec_mul_decomposed<F, const D: usize>(
     matrix: &[Vec<CyclotomicRing<F, D>>],
     parts: &[Vec<CyclotomicRing<F, D>>],
+    parts_i8: Option<&[Vec<[i8; D]>]>,
     log_basis: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
 where
@@ -1143,8 +1149,8 @@ where
         return Err(HachiError::InvalidProof);
     }
 
-    if let Some(parts_i8) = try_centered_i8_rows(parts) {
-        if let Ok(images) = mat_vec_mul_crt_ntt_i8_many(matrix, &parts_i8) {
+    if let Some(parts_i8) = parts_i8 {
+        if let Ok(images) = mat_vec_mul_crt_ntt_i8_many(matrix, parts_i8) {
             let mut acc = vec![CyclotomicRing::<F, D>::zero(); matrix.len()];
             for (part_idx, image) in images.into_iter().enumerate() {
                 let scale = pow2_field::<F>(part_idx * log_basis);
@@ -1171,6 +1177,7 @@ where
 fn decomposed_dot_product<F, const D: usize>(
     lhs: &[CyclotomicRing<F, D>],
     parts: &[Vec<CyclotomicRing<F, D>>],
+    parts_i8: Option<&[Vec<[i8; D]>]>,
     log_basis: usize,
 ) -> Result<CyclotomicRing<F, D>, HachiError>
 where
@@ -1180,8 +1187,8 @@ where
         return Err(HachiError::InvalidProof);
     }
 
-    if let Some(parts_i8) = try_centered_i8_rows(parts) {
-        if let Ok(images) = mat_vec_mul_crt_ntt_i8_many(&[lhs.to_vec()], &parts_i8) {
+    if let Some(parts_i8) = parts_i8 {
+        if let Ok(images) = mat_vec_mul_crt_ntt_i8_many(&[lhs.to_vec()], parts_i8) {
             let mut acc = CyclotomicRing::<F, D>::zero();
             for (part_idx, image) in images.into_iter().enumerate() {
                 let scale = pow2_field::<F>(part_idx * log_basis);
