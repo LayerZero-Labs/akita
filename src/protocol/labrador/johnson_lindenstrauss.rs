@@ -24,6 +24,63 @@ fn expand_jl_seed(seed: &[u8], len: usize) -> Vec<u8> {
     out
 }
 
+fn jl_row_bytes(cols: usize) -> Result<usize, HachiError> {
+    if cols == 0 {
+        return Err(HachiError::InvalidInput(
+            "JL matrix requires non-zero column count".to_string(),
+        ));
+    }
+    Ok((cols * 2).div_ceil(8))
+}
+
+fn jl_seed_reader(seed: &[u8; 32]) -> impl XofReader {
+    let mut xof = Shake128::default();
+    xof.update(JL_XOF_DOMAIN);
+    xof.update(seed);
+    xof.finalize_xof()
+}
+
+pub(crate) fn for_each_jl_group4_bytes<E>(
+    seed: &[u8; 32],
+    row_bytes: usize,
+    mut f: impl FnMut(usize, &[u8], &[u8], &[u8], &[u8]) -> Result<(), E>,
+) -> Result<(), E> {
+    let mut reader = jl_seed_reader(seed);
+    let mut rows = vec![0u8; row_bytes * 4];
+    for group_start in (0..JL_ROWS).step_by(4) {
+        reader.read(&mut rows);
+        let row0 = &rows[..row_bytes];
+        let row1 = &rows[row_bytes..2 * row_bytes];
+        let row2 = &rows[2 * row_bytes..3 * row_bytes];
+        let row3 = &rows[3 * row_bytes..];
+        f(group_start, row0, row1, row2, row3)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn replay_nonce_search_seed<F, T>(
+    transcript: &mut T,
+    jl_nonce: u64,
+    cols: usize,
+) -> Result<(usize, [u8; 32]), HachiError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    if !(1..=LABRADOR_MAX_JL_NONCE_RETRIES).contains(&jl_nonce) {
+        return Err(HachiError::InvalidInput(format!(
+            "JL nonce out of range: {jl_nonce}"
+        )));
+    }
+    let row_bytes = jl_row_bytes(cols)?;
+    transcript.append_bytes(labels::ABSORB_LABRADOR_JL_NONCE, &jl_nonce.to_le_bytes());
+    let seed_vec = transcript.challenge_bytes(labels::CHALLENGE_LABRADOR_JL_SEED, 32);
+    let seed: [u8; 32] = seed_vec
+        .try_into()
+        .map_err(|_| HachiError::InvalidInput("JL seed length mismatch".to_string()))?;
+    Ok((row_bytes, seed))
+}
+
 fn centered_from_canonical(
     canonical: u128,
     modulus: u128,
@@ -227,12 +284,7 @@ impl LabradorJlMatrix {
         F: FieldCore + CanonicalField,
         T: Transcript<F>,
     {
-        if cols == 0 {
-            return Err(HachiError::InvalidInput(
-                "JL matrix requires non-zero column count".to_string(),
-            ));
-        }
-        let row_bytes = (cols * 2).div_ceil(8);
+        let row_bytes = jl_row_bytes(cols)?;
         let total_bytes = JL_ROWS * row_bytes;
         let seed = transcript.challenge_bytes(labels::CHALLENGE_LABRADOR_JL_SEED, 32);
         let packed_rows = expand_jl_seed(&seed, total_bytes);
@@ -262,14 +314,14 @@ impl LabradorJlMatrix {
         F: FieldCore + CanonicalField,
         T: Transcript<F>,
     {
-        if !(1..=LABRADOR_MAX_JL_NONCE_RETRIES).contains(&jl_nonce) {
-            return Err(HachiError::InvalidInput(format!(
-                "JL nonce out of range: {jl_nonce}"
-            )));
-        }
-
-        transcript.append_bytes(labels::ABSORB_LABRADOR_JL_NONCE, &jl_nonce.to_le_bytes());
-        Self::generate::<F, T>(transcript, cols)
+        let (_row_bytes, seed) = replay_nonce_search_seed::<F, T>(transcript, jl_nonce, cols)?;
+        let total_bytes = JL_ROWS * jl_row_bytes(cols)?;
+        let packed_rows = expand_jl_seed(&seed, total_bytes);
+        Ok(Self {
+            cols,
+            row_bytes: jl_row_bytes(cols)?,
+            packed_rows,
+        })
     }
 }
 

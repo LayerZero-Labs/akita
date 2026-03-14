@@ -353,6 +353,10 @@ pub fn decompose_rows<F: FieldCore + CanonicalField, const D: usize>(
 }
 
 /// Decompose each ring element where the last digit carries the remainder.
+///
+/// # Panics
+///
+/// Panics if `delta == 0`.
 pub fn decompose_rows_with_carry<F: FieldCore + CanonicalField, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
     delta: usize,
