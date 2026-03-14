@@ -2,6 +2,8 @@
 
 use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::protocol::labrador::aggregation::{
     aggregate_jl_constraints_verifier_seeded, aggregate_statement,
 };
@@ -22,7 +24,7 @@ use crate::protocol::labrador::types::{
 use crate::protocol::labrador::utils::mat_vec_mul;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::{
-    challenge_ring_element, challenge_ring_element_rejection_sampled, Transcript,
+    challenge_ring_element, challenge_ring_elements_rejection_sampled, Transcript,
 };
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 use std::sync::Arc;
@@ -406,12 +408,9 @@ fn accumulate_row_slice_into_combined<F: FieldCore, const D: usize>(
         let coeff_start = start - row_offset;
         let dst_start = segment.dst_start + (start - seg_start);
         let weight = *alpha * challenges[segment.challenge_idx];
-        for (src, dst) in coeffs[coeff_start..coeff_start + (end - start)]
-            .iter()
-            .zip(combined_phi[dst_start..dst_start + (end - start)].iter_mut())
-        {
-            weight.mul_accumulate_into(src, dst);
-        }
+        cfg_iter_mut!(combined_phi[dst_start..dst_start + (end - start)])
+            .zip(cfg_iter!(coeffs[coeff_start..coeff_start + (end - start)]))
+            .for_each(|(dst, src)| weight.mul_accumulate_into(src, dst));
         covered += end - start;
     }
 
@@ -487,9 +486,9 @@ fn add_combined_phi_in_place<F: FieldCore, const D: usize>(
     if dst.len() != src.len() {
         return Err(HachiError::InvalidProof);
     }
-    for (dst_elem, src_elem) in dst.iter_mut().zip(src.iter()) {
-        *dst_elem += *src_elem;
-    }
+    cfg_iter_mut!(dst)
+        .zip(cfg_iter!(src))
+        .for_each(|(dst_elem, src_elem)| *dst_elem += *src_elem);
     Ok(())
 }
 
@@ -689,14 +688,7 @@ where
     F: FieldCore + CanonicalField + FromSmallInt,
     T: Transcript<F>,
 {
-    let mut challenges = Vec::with_capacity(rows);
-    for _ in 0..rows {
-        challenges.push(challenge_ring_element_rejection_sampled(
-            transcript,
-            labels::CHALLENGE_LABRADOR_AMORTIZE,
-        )?);
-    }
-    Ok(challenges)
+    challenge_ring_elements_rejection_sampled(transcript, labels::CHALLENGE_LABRADOR_AMORTIZE, rows)
 }
 
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]

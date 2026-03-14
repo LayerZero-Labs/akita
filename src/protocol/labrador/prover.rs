@@ -2,7 +2,7 @@
 
 use crate::error::HachiError;
 use crate::protocol::labrador::comkey::LabradorComKeySeed;
-use crate::protocol::labrador::config::{logq_bits, plan_fold, trivial_plan};
+use crate::protocol::labrador::config::{jl_lifts, logq_bits, plan_fold, trivial_plan};
 use crate::protocol::labrador::fold::prove_level;
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
 use crate::protocol::labrador::setup::LabradorSetup;
@@ -147,6 +147,47 @@ where
     let mut fallback_cfg = *initial_config;
     let mut force_first_level = true;
 
+    if level_idx + 1 < LABRADOR_MAX_LEVELS {
+        let tail_plan = plan_fold::<F, D>(&witness, true).unwrap_or_else(|_| {
+            let row_lengths: Vec<usize> = witness.rows().iter().map(|r| r.len()).collect();
+            trivial_plan(
+                LabradorReductionConfig {
+                    tail: true,
+                    kappa1: 0,
+                    fu: 1,
+                    bu: logq_bits::<F>(),
+                    ..fallback_cfg
+                },
+                &row_lengths,
+            )
+        });
+        let baseline_bits = witness_size_bits::<F, D>(&witness);
+        let candidate_bits = estimated_tail_candidate_bits::<F, D>(&tail_plan);
+        if candidate_bits < baseline_bits {
+            let tail_cfg = tail_plan.config;
+            let rr: usize = tail_plan.nu.iter().sum();
+            let tail_setup = Arc::new(LabradorSetup::new(&tail_cfg, rr, tail_plan.nn, comkey_seed));
+            let mut tail_transcript = transcript.clone();
+            if let Ok(tail) = prove_level(
+                &witness,
+                &statement,
+                &tail_cfg,
+                &tail_plan,
+                &tail_setup,
+                level_idx,
+                &mut tail_transcript,
+            ) {
+                levels.push(tail.level_proof);
+                witness = tail.next_witness;
+                *transcript = tail_transcript;
+                return Ok(LabradorProof {
+                    levels,
+                    final_opening_witness: witness,
+                });
+            }
+        }
+    }
+
     while level_idx + 1 < LABRADOR_MAX_LEVELS {
         let before_size = witness_size_bits::<F, D>(&witness);
         if before_size == 0 || witness.rows().len() <= 1 {
@@ -183,6 +224,51 @@ where
         fallback_cfg = cfg;
         level_idx += 1;
         force_first_level = false;
+
+        if level_idx + 1 < LABRADOR_MAX_LEVELS {
+            let tail_plan = plan_fold::<F, D>(&witness, true).unwrap_or_else(|_| {
+                let row_lengths: Vec<usize> = witness.rows().iter().map(|r| r.len()).collect();
+                trivial_plan(
+                    LabradorReductionConfig {
+                        tail: true,
+                        kappa1: 0,
+                        fu: 1,
+                        bu: logq_bits::<F>(),
+                        ..fallback_cfg
+                    },
+                    &row_lengths,
+                )
+            });
+            let accepted_level_bits: usize =
+                levels.iter().map(level_payload_size_bits::<F, D>).sum();
+            let baseline_bits = accepted_level_bits + witness_size_bits::<F, D>(&witness);
+            let candidate_bits =
+                accepted_level_bits + estimated_tail_candidate_bits::<F, D>(&tail_plan);
+            if candidate_bits < baseline_bits {
+                let tail_cfg = tail_plan.config;
+                let rr: usize = tail_plan.nu.iter().sum();
+                let tail_setup =
+                    Arc::new(LabradorSetup::new(&tail_cfg, rr, tail_plan.nn, comkey_seed));
+                let mut tail_transcript = transcript.clone();
+                if let Ok(tail) = prove_level(
+                    &witness,
+                    &statement,
+                    &tail_cfg,
+                    &tail_plan,
+                    &tail_setup,
+                    level_idx,
+                    &mut tail_transcript,
+                ) {
+                    levels.push(tail.level_proof);
+                    witness = tail.next_witness;
+                    *transcript = tail_transcript;
+                    return Ok(LabradorProof {
+                        levels,
+                        final_opening_witness: witness,
+                    });
+                }
+            }
+        }
     }
 
     if level_idx + 1 < LABRADOR_MAX_LEVELS {
@@ -258,6 +344,18 @@ fn level_payload_size_bits<F: FieldCore + CanonicalField, const D: usize>(
     let ring_bits = ring_elems * D * logq_bits;
     let jl_bits = level.jl_projection.len() * 64;
     ring_bits + jl_bits + 64
+}
+
+fn estimated_tail_candidate_bits<F: FieldCore + CanonicalField, const D: usize>(
+    plan: &crate::protocol::labrador::config::LabradorFoldPlan,
+) -> usize {
+    let logq_bits = logq_bits::<F>();
+    let rr: usize = plan.nu.iter().sum();
+    let ring_elems = rr * plan.config.kappa * plan.config.fu
+        + rr * (rr + 1) / 2 * plan.config.fu
+        + jl_lifts::<F>()
+        + plan.config.f * plan.nn;
+    ring_elems * D * logq_bits + 256 * 64 + 64
 }
 
 #[cfg(test)]

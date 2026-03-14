@@ -33,6 +33,8 @@ use crate::{CanonicalField, FieldCore, FromSmallInt};
 type AggregatedConstraintSystem<F, const D: usize> =
     (Vec<Vec<CyclotomicRing<F, D>>>, CyclotomicRing<F, D>);
 
+const STATEMENT_ROW_CHUNK_LEN: usize = 256;
+
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
@@ -528,9 +530,52 @@ fn accumulate_scaled_row<F: FieldCore, const D: usize>(
     alpha: &CyclotomicRing<F, D>,
     scale: F,
 ) {
+    debug_assert_eq!(dst.len(), src.len());
     let scaled_alpha = alpha.scale(&scale);
-    for (dst_elem, src_elem) in dst.iter_mut().zip(src.iter()) {
-        scaled_alpha.mul_accumulate_into(src_elem, dst_elem);
+    cfg_iter_mut!(dst)
+        .zip(cfg_iter!(src))
+        .for_each(|(dst_elem, src_elem)| scaled_alpha.mul_accumulate_into(src_elem, dst_elem));
+}
+
+fn accumulate_statement_row_work<F: FieldCore, const D: usize>(
+    row: &mut [CyclotomicRing<F, D>],
+    work: &[(usize, usize)],
+    constraints: &[LabradorConstraint<F, D>],
+    alphas: &[CyclotomicRing<F, D>],
+) {
+    #[cfg(feature = "parallel")]
+    row.par_chunks_mut(STATEMENT_ROW_CHUNK_LEN)
+        .enumerate()
+        .for_each(|(chunk_idx, chunk)| {
+            let chunk_start = chunk_idx * STATEMENT_ROW_CHUNK_LEN;
+            let chunk_end = chunk_start + chunk.len();
+            for &(ci, ti) in work {
+                let term = &constraints[ci].terms[ti];
+                let term_end = term.offset + term.coefficients.len();
+                let start = chunk_start.max(term.offset);
+                let end = chunk_end.min(term_end);
+                if start >= end {
+                    continue;
+                }
+                let alpha = &alphas[ci];
+                let src = &term.coefficients[start - term.offset..end - term.offset];
+                let dst = &mut chunk[start - chunk_start..end - chunk_start];
+                for (dst_elem, src_elem) in dst.iter_mut().zip(src.iter()) {
+                    alpha.mul_accumulate_into(src_elem, dst_elem);
+                }
+            }
+        });
+
+    #[cfg(not(feature = "parallel"))]
+    for &(ci, ti) in work {
+        let term = &constraints[ci].terms[ti];
+        let alpha = &alphas[ci];
+        for (dst_elem, src_elem) in row[term.offset..term.offset + term.coefficients.len()]
+            .iter_mut()
+            .zip(term.coefficients.iter())
+        {
+            alpha.mul_accumulate_into(src_elem, dst_elem);
+        }
     }
 }
 
@@ -743,13 +788,7 @@ where
         .zip(cfg_iter!(row_lengths).copied())
         .map(|(work, len)| {
             let mut row = vec![CyclotomicRing::<F, D>::zero(); len];
-            for &(ci, ti) in &work {
-                let term = &constraints[ci].terms[ti];
-                let alpha = &alphas[ci];
-                for (j, coeff) in term.coefficients.iter().enumerate() {
-                    alpha.mul_accumulate_into(coeff, &mut row[term.offset + j]);
-                }
-            }
+            accumulate_statement_row_work(&mut row, &work, constraints, &alphas);
             row
         })
         .collect();

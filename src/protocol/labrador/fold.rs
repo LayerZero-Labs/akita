@@ -6,10 +6,10 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::protocol::commitment::utils::linear::decompose_rows_with_carry;
 use crate::protocol::labrador::aggregation::{
-    add_phi_flat_in_place, aggregate_jl_constraints_prover, aggregate_statement, dot_product,
+    add_phi_flat_in_place, aggregate_jl_constraints_prover, aggregate_statement,
 };
 use crate::protocol::labrador::config::LabradorFoldPlan;
-use crate::protocol::labrador::constraints::build_next_constraint_plan;
+use crate::protocol::labrador::constraints::{build_next_constraint_plan, pair_index};
 use crate::protocol::labrador::johnson_lindenstrauss::project;
 use crate::protocol::labrador::setup::LabradorSetup;
 use crate::protocol::labrador::transcript::{
@@ -20,7 +20,7 @@ use crate::protocol::labrador::types::{
 };
 use crate::protocol::labrador::utils::mat_vec_mul;
 use crate::protocol::transcript::labels;
-use crate::protocol::transcript::{challenge_ring_element_rejection_sampled, Transcript};
+use crate::protocol::transcript::{challenge_ring_elements_rejection_sampled, Transcript};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 use std::sync::Arc;
 
@@ -291,18 +291,35 @@ fn compute_linear_garbage<F: FieldCore + CanonicalField + FromSmallInt, const D:
             ));
         }
     }
-    let pairs: Vec<(usize, usize)> = (0..r).flat_map(|i| (i..r).map(move |j| (i, j))).collect();
-    let out: Vec<CyclotomicRing<F, D>> = cfg_iter!(pairs)
-        .map(|&(i, j)| {
-            if i == j {
-                dot_product(&phi[i], &witness.rows()[i])
-            } else {
-                let lhs = dot_product(&phi[i], &witness.rows()[j]);
-                let rhs = dot_product(&phi[j], &witness.rows()[i]);
-                lhs + rhs
+    let rows = witness.rows();
+    let nn = phi.first().map_or(0, Vec::len);
+    let pair_count = r * (r + 1) / 2;
+    const LINEAR_GARBAGE_COL_BLOCK: usize = 32;
+    let out = cfg_fold_reduce!(
+        (0..nn.div_ceil(LINEAR_GARBAGE_COL_BLOCK)),
+        || vec![CyclotomicRing::<F, D>::zero(); pair_count],
+        |mut acc, block_idx| {
+            let start = block_idx * LINEAR_GARBAGE_COL_BLOCK;
+            let end = (start + LINEAR_GARBAGE_COL_BLOCK).min(nn);
+            for col in start..end {
+                for i in 0..r {
+                    phi[i][col].mul_accumulate_into(&rows[i][col], &mut acc[pair_index(i, i, r)]);
+                    for j in i + 1..r {
+                        let pair = pair_index(i, j, r);
+                        phi[i][col].mul_accumulate_into(&rows[j][col], &mut acc[pair]);
+                        phi[j][col].mul_accumulate_into(&rows[i][col], &mut acc[pair]);
+                    }
+                }
             }
-        })
-        .collect();
+            acc
+        },
+        |mut acc, partial| {
+            for (dst, src) in acc.iter_mut().zip(partial.into_iter()) {
+                *dst += src;
+            }
+            acc
+        }
+    );
     Ok(out)
 }
 
@@ -347,14 +364,7 @@ where
     F: FieldCore + CanonicalField + FromSmallInt,
     T: Transcript<F>,
 {
-    let mut challenges = Vec::with_capacity(rows);
-    for _ in 0..rows {
-        challenges.push(challenge_ring_element_rejection_sampled(
-            transcript,
-            labels::CHALLENGE_LABRADOR_AMORTIZE,
-        )?);
-    }
-    Ok(challenges)
+    challenge_ring_elements_rejection_sampled(transcript, labels::CHALLENGE_LABRADOR_AMORTIZE, rows)
 }
 
 #[tracing::instrument(skip_all, name = "labrador::assemble_output_witness")]

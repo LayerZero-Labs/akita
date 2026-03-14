@@ -63,8 +63,9 @@ pub fn select_config_with_mode<F: FieldCore + CanonicalField, const D: usize>(
 ///
 /// Mirrors the C `init_proof` algorithm with `quadratic=0`: all input rows
 /// are placed in a single group (boundary at the last row only). The k-loop
-/// searches from k=15 down to k=1, choosing the largest k such that the
-/// commitment overhead fits within `1.1 × nn`.
+/// searches from k=15 down to k=1, keeps every secure candidate whose
+/// commitment overhead fits within `1.1 × nn`, and returns the candidate with
+/// the smallest carried witness size for the next transition.
 ///
 /// # Errors
 ///
@@ -95,8 +96,11 @@ pub fn plan_fold<F: FieldCore + CanonicalField, const D: usize>(
     let d = D as f64;
 
     // For quadratic=0: single group with boundary at last row.
-    // k-loop: try aggressive splitting (large k) first, fall back to less.
+    // k-loop: enumerate all secure candidates and keep the cheapest witness
+    // carry-forward plan instead of the first aggressive split that passes.
     let mut last_config = None;
+    let mut best_plan = None;
+    let mut best_score = usize::MAX;
 
     for k in (1..=15usize).rev() {
         let nn = total_len.div_ceil(k);
@@ -201,7 +205,13 @@ pub fn plan_fold<F: FieldCore + CanonicalField, const D: usize>(
             if kappa <= 32
                 && (u1len + u2len) as f64 * logq <= 1.1 * nn as f64 * (varz_log / 2.0 + 2.05)
             {
-                return Ok(build_plan(tc, nn, r, rr));
+                let score = transition_carry_ring_elems(nn, rr, &tc);
+                maybe_take_better_plan(
+                    &mut best_plan,
+                    &mut best_score,
+                    score,
+                    build_plan(tc, nn, r, rr),
+                );
             }
             last_config = Some(build_plan(tc, nn, r, rr));
         } else {
@@ -236,15 +246,47 @@ pub fn plan_fold<F: FieldCore + CanonicalField, const D: usize>(
             };
             let lab_m = fu * rr * kappa + (fu + fg) * (rr * rr + rr) / 2;
             if (lab_m as f64) <= 1.1 * nn as f64 {
-                return Ok(build_plan(c, nn, r, rr));
+                let score = transition_carry_ring_elems(nn, rr, &c);
+                maybe_take_better_plan(
+                    &mut best_plan,
+                    &mut best_score,
+                    score,
+                    build_plan(c, nn, r, rr),
+                );
             }
             last_config = Some(build_plan(c, nn, r, rr));
         }
     }
 
+    if let Some(plan) = best_plan {
+        return Ok(plan);
+    }
+
     last_config.ok_or_else(|| {
         HachiError::InvalidInput("failed to find secure Labrador fold parameters".to_string())
     })
+}
+
+fn transition_carry_ring_elems(nn: usize, rr: usize, config: &LabradorReductionConfig) -> usize {
+    let z_rows = config.f * nn;
+    z_rows + rr * config.kappa * config.fu + rr * (rr + 1) / 2 * config.fu
+}
+
+fn maybe_take_better_plan(
+    best_plan: &mut Option<LabradorFoldPlan>,
+    best_score: &mut usize,
+    score: usize,
+    candidate: LabradorFoldPlan,
+) {
+    if score < *best_score
+        || (score == *best_score
+            && best_plan
+                .as_ref()
+                .is_none_or(|best| candidate.nu.iter().sum::<usize>() < best.nu.iter().sum()))
+    {
+        *best_score = score;
+        *best_plan = Some(candidate);
+    }
 }
 
 fn build_plan(config: LabradorReductionConfig, nn: usize, r: usize, rr: usize) -> LabradorFoldPlan {
