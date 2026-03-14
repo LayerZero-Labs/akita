@@ -144,22 +144,19 @@ where
     let initial_witness_bits = witness_size_bits::<F, D>(&witness);
     let initial_witness_bytes =
         FlatLabradorWitness::from_typed(&witness).serialized_size(Compress::No);
-    eprintln!(
-        "  [labrador] initial witness: row_lengths={:?}, total_ring_elems={}, witness_bits={}, serialized={} bytes",
-        initial_row_lengths,
-        initial_ring_elems,
-        initial_witness_bits,
-        initial_witness_bytes,
-    );
-    eprintln!(
-        "  [labrador] initial cfg arg: f={}, b={}, fu={}, bu={}, kappa={}, kappa1={}, tail={}",
-        initial_config.f,
-        initial_config.b,
-        initial_config.fu,
-        initial_config.bu,
-        initial_config.kappa,
-        initial_config.kappa1,
-        initial_config.tail,
+    tracing::debug!(
+        ?initial_row_lengths,
+        total_ring_elems = initial_ring_elems,
+        witness_bits = initial_witness_bits,
+        serialized_bytes = initial_witness_bytes,
+        f = initial_config.f,
+        b = initial_config.b,
+        fu = initial_config.fu,
+        bu = initial_config.bu,
+        kappa = initial_config.kappa,
+        kappa1 = initial_config.kappa1,
+        tail = initial_config.tail,
+        "labrador initial witness"
     );
 
     while level_idx + 1 < LABRADOR_MAX_LEVELS {
@@ -190,23 +187,23 @@ where
         let level_bits = level_payload_size_bits::<F, D>(&fold.level_proof);
         let candidate_bits = level_bits + next_witness_bits;
         let rr: usize = plan.nu.iter().sum();
-        eprintln!(
-            "  [labrador] non-tail candidate: current_bits={}, level_bits={}, next_witness_bits={}, candidate_bits={}, accept={}, nn={}, rr={}, nu={:?}, cfg=(f={}, b={}, fu={}, bu={}, kappa={}, kappa1={}, tail={})",
-            before_size,
+        tracing::debug!(
+            current_bits = before_size,
             level_bits,
             next_witness_bits,
             candidate_bits,
-            candidate_bits < before_size,
-            plan.nn,
+            accept = candidate_bits < before_size,
+            nn = plan.nn,
             rr,
-            plan.nu,
-            cfg.f,
-            cfg.b,
-            cfg.fu,
-            cfg.bu,
-            cfg.kappa,
-            cfg.kappa1,
-            cfg.tail,
+            nu = ?plan.nu,
+            f = cfg.f,
+            b = cfg.b,
+            fu = cfg.fu,
+            bu = cfg.bu,
+            kappa = cfg.kappa,
+            kappa1 = cfg.kappa1,
+            tail = cfg.tail,
+            "labrador non-tail candidate"
         );
         if candidate_bits >= before_size {
             break;
@@ -252,23 +249,23 @@ where
             let next_witness_bits = witness_size_bits::<F, D>(&tail.next_witness);
             let level_bits = level_payload_size_bits::<F, D>(&tail.level_proof);
             let candidate_bits = level_bits + next_witness_bits;
-            eprintln!(
-                "  [labrador] final tail compare: baseline_bits={}, level_bits={}, next_witness_bits={}, candidate_bits={}, accept={}, nn={}, rr={}, nu={:?}, cfg=(f={}, b={}, fu={}, bu={}, kappa={}, kappa1={}, tail={})",
+            tracing::debug!(
                 baseline_bits,
                 level_bits,
                 next_witness_bits,
                 candidate_bits,
-                candidate_bits < baseline_bits,
-                tail_plan.nn,
+                accept = candidate_bits < baseline_bits,
+                nn = tail_plan.nn,
                 rr,
-                tail_plan.nu,
-                tail_cfg.f,
-                tail_cfg.b,
-                tail_cfg.fu,
-                tail_cfg.bu,
-                tail_cfg.kappa,
-                tail_cfg.kappa1,
-                tail_cfg.tail,
+                nu = ?tail_plan.nu,
+                f = tail_cfg.f,
+                b = tail_cfg.b,
+                fu = tail_cfg.fu,
+                bu = tail_cfg.bu,
+                kappa = tail_cfg.kappa,
+                kappa1 = tail_cfg.kappa1,
+                tail = tail_cfg.tail,
+                "labrador final tail compare"
             );
             if candidate_bits < baseline_bits {
                 levels.push(tail.level_proof);

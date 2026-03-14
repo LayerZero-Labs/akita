@@ -6,7 +6,7 @@ use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::utils::linear::{
-    decompose_rows_with_carry, mat_vec_mul_crt_ntt_i8_many, try_centered_i8_cache_from_ring_coeffs,
+    decompose_rows_with_carry, mat_vec_mul_crt_ntt_i8_many,
 };
 use crate::protocol::labrador::aggregation::{
     add_phi_flat_in_place, aggregate_jl_constraints_prover, aggregate_statement,
@@ -21,7 +21,7 @@ use crate::protocol::labrador::transcript::{
 use crate::protocol::labrador::types::{
     LabradorLevelProof, LabradorReductionConfig, LabradorStatement, LabradorWitness,
 };
-use crate::protocol::labrador::utils::mat_vec_mul;
+use crate::protocol::labrador::utils::{mat_vec_mul, try_centered_i8_rows};
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::{challenge_sparse_ring_elements_rejection_sampled, Transcript};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
@@ -274,14 +274,6 @@ fn split_decomposed_rows<F: FieldCore, const D: usize>(
         })
         .collect();
     Ok(rows)
-}
-
-fn try_centered_i8_rows<F: CanonicalField, const D: usize>(
-    rows: &[Vec<CyclotomicRing<F, D>>],
-) -> Option<Vec<Vec<[i8; D]>>> {
-    rows.iter()
-        .map(|row| try_centered_i8_cache_from_ring_coeffs(row))
-        .collect()
 }
 
 #[tracing::instrument(skip_all, name = "labrador::compute_linear_garbage")]

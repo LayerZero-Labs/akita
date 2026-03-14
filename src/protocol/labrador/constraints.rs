@@ -7,6 +7,7 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::protocol::labrador::setup::LabradorSetupMatrices;
 use crate::protocol::labrador::types::{LabradorReducedConstraintPlan, LabradorReductionConfig};
+use crate::protocol::labrador::utils::pow2_field;
 use crate::{cfg_into_iter, CanonicalField, FieldCore, FromSmallInt};
 use std::ops::Range;
 use std::sync::Arc;
@@ -481,15 +482,6 @@ fn combine_phi<F: FieldCore + CanonicalField, const D: usize>(
             acc
         })
         .collect()
-}
-
-fn pow2_field<F: FieldCore + FromSmallInt>(exp: usize) -> F {
-    let two = F::from_u64(2);
-    let mut acc = F::one();
-    for _ in 0..exp {
-        acc = acc * two;
-    }
-    acc
 }
 
 fn constant_poly<F: FieldCore, const D: usize>(value: F) -> CyclotomicRing<F, D> {

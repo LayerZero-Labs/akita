@@ -120,26 +120,7 @@ fn accumulate_pointwise_product_into<W: PrimeWidth, const K: usize, const D: usi
     }
 }
 
-#[cfg(test)]
 fn precompute_dense_mat_ntt_with_params<
-    F: FieldCore + CanonicalField,
-    W: PrimeWidth,
-    const K: usize,
-    const D: usize,
->(
-    mat: &[Vec<CyclotomicRing<F, D>>],
-    params: &CrtNttParamSet<W, K, D>,
-) -> Vec<Vec<CyclotomicCrtNtt<W, K, D>>> {
-    mat.iter()
-        .map(|row| {
-            row.iter()
-                .map(|a| CyclotomicCrtNtt::from_ring_with_params(a, params))
-                .collect()
-        })
-        .collect()
-}
-
-fn precompute_dense_mat_ntt_runtime_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
     const K: usize,
@@ -167,7 +148,7 @@ fn mat_vec_mul_dense_i8_many_with_params<
     vecs: &[Vec<[i8; D]>],
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    let ntt_mat = precompute_dense_mat_ntt_runtime_with_params(mat, params);
+    let ntt_mat = precompute_dense_mat_ntt_with_params(mat, params);
     let blocks: Vec<&[[i8; D]]> = vecs.iter().map(Vec::as_slice).collect();
     mat_vec_mul_digits_i8_with_params(&ntt_mat, &blocks, params)
 }

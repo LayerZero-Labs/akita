@@ -5,9 +5,7 @@ use crate::algebra::SparseChallenge;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::protocol::commitment::utils::linear::{
-    mat_vec_mul_crt_ntt_i8_many, try_centered_i8_cache_from_ring_coeffs,
-};
+use crate::protocol::commitment::utils::linear::mat_vec_mul_crt_ntt_i8_many;
 use crate::protocol::labrador::aggregation::{
     aggregate_jl_constraints_verifier, aggregate_statement,
 };
@@ -25,7 +23,7 @@ use crate::protocol::labrador::types::{
     LabradorLevelProof, LabradorProof, LabradorReducedConstraintPlan, LabradorStatement,
     LabradorWitness,
 };
-use crate::protocol::labrador::utils::mat_vec_mul;
+use crate::protocol::labrador::utils::{mat_vec_mul, pow2_field, try_centered_i8_rows};
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::{
     challenge_ring_element, challenge_sparse_ring_elements_rejection_sampled, Transcript,
@@ -255,14 +253,6 @@ where
         reduced_constraints: Some(Box::new(reduced_constraints)),
         beta_sq: level.norm_sq,
     })
-}
-
-fn try_centered_i8_rows<F: CanonicalField, const D: usize>(
-    rows: &[Vec<CyclotomicRing<F, D>>],
-) -> Option<Vec<Vec<[i8; D]>>> {
-    rows.iter()
-        .map(|row| try_centered_i8_cache_from_ring_coeffs(row))
-        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -503,15 +493,6 @@ fn add_combined_phi_in_place<F: FieldCore, const D: usize>(
         .zip(cfg_iter!(src))
         .for_each(|(dst_elem, src_elem)| *dst_elem += *src_elem);
     Ok(())
-}
-
-fn pow2_field<F: FieldCore + FromSmallInt>(exp: usize) -> F {
-    let two = F::from_u64(2);
-    let mut acc = F::one();
-    for _ in 0..exp {
-        acc = acc * two;
-    }
-    acc
 }
 
 #[tracing::instrument(skip_all, name = "labrador::finalize_reduced_statement_aggregation")]

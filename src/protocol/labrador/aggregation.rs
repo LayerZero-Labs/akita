@@ -29,6 +29,7 @@ use crate::protocol::labrador::johnson_lindenstrauss::{
 use crate::protocol::labrador::types::{
     LabradorReducedConstraintPlan, LabradorStatement, LabradorWitness,
 };
+use crate::protocol::labrador::utils::pow2_field;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::{challenge_ring_element, Transcript};
 use crate::{CanonicalField, FieldCore, FromSmallInt};
@@ -455,15 +456,6 @@ where
 // ---------------------------------------------------------------------------
 // Statement constraint aggregation (shared by prover and verifier)
 // ---------------------------------------------------------------------------
-
-fn pow2_field<F: FieldCore + FromSmallInt>(exp: usize) -> F {
-    let two = F::from_u64(2);
-    let mut acc = F::one();
-    for _ in 0..exp {
-        acc = acc * two;
-    }
-    acc
-}
 
 #[inline]
 fn mul_accumulate_term_coeff<F: FieldCore + CanonicalField, const D: usize>(
