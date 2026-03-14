@@ -6,29 +6,22 @@ use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
 use crate::protocol::labrador::types::LabradorReductionConfig;
 use crate::{CanonicalField, FieldCore, FieldSampling};
+use std::sync::Arc;
 
-/// Pre-derived commitment-key matrices for one Labrador level.
+/// Matrix-only Labrador setup shared by prover and verifier recursion.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LabradorSetup<F: FieldCore, const D: usize> {
+pub struct LabradorSetupMatrices<F: FieldCore, const D: usize> {
     /// Inner commitment matrix A.
     pub a_mat: Vec<Vec<CyclotomicRing<F, D>>>,
-    /// Cached CRT+NTT representation of A for NTT-based witness commitment.
-    pub a_ntt: NttSlotCache<D>,
     /// Outer commitment matrix B. Not needed for the last fold proof.
     pub b_mat: Vec<Vec<CyclotomicRing<F, D>>>,
-    /// Cached CRT+NTT representation of B for NTT-based outer commitment.
-    pub b_ntt: NttSlotCache<D>,
     /// Linear-garbage commitment matrix D. Not needed for the last fold proof.
     pub d_mat: Vec<Vec<CyclotomicRing<F, D>>>,
 }
 
-impl<F: FieldCore + CanonicalField + FieldSampling, const D: usize> LabradorSetup<F, D> {
-    /// Derive all commitment-key matrices for a single Labrador level.
-    ///
-    /// # Panics
-    ///
-    /// Panics if deriving the cached CRT+NTT slots for matrix `A` or `B` fails.
-    #[tracing::instrument(skip_all, name = "labrador::setup")]
+impl<F: FieldCore + CanonicalField + FieldSampling, const D: usize> LabradorSetupMatrices<F, D> {
+    /// Derive the commitment-key matrices for a single Labrador level.
+    #[tracing::instrument(skip_all, name = "labrador::setup_matrices")]
     pub fn new(
         config: &LabradorReductionConfig,
         num_witness_rows: usize,
@@ -41,9 +34,6 @@ impl<F: FieldCore + CanonicalField + FieldSampling, const D: usize> LabradorSetu
             comkey_seed,
             b"labrador/comkey/A",
         );
-        let a_flat = FlatMatrix::from_ring_matrix(&a_mat);
-        let a_ntt =
-            build_ntt_slot(a_flat.view::<D>()).expect("failed to build LabradorSetup A NTT slot");
 
         let (b_mat, d_mat) = if config.kappa1 > 0 && !config.tail {
             let t_hat_len = num_witness_rows * config.kappa * config.fu;
@@ -65,17 +55,63 @@ impl<F: FieldCore + CanonicalField + FieldSampling, const D: usize> LabradorSetu
         } else {
             (Vec::new(), Vec::new())
         };
-        let b_flat = FlatMatrix::from_ring_matrix(&b_mat);
+
+        Self {
+            a_mat,
+            b_mat,
+            d_mat,
+        }
+    }
+}
+
+/// Pre-derived commitment-key matrices for one Labrador level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LabradorSetup<F: FieldCore, const D: usize> {
+    /// Shared matrix payload for prover and verifier-side recursion.
+    pub matrices: Arc<LabradorSetupMatrices<F, D>>,
+    /// Cached CRT+NTT representation of A for NTT-based witness commitment.
+    pub a_ntt: NttSlotCache<D>,
+    /// Cached CRT+NTT representation of B for NTT-based outer commitment.
+    pub b_ntt: NttSlotCache<D>,
+}
+
+impl<F: FieldCore + CanonicalField + FieldSampling, const D: usize> LabradorSetup<F, D> {
+    /// Derive all commitment-key matrices for a single Labrador level.
+    ///
+    /// # Panics
+    ///
+    /// Panics if deriving the cached CRT+NTT slots for matrix `A` or `B` fails.
+    #[tracing::instrument(skip_all, name = "labrador::setup")]
+    pub fn new(
+        config: &LabradorReductionConfig,
+        num_witness_rows: usize,
+        max_witness_len: usize,
+        comkey_seed: &LabradorComKeySeed,
+    ) -> Self {
+        let matrices = Arc::new(LabradorSetupMatrices::new(
+            config,
+            num_witness_rows,
+            max_witness_len,
+            comkey_seed,
+        ));
+        let a_flat = FlatMatrix::from_ring_matrix(&matrices.a_mat);
+        let a_ntt =
+            build_ntt_slot(a_flat.view::<D>()).expect("failed to build LabradorSetup A NTT slot");
+
+        let b_flat = FlatMatrix::from_ring_matrix(&matrices.b_mat);
         let b_ntt =
             build_ntt_slot(b_flat.view::<D>()).expect("failed to build LabradorSetup B NTT slot");
 
         Self {
-            a_mat,
+            matrices,
             a_ntt,
-            b_mat,
             b_ntt,
-            d_mat,
         }
+    }
+
+    /// Return the matrix-only setup used by verifier-side recursion.
+    pub fn verifier_setup(&self) -> Arc<LabradorSetupMatrices<F, D>> {
+        Arc::clone(&self.matrices)
     }
 }
 
@@ -117,16 +153,24 @@ mod tests {
         let cfg = standard_config();
         let setup = LabradorSetup::<F, D>::new(&cfg, NUM_ROWS, MAX_LEN, &SEED);
 
-        assert_eq!(setup.a_mat.len(), cfg.kappa);
-        assert!(setup.a_mat.iter().all(|row| row.len() == MAX_LEN));
+        assert_eq!(setup.matrices.a_mat.len(), cfg.kappa);
+        assert!(setup.matrices.a_mat.iter().all(|row| row.len() == MAX_LEN));
 
         let t_hat_len = NUM_ROWS * cfg.kappa * cfg.fu;
-        assert_eq!(setup.b_mat.len(), cfg.kappa1);
-        assert!(setup.b_mat.iter().all(|row| row.len() == t_hat_len));
+        assert_eq!(setup.matrices.b_mat.len(), cfg.kappa1);
+        assert!(setup
+            .matrices
+            .b_mat
+            .iter()
+            .all(|row| row.len() == t_hat_len));
 
         let h_hat_len = NUM_ROWS * (NUM_ROWS + 1) / 2 * cfg.fu;
-        assert_eq!(setup.d_mat.len(), cfg.kappa1);
-        assert!(setup.d_mat.iter().all(|row| row.len() == h_hat_len));
+        assert_eq!(setup.matrices.d_mat.len(), cfg.kappa1);
+        assert!(setup
+            .matrices
+            .d_mat
+            .iter()
+            .all(|row| row.len() == h_hat_len));
     }
 
     #[test]
@@ -134,10 +178,10 @@ mod tests {
         let cfg = tail_config();
         let setup = LabradorSetup::<F, D>::new(&cfg, NUM_ROWS, MAX_LEN, &SEED);
 
-        assert_eq!(setup.a_mat.len(), cfg.kappa);
-        assert!(setup.a_mat.iter().all(|row| row.len() == MAX_LEN));
+        assert_eq!(setup.matrices.a_mat.len(), cfg.kappa);
+        assert!(setup.matrices.a_mat.iter().all(|row| row.len() == MAX_LEN));
 
-        assert!(setup.b_mat.is_empty());
-        assert!(setup.d_mat.is_empty());
+        assert!(setup.matrices.b_mat.is_empty());
+        assert!(setup.matrices.d_mat.is_empty());
     }
 }

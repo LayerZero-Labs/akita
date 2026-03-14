@@ -4,7 +4,7 @@ use crate::algebra::ring::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::protocol::labrador::setup::LabradorSetup;
+use crate::protocol::labrador::setup::LabradorSetupMatrices;
 use crate::protocol::labrador::types::{LabradorReducedConstraintPlan, LabradorReductionConfig};
 use crate::{cfg_into_iter, CanonicalField, FieldCore, FromSmallInt};
 use std::ops::Range;
@@ -149,7 +149,7 @@ fn build_constraints_from_prepared<F, const D: usize>(
     b_total: &CyclotomicRing<F, D>,
     u1: &[CyclotomicRing<F, D>],
     u2: &[CyclotomicRing<F, D>],
-    setup: &LabradorSetup<F, D>,
+    setup: &LabradorSetupMatrices<F, D>,
 ) -> Result<Vec<LabradorConstraint<F, D>>, HachiError>
 where
     F: FieldCore + CanonicalField + FromSmallInt,
@@ -200,7 +200,7 @@ pub(crate) fn build_next_constraints<F, const D: usize>(
     config: &LabradorReductionConfig,
     u1: &[CyclotomicRing<F, D>],
     u2: &[CyclotomicRing<F, D>],
-    setup: &LabradorSetup<F, D>,
+    setup: &LabradorSetupMatrices<F, D>,
 ) -> Result<Vec<LabradorConstraint<F, D>>, HachiError>
 where
     F: FieldCore + CanonicalField + FromSmallInt,
@@ -229,7 +229,7 @@ pub(crate) fn build_next_constraint_plan<F, const D: usize>(
     row_lengths: &[usize],
     max_len: usize,
     config: &LabradorReductionConfig,
-    setup: Arc<LabradorSetup<F, D>>,
+    setup: Arc<LabradorSetupMatrices<F, D>>,
 ) -> Result<LabradorReducedConstraintPlan<F, D>, HachiError>
 where
     F: FieldCore + CanonicalField + FromSmallInt,
@@ -285,7 +285,7 @@ where
 /// `t_hat` prefix of the auxiliary witness row.
 fn build_outer_commitment_constraints<F: FieldCore, const D: usize>(
     layout: NextWitnessLayout,
-    setup: &LabradorSetup<F, D>,
+    setup: &LabradorSetupMatrices<F, D>,
     u1: &[CyclotomicRing<F, D>],
 ) -> Vec<LabradorConstraint<F, D>> {
     setup
@@ -313,7 +313,7 @@ fn build_outer_commitment_constraints<F: FieldCore, const D: usize>(
 /// reading the `h_hat` suffix of the auxiliary witness row.
 fn build_linear_garbage_commitment_constraints<F: FieldCore, const D: usize>(
     layout: NextWitnessLayout,
-    setup: &LabradorSetup<F, D>,
+    setup: &LabradorSetupMatrices<F, D>,
     u2: &[CyclotomicRing<F, D>],
 ) -> Vec<LabradorConstraint<F, D>> {
     setup
@@ -346,7 +346,7 @@ fn build_amortized_opening_constraints<F: FieldCore, const D: usize>(
     config: &LabradorReductionConfig,
     pow_b: &[F],
     pow_bu: &[F],
-    setup: &LabradorSetup<F, D>,
+    setup: &LabradorSetupMatrices<F, D>,
 ) -> Vec<LabradorConstraint<F, D>> {
     (0..config.kappa)
         .map(|output_idx| {

@@ -4,7 +4,7 @@ use crate::algebra::ring::CyclotomicRing;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::labrador::constraints::LabradorConstraint;
-use crate::protocol::labrador::setup::LabradorSetup;
+use crate::protocol::labrador::setup::LabradorSetupMatrices;
 use crate::{cfg_fold_reduce, CanonicalField, FieldCore};
 use std::sync::Arc;
 
@@ -83,7 +83,7 @@ pub struct LabradorReducedConstraintPlan<F: FieldCore, const D: usize> {
     /// Aggregated right-hand side for the diagonal relation.
     pub b_total: CyclotomicRing<F, D>,
     /// Commitment matrices needed to replay the reduced statement.
-    pub setup: Arc<LabradorSetup<F, D>>,
+    pub setup: Arc<LabradorSetupMatrices<F, D>>,
 }
 
 /// Public statement reduced to Labrador recursion.

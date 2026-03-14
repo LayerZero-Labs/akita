@@ -7,21 +7,23 @@ use crate::protocol::labrador::aggregation::{
 };
 use crate::protocol::labrador::comkey::LabradorComKeySeed;
 use crate::protocol::labrador::constraints::{
-    build_next_constraint_plan, materialize_reduced_constraints, pair_index, LabradorConstraint,
-    NextWitnessLayout,
+    materialize_reduced_constraints, pair_index, LabradorConstraint, NextWitnessLayout,
 };
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
 use crate::protocol::labrador::johnson_lindenstrauss::LabradorJlMatrix;
-use crate::protocol::labrador::setup::LabradorSetup;
+use crate::protocol::labrador::setup::LabradorSetupMatrices;
 use crate::protocol::labrador::transcript::{
     absorb_labrador_jl_projection, absorb_labrador_level_context, LabradorLevelTranscriptContext,
 };
 use crate::protocol::labrador::types::{
-    LabradorLevelProof, LabradorProof, LabradorStatement, LabradorWitness,
+    LabradorLevelProof, LabradorProof, LabradorReducedConstraintPlan, LabradorStatement,
+    LabradorWitness,
 };
 use crate::protocol::labrador::utils::mat_vec_mul;
 use crate::protocol::transcript::labels;
-use crate::protocol::transcript::{challenge_ring_element_rejection_sampled, Transcript};
+use crate::protocol::transcript::{
+    challenge_ring_element, challenge_ring_element_rejection_sampled, Transcript,
+};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 use std::sync::Arc;
 
@@ -170,29 +172,74 @@ where
         &level.bb,
         transcript,
     )?;
-    let (phi_stmt_orig, b_stmt) =
-        aggregate_statement(statement, &level.input_row_lengths, transcript)?;
-    let phi_stmt =
-        reshape_phi_verifier::<F, D>(&phi_stmt_orig, &level.input_row_lengths, &level.nu, nn)?;
-
-    let mut phi_total = phi_stmt;
-    add_phi_flat_in_place(&mut phi_total, &phi_jl_flat)?;
-    let b_total = b_stmt + b_jl;
+    let explicit_aggregation = if statement.reduced_constraints.is_none() {
+        Some(aggregate_statement(
+            statement,
+            &level.input_row_lengths,
+            transcript,
+        )?)
+    } else {
+        None
+    };
+    let reduced_aggregation = statement
+        .reduced_constraints
+        .as_deref()
+        .map(|plan| prepare_reduced_statement_aggregation(statement, plan, transcript))
+        .transpose()?;
 
     transcript.append_serde(labels::ABSORB_LABRADOR_U2, &level.u2);
     let challenges = replay_amortize_challenges(transcript, rr)?;
+    let mut combined_phi = if let Some((phi_stmt_orig, _b_stmt)) = explicit_aggregation.as_ref() {
+        let phi_stmt =
+            reshape_phi_verifier::<F, D>(phi_stmt_orig, &level.input_row_lengths, &level.nu, nn)?;
+        let mut phi_total = phi_stmt;
+        add_phi_flat_in_place(&mut phi_total, &phi_jl_flat)?;
+        combine_virtual_rows(&phi_total, &challenges, nn)?
+    } else {
+        let plan = statement
+            .reduced_constraints
+            .as_deref()
+            .ok_or(HachiError::InvalidProof)?;
+        let aggregation = reduced_aggregation
+            .as_ref()
+            .ok_or(HachiError::InvalidProof)?;
+        let mut combined_phi = finalize_reduced_statement_aggregation(
+            plan,
+            aggregation,
+            &level.input_row_lengths,
+            &level.nu,
+            nn,
+            &challenges,
+        )?;
+        let combined_phi_jl = combine_flat_rows(&phi_jl_flat, &challenges, nn)?;
+        add_combined_phi_in_place(&mut combined_phi, &combined_phi_jl)?;
+        combined_phi
+    };
+    let b_stmt = if let Some((_, b_stmt)) = explicit_aggregation {
+        b_stmt
+    } else {
+        reduced_aggregation
+            .as_ref()
+            .ok_or(HachiError::InvalidProof)?
+            .b_total
+    };
+    let b_total = b_stmt + b_jl;
 
-    let setup = Arc::new(LabradorSetup::new(&level.config, rr, nn, comkey_seed));
-    let reduced_constraints = build_next_constraint_plan(
-        &phi_total,
-        &b_total,
-        &challenges,
-        &virt_row_lengths,
-        nn,
+    let setup = Arc::new(LabradorSetupMatrices::new(
         &level.config,
-        Arc::clone(&setup),
-    )
-    .map_err(|_| HachiError::InvalidProof)?;
+        rr,
+        nn,
+        comkey_seed,
+    ));
+    let reduced_constraints = LabradorReducedConstraintPlan {
+        row_count: virt_row_lengths.len(),
+        max_len: nn,
+        config: level.config,
+        challenges: challenges.clone(),
+        combined_phi: std::mem::take(&mut combined_phi),
+        b_total,
+        setup,
+    };
 
     Ok(LabradorStatement {
         u1: level.u1.clone(),
@@ -202,6 +249,395 @@ where
         reduced_constraints: Some(Box::new(reduced_constraints)),
         beta_sq: level.norm_sq,
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReshapeCombineSegment {
+    src_start: usize,
+    dst_start: usize,
+    len: usize,
+    challenge_idx: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReducedStatementAggregationReplay<F: FieldCore, const D: usize> {
+    b_alphas: Vec<CyclotomicRing<F, D>>,
+    d_alphas: Vec<CyclotomicRing<F, D>>,
+    a_alphas: Vec<CyclotomicRing<F, D>>,
+    alpha_lg: CyclotomicRing<F, D>,
+    alpha_diag: CyclotomicRing<F, D>,
+    b_total: CyclotomicRing<F, D>,
+}
+
+#[tracing::instrument(skip_all, name = "labrador::prepare_reduced_statement_aggregation")]
+fn prepare_reduced_statement_aggregation<F, T, const D: usize>(
+    statement: &LabradorStatement<F, D>,
+    plan: &LabradorReducedConstraintPlan<F, D>,
+    transcript: &mut T,
+) -> Result<ReducedStatementAggregationReplay<F, D>, HachiError>
+where
+    F: FieldCore + CanonicalField + FromSmallInt,
+    T: Transcript<F>,
+{
+    if plan.setup.a_mat.len() != plan.config.kappa
+        || plan.setup.b_mat.len() != statement.u1.len()
+        || plan.setup.d_mat.len() != statement.u2.len()
+    {
+        return Err(HachiError::InvalidProof);
+    }
+
+    let mut b_total = CyclotomicRing::<F, D>::zero();
+
+    let b_alphas: Vec<CyclotomicRing<F, D>> = statement
+        .u1
+        .iter()
+        .map(|target| {
+            let alpha = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
+            b_total += alpha * *target;
+            alpha
+        })
+        .collect();
+    let d_alphas: Vec<CyclotomicRing<F, D>> = statement
+        .u2
+        .iter()
+        .map(|target| {
+            let alpha = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
+            b_total += alpha * *target;
+            alpha
+        })
+        .collect();
+    let a_alphas = (0..plan.config.kappa)
+        .map(|_| challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION))
+        .collect();
+    let alpha_lg = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
+    let alpha_diag = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
+    b_total += alpha_diag * plan.b_total;
+
+    Ok(ReducedStatementAggregationReplay {
+        b_alphas,
+        d_alphas,
+        a_alphas,
+        alpha_lg,
+        alpha_diag,
+        b_total,
+    })
+}
+
+fn build_reshape_combine_plan<F: FieldCore, const D: usize>(
+    row_lengths: &[usize],
+    nu: &[usize],
+    nn: usize,
+    challenges: &[CyclotomicRing<F, D>],
+) -> Result<Vec<Vec<ReshapeCombineSegment>>, HachiError> {
+    let rr = validate_reshape_metadata(row_lengths, nu, nn)?;
+    if challenges.len() != rr {
+        return Err(HachiError::InvalidProof);
+    }
+
+    let mut row_segments = vec![Vec::new(); row_lengths.len()];
+    let mut group_rows = Vec::new();
+    let mut challenge_cursor = 0usize;
+
+    for (row_idx, &row_len) in row_lengths.iter().enumerate() {
+        group_rows.push((row_idx, row_len));
+        let splits = nu[row_idx];
+        if splits == 0 {
+            continue;
+        }
+
+        let group_len: usize = group_rows.iter().map(|(_, len)| *len).sum();
+        if group_len > splits * nn {
+            return Err(HachiError::InvalidProof);
+        }
+
+        let mut group_pos = 0usize;
+        for &(group_row_idx, len) in &group_rows {
+            let mut row_offset = 0usize;
+            while row_offset < len {
+                let challenge_idx = challenge_cursor + group_pos / nn;
+                let dst_start = group_pos % nn;
+                let take = (nn - dst_start).min(len - row_offset);
+                row_segments[group_row_idx].push(ReshapeCombineSegment {
+                    src_start: row_offset,
+                    dst_start,
+                    len: take,
+                    challenge_idx,
+                });
+                row_offset += take;
+                group_pos += take;
+            }
+        }
+
+        challenge_cursor += splits;
+        group_rows.clear();
+    }
+
+    if !group_rows.is_empty() || challenge_cursor != rr {
+        return Err(HachiError::InvalidProof);
+    }
+
+    Ok(row_segments)
+}
+
+fn accumulate_row_slice_into_combined<F: FieldCore, const D: usize>(
+    combined_phi: &mut [CyclotomicRing<F, D>],
+    segments: &[ReshapeCombineSegment],
+    challenges: &[CyclotomicRing<F, D>],
+    row_offset: usize,
+    coeffs: &[CyclotomicRing<F, D>],
+    alpha: &CyclotomicRing<F, D>,
+) -> Result<(), HachiError> {
+    let row_end = row_offset
+        .checked_add(coeffs.len())
+        .ok_or(HachiError::InvalidProof)?;
+    let mut covered = 0usize;
+
+    for segment in segments {
+        let seg_start = segment.src_start;
+        let seg_end = seg_start + segment.len;
+        let start = row_offset.max(seg_start);
+        let end = row_end.min(seg_end);
+        if start >= end {
+            continue;
+        }
+
+        let coeff_start = start - row_offset;
+        let dst_start = segment.dst_start + (start - seg_start);
+        let weight = *alpha * challenges[segment.challenge_idx];
+        for (src, dst) in coeffs[coeff_start..coeff_start + (end - start)]
+            .iter()
+            .zip(combined_phi[dst_start..dst_start + (end - start)].iter_mut())
+        {
+            weight.mul_accumulate_into(src, dst);
+        }
+        covered += end - start;
+    }
+
+    if covered != coeffs.len() {
+        return Err(HachiError::InvalidProof);
+    }
+    Ok(())
+}
+
+fn accumulate_point_into_combined<F: FieldCore, const D: usize>(
+    combined_phi: &mut [CyclotomicRing<F, D>],
+    segments: &[ReshapeCombineSegment],
+    challenges: &[CyclotomicRing<F, D>],
+    position: usize,
+    value: &CyclotomicRing<F, D>,
+) -> Result<(), HachiError> {
+    for segment in segments {
+        let seg_end = segment.src_start + segment.len;
+        if !(segment.src_start..seg_end).contains(&position) {
+            continue;
+        }
+
+        let dst_idx = segment.dst_start + (position - segment.src_start);
+        challenges[segment.challenge_idx].mul_accumulate_into(value, &mut combined_phi[dst_idx]);
+        return Ok(());
+    }
+    Err(HachiError::InvalidProof)
+}
+
+fn combine_virtual_rows<F: FieldCore, const D: usize>(
+    rows: &[Vec<CyclotomicRing<F, D>>],
+    challenges: &[CyclotomicRing<F, D>],
+    nn: usize,
+) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
+    if rows.len() != challenges.len() {
+        return Err(HachiError::InvalidProof);
+    }
+
+    let mut combined = vec![CyclotomicRing::<F, D>::zero(); nn];
+    for (row, challenge) in rows.iter().zip(challenges.iter()) {
+        if row.len() != nn {
+            return Err(HachiError::InvalidProof);
+        }
+        for (dst, src) in combined.iter_mut().zip(row.iter()) {
+            challenge.mul_accumulate_into(src, dst);
+        }
+    }
+    Ok(combined)
+}
+
+fn combine_flat_rows<F: FieldCore, const D: usize>(
+    rows_flat: &[CyclotomicRing<F, D>],
+    challenges: &[CyclotomicRing<F, D>],
+    nn: usize,
+) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
+    if rows_flat.len() != challenges.len() * nn {
+        return Err(HachiError::InvalidProof);
+    }
+
+    let mut combined = vec![CyclotomicRing::<F, D>::zero(); nn];
+    for (row, challenge) in rows_flat.chunks(nn).zip(challenges.iter()) {
+        for (dst, src) in combined.iter_mut().zip(row.iter()) {
+            challenge.mul_accumulate_into(src, dst);
+        }
+    }
+    Ok(combined)
+}
+
+fn add_combined_phi_in_place<F: FieldCore, const D: usize>(
+    dst: &mut [CyclotomicRing<F, D>],
+    src: &[CyclotomicRing<F, D>],
+) -> Result<(), HachiError> {
+    if dst.len() != src.len() {
+        return Err(HachiError::InvalidProof);
+    }
+    for (dst_elem, src_elem) in dst.iter_mut().zip(src.iter()) {
+        *dst_elem += *src_elem;
+    }
+    Ok(())
+}
+
+fn pow2_field<F: FieldCore + FromSmallInt>(exp: usize) -> F {
+    let two = F::from_u64(2);
+    let mut acc = F::one();
+    for _ in 0..exp {
+        acc = acc * two;
+    }
+    acc
+}
+
+#[tracing::instrument(skip_all, name = "labrador::finalize_reduced_statement_aggregation")]
+fn finalize_reduced_statement_aggregation<F, const D: usize>(
+    plan: &LabradorReducedConstraintPlan<F, D>,
+    aggregation: &ReducedStatementAggregationReplay<F, D>,
+    row_lengths: &[usize],
+    nu: &[usize],
+    nn: usize,
+    challenges: &[CyclotomicRing<F, D>],
+) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
+where
+    F: FieldCore + CanonicalField + FromSmallInt,
+{
+    let layout = NextWitnessLayout::new(plan.row_count, &plan.config);
+    if row_lengths.len() != layout.num_rows() {
+        return Err(HachiError::InvalidProof);
+    }
+    if row_lengths
+        .iter()
+        .take(plan.config.f)
+        .any(|&len| len != plan.max_len)
+        || row_lengths[layout.aux_row] != layout.aux_row_len()
+    {
+        return Err(HachiError::InvalidProof);
+    }
+
+    let row_segments = build_reshape_combine_plan(row_lengths, nu, nn, challenges)?;
+    let aux_segments = row_segments
+        .get(layout.aux_row)
+        .ok_or(HachiError::InvalidProof)?;
+    let mut combined_phi = vec![CyclotomicRing::<F, D>::zero(); nn];
+    let pow_b: Vec<F> = (0..plan.config.f)
+        .map(|idx| pow2_field::<F>(plan.config.b * idx))
+        .collect();
+    let pow_bu: Vec<F> = (0..plan.config.fu)
+        .map(|idx| pow2_field::<F>(plan.config.bu * idx))
+        .collect();
+    let t_hat_start = layout.t_hat_range().start;
+    let h_hat_start = layout.h_hat_range().start;
+
+    for (alpha, b_row) in aggregation.b_alphas.iter().zip(plan.setup.b_mat.iter()) {
+        accumulate_row_slice_into_combined(
+            &mut combined_phi,
+            aux_segments,
+            challenges,
+            t_hat_start,
+            b_row,
+            alpha,
+        )?;
+    }
+    for (alpha, d_row) in aggregation.d_alphas.iter().zip(plan.setup.d_mat.iter()) {
+        accumulate_row_slice_into_combined(
+            &mut combined_phi,
+            aux_segments,
+            challenges,
+            h_hat_start,
+            d_row,
+            alpha,
+        )?;
+    }
+
+    for (output_idx, alpha) in aggregation.a_alphas.iter().enumerate() {
+        let a_row = &plan.setup.a_mat[output_idx];
+        for (part_idx, &scale) in pow_b.iter().enumerate() {
+            let scaled_alpha = alpha.scale(&scale);
+            accumulate_row_slice_into_combined(
+                &mut combined_phi,
+                &row_segments[part_idx],
+                challenges,
+                0,
+                a_row,
+                &scaled_alpha,
+            )?;
+        }
+
+        for (row_idx, challenge) in plan.challenges.iter().enumerate() {
+            let base = *alpha * *challenge;
+            for (part_idx, &scale) in pow_bu.iter().enumerate() {
+                let idx = t_hat_start
+                    + row_idx * plan.config.kappa * plan.config.fu
+                    + output_idx * plan.config.fu
+                    + part_idx;
+                let value = -(base.scale(&scale));
+                accumulate_point_into_combined(
+                    &mut combined_phi,
+                    aux_segments,
+                    challenges,
+                    idx,
+                    &value,
+                )?;
+            }
+        }
+    }
+
+    for (part_idx, &scale) in pow_b.iter().enumerate() {
+        let scaled_alpha = aggregation.alpha_lg.scale(&scale);
+        accumulate_row_slice_into_combined(
+            &mut combined_phi,
+            &row_segments[part_idx],
+            challenges,
+            0,
+            &plan.combined_phi,
+            &scaled_alpha,
+        )?;
+    }
+    for i in 0..plan.challenges.len() {
+        for j in i..plan.challenges.len() {
+            let base = aggregation.alpha_lg * plan.challenges[i] * plan.challenges[j];
+            let pair = pair_index(i, j, plan.challenges.len());
+            for (part_idx, &scale) in pow_bu.iter().enumerate() {
+                let idx = h_hat_start + pair * plan.config.fu + part_idx;
+                let value = -(base.scale(&scale));
+                accumulate_point_into_combined(
+                    &mut combined_phi,
+                    aux_segments,
+                    challenges,
+                    idx,
+                    &value,
+                )?;
+            }
+        }
+    }
+
+    for i in 0..plan.row_count {
+        let pair = pair_index(i, i, plan.row_count);
+        for (part_idx, &scale) in pow_bu.iter().enumerate() {
+            let idx = h_hat_start + pair * plan.config.fu + part_idx;
+            let value = aggregation.alpha_diag.scale(&scale);
+            accumulate_point_into_combined(
+                &mut combined_phi,
+                aux_segments,
+                challenges,
+                idx,
+                &value,
+            )?;
+        }
+    }
+
+    Ok(combined_phi)
 }
 
 #[tracing::instrument(skip_all, name = "labrador::reshape_phi_verifier")]
@@ -362,7 +798,7 @@ where
         return Err(HachiError::InvalidProof);
     }
 
-    let setup: LabradorSetup<F, D> = LabradorSetup::new(&level.config, rr, nn, comkey_seed);
+    let setup = LabradorSetupMatrices::new(&level.config, rr, nn, comkey_seed);
     let az = mat_vec_mul(&setup.a_mat, &z);
     let mut rhs = vec![CyclotomicRing::<F, D>::zero(); level.config.kappa];
     for (i, t_row) in t_flat.chunks(level.config.kappa).enumerate() {
@@ -509,7 +945,7 @@ where
         return Err(HachiError::InvalidProof);
     }
 
-    let setup = LabradorSetup::new(&level.config, rr, nn, comkey_seed);
+    let setup = LabradorSetupMatrices::new(&level.config, rr, nn, comkey_seed);
 
     if level.config.kappa1 > 0 {
         let u1_check = mat_vec_mul(&setup.b_mat, t_hat);

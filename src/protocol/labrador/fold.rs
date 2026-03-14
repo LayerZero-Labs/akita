@@ -167,7 +167,7 @@ where
             &virt_row_lengths,
             nn,
             config,
-            Arc::clone(setup),
+            setup.verifier_setup(),
         )?))
     };
 
@@ -331,8 +331,8 @@ fn build_u2<F: FieldCore, const D: usize>(
     setup: &LabradorSetup<F, D>,
     h_hat: &[CyclotomicRing<F, D>],
 ) -> Vec<CyclotomicRing<F, D>> {
-    if !setup.d_mat.is_empty() {
-        mat_vec_mul(&setup.d_mat, h_hat)
+    if !setup.matrices.d_mat.is_empty() {
+        mat_vec_mul(&setup.matrices.d_mat, h_hat)
     } else {
         h_hat.to_vec()
     }
@@ -377,8 +377,10 @@ fn assemble_output_witness<F: FieldCore, const D: usize>(
 mod tests {
     use super::*;
     use crate::algebra::fields::Fp64;
+    use crate::protocol::labrador::aggregation::aggregate_jl_constraints_verifier;
     use crate::protocol::labrador::config::trivial_plan;
     use crate::protocol::labrador::constraints::{LabradorConstraint, LabradorConstraintTerm};
+    use crate::protocol::labrador::johnson_lindenstrauss::LabradorJlMatrix;
     use crate::protocol::labrador::types::LabradorReductionConfig;
     use crate::protocol::labrador::{verify, LabradorProof};
     use crate::protocol::transcript::labels::DOMAIN_LABRADOR_PROTOCOL;
@@ -407,6 +409,50 @@ mod tests {
     ) -> LabradorFoldPlan {
         let row_lengths: Vec<usize> = witness.rows().iter().map(|r| r.len()).collect();
         trivial_plan(*cfg, &row_lengths)
+    }
+
+    fn replay_amortize_challenges_for_level(
+        statement: &LabradorStatement<F, D>,
+        level: &LabradorLevelProof<F, D>,
+    ) -> Vec<CyclotomicRing<F, D>> {
+        let rr = level.nu.iter().sum::<usize>();
+        let virt_row_lengths = vec![level.nn; rr];
+        let jl_cols = rr * level.nn * D;
+        let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+        absorb_labrador_level_context(
+            &mut transcript,
+            &LabradorLevelTranscriptContext {
+                level_index: 0,
+                tail: level.tail,
+                input_row_lengths: level.input_row_lengths.clone(),
+                f: level.config.f,
+                b: level.config.b,
+                fu: level.config.fu,
+                bu: level.config.bu,
+                kappa: level.config.kappa,
+                kappa1: level.config.kappa1,
+            },
+        )
+        .unwrap();
+        transcript.append_serde(labels::ABSORB_LABRADOR_U1, &level.u1);
+        let jl_matrix = LabradorJlMatrix::replay_nonce_search::<F, Blake2bTranscript<F>>(
+            &mut transcript,
+            level.jl_nonce,
+            jl_cols,
+        )
+        .unwrap();
+        absorb_labrador_jl_projection(&mut transcript, &level.jl_projection);
+        aggregate_jl_constraints_verifier(
+            &virt_row_lengths,
+            &level.jl_projection,
+            &jl_matrix,
+            &level.bb,
+            &mut transcript,
+        )
+        .unwrap();
+        aggregate_statement(statement, &level.input_row_lengths, &mut transcript).unwrap();
+        transcript.append_serde(labels::ABSORB_LABRADOR_U2, &level.u2);
+        sample_amortize_challenges(&mut transcript, rr).unwrap()
     }
 
     #[test]
@@ -493,6 +539,75 @@ mod tests {
         );
         assert_eq!(out.next_witness.rows().len(), cfg.f);
         assert!(out.level_proof.tail);
+    }
+
+    #[test]
+    fn amortize_challenges_replay_and_bind_transcript_inputs() {
+        let mk_ring = |c: i64| {
+            CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|i| {
+                if i == 0 {
+                    F::from_i64(c)
+                } else {
+                    F::zero()
+                }
+            }))
+        };
+        let witness = LabradorWitness::new(vec![
+            vec![mk_ring(1), mk_ring(2)],
+            vec![mk_ring(3), mk_ring(-1)],
+        ]);
+        let target = witness.rows()[0][0] + witness.rows()[1][1];
+        let statement = LabradorStatement {
+            u1: Vec::new(),
+            u2: Vec::new(),
+            challenges: Vec::new(),
+            constraints: vec![LabradorConstraint::new(
+                vec![
+                    LabradorConstraintTerm::new(0, 0, vec![mk_ring(1), mk_ring(0)]),
+                    LabradorConstraintTerm::new(1, 0, vec![mk_ring(0), mk_ring(1)]),
+                ],
+                target,
+            )],
+            reduced_constraints: None,
+            beta_sq: 1 << 40,
+        };
+        let cfg = LabradorReductionConfig {
+            f: 4,
+            b: 8,
+            fu: 4,
+            bu: 8,
+            kappa: 2,
+            kappa1: 2,
+            tail: false,
+        };
+        let plan = make_plan(&cfg, &witness);
+        let comkey_seed = [9u8; 32];
+        let rr = plan.nu.iter().sum::<usize>();
+        let setup = std::sync::Arc::new(LabradorSetup::new(&cfg, rr, plan.nn, &comkey_seed));
+        let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let fold = prove_level(
+            &witness,
+            &statement,
+            &cfg,
+            &plan,
+            &setup,
+            0,
+            &mut transcript,
+        )
+        .unwrap();
+
+        let replayed = replay_amortize_challenges_for_level(&statement, &fold.level_proof);
+        assert_eq!(replayed, fold.statement.challenges);
+
+        let mut mutated_u2 = fold.level_proof.clone();
+        mutated_u2.u2[0] += mk_ring(1);
+        let replayed_u2 = replay_amortize_challenges_for_level(&statement, &mutated_u2);
+        assert_ne!(replayed_u2, fold.statement.challenges);
+
+        let mut mutated_nonce = fold.level_proof.clone();
+        mutated_nonce.jl_nonce = if mutated_nonce.jl_nonce == 1 { 2 } else { 1 };
+        let replayed_nonce = replay_amortize_challenges_for_level(&statement, &mutated_nonce);
+        assert_ne!(replayed_nonce, fold.statement.challenges);
     }
 
     #[test]
@@ -679,7 +794,7 @@ mod tests {
             }
             z.push(CyclotomicRing::gadget_recompose_pow2(&slice, cfg.b as u32));
         }
-        let az = mat_vec_mul(&setup2.a_mat, &z);
+        let az = mat_vec_mul(&setup2.matrices.a_mat, &z);
         let mut rhs = vec![CyclotomicRing::<F, D>::zero(); cfg.kappa];
         for (row_idx, t_row) in t_flat.chunks(cfg.kappa).enumerate() {
             let c = challenges[row_idx];
