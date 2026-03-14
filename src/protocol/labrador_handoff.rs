@@ -342,9 +342,9 @@ where
         )?))
     })?;
 
-    eprintln!(
-        "  [labrador_handoff] quad_eq: {:.2}s",
-        t0.elapsed().as_secs_f64()
+    tracing::debug!(
+        elapsed_s = t0.elapsed().as_secs_f64(),
+        "labrador_handoff quad_eq"
     );
 
     let t1 = Instant::now();
@@ -397,48 +397,39 @@ where
 
     let comkey_seed = expanded_setup.labrador_comkey_seed();
 
-    eprintln!(
-        "  [labrador_handoff] incoming hachi w: digits={}, log_basis={}, raw_i8={} bytes, packed_direct={} bytes",
-        current_w.len(),
-        w_layout.log_basis,
-        current_w.len(),
-        direct_hachi_tail_bytes,
-    );
-    eprintln!(
-        "  [labrador_handoff] labrador witness: row_lengths={:?}, total_ring_elems={}, witness_bits={}, serialized={} bytes, beta_sq={}",
-        handoff_row_lengths,
-        handoff_ring_elems,
-        handoff_witness_bits,
-        handoff_witness_bytes,
-        beta_sq,
-    );
-    eprintln!(
-        "  [labrador_handoff] selected cfg: row_count={}, max_row_len={}, f={}, b={}, fu={}, bu={}, kappa={}, kappa1={}, tail={}",
-        witness.rows().len(),
-        handoff_row_lengths.iter().copied().max().unwrap_or(0),
-        cfg.f,
-        cfg.b,
-        cfg.fu,
-        cfg.bu,
-        cfg.kappa,
-        cfg.kappa1,
-        cfg.tail,
-    );
-    eprintln!(
-        "  [labrador_handoff] witness/constraints: {:.2}s (rows={}, constraint_count={})",
-        t1.elapsed().as_secs_f64(),
-        witness.rows().len(),
-        statement.constraints.len(),
+    tracing::debug!(
+        digits = current_w.len(),
+        log_basis = w_layout.log_basis,
+        raw_i8_bytes = current_w.len(),
+        packed_direct_bytes = direct_hachi_tail_bytes,
+        row_count = witness.rows().len(),
+        ?handoff_row_lengths,
+        total_ring_elems = handoff_ring_elems,
+        witness_bits = handoff_witness_bits,
+        serialized_bytes = handoff_witness_bytes,
+        beta_sq = %beta_sq,
+        max_row_len = handoff_row_lengths.iter().copied().max().unwrap_or(0),
+        f = cfg.f,
+        b = cfg.b,
+        fu = cfg.fu,
+        bu = cfg.bu,
+        kappa = cfg.kappa,
+        kappa1 = cfg.kappa1,
+        tail = cfg.tail,
+        elapsed_s = t1.elapsed().as_secs_f64(),
+        rows = witness.rows().len(),
+        constraint_count = statement.constraints.len(),
+        "labrador_handoff witness/constraints"
     );
 
     let t2 = Instant::now();
     let labrador_proof =
         prove_with_config::<F, T, D_HANDOFF>(witness, &statement, &cfg, &comkey_seed, transcript)?;
 
-    eprintln!(
-        "  [labrador_handoff] labrador prove: {:.2}s (levels={})",
-        t2.elapsed().as_secs_f64(),
-        labrador_proof.levels.len(),
+    tracing::info!(
+        elapsed_s = t2.elapsed().as_secs_f64(),
+        levels = labrador_proof.levels.len(),
+        "labrador prove complete"
     );
 
     Ok(HachiProofTail::Labrador(Box::new(LabradorTail {
@@ -563,10 +554,11 @@ where
         &comkey_seed,
         transcript,
     );
-    eprintln!(
-        "  [labrador_handoff_verify] labrador verify: {}",
-        if result.is_ok() { "OK" } else { "FAIL" }
-    );
+    if result.is_ok() {
+        tracing::info!("labrador verify OK");
+    } else {
+        tracing::error!("labrador verify FAIL");
+    }
     result?;
 
     Ok(())

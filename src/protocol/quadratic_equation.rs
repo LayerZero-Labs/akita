@@ -12,14 +12,13 @@ use crate::parallel::*;
 use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
-    flatten_i8_blocks, mat_vec_mul_ntt_single_i8, unreduced_quotient_rows_ntt_cached,
-    unreduced_quotient_rows_ntt_cached_i8,
+    flatten_i8_blocks, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
+    unreduced_quotient_rows_ntt_cached_centered_i32,
 };
-use crate::protocol::commitment::utils::norm::{detect_field_modulus, vec_inf_norm};
 use crate::protocol::commitment::{
     CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, RingCommitment,
 };
-use crate::protocol::hachi_poly_ops::HachiPolyOps;
+use crate::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps};
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::HachiCommitmentHint;
 #[cfg(any(test, debug_assertions))]
@@ -43,15 +42,11 @@ fn flatten_w_hat<const D: usize>(w_hat: &[Vec<[i8; D]>]) -> Vec<[i8; D]> {
     w_hat.iter().flat_map(|v| v.iter().copied()).collect()
 }
 
-/// **Steps 7–9.** Fold `z_pre = Σ c_i · s_i` and check `‖z_pre‖_∞ ≤ β`.
-///
-/// Uses `HachiPolyOps::decompose_fold` to carry out the decompose + fold
-/// in whatever way the polynomial implementation prefers.
 fn compute_z_pre<F, const D: usize, Cfg, P>(
     poly: &P,
     challenges: &[SparseChallenge],
     layout: HachiCommitmentLayout,
-) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
+) -> Result<DecomposeFoldWitness<F, D>, HachiError>
 where
     F: FieldCore + CanonicalField,
     Cfg: CommitmentConfig,
@@ -64,8 +59,7 @@ where
         layout.log_basis,
     );
 
-    let modulus = detect_field_modulus::<F>();
-    let norm = vec_inf_norm(&z, modulus);
+    let norm = u128::from(z.centered_inf_norm);
     let beta = Cfg::beta_bound(layout)?;
     if norm > beta {
         return Err(HachiError::InvalidInput(format!(
@@ -95,7 +89,7 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize, Cfg: CommitmentConfig
     opening_point: RingOpeningPoint<F>,
     /// Pre-decomposition folded witness `z_pre = Σ c_i · s_i` (prover only).
     /// Replaces both `z_hat` and `z`: `z_hat = J^{-1}(z_pre)`.
-    z_pre: Option<Vec<CyclotomicRing<F, D>>>,
+    z_pre: Option<DecomposeFoldWitness<F, D>>,
     /// Decomposed `ŵ_i = G_1^{-1}(w_i)` as i8 digit planes (prover only).
     w_hat: Option<Vec<Vec<[i8; D]>>>,
     /// Flattened `w_hat` as i8 digit planes (prover only, computed once and reused).
@@ -138,12 +132,11 @@ where
     ) -> Result<Self, HachiError> {
         {
             let x: u8 = 0;
-            eprintln!(
-                "  [QuadraticEquation::new_prover] stack ~= {:#x}",
-                &x as *const u8 as usize
+            tracing::trace!(
+                stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
+                "QuadraticEquation::new_prover"
             );
         }
-        let t_wh = Instant::now();
         let (w_hat, w_hat_flat) = {
             let _span = tracing::info_span!("decompose_w_hat").entered();
             let depth_open = layout.num_digits_open;
@@ -155,24 +148,13 @@ where
             let w_hat_flat = flatten_w_hat(&w_hat);
             (w_hat, w_hat_flat)
         };
-        eprintln!(
-            "    [quad_eq] decompose_w_hat+flatten: {:.2}s (blocks={}, depth={})",
-            t_wh.elapsed().as_secs_f64(),
-            w_hat.len(),
-            w_hat.first().map_or(0, |v| v.len())
-        );
         hint.ensure_t_recomposed(layout.num_digits_open, layout.log_basis)?;
 
-        let t_v = Instant::now();
         let v = {
-            let _span = tracing::info_span!("compute_v").entered();
+            let _span =
+                tracing::info_span!("compute_v", w_hat_flat_len = w_hat_flat.len()).entered();
             compute_v(ntt_d, &w_hat_flat)
         };
-        eprintln!(
-            "    [quad_eq] compute_v (D*w_hat): {:.2}s (w_hat_flat_len={})",
-            t_v.elapsed().as_secs_f64(),
-            w_hat_flat.len()
-        );
 
         transcript.append_serde(ABSORB_PROVER_V, &v);
 
@@ -187,16 +169,10 @@ where
             &challenge_cfg,
         )?;
 
-        let t_zp = Instant::now();
         let z_pre = {
             let _span = tracing::info_span!("compute_z_pre").entered();
             compute_z_pre::<F, D, Cfg, P>(poly, &challenges, layout)?
         };
-        eprintln!(
-            "    [quad_eq] compute_z_pre: {:.2}s (z_pre_len={})",
-            t_zp.elapsed().as_secs_f64(),
-            z_pre.len()
-        );
 
         let y = generate_y::<F, D>(&v, &commitment.u, y_ring, Cfg::N_D, Cfg::N_B, Cfg::N_A)?;
 
@@ -264,11 +240,23 @@ where
 
     /// Get the pre-decomposition folded witness `z_pre` (prover only).
     pub fn z_pre(&self) -> Option<&[CyclotomicRing<F, D>]> {
-        self.z_pre.as_deref()
+        self.z_pre.as_ref().map(|witness| witness.z_pre.as_slice())
     }
 
-    /// Take ownership of `z_pre`, leaving `None` in its place.
-    pub fn take_z_pre(&mut self) -> Option<Vec<CyclotomicRing<F, D>>> {
+    /// Get centered coefficients for each `z_pre` row (prover only).
+    pub fn z_pre_centered(&self) -> Option<&[[i32; D]]> {
+        self.z_pre
+            .as_ref()
+            .map(|witness| witness.centered_coeffs.as_slice())
+    }
+
+    /// Get `||z_pre||_inf` from the centered witness representation.
+    pub fn z_pre_centered_inf_norm(&self) -> Option<u32> {
+        self.z_pre.as_ref().map(|witness| witness.centered_inf_norm)
+    }
+
+    /// Take ownership of the `z_pre` witness, leaving `None` in its place.
+    pub fn take_z_pre(&mut self) -> Option<DecomposeFoldWitness<F, D>> {
         self.z_pre.take()
     }
 
@@ -337,47 +325,6 @@ fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basis: u
     out
 }
 
-/// Add scalar * ring_element into the low-D coefficients of `poly`.
-/// scalar * ring produces degree D-1, so no high-half contribution.
-fn add_scalar_ring_product<F: FieldCore, const D: usize>(
-    poly: &mut [F],
-    scalar: &F,
-    ring: &CyclotomicRing<F, D>,
-) {
-    for (k, coeff) in ring.coefficients().iter().enumerate() {
-        poly[k] += *scalar * *coeff;
-    }
-}
-
-/// Subtract scalar * ring_element from the low-D coefficients of `poly`.
-fn sub_scalar_ring_product<F: FieldCore, const D: usize>(
-    poly: &mut [F],
-    scalar: &F,
-    ring: &CyclotomicRing<F, D>,
-) {
-    for (k, coeff) in ring.coefficients().iter().enumerate() {
-        poly[k] -= *scalar * *coeff;
-    }
-}
-
-/// Add sparse_challenge * ring_element as unreduced product into `poly`.
-///
-/// Exploits sparsity: O(weight * D) instead of O(D^2) schoolbook.
-fn add_sparse_ring_product<F: FieldCore + CanonicalField, const D: usize>(
-    poly: &mut [F],
-    challenge: &SparseChallenge,
-    ring: &CyclotomicRing<F, D>,
-) {
-    let rc = ring.coefficients();
-    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        let c = F::from_i64(coeff as i64);
-        let p = pos as usize;
-        for (s, &r_s) in rc.iter().enumerate() {
-            poly[p + s] += c * r_s;
-        }
-    }
-}
-
 /// Add only the high-half quotient contribution of `challenge * ring`.
 fn add_sparse_ring_product_high_half<F: FieldCore + CanonicalField, const D: usize>(
     quotient: &mut [F],
@@ -395,6 +342,16 @@ fn add_sparse_ring_product_high_half<F: FieldCore + CanonicalField, const D: usi
     }
 }
 
+fn quotient_from_cyclic_and_reduced<F: FieldCore, const D: usize>(
+    cyclic: &CyclotomicRing<F, D>,
+    reduced: &CyclotomicRing<F, D>,
+) -> CyclotomicRing<F, D> {
+    let cyc_c = cyclic.coefficients();
+    let red_c = reduced.coefficients();
+    let quotient = std::array::from_fn(|k| (cyc_c[k] - red_c[k]) * F::TWO_INV);
+    CyclotomicRing::from_coefficients(quotient)
+}
+
 /// Split-eq replacement for `generate_m` + `compute_r_via_poly_division`.
 ///
 /// Computes `r` such that `M·z = y + (X^D+1)·r` without materializing M or z.
@@ -404,69 +361,68 @@ fn add_sparse_ring_product_high_half<F: FieldCore + CanonicalField, const D: usi
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_r_split_eq<F, const D: usize, Cfg>(
     _setup: &HachiExpandedSetup<F>,
-    opening_point: &RingOpeningPoint<F>,
     challenges: &[SparseChallenge],
     w_hat_flat: &[[i8; D]],
     t_hat: &[Vec<[i8; D]>],
     t: &[Vec<CyclotomicRing<F, D>>],
     w_folded: &[CyclotomicRing<F, D>],
-    z_pre: &[CyclotomicRing<F, D>],
+    z_pre_centered: &[[i32; D]],
+    z_pre_centered_inf_norm: u32,
     y: &[CyclotomicRing<F, D>],
     ntt_a: &NttSlotCache<D>,
     ntt_b: &NttSlotCache<D>,
     ntt_d: &NttSlotCache<D>,
-    layout: HachiCommitmentLayout,
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
 where
     F: FieldCore + CanonicalField,
     Cfg: CommitmentConfig,
 {
-    {
-        let x: u8 = 0;
-        eprintln!(
-            "  [compute_r_split_eq] stack ~= {:#x}",
-            &x as *const u8 as usize
-        );
-    }
-    let decomp_commit = layout.num_digits_commit;
-    let log_basis = layout.log_basis;
-    let poly_len = 2 * D - 1;
     let num_rows = Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A;
 
     let t_hat_flat = flatten_i8_blocks(t_hat);
 
-    // NTT-accelerated D, B, and A rows: compute quotient = (cyc - neg) / 2
+    // D/B rows already know their reduced outputs `y`, so only the cyclic side
+    // must be computed here; quotient = (cyc - reduced) / 2.
     let t_d = Instant::now();
-    let d_quotients = {
+    let d_cyclic = {
         let _span = tracing::info_span!("D_rows_ntt").entered();
-        unreduced_quotient_rows_ntt_cached_i8(ntt_d, w_hat_flat)
+        mat_vec_mul_ntt_single_i8_cyclic(ntt_d, w_hat_flat)
     };
     let d_time = t_d.elapsed().as_secs_f64();
 
     let t_b = Instant::now();
-    let b_quotients = {
+    let b_cyclic = {
         let _span = tracing::info_span!("B_rows_ntt").entered();
-        unreduced_quotient_rows_ntt_cached_i8(ntt_b, &t_hat_flat)
+        mat_vec_mul_ntt_single_i8_cyclic(ntt_b, &t_hat_flat)
     };
     let b_time = t_b.elapsed().as_secs_f64();
 
     let t_a = Instant::now();
     let a_quotients = {
         let _span = tracing::info_span!("A_rows_ntt").entered();
-        unreduced_quotient_rows_ntt_cached(ntt_a, z_pre)
+        unreduced_quotient_rows_ntt_cached_centered_i32(
+            ntt_a,
+            z_pre_centered,
+            z_pre_centered_inf_norm,
+        )
     };
     let a_time = t_a.elapsed().as_secs_f64();
 
     let mut result = Vec::with_capacity(num_rows);
     let mut other_time = 0.0f64;
-    let mut poly_buf = vec![F::zero(); poly_len];
     let mut quotient_buf = vec![F::zero(); D];
 
-    for (row_idx, _y_i) in y.iter().enumerate().take(num_rows) {
+    for row_idx in 0..num_rows {
         if row_idx < Cfg::N_D {
-            result.push(d_quotients[row_idx]);
+            result.push(quotient_from_cyclic_and_reduced(
+                &d_cyclic[row_idx],
+                &y[row_idx],
+            ));
         } else if row_idx < Cfg::N_D + Cfg::N_B {
-            result.push(b_quotients[row_idx - Cfg::N_D]);
+            result.push(quotient_from_cyclic_and_reduced(
+                &b_cyclic[row_idx - Cfg::N_D],
+                &y[row_idx],
+            ));
         } else if row_idx >= Cfg::N_D + Cfg::N_B + 2 {
             // A-rows: NTT-accelerated A*z_pre + sparse challenge terms
             let t_row = Instant::now();
@@ -487,50 +443,32 @@ where
             result.push(CyclotomicRing::from_slice(&quotient_buf));
             other_time += t_row.elapsed().as_secs_f64();
         } else {
-            // bTw_row and challenge_fold_row: schoolbook (cheap)
             let t_row = Instant::now();
-            poly_buf.fill(F::zero());
 
             if row_idx == Cfg::N_D + Cfg::N_B {
                 let _span = tracing::info_span!("bTw_row").entered();
-                for (i, w_f) in w_folded.iter().enumerate() {
-                    add_scalar_ring_product(&mut poly_buf, &opening_point.b[i], w_f);
-                }
+                // `b^T · G · ŵ - y_ring` is degree < D, so its quotient is zero.
+                result.push(CyclotomicRing::<F, D>::zero());
             } else {
                 let _span = tracing::info_span!("challenge_fold_row").entered();
+                quotient_buf.fill(F::zero());
                 for (i, w_f) in w_folded.iter().enumerate() {
-                    add_sparse_ring_product(&mut poly_buf, &challenges[i], w_f);
+                    add_sparse_ring_product_high_half(&mut quotient_buf, &challenges[i], w_f);
                 }
-                let block_len = opening_point.a.len();
-                for i in 0..block_len {
-                    let start = i * decomp_commit;
-                    let end = start + decomp_commit;
-                    if end <= z_pre.len() {
-                        let z_pre_recomp =
-                            CyclotomicRing::gadget_recompose_pow2(&z_pre[start..end], log_basis);
-                        sub_scalar_ring_product(&mut poly_buf, &opening_point.a[i], &z_pre_recomp);
-                    }
-                }
+                // `a^T · G · J · z_hat` contributes only low-degree terms, so it
+                // cannot affect the high-half quotient we need here.
+                result.push(CyclotomicRing::from_slice(&quotient_buf));
             }
-
-            let y_coeffs = _y_i.coefficients();
-            for k in 0..D {
-                poly_buf[k] -= y_coeffs[k];
-            }
-
-            quotient_buf.fill(F::zero());
-            for k in (D..poly_len).rev() {
-                let q = poly_buf[k];
-                quotient_buf[k - D] = q;
-                poly_buf[k - D] -= q;
-            }
-            result.push(CyclotomicRing::from_slice(&quotient_buf));
             other_time += t_row.elapsed().as_secs_f64();
         }
     }
 
-    eprintln!(
-        "      [compute_r] D(NTT): {d_time:.2}s, B(NTT): {b_time:.2}s, A(NTT): {a_time:.2}s, other: {other_time:.2}s",
+    tracing::debug!(
+        d_ntt_s = d_time,
+        b_ntt_s = b_time,
+        a_ntt_s = a_time,
+        other_s = other_time,
+        "compute_r breakdown"
     );
 
     Ok(result)
