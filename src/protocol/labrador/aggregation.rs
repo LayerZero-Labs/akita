@@ -105,7 +105,8 @@ where
 // ---------------------------------------------------------------------------
 
 /// Collapsed JL weights in the narrowest representation that avoids overflow.
-enum CollapseWeights<F: FieldCore, const D: usize> {
+#[allow(missing_docs)]
+pub enum CollapseWeights<F: FieldCore, const D: usize> {
     I64(Vec<i64>),
     I128(Vec<i128>),
     FieldPhi(Vec<CyclotomicRing<F, D>>),
@@ -211,35 +212,148 @@ fn jl_pair_unit_i128(pair: u8) -> i128 {
 }
 
 #[inline]
-fn row_pair_at(row: &[u8], col_idx: usize) -> u8 {
-    let shift = (col_idx & 0b11) << 1;
-    (row[col_idx >> 2] >> shift) & 0b11
+fn build_four_russians_lookup_field<F: FieldCore>(
+    alpha0: F,
+    alpha1: F,
+    alpha2: F,
+    alpha3: F,
+) -> [F; 256] {
+    let mut lookup = [F::zero(); 256];
+    for packed in 0u16..256 {
+        let packed = packed as u8;
+        let pair0 = packed & 0b11;
+        let pair1 = (packed >> 2) & 0b11;
+        let pair2 = (packed >> 4) & 0b11;
+        let pair3 = (packed >> 6) & 0b11;
+        let mut acc = F::zero();
+        match pair0 {
+            0b00 => acc -= alpha0,
+            0b11 => acc += alpha0,
+            _ => {}
+        }
+        match pair1 {
+            0b00 => acc -= alpha1,
+            0b11 => acc += alpha1,
+            _ => {}
+        }
+        match pair2 {
+            0b00 => acc -= alpha2,
+            0b11 => acc += alpha2,
+            _ => {}
+        }
+        match pair3 {
+            0b00 => acc -= alpha3,
+            0b11 => acc += alpha3,
+            _ => {}
+        }
+        lookup[packed as usize] = acc;
+    }
+    lookup
 }
 
 #[inline]
-fn accumulate_field_pair<F: FieldCore, const D: usize>(
+fn accumulate_field_weight_contribution<F: FieldCore, const D: usize>(
     coeffs: &mut [F],
     local_idx: usize,
-    pair: u8,
-    alpha: F,
+    contribution: F,
 ) {
-    match pair {
-        0b00 => {
-            if local_idx == 0 {
-                coeffs[0] -= alpha;
-            } else {
-                coeffs[D - local_idx] += alpha;
-            }
-        }
-        0b11 => {
-            if local_idx == 0 {
-                coeffs[0] += alpha;
-            } else {
-                coeffs[D - local_idx] -= alpha;
-            }
-        }
-        _ => {}
+    if contribution.is_zero() {
+        return;
     }
+    if local_idx == 0 {
+        coeffs[0] += contribution;
+    } else {
+        coeffs[D - local_idx] -= contribution;
+    }
+}
+
+#[tracing::instrument(skip_all, name = "labrador::collapse_weights_field_four_russians")]
+fn collapse_weights_field_four_russians<F: FieldCore, const D: usize>(
+    matrix: &LabradorJlMatrix,
+    omega: &[F; 256],
+    cols: usize,
+) -> Vec<CyclotomicRing<F, D>> {
+    if D % 4 != 0 {
+        panic!("Four Russians field collapse requires D divisible by 4, got D={D}");
+    }
+    let mut phi = vec![CyclotomicRing::<F, D>::zero(); cols / D];
+    let bytes_per_ring = D / 4;
+    debug_assert_eq!(omega.len() % 4, 0);
+
+    // Four Russians with row-block size 4:
+    // for each 4-row block, precompute all 2-bit-packed pattern sums once
+    // and then consume 4 columns (one byte) at a time.
+    for group_start in (0..omega.len()).step_by(4) {
+        let row0 = matrix.row_bytes(group_start);
+        let row1 = matrix.row_bytes(group_start + 1);
+        let row2 = matrix.row_bytes(group_start + 2);
+        let row3 = matrix.row_bytes(group_start + 3);
+        let lookup = build_four_russians_lookup_field(
+            omega[group_start],
+            omega[group_start + 1],
+            omega[group_start + 2],
+            omega[group_start + 3],
+        );
+
+        for ((((elem, sign_bytes0), sign_bytes1), sign_bytes2), sign_bytes3) in phi
+            .iter_mut()
+            .zip(row0.chunks_exact(bytes_per_ring))
+            .zip(row1.chunks_exact(bytes_per_ring))
+            .zip(row2.chunks_exact(bytes_per_ring))
+            .zip(row3.chunks_exact(bytes_per_ring))
+        {
+            let coeffs = elem.coefficients_mut();
+            let mut local_idx = 0usize;
+
+            for (((&byte0, &byte1), &byte2), &byte3) in sign_bytes0
+                .iter()
+                .zip(sign_bytes1.iter())
+                .zip(sign_bytes2.iter())
+                .zip(sign_bytes3.iter())
+            {
+                let idx0 = (byte0 & 0b11)
+                    | ((byte1 & 0b11) << 2)
+                    | ((byte2 & 0b11) << 4)
+                    | ((byte3 & 0b11) << 6);
+                let idx1 = ((byte0 >> 2) & 0b11)
+                    | (((byte1 >> 2) & 0b11) << 2)
+                    | (((byte2 >> 2) & 0b11) << 4)
+                    | (((byte3 >> 2) & 0b11) << 6);
+                let idx2 = ((byte0 >> 4) & 0b11)
+                    | (((byte1 >> 4) & 0b11) << 2)
+                    | (((byte2 >> 4) & 0b11) << 4)
+                    | (((byte3 >> 4) & 0b11) << 6);
+                let idx3 = ((byte0 >> 6) & 0b11)
+                    | (((byte1 >> 6) & 0b11) << 2)
+                    | (((byte2 >> 6) & 0b11) << 4)
+                    | (((byte3 >> 6) & 0b11) << 6);
+
+                accumulate_field_weight_contribution::<F, D>(
+                    coeffs,
+                    local_idx,
+                    lookup[idx0 as usize],
+                );
+                accumulate_field_weight_contribution::<F, D>(
+                    coeffs,
+                    local_idx + 1,
+                    lookup[idx1 as usize],
+                );
+                accumulate_field_weight_contribution::<F, D>(
+                    coeffs,
+                    local_idx + 2,
+                    lookup[idx2 as usize],
+                );
+                accumulate_field_weight_contribution::<F, D>(
+                    coeffs,
+                    local_idx + 3,
+                    lookup[idx3 as usize],
+                );
+                local_idx += 4;
+            }
+        }
+    }
+
+    phi
 }
 
 /// Branchless i64 collapse. Caller guarantees `256 * max|omega|` fits in i64.
@@ -302,56 +416,10 @@ fn collapse_weights_i128_unchecked(
     weights
 }
 
-/// Field-arithmetic accumulation for fields too wide for integer collapse.
-#[tracing::instrument(skip_all, name = "labrador::collapse_weights_field")]
-fn collapse_weights_field<F: FieldCore, const D: usize>(
-    matrix: &LabradorJlMatrix,
-    omega: &[F; 256],
-    cols: usize,
-) -> Vec<CyclotomicRing<F, D>> {
-    debug_assert!(cols % D == 0, "cols ({cols}) not divisible by D ({D})");
-    let mut phi = vec![CyclotomicRing::<F, D>::zero(); cols / D];
-    if D % 4 == 0 {
-        let bytes_per_ring = D / 4;
-        for (row_idx, &alpha) in omega.iter().enumerate() {
-            let row = matrix.row_bytes(row_idx);
-            for (elem, sign_bytes) in phi.iter_mut().zip(row.chunks_exact(bytes_per_ring)) {
-                let coeffs = elem.coefficients_mut();
-                let mut local_idx = 0usize;
-                for &byte in sign_bytes {
-                    accumulate_field_pair::<F, D>(coeffs, local_idx, byte & 0b11, alpha);
-                    accumulate_field_pair::<F, D>(coeffs, local_idx + 1, (byte >> 2) & 0b11, alpha);
-                    accumulate_field_pair::<F, D>(coeffs, local_idx + 2, (byte >> 4) & 0b11, alpha);
-                    accumulate_field_pair::<F, D>(coeffs, local_idx + 3, (byte >> 6) & 0b11, alpha);
-                    local_idx += 4;
-                }
-            }
-        }
-    } else {
-        for (row_idx, &alpha) in omega.iter().enumerate() {
-            let row = matrix.row_bytes(row_idx);
-            let mut col_idx = 0usize;
-            for elem in &mut phi {
-                let coeffs = elem.coefficients_mut();
-                for local_idx in 0..D {
-                    accumulate_field_pair::<F, D>(
-                        coeffs,
-                        local_idx,
-                        row_pair_at(row, col_idx),
-                        alpha,
-                    );
-                    col_idx += 1;
-                }
-            }
-        }
-    }
-    phi
-}
-
 /// Collapse 256 JL rows × omega into weights, dispatching to the narrowest
 /// integer type that avoids overflow.
-#[tracing::instrument(skip_all, name = "labrador::collapse_jl_weights")]
-fn collapse_jl_weights<F: CanonicalField, const D: usize>(
+#[tracing::instrument(skip_all, name = "labrador::aggregate_jl_functions")]
+pub fn aggregate_jl_functions<F: CanonicalField, const D: usize>(
     matrix: &LabradorJlMatrix,
     omega: &[F; 256],
 ) -> Result<CollapseWeights<F, D>, HachiError> {
@@ -374,9 +442,9 @@ fn collapse_jl_weights<F: CanonicalField, const D: usize>(
             cols,
         )))
     } else {
-        Ok(CollapseWeights::FieldPhi(collapse_weights_field::<F, D>(
-            matrix, omega, cols,
-        )))
+        Ok(CollapseWeights::FieldPhi(
+            collapse_weights_field_four_russians::<F, D>(matrix, omega, cols),
+        ))
     }
 }
 
@@ -573,7 +641,7 @@ where
 
     for _ in 0..lifts {
         let omega = sample_jl_collapse_challenge::<F, T>(transcript);
-        let cw = collapse_jl_weights::<F, D>(matrix, &omega)?;
+        let cw = aggregate_jl_functions::<F, D>(matrix, &omega)?;
         let b_full = cw.compute_b(&flat_witness);
         let phi_flat = cw.into_phi();
 
@@ -626,7 +694,7 @@ where
 
     for bb_lift in bb.iter() {
         let omega = sample_jl_collapse_challenge::<F, T>(transcript);
-        let cw = collapse_jl_weights::<F, D>(matrix, &omega)?;
+        let cw = aggregate_jl_functions::<F, D>(matrix, &omega)?;
         let phi_flat = cw.into_phi();
         let b_full = restore_constant_term(*bb_lift, collapse_to_field::<F>(jl_projection, &omega));
         transcript.append_serde(labels::ABSORB_LABRADOR_BB, bb_lift);
@@ -891,33 +959,74 @@ where
 mod tests {
     use super::*;
     use crate::algebra::fields::Prime128M13M4P0;
+    use crate::algebra::{Pow2Offset32Field, Pow2Offset64Field};
     use crate::protocol::transcript::labels::DOMAIN_LABRADOR_PROTOCOL;
     use crate::protocol::transcript::Blake2bTranscript;
 
-    type F = Prime128M13M4P0;
     const D: usize = 64;
+    const TEST_RING_ELEMS: usize = 16;
+    const TEST_COLS: usize = TEST_RING_ELEMS * D;
 
-    #[test]
-    fn collapse_weights_field_matches_dense_reference() {
-        let cols = 2 * D;
-        let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
-        let matrix = LabradorJlMatrix::generate::<F, _>(&mut transcript, cols).unwrap();
-        let omega = std::array::from_fn(|i| F::from_canonical_u128_reduced((i as u128 + 17) << 72));
+    fn assert_aggregate_jl_functions_matches_naive<F: FieldCore + CanonicalField + FromSmallInt>(
+        matrix: &LabradorJlMatrix,
+        omega: [F; 256],
+    ) {
+        let cols = matrix.cols();
+        assert_eq!(cols, TEST_COLS);
 
-        let got = collapse_weights_field::<F, D>(&matrix, &omega, cols);
+        let got = aggregate_jl_functions::<F, D>(&matrix, &omega)
+            .unwrap()
+            .into_phi();
         let mut expected = vec![CyclotomicRing::<F, D>::zero(); cols / D];
-        for (row_idx, &alpha) in omega.iter().enumerate() {
-            let row = matrix.row_bytes(row_idx);
-            for (elem_idx, elem) in expected.iter_mut().enumerate() {
-                let coeffs = elem.coefficients_mut();
-                for local_idx in 0..D {
+        // Naive paper-style reference:
+        // φ''_i = Σ_j ω_j · σ_{-1}(π_i^(j))
+        for (elem_idx, elem) in expected.iter_mut().enumerate() {
+            for (row_idx, &alpha) in omega.iter().enumerate() {
+                let row = matrix.row_bytes(row_idx);
+                let pi = std::array::from_fn(|local_idx| {
                     let col_idx = elem_idx * D + local_idx;
-                    let pair = row_pair_at(row, col_idx);
-                    accumulate_field_pair::<F, D>(coeffs, local_idx, pair, alpha);
-                }
+                    let shift = (col_idx & 0b11) << 1;
+                    let pair = (row[col_idx >> 2] >> shift) & 0b11;
+                    let sign = match pair {
+                        0b00 => -1i64,
+                        0b11 => 1i64,
+                        _ => 0i64,
+                    };
+                    F::from_i64(sign)
+                });
+                *elem += CyclotomicRing::<F, D>::from_coefficients(pi)
+                    .sigma_m1()
+                    .scale(&alpha);
             }
         }
 
-        assert_eq!(got, expected);
+        assert!(got == expected);
+    }
+
+    #[test]
+    fn aggregate_jl_functions_matches_naive_fp32() {
+        let mut transcript = Blake2bTranscript::<Pow2Offset32Field>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let matrix =
+            LabradorJlMatrix::generate::<Pow2Offset32Field, _>(&mut transcript, TEST_COLS).unwrap();
+        let omega = sample_jl_collapse_challenge::<Pow2Offset32Field, _>(&mut transcript);
+        assert_aggregate_jl_functions_matches_naive::<Pow2Offset32Field>(&matrix, omega);
+    }
+
+    #[test]
+    fn aggregate_jl_functions_matches_naive_fp64() {
+        type F64 = Pow2Offset64Field;
+        let mut transcript = Blake2bTranscript::<F64>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let matrix = LabradorJlMatrix::generate::<F64, _>(&mut transcript, TEST_COLS).unwrap();
+        let omega = sample_jl_collapse_challenge::<F64, _>(&mut transcript);
+        assert_aggregate_jl_functions_matches_naive::<F64>(&matrix, omega);
+    }
+
+    #[test]
+    fn aggregate_jl_functions_matches_naive_fp128() {
+        type F128 = Prime128M13M4P0;
+        let mut transcript = Blake2bTranscript::<F128>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let matrix = LabradorJlMatrix::generate::<F128, _>(&mut transcript, TEST_COLS).unwrap();
+        let omega = sample_jl_collapse_challenge::<F128, _>(&mut transcript);
+        assert_aggregate_jl_functions_matches_naive::<F128>(&matrix, omega);
     }
 }
