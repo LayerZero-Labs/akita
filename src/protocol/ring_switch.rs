@@ -793,14 +793,24 @@ pub(crate) fn build_w_evals_compact(
     let live_x_cols = w.len() / d;
     let num_u = live_x_cols.next_power_of_two().trailing_zeros() as usize;
 
-    let rows: Vec<Vec<i8>> = cfg_into_iter!(0..d)
-        .map(|y| {
-            (0..live_x_cols)
-                .map(|x| w[y + (x << num_l)])
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    let compact = rows.into_iter().flatten().collect();
+    let mut compact = vec![0i8; w.len()];
+
+    #[cfg(feature = "parallel")]
+    compact
+        .par_chunks_mut(live_x_cols)
+        .enumerate()
+        .for_each(|(y, row)| {
+            for (x, dst) in row.iter_mut().enumerate() {
+                *dst = w[y + (x << num_l)];
+            }
+        });
+
+    #[cfg(not(feature = "parallel"))]
+    for (y, row) in compact.chunks_mut(live_x_cols).enumerate() {
+        for (x, dst) in row.iter_mut().enumerate() {
+            *dst = w[y + (x << num_l)];
+        }
+    }
     Ok((compact, num_u, num_l))
 }
 
