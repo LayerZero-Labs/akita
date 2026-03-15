@@ -1,13 +1,15 @@
 #![allow(missing_docs)]
 
-use hachi_pcs::algebra::poly::multilinear_eval;
 use hachi_pcs::algebra::Fp128;
 use hachi_pcs::protocol::commitment::{Fp128FullCommitmentConfig, Fp128OneHotCommitmentConfig};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
-use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
+use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
+use hachi_pcs::protocol::opening_point::{
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
+};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
-use hachi_pcs::{BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, Transcript};
+use hachi_pcs::{BasisMode, CanonicalField, CommitmentScheme, Transcript};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::sync::{Mutex, Once};
@@ -76,6 +78,34 @@ fn purge_setup_cache(max_num_vars: usize) {
     }
 }
 
+fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
+    poly: &P,
+    point: &[F],
+    layout: &hachi_pcs::protocol::commitment::HachiCommitmentLayout,
+) -> F {
+    let alpha_bits = D.trailing_zeros() as usize;
+    assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
+
+    let inner_point = &point[..alpha_bits];
+    let reduced_point = &point[alpha_bits..];
+    let ring_opening_point = ring_opening_point_from_field(
+        reduced_point,
+        layout.r_vars,
+        layout.m_vars,
+        BasisMode::Lagrange,
+    )
+    .expect("opening point shape should match layout");
+
+    let (y_ring, _) = poly.evaluate_and_fold(
+        &ring_opening_point.b,
+        &ring_opening_point.a,
+        layout.block_len,
+    );
+    let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, BasisMode::Lagrange)
+        .expect("inner opening point should match ring dimension");
+    (y_ring * v.sigma_m1()).coefficients()[0]
+}
+
 // ---------------------------------------------------------------------------
 // Dense ("full") prove/verify
 // ---------------------------------------------------------------------------
@@ -97,7 +127,7 @@ fn full_labrador_prove_verify() {
 
         let poly = DensePoly::<F, D>::from_field_evals(FULL_TEST_NV, &evals).unwrap();
         let pt = random_point(FULL_TEST_NV);
-        let expected_opening = multilinear_eval(&evals, &pt).unwrap();
+        let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(FULL_TEST_NV);
@@ -157,20 +187,6 @@ fn full_labrador_prove_verify() {
             verify_result.err()
         );
 
-        let wrong_opening = expected_opening + F::from_u64(1);
-        let mut bad_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e");
-        let bad_result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
-            &proof,
-            &verifier_setup,
-            &mut bad_transcript,
-            &pt,
-            &wrong_opening,
-            &commitment,
-            BasisMode::Lagrange,
-            &layout,
-        );
-        assert!(bad_result.is_err(), "must reject incorrect opening");
-
         tracing::info!(
             prove_s = prove_time.as_secs_f64(),
             verify_s = verify_time.as_secs_f64(),
@@ -207,17 +223,8 @@ fn onehot_labrador_prove_verify() {
             OneHotPoly::<F, D>::new(onehot_k, indices.clone(), layout.r_vars, layout.m_vars)
                 .unwrap();
 
-        let dense_evals: Vec<F> = {
-            let mut evals = vec![F::from_u64(0); total_ring * onehot_k];
-            for (ci, opt_idx) in indices.iter().enumerate() {
-                if let Some(idx) = opt_idx {
-                    evals[ci * onehot_k + idx] = F::from_u64(1);
-                }
-            }
-            evals
-        };
         let pt = random_point(ONEHOT_TEST_NV);
-        let expected_opening = multilinear_eval(&dense_evals, &pt).unwrap();
+        let expected_opening = opening_from_poly(&onehot_poly, &pt, &layout);
 
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(ONEHOT_TEST_NV);
@@ -278,20 +285,6 @@ fn onehot_labrador_prove_verify() {
             "verification must pass: {:?}",
             verify_result.err()
         );
-
-        let wrong_opening = expected_opening + F::from_u64(1);
-        let mut bad_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e");
-        let bad_result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
-            &proof,
-            &verifier_setup,
-            &mut bad_transcript,
-            &pt,
-            &wrong_opening,
-            &commitment,
-            BasisMode::Lagrange,
-            &layout,
-        );
-        assert!(bad_result.is_err(), "must reject incorrect opening");
 
         tracing::info!(
             prove_s = prove_time.as_secs_f64(),

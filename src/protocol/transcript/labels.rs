@@ -46,8 +46,8 @@ pub const CHALLENGE_TAU0: &[u8] = b"hachi/challenge/tau0";
 /// Challenge for sampling `τ₁` (F_α evaluation-relation batching point, paper §4.3).
 pub const CHALLENGE_TAU1: &[u8] = b"hachi/challenge/tau1";
 
-/// Labrador protocol domain label (used for recursive reduction stages).
-pub const DOMAIN_LABRADOR_PROTOCOL: &[u8] = b"hachi/labrador/protocol";
+/// Labrador recursion domain label (used for recursive reduction stages).
+pub const DOMAIN_LABRADOR_RECURSION: &[u8] = b"hachi/labrador/recursion";
 /// Greyhound evaluation-reduction domain label.
 pub const DOMAIN_GREYHOUND_EVAL: &[u8] = b"hachi/greyhound/eval";
 /// Absorb canonical Greyhound evaluation context bytes (dimensions).
@@ -60,8 +60,8 @@ pub const ABSORB_GREYHOUND_EVAL_VALUE: &[u8] = b"hachi/absorb/greyhound-eval-val
 pub const ABSORB_GREYHOUND_U2: &[u8] = b"hachi/absorb/greyhound-u2";
 /// Challenge for Greyhound column-fold coefficients.
 pub const CHALLENGE_GREYHOUND_FOLD: &[u8] = b"hachi/challenge/greyhound-fold";
-/// Absorb canonical Labrador level metadata (shape/config/tail).
-pub const ABSORB_LABRADOR_LEVEL_CONTEXT: &[u8] = b"hachi/absorb/labrador-level-context";
+/// Absorb canonical Labrador recursion metadata (shape/config/tail).
+pub const ABSORB_LABRADOR_RECURSION_CONTEXT: &[u8] = b"hachi/absorb/labrador-recursion-context";
 /// Absorb Labrador JL projection vector `p`.
 pub const ABSORB_LABRADOR_JL_PROJECTION: &[u8] = b"hachi/absorb/labrador-jl-projection";
 /// Absorb Labrador JL nonce.
@@ -70,14 +70,16 @@ pub const ABSORB_LABRADOR_JL_NONCE: &[u8] = b"hachi/absorb/labrador-jl-nonce";
 pub const CHALLENGE_LABRADOR_AGGREGATION: &[u8] = b"hachi/challenge/labrador-aggregation";
 /// Challenge for Labrador JL collapse coefficients.
 pub const CHALLENGE_LABRADOR_JL_COLLAPSE: &[u8] = b"hachi/challenge/labrador-jl-collapse";
-/// Absorb Labrador inner commitment u1 at each recursion level.
-pub const ABSORB_LABRADOR_U1: &[u8] = b"hachi/absorb/labrador-u1";
-/// Absorb Labrador outer commitment u2 at each recursion level.
-pub const ABSORB_LABRADOR_U2: &[u8] = b"hachi/absorb/labrador-u2";
-/// Absorb Labrador lift polynomials (constant-term-removed).
-pub const ABSORB_LABRADOR_BB: &[u8] = b"hachi/absorb/labrador-bb";
-/// Absorb Labrador squared norm bound at each level.
-pub const ABSORB_LABRADOR_NORM: &[u8] = b"hachi/absorb/labrador-norm";
+/// Absorb the Labrador opening-side payload at each recursion level.
+pub const ABSORB_LABRADOR_INNER_OPENING_PAYLOAD: &[u8] =
+    b"hachi/absorb/labrador-inner-opening-payload";
+/// Absorb the Labrador linear-garbage-side payload at each recursion level.
+pub const ABSORB_LABRADOR_LINEAR_GARBAGE_PAYLOAD: &[u8] =
+    b"hachi/absorb/labrador-linear-garbage-payload";
+/// Absorb Labrador JL lift residuals (constant term removed).
+pub const ABSORB_LABRADOR_JL_LIFT_RESIDUALS: &[u8] = b"hachi/absorb/labrador-jl-lift-residuals";
+/// Absorb the Labrador next-witness squared norm bound at each level.
+pub const ABSORB_LABRADOR_NEXT_WITNESS_NORM: &[u8] = b"hachi/absorb/labrador-next-witness-norm";
 /// Challenge for Labrador amortization fold (ring-element challenges).
 pub const CHALLENGE_LABRADOR_AMORTIZE: &[u8] = b"hachi/challenge/labrador-amortize";
 /// Challenge for deriving the JL projection seed from the transcript.
@@ -105,22 +107,22 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         ABSORB_SUMCHECK_W,
         CHALLENGE_TAU0,
         CHALLENGE_TAU1,
-        DOMAIN_LABRADOR_PROTOCOL,
+        DOMAIN_LABRADOR_RECURSION,
         DOMAIN_GREYHOUND_EVAL,
         ABSORB_GREYHOUND_EVAL_CONTEXT,
         ABSORB_GREYHOUND_EVAL_POINT,
         ABSORB_GREYHOUND_EVAL_VALUE,
         ABSORB_GREYHOUND_U2,
         CHALLENGE_GREYHOUND_FOLD,
-        ABSORB_LABRADOR_LEVEL_CONTEXT,
+        ABSORB_LABRADOR_RECURSION_CONTEXT,
         ABSORB_LABRADOR_JL_PROJECTION,
         ABSORB_LABRADOR_JL_NONCE,
         CHALLENGE_LABRADOR_AGGREGATION,
         CHALLENGE_LABRADOR_JL_COLLAPSE,
-        ABSORB_LABRADOR_U1,
-        ABSORB_LABRADOR_U2,
-        ABSORB_LABRADOR_BB,
-        ABSORB_LABRADOR_NORM,
+        ABSORB_LABRADOR_INNER_OPENING_PAYLOAD,
+        ABSORB_LABRADOR_LINEAR_GARBAGE_PAYLOAD,
+        ABSORB_LABRADOR_JL_LIFT_RESIDUALS,
+        ABSORB_LABRADOR_NEXT_WITNESS_NORM,
         CHALLENGE_LABRADOR_AMORTIZE,
         CHALLENGE_LABRADOR_JL_SEED,
     ]

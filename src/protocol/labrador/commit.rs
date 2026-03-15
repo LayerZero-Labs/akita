@@ -17,10 +17,10 @@ use crate::{cfg_iter, CanonicalField, FieldCore, FieldSampling};
 pub struct LabradorCommitmentArtifacts<F: FieldCore, const D: usize> {
     /// Per-row inner commitments.
     pub u_inner: Vec<Vec<CyclotomicRing<F, D>>>,
-    /// First outer commitment (`u1`).
-    pub u1: Vec<CyclotomicRing<F, D>>,
-    /// Second outer commitment (`u2`) from linear garbage terms.
-    pub u2: Vec<CyclotomicRing<F, D>>,
+    /// Opening-side payload (formerly `u1`).
+    pub inner_opening_payload: Vec<CyclotomicRing<F, D>>,
+    /// Linear-garbage-side payload (formerly `u2`).
+    pub linear_garbage_payload: Vec<CyclotomicRing<F, D>>,
     /// Decomposed witness rows.
     pub decomposed_witness: Vec<Vec<CyclotomicRing<F, D>>>,
     /// Decomposed inner commitments.
@@ -47,7 +47,7 @@ where
             "cannot commit empty Labrador witness".to_string(),
         ));
     }
-    if config.fu == 0 || config.bu == 0 || config.kappa == 0 {
+    if config.aux_digit_parts == 0 || config.aux_digit_bits == 0 || config.inner_commit_rank == 0 {
         return Err(HachiError::InvalidInput(
             "invalid Labrador commitment config".to_string(),
         ));
@@ -61,55 +61,60 @@ where
     )> = cfg_iter!(witness.rows())
         .map(|row| {
             let a = derive_extendable_comkey_matrix::<F, D>(
-                config.kappa,
+                config.inner_commit_rank,
                 row.len(),
                 comkey_seed,
                 b"labrador/comkey/A",
             );
             let t = mat_vec_mul(&a, row);
-            let t_hat = decompose_rows_with_carry(&t, config.fu, config.bu as u32);
-            let s_hat = decompose_rows_with_carry(row, config.f, config.b as u32);
-            (t, t_hat, s_hat)
+            let inner_opening_digits =
+                decompose_rows_with_carry(&t, config.aux_digit_parts, config.aux_digit_bits as u32);
+            let witness_digits = decompose_rows_with_carry(
+                row,
+                config.witness_digit_parts,
+                config.witness_digit_bits as u32,
+            );
+            (t, inner_opening_digits, witness_digits)
         })
         .collect();
 
     let mut u_inner = Vec::with_capacity(per_row.len());
     let mut decomposed_inner = Vec::with_capacity(per_row.len());
     let mut decomposed_witness = Vec::with_capacity(per_row.len());
-    for (t, t_hat, s_hat) in per_row {
+    for (t, inner_opening_digits, witness_digits) in per_row {
         if t.is_empty() {
             return Err(HachiError::InvalidInput(
                 "inner commitment row produced empty vector".to_string(),
             ));
         }
         u_inner.push(t);
-        decomposed_inner.push(t_hat);
-        decomposed_witness.push(s_hat);
+        decomposed_inner.push(inner_opening_digits);
+        decomposed_witness.push(witness_digits);
     }
 
-    let mut t_hat_flat = Vec::new();
-    for t_hat in &decomposed_inner {
-        t_hat_flat.extend(t_hat.iter().copied());
+    let mut inner_opening_digits_flat = Vec::new();
+    for inner_opening_digits in &decomposed_inner {
+        inner_opening_digits_flat.extend(inner_opening_digits.iter().copied());
     }
 
-    let u1 = if config.tail || config.kappa1 == 0 {
+    let inner_opening_payload = if config.tail || config.outer_commit_rank == 0 {
         u_inner.iter().flat_map(|v| v.iter().copied()).collect()
     } else {
         let b = derive_extendable_comkey_matrix::<F, D>(
-            config.kappa1,
-            t_hat_flat.len(),
+            config.outer_commit_rank,
+            inner_opening_digits_flat.len(),
             comkey_seed,
             b"labrador/comkey/B",
         );
-        mat_vec_mul(&b, &t_hat_flat)
+        mat_vec_mul(&b, &inner_opening_digits_flat)
     };
 
     let linear_garbage = build_linear_garbage(witness);
-    let u2 = if config.tail || config.kappa1 == 0 {
+    let linear_garbage_payload = if config.tail || config.outer_commit_rank == 0 {
         linear_garbage.clone()
     } else {
         let b2 = derive_extendable_comkey_matrix::<F, D>(
-            config.kappa1,
+            config.outer_commit_rank,
             linear_garbage.len(),
             comkey_seed,
             b"labrador/comkey/U2",
@@ -119,8 +124,8 @@ where
 
     Ok(LabradorCommitmentArtifacts {
         u_inner,
-        u1,
-        u2,
+        inner_opening_payload,
+        linear_garbage_payload,
         decomposed_witness,
         decomposed_inner,
         linear_garbage,
@@ -208,27 +213,29 @@ fn commit_inner_ntt<F: FieldCore + CanonicalField, const D: usize>(
     decompose_modulus: u32,
     outer_rows: usize,
 ) -> TwoTierResult<F, D> {
-    let t_hat_per_row: Vec<Vec<CyclotomicRing<F, D>>> = cfg_iter!(inner_commitment)
+    let inner_opening_digits_per_row: Vec<Vec<CyclotomicRing<F, D>>> = cfg_iter!(inner_commitment)
         .map(|t| decompose_rows_with_carry(t, num_digits, decompose_modulus))
         .collect();
-    let t_hat: Vec<CyclotomicRing<F, D>> = t_hat_per_row.into_iter().flatten().collect();
+    let inner_opening_digits: Vec<CyclotomicRing<F, D>> =
+        inner_opening_digits_per_row.into_iter().flatten().collect();
 
     if ntt_slot_num_rows(matrix) == 0 || outer_rows == 0 {
-        return Ok((t_hat.clone(), t_hat));
+        return Ok((inner_opening_digits.clone(), inner_opening_digits));
     }
-    let one_vec = vec![t_hat.clone()];
+    let one_vec = vec![inner_opening_digits.clone()];
     let u = match matrix {
         NttSlotCache::Q32 { neg, params, .. } => mat_vec_mul_ntt_ring_many(neg, &one_vec, params),
         NttSlotCache::Q64 { neg, params, .. } => mat_vec_mul_ntt_ring_many(neg, &one_vec, params),
         NttSlotCache::Q128 { neg, params, .. } => mat_vec_mul_ntt_ring_many(neg, &one_vec, params),
     };
     let u0 = u.into_iter().next().unwrap_or_default();
-    Ok((t_hat, u0))
+    Ok((inner_opening_digits, u0))
 }
 
 /// NTT-accelerated two-tier commitment: `witness → t = A·w → t̂ → u = B·t̂`.
 ///
-/// Returns `(t̂, u)` where `t̂` is the flattened decomposed inner commitment
+/// Returns `(inner_opening_digits, payload)` where `inner_opening_digits` is
+/// the flattened decomposed inner commitment
 /// and `u` is the outer commitment.
 ///
 /// # Errors
@@ -291,18 +298,21 @@ mod tests {
     fn commit_linear_only_is_deterministic() {
         let witness = sample_witness();
         let cfg = LabradorReductionConfig {
-            f: 1,
-            b: 8,
-            fu: 2,
-            bu: 10,
-            kappa: 3,
-            kappa1: 2,
+            witness_digit_parts: 1,
+            witness_digit_bits: 8,
+            aux_digit_parts: 2,
+            aux_digit_bits: 10,
+            inner_commit_rank: 3,
+            outer_commit_rank: 2,
             tail: false,
         };
         let seed = [3u8; 32];
         let a = commit_linear_only(&witness, &cfg, &seed).unwrap();
         let b = commit_linear_only(&witness, &cfg, &seed).unwrap();
         assert_eq!(a, b);
-        assert!(!a.u2.is_empty(), "linear garbage commitment u2 must exist");
+        assert!(
+            !a.linear_garbage_payload.is_empty(),
+            "linear garbage payload must exist"
+        );
     }
 }

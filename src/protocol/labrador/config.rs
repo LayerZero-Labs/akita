@@ -14,14 +14,15 @@ const LABRADOR_TAU2: f64 = 8.0;
 /// Full fold-level plan: security parameters plus witness reshaping layout.
 #[derive(Debug, Clone)]
 pub struct LabradorFoldPlan {
-    /// Security parameters (f, b, fu, bu, kappa, kappa1, tail).
+    /// Security parameters (formerly `f`, `b`, `fu`, `bu`, `kappa`,
+    /// `kappa1`, `tail`).
     pub config: LabradorReductionConfig,
-    /// Virtual row length after nu-reshaping.
-    pub nn: usize,
+    /// Virtual row length after reshaping (formerly `nn`).
+    pub virtual_row_len: usize,
     /// Per-original-row split count. `0` = continuation (concatenate with next
     /// row), `>0` = boundary that terminates a group and splits it into this
-    /// many virtual rows of length `nn`.
-    pub nu: Vec<usize>,
+    /// many virtual rows of length `virtual_row_len` (formerly `nu`).
+    pub row_split_counts: Vec<usize>,
 }
 
 /// Euclidean SIS estimate for a flattened Module-SIS instance.
@@ -187,8 +188,8 @@ pub fn estimate_module_sis_euclidean<F: CanonicalField, const D: usize>(
 /// Select a linear-only Labrador fold plan (non-tail mode).
 ///
 /// Mirrors the C `init_proof` parameter selection path with `quadratic=0`,
-/// including the nu-partitioning k-loop that determines the optimal virtual
-/// row length `nn`.
+/// including the row-split k-loop that determines the optimal
+/// `virtual_row_len`.
 ///
 /// # Errors
 ///
@@ -218,7 +219,7 @@ pub fn select_config_with_mode<F: FieldCore + CanonicalField, const D: usize>(
 /// Mirrors the C `init_proof` algorithm with `quadratic=0`: all input rows
 /// are placed in a single group (boundary at the last row only). The k-loop
 /// searches from k=15 down to k=1, keeps every secure candidate whose
-/// commitment overhead fits within `1.1 × nn`, and returns the candidate with
+/// commitment overhead fits within `1.1 × virtual_row_len`, and returns the candidate with
 /// the smallest carried witness size for the next transition.
 ///
 /// # Errors
@@ -257,11 +258,11 @@ pub fn plan_fold<F: FieldCore + CanonicalField, const D: usize>(
     let mut best_score = usize::MAX;
 
     for k in (1..=15usize).rev() {
-        let nn = total_len.div_ceil(k);
-        let rr = k;
-        let rr_f = rr as f64;
+        let virtual_row_len = total_len.div_ceil(k);
+        let virtual_row_count = k;
+        let virtual_row_count_f = virtual_row_count as f64;
 
-        let mut varz = norm_sum / (nn as f64 * d);
+        let mut varz = norm_sum / (virtual_row_len as f64 * d);
         varz *= LABRADOR_TAU1 + 4.0 * LABRADOR_TAU2;
         if !varz.is_finite() || varz <= 0.0 {
             varz = 1.0;
@@ -272,143 +273,159 @@ pub fn plan_fold<F: FieldCore + CanonicalField, const D: usize>(
                 13,
                 6.0 * LABRADOR_T
                     * LABRADOR_SLACK
-                    * (2.0 * (LABRADOR_TAU1 + 4.0 * LABRADOR_TAU2) * varz * nn as f64 * d).sqrt(),
+                    * (2.0
+                        * (LABRADOR_TAU1 + 4.0 * LABRADOR_TAU2)
+                        * varz
+                        * virtual_row_len as f64
+                        * d)
+                        .sqrt(),
                 logq,
                 d,
             ) || 64.0 * varz > (1u64 << 28) as f64);
 
-        let f: usize = if decompose { 2 } else { 1 };
-        let mut b = if decompose {
+        let witness_digit_parts: usize = if decompose { 2 } else { 1 };
+        let mut witness_digit_bits = if decompose {
             ((12.0f64.log2() + varz.log2()) / 4.0).round() as isize
         } else {
             ((12.0f64.log2() + varz.log2()) / 2.0).round() as isize
         };
-        b = b.clamp(1, logq_bits as isize);
+        witness_digit_bits = witness_digit_bits.clamp(1, logq_bits as isize);
 
-        let (fu, bu) = if tail {
+        let (aux_digit_parts, aux_digit_bits) = if tail {
             (1usize, logq_bits.max(1))
         } else {
-            let fu = ((logq_bits + 2 * (b as usize) / 3) / (b as usize)).max(1);
-            let bu = ((logq_bits + fu / 2) / fu).max(1);
-            (fu, bu)
+            let aux_digit_parts = ((logq_bits + 2 * (witness_digit_bits as usize) / 3)
+                / (witness_digit_bits as usize))
+                .max(1);
+            let aux_digit_bits = ((logq_bits + aux_digit_parts / 2) / aux_digit_parts).max(1);
+            (aux_digit_parts, aux_digit_bits)
         };
 
         let fg: usize = 0; // quadratic=0
 
-        let mut found_kappa = None;
+        let mut found_inner_commit_rank = None;
         let mut last_normsq = 0.0f64;
 
-        for kappa in 1..=32usize {
-            let mut normsq = (2f64.powi(2 * b as i32) / 12.0 * ((f - 1) as f64)
-                + varz / 2f64.powi(2 * (f - 1) as i32 * b as i32))
-                * nn as f64;
+        for inner_commit_rank in 1..=32usize {
+            let mut normsq = (2f64.powi(2 * witness_digit_bits as i32) / 12.0
+                * ((witness_digit_parts - 1) as f64)
+                + varz
+                    / 2f64.powi(2 * (witness_digit_parts - 1) as i32 * witness_digit_bits as i32))
+                * virtual_row_len as f64;
             if !tail {
-                let hi_exp = logq_bits as isize - (fu.saturating_sub(1) * bu) as isize;
+                let hi_exp = logq_bits as isize
+                    - (aux_digit_parts.saturating_sub(1) * aux_digit_bits) as isize;
                 let hi_exp = hi_exp.max(0) as i32;
-                normsq += (2f64.powi(2 * bu as i32) * ((fu - 1) as f64) + 2f64.powi(2 * hi_exp))
+                normsq += (2f64.powi(2 * aux_digit_bits as i32) * ((aux_digit_parts - 1) as f64)
+                    + 2f64.powi(2 * hi_exp))
                     / 12.0
-                    * (rr_f * kappa as f64 + (rr_f * rr_f + rr_f) / 2.0);
+                    * (virtual_row_count_f * inner_commit_rank as f64
+                        + (virtual_row_count_f * virtual_row_count_f + virtual_row_count_f) / 2.0);
             }
             normsq *= d;
             last_normsq = normsq;
 
             if sis_secure_with_params(
-                kappa,
+                inner_commit_rank,
                 6.0 * LABRADOR_T
                     * LABRADOR_SLACK
-                    * 2f64.powi(((f - 1) * b as usize) as i32)
+                    * 2f64.powi(((witness_digit_parts - 1) * witness_digit_bits as usize) as i32)
                     * normsq.sqrt(),
                 logq,
                 d,
             ) {
-                found_kappa = Some(kappa);
+                found_inner_commit_rank = Some(inner_commit_rank);
                 break;
             }
         }
 
-        let kappa = match found_kappa {
+        let inner_commit_rank = match found_inner_commit_rank {
             Some(k) => k,
             None => {
                 let c = LabradorReductionConfig {
-                    f,
-                    b: b as usize,
-                    fu,
-                    bu,
-                    kappa: 32,
-                    kappa1: 0,
+                    witness_digit_parts,
+                    witness_digit_bits: witness_digit_bits as usize,
+                    aux_digit_parts,
+                    aux_digit_bits,
+                    inner_commit_rank: 32,
+                    outer_commit_rank: 0,
                     tail,
                 };
-                last_config = Some(build_plan(c, nn, r, rr));
+                last_config = Some(build_plan(c, virtual_row_len, r, virtual_row_count));
                 continue;
             }
         };
 
         if tail {
-            let u1len = rr * kappa;
-            let u2len = 2 * rr - 1;
+            let inner_opening_payload_len = virtual_row_count * inner_commit_rank;
+            let linear_garbage_payload_len = 2 * virtual_row_count - 1;
             let varz_log = if varz > 0.0 { varz.log2() } else { 0.0 };
             let tc = LabradorReductionConfig {
-                f,
-                b: b as usize,
-                fu,
-                bu,
-                kappa,
-                kappa1: 0,
+                witness_digit_parts,
+                witness_digit_bits: witness_digit_bits as usize,
+                aux_digit_parts,
+                aux_digit_bits,
+                inner_commit_rank,
+                outer_commit_rank: 0,
                 tail: true,
             };
-            if kappa <= 32
-                && (u1len + u2len) as f64 * logq <= 1.1 * nn as f64 * (varz_log / 2.0 + 2.05)
+            if inner_commit_rank <= 32
+                && (inner_opening_payload_len + linear_garbage_payload_len) as f64 * logq
+                    <= 1.1 * virtual_row_len as f64 * (varz_log / 2.0 + 2.05)
             {
-                let score = transition_carry_ring_elems(nn, rr, &tc);
+                let score = transition_carry_ring_elems(virtual_row_len, virtual_row_count, &tc);
                 maybe_take_better_plan(
                     &mut best_plan,
                     &mut best_score,
                     score,
-                    build_plan(tc, nn, r, rr),
+                    build_plan(tc, virtual_row_len, r, virtual_row_count),
                 );
             }
-            last_config = Some(build_plan(tc, nn, r, rr));
+            last_config = Some(build_plan(tc, virtual_row_len, r, virtual_row_count));
         } else {
-            let kappa1 = (1..=32usize).find(|&k1| {
-                sis_secure_with_params(k1, 2.0 * LABRADOR_SLACK * last_normsq.sqrt(), logq, d)
+            let outer_commit_rank = (1..=32usize).find(|&rank| {
+                sis_secure_with_params(rank, 2.0 * LABRADOR_SLACK * last_normsq.sqrt(), logq, d)
             });
-            let kappa1 = match kappa1 {
-                Some(k1) => k1,
+            let outer_commit_rank = match outer_commit_rank {
+                Some(rank) => rank,
                 None => {
                     let c = LabradorReductionConfig {
-                        f,
-                        b: b as usize,
-                        fu,
-                        bu,
-                        kappa,
-                        kappa1: 32,
+                        witness_digit_parts,
+                        witness_digit_bits: witness_digit_bits as usize,
+                        aux_digit_parts,
+                        aux_digit_bits,
+                        inner_commit_rank,
+                        outer_commit_rank: 32,
                         tail: false,
                     };
-                    last_config = Some(build_plan(c, nn, r, rr));
+                    last_config = Some(build_plan(c, virtual_row_len, r, virtual_row_count));
                     continue;
                 }
             };
 
             let c = LabradorReductionConfig {
-                f,
-                b: b as usize,
-                fu,
-                bu,
-                kappa,
-                kappa1,
+                witness_digit_parts,
+                witness_digit_bits: witness_digit_bits as usize,
+                aux_digit_parts,
+                aux_digit_bits,
+                inner_commit_rank,
+                outer_commit_rank,
                 tail: false,
             };
-            let lab_m = fu * rr * kappa + (fu + fg) * (rr * rr + rr) / 2;
-            if (lab_m as f64) <= 1.1 * nn as f64 {
-                let score = transition_carry_ring_elems(nn, rr, &c);
+            let aux_row_len = aux_digit_parts * virtual_row_count * inner_commit_rank
+                + (aux_digit_parts + fg)
+                    * (virtual_row_count * virtual_row_count + virtual_row_count)
+                    / 2;
+            if (aux_row_len as f64) <= 1.1 * virtual_row_len as f64 {
+                let score = transition_carry_ring_elems(virtual_row_len, virtual_row_count, &c);
                 maybe_take_better_plan(
                     &mut best_plan,
                     &mut best_score,
                     score,
-                    build_plan(c, nn, r, rr),
+                    build_plan(c, virtual_row_len, r, virtual_row_count),
                 );
             }
-            last_config = Some(build_plan(c, nn, r, rr));
+            last_config = Some(build_plan(c, virtual_row_len, r, virtual_row_count));
         }
     }
 
@@ -421,9 +438,15 @@ pub fn plan_fold<F: FieldCore + CanonicalField, const D: usize>(
     })
 }
 
-fn transition_carry_ring_elems(nn: usize, rr: usize, config: &LabradorReductionConfig) -> usize {
-    let z_rows = config.f * nn;
-    z_rows + rr * config.kappa * config.fu + rr * (rr + 1) / 2 * config.fu
+fn transition_carry_ring_elems(
+    virtual_row_len: usize,
+    virtual_row_count: usize,
+    config: &LabradorReductionConfig,
+) -> usize {
+    let witness_rows = config.witness_digit_parts * virtual_row_len;
+    witness_rows
+        + virtual_row_count * config.inner_commit_rank * config.aux_digit_parts
+        + virtual_row_count * (virtual_row_count + 1) / 2 * config.aux_digit_parts
 }
 
 fn maybe_take_better_plan(
@@ -434,37 +457,53 @@ fn maybe_take_better_plan(
 ) {
     if score < *best_score
         || (score == *best_score
-            && best_plan
-                .as_ref()
-                .is_none_or(|best| candidate.nu.iter().sum::<usize>() < best.nu.iter().sum()))
+            && best_plan.as_ref().is_none_or(|best| {
+                candidate.row_split_counts.iter().sum::<usize>()
+                    < best.row_split_counts.iter().sum::<usize>()
+            }))
     {
         *best_score = score;
         *best_plan = Some(candidate);
     }
 }
 
-fn build_plan(config: LabradorReductionConfig, nn: usize, r: usize, rr: usize) -> LabradorFoldPlan {
-    let mut nu = vec![0usize; r];
-    if !nu.is_empty() {
-        nu[r - 1] = rr;
+fn build_plan(
+    config: LabradorReductionConfig,
+    virtual_row_len: usize,
+    input_row_count: usize,
+    virtual_row_count: usize,
+) -> LabradorFoldPlan {
+    let mut row_split_counts = vec![0usize; input_row_count];
+    if !row_split_counts.is_empty() {
+        row_split_counts[input_row_count - 1] = virtual_row_count;
     }
-    LabradorFoldPlan { config, nn, nu }
+    LabradorFoldPlan {
+        config,
+        virtual_row_len,
+        row_split_counts,
+    }
 }
 
 /// Build a trivial fold plan (no reshaping) from a config and row lengths.
 ///
-/// All rows keep their original lengths; `nn = max(row_lengths)` and `nu`
+/// All rows keep their original lengths; `virtual_row_len = max(row_lengths)`
+/// and `row_split_counts`
 /// marks each row as its own virtual row.
 pub fn trivial_plan(config: LabradorReductionConfig, row_lengths: &[usize]) -> LabradorFoldPlan {
-    let nn = row_lengths.iter().copied().max().unwrap_or(0);
-    let nu: Vec<usize> = row_lengths.iter().map(|_| 1).collect();
-    LabradorFoldPlan { config, nn, nu }
+    let virtual_row_len = row_lengths.iter().copied().max().unwrap_or(0);
+    let row_split_counts: Vec<usize> = row_lengths.iter().map(|_| 1).collect();
+    LabradorFoldPlan {
+        config,
+        virtual_row_len,
+        row_split_counts,
+    }
 }
 
 /// Parameter selection for the Hachi→Labrador handoff witness.
 ///
 /// Given fixed matrix dimensions `m` (rows) and `n` (columns), searches over
-/// `f` (2..=8) and `kappa` (1..=32) to find the smallest SIS-secure parameter
+/// witness digit parts (2..=8) and inner commitment rank (1..=32) to find the
+/// smallest SIS-secure parameter
 /// set for the polynomial commitment.
 ///
 /// # Errors
@@ -485,54 +524,57 @@ pub fn select_handoff_config<F: CanonicalField, const D: usize>(
     const GH_TAU1: f64 = 32.0;
     const GH_TAU2: f64 = 8.0;
 
-    for f in 2..=8usize {
-        let b = (logq + f / 2) / f;
+    for witness_digit_parts in 2..=8usize {
+        let witness_digit_bits = (logq + witness_digit_parts / 2) / witness_digit_parts;
 
-        let varz = 2f64.powi(2 * b as i32) / 12.0 * nf * (GH_TAU1 + 4.0 * GH_TAU2);
-        let bu = ((0.25 * (12.0 * varz).log2()).round() as usize)
+        let varz = 2f64.powi(2 * witness_digit_bits as i32) / 12.0 * nf * (GH_TAU1 + 4.0 * GH_TAU2);
+        let aux_digit_bits = ((0.25 * (12.0 * varz).log2()).round() as usize)
             .max(1)
             .min(logq);
-        let fu = ((logq as f64 / bu as f64).round() as usize).max(1);
+        let aux_digit_parts = ((logq as f64 / aux_digit_bits as f64).round() as usize).max(1);
 
         let mut found = None;
-        for kappa in 1..=32usize {
-            let mut normsq =
-                (2f64.powi(2 * bu as i32) / 12.0 + varz / 2f64.powi(2 * bu as i32)) * mf * f as f64;
-            let hi_exp = logq as i32 - (fu.saturating_sub(1) * bu) as i32;
-            normsq += (2f64.powi(2 * bu as i32) * (fu as f64 - 1.0) + 2f64.powi(2 * hi_exp.max(0)))
+        for inner_commit_rank in 1..=32usize {
+            let mut normsq = (2f64.powi(2 * aux_digit_bits as i32) / 12.0
+                + varz / 2f64.powi(2 * aux_digit_bits as i32))
+                * mf
+                * witness_digit_parts as f64;
+            let hi_exp = logq as i32 - (aux_digit_parts.saturating_sub(1) * aux_digit_bits) as i32;
+            normsq += (2f64.powi(2 * aux_digit_bits as i32) * (aux_digit_parts as f64 - 1.0)
+                + 2f64.powi(2 * hi_exp.max(0)))
                 / 12.0
-                * (kappa as f64 + 1.0)
+                * (inner_commit_rank as f64 + 1.0)
                 * nf;
             normsq *= d;
 
             if sis_secure::<F, D>(
-                kappa,
-                6.0 * GH_T * GH_SLACK * 2f64.powi(bu as i32) * normsq.sqrt(),
+                inner_commit_rank,
+                6.0 * GH_T * GH_SLACK * 2f64.powi(aux_digit_bits as i32) * normsq.sqrt(),
             ) {
-                found = Some((kappa, normsq));
+                found = Some((inner_commit_rank, normsq));
                 break;
             }
         }
 
-        let (kappa, _normsq) = match found {
+        let (inner_commit_rank, normsq) = match found {
             Some(v) => v,
             None => continue,
         };
 
-        let kappa1 =
-            (1..=32usize).find(|&k1| sis_secure::<F, D>(k1, 2.0 * GH_SLACK * _normsq.sqrt()));
-        let kappa1 = match kappa1 {
-            Some(k1) => k1,
+        let outer_commit_rank =
+            (1..=32usize).find(|&rank| sis_secure::<F, D>(rank, 2.0 * GH_SLACK * normsq.sqrt()));
+        let outer_commit_rank = match outer_commit_rank {
+            Some(rank) => rank,
             None => continue,
         };
 
         return Ok(LabradorReductionConfig {
-            f,
-            b,
-            fu,
-            bu,
-            kappa,
-            kappa1,
+            witness_digit_parts,
+            witness_digit_bits,
+            aux_digit_parts,
+            aux_digit_bits,
+            inner_commit_rank,
+            outer_commit_rank,
             tail: false,
         });
     }
@@ -631,12 +673,12 @@ mod tests {
     fn select_config_returns_valid_ranges() {
         let witness = LabradorWitness::new(vec![row(32), row(32), row(32)]);
         let cfg = select_config::<F, D>(&witness).unwrap();
-        assert!(cfg.f >= 1 && cfg.f <= 2);
-        assert!(cfg.b > 0);
-        assert!(cfg.fu > 0);
-        assert!(cfg.bu > 0);
-        assert!((1..=32).contains(&cfg.kappa));
-        assert!((1..=32).contains(&cfg.kappa1));
+        assert!((1..=2).contains(&cfg.witness_digit_parts));
+        assert!(cfg.witness_digit_bits > 0);
+        assert!(cfg.aux_digit_parts > 0);
+        assert!(cfg.aux_digit_bits > 0);
+        assert!((1..=32).contains(&cfg.inner_commit_rank));
+        assert!((1..=32).contains(&cfg.outer_commit_rank));
         assert!(!cfg.tail);
     }
 

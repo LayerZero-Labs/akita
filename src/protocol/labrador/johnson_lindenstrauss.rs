@@ -501,7 +501,7 @@ fn project_streaming<const D: usize>(
 mod tests {
     use super::*;
     use crate::algebra::fields::{Fp64, Prime128M13M4P0};
-    use crate::protocol::transcript::labels::DOMAIN_LABRADOR_PROTOCOL;
+    use crate::protocol::transcript::labels::DOMAIN_LABRADOR_RECURSION;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::FromSmallInt;
 
@@ -561,8 +561,8 @@ mod tests {
     #[test]
     fn project_is_deterministic_and_replayable() {
         let witness = sample_witness_from_seed(42);
-        let mut t1 = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
-        let mut t2 = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let mut t1 = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_RECURSION);
+        let mut t2 = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_RECURSION);
         let (p1, n1, _) = project(&witness, &mut t1).unwrap();
         let (p2, n2, _) = project(&witness, &mut t2).unwrap();
         assert_eq!(p1, p2);
@@ -572,8 +572,8 @@ mod tests {
     #[test]
     fn project_fp128_is_deterministic_and_replayable() {
         let witness = sample_witness_from_seed_generic::<F128>(42);
-        let mut t1 = Blake2bTranscript::<F128>::new(DOMAIN_LABRADOR_PROTOCOL);
-        let mut t2 = Blake2bTranscript::<F128>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let mut t1 = Blake2bTranscript::<F128>::new(DOMAIN_LABRADOR_RECURSION);
+        let mut t2 = Blake2bTranscript::<F128>::new(DOMAIN_LABRADOR_RECURSION);
         let (p1, n1, _) = project(&witness, &mut t1).unwrap();
         let (p2, n2, _) = project(&witness, &mut t2).unwrap();
         assert_eq!(p1, p2);
@@ -640,7 +640,7 @@ mod tests {
     fn project_norm_bound_over_multiple_witnesses() {
         for seed in 1..=10u64 {
             let witness = sample_witness_from_seed(seed);
-            let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+            let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_RECURSION);
             let (projection, nonce, _) = project(&witness, &mut transcript).unwrap();
 
             let beta = witness_squared_norm(&witness);

@@ -64,24 +64,25 @@ impl<F: FieldCore, const D: usize> LabradorConstraint<F, D> {
 pub(crate) struct NextWitnessLayout {
     /// Number of rows used by the decomposed `z` witness.
     pub z_part_rows: usize,
-    /// Row index holding `t_hat || h_hat`.
+    /// Row index holding `inner_opening_digits || linear_garbage_digits`.
     pub aux_row: usize,
     /// Number of decomposed inner-commitment entries.
-    pub t_hat_len: usize,
+    pub inner_opening_digits_len: usize,
     /// Number of decomposed linear-garbage entries.
-    pub h_hat_len: usize,
+    pub linear_garbage_digits_len: usize,
 }
 
 impl NextWitnessLayout {
     /// Derive the next-witness layout from input row count and config.
     pub(crate) fn new(input_rows: usize, config: &LabradorReductionConfig) -> Self {
-        let t_hat_len = input_rows * config.kappa * config.fu;
-        let h_hat_len = input_rows * (input_rows + 1) / 2 * config.fu;
+        let inner_opening_digits_len =
+            input_rows * config.inner_commit_rank * config.aux_digit_parts;
+        let linear_garbage_digits_len = input_rows * (input_rows + 1) / 2 * config.aux_digit_parts;
         Self {
-            z_part_rows: config.f,
-            aux_row: config.f,
-            t_hat_len,
-            h_hat_len,
+            z_part_rows: config.witness_digit_parts,
+            aux_row: config.witness_digit_parts,
+            inner_opening_digits_len,
+            linear_garbage_digits_len,
         }
     }
 
@@ -92,17 +93,17 @@ impl NextWitnessLayout {
 
     /// Total length of the auxiliary row.
     pub(crate) fn aux_row_len(self) -> usize {
-        self.t_hat_len + self.h_hat_len
+        self.inner_opening_digits_len + self.linear_garbage_digits_len
     }
 
-    /// Slice of the auxiliary row occupied by `t_hat`.
-    pub(crate) fn t_hat_range(self) -> Range<usize> {
-        0..self.t_hat_len
+    /// Slice of the auxiliary row occupied by `inner_opening_digits`.
+    pub(crate) fn inner_opening_digits_range(self) -> Range<usize> {
+        0..self.inner_opening_digits_len
     }
 
-    /// Slice of the auxiliary row occupied by `h_hat`.
-    pub(crate) fn h_hat_range(self) -> Range<usize> {
-        self.t_hat_len..self.aux_row_len()
+    /// Slice of the auxiliary row occupied by `linear_garbage_digits`.
+    pub(crate) fn linear_garbage_digits_range(self) -> Range<usize> {
+        self.inner_opening_digits_len..self.aux_row_len()
     }
 }
 
@@ -123,21 +124,21 @@ where
             "challenge row count mismatch".to_string(),
         ));
     }
-    if config.f == 0 {
+    if config.witness_digit_parts == 0 {
         return Err(HachiError::InvalidInput(
-            "cannot build next constraints with f=0".to_string(),
+            "cannot build next constraints with witness_digit_parts=0".to_string(),
         ));
     }
 
     let layout = NextWitnessLayout::new(r, config);
-    let pow_b: Vec<F> = (0..config.f)
-        .map(|idx| pow2_field::<F>(config.b * idx))
+    let pow_b: Vec<F> = (0..config.witness_digit_parts)
+        .map(|idx| pow2_field::<F>(config.witness_digit_bits * idx))
         .collect();
-    let pow_bu: Vec<F> = (0..config.fu)
-        .map(|idx| pow2_field::<F>(config.bu * idx))
+    let pow_bu: Vec<F> = (0..config.aux_digit_parts)
+        .map(|idx| pow2_field::<F>(config.aux_digit_bits * idx))
         .collect();
-    let combined_phi = combine_phi(phi_total, challenges, max_len);
-    Ok((layout, pow_b, pow_bu, combined_phi))
+    let amortized_phi = combine_phi(phi_total, challenges, max_len);
+    Ok((layout, pow_b, pow_bu, amortized_phi))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -147,10 +148,10 @@ fn build_constraints_from_prepared<F, const D: usize>(
     challenges: &[SparseChallenge],
     pow_b: &[F],
     pow_bu: &[F],
-    combined_phi: &[CyclotomicRing<F, D>],
-    b_total: &CyclotomicRing<F, D>,
-    u1: &[CyclotomicRing<F, D>],
-    u2: &[CyclotomicRing<F, D>],
+    amortized_phi: &[CyclotomicRing<F, D>],
+    aggregated_rhs: &CyclotomicRing<F, D>,
+    inner_opening_payload: &[CyclotomicRing<F, D>],
+    linear_garbage_payload: &[CyclotomicRing<F, D>],
     setup: &LabradorSetupMatrices<F, D>,
 ) -> Result<Vec<LabradorConstraint<F, D>>, HachiError>
 where
@@ -165,15 +166,23 @@ where
                 .expect("sampler outputs valid challenges")
         })
         .collect();
-    if config.kappa1 > 0 {
-        if u1.len() != config.kappa1 || u2.len() != config.kappa1 {
+    if config.outer_commit_rank > 0 {
+        if inner_opening_payload.len() != config.outer_commit_rank
+            || linear_garbage_payload.len() != config.outer_commit_rank
+        {
             return Err(HachiError::InvalidInput(
-                "u1/u2 length mismatch for next statement".to_string(),
+                "payload length mismatch for next statement".to_string(),
             ));
         }
-        constraints.extend(build_outer_commitment_constraints(layout, setup, u1));
+        constraints.extend(build_outer_commitment_constraints(
+            layout,
+            setup,
+            inner_opening_payload,
+        ));
         constraints.extend(build_linear_garbage_commitment_constraints(
-            layout, setup, u2,
+            layout,
+            setup,
+            linear_garbage_payload,
         ));
     }
     constraints.extend(build_amortized_opening_constraints(
@@ -190,11 +199,11 @@ where
         config,
         pow_b,
         pow_bu,
-        combined_phi,
+        amortized_phi,
     ));
     constraints.push(build_diagonal_constraint(
         layout,
-        b_total,
+        aggregated_rhs,
         challenges.len(),
         config,
         pow_bu,
@@ -208,19 +217,19 @@ where
 #[tracing::instrument(skip_all, name = "labrador::build_next_constraints")]
 pub(crate) fn build_next_constraints<F, const D: usize>(
     phi_total: &[Vec<CyclotomicRing<F, D>>],
-    b_total: &CyclotomicRing<F, D>,
+    aggregated_rhs: &CyclotomicRing<F, D>,
     challenges: &[SparseChallenge],
     row_lengths: &[usize],
     max_len: usize,
     config: &LabradorReductionConfig,
-    u1: &[CyclotomicRing<F, D>],
-    u2: &[CyclotomicRing<F, D>],
+    inner_opening_payload: &[CyclotomicRing<F, D>],
+    linear_garbage_payload: &[CyclotomicRing<F, D>],
     setup: &LabradorSetupMatrices<F, D>,
 ) -> Result<Vec<LabradorConstraint<F, D>>, HachiError>
 where
     F: FieldCore + CanonicalField + FromSmallInt,
 {
-    let (layout, pow_b, pow_bu, combined_phi) =
+    let (layout, pow_b, pow_bu, amortized_phi) =
         prepare_next_constraint_inputs(phi_total, challenges, row_lengths, max_len, config)?;
     build_constraints_from_prepared(
         layout,
@@ -228,10 +237,10 @@ where
         challenges,
         &pow_b,
         &pow_bu,
-        &combined_phi,
-        b_total,
-        u1,
-        u2,
+        &amortized_phi,
+        aggregated_rhs,
+        inner_opening_payload,
+        linear_garbage_payload,
         setup,
     )
 }
@@ -239,7 +248,7 @@ where
 #[tracing::instrument(skip_all, name = "labrador::build_next_constraint_plan")]
 pub(crate) fn build_next_constraint_plan<F, const D: usize>(
     phi_total: &[Vec<CyclotomicRing<F, D>>],
-    b_total: &CyclotomicRing<F, D>,
+    aggregated_rhs: &CyclotomicRing<F, D>,
     challenges: &[SparseChallenge],
     row_lengths: &[usize],
     max_len: usize,
@@ -249,15 +258,15 @@ pub(crate) fn build_next_constraint_plan<F, const D: usize>(
 where
     F: FieldCore + CanonicalField + FromSmallInt,
 {
-    let (_layout, _pow_b, _pow_bu, combined_phi) =
+    let (_layout, _pow_b, _pow_bu, amortized_phi) =
         prepare_next_constraint_inputs(phi_total, challenges, row_lengths, max_len, config)?;
     Ok(LabradorReducedConstraintPlan {
         row_count: row_lengths.len(),
         max_len,
         config: *config,
         challenges: challenges.to_vec(),
-        combined_phi,
-        b_total: *b_total,
+        amortized_phi,
+        aggregated_rhs: *aggregated_rhs,
         setup,
     })
 }
@@ -265,18 +274,18 @@ where
 #[tracing::instrument(skip_all, name = "labrador::materialize_reduced_constraints")]
 pub(crate) fn materialize_reduced_constraints<F, const D: usize>(
     plan: &LabradorReducedConstraintPlan<F, D>,
-    u1: &[CyclotomicRing<F, D>],
-    u2: &[CyclotomicRing<F, D>],
+    inner_opening_payload: &[CyclotomicRing<F, D>],
+    linear_garbage_payload: &[CyclotomicRing<F, D>],
 ) -> Result<Vec<LabradorConstraint<F, D>>, HachiError>
 where
     F: FieldCore + CanonicalField + FromSmallInt,
 {
     let layout = NextWitnessLayout::new(plan.row_count, &plan.config);
-    let pow_b: Vec<F> = (0..plan.config.f)
-        .map(|idx| pow2_field::<F>(plan.config.b * idx))
+    let pow_b: Vec<F> = (0..plan.config.witness_digit_parts)
+        .map(|idx| pow2_field::<F>(plan.config.witness_digit_bits * idx))
         .collect();
-    let pow_bu: Vec<F> = (0..plan.config.fu)
-        .map(|idx| pow2_field::<F>(plan.config.bu * idx))
+    let pow_bu: Vec<F> = (0..plan.config.aux_digit_parts)
+        .map(|idx| pow2_field::<F>(plan.config.aux_digit_bits * idx))
         .collect();
     build_constraints_from_prepared(
         layout,
@@ -284,34 +293,35 @@ where
         &plan.challenges,
         &pow_b,
         &pow_bu,
-        &plan.combined_phi,
-        &plan.b_total,
-        u1,
-        u2,
+        &plan.amortized_phi,
+        &plan.aggregated_rhs,
+        inner_opening_payload,
+        linear_garbage_payload,
         plan.setup.as_ref(),
     )
 }
 
 /// Build the paper's outer-commitment check (Fig. 3, line 19)
-/// `u1 = B * t_hat`, with the quadratic `g_ij` contribution omitted.
+/// `inner_opening_payload = B * inner_opening_digits`, with the quadratic
+/// `g_ij` contribution omitted.
 ///
 /// The paper writes this as one vector equation. Here it is scalarized into one
-/// `LabradorConstraint` per row of `B` / entry of `u1`, all reading the
-/// `t_hat` prefix of the auxiliary witness row.
+/// `LabradorConstraint` per row of `B` / entry of the opening-side payload, all
+/// reading the `inner_opening_digits` prefix of the auxiliary witness row.
 fn build_outer_commitment_constraints<F: FieldCore, const D: usize>(
     layout: NextWitnessLayout,
     setup: &LabradorSetupMatrices<F, D>,
-    u1: &[CyclotomicRing<F, D>],
+    inner_opening_payload: &[CyclotomicRing<F, D>],
 ) -> Vec<LabradorConstraint<F, D>> {
     setup
         .b_mat
         .iter()
-        .zip(u1.iter())
+        .zip(inner_opening_payload.iter())
         .map(|(b_row, target)| {
             LabradorConstraint::new(
                 vec![LabradorConstraintTerm::new(
                     layout.aux_row,
-                    layout.t_hat_range().start,
+                    layout.inner_opening_digits_range().start,
                     b_row.clone(),
                 )],
                 *target,
@@ -321,25 +331,26 @@ fn build_outer_commitment_constraints<F: FieldCore, const D: usize>(
 }
 
 /// Build the linear-garbage commitment check (Fig. 3, line 20)
-/// `u2 = D * h_hat`.
+/// `linear_garbage_payload = D * linear_garbage_digits`.
 ///
-/// As with `u1`, the paper presents a vector equation; this implementation
-/// expands it into one scalar constraint per row of `D` / entry of `u2`,
-/// reading the `h_hat` suffix of the auxiliary witness row.
+/// As with the opening-side payload, the paper presents a vector equation; this
+/// implementation expands it into one scalar constraint per row of `D` / entry
+/// of the linear-garbage-side payload, reading the
+/// `linear_garbage_digits` suffix of the auxiliary witness row.
 fn build_linear_garbage_commitment_constraints<F: FieldCore, const D: usize>(
     layout: NextWitnessLayout,
     setup: &LabradorSetupMatrices<F, D>,
-    u2: &[CyclotomicRing<F, D>],
+    linear_garbage_payload: &[CyclotomicRing<F, D>],
 ) -> Vec<LabradorConstraint<F, D>> {
     setup
         .d_mat
         .iter()
-        .zip(u2.iter())
+        .zip(linear_garbage_payload.iter())
         .map(|(d_row, target)| {
             LabradorConstraint::new(
                 vec![LabradorConstraintTerm::new(
                     layout.aux_row,
-                    layout.h_hat_range().start,
+                    layout.linear_garbage_digits_range().start,
                     d_row.clone(),
                 )],
                 *target,
@@ -351,9 +362,11 @@ fn build_linear_garbage_commitment_constraints<F: FieldCore, const D: usize>(
 /// Build the amortized opening relation (Fig. 3, line 15)
 /// `A * z_tilde = sum_i c_i * t_tilde_i`.
 ///
-/// The paper's equation is `kappa`-dimensional, so this function emits one
-/// scalar constraint per row of `A`. The first `f` witness rows reconstruct the
-/// decomposed `z_tilde = sum_k 2^(k b) z^(k)`, while the `t_hat` slice of the
+/// The paper's equation is `inner_commit_rank`-dimensional, so this function
+/// emits one scalar constraint per row of `A`. The first
+/// `witness_digit_parts` witness rows reconstruct the decomposed
+/// `z_tilde = sum_k 2^(k * witness_digit_bits) z^(k)`, while the
+/// `inner_opening_digits` slice of the
 /// auxiliary row reconstructs each decomposed `t_tilde_i`.
 fn build_amortized_opening_constraints<F: FieldCore, const D: usize>(
     layout: NextWitnessLayout,
@@ -363,9 +376,9 @@ fn build_amortized_opening_constraints<F: FieldCore, const D: usize>(
     pow_bu: &[F],
     setup: &LabradorSetupMatrices<F, D>,
 ) -> Vec<LabradorConstraint<F, D>> {
-    (0..config.kappa)
+    (0..config.inner_commit_rank)
         .map(|output_idx| {
-            let mut terms = Vec::with_capacity(config.f + 1);
+            let mut terms = Vec::with_capacity(config.witness_digit_parts + 1);
             for (part_idx, scale) in pow_b.iter().copied().enumerate() {
                 let coeffs = setup.a_mat[output_idx]
                     .iter()
@@ -374,17 +387,19 @@ fn build_amortized_opening_constraints<F: FieldCore, const D: usize>(
                 terms.push(LabradorConstraintTerm::new(part_idx, 0, coeffs));
             }
 
-            let mut aux_coeffs = vec![CyclotomicRing::<F, D>::zero(); layout.t_hat_len];
+            let mut aux_coeffs =
+                vec![CyclotomicRing::<F, D>::zero(); layout.inner_opening_digits_len];
             for (row_idx, challenge) in challenges.iter().enumerate() {
                 for (part_idx, &scale) in pow_bu.iter().enumerate() {
-                    let idx =
-                        row_idx * config.kappa * config.fu + output_idx * config.fu + part_idx;
+                    let idx = row_idx * config.inner_commit_rank * config.aux_digit_parts
+                        + output_idx * config.aux_digit_parts
+                        + part_idx;
                     aux_coeffs[idx] = -(challenge.scale(&scale));
                 }
             }
             terms.push(LabradorConstraintTerm::new(
                 layout.aux_row,
-                layout.t_hat_range().start,
+                layout.inner_opening_digits_range().start,
                 aux_coeffs,
             ));
 
@@ -396,9 +411,10 @@ fn build_amortized_opening_constraints<F: FieldCore, const D: usize>(
 /// Build the linear-only garbage relation (Fig. 3, line 17)
 /// `sum_i c_i * <phi_i, z_tilde> = sum_{i <= j} c_i c_j * h_ij`.
 ///
-/// `combined_phi` already equals `sum_i c_i * phi_i`, so the left-hand side is
+/// `amortized_phi` already equals `sum_i c_i * phi_i`, so the left-hand side is
 /// reconstructed from the decomposed `z_tilde` rows. The right-hand side is
-/// reconstructed from the packed upper-triangular `h_hat` entries stored in the
+/// reconstructed from the packed upper-triangular `linear_garbage_digits`
+/// entries stored in the
 /// auxiliary row.
 fn build_linear_garbage_constraint<F: FieldCore, const D: usize>(
     layout: NextWitnessLayout,
@@ -406,28 +422,31 @@ fn build_linear_garbage_constraint<F: FieldCore, const D: usize>(
     config: &LabradorReductionConfig,
     pow_b: &[F],
     pow_bu: &[F],
-    combined_phi: &[CyclotomicRing<F, D>],
+    amortized_phi: &[CyclotomicRing<F, D>],
 ) -> LabradorConstraint<F, D> {
-    let mut terms = Vec::with_capacity(config.f + 1);
+    let mut terms = Vec::with_capacity(config.witness_digit_parts + 1);
     for (part_idx, scale) in pow_b.iter().copied().enumerate() {
-        let coeffs = combined_phi.iter().map(|elem| elem.scale(&scale)).collect();
+        let coeffs = amortized_phi
+            .iter()
+            .map(|elem| elem.scale(&scale))
+            .collect();
         terms.push(LabradorConstraintTerm::new(part_idx, 0, coeffs));
     }
 
-    let mut h_coeffs = vec![CyclotomicRing::<F, D>::zero(); layout.h_hat_len];
+    let mut h_coeffs = vec![CyclotomicRing::<F, D>::zero(); layout.linear_garbage_digits_len];
     for i in 0..challenges.len() {
         for j in i..challenges.len() {
             let coeff = challenges[i] * challenges[j];
             let pair = pair_index(i, j, challenges.len());
             for (part_idx, &scale) in pow_bu.iter().enumerate() {
-                let idx = pair * config.fu + part_idx;
+                let idx = pair * config.aux_digit_parts + part_idx;
                 h_coeffs[idx] = -(coeff.scale(&scale));
             }
         }
     }
     terms.push(LabradorConstraintTerm::new(
         layout.aux_row,
-        layout.h_hat_range().start,
+        layout.linear_garbage_digits_range().start,
         h_coeffs,
     ));
 
@@ -436,22 +455,23 @@ fn build_linear_garbage_constraint<F: FieldCore, const D: usize>(
 
 /// Build the linear-only diagonal relation (Fig. 3, line 18 with no `a_ij`
 /// or `g_ij`)
-/// `sum_i h_ii = b_total`.
+/// `sum_i h_ii = aggregated_rhs`.
 ///
-/// Only diagonal packed `h_hat` entries contribute here. Their decomposed
-/// digits are reweighted by powers of `2^bu` to reconstruct each `h_ii`.
+/// Only diagonal packed `linear_garbage_digits` entries contribute here. Their
+/// decomposed digits are reweighted by powers of `2^aux_digit_bits` to
+/// reconstruct each `h_ii`.
 fn build_diagonal_constraint<F: FieldCore, const D: usize>(
     layout: NextWitnessLayout,
-    b_total: &CyclotomicRing<F, D>,
+    aggregated_rhs: &CyclotomicRing<F, D>,
     input_rows: usize,
     config: &LabradorReductionConfig,
     pow_bu: &[F],
 ) -> LabradorConstraint<F, D> {
-    let mut diag_coeffs = vec![CyclotomicRing::<F, D>::zero(); layout.h_hat_len];
+    let mut diag_coeffs = vec![CyclotomicRing::<F, D>::zero(); layout.linear_garbage_digits_len];
     for i in 0..input_rows {
         let pair = pair_index(i, i, input_rows);
         for (part_idx, &scale) in pow_bu.iter().enumerate() {
-            let idx = pair * config.fu + part_idx;
+            let idx = pair * config.aux_digit_parts + part_idx;
             diag_coeffs[idx] = constant_poly(scale);
         }
     }
@@ -459,10 +479,10 @@ fn build_diagonal_constraint<F: FieldCore, const D: usize>(
     LabradorConstraint::new(
         vec![LabradorConstraintTerm::new(
             layout.aux_row,
-            layout.h_hat_range().start,
+            layout.linear_garbage_digits_range().start,
             diag_coeffs,
         )],
-        *b_total,
+        *aggregated_rhs,
     )
 }
 

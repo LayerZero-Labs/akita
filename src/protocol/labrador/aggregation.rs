@@ -350,10 +350,11 @@ fn accumulate_phi_flat<F: FieldCore + CanonicalField, const D: usize>(
 ///   2. Collapse the JL matrix rows → φ^''(k) ring-element vector.
 ///   3. Compute b^''(k) = ⟨φ^''(k), s⟩ and verify its constant term.
 ///   4. Transmit b^''(k) (constant term zeroed) and absorb into transcript.
-///   5. Sample ring-element β_k and accumulate into (φ_total, b_total).
+///   5. Sample ring-element β_k and accumulate into (φ_total, aggregated_rhs).
 ///
-/// Returns `(phi_total_flat, b_total, bb)` where `phi_total_flat` is flattened
-/// in row-major order and `bb` holds the transmitted polynomials.
+/// Returns `(phi_total_flat, aggregated_rhs, jl_lift_residuals)` where
+/// `phi_total_flat` is flattened in row-major order and
+/// `jl_lift_residuals` holds the transmitted polynomials.
 #[allow(clippy::type_complexity)]
 #[tracing::instrument(skip_all, name = "labrador::aggregate_jl_constraints_prover")]
 pub(crate) fn aggregate_jl_constraints_prover<F, T, const D: usize>(
@@ -376,9 +377,9 @@ where
     let flat_witness_i8 = try_centered_i8_cache_from_ring_coeffs(&flat_witness.rings);
 
     let mut phi_total_flat = vec![CyclotomicRing::<F, D>::zero(); flat_witness.rings.len()];
-    let mut b_total = CyclotomicRing::<F, D>::zero();
+    let mut aggregated_rhs = CyclotomicRing::<F, D>::zero();
     let lifts = jl_lifts::<F>();
-    let mut bb = Vec::with_capacity(lifts);
+    let mut jl_lift_residuals = Vec::with_capacity(lifts);
 
     for _ in 0..lifts {
         let omega = sample_jl_collapse_challenge::<F, T>(transcript);
@@ -397,16 +398,16 @@ where
         };
 
         let (b_tx, _c0) = zero_constant_term_for_proof(b_full);
-        bb.push(b_tx);
-        transcript.append_serde(labels::ABSORB_LABRADOR_BB, &b_tx);
+        jl_lift_residuals.push(b_tx);
+        transcript.append_serde(labels::ABSORB_LABRADOR_JL_LIFT_RESIDUALS, &b_tx);
 
         let beta: CyclotomicRing<F, D> =
             challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
-        b_total += beta * b_full;
+        aggregated_rhs += beta * b_full;
         accumulate_phi_flat(&mut phi_total_flat, &phi_flat, beta);
     }
 
-    Ok((phi_total_flat, b_total, bb))
+    Ok((phi_total_flat, aggregated_rhs, jl_lift_residuals))
 }
 
 // ---------------------------------------------------------------------------
@@ -417,14 +418,14 @@ where
 ///
 /// Same transcript flow as the prover variant, but reconstructs the full
 /// polynomial b^''(k) by restoring the constant term from the projection
-/// and the transmitted `bb[k]`. Returns a flattened `phi_total`.
+/// and the transmitted `jl_lift_residuals[k]`. Returns a flattened `phi_total`.
 #[allow(clippy::type_complexity)]
 #[tracing::instrument(skip_all, name = "labrador::aggregate_jl_constraints_verifier")]
 pub(crate) fn aggregate_jl_constraints_verifier<F, T, const D: usize>(
     row_lengths: &[usize],
     jl_projection: &[i64; 256],
     matrix: &LabradorJlMatrix,
-    bb: &[CyclotomicRing<F, D>],
+    jl_lift_residuals: &[CyclotomicRing<F, D>],
     transcript: &mut T,
 ) -> Result<(Vec<CyclotomicRing<F, D>>, CyclotomicRing<F, D>), HachiError>
 where
@@ -432,25 +433,28 @@ where
     T: Transcript<F>,
 {
     let lifts = jl_lifts::<F>();
-    if bb.len() != lifts {
+    if jl_lift_residuals.len() != lifts {
         return Err(HachiError::InvalidProof);
     }
     let total_phi_elems: usize = row_lengths.iter().sum();
     let mut phi_total_flat = vec![CyclotomicRing::<F, D>::zero(); total_phi_elems];
-    let mut b_total = CyclotomicRing::<F, D>::zero();
+    let mut aggregated_rhs = CyclotomicRing::<F, D>::zero();
 
-    for bb_lift in bb.iter() {
+    for jl_lift_residual in jl_lift_residuals.iter() {
         let omega = sample_jl_collapse_challenge::<F, T>(transcript);
         let phi_flat = aggregate_jl_contraints_one_lift::<F, D>(matrix, &omega)?;
-        let b_full = restore_constant_term(*bb_lift, collapse_to_field::<F>(jl_projection, &omega));
-        transcript.append_serde(labels::ABSORB_LABRADOR_BB, bb_lift);
+        let b_full = restore_constant_term(
+            *jl_lift_residual,
+            collapse_to_field::<F>(jl_projection, &omega),
+        );
+        transcript.append_serde(labels::ABSORB_LABRADOR_JL_LIFT_RESIDUALS, jl_lift_residual);
         let beta: CyclotomicRing<F, D> =
             challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
-        b_total += beta * b_full;
+        aggregated_rhs += beta * b_full;
         accumulate_phi_flat(&mut phi_total_flat, &phi_flat, beta);
     }
 
-    Ok((phi_total_flat, b_total))
+    Ok((phi_total_flat, aggregated_rhs))
 }
 
 // ---------------------------------------------------------------------------
@@ -546,7 +550,7 @@ where
     }
     if row_lengths
         .iter()
-        .take(plan.config.f)
+        .take(plan.config.witness_digit_parts)
         .any(|&len| len != plan.max_len)
         || row_lengths[layout.aux_row] != layout.aux_row_len()
     {
@@ -554,50 +558,62 @@ where
             "reduced statement row layout mismatch".to_string(),
         ));
     }
-    if statement.u1.len() != plan.config.kappa1 || statement.u2.len() != plan.config.kappa1 {
+    if statement.inner_opening_payload.len() != plan.config.outer_commit_rank
+        || statement.linear_garbage_payload.len() != plan.config.outer_commit_rank
+    {
         return Err(HachiError::InvalidInput(
-            "reduced statement u1/u2 length mismatch".to_string(),
+            "reduced statement payload length mismatch".to_string(),
         ));
     }
 
-    let pow_b: Vec<F> = (0..plan.config.f)
-        .map(|idx| pow2_field::<F>(plan.config.b * idx))
+    let pow_b: Vec<F> = (0..plan.config.witness_digit_parts)
+        .map(|idx| pow2_field::<F>(plan.config.witness_digit_bits * idx))
         .collect();
-    let pow_bu: Vec<F> = (0..plan.config.fu)
-        .map(|idx| pow2_field::<F>(plan.config.bu * idx))
+    let pow_bu: Vec<F> = (0..plan.config.aux_digit_parts)
+        .map(|idx| pow2_field::<F>(plan.config.aux_digit_bits * idx))
         .collect();
 
     let mut phi_total: Vec<Vec<CyclotomicRing<F, D>>> = row_lengths
         .iter()
         .map(|&len| vec![CyclotomicRing::zero(); len])
         .collect();
-    let (z_rows, aux_rows) = phi_total.split_at_mut(plan.config.f);
+    let (z_rows, aux_rows) = phi_total.split_at_mut(plan.config.witness_digit_parts);
     let aux_row = aux_rows.first_mut().ok_or_else(|| {
         HachiError::InvalidInput("missing auxiliary row in reduced statement".to_string())
     })?;
-    let t_hat_start = layout.t_hat_range().start;
-    let h_hat_start = layout.h_hat_range().start;
-    let mut b_total = CyclotomicRing::<F, D>::zero();
+    let inner_opening_start = layout.inner_opening_digits_range().start;
+    let linear_garbage_start = layout.linear_garbage_digits_range().start;
+    let mut aggregated_rhs = CyclotomicRing::<F, D>::zero();
 
-    for (b_row, target) in plan.setup.b_mat.iter().zip(statement.u1.iter()) {
+    for (b_row, target) in plan
+        .setup
+        .b_mat
+        .iter()
+        .zip(statement.inner_opening_payload.iter())
+    {
         let alpha = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
-        b_total += alpha * *target;
-        let dst = &mut aux_row[t_hat_start..h_hat_start];
+        aggregated_rhs += alpha * *target;
+        let dst = &mut aux_row[inner_opening_start..linear_garbage_start];
         for (dst, src) in dst.iter_mut().zip(b_row.iter()) {
             mul_accumulate_term_coeff(&alpha, src, dst);
         }
     }
 
-    for (d_row, target) in plan.setup.d_mat.iter().zip(statement.u2.iter()) {
+    for (d_row, target) in plan
+        .setup
+        .d_mat
+        .iter()
+        .zip(statement.linear_garbage_payload.iter())
+    {
         let alpha = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
-        b_total += alpha * *target;
-        let dst = &mut aux_row[h_hat_start..];
+        aggregated_rhs += alpha * *target;
+        let dst = &mut aux_row[linear_garbage_start..];
         for (dst, src) in dst.iter_mut().zip(d_row.iter()) {
             mul_accumulate_term_coeff(&alpha, src, dst);
         }
     }
 
-    for output_idx in 0..plan.config.kappa {
+    for output_idx in 0..plan.config.inner_commit_rank {
         let alpha = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
         let a_row = &plan.setup.a_mat[output_idx];
         for (part_idx, &scale) in pow_b.iter().enumerate() {
@@ -607,9 +623,9 @@ where
         for (row_idx, challenge) in plan.challenges.iter().enumerate() {
             let base = alpha.mul_by_sparse(challenge);
             for (part_idx, &scale) in pow_bu.iter().enumerate() {
-                let idx = t_hat_start
-                    + row_idx * plan.config.kappa * plan.config.fu
-                    + output_idx * plan.config.fu
+                let idx = inner_opening_start
+                    + row_idx * plan.config.inner_commit_rank * plan.config.aux_digit_parts
+                    + output_idx * plan.config.aux_digit_parts
                     + part_idx;
                 aux_row[idx] -= base.scale(&scale);
             }
@@ -618,7 +634,7 @@ where
 
     let alpha_lg = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
     for (part_idx, &scale) in pow_b.iter().enumerate() {
-        accumulate_scaled_row(&mut z_rows[part_idx], &plan.combined_phi, &alpha_lg, scale);
+        accumulate_scaled_row(&mut z_rows[part_idx], &plan.amortized_phi, &alpha_lg, scale);
     }
     for i in 0..plan.challenges.len() {
         for j in i..plan.challenges.len() {
@@ -627,23 +643,23 @@ where
                 .mul_by_sparse(&plan.challenges[j]);
             let pair = pair_index(i, j, plan.challenges.len());
             for (part_idx, &scale) in pow_bu.iter().enumerate() {
-                let idx = h_hat_start + pair * plan.config.fu + part_idx;
+                let idx = linear_garbage_start + pair * plan.config.aux_digit_parts + part_idx;
                 aux_row[idx] -= base.scale(&scale);
             }
         }
     }
 
     let alpha_diag = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
-    b_total += alpha_diag * plan.b_total;
+    aggregated_rhs += alpha_diag * plan.aggregated_rhs;
     for i in 0..plan.row_count {
         let pair = pair_index(i, i, plan.row_count);
         for (part_idx, &scale) in pow_bu.iter().enumerate() {
-            let idx = h_hat_start + pair * plan.config.fu + part_idx;
+            let idx = linear_garbage_start + pair * plan.config.aux_digit_parts + part_idx;
             aux_row[idx] += alpha_diag.scale(&scale);
         }
     }
 
-    Ok((phi_total, b_total))
+    Ok((phi_total, aggregated_rhs))
 }
 
 pub(crate) fn aggregate_statement<F, T, const D: usize>(
@@ -667,7 +683,7 @@ where
 ///
 /// Each scalar constraint is folded with one fresh dense challenge α: its
 /// coefficient terms are fused-accumulated into `phi_total`, while `α · target`
-/// is accumulated into `b_total`.
+/// is accumulated into `aggregated_rhs`.
 #[allow(clippy::type_complexity)]
 #[tracing::instrument(skip_all, name = "labrador::aggregate_statement_constraints")]
 pub(crate) fn aggregate_statement_constraints<F, T, const D: usize>(
@@ -711,8 +727,8 @@ where
         }
     }
 
-    // Phase 3: b_total — parallel fold-reduce over constraints.
-    let b_total = cfg_fold_reduce!(
+    // Phase 3: aggregated_rhs — parallel fold-reduce over constraints.
+    let aggregated_rhs = cfg_fold_reduce!(
         (0..constraints.len()),
         || CyclotomicRing::<F, D>::zero(),
         |mut acc, i| {
@@ -742,7 +758,7 @@ where
         })
         .collect();
 
-    Ok((phi_total, b_total))
+    Ok((phi_total, aggregated_rhs))
 }
 
 #[cfg(test)]
@@ -750,7 +766,7 @@ mod tests {
     use super::*;
     use crate::algebra::fields::Prime128M13M4P0;
     use crate::algebra::{Pow2Offset32Field, Pow2Offset64Field};
-    use crate::protocol::transcript::labels::DOMAIN_LABRADOR_PROTOCOL;
+    use crate::protocol::transcript::labels::DOMAIN_LABRADOR_RECURSION;
     use crate::protocol::transcript::Blake2bTranscript;
 
     const D: usize = 64;
@@ -795,7 +811,7 @@ mod tests {
 
     #[test]
     fn aggregate_jl_contraints_one_lift_matches_naive_fp32() {
-        let mut transcript = Blake2bTranscript::<Pow2Offset32Field>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let mut transcript = Blake2bTranscript::<Pow2Offset32Field>::new(DOMAIN_LABRADOR_RECURSION);
         let matrix =
             LabradorJlMatrix::generate::<Pow2Offset32Field, _>(&mut transcript, TEST_COLS).unwrap();
         let omega = sample_jl_collapse_challenge::<Pow2Offset32Field, _>(&mut transcript);
@@ -805,7 +821,7 @@ mod tests {
     #[test]
     fn aggregate_jl_contraints_one_lift_matches_naive_fp64() {
         type F64 = Pow2Offset64Field;
-        let mut transcript = Blake2bTranscript::<F64>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let mut transcript = Blake2bTranscript::<F64>::new(DOMAIN_LABRADOR_RECURSION);
         let matrix = LabradorJlMatrix::generate::<F64, _>(&mut transcript, TEST_COLS).unwrap();
         let omega = sample_jl_collapse_challenge::<F64, _>(&mut transcript);
         assert_aggregate_jl_contraints_one_lift_matches_naive::<F64>(&matrix, omega);
@@ -814,7 +830,7 @@ mod tests {
     #[test]
     fn aggregate_jl_contraints_one_lift_matches_naive_fp128() {
         type F128 = Prime128M13M4P0;
-        let mut transcript = Blake2bTranscript::<F128>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let mut transcript = Blake2bTranscript::<F128>::new(DOMAIN_LABRADOR_RECURSION);
         let matrix = LabradorJlMatrix::generate::<F128, _>(&mut transcript, TEST_COLS).unwrap();
         let omega = sample_jl_collapse_challenge::<F128, _>(&mut transcript);
         assert_aggregate_jl_contraints_one_lift_matches_naive::<F128>(&matrix, omega);

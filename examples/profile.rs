@@ -194,7 +194,7 @@ fn print_labrador_tail_breakdown(label: &str, tail: &LabradorTail<F>) -> usize {
     let labrador_proof_size = tail.labrador_proof.serialized_size(Compress::No);
     let v_size = tail.v.serialized_size(Compress::No);
     let y_ring_size = tail.y_ring.serialized_size(Compress::No);
-    let beta_sq_size = tail.beta_sq.serialized_size(Compress::No);
+    let witness_norm_bound_sq_size = tail.witness_norm_bound_sq.serialized_size(Compress::No);
     let total = tail.serialized_size(Compress::No);
 
     eprintln!("[{label}]   final_w: Labrador tail");
@@ -212,10 +212,10 @@ fn print_labrador_tail_breakdown(label: &str, tail: &LabradorTail<F>) -> usize {
         tail.y_ring.count(),
         tail.y_ring.ring_dim(),
     );
-    eprintln!("[{label}]     beta_sq={beta_sq_size} bytes");
+    eprintln!("[{label}]     witness_norm_bound_sq={witness_norm_bound_sq_size} bytes");
     debug_assert_eq!(
         total,
-        labrador_proof_size + v_size + y_ring_size + beta_sq_size
+        labrador_proof_size + v_size + y_ring_size + witness_norm_bound_sq_size
     );
 
     let labrador_levels_len_size = std::mem::size_of::<u32>();
@@ -256,14 +256,14 @@ fn print_labrador_level_breakdown(
     let tail_flag_size = std::mem::size_of::<u8>();
     let input_row_lengths_size = level.input_row_lengths.serialized_size(Compress::No);
     let config_size = level.config.serialized_size(Compress::No);
-    let nn_size = level.nn.serialized_size(Compress::No);
-    let nu_size = level.nu.serialized_size(Compress::No);
-    let u1_size = level.u1.serialized_size(Compress::No);
-    let u2_size = level.u2.serialized_size(Compress::No);
+    let virtual_row_len_size = level.virtual_row_len.serialized_size(Compress::No);
+    let row_split_counts_size = level.row_split_counts.serialized_size(Compress::No);
+    let inner_opening_payload_size = level.inner_opening_payload.serialized_size(Compress::No);
+    let linear_garbage_payload_size = level.linear_garbage_payload.serialized_size(Compress::No);
     let jl_projection_size = level.jl_projection.len() * std::mem::size_of::<i64>();
     let jl_nonce_size = level.jl_nonce.serialized_size(Compress::No);
-    let bb_size = level.bb.serialized_size(Compress::No);
-    let norm_sq_size = level.norm_sq.serialized_size(Compress::No);
+    let jl_lift_residuals_size = level.jl_lift_residuals.serialized_size(Compress::No);
+    let next_witness_norm_sq_size = level.next_witness_norm_sq.serialized_size(Compress::No);
     let total = level.serialized_size(Compress::No);
 
     eprintln!(
@@ -271,41 +271,41 @@ fn print_labrador_level_breakdown(
         level.tail
     );
     eprintln!(
-        "[{label}]       params: input_row_lengths={:?}, nn={}, rr={}, nu={:?}, f={}, b={}, fu={}, bu={}, kappa={}, kappa1={}",
+        "[{label}]       params: input_row_lengths={:?}, virtual_row_len={}, virtual_row_count={}, row_split_counts={:?}, witness_digit_parts={}, witness_digit_bits={}, aux_digit_parts={}, aux_digit_bits={}, inner_commit_rank={}, outer_commit_rank={}",
         level.input_row_lengths,
-        level.nn,
-        level.nu.iter().sum::<usize>(),
-        level.nu,
-        level.config.f,
-        level.config.b,
-        level.config.fu,
-        level.config.bu,
-        level.config.kappa,
-        level.config.kappa1,
+        level.virtual_row_len,
+        level.row_split_counts.iter().sum::<usize>(),
+        level.row_split_counts,
+        level.config.witness_digit_parts,
+        level.config.witness_digit_bits,
+        level.config.aux_digit_parts,
+        level.config.aux_digit_bits,
+        level.config.inner_commit_rank,
+        level.config.outer_commit_rank,
     );
     eprintln!(
-        "[{label}]       framing: tail_flag={tail_flag_size}, input_row_lengths={input_row_lengths_size}, config={config_size}, nn={nn_size}, nu={nu_size}, norm_sq={norm_sq_size}"
+        "[{label}]       framing: tail_flag={tail_flag_size}, input_row_lengths={input_row_lengths_size}, config={config_size}, virtual_row_len={virtual_row_len_size}, row_split_counts={row_split_counts_size}, next_witness_norm_sq={next_witness_norm_sq_size}"
     );
     eprintln!(
-        "[{label}]       msg u1={} bytes ({} ring elems, D={})",
-        u1_size,
-        level.u1.count(),
-        level.u1.ring_dim(),
+        "[{label}]       msg inner_opening_payload={} bytes ({} ring elems, D={})",
+        inner_opening_payload_size,
+        level.inner_opening_payload.count(),
+        level.inner_opening_payload.ring_dim(),
     );
     eprintln!(
-        "[{label}]       msg u2={} bytes ({} ring elems, D={})",
-        u2_size,
-        level.u2.count(),
-        level.u2.ring_dim(),
+        "[{label}]       msg linear_garbage_payload={} bytes ({} ring elems, D={})",
+        linear_garbage_payload_size,
+        level.linear_garbage_payload.count(),
+        level.linear_garbage_payload.ring_dim(),
     );
     eprintln!(
         "[{label}]       msg jl_projection={jl_projection_size} bytes, jl_nonce={jl_nonce_size} bytes"
     );
     eprintln!(
-        "[{label}]       msg bb={} bytes ({} ring elems, D={})",
-        bb_size,
-        level.bb.count(),
-        level.bb.ring_dim(),
+        "[{label}]       msg jl_lift_residuals={} bytes ({} ring elems, D={})",
+        jl_lift_residuals_size,
+        level.jl_lift_residuals.count(),
+        level.jl_lift_residuals.ring_dim(),
     );
 
     debug_assert_eq!(
@@ -313,14 +313,14 @@ fn print_labrador_level_breakdown(
         tail_flag_size
             + input_row_lengths_size
             + config_size
-            + nn_size
-            + nu_size
-            + u1_size
-            + u2_size
+            + virtual_row_len_size
+            + row_split_counts_size
+            + inner_opening_payload_size
+            + linear_garbage_payload_size
             + jl_projection_size
             + jl_nonce_size
-            + bb_size
-            + norm_sq_size
+            + jl_lift_residuals_size
+            + next_witness_norm_sq_size
     );
     total
 }

@@ -2,7 +2,8 @@
 //!
 //! Instead of computing the quotient `r`, evaluating at a random `alpha`, and
 //! running sumcheck, this module converts the ring-level relation `Mz = y`
-//! directly into Labrador constraints.  The witness `w` is `[w_hat | t_hat | z_pre]`
+//! directly into Labrador constraints. The witness `w` is
+//! `[w_hat | inner_opening_digits | z_pre]`
 //! with no quotient portion.
 
 use crate::algebra::ring::CyclotomicRing;
@@ -352,11 +353,11 @@ where
     let w_hat_flat = quad_eq
         .w_hat_flat()
         .ok_or_else(|| HachiError::InvalidInput("missing w_hat_flat".into()))?;
-    let t_hat = &quad_eq
+    let inner_opening_digits = &quad_eq
         .hint()
         .ok_or_else(|| HachiError::InvalidInput("missing hint".into()))?
-        .t_hat;
-    let t_hat_flat = flatten_i8_blocks(t_hat);
+        .inner_opening_digits;
+    let inner_opening_digits_flat = flatten_i8_blocks(inner_opening_digits);
     let z_pre = quad_eq
         .z_pre()
         .ok_or_else(|| HachiError::InvalidInput("missing z_pre".into()))?;
@@ -374,8 +375,8 @@ where
             w_layout,
         )?;
 
-    let witness = build_labrador_witness(w_hat_flat, &t_hat_flat, z_pre, w_layout);
-    let beta_sq = witness.norm();
+    let witness = build_labrador_witness(w_hat_flat, &inner_opening_digits_flat, z_pre, w_layout);
+    let witness_norm_bound_sq = witness.norm();
 
     let cfg = hachi_labrador_select_config::<F, D_HANDOFF>(&witness)?;
     let handoff_row_lengths: Vec<usize> = witness.rows().iter().map(|row| row.len()).collect();
@@ -387,12 +388,12 @@ where
         8 + 1 + (current_w.len() * w_layout.log_basis as usize).div_ceil(8);
 
     let statement = LabradorStatement {
-        u1: Vec::new(),
-        u2: Vec::new(),
+        inner_opening_payload: Vec::new(),
+        linear_garbage_payload: Vec::new(),
         challenges: Vec::new(),
         constraints,
         reduced_constraints: None,
-        beta_sq,
+        witness_norm_bound_sq,
     };
 
     let comkey_seed = expanded_setup.labrador_comkey_seed();
@@ -407,14 +408,14 @@ where
         total_ring_elems = handoff_ring_elems,
         witness_bits = handoff_witness_bits,
         serialized_bytes = handoff_witness_bytes,
-        beta_sq = %beta_sq,
+        witness_norm_bound_sq = %witness_norm_bound_sq,
         max_row_len = handoff_row_lengths.iter().copied().max().unwrap_or(0),
-        f = cfg.f,
-        b = cfg.b,
-        fu = cfg.fu,
-        bu = cfg.bu,
-        kappa = cfg.kappa,
-        kappa1 = cfg.kappa1,
+        witness_digit_parts = cfg.witness_digit_parts,
+        witness_digit_bits = cfg.witness_digit_bits,
+        aux_digit_parts = cfg.aux_digit_parts,
+        aux_digit_bits = cfg.aux_digit_bits,
+        inner_commit_rank = cfg.inner_commit_rank,
+        outer_commit_rank = cfg.outer_commit_rank,
         tail = cfg.tail,
         elapsed_s = t1.elapsed().as_secs_f64(),
         rows = witness.rows().len(),
@@ -436,7 +437,7 @@ where
         labrador_proof: FlatLabradorProof::from_typed(&labrador_proof),
         v: FlatRingVec::from_ring_elems(&quad_eq.v),
         y_ring: FlatRingVec::from_single(&y_ring),
-        beta_sq,
+        witness_norm_bound_sq,
     })))
 }
 
@@ -538,12 +539,12 @@ where
         )?;
 
     let statement = LabradorStatement {
-        u1: Vec::new(),
-        u2: Vec::new(),
+        inner_opening_payload: Vec::new(),
+        linear_garbage_payload: Vec::new(),
         challenges: Vec::new(),
         constraints,
         reduced_constraints: None,
-        beta_sq: tail.beta_sq,
+        witness_norm_bound_sq: tail.witness_norm_bound_sq,
     };
 
     let comkey_seed = expanded_setup.labrador_comkey_seed();
@@ -645,8 +646,8 @@ mod tests {
         .unwrap();
 
         let w_hat_flat = quad_eq.w_hat_flat().unwrap();
-        let t_hat = &quad_eq.hint().unwrap().t_hat;
-        let t_hat_flat = flatten_i8_blocks(t_hat);
+        let inner_opening_digits = &quad_eq.hint().unwrap().inner_opening_digits;
+        let inner_opening_digits_flat = flatten_i8_blocks(inner_opening_digits);
         let z_pre = quad_eq.z_pre().unwrap();
 
         let constraints = build_hachi_labrador_constraints::<F, D, TinyConfig>(
@@ -662,7 +663,7 @@ mod tests {
         )
         .unwrap();
 
-        let witness = build_labrador_witness(w_hat_flat, &t_hat_flat, z_pre, layout);
+        let witness = build_labrador_witness(w_hat_flat, &inner_opening_digits_flat, z_pre, layout);
 
         let rows = witness.rows();
         for (ci, constraint) in constraints.iter().enumerate() {

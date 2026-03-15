@@ -52,8 +52,13 @@ where
 
         let plan = plan_fold::<F, D>(&witness, false)?;
         let cfg = plan.config;
-        let rr: usize = plan.nu.iter().sum();
-        let setup = Arc::new(LabradorSetup::new(&cfg, rr, plan.nn, comkey_seed));
+        let virtual_row_count: usize = plan.row_split_counts.iter().sum();
+        let setup = Arc::new(LabradorSetup::new(
+            &cfg,
+            virtual_row_count,
+            plan.virtual_row_len,
+            comkey_seed,
+        ));
         let fold = prove_level(
             &witness,
             &_statement,
@@ -79,8 +84,13 @@ where
         let tail_cfg = tail_plan.config;
         let baseline_bits = witness_size_bits::<F, D>(&witness);
 
-        let rr: usize = tail_plan.nu.iter().sum();
-        let tail_setup = Arc::new(LabradorSetup::new(&tail_cfg, rr, tail_plan.nn, comkey_seed));
+        let virtual_row_count: usize = tail_plan.row_split_counts.iter().sum();
+        let tail_setup = Arc::new(LabradorSetup::new(
+            &tail_cfg,
+            virtual_row_count,
+            tail_plan.virtual_row_len,
+            comkey_seed,
+        ));
         let mut tail_transcript = transcript.clone();
         if let Ok(tail) = prove_level(
             &witness,
@@ -149,12 +159,12 @@ where
         total_ring_elems = initial_ring_elems,
         witness_bits = initial_witness_bits,
         serialized_bytes = initial_witness_bytes,
-        f = initial_config.f,
-        b = initial_config.b,
-        fu = initial_config.fu,
-        bu = initial_config.bu,
-        kappa = initial_config.kappa,
-        kappa1 = initial_config.kappa1,
+        witness_digit_parts = initial_config.witness_digit_parts,
+        witness_digit_bits = initial_config.witness_digit_bits,
+        aux_digit_parts = initial_config.aux_digit_parts,
+        aux_digit_bits = initial_config.aux_digit_bits,
+        inner_commit_rank = initial_config.inner_commit_rank,
+        outer_commit_rank = initial_config.outer_commit_rank,
         tail = initial_config.tail,
         "labrador initial witness"
     );
@@ -170,8 +180,13 @@ where
             trivial_plan(fallback_cfg, &row_lengths)
         });
         let cfg = plan.config;
-        let rr: usize = plan.nu.iter().sum();
-        let setup = Arc::new(LabradorSetup::new(&cfg, rr, plan.nn, comkey_seed));
+        let virtual_row_count: usize = plan.row_split_counts.iter().sum();
+        let setup = Arc::new(LabradorSetup::new(
+            &cfg,
+            virtual_row_count,
+            plan.virtual_row_len,
+            comkey_seed,
+        ));
 
         let mut attempt_transcript = transcript.clone();
         let fold = prove_level(
@@ -186,22 +201,21 @@ where
         let next_witness_bits = witness_size_bits::<F, D>(&fold.next_witness);
         let level_bits = level_payload_size_bits::<F, D>(&fold.level_proof);
         let candidate_bits = level_bits + next_witness_bits;
-        let rr: usize = plan.nu.iter().sum();
         tracing::debug!(
             current_bits = before_size,
             level_bits,
             next_witness_bits,
             candidate_bits,
             accept = candidate_bits < before_size,
-            nn = plan.nn,
-            rr,
-            nu = ?plan.nu,
-            f = cfg.f,
-            b = cfg.b,
-            fu = cfg.fu,
-            bu = cfg.bu,
-            kappa = cfg.kappa,
-            kappa1 = cfg.kappa1,
+            virtual_row_len = plan.virtual_row_len,
+            virtual_row_count,
+            row_split_counts = ?plan.row_split_counts,
+            witness_digit_parts = cfg.witness_digit_parts,
+            witness_digit_bits = cfg.witness_digit_bits,
+            aux_digit_parts = cfg.aux_digit_parts,
+            aux_digit_bits = cfg.aux_digit_bits,
+            inner_commit_rank = cfg.inner_commit_rank,
+            outer_commit_rank = cfg.outer_commit_rank,
             tail = cfg.tail,
             "labrador non-tail candidate"
         );
@@ -223,9 +237,9 @@ where
             trivial_plan(
                 LabradorReductionConfig {
                     tail: true,
-                    kappa1: 0,
-                    fu: 1,
-                    bu: logq_bits::<F>(),
+                    outer_commit_rank: 0,
+                    aux_digit_parts: 1,
+                    aux_digit_bits: logq_bits::<F>(),
                     ..fallback_cfg
                 },
                 &row_lengths,
@@ -234,8 +248,13 @@ where
         let tail_cfg = tail_plan.config;
         let baseline_bits = witness_size_bits::<F, D>(&witness);
 
-        let rr: usize = tail_plan.nu.iter().sum();
-        let tail_setup = Arc::new(LabradorSetup::new(&tail_cfg, rr, tail_plan.nn, comkey_seed));
+        let virtual_row_count: usize = tail_plan.row_split_counts.iter().sum();
+        let tail_setup = Arc::new(LabradorSetup::new(
+            &tail_cfg,
+            virtual_row_count,
+            tail_plan.virtual_row_len,
+            comkey_seed,
+        ));
         let mut tail_transcript = transcript.clone();
         if let Ok(tail) = prove_level(
             &witness,
@@ -255,15 +274,15 @@ where
                 next_witness_bits,
                 candidate_bits,
                 accept = candidate_bits < baseline_bits,
-                nn = tail_plan.nn,
-                rr,
-                nu = ?tail_plan.nu,
-                f = tail_cfg.f,
-                b = tail_cfg.b,
-                fu = tail_cfg.fu,
-                bu = tail_cfg.bu,
-                kappa = tail_cfg.kappa,
-                kappa1 = tail_cfg.kappa1,
+                virtual_row_len = tail_plan.virtual_row_len,
+                virtual_row_count,
+                row_split_counts = ?tail_plan.row_split_counts,
+                witness_digit_parts = tail_cfg.witness_digit_parts,
+                witness_digit_bits = tail_cfg.witness_digit_bits,
+                aux_digit_parts = tail_cfg.aux_digit_parts,
+                aux_digit_bits = tail_cfg.aux_digit_bits,
+                inner_commit_rank = tail_cfg.inner_commit_rank,
+                outer_commit_rank = tail_cfg.outer_commit_rank,
                 tail = tail_cfg.tail,
                 "labrador final tail compare"
             );
@@ -296,7 +315,9 @@ fn level_payload_size_bits<F: FieldCore + CanonicalField, const D: usize>(
     level: &crate::protocol::labrador::LabradorLevelProof<F, D>,
 ) -> usize {
     let logq_bits = logq_bits::<F>();
-    let ring_elems = level.u1.len() + level.u2.len() + level.bb.len();
+    let ring_elems = level.inner_opening_payload.len()
+        + level.linear_garbage_payload.len()
+        + level.jl_lift_residuals.len();
     let ring_bits = ring_elems * D * logq_bits;
     let jl_bits = level.jl_projection.len() * 64;
     ring_bits + jl_bits + 64
@@ -314,7 +335,7 @@ mod tests {
     use super::*;
     use crate::algebra::fields::Fp64;
     use crate::algebra::ring::CyclotomicRing;
-    use crate::protocol::transcript::labels::DOMAIN_LABRADOR_PROTOCOL;
+    use crate::protocol::transcript::labels::DOMAIN_LABRADOR_RECURSION;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::FromSmallInt;
 
@@ -337,14 +358,14 @@ mod tests {
     #[test]
     fn prover_loop_returns_final_opening_witness() {
         let statement = crate::protocol::labrador::types::LabradorStatement {
-            u1: Vec::new(),
-            u2: Vec::new(),
+            inner_opening_payload: Vec::new(),
+            linear_garbage_payload: Vec::new(),
             challenges: Vec::new(),
             constraints: Vec::new(),
             reduced_constraints: None,
-            beta_sq: 1024,
+            witness_norm_bound_sq: 1024,
         };
-        let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_RECURSION);
         let proof = prove(sample_witness(), &statement, &[1u8; 32], &mut transcript).unwrap();
         assert!(!proof.final_opening_witness.rows().is_empty());
         assert!(proof.levels.len() <= LABRADOR_MAX_LEVELS);
@@ -353,17 +374,17 @@ mod tests {
     #[test]
     fn prover_proof_verifies() {
         let statement = crate::protocol::labrador::types::LabradorStatement {
-            u1: Vec::new(),
-            u2: Vec::new(),
+            inner_opening_payload: Vec::new(),
+            linear_garbage_payload: Vec::new(),
             challenges: Vec::new(),
             constraints: Vec::new(),
             reduced_constraints: None,
-            beta_sq: 1 << 30,
+            witness_norm_bound_sq: 1 << 30,
         };
-        let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_RECURSION);
         let proof = prove(sample_witness(), &statement, &[1u8; 32], &mut transcript).unwrap();
 
-        let mut verify_transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let mut verify_transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_RECURSION);
         crate::protocol::labrador::verify(&statement, &proof, &[1u8; 32], &mut verify_transcript)
             .unwrap();
     }

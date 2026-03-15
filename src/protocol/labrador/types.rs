@@ -79,10 +79,12 @@ pub struct LabradorReducedConstraintPlan<F: FieldCore, const D: usize> {
     pub config: LabradorReductionConfig,
     /// Amortization challenges from the previous level.
     pub challenges: Vec<SparseChallenge>,
-    /// Combined `sum_i c_i * phi_i` relation carried into the next level.
-    pub combined_phi: Vec<CyclotomicRing<F, D>>,
-    /// Aggregated right-hand side for the diagonal relation.
-    pub b_total: CyclotomicRing<F, D>,
+    /// Amortized `sum_i c_i * phi_i` relation carried into the next level
+    /// (formerly `combined_phi`).
+    pub amortized_phi: Vec<CyclotomicRing<F, D>>,
+    /// Aggregated right-hand side for the diagonal relation
+    /// (formerly `b_total`).
+    pub aggregated_rhs: CyclotomicRing<F, D>,
     /// Commitment matrices needed to replay the reduced statement.
     pub setup: Arc<LabradorSetupMatrices<F, D>>,
 }
@@ -90,35 +92,41 @@ pub struct LabradorReducedConstraintPlan<F: FieldCore, const D: usize> {
 /// Public statement reduced to Labrador recursion.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabradorStatement<F: FieldCore, const D: usize> {
-    /// Outer commitment for opening relation.
-    pub u1: Vec<CyclotomicRing<F, D>>,
-    /// Outer commitment for linear-garbage relation.
-    pub u2: Vec<CyclotomicRing<F, D>>,
+    /// Opening-side payload for the current round (formerly `u1`).
+    ///
+    /// This is an outer commitment in standard rounds and the raw opening-side
+    /// digits in tail mode.
+    pub inner_opening_payload: Vec<CyclotomicRing<F, D>>,
+    /// Linear-garbage-side payload for the current round (formerly `u2`).
+    ///
+    /// This is an outer commitment in standard rounds and the raw
+    /// linear-garbage digits in tail mode.
+    pub linear_garbage_payload: Vec<CyclotomicRing<F, D>>,
     /// Amortization challenges (per input witness row).
     pub challenges: Vec<SparseChallenge>,
     /// Sparse constraints checked by reducer/verifier.
     pub constraints: Vec<LabradorConstraint<F, D>>,
     /// Compact recursive statement representation used between Labrador levels.
     pub reduced_constraints: Option<Box<LabradorReducedConstraintPlan<F, D>>>,
-    /// Squared norm bound.
-    pub beta_sq: u128,
+    /// Squared witness norm bound (formerly `beta_sq`).
+    pub witness_norm_bound_sq: u128,
 }
 
 /// Per-level reduction parameters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LabradorReductionConfig {
-    /// Witness decomposition parts.
-    pub f: usize,
-    /// Witness decomposition basis log2.
-    pub b: usize,
-    /// Commitment decomposition parts.
-    pub fu: usize,
-    /// Commitment decomposition basis log2.
-    pub bu: usize,
-    /// Inner commitment rank.
-    pub kappa: usize,
-    /// Outer commitment rank (`0` in tail mode).
-    pub kappa1: usize,
+    /// Number of witness-side digit parts (formerly `f`).
+    pub witness_digit_parts: usize,
+    /// Bit width of each witness-side digit (formerly `b`).
+    pub witness_digit_bits: usize,
+    /// Number of auxiliary digit parts (formerly `fu`).
+    pub aux_digit_parts: usize,
+    /// Bit width of each auxiliary digit (formerly `bu`).
+    pub aux_digit_bits: usize,
+    /// Inner commitment rank (formerly `kappa`).
+    pub inner_commit_rank: usize,
+    /// Outer commitment rank (formerly `kappa1`, `0` in tail mode).
+    pub outer_commit_rank: usize,
     /// Tail-mode marker.
     pub tail: bool,
 }
@@ -132,22 +140,23 @@ pub struct LabradorLevelProof<F: FieldCore, const D: usize> {
     pub input_row_lengths: Vec<usize>,
     /// Configuration selected for this level.
     pub config: LabradorReductionConfig,
-    /// Virtual row length after nu-reshaping.
-    pub nn: usize,
-    /// Per-original-row split counts from the fold plan.
-    pub nu: Vec<usize>,
-    /// First outer commitment.
-    pub u1: Vec<CyclotomicRing<F, D>>,
-    /// Second outer commitment.
-    pub u2: Vec<CyclotomicRing<F, D>>,
+    /// Virtual row length after reshaping (formerly `nn`).
+    pub virtual_row_len: usize,
+    /// Per-original-row split counts from the fold plan (formerly `nu`).
+    pub row_split_counts: Vec<usize>,
+    /// Opening-side payload for this level (formerly `u1`).
+    pub inner_opening_payload: Vec<CyclotomicRing<F, D>>,
+    /// Linear-garbage-side payload for this level (formerly `u2`).
+    pub linear_garbage_payload: Vec<CyclotomicRing<F, D>>,
     /// JL projection vector.
     pub jl_projection: [i64; 256],
     /// JL nonce used to regenerate projection matrix.
     pub jl_nonce: u64,
-    /// Lift polynomials (constant term zeroed in proof).
-    pub bb: Vec<CyclotomicRing<F, D>>,
-    /// Output witness norm bound after reduction.
-    pub norm_sq: u128,
+    /// JL lift residuals with constant term zeroed in the proof
+    /// (formerly `bb`).
+    pub jl_lift_residuals: Vec<CyclotomicRing<F, D>>,
+    /// Output witness norm bound after reduction (formerly `norm_sq`).
+    pub next_witness_norm_sq: u128,
 }
 
 /// Full recursive Labrador proof plus final clear opening witness.
@@ -163,11 +172,13 @@ impl<F: FieldCore, const D: usize> LabradorLevelProof<F, D> {
     /// Serialized size of this level in bytes.
     pub fn size(&self) -> usize {
         let ring_bytes = std::mem::size_of::<CyclotomicRing<F, D>>();
-        let ring_count = self.u1.len() + self.u2.len() + self.bb.len();
+        let ring_count = self.inner_opening_payload.len()
+            + self.linear_garbage_payload.len()
+            + self.jl_lift_residuals.len();
         ring_count * ring_bytes
             + self.jl_projection.len() * std::mem::size_of::<i64>()
             + std::mem::size_of::<u64>() // jl_nonce
-            + std::mem::size_of::<u128>() // norm_sq
+            + std::mem::size_of::<u128>() // next_witness_norm_sq
     }
 }
 

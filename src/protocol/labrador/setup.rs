@@ -29,25 +29,27 @@ impl<F: FieldCore + CanonicalField + FieldSampling, const D: usize> LabradorSetu
         comkey_seed: &LabradorComKeySeed,
     ) -> Self {
         let a_mat = derive_extendable_comkey_matrix::<F, D>(
-            config.kappa,
+            config.inner_commit_rank,
             max_witness_len,
             comkey_seed,
             b"labrador/comkey/A",
         );
 
-        let (b_mat, d_mat) = if config.kappa1 > 0 && !config.tail {
-            let t_hat_len = num_witness_rows * config.kappa * config.fu;
-            let h_hat_len = num_witness_rows * (num_witness_rows + 1) / 2 * config.fu;
+        let (b_mat, d_mat) = if config.outer_commit_rank > 0 && !config.tail {
+            let inner_opening_digits_len =
+                num_witness_rows * config.inner_commit_rank * config.aux_digit_parts;
+            let linear_garbage_digits_len =
+                num_witness_rows * (num_witness_rows + 1) / 2 * config.aux_digit_parts;
 
             let b = derive_extendable_comkey_matrix::<F, D>(
-                config.kappa1,
-                t_hat_len,
+                config.outer_commit_rank,
+                inner_opening_digits_len,
                 comkey_seed,
                 b"labrador/comkey/B",
             );
             let d = derive_extendable_comkey_matrix::<F, D>(
-                config.kappa1,
-                h_hat_len,
+                config.outer_commit_rank,
+                linear_garbage_digits_len,
                 comkey_seed,
                 b"labrador/comkey/U2",
             );
@@ -130,12 +132,12 @@ mod tests {
 
     fn standard_config() -> LabradorReductionConfig {
         LabradorReductionConfig {
-            f: 2,
-            b: 8,
-            fu: 3,
-            bu: 10,
-            kappa: 4,
-            kappa1: 3,
+            witness_digit_parts: 2,
+            witness_digit_bits: 8,
+            aux_digit_parts: 3,
+            aux_digit_bits: 10,
+            inner_commit_rank: 4,
+            outer_commit_rank: 3,
             tail: false,
         }
     }
@@ -143,7 +145,7 @@ mod tests {
     fn tail_config() -> LabradorReductionConfig {
         LabradorReductionConfig {
             tail: true,
-            kappa1: 0,
+            outer_commit_rank: 0,
             ..standard_config()
         }
     }
@@ -153,24 +155,24 @@ mod tests {
         let cfg = standard_config();
         let setup = LabradorSetup::<F, D>::new(&cfg, NUM_ROWS, MAX_LEN, &SEED);
 
-        assert_eq!(setup.matrices.a_mat.len(), cfg.kappa);
+        assert_eq!(setup.matrices.a_mat.len(), cfg.inner_commit_rank);
         assert!(setup.matrices.a_mat.iter().all(|row| row.len() == MAX_LEN));
 
-        let t_hat_len = NUM_ROWS * cfg.kappa * cfg.fu;
-        assert_eq!(setup.matrices.b_mat.len(), cfg.kappa1);
+        let inner_opening_digits_len = NUM_ROWS * cfg.inner_commit_rank * cfg.aux_digit_parts;
+        assert_eq!(setup.matrices.b_mat.len(), cfg.outer_commit_rank);
         assert!(setup
             .matrices
             .b_mat
             .iter()
-            .all(|row| row.len() == t_hat_len));
+            .all(|row| row.len() == inner_opening_digits_len));
 
-        let h_hat_len = NUM_ROWS * (NUM_ROWS + 1) / 2 * cfg.fu;
-        assert_eq!(setup.matrices.d_mat.len(), cfg.kappa1);
+        let linear_garbage_digits_len = NUM_ROWS * (NUM_ROWS + 1) / 2 * cfg.aux_digit_parts;
+        assert_eq!(setup.matrices.d_mat.len(), cfg.outer_commit_rank);
         assert!(setup
             .matrices
             .d_mat
             .iter()
-            .all(|row| row.len() == h_hat_len));
+            .all(|row| row.len() == linear_garbage_digits_len));
     }
 
     #[test]
@@ -178,7 +180,7 @@ mod tests {
         let cfg = tail_config();
         let setup = LabradorSetup::<F, D>::new(&cfg, NUM_ROWS, MAX_LEN, &SEED);
 
-        assert_eq!(setup.matrices.a_mat.len(), cfg.kappa);
+        assert_eq!(setup.matrices.a_mat.len(), cfg.inner_commit_rank);
         assert!(setup.matrices.a_mat.iter().all(|row| row.len() == MAX_LEN));
 
         assert!(setup.matrices.b_mat.is_empty());

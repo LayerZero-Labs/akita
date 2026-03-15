@@ -32,6 +32,9 @@ fn try_centered_i8<F: CanonicalField>(coeff: F, q: u128, half_q: u128) -> Option
     }
 }
 
+const FAST_I8_DIGIT_MIN: i8 = -8;
+const FAST_I8_DIGIT_MAX: i8 = 7;
+
 pub(crate) fn try_centered_i8_cache_from_ring_coeffs<F: CanonicalField, const D: usize>(
     coeffs: &[CyclotomicRing<F, D>],
 ) -> Option<Vec<[i8; D]>> {
@@ -42,7 +45,13 @@ pub(crate) fn try_centered_i8_cache_from_ring_coeffs<F: CanonicalField, const D:
     for ring in coeffs {
         let mut digits = [0i8; D];
         for (dst, coeff) in digits.iter_mut().zip(ring.coeffs.iter()) {
-            *dst = try_centered_i8(*coeff, q, half_q)?;
+            let centered = try_centered_i8(*coeff, q, half_q)?;
+            // The small-digit CRT+NTT fast path uses a fixed LUT for [-8, 7].
+            // Larger centered coefficients must fall back to the generic path.
+            if !(FAST_I8_DIGIT_MIN..=FAST_I8_DIGIT_MAX).contains(&centered) {
+                return None;
+            }
+            *dst = centered;
         }
         out.push(digits);
     }
