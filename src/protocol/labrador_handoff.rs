@@ -23,7 +23,9 @@ use crate::protocol::labrador::types::{
     LabradorReductionConfig, LabradorStatement, LabradorWitness,
 };
 use crate::protocol::labrador::{prove_with_config, LabradorConstraint, LabradorConstraintTerm};
-use crate::protocol::opening_point::{BasisMode, RingOpeningPoint};
+use crate::protocol::opening_point::{
+    ring_opening_point_from_field, BasisMode, RingOpeningPoint,
+};
 use crate::protocol::proof::{
     FlatLabradorProof, FlatLabradorWitness, FlatRingVec, HachiCommitmentHint, HachiProofTail,
     LabradorTail,
@@ -293,7 +295,7 @@ where
 
     let ring_opening_point =
         tracing::info_span!("labrador::handoff_ring_opening_point").in_scope(|| {
-            super::commitment_scheme::ring_opening_point_from_field::<F>(
+            ring_opening_point_from_field::<F>(
                 outer_point,
                 w_layout.r_vars,
                 w_layout.m_vars,
@@ -490,7 +492,7 @@ where
 
     let ring_opening_point =
         tracing::info_span!("labrador::handoff_ring_opening_point").in_scope(|| {
-            super::commitment_scheme::ring_opening_point_from_field::<F>(
+            ring_opening_point_from_field::<F>(
                 outer_point,
                 w_layout.r_vars,
                 w_layout.m_vars,

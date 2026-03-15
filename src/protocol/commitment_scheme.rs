@@ -6,7 +6,6 @@ use crate::algebra::CyclotomicRing;
 #[cfg(debug_assertions)]
 use crate::algebra::SparseChallenge;
 use crate::error::HachiError;
-use crate::primitives::poly::multilinear_lagrange_basis;
 use crate::primitives::serialization::Valid;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{flatten_i8_blocks, mat_vec_mul_ntt_single_i8};
@@ -17,7 +16,10 @@ use crate::protocol::commitment::{
     RingCommitment, RingCommitmentScheme,
 };
 use crate::protocol::hachi_poly_ops::{BalancedDigitPoly, HachiPolyOps};
-use crate::protocol::opening_point::{BasisMode, RingOpeningPoint};
+use crate::protocol::opening_point::{
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
+    RingOpeningPoint,
+};
 use crate::protocol::proof::{
     FlatCommitmentHint, FlatRingVec, HachiCommitmentHint, HachiLevelProof, HachiProof,
     HachiProofTail, LabradorTail, PackedDigits,
@@ -1170,7 +1172,7 @@ where
     }
     transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
 
-    let v = reduce_inner_openings_to_ring_elements::<F, { D }>(inner_point, basis)?;
+    let v = reduce_inner_opening_to_ring_element::<F, { D }>(inner_point, basis)?;
     let d = F::from_u64(Cfg::D as u64);
     let trace_lhs = trace::<F, { D }>(&(y_ring * v.sigma_m1()));
     let trace_rhs = d * *opening;
@@ -1378,73 +1380,6 @@ where
         tau1,
     )?;
     Ok((alpha, m_evals_x))
-}
-
-fn lagrange_weights<F: FieldCore>(point: &[F]) -> Vec<F> {
-    let len = 1usize << point.len();
-    let mut weights = vec![F::zero(); len];
-    multilinear_lagrange_basis(&mut weights, point);
-    weights
-}
-
-/// Multilinear monomial weights: `⊗ᵢ (1, xᵢ)`.
-///
-/// The j-th entry is `∏_{i ∈ bits(j)} point[i]`.
-fn monomial_weights<F: FieldCore>(point: &[F]) -> Vec<F> {
-    let len = 1usize << point.len();
-    let mut weights = vec![F::zero(); len];
-    weights[0] = F::one();
-    for (level, &p) in point.iter().enumerate() {
-        let k = 1usize << level;
-        for i in (0..k).rev() {
-            weights[i + k] = weights[i] * p;
-        }
-    }
-    weights
-}
-
-fn basis_weights<F: FieldCore>(point: &[F], mode: BasisMode) -> Vec<F> {
-    match mode {
-        BasisMode::Lagrange => lagrange_weights(point),
-        BasisMode::Monomial => monomial_weights(point),
-    }
-}
-
-pub(crate) fn ring_opening_point_from_field<F: FieldCore>(
-    opening_point: &[F],
-    r_vars: usize,
-    m_vars: usize,
-    basis: BasisMode,
-) -> Result<RingOpeningPoint<F>, HachiError> {
-    let expected_len = r_vars
-        .checked_add(m_vars)
-        .ok_or_else(|| HachiError::InvalidSetup("opening point length overflow".to_string()))?;
-    if opening_point.len() != expected_len {
-        return Err(HachiError::InvalidPointDimension {
-            expected: expected_len,
-            actual: opening_point.len(),
-        });
-    }
-
-    // Sequential ordering: M variables (position in block) come first,
-    // R variables (block selection) come second.
-    let a = basis_weights(&opening_point[..m_vars], basis);
-    let b = basis_weights(&opening_point[m_vars..], basis);
-    Ok(RingOpeningPoint { a, b })
-}
-
-fn reduce_inner_openings_to_ring_elements<F: FieldCore, const D: usize>(
-    inner_point: &[F],
-    basis: BasisMode,
-) -> Result<CyclotomicRing<F, D>, HachiError> {
-    let weights = basis_weights(inner_point, basis);
-    if weights.len() != D {
-        return Err(HachiError::InvalidInput(format!(
-            "inner basis length {} does not match D={D}",
-            weights.len()
-        )));
-    }
-    Ok(CyclotomicRing::from_slice(&weights))
 }
 
 fn trace<F: FieldCore + FromSmallInt, const D: usize>(u: &CyclotomicRing<F, D>) -> F {

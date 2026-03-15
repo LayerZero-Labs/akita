@@ -1,6 +1,5 @@
 #![allow(missing_docs)]
 
-use hachi_pcs::algebra::poly::multilinear_eval;
 use hachi_pcs::algebra::Fp128;
 use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
@@ -9,6 +8,9 @@ use hachi_pcs::protocol::commitment::{
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
+use hachi_pcs::protocol::opening_point::{
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
+};
 use hachi_pcs::protocol::proof::{
     FlatLabradorLevelProof, FlatLabradorWitness, HachiLevelProof, HachiProof, HachiProofTail,
     LabradorTail,
@@ -29,6 +31,35 @@ use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::prelude::*;
 
 type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
+
+fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
+    poly: &P,
+    point: &[F],
+    layout: &HachiCommitmentLayout,
+    basis: BasisMode,
+) -> F {
+    let alpha_bits = D.trailing_zeros() as usize;
+    assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
+
+    let inner_point = &point[..alpha_bits];
+    let reduced_point = &point[alpha_bits..];
+    let ring_opening_point = ring_opening_point_from_field(
+        reduced_point,
+        layout.r_vars,
+        layout.m_vars,
+        basis,
+    )
+    .expect("opening point shape should match layout");
+
+    let (y_ring, _) = poly.evaluate_and_fold(
+        &ring_opening_point.b,
+        &ring_opening_point.a,
+        layout.block_len,
+    );
+    let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)
+        .expect("inner opening point should match ring dimension");
+    (y_ring * v.sigma_m1()).coefficients()[0]
+}
 
 fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
     label: &str,
@@ -338,23 +369,26 @@ fn print_layout(layout: &HachiCommitmentLayout) {
 
 fn run_dense<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCommitmentLayout) {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
-    let len = 1usize << nv;
-    let decomp = Cfg::decomposition();
-    let half_bound = 1i64 << (decomp.log_commit_bound.min(62) - 1);
-    let evals: Vec<F> = if decomp.log_commit_bound >= 128 {
-        (0..len)
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-            .collect()
-    } else {
-        (0..len)
-            .map(|_| F::from_i64(rng.gen_range(-half_bound..half_bound)))
-            .collect()
-    };
-    let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
     let pt: Vec<F> = (0..nv)
         .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
         .collect();
-    let opening = multilinear_eval(&evals, &pt).unwrap();
+    let (poly, opening) = {
+        let len = 1usize << nv;
+        let decomp = Cfg::decomposition();
+        let half_bound = 1i64 << (decomp.log_commit_bound.min(62) - 1);
+        let evals: Vec<F> = if decomp.log_commit_bound >= 128 {
+            (0..len)
+                .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+                .collect()
+        } else {
+            (0..len)
+                .map(|_| F::from_i64(rng.gen_range(-half_bound..half_bound)))
+                .collect()
+        };
+        let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
+        let opening = opening_from_poly(&poly, &pt, layout, BasisMode::Lagrange);
+        (poly, opening)
+    };
 
     let t0 = Instant::now();
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
@@ -372,27 +406,31 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCo
         .map(|_| Some(rng.gen_range(0..onehot_k)))
         .collect();
     let onehot_poly =
-        OneHotPoly::<F, D>::new(onehot_k, indices.clone(), layout.r_vars, layout.m_vars).unwrap();
-
-    let onehot_evals: Vec<F> = {
-        let mut evals = vec![F::from_u64(0); total_ring * onehot_k];
-        for (ci, opt_idx) in indices.iter().enumerate() {
-            if let Some(idx) = opt_idx {
-                evals[ci * onehot_k + idx] = F::from_u64(1);
-            }
-        }
-        evals
-    };
+        OneHotPoly::<F, D>::new(onehot_k, indices, layout.r_vars, layout.m_vars).unwrap();
     let pt: Vec<F> = (0..nv)
         .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
         .collect();
-    let opening = multilinear_eval(&onehot_evals, &pt).unwrap();
+    let opening = opening_from_poly(&onehot_poly, &pt, layout, BasisMode::Lagrange);
 
     let t0 = Instant::now();
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "setup");
 
     run_prove::<D, Cfg, _>("onehot", &setup, &onehot_poly, &pt, opening, layout);
+}
+
+fn run_dense_mode<const D: usize, Cfg: CommitmentConfig>(title: &str, nv: usize) {
+    let layout = resolve_layout::<Cfg>(nv);
+    tracing::info!("{}", title);
+    print_layout(&layout);
+    run_dense::<D, Cfg>(nv, &layout);
+}
+
+fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig>(title: &str, nv: usize) {
+    let layout = resolve_layout::<Cfg>(nv);
+    tracing::info!("{}", title);
+    print_layout(&layout);
+    run_onehot::<D, Cfg>(nv, &layout);
 }
 
 fn main() {
@@ -446,142 +484,130 @@ fn main() {
     match mode.as_str() {
         "full" => {
             type Cfg = Fp128FullCommitmentConfig;
-            let layout = resolve_layout::<Cfg>(nv);
-            tracing::info!("=== full (dense, log_commit_bound=128) ===");
-            print_layout(&layout);
-            run_dense::<{ Fp128FullCommitmentConfig::D }, Cfg>(nv, &layout);
+            run_dense_mode::<{ Fp128FullCommitmentConfig::D }, Cfg>(
+                "=== full (dense, log_commit_bound=128) ===",
+                nv,
+            );
         }
         "onehot" => {
             type Cfg = Fp128OneHotCommitmentConfig;
-            let layout = resolve_layout::<Cfg>(nv);
-            tracing::info!("=== onehot (log_commit_bound=1) ===");
-            print_layout(&layout);
-            run_onehot::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(nv, &layout);
+            run_onehot_mode::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(
+                "=== onehot (log_commit_bound=1) ===",
+                nv,
+            );
         }
         "logbasis" => {
             type Cfg = Fp128LogBasisCommitmentConfig;
-            let layout = resolve_layout::<Cfg>(nv);
-            tracing::info!("=== logbasis (dense, log_commit_bound=3) ===");
-            print_layout(&layout);
-            run_dense::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(nv, &layout);
+            run_dense_mode::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(
+                "=== logbasis (dense, log_commit_bound=3) ===",
+                nv,
+            );
         }
         "all" => {
             {
                 type Cfg = Fp128FullCommitmentConfig;
-                let layout = resolve_layout::<Cfg>(nv);
-                tracing::info!("=== full (dense, log_commit_bound=128) ===");
-                print_layout(&layout);
-                run_dense::<{ Fp128FullCommitmentConfig::D }, Cfg>(nv, &layout);
+                run_dense_mode::<{ Fp128FullCommitmentConfig::D }, Cfg>(
+                    "=== full (dense, log_commit_bound=128) ===",
+                    nv,
+                );
             }
             {
                 type Cfg = Fp128OneHotCommitmentConfig;
-                let layout = resolve_layout::<Cfg>(nv);
-                tracing::info!("=== onehot (log_commit_bound=1) ===");
-                print_layout(&layout);
-                run_onehot::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(nv, &layout);
+                run_onehot_mode::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(
+                    "=== onehot (log_commit_bound=1) ===",
+                    nv,
+                );
             }
             {
                 type Cfg = Fp128LogBasisCommitmentConfig;
-                let layout = resolve_layout::<Cfg>(nv);
-                tracing::info!("=== logbasis (dense, log_commit_bound=3) ===");
-                print_layout(&layout);
-                run_dense::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(nv, &layout);
+                run_dense_mode::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(
+                    "=== logbasis (dense, log_commit_bound=3) ===",
+                    nv,
+                );
             }
         }
         "compare_onehot" => {
             {
                 type Cfg = Fp128BoundedCommitmentConfig<1, 3, 3>;
-                let layout = resolve_layout::<Cfg>(nv);
-                tracing::info!("=== [A] onehot, basis=3 everywhere ===");
-                print_layout(&layout);
-                run_onehot::<{ Cfg::D }, Cfg>(nv, &layout);
+                run_onehot_mode::<{ Cfg::D }, Cfg>("=== [A] onehot, basis=3 everywhere ===", nv);
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<1, 2, 2>;
-                let layout = resolve_layout::<Cfg>(nv);
-                tracing::info!("=== [B] onehot, basis=2 everywhere ===");
-                print_layout(&layout);
-                run_onehot::<{ Cfg::D }, Cfg>(nv, &layout);
+                run_onehot_mode::<{ Cfg::D }, Cfg>("=== [B] onehot, basis=2 everywhere ===", nv);
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<1, 2, 3>;
-                let layout = resolve_layout::<Cfg>(nv);
-                tracing::info!("=== [C] onehot, L0 basis=2, w-levels basis=3 ===");
-                print_layout(&layout);
-                run_onehot::<{ Cfg::D }, Cfg>(nv, &layout);
+                run_onehot_mode::<{ Cfg::D }, Cfg>(
+                    "=== [C] onehot, L0 basis=2, w-levels basis=3 ===",
+                    nv,
+                );
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<1, 2, 4>;
-                let layout = resolve_layout::<Cfg>(nv);
-                tracing::info!("=== [D] onehot, L0 basis=2, w-levels basis=4 ===");
-                print_layout(&layout);
-                run_onehot::<{ Cfg::D }, Cfg>(nv, &layout);
+                run_onehot_mode::<{ Cfg::D }, Cfg>(
+                    "=== [D] onehot, L0 basis=2, w-levels basis=4 ===",
+                    nv,
+                );
             }
         }
         "compare_logbasis" => {
             {
                 type Cfg = Fp128BoundedCommitmentConfig<3, 3, 3>;
-                let layout = resolve_layout::<Cfg>(nv);
-                tracing::info!("=== [A] logbasis coeffs, basis=3 everywhere ===");
-                print_layout(&layout);
-                run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
+                run_dense_mode::<{ Cfg::D }, Cfg>(
+                    "=== [A] logbasis coeffs, basis=3 everywhere ===",
+                    nv,
+                );
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<3, 2, 2>;
-                let layout = resolve_layout::<Cfg>(nv);
-                tracing::info!("=== [B] logbasis coeffs, basis=2 everywhere ===");
-                print_layout(&layout);
-                run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
+                run_dense_mode::<{ Cfg::D }, Cfg>(
+                    "=== [B] logbasis coeffs, basis=2 everywhere ===",
+                    nv,
+                );
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<3, 2, 3>;
-                let layout = resolve_layout::<Cfg>(nv);
-                tracing::info!("=== [C] logbasis coeffs, L0 basis=2, w-levels basis=3 ===");
-                print_layout(&layout);
-                run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
+                run_dense_mode::<{ Cfg::D }, Cfg>(
+                    "=== [C] logbasis coeffs, L0 basis=2, w-levels basis=3 ===",
+                    nv,
+                );
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<3, 2, 4>;
-                let layout = resolve_layout::<Cfg>(nv);
-                tracing::info!("=== [D] logbasis coeffs, L0 basis=2, w-levels basis=4 ===");
-                print_layout(&layout);
-                run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
+                run_dense_mode::<{ Cfg::D }, Cfg>(
+                    "=== [D] logbasis coeffs, L0 basis=2, w-levels basis=4 ===",
+                    nv,
+                );
             }
         }
         "compare_basis" => {
             {
                 type Cfg = Fp128BoundedCommitmentConfig<128, 3, 3>;
-                let layout = resolve_layout::<Cfg>(nv);
-                tracing::info!("=== [A] baseline: log_basis=3 everywhere ===");
-                print_layout(&layout);
-                run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
+                run_dense_mode::<{ Cfg::D }, Cfg>(
+                    "=== [A] baseline: log_basis=3 everywhere ===",
+                    nv,
+                );
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<128, 2, 2>;
-                let layout = resolve_layout::<Cfg>(nv);
-                tracing::info!("=== [B] log_basis=2 everywhere ===");
-                print_layout(&layout);
-                run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
+                run_dense_mode::<{ Cfg::D }, Cfg>("=== [B] log_basis=2 everywhere ===", nv);
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<128, 2, 3>;
-                let layout = resolve_layout::<Cfg>(nv);
-                tracing::info!("=== [C] L0 basis=2, w-levels basis=3 ===");
-                print_layout(&layout);
-                run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
+                run_dense_mode::<{ Cfg::D }, Cfg>(
+                    "=== [C] L0 basis=2, w-levels basis=3 ===",
+                    nv,
+                );
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<128, 2, 4>;
-                let layout = resolve_layout::<Cfg>(nv);
-                tracing::info!("=== [D] L0 basis=2, w-levels basis=4 ===");
-                print_layout(&layout);
-                run_dense::<{ Cfg::D }, Cfg>(nv, &layout);
+                run_dense_mode::<{ Cfg::D }, Cfg>("=== [D] L0 basis=2, w-levels basis=4 ===", nv);
             }
         }
         other => {
             tracing::error!(
                 mode = other,
-                "Unknown HACHI_MODE. Use: full, onehot, logbasis, compare_basis, all"
+                "Unknown HACHI_MODE. Use: full, onehot, logbasis, all, compare_onehot, compare_logbasis, compare_basis"
             );
             std::process::exit(1);
         }
