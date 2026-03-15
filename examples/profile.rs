@@ -106,8 +106,7 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
     );
     debug_assert_eq!(accounted_total, proof.size());
     eprintln!(
-        "[{label}]   proof framing: levels_len={} bytes, tail_tag={} byte",
-        top_levels_len_size, top_tail_tag_size
+        "[{label}]   proof framing: levels_len={top_levels_len_size} bytes, tail_tag={top_tail_tag_size} byte"
     );
 
     for (i, lp) in proof.levels.iter().enumerate() {
@@ -149,14 +148,13 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
         level.v.count(),
         level.v.ring_dim(),
     );
-    eprintln!("[{label}]     sumcheck={} bytes", sumcheck_size);
+    eprintln!("[{label}]     sumcheck={sumcheck_size} bytes");
     eprintln!(
-        "[{label}]     w_commitment={} bytes ({} ring elems, D={})",
-        w_commitment_size,
+        "[{label}]     w_commitment={w_commitment_size} bytes ({} ring elems, D={})",
         level.w_commitment.count(),
         level.w_commit_d(),
     );
-    eprintln!("[{label}]     w_eval={} bytes", w_eval_size);
+    eprintln!("[{label}]     w_eval={w_eval_size} bytes");
 
     debug_assert_eq!(
         total,
@@ -174,7 +172,7 @@ fn print_labrador_tail_breakdown(label: &str, tail: &LabradorTail<F>) -> usize {
 
     eprintln!("[{label}]   final_w: Labrador tail");
     eprintln!("[{label}]   labrador_tail: total={total} bytes");
-    eprintln!("[{label}]     labrador_proof={} bytes", labrador_proof_size);
+    eprintln!("[{label}]     labrador_proof={labrador_proof_size} bytes");
     eprintln!(
         "[{label}]     v={} bytes ({} ring elems, D={})",
         v_size,
@@ -187,7 +185,7 @@ fn print_labrador_tail_breakdown(label: &str, tail: &LabradorTail<F>) -> usize {
         tail.y_ring.count(),
         tail.y_ring.ring_dim(),
     );
-    eprintln!("[{label}]     beta_sq={} bytes", beta_sq_size);
+    eprintln!("[{label}]     beta_sq={beta_sq_size} bytes");
     debug_assert_eq!(
         total,
         labrador_proof_size + v_size + y_ring_size + beta_sq_size
@@ -259,8 +257,7 @@ fn print_labrador_level_breakdown(
         level.config.kappa1,
     );
     eprintln!(
-        "[{label}]       framing: tail_flag={}, input_row_lengths={}, config={}, nn={}, nu={}, norm_sq={}",
-        tail_flag_size, input_row_lengths_size, config_size, nn_size, nu_size, norm_sq_size,
+        "[{label}]       framing: tail_flag={tail_flag_size}, input_row_lengths={input_row_lengths_size}, config={config_size}, nn={nn_size}, nu={nu_size}, norm_sq={norm_sq_size}"
     );
     eprintln!(
         "[{label}]       msg u1={} bytes ({} ring elems, D={})",
@@ -275,8 +272,7 @@ fn print_labrador_level_breakdown(
         level.u2.ring_dim(),
     );
     eprintln!(
-        "[{label}]       msg jl_projection={} bytes, jl_nonce={} bytes",
-        jl_projection_size, jl_nonce_size
+        "[{label}]       msg jl_projection={jl_projection_size} bytes, jl_nonce={jl_nonce_size} bytes"
     );
     eprintln!(
         "[{label}]       msg bb={} bytes ({} ring elems, D={})",
@@ -312,8 +308,7 @@ fn print_labrador_final_witness_breakdown(label: &str, witness: &FlatLabradorWit
     let total = witness.serialized_size(Compress::No);
 
     eprintln!(
-        "[{label}]     final_opening_witness: total={} bytes, rows_len={} bytes",
-        total, rows_len_size
+        "[{label}]     final_opening_witness: total={total} bytes, rows_len={rows_len_size} bytes"
     );
     for (row_idx, row) in witness.rows.iter().enumerate() {
         eprintln!(
