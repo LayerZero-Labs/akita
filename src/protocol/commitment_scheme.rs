@@ -1393,6 +1393,7 @@ mod tests {
     use crate::primitives::serialization::Compress;
     use crate::protocol::commitment::CommitmentConfig;
     use crate::protocol::hachi_poly_ops::DensePoly;
+    use crate::protocol::opening_point::{lagrange_weights, monomial_weights};
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::test_utils::F;
     use crate::{CommitmentScheme, FromSmallInt};

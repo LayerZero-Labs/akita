@@ -43,13 +43,9 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
 
     let inner_point = &point[..alpha_bits];
     let reduced_point = &point[alpha_bits..];
-    let ring_opening_point = ring_opening_point_from_field(
-        reduced_point,
-        layout.r_vars,
-        layout.m_vars,
-        basis,
-    )
-    .expect("opening point shape should match layout");
+    let ring_opening_point =
+        ring_opening_point_from_field(reduced_point, layout.r_vars, layout.m_vars, basis)
+            .expect("opening point shape should match layout");
 
     let (y_ring, _) = poly.evaluate_and_fold(
         &ring_opening_point.b,
@@ -594,10 +590,7 @@ fn main() {
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<128, 2, 3>;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [C] L0 basis=2, w-levels basis=3 ===",
-                    nv,
-                );
+                run_dense_mode::<{ Cfg::D }, Cfg>("=== [C] L0 basis=2, w-levels basis=3 ===", nv);
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<128, 2, 4>;
