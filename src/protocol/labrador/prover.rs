@@ -3,7 +3,10 @@
 use crate::error::HachiError;
 use crate::primitives::serialization::Compress;
 use crate::protocol::labrador::comkey::LabradorComKeySeed;
-use crate::protocol::labrador::config::{logq_bits, plan_fold, trivial_plan};
+use crate::protocol::labrador::config::{
+    estimate_fold_step, estimate_selected_fold_step, logq_bits, plan_fold, trivial_plan,
+    LabradorFoldPlan,
+};
 use crate::protocol::labrador::fold::prove_level;
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
 use crate::protocol::labrador::setup::LabradorSetup;
@@ -30,7 +33,7 @@ pub fn prove<F, T, const D: usize>(
     transcript: &mut T,
 ) -> Result<LabradorProof<F, D>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
+    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt + HachiSerialize,
     T: Transcript<F>,
 {
     if initial_witness.rows().is_empty() {
@@ -45,12 +48,16 @@ where
     let mut level_idx = 0usize;
 
     while level_idx + 1 < LABRADOR_MAX_LEVELS {
-        let before_size = witness_size_bits::<F, D>(&witness);
-        if before_size == 0 || witness.rows().len() <= 1 {
+        let before_bytes = witness_size_bytes::<F, D>(&witness);
+        if before_bytes == 0 || witness.rows().len() <= 1 {
             break;
         }
 
-        let plan = plan_fold::<F, D>(&witness, false)?;
+        let estimate = estimate_fold_step::<F, D>(&witness, false)?;
+        if estimate.transition_bytes >= before_bytes {
+            break;
+        }
+        let plan = estimate.plan;
         let cfg = plan.config;
         let virtual_row_count: usize = plan.row_split_counts.iter().sum();
         let setup = Arc::new(LabradorSetup::new(
@@ -68,11 +75,6 @@ where
             level_idx,
             transcript,
         )?;
-        let candidate_bits =
-            transition_candidate_bits::<F, D>(&fold.level_proof, &fold.next_witness);
-        if candidate_bits >= before_size {
-            break;
-        }
         levels.push(fold.level_proof);
         _statement = fold.statement;
         witness = fold.next_witness;
@@ -80,9 +82,16 @@ where
     }
 
     if level_idx + 1 < LABRADOR_MAX_LEVELS {
-        let tail_plan = plan_fold::<F, D>(&witness, true)?;
+        let baseline_bytes = witness_size_bytes::<F, D>(&witness);
+        let tail_estimate = estimate_fold_step::<F, D>(&witness, true)?;
+        if tail_estimate.transition_bytes >= baseline_bytes {
+            return Ok(LabradorProof {
+                levels,
+                final_opening_witness: witness,
+            });
+        }
+        let tail_plan = tail_estimate.plan;
         let tail_cfg = tail_plan.config;
-        let baseline_bits = witness_size_bits::<F, D>(&witness);
 
         let virtual_row_count: usize = tail_plan.row_split_counts.iter().sum();
         let tail_setup = Arc::new(LabradorSetup::new(
@@ -101,14 +110,10 @@ where
             level_idx,
             &mut tail_transcript,
         ) {
-            let candidate_bits =
-                transition_candidate_bits::<F, D>(&tail.level_proof, &tail.next_witness);
-            if candidate_bits < baseline_bits {
-                levels.push(tail.level_proof);
-                _statement = tail.statement;
-                witness = tail.next_witness;
-                *transcript = tail_transcript;
-            }
+            levels.push(tail.level_proof);
+            _statement = tail.statement;
+            witness = tail.next_witness;
+            *transcript = tail_transcript;
         }
     }
 
@@ -118,24 +123,30 @@ where
     })
 }
 
-/// Build a recursive Labrador proof using a caller-supplied initial config.
+/// Build a recursive Labrador proof using a caller-supplied initial plan.
 ///
-/// Falls back to the provided config if `select_config` fails for a level.
+/// The initial plan is used for the first fold level. Later levels fall back to
+/// the last accepted config if `plan_fold` fails.
 ///
 /// # Errors
 ///
 /// Returns [`HachiError`] if any fold level fails (e.g. empty witness,
 /// invalid config, or transcript errors).
-#[tracing::instrument(skip_all, name = "labrador::prove_with_config")]
-pub fn prove_with_config<F, T, const D: usize>(
+///
+/// # Panics
+///
+/// Panics if estimating a trivial follow-on fold unexpectedly fails while
+/// proving a previously accepted recursive step.
+#[tracing::instrument(skip_all, name = "labrador::prove_with_plan")]
+pub fn prove_with_plan<F, T, const D: usize>(
     initial_witness: LabradorWitness<F, D>,
     initial_statement: &LabradorStatement<F, D>,
-    initial_config: &LabradorReductionConfig,
+    initial_plan: &LabradorFoldPlan,
     comkey_seed: &LabradorComKeySeed,
     transcript: &mut T,
 ) -> Result<LabradorProof<F, D>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
+    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt + HachiSerialize,
     T: Transcript<F>,
 {
     if initial_witness.rows().is_empty() {
@@ -148,37 +159,47 @@ where
     let mut witness = initial_witness;
     let mut statement = initial_statement.clone();
     let mut level_idx = 0usize;
-    let mut fallback_cfg = *initial_config;
+    let mut fallback_cfg = initial_plan.config;
     let initial_row_lengths: Vec<usize> = witness.rows().iter().map(|row| row.len()).collect();
     let initial_ring_elems: usize = initial_row_lengths.iter().sum();
-    let initial_witness_bits = witness_size_bits::<F, D>(&witness);
-    let initial_witness_bytes =
-        FlatLabradorWitness::from_typed(&witness).serialized_size(Compress::No);
+    let initial_witness_bytes = witness_size_bytes::<F, D>(&witness);
     tracing::debug!(
         ?initial_row_lengths,
         total_ring_elems = initial_ring_elems,
-        witness_bits = initial_witness_bits,
+        witness_bytes = initial_witness_bytes,
         serialized_bytes = initial_witness_bytes,
-        witness_digit_parts = initial_config.witness_digit_parts,
-        witness_digit_bits = initial_config.witness_digit_bits,
-        aux_digit_parts = initial_config.aux_digit_parts,
-        aux_digit_bits = initial_config.aux_digit_bits,
-        inner_commit_rank = initial_config.inner_commit_rank,
-        outer_commit_rank = initial_config.outer_commit_rank,
-        tail = initial_config.tail,
+        virtual_row_len = initial_plan.virtual_row_len,
+        row_split_counts = ?initial_plan.row_split_counts,
+        witness_digit_parts = initial_plan.config.witness_digit_parts,
+        witness_digit_bits = initial_plan.config.witness_digit_bits,
+        aux_digit_parts = initial_plan.config.aux_digit_parts,
+        aux_digit_bits = initial_plan.config.aux_digit_bits,
+        inner_commit_rank = initial_plan.config.inner_commit_rank,
+        outer_commit_rank = initial_plan.config.outer_commit_rank,
+        tail = initial_plan.config.tail,
         "labrador initial witness"
     );
 
     while level_idx + 1 < LABRADOR_MAX_LEVELS {
-        let before_size = witness_size_bits::<F, D>(&witness);
-        if before_size == 0 || witness.rows().len() <= 1 {
+        let before_bytes = witness_size_bytes::<F, D>(&witness);
+        if before_bytes == 0 || witness.rows().len() <= 1 {
             break;
         }
 
-        let plan = plan_fold::<F, D>(&witness, false).unwrap_or_else(|_| {
-            let row_lengths: Vec<usize> = witness.rows().iter().map(|r| r.len()).collect();
-            trivial_plan(fallback_cfg, &row_lengths)
-        });
+        let estimate = if level_idx == 0 {
+            estimate_selected_fold_step::<F, D>(&witness, initial_plan)?
+        } else {
+            estimate_fold_step::<F, D>(&witness, false).unwrap_or_else(|_| {
+                let row_lengths: Vec<usize> = witness.rows().iter().map(|r| r.len()).collect();
+                let plan = trivial_plan(fallback_cfg, &row_lengths);
+                estimate_selected_fold_step::<F, D>(&witness, &plan)
+                    .expect("trivial fold estimate must succeed")
+            })
+        };
+        if estimate.transition_bytes >= before_bytes {
+            break;
+        }
+        let plan = estimate.plan;
         let cfg = plan.config;
         let virtual_row_count: usize = plan.row_split_counts.iter().sum();
         let setup = Arc::new(LabradorSetup::new(
@@ -198,15 +219,12 @@ where
             level_idx,
             &mut attempt_transcript,
         )?;
-        let next_witness_bits = witness_size_bits::<F, D>(&fold.next_witness);
-        let level_bits = level_payload_size_bits::<F, D>(&fold.level_proof);
-        let candidate_bits = level_bits + next_witness_bits;
         tracing::debug!(
-            current_bits = before_size,
-            level_bits,
-            next_witness_bits,
-            candidate_bits,
-            accept = candidate_bits < before_size,
+            current_bytes = before_bytes,
+            estimated_level_bytes = estimate.level_payload_bytes,
+            estimated_next_witness_bytes = estimate.next_witness_bytes,
+            estimated_candidate_bytes = estimate.transition_bytes,
+            accept = estimate.transition_bytes < before_bytes,
             virtual_row_len = plan.virtual_row_len,
             virtual_row_count,
             row_split_counts = ?plan.row_split_counts,
@@ -219,9 +237,6 @@ where
             tail = cfg.tail,
             "labrador non-tail candidate"
         );
-        if candidate_bits >= before_size {
-            break;
-        }
 
         *transcript = attempt_transcript;
         levels.push(fold.level_proof);
@@ -245,8 +260,18 @@ where
                 &row_lengths,
             )
         });
+        let baseline_bytes = witness_size_bytes::<F, D>(&witness);
+        let tail_estimate = estimate_fold_step::<F, D>(&witness, true).unwrap_or_else(|_| {
+            estimate_selected_fold_step::<F, D>(&witness, &tail_plan)
+                .expect("tail trivial estimate must succeed")
+        });
+        if tail_estimate.transition_bytes >= baseline_bytes {
+            return Ok(LabradorProof {
+                levels,
+                final_opening_witness: witness,
+            });
+        }
         let tail_cfg = tail_plan.config;
-        let baseline_bits = witness_size_bits::<F, D>(&witness);
 
         let virtual_row_count: usize = tail_plan.row_split_counts.iter().sum();
         let tail_setup = Arc::new(LabradorSetup::new(
@@ -265,15 +290,12 @@ where
             level_idx,
             &mut tail_transcript,
         ) {
-            let next_witness_bits = witness_size_bits::<F, D>(&tail.next_witness);
-            let level_bits = level_payload_size_bits::<F, D>(&tail.level_proof);
-            let candidate_bits = level_bits + next_witness_bits;
             tracing::debug!(
-                baseline_bits,
-                level_bits,
-                next_witness_bits,
-                candidate_bits,
-                accept = candidate_bits < baseline_bits,
+                baseline_bytes,
+                estimated_level_bytes = tail_estimate.level_payload_bytes,
+                estimated_next_witness_bytes = tail_estimate.next_witness_bytes,
+                estimated_candidate_bytes = tail_estimate.transition_bytes,
+                accept = tail_estimate.transition_bytes < baseline_bytes,
                 virtual_row_len = tail_plan.virtual_row_len,
                 virtual_row_count,
                 row_split_counts = ?tail_plan.row_split_counts,
@@ -286,11 +308,9 @@ where
                 tail = tail_cfg.tail,
                 "labrador final tail compare"
             );
-            if candidate_bits < baseline_bits {
-                levels.push(tail.level_proof);
-                witness = tail.next_witness;
-                *transcript = tail_transcript;
-            }
+            levels.push(tail.level_proof);
+            witness = tail.next_witness;
+            *transcript = tail_transcript;
         }
     }
 
@@ -300,34 +320,10 @@ where
     })
 }
 
-fn witness_size_bits<F: FieldCore + CanonicalField, const D: usize>(
+fn witness_size_bytes<F: FieldCore + HachiSerialize, const D: usize>(
     witness: &LabradorWitness<F, D>,
 ) -> usize {
-    let logq_bits = logq_bits::<F>();
-    witness
-        .rows()
-        .iter()
-        .map(|row| row.len() * D * logq_bits)
-        .sum()
-}
-
-fn level_payload_size_bits<F: FieldCore + CanonicalField, const D: usize>(
-    level: &crate::protocol::labrador::LabradorLevelProof<F, D>,
-) -> usize {
-    let logq_bits = logq_bits::<F>();
-    let ring_elems = level.inner_opening_payload.len()
-        + level.linear_garbage_payload.len()
-        + level.jl_lift_residuals.len();
-    let ring_bits = ring_elems * D * logq_bits;
-    let jl_bits = level.jl_projection.len() * 64;
-    ring_bits + jl_bits + 64
-}
-
-fn transition_candidate_bits<F: FieldCore + CanonicalField, const D: usize>(
-    level: &crate::protocol::labrador::LabradorLevelProof<F, D>,
-    next_witness: &LabradorWitness<F, D>,
-) -> usize {
-    level_payload_size_bits::<F, D>(level) + witness_size_bits::<F, D>(next_witness)
+    FlatLabradorWitness::from_typed(witness).serialized_size(Compress::No)
 }
 
 #[cfg(test)]
@@ -335,6 +331,7 @@ mod tests {
     use super::*;
     use crate::algebra::fields::Fp64;
     use crate::algebra::ring::CyclotomicRing;
+    use crate::protocol::labrador::{verify, LabradorStatement};
     use crate::protocol::transcript::labels::DOMAIN_LABRADOR_RECURSION;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::FromSmallInt;
@@ -357,7 +354,7 @@ mod tests {
 
     #[test]
     fn prover_loop_returns_final_opening_witness() {
-        let statement = crate::protocol::labrador::types::LabradorStatement {
+        let statement = LabradorStatement {
             inner_opening_payload: Vec::new(),
             linear_garbage_payload: Vec::new(),
             challenges: Vec::new(),
@@ -373,7 +370,7 @@ mod tests {
 
     #[test]
     fn prover_proof_verifies() {
-        let statement = crate::protocol::labrador::types::LabradorStatement {
+        let statement = LabradorStatement {
             inner_opening_payload: Vec::new(),
             linear_garbage_payload: Vec::new(),
             challenges: Vec::new(),
@@ -385,7 +382,6 @@ mod tests {
         let proof = prove(sample_witness(), &statement, &[1u8; 32], &mut transcript).unwrap();
 
         let mut verify_transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_RECURSION);
-        crate::protocol::labrador::verify(&statement, &proof, &[1u8; 32], &mut verify_transcript)
-            .unwrap();
+        verify(&statement, &proof, &[1u8; 32], &mut verify_transcript).unwrap();
     }
 }

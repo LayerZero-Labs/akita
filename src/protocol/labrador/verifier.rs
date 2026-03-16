@@ -203,6 +203,12 @@ where
         &level.linear_garbage_payload,
     );
     let challenges = replay_amortize_challenges::<F, T, D>(transcript, virtual_row_count)?;
+    tracing::debug!(
+        level_index,
+        tail = false,
+        ?challenges,
+        "labrador verifier amortize challenges"
+    );
     let mut amortized_phi =
         if let Some((phi_stmt_orig, _statement_rhs)) = explicit_aggregation.as_ref() {
             let phi_stmt = reshape_phi_verifier::<F, D>(
@@ -812,6 +818,12 @@ where
         &level.linear_garbage_payload,
     );
     let challenges = replay_amortize_challenges::<F, T, D>(transcript, virtual_row_count)?;
+    tracing::debug!(
+        level_index,
+        tail = true,
+        ?challenges,
+        "labrador verifier amortize challenges"
+    );
     let amortized_phi = if let Some((phi_stmt_orig, _)) = explicit_aggregation.as_ref() {
         let phi_stmt = reshape_phi_verifier::<F, D>(
             phi_stmt_orig,

@@ -41,10 +41,6 @@ type AggregatedConstraintSystem<F, const D: usize> =
 const STATEMENT_ROW_CHUNK_LEN: usize = 256;
 const SPARSE_RING_MUL_MAX_WEIGHT: usize = 48;
 
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
-
 /// Inner product of two ring-element slices.
 pub(crate) fn dot_product<F: FieldCore, const D: usize>(
     lhs: &[CyclotomicRing<F, D>],
@@ -108,10 +104,6 @@ where
         .zip(alpha.iter())
         .fold(F::zero(), |acc, (&p, &a)| acc + a * F::from_i64(p))
 }
-
-// ---------------------------------------------------------------------------
-// Collapse helpers
-// ---------------------------------------------------------------------------
 
 fn validate_matrix_cols(matrix: &LabradorJlMatrix, cols: usize) -> Result<(), HachiError> {
     if !matrix.is_well_formed() || matrix.cols() != cols {
@@ -303,10 +295,6 @@ pub fn aggregate_jl_contraints_one_lift<F: CanonicalField, const D: usize>(
         .collect())
 }
 
-// ---------------------------------------------------------------------------
-// Witness flattening
-// ---------------------------------------------------------------------------
-
 /// Pre-flattened witness layout used during JL aggregation.
 struct FlatWitness<F: FieldCore, const D: usize> {
     rings: Vec<CyclotomicRing<F, D>>,
@@ -338,10 +326,6 @@ fn accumulate_phi_flat<F: FieldCore + CanonicalField, const D: usize>(
         .zip(cfg_iter!(phi_flat))
         .for_each(|(dst, src)| mul_accumulate_term_coeff(beta_ref, src, dst));
 }
-
-// ---------------------------------------------------------------------------
-// Prover-side JL aggregation
-// ---------------------------------------------------------------------------
 
 /// Aggregate JL projection constraints on the prover side.
 ///
@@ -410,10 +394,6 @@ where
     Ok((phi_total_flat, aggregated_rhs, jl_lift_residuals))
 }
 
-// ---------------------------------------------------------------------------
-// Verifier-side JL aggregation
-// ---------------------------------------------------------------------------
-
 /// Aggregate JL projection constraints on the verifier side.
 ///
 /// Same transcript flow as the prover variant, but reconstructs the full
@@ -456,10 +436,6 @@ where
 
     Ok((phi_total_flat, aggregated_rhs))
 }
-
-// ---------------------------------------------------------------------------
-// Statement constraint aggregation (shared by prover and verifier)
-// ---------------------------------------------------------------------------
 
 #[inline]
 fn mul_accumulate_term_coeff<F: FieldCore + CanonicalField, const D: usize>(

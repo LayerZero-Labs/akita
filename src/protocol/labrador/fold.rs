@@ -11,6 +11,7 @@ use crate::protocol::commitment::utils::linear::{
 use crate::protocol::labrador::aggregation::{
     add_phi_flat_in_place, aggregate_jl_constraints_prover, aggregate_statement,
 };
+use crate::protocol::labrador::commit::ntt_two_tier_commit;
 use crate::protocol::labrador::config::LabradorFoldPlan;
 use crate::protocol::labrador::constraints::{build_next_constraint_plan, pair_index};
 use crate::protocol::labrador::johnson_lindenstrauss::project;
@@ -37,8 +38,6 @@ pub struct LabradorFoldResult<F: FieldCore, const D: usize> {
     /// Reduced statement consumed by the next verifier step.
     pub statement: LabradorStatement<F, D>,
 }
-
-use crate::protocol::labrador::commit::ntt_two_tier_commit;
 
 /// Perform one Labrador fold level (standard or tail, determined by
 /// `config.tail`).
@@ -97,12 +96,11 @@ where
 
     // Phase 1: Inner commitments and opening-side payload.
     let (inner_opening_digits, inner_opening_payload) = ntt_two_tier_commit(
-        &setup.a_ntt,
-        &setup.b_ntt,
+        &setup.matrices.a_mat,
+        &setup.matrices.b_mat,
         virtual_witness.rows(),
         config.aux_digit_parts,
         config.aux_digit_bits as u32,
-        config.outer_commit_rank,
     )?;
 
     // Absorb level context and the opening-side payload before deriving the JL seed.
@@ -162,6 +160,12 @@ where
 
     // Phase 4: Amortize — sample challenge ring-elements from the transcript, fold.
     let challenges = sample_amortize_challenges::<F, T, D>(transcript, virtual_row_count)?;
+    tracing::debug!(
+        level_index,
+        tail = config.tail,
+        ?challenges,
+        "labrador prover amortize challenges"
+    );
     let z = amortize_witness(&virtual_witness, &challenges, virtual_row_len);
 
     let decomposed_z =
@@ -438,6 +442,7 @@ mod tests {
     use super::*;
     use crate::algebra::fields::Fp64;
     use crate::protocol::labrador::aggregation::aggregate_jl_constraints_verifier;
+    use crate::protocol::labrador::commit::ntt_two_tier_commit;
     use crate::protocol::labrador::config::trivial_plan;
     use crate::protocol::labrador::constraints::{LabradorConstraint, LabradorConstraintTerm};
     use crate::protocol::labrador::johnson_lindenstrauss::LabradorJlMatrix;
@@ -616,6 +621,71 @@ mod tests {
         );
         assert_eq!(out.next_witness.rows().len(), cfg.witness_digit_parts);
         assert!(out.level_proof.tail);
+    }
+
+    #[test]
+    fn tail_fold_roundtrip_verifies() {
+        let row = |seed: i64| -> Vec<CyclotomicRing<F, D>> {
+            (0..28)
+                .map(|j| {
+                    CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                        let raw = (seed + j as i64 * 3 + k as i64 * 5) % 11;
+                        F::from_i64(raw - 5)
+                    }))
+                })
+                .collect()
+        };
+        let witness = LabradorWitness::new(vec![row(1), row(2), row(3)]);
+        let statement = LabradorStatement {
+            inner_opening_payload: Vec::new(),
+            linear_garbage_payload: Vec::new(),
+            challenges: Vec::new(),
+            constraints: Vec::new(),
+            reduced_constraints: None,
+            witness_norm_bound_sq: 1 << 80,
+        };
+        let cfg = LabradorReductionConfig {
+            witness_digit_parts: 1,
+            witness_digit_bits: 39,
+            aux_digit_parts: 1,
+            aux_digit_bits: 128,
+            inner_commit_rank: 4,
+            outer_commit_rank: 0,
+            tail: true,
+        };
+        let plan = make_plan(&cfg, &witness);
+        let comkey_seed = [13u8; 32];
+        let virtual_row_count = plan.row_split_counts.iter().sum::<usize>();
+        let setup = std::sync::Arc::new(LabradorSetup::new(
+            &cfg,
+            virtual_row_count,
+            plan.virtual_row_len,
+            &comkey_seed,
+        ));
+        let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_RECURSION);
+        let fold = prove_level(
+            &witness,
+            &statement,
+            &cfg,
+            &plan,
+            &setup,
+            0,
+            &mut transcript,
+        )
+        .unwrap();
+
+        let proof = LabradorProof {
+            levels: vec![fold.level_proof],
+            final_opening_witness: fold.next_witness,
+        };
+        let mut verify_transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_RECURSION);
+        let verify_result =
+            verify(&statement, &proof, &comkey_seed, &mut verify_transcript).unwrap();
+        assert_eq!(verify_result.terminal_statement, statement);
+        assert_eq!(
+            verify_result.final_opening_witness,
+            proof.final_opening_witness
+        );
     }
 
     #[test]
@@ -800,6 +870,69 @@ mod tests {
     }
 
     #[test]
+    fn non_tail_grouped_rows_statement_roundtrip_verifies() {
+        let row = |seed: i64, len: usize| -> Vec<CyclotomicRing<F, D>> {
+            (0..len)
+                .map(|j| {
+                    CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                        let raw = (seed + j as i64 * 3 + k as i64 * 5) % 11;
+                        F::from_i64(raw - 5)
+                    }))
+                })
+                .collect()
+        };
+        let witness = LabradorWitness::new_unchecked(vec![row(1, 48), row(2, 36)]);
+        let statement = LabradorStatement {
+            inner_opening_payload: Vec::new(),
+            linear_garbage_payload: Vec::new(),
+            challenges: Vec::new(),
+            constraints: Vec::new(),
+            reduced_constraints: None,
+            witness_norm_bound_sq: 1 << 100,
+        };
+        let cfg = LabradorReductionConfig {
+            witness_digit_parts: 1,
+            witness_digit_bits: 35,
+            aux_digit_parts: 4,
+            aux_digit_bits: 32,
+            inner_commit_rank: 3,
+            outer_commit_rank: 3,
+            tail: false,
+        };
+        let plan = LabradorFoldPlan {
+            config: cfg,
+            virtual_row_len: 48,
+            row_split_counts: vec![0, 2],
+        };
+        let comkey_seed = [17u8; 32];
+        let setup = std::sync::Arc::new(LabradorSetup::new(&cfg, 2, 48, &comkey_seed));
+        let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_RECURSION);
+        let fold = prove_level(
+            &witness,
+            &statement,
+            &cfg,
+            &plan,
+            &setup,
+            0,
+            &mut transcript,
+        )
+        .unwrap();
+
+        let base_proof = LabradorProof {
+            levels: Vec::new(),
+            final_opening_witness: fold.next_witness.clone(),
+        };
+        let mut base_transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_RECURSION);
+        verify(
+            &fold.statement,
+            &base_proof,
+            &comkey_seed,
+            &mut base_transcript,
+        )
+        .unwrap();
+    }
+
+    #[test]
     fn two_level_fold_roundtrip_verifies() {
         let mk_ring = |c: i64| {
             CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|i| {
@@ -916,7 +1049,92 @@ mod tests {
             final_opening_witness: fold2.next_witness,
         };
         let mut verify_transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_RECURSION);
-        verify(&statement, &proof, &comkey_seed, &mut verify_transcript).unwrap();
+        let verify_result =
+            verify(&statement, &proof, &comkey_seed, &mut verify_transcript).unwrap();
+        assert_eq!(verify_result.terminal_statement, fold2.statement);
+        assert_eq!(
+            verify_result.final_opening_witness,
+            proof.final_opening_witness
+        );
+    }
+
+    #[test]
+    fn tail_linear_relation_matches_schoolbook_on_virtual_rows() {
+        let row = |seed: i64| -> Vec<CyclotomicRing<F, D>> {
+            (0..28)
+                .map(|j| {
+                    CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                        let raw = (seed + j as i64 * 3 + k as i64 * 5) % 11;
+                        F::from_i64(raw - 5)
+                    }))
+                })
+                .collect()
+        };
+        let virtual_witness = LabradorWitness::new(vec![row(1), row(2), row(3)]);
+        let cfg = LabradorReductionConfig {
+            witness_digit_parts: 1,
+            witness_digit_bits: 39,
+            aux_digit_parts: 1,
+            aux_digit_bits: 128,
+            inner_commit_rank: 4,
+            outer_commit_rank: 0,
+            tail: true,
+        };
+        let comkey_seed = [13u8; 32];
+        let setup = LabradorSetup::new(&cfg, 3, 28, &comkey_seed);
+        let (inner_opening_digits, inner_opening_payload) = ntt_two_tier_commit(
+            &setup.matrices.a_mat,
+            &setup.matrices.b_mat,
+            virtual_witness.rows(),
+            cfg.aux_digit_parts,
+            cfg.aux_digit_bits as u32,
+        )
+        .unwrap();
+        assert_eq!(inner_opening_digits, inner_opening_payload);
+
+        let challenges = vec![
+            SparseChallenge {
+                positions: vec![0, 7, 11],
+                coeffs: vec![1, -1, 2],
+            },
+            SparseChallenge {
+                positions: vec![3, 9, 17],
+                coeffs: vec![-1, 1, -2],
+            },
+            SparseChallenge {
+                positions: vec![5, 12, 21],
+                coeffs: vec![2, -1, 1],
+            },
+        ];
+        let z = amortize_witness(&virtual_witness, &challenges, 28);
+        let az = mat_vec_mul(&setup.matrices.a_mat, &z);
+
+        let mut rhs_payload = vec![CyclotomicRing::<F, D>::zero(); cfg.inner_commit_rank];
+        for (row_idx, chunk) in inner_opening_digits
+            .chunks(cfg.inner_commit_rank * cfg.aux_digit_parts)
+            .enumerate()
+        {
+            let challenge = &challenges[row_idx];
+            for (k, rhs_k) in rhs_payload.iter_mut().enumerate() {
+                let start = k * cfg.aux_digit_parts;
+                let t = CyclotomicRing::gadget_recompose_pow2(
+                    &chunk[start..start + cfg.aux_digit_parts],
+                    cfg.aux_digit_bits as u32,
+                );
+                t.mul_by_sparse_into(challenge, rhs_k);
+            }
+        }
+
+        let mut rhs_schoolbook = vec![CyclotomicRing::<F, D>::zero(); cfg.inner_commit_rank];
+        for (row, challenge) in virtual_witness.rows().iter().zip(challenges.iter()) {
+            let t_row = mat_vec_mul(&setup.matrices.a_mat, row);
+            for (rhs_k, t_k) in rhs_schoolbook.iter_mut().zip(t_row.iter()) {
+                t_k.mul_by_sparse_into(challenge, rhs_k);
+            }
+        }
+
+        assert_eq!(az, rhs_schoolbook);
+        assert_eq!(rhs_payload, rhs_schoolbook);
     }
 }
 

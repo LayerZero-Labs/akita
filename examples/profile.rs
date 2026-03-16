@@ -142,6 +142,10 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
     match &proof.tail {
         HachiProofTail::Direct(final_w) => {
             eprintln!(
+                "[{label}]   tail_choice: kind=direct, bytes={}",
+                final_w.serialized_size(Compress::No)
+            );
+            eprintln!(
                 "[{label}]   final_w: total={} bytes, elems={}, bits/elem={}",
                 final_w.serialized_size(Compress::No),
                 final_w.num_elems,
@@ -149,6 +153,11 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
             );
         }
         HachiProofTail::Labrador(tail) => {
+            eprintln!(
+                "[{label}]   tail_choice: kind=labrador, bytes={}, labrador_levels={}",
+                tail.serialized_size(Compress::No),
+                tail.labrador_proof.levels.len()
+            );
             print_labrador_tail_breakdown(label, tail);
         }
     }

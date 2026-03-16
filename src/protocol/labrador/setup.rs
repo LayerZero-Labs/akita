@@ -1,8 +1,6 @@
 //! Labrador commitment key setup.
 
 use crate::algebra::ring::CyclotomicRing;
-use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
-use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
 use crate::protocol::labrador::types::LabradorReductionConfig;
 use crate::{CanonicalField, FieldCore, FieldSampling};
@@ -71,18 +69,10 @@ impl<F: FieldCore + CanonicalField + FieldSampling, const D: usize> LabradorSetu
 pub struct LabradorSetup<F: FieldCore, const D: usize> {
     /// Shared matrix payload for prover and verifier-side recursion.
     pub matrices: Arc<LabradorSetupMatrices<F, D>>,
-    /// Cached CRT+NTT representation of A for NTT-based witness commitment.
-    pub a_ntt: NttSlotCache<D>,
-    /// Cached CRT+NTT representation of B for NTT-based outer commitment.
-    pub b_ntt: NttSlotCache<D>,
 }
 
 impl<F: FieldCore + CanonicalField + FieldSampling, const D: usize> LabradorSetup<F, D> {
     /// Derive all commitment-key matrices for a single Labrador level.
-    ///
-    /// # Panics
-    ///
-    /// Panics if deriving the cached CRT+NTT slots for matrix `A` or `B` fails.
     #[tracing::instrument(skip_all, name = "labrador::setup")]
     pub fn new(
         config: &LabradorReductionConfig,
@@ -96,19 +86,7 @@ impl<F: FieldCore + CanonicalField + FieldSampling, const D: usize> LabradorSetu
             max_witness_len,
             comkey_seed,
         ));
-        let a_flat = FlatMatrix::from_ring_matrix(&matrices.a_mat);
-        let a_ntt =
-            build_ntt_slot(a_flat.view::<D>()).expect("failed to build LabradorSetup A NTT slot");
-
-        let b_flat = FlatMatrix::from_ring_matrix(&matrices.b_mat);
-        let b_ntt =
-            build_ntt_slot(b_flat.view::<D>()).expect("failed to build LabradorSetup B NTT slot");
-
-        Self {
-            matrices,
-            a_ntt,
-            b_ntt,
-        }
+        Self { matrices }
     }
 
     /// Return the matrix-only setup used by verifier-side recursion.

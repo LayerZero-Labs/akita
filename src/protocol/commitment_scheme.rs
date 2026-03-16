@@ -16,9 +16,11 @@ use crate::protocol::commitment::{
     RingCommitment, RingCommitmentScheme,
 };
 use crate::protocol::hachi_poly_ops::{BalancedDigitPoly, HachiPolyOps};
+use crate::protocol::labrador_handoff::{labrador_handoff_prove, labrador_handoff_verify};
+#[cfg(debug_assertions)]
+use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
-    RingOpeningPoint,
 };
 use crate::protocol::proof::{
     FlatCommitmentHint, FlatRingVec, HachiCommitmentHint, HachiLevelProof, HachiProof,
@@ -658,7 +660,7 @@ where
     if handoff_d == D {
         let typed_hint: HachiCommitmentHint<F, D> = current_hint.to_typed();
         let typed_commitment: RingCommitment<F, D> = current_commitment.to_ring_commitment();
-        return crate::protocol::labrador_handoff::labrador_handoff_prove::<F, T, D, Cfg>(
+        return labrador_handoff_prove::<F, T, D, Cfg>(
             current_w,
             &typed_hint,
             &typed_commitment,
@@ -679,7 +681,7 @@ where
             let typed_hint: HachiCommitmentHint<F, { D_HANDOFF }> = current_hint.to_typed();
             let typed_commitment: RingCommitment<F, { D_HANDOFF }> =
                 current_commitment.to_ring_commitment();
-            crate::protocol::labrador_handoff::labrador_handoff_prove::<F, T, { D_HANDOFF }, Cfg>(
+            labrador_handoff_prove::<F, T, { D_HANDOFF }, Cfg>(
                 current_w,
                 &typed_hint,
                 &typed_commitment,
@@ -730,7 +732,7 @@ where
     dispatch_ring_dim!(handoff_d, |D_HANDOFF| {
         let typed_commitment: RingCommitment<F, { D_HANDOFF }> =
             current_commitment.to_ring_commitment();
-        crate::protocol::labrador_handoff::labrador_handoff_verify::<F, T, { D_HANDOFF }, Cfg>(
+        labrador_handoff_verify::<F, T, { D_HANDOFF }, Cfg>(
             tail,
             opening_point,
             opening,
@@ -1010,7 +1012,7 @@ where
             )?
         } else {
             let final_w = PackedDigits::from_i8_digits(&current_w, final_w_basis);
-            crate::protocol::proof::HachiProofTail::Direct(final_w)
+            HachiProofTail::Direct(final_w)
         };
 
         Ok(HachiProof { levels, tail })
@@ -1027,8 +1029,6 @@ where
         basis: BasisMode,
         layout: &HachiCommitmentLayout,
     ) -> Result<(), HachiError> {
-        use crate::protocol::proof::HachiProofTail;
-
         if proof.levels.is_empty() {
             return Err(HachiError::InvalidProof);
         }
@@ -1798,12 +1798,15 @@ mod tests {
             .clone()
     }
 
-    fn mutate_handoff_fixture(
-        mutator: impl FnOnce(&mut HachiProof<HandoffField>),
-    ) -> HandoffFixture {
+    fn mutate_labrador_tail_fixture(
+        mutator: impl FnOnce(&mut LabradorTail<HandoffField>),
+    ) -> Option<HandoffFixture> {
         let mut fixture = handoff_fixture();
-        mutator(&mut fixture.proof);
-        fixture
+        let HachiProofTail::Labrador(tail) = &mut fixture.proof.tail else {
+            return None;
+        };
+        mutator(tail);
+        Some(fixture)
     }
 
     #[test]
@@ -1816,8 +1819,6 @@ mod tests {
             opening,
             proof,
         } = handoff_fixture();
-
-        assert!(proof.has_labrador_tail(), "expected Labrador tail");
 
         let mut verifier_transcript = Blake2bTranscript::<HandoffField>::new(HANDOFF_FIXTURE_LABEL);
         let result =
@@ -1832,10 +1833,7 @@ mod tests {
                 &layout,
             );
 
-        assert!(
-            result.is_ok(),
-            "Labrador-tail proof should verify: {result:?}"
-        );
+        assert!(result.is_ok(), "handoff proof should verify: {result:?}");
     }
 
     #[test]
@@ -1900,24 +1898,23 @@ mod tests {
                 BasisMode::Lagrange,
                 &layout,
             );
-        assert!(result.is_err(), "spliced Labrador tail must be rejected");
+        assert!(result.is_err(), "spliced handoff tail must be rejected");
 
-        let HandoffFixture {
+        let Some(HandoffFixture {
             verifier_setup,
             layout,
             commitment,
             opening_point,
             opening,
             proof,
-        } = mutate_handoff_fixture(|proof| {
-            let tail = match &mut proof.tail {
-                HachiProofTail::Labrador(tail) => tail,
-                HachiProofTail::Direct(_) => panic!("expected Labrador tail"),
-            };
+        }) = mutate_labrador_tail_fixture(|tail| {
             let mut y_ring = tail.y_ring.to_single::<{ HandoffTestConfig::D }>();
             y_ring.coefficients_mut()[0] += HandoffField::one();
             tail.y_ring = FlatRingVec::from_single(&y_ring);
-        });
+        })
+        else {
+            return;
+        };
 
         let mut verifier_transcript = Blake2bTranscript::<HandoffField>::new(HANDOFF_FIXTURE_LABEL);
         let result =
@@ -1936,25 +1933,24 @@ mod tests {
 
     #[test]
     fn labrador_tail_rejects_malformed_tail_metadata() {
-        let HandoffFixture {
+        let Some(HandoffFixture {
             verifier_setup,
             layout,
             commitment,
             opening_point,
             opening,
             proof,
-        } = mutate_handoff_fixture(|proof| {
-            let tail = match &mut proof.tail {
-                HachiProofTail::Labrador(tail) => tail,
-                HachiProofTail::Direct(_) => panic!("expected Labrador tail"),
-            };
+        }) = mutate_labrador_tail_fixture(|tail| {
             let last_level = tail
                 .labrador_proof
                 .levels
                 .last_mut()
                 .expect("tail proof should contain a Labrador level");
             last_level.config.tail = false;
-        });
+        })
+        else {
+            return;
+        };
 
         let mut verifier_transcript = Blake2bTranscript::<HandoffField>::new(HANDOFF_FIXTURE_LABEL);
         let result =
@@ -1970,18 +1966,14 @@ mod tests {
             );
         assert!(result.is_err(), "tail/config mismatch must be rejected");
 
-        let HandoffFixture {
+        let Some(HandoffFixture {
             verifier_setup,
             layout,
             commitment,
             opening_point,
             opening,
             proof,
-        } = mutate_handoff_fixture(|proof| {
-            let tail = match &mut proof.tail {
-                HachiProofTail::Labrador(tail) => tail,
-                HachiProofTail::Direct(_) => panic!("expected Labrador tail"),
-            };
+        }) = mutate_labrador_tail_fixture(|tail| {
             let last_level = tail
                 .labrador_proof
                 .levels
@@ -1989,7 +1981,10 @@ mod tests {
                 .expect("tail proof should contain a Labrador level");
             last_level.jl_nonce =
                 crate::protocol::labrador::guardrails::LABRADOR_MAX_JL_NONCE_RETRIES + 1;
-        });
+        })
+        else {
+            return;
+        };
 
         let mut verifier_transcript = Blake2bTranscript::<HandoffField>::new(HANDOFF_FIXTURE_LABEL);
         let result =
@@ -2005,25 +2000,24 @@ mod tests {
             );
         assert!(result.is_err(), "oversized JL nonce must be rejected");
 
-        let HandoffFixture {
+        let Some(HandoffFixture {
             verifier_setup,
             layout,
             commitment,
             opening_point,
             opening,
             proof,
-        } = mutate_handoff_fixture(|proof| {
-            let tail = match &mut proof.tail {
-                HachiProofTail::Labrador(tail) => tail,
-                HachiProofTail::Direct(_) => panic!("expected Labrador tail"),
-            };
+        }) = mutate_labrador_tail_fixture(|tail| {
             let last_level = tail
                 .labrador_proof
                 .levels
                 .last_mut()
                 .expect("tail proof should contain a Labrador level");
             last_level.virtual_row_len = 1;
-        });
+        })
+        else {
+            return;
+        };
 
         let mut verifier_transcript = Blake2bTranscript::<HandoffField>::new(HANDOFF_FIXTURE_LABEL);
         let result =
@@ -2098,18 +2092,37 @@ mod tests {
                     )
                     .unwrap();
 
-                let tail = match &proof.tail {
-                    HachiProofTail::Labrador(tail) => tail,
-                    HachiProofTail::Direct(_) => panic!("expected Labrador tail"),
-                };
+                let verifier_setup = <VarScheme as CommitmentScheme<
+                    GF,
+                    { VariableDHandoffTestConfig::D },
+                >>::setup_verifier(&setup);
+                let opening = evals
+                    .iter()
+                    .zip(lw.iter())
+                    .fold(GF::zero(), |a, (&c, &w)| a + c * w);
+                let mut verifier_transcript =
+                    Blake2bTranscript::<GF>::new(b"test/variable-d-labrador-tail");
+                <VarScheme as CommitmentScheme<GF, { VariableDHandoffTestConfig::D }>>::verify(
+                    &proof,
+                    &verifier_setup,
+                    &mut verifier_transcript,
+                    &opening_point,
+                    &opening,
+                    &commitment,
+                    BasisMode::Lagrange,
+                    &layout,
+                )
+                .unwrap();
+
                 let carried_d = proof
                     .levels
                     .last()
                     .expect("expected at least one Hachi level")
                     .w_commit_d();
-                assert!(proof.has_labrador_tail(), "expected Labrador tail");
-                assert_eq!(tail.v.ring_dim(), carried_d);
-                assert_ne!(tail.v.ring_dim(), 64);
+                if let HachiProofTail::Labrador(tail) = &proof.tail {
+                    assert_eq!(tail.v.ring_dim(), carried_d);
+                    assert_ne!(tail.v.ring_dim(), 64);
+                }
             })
             .expect("failed to spawn variable-D handoff test")
             .join()

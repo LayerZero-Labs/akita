@@ -18,22 +18,26 @@ use crate::protocol::commitment::utils::linear::flatten_i8_blocks;
 use crate::protocol::commitment::{
     CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, RingCommitment,
 };
+use crate::protocol::commitment_scheme::next_level_opening_point;
 use crate::protocol::hachi_poly_ops::{BalancedDigitPoly, HachiPolyOps};
-use crate::protocol::labrador::config::logq_bits;
-use crate::protocol::labrador::types::{
-    LabradorReductionConfig, LabradorStatement, LabradorWitness,
+use crate::protocol::labrador::config::{
+    estimate_handoff_recursive_proof, logq_bits, LabradorRecursiveSizeEstimate,
 };
-use crate::protocol::labrador::{prove_with_config, LabradorConstraint, LabradorConstraintTerm};
+use crate::protocol::labrador::types::{LabradorStatement, LabradorWitness};
+use crate::protocol::labrador::{
+    prove_with_plan, verify as verify_labrador, LabradorConstraint, LabradorConstraintTerm,
+};
 use crate::protocol::opening_point::{ring_opening_point_from_field, BasisMode, RingOpeningPoint};
 use crate::protocol::proof::{
     FlatLabradorProof, FlatLabradorWitness, FlatRingVec, HachiCommitmentHint, HachiProofTail,
-    LabradorTail,
+    LabradorTail, PackedDigits,
 };
 use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::ring_switch::WCommitmentConfig;
 use crate::protocol::transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt, HachiSerialize};
+use std::time::Instant;
 
 /// Build Labrador constraints that encode the ring-level relation `Mz = y` from
 /// the Hachi quadratic equation.
@@ -100,7 +104,7 @@ where
 
     let mut constraints = Vec::with_capacity(Cfg::N_D + Cfg::N_B + 2 + Cfg::N_A);
 
-    // --- D-rows: D_mat * w_hat_flat = v ---
+    // D rows enforce `D_mat * w_hat_flat = v`.
     let d_view = d_mat.view::<D>();
     for (i, &v_i) in v.iter().enumerate().take(Cfg::N_D) {
         let d_row = d_view.row(i);
@@ -111,7 +115,7 @@ where
         ));
     }
 
-    // --- B-rows: B_mat * t_hat_flat = u ---
+    // B rows enforce `B_mat * t_hat_flat = u`.
     let b_view = b_mat.view::<D>();
     for (i, &u_i) in u.iter().enumerate().take(Cfg::N_B) {
         let b_row = b_view.row(i);
@@ -122,7 +126,7 @@ where
         ));
     }
 
-    // --- bTw row: sum_i b_i * G_open * w_hat_block_i = y_eval ---
+    // This row enforces the opening evaluation claim.
     {
         let mut phi_w = vec![CyclotomicRing::<F, D>::zero(); w_len];
         for (i, &b_i) in opening_point.b.iter().enumerate() {
@@ -136,7 +140,7 @@ where
         ));
     }
 
-    // --- fold row: c^T * G_open * w_hat - a^T * G_commit * J * z_pre = 0 ---
+    // This row ties the folded witness to the pre-handoff `z` decomposition.
     {
         let mut phi_w = vec![CyclotomicRing::<F, D>::zero(); w_len];
         for (i, c_i) in dense_challenges.iter().enumerate() {
@@ -164,7 +168,7 @@ where
         ));
     }
 
-    // --- A-rows: c^T * G_open * t_hat_slice[a_idx] - A[a_idx] * J * z_pre = 0 ---
+    // A rows link the folded inner openings back to the same `z` decomposition.
     let a_view = a_mat.view::<D>();
     for a_idx in 0..Cfg::N_A {
         let mut phi_t = vec![CyclotomicRing::<F, D>::zero(); t_len];
@@ -228,14 +232,16 @@ where
     LabradorWitness::new_unchecked(vec![row0, row1, row2])
 }
 
-/// Select Labrador reduction config for the Hachi handoff witness.
-#[tracing::instrument(skip_all, name = "labrador::handoff_select_config")]
-pub(crate) fn hachi_labrador_select_config<F: CanonicalField, const D: usize>(
+/// Estimate the full Labrador recursive proof for the Hachi handoff witness.
+#[tracing::instrument(skip_all, name = "labrador::handoff_estimate")]
+pub(crate) fn hachi_labrador_estimate<
+    F: FieldCore + CanonicalField + HachiSerialize,
+    const D: usize,
+>(
     witness: &LabradorWitness<F, D>,
-) -> Result<LabradorReductionConfig, HachiError> {
-    let row_count = witness.rows().len();
-    let max_row_len = witness.rows().iter().map(|r| r.len()).max().unwrap_or(0);
-    crate::protocol::labrador::config::select_handoff_config::<F, D>(row_count, max_row_len)
+    coeff_bit_bound: usize,
+) -> Result<LabradorRecursiveSizeEstimate, HachiError> {
+    estimate_handoff_recursive_proof::<F, D>(witness, coeff_bit_bound)
 }
 
 /// Execute the Labrador direct handoff from the Hachi folding loop.
@@ -265,18 +271,11 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
-    use std::time::Instant;
-
     let t0 = Instant::now();
+    let mut handoff_transcript = transcript.clone();
 
-    let opening_point =
-        tracing::info_span!("labrador::handoff_prepare_opening_point").in_scope(|| {
-            super::commitment_scheme::next_level_opening_point(
-                current_challenges,
-                current_num_u,
-                current_num_l,
-            )
-        });
+    let opening_point = tracing::info_span!("labrador::handoff_prepare_opening_point")
+        .in_scope(|| next_level_opening_point(current_challenges, current_num_u, current_num_l));
 
     let alpha = D_HANDOFF.trailing_zeros() as usize;
     if opening_point.len() < alpha {
@@ -287,6 +286,8 @@ where
     }
 
     let w_layout = <WCommitmentConfig<D_HANDOFF, Cfg>>::commitment_layout(opening_point.len())?;
+    let direct_tail = PackedDigits::from_i8_digits(current_w, w_layout.log_basis);
+    let direct_hachi_tail_bytes = direct_tail.serialized_size(Compress::No);
     let target_num_vars = w_layout.m_vars + w_layout.r_vars + alpha;
     let mut padded_point = opening_point.clone();
     padded_point.resize(target_num_vars, F::zero());
@@ -318,11 +319,11 @@ where
         })?;
 
     tracing::info_span!("labrador::handoff_absorb_claims").in_scope(|| {
-        current_commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+        current_commitment.append_to_transcript(ABSORB_COMMITMENT, &mut handoff_transcript);
         for pt in &padded_point {
-            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+            handoff_transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+        handoff_transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
     });
 
     let quad_eq = tracing::info_span!("labrador::handoff_quad_eq").in_scope(|| {
@@ -336,7 +337,7 @@ where
             &w_poly,
             w_folded,
             current_hint.clone(),
-            transcript,
+            &mut handoff_transcript,
             current_commitment,
             &y_ring,
             w_layout,
@@ -378,14 +379,14 @@ where
     let witness = build_labrador_witness(w_hat_flat, &inner_opening_digits_flat, z_pre, w_layout);
     let witness_norm_bound_sq = witness.norm();
 
-    let cfg = hachi_labrador_select_config::<F, D_HANDOFF>(&witness)?;
+    let estimate = hachi_labrador_estimate::<F, D_HANDOFF>(&witness, w_layout.log_basis as usize)?;
+    let plan = estimate.initial_plan.clone();
+    let cfg = plan.config;
     let handoff_row_lengths: Vec<usize> = witness.rows().iter().map(|row| row.len()).collect();
     let handoff_ring_elems: usize = handoff_row_lengths.iter().sum();
     let handoff_witness_bits = handoff_ring_elems * D_HANDOFF * logq_bits::<F>();
     let handoff_witness_bytes =
         FlatLabradorWitness::from_typed(&witness).serialized_size(Compress::No);
-    let direct_hachi_tail_bytes =
-        8 + 1 + (current_w.len() * w_layout.log_basis as usize).div_ceil(8);
 
     let statement = LabradorStatement {
         inner_opening_payload: Vec::new(),
@@ -410,6 +411,8 @@ where
         serialized_bytes = handoff_witness_bytes,
         witness_norm_bound_sq = %witness_norm_bound_sq,
         max_row_len = handoff_row_lengths.iter().copied().max().unwrap_or(0),
+        virtual_row_len = plan.virtual_row_len,
+        row_split_counts = ?plan.row_split_counts,
         witness_digit_parts = cfg.witness_digit_parts,
         witness_digit_bits = cfg.witness_digit_bits,
         aux_digit_parts = cfg.aux_digit_parts,
@@ -417,15 +420,65 @@ where
         inner_commit_rank = cfg.inner_commit_rank,
         outer_commit_rank = cfg.outer_commit_rank,
         tail = cfg.tail,
+        estimated_labrador_levels = estimate.level_count,
+        estimated_labrador_proof_bytes = estimate.proof_bytes,
+        estimated_labrador_final_witness_bytes = estimate.final_witness_bytes,
         elapsed_s = t1.elapsed().as_secs_f64(),
         rows = witness.rows().len(),
         constraint_count = statement.constraints.len(),
         "labrador_handoff witness/constraints"
     );
 
+    let v_bytes = FlatRingVec::from_ring_elems(&quad_eq.v).serialized_size(Compress::No);
+    let y_ring_bytes = FlatRingVec::from_single(&y_ring).serialized_size(Compress::No);
+    let estimated_labrador_tail_bytes = estimate.proof_bytes
+        + v_bytes
+        + y_ring_bytes
+        + witness_norm_bound_sq.serialized_size(Compress::No);
+    tracing::info!(
+        packed_direct_bytes = direct_hachi_tail_bytes,
+        estimated_labrador_tail_bytes,
+        selected_tail = if estimated_labrador_tail_bytes < direct_hachi_tail_bytes {
+            "labrador"
+        } else {
+            "direct"
+        },
+        estimated_labrador_proof_bytes = estimate.proof_bytes,
+        v_bytes,
+        y_ring_bytes,
+        witness_norm_bound_sq_bytes = witness_norm_bound_sq.serialized_size(Compress::No),
+        "labrador_handoff estimated tail comparison"
+    );
+    if estimated_labrador_tail_bytes >= direct_hachi_tail_bytes {
+        return Ok(HachiProofTail::Direct(direct_tail));
+    }
+
     let t2 = Instant::now();
-    let labrador_proof =
-        prove_with_config::<F, T, D_HANDOFF>(witness, &statement, &cfg, &comkey_seed, transcript)?;
+    let labrador_proof = prove_with_plan::<F, T, D_HANDOFF>(
+        witness,
+        &statement,
+        &plan,
+        &comkey_seed,
+        &mut handoff_transcript,
+    )?;
+    #[cfg(debug_assertions)]
+    {
+        let roundtrip = FlatLabradorProof::from_typed(&labrador_proof).to_typed::<D_HANDOFF>();
+        assert!(
+            roundtrip == labrador_proof,
+            "labrador handoff proof roundtrip must preserve the proof"
+        );
+
+        let mut self_verify_transcript = handoff_transcript.clone();
+        verify_labrador::<F, T, D_HANDOFF>(
+            &statement,
+            &labrador_proof,
+            &comkey_seed,
+            &mut self_verify_transcript,
+        )
+        .expect("freshly generated Labrador handoff proof must verify");
+    }
+    *transcript = handoff_transcript;
 
     tracing::info!(
         elapsed_s = t2.elapsed().as_secs_f64(),
@@ -549,12 +602,8 @@ where
 
     let comkey_seed = expanded_setup.labrador_comkey_seed();
 
-    let result = crate::protocol::labrador::verify::<F, T, D_HANDOFF>(
-        &statement,
-        &labrador_proof,
-        &comkey_seed,
-        transcript,
-    );
+    let result =
+        verify_labrador::<F, T, D_HANDOFF>(&statement, &labrador_proof, &comkey_seed, transcript);
     if result.is_ok() {
         tracing::info!("labrador verify OK");
     } else {
@@ -619,7 +668,7 @@ mod tests {
             )
             .unwrap();
 
-        let point = crate::protocol::opening_point::RingOpeningPoint {
+        let point = RingOpeningPoint {
             a: sample_a(),
             b: sample_b(),
         };

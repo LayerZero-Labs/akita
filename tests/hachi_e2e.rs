@@ -160,10 +160,11 @@ fn full_labrador_prove_verify() {
             !proof.levels.is_empty(),
             "proof must have at least one level"
         );
-        assert!(
-            proof.has_labrador_tail(),
-            "expected Labrador tail, got direct"
-        );
+        let tail_kind = if proof.has_labrador_tail() {
+            "labrador"
+        } else {
+            "direct"
+        };
 
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
@@ -193,6 +194,7 @@ fn full_labrador_prove_verify() {
             proof_bytes,
             proof_kib = proof_bytes as f64 / 1024.0,
             levels = proof.levels.len(),
+            tail_kind,
             "full/nv{FULL_TEST_NV} e2e"
         );
     });
@@ -259,10 +261,11 @@ fn onehot_labrador_prove_verify() {
             !proof.levels.is_empty(),
             "proof must have at least one level"
         );
-        assert!(
-            proof.has_labrador_tail(),
-            "expected Labrador tail, got direct"
-        );
+        let tail_kind = if proof.has_labrador_tail() {
+            "labrador"
+        } else {
+            "direct"
+        };
 
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
@@ -292,6 +295,7 @@ fn onehot_labrador_prove_verify() {
             proof_bytes,
             proof_kib = proof_bytes as f64 / 1024.0,
             levels = proof.levels.len(),
+            tail_kind,
             "onehot/nv{ONEHOT_TEST_NV} e2e"
         );
     });

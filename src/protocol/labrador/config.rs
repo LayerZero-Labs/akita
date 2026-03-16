@@ -1,9 +1,11 @@
 //! Labrador parameter-selection and security checks.
 
 use crate::error::HachiError;
+use crate::primitives::serialization::Compress;
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
+use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
 use crate::protocol::labrador::types::{LabradorReductionConfig, LabradorWitness};
-use crate::{CanonicalField, FieldCore};
+use crate::{CanonicalField, FieldCore, HachiSerialize};
 use std::f64::consts::{E, PI};
 const LABRADOR_LOGDELTA: f64 = 0.00639138757765197; // log2(1.00444)
 const LABRADOR_T: f64 = 14.0;
@@ -23,6 +25,92 @@ pub struct LabradorFoldPlan {
     /// row), `>0` = boundary that terminates a group and splits it into this
     /// many virtual rows of length `virtual_row_len` (formerly `nu`).
     pub row_split_counts: Vec<usize>,
+}
+
+const MAX_WITNESS_DIGIT_PARTS: usize = 8;
+const MAX_COMMITMENT_RANK: usize = 32;
+
+#[derive(Debug, Clone)]
+struct LabradorWitnessPlanningProfile {
+    row_lengths: Vec<usize>,
+    norm_sum: f64,
+    coeff_bit_bound: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LabradorFoldEstimate {
+    pub plan: LabradorFoldPlan,
+    pub level_payload_bytes: usize,
+    pub next_witness_bytes: usize,
+    pub transition_bytes: usize,
+    next_row_lengths: Vec<usize>,
+    next_norm_sum: f64,
+}
+
+impl LabradorFoldEstimate {
+    fn next_profile(&self) -> Result<LabradorWitnessPlanningProfile, HachiError> {
+        LabradorWitnessPlanningProfile::new(self.next_row_lengths.clone(), self.next_norm_sum, None)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LabradorRecursiveSizeEstimate {
+    pub initial_plan: LabradorFoldPlan,
+    pub proof_bytes: usize,
+    pub final_witness_bytes: usize,
+    pub level_count: usize,
+}
+
+impl LabradorWitnessPlanningProfile {
+    fn new(
+        row_lengths: Vec<usize>,
+        norm_sum: f64,
+        coeff_bit_bound: Option<usize>,
+    ) -> Result<Self, HachiError> {
+        if row_lengths.is_empty() {
+            return Err(HachiError::InvalidInput(
+                "cannot select config for empty Labrador witness".to_string(),
+            ));
+        }
+        if row_lengths.iter().sum::<usize>() == 0 {
+            return Err(HachiError::InvalidInput(
+                "cannot select config for zero-length Labrador witness".to_string(),
+            ));
+        }
+        if !norm_sum.is_finite() || norm_sum < 0.0 {
+            return Err(HachiError::InvalidInput(
+                "cannot select config for non-finite Labrador witness norm".to_string(),
+            ));
+        }
+        Ok(Self {
+            row_lengths,
+            norm_sum,
+            coeff_bit_bound,
+        })
+    }
+
+    fn from_witness<F: FieldCore + CanonicalField, const D: usize>(
+        witness: &LabradorWitness<F, D>,
+    ) -> Result<Self, HachiError> {
+        let row_lengths = witness.rows().iter().map(|r| r.len()).collect();
+        Self::new(row_lengths, witness.norm() as f64, None)
+    }
+
+    fn from_handoff_witness<F: FieldCore + CanonicalField, const D: usize>(
+        witness: &LabradorWitness<F, D>,
+        coeff_bit_bound: usize,
+    ) -> Result<Self, HachiError> {
+        let row_lengths = witness.rows().iter().map(|r| r.len()).collect();
+        Self::new(
+            row_lengths,
+            witness.norm() as f64,
+            Some(coeff_bit_bound.max(1)),
+        )
+    }
+
+    fn total_len(&self) -> usize {
+        self.row_lengths.iter().sum()
+    }
 }
 
 /// Euclidean SIS estimate for a flattened Module-SIS instance.
@@ -195,7 +283,7 @@ pub fn estimate_module_sis_euclidean<F: CanonicalField, const D: usize>(
 ///
 /// Returns an error if witness metadata is empty/invalid or if no secure
 /// commitment ranks are found within supported bounds.
-pub fn select_config<F: FieldCore + CanonicalField, const D: usize>(
+pub fn select_config<F: FieldCore + CanonicalField + HachiSerialize, const D: usize>(
     witness: &LabradorWitness<F, D>,
 ) -> Result<LabradorReductionConfig, HachiError> {
     plan_fold::<F, D>(witness, false).map(|p| p.config)
@@ -207,7 +295,7 @@ pub fn select_config<F: FieldCore + CanonicalField, const D: usize>(
 ///
 /// Returns an error if witness metadata is empty/invalid or if no secure
 /// commitment ranks are found within supported bounds.
-pub fn select_config_with_mode<F: FieldCore + CanonicalField, const D: usize>(
+pub fn select_config_with_mode<F: FieldCore + CanonicalField + HachiSerialize, const D: usize>(
     witness: &LabradorWitness<F, D>,
     tail: bool,
 ) -> Result<LabradorReductionConfig, HachiError> {
@@ -226,35 +314,46 @@ pub fn select_config_with_mode<F: FieldCore + CanonicalField, const D: usize>(
 ///
 /// Returns an error if the witness is empty or no secure parameters exist.
 #[tracing::instrument(skip_all, name = "labrador::plan_fold")]
-pub fn plan_fold<F: FieldCore + CanonicalField, const D: usize>(
+pub fn plan_fold<F: FieldCore + CanonicalField + HachiSerialize, const D: usize>(
     witness: &LabradorWitness<F, D>,
     tail: bool,
 ) -> Result<LabradorFoldPlan, HachiError> {
-    if witness.rows().is_empty() {
-        return Err(HachiError::InvalidInput(
-            "cannot select config for empty Labrador witness".to_string(),
-        ));
-    }
+    let profile = LabradorWitnessPlanningProfile::from_witness(witness)?;
+    plan_fold_with_profile::<F, D>(&profile, tail)
+}
 
-    let row_lengths: Vec<usize> = witness.rows().iter().map(|r| r.len()).collect();
+fn plan_fold_with_profile<F: FieldCore + CanonicalField + HachiSerialize, const D: usize>(
+    profile: &LabradorWitnessPlanningProfile,
+    tail: bool,
+) -> Result<LabradorFoldPlan, HachiError> {
+    search_best_estimate_with_profile::<F, D>(profile, tail).map(|estimate| estimate.plan)
+}
+
+fn coeff_varz_cap(coeff_bit_bound: usize) -> Option<f64> {
+    let exp = coeff_bit_bound.checked_mul(2)?;
+    if exp > i32::MAX as usize {
+        return None;
+    }
+    let cap = 2f64.powi(exp as i32) / 12.0 * (LABRADOR_TAU1 + 4.0 * LABRADOR_TAU2);
+    (cap.is_finite() && cap > 0.0).then_some(cap)
+}
+
+fn search_best_estimate_with_profile<
+    F: FieldCore + CanonicalField + HachiSerialize,
+    const D: usize,
+>(
+    profile: &LabradorWitnessPlanningProfile,
+    tail: bool,
+) -> Result<LabradorFoldEstimate, HachiError> {
+    let row_lengths = &profile.row_lengths;
     let r = row_lengths.len();
-    let total_len: usize = row_lengths.iter().sum();
-    if total_len == 0 {
-        return Err(HachiError::InvalidInput(
-            "cannot select config for zero-length Labrador witness".to_string(),
-        ));
-    }
-
-    let norm_sum: f64 = witness.norm() as f64;
+    let total_len = profile.total_len();
     let logq_bits = logq_bits::<F>();
     let logq = logq_bits as f64;
     let d = D as f64;
 
-    // For quadratic=0: single group with boundary at last row.
-    // k-loop: enumerate all secure candidates and keep the cheapest witness
-    // carry-forward plan instead of the first aggressive split that passes.
-    let mut last_config = None;
-    let mut best_plan = None;
+    let mut last_plan = None;
+    let mut best_estimate = None;
     let mut best_score = usize::MAX;
 
     for k in (1..=15usize).rev() {
@@ -262,208 +361,432 @@ pub fn plan_fold<F: FieldCore + CanonicalField, const D: usize>(
         let virtual_row_count = k;
         let virtual_row_count_f = virtual_row_count as f64;
 
-        let mut varz = norm_sum / (virtual_row_len as f64 * d);
+        let mut varz = profile.norm_sum / (virtual_row_len as f64 * d);
         varz *= LABRADOR_TAU1 + 4.0 * LABRADOR_TAU2;
+        if let Some(coeff_bit_bound) = profile.coeff_bit_bound {
+            if let Some(varz_cap) = coeff_varz_cap(coeff_bit_bound) {
+                varz = varz.min(varz_cap);
+            }
+        }
         if !varz.is_finite() || varz <= 0.0 {
             varz = 1.0;
         }
 
-        let decompose = !tail
-            && (!sis_secure_with_params(
-                13,
-                6.0 * LABRADOR_T
-                    * LABRADOR_SLACK
-                    * (2.0
-                        * (LABRADOR_TAU1 + 4.0 * LABRADOR_TAU2)
-                        * varz
-                        * virtual_row_len as f64
-                        * d)
-                        .sqrt(),
-                logq,
-                d,
-            ) || 64.0 * varz > (1u64 << 28) as f64);
-
-        let witness_digit_parts: usize = if decompose { 2 } else { 1 };
-        let mut witness_digit_bits = if decompose {
-            ((12.0f64.log2() + varz.log2()) / 4.0).round() as isize
+        let witness_digit_part_range = if tail {
+            1..=1
         } else {
-            ((12.0f64.log2() + varz.log2()) / 2.0).round() as isize
-        };
-        witness_digit_bits = witness_digit_bits.clamp(1, logq_bits as isize);
-
-        let (aux_digit_parts, aux_digit_bits) = if tail {
-            (1usize, logq_bits.max(1))
-        } else {
-            let aux_digit_parts = ((logq_bits + 2 * (witness_digit_bits as usize) / 3)
-                / (witness_digit_bits as usize))
-                .max(1);
-            let aux_digit_bits = ((logq_bits + aux_digit_parts / 2) / aux_digit_parts).max(1);
-            (aux_digit_parts, aux_digit_bits)
+            1..=MAX_WITNESS_DIGIT_PARTS
         };
 
-        let fg: usize = 0; // quadratic=0
+        for witness_digit_parts in witness_digit_part_range {
+            let mut witness_digit_bits = ((12.0f64.log2() + varz.log2())
+                / (2.0 * witness_digit_parts as f64))
+                .round() as isize;
+            witness_digit_bits = witness_digit_bits.clamp(1, logq_bits as isize);
 
-        let mut found_inner_commit_rank = None;
-        let mut last_normsq = 0.0f64;
-
-        for inner_commit_rank in 1..=32usize {
-            let mut normsq = (2f64.powi(2 * witness_digit_bits as i32) / 12.0
-                * ((witness_digit_parts - 1) as f64)
-                + varz
-                    / 2f64.powi(2 * (witness_digit_parts - 1) as i32 * witness_digit_bits as i32))
-                * virtual_row_len as f64;
-            if !tail {
-                let hi_exp = logq_bits as isize
-                    - (aux_digit_parts.saturating_sub(1) * aux_digit_bits) as isize;
-                let hi_exp = hi_exp.max(0) as i32;
-                normsq += (2f64.powi(2 * aux_digit_bits as i32) * ((aux_digit_parts - 1) as f64)
-                    + 2f64.powi(2 * hi_exp))
-                    / 12.0
-                    * (virtual_row_count_f * inner_commit_rank as f64
-                        + (virtual_row_count_f * virtual_row_count_f + virtual_row_count_f) / 2.0);
-            }
-            normsq *= d;
-            last_normsq = normsq;
-
-            if sis_secure_with_params(
-                inner_commit_rank,
-                6.0 * LABRADOR_T
-                    * LABRADOR_SLACK
-                    * 2f64.powi(((witness_digit_parts - 1) * witness_digit_bits as usize) as i32)
-                    * normsq.sqrt(),
-                logq,
-                d,
-            ) {
-                found_inner_commit_rank = Some(inner_commit_rank);
-                break;
-            }
-        }
-
-        let inner_commit_rank = match found_inner_commit_rank {
-            Some(k) => k,
-            None => {
-                let c = LabradorReductionConfig {
-                    witness_digit_parts,
-                    witness_digit_bits: witness_digit_bits as usize,
-                    aux_digit_parts,
-                    aux_digit_bits,
-                    inner_commit_rank: 32,
-                    outer_commit_rank: 0,
-                    tail,
-                };
-                last_config = Some(build_plan(c, virtual_row_len, r, virtual_row_count));
-                continue;
-            }
-        };
-
-        if tail {
-            let inner_opening_payload_len = virtual_row_count * inner_commit_rank;
-            let linear_garbage_payload_len = 2 * virtual_row_count - 1;
-            let varz_log = if varz > 0.0 { varz.log2() } else { 0.0 };
-            let tc = LabradorReductionConfig {
-                witness_digit_parts,
-                witness_digit_bits: witness_digit_bits as usize,
-                aux_digit_parts,
-                aux_digit_bits,
-                inner_commit_rank,
-                outer_commit_rank: 0,
-                tail: true,
+            let (aux_digit_parts, aux_digit_bits) = if tail {
+                (1usize, logq_bits.max(1))
+            } else {
+                let aux_digit_parts = ((logq_bits + 2 * (witness_digit_bits as usize) / 3)
+                    / (witness_digit_bits as usize))
+                    .max(1);
+                let aux_digit_bits = ((logq_bits + aux_digit_parts / 2) / aux_digit_parts).max(1);
+                (aux_digit_parts, aux_digit_bits)
             };
-            if inner_commit_rank <= 32
-                && (inner_opening_payload_len + linear_garbage_payload_len) as f64 * logq
-                    <= 1.1 * virtual_row_len as f64 * (varz_log / 2.0 + 2.05)
-            {
-                let score = transition_carry_ring_elems(virtual_row_len, virtual_row_count, &tc);
-                maybe_take_better_plan(
-                    &mut best_plan,
-                    &mut best_score,
-                    score,
-                    build_plan(tc, virtual_row_len, r, virtual_row_count),
-                );
+
+            let mut found_inner_commit_rank = None;
+            let mut last_normsq = 0.0f64;
+
+            for inner_commit_rank in 1..=MAX_COMMITMENT_RANK {
+                let mut normsq = (2f64.powi(2 * witness_digit_bits as i32) / 12.0
+                    * ((witness_digit_parts - 1) as f64)
+                    + varz
+                        / 2f64.powi(
+                            2 * (witness_digit_parts - 1) as i32 * witness_digit_bits as i32,
+                        ))
+                    * virtual_row_len as f64;
+                if !tail {
+                    let hi_exp = logq_bits as isize
+                        - (aux_digit_parts.saturating_sub(1) * aux_digit_bits) as isize;
+                    let hi_exp = hi_exp.max(0) as i32;
+                    normsq += (2f64.powi(2 * aux_digit_bits as i32)
+                        * ((aux_digit_parts - 1) as f64)
+                        + 2f64.powi(2 * hi_exp))
+                        / 12.0
+                        * (virtual_row_count_f * inner_commit_rank as f64
+                            + (virtual_row_count_f * virtual_row_count_f + virtual_row_count_f)
+                                / 2.0);
+                }
+                normsq *= d;
+                last_normsq = normsq;
+
+                if sis_secure_with_params(
+                    inner_commit_rank,
+                    6.0 * LABRADOR_T
+                        * LABRADOR_SLACK
+                        * 2f64
+                            .powi(((witness_digit_parts - 1) * witness_digit_bits as usize) as i32)
+                        * normsq.sqrt(),
+                    logq,
+                    d,
+                ) {
+                    found_inner_commit_rank = Some(inner_commit_rank);
+                    break;
+                }
             }
-            last_config = Some(build_plan(tc, virtual_row_len, r, virtual_row_count));
-        } else {
-            let outer_commit_rank = (1..=32usize).find(|&rank| {
-                sis_secure_with_params(rank, 2.0 * LABRADOR_SLACK * last_normsq.sqrt(), logq, d)
-            });
-            let outer_commit_rank = match outer_commit_rank {
+
+            let inner_commit_rank = match found_inner_commit_rank {
                 Some(rank) => rank,
                 None => {
-                    let c = LabradorReductionConfig {
-                        witness_digit_parts,
-                        witness_digit_bits: witness_digit_bits as usize,
-                        aux_digit_parts,
-                        aux_digit_bits,
-                        inner_commit_rank,
-                        outer_commit_rank: 32,
-                        tail: false,
-                    };
-                    last_config = Some(build_plan(c, virtual_row_len, r, virtual_row_count));
+                    last_plan = Some(build_plan(
+                        LabradorReductionConfig {
+                            witness_digit_parts,
+                            witness_digit_bits: witness_digit_bits as usize,
+                            aux_digit_parts,
+                            aux_digit_bits,
+                            inner_commit_rank: MAX_COMMITMENT_RANK,
+                            outer_commit_rank: 0,
+                            tail,
+                        },
+                        virtual_row_len,
+                        r,
+                        virtual_row_count,
+                    ));
                     continue;
                 }
             };
 
-            let c = LabradorReductionConfig {
-                witness_digit_parts,
-                witness_digit_bits: witness_digit_bits as usize,
-                aux_digit_parts,
-                aux_digit_bits,
-                inner_commit_rank,
-                outer_commit_rank,
-                tail: false,
+            let outer_commit_rank = if tail {
+                0
+            } else {
+                match (1..=MAX_COMMITMENT_RANK).find(|&rank| {
+                    sis_secure_with_params(rank, 2.0 * LABRADOR_SLACK * last_normsq.sqrt(), logq, d)
+                }) {
+                    Some(rank) => rank,
+                    None => {
+                        last_plan = Some(build_plan(
+                            LabradorReductionConfig {
+                                witness_digit_parts,
+                                witness_digit_bits: witness_digit_bits as usize,
+                                aux_digit_parts,
+                                aux_digit_bits,
+                                inner_commit_rank,
+                                outer_commit_rank: MAX_COMMITMENT_RANK,
+                                tail,
+                            },
+                            virtual_row_len,
+                            r,
+                            virtual_row_count,
+                        ));
+                        continue;
+                    }
+                }
             };
-            let aux_row_len = aux_digit_parts * virtual_row_count * inner_commit_rank
-                + (aux_digit_parts + fg)
-                    * (virtual_row_count * virtual_row_count + virtual_row_count)
-                    / 2;
-            if (aux_row_len as f64) <= 1.1 * virtual_row_len as f64 {
-                let score = transition_carry_ring_elems(virtual_row_len, virtual_row_count, &c);
-                maybe_take_better_plan(
-                    &mut best_plan,
-                    &mut best_score,
-                    score,
-                    build_plan(c, virtual_row_len, r, virtual_row_count),
-                );
-            }
-            last_config = Some(build_plan(c, virtual_row_len, r, virtual_row_count));
+
+            let plan = build_plan(
+                LabradorReductionConfig {
+                    witness_digit_parts,
+                    witness_digit_bits: witness_digit_bits as usize,
+                    aux_digit_parts,
+                    aux_digit_bits,
+                    inner_commit_rank,
+                    outer_commit_rank,
+                    tail,
+                },
+                virtual_row_len,
+                r,
+                virtual_row_count,
+            );
+            let estimate = estimate_plan_with_profile::<F, D>(profile, &plan, last_normsq)?;
+            let score = estimate.transition_bytes;
+            last_plan = Some(plan);
+            maybe_take_better_estimate(&mut best_estimate, &mut best_score, score, estimate);
         }
     }
 
-    if let Some(plan) = best_plan {
-        return Ok(plan);
+    if let Some(estimate) = best_estimate {
+        return Ok(estimate);
     }
 
-    last_config.ok_or_else(|| {
-        HachiError::InvalidInput("failed to find secure Labrador fold parameters".to_string())
+    last_plan.map_or_else(
+        || {
+            Err(HachiError::InvalidInput(
+                "failed to find secure Labrador fold parameters".to_string(),
+            ))
+        },
+        |plan| estimate_plan_with_profile::<F, D>(profile, &plan, profile.norm_sum.max(1.0)),
+    )
+}
+
+fn estimate_plan_with_profile<F: FieldCore + CanonicalField + HachiSerialize, const D: usize>(
+    profile: &LabradorWitnessPlanningProfile,
+    plan: &LabradorFoldPlan,
+    next_norm_sum: f64,
+) -> Result<LabradorFoldEstimate, HachiError> {
+    let virtual_row_count: usize = plan.row_split_counts.iter().sum();
+    let next_row_lengths =
+        estimate_next_row_lengths(virtual_row_count, plan.virtual_row_len, &plan.config);
+    let level_payload_bytes = estimate_level_payload_bytes::<F, D>(
+        profile.row_lengths.len(),
+        virtual_row_count,
+        plan.virtual_row_len,
+        &plan.config,
+    );
+    let next_witness_bytes = estimate_witness_bytes_from_row_lengths::<F, D>(&next_row_lengths);
+    Ok(LabradorFoldEstimate {
+        plan: plan.clone(),
+        level_payload_bytes,
+        next_witness_bytes,
+        transition_bytes: level_payload_bytes + next_witness_bytes,
+        next_row_lengths,
+        next_norm_sum: next_norm_sum.max(1.0),
     })
 }
 
-fn transition_carry_ring_elems(
+fn estimate_next_norm_sum_for_config<F: CanonicalField, const D: usize>(
+    profile: &LabradorWitnessPlanningProfile,
     virtual_row_len: usize,
     virtual_row_count: usize,
     config: &LabradorReductionConfig,
-) -> usize {
-    let witness_rows = config.witness_digit_parts * virtual_row_len;
-    witness_rows
-        + virtual_row_count * config.inner_commit_rank * config.aux_digit_parts
-        + virtual_row_count * (virtual_row_count + 1) / 2 * config.aux_digit_parts
+) -> f64 {
+    let logq_bits = logq_bits::<F>();
+    let d = D as f64;
+    let mut varz = profile.norm_sum / (virtual_row_len as f64 * d);
+    varz *= LABRADOR_TAU1 + 4.0 * LABRADOR_TAU2;
+    if let Some(coeff_bit_bound) = profile.coeff_bit_bound {
+        if let Some(varz_cap) = coeff_varz_cap(coeff_bit_bound) {
+            varz = varz.min(varz_cap);
+        }
+    }
+    if !varz.is_finite() || varz <= 0.0 {
+        varz = 1.0;
+    }
+
+    let mut normsq = (2f64.powi(2 * config.witness_digit_bits as i32) / 12.0
+        * ((config.witness_digit_parts - 1) as f64)
+        + varz
+            / 2f64.powi(
+                2 * (config.witness_digit_parts - 1) as i32 * config.witness_digit_bits as i32,
+            ))
+        * virtual_row_len as f64;
+    if !config.tail {
+        let hi_exp = logq_bits as isize
+            - (config.aux_digit_parts.saturating_sub(1) * config.aux_digit_bits) as isize;
+        let hi_exp = hi_exp.max(0) as i32;
+        let virtual_row_count_f = virtual_row_count as f64;
+        normsq += (2f64.powi(2 * config.aux_digit_bits as i32)
+            * ((config.aux_digit_parts - 1) as f64)
+            + 2f64.powi(2 * hi_exp))
+            / 12.0
+            * (virtual_row_count_f * config.inner_commit_rank as f64
+                + (virtual_row_count_f * virtual_row_count_f + virtual_row_count_f) / 2.0);
+    }
+    (normsq * d).max(1.0)
 }
 
-fn maybe_take_better_plan(
-    best_plan: &mut Option<LabradorFoldPlan>,
+pub(crate) fn estimate_fold_step<F: FieldCore + CanonicalField + HachiSerialize, const D: usize>(
+    witness: &LabradorWitness<F, D>,
+    tail: bool,
+) -> Result<LabradorFoldEstimate, HachiError> {
+    let profile = LabradorWitnessPlanningProfile::from_witness(witness)?;
+    search_best_estimate_with_profile::<F, D>(&profile, tail)
+}
+
+pub(crate) fn estimate_selected_fold_step<
+    F: FieldCore + CanonicalField + HachiSerialize,
+    const D: usize,
+>(
+    witness: &LabradorWitness<F, D>,
+    plan: &LabradorFoldPlan,
+) -> Result<LabradorFoldEstimate, HachiError> {
+    let profile = LabradorWitnessPlanningProfile::from_witness(witness)?;
+    let virtual_row_count: usize = plan.row_split_counts.iter().sum();
+    let next_norm_sum = estimate_next_norm_sum_for_config::<F, D>(
+        &profile,
+        plan.virtual_row_len,
+        virtual_row_count,
+        &plan.config,
+    );
+    estimate_plan_with_profile::<F, D>(&profile, plan, next_norm_sum)
+}
+
+#[cfg(test)]
+pub(crate) fn estimate_recursive_proof_with_plan<
+    F: FieldCore + CanonicalField + HachiSerialize,
+    const D: usize,
+>(
+    witness: &LabradorWitness<F, D>,
+    initial_plan: &LabradorFoldPlan,
+) -> Result<LabradorRecursiveSizeEstimate, HachiError> {
+    let profile = LabradorWitnessPlanningProfile::from_witness(witness)?;
+    let virtual_row_count: usize = initial_plan.row_split_counts.iter().sum();
+    let next_norm_sum = estimate_next_norm_sum_for_config::<F, D>(
+        &profile,
+        initial_plan.virtual_row_len,
+        virtual_row_count,
+        &initial_plan.config,
+    );
+    let initial_estimate =
+        estimate_plan_with_profile::<F, D>(&profile, initial_plan, next_norm_sum)?;
+    let (proof_bytes, final_witness_bytes, level_count) =
+        simulate_recursive_proof_bytes::<F, D>(profile, Some(initial_estimate))?;
+    Ok(LabradorRecursiveSizeEstimate {
+        initial_plan: initial_plan.clone(),
+        proof_bytes,
+        final_witness_bytes,
+        level_count,
+    })
+}
+
+pub(crate) fn estimate_handoff_recursive_proof<
+    F: FieldCore + CanonicalField + HachiSerialize,
+    const D: usize,
+>(
+    witness: &LabradorWitness<F, D>,
+    coeff_bit_bound: usize,
+) -> Result<LabradorRecursiveSizeEstimate, HachiError> {
+    let profile = LabradorWitnessPlanningProfile::from_handoff_witness(witness, coeff_bit_bound)?;
+    let initial_estimate = search_best_estimate_with_profile::<F, D>(&profile, false)?;
+    let initial_plan = initial_estimate.plan.clone();
+    let (proof_bytes, final_witness_bytes, level_count) =
+        simulate_recursive_proof_bytes::<F, D>(profile, Some(initial_estimate))?;
+    Ok(LabradorRecursiveSizeEstimate {
+        initial_plan,
+        proof_bytes,
+        final_witness_bytes,
+        level_count,
+    })
+}
+
+fn simulate_recursive_proof_bytes<
+    F: FieldCore + CanonicalField + HachiSerialize,
+    const D: usize,
+>(
+    mut profile: LabradorWitnessPlanningProfile,
+    mut first_non_tail: Option<LabradorFoldEstimate>,
+) -> Result<(usize, usize, usize), HachiError> {
+    let mut level_payload_total = 0usize;
+    let mut level_count = 0usize;
+
+    while level_count + 1 < LABRADOR_MAX_LEVELS {
+        let before_bytes = estimate_witness_bytes_from_row_lengths::<F, D>(&profile.row_lengths);
+        if before_bytes == 0 || profile.row_lengths.len() <= 1 {
+            break;
+        }
+        let estimate = match first_non_tail.take() {
+            Some(estimate) => estimate,
+            None => search_best_estimate_with_profile::<F, D>(&profile, false)?,
+        };
+        if estimate.transition_bytes >= before_bytes {
+            break;
+        }
+        level_payload_total += estimate.level_payload_bytes;
+        profile = estimate.next_profile()?;
+        level_count += 1;
+    }
+
+    if level_count + 1 < LABRADOR_MAX_LEVELS {
+        let before_bytes = estimate_witness_bytes_from_row_lengths::<F, D>(&profile.row_lengths);
+        if before_bytes > 0 && profile.row_lengths.len() > 1 {
+            let tail_estimate = search_best_estimate_with_profile::<F, D>(&profile, true)?;
+            if tail_estimate.transition_bytes < before_bytes {
+                level_payload_total += tail_estimate.level_payload_bytes;
+                profile = tail_estimate.next_profile()?;
+                level_count += 1;
+            }
+        }
+    }
+
+    let final_witness_bytes = estimate_witness_bytes_from_row_lengths::<F, D>(&profile.row_lengths);
+    Ok((
+        4 + level_payload_total + final_witness_bytes,
+        final_witness_bytes,
+        level_count,
+    ))
+}
+
+fn estimate_next_row_lengths(
+    virtual_row_count: usize,
+    virtual_row_len: usize,
+    config: &LabradorReductionConfig,
+) -> Vec<usize> {
+    let mut row_lengths = vec![virtual_row_len; config.witness_digit_parts];
+    if !config.tail {
+        row_lengths.push(
+            virtual_row_count * config.inner_commit_rank * config.aux_digit_parts
+                + virtual_row_count * (virtual_row_count + 1) / 2 * config.aux_digit_parts,
+        );
+    }
+    row_lengths
+}
+
+fn estimate_witness_bytes_from_row_lengths<F: FieldCore + HachiSerialize, const D: usize>(
+    row_lengths: &[usize],
+) -> usize {
+    4 + row_lengths
+        .iter()
+        .map(|&ring_elems| estimate_flat_ring_vec_bytes::<F, D>(ring_elems))
+        .sum::<usize>()
+}
+
+fn estimate_level_payload_bytes<F: FieldCore + CanonicalField + HachiSerialize, const D: usize>(
+    input_row_count: usize,
+    virtual_row_count: usize,
+    virtual_row_len: usize,
+    config: &LabradorReductionConfig,
+) -> usize {
+    let inner_payload_ring_elems = if config.tail || config.outer_commit_rank == 0 {
+        virtual_row_count * config.inner_commit_rank * config.aux_digit_parts
+    } else {
+        config.outer_commit_rank
+    };
+    let linear_payload_ring_elems = if config.tail || config.outer_commit_rank == 0 {
+        virtual_row_count * (virtual_row_count + 1) / 2 * config.aux_digit_parts
+    } else {
+        config.outer_commit_rank
+    };
+
+    1 + estimate_vec_usize_bytes(input_row_count)
+        + config.serialized_size(Compress::No)
+        + virtual_row_len.serialized_size(Compress::No)
+        + estimate_vec_usize_bytes(input_row_count)
+        + estimate_flat_ring_vec_bytes::<F, D>(inner_payload_ring_elems)
+        + estimate_flat_ring_vec_bytes::<F, D>(linear_payload_ring_elems)
+        + jl_projection_bytes()
+        + 8
+        + estimate_flat_ring_vec_bytes::<F, D>(jl_lifts::<F>())
+        + 16
+}
+
+fn estimate_flat_ring_vec_bytes<F: FieldCore + HachiSerialize, const D: usize>(
+    ring_elems: usize,
+) -> usize {
+    4 + 8 + ring_elems * D * F::zero().serialized_size(Compress::No)
+}
+
+fn estimate_vec_usize_bytes(len: usize) -> usize {
+    8 + len * 8
+}
+
+fn jl_projection_bytes() -> usize {
+    256 * std::mem::size_of::<i64>()
+}
+
+fn maybe_take_better_estimate(
+    best_estimate: &mut Option<LabradorFoldEstimate>,
     best_score: &mut usize,
     score: usize,
-    candidate: LabradorFoldPlan,
+    candidate: LabradorFoldEstimate,
 ) {
     if score < *best_score
         || (score == *best_score
-            && best_plan.as_ref().is_none_or(|best| {
-                candidate.row_split_counts.iter().sum::<usize>()
-                    < best.row_split_counts.iter().sum::<usize>()
+            && best_estimate.as_ref().is_none_or(|best| {
+                candidate.plan.row_split_counts.iter().sum::<usize>()
+                    < best.plan.row_split_counts.iter().sum::<usize>()
             }))
     {
         *best_score = score;
-        *best_plan = Some(candidate);
+        *best_estimate = Some(candidate);
     }
 }
 
@@ -499,89 +822,35 @@ pub fn trivial_plan(config: LabradorReductionConfig, row_lengths: &[usize]) -> L
     }
 }
 
-/// Parameter selection for the Hachi→Labrador handoff witness.
+/// Compute a full Labrador fold plan for the Hachi→Labrador handoff witness.
 ///
-/// Given fixed matrix dimensions `m` (rows) and `n` (columns), searches over
-/// witness digit parts (2..=8) and inner commitment rank (1..=32) to find the
-/// smallest SIS-secure parameter
-/// set for the polynomial commitment.
+/// Unlike the generic recursive planner, the handoff planner is seeded from the
+/// actual witness rows and their squared norm, rather than collapsing the input
+/// to only `(row_count, max_row_len)`.
 ///
 /// # Errors
 ///
-/// Returns an error if no secure parameter combination exists within the
-/// supported bounds.
-pub fn select_handoff_config<F: CanonicalField, const D: usize>(
-    m: usize,
-    n: usize,
+/// Returns an error if the witness is empty or no secure parameter
+/// combination exists within the supported bounds.
+pub fn plan_handoff<F: FieldCore + CanonicalField + HachiSerialize, const D: usize>(
+    witness: &LabradorWitness<F, D>,
+    coeff_bit_bound: usize,
+) -> Result<LabradorFoldPlan, HachiError> {
+    let profile = LabradorWitnessPlanningProfile::from_handoff_witness(witness, coeff_bit_bound)?;
+    plan_fold_with_profile::<F, D>(&profile, false)
+}
+
+/// Select Labrador reduction config for the Hachi→Labrador handoff witness.
+///
+/// # Errors
+///
+/// Returns an error if the witness is empty or no secure parameter
+/// combination exists within the supported bounds.
+pub fn select_handoff_config<F: FieldCore + CanonicalField + HachiSerialize, const D: usize>(
+    witness: &LabradorWitness<F, D>,
+    coeff_bit_bound: usize,
 ) -> Result<LabradorReductionConfig, HachiError> {
-    let logq = logq_bits::<F>();
-    let d = D as f64;
-    let mf = m as f64;
-    let nf = n as f64;
-
-    const GH_T: f64 = 14.0;
-    const GH_SLACK: f64 = 2.0;
-    const GH_TAU1: f64 = 32.0;
-    const GH_TAU2: f64 = 8.0;
-
-    for witness_digit_parts in 2..=8usize {
-        let witness_digit_bits = (logq + witness_digit_parts / 2) / witness_digit_parts;
-
-        let varz = 2f64.powi(2 * witness_digit_bits as i32) / 12.0 * nf * (GH_TAU1 + 4.0 * GH_TAU2);
-        let aux_digit_bits = ((0.25 * (12.0 * varz).log2()).round() as usize)
-            .max(1)
-            .min(logq);
-        let aux_digit_parts = ((logq as f64 / aux_digit_bits as f64).round() as usize).max(1);
-
-        let mut found = None;
-        for inner_commit_rank in 1..=32usize {
-            let mut normsq = (2f64.powi(2 * aux_digit_bits as i32) / 12.0
-                + varz / 2f64.powi(2 * aux_digit_bits as i32))
-                * mf
-                * witness_digit_parts as f64;
-            let hi_exp = logq as i32 - (aux_digit_parts.saturating_sub(1) * aux_digit_bits) as i32;
-            normsq += (2f64.powi(2 * aux_digit_bits as i32) * (aux_digit_parts as f64 - 1.0)
-                + 2f64.powi(2 * hi_exp.max(0)))
-                / 12.0
-                * (inner_commit_rank as f64 + 1.0)
-                * nf;
-            normsq *= d;
-
-            if sis_secure::<F, D>(
-                inner_commit_rank,
-                6.0 * GH_T * GH_SLACK * 2f64.powi(aux_digit_bits as i32) * normsq.sqrt(),
-            ) {
-                found = Some((inner_commit_rank, normsq));
-                break;
-            }
-        }
-
-        let (inner_commit_rank, normsq) = match found {
-            Some(v) => v,
-            None => continue,
-        };
-
-        let outer_commit_rank =
-            (1..=32usize).find(|&rank| sis_secure::<F, D>(rank, 2.0 * GH_SLACK * normsq.sqrt()));
-        let outer_commit_rank = match outer_commit_rank {
-            Some(rank) => rank,
-            None => continue,
-        };
-
-        return Ok(LabradorReductionConfig {
-            witness_digit_parts,
-            witness_digit_bits,
-            aux_digit_parts,
-            aux_digit_bits,
-            inner_commit_rank,
-            outer_commit_rank,
-            tail: false,
-        });
-    }
-
-    Err(HachiError::InvalidInput(
-        "select_handoff_config: no secure parameters found".to_string(),
-    ))
+    plan_handoff::<F, D>(witness, coeff_bit_bound).map(|plan| plan.config)
 }
 
 pub(crate) fn logq_bits<F: CanonicalField>() -> usize {
@@ -673,13 +942,42 @@ mod tests {
     fn select_config_returns_valid_ranges() {
         let witness = LabradorWitness::new(vec![row(32), row(32), row(32)]);
         let cfg = select_config::<F, D>(&witness).unwrap();
-        assert!((1..=2).contains(&cfg.witness_digit_parts));
+        assert!((1..=MAX_WITNESS_DIGIT_PARTS).contains(&cfg.witness_digit_parts));
         assert!(cfg.witness_digit_bits > 0);
         assert!(cfg.aux_digit_parts > 0);
         assert!(cfg.aux_digit_bits > 0);
-        assert!((1..=32).contains(&cfg.inner_commit_rank));
-        assert!((1..=32).contains(&cfg.outer_commit_rank));
+        assert!((1..=MAX_COMMITMENT_RANK).contains(&cfg.inner_commit_rank));
+        assert!((1..=MAX_COMMITMENT_RANK).contains(&cfg.outer_commit_rank));
         assert!(!cfg.tail);
+    }
+
+    #[test]
+    fn handoff_estimate_is_not_worse_than_generic_plan_on_small_coeffs() {
+        let witness = LabradorWitness::new(vec![row(48), row(48), row(48)]);
+
+        let generic_plan = plan_fold::<F, D>(&witness, false).unwrap();
+        let generic_estimate =
+            estimate_recursive_proof_with_plan::<F, D>(&witness, &generic_plan).unwrap();
+        let handoff_estimate = estimate_handoff_recursive_proof::<F, D>(&witness, 3).unwrap();
+
+        assert!(handoff_estimate.proof_bytes <= generic_estimate.proof_bytes);
+    }
+
+    #[test]
+    fn planner_can_search_more_than_two_z_parts() {
+        let row_lengths = vec![512usize, 512usize, 512usize];
+        let found = (20..=80).any(|exp| {
+            let profile =
+                LabradorWitnessPlanningProfile::new(row_lengths.clone(), 2f64.powi(exp), None)
+                    .unwrap();
+            plan_fold_with_profile::<F, D>(&profile, false)
+                .map(|plan| plan.config.witness_digit_parts > 2)
+                .unwrap_or(false)
+        });
+        assert!(
+            found,
+            "expected planner search to reach witness_digit_parts > 2"
+        );
     }
 
     #[test]
