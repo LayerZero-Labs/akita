@@ -1,15 +1,15 @@
 //! Two-tier commitment helpers for Labrador.
 
 use crate::algebra::ring::CyclotomicRing;
-use crate::algebra::{CrtNttParamSet, CyclotomicCrtNtt, MontCoeff, PrimeWidth};
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
-use crate::protocol::commitment::utils::linear::decompose_rows_with_carry;
+use crate::protocol::commitment::utils::linear::{
+    decompose_rows_with_carry, mat_vec_mul_crt_ntt_i8_many,
+};
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
 use crate::protocol::labrador::types::{LabradorReductionConfig, LabradorWitness};
-use crate::protocol::labrador::utils::mat_vec_mul;
+use crate::protocol::labrador::utils::{mat_vec_mul, try_centered_i8_rows};
 use crate::{cfg_iter, CanonicalField, FieldCore, FieldSampling};
 
 /// Commitment artifacts needed by downstream Labrador flows.
@@ -17,10 +17,10 @@ use crate::{cfg_iter, CanonicalField, FieldCore, FieldSampling};
 pub struct LabradorCommitmentArtifacts<F: FieldCore, const D: usize> {
     /// Per-row inner commitments.
     pub u_inner: Vec<Vec<CyclotomicRing<F, D>>>,
-    /// First outer commitment (`u1`).
-    pub u1: Vec<CyclotomicRing<F, D>>,
-    /// Second outer commitment (`u2`) from linear garbage terms.
-    pub u2: Vec<CyclotomicRing<F, D>>,
+    /// Opening-side payload (formerly `u1`).
+    pub inner_opening_payload: Vec<CyclotomicRing<F, D>>,
+    /// Linear-garbage-side payload (formerly `u2`).
+    pub linear_garbage_payload: Vec<CyclotomicRing<F, D>>,
     /// Decomposed witness rows.
     pub decomposed_witness: Vec<Vec<CyclotomicRing<F, D>>>,
     /// Decomposed inner commitments.
@@ -47,7 +47,7 @@ where
             "cannot commit empty Labrador witness".to_string(),
         ));
     }
-    if config.fu == 0 || config.bu == 0 || config.kappa == 0 {
+    if config.aux_digit_parts == 0 || config.aux_digit_bits == 0 || config.inner_commit_rank == 0 {
         return Err(HachiError::InvalidInput(
             "invalid Labrador commitment config".to_string(),
         ));
@@ -61,55 +61,60 @@ where
     )> = cfg_iter!(witness.rows())
         .map(|row| {
             let a = derive_extendable_comkey_matrix::<F, D>(
-                config.kappa,
+                config.inner_commit_rank,
                 row.len(),
                 comkey_seed,
                 b"labrador/comkey/A",
             );
             let t = mat_vec_mul(&a, row);
-            let t_hat = decompose_rows_with_carry(&t, config.fu, config.bu as u32);
-            let s_hat = decompose_rows_with_carry(row, config.f, config.b as u32);
-            (t, t_hat, s_hat)
+            let inner_opening_digits =
+                decompose_rows_with_carry(&t, config.aux_digit_parts, config.aux_digit_bits as u32);
+            let witness_digits = decompose_rows_with_carry(
+                row,
+                config.witness_digit_parts,
+                config.witness_digit_bits as u32,
+            );
+            (t, inner_opening_digits, witness_digits)
         })
         .collect();
 
     let mut u_inner = Vec::with_capacity(per_row.len());
     let mut decomposed_inner = Vec::with_capacity(per_row.len());
     let mut decomposed_witness = Vec::with_capacity(per_row.len());
-    for (t, t_hat, s_hat) in per_row {
+    for (t, inner_opening_digits, witness_digits) in per_row {
         if t.is_empty() {
             return Err(HachiError::InvalidInput(
                 "inner commitment row produced empty vector".to_string(),
             ));
         }
         u_inner.push(t);
-        decomposed_inner.push(t_hat);
-        decomposed_witness.push(s_hat);
+        decomposed_inner.push(inner_opening_digits);
+        decomposed_witness.push(witness_digits);
     }
 
-    let mut t_hat_flat = Vec::new();
-    for t_hat in &decomposed_inner {
-        t_hat_flat.extend(t_hat.iter().copied());
+    let mut inner_opening_digits_flat = Vec::new();
+    for inner_opening_digits in &decomposed_inner {
+        inner_opening_digits_flat.extend(inner_opening_digits.iter().copied());
     }
 
-    let u1 = if config.tail || config.kappa1 == 0 {
+    let inner_opening_payload = if config.tail || config.outer_commit_rank == 0 {
         u_inner.iter().flat_map(|v| v.iter().copied()).collect()
     } else {
         let b = derive_extendable_comkey_matrix::<F, D>(
-            config.kappa1,
-            t_hat_flat.len(),
+            config.outer_commit_rank,
+            inner_opening_digits_flat.len(),
             comkey_seed,
             b"labrador/comkey/B",
         );
-        mat_vec_mul(&b, &t_hat_flat)
+        mat_vec_mul(&b, &inner_opening_digits_flat)
     };
 
     let linear_garbage = build_linear_garbage(witness);
-    let u2 = if config.tail || config.kappa1 == 0 {
+    let linear_garbage_payload = if config.tail || config.outer_commit_rank == 0 {
         linear_garbage.clone()
     } else {
         let b2 = derive_extendable_comkey_matrix::<F, D>(
-            config.kappa1,
+            config.outer_commit_rank,
             linear_garbage.len(),
             comkey_seed,
             b"labrador/comkey/U2",
@@ -119,116 +124,176 @@ where
 
     Ok(LabradorCommitmentArtifacts {
         u_inner,
-        u1,
-        u2,
+        inner_opening_payload,
+        linear_garbage_payload,
         decomposed_witness,
         decomposed_inner,
         linear_garbage,
     })
 }
 
-// ---------------------------------------------------------------------------
-// NTT-accelerated two-tier commitment (used by Labrador fold levels)
-// ---------------------------------------------------------------------------
-
 type RingVec<F, const D: usize> = Vec<CyclotomicRing<F, D>>;
 type TwoTierResult<F, const D: usize> = Result<(RingVec<F, D>, RingVec<F, D>), HachiError>;
+const OUTER_NTT_LOG_BASIS: u32 = 4;
 
-fn mat_vec_mul_ntt_ring_many<
-    F: FieldCore + CanonicalField,
-    W: PrimeWidth,
-    const K: usize,
-    const D: usize,
->(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
-    vecs: &[Vec<CyclotomicRing<F, D>>],
-    params: &CrtNttParamSet<W, K, D>,
+fn max_centered_coeff_bits<F: CanonicalField, const D: usize>(
+    rows: &[CyclotomicRing<F, D>],
+) -> usize {
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let half_q = q / 2;
+    let mut max_abs = 0u128;
+
+    for row in rows {
+        for coeff in row.coeffs.iter() {
+            let canonical = coeff.to_canonical_u128();
+            let signed = if canonical > half_q {
+                -((q - canonical) as i128)
+            } else {
+                canonical as i128
+            };
+            let abs = signed.unsigned_abs();
+            if abs > max_abs {
+                max_abs = abs;
+            }
+        }
+    }
+
+    if max_abs == 0 {
+        1
+    } else {
+        (u128::BITS - max_abs.leading_zeros()) as usize
+    }
+}
+
+fn outer_ntt_digit_levels<F: CanonicalField, const D: usize>(
+    rows: &[CyclotomicRing<F, D>],
+) -> usize {
+    let coeff_bits = max_centered_coeff_bits(rows);
+    coeff_bits.div_ceil(OUTER_NTT_LOG_BASIS as usize) + 1
+}
+
+fn witness_ntt_digit_levels<F: CanonicalField, const D: usize>(
+    witness: &[Vec<CyclotomicRing<F, D>>],
+) -> usize {
+    witness
+        .iter()
+        .map(|row| outer_ntt_digit_levels(row))
+        .max()
+        .unwrap_or(1)
+}
+
+fn pow2_field<F: FieldCore>(exp: u32) -> F {
+    let two = F::one() + F::one();
+    let mut acc = F::one();
+    for _ in 0..exp {
+        acc = acc * two;
+    }
+    acc
+}
+
+fn expand_matrix_for_i8_digits<F: FieldCore, const D: usize>(
+    matrix: &[Vec<CyclotomicRing<F, D>>],
+    num_digits: usize,
+    log_basis: u32,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    let ntt_vecs: Vec<Vec<CyclotomicCrtNtt<W, K, D>>> = cfg_iter!(vecs)
-        .map(|vec| {
-            vec.iter()
-                .map(|v| CyclotomicCrtNtt::from_ring_with_params(v, params))
-                .collect()
-        })
-        .collect();
+    let scale_step = pow2_field::<F>(log_basis);
+    let mut scales = Vec::with_capacity(num_digits);
+    let mut scale = F::one();
+    for _ in 0..num_digits {
+        scales.push(scale);
+        scale = scale * scale_step;
+    }
 
-    cfg_iter!(&ntt_vecs)
-        .map(|ntt_vec| {
-            cfg_iter!(ntt_mat)
-                .map(|row_ntt| {
-                    let n = row_ntt.len().min(ntt_vec.len());
-                    let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
-                    for j in 0..n {
-                        let prod = row_ntt[j].pointwise_mul_with_params(&ntt_vec[j], params);
-                        for (k, prime) in params.primes.iter().copied().enumerate() {
-                            for d in 0..D {
-                                let sum = MontCoeff::from_raw(
-                                    acc.limbs[k][d].raw().wrapping_add(prod.limbs[k][d].raw()),
-                                );
-                                acc.limbs[k][d] = prime.reduce_range(sum);
-                            }
-                        }
-                    }
-                    acc.to_ring_with_params(params)
-                })
-                .collect()
+    cfg_iter!(matrix)
+        .map(|row| {
+            let mut expanded = Vec::with_capacity(row.len() * num_digits);
+            for entry in row {
+                for scale in &scales {
+                    expanded.push(entry.scale(scale));
+                }
+            }
+            expanded
         })
         .collect()
 }
 
-fn ntt_slot_num_rows<const D: usize>(slot: &NttSlotCache<D>) -> usize {
-    match slot {
-        NttSlotCache::Q32 { neg, .. } => neg.len(),
-        NttSlotCache::Q64 { neg, .. } => neg.len(),
-        NttSlotCache::Q128 { neg, .. } => neg.len(),
+fn decompose_rows_ntt_i8_exact<F: CanonicalField, const D: usize>(
+    rows: &[CyclotomicRing<F, D>],
+    num_digits: usize,
+    log_basis: u32,
+) -> Vec<[i8; D]> {
+    let mut out = Vec::with_capacity(rows.len() * num_digits);
+    for row in rows {
+        out.extend(row.balanced_decompose_pow2_i8(num_digits, log_basis));
     }
+    out
 }
 
 #[tracing::instrument(skip_all, name = "labrador::commit_witness_ntt")]
 fn commit_witness_ntt<F: FieldCore + CanonicalField, const D: usize>(
-    matrix: &NttSlotCache<D>,
+    matrix: &[Vec<CyclotomicRing<F, D>>],
     witness: &[Vec<CyclotomicRing<F, D>>],
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError> {
-    if ntt_slot_num_rows(matrix) == 0 {
+    if matrix.is_empty() {
         return Ok(vec![vec![]; witness.len()]);
     }
-    let out = match matrix {
-        NttSlotCache::Q32 { neg, params, .. } => mat_vec_mul_ntt_ring_many(neg, witness, params),
-        NttSlotCache::Q64 { neg, params, .. } => mat_vec_mul_ntt_ring_many(neg, witness, params),
-        NttSlotCache::Q128 { neg, params, .. } => mat_vec_mul_ntt_ring_many(neg, witness, params),
-    };
-    Ok(out)
+
+    if let Some(witness_i8) = try_centered_i8_rows(witness) {
+        return mat_vec_mul_crt_ntt_i8_many(matrix, &witness_i8);
+    }
+
+    // Large decomposed witness rows can exceed the safe reconstruction range of
+    // the generic ring-element NTT multiply. Re-expand them into balanced i8
+    // planes and scale A by powers of two so the shared CRT backend stays exact.
+    let witness_digit_levels = witness_ntt_digit_levels(witness);
+    let expanded_matrix =
+        expand_matrix_for_i8_digits(matrix, witness_digit_levels, OUTER_NTT_LOG_BASIS);
+    let witness_digits: Vec<Vec<[i8; D]>> = cfg_iter!(witness)
+        .map(|row| decompose_rows_ntt_i8_exact(row, witness_digit_levels, OUTER_NTT_LOG_BASIS))
+        .collect();
+    mat_vec_mul_crt_ntt_i8_many(&expanded_matrix, &witness_digits)
 }
 
 #[tracing::instrument(skip_all, name = "labrador::commit_inner_ntt")]
 fn commit_inner_ntt<F: FieldCore + CanonicalField, const D: usize>(
-    matrix: &NttSlotCache<D>,
+    matrix: &[Vec<CyclotomicRing<F, D>>],
     inner_commitment: &[Vec<CyclotomicRing<F, D>>],
     num_digits: usize,
     decompose_modulus: u32,
-    outer_rows: usize,
 ) -> TwoTierResult<F, D> {
-    let t_hat_per_row: Vec<Vec<CyclotomicRing<F, D>>> = cfg_iter!(inner_commitment)
+    let inner_opening_digits_per_row: Vec<Vec<CyclotomicRing<F, D>>> = cfg_iter!(inner_commitment)
         .map(|t| decompose_rows_with_carry(t, num_digits, decompose_modulus))
         .collect();
-    let t_hat: Vec<CyclotomicRing<F, D>> = t_hat_per_row.into_iter().flatten().collect();
+    let inner_opening_digits: Vec<CyclotomicRing<F, D>> =
+        inner_opening_digits_per_row.into_iter().flatten().collect();
 
-    if ntt_slot_num_rows(matrix) == 0 || outer_rows == 0 {
-        return Ok((t_hat.clone(), t_hat));
+    if matrix.is_empty() {
+        return Ok((inner_opening_digits.clone(), inner_opening_digits));
     }
-    let one_vec = vec![t_hat.clone()];
-    let u = match matrix {
-        NttSlotCache::Q32 { neg, params, .. } => mat_vec_mul_ntt_ring_many(neg, &one_vec, params),
-        NttSlotCache::Q64 { neg, params, .. } => mat_vec_mul_ntt_ring_many(neg, &one_vec, params),
-        NttSlotCache::Q128 { neg, params, .. } => mat_vec_mul_ntt_ring_many(neg, &one_vec, params),
-    };
-    let u0 = u.into_iter().next().unwrap_or_default();
-    Ok((t_hat, u0))
+
+    // The outer B-multiply sees arbitrary Labrador key coefficients times
+    // decomposed carry digits. Re-expand those digits into small i8 planes and
+    // expand B by powers of two so the product stays within the conservative
+    // CRT range used by the shared NTT backend.
+    let outer_digit_levels = outer_ntt_digit_levels(&inner_opening_digits);
+    let expanded_matrix =
+        expand_matrix_for_i8_digits(matrix, outer_digit_levels, OUTER_NTT_LOG_BASIS);
+    let inner_opening_digits_i8 = decompose_rows_ntt_i8_exact(
+        &inner_opening_digits,
+        outer_digit_levels,
+        OUTER_NTT_LOG_BASIS,
+    );
+    let u0 = mat_vec_mul_crt_ntt_i8_many(&expanded_matrix, &[inner_opening_digits_i8])?
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    Ok((inner_opening_digits, u0))
 }
 
 /// NTT-accelerated two-tier commitment: `witness → t = A·w → t̂ → u = B·t̂`.
 ///
-/// Returns `(t̂, u)` where `t̂` is the flattened decomposed inner commitment
+/// Returns `(inner_opening_digits, payload)` where `inner_opening_digits` is
+/// the flattened decomposed inner commitment
 /// and `u` is the outer commitment.
 ///
 /// # Errors
@@ -236,15 +301,14 @@ fn commit_inner_ntt<F: FieldCore + CanonicalField, const D: usize>(
 /// Propagates NTT or matrix shape errors.
 #[tracing::instrument(skip_all, name = "labrador::ntt_two_tier_commit")]
 pub fn ntt_two_tier_commit<F: FieldCore + CanonicalField, const D: usize>(
-    a_ntt: &NttSlotCache<D>,
-    b_ntt: &NttSlotCache<D>,
+    a_mat: &[Vec<CyclotomicRing<F, D>>],
+    b_mat: &[Vec<CyclotomicRing<F, D>>],
     witness: &[Vec<CyclotomicRing<F, D>>],
     num_digits: usize,
     decompose_modulus: u32,
-    outer_rows: usize,
 ) -> TwoTierResult<F, D> {
-    let t = commit_witness_ntt(a_ntt, witness)?;
-    commit_inner_ntt(b_ntt, &t, num_digits, decompose_modulus, outer_rows)
+    let t = commit_witness_ntt(a_mat, witness)?;
+    commit_inner_ntt(b_mat, &t, num_digits, decompose_modulus)
 }
 
 fn build_linear_garbage<F: FieldCore, const D: usize>(
@@ -267,8 +331,11 @@ fn build_linear_garbage<F: FieldCore, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::fields::Fp64;
+    use crate::algebra::fields::{Fp128, Fp64};
+    use crate::protocol::commitment::utils::linear::mat_vec_mul_crt_ntt_many;
+    use crate::protocol::labrador::setup::LabradorSetup;
     use crate::protocol::labrador::types::LabradorReductionConfig;
+    use crate::protocol::labrador::utils::mat_vec_mul;
     use crate::FromSmallInt;
 
     type F = Fp64<4294967197>;
@@ -291,18 +358,123 @@ mod tests {
     fn commit_linear_only_is_deterministic() {
         let witness = sample_witness();
         let cfg = LabradorReductionConfig {
-            f: 1,
-            b: 8,
-            fu: 2,
-            bu: 10,
-            kappa: 3,
-            kappa1: 2,
+            witness_digit_parts: 1,
+            witness_digit_bits: 8,
+            aux_digit_parts: 2,
+            aux_digit_bits: 10,
+            inner_commit_rank: 3,
+            outer_commit_rank: 2,
             tail: false,
         };
         let seed = [3u8; 32];
         let a = commit_linear_only(&witness, &cfg, &seed).unwrap();
         let b = commit_linear_only(&witness, &cfg, &seed).unwrap();
         assert_eq!(a, b);
-        assert!(!a.u2.is_empty(), "linear garbage commitment u2 must exist");
+        assert!(
+            !a.linear_garbage_payload.is_empty(),
+            "linear garbage payload must exist"
+        );
+    }
+
+    #[test]
+    fn ntt_two_tier_commit_matches_schoolbook_fp128_non_tail() {
+        type F128 = Fp128<0xfffffffffffffffffffffffffffffeed>;
+        const D128: usize = 256;
+
+        let row = |seed: i64, len: usize| -> Vec<CyclotomicRing<F128, D128>> {
+            (0..len)
+                .map(|j| {
+                    CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                        let raw = (seed + j as i64 * 7 + k as i64 * 11) % 17;
+                        F128::from_i64(raw - 8)
+                    }))
+                })
+                .collect()
+        };
+        let mut second_row = row(2, 36);
+        second_row.resize(48, CyclotomicRing::<F128, D128>::zero());
+        let witness = vec![row(1, 48), second_row];
+
+        let cfg = LabradorReductionConfig {
+            witness_digit_parts: 1,
+            witness_digit_bits: 35,
+            aux_digit_parts: 4,
+            aux_digit_bits: 32,
+            inner_commit_rank: 3,
+            outer_commit_rank: 3,
+            tail: false,
+        };
+        let comkey_seed = [17u8; 32];
+        let setup = LabradorSetup::<F128, D128>::new(&cfg, witness.len(), 48, &comkey_seed);
+
+        let t_schoolbook: Vec<Vec<CyclotomicRing<F128, D128>>> = witness
+            .iter()
+            .map(|row| mat_vec_mul(&setup.matrices.a_mat, row))
+            .collect();
+        let t_direct_ntt = mat_vec_mul_crt_ntt_many(&setup.matrices.a_mat, &witness).unwrap();
+        assert_eq!(t_direct_ntt, t_schoolbook);
+
+        let t_cached_ntt = commit_witness_ntt(&setup.matrices.a_mat, &witness).unwrap();
+        assert_eq!(t_cached_ntt, t_schoolbook);
+
+        let inner_opening_digits_schoolbook: Vec<CyclotomicRing<F128, D128>> = t_schoolbook
+            .iter()
+            .flat_map(|row| {
+                decompose_rows_with_carry(row, cfg.aux_digit_parts, cfg.aux_digit_bits as u32)
+            })
+            .collect();
+        let inner_opening_payload_schoolbook =
+            mat_vec_mul(&setup.matrices.b_mat, &inner_opening_digits_schoolbook);
+
+        let (inner_opening_digits_ntt, inner_opening_payload_ntt) = ntt_two_tier_commit(
+            &setup.matrices.a_mat,
+            &setup.matrices.b_mat,
+            &witness,
+            cfg.aux_digit_parts,
+            cfg.aux_digit_bits as u32,
+        )
+        .unwrap();
+
+        assert_eq!(inner_opening_digits_ntt, inner_opening_digits_schoolbook);
+        assert_eq!(inner_opening_payload_ntt, inner_opening_payload_schoolbook);
+    }
+
+    #[test]
+    fn commit_witness_ntt_matches_schoolbook_on_large_tail_digits() {
+        type F128 = Fp128<0xfffffffffffffffffffffffffffffeed>;
+        const D128: usize = 256;
+
+        let row = |seed: i64, scale_exp: u32| -> Vec<CyclotomicRing<F128, D128>> {
+            let scale = pow2_field::<F128>(scale_exp);
+            (0..28)
+                .map(|j| {
+                    CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                        let raw = (seed + j as i64 * 7 + k as i64 * 11) % 17;
+                        F128::from_i64(raw - 8) * scale
+                    }))
+                })
+                .collect()
+        };
+        let witness = vec![row(1, 35), row(2, 32), row(3, 35)];
+
+        let cfg = LabradorReductionConfig {
+            witness_digit_parts: 1,
+            witness_digit_bits: 39,
+            aux_digit_parts: 1,
+            aux_digit_bits: 128,
+            inner_commit_rank: 4,
+            outer_commit_rank: 0,
+            tail: true,
+        };
+        let comkey_seed = [23u8; 32];
+        let setup = LabradorSetup::<F128, D128>::new(&cfg, witness.len(), 28, &comkey_seed);
+
+        let t_schoolbook: Vec<Vec<CyclotomicRing<F128, D128>>> = witness
+            .iter()
+            .map(|row| mat_vec_mul(&setup.matrices.a_mat, row))
+            .collect();
+        let t_cached_ntt = commit_witness_ntt(&setup.matrices.a_mat, &witness).unwrap();
+
+        assert_eq!(t_cached_ntt, t_schoolbook);
     }
 }

@@ -208,6 +208,30 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
         }
     }
 
+    /// Fused negacyclic shift + scaled accumulate: `dst += scale * self * X^k`.
+    #[inline]
+    pub fn shift_scale_accumulate_into(&self, dst: &mut Self, k: usize, scale: F) {
+        if scale.is_zero() {
+            return;
+        }
+        let k = k % D;
+        if k == 0 {
+            for i in 0..D {
+                dst.coeffs[i] += self.coeffs[i] * scale;
+            }
+            return;
+        }
+        for i in 0..D {
+            let target = i + k;
+            let product = self.coeffs[i] * scale;
+            if target < D {
+                dst.coeffs[target] += product;
+            } else {
+                dst.coeffs[target - D] -= product;
+            }
+        }
+    }
+
     /// Fused multiply-by-monomial-sum + accumulate:
     /// `dst += self * (X^{k_1} + X^{k_2} + ...)`.
     ///
@@ -228,17 +252,44 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
         F: CanonicalField,
     {
         let mut result = Self::zero();
+        self.mul_by_sparse_into(challenge, &mut result);
+        result
+    }
+
+    /// Fused `dst += self * challenge` for a sparse challenge element.
+    pub fn mul_by_sparse_into(&self, challenge: &SparseChallenge, dst: &mut Self)
+    where
+        F: CanonicalField,
+    {
         for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
             match coeff {
-                1 => self.shift_accumulate_into(&mut result, pos as usize),
-                -1 => self.shift_sub_into(&mut result, pos as usize),
-                c => {
-                    let shifted = self.negacyclic_shift(pos as usize);
-                    result += shifted.scale(&F::from_i64(c as i64));
-                }
+                1 => self.shift_accumulate_into(dst, pos as usize),
+                -1 => self.shift_sub_into(dst, pos as usize),
+                c => self.shift_scale_accumulate_into(dst, pos as usize, F::from_i64(c as i64)),
             }
         }
-        result
+    }
+
+    /// Fused `dst += self * rhs` when `rhs` is coefficient-sparse.
+    ///
+    /// This is exact for any field coefficients in `rhs`, but runs in
+    /// `O(hw(rhs) * D)` instead of `O(D^2)`.
+    pub fn mul_accumulate_sparse_rhs_into(&self, rhs: &Self, dst: &mut Self)
+    where
+        F: CanonicalField,
+    {
+        for (pos, coeff) in rhs.coeffs.iter().copied().enumerate() {
+            if coeff.is_zero() {
+                continue;
+            }
+            if coeff == F::one() {
+                self.shift_accumulate_into(dst, pos);
+            } else if coeff == -F::one() {
+                self.shift_sub_into(dst, pos);
+            } else {
+                self.shift_scale_accumulate_into(dst, pos, coeff);
+            }
+        }
     }
 
     /// Fused `dst += self * rhs` via schoolbook negacyclic convolution.
@@ -249,14 +300,18 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     pub fn mul_accumulate_into(&self, rhs: &Self, dst: &mut Self) {
         for i in 0..D {
             let ai = self.coeffs[i];
-            for j in 0..D {
-                let product = ai * rhs.coeffs[j];
-                let idx = i + j;
-                if idx < D {
-                    dst.coeffs[idx] += product;
-                } else {
-                    dst.coeffs[idx - D] -= product;
-                }
+            if ai.is_zero() {
+                continue;
+            }
+
+            let (dst_wrap, dst_direct) = dst.coeffs.split_at_mut(i);
+            let (rhs_direct, rhs_wrap) = rhs.coeffs.split_at(D - i);
+
+            for (dst_coeff, rhs_coeff) in dst_direct.iter_mut().zip(rhs_direct.iter()) {
+                *dst_coeff += ai * *rhs_coeff;
+            }
+            for (dst_coeff, rhs_coeff) in dst_wrap.iter_mut().zip(rhs_wrap.iter()) {
+                *dst_coeff -= ai * *rhs_coeff;
             }
         }
     }
@@ -560,10 +615,11 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     ///
     /// Panics if `levels` is zero, `log_basis` is zero or >= 128, or
     /// `(levels - 1) * log_basis >= 128`.
-    pub fn balanced_decompose_pow2_with_carry(&self, levels: usize, log_basis: u32) -> Vec<Self>
+    pub fn balanced_decompose_pow2_with_carry_into(&self, out: &mut [Self], log_basis: u32)
     where
         F: CanonicalField,
     {
+        let levels = out.len();
         assert!(levels > 0, "levels must be positive");
         assert!(
             log_basis > 0 && log_basis <= 128,
@@ -585,8 +641,6 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         let q = (-F::one()).to_canonical_u128() + 1;
         let half_q = q / 2;
 
-        let mut digit_planes: Vec<[F; D]> = (0..levels).map(|_| [F::zero(); D]).collect();
-
         for i in 0..D {
             let canonical = self.coeffs[i].to_canonical_u128();
             let mut c: i128 = if canonical > half_q {
@@ -595,7 +649,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
                 canonical as i128
             };
 
-            for (plane_idx, plane) in digit_planes.iter_mut().enumerate() {
+            for (plane_idx, plane) in out.iter_mut().enumerate() {
                 let balanced = if plane_idx + 1 == levels {
                     c
                 } else {
@@ -605,18 +659,24 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
                     digit
                 };
 
-                plane[i] = if balanced >= 0 {
+                plane.coeffs[i] = if balanced >= 0 {
                     F::from_canonical_u128_reduced(balanced as u128)
                 } else {
                     F::from_canonical_u128_reduced(q - ((-balanced) as u128))
                 };
             }
         }
+    }
 
-        digit_planes
-            .into_iter()
-            .map(Self::from_coefficients)
-            .collect()
+    /// Allocating variant of
+    /// [`balanced_decompose_pow2_with_carry_into`](Self::balanced_decompose_pow2_with_carry_into).
+    pub fn balanced_decompose_pow2_with_carry(&self, levels: usize, log_basis: u32) -> Vec<Self>
+    where
+        F: CanonicalField,
+    {
+        let mut out = vec![Self::zero(); levels];
+        self.balanced_decompose_pow2_with_carry_into(&mut out, log_basis);
+        out
     }
 }
 

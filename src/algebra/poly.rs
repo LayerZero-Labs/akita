@@ -134,16 +134,23 @@ pub fn multilinear_eval<E: FieldCore>(evals: &[E], point: &[E]) -> Result<E, Hac
             actual: evals.len(),
         });
     }
-    let mut current = evals.to_vec();
-    for &r in point {
-        let half = current.len() / 2;
-        let mut next = Vec::with_capacity(half);
-        for i in 0..half {
-            next.push(current[2 * i] + r * (current[2 * i + 1] - current[2 * i]));
+    Ok(multilinear_eval_ref(evals, point))
+}
+
+#[inline]
+fn multilinear_eval_ref<E: FieldCore>(evals: &[E], point: &[E]) -> E {
+    match point.split_last() {
+        None => {
+            debug_assert_eq!(evals.len(), 1);
+            evals[0]
         }
-        current = next;
+        Some((&r, rest)) => {
+            let half = evals.len() / 2;
+            let lo = multilinear_eval_ref(&evals[..half], rest);
+            let hi = multilinear_eval_ref(&evals[half..], rest);
+            lo + r * (hi - lo)
+        }
     }
-    Ok(current[0])
 }
 
 /// Fold an evaluation table in place by binding its first variable to `r`,

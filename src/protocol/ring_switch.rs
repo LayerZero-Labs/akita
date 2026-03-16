@@ -110,7 +110,7 @@ where
     let hint = quad_eq
         .hint()
         .ok_or_else(|| HachiError::InvalidInput("missing hint in prover".to_string()))?;
-    let t_hat = &hint.t_hat;
+    let inner_opening_digits = &hint.inner_opening_digits;
     let t = hint.t().ok_or_else(|| {
         HachiError::InvalidInput("missing recomposed t in prover hint".to_string())
     })?;
@@ -122,7 +122,7 @@ where
         setup,
         &quad_eq.challenges,
         w_hat_flat,
-        t_hat,
+        inner_opening_digits,
         t,
         w_folded,
         z_pre_centered,
@@ -134,7 +134,7 @@ where
     )?;
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
-        build_w_coeffs::<F, D>(w_hat, t_hat, z_pre_centered, &r, layout)
+        build_w_coeffs::<F, D>(w_hat, inner_opening_digits, z_pre_centered, &r, layout)
     };
     Ok(w)
 }
@@ -793,14 +793,24 @@ pub(crate) fn build_w_evals_compact(
     let live_x_cols = w.len() / d;
     let num_u = live_x_cols.next_power_of_two().trailing_zeros() as usize;
 
-    let rows: Vec<Vec<i8>> = cfg_into_iter!(0..d)
-        .map(|y| {
-            (0..live_x_cols)
-                .map(|x| w[y + (x << num_l)])
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    let compact = rows.into_iter().flatten().collect();
+    let mut compact = vec![0i8; w.len()];
+
+    #[cfg(feature = "parallel")]
+    compact
+        .par_chunks_mut(live_x_cols)
+        .enumerate()
+        .for_each(|(y, row)| {
+            for (x, dst) in row.iter_mut().enumerate() {
+                *dst = w[y + (x << num_l)];
+            }
+        });
+
+    #[cfg(not(feature = "parallel"))]
+    for (y, row) in compact.chunks_mut(live_x_cols).enumerate() {
+        for (x, dst) in row.iter_mut().enumerate() {
+            *dst = w[y + (x << num_l)];
+        }
+    }
     Ok((compact, num_u, num_l))
 }
 

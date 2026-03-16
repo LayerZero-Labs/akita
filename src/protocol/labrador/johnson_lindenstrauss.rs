@@ -24,6 +24,38 @@ fn expand_jl_seed(seed: &[u8], len: usize) -> Vec<u8> {
     out
 }
 
+fn jl_row_bytes(cols: usize) -> Result<usize, HachiError> {
+    if cols == 0 {
+        return Err(HachiError::InvalidInput(
+            "JL matrix requires non-zero column count".to_string(),
+        ));
+    }
+    Ok((cols * 2).div_ceil(8))
+}
+
+pub(crate) fn replay_nonce_search_seed<F, T>(
+    transcript: &mut T,
+    jl_nonce: u64,
+    cols: usize,
+) -> Result<(usize, [u8; 32]), HachiError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    if !(1..=LABRADOR_MAX_JL_NONCE_RETRIES).contains(&jl_nonce) {
+        return Err(HachiError::InvalidInput(format!(
+            "JL nonce out of range: {jl_nonce}"
+        )));
+    }
+    let row_bytes = jl_row_bytes(cols)?;
+    transcript.append_bytes(labels::ABSORB_LABRADOR_JL_NONCE, &jl_nonce.to_le_bytes());
+    let seed_vec = transcript.challenge_bytes(labels::CHALLENGE_LABRADOR_JL_SEED, 32);
+    let seed: [u8; 32] = seed_vec
+        .try_into()
+        .map_err(|_| HachiError::InvalidInput("JL seed length mismatch".to_string()))?;
+    Ok((row_bytes, seed))
+}
+
 fn centered_from_canonical(
     canonical: u128,
     modulus: u128,
@@ -227,12 +259,7 @@ impl LabradorJlMatrix {
         F: FieldCore + CanonicalField,
         T: Transcript<F>,
     {
-        if cols == 0 {
-            return Err(HachiError::InvalidInput(
-                "JL matrix requires non-zero column count".to_string(),
-            ));
-        }
-        let row_bytes = (cols * 2).div_ceil(8);
+        let row_bytes = jl_row_bytes(cols)?;
         let total_bytes = JL_ROWS * row_bytes;
         let seed = transcript.challenge_bytes(labels::CHALLENGE_LABRADOR_JL_SEED, 32);
         let packed_rows = expand_jl_seed(&seed, total_bytes);
@@ -262,14 +289,14 @@ impl LabradorJlMatrix {
         F: FieldCore + CanonicalField,
         T: Transcript<F>,
     {
-        if !(1..=LABRADOR_MAX_JL_NONCE_RETRIES).contains(&jl_nonce) {
-            return Err(HachiError::InvalidInput(format!(
-                "JL nonce out of range: {jl_nonce}"
-            )));
-        }
-
-        transcript.append_bytes(labels::ABSORB_LABRADOR_JL_NONCE, &jl_nonce.to_le_bytes());
-        Self::generate::<F, T>(transcript, cols)
+        let (_row_bytes, seed) = replay_nonce_search_seed::<F, T>(transcript, jl_nonce, cols)?;
+        let total_bytes = JL_ROWS * jl_row_bytes(cols)?;
+        let packed_rows = expand_jl_seed(&seed, total_bytes);
+        Ok(Self {
+            cols,
+            row_bytes: jl_row_bytes(cols)?,
+            packed_rows,
+        })
     }
 }
 
@@ -474,7 +501,7 @@ fn project_streaming<const D: usize>(
 mod tests {
     use super::*;
     use crate::algebra::fields::{Fp64, Prime128M13M4P0};
-    use crate::protocol::transcript::labels::DOMAIN_LABRADOR_PROTOCOL;
+    use crate::protocol::transcript::labels::DOMAIN_LABRADOR_RECURSION;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::FromSmallInt;
 
@@ -534,8 +561,8 @@ mod tests {
     #[test]
     fn project_is_deterministic_and_replayable() {
         let witness = sample_witness_from_seed(42);
-        let mut t1 = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
-        let mut t2 = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let mut t1 = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_RECURSION);
+        let mut t2 = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_RECURSION);
         let (p1, n1, _) = project(&witness, &mut t1).unwrap();
         let (p2, n2, _) = project(&witness, &mut t2).unwrap();
         assert_eq!(p1, p2);
@@ -545,8 +572,8 @@ mod tests {
     #[test]
     fn project_fp128_is_deterministic_and_replayable() {
         let witness = sample_witness_from_seed_generic::<F128>(42);
-        let mut t1 = Blake2bTranscript::<F128>::new(DOMAIN_LABRADOR_PROTOCOL);
-        let mut t2 = Blake2bTranscript::<F128>::new(DOMAIN_LABRADOR_PROTOCOL);
+        let mut t1 = Blake2bTranscript::<F128>::new(DOMAIN_LABRADOR_RECURSION);
+        let mut t2 = Blake2bTranscript::<F128>::new(DOMAIN_LABRADOR_RECURSION);
         let (p1, n1, _) = project(&witness, &mut t1).unwrap();
         let (p2, n2, _) = project(&witness, &mut t2).unwrap();
         assert_eq!(p1, p2);
@@ -613,7 +640,7 @@ mod tests {
     fn project_norm_bound_over_multiple_witnesses() {
         for seed in 1..=10u64 {
             let witness = sample_witness_from_seed(seed);
-            let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_PROTOCOL);
+            let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_RECURSION);
             let (projection, nonce, _) = project(&witness, &mut transcript).unwrap();
 
             let beta = witness_squared_norm(&witness);

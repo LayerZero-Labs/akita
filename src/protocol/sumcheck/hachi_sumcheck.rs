@@ -896,12 +896,15 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
 
     fn fold_compact_prefix_x(w_compact: &[i8], live_x_cols: usize, y_len: usize, r: E) -> Vec<E> {
         let next_live_x_cols = live_x_cols.div_ceil(2);
-        let rows: Vec<Vec<E>> = cfg_into_iter!(0..y_len)
-            .map(|y| {
+        let mut out = vec![E::zero(); y_len * next_live_x_cols];
+
+        #[cfg(feature = "parallel")]
+        out.par_chunks_mut(next_live_x_cols)
+            .enumerate()
+            .for_each(|(y, row_out)| {
                 let row_start = y * live_x_cols;
                 let row = &w_compact[row_start..row_start + live_x_cols];
-                let mut folded = Vec::with_capacity(next_live_x_cols);
-                for pair_x in 0..next_live_x_cols {
+                for (pair_x, dst) in row_out.iter_mut().enumerate() {
                     let left = 2 * pair_x;
                     let w_0 = E::from_i64(row[left] as i64);
                     let w_1 = if left + 1 < live_x_cols {
@@ -909,22 +912,40 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
                     } else {
                         E::zero()
                     };
-                    folded.push(w_0 + r * (w_1 - w_0));
+                    *dst = w_0 + r * (w_1 - w_0);
                 }
-                folded
-            })
-            .collect();
-        rows.into_iter().flatten().collect()
+            });
+
+        #[cfg(not(feature = "parallel"))]
+        for (y, row_out) in out.chunks_mut(next_live_x_cols).enumerate() {
+            let row_start = y * live_x_cols;
+            let row = &w_compact[row_start..row_start + live_x_cols];
+            for (pair_x, dst) in row_out.iter_mut().enumerate() {
+                let left = 2 * pair_x;
+                let w_0 = E::from_i64(row[left] as i64);
+                let w_1 = if left + 1 < live_x_cols {
+                    E::from_i64(row[left + 1] as i64)
+                } else {
+                    E::zero()
+                };
+                *dst = w_0 + r * (w_1 - w_0);
+            }
+        }
+
+        out
     }
 
     fn fold_full_prefix_x(w_full: &[E], live_x_cols: usize, y_len: usize, r: E) -> Vec<E> {
         let next_live_x_cols = live_x_cols.div_ceil(2);
-        let rows: Vec<Vec<E>> = cfg_into_iter!(0..y_len)
-            .map(|y| {
+        let mut out = vec![E::zero(); y_len * next_live_x_cols];
+
+        #[cfg(feature = "parallel")]
+        out.par_chunks_mut(next_live_x_cols)
+            .enumerate()
+            .for_each(|(y, row_out)| {
                 let row_start = y * live_x_cols;
                 let row = &w_full[row_start..row_start + live_x_cols];
-                let mut folded = Vec::with_capacity(next_live_x_cols);
-                for pair_x in 0..next_live_x_cols {
+                for (pair_x, dst) in row_out.iter_mut().enumerate() {
                     let left = 2 * pair_x;
                     let w_0 = row[left];
                     let w_1 = if left + 1 < live_x_cols {
@@ -932,12 +953,27 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
                     } else {
                         E::zero()
                     };
-                    folded.push(w_0 + r * (w_1 - w_0));
+                    *dst = w_0 + r * (w_1 - w_0);
                 }
-                folded
-            })
-            .collect();
-        rows.into_iter().flatten().collect()
+            });
+
+        #[cfg(not(feature = "parallel"))]
+        for (y, row_out) in out.chunks_mut(next_live_x_cols).enumerate() {
+            let row_start = y * live_x_cols;
+            let row = &w_full[row_start..row_start + live_x_cols];
+            for (pair_x, dst) in row_out.iter_mut().enumerate() {
+                let left = 2 * pair_x;
+                let w_0 = row[left];
+                let w_1 = if left + 1 < live_x_cols {
+                    row[left + 1]
+                } else {
+                    E::zero()
+                };
+                *dst = w_0 + r * (w_1 - w_0);
+            }
+        }
+
+        out
     }
 
     fn fold_m_prefix(m_compact: &[E], live_x_cols: usize, r: E) -> Vec<E> {

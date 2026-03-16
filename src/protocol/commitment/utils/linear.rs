@@ -6,7 +6,6 @@ use crate::algebra::ntt::{MontCoeff, PrimeWidth};
 use crate::algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
 };
-#[cfg(test)]
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
@@ -16,8 +15,49 @@ use std::array::from_fn;
 use std::mem::size_of;
 
 use super::crt_ntt::NttSlotCache;
-#[cfg(test)]
 use super::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
+
+#[inline(always)]
+fn try_centered_i8<F: CanonicalField>(coeff: F, q: u128, half_q: u128) -> Option<i8> {
+    let canonical = coeff.to_canonical_u128();
+    let centered = if canonical > half_q {
+        -((q - canonical) as i128)
+    } else {
+        canonical as i128
+    };
+    if (i8::MIN as i128..=i8::MAX as i128).contains(&centered) {
+        Some(centered as i8)
+    } else {
+        None
+    }
+}
+
+const FAST_I8_DIGIT_MIN: i8 = -8;
+const FAST_I8_DIGIT_MAX: i8 = 7;
+
+pub(crate) fn try_centered_i8_cache_from_ring_coeffs<F: CanonicalField, const D: usize>(
+    coeffs: &[CyclotomicRing<F, D>],
+) -> Option<Vec<[i8; D]>> {
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let half_q = q / 2;
+    let mut out = Vec::with_capacity(coeffs.len());
+
+    for ring in coeffs {
+        let mut digits = [0i8; D];
+        for (dst, coeff) in digits.iter_mut().zip(ring.coeffs.iter()) {
+            let centered = try_centered_i8(*coeff, q, half_q)?;
+            // The small-digit CRT+NTT fast path uses a fixed LUT for [-8, 7].
+            // Larger centered coefficients must fall back to the generic path.
+            if !(FAST_I8_DIGIT_MIN..=FAST_I8_DIGIT_MAX).contains(&centered) {
+                return None;
+            }
+            *dst = centered;
+        }
+        out.push(digits);
+    }
+
+    Some(out)
+}
 
 #[cfg(test)]
 pub(crate) fn mat_vec_mul_unchecked<F: FieldCore + CanonicalField, const D: usize>(
@@ -89,7 +129,6 @@ fn accumulate_pointwise_product_into<W: PrimeWidth, const K: usize, const D: usi
     }
 }
 
-#[cfg(test)]
 fn precompute_dense_mat_ntt_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -106,6 +145,21 @@ fn precompute_dense_mat_ntt_with_params<
                 .collect()
         })
         .collect()
+}
+
+fn mat_vec_mul_dense_i8_many_with_params<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    mat: &[Vec<CyclotomicRing<F, D>>],
+    vecs: &[Vec<[i8; D]>],
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    let ntt_mat = precompute_dense_mat_ntt_with_params(mat, params);
+    let blocks: Vec<&[[i8; D]]> = vecs.iter().map(Vec::as_slice).collect();
+    mat_vec_mul_digits_i8_with_params(&ntt_mat, &blocks, params)
 }
 
 #[cfg(test)]
@@ -195,6 +249,19 @@ pub(crate) fn mat_vec_mul_crt_ntt_many<F: FieldCore + CanonicalField, const D: u
         ProtocolCrtNttParams::Q32(p) => mat_vec_mul_dense_many_with_params(mat, vecs, p),
         ProtocolCrtNttParams::Q64(p) => mat_vec_mul_dense_many_with_params(mat, vecs, p),
         ProtocolCrtNttParams::Q128(p) => mat_vec_mul_dense_many_with_params(mat, vecs, p),
+    };
+    Ok(out)
+}
+
+pub(crate) fn mat_vec_mul_crt_ntt_i8_many<F: FieldCore + CanonicalField, const D: usize>(
+    mat: &[Vec<CyclotomicRing<F, D>>],
+    vecs: &[Vec<[i8; D]>],
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError> {
+    let params = select_crt_ntt_params::<F, D>()?;
+    let out = match &params {
+        ProtocolCrtNttParams::Q32(p) => mat_vec_mul_dense_i8_many_with_params(mat, vecs, p),
+        ProtocolCrtNttParams::Q64(p) => mat_vec_mul_dense_i8_many_with_params(mat, vecs, p),
+        ProtocolCrtNttParams::Q128(p) => mat_vec_mul_dense_i8_many_with_params(mat, vecs, p),
     };
     Ok(out)
 }
@@ -385,15 +452,36 @@ pub fn decompose_rows<F: FieldCore + CanonicalField, const D: usize>(
 }
 
 /// Decompose each ring element where the last digit carries the remainder.
+///
+/// # Panics
+///
+/// Panics if `delta == 0`.
 pub fn decompose_rows_with_carry<F: FieldCore + CanonicalField, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
     delta: usize,
     log_basis: u32,
 ) -> Vec<CyclotomicRing<F, D>> {
-    let mut out = Vec::with_capacity(rows.len() * delta);
-    for row in rows {
-        out.extend(row.balanced_decompose_pow2_with_carry(delta, log_basis));
+    if rows.is_empty() {
+        return Vec::new();
     }
+    assert!(delta > 0, "levels must be positive");
+
+    let mut out = vec![CyclotomicRing::<F, D>::zero(); rows.len() * delta];
+
+    #[cfg(feature = "parallel")]
+    out.par_chunks_mut(delta)
+        .zip(rows.par_iter())
+        .for_each(|(dst_chunk, row)| {
+            row.balanced_decompose_pow2_with_carry_into(dst_chunk, log_basis)
+        });
+
+    #[cfg(not(feature = "parallel"))]
+    out.chunks_mut(delta)
+        .zip(rows.iter())
+        .for_each(|(dst_chunk, row)| {
+            row.balanced_decompose_pow2_with_carry_into(dst_chunk, log_basis)
+        });
+
     out
 }
 

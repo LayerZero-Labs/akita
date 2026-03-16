@@ -5,8 +5,11 @@ pub mod labels;
 
 use crate::algebra::fields::lift::ExtField;
 use crate::algebra::ring::CyclotomicRing;
+use crate::algebra::SparseChallenge;
 use crate::error::HachiError;
-use crate::protocol::labrador::challenge::sample_labrador_challenge_coeffs;
+use crate::protocol::labrador::challenge::{
+    sample_labrador_challenges, sample_labrador_sparse_challenges,
+};
 use crate::{CanonicalField, FieldCore, FromSmallInt, HachiSerialize};
 
 pub use hash::{Blake2bTranscript, HashTranscript, KeccakTranscript};
@@ -87,19 +90,50 @@ where
     F: FieldCore + CanonicalField + FromSmallInt,
     T: Transcript<F>,
 {
-    let mut seed = [0u8; 16];
-    for chunk in seed.chunks_mut(8) {
-        let s = tr.challenge_scalar(label);
-        let v = s.to_canonical_u128();
-        let len = chunk.len();
-        chunk.copy_from_slice(&v.to_le_bytes()[..len]);
-    }
-    let coeffs = sample_labrador_challenge_coeffs::<D>(1, &seed, REJECTION_SAMPLER_SINGLE_NONCE)?;
-    let poly = coeffs
-        .into_iter()
-        .next()
-        .ok_or_else(|| HachiError::InvalidInput("rejection sampler produced no output".into()))?;
-    Ok(CyclotomicRing::from_coefficients(std::array::from_fn(
-        |i| F::from_i64(poly[i] as i64),
-    )))
+    let mut polys = challenge_ring_elements_rejection_sampled::<F, T, D>(tr, label, 1)?;
+    polys
+        .pop()
+        .ok_or_else(|| HachiError::InvalidInput("rejection sampler produced no output".into()))
+}
+
+/// Sample multiple sparse ring-element challenges from one transcript-bound seed.
+///
+/// # Errors
+///
+/// Returns an error if `D` is incompatible with the rejection sampler.
+pub fn challenge_ring_elements_rejection_sampled<F, T, const D: usize>(
+    tr: &mut T,
+    label: &[u8],
+    len: usize,
+) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
+where
+    F: FieldCore + CanonicalField + FromSmallInt,
+    T: Transcript<F>,
+{
+    let seed_vec = tr.challenge_bytes(label, 16);
+    let seed: [u8; 16] = seed_vec
+        .try_into()
+        .map_err(|_| HachiError::InvalidInput("rejection sampler seed length mismatch".into()))?;
+    sample_labrador_challenges::<F, D>(len, &seed, REJECTION_SAMPLER_SINGLE_NONCE)
+}
+
+/// Sample multiple sparse ring-element challenges from one transcript-bound seed.
+///
+/// # Errors
+///
+/// Returns an error if `D` is incompatible with the rejection sampler.
+pub fn challenge_sparse_ring_elements_rejection_sampled<F, T, const D: usize>(
+    tr: &mut T,
+    label: &[u8],
+    len: usize,
+) -> Result<Vec<SparseChallenge>, HachiError>
+where
+    F: FieldCore + CanonicalField + FromSmallInt,
+    T: Transcript<F>,
+{
+    let seed_vec = tr.challenge_bytes(label, 16);
+    let seed: [u8; 16] = seed_vec
+        .try_into()
+        .map_err(|_| HachiError::InvalidInput("rejection sampler seed length mismatch".into()))?;
+    sample_labrador_sparse_challenges::<D>(len, &seed, REJECTION_SAMPLER_SINGLE_NONCE)
 }

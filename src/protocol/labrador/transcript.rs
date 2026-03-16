@@ -32,18 +32,18 @@ pub struct LabradorLevelTranscriptContext {
     pub tail: bool,
     /// Input witness row lengths (`n[i]` in the C reference).
     pub input_row_lengths: Vec<usize>,
-    /// Witness decomposition parts.
-    pub f: usize,
-    /// Witness decomposition basis log2.
-    pub b: usize,
-    /// Commitment decomposition parts.
-    pub fu: usize,
-    /// Commitment decomposition basis log2.
-    pub bu: usize,
-    /// Inner commitment rank.
-    pub kappa: usize,
-    /// Outer commitment rank.
-    pub kappa1: usize,
+    /// Witness decomposition parts (formerly `f`).
+    pub witness_digit_parts: usize,
+    /// Witness decomposition basis log2 (formerly `b`).
+    pub witness_digit_bits: usize,
+    /// Auxiliary decomposition parts (formerly `fu`).
+    pub aux_digit_parts: usize,
+    /// Auxiliary decomposition basis log2 (formerly `bu`).
+    pub aux_digit_bits: usize,
+    /// Inner commitment rank (formerly `kappa`).
+    pub inner_commit_rank: usize,
+    /// Outer commitment rank (formerly `kappa1`).
+    pub outer_commit_rank: usize,
 }
 
 fn append_u64_le(buf: &mut Vec<u8>, value: u64) {
@@ -91,12 +91,30 @@ fn encode_labrador_level_context(
         &mut bytes,
         checked_usize_to_u64(ctx.level_index, "level_index")?,
     );
-    append_u64_le(&mut bytes, checked_usize_to_u64(ctx.f, "f")?);
-    append_u64_le(&mut bytes, checked_usize_to_u64(ctx.b, "b")?);
-    append_u64_le(&mut bytes, checked_usize_to_u64(ctx.fu, "fu")?);
-    append_u64_le(&mut bytes, checked_usize_to_u64(ctx.bu, "bu")?);
-    append_u64_le(&mut bytes, checked_usize_to_u64(ctx.kappa, "kappa")?);
-    append_u64_le(&mut bytes, checked_usize_to_u64(ctx.kappa1, "kappa1")?);
+    append_u64_le(
+        &mut bytes,
+        checked_usize_to_u64(ctx.witness_digit_parts, "witness_digit_parts")?,
+    );
+    append_u64_le(
+        &mut bytes,
+        checked_usize_to_u64(ctx.witness_digit_bits, "witness_digit_bits")?,
+    );
+    append_u64_le(
+        &mut bytes,
+        checked_usize_to_u64(ctx.aux_digit_parts, "aux_digit_parts")?,
+    );
+    append_u64_le(
+        &mut bytes,
+        checked_usize_to_u64(ctx.aux_digit_bits, "aux_digit_bits")?,
+    );
+    append_u64_le(
+        &mut bytes,
+        checked_usize_to_u64(ctx.inner_commit_rank, "inner_commit_rank")?,
+    );
+    append_u64_le(
+        &mut bytes,
+        checked_usize_to_u64(ctx.outer_commit_rank, "outer_commit_rank")?,
+    );
     encode_usize_slice(&mut bytes, &ctx.input_row_lengths)?;
     Ok(bytes)
 }
@@ -173,7 +191,7 @@ where
     T: Transcript<F>,
 {
     let bytes = encode_labrador_level_context(ctx)?;
-    transcript.append_bytes(labels::ABSORB_LABRADOR_LEVEL_CONTEXT, &bytes);
+    transcript.append_bytes(labels::ABSORB_LABRADOR_RECURSION_CONTEXT, &bytes);
     Ok(())
 }
 
@@ -311,23 +329,23 @@ mod tests {
             level_index: 2,
             tail: false,
             input_row_lengths: vec![1024, 2048, 128, 64],
-            f: 2,
-            b: 8,
-            fu: 3,
-            bu: 10,
-            kappa: 12,
-            kappa1: 6,
+            witness_digit_parts: 2,
+            witness_digit_bits: 8,
+            aux_digit_parts: 3,
+            aux_digit_bits: 10,
+            inner_commit_rank: 12,
+            outer_commit_rank: 6,
         };
         let projection = std::array::from_fn(|i| i as i64 - 127);
         let nonce = TEST_NONCE_REPLAY;
 
-        let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_PROTOCOL);
+        let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_RECURSION);
         absorb_labrador_level_context::<F, _>(&mut t1, &ctx).unwrap();
         absorb_labrador_jl_projection::<F, _>(&mut t1, &projection);
         absorb_labrador_jl_nonce::<F, _>(&mut t1, nonce);
         let c1 = sample_labrador_aggregation_challenge::<F, _>(&mut t1);
 
-        let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_PROTOCOL);
+        let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_RECURSION);
         absorb_labrador_level_context::<F, _>(&mut t2, &ctx).unwrap();
         absorb_labrador_jl_projection::<F, _>(&mut t2, &projection);
         absorb_labrador_jl_nonce::<F, _>(&mut t2, nonce);
@@ -342,22 +360,22 @@ mod tests {
             level_index: 0,
             tail: true,
             input_row_lengths: vec![64, 32],
-            f: 1,
-            b: 8,
-            fu: 2,
-            bu: 10,
-            kappa: 4,
-            kappa1: 0,
+            witness_digit_parts: 1,
+            witness_digit_bits: 8,
+            aux_digit_parts: 2,
+            aux_digit_bits: 10,
+            inner_commit_rank: 4,
+            outer_commit_rank: 0,
         };
         let projection = [0i64; 256];
 
-        let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_PROTOCOL);
+        let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_RECURSION);
         absorb_labrador_level_context::<F, _>(&mut t1, &ctx).unwrap();
         absorb_labrador_jl_projection::<F, _>(&mut t1, &projection);
         absorb_labrador_jl_nonce::<F, _>(&mut t1, TEST_NONCE_LOW);
         let c1 = sample_labrador_aggregation_challenge::<F, _>(&mut t1);
 
-        let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_PROTOCOL);
+        let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_RECURSION);
         absorb_labrador_level_context::<F, _>(&mut t2, &ctx).unwrap();
         absorb_labrador_jl_projection::<F, _>(&mut t2, &projection);
         absorb_labrador_jl_nonce::<F, _>(&mut t2, TEST_NONCE_HIGH);

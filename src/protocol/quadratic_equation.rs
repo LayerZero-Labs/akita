@@ -756,14 +756,14 @@ mod tests {
         assert_eq!(lhs, f.quad_eq.v(), "Row 1 failed: D · ŵ ≠ v");
     }
 
-    /// Row 2: B · t̂ = u (commitment vector)
+    /// Row 2: B · inner opening digits = u (commitment vector)
     #[test]
-    fn row2_b_times_t_hat_equals_u_commitment() {
+    fn row2_b_times_inner_opening_digits_equals_u_commitment() {
         let f = build_fixture();
 
         let hint = f.quad_eq.hint().unwrap();
-        let t_hat_flat_ring: Vec<CyclotomicRing<F, D>> = hint
-            .t_hat
+        let inner_opening_digits_flat_ring: Vec<CyclotomicRing<F, D>> = hint
+            .inner_opening_digits
             .iter()
             .flat_map(|v| v.iter())
             .map(|plane| {
@@ -771,9 +771,12 @@ mod tests {
                 CyclotomicRing::from_coefficients(coeffs)
             })
             .collect();
-        let lhs = mat_vec_mul(&f.setup.expanded.B, &t_hat_flat_ring);
+        let lhs = mat_vec_mul(&f.setup.expanded.B, &inner_opening_digits_flat_ring);
 
-        assert_eq!(lhs, f.commitment_u, "Row 2 failed: B · t̂ ≠ u");
+        assert_eq!(
+            lhs, f.commitment_u,
+            "Row 2 failed: B · inner opening digits ≠ u"
+        );
     }
 
     /// Row 3: b^T · G_{2^r} · ŵ = u_eval
@@ -847,15 +850,17 @@ mod tests {
         assert_eq!(lhs, rhs, "Row 4 failed: (c^T ⊗ G_1)ŵ ≠ a^T G J ẑ");
     }
 
-    /// Row 5: (c^T ⊗ G_{n_A}) · t̂ = A · J · ẑ
+    /// Row 5: (c^T ⊗ G_{n_A}) · inner opening digits = A · J · ẑ
     #[test]
-    fn row5_challenge_fold_t_equals_a_j_z_hat() {
+    fn row5_challenge_fold_inner_opening_digits_equals_a_j_z_hat() {
         let f = build_fixture();
 
         let hint = f.quad_eq.hint().unwrap();
         let mut lhs = vec![CyclotomicRing::<F, D>::zero(); N_A];
-        for (c_i, t_hat_i) in f.challenges.iter().zip(hint.t_hat.iter()) {
-            let t_i = gadget_recompose_vec_i8(t_hat_i);
+        for (c_i, inner_opening_digits_i) in
+            f.challenges.iter().zip(hint.inner_opening_digits.iter())
+        {
+            let t_i = gadget_recompose_vec_i8(inner_opening_digits_i);
             assert_eq!(t_i.len(), N_A);
             for (lhs_j, t_ij) in lhs.iter_mut().zip(t_i.iter()) {
                 *lhs_j += *c_i * *t_ij;
@@ -866,7 +871,10 @@ mod tests {
         let z_recovered = recompose_z_hat(&z_hat);
         let rhs = mat_vec_mul(&f.setup.expanded.A, &z_recovered);
 
-        assert_eq!(lhs, rhs, "Row 5 failed: (c^T ⊗ G_nA)t̂ ≠ A · J · ẑ");
+        assert_eq!(
+            lhs, rhs,
+            "Row 5 failed: (c^T ⊗ G_nA)inner opening digits ≠ A · J · ẑ"
+        );
     }
 
     #[test]
@@ -880,9 +888,9 @@ mod tests {
         assert!(w_hat.iter().all(|v| v.len() == num_digits_open()));
 
         let hint = f.quad_eq.hint().unwrap();
-        assert_eq!(hint.t_hat.len(), NUM_BLOCKS);
+        assert_eq!(hint.inner_opening_digits.len(), NUM_BLOCKS);
         assert!(hint
-            .t_hat
+            .inner_opening_digits
             .iter()
             .all(|v| v.len() == N_A * num_digits_open()));
 

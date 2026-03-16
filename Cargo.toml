@@ -81,6 +81,10 @@ harness = false
 name = "norm_sumcheck"
 harness = false
 
+[[bench]]
+name = "labrador_jl_aggregation"
+harness = false
+
 [lints.rust]
 missing_docs = "warn"
 unreachable_pub = "warn"

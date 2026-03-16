@@ -3,6 +3,7 @@
 //! This ports the `polyvec_challenge` rejection sampler from the C reference.
 
 use crate::algebra::ring::CyclotomicRing;
+use crate::algebra::SparseChallenge;
 use crate::error::HachiError;
 use crate::protocol::labrador::guardrails::{
     checked_add, checked_mul, ensure_power_of_two, ensure_temp_allocation_limit,
@@ -19,6 +20,8 @@ pub const LABRADOR_TAU1: usize = 32;
 pub const LABRADOR_TAU2: usize = 8;
 /// Operator norm bound used by C's challenge rejection sampler.
 pub const LABRADOR_CHALLENGE_OPNORM_BOUND: f64 = 14.0;
+const LABRADOR_CHALLENGE_OPNORM_BOUND_SQ: f64 =
+    LABRADOR_CHALLENGE_OPNORM_BOUND * LABRADOR_CHALLENGE_OPNORM_BOUND;
 
 const SHAKE128_RATE: usize = 168;
 const SINGLE_CHALLENGE_BLOCKS: usize = 2;
@@ -109,6 +112,32 @@ where
         .collect())
 }
 
+/// Sample Labrador challenge polynomials as sparse ring elements.
+///
+/// # Errors
+///
+/// Returns an error if parameter checks fail.
+pub fn sample_labrador_sparse_challenges<const D: usize>(
+    len: usize,
+    seed: &[u8; 16],
+    stream_id: u64,
+) -> Result<Vec<SparseChallenge>, HachiError> {
+    Ok(sample_labrador_challenge_coeffs::<D>(len, seed, stream_id)?
+        .into_iter()
+        .map(|poly| {
+            let mut positions = Vec::with_capacity(LABRADOR_TAU1 + LABRADOR_TAU2);
+            let mut coeffs = Vec::with_capacity(LABRADOR_TAU1 + LABRADOR_TAU2);
+            for (idx, coeff) in poly.into_iter().enumerate() {
+                if coeff != 0 {
+                    positions.push(idx as u32);
+                    coeffs.push(coeff);
+                }
+            }
+            SparseChallenge { positions, coeffs }
+        })
+        .collect())
+}
+
 fn validate_challenge_params<const D: usize>() -> Result<(), HachiError> {
     ensure_power_of_two(D, "challenge sampler degree D")?;
     if D > 256 {
@@ -158,7 +187,9 @@ fn consume_challenge_buffer<const D: usize>(
             }
         }
 
-        if k == D && challenge_operator_norm::<D>(&poly) <= LABRADOR_CHALLENGE_OPNORM_BOUND {
+        if k == D
+            && challenge_operator_norm_with_bound::<D>(&poly, LABRADOR_CHALLENGE_OPNORM_BOUND_SQ)
+        {
             out.push(poly);
             produced += 1;
         }
@@ -251,6 +282,7 @@ fn challenge_operator_norm_dense_reference<const D: usize>(coeffs: &[i16; D]) ->
     max_norm
 }
 
+#[cfg(test)]
 fn challenge_operator_norm<const D: usize>(coeffs: &[i16; D]) -> f64 {
     let table = challenge_opnorm_table::<D>();
     let mut support_idx = [0usize; LABRADOR_TAU1 + LABRADOR_TAU2];
@@ -292,6 +324,49 @@ fn challenge_operator_norm<const D: usize>(coeffs: &[i16; D]) -> f64 {
         }
     }
     max_norm
+}
+
+fn challenge_operator_norm_with_bound<const D: usize>(coeffs: &[i16; D], bound_sq: f64) -> bool {
+    let table = challenge_opnorm_table::<D>();
+    let mut support_idx = [0usize; LABRADOR_TAU1 + LABRADOR_TAU2];
+    let mut support_coeff = [0.0f64; LABRADOR_TAU1 + LABRADOR_TAU2];
+    let mut support_len = 0usize;
+    for (idx, &coeff) in coeffs.iter().enumerate() {
+        if coeff == 0 {
+            continue;
+        }
+        if support_len == support_idx.len() {
+            #[cfg(test)]
+            {
+                let norm = challenge_operator_norm_dense_reference(coeffs);
+                return norm * norm <= bound_sq;
+            }
+            #[cfg(not(test))]
+            {
+                panic!("challenge support exceeded expected sparsity");
+            }
+        }
+        support_idx[support_len] = idx;
+        support_coeff[support_len] = coeff as f64;
+        support_len += 1;
+    }
+
+    for i in 0..D {
+        let row_base = i * D;
+        let mut re = 0.0f64;
+        let mut im = 0.0f64;
+        for idx in 0..support_len {
+            let coeff = support_coeff[idx];
+            let col = support_idx[idx];
+            re += coeff * table.cos[row_base + col];
+            im += coeff * table.sin[row_base + col];
+        }
+        if re * re + im * im > bound_sq {
+            return false;
+        }
+    }
+
+    true
 }
 
 #[cfg(test)]
@@ -361,6 +436,20 @@ mod tests {
                 assert_eq!(
                     sparse <= LABRADOR_CHALLENGE_OPNORM_BOUND,
                     dense <= LABRADOR_CHALLENGE_OPNORM_BOUND
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn operator_norm_bound_check_matches_full_norm() {
+        for stream_id in [2u64, 5, 11, 19] {
+            let polys =
+                sample_labrador_challenge_coeffs::<D>(6, &TEST_SEED_B, stream_id).expect("sample");
+            for poly in polys {
+                assert_eq!(
+                    challenge_operator_norm(&poly) <= LABRADOR_CHALLENGE_OPNORM_BOUND,
+                    challenge_operator_norm_with_bound(&poly, LABRADOR_CHALLENGE_OPNORM_BOUND_SQ)
                 );
             }
         }
