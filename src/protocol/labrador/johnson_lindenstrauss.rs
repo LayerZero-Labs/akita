@@ -186,7 +186,7 @@ impl LabradorJlMatrix {
         self.cols > 0 && self.packed_rows.len() == JL_ROWS * self.row_bytes
     }
 
-    pub(crate) fn row_bytes(&self, row_idx: usize) -> &[u8] {
+    pub(crate) fn packed_row(&self, row_idx: usize) -> &[u8] {
         debug_assert!(row_idx < JL_ROWS);
         let start = row_idx * self.row_bytes;
         &self.packed_rows[start..start + self.row_bytes]
@@ -243,7 +243,7 @@ impl LabradorJlMatrix {
             return None;
         }
         Some(jl_pair_to_sign(jl_pair_at(
-            self.row_bytes(row_idx),
+            self.packed_row(row_idx),
             col_idx,
         )))
     }
@@ -479,13 +479,13 @@ fn project_streaming<const D: usize>(
     }
     let results: Vec<Option<i64>> = match centered_witness {
         CenteredWitness::I64 { coeffs } => cfg_into_iter!(0..JL_ROWS)
-            .map(|row_idx| project_row_i64(matrix.row_bytes(row_idx), coeffs, total_coeffs))
+            .map(|row_idx| project_row_i64(matrix.packed_row(row_idx), coeffs, total_coeffs))
             .collect(),
         CenteredWitness::I128 { rings, sum_abs } => {
             let use_checked = *sum_abs > i128::MAX as u128;
             cfg_into_iter!(0..JL_ROWS)
                 .map(|row_idx| {
-                    project_row_i128(matrix.row_bytes(row_idx), rings, total_coeffs, use_checked)
+                    project_row_i128(matrix.packed_row(row_idx), rings, total_coeffs, use_checked)
                 })
                 .collect()
         }

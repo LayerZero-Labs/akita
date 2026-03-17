@@ -8,7 +8,7 @@ use crate::error::HachiError;
 use crate::protocol::labrador::guardrails::checked_usize_to_u64;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
-use crate::{CanonicalField, FieldCore, HachiSerialize};
+use crate::{CanonicalField, FieldCore};
 
 /// Greyhound evaluation transcript context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,25 +157,6 @@ pub fn absorb_greyhound_eval_claim<F, T, const D: usize>(
     }
 }
 
-/// Absorb Greyhound commitment payload `u2`.
-pub fn absorb_greyhound_u2<F, T, S>(transcript: &mut T, u2: &S)
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-    S: HachiSerialize,
-{
-    transcript.append_serde(labels::ABSORB_GREYHOUND_U2, u2);
-}
-
-/// Sample a Greyhound fold challenge.
-pub fn sample_greyhound_fold_challenge<F, T>(transcript: &mut T) -> F
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    transcript.challenge_scalar(labels::CHALLENGE_GREYHOUND_FOLD)
-}
-
 /// Absorb canonical Labrador level context bytes.
 ///
 /// # Errors
@@ -207,15 +188,6 @@ where
         bytes.extend_from_slice(&coeff.to_le_bytes());
     }
     transcript.append_bytes(labels::ABSORB_LABRADOR_JL_PROJECTION, &bytes);
-}
-
-/// Absorb Labrador JL nonce (`u64` little-endian).
-pub fn absorb_labrador_jl_nonce<F, T>(transcript: &mut T, nonce: u64)
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    transcript.append_bytes(labels::ABSORB_LABRADOR_JL_NONCE, &nonce.to_le_bytes());
 }
 
 /// Sample a Labrador aggregation challenge.
@@ -269,14 +241,14 @@ mod tests {
         let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_GREYHOUND_EVAL);
         absorb_greyhound_eval_context::<F, _>(&mut t1, &ctx).unwrap();
         absorb_greyhound_eval_claim::<F, _, D>(&mut t1, &eval_point, &eval_target);
-        absorb_greyhound_u2::<F, _, _>(&mut t1, &u2);
-        let c1 = sample_greyhound_fold_challenge::<F, _>(&mut t1);
+        t1.append_serde(labels::ABSORB_GREYHOUND_U2, &u2);
+        let c1 = t1.challenge_scalar(labels::CHALLENGE_GREYHOUND_FOLD);
 
         let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_GREYHOUND_EVAL);
         absorb_greyhound_eval_context::<F, _>(&mut t2, &ctx).unwrap();
         absorb_greyhound_eval_claim::<F, _, D>(&mut t2, &eval_point, &eval_target);
-        absorb_greyhound_u2::<F, _, _>(&mut t2, &u2);
-        let c2 = sample_greyhound_fold_challenge::<F, _>(&mut t2);
+        t2.append_serde(labels::ABSORB_GREYHOUND_U2, &u2);
+        let c2 = t2.challenge_scalar(labels::CHALLENGE_GREYHOUND_FOLD);
 
         assert_eq!(c1, c2, "same transcript schedule must replay identically");
     }
@@ -299,8 +271,8 @@ mod tests {
         )
         .unwrap();
         absorb_greyhound_eval_claim::<F, _, D>(&mut t1, &eval_point, &eval_target);
-        absorb_greyhound_u2::<F, _, _>(&mut t1, &u2);
-        let c1 = sample_greyhound_fold_challenge::<F, _>(&mut t1);
+        t1.append_serde(labels::ABSORB_GREYHOUND_U2, &u2);
+        let c1 = t1.challenge_scalar(labels::CHALLENGE_GREYHOUND_FOLD);
 
         let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_GREYHOUND_EVAL);
         absorb_greyhound_eval_context::<F, _>(
@@ -314,8 +286,8 @@ mod tests {
         )
         .unwrap();
         absorb_greyhound_eval_claim::<F, _, D>(&mut t2, &eval_point, &eval_target);
-        absorb_greyhound_u2::<F, _, _>(&mut t2, &u2);
-        let c2 = sample_greyhound_fold_challenge::<F, _>(&mut t2);
+        t2.append_serde(labels::ABSORB_GREYHOUND_U2, &u2);
+        let c2 = t2.challenge_scalar(labels::CHALLENGE_GREYHOUND_FOLD);
 
         assert_ne!(
             c1, c2,
@@ -342,13 +314,13 @@ mod tests {
         let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_RECURSION);
         absorb_labrador_level_context::<F, _>(&mut t1, &ctx).unwrap();
         absorb_labrador_jl_projection::<F, _>(&mut t1, &projection);
-        absorb_labrador_jl_nonce::<F, _>(&mut t1, nonce);
+        t1.append_bytes(labels::ABSORB_LABRADOR_JL_NONCE, &nonce.to_le_bytes());
         let c1 = sample_labrador_aggregation_challenge::<F, _>(&mut t1);
 
         let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_RECURSION);
         absorb_labrador_level_context::<F, _>(&mut t2, &ctx).unwrap();
         absorb_labrador_jl_projection::<F, _>(&mut t2, &projection);
-        absorb_labrador_jl_nonce::<F, _>(&mut t2, nonce);
+        t2.append_bytes(labels::ABSORB_LABRADOR_JL_NONCE, &nonce.to_le_bytes());
         let c2 = sample_labrador_aggregation_challenge::<F, _>(&mut t2);
 
         assert_eq!(c1, c2, "identical schedule must be replay deterministic");
@@ -372,13 +344,19 @@ mod tests {
         let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_RECURSION);
         absorb_labrador_level_context::<F, _>(&mut t1, &ctx).unwrap();
         absorb_labrador_jl_projection::<F, _>(&mut t1, &projection);
-        absorb_labrador_jl_nonce::<F, _>(&mut t1, TEST_NONCE_LOW);
+        t1.append_bytes(
+            labels::ABSORB_LABRADOR_JL_NONCE,
+            &TEST_NONCE_LOW.to_le_bytes(),
+        );
         let c1 = sample_labrador_aggregation_challenge::<F, _>(&mut t1);
 
         let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_RECURSION);
         absorb_labrador_level_context::<F, _>(&mut t2, &ctx).unwrap();
         absorb_labrador_jl_projection::<F, _>(&mut t2, &projection);
-        absorb_labrador_jl_nonce::<F, _>(&mut t2, TEST_NONCE_HIGH);
+        t2.append_bytes(
+            labels::ABSORB_LABRADOR_JL_NONCE,
+            &TEST_NONCE_HIGH.to_le_bytes(),
+        );
         let c2 = sample_labrador_aggregation_challenge::<F, _>(&mut t2);
 
         assert_ne!(c1, c2, "nonce must be transcript-binding");

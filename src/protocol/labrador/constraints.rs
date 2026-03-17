@@ -520,3 +520,127 @@ pub(crate) fn pair_index(i: usize, j: usize, r: usize) -> usize {
     debug_assert!(i <= j && j < r);
     i * (2 * r - i + 1) / 2 + (j - i)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::algebra::fields::Fp64;
+    use crate::protocol::labrador::comkey::LabradorComKeySeed;
+    use crate::protocol::labrador::types::LabradorReductionConfig;
+
+    type F = Fp64<4294967197>;
+    const D: usize = 64;
+    const COMKEY_SEED: LabradorComKeySeed = [9u8; 32];
+
+    fn test_config() -> LabradorReductionConfig {
+        LabradorReductionConfig {
+            witness_digit_parts: 2,
+            witness_digit_bits: 2,
+            aux_digit_parts: 2,
+            aux_digit_bits: 3,
+            inner_commit_rank: 2,
+            outer_commit_rank: 2,
+            tail: false,
+        }
+    }
+
+    fn unit_sparse_challenge(position: u32) -> SparseChallenge {
+        SparseChallenge {
+            positions: vec![position],
+            coeffs: vec![1],
+        }
+    }
+
+    fn constant_ring(value: u64) -> CyclotomicRing<F, D> {
+        CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
+            if idx == 0 {
+                F::from_u64(value)
+            } else {
+                F::zero()
+            }
+        }))
+    }
+
+    #[test]
+    fn next_witness_layout_ranges_are_disjoint() {
+        let layout = NextWitnessLayout::new(3, &test_config());
+
+        assert_eq!(layout.num_rows(), 3);
+        assert_eq!(layout.aux_row, 2);
+        assert_eq!(
+            layout.inner_opening_digits_range().end,
+            layout.linear_garbage_digits_range().start
+        );
+        assert_eq!(
+            layout.linear_garbage_digits_range().end,
+            layout.aux_row_len()
+        );
+    }
+
+    #[test]
+    fn pair_index_covers_upper_triangle_without_gaps() {
+        let row_count = 4;
+        let mut seen = Vec::new();
+        for i in 0..row_count {
+            for j in i..row_count {
+                seen.push(pair_index(i, j, row_count));
+            }
+        }
+        seen.sort_unstable();
+        assert_eq!(
+            seen,
+            (0..row_count * (row_count + 1) / 2).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn reduced_constraint_plan_materializes_same_constraints() {
+        let config = test_config();
+        let row_lengths = vec![3usize, 2usize];
+        let max_len = 3usize;
+        let setup = Arc::new(LabradorSetupMatrices::new(
+            &config,
+            row_lengths.len(),
+            max_len,
+            &COMKEY_SEED,
+        ));
+        let phi_total = vec![
+            vec![constant_ring(1), constant_ring(2), constant_ring(0)],
+            vec![constant_ring(3), constant_ring(0), constant_ring(4)],
+        ];
+        let challenges = vec![unit_sparse_challenge(0), unit_sparse_challenge(1)];
+        let aggregated_rhs = constant_ring(5);
+        let inner_opening_payload = vec![constant_ring(6), constant_ring(7)];
+        let linear_garbage_payload = vec![constant_ring(8), constant_ring(9)];
+
+        let direct = build_next_constraints(
+            &phi_total,
+            &aggregated_rhs,
+            &challenges,
+            &row_lengths,
+            max_len,
+            &config,
+            &inner_opening_payload,
+            &linear_garbage_payload,
+            setup.as_ref(),
+        )
+        .unwrap();
+
+        let plan = build_next_constraint_plan(
+            &phi_total,
+            &aggregated_rhs,
+            &challenges,
+            &row_lengths,
+            max_len,
+            &config,
+            Arc::clone(&setup),
+        )
+        .unwrap();
+
+        let materialized =
+            materialize_reduced_constraints(&plan, &inner_opening_payload, &linear_garbage_payload)
+                .unwrap();
+
+        assert_eq!(materialized, direct);
+    }
+}
