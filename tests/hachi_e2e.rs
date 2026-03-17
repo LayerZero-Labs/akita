@@ -2,14 +2,13 @@
 
 use hachi_pcs::algebra::Fp128;
 use hachi_pcs::protocol::commitment::{Fp128FullCommitmentConfig, Fp128OneHotCommitmentConfig};
-use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
 };
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
-use hachi_pcs::{BasisMode, CanonicalField, CommitmentScheme, Transcript};
+use hachi_pcs::{BasisMode, CanonicalField, CommitmentScheme, HachiCommitmentScheme, Transcript};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::sync::{Mutex, Once};
@@ -97,18 +96,14 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
     .expect("opening point shape should match layout");
 
     let (y_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
+        ring_opening_point.outer_weights(),
+        ring_opening_point.inner_weights(),
         layout.block_len,
     );
     let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, BasisMode::Lagrange)
         .expect("inner opening point should match ring dimension");
     (y_ring * v.sigma_m1()).coefficients()[0]
 }
-
-// ---------------------------------------------------------------------------
-// Dense ("full") prove/verify
-// ---------------------------------------------------------------------------
 
 #[test]
 fn full_labrador_prove_verify() {
@@ -133,7 +128,10 @@ fn full_labrador_prove_verify() {
         purge_setup_cache(FULL_TEST_NV);
 
         let setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(FULL_TEST_NV);
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(FULL_TEST_NV)
+                .unwrap();
+        let verifier_setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
             &poly, &setup, &layout,
         )
@@ -166,8 +164,6 @@ fn full_labrador_prove_verify() {
             "direct"
         };
 
-        let verifier_setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e");
         let verify_start = Instant::now();
         let verify_result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
@@ -200,10 +196,6 @@ fn full_labrador_prove_verify() {
     });
 }
 
-// ---------------------------------------------------------------------------
-// One-hot prove/verify
-// ---------------------------------------------------------------------------
-
 #[test]
 fn onehot_labrador_prove_verify() {
     init_rayon_pool();
@@ -232,7 +224,10 @@ fn onehot_labrador_prove_verify() {
         purge_setup_cache(ONEHOT_TEST_NV);
 
         let setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(ONEHOT_TEST_NV);
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(ONEHOT_TEST_NV)
+                .unwrap();
+        let verifier_setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
             &onehot_poly,
             &setup,
@@ -267,8 +262,6 @@ fn onehot_labrador_prove_verify() {
             "direct"
         };
 
-        let verifier_setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e");
         let verify_start = Instant::now();
         let verify_result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(

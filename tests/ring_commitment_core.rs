@@ -5,8 +5,8 @@ use hachi_pcs::protocol::commitment::{
     utils::linear::decompose_block, CommitmentConfig, DecompositionParams, HachiCommitmentCore,
     HachiCommitmentLayout, RingCommitmentScheme, SmallTestCommitmentConfig,
 };
-use hachi_pcs::test_utils::*;
 use hachi_pcs::{FromSmallInt, HachiError};
+use hachi_test_support::*;
 use std::array::from_fn;
 
 #[derive(Clone)]

@@ -3,16 +3,18 @@
 use hachi_pcs::algebra::CyclotomicRing;
 use hachi_pcs::algebra::Fp64;
 use hachi_pcs::algebra::SparseChallenge;
+use hachi_pcs::primitives::{Compress, SerializationError, Valid, Validate};
 use hachi_pcs::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use hachi_pcs::protocol::commitment::utils::flat_matrix::FlatMatrix;
-use hachi_pcs::protocol::commitment::{DummyProof, HachiCommitment};
 use hachi_pcs::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps};
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
-    AppendToTranscript, BasisMode, Blake2bTranscript, CommitmentScheme, HachiCommitmentLayout,
-    Transcript,
+    BasisMode, Blake2bTranscript, CommitmentScheme, HachiCommitmentLayout, Transcript,
 };
-use hachi_pcs::{CanonicalField, FieldCore, FromSmallInt, HachiError};
+use hachi_pcs::{
+    CanonicalField, FieldCore, FromSmallInt, HachiDeserialize, HachiError, HachiSerialize,
+};
+use std::io::{Read, Write};
 
 type F = Fp64<4294967197>;
 
@@ -91,17 +93,85 @@ struct DummySetup {
 #[derive(Clone)]
 struct DummyScheme;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct TestCommitment(u128);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct TestProof(u128);
+
+impl Valid for TestCommitment {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl HachiSerialize for TestCommitment {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        _compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.0.serialize_with_mode(&mut writer, Compress::No)
+    }
+
+    fn serialized_size(&self, _compress: Compress) -> usize {
+        16
+    }
+}
+
+impl HachiDeserialize for TestCommitment {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        _compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let value = u128::deserialize_with_mode(&mut reader, Compress::No, validate)?;
+        Ok(Self(value))
+    }
+}
+
+impl Valid for TestProof {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl HachiSerialize for TestProof {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        _compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.0.serialize_with_mode(&mut writer, Compress::No)
+    }
+
+    fn serialized_size(&self, _compress: Compress) -> usize {
+        16
+    }
+}
+
+impl HachiDeserialize for TestProof {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        _compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let value = u128::deserialize_with_mode(&mut reader, Compress::No, validate)?;
+        Ok(Self(value))
+    }
+}
+
 impl CommitmentScheme<F, 1> for DummyScheme {
     type ProverSetup = DummySetup;
     type VerifierSetup = DummySetup;
-    type Commitment = HachiCommitment;
-    type Proof = DummyProof;
-    type CommitHint = HachiCommitment;
+    type Commitment = TestCommitment;
+    type Proof = TestProof;
+    type CommitHint = TestCommitment;
 
-    fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
-        DummySetup {
+    fn setup_prover(max_num_vars: usize) -> Result<Self::ProverSetup, HachiError> {
+        Ok(DummySetup {
             _max_num_vars: max_num_vars,
-        }
+        })
     }
 
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
@@ -113,7 +183,7 @@ impl CommitmentScheme<F, 1> for DummyScheme {
         _setup: &Self::ProverSetup,
         _layout: &HachiCommitmentLayout,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError> {
-        let c = HachiCommitment(0);
+        let c = TestCommitment(0);
         Ok((c, c))
     }
 
@@ -127,9 +197,9 @@ impl CommitmentScheme<F, 1> for DummyScheme {
         _basis: BasisMode,
         _layout: &HachiCommitmentLayout,
     ) -> Result<Self::Proof, HachiError> {
-        commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
+        transcript.append_serde(labels::ABSORB_COMMITMENT, commitment);
         let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
-        Ok(DummyProof(q.to_canonical_u128()))
+        Ok(TestProof(q.to_canonical_u128()))
     }
 
     fn verify<T: Transcript<F>>(
@@ -142,7 +212,7 @@ impl CommitmentScheme<F, 1> for DummyScheme {
         _basis: BasisMode,
         _layout: &HachiCommitmentLayout,
     ) -> Result<(), HachiError> {
-        commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
+        transcript.append_serde(labels::ABSORB_COMMITMENT, commitment);
         let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
         if proof.0 == q.to_canonical_u128() {
             Ok(())
@@ -163,7 +233,7 @@ fn commitment_scheme_round_trip() {
     };
     let opening_point = [F::from_u64(11), F::from_u64(13)];
 
-    let psetup = DummyScheme::setup_prover(poly.num_vars());
+    let psetup = DummyScheme::setup_prover(poly.num_vars()).unwrap();
     let vsetup = DummyScheme::setup_verifier(&psetup);
 
     let layout = HachiCommitmentLayout {

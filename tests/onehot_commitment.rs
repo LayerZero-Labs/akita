@@ -2,8 +2,8 @@
 
 use hachi_pcs::algebra::CyclotomicRing;
 use hachi_pcs::protocol::commitment::{HachiCommitmentCore, RingCommitmentScheme};
-use hachi_pcs::test_utils::*;
 use hachi_pcs::{FieldCore, FromSmallInt};
+use hachi_test_support::*;
 
 type Core = HachiCommitmentCore;
 

@@ -324,19 +324,36 @@ fn save_expanded_setup<F: FieldCore>(setup: &HachiExpandedSetup<F>, max_num_vars
     };
 
     if let Some(parent) = storage_path.parent() {
-        fs::create_dir_all(parent)
-            .unwrap_or_else(|e| panic!("Failed to create storage directory: {e}"));
+        if let Err(error) = fs::create_dir_all(parent) {
+            tracing::warn!(
+                "Failed to create setup cache directory {}: {error}",
+                parent.display()
+            );
+            return;
+        }
     }
 
     tracing::info!("Saving setup to {}", storage_path.display());
 
-    let file = fs::File::create(&storage_path)
-        .unwrap_or_else(|e| panic!("Failed to create setup file: {e}"));
+    let file = match fs::File::create(&storage_path) {
+        Ok(file) => file,
+        Err(error) => {
+            tracing::warn!(
+                "Failed to create setup cache file {}: {error}",
+                storage_path.display()
+            );
+            return;
+        }
+    };
     let mut writer = std::io::BufWriter::new(file);
 
-    setup
-        .serialize_compressed(&mut writer)
-        .unwrap_or_else(|e| panic!("Failed to serialize setup: {e}"));
+    if let Err(error) = setup.serialize_compressed(&mut writer) {
+        tracing::warn!(
+            "Failed to serialize setup cache {}: {error}",
+            storage_path.display()
+        );
+        return;
+    }
 
     tracing::info!("Successfully saved setup to disk");
 }
@@ -936,7 +953,7 @@ impl HachiCommitmentCore {
 mod tests {
     use super::*;
     use crate::primitives::{HachiDeserialize, HachiSerialize};
-    use crate::test_utils::{TinyConfig, F as TestF};
+    use crate::testing::{TinyConfig, F as TestF};
 
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {

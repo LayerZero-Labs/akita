@@ -11,16 +11,16 @@ use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{flatten_i8_blocks, mat_vec_mul_ntt_single_i8};
 use crate::protocol::commitment::utils::ntt_cache::{MultiDNttBundle, MultiDNttCaches};
 use crate::protocol::commitment::{
-    AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore,
-    HachiCommitmentLayout, HachiExpandedSetup, HachiProverSetup, HachiVerifierSetup,
-    RingCommitment, RingCommitmentScheme,
+    CommitmentConfig, CommitmentScheme, HachiCommitmentCore, HachiCommitmentLayout,
+    HachiExpandedSetup, HachiProverSetup, HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
 };
 use crate::protocol::hachi_poly_ops::{BalancedDigitPoly, HachiPolyOps};
 use crate::protocol::labrador_handoff::{labrador_handoff_prove, labrador_handoff_verify};
 #[cfg(debug_assertions)]
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::opening_point::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
+    next_level_opening_point, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
+    BasisMode,
 };
 use crate::protocol::proof::{
     FlatCommitmentHint, FlatRingVec, HachiCommitmentHint, HachiLevelProof, HachiProof,
@@ -44,7 +44,8 @@ use crate::protocol::sumcheck::hachi_sumcheck::{HachiSumcheckProver, HachiSumche
 use crate::protocol::sumcheck::{multilinear_eval, range_check_eval};
 use crate::protocol::sumcheck::{prove_sumcheck, verify_sumcheck};
 use crate::protocol::transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, CHALLENGE_SUMCHECK_BATCH,
+    CHALLENGE_SUMCHECK_ROUND, DOMAIN_HACHI_PROTOCOL,
 };
 use crate::protocol::transcript::Transcript;
 use crate::{dispatch_ring_dim, dispatch_with_d_ntt, dispatch_with_ntt};
@@ -57,9 +58,7 @@ use std::time::Instant;
 #[cfg(test)]
 use crate::protocol::ring_switch::expand_m_a;
 #[cfg(test)]
-use crate::protocol::transcript::labels::{
-    ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, DOMAIN_HACHI_PROTOCOL,
-};
+use crate::protocol::transcript::labels::{ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH};
 #[cfg(test)]
 use crate::protocol::transcript::Blake2bTranscript;
 #[cfg(test)]
@@ -124,8 +123,8 @@ struct ProveLevelOutput<F: FieldCore> {
     w: Vec<i8>,
     w_hint: FlatCommitmentHint,
     sumcheck_challenges: Vec<F>,
-    num_u: usize,
-    num_l: usize,
+    num_x_vars: usize,
+    num_y_vars: usize,
 }
 
 /// Prove one fold level: quad_eq -> ring_switch -> sumcheck.
@@ -156,7 +155,7 @@ fn prove_level_diagnostic<F, const D: usize, Cfg>(
         compute_m_a_reference::<F, D, Cfg>(expanded, opening_point, challenges, &rs.alpha, layout)
             .expect("compute_m_a diagnostic failed");
 
-    let x_len = 1usize << rs.num_u;
+    let x_len = 1usize << rs.num_x_vars;
     let d = D;
 
     let mut w_at_alpha = vec![F::zero(); x_len];
@@ -221,8 +220,9 @@ fn prove_level_diagnostic<F, const D: usize, Cfg>(
     let x_mask = x_len - 1;
     let mut prover_claim = F::zero();
     for (idx, &w) in rs.w_evals.iter().enumerate() {
-        prover_claim +=
-            F::from_i64(w as i64) * rs.alpha_evals_y[idx >> rs.num_u] * rs.m_evals_x[idx & x_mask];
+        prover_claim += F::from_i64(w as i64)
+            * rs.alpha_evals_y[idx >> rs.num_x_vars]
+            * rs.m_evals_x[idx & x_mask];
     }
     tracing::debug!(
         level,
@@ -310,8 +310,8 @@ where
         ring_opening_point_from_field::<F>(outer_point, layout.r_vars, layout.m_vars, basis)?
     };
 
-    let fold_scalars = &ring_opening_point.a;
-    let eval_outer_scalars = &ring_opening_point.b;
+    let fold_scalars = ring_opening_point.inner_weights();
+    let eval_outer_scalars = ring_opening_point.outer_weights();
     let (y_ring, w_folded) = {
         let _span = tracing::info_span!(
             "evaluate_and_fold",
@@ -322,7 +322,7 @@ where
         poly.evaluate_and_fold(eval_outer_scalars, fold_scalars, layout.block_len)
     };
 
-    commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+    transcript.append_serde(ABSORB_COMMITMENT, commitment);
     for pt in &padded_point {
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
     }
@@ -383,11 +383,11 @@ where
         live_x_cols,
         m_evals_x,
         alpha_evals_y,
-        num_u,
-        num_l,
+        num_x_vars,
+        num_y_vars,
         tau0,
         tau1: _,
-        b,
+        digit_base,
         alpha: _,
     } = rs;
     #[cfg(debug_assertions)]
@@ -398,12 +398,12 @@ where
         batching_coeff,
         w_evals,
         &tau0,
-        b,
+        digit_base,
         alpha_evals_y,
         m_evals_x,
         live_x_cols,
-        num_u,
-        num_l,
+        num_x_vars,
+        num_y_vars,
         relation_claim,
     );
 
@@ -422,11 +422,11 @@ where
         &tau0,
         &sumcheck_challenges,
         w_eval,
-        b,
+        digit_base,
         batching_coeff,
         &alpha_evals_y_debug,
         &m_evals_x_debug,
-        num_u,
+        num_x_vars,
         _final_claim,
         level,
     );
@@ -442,8 +442,8 @@ where
         w,
         w_hint,
         sumcheck_challenges,
-        num_u,
-        num_l,
+        num_x_vars,
+        num_y_vars,
     })
 }
 
@@ -457,25 +457,6 @@ fn should_stop_folding(w_len: usize, prev_w_len: usize) -> bool {
     }
     let ratio = w_len as f64 / prev_w_len as f64;
     ratio > MIN_SHRINK_RATIO
-}
-
-/// Derive the opening point for the next fold level from the sumcheck
-/// challenges of the current level.
-///
-/// Sumcheck challenges are ordered `[x_0..x_{num_u-1}, y_0..y_{num_l-1}]`
-/// where x selects ring elements and y selects coefficients.
-/// The PCS opening point is `[inner, outer]` = `[y, x]`.
-pub(crate) fn next_level_opening_point<F: FieldCore>(
-    sumcheck_challenges: &[F],
-    num_u: usize,
-    num_l: usize,
-) -> Vec<F> {
-    let (x, y) = sumcheck_challenges.split_at(num_u);
-    debug_assert_eq!(y.len(), num_l);
-    let mut point = Vec::with_capacity(num_u + num_l);
-    point.extend_from_slice(y);
-    point.extend_from_slice(x);
-    point
 }
 
 /// Dispatch a commit-w operation to the correct ring dimension.
@@ -839,11 +820,10 @@ where
     type CommitHint = HachiCommitmentHint<F, D>;
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::setup_prover")]
-    fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
-        let (setup, _) =
-            <HachiCommitmentCore as RingCommitmentScheme<F, { D }, Cfg>>::setup(max_num_vars)
-                .expect("commitment setup failed");
-        setup
+    fn setup_prover(max_num_vars: usize) -> Result<Self::ProverSetup, HachiError> {
+        let (prover, _) =
+            <HachiCommitmentCore as RingCommitmentScheme<F, { D }, Cfg>>::setup(max_num_vars)?;
+        Ok(prover)
     }
 
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
@@ -870,7 +850,7 @@ where
         let inner_opening_digits_flat = flatten_i8_blocks(&inner.t_hat);
         let u: Vec<CyclotomicRing<F, D>> =
             mat_vec_mul_ntt_single_i8(&setup.ntt_B, &inner_opening_digits_flat);
-        let hint = HachiCommitmentHint::with_t(inner.t_hat, inner.t);
+        let hint = HachiCommitmentHint::with_recomposed_rows(inner.t_hat, inner.t);
         Ok((RingCommitment { u }, hint))
     }
 
@@ -937,8 +917,8 @@ where
         let mut current_w = out.w;
         let mut current_hint = out.w_hint;
         let mut current_challenges = out.sumcheck_challenges;
-        let mut current_num_u = out.num_u;
-        let mut current_num_l = out.num_l;
+        let mut current_num_x_vars = out.num_x_vars;
+        let mut current_num_y_vars = out.num_y_vars;
         let mut level = 1usize;
 
         // Subsequent levels: recursive w-opening with WCommitmentConfig.
@@ -962,8 +942,8 @@ where
                 &current_w,
                 &current_hint,
                 &current_challenges,
-                current_num_u,
-                current_num_l,
+                current_num_x_vars,
+                current_num_y_vars,
                 last_w_commitment,
                 last_w_eval,
                 transcript,
@@ -976,8 +956,8 @@ where
             current_w = out.w;
             current_hint = out.w_hint;
             current_challenges = out.sumcheck_challenges;
-            current_num_u = out.num_u;
-            current_num_l = out.num_l;
+            current_num_x_vars = out.num_x_vars;
+            current_num_y_vars = out.num_y_vars;
             level += 1;
         }
 
@@ -1003,11 +983,11 @@ where
                 &current_w,
                 &current_hint,
                 &current_challenges,
-                current_num_u,
-                current_num_l,
+                current_num_x_vars,
+                current_num_y_vars,
                 &levels.last().unwrap().w_commitment,
                 setup,
-                &mut commit_ntt_bundle.D_mat,
+                &mut commit_ntt_bundle.d_matrix,
                 transcript,
             )?
         } else {
@@ -1123,7 +1103,7 @@ where
     }
 
     fn protocol_name() -> &'static [u8] {
-        unimplemented!()
+        DOMAIN_HACHI_PROTOCOL
     }
 }
 
@@ -1167,7 +1147,7 @@ where
     let inner_point = &padded_point[..alpha_bits];
     let reduced_opening_point = &padded_point[alpha_bits..];
 
-    commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+    transcript.append_serde(ABSORB_COMMITMENT, commitment);
     for pt in &padded_point {
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
     }
@@ -1220,8 +1200,9 @@ where
         HachiSumcheckVerifier::new(
             batching_coeff,
             w_evals_full,
+            None,
             rs.tau0,
-            rs.b,
+            rs.digit_base,
             rs.alpha_evals_y,
             rs.m_evals_x,
             rs.tau1,
@@ -1229,15 +1210,16 @@ where
             commitment.u.clone(),
             y_ring,
             rs.alpha,
-            rs.num_u,
-            rs.num_l,
+            rs.num_x_vars,
+            rs.num_y_vars,
         )
     } else {
         HachiSumcheckVerifier::new(
             batching_coeff,
             Vec::new(),
+            Some(level_proof.w_eval),
             rs.tau0,
-            rs.b,
+            rs.digit_base,
             rs.alpha_evals_y,
             rs.m_evals_x,
             rs.tau1,
@@ -1245,10 +1227,9 @@ where
             commitment.u.clone(),
             y_ring,
             rs.alpha,
-            rs.num_u,
-            rs.num_l,
+            rs.num_x_vars,
+            rs.num_y_vars,
         )
-        .with_w_val_override(level_proof.w_eval)
     };
 
     let challenges = verify_sumcheck::<F, _, F, _, _>(
@@ -1294,7 +1275,7 @@ where
     )?;
     let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_HACHI_PROTOCOL);
 
-    commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+    transcript.append_serde(ABSORB_COMMITMENT, commitment);
     for pt in opening_point {
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
     }
@@ -1354,7 +1335,7 @@ where
     )?;
     let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_HACHI_PROTOCOL);
 
-    commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+    transcript.append_serde(ABSORB_COMMITMENT, commitment);
     for pt in opening_point {
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
     }
@@ -1396,7 +1377,7 @@ mod tests {
     use crate::protocol::hachi_poly_ops::DensePoly;
     use crate::protocol::opening_point::{lagrange_weights, monomial_weights};
     use crate::protocol::transcript::Blake2bTranscript;
-    use crate::test_utils::F;
+    use crate::testing::F;
     use crate::{CommitmentScheme, FromSmallInt};
     use std::sync::OnceLock;
 
@@ -1419,7 +1400,7 @@ mod tests {
 
         let (poly, evals) = make_dense_poly(num_vars);
 
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars).unwrap();
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
         let (commitment, hint) =
@@ -1468,7 +1449,7 @@ mod tests {
 
         let (poly, evals) = make_dense_poly(num_vars);
 
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars).unwrap();
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
         let (commitment, hint) =
@@ -1523,7 +1504,7 @@ mod tests {
         let coeffs: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
         let poly = DensePoly::<F, D>::from_field_evals(num_vars, &coeffs).unwrap();
 
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars).unwrap();
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
         let (commitment, hint) =
@@ -1737,7 +1718,8 @@ mod tests {
             .collect();
         let poly = DensePoly::<HandoffField, D>::from_field_evals(num_vars, &evals).unwrap();
 
-        let setup = <HandoffScheme as CommitmentScheme<HandoffField, D>>::setup_prover(num_vars);
+        let setup =
+            <HandoffScheme as CommitmentScheme<HandoffField, D>>::setup_prover(num_vars).unwrap();
         let verifier_setup =
             <HandoffScheme as CommitmentScheme<HandoffField, D>>::setup_verifier(&setup);
 
@@ -2061,7 +2043,8 @@ mod tests {
                 let setup = <VarScheme as CommitmentScheme<
                     GF,
                     { VariableDHandoffTestConfig::D },
-                >>::setup_prover(num_vars);
+                >>::setup_prover(num_vars)
+                .unwrap();
                 let (commitment, hint) = <VarScheme as CommitmentScheme<
                     GF,
                     { VariableDHandoffTestConfig::D },

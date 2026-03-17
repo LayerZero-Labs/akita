@@ -4,10 +4,10 @@ use crate::algebra::fields::wide::{HasWide, ReduceTo};
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
+use crate::primitives::poly::EqPolynomial;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::protocol::sumcheck::eq_poly::EqPolynomial;
 use crate::{cfg_fold_reduce, AdditiveGroup, FieldCore, FromSmallInt};
 use std::io::{Read, Write};
 use std::ops::{Add, Neg, Sub};

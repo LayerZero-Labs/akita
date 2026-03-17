@@ -1288,7 +1288,7 @@ mod tests {
         CommitmentConfig, HachiCommitmentCore, RingCommitmentScheme,
     };
     use crate::protocol::ring_switch::w_commitment_layout;
-    use crate::test_utils::{TinyConfig, D as TestD, F as TestF};
+    use crate::testing::{TinyConfig, D as TestD, F as TestF};
     use crate::FromSmallInt;
 
     #[test]

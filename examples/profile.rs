@@ -6,7 +6,6 @@ use hachi_pcs::protocol::commitment::{
     Fp128BoundedCommitmentConfig, Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig,
     Fp128OneHotCommitmentConfig, HachiCommitmentLayout,
 };
-use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
@@ -18,8 +17,8 @@ use hachi_pcs::protocol::proof::{
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
-    BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, HachiPolyOps, HachiSerialize,
-    Transcript,
+    BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, HachiCommitmentScheme, HachiPolyOps,
+    HachiSerialize, Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -48,8 +47,8 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
             .expect("opening point shape should match layout");
 
     let (y_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
+        ring_opening_point.outer_weights(),
+        ring_opening_point.inner_weights(),
         layout.block_len,
     );
     let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)
@@ -60,6 +59,7 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
 fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
     label: &str,
     setup: &<HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::ProverSetup,
+    verifier_setup: &<HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::VerifierSetup,
     poly: &P,
     pt: &[F],
     opening: F,
@@ -89,7 +89,6 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
     print_proof_summary(label, &proof);
 
     let t0 = Instant::now();
-    let verifier_setup = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(setup);
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
     match <Scheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
         &proof,
@@ -396,10 +395,19 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCom
     };
 
     let t0 = Instant::now();
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+    let setup =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv).expect("setup");
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "setup");
 
-    run_prove::<D, Cfg, _>("dense", &setup, &poly, &pt, opening, layout);
+    run_prove::<D, Cfg, _>(
+        "dense",
+        &setup,
+        &<HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup),
+        &poly,
+        &pt,
+        opening,
+        layout,
+    );
 }
 
 fn run_onehot<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCommitmentLayout) {
@@ -418,10 +426,19 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCo
     let opening = opening_from_poly(&onehot_poly, &pt, layout, BasisMode::Lagrange);
 
     let t0 = Instant::now();
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+    let setup =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv).expect("setup");
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "setup");
 
-    run_prove::<D, Cfg, _>("onehot", &setup, &onehot_poly, &pt, opening, layout);
+    run_prove::<D, Cfg, _>(
+        "onehot",
+        &setup,
+        &<HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup),
+        &onehot_poly,
+        &pt,
+        opening,
+        layout,
+    );
 }
 
 fn run_dense_mode<const D: usize, Cfg: CommitmentConfig>(title: &str, nv: usize) {

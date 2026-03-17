@@ -72,37 +72,37 @@ macro_rules! dispatch_with_ntt {
         match __d {
             64 => {
                 const $D: usize = 64;
-                let $ntt_a = ($ntt).A.get_or_build_64(&($expanded).A)?;
-                let $ntt_b = ($ntt).B.get_or_build_64(&($expanded).B)?;
-                let $ntt_d = ($ntt).D_mat.get_or_build_64(&($expanded).D_mat)?;
+                let $ntt_a = ($ntt).a_matrix.get_or_build_64(&($expanded).A)?;
+                let $ntt_b = ($ntt).b_matrix.get_or_build_64(&($expanded).B)?;
+                let $ntt_d = ($ntt).d_matrix.get_or_build_64(&($expanded).D_mat)?;
                 $body
             }
             128 => {
                 const $D: usize = 128;
-                let $ntt_a = ($ntt).A.get_or_build_128(&($expanded).A)?;
-                let $ntt_b = ($ntt).B.get_or_build_128(&($expanded).B)?;
-                let $ntt_d = ($ntt).D_mat.get_or_build_128(&($expanded).D_mat)?;
+                let $ntt_a = ($ntt).a_matrix.get_or_build_128(&($expanded).A)?;
+                let $ntt_b = ($ntt).b_matrix.get_or_build_128(&($expanded).B)?;
+                let $ntt_d = ($ntt).d_matrix.get_or_build_128(&($expanded).D_mat)?;
                 $body
             }
             256 => {
                 const $D: usize = 256;
-                let $ntt_a = ($ntt).A.get_or_build_256(&($expanded).A)?;
-                let $ntt_b = ($ntt).B.get_or_build_256(&($expanded).B)?;
-                let $ntt_d = ($ntt).D_mat.get_or_build_256(&($expanded).D_mat)?;
+                let $ntt_a = ($ntt).a_matrix.get_or_build_256(&($expanded).A)?;
+                let $ntt_b = ($ntt).b_matrix.get_or_build_256(&($expanded).B)?;
+                let $ntt_d = ($ntt).d_matrix.get_or_build_256(&($expanded).D_mat)?;
                 $body
             }
             512 => {
                 const $D: usize = 512;
-                let $ntt_a = ($ntt).A.get_or_build_512(&($expanded).A)?;
-                let $ntt_b = ($ntt).B.get_or_build_512(&($expanded).B)?;
-                let $ntt_d = ($ntt).D_mat.get_or_build_512(&($expanded).D_mat)?;
+                let $ntt_a = ($ntt).a_matrix.get_or_build_512(&($expanded).A)?;
+                let $ntt_b = ($ntt).b_matrix.get_or_build_512(&($expanded).B)?;
+                let $ntt_d = ($ntt).d_matrix.get_or_build_512(&($expanded).D_mat)?;
                 $body
             }
             1024 => {
                 const $D: usize = 1024;
-                let $ntt_a = ($ntt).A.get_or_build_1024(&($expanded).A)?;
-                let $ntt_b = ($ntt).B.get_or_build_1024(&($expanded).B)?;
-                let $ntt_d = ($ntt).D_mat.get_or_build_1024(&($expanded).D_mat)?;
+                let $ntt_a = ($ntt).a_matrix.get_or_build_1024(&($expanded).A)?;
+                let $ntt_b = ($ntt).b_matrix.get_or_build_1024(&($expanded).B)?;
+                let $ntt_d = ($ntt).d_matrix.get_or_build_1024(&($expanded).D_mat)?;
                 $body
             }
             _ => panic!("unsupported ring dimension: {__d}"),

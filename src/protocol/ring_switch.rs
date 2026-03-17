@@ -50,16 +50,16 @@ pub struct RingSwitchOutput<F: FieldCore> {
     pub m_evals_x: Vec<F>,
     /// Evaluation table of alpha powers (y dimension).
     pub alpha_evals_y: Vec<F>,
-    /// Number of upper variable bits.
-    pub num_u: usize,
-    /// Number of lower variable bits.
-    pub num_l: usize,
+    /// Number of x-dimension variables.
+    pub num_x_vars: usize,
+    /// Number of y-dimension variables.
+    pub num_y_vars: usize,
     /// Challenge tau0 for F_0 sumcheck.
     pub tau0: Vec<F>,
     /// Challenge tau1 for F_alpha sumcheck.
     pub tau1: Vec<F>,
-    /// Basis size b = 2^LOG_BASIS.
-    pub b: usize,
+    /// Digit base `B = 2^LOG_BASIS`.
+    pub digit_base: usize,
     /// Ring-switch challenge alpha.
     pub alpha: F,
 }
@@ -111,7 +111,7 @@ where
         .hint()
         .ok_or_else(|| HachiError::InvalidInput("missing hint in prover".to_string()))?;
     let inner_opening_digits = &hint.inner_opening_digits;
-    let t = hint.t().ok_or_else(|| {
+    let recomposed_rows = hint.recomposed_rows().ok_or_else(|| {
         HachiError::InvalidInput("missing recomposed t in prover hint".to_string())
     })?;
     let w_folded = quad_eq
@@ -123,7 +123,7 @@ where
         &quad_eq.challenges,
         w_hat_flat,
         inner_opening_digits,
-        t,
+        recomposed_rows,
         w_folded,
         z_pre_centered,
         z_pre_centered_inf_norm,
@@ -173,12 +173,12 @@ where
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
 
-    let num_l = D.trailing_zeros() as usize;
+    let num_y_vars = D.trailing_zeros() as usize;
     let num_ring_elems = w.len() / D;
     let live_x_cols = num_ring_elems;
-    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let num_x_vars = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
     let m_rows = m_row_count::<Cfg>();
-    let num_sc_vars = num_u + num_l;
+    let num_sc_vars = num_x_vars + num_y_vars;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
     let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
@@ -229,11 +229,11 @@ where
         live_x_cols,
         m_evals_x,
         alpha_evals_y,
-        num_u,
-        num_l,
+        num_x_vars,
+        num_y_vars,
         tau0,
         tau1,
-        b: 1usize << layout.log_basis,
+        digit_base: 1usize << layout.log_basis,
         alpha,
     })
 }
@@ -309,10 +309,10 @@ where
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
 
     let num_ring_elems = w_len / D;
-    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    let num_l = D.trailing_zeros() as usize;
+    let num_x_vars = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let num_y_vars = D.trailing_zeros() as usize;
     let m_rows = m_row_count::<Cfg>();
-    let num_sc_vars = num_u + num_l;
+    let num_sc_vars = num_x_vars + num_y_vars;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
     let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
@@ -337,11 +337,11 @@ where
         live_x_cols: w_len / D,
         m_evals_x,
         alpha_evals_y,
-        num_u,
-        num_l,
+        num_x_vars,
+        num_y_vars,
         tau0,
         tau1,
-        b: 1usize << layout.log_basis,
+        digit_base: 1usize << layout.log_basis,
         alpha,
     })
 }
@@ -594,7 +594,7 @@ where
 
     let t_hat_flat = flatten_i8_blocks(&t_hat_per_block);
     let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(ntt_b, &t_hat_flat);
-    let hint = HachiCommitmentHint::with_t(t_hat_per_block, t_all);
+    let hint = HachiCommitmentHint::with_recomposed_rows(t_hat_per_block, t_all);
     Ok((RingCommitment { u }, hint))
 }
 
@@ -841,7 +841,7 @@ where
     let depth_open = layout.num_digits_open;
     let depth_fold = layout.num_digits_fold;
     let log_basis = layout.log_basis;
-    let num_blocks = opening_point.b.len();
+    let num_blocks = opening_point.outer_weights().len();
     let block_len = layout.block_len;
     let w_len = depth_open * num_blocks;
     let t_len = depth_open * Cfg::N_A * num_blocks;
@@ -887,7 +887,7 @@ where
         .map(|x| {
             let block_idx = x / depth_open;
             let digit_idx = x % depth_open;
-            let mut acc = (row3_weight * opening_point.b[block_idx]
+            let mut acc = (row3_weight * opening_point.outer_weights()[block_idx]
                 + row4_weight * c_alphas[block_idx])
                 * g1_open[digit_idx];
             for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(Cfg::N_D) {
@@ -921,7 +921,8 @@ where
         .map(|k| {
             let block_idx = k / depth_commit;
             let digit_idx = k % depth_commit;
-            let mut acc = row4_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
+            let mut acc =
+                row4_weight * opening_point.inner_weights()[block_idx] * g1_commit[digit_idx];
             for (a_idx, eq_i) in a_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[k], alpha_pows);

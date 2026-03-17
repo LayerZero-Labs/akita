@@ -18,15 +18,15 @@ use crate::{CanonicalField, FieldCore};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultiDNttCaches {
     /// Cache for D=64.
-    pub d64: Option<Box<NttSlotCache<64>>>,
+    d64: Option<Box<NttSlotCache<64>>>,
     /// Cache for D=128.
-    pub d128: Option<Box<NttSlotCache<128>>>,
+    d128: Option<Box<NttSlotCache<128>>>,
     /// Cache for D=256.
-    pub d256: Option<Box<NttSlotCache<256>>>,
+    d256: Option<Box<NttSlotCache<256>>>,
     /// Cache for D=512.
-    pub d512: Option<Box<NttSlotCache<512>>>,
+    d512: Option<Box<NttSlotCache<512>>>,
     /// Cache for D=1024.
-    pub d1024: Option<Box<NttSlotCache<1024>>>,
+    d1024: Option<Box<NttSlotCache<1024>>>,
 }
 
 macro_rules! impl_get_or_build {
@@ -87,14 +87,13 @@ impl Default for MultiDNttCaches {
 
 /// Bundle of three multi-D NTT caches for the A, B, and D matrices.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[allow(non_snake_case)]
 pub struct MultiDNttBundle {
     /// NTT caches for the A matrix at various ring dimensions.
-    pub A: MultiDNttCaches,
+    pub a_matrix: MultiDNttCaches,
     /// NTT caches for the B matrix at various ring dimensions.
-    pub B: MultiDNttCaches,
+    pub b_matrix: MultiDNttCaches,
     /// NTT caches for the D matrix at various ring dimensions.
-    pub D_mat: MultiDNttCaches,
+    pub d_matrix: MultiDNttCaches,
 }
 
 impl MultiDNttBundle {

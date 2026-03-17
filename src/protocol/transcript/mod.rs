@@ -73,7 +73,7 @@ where
     CyclotomicRing::from_coefficients(std::array::from_fn(|_| tr.challenge_scalar(label)))
 }
 
-/// Sample a sparse ring-element challenge with operator-norm rejection sampling.
+/// Sample one dense ring element via sparse-profile rejection sampling.
 ///
 /// Squeezes a 16-byte seed from the transcript, then delegates to the Labrador
 /// rejection sampler which produces a polynomial with exactly `TAU1` coefficients
@@ -96,7 +96,7 @@ where
         .ok_or_else(|| HachiError::InvalidInput("rejection sampler produced no output".into()))
 }
 
-/// Sample multiple sparse ring-element challenges from one transcript-bound seed.
+/// Sample multiple dense ring elements from one transcript-bound seed.
 ///
 /// # Errors
 ///
@@ -117,7 +117,7 @@ where
     sample_labrador_challenges::<F, D>(len, &seed, REJECTION_SAMPLER_SINGLE_NONCE)
 }
 
-/// Sample multiple sparse ring-element challenges from one transcript-bound seed.
+/// Sample multiple sparse challenges from one transcript-bound seed.
 ///
 /// # Errors
 ///

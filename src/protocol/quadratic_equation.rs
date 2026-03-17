@@ -148,7 +148,7 @@ where
             let w_hat_flat = flatten_w_hat(&w_hat);
             (w_hat, w_hat_flat)
         };
-        hint.ensure_t_recomposed(layout.num_digits_open, layout.log_basis)?;
+        hint.ensure_recomposed_rows(layout.num_digits_open, layout.log_basis)?;
 
         let v = {
             let _span =
@@ -496,7 +496,7 @@ where
     let depth_open = layout.num_digits_open;
     let depth_fold = layout.num_digits_fold;
     let log_basis = layout.log_basis;
-    let num_blocks = opening_point.b.len();
+    let num_blocks = opening_point.outer_weights().len();
     let block_len = layout.block_len;
     let w_len = depth_open * num_blocks;
     let t_len = depth_open * Cfg::N_A * num_blocks;
@@ -544,7 +544,7 @@ where
     // Row 3: b^T · G · ŵ = y_ring (ŵ uses delta_open)
     {
         let mut full = vec![F::zero(); total_cols];
-        for (i, &b_i) in opening_point.b.iter().enumerate() {
+        for (i, &b_i) in opening_point.outer_weights().iter().enumerate() {
             for (d, &g) in g1_open.iter().enumerate() {
                 full[i * depth_open + d] = b_i * g;
             }
@@ -561,7 +561,7 @@ where
             }
         }
         let z_offset = w_len + t_len;
-        for (i, &a_i) in opening_point.a.iter().enumerate() {
+        for (i, &a_i) in opening_point.inner_weights().iter().enumerate() {
             for (d, &g) in g1_commit.iter().enumerate() {
                 let ag = a_i * g;
                 for (t, &j) in j1.iter().enumerate() {
@@ -643,7 +643,7 @@ mod tests {
     use crate::protocol::hachi_poly_ops::DensePoly;
     use crate::protocol::proof::HachiCommitmentHint;
     use crate::protocol::transcript::Blake2bTranscript;
-    use crate::test_utils::*;
+    use crate::testing::*;
     use crate::FromSmallInt;
     use crate::Transcript;
 
@@ -691,10 +691,7 @@ mod tests {
             )
             .unwrap();
 
-        let point = RingOpeningPoint {
-            a: sample_a(),
-            b: sample_b(),
-        };
+        let point = RingOpeningPoint::from_weight_vectors(sample_a(), sample_b());
 
         let ring_coeffs: Vec<CyclotomicRing<F, D>> =
             blocks.iter().flat_map(|b| b.iter().copied()).collect();
@@ -703,7 +700,7 @@ mod tests {
         let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_SEED);
         let y_ring = CyclotomicRing::<F, D>::zero();
         let layout = setup.layout();
-        let w_folded = poly.fold_blocks(&point.a, layout.block_len);
+        let w_folded = poly.fold_blocks(point.inner_weights(), layout.block_len);
         let quad_eq = QuadraticEquation::<F, D, TinyConfig>::new_prover(
             &setup.ntt_D,
             point.clone(),
@@ -792,17 +789,17 @@ mod tests {
 
         let u_eval = w_recomposed
             .iter()
-            .zip(f.point.b.iter())
+            .zip(f.point.outer_weights().iter())
             .fold(CyclotomicRing::<F, D>::zero(), |acc, (w_i, b_i)| {
                 acc + w_i.scale(b_i)
             });
 
-        let u_eval_direct = f.blocks.iter().zip(f.point.b.iter()).fold(
+        let u_eval_direct = f.blocks.iter().zip(f.point.outer_weights().iter()).fold(
             CyclotomicRing::<F, D>::zero(),
             |acc, (block_i, b_i)| {
                 let inner: CyclotomicRing<F, D> = block_i
                     .iter()
-                    .zip(f.point.a.iter())
+                    .zip(f.point.inner_weights().iter())
                     .fold(CyclotomicRing::<F, D>::zero(), |acc2, (f_ij, a_j)| {
                         acc2 + f_ij.scale(a_j)
                     });
@@ -845,7 +842,7 @@ mod tests {
 
         let z_hat = derive_z_hat(f.quad_eq.z_pre().unwrap());
         let z_recovered = recompose_z_hat(&z_hat);
-        let rhs = a_transpose_gadget_times_vec(&f.point.a, &z_recovered);
+        let rhs = a_transpose_gadget_times_vec(f.point.inner_weights(), &z_recovered);
 
         assert_eq!(lhs, rhs, "Row 4 failed: (c^T ⊗ G_1)ŵ ≠ a^T G J ẑ");
     }

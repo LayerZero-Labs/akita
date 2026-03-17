@@ -6,9 +6,6 @@
 
 use std::io::{Read, Write};
 
-// Re-export derive macros
-pub use hachi_derive::hachi_macro;
-
 /// Compression mode for serialization
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Compress {
@@ -216,7 +213,11 @@ mod primitive_impls {
             validate: Validate,
         ) -> Result<Self, SerializationError> {
             let val = u64::deserialize_with_mode(reader, compress, validate)?;
-            Ok(val as usize)
+            usize::try_from(val).map_err(|_| {
+                SerializationError::InvalidData(format!(
+                    "u64 value {val} does not fit in usize on this platform"
+                ))
+            })
         }
     }
 
@@ -294,7 +295,12 @@ mod primitive_impls {
             compress: Compress,
             validate: Validate,
         ) -> Result<Self, SerializationError> {
-            let len = u64::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+            let raw_len = u64::deserialize_with_mode(&mut reader, compress, validate)?;
+            let len = usize::try_from(raw_len).map_err(|_| {
+                SerializationError::InvalidData(format!(
+                    "vector length {raw_len} does not fit in usize on this platform"
+                ))
+            })?;
             let mut vec = Vec::with_capacity(len);
             for _ in 0..len {
                 vec.push(T::deserialize_with_mode(&mut reader, compress, validate)?);

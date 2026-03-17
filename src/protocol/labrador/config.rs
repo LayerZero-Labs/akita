@@ -862,7 +862,7 @@ pub(crate) fn logq_bits<F: CanonicalField>() -> usize {
 }
 
 pub(crate) fn jl_lifts<F: CanonicalField>() -> usize {
-    128_usize.div_ceil(logq_bits::<F>().max(1))
+    128_usize.div_ceil(logq_bits::<F>())
 }
 
 fn sis_secure_with_params(rank: usize, norm: f64, logq: f64, ring_degree: f64) -> bool {

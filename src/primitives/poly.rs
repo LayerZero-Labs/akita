@@ -1,6 +1,7 @@
 //! Multilinear polynomial utility functions.
 
 use super::arithmetic::FieldCore;
+use std::marker::PhantomData;
 
 /// Compute multilinear Lagrange basis evaluations at a point
 ///
@@ -54,6 +55,113 @@ pub(crate) fn multilinear_lagrange_basis<F: FieldCore>(output: &mut [F], point: 
                 *l = l.mul(&one_minus_p);
             }
         }
+    }
+}
+
+/// Utilities for the equality polynomial `eq(x, y)`.
+pub struct EqPolynomial<E: FieldCore>(PhantomData<E>);
+
+impl<E: FieldCore> EqPolynomial<E> {
+    /// Compute the MLE of the equality polynomial at two points.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `x.len() != y.len()`.
+    pub fn mle(x: &[E], y: &[E]) -> E {
+        assert_eq!(x.len(), y.len());
+        x.iter()
+            .zip(y.iter())
+            .map(|(&x_i, &y_i)| x_i * y_i + (E::one() - x_i) * (E::one() - y_i))
+            .fold(E::one(), |acc, v| acc * v)
+    }
+
+    /// Compute the zero selector: `eq(r, 0) = Πᵢ (1 − rᵢ)`.
+    pub fn zero_selector(r: &[E]) -> E {
+        r.iter().fold(E::one(), |acc, &r_i| acc * (E::one() - r_i))
+    }
+
+    /// Compute the full evaluation table `{ eq(r, x) : x ∈ {0,1}^n }`.
+    pub fn evals(r: &[E]) -> Vec<E> {
+        Self::evals_with_scaling(r, None)
+    }
+
+    /// Compute the full evaluation table with optional scaling.
+    pub fn evals_with_scaling(r: &[E], scaling_factor: Option<E>) -> Vec<E> {
+        #[cfg(feature = "parallel")]
+        {
+            const PARALLEL_THRESHOLD: usize = 16;
+            if r.len() > PARALLEL_THRESHOLD {
+                return Self::evals_parallel(r, scaling_factor);
+            }
+        }
+        Self::evals_serial(r, scaling_factor)
+    }
+
+    /// Serial version of [`Self::evals_with_scaling`].
+    pub fn evals_serial(r: &[E], scaling_factor: Option<E>) -> Vec<E> {
+        let size = 1usize << r.len();
+        let mut evals = vec![E::zero(); size];
+        evals[0] = scaling_factor.unwrap_or(E::one());
+        let mut len = 1usize;
+        for &t in r.iter().rev() {
+            let one_minus_t = E::one() - t;
+            for j in (0..len).rev() {
+                evals[2 * j + 1] = evals[j] * t;
+                evals[2 * j] = evals[j] * one_minus_t;
+            }
+            len *= 2;
+        }
+        evals
+    }
+
+    /// Compute eq evaluations and cache intermediate tables.
+    pub fn evals_cached(r: &[E]) -> Vec<Vec<E>> {
+        Self::evals_cached_with_scaling(r, None)
+    }
+
+    /// Like [`Self::evals_cached`], but with optional scaling.
+    pub fn evals_cached_with_scaling(r: &[E], scaling_factor: Option<E>) -> Vec<Vec<E>> {
+        let mut result: Vec<Vec<E>> = (0..r.len() + 1).map(|i| vec![E::zero(); 1 << i]).collect();
+        result[0][0] = scaling_factor.unwrap_or(E::one());
+        for j in 0..r.len() {
+            let idx = r.len() - 1 - j;
+            let t = r[idx];
+            let one_minus_t = E::one() - t;
+            let prev_len = 1 << j;
+            for i in (0..prev_len).rev() {
+                result[j + 1][2 * i + 1] = result[j][i] * t;
+                result[j + 1][2 * i] = result[j][i] * one_minus_t;
+            }
+        }
+        result
+    }
+
+    /// Parallel version of [`Self::evals_with_scaling`].
+    #[cfg(feature = "parallel")]
+    pub fn evals_parallel(r: &[E], scaling_factor: Option<E>) -> Vec<E> {
+        use rayon::prelude::*;
+
+        let final_size = 1usize << r.len();
+        let mut evals = vec![E::zero(); final_size];
+        evals[0] = scaling_factor.unwrap_or(E::one());
+        let mut size = 1;
+
+        for &r_i in r.iter() {
+            let (evals_left, evals_right) = evals.split_at_mut(size);
+            let (evals_right, _) = evals_right.split_at_mut(size);
+
+            evals_left
+                .par_iter_mut()
+                .zip(evals_right.par_iter_mut())
+                .for_each(|(x, y)| {
+                    *y = *x * r_i;
+                    *x -= *y;
+                });
+
+            size *= 2;
+        }
+
+        evals
     }
 }
 

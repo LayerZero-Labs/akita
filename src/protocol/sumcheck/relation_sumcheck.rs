@@ -299,7 +299,8 @@ mod tests {
         let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
         let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
 
-        let setup = Scheme::setup_prover(num_vars);
+        let setup = Scheme::setup_prover(num_vars).unwrap();
+        let verifier_setup = Scheme::setup_verifier(&setup);
         let (commitment, hint) = Scheme::commit(&poly, &setup, &layout).unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
@@ -318,7 +319,7 @@ mod tests {
 
         let (alpha, m_a_vec) = rederive_alpha_and_m_a::<F, { Cfg::D }, Cfg>(
             &proof,
-            &Scheme::setup_verifier(&setup),
+            &verifier_setup,
             &opening_point,
             &commitment,
         )
@@ -375,7 +376,7 @@ mod tests {
 
         let (alpha_check, m_evals_x) = rederive_alpha_and_m_evals_x::<F, { Cfg::D }, Cfg>(
             &proof,
-            &Scheme::setup_verifier(&setup),
+            &verifier_setup,
             &opening_point,
             &commitment,
             &tau1,

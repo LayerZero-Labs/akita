@@ -7,11 +7,12 @@ use hachi_pcs::algebra::Fp128;
 use hachi_pcs::protocol::commitment::{
     Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig,
 };
-use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
-use hachi_pcs::{BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, Transcript};
+use hachi_pcs::{
+    BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, HachiCommitmentScheme, Transcript,
+};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;
@@ -67,12 +68,16 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig>(
             black_box(
                 <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(black_box(
                     nv,
-                )),
+                ))
+                .unwrap(),
             )
         })
     });
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+    let setup =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv).unwrap();
+    let verifier_setup =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
     group.bench_function("commit", |b| {
         b.iter(|| {
@@ -114,8 +119,6 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig>(
         )
     });
 
-    let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
         &setup,
@@ -212,7 +215,10 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
     let pt = random_point(nv);
     let opening = multilinear_eval(&dense_evals, &pt).unwrap();
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+    let setup =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv).unwrap();
+    let verifier_setup =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
     let mut group = c.benchmark_group(format!("hachi/{label}/nv{nv}"));
     configure_group(&mut group, nv);
@@ -260,8 +266,6 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
         )
     });
 
-    let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
         &setup,

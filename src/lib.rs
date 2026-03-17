@@ -22,7 +22,6 @@
 //! - [`primitives`] - Core traits and abstractions
 //!   - [`primitives::arithmetic`] - Field and module traits for lattice arithmetic
 //!   - [`primitives::poly`] - Multilinear polynomial utility functions
-//!   - [`primitives::transcript`] - Fiat-Shamir transcript trait
 //!   - [`primitives::serialization`] - Serialization abstractions
 //! - [`error`] - Error types
 //!
@@ -50,9 +49,9 @@ pub mod parallel;
 /// Protocol-layer transcript and commitment abstractions
 pub mod protocol;
 
-/// Shared test configuration and helpers.
-#[doc(hidden)]
-pub mod test_utils;
+/// Shared test configuration and helpers for in-crate unit tests.
+#[cfg(test)]
+pub(crate) mod testing;
 
 pub use error::HachiError;
 pub use primitives::arithmetic::{
@@ -61,5 +60,6 @@ pub use primitives::arithmetic::{
 };
 pub use primitives::serialization::{HachiDeserialize, HachiSerialize};
 pub use protocol::{
-    BasisMode, CommitmentScheme, DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly, Transcript,
+    BasisMode, CommitmentScheme, DensePoly, HachiCommitmentScheme, HachiPolyOps, OneHotIndex,
+    OneHotPoly, Transcript,
 };

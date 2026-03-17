@@ -29,8 +29,8 @@ pub enum BasisMode {
 /// Ring-native opening point storing field scalars.
 ///
 /// Contains the two vectors used by the §4.2 prover:
-/// - `a`: evaluation vector of length `2^m` (inner-block coordinates).
-/// - `b`: block-select vector of length `2^r` (outer coordinates).
+/// - `inner_weights`: evaluation vector of length `2^m` (inner-block coordinates).
+/// - `outer_weights`: block-select vector of length `2^r` (outer coordinates).
 ///
 /// These are raw field scalars, not ring elements — they originate from
 /// basis weight evaluations (Lagrange or monomial) and are always constant
@@ -38,9 +38,29 @@ pub enum BasisMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RingOpeningPoint<F: FieldCore> {
     /// Evaluation vector of length `2^m` (field scalars).
-    pub a: Vec<F>,
+    inner_weights: Vec<F>,
     /// Block-select vector of length `2^r` (field scalars).
-    pub b: Vec<F>,
+    outer_weights: Vec<F>,
+}
+
+impl<F: FieldCore> RingOpeningPoint<F> {
+    /// Construct directly from precomputed inner and outer weight vectors.
+    pub(crate) fn from_weight_vectors(inner_weights: Vec<F>, outer_weights: Vec<F>) -> Self {
+        Self {
+            inner_weights,
+            outer_weights,
+        }
+    }
+
+    /// Inner evaluation weights of length `2^m`.
+    pub fn inner_weights(&self) -> &[F] {
+        &self.inner_weights
+    }
+
+    /// Outer block-selection weights of length `2^r`.
+    pub fn outer_weights(&self) -> &[F] {
+        &self.outer_weights
+    }
 }
 
 /// Multilinear Lagrange weights: `⊗ᵢ (1 − xᵢ, xᵢ)`.
@@ -100,9 +120,12 @@ pub fn ring_opening_point_from_field<F: FieldCore>(
         });
     }
 
-    let a = basis_weights(&opening_point[..m_vars], basis);
-    let b = basis_weights(&opening_point[m_vars..], basis);
-    Ok(RingOpeningPoint { a, b })
+    let inner_weights = basis_weights(&opening_point[..m_vars], basis);
+    let outer_weights = basis_weights(&opening_point[m_vars..], basis);
+    Ok(RingOpeningPoint::from_weight_vectors(
+        inner_weights,
+        outer_weights,
+    ))
 }
 
 /// Reduce the inner `alpha = log2(D)` opening coordinates to one ring element.
@@ -123,4 +146,23 @@ pub fn reduce_inner_opening_to_ring_element<F: FieldCore, const D: usize>(
         )));
     }
     Ok(CyclotomicRing::from_slice(&weights))
+}
+
+/// Derive the next fold level's field opening point from the current level's
+/// sumcheck challenges.
+///
+/// Sumcheck challenges are ordered `[x_0..x_{num_x_vars-1}, y_0..y_{num_y_vars-1}]`
+/// where `x` selects ring elements and `y` selects coefficients. The next PCS
+/// opening point is `[inner, outer] = [y, x]`.
+pub fn next_level_opening_point<F: FieldCore>(
+    sumcheck_challenges: &[F],
+    num_x_vars: usize,
+    num_y_vars: usize,
+) -> Vec<F> {
+    let (outer_challenges, inner_challenges) = sumcheck_challenges.split_at(num_x_vars);
+    debug_assert_eq!(inner_challenges.len(), num_y_vars);
+    let mut point = Vec::with_capacity(num_x_vars + num_y_vars);
+    point.extend_from_slice(inner_challenges);
+    point.extend_from_slice(outer_challenges);
+    point
 }

@@ -1225,7 +1225,7 @@ mod tests {
         let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
         let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
 
-        let setup = Scheme::setup_prover(num_vars);
+        let setup = Scheme::setup_prover(num_vars).unwrap();
         let (commitment, hint) = Scheme::commit(&poly, &setup, &layout).unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();

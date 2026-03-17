@@ -11,14 +11,12 @@ use crate::algebra::SparseChallenge;
 use crate::error::HachiError;
 use crate::primitives::poly::multilinear_lagrange_basis;
 use crate::primitives::serialization::{Compress, Valid};
-use crate::protocol::commitment::transcript_append::AppendToTranscript;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::linear::flatten_i8_blocks;
 use crate::protocol::commitment::{
     CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, RingCommitment,
 };
-use crate::protocol::commitment_scheme::next_level_opening_point;
 use crate::protocol::hachi_poly_ops::{BalancedDigitPoly, HachiPolyOps};
 use crate::protocol::labrador::config::{
     estimate_handoff_recursive_proof, logq_bits, LabradorRecursiveSizeEstimate,
@@ -27,7 +25,9 @@ use crate::protocol::labrador::types::{LabradorStatement, LabradorWitness};
 use crate::protocol::labrador::{
     prove_with_plan, verify as verify_labrador, LabradorConstraint, LabradorConstraintTerm,
 };
-use crate::protocol::opening_point::{ring_opening_point_from_field, BasisMode, RingOpeningPoint};
+use crate::protocol::opening_point::{
+    next_level_opening_point, ring_opening_point_from_field, BasisMode, RingOpeningPoint,
+};
 use crate::protocol::proof::{
     FlatLabradorProof, FlatLabradorWitness, FlatRingVec, HachiCommitmentHint, HachiProofTail,
     LabradorTail, PackedDigits,
@@ -74,7 +74,7 @@ where
     let depth_commit = layout.num_digits_commit;
     let depth_fold = layout.num_digits_fold;
     let log_basis = layout.log_basis;
-    let num_blocks = opening_point.b.len();
+    let num_blocks = opening_point.outer_weights().len();
     let block_len = layout.block_len;
     let inner_width = block_len * depth_commit;
 
@@ -129,7 +129,7 @@ where
     // This row enforces the opening evaluation claim.
     {
         let mut phi_w = vec![CyclotomicRing::<F, D>::zero(); w_len];
-        for (i, &b_i) in opening_point.b.iter().enumerate() {
+        for (i, &b_i) in opening_point.outer_weights().iter().enumerate() {
             for (d, &g) in g_open.iter().enumerate() {
                 phi_w[i * depth_open + d] = scalar_ring(b_i * g);
             }
@@ -150,7 +150,7 @@ where
         }
 
         let mut phi_z = vec![CyclotomicRing::<F, D>::zero(); z_len];
-        for (i, &a_i) in opening_point.a.iter().enumerate() {
+        for (i, &a_i) in opening_point.inner_weights().iter().enumerate() {
             for (d, &g) in g_commit.iter().enumerate() {
                 let ag = a_i * g;
                 for (t, &j) in j_fold.iter().enumerate() {
@@ -277,10 +277,10 @@ where
     let opening_point = tracing::info_span!("labrador::handoff_prepare_opening_point")
         .in_scope(|| next_level_opening_point(current_challenges, current_num_u, current_num_l));
 
-    let alpha = D_HANDOFF.trailing_zeros() as usize;
-    if opening_point.len() < alpha {
+    let inner_point_bits = D_HANDOFF.trailing_zeros() as usize;
+    if opening_point.len() < inner_point_bits {
         return Err(HachiError::InvalidPointDimension {
-            expected: alpha,
+            expected: inner_point_bits,
             actual: opening_point.len(),
         });
     }
@@ -288,10 +288,10 @@ where
     let w_layout = <WCommitmentConfig<D_HANDOFF, Cfg>>::commitment_layout(opening_point.len())?;
     let direct_tail = PackedDigits::from_i8_digits(current_w, w_layout.log_basis);
     let direct_hachi_tail_bytes = direct_tail.serialized_size(Compress::No);
-    let target_num_vars = w_layout.m_vars + w_layout.r_vars + alpha;
+    let target_num_vars = w_layout.m_vars + w_layout.r_vars + inner_point_bits;
     let mut padded_point = opening_point.clone();
     padded_point.resize(target_num_vars, F::zero());
-    let outer_point = &padded_point[alpha..];
+    let outer_point = &padded_point[inner_point_bits..];
 
     let ring_opening_point =
         tracing::info_span!("labrador::handoff_ring_opening_point").in_scope(|| {
@@ -311,15 +311,15 @@ where
         .in_scope(|| {
             let w_poly = BalancedDigitPoly::<F, D_HANDOFF>::from_i8_digits(current_w)?;
             let (y_ring, w_folded) = w_poly.evaluate_and_fold(
-                &ring_opening_point.b,
-                &ring_opening_point.a,
+                ring_opening_point.outer_weights(),
+                ring_opening_point.inner_weights(),
                 w_layout.block_len,
             );
             Ok::<_, HachiError>((w_poly, y_ring, w_folded))
         })?;
 
     tracing::info_span!("labrador::handoff_absorb_claims").in_scope(|| {
-        current_commitment.append_to_transcript(ABSORB_COMMITMENT, &mut handoff_transcript);
+        handoff_transcript.append_serde(ABSORB_COMMITMENT, current_commitment);
         for pt in &padded_point {
             handoff_transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
@@ -554,7 +554,7 @@ where
 
     // Replay transcript against the carried Hachi commitment.
     tracing::info_span!("labrador::handoff_absorb_claims").in_scope(|| {
-        current_commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+        transcript.append_serde(ABSORB_COMMITMENT, current_commitment);
         for pt in &padded_point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
@@ -649,7 +649,7 @@ mod tests {
     use crate::protocol::proof::HachiCommitmentHint;
     use crate::protocol::quadratic_equation::QuadraticEquation;
     use crate::protocol::transcript::Blake2bTranscript;
-    use crate::test_utils::*;
+    use crate::testing::*;
     use crate::Transcript;
 
     const TRANSCRIPT_SEED: &[u8] = b"test/labrador_handoff";
@@ -668,10 +668,7 @@ mod tests {
             )
             .unwrap();
 
-        let point = RingOpeningPoint {
-            a: sample_a(),
-            b: sample_b(),
-        };
+        let point = RingOpeningPoint::from_weight_vectors(sample_a(), sample_b());
 
         let ring_coeffs: Vec<CyclotomicRing<F, D>> =
             blocks.iter().flat_map(|b| b.iter().copied()).collect();
@@ -679,7 +676,11 @@ mod tests {
         let hint = HachiCommitmentHint::new(w.t_hat);
         let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_SEED);
         let layout = setup.layout();
-        let (y_ring, w_folded) = poly.evaluate_and_fold(&point.b, &point.a, layout.block_len);
+        let (y_ring, w_folded) = poly.evaluate_and_fold(
+            point.outer_weights(),
+            point.inner_weights(),
+            layout.block_len,
+        );
 
         let quad_eq = QuadraticEquation::<F, D, TinyConfig>::new_prover(
             &setup.ntt_D,

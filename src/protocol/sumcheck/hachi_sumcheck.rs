@@ -1340,6 +1340,7 @@ impl<F: FieldCore + FromSmallInt, const D: usize> HachiSumcheckVerifier<F, D> {
     pub fn new(
         batching_coeff: F,
         w_evals: Vec<F>,
+        w_val_override: Option<F>,
         tau0: Vec<F>,
         b: usize,
         alpha_evals_y: Vec<F>,
@@ -1368,7 +1369,7 @@ impl<F: FieldCore + FromSmallInt, const D: usize> HachiSumcheckVerifier<F, D> {
         Self {
             batching_coeff,
             w_evals,
-            w_val_override: None,
+            w_val_override,
             tau0,
             b,
             alpha_evals_y,
@@ -1378,13 +1379,6 @@ impl<F: FieldCore + FromSmallInt, const D: usize> HachiSumcheckVerifier<F, D> {
             relation_claim,
             _marker: PhantomData,
         }
-    }
-
-    /// Set the w_val override for intermediate fold levels where the
-    /// full w vector is not available.
-    pub fn with_w_val_override(mut self, w_val: F) -> Self {
-        self.w_val_override = Some(w_val);
-        self
     }
 }
 

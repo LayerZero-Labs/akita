@@ -1,13 +1,12 @@
 //! Commitment-scheme trait surface for Hachi protocol code.
 
 use super::config::{CommitmentConfig, HachiCommitmentLayout};
-use super::transcript_append::AppendToTranscript;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::hachi_poly_ops::{HachiPolyOps, OneHotIndex};
 use crate::protocol::opening_point::BasisMode;
 use crate::protocol::transcript::Transcript;
-use crate::{CanonicalField, FieldCore};
+use crate::{CanonicalField, FieldCore, HachiSerialize};
 
 /// Witness data produced alongside a ring-native commitment.
 ///
@@ -47,7 +46,7 @@ where
     /// Verifier setup parameters.
     type VerifierSetup: Clone + Send + Sync;
     /// Commitment object.
-    type Commitment: Clone + PartialEq + Send + Sync + AppendToTranscript<F>;
+    type Commitment: Clone + PartialEq + Send + Sync + HachiSerialize;
     /// Evaluation/opening proof object.
     type Proof: Clone + Send + Sync;
     /// Prover-side hint produced at commitment time.
@@ -55,10 +54,10 @@ where
 
     /// Build prover setup for maximum polynomial dimension.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if internal setup fails (programming error, not adversarial input).
-    fn setup_prover(max_num_vars: usize) -> Self::ProverSetup;
+    /// Returns an error if setup parameters are invalid or setup generation fails.
+    fn setup_prover(max_num_vars: usize) -> Result<Self::ProverSetup, HachiError>;
 
     /// Derive verifier setup from prover setup.
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;

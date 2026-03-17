@@ -399,7 +399,7 @@ pub struct HachiCommitmentHint<F: FieldCore, const D: usize> {
     /// digit planes (formerly `t_hat`).
     pub inner_opening_digits: Vec<Vec<[i8; D]>>,
     /// Optional recomposed `t_i` rows cached for prover-side A-row work.
-    t: Option<Vec<Vec<CyclotomicRing<F, D>>>>,
+    recomposed_rows: Option<Vec<Vec<CyclotomicRing<F, D>>>>,
     _marker: PhantomData<F>,
 }
 
@@ -408,26 +408,26 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
     pub fn new(inner_opening_digits: Vec<Vec<[i8; D]>>) -> Self {
         Self {
             inner_opening_digits,
-            t: None,
+            recomposed_rows: None,
             _marker: PhantomData,
         }
     }
 
     /// Construct a hint that also preserves the undecomposed `t_i` rows.
-    pub fn with_t(
+    pub fn with_recomposed_rows(
         inner_opening_digits: Vec<Vec<[i8; D]>>,
-        t: Vec<Vec<CyclotomicRing<F, D>>>,
+        recomposed_rows: Vec<Vec<CyclotomicRing<F, D>>>,
     ) -> Self {
         Self {
             inner_opening_digits,
-            t: Some(t),
+            recomposed_rows: Some(recomposed_rows),
             _marker: PhantomData,
         }
     }
 
     /// Get the optional recomposed `t_i` rows.
-    pub fn t(&self) -> Option<&[Vec<CyclotomicRing<F, D>>]> {
-        self.t.as_deref()
+    pub fn recomposed_rows(&self) -> Option<&[Vec<CyclotomicRing<F, D>>]> {
+        self.recomposed_rows.as_deref()
     }
 
     /// Populate the recomposed `t_i` rows from the inner-opening digits when
@@ -437,7 +437,7 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
     ///
     /// Returns an error if `num_digits_open` is zero or if any inner-opening
     /// digit block length is not a multiple of `num_digits_open`.
-    pub fn ensure_t_recomposed(
+    pub fn ensure_recomposed_rows(
         &mut self,
         num_digits_open: usize,
         log_basis: u32,
@@ -445,7 +445,7 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
     where
         F: CanonicalField,
     {
-        if self.t.is_some() {
+        if self.recomposed_rows.is_some() {
             return Ok(());
         }
         if num_digits_open == 0 {
@@ -454,7 +454,7 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
             ));
         }
 
-        let t = self
+        let recomposed_rows = self
             .inner_opening_digits
             .iter()
             .map(|block| {
@@ -470,7 +470,7 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
                     .collect())
             })
             .collect::<Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError>>()?;
-        self.t = Some(t);
+        self.recomposed_rows = Some(recomposed_rows);
         Ok(())
     }
 }
@@ -563,9 +563,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// D-erased Labrador proof types for HachiProofTail
-// ---------------------------------------------------------------------------
+// D-erased Labrador proof types for HachiProofTail.
 
 /// D-erased Labrador level proof.
 ///
