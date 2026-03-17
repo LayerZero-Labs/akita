@@ -151,9 +151,12 @@ fn prove_level_diagnostic<F, const D: usize, Cfg>(
     F: FieldCore + CanonicalField + FieldSampling,
     Cfg: CommitmentConfig,
 {
-    let m_a =
+    let Ok(m_a) =
         compute_m_a_reference::<F, D, Cfg>(expanded, opening_point, challenges, &rs.alpha, layout)
-            .expect("compute_m_a diagnostic failed");
+    else {
+        tracing::warn!(level, "diagnostic m_a recomputation failed");
+        return;
+    };
 
     let x_len = 1usize << rs.num_x_vars;
     let d = D;
@@ -251,8 +254,16 @@ fn prove_level_selfcheck<F: FieldCore + FromSmallInt>(
     let eq_val = EqPolynomial::mle(tau0, sumcheck_challenges);
     let norm_oracle = eq_val * range_check_eval(w_eval, b);
     let (x_ch, y_ch) = sumcheck_challenges.split_at(num_u);
-    let alpha_val = multilinear_eval(alpha_evals_y, y_ch).unwrap();
-    let m_val = multilinear_eval(m_evals_x, x_ch).unwrap();
+    let (Ok(alpha_val), Ok(m_val)) = (
+        multilinear_eval(alpha_evals_y, y_ch),
+        multilinear_eval(m_evals_x, x_ch),
+    ) else {
+        tracing::warn!(
+            level,
+            "PROVER self-check skipped: invalid multilinear inputs"
+        );
+        return;
+    };
     let relation_oracle = w_eval * alpha_val * m_val;
     let prover_expected = batching_coeff * norm_oracle + relation_oracle;
     if prover_expected != final_claim {
@@ -405,7 +416,7 @@ where
         num_x_vars,
         num_y_vars,
         relation_claim,
-    );
+    )?;
 
     let (sumcheck_proof, sumcheck_challenges, _final_claim) =
         prove_sumcheck::<F, _, F, _, _>(&mut fused_prover, transcript, |tr| {
@@ -594,7 +605,7 @@ where
 {
     dispatch_ring_dim!(level_d, |D_LEVEL| {
         let typed_commitment: RingCommitment<F, { D_LEVEL }> =
-            current_commitment.to_ring_commitment();
+            current_commitment.try_to_ring_commitment()?;
         let w_layout =
             <WCommitmentConfig<{ D_LEVEL }, Cfg>>::commitment_layout(opening_point.len())?;
         verify_one_level::<F, T, { D_LEVEL }, WCommitmentConfig<{ D_LEVEL }, Cfg>>(
@@ -639,8 +650,8 @@ where
     }
 
     if handoff_d == D {
-        let typed_hint: HachiCommitmentHint<F, D> = current_hint.to_typed();
-        let typed_commitment: RingCommitment<F, D> = current_commitment.to_ring_commitment();
+        let typed_hint: HachiCommitmentHint<F, D> = current_hint.try_to_typed()?;
+        let typed_commitment: RingCommitment<F, D> = current_commitment.try_to_ring_commitment()?;
         return labrador_handoff_prove::<F, T, D, Cfg>(
             current_w,
             &typed_hint,
@@ -659,9 +670,9 @@ where
         handoff_ntt_d_cache,
         &setup.expanded,
         |D_HANDOFF, ntt_d| {
-            let typed_hint: HachiCommitmentHint<F, { D_HANDOFF }> = current_hint.to_typed();
+            let typed_hint: HachiCommitmentHint<F, { D_HANDOFF }> = current_hint.try_to_typed()?;
             let typed_commitment: RingCommitment<F, { D_HANDOFF }> =
-                current_commitment.to_ring_commitment();
+                current_commitment.try_to_ring_commitment()?;
             labrador_handoff_prove::<F, T, { D_HANDOFF }, Cfg>(
                 current_w,
                 &typed_hint,
@@ -712,7 +723,7 @@ where
 
     dispatch_ring_dim!(handoff_d, |D_HANDOFF| {
         let typed_commitment: RingCommitment<F, { D_HANDOFF }> =
-            current_commitment.to_ring_commitment();
+            current_commitment.try_to_ring_commitment()?;
         labrador_handoff_verify::<F, T, { D_HANDOFF }, Cfg>(
             tail,
             opening_point,
@@ -757,22 +768,31 @@ where
     {
         let mut field_evals: Vec<F> = current_w.iter().map(|&d| F::from_i8(d)).collect();
         field_evals.resize(w_poly.num_ring_elems() * D_LEVEL, F::zero());
-        let direct_eval = multilinear_eval(&field_evals, &opening_point).unwrap();
-        if last_w_eval != direct_eval {
-            tracing::error!(
-                level,
-                ring_elems = w_poly.num_ring_elems(),
-                field_len = field_evals.len(),
-                point_len = opening_point.len(),
-                "BUG: w_eval mismatch! prev_level w_eval != w_poly eval at opening_point"
-            );
-        } else {
-            tracing::debug!(level, "w_eval consistency OK");
+        match multilinear_eval(&field_evals, &opening_point) {
+            Ok(direct_eval) if last_w_eval == direct_eval => {
+                tracing::debug!(level, "w_eval consistency OK");
+            }
+            Ok(_) => {
+                tracing::error!(
+                    level,
+                    ring_elems = w_poly.num_ring_elems(),
+                    field_len = field_evals.len(),
+                    point_len = opening_point.len(),
+                    "BUG: w_eval mismatch! prev_level w_eval != w_poly eval at opening_point"
+                );
+            }
+            Err(_) => {
+                tracing::warn!(
+                    level,
+                    "w_eval debug self-check skipped: invalid opening point"
+                );
+            }
         }
     }
 
-    let w_commitment: RingCommitment<F, { D_LEVEL }> = last_w_commitment.to_ring_commitment();
-    let typed_hint: HachiCommitmentHint<F, { D_LEVEL }> = current_hint.to_typed();
+    let w_commitment: RingCommitment<F, { D_LEVEL }> =
+        last_w_commitment.try_to_ring_commitment()?;
+    let typed_hint: HachiCommitmentHint<F, { D_LEVEL }> = current_hint.try_to_typed()?;
 
     let commit_fn: CommitFn<'_, F> = Box::new(
         |w: &[i8]| -> Result<(FlatRingVec<F>, FlatCommitmentHint), HachiError> {
@@ -928,8 +948,9 @@ where
             let level_d = Cfg::d_at_level(level, current_w.len());
             let commit_d = Cfg::d_at_level(level + 1, 0);
 
-            let last_w_eval = levels.last().unwrap().w_eval;
-            let last_w_commitment = &levels.last().unwrap().w_commitment;
+            let previous_level = levels.last().ok_or(HachiError::InvalidProof)?;
+            let last_w_eval = previous_level.w_eval;
+            let last_w_commitment = &previous_level.w_commitment;
             let out = dispatch_prove_level::<F, T, D, Cfg>(
                 level_d,
                 &mut ntt_bundle,
@@ -979,19 +1000,20 @@ where
 
         let tail = if labrador_enabled {
             tracing::info!("labrador handoff started");
+            let last_level = levels.last().ok_or(HachiError::InvalidProof)?;
             dispatch_labrador_handoff_prove::<F, T, D, Cfg>(
                 &current_w,
                 &current_hint,
                 &current_challenges,
                 current_num_x_vars,
                 current_num_y_vars,
-                &levels.last().unwrap().w_commitment,
+                &last_level.w_commitment,
                 setup,
                 &mut commit_ntt_bundle.d_matrix,
                 transcript,
             )?
         } else {
-            let final_w = PackedDigits::from_i8_digits(&current_w, final_w_basis);
+            let final_w = PackedDigits::try_from_i8_digits(&current_w, final_w_basis)?;
             HachiProofTail::Direct(final_w)
         };
 
@@ -1017,7 +1039,10 @@ where
         let has_handoff_tail = proof.has_handoff_tail();
 
         let final_w_elems: Option<Vec<F>> = match &proof.tail {
-            HachiProofTail::Direct(pw) => Some(pw.to_field_elems()),
+            HachiProofTail::Direct(pw) => Some(
+                pw.try_to_field_elems()
+                    .map_err(|_| HachiError::InvalidProof)?,
+            ),
             HachiProofTail::Labrador(_) => None,
         };
 
@@ -1045,7 +1070,7 @@ where
             let fw_ref = final_w_elems.as_deref();
             let challenges = if i == 0 {
                 let typed_commitment: RingCommitment<F, D> =
-                    current_commitment.to_ring_commitment();
+                    current_commitment.try_to_ring_commitment()?;
                 verify_one_level::<F, T, D, Cfg>(
                     level_proof,
                     setup,
@@ -1132,8 +1157,8 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
-    let y_ring: CyclotomicRing<F, D> = level_proof.y_ring_typed();
-    let v_typed: Vec<CyclotomicRing<F, D>> = level_proof.v_typed();
+    let y_ring: CyclotomicRing<F, D> = level_proof.try_y_ring()?;
+    let v_typed: Vec<CyclotomicRing<F, D>> = level_proof.try_v()?;
 
     let alpha_bits = Cfg::D.trailing_zeros() as usize;
     if opening_point.len() < alpha_bits {
@@ -1212,7 +1237,7 @@ where
             rs.alpha,
             rs.num_x_vars,
             rs.num_y_vars,
-        )
+        )?
     } else {
         HachiSumcheckVerifier::new(
             batching_coeff,
@@ -1229,7 +1254,7 @@ where
             rs.alpha,
             rs.num_x_vars,
             rs.num_y_vars,
-        )
+        )?
     };
 
     let challenges = verify_sumcheck::<F, _, F, _, _>(
@@ -1257,8 +1282,8 @@ where
     Cfg: CommitmentConfig,
 {
     let level0 = proof.levels.first().ok_or(HachiError::InvalidProof)?;
-    let y_ring: CyclotomicRing<F, D> = level0.y_ring_typed();
-    let v_typed: Vec<CyclotomicRing<F, D>> = level0.v_typed();
+    let y_ring: CyclotomicRing<F, D> = level0.try_y_ring()?;
+    let v_typed: Vec<CyclotomicRing<F, D>> = level0.try_v()?;
 
     let alpha_bits = Cfg::D.trailing_zeros() as usize;
     if opening_point.len() < alpha_bits {
@@ -1317,8 +1342,8 @@ where
     Cfg: CommitmentConfig,
 {
     let level0 = proof.levels.first().ok_or(HachiError::InvalidProof)?;
-    let y_ring: CyclotomicRing<F, D> = level0.y_ring_typed();
-    let v_typed: Vec<CyclotomicRing<F, D>> = level0.v_typed();
+    let y_ring: CyclotomicRing<F, D> = level0.try_y_ring()?;
+    let v_typed: Vec<CyclotomicRing<F, D>> = level0.try_v()?;
 
     let alpha_bits = Cfg::D.trailing_zeros() as usize;
     if opening_point.len() < alpha_bits {
@@ -1890,7 +1915,10 @@ mod tests {
             opening,
             proof,
         }) = mutate_labrador_tail_fixture(|tail| {
-            let mut y_ring = tail.y_ring.to_single::<{ HandoffTestConfig::D }>();
+            let mut y_ring = tail
+                .y_ring
+                .try_to_single::<{ HandoffTestConfig::D }>()
+                .unwrap();
             y_ring.coefficients_mut()[0] += HandoffField::one();
             tail.y_ring = FlatRingVec::from_single(&y_ring);
         })

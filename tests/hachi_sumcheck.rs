@@ -44,7 +44,7 @@ fn run_f0_e2e(num_u: usize, num_l: usize, b: usize) {
     let tau0: Vec<F> = (0..num_vars).map(|_| F::sample(&mut rng)).collect();
 
     let t0 = Instant::now();
-    let mut prover = NormSumcheckProver::new(&tau0, w_evals.clone(), b);
+    let mut prover = NormSumcheckProver::new(&tau0, w_evals.clone(), b).unwrap();
     let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
 
     let (proof, prover_challenges, final_claim) =
@@ -60,7 +60,7 @@ fn run_f0_e2e(num_u: usize, num_l: usize, b: usize) {
     assert_eq!(final_claim, oracle, "prover final claim != oracle eval");
 
     let t1 = Instant::now();
-    let verifier = NormSumcheckVerifier::new(tau0, w_evals, b);
+    let verifier = NormSumcheckVerifier::new(tau0, w_evals, b).unwrap();
     let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
 
     let verifier_challenges = verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut vt, |tr| {
@@ -166,7 +166,8 @@ fn run_f_alpha_e2e<const D: usize>(num_u: usize, num_i: usize) {
 
     let t0 = Instant::now();
     let mut prover =
-        RelationSumcheckProver::new(w_evals.clone(), &alpha_evals_y, &m_evals_x, num_u, num_l);
+        RelationSumcheckProver::new(w_evals.clone(), &alpha_evals_y, &m_evals_x, num_u, num_l)
+            .unwrap();
     let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
 
     let (proof, prover_challenges, final_claim) =
@@ -195,7 +196,8 @@ fn run_f_alpha_e2e<const D: usize>(num_u: usize, num_i: usize) {
         ring_alpha,
         num_u,
         num_l,
-    );
+    )
+    .unwrap();
     let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
 
     let verifier_challenges = verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut vt, |tr| {

@@ -147,8 +147,8 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
             eprintln!(
                 "[{label}]   final_w: total={} bytes, elems={}, bits/elem={}",
                 final_w.serialized_size(Compress::No),
-                final_w.num_elems,
-                final_w.bits_per_elem,
+                final_w.num_elems(),
+                final_w.bits_per_elem(),
             );
         }
         HachiProofTail::Labrador(tail) => {

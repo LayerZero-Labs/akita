@@ -21,11 +21,11 @@ use std::marker::PhantomData;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackedDigits {
     /// Number of logical elements.
-    pub num_elems: usize,
+    num_elems: usize,
     /// Bits per element (= `log_basis` from the commitment config).
-    pub bits_per_elem: u32,
+    bits_per_elem: u32,
     /// Bit-packed two's-complement data.
-    pub data: Vec<u8>,
+    data: Vec<u8>,
 }
 
 /// Precomputed lookup table mapping balanced digit index → field element.
@@ -54,15 +54,23 @@ impl<F: FieldCore + FromSmallInt> DigitLut<F> {
 }
 
 impl PackedDigits {
+    fn invalid_data(message: impl Into<String>) -> SerializationError {
+        SerializationError::InvalidData(message.into())
+    }
+
     /// Pack balanced i8 digits into bit-packed form.
     ///
     /// Each element must be in `[-b/2, b/2)` where `b = 2^log_basis`.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics (in debug) if any element does not fit in `log_basis` bits.
-    pub fn from_i8_digits(w: &[i8], log_basis: u32) -> Self {
-        assert!(log_basis > 0 && log_basis <= 7, "log_basis out of range");
+    /// Returns an error if `log_basis` is out of range or any digit does not fit.
+    pub fn try_from_i8_digits(w: &[i8], log_basis: u32) -> Result<Self, HachiError> {
+        if !(1..=7).contains(&log_basis) {
+            return Err(HachiError::InvalidInput(format!(
+                "log_basis must be in 1..=7, got {log_basis}"
+            )));
+        }
         let half_b = 1i8 << (log_basis - 1);
 
         let bits = log_basis as usize;
@@ -71,10 +79,11 @@ impl PackedDigits {
         let mut data = vec![0u8; num_bytes];
 
         for (i, &signed) in w.iter().enumerate() {
-            debug_assert!(
-                signed >= -half_b && signed < half_b,
-                "digit {signed} out of range for log_basis={log_basis}"
-            );
+            if signed < -half_b || signed >= half_b {
+                return Err(HachiError::InvalidInput(format!(
+                    "digit {signed} out of range for log_basis={log_basis}"
+                )));
+            }
             let unsigned = (signed as u8) & ((1u8 << bits) - 1);
             let bit_offset = i * bits;
             let byte_idx = bit_offset / 8;
@@ -85,15 +94,22 @@ impl PackedDigits {
             }
         }
 
-        Self {
+        Ok(Self {
             num_elems: w.len(),
             bits_per_elem: log_basis,
             data,
-        }
+        })
     }
 
     /// Unpack to field elements using a precomputed lookup table.
-    pub fn to_field_elems<F: FieldCore + FromSmallInt>(&self) -> Vec<F> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the packed representation fails validation.
+    pub fn try_to_field_elems<F: FieldCore + FromSmallInt>(
+        &self,
+    ) -> Result<Vec<F>, SerializationError> {
+        self.check()?;
         let bits = self.bits_per_elem as usize;
         let mask = (1u8 << bits) - 1;
         let sign_bit = 1u8 << (bits - 1);
@@ -115,12 +131,22 @@ impl PackedDigits {
             };
             out.push(lut.get(signed));
         }
-        out
+        Ok(out)
     }
 
     /// Number of packed data bytes.
     pub fn packed_byte_len(&self) -> usize {
         self.data.len()
+    }
+
+    /// Number of logical elements.
+    pub fn num_elems(&self) -> usize {
+        self.num_elems
+    }
+
+    /// Bits used per element.
+    pub fn bits_per_elem(&self) -> u32 {
+        self.bits_per_elem
     }
 }
 
@@ -130,7 +156,9 @@ impl HachiSerialize for PackedDigits {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        (self.num_elems as u64).serialize_with_mode(&mut writer, compress)?;
+        u64::try_from(self.num_elems)
+            .map_err(|_| Self::invalid_data("num_elems does not fit in u64"))?
+            .serialize_with_mode(&mut writer, compress)?;
         (self.bits_per_elem as u8).serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.data)?;
         Ok(())
@@ -144,15 +172,11 @@ impl HachiSerialize for PackedDigits {
 impl Valid for PackedDigits {
     fn check(&self) -> Result<(), SerializationError> {
         if self.bits_per_elem == 0 || self.bits_per_elem > 7 {
-            return Err(SerializationError::InvalidData(
-                "bits_per_elem out of range".to_string(),
-            ));
+            return Err(Self::invalid_data("bits_per_elem out of range"));
         }
         let expected_bytes = (self.num_elems * self.bits_per_elem as usize).div_ceil(8);
         if self.data.len() != expected_bytes {
-            return Err(SerializationError::InvalidData(
-                "packed data length mismatch".to_string(),
-            ));
+            return Err(Self::invalid_data("packed data length mismatch"));
         }
         Ok(())
     }
@@ -164,7 +188,9 @@ impl HachiDeserialize for PackedDigits {
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        let num_elems = u64::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+        let num_elems =
+            usize::try_from(u64::deserialize_with_mode(&mut reader, compress, validate)?)
+                .map_err(|_| Self::invalid_data("num_elems does not fit in usize"))?;
         let bits_per_elem = u8::deserialize_with_mode(&mut reader, compress, validate)? as u32;
         let num_bytes = (num_elems * bits_per_elem as usize).div_ceil(8);
         let mut data = vec![0u8; num_bytes];
@@ -194,6 +220,13 @@ pub struct FlatRingVec<F> {
 }
 
 impl<F: FieldCore> FlatRingVec<F> {
+    fn ring_dim_mismatch<const D: usize>(&self, method: &str) -> HachiError {
+        HachiError::InvalidInput(format!(
+            "ring dimension mismatch in {method}: stored {}, requested {D}",
+            self.ring_dim
+        ))
+    }
+
     /// Wrap a single ring element.
     pub fn from_single<const D: usize>(r: &CyclotomicRing<F, D>) -> Self {
         Self {
@@ -240,35 +273,50 @@ impl<F: FieldCore> FlatRingVec<F> {
 
     /// Reconstruct a single ring element.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `D != ring_dim` or `count() != 1`.
-    pub fn to_single<const D: usize>(&self) -> CyclotomicRing<F, D> {
-        assert_eq!(D, self.ring_dim, "D mismatch in to_single");
-        assert_eq!(self.count(), 1, "expected exactly one ring element");
-        CyclotomicRing::from_slice(&self.coeffs)
+    /// Returns an error if the stored ring dimension does not match `D` or the
+    /// vector does not contain exactly one ring element.
+    pub fn try_to_single<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, HachiError> {
+        if D != self.ring_dim {
+            return Err(self.ring_dim_mismatch::<D>("FlatRingVec::try_to_single"));
+        }
+        if self.count() != 1 {
+            return Err(HachiError::InvalidSize {
+                expected: 1,
+                actual: self.count(),
+            });
+        }
+        Ok(CyclotomicRing::from_slice(&self.coeffs))
     }
 
     /// Reconstruct a vector of ring elements.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `D != ring_dim`.
-    pub fn to_vec<const D: usize>(&self) -> Vec<CyclotomicRing<F, D>> {
-        assert_eq!(D, self.ring_dim, "D mismatch in to_vec");
-        self.coeffs
+    /// Returns an error if the stored ring dimension does not match `D`.
+    pub fn try_to_vec<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
+        if D != self.ring_dim {
+            return Err(self.ring_dim_mismatch::<D>("FlatRingVec::try_to_vec"));
+        }
+        Ok(self
+            .coeffs
             .chunks_exact(D)
             .map(CyclotomicRing::from_slice)
-            .collect()
+            .collect())
     }
 
     /// Reconstruct a `RingCommitment`.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `D != ring_dim`.
-    pub fn to_ring_commitment<const D: usize>(&self) -> RingCommitment<F, D> {
-        RingCommitment { u: self.to_vec() }
+    /// Returns an error if the stored ring dimension does not match `D`.
+    pub fn try_to_ring_commitment<const D: usize>(
+        &self,
+    ) -> Result<RingCommitment<F, D>, HachiError> {
+        Ok(RingCommitment {
+            u: self.try_to_vec()?,
+        })
     }
 }
 
@@ -309,7 +357,10 @@ impl<F: FieldCore + Valid> HachiDeserialize for FlatRingVec<F> {
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        let ring_dim = u32::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+        let ring_dim =
+            usize::try_from(u32::deserialize_with_mode(&mut reader, compress, validate)?).map_err(
+                |_| SerializationError::InvalidData("ring_dim does not fit in usize".into()),
+            )?;
         let coeffs = Vec::<F>::deserialize_with_mode(&mut reader, compress, validate)?;
         let out = Self { coeffs, ring_dim };
         if matches!(validate, Validate::Yes) {
@@ -325,7 +376,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for FlatRingVec<F> {
 /// flat `Vec<i8>` with metadata about block sizes and ring dimension. Convert
 /// to/from the typed
 /// [`HachiCommitmentHint`] via [`from_typed`](Self::from_typed) and
-/// [`to_typed`](Self::to_typed).
+/// [`try_to_typed`](Self::try_to_typed).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlatCommitmentHint {
     data: Vec<i8>,
@@ -353,16 +404,29 @@ impl FlatCommitmentHint {
 
     /// Reconstruct a typed hint.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `D != ring_dim`.
-    pub fn to_typed<F: FieldCore, const D: usize>(&self) -> HachiCommitmentHint<F, D> {
-        assert_eq!(D, self.ring_dim, "D mismatch in to_typed");
+    /// Returns an error if the stored ring dimension does not match `D` or the
+    /// flattened digit payload is malformed.
+    pub fn try_to_typed<F: FieldCore, const D: usize>(
+        &self,
+    ) -> Result<HachiCommitmentHint<F, D>, HachiError> {
+        if D != self.ring_dim {
+            return Err(HachiError::InvalidInput(format!(
+                "ring dimension mismatch in FlatCommitmentHint::try_to_typed: stored {}, requested {D}",
+                self.ring_dim
+            )));
+        }
         let mut inner_opening_digits = Vec::with_capacity(self.block_sizes.len());
         let mut offset = 0;
         for &block_size in &self.block_sizes {
             let mut block = Vec::with_capacity(block_size);
             for _ in 0..block_size {
+                if offset + D > self.data.len() {
+                    return Err(HachiError::InvalidInput(
+                        "flat commitment hint data length mismatch".to_string(),
+                    ));
+                }
                 let mut plane = [0i8; D];
                 plane.copy_from_slice(&self.data[offset..offset + D]);
                 offset += D;
@@ -370,7 +434,12 @@ impl FlatCommitmentHint {
             }
             inner_opening_digits.push(block);
         }
-        HachiCommitmentHint::new(inner_opening_digits)
+        if offset != self.data.len() {
+            return Err(HachiError::InvalidInput(
+                "flat commitment hint has trailing digit data".to_string(),
+            ));
+        }
+        Ok(HachiCommitmentHint::new(inner_opening_digits))
     }
 
     /// Ring dimension stored in this hint.
@@ -486,9 +555,9 @@ impl<F: FieldCore, const D: usize> Eq for HachiCommitmentHint<F, D> {}
 /// Proof for a single fold level (quad_eq + ring_switch + sumcheck).
 ///
 /// D-agnostic: ring elements are stored as [`FlatRingVec`] with their
-/// ring dimension recorded. Use [`y_ring_typed`](Self::y_ring_typed),
-/// [`v_typed`](Self::v_typed), and
-/// [`w_commitment_typed`](Self::w_commitment_typed) to reconstruct
+/// ring dimension recorded. Use [`try_y_ring`](Self::try_y_ring),
+/// [`try_v`](Self::try_v), and
+/// [`try_w_commitment`](Self::try_w_commitment) to reconstruct
 /// typed ring elements.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiLevelProof<F: FieldCore> {
@@ -537,29 +606,29 @@ impl<F: FieldCore> HachiLevelProof<F> {
 
     /// Reconstruct typed `y_ring`.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `D` does not match the stored ring dimension.
-    pub fn y_ring_typed<const D: usize>(&self) -> CyclotomicRing<F, D> {
-        self.y_ring.to_single()
+    /// Returns an error if the stored ring dimension does not match `D`.
+    pub fn try_y_ring<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, HachiError> {
+        self.y_ring.try_to_single()
     }
 
     /// Reconstruct typed `v`.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `D` does not match the stored ring dimension.
-    pub fn v_typed<const D: usize>(&self) -> Vec<CyclotomicRing<F, D>> {
-        self.v.to_vec()
+    /// Returns an error if the stored ring dimension does not match `D`.
+    pub fn try_v<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
+        self.v.try_to_vec()
     }
 
     /// Reconstruct typed `w_commitment`.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `D` does not match the stored ring dimension.
-    pub fn w_commitment_typed<const D: usize>(&self) -> RingCommitment<F, D> {
-        self.w_commitment.to_ring_commitment()
+    /// Returns an error if the stored ring dimension does not match `D`.
+    pub fn try_w_commitment<const D: usize>(&self) -> Result<RingCommitment<F, D>, HachiError> {
+        self.w_commitment.try_to_ring_commitment()
     }
 }
 
@@ -614,23 +683,23 @@ impl<F: FieldCore> FlatLabradorLevelProof<F> {
 
     /// Reconstruct the typed `LabradorLevelProof<F, D>`.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `D` does not match the stored ring dimension.
-    pub fn to_typed<const D: usize>(&self) -> LabradorLevelProof<F, D> {
-        LabradorLevelProof {
+    /// Returns an error if any stored ring payload uses the wrong dimension.
+    pub fn try_to_typed<const D: usize>(&self) -> Result<LabradorLevelProof<F, D>, HachiError> {
+        Ok(LabradorLevelProof {
             tail: self.tail,
             input_row_lengths: self.input_row_lengths.clone(),
             config: self.config,
             virtual_row_len: self.virtual_row_len,
             row_split_counts: self.row_split_counts.clone(),
-            inner_opening_payload: self.inner_opening_payload.to_vec(),
-            linear_garbage_payload: self.linear_garbage_payload.to_vec(),
+            inner_opening_payload: self.inner_opening_payload.try_to_vec()?,
+            linear_garbage_payload: self.linear_garbage_payload.try_to_vec()?,
             jl_projection: self.jl_projection,
             jl_nonce: self.jl_nonce,
-            jl_lift_residuals: self.jl_lift_residuals.to_vec(),
+            jl_lift_residuals: self.jl_lift_residuals.try_to_vec()?,
             next_witness_norm_sq: self.next_witness_norm_sq,
-        }
+        })
     }
 }
 
@@ -657,12 +726,16 @@ impl<F: FieldCore> FlatLabradorWitness<F> {
 
     /// Reconstruct the typed `LabradorWitness<F, D>`.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `D` does not match the stored ring dimension.
-    pub fn to_typed<const D: usize>(&self) -> LabradorWitness<F, D> {
-        let rows: Vec<Vec<CyclotomicRing<F, D>>> = self.rows.iter().map(|r| r.to_vec()).collect();
-        LabradorWitness::new_unchecked(rows)
+    /// Returns an error if any row uses the wrong ring dimension.
+    pub fn try_to_typed<const D: usize>(&self) -> Result<LabradorWitness<F, D>, HachiError> {
+        let rows: Vec<Vec<CyclotomicRing<F, D>>> = self
+            .rows
+            .iter()
+            .map(FlatRingVec::try_to_vec)
+            .collect::<Result<_, _>>()?;
+        Ok(LabradorWitness::new_unchecked(rows))
     }
 }
 
@@ -692,14 +765,19 @@ impl<F: FieldCore> FlatLabradorProof<F> {
 
     /// Reconstruct the typed `LabradorProof<F, D>`.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `D` does not match the stored ring dimension.
-    pub fn to_typed<const D: usize>(&self) -> LabradorProof<F, D> {
-        LabradorProof {
-            levels: self.levels.iter().map(|l| l.to_typed()).collect(),
-            final_opening_witness: self.final_opening_witness.to_typed(),
-        }
+    /// Returns an error if any nested Labrador payload uses the wrong ring
+    /// dimension.
+    pub fn try_to_typed<const D: usize>(&self) -> Result<LabradorProof<F, D>, HachiError> {
+        Ok(LabradorProof {
+            levels: self
+                .levels
+                .iter()
+                .map(FlatLabradorLevelProof::try_to_typed)
+                .collect::<Result<_, _>>()?,
+            final_opening_witness: self.final_opening_witness.try_to_typed()?,
+        })
     }
 }
 
@@ -1033,7 +1111,9 @@ impl<F: FieldCore> HachiSerialize for FlatLabradorProof<F> {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        (self.levels.len() as u32).serialize_with_mode(&mut writer, compress)?;
+        u32::try_from(self.levels.len())
+            .map_err(|_| SerializationError::InvalidData("too many proof levels".into()))?
+            .serialize_with_mode(&mut writer, compress)?;
         for level in &self.levels {
             level.serialize_with_mode(&mut writer, compress)?;
         }
@@ -1080,7 +1160,10 @@ impl<F: FieldCore + Valid> HachiDeserialize for FlatLabradorProof<F> {
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        let num_levels = u32::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+        let num_levels =
+            usize::try_from(u32::deserialize_with_mode(&mut reader, compress, validate)?).map_err(
+                |_| SerializationError::InvalidData("num_levels does not fit in usize".into()),
+            )?;
         let mut levels = Vec::with_capacity(num_levels);
         for _ in 0..num_levels {
             levels.push(FlatLabradorLevelProof::deserialize_with_mode(
@@ -1185,13 +1268,17 @@ impl<F: FieldCore, const D: usize> HachiSerialize for HachiCommitmentHint<F, D> 
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        (self.inner_opening_digits.len() as u64).serialize_with_mode(&mut writer, compress)?;
+        u64::try_from(self.inner_opening_digits.len())
+            .map_err(|_| SerializationError::InvalidData("too many hint blocks".into()))?
+            .serialize_with_mode(&mut writer, compress)?;
         for block in &self.inner_opening_digits {
-            (block.len() as u64).serialize_with_mode(&mut writer, compress)?;
+            u64::try_from(block.len())
+                .map_err(|_| SerializationError::InvalidData("hint block too large".into()))?
+                .serialize_with_mode(&mut writer, compress)?;
             for plane in block {
-                let bytes: &[u8] =
-                    unsafe { std::slice::from_raw_parts(plane.as_ptr().cast::<u8>(), D) };
-                writer.write_all(bytes)?;
+                for &digit in plane {
+                    digit.serialize_with_mode(&mut writer, compress)?;
+                }
             }
         }
         Ok(())
@@ -1217,16 +1304,23 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiCommitmentH
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        let num_blocks = u64::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+        let num_blocks =
+            usize::try_from(u64::deserialize_with_mode(&mut reader, compress, validate)?).map_err(
+                |_| SerializationError::InvalidData("num_blocks does not fit in usize".into()),
+            )?;
         let mut inner_opening_digits = Vec::with_capacity(num_blocks);
         for _ in 0..num_blocks {
-            let block_len = u64::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+            let block_len =
+                usize::try_from(u64::deserialize_with_mode(&mut reader, compress, validate)?)
+                    .map_err(|_| {
+                        SerializationError::InvalidData("block_len does not fit in usize".into())
+                    })?;
             let mut block = Vec::with_capacity(block_len);
             for _ in 0..block_len {
                 let mut plane = [0i8; D];
-                let bytes: &mut [u8] =
-                    unsafe { std::slice::from_raw_parts_mut(plane.as_mut_ptr().cast::<u8>(), D) };
-                reader.read_exact(bytes)?;
+                for digit in &mut plane {
+                    *digit = i8::deserialize_with_mode(&mut reader, compress, validate)?;
+                }
                 block.push(plane);
             }
             inner_opening_digits.push(block);
@@ -1363,5 +1457,40 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiProof<F> {
             }
         };
         Ok(Self { levels, tail })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::algebra::Fp64;
+
+    type F = Fp64<4294967197>;
+
+    #[test]
+    fn packed_digits_rejects_out_of_range_digit() {
+        let err = PackedDigits::try_from_i8_digits(&[4], 3).unwrap_err();
+        assert!(matches!(err, HachiError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn packed_digits_rejects_malformed_storage() {
+        let packed = PackedDigits {
+            num_elems: 3,
+            bits_per_elem: 3,
+            data: vec![0u8],
+        };
+        let err = packed.try_to_field_elems::<F>().unwrap_err();
+        assert!(matches!(err, SerializationError::InvalidData(_)));
+    }
+
+    #[test]
+    fn flat_ring_vec_reports_dimension_mismatch() {
+        let flat = FlatRingVec {
+            coeffs: vec![F::one(), F::zero(), F::zero(), F::zero()],
+            ring_dim: 4,
+        };
+        let err = flat.try_to_single::<8>().unwrap_err();
+        assert!(matches!(err, HachiError::InvalidInput(_)));
     }
 }

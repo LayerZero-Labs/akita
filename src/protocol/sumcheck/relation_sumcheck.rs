@@ -16,6 +16,12 @@ use crate::protocol::ring_switch::eval_ring_at;
 use crate::{FieldCore, FromSmallInt};
 use std::iter;
 
+fn hypercube_len(num_vars: usize, label: &str) -> Result<usize, HachiError> {
+    1usize
+        .checked_shl(num_vars as u32)
+        .ok_or_else(|| HachiError::InvalidInput(format!("{label} width overflows usize")))
+}
+
 /// Prover for `F_{α,τ₁}(x,y) = w̃(x,y) · α̃(y) · m(x)`.
 ///
 /// Alpha and m are stored in compact form (sizes `2^num_l` and `2^num_u`)
@@ -39,30 +45,48 @@ impl<E: FieldCore + FromSmallInt> RelationSumcheckProver<E> {
     /// - `alpha_evals_y`: evaluations of `α̃` over `{0,1}^{num_l}` (compact).
     /// - `m_evals_x`: evaluations of `m` over `{0,1}^{num_u}` (compact).
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if table sizes don't match `2^num_u`, `2^num_l`, or `2^(num_u+num_l)`.
+    /// Returns an error if any table length is inconsistent with `num_u` and `num_l`.
+    ///
     pub fn new(
         w_evals: Vec<E>,
         alpha_evals_y: &[E],
         m_evals_x: &[E],
         num_u: usize,
         num_l: usize,
-    ) -> Self {
+    ) -> Result<Self, HachiError> {
         let num_vars = num_u + num_l;
-        let n = 1usize << num_vars;
-        assert_eq!(w_evals.len(), n);
-        assert_eq!(alpha_evals_y.len(), 1 << num_l);
-        assert_eq!(m_evals_x.len(), 1 << num_u);
+        let n = hypercube_len(num_vars, "relation witness table")?;
+        let expected_alpha_len = hypercube_len(num_l, "alpha table")?;
+        let expected_m_len = hypercube_len(num_u, "m table")?;
+        if w_evals.len() != n {
+            return Err(HachiError::InvalidSize {
+                expected: n,
+                actual: w_evals.len(),
+            });
+        }
+        if alpha_evals_y.len() != expected_alpha_len {
+            return Err(HachiError::InvalidSize {
+                expected: expected_alpha_len,
+                actual: alpha_evals_y.len(),
+            });
+        }
+        if m_evals_x.len() != expected_m_len {
+            return Err(HachiError::InvalidSize {
+                expected: expected_m_len,
+                actual: m_evals_x.len(),
+            });
+        }
 
-        Self {
+        Ok(Self {
             w_table: w_evals,
             alpha_compact: alpha_evals_y.to_vec(),
             m_compact: m_evals_x.to_vec(),
             num_u,
             num_vars,
             rounds_completed: 0,
-        }
+        })
     }
 }
 
@@ -198,9 +222,9 @@ pub struct RelationSumcheckVerifier<F: FieldCore, const D: usize> {
 impl<F: FieldCore, const D: usize> RelationSumcheckVerifier<F, D> {
     /// Create a new evaluation-relation sumcheck verifier.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if table sizes don't match `2^num_u`, `2^num_l`, or `2^(num_u+num_l)`.
+    /// Returns an error if any table length is inconsistent with `num_u` and `num_l`.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         w_evals: Vec<F>,
@@ -213,11 +237,29 @@ impl<F: FieldCore, const D: usize> RelationSumcheckVerifier<F, D> {
         alpha: F,
         num_u: usize,
         num_l: usize,
-    ) -> Self {
-        assert_eq!(w_evals.len(), 1 << (num_u + num_l));
-        assert_eq!(alpha_evals_y.len(), 1 << num_l);
-        assert_eq!(m_evals_x.len(), 1 << num_u);
-        Self {
+    ) -> Result<Self, HachiError> {
+        let expected_w_len = hypercube_len(num_u + num_l, "relation witness table")?;
+        let expected_alpha_len = hypercube_len(num_l, "alpha table")?;
+        let expected_m_len = hypercube_len(num_u, "m table")?;
+        if w_evals.len() != expected_w_len {
+            return Err(HachiError::InvalidSize {
+                expected: expected_w_len,
+                actual: w_evals.len(),
+            });
+        }
+        if alpha_evals_y.len() != expected_alpha_len {
+            return Err(HachiError::InvalidSize {
+                expected: expected_alpha_len,
+                actual: alpha_evals_y.len(),
+            });
+        }
+        if m_evals_x.len() != expected_m_len {
+            return Err(HachiError::InvalidSize {
+                expected: expected_m_len,
+                actual: m_evals_x.len(),
+            });
+        }
+        Ok(Self {
             w_evals,
             alpha_evals_y,
             m_evals_x,
@@ -228,7 +270,7 @@ impl<F: FieldCore, const D: usize> RelationSumcheckVerifier<F, D> {
             alpha,
             num_u,
             num_l,
-        }
+        })
     }
 }
 
@@ -325,7 +367,11 @@ mod tests {
         )
         .unwrap();
 
-        let final_w: Vec<F> = proof.final_w().expect("direct tail").to_field_elems();
+        let final_w: Vec<F> = proof
+            .final_w()
+            .expect("direct tail")
+            .try_to_field_elems()
+            .unwrap();
         let d = SmallTestCommitmentConfig::D;
         assert_eq!(final_w.len() % d, 0);
         let w_u = final_w.len() / d;
@@ -403,7 +449,8 @@ mod tests {
             .fold(F::zero(), |a, v| a + v);
 
         let mut prover =
-            RelationSumcheckProver::new(w_evals.clone(), &alpha_evals_y, &m_evals_x, num_u, num_l);
+            RelationSumcheckProver::new(w_evals.clone(), &alpha_evals_y, &m_evals_x, num_u, num_l)
+                .unwrap();
         let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
         let (proof_sc, prover_challenges, final_claim) =
             prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut pt, |tr| {
@@ -422,13 +469,14 @@ mod tests {
             alpha_evals_y,
             m_evals_x,
             tau1,
-            proof.levels[0].v_typed::<D>(),
+            proof.levels[0].try_v::<D>().unwrap(),
             commitment.u.clone(),
-            proof.levels[0].y_ring_typed::<D>(),
+            proof.levels[0].try_y_ring::<D>().unwrap(),
             alpha,
             num_u,
             num_l,
-        );
+        )
+        .unwrap();
         let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
         let verifier_challenges =
             verify_sumcheck::<F, _, F, _, _>(&proof_sc, &verifier, &mut vt, |tr| {

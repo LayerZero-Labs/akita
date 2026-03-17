@@ -29,6 +29,12 @@ use std::time::Instant;
 
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
 
+fn hypercube_len(num_vars: usize, label: &str) -> Result<usize, HachiError> {
+    1usize
+        .checked_shl(num_vars as u32)
+        .ok_or_else(|| HachiError::InvalidInput(format!("{label} width overflows usize")))
+}
+
 enum WTable<E: FieldCore> {
     Compact(Vec<i8>),
     Full(Vec<E>),
@@ -71,9 +77,10 @@ pub struct HachiSumcheckProver<E: FieldCore> {
 impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumcheckProver<E> {
     /// Create a fused norm+relation sumcheck prover.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if table sizes are inconsistent with `num_u` and `num_l`.
+    /// Returns an error if any compact table length, challenge table length, or
+    /// live-column count is inconsistent with `num_u` and `num_l`.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "HachiSumcheckProver::new")]
     pub fn new(
@@ -87,19 +94,52 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
         num_u: usize,
         num_l: usize,
         relation_claim: E,
-    ) -> Self {
-        assert!(b >= 1, "b must be at least 1");
+    ) -> Result<Self, HachiError> {
+        if b == 0 {
+            return Err(HachiError::InvalidInput(
+                "hachi sumcheck base b must be at least 1".to_string(),
+            ));
+        }
         let num_vars = num_u + num_l;
-        assert!(live_x_cols >= 1, "live_x_cols must be at least 1");
-        assert!(
-            live_x_cols <= (1usize << num_u),
-            "live_x_cols exceeds x width"
-        );
-        let y_len = 1usize << num_l;
-        assert_eq!(w_evals_compact.len(), live_x_cols * y_len);
-        assert_eq!(tau0.len(), num_vars);
-        assert_eq!(alpha_evals_y.len(), y_len);
-        assert_eq!(m_evals_x.len(), 1 << num_u);
+        let max_live_x_cols = hypercube_len(num_u, "live_x_cols")?;
+        if live_x_cols == 0 {
+            return Err(HachiError::InvalidInput(
+                "live_x_cols must be at least 1".to_string(),
+            ));
+        }
+        if live_x_cols > max_live_x_cols {
+            return Err(HachiError::InvalidInput(format!(
+                "live_x_cols {live_x_cols} exceeds x width {max_live_x_cols}"
+            )));
+        }
+        let y_len = hypercube_len(num_l, "alpha table")?;
+        let expected_w_len = live_x_cols
+            .checked_mul(y_len)
+            .ok_or_else(|| HachiError::InvalidInput("compact witness table overflow".into()))?;
+        if w_evals_compact.len() != expected_w_len {
+            return Err(HachiError::InvalidSize {
+                expected: expected_w_len,
+                actual: w_evals_compact.len(),
+            });
+        }
+        if tau0.len() != num_vars {
+            return Err(HachiError::InvalidSize {
+                expected: num_vars,
+                actual: tau0.len(),
+            });
+        }
+        if alpha_evals_y.len() != y_len {
+            return Err(HachiError::InvalidSize {
+                expected: y_len,
+                actual: alpha_evals_y.len(),
+            });
+        }
+        if m_evals_x.len() != max_live_x_cols {
+            return Err(HachiError::InvalidSize {
+                expected: max_live_x_cols,
+                actual: m_evals_x.len(),
+            });
+        }
 
         let round_kernel = choose_round_kernel(b);
         let point_precomp = match round_kernel {
@@ -111,7 +151,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
             NormRoundKernel::AffineCoeffComposition => Some(RangeAffinePrecomp::new(b)),
         };
 
-        Self {
+        Ok(Self {
             w_table: WTable::Compact(w_evals_compact),
             batching_coeff,
             split_eq: GruenSplitEq::new(tau0),
@@ -129,7 +169,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiSumche
             relation_time_total: 0.0,
             fold_time_total: 0.0,
             rounds_completed: 0,
-        }
+        })
     }
 
     /// Return the fully folded witness evaluation after the final round.
@@ -1335,6 +1375,12 @@ pub struct HachiSumcheckVerifier<F: FieldCore, const D: usize> {
 
 impl<F: FieldCore + FromSmallInt, const D: usize> HachiSumcheckVerifier<F, D> {
     /// Create a fused verifier for the norm + relation sumcheck.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any verifier table length is inconsistent with
+    /// `num_u` and `num_l`, or if `w_evals` is provided alongside
+    /// `w_val_override`.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "HachiSumcheckVerifier::new")]
     pub fn new(
@@ -1352,7 +1398,51 @@ impl<F: FieldCore + FromSmallInt, const D: usize> HachiSumcheckVerifier<F, D> {
         alpha: F,
         num_u: usize,
         num_l: usize,
-    ) -> Self {
+    ) -> Result<Self, HachiError> {
+        if b == 0 {
+            return Err(HachiError::InvalidInput(
+                "hachi sumcheck base b must be at least 1".to_string(),
+            ));
+        }
+        let num_vars = num_u + num_l;
+        if tau0.len() != num_vars {
+            return Err(HachiError::InvalidSize {
+                expected: num_vars,
+                actual: tau0.len(),
+            });
+        }
+        let expected_alpha_len = hypercube_len(num_l, "alpha table")?;
+        if alpha_evals_y.len() != expected_alpha_len {
+            return Err(HachiError::InvalidSize {
+                expected: expected_alpha_len,
+                actual: alpha_evals_y.len(),
+            });
+        }
+        let expected_m_len = hypercube_len(num_u, "m table")?;
+        if m_evals_x.len() != expected_m_len {
+            return Err(HachiError::InvalidSize {
+                expected: expected_m_len,
+                actual: m_evals_x.len(),
+            });
+        }
+        let expected_w_len = hypercube_len(num_vars, "witness table")?;
+        match w_val_override {
+            Some(_) => {
+                if !w_evals.is_empty() {
+                    return Err(HachiError::InvalidInput(
+                        "w_evals must be empty when w_val_override is provided".to_string(),
+                    ));
+                }
+            }
+            None => {
+                if w_evals.len() != expected_w_len {
+                    return Err(HachiError::InvalidSize {
+                        expected: expected_w_len,
+                        actual: w_evals.len(),
+                    });
+                }
+            }
+        }
         let y_a: Vec<F> = v
             .iter()
             .chain(u.iter())
@@ -1366,7 +1456,7 @@ impl<F: FieldCore + FromSmallInt, const D: usize> HachiSumcheckVerifier<F, D> {
             relation_claim += *eq_i * y_i;
         }
 
-        Self {
+        Ok(Self {
             batching_coeff,
             w_evals,
             w_val_override,
@@ -1378,7 +1468,7 @@ impl<F: FieldCore + FromSmallInt, const D: usize> HachiSumcheckVerifier<F, D> {
             num_l,
             relation_claim,
             _marker: PhantomData,
-        }
+        })
     }
 }
 

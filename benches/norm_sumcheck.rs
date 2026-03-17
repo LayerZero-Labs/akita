@@ -181,7 +181,7 @@ fn bench_norm_sumcheck(c: &mut Criterion) {
 
         group.bench_function(BenchmarkId::new("dispatched", &case_tag), |bencher| {
             bencher.iter_batched(
-                || NormSumcheckProver::new(&case.tau, case.w_evals.clone(), case.b),
+                || NormSumcheckProver::new(&case.tau, case.w_evals.clone(), case.b).unwrap(),
                 |mut prover| {
                     let mut transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
                     black_box(

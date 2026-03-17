@@ -286,7 +286,7 @@ where
     }
 
     let w_layout = <WCommitmentConfig<D_HANDOFF, Cfg>>::commitment_layout(opening_point.len())?;
-    let direct_tail = PackedDigits::from_i8_digits(current_w, w_layout.log_basis);
+    let direct_tail = PackedDigits::try_from_i8_digits(current_w, w_layout.log_basis)?;
     let direct_hachi_tail_bytes = direct_tail.serialized_size(Compress::No);
     let target_num_vars = w_layout.m_vars + w_layout.r_vars + inner_point_bits;
     let mut padded_point = opening_point.clone();
@@ -463,7 +463,9 @@ where
     )?;
     #[cfg(debug_assertions)]
     {
-        let roundtrip = FlatLabradorProof::from_typed(&labrador_proof).to_typed::<D_HANDOFF>();
+        let roundtrip = FlatLabradorProof::from_typed(&labrador_proof)
+            .try_to_typed::<D_HANDOFF>()
+            .expect("roundtrip typed proof");
         assert!(
             roundtrip == labrador_proof,
             "labrador handoff proof roundtrip must preserve the proof"
@@ -526,9 +528,9 @@ where
         });
     }
 
-    let v: Vec<CyclotomicRing<F, D_HANDOFF>> = tail.v.to_vec();
-    let y_ring: CyclotomicRing<F, D_HANDOFF> = tail.y_ring.to_single();
-    let labrador_proof = tail.labrador_proof.to_typed::<D_HANDOFF>();
+    let v: Vec<CyclotomicRing<F, D_HANDOFF>> = tail.v.try_to_vec()?;
+    let y_ring: CyclotomicRing<F, D_HANDOFF> = tail.y_ring.try_to_single()?;
+    let labrador_proof = tail.labrador_proof.try_to_typed::<D_HANDOFF>()?;
 
     if !tracing::info_span!("labrador::handoff_match_opening_claim")
         .in_scope(|| matches_opening_claim::<F, D_HANDOFF>(&y_ring, opening_point, opening_value))

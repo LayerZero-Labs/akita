@@ -15,6 +15,12 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::{cfg_fold_reduce, AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
 
+fn hypercube_len(num_vars: usize, label: &str) -> Result<usize, HachiError> {
+    1usize
+        .checked_shl(num_vars as u32)
+        .ok_or_else(|| HachiError::InvalidInput(format!("{label} width overflows usize")))
+}
+
 /// Max number of affine coefficient rows (degree_q + 1) for `b <= 16`.
 /// With the balanced range-check polynomial (degree b), degree_q = b,
 /// so num_rows = b + 1 <= 17 fits comfortably.
@@ -766,10 +772,10 @@ pub struct NormSumcheckProver<E: FieldCore> {
 impl<E: FieldCore + FromSmallInt + HasUnreducedOps> NormSumcheckProver<E> {
     /// Create a new norm (range-check) sumcheck prover.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `w_evals.len() != 2^tau.len()`.
-    pub fn new(tau: &[E], w_evals: Vec<E>, b: usize) -> Self {
+    /// Returns an error if `b` is zero or `w_evals` does not match `2^tau.len()`.
+    pub fn new(tau: &[E], w_evals: Vec<E>, b: usize) -> Result<Self, HachiError> {
         Self::new_with_kernel(tau, w_evals, b, choose_round_kernel(b))
     }
 
@@ -778,10 +784,20 @@ impl<E: FieldCore + FromSmallInt + HasUnreducedOps> NormSumcheckProver<E> {
         w_evals: Vec<E>,
         b: usize,
         round_kernel: NormRoundKernel,
-    ) -> Self {
-        assert!(b >= 1, "b must be at least 1");
+    ) -> Result<Self, HachiError> {
+        if b == 0 {
+            return Err(HachiError::InvalidInput(
+                "norm sumcheck base b must be at least 1".to_string(),
+            ));
+        }
         let num_vars = tau.len();
-        assert_eq!(w_evals.len(), 1 << num_vars);
+        let expected_w_len = hypercube_len(num_vars, "norm witness table")?;
+        if w_evals.len() != expected_w_len {
+            return Err(HachiError::InvalidSize {
+                expected: expected_w_len,
+                actual: w_evals.len(),
+            });
+        }
         let point_precomp = match round_kernel {
             NormRoundKernel::PointEvalInterpolation => Some(PointEvalPrecomp::new(b)),
             NormRoundKernel::AffineCoeffComposition => None,
@@ -790,7 +806,7 @@ impl<E: FieldCore + FromSmallInt + HasUnreducedOps> NormSumcheckProver<E> {
             NormRoundKernel::PointEvalInterpolation => None,
             NormRoundKernel::AffineCoeffComposition => Some(RangeAffinePrecomp::new(b)),
         };
-        Self {
+        Ok(Self {
             split_eq: GruenSplitEq::new(tau),
             w_table: w_evals,
             round_kernel,
@@ -798,7 +814,7 @@ impl<E: FieldCore + FromSmallInt + HasUnreducedOps> NormSumcheckProver<E> {
             range_precomp,
             num_vars,
             b,
-        }
+        })
     }
 }
 
@@ -848,18 +864,29 @@ pub struct NormSumcheckVerifier<E> {
 impl<E: FieldCore + FromSmallInt> NormSumcheckVerifier<E> {
     /// Create a new norm (range-check) sumcheck verifier.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `w_evals.len() != 2^tau.len()`.
-    pub fn new(tau: Vec<E>, w_evals: Vec<E>, b: usize) -> Self {
+    /// Returns an error if `b` is zero or `w_evals` does not match `2^tau.len()`.
+    pub fn new(tau: Vec<E>, w_evals: Vec<E>, b: usize) -> Result<Self, HachiError> {
         let num_vars = tau.len();
-        assert_eq!(w_evals.len(), 1 << num_vars);
-        Self {
+        if b == 0 {
+            return Err(HachiError::InvalidInput(
+                "norm sumcheck base b must be at least 1".to_string(),
+            ));
+        }
+        let expected_w_len = hypercube_len(num_vars, "norm witness table")?;
+        if w_evals.len() != expected_w_len {
+            return Err(HachiError::InvalidSize {
+                expected: expected_w_len,
+                actual: w_evals.len(),
+            });
+        }
+        Ok(Self {
             tau,
             w_evals,
             num_vars,
             b,
-        }
+        })
     }
 }
 
@@ -1017,21 +1044,25 @@ mod tests {
                 .map(|_| F::from_u64(rand::Rng::gen_range(&mut rng, 1u64..=257)))
                 .collect();
 
-            let mut dispatched = NormSumcheckProver::new(&tau, w_evals.clone(), b);
+            let mut dispatched = NormSumcheckProver::new(&tau, w_evals.clone(), b).unwrap();
             let mut point_eval = NormSumcheckProver::new_with_kernel(
                 &tau,
                 w_evals.clone(),
                 b,
                 NormRoundKernel::PointEvalInterpolation,
-            );
+            )
+            .unwrap();
             let use_affine = b <= 8;
             let mut affine_coeff = if use_affine {
-                Some(NormSumcheckProver::new_with_kernel(
-                    &tau,
-                    w_evals.clone(),
-                    b,
-                    NormRoundKernel::AffineCoeffComposition,
-                ))
+                Some(
+                    NormSumcheckProver::new_with_kernel(
+                        &tau,
+                        w_evals.clone(),
+                        b,
+                        NormRoundKernel::AffineCoeffComposition,
+                    )
+                    .unwrap(),
+                )
             } else {
                 None
             };
@@ -1135,9 +1166,9 @@ mod tests {
             ("affine_coeff", NormRoundKernel::AffineCoeffComposition),
         ] {
             with_norm_kernel_override(override_value, || {
-                let mut overridden = NormSumcheckProver::new(&tau, w_evals.clone(), b);
+                let mut overridden = NormSumcheckProver::new(&tau, w_evals.clone(), b).unwrap();
                 let mut explicit =
-                    NormSumcheckProver::new_with_kernel(&tau, w_evals.clone(), b, kernel);
+                    NormSumcheckProver::new_with_kernel(&tau, w_evals.clone(), b, kernel).unwrap();
                 let mut claim_overridden = F::zero();
                 let mut claim_explicit = F::zero();
                 for round in 0..num_vars {
@@ -1193,7 +1224,7 @@ mod tests {
             .map(|i| eq_table[i] * range_check_eval(w_evals[i], b))
             .fold(F::zero(), |a, v| a + v);
 
-        let mut prover = NormSumcheckProver::new(&tau, w_evals.clone(), b);
+        let mut prover = NormSumcheckProver::new(&tau, w_evals.clone(), b).unwrap();
         let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
         let (proof, prover_challenges, final_claim) =
             prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut pt, |tr| {
@@ -1205,7 +1236,7 @@ mod tests {
             * range_check_eval(multilinear_eval(&w_evals, &prover_challenges).unwrap(), b);
         assert_eq!(final_claim, oracle, "prover final claim != oracle eval");
 
-        let verifier = NormSumcheckVerifier::new(tau, w_evals, b);
+        let verifier = NormSumcheckVerifier::new(tau, w_evals, b).unwrap();
         let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
         let verifier_challenges =
             verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut vt, |tr| {
@@ -1242,7 +1273,11 @@ mod tests {
         )
         .unwrap();
 
-        let mut w_evals: Vec<F> = proof.final_w().expect("direct tail").to_field_elems();
+        let mut w_evals: Vec<F> = proof
+            .final_w()
+            .expect("direct tail")
+            .try_to_field_elems()
+            .unwrap();
         let target_len = w_evals.len().next_power_of_two();
         w_evals.resize(target_len, F::zero());
         let num_sumcheck_vars = target_len.trailing_zeros() as usize;
@@ -1256,7 +1291,7 @@ mod tests {
             .map(|i| eq_table[i] * range_check_eval(w_evals[i], b))
             .fold(F::zero(), |a, v| a + v);
 
-        let mut prover = NormSumcheckProver::new(&tau, w_evals.clone(), b);
+        let mut prover = NormSumcheckProver::new(&tau, w_evals.clone(), b).unwrap();
         let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
         let (proof_sc, prover_challenges, final_claim) =
             prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut pt, |tr| {
@@ -1268,7 +1303,7 @@ mod tests {
             * range_check_eval(multilinear_eval(&w_evals, &prover_challenges).unwrap(), b);
         assert_eq!(final_claim, oracle, "prover final claim != oracle eval");
 
-        let verifier = NormSumcheckVerifier::new(tau, w_evals, b);
+        let verifier = NormSumcheckVerifier::new(tau, w_evals, b).unwrap();
         let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
         let verifier_challenges =
             verify_sumcheck::<F, _, F, _, _>(&proof_sc, &verifier, &mut vt, |tr| {
@@ -1294,7 +1329,7 @@ mod tests {
         let w_evals_e: Vec<E2> = w_evals_f.iter().map(|&f| E2::lift_base(f)).collect();
         let tau_e: Vec<E2> = tau_f.iter().map(|&f| E2::lift_base(f)).collect();
 
-        let mut prover = NormSumcheckProver::new(&tau_e, w_evals_e.clone(), b);
+        let mut prover = NormSumcheckProver::new(&tau_e, w_evals_e.clone(), b).unwrap();
 
         let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
         let (proof, prover_challenges, final_claim) =
@@ -1307,7 +1342,7 @@ mod tests {
             * range_check_eval(multilinear_eval(&w_evals_e, &prover_challenges).unwrap(), b);
         assert_eq!(final_claim, oracle, "E2 prover final claim != oracle eval");
 
-        let verifier = NormSumcheckVerifier::new(tau_e, w_evals_e, b);
+        let verifier = NormSumcheckVerifier::new(tau_e, w_evals_e, b).unwrap();
         let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
         let verifier_challenges =
             verify_sumcheck::<F, _, E2, _, _>(&proof, &verifier, &mut vt, |tr| {
