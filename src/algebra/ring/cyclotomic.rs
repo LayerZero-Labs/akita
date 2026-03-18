@@ -984,7 +984,7 @@ impl<W: AdditiveGroup, const D: usize> Default for WideCyclotomicRing<W, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::fields::{Fp128x8i32, Fp64, Fp64x4i32, Prime128M8M4M1M0};
+    use crate::algebra::fields::{Fp128x6i32, Fp128x8i32, Fp64, Fp64x4i32, Prime128M8M4M1M0};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
@@ -1055,6 +1055,28 @@ mod tests {
         let mut narrow = CyclotomicRing::<F128, D>::zero();
         let wide_src = WideCyclotomicRing::<Fp128x8i32, D>::from_ring(&src);
         let mut wide_dst = WideCyclotomicRing::<Fp128x8i32, D>::zero();
+
+        for k in 0..50 {
+            src.shift_accumulate_into(&mut narrow, k % D);
+            wide_src.shift_accumulate_into(&mut wide_dst, k % D);
+        }
+        for k in 0..30 {
+            src.shift_sub_into(&mut narrow, k % D);
+            wide_src.shift_sub_into(&mut wide_dst, k % D);
+        }
+
+        let wide_reduced: CyclotomicRing<F128, D> = wide_dst.reduce();
+        assert_eq!(narrow, wide_reduced);
+    }
+
+    #[test]
+    fn wide_many_accumulations_fp128x6() {
+        let mut rng = StdRng::seed_from_u64(0xbeef_0606);
+        let src = CyclotomicRing::<F128, D>::random(&mut rng);
+
+        let mut narrow = CyclotomicRing::<F128, D>::zero();
+        let wide_src = WideCyclotomicRing::<Fp128x6i32, D>::from_ring(&src);
+        let mut wide_dst = WideCyclotomicRing::<Fp128x6i32, D>::zero();
 
         for k in 0..50 {
             src.shift_accumulate_into(&mut narrow, k % D);

@@ -1,12 +1,13 @@
 //! Wide unreduced field accumulators for carry-free signed addition.
 //!
-//! Each type splits a canonical field element into 16-bit limbs stored in
-//! `i32` slots.  Addition and negation are element-wise i32 ops — no carry
-//! propagation, no modular reduction.  Reduction back to canonical form
-//! happens once after accumulation via [`reduce`](Fp128x8i32::reduce).
+//! The scaled-wide types used by [`HasWide`] split canonical field elements
+//! into 16-bit limbs stored in `i32` slots. Addition and negation are
+//! element-wise i32 ops with reduction back to canonical form happening once
+//! after accumulation.
 //!
-//! The i32 overflow budget is `i32::MAX / u16::MAX ≈ 32,769` signed
-//! additions before any limb can overflow.
+//! Add/sub-only callers can use denser layouts through [`HasAdditiveWide`].
+//! These types do not support `scale_i32`, but they expose an explicit signed
+//! addition headroom so callers can flush before an `i32` limb overflows.
 
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
@@ -533,6 +534,229 @@ impl Neg for Fp128x8i32 {
     }
 }
 
+/// Add/sub-only wide accumulator for `Fp128`: 6 × i32 limbs.
+///
+/// The layout is `[22, 21, 21, 22, 21, 21]` bits so each 64-bit half of the
+/// canonical value decomposes independently into three digits. The widest
+/// digits are 22 bits, giving a safe signed-add headroom of `512`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+pub struct Fp128x6i32(pub [i32; 6]);
+
+impl Fp128x6i32 {
+    const LOW_MASK: u64 = 0x3f_ffff;
+    const MID_MASK: u64 = 0x1f_ffff;
+    const WIDTHS: [u32; 6] = [22, 21, 21, 22, 21, 21];
+    const MASKS: [i64; 6] = [
+        Self::LOW_MASK as i64,
+        Self::MID_MASK as i64,
+        Self::MID_MASK as i64,
+        Self::LOW_MASK as i64,
+        Self::MID_MASK as i64,
+        Self::MID_MASK as i64,
+    ];
+
+    /// Returns the zero accumulator.
+    #[inline]
+    pub fn zero() -> Self {
+        <Self as AdditiveGroup>::ZERO
+    }
+
+    /// Reduce back to canonical `Fp128<P>`.
+    #[inline]
+    pub fn reduce<const P: u128>(self) -> Fp128<P> {
+        let mut carry: i64 = 0;
+        let mut digits = [0u64; 6];
+        for (((&limb, &mask), &width), digit) in self
+            .0
+            .iter()
+            .zip(Self::MASKS.iter())
+            .zip(Self::WIDTHS.iter())
+            .zip(digits.iter_mut())
+        {
+            let v = limb as i64 + carry;
+            *digit = (v & mask) as u64;
+            carry = v >> width;
+        }
+
+        let lo = digits[0] | (digits[1] << 22) | (digits[2] << 43);
+        let hi = digits[3] | (digits[4] << 22) | (digits[5] << 43);
+
+        let c = Fp128::<P>::C_LO;
+        if carry == 0 {
+            Fp128::<P>::from_canonical_u128_reduced(lo as u128 | (hi as u128) << 64)
+        } else if carry > 0 {
+            Fp128::<P>::solinas_reduce(&[lo, hi, carry as u64])
+        } else {
+            let neg_carry = (-carry) as u64;
+            let sub = neg_carry as u128 * c as u128;
+            let base = lo as u128 | (hi as u128) << 64;
+            if base >= sub {
+                Fp128::<P>::from_canonical_u128_reduced(base - sub)
+            } else {
+                let diff = sub - base;
+                Fp128::<P>::from_canonical_u128_reduced(P - diff)
+            }
+        }
+    }
+}
+
+impl<const P: u128> From<Fp128<P>> for Fp128x6i32 {
+    #[inline]
+    fn from(x: Fp128<P>) -> Self {
+        let lo = x.0[0];
+        let hi = x.0[1];
+        Self([
+            (lo & Self::LOW_MASK) as i32,
+            ((lo >> 22) & Self::MID_MASK) as i32,
+            ((lo >> 43) & Self::MID_MASK) as i32,
+            (hi & Self::LOW_MASK) as i32,
+            ((hi >> 22) & Self::MID_MASK) as i32,
+            ((hi >> 43) & Self::MID_MASK) as i32,
+        ])
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl Add for Fp128x6i32 {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        unsafe {
+            use std::arch::aarch64::*;
+            let a0 = vld1q_s32(self.0.as_ptr());
+            let a1 = vld1_s32(self.0.as_ptr().add(4));
+            let b0 = vld1q_s32(rhs.0.as_ptr());
+            let b1 = vld1_s32(rhs.0.as_ptr().add(4));
+            let mut out = [0i32; 6];
+            vst1q_s32(out.as_mut_ptr(), vaddq_s32(a0, b0));
+            vst1_s32(out.as_mut_ptr().add(4), vadd_s32(a1, b1));
+            Self(out)
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl AddAssign for Fp128x6i32 {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl Sub for Fp128x6i32 {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        unsafe {
+            use std::arch::aarch64::*;
+            let a0 = vld1q_s32(self.0.as_ptr());
+            let a1 = vld1_s32(self.0.as_ptr().add(4));
+            let b0 = vld1q_s32(rhs.0.as_ptr());
+            let b1 = vld1_s32(rhs.0.as_ptr().add(4));
+            let mut out = [0i32; 6];
+            vst1q_s32(out.as_mut_ptr(), vsubq_s32(a0, b0));
+            vst1_s32(out.as_mut_ptr().add(4), vsub_s32(a1, b1));
+            Self(out)
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl SubAssign for Fp128x6i32 {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl Neg for Fp128x6i32 {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        unsafe {
+            use std::arch::aarch64::*;
+            let a0 = vld1q_s32(self.0.as_ptr());
+            let a1 = vld1_s32(self.0.as_ptr().add(4));
+            let mut out = [0i32; 6];
+            vst1q_s32(out.as_mut_ptr(), vnegq_s32(a0));
+            vst1_s32(out.as_mut_ptr().add(4), vneg_s32(a1));
+            Self(out)
+        }
+    }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+impl Add for Fp128x6i32 {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        Self([
+            self.0[0] + rhs.0[0],
+            self.0[1] + rhs.0[1],
+            self.0[2] + rhs.0[2],
+            self.0[3] + rhs.0[3],
+            self.0[4] + rhs.0[4],
+            self.0[5] + rhs.0[5],
+        ])
+    }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+impl AddAssign for Fp128x6i32 {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.0[0] += rhs.0[0];
+        self.0[1] += rhs.0[1];
+        self.0[2] += rhs.0[2];
+        self.0[3] += rhs.0[3];
+        self.0[4] += rhs.0[4];
+        self.0[5] += rhs.0[5];
+    }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+impl Sub for Fp128x6i32 {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        Self([
+            self.0[0] - rhs.0[0],
+            self.0[1] - rhs.0[1],
+            self.0[2] - rhs.0[2],
+            self.0[3] - rhs.0[3],
+            self.0[4] - rhs.0[4],
+            self.0[5] - rhs.0[5],
+        ])
+    }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+impl SubAssign for Fp128x6i32 {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0[0] -= rhs.0[0];
+        self.0[1] -= rhs.0[1];
+        self.0[2] -= rhs.0[2];
+        self.0[3] -= rhs.0[3];
+        self.0[4] -= rhs.0[4];
+        self.0[5] -= rhs.0[5];
+    }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+impl Neg for Fp128x6i32 {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        Self([
+            -self.0[0], -self.0[1], -self.0[2], -self.0[3], -self.0[4], -self.0[5],
+        ])
+    }
+}
+
 impl AdditiveGroup for Fp32x2i32 {
     const ZERO: Self = Self([0; 2]);
 }
@@ -543,6 +767,10 @@ impl AdditiveGroup for Fp64x4i32 {
 
 impl AdditiveGroup for Fp128x8i32 {
     const ZERO: Self = Self([0; 8]);
+}
+
+impl AdditiveGroup for Fp128x6i32 {
+    const ZERO: Self = Self([0; 6]);
 }
 
 /// Accumulator for `Fp64 × u64` products (also used for `Fp64 × Fp64`).
@@ -869,6 +1097,13 @@ impl<const P: u128> ReduceTo<Fp128<P>> for Fp128x8i32 {
     }
 }
 
+impl<const P: u128> ReduceTo<Fp128<P>> for Fp128x6i32 {
+    #[inline]
+    fn reduce(self) -> Fp128<P> {
+        Fp128x6i32::reduce::<P>(self)
+    }
+}
+
 /// Multi-level unreduced multiplication hierarchy.
 ///
 /// Provides `field × u64` and `field × field` widening multiplies that return
@@ -972,6 +1207,16 @@ impl ScaleI32 for Fp128x8i32 {
     }
 }
 
+/// Associates a field type with an add/sub-only wide accumulator.
+pub trait HasAdditiveWide: FieldCore {
+    /// Wide accumulator used only for signed addition / subtraction.
+    type AdditiveWide: AdditiveGroup + From<Self> + ReduceTo<Self>;
+
+    /// Maximum number of worst-case signed additions before any limb can
+    /// overflow an `i32`.
+    const ADDITIVE_WIDE_HEADROOM: usize;
+}
+
 /// Associates a field type with its wide unreduced accumulator.
 pub trait HasWide: FieldCore {
     /// The wide accumulator type.
@@ -991,12 +1236,27 @@ impl<const P: u32> HasWide for Fp32<P> {
     type Wide = Fp32x2i32;
 }
 
+impl<const P: u32> HasAdditiveWide for Fp32<P> {
+    type AdditiveWide = Fp32x2i32;
+    const ADDITIVE_WIDE_HEADROOM: usize = 32_768;
+}
+
 impl<const P: u64> HasWide for Fp64<P> {
     type Wide = Fp64x4i32;
 }
 
+impl<const P: u64> HasAdditiveWide for Fp64<P> {
+    type AdditiveWide = Fp64x4i32;
+    const ADDITIVE_WIDE_HEADROOM: usize = 32_768;
+}
+
 impl<const P: u128> HasWide for Fp128<P> {
     type Wide = Fp128x8i32;
+}
+
+impl<const P: u128> HasAdditiveWide for Fp128<P> {
+    type AdditiveWide = Fp128x6i32;
+    const ADDITIVE_WIDE_HEADROOM: usize = 512;
 }
 
 #[cfg(test)]
@@ -1069,6 +1329,68 @@ mod tests {
         let mut wide = Fp128x8i32::zero();
         for (i, &v) in vals.iter().enumerate() {
             let wv = Fp128x8i32::from(v);
+            if i % 3 == 0 {
+                scalar -= v;
+                wide -= wv;
+            } else {
+                scalar += v;
+                wide += wv;
+            }
+        }
+        assert_eq!(wide.reduce::<P128>(), scalar);
+    }
+
+    #[test]
+    fn fp128x6_roundtrip() {
+        let mut rng = StdRng::seed_from_u64(0x6161_1234);
+        for _ in 0..1000 {
+            let a: F128 = FieldSampling::sample(&mut rng);
+            let wide = Fp128x6i32::from(a);
+            let back = wide.reduce::<P128>();
+            assert_eq!(a, back, "roundtrip failed for {a:?}");
+        }
+    }
+
+    #[test]
+    fn fp128x6_accumulate_matches_scalar() {
+        let mut rng = StdRng::seed_from_u64(0x6161_beef);
+        let n = 500;
+        let vals: Vec<F128> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+
+        let scalar_sum = vals.iter().fold(F128::zero(), |acc, &x| acc + x);
+        let wide_sum = vals
+            .iter()
+            .fold(Fp128x6i32::zero(), |acc, &x| acc + Fp128x6i32::from(x));
+
+        assert_eq!(wide_sum.reduce::<P128>(), scalar_sum);
+    }
+
+    #[test]
+    fn fp128x6_add_sub_neg_match_scalar() {
+        let mut rng = StdRng::seed_from_u64(0x6161_5566);
+        for _ in 0..500 {
+            let a: F128 = FieldSampling::sample(&mut rng);
+            let b: F128 = FieldSampling::sample(&mut rng);
+
+            let wa = Fp128x6i32::from(a);
+            let wb = Fp128x6i32::from(b);
+
+            assert_eq!((wa + wb).reduce::<P128>(), a + b);
+            assert_eq!((wa - wb).reduce::<P128>(), a - b);
+            assert_eq!((-wa).reduce::<P128>(), -a);
+        }
+    }
+
+    #[test]
+    fn fp128x6_mixed_add_sub_stress() {
+        let mut rng = StdRng::seed_from_u64(0x6161_cccc);
+        let n = 500;
+        let vals: Vec<F128> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+
+        let mut scalar = F128::zero();
+        let mut wide = Fp128x6i32::zero();
+        for (i, &v) in vals.iter().enumerate() {
+            let wv = Fp128x6i32::from(v);
             if i % 3 == 0 {
                 scalar -= v;
                 wide -= wv;

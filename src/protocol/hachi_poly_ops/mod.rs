@@ -15,7 +15,7 @@
 //! signature will change.  Additional operation methods may be added as the
 //! protocol evolves.
 
-use crate::algebra::fields::wide::HasWide;
+use crate::algebra::fields::wide::HasAdditiveWide;
 use crate::algebra::ring::sparse_challenge::SparseChallenge;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
@@ -1145,7 +1145,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
 
 impl<F, const D: usize, I: OneHotIndex> HachiPolyOps<F, D> for OneHotPoly<F, D, I>
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: FieldCore + CanonicalField + HasAdditiveWide,
 {
     type CommitCache = NttSlotCache<D>;
 

@@ -1,6 +1,6 @@
 //! Commitment scheme trait implementation.
 
-use crate::algebra::fields::wide::HasWide;
+use crate::algebra::fields::wide::{HasAdditiveWide, HasWide};
 use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::CyclotomicRing;
 #[cfg(debug_assertions)]
@@ -829,7 +829,13 @@ where
 
 impl<F, const D: usize, Cfg> CommitmentScheme<F, D> for HachiCommitmentScheme<D, Cfg>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasAdditiveWide
+        + HasWide
+        + HasUnreducedOps
+        + Valid,
     Cfg: CommitmentConfig,
 {
     type ProverSetup = HachiProverSetup<F, D>;

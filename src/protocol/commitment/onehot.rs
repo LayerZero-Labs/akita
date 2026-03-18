@@ -6,12 +6,12 @@
 
 use std::collections::BTreeMap;
 
-use crate::algebra::fields::wide::{HasWide, ReduceTo};
+use crate::algebra::fields::wide::HasAdditiveWide;
 use crate::algebra::ring::{CyclotomicRing, WideCyclotomicRing};
 use crate::error::HachiError;
 use crate::protocol::commitment::utils::flat_matrix::RingMatrixView;
 use crate::protocol::hachi_poly_ops::OneHotIndex;
-use crate::{AdditiveGroup, CanonicalField, FieldCore};
+use crate::{CanonicalField, FieldCore};
 
 /// Describes a nonzero ring element within one block of the commitment layout.
 #[derive(Debug, Clone, PartialEq)]
@@ -143,7 +143,62 @@ pub(crate) fn inner_ajtai_onehot_t_only<F: FieldCore + CanonicalField, const D: 
 /// Wide-accumulator variant of [`inner_ajtai_onehot_t_only`].
 ///
 /// Accumulates into `WideCyclotomicRing<W, D>` (carry-free i32 additions),
-/// then reduces once at the end. This avoids per-addition modular reduction.
+/// flushing into reduced ring totals when the signed-add budget is exhausted.
+/// This avoids per-addition modular reduction while keeping overflow explicit.
+fn flush_onehot_wide_chunk<F, const D: usize>(
+    reduced: &mut [CyclotomicRing<F, D>],
+    wide_chunk: &mut [WideCyclotomicRing<F::AdditiveWide, D>],
+) where
+    F: FieldCore + CanonicalField + HasAdditiveWide,
+{
+    for (dst, wide) in reduced.iter_mut().zip(wide_chunk.iter_mut()) {
+        *dst += wide.reduce();
+        *wide = WideCyclotomicRing::zero();
+    }
+}
+
+fn inner_ajtai_onehot_wide_with_budget<F, const D: usize>(
+    a: &RingMatrixView<'_, F, D>,
+    sparse_entries: &[SparseBlockEntry],
+    _block_len: usize,
+    num_digits: usize,
+    budget: usize,
+) -> Vec<CyclotomicRing<F, D>>
+where
+    F: FieldCore + CanonicalField + HasAdditiveWide,
+{
+    assert!(budget > 0, "budget must be positive");
+    let n_a = a.num_rows();
+    let mut reduced = vec![CyclotomicRing::<F, D>::zero(); n_a];
+    let mut wide_chunk = vec![WideCyclotomicRing::<F::AdditiveWide, D>::zero(); n_a];
+    let mut remaining_budget = budget;
+
+    for entry in sparse_entries {
+        let col = entry.pos_in_block * num_digits;
+        let mut consumed = 0usize;
+        while consumed < entry.nonzero_coeffs.len() {
+            if remaining_budget == 0 {
+                flush_onehot_wide_chunk(&mut reduced, &mut wide_chunk);
+                remaining_budget = budget;
+            }
+            let take = remaining_budget.min(entry.nonzero_coeffs.len() - consumed);
+            let coeff_chunk = &entry.nonzero_coeffs[consumed..consumed + take];
+            for (a_idx, t_w) in wide_chunk.iter_mut().enumerate() {
+                let a_wide = WideCyclotomicRing::from_ring(&a.row(a_idx)[col]);
+                a_wide.mul_by_monomial_sum_into(t_w, coeff_chunk);
+            }
+            consumed += take;
+            remaining_budget -= take;
+        }
+    }
+
+    if remaining_budget != budget {
+        flush_onehot_wide_chunk(&mut reduced, &mut wide_chunk);
+    }
+
+    reduced
+}
+
 #[allow(non_snake_case)]
 pub(crate) fn inner_ajtai_onehot_wide<F, const D: usize>(
     A: &RingMatrixView<'_, F, D>,
@@ -152,21 +207,15 @@ pub(crate) fn inner_ajtai_onehot_wide<F, const D: usize>(
     num_digits: usize,
 ) -> Vec<CyclotomicRing<F, D>>
 where
-    F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: FieldCore + CanonicalField + HasAdditiveWide,
 {
-    let n_a = A.num_rows();
-    let mut t_wide = vec![WideCyclotomicRing::<F::Wide, D>::zero(); n_a];
-
-    for entry in sparse_entries {
-        let col = entry.pos_in_block * num_digits;
-        for (a_idx, t_w) in t_wide.iter_mut().enumerate() {
-            let a_wide = WideCyclotomicRing::from_ring(&A.row(a_idx)[col]);
-            a_wide.mul_by_monomial_sum_into(t_w, &entry.nonzero_coeffs);
-        }
-    }
-
-    t_wide.into_iter().map(|w| w.reduce()).collect()
+    inner_ajtai_onehot_wide_with_budget::<F, D>(
+        A,
+        sparse_entries,
+        _block_len,
+        num_digits,
+        F::ADDITIVE_WIDE_HEADROOM,
+    )
 }
 
 #[cfg(test)]
@@ -331,6 +380,46 @@ mod tests {
         assert_eq!(ref_result.len(), wide_result.len());
         for (r, w) in ref_result.iter().zip(wide_result.iter()) {
             assert_eq!(r, w, "wide result must match reference (Fp128)");
+        }
+    }
+
+    #[test]
+    fn wide_matches_reference_fp128_forced_flush() {
+        type F = Prime128M8M4M1M0;
+        const D: usize = 64;
+
+        let mut rng = StdRng::seed_from_u64(0xface_2468);
+        let n_a = 2;
+        let block_len = 2;
+        let num_digits = 3;
+        let a_matrix: Vec<Vec<CyclotomicRing<F, D>>> = (0..n_a)
+            .map(|_| {
+                (0..block_len * num_digits)
+                    .map(|_| CyclotomicRing::random(&mut rng))
+                    .collect()
+            })
+            .collect();
+
+        let entries = vec![
+            SparseBlockEntry {
+                pos_in_block: 0,
+                nonzero_coeffs: (0..11).collect(),
+            },
+            SparseBlockEntry {
+                pos_in_block: 1,
+                nonzero_coeffs: vec![3, 9, 17, 31, 45, 63],
+            },
+        ];
+
+        let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
+        let a_view = a_flat.view::<D>();
+        let ref_result = inner_ajtai_onehot_t_only(&a_matrix, &entries, block_len, num_digits);
+        let wide_result =
+            inner_ajtai_onehot_wide_with_budget(&a_view, &entries, block_len, num_digits, 4);
+
+        assert_eq!(ref_result.len(), wide_result.len());
+        for (r, w) in ref_result.iter().zip(wide_result.iter()) {
+            assert_eq!(r, w, "forced-flush result must match reference (Fp128)");
         }
     }
 }

@@ -16,7 +16,7 @@ use super::utils::linear::{
 };
 use super::utils::matrix::{derive_public_matrix, sample_public_matrix_seed, PublicMatrixSeed};
 use super::CommitmentConfig;
-use crate::algebra::fields::wide::HasWide;
+use crate::algebra::fields::wide::{HasAdditiveWide, HasWide};
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
@@ -396,7 +396,7 @@ pub struct HachiCommitmentCore;
 
 impl<F, const D: usize, Cfg> RingCommitmentScheme<F, D, Cfg> for HachiCommitmentCore
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasWide + Valid,
+    F: FieldCore + CanonicalField + FieldSampling + HasAdditiveWide + HasWide + Valid,
     Cfg: CommitmentConfig,
 {
     type ProverSetup = HachiProverSetup<F, D>;
