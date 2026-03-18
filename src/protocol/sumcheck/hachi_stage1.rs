@@ -814,6 +814,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         let live_pairs = self.live_x_cols.div_ceil(2);
         let degree_q = self.b / 2;
 
+        let block_size = num_first.min(live_pairs);
+
         match self.round_kernel {
             NormRoundKernel::PointEvalInterpolation => {
                 let num_points_q = degree_q + 1;
@@ -823,28 +825,43 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                     |mut norm_evals, y| {
                         let row_start = y * self.live_x_cols;
                         let row = &s_compact[row_start..row_start + self.live_x_cols];
-                        for pair_x in 0..live_pairs {
-                            let j = y * current_x_half + pair_x;
-                            let j_low = j & (num_first - 1);
-                            let j_high = j >> first_bits;
-                            let eq_rem = e_first[j_low] * e_second[j_high];
+                        let j_base = y * current_x_half;
+                        let mut inner_evals = vec![E::zero(); num_points_q];
 
-                            let left = 2 * pair_x;
-                            let s0_i = row[left] as i64;
-                            let s1_i = if left + 1 < self.live_x_cols {
-                                row[left + 1] as i64
-                            } else {
-                                0
-                            };
-                            let delta_i = s1_i - s0_i;
-                            let mut s_t_i = s0_i;
-                            for eval in &mut norm_evals {
-                                *eval += eq_rem
-                                    * field_from_i128::<E>(range_check_eval_from_s_i128(
-                                        s_t_i, self.b,
-                                    ));
-                                s_t_i += delta_i;
+                        let mut blk = 0usize;
+                        while blk < live_pairs {
+                            let blk_end = (blk + block_size).min(live_pairs);
+                            let j_high = (j_base + blk) >> first_bits;
+
+                            for v in inner_evals.iter_mut() {
+                                *v = E::zero();
                             }
+                            for pair_x in blk..blk_end {
+                                let j_low = (j_base + pair_x) & (num_first - 1);
+                                let e_in = e_first[j_low];
+                                let left = 2 * pair_x;
+                                let s0_i = row[left] as i64;
+                                let s1_i = if left + 1 < self.live_x_cols {
+                                    row[left + 1] as i64
+                                } else {
+                                    0
+                                };
+                                let delta_i = s1_i - s0_i;
+                                let mut s_t_i = s0_i;
+                                for eval in &mut inner_evals {
+                                    *eval += e_in
+                                        * field_from_i128::<E>(range_check_eval_from_s_i128(
+                                            s_t_i, self.b,
+                                        ));
+                                    s_t_i += delta_i;
+                                }
+                            }
+
+                            let e_out = e_second[j_high];
+                            for (eval, inner) in norm_evals.iter_mut().zip(inner_evals.iter()) {
+                                *eval += e_out * *inner;
+                            }
+                            blk = blk_end;
                         }
                         norm_evals
                     },
@@ -862,91 +879,112 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                 let rp = self.range_precomp.as_ref().unwrap();
                 let num_coeffs_q = rp.degree_q + 1;
                 let mut q_coeffs = if rp.compact_coeffs_lut(0, 0).is_some() {
-                    let (pos_accum, neg_accum) = cfg_fold_reduce!(
+                    cfg_fold_reduce!(
                         0..(1usize << (self.num_vars - self.num_u)),
-                        || (
-                            vec![E::MulU64Accum::ZERO; num_coeffs_q],
-                            vec![E::MulU64Accum::ZERO; num_coeffs_q],
-                        ),
-                        |(mut pos_accum, mut neg_accum), y| {
+                        || vec![E::ProductAccum::ZERO; num_coeffs_q],
+                        |mut outer_accum, y| {
                             let row_start = y * self.live_x_cols;
                             let row = &s_compact[row_start..row_start + self.live_x_cols];
-                            for pair_x in 0..live_pairs {
-                                let j = y * current_x_half + pair_x;
-                                let j_low = j & (num_first - 1);
-                                let j_high = j >> first_bits;
-                                let eq_rem = e_first[j_low] * e_second[j_high];
+                            let j_base = y * current_x_half;
 
-                                let left = 2 * pair_x;
-                                let s0_i = row[left];
-                                let s1_i = if left + 1 < self.live_x_cols {
-                                    row[left + 1]
-                                } else {
-                                    0
-                                };
-                                let coeffs = rp
-                                    .compact_coeffs_lut(s0_i, s1_i)
-                                    .expect("missing compact coefficient LUT");
-                                accumulate_compact_coeffs(
-                                    &mut pos_accum,
-                                    &mut neg_accum,
-                                    eq_rem,
-                                    coeffs,
-                                );
+                            let mut blk = 0usize;
+                            while blk < live_pairs {
+                                let blk_end = (blk + block_size).min(live_pairs);
+                                let j_high = (j_base + blk) >> first_bits;
+                                let mut inner_pos = [E::MulU64Accum::ZERO; MAX_AFFINE_COEFFS];
+                                let mut inner_neg = [E::MulU64Accum::ZERO; MAX_AFFINE_COEFFS];
+
+                                for pair_x in blk..blk_end {
+                                    let j_low = (j_base + pair_x) & (num_first - 1);
+                                    let e_in = e_first[j_low];
+                                    let left = 2 * pair_x;
+                                    let s0_i = row[left];
+                                    let s1_i = if left + 1 < self.live_x_cols {
+                                        row[left + 1]
+                                    } else {
+                                        0
+                                    };
+                                    let coeffs = rp
+                                        .compact_coeffs_lut(s0_i, s1_i)
+                                        .expect("missing compact coefficient LUT");
+                                    accumulate_compact_coeffs(
+                                        &mut inner_pos[..num_coeffs_q],
+                                        &mut inner_neg[..num_coeffs_q],
+                                        e_in,
+                                        coeffs,
+                                    );
+                                }
+
+                                let e_out = e_second[j_high];
+                                for k in 0..num_coeffs_q {
+                                    let inner_reduced =
+                                        reduce_small_coeff_accum(inner_pos[k], inner_neg[k]);
+                                    outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                                }
+                                blk = blk_end;
                             }
-                            (pos_accum, neg_accum)
+                            outer_accum
                         },
-                        |(mut pa, mut na), (pb, nb)| {
-                            for (ai, bi) in pa.iter_mut().zip(pb.iter()) {
+                        |mut a, b_vec| {
+                            for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
                                 *ai += *bi;
                             }
-                            for (ai, bi) in na.iter_mut().zip(nb.iter()) {
-                                *ai += *bi;
-                            }
-                            (pa, na)
+                            a
                         }
-                    );
-                    pos_accum
-                        .into_iter()
-                        .zip(neg_accum)
-                        .map(|(pos, neg)| reduce_small_coeff_accum(pos, neg))
-                        .collect()
+                    )
+                    .into_iter()
+                    .map(E::reduce_product_accum)
+                    .collect()
                 } else {
                     cfg_fold_reduce!(
                         0..(1usize << (self.num_vars - self.num_u)),
                         || vec![E::ProductAccum::ZERO; num_coeffs_q],
-                        |mut q_coeffs, y| {
+                        |mut outer_accum, y| {
                             let row_start = y * self.live_x_cols;
                             let row = &s_compact[row_start..row_start + self.live_x_cols];
+                            let j_base = y * current_x_half;
                             let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
                             let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
-                            for pair_x in 0..live_pairs {
-                                let j = y * current_x_half + pair_x;
-                                let j_low = j & (num_first - 1);
-                                let j_high = j >> first_bits;
-                                let eq_rem = e_first[j_low] * e_second[j_high];
 
-                                let left = 2 * pair_x;
-                                let s0_i = row[left];
-                                let s1_i = if left + 1 < self.live_x_cols {
-                                    row[left + 1]
-                                } else {
-                                    0
-                                };
-                                compute_entry_coeffs_from_s(
-                                    &mut entry_buf,
-                                    &mut s_pows_buf,
-                                    rp,
-                                    E::from_i64(s0_i as i64),
-                                    E::from_i64((s1_i as i64) - (s0_i as i64)),
-                                );
-                                for (acc, &entry) in
-                                    q_coeffs.iter_mut().zip(entry_buf[..num_coeffs_q].iter())
-                                {
-                                    *acc += eq_rem.mul_to_product_accum(entry);
+                            let mut blk = 0usize;
+                            while blk < live_pairs {
+                                let blk_end = (blk + block_size).min(live_pairs);
+                                let j_high = (j_base + blk) >> first_bits;
+                                let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+
+                                for pair_x in blk..blk_end {
+                                    let j_low = (j_base + pair_x) & (num_first - 1);
+                                    let e_in = e_first[j_low];
+                                    let left = 2 * pair_x;
+                                    let s0_i = row[left];
+                                    let s1_i = if left + 1 < self.live_x_cols {
+                                        row[left + 1]
+                                    } else {
+                                        0
+                                    };
+                                    compute_entry_coeffs_from_s(
+                                        &mut entry_buf,
+                                        &mut s_pows_buf,
+                                        rp,
+                                        E::from_i64(s0_i as i64),
+                                        E::from_i64((s1_i as i64) - (s0_i as i64)),
+                                    );
+                                    for (acc, &entry) in inner_accum[..num_coeffs_q]
+                                        .iter_mut()
+                                        .zip(entry_buf[..num_coeffs_q].iter())
+                                    {
+                                        *acc += e_in.mul_to_product_accum(entry);
+                                    }
                                 }
+
+                                let e_out = e_second[j_high];
+                                for k in 0..num_coeffs_q {
+                                    let inner_reduced = E::reduce_product_accum(inner_accum[k]);
+                                    outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                                }
+                                blk = blk_end;
                             }
-                            q_coeffs
+                            outer_accum
                         },
                         |mut ca, cb| {
                             for (ai, bi) in ca.iter_mut().zip(cb.iter()) {
@@ -977,6 +1015,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         let current_x_half = 1usize << (self.current_x_width() - 1);
         let live_pairs = self.live_x_cols.div_ceil(2);
         let degree_q = self.b / 2;
+        let block_size = num_first.min(live_pairs);
 
         match self.round_kernel {
             NormRoundKernel::PointEvalInterpolation => {
@@ -988,26 +1027,41 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                     |mut norm_evals, y| {
                         let row_start = y * self.live_x_cols;
                         let row = &s_full[row_start..row_start + self.live_x_cols];
-                        for pair_x in 0..live_pairs {
-                            let j = y * current_x_half + pair_x;
-                            let j_low = j & (num_first - 1);
-                            let j_high = j >> first_bits;
-                            let eq_rem = e_first[j_low] * e_second[j_high];
+                        let j_base = y * current_x_half;
+                        let mut inner_evals = vec![E::zero(); num_points_q];
 
-                            let left = 2 * pair_x;
-                            let s_0 = row[left];
-                            let s_1 = if left + 1 < self.live_x_cols {
-                                row[left + 1]
-                            } else {
-                                E::zero()
-                            };
-                            let delta = s_1 - s_0;
-                            let mut s_t = s_0;
-                            for eval in &mut norm_evals {
-                                *eval +=
-                                    eq_rem * range_check_eval_from_s_precomputed(s_t, pair_offsets);
-                                s_t += delta;
+                        let mut blk = 0usize;
+                        while blk < live_pairs {
+                            let blk_end = (blk + block_size).min(live_pairs);
+                            let j_high = (j_base + blk) >> first_bits;
+
+                            for v in inner_evals.iter_mut() {
+                                *v = E::zero();
                             }
+                            for pair_x in blk..blk_end {
+                                let j_low = (j_base + pair_x) & (num_first - 1);
+                                let e_in = e_first[j_low];
+                                let left = 2 * pair_x;
+                                let s_0 = row[left];
+                                let s_1 = if left + 1 < self.live_x_cols {
+                                    row[left + 1]
+                                } else {
+                                    E::zero()
+                                };
+                                let delta = s_1 - s_0;
+                                let mut s_t = s_0;
+                                for eval in &mut inner_evals {
+                                    *eval += e_in
+                                        * range_check_eval_from_s_precomputed(s_t, pair_offsets);
+                                    s_t += delta;
+                                }
+                            }
+
+                            let e_out = e_second[j_high];
+                            for (eval, inner) in norm_evals.iter_mut().zip(inner_evals.iter()) {
+                                *eval += e_out * *inner;
+                            }
+                            blk = blk_end;
                         }
                         norm_evals
                     },
@@ -1027,18 +1081,63 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                 let mut q_coeffs = cfg_fold_reduce!(
                     0..y_len,
                     || vec![E::ProductAccum::ZERO; num_coeffs_q],
-                    |mut q_coeffs, y| {
+                    |mut outer_accum, y| {
                         debug_assert!(num_coeffs_q <= MAX_AFFINE_COEFFS);
                         let row_start = y * self.live_x_cols;
                         let row = &s_full[row_start..row_start + self.live_x_cols];
-                        let base_j = y * current_x_half;
-                        let full_chunks = live_pairs / 4;
+                        let j_base = y * current_x_half;
                         let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
+                        let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
+                        let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
 
-                        for chunk in 0..full_chunks {
-                            let pair_base = chunk * 4;
-                            let mut pairs = [(E::zero(), E::zero()); 4];
-                            for (slot, pair_x) in (pair_base..pair_base + 4).enumerate() {
+                        let mut blk = 0usize;
+                        while blk < live_pairs {
+                            let blk_end = (blk + block_size).min(live_pairs);
+                            let j_high = (j_base + blk) >> first_bits;
+                            let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                            let blk_len = blk_end - blk;
+                            let full_chunks = blk_len / 4;
+
+                            for chunk in 0..full_chunks {
+                                let pair_base = blk + chunk * 4;
+                                let mut pairs = [(E::zero(), E::zero()); 4];
+                                for (slot, pair_x) in (pair_base..pair_base + 4).enumerate() {
+                                    let left = 2 * pair_x;
+                                    let s_0 = row[left];
+                                    let s_1 = if left + 1 < self.live_x_cols {
+                                        row[left + 1]
+                                    } else {
+                                        E::zero()
+                                    };
+                                    pairs[slot] = (s_0, s_1);
+                                }
+
+                                compute_entry_coeffs_from_s_x4(
+                                    &mut batch_out,
+                                    range_pc,
+                                    [pairs[0].0, pairs[1].0, pairs[2].0, pairs[3].0],
+                                    [
+                                        pairs[0].1 - pairs[0].0,
+                                        pairs[1].1 - pairs[1].0,
+                                        pairs[2].1 - pairs[2].0,
+                                        pairs[3].1 - pairs[3].0,
+                                    ],
+                                );
+
+                                for (slot, _) in pairs.iter().enumerate() {
+                                    let pair_x = pair_base + slot;
+                                    let j_low = (j_base + pair_x) & (num_first - 1);
+                                    let e_in = e_first[j_low];
+                                    for (acc, &entry) in inner_accum[..num_coeffs_q]
+                                        .iter_mut()
+                                        .zip(batch_out[slot][..num_coeffs_q].iter())
+                                    {
+                                        *acc += e_in.mul_to_product_accum(entry);
+                                    }
+                                }
+                            }
+
+                            for pair_x in blk + full_chunks * 4..blk_end {
                                 let left = 2 * pair_x;
                                 let s_0 = row[left];
                                 let s_1 = if left + 1 < self.live_x_cols {
@@ -1046,66 +1145,32 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                                 } else {
                                     E::zero()
                                 };
-                                pairs[slot] = (s_0, s_1);
-                            }
-
-                            compute_entry_coeffs_from_s_x4(
-                                &mut batch_out,
-                                range_pc,
-                                [pairs[0].0, pairs[1].0, pairs[2].0, pairs[3].0],
-                                [
-                                    pairs[0].1 - pairs[0].0,
-                                    pairs[1].1 - pairs[1].0,
-                                    pairs[2].1 - pairs[2].0,
-                                    pairs[3].1 - pairs[3].0,
-                                ],
-                            );
-
-                            for (slot, _) in pairs.iter().enumerate() {
-                                let pair_x = pair_base + slot;
-                                let j = base_j + pair_x;
-                                let j_low = j & (num_first - 1);
-                                let j_high = j >> first_bits;
-                                let eq_rem = e_first[j_low] * e_second[j_high];
-                                for (acc, &entry) in q_coeffs
+                                compute_entry_coeffs_from_s(
+                                    &mut entry_buf,
+                                    &mut s_pows_buf,
+                                    range_pc,
+                                    s_0,
+                                    s_1 - s_0,
+                                );
+                                let j_low = (j_base + pair_x) & (num_first - 1);
+                                let e_in = e_first[j_low];
+                                for (acc, &entry) in inner_accum[..num_coeffs_q]
                                     .iter_mut()
-                                    .zip(batch_out[slot][..num_coeffs_q].iter())
+                                    .zip(entry_buf[..num_coeffs_q].iter())
                                 {
-                                    *acc += eq_rem.mul_to_product_accum(entry);
+                                    *acc += e_in.mul_to_product_accum(entry);
                                 }
                             }
-                        }
 
-                        let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
-                        let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
-                        for pair_x in full_chunks * 4..live_pairs {
-                            let left = 2 * pair_x;
-                            let s_0 = row[left];
-                            let s_1 = if left + 1 < self.live_x_cols {
-                                row[left + 1]
-                            } else {
-                                E::zero()
-                            };
-                            compute_entry_coeffs_from_s(
-                                &mut entry_buf,
-                                &mut s_pows_buf,
-                                range_pc,
-                                s_0,
-                                s_1 - s_0,
-                            );
-
-                            let j = base_j + pair_x;
-                            let j_low = j & (num_first - 1);
-                            let j_high = j >> first_bits;
-                            let eq_rem = e_first[j_low] * e_second[j_high];
-                            for (acc, &entry) in
-                                q_coeffs.iter_mut().zip(entry_buf[..num_coeffs_q].iter())
-                            {
-                                *acc += eq_rem.mul_to_product_accum(entry);
+                            let e_out = e_second[j_high];
+                            for k in 0..num_coeffs_q {
+                                let inner_reduced = E::reduce_product_accum(inner_accum[k]);
+                                outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
                             }
+                            blk = blk_end;
                         }
 
-                        q_coeffs
+                        outer_accum
                     },
                     |mut ca, cb| {
                         for (ai, bi) in ca.iter_mut().zip(cb.iter()) {
