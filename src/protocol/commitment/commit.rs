@@ -5,7 +5,8 @@ use super::config::{
     validate_and_derive_layout, HachiCommitmentLayout,
 };
 use super::onehot::{
-    inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks, PackedSparseBlockLayout,
+    inner_ajtai_onehot_wide, packed_sparse_block_for_block, validate_onehot_indices,
+    validate_onehot_sparse_shape,
 };
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
@@ -28,12 +29,13 @@ use crate::primitives::serialization::{
 };
 use crate::protocol::hachi_poly_ops::OneHotIndex;
 use crate::protocol::ring_switch::w_commitment_layout;
-use crate::{cfg_into_iter, cfg_iter, CanonicalField, FieldCore, FieldSampling};
+use crate::{cfg_into_iter, CanonicalField, FieldCore, FieldSampling};
 #[cfg(feature = "disk-persistence")]
 use std::fs;
 use std::io::{Read, Write};
 #[cfg(feature = "disk-persistence")]
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Seed-only stage for deterministic setup expansion.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,7 +74,7 @@ pub struct HachiExpandedSetup<F: FieldCore> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiProverSetup<F: FieldCore, const D: usize> {
     /// Expanded matrix stage used by both prover and verifier.
-    pub expanded: HachiExpandedSetup<F>,
+    pub expanded: Arc<HachiExpandedSetup<F>>,
     /// NTT cache for the A matrix.
     pub ntt_A: NttSlotCache<D>,
     /// NTT cache for the B matrix.
@@ -85,7 +87,7 @@ pub struct HachiProverSetup<F: FieldCore, const D: usize> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiVerifierSetup<F: FieldCore> {
     /// Expanded matrix stage used for verification.
-    pub expanded: HachiExpandedSetup<F>,
+    pub expanded: Arc<HachiExpandedSetup<F>>,
 }
 
 impl<F: FieldCore> HachiExpandedSetup<F> {
@@ -268,11 +270,11 @@ impl<F: FieldCore> HachiSerialize for HachiVerifierSetup<F> {
         writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.expanded.serialize_with_mode(writer, compress)
+        self.expanded.as_ref().serialize_with_mode(writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.expanded.serialized_size(compress)
+        self.expanded.as_ref().serialized_size(compress)
     }
 }
 
@@ -283,7 +285,9 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiVerifierSetup<F> {
         validate: Validate,
     ) -> Result<Self, SerializationError> {
         Ok(Self {
-            expanded: HachiExpandedSetup::deserialize_with_mode(reader, compress, validate)?,
+            expanded: Arc::new(HachiExpandedSetup::deserialize_with_mode(
+                reader, compress, validate,
+            )?),
         })
     }
 }
@@ -377,13 +381,14 @@ fn load_expanded_setup<F: FieldCore + Valid>(
 pub(crate) fn setup_from_expanded<F: FieldCore + CanonicalField, const D: usize>(
     expanded: HachiExpandedSetup<F>,
 ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError> {
+    let expanded = Arc::new(expanded);
     let (ntt_a, ntt_b, ntt_d) = build_ntt_slots(
         expanded.A.view::<D>(),
         expanded.B.view::<D>(),
         expanded.D_mat.view::<D>(),
     )?;
     let prover_setup = HachiProverSetup {
-        expanded: expanded.clone(),
+        expanded: Arc::clone(&expanded),
         ntt_A: ntt_a,
         ntt_B: ntt_b,
         ntt_D: ntt_d,
@@ -448,7 +453,7 @@ where
         let ntt_a = build_ntt_slot(a_flat.view::<D>())?;
         let ntt_b = build_ntt_slot(b_flat.view::<D>())?;
         let ntt_d = build_ntt_slot(d_flat.view::<D>())?;
-        let expanded = HachiExpandedSetup {
+        let expanded = Arc::new(HachiExpandedSetup {
             seed: HachiSetupSeed {
                 max_num_vars,
                 layout,
@@ -457,13 +462,13 @@ where
             A: a_flat,
             B: b_flat,
             D_mat: d_flat,
-        };
+        });
 
         #[cfg(feature = "disk-persistence")]
-        save_expanded_setup(&expanded, max_num_vars);
+        save_expanded_setup(expanded.as_ref(), max_num_vars);
 
         let prover_setup = HachiProverSetup {
-            expanded: expanded.clone(),
+            expanded: Arc::clone(&expanded),
             ntt_A: ntt_a,
             ntt_B: ntt_b,
             ntt_D: ntt_d,
@@ -583,27 +588,27 @@ where
         ensure_matrix_shape_ge::<F, D>(&setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
         ensure_matrix_shape_ge::<F, D>(&setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
 
-        let sparse_blocks =
-            map_onehot_to_sparse_blocks(onehot_k, indices, layout.r_vars, layout.m_vars, D)?;
-        let packed_sparse_blocks: Vec<PackedSparseBlockLayout> = sparse_blocks
-            .iter()
-            .map(|entries| PackedSparseBlockLayout::from_entries(entries))
-            .collect();
+        let (num_blocks, block_len) =
+            validate_onehot_sparse_shape(onehot_k, indices.len(), layout.r_vars, layout.m_vars, D)?;
+        validate_onehot_indices(onehot_k, indices)?;
 
         let depth_commit = layout.num_digits_commit;
         let depth_open = layout.num_digits_open;
         let log_basis = layout.log_basis;
         let zero_block_len = Cfg::N_A.checked_mul(depth_open).unwrap();
         let a_view = setup.expanded.A.view::<D>();
-        let block_len = layout.block_len;
+        debug_assert_eq!(block_len, layout.block_len);
 
-        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(packed_sparse_blocks)
-            .map(|block_entries| {
+        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(0..num_blocks)
+            .map(|block_idx| {
+                let block_entries =
+                    packed_sparse_block_for_block(onehot_k, indices, block_idx, block_len, D)
+                        .expect("one-hot indices validated above");
                 if block_entries.is_empty() {
                     vec![[0i8; D]; zero_block_len]
                 } else {
                     let t_i =
-                        inner_ajtai_onehot_wide(&a_view, block_entries, block_len, depth_commit);
+                        inner_ajtai_onehot_wide(&a_view, &block_entries, block_len, depth_commit);
                     decompose_rows_i8(&t_i, depth_open, log_basis)
                 }
             })
@@ -815,7 +820,7 @@ impl HachiCommitmentCore {
         let ntt_a = build_ntt_slot(existing.A.view::<D>())?;
         let ntt_b = build_ntt_slot(b_flat.view::<D>())?;
         let ntt_d = build_ntt_slot(d_flat.view::<D>())?;
-        let expanded = HachiExpandedSetup {
+        let expanded = Arc::new(HachiExpandedSetup {
             seed: HachiSetupSeed {
                 max_num_vars,
                 layout: new_layout,
@@ -824,9 +829,9 @@ impl HachiCommitmentCore {
             A: existing.A.clone(),
             B: b_flat,
             D_mat: d_flat,
-        };
+        });
         let prover_setup = HachiProverSetup {
-            expanded: expanded.clone(),
+            expanded: Arc::clone(&expanded),
             ntt_A: ntt_a,
             ntt_B: ntt_b,
             ntt_D: ntt_d,
@@ -899,7 +904,7 @@ impl HachiCommitmentCore {
         let ntt_a = build_ntt_slot(a_flat.view::<D>())?;
         let ntt_b = build_ntt_slot(b_flat.view::<D>())?;
         let ntt_d = build_ntt_slot(d_flat.view::<D>())?;
-        let expanded = HachiExpandedSetup {
+        let expanded = Arc::new(HachiExpandedSetup {
             seed: HachiSetupSeed {
                 max_num_vars,
                 layout,
@@ -908,9 +913,9 @@ impl HachiCommitmentCore {
             A: a_flat,
             B: b_flat,
             D_mat: d_flat,
-        };
+        });
         let prover_setup = HachiProverSetup {
-            expanded: expanded.clone(),
+            expanded: Arc::clone(&expanded),
             ntt_A: ntt_a,
             ntt_B: ntt_b,
             ntt_D: ntt_d,
@@ -958,10 +963,10 @@ mod tests {
             .unwrap();
         let decoded = HachiExpandedSetup::<TestF>::deserialize_compressed(&bytes[..]).unwrap();
 
-        assert_eq!(decoded, prover_setup.expanded);
+        assert_eq!(decoded, *prover_setup.expanded);
 
         let derived_verifier = HachiVerifierSetup {
-            expanded: decoded.clone(),
+            expanded: Arc::new(decoded.clone()),
         };
         assert_eq!(derived_verifier, verifier_setup);
     }

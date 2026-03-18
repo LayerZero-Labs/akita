@@ -4,8 +4,6 @@
 //! eliminate all inner ring multiplications. The inner Ajtai `t = A * s`
 //! reduces to summing selected columns of `A` with negacyclic rotations.
 
-use std::collections::BTreeMap;
-
 use crate::algebra::fields::{HasAdditivePacking, PackedAdditive};
 use crate::algebra::ring::{CyclotomicRing, PackedNegacyclicRing};
 use crate::error::HachiError;
@@ -23,7 +21,7 @@ pub struct SparseBlockEntry {
 }
 
 /// Flat sparse-block layout for packed one-hot kernels.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct PackedSparseBlockLayout {
     positions: Vec<usize>,
     coeff_offsets: Vec<usize>,
@@ -40,7 +38,26 @@ pub(crate) struct PackedSparseEntryRef<'a> {
 }
 
 impl PackedSparseBlockLayout {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self::with_capacity(0, 0)
+    }
+
+    #[inline]
+    pub(crate) fn with_capacity(entries: usize, coeffs: usize) -> Self {
+        Self {
+            positions: Vec::with_capacity(entries),
+            coeff_offsets: {
+                let mut offsets = Vec::with_capacity(entries + 1);
+                offsets.push(0);
+                offsets
+            },
+            coeffs: Vec::with_capacity(coeffs),
+        }
+    }
+
     /// Build the flat layout used by packed one-hot kernels.
+    #[cfg(test)]
     pub(crate) fn from_entries(entries: &[SparseBlockEntry]) -> Self {
         let mut positions = Vec::with_capacity(entries.len());
         let mut coeff_offsets = Vec::with_capacity(entries.len() + 1);
@@ -56,6 +73,16 @@ impl PackedSparseBlockLayout {
             coeff_offsets,
             coeffs,
         }
+    }
+
+    #[inline]
+    fn push_entry_from_vec(&mut self, pos_in_block: usize, coeffs: &mut Vec<usize>) {
+        if self.coeff_offsets.is_empty() {
+            self.coeff_offsets.push(0);
+        }
+        self.positions.push(pos_in_block);
+        self.coeffs.append(coeffs);
+        self.coeff_offsets.push(self.coeffs.len());
     }
 
     #[inline]
@@ -77,6 +104,197 @@ impl PackedSparseBlockLayout {
     pub(crate) fn entries(&self) -> impl Iterator<Item = PackedSparseEntryRef<'_>> + '_ {
         (0..self.positions.len()).map(|idx| self.entry(idx))
     }
+}
+
+pub(crate) fn validate_onehot_sparse_shape(
+    onehot_k: usize,
+    num_chunks: usize,
+    r: usize,
+    m: usize,
+    d: usize,
+) -> Result<(usize, usize), HachiError> {
+    if onehot_k == 0 || d == 0 {
+        return Err(HachiError::InvalidInput(
+            "onehot_k and D must be nonzero".into(),
+        ));
+    }
+    if !(onehot_k % d == 0 || d % onehot_k == 0) {
+        return Err(HachiError::InvalidInput(format!(
+            "K={onehot_k} and D={d} must be nicely matched (one divides the other)"
+        )));
+    }
+
+    let total_field_elems = num_chunks
+        .checked_mul(onehot_k)
+        .ok_or_else(|| HachiError::InvalidInput("T*K overflow".into()))?;
+    if total_field_elems % d != 0 {
+        return Err(HachiError::InvalidInput(format!(
+            "T*K={total_field_elems} is not divisible by D={d}"
+        )));
+    }
+
+    let total_ring_elems = total_field_elems / d;
+    let num_blocks = 1usize << r;
+    let block_len = 1usize << m;
+    if total_ring_elems != num_blocks * block_len {
+        return Err(HachiError::InvalidSize {
+            expected: num_blocks * block_len,
+            actual: total_ring_elems,
+        });
+    }
+
+    Ok((num_blocks, block_len))
+}
+
+pub(crate) fn validate_onehot_indices<I: OneHotIndex>(
+    onehot_k: usize,
+    indices: &[Option<I>],
+) -> Result<(), HachiError> {
+    for (chunk_idx, opt) in indices.iter().enumerate() {
+        let Some(&idx_raw) = opt.as_ref() else {
+            continue;
+        };
+        let idx = idx_raw.as_usize();
+        if idx >= onehot_k {
+            return Err(HachiError::InvalidInput(format!(
+                "index {idx} out of range for chunk size K={onehot_k} at position {chunk_idx}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[inline]
+fn onehot_block_field_range(block_idx: usize, block_len: usize, d: usize) -> (usize, usize) {
+    let field_start = block_idx * block_len * d;
+    let field_end = field_start + block_len * d;
+    (field_start, field_end)
+}
+
+#[inline]
+fn onehot_block_chunk_range(
+    num_chunks: usize,
+    onehot_k: usize,
+    block_idx: usize,
+    block_len: usize,
+    d: usize,
+) -> (usize, usize, usize, usize) {
+    let (field_start, field_end) = onehot_block_field_range(block_idx, block_len, d);
+    let start_chunk = field_start / onehot_k;
+    let end_chunk = field_end.div_ceil(onehot_k).min(num_chunks);
+    (field_start, field_end, start_chunk, end_chunk)
+}
+
+pub(crate) fn packed_sparse_block_for_block<I: OneHotIndex>(
+    onehot_k: usize,
+    indices: &[Option<I>],
+    block_idx: usize,
+    block_len: usize,
+    d: usize,
+) -> Result<PackedSparseBlockLayout, HachiError> {
+    let (field_start, field_end, start_chunk, end_chunk) =
+        onehot_block_chunk_range(indices.len(), onehot_k, block_idx, block_len, d);
+    let candidate_chunks = end_chunk.saturating_sub(start_chunk);
+    let mut block =
+        PackedSparseBlockLayout::with_capacity(candidate_chunks.min(block_len), candidate_chunks);
+    let mut current_pos: Option<usize> = None;
+    let mut current_coeffs = Vec::new();
+
+    let mut flush_current = |pos_in_block: usize, coeffs: &mut Vec<usize>| {
+        block.push_entry_from_vec(pos_in_block, coeffs);
+    };
+
+    for (local_chunk_idx, opt) in indices[start_chunk..end_chunk].iter().enumerate() {
+        let chunk_idx = start_chunk + local_chunk_idx;
+        let Some(&idx_raw) = opt.as_ref() else {
+            continue;
+        };
+        let idx = idx_raw.as_usize();
+        if idx >= onehot_k {
+            return Err(HachiError::InvalidInput(format!(
+                "index {idx} out of range for chunk size K={onehot_k} at position {chunk_idx}"
+            )));
+        }
+
+        let field_pos = chunk_idx * onehot_k + idx;
+        if field_pos < field_start || field_pos >= field_end {
+            continue;
+        }
+
+        let local_field_pos = field_pos - field_start;
+        let pos_in_block = local_field_pos / d;
+        let coeff_idx = local_field_pos % d;
+
+        match current_pos {
+            Some(existing_pos) if existing_pos == pos_in_block => current_coeffs.push(coeff_idx),
+            Some(existing_pos) => {
+                flush_current(existing_pos, &mut current_coeffs);
+                current_pos = Some(pos_in_block);
+                current_coeffs.push(coeff_idx);
+            }
+            None => {
+                current_pos = Some(pos_in_block);
+                current_coeffs.push(coeff_idx);
+            }
+        }
+    }
+
+    if let Some(existing_pos) = current_pos {
+        flush_current(existing_pos, &mut current_coeffs);
+    }
+
+    Ok(block)
+}
+
+pub(crate) fn map_onehot_to_packed_sparse_blocks<I: OneHotIndex>(
+    onehot_k: usize,
+    indices: &[Option<I>],
+    r: usize,
+    m: usize,
+    d: usize,
+) -> Result<Vec<PackedSparseBlockLayout>, HachiError> {
+    let (num_blocks, block_len) = validate_onehot_sparse_shape(onehot_k, indices.len(), r, m, d)?;
+    validate_onehot_indices(onehot_k, indices)?;
+    let mut blocks = vec![PackedSparseBlockLayout::new(); num_blocks];
+
+    let mut current_ring_elem_idx: Option<usize> = None;
+    let mut current_coeffs = Vec::new();
+
+    let mut flush_current = |ring_elem_idx: usize, coeffs: &mut Vec<usize>| {
+        let block_idx = ring_elem_idx / block_len;
+        let pos_in_block = ring_elem_idx % block_len;
+        blocks[block_idx].push_entry_from_vec(pos_in_block, coeffs);
+    };
+
+    for (chunk_idx, opt) in indices.iter().enumerate() {
+        let Some(&idx_raw) = opt.as_ref() else {
+            continue;
+        };
+        let idx = idx_raw.as_usize();
+
+        let field_pos = chunk_idx * onehot_k + idx;
+        let ring_elem_idx = field_pos / d;
+        let coeff_idx = field_pos % d;
+
+        match current_ring_elem_idx {
+            Some(current_idx) if current_idx == ring_elem_idx => current_coeffs.push(coeff_idx),
+            Some(current_idx) => {
+                flush_current(current_idx, &mut current_coeffs);
+                current_ring_elem_idx = Some(ring_elem_idx);
+                current_coeffs.push(coeff_idx);
+            }
+            None => {
+                current_ring_elem_idx = Some(ring_elem_idx);
+                current_coeffs.push(coeff_idx);
+            }
+        }
+    }
+
+    if let Some(current_idx) = current_ring_elem_idx {
+        flush_current(current_idx, &mut current_coeffs);
+    }
+
+    Ok(blocks)
 }
 
 /// Map a regular one-hot witness to sparse ring block entries.
@@ -102,69 +320,19 @@ pub fn map_onehot_to_sparse_blocks<I: OneHotIndex>(
     m: usize,
     d: usize,
 ) -> Result<Vec<Vec<SparseBlockEntry>>, HachiError> {
-    if onehot_k == 0 || d == 0 {
-        return Err(HachiError::InvalidInput(
-            "onehot_k and D must be nonzero".into(),
-        ));
-    }
-    if !(onehot_k % d == 0 || d % onehot_k == 0) {
-        return Err(HachiError::InvalidInput(format!(
-            "K={onehot_k} and D={d} must be nicely matched (one divides the other)"
-        )));
-    }
-
-    let num_chunks = indices.len();
-    let total_field_elems = num_chunks
-        .checked_mul(onehot_k)
-        .ok_or_else(|| HachiError::InvalidInput("T*K overflow".into()))?;
-    if total_field_elems % d != 0 {
-        return Err(HachiError::InvalidInput(format!(
-            "T*K={total_field_elems} is not divisible by D={d}"
-        )));
-    }
-    let total_ring_elems = total_field_elems / d;
-    let num_blocks = 1usize << r;
-    let block_len = 1usize << m;
-    if total_ring_elems != num_blocks * block_len {
-        return Err(HachiError::InvalidSize {
-            expected: num_blocks * block_len,
-            actual: total_ring_elems,
-        });
-    }
-
-    let mut ring_elem_map: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for (c, opt) in indices.iter().enumerate() {
-        let Some(&idx_raw) = opt.as_ref() else {
-            continue;
-        };
-        let idx = idx_raw.as_usize();
-        if idx >= onehot_k {
-            return Err(HachiError::InvalidInput(format!(
-                "index {idx} out of range for chunk size K={onehot_k} at position {c}"
-            )));
-        }
-        let field_pos = c * onehot_k + idx;
-        let ring_elem_idx = field_pos / d;
-        let coeff_idx = field_pos % d;
-        ring_elem_map
-            .entry(ring_elem_idx)
-            .or_default()
-            .push(coeff_idx);
-    }
-
-    // Sequential block layout matching commit_coeffs: block i = ring elements
-    // [i*block_len, (i+1)*block_len).
-    let mut blocks: Vec<Vec<SparseBlockEntry>> = vec![Vec::new(); num_blocks];
-    for (ring_elem_idx, nonzero_coeffs) in ring_elem_map {
-        let block_idx = ring_elem_idx / block_len;
-        let pos_in_block = ring_elem_idx % block_len;
-        blocks[block_idx].push(SparseBlockEntry {
-            pos_in_block,
-            nonzero_coeffs,
-        });
-    }
-
-    Ok(blocks)
+    let packed_blocks = map_onehot_to_packed_sparse_blocks(onehot_k, indices, r, m, d)?;
+    Ok(packed_blocks
+        .into_iter()
+        .map(|block| {
+            block
+                .entries()
+                .map(|entry| SparseBlockEntry {
+                    pos_in_block: entry.pos_in_block,
+                    nonzero_coeffs: entry.nonzero_coeffs.to_vec(),
+                })
+                .collect()
+        })
+        .collect())
 }
 
 /// Sparse inner Ajtai: compute `t = A * s` for a one-hot block.

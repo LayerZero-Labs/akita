@@ -22,7 +22,8 @@ use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::onehot::{
-    inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks, PackedSparseBlockLayout, SparseBlockEntry,
+    inner_ajtai_onehot_wide, packed_sparse_block_for_block, validate_onehot_indices,
+    validate_onehot_sparse_shape, PackedSparseBlockLayout,
 };
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
@@ -1026,40 +1027,6 @@ impl OneHotIndex for usize {
     }
 }
 
-/// Explicit regular one-hot layout in block-major order.
-#[derive(Debug, Clone)]
-struct RegularOneHotLayout<I: OneHotIndex> {
-    block_len: usize,
-    indices: Vec<Option<I>>,
-}
-
-impl<I: OneHotIndex> RegularOneHotLayout<I> {
-    fn new(block_len: usize, indices: &[Option<I>]) -> Self {
-        assert!(block_len > 0, "block_len must be positive");
-        assert_eq!(
-            indices.len() % block_len,
-            0,
-            "regular one-hot indices must align to block size"
-        );
-        Self {
-            block_len,
-            indices: indices.to_vec(),
-        }
-    }
-
-    #[inline]
-    fn num_blocks(&self) -> usize {
-        self.indices.len() / self.block_len
-    }
-
-    #[inline]
-    fn block(&self, block_idx: usize) -> &[Option<I>] {
-        let start = block_idx * self.block_len;
-        let end = start + self.block_len;
-        &self.indices[start..end]
-    }
-}
-
 /// One-hot polynomial: sparse witness with at most one nonzero field element
 /// per chunk of size `onehot_k`.
 ///
@@ -1073,9 +1040,6 @@ pub struct OneHotPoly<F: FieldCore, const D: usize, I: OneHotIndex = usize> {
     onehot_k: usize,
     indices: Vec<Option<I>>,
     m_vars: usize,
-    sparse_blocks: Vec<Vec<SparseBlockEntry>>,
-    regular_layout: Option<RegularOneHotLayout<I>>,
-    packed_sparse_blocks: Vec<PackedSparseBlockLayout>,
     _marker: PhantomData<F>,
 }
 
@@ -1093,20 +1057,12 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         r_vars: usize,
         m_vars: usize,
     ) -> Result<Self, HachiError> {
-        let sparse_blocks = map_onehot_to_sparse_blocks(onehot_k, &indices, r_vars, m_vars, D)?;
-        let packed_sparse_blocks = sparse_blocks
-            .iter()
-            .map(|entries| PackedSparseBlockLayout::from_entries(entries))
-            .collect();
-        let block_len = 1usize << m_vars;
-        let regular_layout = (onehot_k == D).then(|| RegularOneHotLayout::new(block_len, &indices));
+        validate_onehot_sparse_shape(onehot_k, indices.len(), r_vars, m_vars, D)?;
+        validate_onehot_indices(onehot_k, &indices)?;
         Ok(Self {
             onehot_k,
             indices,
             m_vars,
-            sparse_blocks,
-            regular_layout,
-            packed_sparse_blocks,
             _marker: PhantomData,
         })
     }
@@ -1114,6 +1070,70 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     fn total_ring_elems(&self) -> usize {
         let total_field = self.indices.len() * self.onehot_k;
         total_field / D
+    }
+
+    #[inline]
+    fn block_len(&self) -> usize {
+        1usize << self.m_vars
+    }
+
+    #[inline]
+    fn regular_num_blocks(&self) -> usize {
+        self.indices.len() / self.block_len()
+    }
+
+    #[inline]
+    fn num_blocks(&self) -> usize {
+        self.total_ring_elems() / self.block_len()
+    }
+
+    #[inline]
+    fn regular_block(&self, block_idx: usize, block_len: usize) -> &[Option<I>] {
+        debug_assert_eq!(self.block_len(), block_len);
+        let start = block_idx * block_len;
+        let end = start + block_len;
+        &self.indices[start..end]
+    }
+
+    fn packed_sparse_block(&self, block_idx: usize, block_len: usize) -> PackedSparseBlockLayout {
+        debug_assert_eq!(self.block_len(), block_len);
+        packed_sparse_block_for_block(self.onehot_k, &self.indices, block_idx, block_len, D)
+            .expect("one-hot indices were validated during construction")
+    }
+
+    fn fold_block(
+        &self,
+        block_idx: usize,
+        block_len: usize,
+        scalars: &[F],
+    ) -> CyclotomicRing<F, D> {
+        debug_assert_eq!(self.block_len(), block_len);
+        let field_start = block_idx * block_len * D;
+        let field_end = field_start + block_len * D;
+        let start_chunk = field_start / self.onehot_k;
+        let end_chunk = field_end.div_ceil(self.onehot_k).min(self.indices.len());
+        let mut coeffs_acc = [F::zero(); D];
+
+        for (local_chunk_idx, opt) in self.indices[start_chunk..end_chunk].iter().enumerate() {
+            let chunk_idx = start_chunk + local_chunk_idx;
+            let Some(hot_idx) = opt else {
+                continue;
+            };
+            let idx = hot_idx.as_usize();
+            debug_assert!(idx < self.onehot_k);
+            let field_pos = chunk_idx * self.onehot_k + idx;
+            if field_pos < field_start || field_pos >= field_end {
+                continue;
+            }
+
+            let local_field_pos = field_pos - field_start;
+            let pos_in_block = local_field_pos / D;
+            if pos_in_block < scalars.len() {
+                coeffs_acc[local_field_pos % D] += scalars[pos_in_block];
+            }
+        }
+
+        CyclotomicRing::from_coefficients(coeffs_acc)
     }
 
     fn decompose_fold_regular_onehot_with_packing<P>(
@@ -1125,12 +1145,8 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         F: CanonicalField,
         P: PackedAdditive<Scalar = i32>,
     {
-        let layout = self
-            .regular_layout
-            .as_ref()
-            .expect("regular one-hot layout must exist when K == D");
-        debug_assert_eq!(layout.block_len, block_len);
-        let num_blocks = challenges.len().min(layout.num_blocks());
+        debug_assert_eq!(self.onehot_k, D);
+        let num_blocks = challenges.len().min(self.regular_num_blocks());
         let modulus = (-F::one()).to_canonical_u128() + 1;
         let packed_challenges: Vec<PackedNegacyclicRing<P, D>> = challenges
             .iter()
@@ -1144,7 +1160,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
                 .map(|elem_idx| {
                     let mut coeffs = PackedNegacyclicRing::<P, D>::zero();
                     for (block_idx, challenge) in packed_challenges.iter().enumerate() {
-                        if let Some(hot_idx) = layout.block(block_idx)[elem_idx] {
+                        if let Some(hot_idx) = self.regular_block(block_idx, block_len)[elem_idx] {
                             accum_onehot_coeff_packed::<P, D>(
                                 &mut coeffs,
                                 hot_idx.as_usize(),
@@ -1172,7 +1188,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         P: PackedAdditive<Scalar = i32>,
     {
         let inner_width = block_len * num_digits;
-        let num_blocks = challenges.len().min(self.packed_sparse_blocks.len());
+        let num_blocks = challenges.len().min(self.num_blocks());
         let modulus = (-F::one()).to_canonical_u128() + 1;
         let packed_challenges: Vec<PackedNegacyclicRing<P, D>> = challenges
             .iter()
@@ -1186,8 +1202,9 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
                 0..num_blocks,
                 || vec![PackedNegacyclicRing::<P, D>::zero(); inner_width],
                 |mut z_local: Vec<PackedNegacyclicRing<P, D>>, block_idx: usize| {
+                    let block_entries = self.packed_sparse_block(block_idx, block_len);
                     let challenge = &packed_challenges[block_idx];
-                    for entry in self.packed_sparse_blocks[block_idx].entries() {
+                    for entry in block_entries.entries() {
                         let z_coeffs = &mut z_local[entry.pos_in_block * num_digits];
                         accum_onehot_positions_packed::<P, D>(
                             z_coeffs,
@@ -1226,41 +1243,25 @@ where
     }
 
     fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
-        let block_len = 1usize << self.m_vars;
-        cfg_fold_reduce!(
-            0..self.sparse_blocks.len(),
-            || CyclotomicRing::<F, D>::zero(),
-            |mut acc: CyclotomicRing<F, D>, block_idx: usize| {
-                let block_offset = block_idx * block_len;
-                for entry in &self.sparse_blocks[block_idx] {
-                    let ring_idx = block_offset + entry.pos_in_block;
-                    if ring_idx < scalars.len() {
-                        let s = scalars[ring_idx];
-                        for &ci in &entry.nonzero_coeffs {
-                            acc.coeffs[ci] += s;
-                        }
-                    }
-                }
-                acc
-            },
-            |a, b| a + b
-        )
+        let mut coeffs_acc = [F::zero(); D];
+        for (chunk_idx, opt) in self.indices.iter().enumerate() {
+            let Some(hot_idx) = opt else {
+                continue;
+            };
+            let idx = hot_idx.as_usize();
+            debug_assert!(idx < self.onehot_k);
+            let field_pos = chunk_idx * self.onehot_k + idx;
+            let ring_idx = field_pos / D;
+            if ring_idx < scalars.len() {
+                coeffs_acc[field_pos % D] += scalars[ring_idx];
+            }
+        }
+        CyclotomicRing::from_coefficients(coeffs_acc)
     }
 
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
-        cfg_iter!(self.sparse_blocks)
-            .map(|entries| {
-                let mut coeffs_acc = [F::zero(); D];
-                for entry in entries {
-                    if entry.pos_in_block < scalars.len() && entry.pos_in_block < block_len {
-                        let s = scalars[entry.pos_in_block];
-                        for &ci in &entry.nonzero_coeffs {
-                            coeffs_acc[ci] += s;
-                        }
-                    }
-                }
-                CyclotomicRing::from_coefficients(coeffs_acc)
-            })
+        cfg_into_iter!(0..self.num_blocks())
+            .map(|block_idx| self.fold_block(block_idx, block_len, scalars))
             .collect()
     }
 
@@ -1299,14 +1300,15 @@ where
         let n_a = a_view.num_rows();
         let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
 
-        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(self.packed_sparse_blocks)
-            .map(|block_entries| {
+        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(0..self.num_blocks())
+            .map(|block_idx| {
+                let block_entries = self.packed_sparse_block(block_idx, block_len);
                 if block_entries.is_empty() {
                     vec![[0i8; D]; zero_block_len]
                 } else {
                     let t_i = inner_ajtai_onehot_wide(
                         &a_view,
-                        block_entries,
+                        &block_entries,
                         block_len,
                         num_digits_commit,
                     );
@@ -1331,8 +1333,9 @@ where
         let n_a = a_view.num_rows();
         let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
 
-        let per_block = cfg_iter!(self.packed_sparse_blocks)
-            .map(|block_entries| {
+        let per_block = cfg_into_iter!(0..self.num_blocks())
+            .map(|block_idx| {
+                let block_entries = self.packed_sparse_block(block_idx, block_len);
                 if block_entries.is_empty() {
                     (
                         vec![CyclotomicRing::<F, D>::zero(); n_a],
@@ -1341,7 +1344,7 @@ where
                 } else {
                     let t_i = inner_ajtai_onehot_wide(
                         &a_view,
-                        block_entries,
+                        &block_entries,
                         block_len,
                         num_digits_commit,
                     );

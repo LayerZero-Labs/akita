@@ -406,12 +406,16 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCo
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let total_ring = layout.num_blocks * layout.block_len;
     let onehot_k = D;
+    assert!(
+        onehot_k <= (u8::MAX as usize) + 1,
+        "profile onehot path expects indices to fit in u8"
+    );
 
-    let indices: Vec<Option<usize>> = (0..total_ring)
-        .map(|_| Some(rng.gen_range(0..onehot_k)))
+    let indices: Vec<Option<u8>> = (0..total_ring)
+        .map(|_| Some(u8::try_from(rng.gen_range(0..onehot_k)).expect("index must fit in u8")))
         .collect();
     let onehot_poly =
-        OneHotPoly::<F, D>::new(onehot_k, indices, layout.r_vars, layout.m_vars).unwrap();
+        OneHotPoly::<F, D, u8>::new(onehot_k, indices, layout.r_vars, layout.m_vars).unwrap();
     let pt: Vec<F> = (0..nv)
         .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
         .collect();
