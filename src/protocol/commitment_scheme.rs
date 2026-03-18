@@ -29,6 +29,7 @@ use crate::protocol::proof::{
 #[cfg(any(test, debug_assertions))]
 use crate::protocol::quadratic_equation::compute_m_a_reference;
 use crate::protocol::quadratic_equation::QuadraticEquation;
+#[cfg(debug_assertions)]
 use crate::protocol::ring_switch::eval_ring_at;
 #[cfg(debug_assertions)]
 use crate::protocol::ring_switch::m_row_count;
@@ -38,18 +39,29 @@ use crate::protocol::ring_switch::{
     build_w_evals, commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_verifier,
     w_ring_element_count, RingSwitchOutput, WCommitmentConfig,
 };
+#[cfg(debug_assertions)]
 use crate::protocol::sumcheck::eq_poly::EqPolynomial;
+#[cfg(debug_assertions)]
 use crate::protocol::sumcheck::hachi_stage1::{
     range_check_eval_from_s, HachiStage1Prover, HachiStage1Verifier,
 };
+#[cfg(not(debug_assertions))]
+use crate::protocol::sumcheck::hachi_stage1::{HachiStage1Prover, HachiStage1Verifier};
 use crate::protocol::sumcheck::hachi_stage2::{
     relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier,
 };
 #[cfg(debug_assertions)]
 use crate::protocol::sumcheck::multilinear_eval;
-use crate::protocol::sumcheck::{prove_sumcheck, verify_sumcheck};
+use crate::protocol::sumcheck::two_round_prefix::{
+    Stage1BivariateSkipState, Stage2BivariateSkipState,
+};
+use crate::protocol::sumcheck::{
+    prove_sumcheck_with_omitted_prefix_rounds, verify_sumcheck, verify_sumcheck_with_prefix_rounds,
+    SumcheckInstanceProver, SumcheckInstanceVerifier,
+};
 use crate::protocol::transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_STAGE1_PREFIX,
+    ABSORB_SUMCHECK_STAGE2_PREFIX, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH,
     CHALLENGE_SUMCHECK_ROUND,
 };
 use crate::protocol::transcript::Transcript;
@@ -391,45 +403,94 @@ where
     let alpha_evals_y_debug = alpha_evals_y.clone();
     #[cfg(debug_assertions)]
     let m_evals_x_debug = m_evals_x.clone();
-    let mut stage1_prover =
-        HachiStage1Prover::new(&w_evals_compact, &tau0, b, live_x_cols, num_u, num_l);
-    let (stage1_sumcheck, r_stage1, stage1_final_claim) =
-        prove_sumcheck::<F, _, F, _, _>(&mut stage1_prover, transcript, |tr| {
-            tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
-        })?;
-    let s_claim = stage1_prover.final_s_claim();
-    #[cfg(not(debug_assertions))]
-    let _ = stage1_final_claim;
+    let (stage1_prefix, stage1_sumcheck, r_stage1, s_claim) = {
+        let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+        let mut stage1_prover =
+            HachiStage1Prover::new(&w_evals_compact, &tau0, b, live_x_cols, num_u, num_l);
+        let omitted_prefix_rounds = if stage1_prover.can_use_two_round_prefix() {
+            2
+        } else {
+            0
+        };
+        let (stage1_sumcheck, r_stage1, stage1_final_claim) =
+            prove_sumcheck_with_omitted_prefix_rounds::<F, _, F, _, _, _>(
+                &mut stage1_prover,
+                transcript,
+                |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+                omitted_prefix_rounds,
+                |round, prover, tr| {
+                    if round == 0 {
+                        if let Some(prefix) = prover.prefix_payload() {
+                            tr.append_serde(ABSORB_SUMCHECK_STAGE1_PREFIX, prefix);
+                        }
+                    }
+                    Ok(())
+                },
+            )?;
+        let stage1_prefix = stage1_prover.prefix_payload().cloned();
+        let s_claim = stage1_prover.final_s_claim();
+        #[cfg(not(debug_assertions))]
+        let _ = stage1_final_claim;
 
-    #[cfg(debug_assertions)]
-    prove_stage1_selfcheck(&tau0, &r_stage1, s_claim, b, stage1_final_claim, level);
+        #[cfg(debug_assertions)]
+        prove_stage1_selfcheck(&tau0, &r_stage1, s_claim, b, stage1_final_claim, level);
+
+        (stage1_prefix, stage1_sumcheck, r_stage1, s_claim)
+    };
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let stage2_input_claim = batching_coeff * s_claim + relation_claim;
+    let (stage2_prefix, stage2_sumcheck, sumcheck_challenges, stage2_final_claim, w_eval) = {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+        let mut stage2_prover = HachiStage2Prover::new(
+            batching_coeff,
+            w_evals_compact,
+            &r_stage1,
+            s_claim,
+            alpha_evals_y,
+            m_evals_x,
+            live_x_cols,
+            num_u,
+            num_l,
+            relation_claim,
+        );
+        debug_assert!(stage2_input_claim == SumcheckInstanceProver::input_claim(&stage2_prover));
+        let omitted_prefix_rounds = if stage2_prover.can_use_two_round_prefix() {
+            2
+        } else {
+            0
+        };
+        let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
+            prove_sumcheck_with_omitted_prefix_rounds::<F, _, F, _, _, _>(
+                &mut stage2_prover,
+                transcript,
+                |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+                omitted_prefix_rounds,
+                |round, prover, tr| {
+                    if round == 0 {
+                        if let Some(prefix) = prover.prefix_payload() {
+                            tr.append_serde(ABSORB_SUMCHECK_STAGE2_PREFIX, prefix);
+                        }
+                    }
+                    Ok(())
+                },
+            )?;
+        let stage2_prefix = stage2_prover.prefix_payload().cloned();
+        #[cfg(not(debug_assertions))]
+        let _ = stage2_final_claim;
 
-    let mut stage2_prover = HachiStage2Prover::new(
-        batching_coeff,
-        w_evals_compact,
-        &r_stage1,
-        s_claim,
-        alpha_evals_y,
-        m_evals_x,
-        live_x_cols,
-        num_u,
-        num_l,
-        relation_claim,
-    );
-
-    let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
-        prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
-            tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
-        })?;
-    #[cfg(not(debug_assertions))]
-    let _ = stage2_final_claim;
-
-    let w_eval = {
-        let _span = tracing::info_span!("multilinear_eval", level).entered();
-        stage2_prover.final_w_eval()
+        let w_eval = {
+            let _span = tracing::info_span!("multilinear_eval", level).entered();
+            stage2_prover.final_w_eval()
+        };
+        (
+            stage2_prefix,
+            stage2_sumcheck,
+            sumcheck_challenges,
+            stage2_final_claim,
+            w_eval,
+        )
     };
 
     #[cfg(debug_assertions)]
@@ -444,13 +505,17 @@ where
         stage2_final_claim,
         level,
     );
+    #[cfg(not(debug_assertions))]
+    let _ = stage2_final_claim;
 
     Ok(ProveLevelOutput {
         level_proof: HachiLevelProof::new::<D>(
             y_ring,
             quad_eq.v,
+            stage1_prefix,
             stage1_sumcheck,
             s_claim,
+            stage2_prefix,
             stage2_sumcheck,
             w_commitment,
             w_eval,
@@ -1228,17 +1293,54 @@ where
         layout,
     )?;
 
+    let stage1_tau0 = rs.tau0.clone();
+    let can_use_stage1_prefix = rs.num_u >= 2 && rs.b == 8;
     let stage1_verifier =
-        HachiStage1Verifier::new(rs.tau0.clone(), level_proof.stage1.s_claim, rs.b);
-    let r_stage1 = verify_sumcheck::<F, _, F, _, _>(
-        &level_proof.stage1.sumcheck,
-        &stage1_verifier,
-        transcript,
-        |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-    )?;
+        HachiStage1Verifier::new(stage1_tau0.clone(), level_proof.stage1.s_claim, rs.b);
+    let r_stage1 = {
+        let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+        if let Some(prefix) = level_proof.stage1.prefix.as_ref() {
+            if !can_use_stage1_prefix {
+                return Err(HachiError::InvalidProof);
+            }
+            let prefix_state = Stage1BivariateSkipState::new(prefix, &stage1_tau0, rs.b)
+                .ok_or(HachiError::InvalidProof)?;
+            verify_sumcheck_with_prefix_rounds::<F, _, F, _, _, _, _>(
+                &level_proof.stage1.sumcheck,
+                &stage1_verifier,
+                transcript,
+                |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+                2,
+                |round, tr| {
+                    if round == 0 {
+                        tr.append_serde(ABSORB_SUMCHECK_STAGE1_PREFIX, prefix);
+                    }
+                    Ok(())
+                },
+                |round, _, challenges| match round {
+                    0 => prefix_state.reconstruct_round0_poly().compress(),
+                    1 => prefix_state
+                        .reconstruct_round1_poly(challenges[0])
+                        .compress(),
+                    _ => unreachable!("only two stage1 prefix rounds are reconstructed"),
+                },
+            )?
+        } else {
+            verify_sumcheck::<F, _, F, _, _>(
+                &level_proof.stage1.sumcheck,
+                &stage1_verifier,
+                transcript,
+                |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+            )?
+        }
+    };
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &level_proof.stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let relation_claim =
+        relation_claim_from_rows(&rs.tau1, rs.alpha, &v_typed, &commitment.u, &y_ring);
+    let stage2_input_claim = batching_coeff * level_proof.stage1.s_claim + relation_claim;
+    let can_use_stage2_prefix = rs.num_u >= 2;
 
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
@@ -1247,7 +1349,7 @@ where
             batching_coeff,
             level_proof.stage1.s_claim,
             w_evals_full,
-            r_stage1,
+            r_stage1.clone(),
             rs.alpha_evals_y,
             rs.m_evals_x,
             rs.tau1,
@@ -1263,7 +1365,7 @@ where
             batching_coeff,
             level_proof.stage1.s_claim,
             Vec::new(),
-            r_stage1,
+            r_stage1.clone(),
             rs.alpha_evals_y,
             rs.m_evals_x,
             rs.tau1,
@@ -1276,13 +1378,53 @@ where
         )
         .with_w_eval_override(level_proof.stage2.next_w_eval)
     };
+    if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
+        return Err(HachiError::InvalidProof);
+    }
 
-    let challenges = verify_sumcheck::<F, _, F, _, _>(
-        &level_proof.stage2.sumcheck,
-        &stage2_verifier,
-        transcript,
-        |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-    )?;
+    let challenges = {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+        if let Some(prefix) = level_proof.stage2.prefix.as_ref() {
+            if !can_use_stage2_prefix {
+                return Err(HachiError::InvalidProof);
+            }
+            let prefix_state = Stage2BivariateSkipState::new(
+                prefix,
+                &r_stage1,
+                level_proof.stage1.s_claim,
+                relation_claim,
+                batching_coeff,
+            )
+            .ok_or(HachiError::InvalidProof)?;
+            verify_sumcheck_with_prefix_rounds::<F, _, F, _, _, _, _>(
+                &level_proof.stage2.sumcheck,
+                &stage2_verifier,
+                transcript,
+                |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+                2,
+                |round, tr| {
+                    if round == 0 {
+                        tr.append_serde(ABSORB_SUMCHECK_STAGE2_PREFIX, prefix);
+                    }
+                    Ok(())
+                },
+                |round, _, challenges| match round {
+                    0 => prefix_state.reconstruct_round0_poly().compress(),
+                    1 => prefix_state
+                        .reconstruct_round1_poly(challenges[0])
+                        .compress(),
+                    _ => unreachable!("only two stage2 prefix rounds are reconstructed"),
+                },
+            )?
+        } else {
+            verify_sumcheck::<F, _, F, _, _>(
+                &level_proof.stage2.sumcheck,
+                &stage2_verifier,
+                transcript,
+                |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+            )?
+        }
+    };
 
     Ok(challenges)
 }

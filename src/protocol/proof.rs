@@ -8,6 +8,9 @@ use crate::protocol::commitment::RingCommitment;
 use crate::protocol::labrador::types::{
     LabradorLevelProof, LabradorProof, LabradorReductionConfig, LabradorWitness,
 };
+use crate::protocol::sumcheck::two_round_prefix::{
+    Stage1BivariateSkipProof, Stage2BivariateSkipProof,
+};
 use crate::protocol::sumcheck::SumcheckProof;
 use crate::{CanonicalField, FieldCore, FromSmallInt, HachiDeserialize, HachiSerialize};
 use std::io::{Read, Write};
@@ -486,7 +489,15 @@ impl<F: FieldCore, const D: usize> Eq for HachiCommitmentHint<F, D> {}
 /// Proof payload for stage 1 of a single Hachi level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiStage1Proof<F: FieldCore> {
+    /// Optional serialized first-two-round bivariate-skip proof for stage 1.
+    ///
+    /// When present, this payload determines the first two x-rounds and the
+    /// `sumcheck` field stores only the suffix proof starting at round 2.
+    pub(crate) prefix: Option<Stage1BivariateSkipProof<F>>,
     /// Stage-1 sumcheck proof over the virtual `S = w(w+1)` table.
+    ///
+    /// This is the full stage-1 proof when `prefix` is `None`, and the suffix
+    /// proof over rounds `2..` when `prefix` is present.
     pub sumcheck: SumcheckProof<F>,
     /// Claimed evaluation of `S` at the stage-1 output point.
     pub s_claim: F,
@@ -495,7 +506,15 @@ pub struct HachiStage1Proof<F: FieldCore> {
 /// Proof payload for stage 2 of a single Hachi level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiStage2Proof<F: FieldCore> {
+    /// Optional serialized first-two-round bivariate-skip proof for stage 2.
+    ///
+    /// When present, this payload determines the first two x-rounds and the
+    /// `sumcheck` field stores only the suffix proof starting at round 2.
+    pub(crate) prefix: Option<Stage2BivariateSkipProof<F>>,
     /// Stage-2 fused sumcheck proof.
+    ///
+    /// This is the full stage-2 proof when `prefix` is `None`, and the suffix
+    /// proof over rounds `2..` when `prefix` is present.
     pub sumcheck: SumcheckProof<F>,
     /// Commitment to the next witness `w`
     /// (ring dim = next level's D, may differ from y_ring/v).
@@ -527,11 +546,13 @@ impl<F: FieldCore> HachiLevelProof<F> {
     /// Construct from typed ring elements for the current level and a
     /// pre-erased `FlatRingVec` for the w-commitment (which may be at a
     /// different D).
-    pub fn new<const D: usize>(
+    pub(crate) fn new<const D: usize>(
         y_ring: CyclotomicRing<F, D>,
         v: Vec<CyclotomicRing<F, D>>,
+        stage1_prefix: Option<Stage1BivariateSkipProof<F>>,
         stage1_sumcheck: SumcheckProof<F>,
         stage1_s_claim: F,
+        stage2_prefix: Option<Stage2BivariateSkipProof<F>>,
         stage2_sumcheck: SumcheckProof<F>,
         next_w_commitment: FlatRingVec<F>,
         next_w_eval: F,
@@ -540,10 +561,12 @@ impl<F: FieldCore> HachiLevelProof<F> {
             y_ring: FlatRingVec::from_single(&y_ring),
             v: FlatRingVec::from_ring_elems(&v),
             stage1: HachiStage1Proof {
+                prefix: stage1_prefix,
                 sumcheck: stage1_sumcheck,
                 s_claim: stage1_s_claim,
             },
             stage2: HachiStage2Proof {
+                prefix: stage2_prefix,
                 sumcheck: stage2_sumcheck,
                 next_w_commitment,
                 next_w_eval,
@@ -1271,12 +1294,26 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
     ) -> Result<(), SerializationError> {
         self.y_ring.serialize_with_mode(&mut writer, compress)?;
         self.v.serialize_with_mode(&mut writer, compress)?;
+        match &self.stage1.prefix {
+            None => 0u8.serialize_with_mode(&mut writer, compress)?,
+            Some(prefix) => {
+                1u8.serialize_with_mode(&mut writer, compress)?;
+                prefix.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
         self.stage1
             .sumcheck
             .serialize_with_mode(&mut writer, compress)?;
         self.stage1
             .s_claim
             .serialize_with_mode(&mut writer, compress)?;
+        match &self.stage2.prefix {
+            None => 0u8.serialize_with_mode(&mut writer, compress)?,
+            Some(prefix) => {
+                1u8.serialize_with_mode(&mut writer, compress)?;
+                prefix.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
         self.stage2
             .sumcheck
             .serialize_with_mode(&mut writer, compress)?;
@@ -1290,18 +1327,36 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
     fn serialized_size(&self, compress: Compress) -> usize {
         self.y_ring.serialized_size(compress)
             + self.v.serialized_size(compress)
+            + 1
+            + self
+                .stage1
+                .prefix
+                .as_ref()
+                .map_or(0, |prefix| prefix.serialized_size(compress))
             + self.stage1.sumcheck.serialized_size(compress)
             + self.stage1.s_claim.serialized_size(compress)
+            + 1
+            + self
+                .stage2
+                .prefix
+                .as_ref()
+                .map_or(0, |prefix| prefix.serialized_size(compress))
             + self.stage2.sumcheck.serialized_size(compress)
             + self.stage2.next_w_commitment.serialized_size(compress)
             + self.stage2.next_w_eval.serialized_size(compress)
     }
 }
 
-impl<F: FieldCore> Valid for HachiLevelProof<F> {
+impl<F: FieldCore + Valid> Valid for HachiLevelProof<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.y_ring.check()?;
         self.v.check()?;
+        if let Some(prefix) = &self.stage1.prefix {
+            prefix.check()?;
+        }
+        if let Some(prefix) = &self.stage2.prefix {
+            prefix.check()?;
+        }
         self.stage2.next_w_commitment.check()
     }
 }
@@ -1312,14 +1367,47 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
+        let y_ring = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?;
+        let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?;
+        let stage1_prefix = match u8::deserialize_with_mode(&mut reader, compress, validate)? {
+            0 => None,
+            1 => Some(Stage1BivariateSkipProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?),
+            tag => {
+                return Err(SerializationError::InvalidData(format!(
+                    "unknown stage1 prefix tag: {tag}"
+                )));
+            }
+        };
+        let stage1_sumcheck =
+            SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?;
+        let stage1_s_claim = F::deserialize_with_mode(&mut reader, compress, validate)?;
+        let stage2_prefix = match u8::deserialize_with_mode(&mut reader, compress, validate)? {
+            0 => None,
+            1 => Some(Stage2BivariateSkipProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?),
+            tag => {
+                return Err(SerializationError::InvalidData(format!(
+                    "unknown stage2 prefix tag: {tag}"
+                )));
+            }
+        };
         Ok(Self {
-            y_ring: FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?,
-            v: FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?,
+            y_ring,
+            v,
             stage1: HachiStage1Proof {
-                sumcheck: SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?,
-                s_claim: F::deserialize_with_mode(&mut reader, compress, validate)?,
+                prefix: stage1_prefix,
+                sumcheck: stage1_sumcheck,
+                s_claim: stage1_s_claim,
             },
             stage2: HachiStage2Proof {
+                prefix: stage2_prefix,
                 sumcheck: SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?,
                 next_w_commitment: FlatRingVec::deserialize_with_mode(
                     &mut reader,
@@ -1368,7 +1456,7 @@ impl<F: FieldCore> HachiSerialize for HachiProof<F> {
     }
 }
 
-impl<F: FieldCore> Valid for HachiProof<F> {
+impl<F: FieldCore + Valid> Valid for HachiProof<F> {
     fn check(&self) -> Result<(), SerializationError> {
         for lp in &self.levels {
             lp.check()?;

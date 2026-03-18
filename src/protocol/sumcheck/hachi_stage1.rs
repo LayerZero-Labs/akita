@@ -31,6 +31,10 @@
 
 use super::eq_poly::EqPolynomial;
 use super::split_eq::GruenSplitEq;
+use super::two_round_prefix::{
+    build_stage1_bivariate_skip_proof_from_s_compact, can_use_stage1_two_round_prefix,
+    Stage1BivariateSkipProof, Stage1BivariateSkipState,
+};
 use super::{
     fold_evals_in_place, trim_trailing_zeros, CompactPairFoldLut, SumcheckInstanceProver,
     SumcheckInstanceVerifier, UniPoly,
@@ -643,6 +647,12 @@ enum STable<E: FieldCore> {
     Full(Vec<E>),
 }
 
+struct Stage1TwoRoundPrefix<E: FieldCore> {
+    proof: Stage1BivariateSkipProof<E>,
+    skip_state: Stage1BivariateSkipState<E>,
+    first_challenge: Option<E>,
+}
+
 /// Stage-1 norm sumcheck prover over the virtual table `S(x) = w(x)(w(x)+1)`.
 pub struct HachiStage1Prover<E: FieldCore> {
     s_table: STable<E>,
@@ -652,6 +662,10 @@ pub struct HachiStage1Prover<E: FieldCore> {
     num_u: usize,
     num_vars: usize,
     b: usize,
+    prefix_tau: Option<Vec<E>>,
+    two_round_prefix: Option<Stage1TwoRoundPrefix<E>>,
+    cached_round_poly: Option<UniPoly<E>>,
+    pending_round_poly: Option<UniPoly<E>>,
     prefix_time_total: f64,
     dense_time_total: f64,
     fold_time_total: f64,
@@ -691,6 +705,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
             num_u,
             num_vars,
             b,
+            prefix_tau: can_use_stage1_two_round_prefix(num_u, b).then(|| tau0.to_vec()),
+            two_round_prefix: None,
+            cached_round_poly: None,
+            pending_round_poly: None,
             prefix_time_total: 0.0,
             dense_time_total: 0.0,
             fold_time_total: 0.0,
@@ -730,6 +748,27 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     }
 
     #[inline]
+    fn next_use_prefix_x_round_after_current(&self) -> bool {
+        self.rounds_completed + 1 < self.num_u
+            && self.live_x_cols.div_ceil(2) < (self.current_x_len() / 2)
+    }
+
+    #[inline]
+    pub(crate) fn can_use_two_round_prefix(&self) -> bool {
+        self.prefix_tau.is_some()
+    }
+
+    #[inline]
+    fn using_two_round_prefix(&self) -> bool {
+        self.rounds_completed < 2 && self.can_use_two_round_prefix()
+    }
+
+    #[inline]
+    pub(crate) fn prefix_payload(&self) -> Option<&Stage1BivariateSkipProof<E>> {
+        self.two_round_prefix.as_ref().map(|prefix| &prefix.proof)
+    }
+
+    #[inline]
     fn compact_s_values(b: usize) -> Vec<i32> {
         let half = (b / 2) as i32;
         (0..half).map(|k| k * (k + 1)).collect()
@@ -739,6 +778,623 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     fn build_compact_s_fold_lut(b: usize, r: E) -> CompactPairFoldLut<E> {
         let valid_s = Self::compact_s_values(b);
         CompactPairFoldLut::from_allowed_values(&valid_s, r)
+    }
+
+    fn ensure_two_round_prefix(&mut self) -> &mut Stage1TwoRoundPrefix<E> {
+        if self.two_round_prefix.is_none() {
+            let tau0 = self
+                .prefix_tau
+                .clone()
+                .expect("two-round prefix requested without cached tau");
+            let num_l = self.num_vars - self.num_u;
+            let s_compact = match &self.s_table {
+                STable::Compact(s_compact) => s_compact,
+                STable::Full(_) => panic!("two-round prefix can only build from compact table"),
+            };
+            let proof = build_stage1_bivariate_skip_proof_from_s_compact(
+                s_compact,
+                &tau0,
+                self.b,
+                self.live_x_cols,
+                self.num_u,
+                num_l,
+            )
+            .expect("two-round prefix should be available");
+            let skip_state = Stage1BivariateSkipState::new(&proof, &tau0, self.b)
+                .expect("valid bivariate-skip state");
+            self.two_round_prefix = Some(Stage1TwoRoundPrefix {
+                proof,
+                skip_state,
+                first_challenge: None,
+            });
+        }
+        self.two_round_prefix
+            .as_mut()
+            .expect("two-round prefix should be initialized")
+    }
+
+    #[inline]
+    fn direct_fold_s_quad_to_round2(s00: i32, s10: i32, s01: i32, s11: i32, r0: E, r1: E) -> E {
+        let s00 = E::from_i64(s00 as i64);
+        let s10 = E::from_i64(s10 as i64);
+        let s01 = E::from_i64(s01 as i64);
+        let s11 = E::from_i64(s11 as i64);
+        let x0 = s00 + r0 * (s10 - s00);
+        let x1 = s01 + r0 * (s11 - s01);
+        x0 + r1 * (x1 - x0)
+    }
+
+    #[inline]
+    fn stage1_b8_s_digit_from_compact_s(s: i32) -> usize {
+        match s {
+            0 => 0,
+            2 => 1,
+            6 => 2,
+            12 => 3,
+            other => unreachable!("unexpected compact s value {other}"),
+        }
+    }
+
+    #[inline]
+    fn stage1_b8_quad_lookup_index_from_row(row: &[i32], base: usize) -> usize {
+        let d0 = row
+            .get(base)
+            .copied()
+            .map(Self::stage1_b8_s_digit_from_compact_s)
+            .unwrap_or(0);
+        let d1 = row
+            .get(base + 1)
+            .copied()
+            .map(Self::stage1_b8_s_digit_from_compact_s)
+            .unwrap_or(0);
+        let d2 = row
+            .get(base + 2)
+            .copied()
+            .map(Self::stage1_b8_s_digit_from_compact_s)
+            .unwrap_or(0);
+        let d3 = row
+            .get(base + 3)
+            .copied()
+            .map(Self::stage1_b8_s_digit_from_compact_s)
+            .unwrap_or(0);
+        d0 | (d1 << 2) | (d2 << 4) | (d3 << 6)
+    }
+
+    fn build_round2_s_lookup(r0: E, r1: E) -> Vec<E> {
+        const S_VALUES: [i32; 4] = [0, 2, 6, 12];
+        (0..256usize)
+            .map(|idx| {
+                let d0 = idx & 0b11;
+                let d1 = (idx >> 2) & 0b11;
+                let d2 = (idx >> 4) & 0b11;
+                let d3 = (idx >> 6) & 0b11;
+                Self::direct_fold_s_quad_to_round2(
+                    S_VALUES[d0],
+                    S_VALUES[d1],
+                    S_VALUES[d2],
+                    S_VALUES[d3],
+                    r0,
+                    r1,
+                )
+            })
+            .collect()
+    }
+
+    #[tracing::instrument(skip_all, name = "HachiStage1Prover::fold_s_compact_to_round2")]
+    fn fold_s_compact_to_round2(
+        s_compact: &[i32],
+        live_x_cols: usize,
+        y_len: usize,
+        r0: E,
+        r1: E,
+    ) -> Vec<E> {
+        let next_live_x_cols = live_x_cols.div_ceil(4);
+        let mut out = vec![E::zero(); y_len * next_live_x_cols];
+        for (y, row_out) in out.chunks_mut(next_live_x_cols).enumerate() {
+            let row = &s_compact[y * live_x_cols..(y + 1) * live_x_cols];
+            for (quad_x, dst) in row_out.iter_mut().enumerate() {
+                let base = 4 * quad_x;
+                *dst = Self::direct_fold_s_quad_to_round2(
+                    row.get(base).copied().unwrap_or_default(),
+                    row.get(base + 1).copied().unwrap_or_default(),
+                    row.get(base + 2).copied().unwrap_or_default(),
+                    row.get(base + 3).copied().unwrap_or_default(),
+                    r0,
+                    r1,
+                );
+            }
+        }
+        out
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "HachiStage1Prover::fuse_compact_to_round2_and_compute_round"
+    )]
+    fn fuse_compact_to_round2_and_compute_round(
+        &self,
+        s_compact: &[i32],
+        previous_claim: E,
+        r0: E,
+        r1: E,
+    ) -> (Vec<E>, UniPoly<E>) {
+        debug_assert!(self.num_u > 2);
+        let old_live_x_cols = self.live_x_cols;
+        let next_live_x_cols = old_live_x_cols.div_ceil(4);
+        let y_len = s_compact.len() / old_live_x_cols;
+        let live_pairs = next_live_x_cols.div_ceil(2);
+        let current_x_half = 1usize << (self.num_u - 3);
+        let (e_first, e_second) = self.split_eq.remaining_eq_tables();
+        let num_first = e_first.len();
+        let first_bits = num_first.trailing_zeros();
+        let block_size = num_first.min(live_pairs);
+        let quad_fold_lut = Self::build_round2_s_lookup(r0, r1);
+
+        let range_pc = &self.range_precomp;
+        let full_num_coeffs_q = range_pc.degree_q + 1;
+        let skip_linear_coeff = self.split_eq.can_recover_linear_q_term_from_claim();
+        let num_coeffs_q = full_num_coeffs_q - usize::from(skip_linear_coeff);
+        let mut out = vec![E::zero(); y_len * next_live_x_cols];
+
+        #[cfg(feature = "parallel")]
+        let q_coeffs = out
+            .par_chunks_mut(next_live_x_cols)
+            .enumerate()
+            .map(|(y, row_out)| {
+                let row = &s_compact[y * old_live_x_cols..(y + 1) * old_live_x_cols];
+                let j_base = y * current_x_half;
+                let mut outer_accum = vec![E::ProductAccum::ZERO; num_coeffs_q];
+                let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
+                let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
+
+                let mut blk = 0usize;
+                while blk < live_pairs {
+                    let blk_end = (blk + block_size).min(live_pairs);
+                    let j_high = (j_base + blk) >> first_bits;
+                    let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+
+                    for pair_x in blk..blk_end {
+                        let j_low = (j_base + pair_x) & (num_first - 1);
+                        let e_in = e_first[j_low];
+                        let left_quad = 2 * pair_x;
+                        let left_base = 8 * pair_x;
+                        let s0 = quad_fold_lut
+                            [Self::stage1_b8_quad_lookup_index_from_row(row, left_base)];
+                        row_out[left_quad] = s0;
+                        let s1 = if left_quad + 1 < next_live_x_cols {
+                            let s1 = quad_fold_lut
+                                [Self::stage1_b8_quad_lookup_index_from_row(row, left_base + 4)];
+                            row_out[left_quad + 1] = s1;
+                            s1
+                        } else {
+                            E::zero()
+                        };
+                        compute_entry_coeffs_from_s(
+                            &mut entry_buf,
+                            &mut s_pows_buf,
+                            range_pc,
+                            s0,
+                            s1 - s0,
+                        );
+                        accumulate_dense_entry_coeffs(
+                            &mut inner_accum[..num_coeffs_q],
+                            &entry_buf[..full_num_coeffs_q],
+                            e_in,
+                            skip_linear_coeff,
+                        );
+                    }
+
+                    let e_out = e_second[j_high];
+                    for k in 0..num_coeffs_q {
+                        let inner_reduced = E::reduce_product_accum(inner_accum[k]);
+                        outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                    }
+                    blk = blk_end;
+                }
+                outer_accum
+            })
+            .reduce(
+                || vec![E::ProductAccum::ZERO; num_coeffs_q],
+                |mut a, b| {
+                    for (ai, bi) in a.iter_mut().zip(b.iter()) {
+                        *ai += *bi;
+                    }
+                    a
+                },
+            )
+            .into_iter()
+            .map(E::reduce_product_accum)
+            .collect::<Vec<_>>();
+
+        #[cfg(not(feature = "parallel"))]
+        let q_coeffs = {
+            let mut outer = vec![E::ProductAccum::ZERO; num_coeffs_q];
+            for (y, row_out) in out.chunks_mut(next_live_x_cols).enumerate() {
+                let row = &s_compact[y * old_live_x_cols..(y + 1) * old_live_x_cols];
+                let j_base = y * current_x_half;
+                let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
+                let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
+
+                let mut blk = 0usize;
+                while blk < live_pairs {
+                    let blk_end = (blk + block_size).min(live_pairs);
+                    let j_high = (j_base + blk) >> first_bits;
+                    let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+
+                    for pair_x in blk..blk_end {
+                        let j_low = (j_base + pair_x) & (num_first - 1);
+                        let e_in = e_first[j_low];
+                        let left_quad = 2 * pair_x;
+                        let left_base = 8 * pair_x;
+                        let s0 = quad_fold_lut
+                            [Self::stage1_b8_quad_lookup_index_from_row(row, left_base)];
+                        row_out[left_quad] = s0;
+                        let s1 = if left_quad + 1 < next_live_x_cols {
+                            let s1 = quad_fold_lut
+                                [Self::stage1_b8_quad_lookup_index_from_row(row, left_base + 4)];
+                            row_out[left_quad + 1] = s1;
+                            s1
+                        } else {
+                            E::zero()
+                        };
+                        compute_entry_coeffs_from_s(
+                            &mut entry_buf,
+                            &mut s_pows_buf,
+                            range_pc,
+                            s0,
+                            s1 - s0,
+                        );
+                        accumulate_dense_entry_coeffs(
+                            &mut inner_accum[..num_coeffs_q],
+                            &entry_buf[..full_num_coeffs_q],
+                            e_in,
+                            skip_linear_coeff,
+                        );
+                    }
+
+                    let e_out = e_second[j_high];
+                    for k in 0..num_coeffs_q {
+                        let inner_reduced = E::reduce_product_accum(inner_accum[k]);
+                        outer[k] += e_out.mul_to_product_accum(inner_reduced);
+                    }
+                    blk = blk_end;
+                }
+            }
+            outer
+                .into_iter()
+                .map(E::reduce_product_accum)
+                .collect::<Vec<_>>()
+        };
+
+        let poly = finish_gruen_round_poly_from_q_coeffs(
+            &self.split_eq,
+            q_coeffs,
+            previous_claim,
+            skip_linear_coeff,
+        );
+        (out, poly)
+    }
+
+    #[inline]
+    fn fold_full_prefix_pair(row: &[E], left: usize, r: E) -> E {
+        let s_0 = row.get(left).copied().unwrap_or_else(E::zero);
+        let s_1 = row.get(left + 1).copied().unwrap_or_else(E::zero);
+        s_0 + r * (s_1 - s_0)
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "HachiStage1Prover::fuse_full_prefix_x_and_compute_round"
+    )]
+    fn fuse_full_prefix_x_and_compute_round(
+        &self,
+        s_full: &[E],
+        previous_claim: E,
+        r: E,
+    ) -> (Vec<E>, UniPoly<E>) {
+        debug_assert!(self.next_use_prefix_x_round_after_current());
+        debug_assert!(self.current_x_width() >= 2);
+
+        let old_live_x_cols = self.live_x_cols;
+        let next_live_x_cols = old_live_x_cols.div_ceil(2);
+        let y_len = s_full.len() / old_live_x_cols;
+        let (e_first, e_second) = self.split_eq.remaining_eq_tables();
+        let num_first = e_first.len();
+        let first_bits = num_first.trailing_zeros();
+        let next_current_x_half = 1usize << (self.current_x_width() - 2);
+        let live_pairs = next_live_x_cols.div_ceil(2);
+        let block_size = num_first.min(live_pairs);
+
+        let range_pc = &self.range_precomp;
+        let full_num_coeffs_q = range_pc.degree_q + 1;
+        let skip_linear_coeff = self.split_eq.can_recover_linear_q_term_from_claim();
+        let num_coeffs_q = full_num_coeffs_q - usize::from(skip_linear_coeff);
+        let mut out = vec![E::zero(); y_len * next_live_x_cols];
+
+        #[cfg(feature = "parallel")]
+        let q_coeffs = out
+            .par_chunks_mut(next_live_x_cols)
+            .enumerate()
+            .map(|(y, row_out)| {
+                debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
+                let row = &s_full[y * old_live_x_cols..(y + 1) * old_live_x_cols];
+                let j_base = y * next_current_x_half;
+                let mut outer_accum = vec![E::ProductAccum::ZERO; num_coeffs_q];
+                let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
+                let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
+                let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
+
+                let mut blk = 0usize;
+                while blk < live_pairs {
+                    let blk_end = (blk + block_size).min(live_pairs);
+                    let j_high = (j_base + blk) >> first_bits;
+                    let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                    let blk_len = blk_end - blk;
+                    let full_chunks = blk_len / 4;
+
+                    for chunk in 0..full_chunks {
+                        let pair_base = blk + chunk * 4;
+                        let mut pairs = [(E::zero(), E::zero()); 4];
+                        for (slot, pair_x) in (pair_base..pair_base + 4).enumerate() {
+                            let left_next = 2 * pair_x;
+                            let left_old = 4 * pair_x;
+                            let s0 = Self::fold_full_prefix_pair(row, left_old, r);
+                            row_out[left_next] = s0;
+                            let s1 = if left_next + 1 < next_live_x_cols {
+                                let s1 = Self::fold_full_prefix_pair(row, left_old + 2, r);
+                                row_out[left_next + 1] = s1;
+                                s1
+                            } else {
+                                E::zero()
+                            };
+                            pairs[slot] = (s0, s1);
+                        }
+
+                        compute_entry_coeffs_from_s_x4(
+                            &mut batch_out,
+                            range_pc,
+                            [pairs[0].0, pairs[1].0, pairs[2].0, pairs[3].0],
+                            [
+                                pairs[0].1 - pairs[0].0,
+                                pairs[1].1 - pairs[1].0,
+                                pairs[2].1 - pairs[2].0,
+                                pairs[3].1 - pairs[3].0,
+                            ],
+                        );
+
+                        for (slot, _) in pairs.iter().enumerate() {
+                            let pair_x = pair_base + slot;
+                            let j_low = (j_base + pair_x) & (num_first - 1);
+                            let e_in = e_first[j_low];
+                            accumulate_dense_entry_coeffs(
+                                &mut inner_accum[..num_coeffs_q],
+                                &batch_out[slot][..full_num_coeffs_q],
+                                e_in,
+                                skip_linear_coeff,
+                            );
+                        }
+                    }
+
+                    for pair_x in blk + full_chunks * 4..blk_end {
+                        let left_next = 2 * pair_x;
+                        let left_old = 4 * pair_x;
+                        let s_0 = Self::fold_full_prefix_pair(row, left_old, r);
+                        row_out[left_next] = s_0;
+                        let s_1 = if left_next + 1 < next_live_x_cols {
+                            let s_1 = Self::fold_full_prefix_pair(row, left_old + 2, r);
+                            row_out[left_next + 1] = s_1;
+                            s_1
+                        } else {
+                            E::zero()
+                        };
+                        compute_entry_coeffs_from_s(
+                            &mut entry_buf,
+                            &mut s_pows_buf,
+                            range_pc,
+                            s_0,
+                            s_1 - s_0,
+                        );
+                        let j_low = (j_base + pair_x) & (num_first - 1);
+                        let e_in = e_first[j_low];
+                        accumulate_dense_entry_coeffs(
+                            &mut inner_accum[..num_coeffs_q],
+                            &entry_buf[..full_num_coeffs_q],
+                            e_in,
+                            skip_linear_coeff,
+                        );
+                    }
+
+                    let e_out = e_second[j_high];
+                    for k in 0..num_coeffs_q {
+                        let inner_reduced = E::reduce_product_accum(inner_accum[k]);
+                        outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                    }
+                    blk = blk_end;
+                }
+
+                outer_accum
+            })
+            .reduce(
+                || vec![E::ProductAccum::ZERO; num_coeffs_q],
+                |mut a, b| {
+                    for (ai, bi) in a.iter_mut().zip(b.iter()) {
+                        *ai += *bi;
+                    }
+                    a
+                },
+            )
+            .into_iter()
+            .map(E::reduce_product_accum)
+            .collect::<Vec<_>>();
+
+        #[cfg(not(feature = "parallel"))]
+        let q_coeffs = {
+            let mut outer_accum = vec![E::ProductAccum::ZERO; num_coeffs_q];
+            for (y, row_out) in out.chunks_mut(next_live_x_cols).enumerate() {
+                debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
+                let row = &s_full[y * old_live_x_cols..(y + 1) * old_live_x_cols];
+                let j_base = y * next_current_x_half;
+                let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
+                let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
+                let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
+
+                let mut blk = 0usize;
+                while blk < live_pairs {
+                    let blk_end = (blk + block_size).min(live_pairs);
+                    let j_high = (j_base + blk) >> first_bits;
+                    let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                    let blk_len = blk_end - blk;
+                    let full_chunks = blk_len / 4;
+
+                    for chunk in 0..full_chunks {
+                        let pair_base = blk + chunk * 4;
+                        let mut pairs = [(E::zero(), E::zero()); 4];
+                        for (slot, pair_x) in (pair_base..pair_base + 4).enumerate() {
+                            let left_next = 2 * pair_x;
+                            let left_old = 4 * pair_x;
+                            let s0 = Self::fold_full_prefix_pair(row, left_old, r);
+                            row_out[left_next] = s0;
+                            let s1 = if left_next + 1 < next_live_x_cols {
+                                let s1 = Self::fold_full_prefix_pair(row, left_old + 2, r);
+                                row_out[left_next + 1] = s1;
+                                s1
+                            } else {
+                                E::zero()
+                            };
+                            pairs[slot] = (s0, s1);
+                        }
+
+                        compute_entry_coeffs_from_s_x4(
+                            &mut batch_out,
+                            range_pc,
+                            [pairs[0].0, pairs[1].0, pairs[2].0, pairs[3].0],
+                            [
+                                pairs[0].1 - pairs[0].0,
+                                pairs[1].1 - pairs[1].0,
+                                pairs[2].1 - pairs[2].0,
+                                pairs[3].1 - pairs[3].0,
+                            ],
+                        );
+
+                        for (slot, _) in pairs.iter().enumerate() {
+                            let pair_x = pair_base + slot;
+                            let j_low = (j_base + pair_x) & (num_first - 1);
+                            let e_in = e_first[j_low];
+                            accumulate_dense_entry_coeffs(
+                                &mut inner_accum[..num_coeffs_q],
+                                &batch_out[slot][..full_num_coeffs_q],
+                                e_in,
+                                skip_linear_coeff,
+                            );
+                        }
+                    }
+
+                    for pair_x in blk + full_chunks * 4..blk_end {
+                        let left_next = 2 * pair_x;
+                        let left_old = 4 * pair_x;
+                        let s_0 = Self::fold_full_prefix_pair(row, left_old, r);
+                        row_out[left_next] = s_0;
+                        let s_1 = if left_next + 1 < next_live_x_cols {
+                            let s_1 = Self::fold_full_prefix_pair(row, left_old + 2, r);
+                            row_out[left_next + 1] = s_1;
+                            s_1
+                        } else {
+                            E::zero()
+                        };
+                        compute_entry_coeffs_from_s(
+                            &mut entry_buf,
+                            &mut s_pows_buf,
+                            range_pc,
+                            s_0,
+                            s_1 - s_0,
+                        );
+                        let j_low = (j_base + pair_x) & (num_first - 1);
+                        let e_in = e_first[j_low];
+                        accumulate_dense_entry_coeffs(
+                            &mut inner_accum[..num_coeffs_q],
+                            &entry_buf[..full_num_coeffs_q],
+                            e_in,
+                            skip_linear_coeff,
+                        );
+                    }
+
+                    let e_out = e_second[j_high];
+                    for k in 0..num_coeffs_q {
+                        let inner_reduced = E::reduce_product_accum(inner_accum[k]);
+                        outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                    }
+                    blk = blk_end;
+                }
+            }
+
+            outer_accum
+                .into_iter()
+                .map(E::reduce_product_accum)
+                .collect::<Vec<_>>()
+        };
+
+        let poly = finish_gruen_round_poly_from_q_coeffs(
+            &self.split_eq,
+            q_coeffs,
+            previous_claim,
+            skip_linear_coeff,
+        );
+        (out, poly)
+    }
+
+    fn compute_current_round_poly_from_state(&mut self, previous_claim: E) -> UniPoly<E> {
+        let use_two_round_prefix = self.using_two_round_prefix();
+        let use_prefix_x_round = !use_two_round_prefix && self.use_prefix_x_round();
+        let t_round = Instant::now();
+        let rounds_completed = self.rounds_completed;
+        let poly = if use_two_round_prefix {
+            let prefix = self.ensure_two_round_prefix();
+            if rounds_completed == 0 {
+                prefix.skip_state.reconstruct_round0_poly()
+            } else {
+                let r0 = prefix
+                    .first_challenge
+                    .expect("round 1 prefix polynomial requested before ingesting round 0");
+                prefix.skip_state.reconstruct_round1_poly(r0)
+            }
+        } else if self.split_eq.current_scalar().is_zero() {
+            UniPoly::from_coeffs(vec![E::zero()])
+        } else {
+            match &self.s_table {
+                STable::Compact(s_compact) => {
+                    if use_prefix_x_round {
+                        self.compute_round_compact_prefix_x(s_compact, previous_claim)
+                    } else {
+                        compute_norm_round_poly_from_s_compact(
+                            &self.split_eq,
+                            s_compact,
+                            &self.range_precomp,
+                            previous_claim,
+                        )
+                    }
+                }
+                STable::Full(s_full) => {
+                    if use_prefix_x_round {
+                        self.compute_round_full_prefix_x(s_full, previous_claim)
+                    } else {
+                        compute_norm_round_poly_from_s(
+                            &self.split_eq,
+                            &self.range_precomp,
+                            previous_claim,
+                            |j| (s_full[2 * j], s_full[2 * j + 1]),
+                        )
+                    }
+                }
+            }
+        };
+
+        if use_two_round_prefix || use_prefix_x_round {
+            self.prefix_time_total += t_round.elapsed().as_secs_f64();
+        } else {
+            self.dense_time_total += t_round.elapsed().as_secs_f64();
+        }
+
+        poly
     }
 
     #[tracing::instrument(skip_all, name = "HachiStage1Prover::compute_round_compact_prefix_x")]
@@ -1126,54 +1782,82 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
     }
 
     fn compute_round_univariate(&mut self, _round: usize, previous_claim: E) -> UniPoly<E> {
-        let use_prefix_x_round = self.use_prefix_x_round();
-        let t_round = Instant::now();
-        let poly = if self.split_eq.current_scalar().is_zero() {
-            UniPoly::from_coeffs(vec![E::zero()])
+        let poly = if let Some(poly) = self.cached_round_poly.take() {
+            poly
         } else {
-            match &self.s_table {
-                STable::Compact(s_compact) => {
-                    if use_prefix_x_round {
-                        self.compute_round_compact_prefix_x(s_compact, previous_claim)
-                    } else {
-                        compute_norm_round_poly_from_s_compact(
-                            &self.split_eq,
-                            s_compact,
-                            &self.range_precomp,
-                            previous_claim,
-                        )
-                    }
-                }
-                STable::Full(s_full) => {
-                    if use_prefix_x_round {
-                        self.compute_round_full_prefix_x(s_full, previous_claim)
-                    } else {
-                        let s_table = s_full;
-                        compute_norm_round_poly_from_s(
-                            &self.split_eq,
-                            &self.range_precomp,
-                            previous_claim,
-                            |j| (s_table[2 * j], s_table[2 * j + 1]),
-                        )
-                    }
-                }
-            }
+            self.compute_current_round_poly_from_state(previous_claim)
         };
-
-        if use_prefix_x_round {
-            self.prefix_time_total += t_round.elapsed().as_secs_f64();
-        } else {
-            self.dense_time_total += t_round.elapsed().as_secs_f64();
-        }
-
+        self.pending_round_poly = Some(poly.clone());
         poly
     }
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {
         let t_fold = Instant::now();
         let _span = tracing::info_span!("HachiStage1Prover::fold_round").entered();
+        let next_claim = self
+            .pending_round_poly
+            .take()
+            .map(|poly| poly.evaluate(&r))
+            .expect("ingest_challenge called before computing the current round polynomial");
+        if self.using_two_round_prefix() {
+            let rounds_completed = self.rounds_completed;
+            self.split_eq.bind(r);
+            if rounds_completed == 0 {
+                self.ensure_two_round_prefix().first_challenge = Some(r);
+            } else {
+                let r0 = {
+                    let prefix = self.ensure_two_round_prefix();
+                    prefix
+                        .first_challenge
+                        .expect("round 1 ingest requires the round 0 challenge")
+                };
+                let y_len = match &self.s_table {
+                    STable::Compact(s_compact) => s_compact.len() / self.live_x_cols,
+                    STable::Full(_) => panic!("two-round prefix expected compact table"),
+                };
+                self.s_table = match std::mem::replace(&mut self.s_table, STable::Full(Vec::new()))
+                {
+                    STable::Compact(s_compact) => {
+                        if self.num_u > 2 {
+                            let (s_full, round_poly) = self
+                                .fuse_compact_to_round2_and_compute_round(
+                                    &s_compact, next_claim, r0, r,
+                                );
+                            self.cached_round_poly = Some(round_poly);
+                            STable::Full(s_full)
+                        } else {
+                            let s_full = Self::fold_s_compact_to_round2(
+                                &s_compact,
+                                self.live_x_cols,
+                                y_len,
+                                r0,
+                                r,
+                            );
+                            STable::Full(s_full)
+                        }
+                    }
+                    STable::Full(_) => unreachable!("two-round prefix should hold compact table"),
+                };
+                self.live_x_cols = self.live_x_cols.div_ceil(4);
+            }
+            self.rounds_completed += 1;
+            if self.rounds_completed < self.num_vars {
+                if self.cached_round_poly.is_none() {
+                    self.cached_round_poly =
+                        Some(self.compute_current_round_poly_from_state(next_claim));
+                }
+            } else {
+                self.cached_round_poly = None;
+            }
+            drop(_span);
+            self.fold_time_total += t_fold.elapsed().as_secs_f64();
+            return;
+        }
+
         self.split_eq.bind(r);
         let use_prefix_x_round = self.use_prefix_x_round();
+        let fuse_next_full_prefix_x =
+            use_prefix_x_round && self.next_use_prefix_x_round_after_current();
         let y_len = match &self.s_table {
             STable::Compact(s_compact) => s_compact.len() / self.live_x_cols,
             STable::Full(s_full) => s_full.len() / self.live_x_cols,
@@ -1189,13 +1873,23 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
                 };
                 STable::Full(s_full)
             }
-            STable::Full(mut s_full) => {
+            STable::Full(s_full) => {
                 if use_prefix_x_round {
-                    s_full = Self::fold_s_full_prefix_x(&s_full, self.live_x_cols, y_len, r);
+                    if fuse_next_full_prefix_x {
+                        let (next_s_full, round_poly) =
+                            self.fuse_full_prefix_x_and_compute_round(&s_full, next_claim, r);
+                        self.cached_round_poly = Some(round_poly);
+                        STable::Full(next_s_full)
+                    } else {
+                        let next_s_full =
+                            Self::fold_s_full_prefix_x(&s_full, self.live_x_cols, y_len, r);
+                        STable::Full(next_s_full)
+                    }
                 } else {
+                    let mut s_full = s_full;
                     fold_evals_in_place(&mut s_full, r);
+                    STable::Full(s_full)
                 }
-                STable::Full(s_full)
             }
         };
 
@@ -1203,6 +1897,14 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
             self.live_x_cols = self.live_x_cols.div_ceil(2);
         }
         self.rounds_completed += 1;
+        if self.rounds_completed < self.num_vars {
+            if self.cached_round_poly.is_none() {
+                self.cached_round_poly =
+                    Some(self.compute_current_round_poly_from_state(next_claim));
+            }
+        } else {
+            self.cached_round_poly = None;
+        }
         drop(_span);
         self.fold_time_total += t_fold.elapsed().as_secs_f64();
     }
@@ -1419,5 +2121,125 @@ mod tests {
                 "final s-claim mismatch live_x_cols={live_x_cols}"
             );
         }
+    }
+
+    #[test]
+    fn stage1_fused_round2_transition_matches_two_pass_reference() {
+        let num_u = 3usize;
+        let num_l = 2usize;
+        let live_x_cols = 6usize;
+        let b = 8usize;
+        let half = (b / 2) as i8;
+        let y_len = 1usize << num_l;
+        let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+            .map(|i| ((i * 9 + 5) % b) as i8 - half)
+            .collect();
+        let s_compact: Vec<i32> = w_prefix
+            .iter()
+            .map(|&w| {
+                let w = w as i32;
+                w * (w + 1)
+            })
+            .collect();
+        let tau0: Vec<F> = (0..(num_u + num_l))
+            .map(|i| F::from_u64((i as u64) + 53))
+            .collect();
+
+        let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+        let round0 = prover.compute_round_univariate(0, F::zero());
+        let r0 = F::from_u64(61);
+        let claim1 = round0.evaluate(&r0);
+        prover.ingest_challenge(0, r0);
+        let round1 = prover.compute_round_univariate(1, claim1);
+        let r1 = F::from_u64(67);
+        let claim2 = round1.evaluate(&r1);
+
+        let expected_s_full = HachiStage1Prover::<F>::fold_s_compact_to_round2(
+            &s_compact,
+            live_x_cols,
+            y_len,
+            r0,
+            r1,
+        );
+        let mut expected = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+        expected.split_eq.bind(r0);
+        expected.split_eq.bind(r1);
+        expected.live_x_cols = live_x_cols.div_ceil(4);
+        expected.rounds_completed = 2;
+        let expected_round2 = expected.compute_round_full_prefix_x(&expected_s_full, claim2);
+
+        prover.ingest_challenge(1, r1);
+
+        match &prover.s_table {
+            STable::Full(s_full) => assert_eq!(s_full, &expected_s_full),
+            STable::Compact(_) => {
+                panic!("expected fused stage1 transition to materialize full table")
+            }
+        }
+        assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
+    }
+
+    #[test]
+    fn stage1_later_full_prefix_fusion_matches_two_pass_reference() {
+        let num_u = 5usize;
+        let num_l = 2usize;
+        let live_x_cols = 12usize;
+        let b = 8usize;
+        let half = (b / 2) as i8;
+        let y_len = 1usize << num_l;
+        let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+            .map(|i| ((i * 5 + 11) % b) as i8 - half)
+            .collect();
+        let tau0: Vec<F> = (0..(num_u + num_l))
+            .map(|i| F::from_u64((i as u64) + 101))
+            .collect();
+
+        let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+        let round0 = prover.compute_round_univariate(0, F::zero());
+        let r0 = F::from_u64(107);
+        let claim1 = round0.evaluate(&r0);
+        prover.ingest_challenge(0, r0);
+
+        let round1 = prover.compute_round_univariate(1, claim1);
+        let r1 = F::from_u64(109);
+        let claim2 = round1.evaluate(&r1);
+        prover.ingest_challenge(1, r1);
+
+        let round2 = prover.compute_round_univariate(2, claim2);
+        let r2 = F::from_u64(113);
+        let claim3 = round2.evaluate(&r2);
+
+        let mut expected = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+        let expected_round0 = expected.compute_round_univariate(0, F::zero());
+        assert_eq!(expected_round0, round0);
+        expected.ingest_challenge(0, r0);
+        let expected_round1 = expected.compute_round_univariate(1, claim1);
+        assert_eq!(expected_round1, round1);
+        expected.ingest_challenge(1, r1);
+        let expected_round2 = expected.compute_round_univariate(2, claim2);
+        assert_eq!(expected_round2, round2);
+
+        let current_s_full = match &expected.s_table {
+            STable::Full(s_full) => s_full.clone(),
+            STable::Compact(_) => panic!("expected later prefix state to be full"),
+        };
+        let expected_next_s_full = HachiStage1Prover::<F>::fold_s_full_prefix_x(
+            &current_s_full,
+            expected.live_x_cols,
+            y_len,
+            r2,
+        );
+        expected.split_eq.bind(r2);
+        expected.live_x_cols = expected.live_x_cols.div_ceil(2);
+        expected.rounds_completed += 1;
+        let expected_round3 = expected.compute_round_full_prefix_x(&expected_next_s_full, claim3);
+
+        prover.ingest_challenge(2, r2);
+
+        match &prover.s_table {
+            STable::Full(s_full) => assert_eq!(s_full, &expected_next_s_full),
+            STable::Compact(_) => panic!("expected fused later prefix stage to stay full"),
+        }
+        assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
     }
 }
