@@ -7,14 +7,16 @@
 //! # Paper reference
 //!
 //! The JL constraints are first collapsed into ⌈128/log q⌉ functions using
-//! scalar challenges ω^(k) ∈ (Z_q)^256 (one per "lift"). Each collapsed
+//! 256 independent scalar collapse challenges per lift. Each collapsed
 //! function produces a polynomial b''(k) whose constant term the verifier
 //! can check. The prover sends b''(k) with the constant term zeroed out.
-//! A ring-element challenge β_k then folds each lift into a running sum.
+//! For 128-bit fields, a scalar challenge β_k folds each lift; otherwise
+//! the ring-element β_k is used.
 //! Statement constraints are folded separately with their own ring-element
 //! challenges. Both contributions are combined by the caller.
 
 use crate::algebra::ring::CyclotomicRing;
+use crate::algebra::SparseChallenge;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
@@ -26,6 +28,7 @@ use crate::protocol::labrador::constraints::{pair_index, LabradorConstraint, Nex
 use crate::protocol::labrador::johnson_lindenstrauss::{
     restore_constant_term, zero_constant_term_for_proof, LabradorJlMatrix,
 };
+use crate::protocol::labrador::transcript::sample_labrador_aggregation_challenge;
 use crate::protocol::labrador::types::{
     LabradorReducedConstraintPlan, LabradorStatement, LabradorWitness,
 };
@@ -84,7 +87,113 @@ pub(crate) fn add_phi_flat_in_place<F: FieldCore, const D: usize>(
     Ok(())
 }
 
-/// Sample 256 scalar challenges ω_j^(k) from the transcript.
+#[inline]
+fn field_modulus_bits<F: CanonicalField>() -> u32 {
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    u128::BITS - modulus.leading_zeros()
+}
+
+#[inline]
+/// Whether constraint aggregation may safely replace ring randomness with scalar randomness.
+///
+/// Security note: for prime moduli with bit-length greater than 128, we can
+/// replace a ring-element challenge with a scalar field challenge and still keep
+/// the claimed security level for the aggregation step.
+pub(crate) fn safe_to_use_scalar_randomness<F: CanonicalField>() -> bool {
+    field_modulus_bits::<F>() == 128
+}
+
+#[inline]
+fn scalar_to_ring<F: FieldCore, const D: usize>(scalar: F) -> CyclotomicRing<F, D> {
+    let mut coeffs = [F::zero(); D];
+    coeffs[0] = scalar;
+    CyclotomicRing::from_coefficients(coeffs)
+}
+
+#[derive(Clone, Copy)]
+enum AggregationAlpha<F: FieldCore, const D: usize> {
+    Scalar(F),
+    Ring(CyclotomicRing<F, D>),
+}
+
+#[inline]
+fn sample_aggregation_alpha<F, T, const D: usize>(transcript: &mut T) -> AggregationAlpha<F, D>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    if safe_to_use_scalar_randomness::<F>() {
+        AggregationAlpha::Scalar(sample_labrador_aggregation_challenge::<F, _>(transcript))
+    } else {
+        AggregationAlpha::Ring(challenge_ring_element(
+            transcript,
+            labels::CHALLENGE_LABRADOR_AGGREGATION,
+        ))
+    }
+}
+
+#[inline]
+fn mul_accumulate_with_alpha<F: FieldCore + CanonicalField, const D: usize>(
+    alpha: &AggregationAlpha<F, D>,
+    coeff: &CyclotomicRing<F, D>,
+    dst: &mut CyclotomicRing<F, D>,
+) {
+    match alpha {
+        AggregationAlpha::Scalar(alpha_scalar) => {
+            if alpha_scalar.is_zero() {
+                return;
+            }
+            for (dst_coeff, src_coeff) in
+                dst.coefficients_mut().iter_mut().zip(coeff.coefficients())
+            {
+                *dst_coeff += *src_coeff * *alpha_scalar;
+            }
+        }
+        AggregationAlpha::Ring(alpha_ring) => mul_accumulate_term_coeff(alpha_ring, coeff, dst),
+    }
+}
+
+#[inline]
+fn accumulate_rhs_with_alpha<F: FieldCore + CanonicalField, const D: usize>(
+    alpha: &AggregationAlpha<F, D>,
+    target: &CyclotomicRing<F, D>,
+    acc: &mut CyclotomicRing<F, D>,
+) {
+    match alpha {
+        AggregationAlpha::Scalar(alpha_scalar) => *acc += target.scale(alpha_scalar),
+        AggregationAlpha::Ring(alpha_ring) => alpha_ring.mul_accumulate_into(target, acc),
+    }
+}
+
+#[inline]
+fn alpha_mul_sparse<F: FieldCore + CanonicalField + FromSmallInt, const D: usize>(
+    alpha: &AggregationAlpha<F, D>,
+    challenge: &SparseChallenge,
+) -> CyclotomicRing<F, D> {
+    match alpha {
+        AggregationAlpha::Scalar(alpha_scalar) => {
+            let mut coeffs = [F::zero(); D];
+            for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+                coeffs[pos as usize] += *alpha_scalar * F::from_i64(coeff as i64);
+            }
+            CyclotomicRing::from_coefficients(coeffs)
+        }
+        AggregationAlpha::Ring(alpha_ring) => alpha_ring.mul_by_sparse(challenge),
+    }
+}
+
+#[inline]
+fn alpha_scale_to_ring<F: FieldCore + CanonicalField, const D: usize>(
+    alpha: &AggregationAlpha<F, D>,
+    scale: F,
+) -> CyclotomicRing<F, D> {
+    match alpha {
+        AggregationAlpha::Scalar(alpha_scalar) => scalar_to_ring::<F, D>(*alpha_scalar * scale),
+        AggregationAlpha::Ring(alpha_ring) => alpha_ring.scale(&scale),
+    }
+}
+
+/// Sample 256 scalar collapse challenges (legacy schedule).
 fn sample_jl_collapse_challenge<F, T>(transcript: &mut T) -> [F; 256]
 where
     F: FieldCore + CanonicalField,
@@ -312,16 +421,38 @@ impl<F: FieldCore + CanonicalField, const D: usize> FlatWitness<F, D> {
 }
 
 /// Fold `phi_flat` into a flat accumulator scaled by `beta`.
-fn accumulate_phi_flat<F: FieldCore + CanonicalField, const D: usize>(
+#[tracing::instrument(skip_all, name = "labrador::accumulate_phi_flat_scalar")]
+fn accumulate_phi_flat_scalar<F: FieldCore + CanonicalField, const D: usize>(
+    phi_total_flat: &mut [CyclotomicRing<F, D>],
+    phi_flat: &[CyclotomicRing<F, D>],
+    beta: F,
+) {
+    debug_assert_eq!(phi_total_flat.len(), phi_flat.len());
+    if beta.is_zero() {
+        return;
+    }
+    // In-place accumulation on destination:
+    //   phi_total_flat[i] += beta * phi_flat[i]
+    // using coefficient-wise scalar MAC to avoid dense ring multiplication.
+    cfg_iter_mut!(phi_total_flat)
+        .zip(cfg_iter!(phi_flat))
+        .for_each(|(dst, src)| {
+            for (dst_coeff, src_coeff) in dst.coefficients_mut().iter_mut().zip(src.coefficients())
+            {
+                *dst_coeff += *src_coeff * beta;
+            }
+        });
+}
+
+/// Legacy JL fold: ring-element challenge accumulation.
+#[tracing::instrument(skip_all, name = "labrador::accumulate_phi_flat_ring")]
+fn accumulate_phi_flat_ring<F: FieldCore + CanonicalField, const D: usize>(
     phi_total_flat: &mut [CyclotomicRing<F, D>],
     phi_flat: &[CyclotomicRing<F, D>],
     beta: CyclotomicRing<F, D>,
 ) {
     debug_assert_eq!(phi_total_flat.len(), phi_flat.len());
     let beta_ref = &beta;
-    // In-place accumulation on destination:
-    //   phi_total_flat[i] += beta * phi_flat[i]
-    // Capture beta by reference so rayon workers don't copy the full ring value.
     cfg_iter_mut!(phi_total_flat)
         .zip(cfg_iter!(phi_flat))
         .for_each(|(dst, src)| mul_accumulate_term_coeff(beta_ref, src, dst));
@@ -330,11 +461,11 @@ fn accumulate_phi_flat<F: FieldCore + CanonicalField, const D: usize>(
 /// Aggregate JL projection constraints on the prover side.
 ///
 /// For each of the ⌈128/log q⌉ lifts:
-///   1. Sample ω^(k) ∈ (Z_q)^256 from the transcript.
+///   1. Sample ω_j^(k) ∈ Z_q for `j = 1..256`.
 ///   2. Collapse the JL matrix rows → φ^''(k) ring-element vector.
 ///   3. Compute b^''(k) = ⟨φ^''(k), s⟩ and verify its constant term.
 ///   4. Transmit b^''(k) (constant term zeroed) and absorb into transcript.
-///   5. Sample ring-element β_k and accumulate into (φ_total, aggregated_rhs).
+///   5. If `q` is 128-bit, use scalar β_k; otherwise use ring β_k.
 ///
 /// Returns `(phi_total_flat, aggregated_rhs, jl_lift_residuals)` where
 /// `phi_total_flat` is flattened in row-major order and
@@ -385,10 +516,16 @@ where
         jl_lift_residuals.push(b_tx);
         transcript.append_serde(labels::ABSORB_LABRADOR_JL_LIFT_RESIDUALS, &b_tx);
 
-        let beta: CyclotomicRing<F, D> =
-            challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
-        aggregated_rhs += beta * b_full;
-        accumulate_phi_flat(&mut phi_total_flat, &phi_flat, beta);
+        if safe_to_use_scalar_randomness::<F>() {
+            let beta = sample_labrador_aggregation_challenge::<F, _>(transcript);
+            aggregated_rhs += b_full.scale(&beta);
+            accumulate_phi_flat_scalar(&mut phi_total_flat, &phi_flat, beta);
+        } else {
+            let beta: CyclotomicRing<F, D> =
+                challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
+            aggregated_rhs += beta * b_full;
+            accumulate_phi_flat_ring(&mut phi_total_flat, &phi_flat, beta);
+        }
     }
 
     Ok((phi_total_flat, aggregated_rhs, jl_lift_residuals))
@@ -428,10 +565,16 @@ where
             collapse_to_field::<F>(jl_projection, &omega),
         );
         transcript.append_serde(labels::ABSORB_LABRADOR_JL_LIFT_RESIDUALS, jl_lift_residual);
-        let beta: CyclotomicRing<F, D> =
-            challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
-        aggregated_rhs += beta * b_full;
-        accumulate_phi_flat(&mut phi_total_flat, &phi_flat, beta);
+        if safe_to_use_scalar_randomness::<F>() {
+            let beta = sample_labrador_aggregation_challenge::<F, _>(transcript);
+            aggregated_rhs += b_full.scale(&beta);
+            accumulate_phi_flat_scalar(&mut phi_total_flat, &phi_flat, beta);
+        } else {
+            let beta: CyclotomicRing<F, D> =
+                challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
+            aggregated_rhs += beta * b_full;
+            accumulate_phi_flat_ring(&mut phi_total_flat, &phi_flat, beta);
+        }
     }
 
     Ok((phi_total_flat, aggregated_rhs))
@@ -453,23 +596,44 @@ fn mul_accumulate_term_coeff<F: FieldCore + CanonicalField, const D: usize>(
 fn accumulate_scaled_row<F: FieldCore + CanonicalField, const D: usize>(
     dst: &mut [CyclotomicRing<F, D>],
     src: &[CyclotomicRing<F, D>],
-    alpha: &CyclotomicRing<F, D>,
+    alpha: &AggregationAlpha<F, D>,
     scale: F,
 ) {
     debug_assert_eq!(dst.len(), src.len());
-    let scaled_alpha = alpha.scale(&scale);
-    cfg_iter_mut!(dst)
-        .zip(cfg_iter!(src))
-        .for_each(|(dst_elem, src_elem)| {
-            mul_accumulate_term_coeff(&scaled_alpha, src_elem, dst_elem)
-        });
+    match alpha {
+        AggregationAlpha::Scalar(alpha_scalar) => {
+            let scaled_alpha = *alpha_scalar * scale;
+            if scaled_alpha.is_zero() {
+                return;
+            }
+            cfg_iter_mut!(dst)
+                .zip(cfg_iter!(src))
+                .for_each(|(dst_elem, src_elem)| {
+                    for (dst_coeff, src_coeff) in dst_elem
+                        .coefficients_mut()
+                        .iter_mut()
+                        .zip(src_elem.coefficients())
+                    {
+                        *dst_coeff += *src_coeff * scaled_alpha;
+                    }
+                });
+        }
+        AggregationAlpha::Ring(alpha_ring) => {
+            let scaled_alpha = alpha_ring.scale(&scale);
+            cfg_iter_mut!(dst)
+                .zip(cfg_iter!(src))
+                .for_each(|(dst_elem, src_elem)| {
+                    mul_accumulate_term_coeff(&scaled_alpha, src_elem, dst_elem)
+                });
+        }
+    }
 }
 
 fn accumulate_statement_row_work<F: FieldCore + CanonicalField, const D: usize>(
     row: &mut [CyclotomicRing<F, D>],
     work: &[(usize, usize)],
     constraints: &[LabradorConstraint<F, D>],
-    alphas: &[CyclotomicRing<F, D>],
+    alphas: &[AggregationAlpha<F, D>],
 ) {
     #[cfg(feature = "parallel")]
     row.par_chunks_mut(STATEMENT_ROW_CHUNK_LEN)
@@ -489,7 +653,7 @@ fn accumulate_statement_row_work<F: FieldCore + CanonicalField, const D: usize>(
                 let src = &term.coefficients[start - term.offset..end - term.offset];
                 let dst = &mut chunk[start - chunk_start..end - chunk_start];
                 for (dst_elem, src_elem) in dst.iter_mut().zip(src.iter()) {
-                    mul_accumulate_term_coeff(alpha, src_elem, dst_elem);
+                    mul_accumulate_with_alpha(alpha, src_elem, dst_elem);
                 }
             }
         });
@@ -502,7 +666,7 @@ fn accumulate_statement_row_work<F: FieldCore + CanonicalField, const D: usize>(
             .iter_mut()
             .zip(term.coefficients.iter())
         {
-            mul_accumulate_term_coeff(alpha, src_elem, dst_elem);
+            mul_accumulate_with_alpha(alpha, src_elem, dst_elem);
         }
     }
 }
@@ -567,11 +731,11 @@ where
         .iter()
         .zip(statement.inner_opening_payload.iter())
     {
-        let alpha = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
-        aggregated_rhs += alpha * *target;
+        let alpha = sample_aggregation_alpha::<F, T, D>(transcript);
+        accumulate_rhs_with_alpha(&alpha, target, &mut aggregated_rhs);
         let dst = &mut aux_row[inner_opening_start..linear_garbage_start];
         for (dst, src) in dst.iter_mut().zip(b_row.iter()) {
-            mul_accumulate_term_coeff(&alpha, src, dst);
+            mul_accumulate_with_alpha(&alpha, src, dst);
         }
     }
 
@@ -581,23 +745,23 @@ where
         .iter()
         .zip(statement.linear_garbage_payload.iter())
     {
-        let alpha = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
-        aggregated_rhs += alpha * *target;
+        let alpha = sample_aggregation_alpha::<F, T, D>(transcript);
+        accumulate_rhs_with_alpha(&alpha, target, &mut aggregated_rhs);
         let dst = &mut aux_row[linear_garbage_start..];
         for (dst, src) in dst.iter_mut().zip(d_row.iter()) {
-            mul_accumulate_term_coeff(&alpha, src, dst);
+            mul_accumulate_with_alpha(&alpha, src, dst);
         }
     }
 
     for output_idx in 0..plan.config.inner_commit_rank {
-        let alpha = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
+        let alpha = sample_aggregation_alpha::<F, T, D>(transcript);
         let a_row = &plan.setup.a_mat[output_idx];
         for (part_idx, &scale) in pow_b.iter().enumerate() {
             accumulate_scaled_row(&mut z_rows[part_idx], a_row, &alpha, scale);
         }
 
         for (row_idx, challenge) in plan.challenges.iter().enumerate() {
-            let base = alpha.mul_by_sparse(challenge);
+            let base = alpha_mul_sparse(&alpha, challenge);
             for (part_idx, &scale) in pow_bu.iter().enumerate() {
                 let idx = inner_opening_start
                     + row_idx * plan.config.inner_commit_rank * plan.config.aux_digit_parts
@@ -608,15 +772,14 @@ where
         }
     }
 
-    let alpha_lg = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
+    let alpha_lg = sample_aggregation_alpha::<F, T, D>(transcript);
     for (part_idx, &scale) in pow_b.iter().enumerate() {
         accumulate_scaled_row(&mut z_rows[part_idx], &plan.amortized_phi, &alpha_lg, scale);
     }
     for i in 0..plan.challenges.len() {
         for j in i..plan.challenges.len() {
-            let base = alpha_lg
-                .mul_by_sparse(&plan.challenges[i])
-                .mul_by_sparse(&plan.challenges[j]);
+            let mut base = alpha_mul_sparse(&alpha_lg, &plan.challenges[i]);
+            base = base.mul_by_sparse(&plan.challenges[j]);
             let pair = pair_index(i, j, plan.challenges.len());
             for (part_idx, &scale) in pow_bu.iter().enumerate() {
                 let idx = linear_garbage_start + pair * plan.config.aux_digit_parts + part_idx;
@@ -625,13 +788,13 @@ where
         }
     }
 
-    let alpha_diag = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
-    aggregated_rhs += alpha_diag * plan.aggregated_rhs;
+    let alpha_diag = sample_aggregation_alpha::<F, T, D>(transcript);
+    accumulate_rhs_with_alpha(&alpha_diag, &plan.aggregated_rhs, &mut aggregated_rhs);
     for i in 0..plan.row_count {
         let pair = pair_index(i, i, plan.row_count);
         for (part_idx, &scale) in pow_bu.iter().enumerate() {
             let idx = linear_garbage_start + pair * plan.config.aux_digit_parts + part_idx;
-            aux_row[idx] += alpha_diag.scale(&scale);
+            aux_row[idx] += alpha_scale_to_ring(&alpha_diag, scale);
         }
     }
 
@@ -654,8 +817,7 @@ where
     }
 }
 
-/// Fold statement constraints into aggregated (φ, b) using ring-element
-/// challenges sampled from the transcript.
+/// Fold statement constraints into aggregated (φ, b) using transcript challenges.
 ///
 /// Each scalar constraint is folded with one fresh dense challenge α: its
 /// coefficient terms are fused-accumulated into `phi_total`, while `α · target`
@@ -682,9 +844,9 @@ where
     let num_rows = row_lengths.len();
 
     // Phase 1: sample all challenges sequentially (Fiat-Shamir ordering).
-    let alphas: Vec<CyclotomicRing<F, D>> = constraints
+    let alphas: Vec<AggregationAlpha<F, D>> = constraints
         .iter()
-        .map(|_| challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION))
+        .map(|_| sample_aggregation_alpha::<F, T, D>(transcript))
         .collect();
 
     // Phase 2: validate bounds (cheap, allows early `?` return).
@@ -708,7 +870,7 @@ where
         (0..constraints.len()),
         || CyclotomicRing::<F, D>::zero(),
         |mut acc, i| {
-            alphas[i].mul_accumulate_into(&constraints[i].target, &mut acc);
+            accumulate_rhs_with_alpha(&alphas[i], &constraints[i].target, &mut acc);
             acc
         },
         |mut a, b| {
@@ -748,6 +910,22 @@ mod tests {
     const D: usize = 64;
     const TEST_RING_ELEMS: usize = 16;
     const TEST_COLS: usize = TEST_RING_ELEMS * D;
+
+    #[test]
+    fn safe_to_use_scalar_randomness_only_for_128_bit_fields() {
+        assert!(
+            !safe_to_use_scalar_randomness::<Pow2Offset32Field>(),
+            "32-bit field must use legacy JL aggregation schedule"
+        );
+        assert!(
+            !safe_to_use_scalar_randomness::<Pow2Offset64Field>(),
+            "64-bit field must use legacy JL aggregation schedule"
+        );
+        assert!(
+            safe_to_use_scalar_randomness::<Prime128M13M4P0>(),
+            "128-bit field should use scalar JL aggregation schedule"
+        );
+    }
 
     fn assert_aggregate_jl_contraints_one_lift_matches_naive<
         F: FieldCore + CanonicalField + FromSmallInt,
