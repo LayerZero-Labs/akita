@@ -1284,6 +1284,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
     let y_len = 1usize << num_l;
     assert_eq!(alpha_evals_y.len(), y_len);
     assert_eq!(w_compact.len(), live_x_cols * y_len);
+    assert_eq!(m_evals_x.len(), 1usize << num_u);
     assert_eq!(r_stage1.len(), num_u + num_l);
 
     let eq_x_suffix = EqPolynomial::evals(&r_stage1[2..num_u]);
@@ -1298,14 +1299,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
     let m_point_values_by_quad: Vec<[E; STAGE2_COMPRESSED_POINT_COUNT]> = (0..live_x_quads)
         .map(|x_quad| {
             let base = 4 * x_quad;
-            let m_quad = std::array::from_fn(|offset| {
-                let idx = base + offset;
-                if idx < live_x_cols && idx < m_evals_x.len() {
-                    m_evals_x[idx]
-                } else {
-                    E::zero()
-                }
-            });
+            let m_quad = std::array::from_fn(|offset| m_evals_x[base + offset]);
             stage2_relation_m_point_values_compressed(m_quad)
         })
         .collect();
@@ -1962,6 +1956,7 @@ mod tests {
         }
 
         let y_len = 1usize << num_l;
+        assert_eq!(m_evals_x.len(), 1usize << num_u);
         let eq_x_suffix = EqPolynomial::evals(&r_stage1[2..num_u]);
         let eq_y = EqPolynomial::evals(&r_stage1[num_u..]);
         let points = stage2_full_prefix_points::<F>();
@@ -1985,11 +1980,7 @@ mod tests {
                 });
                 let m_quad = std::array::from_fn(|offset| {
                     let idx = base + offset;
-                    if idx < live_x_cols && idx < m_evals_x.len() {
-                        m_evals_x[idx]
-                    } else {
-                        F::zero()
-                    }
+                    m_evals_x[idx]
                 });
                 let norm_weight = eq_x_suffix[x_quad] * eq_y_weight;
                 for idx in 0..9 {
@@ -2145,6 +2136,9 @@ mod tests {
             F::from_u64(13),
             F::from_u64(17),
             F::from_u64(19),
+            F::from_u64(23),
+            F::from_u64(29),
+            F::from_u64(31),
         ];
         let r_stage1 = [
             F::from_u64(3),

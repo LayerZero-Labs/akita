@@ -546,6 +546,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
     /// Construct from typed ring elements for the current level and a
     /// pre-erased `FlatRingVec` for the w-commitment (which may be at a
     /// different D).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new<const D: usize>(
         y_ring: CyclotomicRing<F, D>,
         v: Vec<CyclotomicRing<F, D>>,
