@@ -66,7 +66,14 @@ enum WTable<E: FieldCore> {
     Full(Vec<E>),
 }
 
+#[derive(Clone, Copy)]
+enum NormRoundTerms<E: FieldCore> {
+    Full([E; 3]),
+    SkipLinear([E; 2]),
+}
+
 type CompactVirtAccum<E> = [<E as HasUnreducedOps>::MulU64Accum; 4];
+type CompactVirtSkipLinearAccum<E> = [<E as HasUnreducedOps>::MulU64Accum; 2];
 type CompactRelAccum<E> = [<E as HasUnreducedOps>::MulU64Accum; 6];
 
 #[inline]
@@ -108,6 +115,16 @@ fn reduce_compact_virt<E: FieldCore + HasUnreducedOps>(virt: CompactVirtAccum<E>
         E::reduce_mul_u64_accum(virt[0]),
         reduce_signed_accum::<E>(virt[1], virt[2]),
         E::reduce_mul_u64_accum(virt[3]),
+    ]
+}
+
+#[inline]
+fn reduce_compact_virt_skip_linear<E: FieldCore + HasUnreducedOps>(
+    virt: CompactVirtSkipLinearAccum<E>,
+) -> [E; 2] {
+    [
+        E::reduce_mul_u64_accum(virt[0]),
+        E::reduce_mul_u64_accum(virt[1]),
     ]
 }
 
@@ -170,6 +187,8 @@ pub struct HachiStage2Prover<E: FieldCore> {
     num_u: usize,
     num_vars: usize,
     relation_claim: E,
+    prev_norm_claim: E,
+    prev_norm_poly: Option<UniPoly<E>>,
 
     scan_time_total: f64,
     fold_time_total: f64,
@@ -215,6 +234,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
             num_u,
             num_vars,
             relation_claim,
+            prev_norm_claim: batching_coeff * s_claim,
+            prev_norm_poly: None,
             scan_time_total: 0.0,
             fold_time_total: 0.0,
             rounds_completed: 0,
@@ -253,12 +274,30 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
     }
 
     #[inline]
+    fn can_skip_norm_linear_coeff(&self) -> bool {
+        self.split_eq.can_recover_linear_q_term_from_claim()
+    }
+
+    #[inline]
+    fn norm_poly_from_terms(&self, virt_terms: NormRoundTerms<E>) -> UniPoly<E> {
+        match virt_terms {
+            NormRoundTerms::Full(virt_q_coeffs) => {
+                self.split_eq.gruen_mul(&coeffs_to_poly(virt_q_coeffs))
+            }
+            NormRoundTerms::SkipLinear([q_constant, q_quadratic]) => self
+                .split_eq
+                .try_gruen_poly_deg_3(q_constant, q_quadratic, self.prev_norm_claim)
+                .expect("split-eq norm claim recovery should succeed"),
+        }
+    }
+
+    #[inline]
     fn polys_from_terms(
         &self,
-        virt_q_coeffs: [E; 3],
+        virt_terms: NormRoundTerms<E>,
         rel_coeffs: [E; 3],
     ) -> (UniPoly<E>, UniPoly<E>) {
-        let virt_poly = self.split_eq.gruen_mul(&coeffs_to_poly(virt_q_coeffs));
+        let virt_poly = self.norm_poly_from_terms(virt_terms);
         let rel_poly = coeffs_to_poly(rel_coeffs);
         (virt_poly, rel_poly)
     }
@@ -277,16 +316,18 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
     }
 
     #[inline]
-    fn combine_terms(&self, virt_q_coeffs: [E; 3], rel_coeffs: [E; 3]) -> UniPoly<E> {
-        let (virt_poly, relation_poly) = self.polys_from_terms(virt_q_coeffs, rel_coeffs);
-        self.combine_polys(&virt_poly, &relation_poly)
+    fn combine_terms(&mut self, virt_terms: NormRoundTerms<E>, rel_coeffs: [E; 3]) -> UniPoly<E> {
+        let (virt_poly, relation_poly) = self.polys_from_terms(virt_terms, rel_coeffs);
+        let combined = self.combine_polys(&virt_poly, &relation_poly);
+        self.prev_norm_poly = Some(virt_poly);
+        combined
     }
 
     #[tracing::instrument(
         skip_all,
         name = "HachiStage2Prover::compute_round_compact_dense_terms"
     )]
-    fn compute_round_compact_dense_terms(&self, w_compact: &[i8]) -> ([E; 3], [E; 3]) {
+    fn compute_round_compact_dense_terms(&self, w_compact: &[i8]) -> (NormRoundTerms<E>, [E; 3]) {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let num_second = e_second.len();
@@ -296,109 +337,78 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
         let m_compact = &self.m_compact;
         debug_assert_eq!(w_compact.len() / 2, num_first * num_second);
 
-        let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
-            0..num_second,
-            || ([E::zero(); 3], [E::MulU64Accum::ZERO; 6]),
-            |(mut virt, mut rel), j_high| {
-                let mut inner_virt = [E::MulU64Accum::ZERO; 4];
-                let base = j_high * num_first;
+        if self.can_skip_norm_linear_coeff() {
+            let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
+                0..num_second,
+                || ([E::zero(); 2], [E::MulU64Accum::ZERO; 6]),
+                |(mut virt, mut rel), j_high| {
+                    let mut inner_virt = [E::MulU64Accum::ZERO; 2];
+                    let base = j_high * num_first;
 
-                for (j_low, &e_in) in e_first.iter().enumerate() {
-                    let j = base + j_low;
-                    let w0 = w_compact[2 * j] as i32;
-                    let w1 = w_compact[2 * j + 1] as i32;
-                    let dw = w1 - w0;
-                    let w0_i64 = w0 as i64;
-                    let dw_i64 = dw as i64;
+                    for (j_low, &e_in) in e_first.iter().enumerate() {
+                        let j = base + j_low;
+                        let w0 = w_compact[2 * j] as i32;
+                        let w1 = w_compact[2 * j + 1] as i32;
+                        let dw = w1 - w0;
+                        let w0_i64 = w0 as i64;
+                        let dw_i64 = dw as i64;
 
-                    let q0 = w0_i64 * (w0_i64 + 1);
-                    if q0 != 0 {
-                        inner_virt[0] += e_in.mul_u64_unreduced(q0 as u64);
+                        let q0 = w0_i64 * (w0_i64 + 1);
+                        if q0 != 0 {
+                            inner_virt[0] += e_in.mul_u64_unreduced(q0 as u64);
+                        }
+                        let q2 = dw_i64 * dw_i64;
+                        if q2 != 0 {
+                            inner_virt[1] += e_in.mul_u64_unreduced(q2 as u64);
+                        }
+
+                        let a0 = alpha_compact[(2 * j) >> current_x_width];
+                        let a1 = alpha_compact[(2 * j + 1) >> current_x_width];
+                        let m0 = m_compact[(2 * j) & current_x_mask];
+                        let m1 = m_compact[(2 * j + 1) & current_x_mask];
+                        let p0 = a0 * m0;
+                        let p1 = a1 * m1;
+                        let dp = p1 - p0;
+                        accum_small_signed::<E>(&mut rel, 0, p0, w0_i64);
+                        accum_small_signed::<E>(&mut rel, 2, dp, w0_i64);
+                        accum_small_signed::<E>(&mut rel, 2, p0, dw_i64);
+                        accum_small_signed::<E>(&mut rel, 4, dp, dw_i64);
                     }
-                    let q1 = dw_i64 * (2 * w0_i64 + 1);
-                    accum_small_signed::<E>(&mut inner_virt, 1, e_in, q1);
-                    let q2 = dw_i64 * dw_i64;
-                    if q2 != 0 {
-                        inner_virt[3] += e_in.mul_u64_unreduced(q2 as u64);
+
+                    let reduced_inner: [E; 2] = reduce_compact_virt_skip_linear(inner_virt);
+                    let e_out = e_second[j_high];
+                    virt[0] += e_out * reduced_inner[0];
+                    virt[1] += e_out * reduced_inner[1];
+
+                    (virt, rel)
+                },
+                |(mut va, mut ra), (vb, rb)| {
+                    for (ai, bi) in va.iter_mut().zip(vb.iter()) {
+                        *ai += *bi;
                     }
-
-                    let a0 = alpha_compact[(2 * j) >> current_x_width];
-                    let a1 = alpha_compact[(2 * j + 1) >> current_x_width];
-                    let m0 = m_compact[(2 * j) & current_x_mask];
-                    let m1 = m_compact[(2 * j + 1) & current_x_mask];
-                    let p0 = a0 * m0;
-                    let p1 = a1 * m1;
-                    let dp = p1 - p0;
-                    accum_small_signed::<E>(&mut rel, 0, p0, w0_i64);
-                    accum_small_signed::<E>(&mut rel, 2, dp, w0_i64);
-                    accum_small_signed::<E>(&mut rel, 2, p0, dw_i64);
-                    accum_small_signed::<E>(&mut rel, 4, dp, dw_i64);
+                    for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
+                        *ai += *bi;
+                    }
+                    (va, ra)
                 }
+            );
 
-                let reduced_inner: [E; 3] = reduce_compact_virt(inner_virt);
-                let e_out = e_second[j_high];
-                virt[0] += e_out * reduced_inner[0];
-                virt[1] += e_out * reduced_inner[1];
-                virt[2] += e_out * reduced_inner[2];
-
-                (virt, rel)
-            },
-            |(mut va, mut ra), (vb, rb)| {
-                for (ai, bi) in va.iter_mut().zip(vb.iter()) {
-                    *ai += *bi;
-                }
-                for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                    *ai += *bi;
-                }
-                (va, ra)
-            }
-        );
-
-        (virt_coeffs, reduce_compact_rel(rel_accum))
-    }
-
-    #[tracing::instrument(
-        skip_all,
-        name = "HachiStage2Prover::compute_round_compact_prefix_x_terms"
-    )]
-    fn compute_round_compact_prefix_x_terms(&self, w_compact: &[i8]) -> ([E; 3], [E; 3]) {
-        debug_assert!(self.rounds_completed < self.num_u);
-        debug_assert_eq!(w_compact.len(), self.live_x_cols * self.alpha_compact.len());
-
-        let (e_first, e_second) = self.split_eq.remaining_eq_tables();
-        let num_first = e_first.len();
-        let first_bits = num_first.trailing_zeros() as usize;
-        let current_x_half = 1usize << (self.current_x_width() - 1);
-        let live_pairs = self.live_x_cols.div_ceil(2);
-        let block_size = num_first.min(live_pairs);
-        let alpha_compact = &self.alpha_compact;
-        let m_compact = &self.m_compact;
-
-        let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
-            0..alpha_compact.len(),
-            || ([E::zero(); 3], [E::MulU64Accum::ZERO; 6]),
-            |(mut virt, mut rel), y| {
-                let row_start = y * self.live_x_cols;
-                let row = &w_compact[row_start..row_start + self.live_x_cols];
-                let alpha = alpha_compact[y];
-                let j_base = y * current_x_half;
-
-                let mut blk = 0usize;
-                while blk < live_pairs {
-                    let blk_end = (blk + block_size).min(live_pairs);
-                    let j_high = (j_base + blk) >> first_bits;
+            (
+                NormRoundTerms::SkipLinear(virt_coeffs),
+                reduce_compact_rel(rel_accum),
+            )
+        } else {
+            let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
+                0..num_second,
+                || ([E::zero(); 3], [E::MulU64Accum::ZERO; 6]),
+                |(mut virt, mut rel), j_high| {
                     let mut inner_virt = [E::MulU64Accum::ZERO; 4];
+                    let base = j_high * num_first;
 
-                    for pair_x in blk..blk_end {
-                        let j_low = (j_base + pair_x) & (num_first - 1);
-                        let e_in = e_first[j_low];
-                        let left = 2 * pair_x;
-                        let w0 = row[left] as i32;
-                        let w1 = if left + 1 < self.live_x_cols {
-                            row[left + 1] as i32
-                        } else {
-                            0
-                        };
+                    for (j_low, &e_in) in e_first.iter().enumerate() {
+                        let j = base + j_low;
+                        let w0 = w_compact[2 * j] as i32;
+                        let w1 = w_compact[2 * j + 1] as i32;
                         let dw = w1 - w0;
                         let w0_i64 = w0 as i64;
                         let dw_i64 = dw as i64;
@@ -414,14 +424,12 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                             inner_virt[3] += e_in.mul_u64_unreduced(q2 as u64);
                         }
 
-                        let m0 = m_compact[left];
-                        let m1 = if left + 1 < self.live_x_cols {
-                            m_compact[left + 1]
-                        } else {
-                            E::zero()
-                        };
-                        let p0 = alpha * m0;
-                        let p1 = alpha * m1;
+                        let a0 = alpha_compact[(2 * j) >> current_x_width];
+                        let a1 = alpha_compact[(2 * j + 1) >> current_x_width];
+                        let m0 = m_compact[(2 * j) & current_x_mask];
+                        let m1 = m_compact[(2 * j + 1) & current_x_mask];
+                        let p0 = a0 * m0;
+                        let p1 = a1 * m1;
                         let dp = p1 - p0;
                         accum_small_signed::<E>(&mut rel, 0, p0, w0_i64);
                         accum_small_signed::<E>(&mut rel, 2, dp, w0_i64);
@@ -435,29 +443,213 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                     virt[1] += e_out * reduced_inner[1];
                     virt[2] += e_out * reduced_inner[2];
 
-                    blk = blk_end;
+                    (virt, rel)
+                },
+                |(mut va, mut ra), (vb, rb)| {
+                    for (ai, bi) in va.iter_mut().zip(vb.iter()) {
+                        *ai += *bi;
+                    }
+                    for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
+                        *ai += *bi;
+                    }
+                    (va, ra)
                 }
-                (virt, rel)
-            },
-            |(mut va, mut ra), (vb, rb)| {
-                for (ai, bi) in va.iter_mut().zip(vb.iter()) {
-                    *ai += *bi;
-                }
-                for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                    *ai += *bi;
-                }
-                (va, ra)
-            }
-        );
+            );
 
-        (virt_coeffs, reduce_compact_rel(rel_accum))
+            (
+                NormRoundTerms::Full(virt_coeffs),
+                reduce_compact_rel(rel_accum),
+            )
+        }
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "HachiStage2Prover::compute_round_compact_prefix_x_terms"
+    )]
+    fn compute_round_compact_prefix_x_terms(
+        &self,
+        w_compact: &[i8],
+    ) -> (NormRoundTerms<E>, [E; 3]) {
+        debug_assert!(self.rounds_completed < self.num_u);
+        debug_assert_eq!(w_compact.len(), self.live_x_cols * self.alpha_compact.len());
+
+        let (e_first, e_second) = self.split_eq.remaining_eq_tables();
+        let num_first = e_first.len();
+        let first_bits = num_first.trailing_zeros() as usize;
+        let current_x_half = 1usize << (self.current_x_width() - 1);
+        let live_pairs = self.live_x_cols.div_ceil(2);
+        let block_size = num_first.min(live_pairs);
+        let alpha_compact = &self.alpha_compact;
+        let m_compact = &self.m_compact;
+
+        if self.can_skip_norm_linear_coeff() {
+            let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
+                0..alpha_compact.len(),
+                || ([E::zero(); 2], [E::MulU64Accum::ZERO; 6]),
+                |(mut virt, mut rel), y| {
+                    let row_start = y * self.live_x_cols;
+                    let row = &w_compact[row_start..row_start + self.live_x_cols];
+                    let alpha = alpha_compact[y];
+                    let j_base = y * current_x_half;
+
+                    let mut blk = 0usize;
+                    while blk < live_pairs {
+                        let blk_end = (blk + block_size).min(live_pairs);
+                        let j_high = (j_base + blk) >> first_bits;
+                        let mut inner_virt = [E::MulU64Accum::ZERO; 2];
+
+                        for pair_x in blk..blk_end {
+                            let j_low = (j_base + pair_x) & (num_first - 1);
+                            let e_in = e_first[j_low];
+                            let left = 2 * pair_x;
+                            let w0 = row[left] as i32;
+                            let w1 = if left + 1 < self.live_x_cols {
+                                row[left + 1] as i32
+                            } else {
+                                0
+                            };
+                            let dw = w1 - w0;
+                            let w0_i64 = w0 as i64;
+                            let dw_i64 = dw as i64;
+
+                            let q0 = w0_i64 * (w0_i64 + 1);
+                            if q0 != 0 {
+                                inner_virt[0] += e_in.mul_u64_unreduced(q0 as u64);
+                            }
+                            let q2 = dw_i64 * dw_i64;
+                            if q2 != 0 {
+                                inner_virt[1] += e_in.mul_u64_unreduced(q2 as u64);
+                            }
+
+                            let m0 = m_compact[left];
+                            let m1 = if left + 1 < self.live_x_cols {
+                                m_compact[left + 1]
+                            } else {
+                                E::zero()
+                            };
+                            let p0 = alpha * m0;
+                            let p1 = alpha * m1;
+                            let dp = p1 - p0;
+                            accum_small_signed::<E>(&mut rel, 0, p0, w0_i64);
+                            accum_small_signed::<E>(&mut rel, 2, dp, w0_i64);
+                            accum_small_signed::<E>(&mut rel, 2, p0, dw_i64);
+                            accum_small_signed::<E>(&mut rel, 4, dp, dw_i64);
+                        }
+
+                        let reduced_inner: [E; 2] = reduce_compact_virt_skip_linear(inner_virt);
+                        let e_out = e_second[j_high];
+                        virt[0] += e_out * reduced_inner[0];
+                        virt[1] += e_out * reduced_inner[1];
+
+                        blk = blk_end;
+                    }
+                    (virt, rel)
+                },
+                |(mut va, mut ra), (vb, rb)| {
+                    for (ai, bi) in va.iter_mut().zip(vb.iter()) {
+                        *ai += *bi;
+                    }
+                    for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
+                        *ai += *bi;
+                    }
+                    (va, ra)
+                }
+            );
+
+            (
+                NormRoundTerms::SkipLinear(virt_coeffs),
+                reduce_compact_rel(rel_accum),
+            )
+        } else {
+            let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
+                0..alpha_compact.len(),
+                || ([E::zero(); 3], [E::MulU64Accum::ZERO; 6]),
+                |(mut virt, mut rel), y| {
+                    let row_start = y * self.live_x_cols;
+                    let row = &w_compact[row_start..row_start + self.live_x_cols];
+                    let alpha = alpha_compact[y];
+                    let j_base = y * current_x_half;
+
+                    let mut blk = 0usize;
+                    while blk < live_pairs {
+                        let blk_end = (blk + block_size).min(live_pairs);
+                        let j_high = (j_base + blk) >> first_bits;
+                        let mut inner_virt = [E::MulU64Accum::ZERO; 4];
+
+                        for pair_x in blk..blk_end {
+                            let j_low = (j_base + pair_x) & (num_first - 1);
+                            let e_in = e_first[j_low];
+                            let left = 2 * pair_x;
+                            let w0 = row[left] as i32;
+                            let w1 = if left + 1 < self.live_x_cols {
+                                row[left + 1] as i32
+                            } else {
+                                0
+                            };
+                            let dw = w1 - w0;
+                            let w0_i64 = w0 as i64;
+                            let dw_i64 = dw as i64;
+
+                            let q0 = w0_i64 * (w0_i64 + 1);
+                            if q0 != 0 {
+                                inner_virt[0] += e_in.mul_u64_unreduced(q0 as u64);
+                            }
+                            let q1 = dw_i64 * (2 * w0_i64 + 1);
+                            accum_small_signed::<E>(&mut inner_virt, 1, e_in, q1);
+                            let q2 = dw_i64 * dw_i64;
+                            if q2 != 0 {
+                                inner_virt[3] += e_in.mul_u64_unreduced(q2 as u64);
+                            }
+
+                            let m0 = m_compact[left];
+                            let m1 = if left + 1 < self.live_x_cols {
+                                m_compact[left + 1]
+                            } else {
+                                E::zero()
+                            };
+                            let p0 = alpha * m0;
+                            let p1 = alpha * m1;
+                            let dp = p1 - p0;
+                            accum_small_signed::<E>(&mut rel, 0, p0, w0_i64);
+                            accum_small_signed::<E>(&mut rel, 2, dp, w0_i64);
+                            accum_small_signed::<E>(&mut rel, 2, p0, dw_i64);
+                            accum_small_signed::<E>(&mut rel, 4, dp, dw_i64);
+                        }
+
+                        let reduced_inner: [E; 3] = reduce_compact_virt(inner_virt);
+                        let e_out = e_second[j_high];
+                        virt[0] += e_out * reduced_inner[0];
+                        virt[1] += e_out * reduced_inner[1];
+                        virt[2] += e_out * reduced_inner[2];
+
+                        blk = blk_end;
+                    }
+                    (virt, rel)
+                },
+                |(mut va, mut ra), (vb, rb)| {
+                    for (ai, bi) in va.iter_mut().zip(vb.iter()) {
+                        *ai += *bi;
+                    }
+                    for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
+                        *ai += *bi;
+                    }
+                    (va, ra)
+                }
+            );
+
+            (
+                NormRoundTerms::Full(virt_coeffs),
+                reduce_compact_rel(rel_accum),
+            )
+        }
     }
 
     #[tracing::instrument(
         skip_all,
         name = "HachiStage2Prover::compute_round_full_prefix_x_terms"
     )]
-    fn compute_round_full_prefix_x_terms(&self, w_full: &[E]) -> ([E; 3], [E; 3]) {
+    fn compute_round_full_prefix_x_terms(&self, w_full: &[E]) -> (NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.rounds_completed < self.num_u);
         debug_assert_eq!(w_full.len(), self.live_x_cols * self.alpha_compact.len());
 
@@ -470,31 +662,209 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
         let alpha_compact = &self.alpha_compact;
         let m_compact = &self.m_compact;
 
-        cfg_fold_reduce!(
-            0..alpha_compact.len(),
-            || ([E::zero(); 3], [E::zero(); 3]),
-            |(mut virt, mut rel), y| {
-                let row_start = y * self.live_x_cols;
-                let row = &w_full[row_start..row_start + self.live_x_cols];
-                let alpha = alpha_compact[y];
-                let j_base = y * current_x_half;
+        if self.can_skip_norm_linear_coeff() {
+            let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
+                0..alpha_compact.len(),
+                || ([E::zero(); 2], [E::zero(); 3]),
+                |(mut virt, mut rel), y| {
+                    let row_start = y * self.live_x_cols;
+                    let row = &w_full[row_start..row_start + self.live_x_cols];
+                    let alpha = alpha_compact[y];
+                    let j_base = y * current_x_half;
 
-                let mut blk = 0usize;
-                while blk < live_pairs {
-                    let blk_end = (blk + block_size).min(live_pairs);
-                    let j_high = (j_base + blk) >> first_bits;
+                    let mut blk = 0usize;
+                    while blk < live_pairs {
+                        let blk_end = (blk + block_size).min(live_pairs);
+                        let j_high = (j_base + blk) >> first_bits;
+                        let mut inner_virt = [E::zero(); 2];
+
+                        for pair_x in blk..blk_end {
+                            let j_low = (j_base + pair_x) & (num_first - 1);
+                            let e_in = e_first[j_low];
+                            let left = 2 * pair_x;
+                            let w0 = row[left];
+                            let w1 = if left + 1 < self.live_x_cols {
+                                row[left + 1]
+                            } else {
+                                E::zero()
+                            };
+                            let dw = w1 - w0;
+
+                            inner_virt[0] += e_in * (w0 * (w0 + E::one()));
+                            inner_virt[1] += e_in * (dw * dw);
+
+                            let m0 = m_compact[left];
+                            let m1 = if left + 1 < self.live_x_cols {
+                                m_compact[left + 1]
+                            } else {
+                                E::zero()
+                            };
+                            let p0 = alpha * m0;
+                            let p1 = alpha * m1;
+                            let dp = p1 - p0;
+                            rel[0] += w0 * p0;
+                            rel[1] += w0 * dp + dw * p0;
+                            rel[2] += dw * dp;
+                        }
+
+                        let e_out = e_second[j_high];
+                        virt[0] += e_out * inner_virt[0];
+                        virt[1] += e_out * inner_virt[1];
+
+                        blk = blk_end;
+                    }
+                    (virt, rel)
+                },
+                |(mut va, mut ra), (vb, rb)| {
+                    for (ai, bi) in va.iter_mut().zip(vb.iter()) {
+                        *ai += *bi;
+                    }
+                    for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
+                        *ai += *bi;
+                    }
+                    (va, ra)
+                }
+            );
+            (NormRoundTerms::SkipLinear(virt_coeffs), rel_coeffs)
+        } else {
+            let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
+                0..alpha_compact.len(),
+                || ([E::zero(); 3], [E::zero(); 3]),
+                |(mut virt, mut rel), y| {
+                    let row_start = y * self.live_x_cols;
+                    let row = &w_full[row_start..row_start + self.live_x_cols];
+                    let alpha = alpha_compact[y];
+                    let j_base = y * current_x_half;
+
+                    let mut blk = 0usize;
+                    while blk < live_pairs {
+                        let blk_end = (blk + block_size).min(live_pairs);
+                        let j_high = (j_base + blk) >> first_bits;
+                        let mut inner_virt = [E::zero(); 3];
+
+                        for pair_x in blk..blk_end {
+                            let j_low = (j_base + pair_x) & (num_first - 1);
+                            let e_in = e_first[j_low];
+                            let left = 2 * pair_x;
+                            let w0 = row[left];
+                            let w1 = if left + 1 < self.live_x_cols {
+                                row[left + 1]
+                            } else {
+                                E::zero()
+                            };
+                            let dw = w1 - w0;
+                            let two_w0_plus_one = w0 + w0 + E::one();
+
+                            inner_virt[0] += e_in * (w0 * (w0 + E::one()));
+                            inner_virt[1] += e_in * (dw * two_w0_plus_one);
+                            inner_virt[2] += e_in * (dw * dw);
+
+                            let m0 = m_compact[left];
+                            let m1 = if left + 1 < self.live_x_cols {
+                                m_compact[left + 1]
+                            } else {
+                                E::zero()
+                            };
+                            let p0 = alpha * m0;
+                            let p1 = alpha * m1;
+                            let dp = p1 - p0;
+                            rel[0] += w0 * p0;
+                            rel[1] += w0 * dp + dw * p0;
+                            rel[2] += dw * dp;
+                        }
+
+                        let e_out = e_second[j_high];
+                        virt[0] += e_out * inner_virt[0];
+                        virt[1] += e_out * inner_virt[1];
+                        virt[2] += e_out * inner_virt[2];
+
+                        blk = blk_end;
+                    }
+                    (virt, rel)
+                },
+                |(mut va, mut ra), (vb, rb)| {
+                    for (ai, bi) in va.iter_mut().zip(vb.iter()) {
+                        *ai += *bi;
+                    }
+                    for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
+                        *ai += *bi;
+                    }
+                    (va, ra)
+                }
+            );
+            (NormRoundTerms::Full(virt_coeffs), rel_coeffs)
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "HachiStage2Prover::compute_round_full_dense_terms")]
+    fn compute_round_full_dense_terms(&self, w_full: &[E]) -> (NormRoundTerms<E>, [E; 3]) {
+        let (e_first, e_second) = self.split_eq.remaining_eq_tables();
+        let num_first = e_first.len();
+        let num_second = e_second.len();
+        let current_x_width = self.current_x_width();
+        let current_x_mask = (1usize << current_x_width).wrapping_sub(1);
+        let alpha_compact = &self.alpha_compact;
+        let m_compact = &self.m_compact;
+        debug_assert_eq!(w_full.len() / 2, num_first * num_second);
+
+        if self.can_skip_norm_linear_coeff() {
+            let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
+                0..num_second,
+                || ([E::zero(); 2], [E::zero(); 3]),
+                |(mut virt, mut rel), j_high| {
+                    let mut inner_virt = [E::zero(); 2];
+                    let base = j_high * num_first;
+
+                    for (j_low, &e_in) in e_first.iter().enumerate() {
+                        let j = base + j_low;
+                        let w0 = w_full[2 * j];
+                        let w1 = w_full[2 * j + 1];
+                        let dw = w1 - w0;
+
+                        inner_virt[0] += e_in * (w0 * (w0 + E::one()));
+                        inner_virt[1] += e_in * (dw * dw);
+
+                        let a0 = alpha_compact[(2 * j) >> current_x_width];
+                        let a1 = alpha_compact[(2 * j + 1) >> current_x_width];
+                        let m0 = m_compact[(2 * j) & current_x_mask];
+                        let m1 = m_compact[(2 * j + 1) & current_x_mask];
+                        let p0 = a0 * m0;
+                        let p1 = a1 * m1;
+                        let dp = p1 - p0;
+                        rel[0] += w0 * p0;
+                        rel[1] += w0 * dp + dw * p0;
+                        rel[2] += dw * dp;
+                    }
+
+                    let e_out = e_second[j_high];
+                    virt[0] += e_out * inner_virt[0];
+                    virt[1] += e_out * inner_virt[1];
+
+                    (virt, rel)
+                },
+                |(mut va, mut ra), (vb, rb)| {
+                    for (ai, bi) in va.iter_mut().zip(vb.iter()) {
+                        *ai += *bi;
+                    }
+                    for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
+                        *ai += *bi;
+                    }
+                    (va, ra)
+                }
+            );
+            (NormRoundTerms::SkipLinear(virt_coeffs), rel_coeffs)
+        } else {
+            let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
+                0..num_second,
+                || ([E::zero(); 3], [E::zero(); 3]),
+                |(mut virt, mut rel), j_high| {
                     let mut inner_virt = [E::zero(); 3];
+                    let base = j_high * num_first;
 
-                    for pair_x in blk..blk_end {
-                        let j_low = (j_base + pair_x) & (num_first - 1);
-                        let e_in = e_first[j_low];
-                        let left = 2 * pair_x;
-                        let w0 = row[left];
-                        let w1 = if left + 1 < self.live_x_cols {
-                            row[left + 1]
-                        } else {
-                            E::zero()
-                        };
+                    for (j_low, &e_in) in e_first.iter().enumerate() {
+                        let j = base + j_low;
+                        let w0 = w_full[2 * j];
+                        let w1 = w_full[2 * j + 1];
                         let dw = w1 - w0;
                         let two_w0_plus_one = w0 + w0 + E::one();
 
@@ -502,14 +872,12 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                         inner_virt[1] += e_in * (dw * two_w0_plus_one);
                         inner_virt[2] += e_in * (dw * dw);
 
-                        let m0 = m_compact[left];
-                        let m1 = if left + 1 < self.live_x_cols {
-                            m_compact[left + 1]
-                        } else {
-                            E::zero()
-                        };
-                        let p0 = alpha * m0;
-                        let p1 = alpha * m1;
+                        let a0 = alpha_compact[(2 * j) >> current_x_width];
+                        let a1 = alpha_compact[(2 * j + 1) >> current_x_width];
+                        let m0 = m_compact[(2 * j) & current_x_mask];
+                        let m1 = m_compact[(2 * j + 1) & current_x_mask];
+                        let p0 = a0 * m0;
+                        let p1 = a1 * m1;
                         let dp = p1 - p0;
                         rel[0] += w0 * p0;
                         rel[1] += w0 * dp + dw * p0;
@@ -521,80 +889,20 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                     virt[1] += e_out * inner_virt[1];
                     virt[2] += e_out * inner_virt[2];
 
-                    blk = blk_end;
+                    (virt, rel)
+                },
+                |(mut va, mut ra), (vb, rb)| {
+                    for (ai, bi) in va.iter_mut().zip(vb.iter()) {
+                        *ai += *bi;
+                    }
+                    for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
+                        *ai += *bi;
+                    }
+                    (va, ra)
                 }
-                (virt, rel)
-            },
-            |(mut va, mut ra), (vb, rb)| {
-                for (ai, bi) in va.iter_mut().zip(vb.iter()) {
-                    *ai += *bi;
-                }
-                for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                    *ai += *bi;
-                }
-                (va, ra)
-            }
-        )
-    }
-
-    #[tracing::instrument(skip_all, name = "HachiStage2Prover::compute_round_full_dense_terms")]
-    fn compute_round_full_dense_terms(&self, w_full: &[E]) -> ([E; 3], [E; 3]) {
-        let (e_first, e_second) = self.split_eq.remaining_eq_tables();
-        let num_first = e_first.len();
-        let num_second = e_second.len();
-        let current_x_width = self.current_x_width();
-        let current_x_mask = (1usize << current_x_width).wrapping_sub(1);
-        let alpha_compact = &self.alpha_compact;
-        let m_compact = &self.m_compact;
-        debug_assert_eq!(w_full.len() / 2, num_first * num_second);
-
-        cfg_fold_reduce!(
-            0..num_second,
-            || ([E::zero(); 3], [E::zero(); 3]),
-            |(mut virt, mut rel), j_high| {
-                let mut inner_virt = [E::zero(); 3];
-                let base = j_high * num_first;
-
-                for (j_low, &e_in) in e_first.iter().enumerate() {
-                    let j = base + j_low;
-                    let w0 = w_full[2 * j];
-                    let w1 = w_full[2 * j + 1];
-                    let dw = w1 - w0;
-                    let two_w0_plus_one = w0 + w0 + E::one();
-
-                    inner_virt[0] += e_in * (w0 * (w0 + E::one()));
-                    inner_virt[1] += e_in * (dw * two_w0_plus_one);
-                    inner_virt[2] += e_in * (dw * dw);
-
-                    let a0 = alpha_compact[(2 * j) >> current_x_width];
-                    let a1 = alpha_compact[(2 * j + 1) >> current_x_width];
-                    let m0 = m_compact[(2 * j) & current_x_mask];
-                    let m1 = m_compact[(2 * j + 1) & current_x_mask];
-                    let p0 = a0 * m0;
-                    let p1 = a1 * m1;
-                    let dp = p1 - p0;
-                    rel[0] += w0 * p0;
-                    rel[1] += w0 * dp + dw * p0;
-                    rel[2] += dw * dp;
-                }
-
-                let e_out = e_second[j_high];
-                virt[0] += e_out * inner_virt[0];
-                virt[1] += e_out * inner_virt[1];
-                virt[2] += e_out * inner_virt[2];
-
-                (virt, rel)
-            },
-            |(mut va, mut ra), (vb, rb)| {
-                for (ai, bi) in va.iter_mut().zip(vb.iter()) {
-                    *ai += *bi;
-                }
-                for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                    *ai += *bi;
-                }
-                (va, ra)
-            }
-        )
+            );
+            (NormRoundTerms::Full(virt_coeffs), rel_coeffs)
+        }
     }
 
     fn compute_round_compact_prefix_x_polys(&self, w_compact: &[i8]) -> (UniPoly<E>, UniPoly<E>) {
@@ -757,7 +1065,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
                 if self.use_prefix_x_round() {
                     let (virt_poly, rel_poly) =
                         self.compute_round_compact_prefix_x_polys(w_compact);
-                    self.combine_polys(&virt_poly, &rel_poly)
+                    let combined = self.combine_polys(&virt_poly, &rel_poly);
+                    self.prev_norm_poly = Some(virt_poly);
+                    combined
                 } else {
                     let (virt_q_coeffs, rel_coeffs) =
                         self.compute_round_compact_dense_terms(w_compact);
@@ -782,6 +1092,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
     fn ingest_challenge(&mut self, _round: usize, r: E) {
         let t_fold = Instant::now();
         let _span = tracing::info_span!("HachiStage2Prover::fold_round").entered();
+        if let Some(prev_norm_poly) = self.prev_norm_poly.take() {
+            self.prev_norm_claim = prev_norm_poly.evaluate(&r);
+        }
         self.split_eq.bind(r);
         let folding_x_round = self.rounds_completed < self.num_u;
         let use_prefix_x_round = self.use_prefix_x_round();
@@ -930,6 +1243,7 @@ impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckInsta
 mod tests {
     use super::*;
     use crate::algebra::Prime128M8M4M1M0;
+    use crate::protocol::sumcheck::multilinear_eval;
 
     type F = Prime128M8M4M1M0;
 
@@ -940,14 +1254,30 @@ mod tests {
         num_l: usize,
     }
 
+    fn s_claim_from_compact_rows(w_compact: &[i8], params: &Stage2Params<'_>) -> F {
+        let padded = if params.live_x_cols == (1usize << params.num_u) {
+            w_compact.to_vec()
+        } else {
+            pad_compact_rows(w_compact, params.live_x_cols, params.num_u, params.num_l)
+        };
+        let s_evals: Vec<F> = padded
+            .iter()
+            .map(|&w| {
+                let w = F::from_i64(w as i64);
+                w * (w + F::one())
+            })
+            .collect();
+        multilinear_eval(&s_evals, params.r_stage1).expect("valid stage-2 witness shape")
+    }
+
     fn new_stage2_test_prover(
         batching_coeff: F,
-        s_claim: F,
         w_compact: Vec<i8>,
         alpha_evals_y: Vec<F>,
         m_evals_x: Vec<F>,
         params: Stage2Params<'_>,
     ) -> HachiStage2Prover<F> {
+        let s_claim = s_claim_from_compact_rows(&w_compact, &params);
         HachiStage2Prover::new(
             batching_coeff,
             w_compact,
@@ -1100,7 +1430,6 @@ mod tests {
 
         let prover = new_stage2_test_prover(
             F::from_u64(13),
-            F::from_u64(17),
             w_compact.clone(),
             alpha_evals_y.clone(),
             m_evals_x.clone(),
@@ -1149,7 +1478,6 @@ mod tests {
 
             let mut prefix_prover = new_stage2_test_prover(
                 F::from_u64(17),
-                F::from_u64(23),
                 w_prefix.clone(),
                 alpha_evals_y.clone(),
                 m_evals_x.clone(),
@@ -1162,7 +1490,6 @@ mod tests {
             );
             let mut padded_prover = new_stage2_test_prover(
                 F::from_u64(17),
-                F::from_u64(23),
                 w_padded.clone(),
                 alpha_evals_y.clone(),
                 m_evals_x.clone(),
@@ -1173,21 +1500,26 @@ mod tests {
                     num_l,
                 },
             );
+            let mut prefix_claim = prefix_prover.input_claim();
+            let mut padded_claim = padded_prover.input_claim();
 
             for round in 0..(num_u + num_l) {
-                let prefix_poly = prefix_prover.compute_round_univariate(round, F::zero());
-                let padded_poly = padded_prover.compute_round_univariate(round, F::zero());
+                let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
+                let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
                 assert_eq!(
                     prefix_poly, padded_poly,
                     "round {round} polynomial mismatch live_x_cols={live_x_cols}"
                 );
 
                 let challenge = F::from_u64((round as u64) + 37);
+                prefix_claim = prefix_poly.evaluate(&challenge);
+                padded_claim = padded_poly.evaluate(&challenge);
                 prefix_prover.ingest_challenge(round, challenge);
                 padded_prover.ingest_challenge(round, challenge);
             }
 
             assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
+            assert_eq!(prefix_claim, padded_claim);
         }
     }
 
@@ -1208,7 +1540,6 @@ mod tests {
 
         let prover = new_stage2_test_prover(
             F::from_u64(19),
-            F::from_u64(29),
             w_compact.clone(),
             alpha_evals_y.clone(),
             m_evals_x.clone(),

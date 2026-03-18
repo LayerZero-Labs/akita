@@ -242,24 +242,49 @@ pub(crate) fn range_check_eval_from_s<E: FieldCore + FromSmallInt>(s: E, b: usiz
 }
 
 #[inline]
+fn accumulate_compact_coeff_slot<E: FieldCore + HasUnreducedOps>(
+    pos_accum: &mut [E::MulU64Accum],
+    neg_accum: &mut [E::MulU64Accum],
+    slot: usize,
+    e_in: E,
+    coeff: &CompactCoeffEntry,
+) {
+    if coeff.abs_coeff == 0 {
+        return;
+    }
+    let prod = e_in.mul_u64_unreduced(coeff.abs_coeff);
+    if coeff.is_neg {
+        neg_accum[slot] += prod;
+    } else {
+        pos_accum[slot] += prod;
+    }
+}
+
+#[inline]
 fn accumulate_compact_coeffs<E: FieldCore + HasUnreducedOps>(
     pos_accum: &mut [E::MulU64Accum],
     neg_accum: &mut [E::MulU64Accum],
     e_in: E,
     coeffs: &[CompactCoeffEntry],
+    skip_linear_coeff: bool,
 ) {
-    debug_assert!(pos_accum.len() >= coeffs.len());
-    debug_assert!(neg_accum.len() >= coeffs.len());
-    for (idx, coeff) in coeffs.iter().enumerate() {
-        if coeff.abs_coeff == 0 {
-            continue;
+    debug_assert_eq!(pos_accum.len(), neg_accum.len());
+    debug_assert!(
+        (!skip_linear_coeff && pos_accum.len() >= coeffs.len())
+            || (skip_linear_coeff && pos_accum.len() + 1 >= coeffs.len())
+    );
+    if skip_linear_coeff {
+        if let Some(coeff) = coeffs.first() {
+            accumulate_compact_coeff_slot(pos_accum, neg_accum, 0, e_in, coeff);
         }
-        let prod = e_in.mul_u64_unreduced(coeff.abs_coeff);
-        if coeff.is_neg {
-            neg_accum[idx] += prod;
-        } else {
-            pos_accum[idx] += prod;
+        for (coeff_idx, coeff) in coeffs.iter().enumerate().skip(2) {
+            accumulate_compact_coeff_slot(pos_accum, neg_accum, coeff_idx - 1, e_in, coeff);
         }
+        return;
+    }
+
+    for (idx, coeff) in coeffs.iter().enumerate().take(pos_accum.len()) {
+        accumulate_compact_coeff_slot(pos_accum, neg_accum, idx, e_in, coeff);
     }
 }
 
@@ -269,6 +294,47 @@ fn reduce_small_coeff_accum<E: FieldCore + HasUnreducedOps>(
     neg: E::MulU64Accum,
 ) -> E {
     E::reduce_mul_u64_accum(pos) - E::reduce_mul_u64_accum(neg)
+}
+
+#[inline]
+fn accumulate_dense_entry_coeffs<E: FieldCore + HasUnreducedOps>(
+    accum: &mut [E::ProductAccum],
+    entry_coeffs: &[E],
+    e_in: E,
+    skip_linear_coeff: bool,
+) {
+    if accum.is_empty() {
+        return;
+    }
+
+    accum[0] += e_in.mul_to_product_accum(entry_coeffs[0]);
+    if skip_linear_coeff {
+        for (acc, &entry) in accum.iter_mut().skip(1).zip(entry_coeffs.iter().skip(2)) {
+            *acc += e_in.mul_to_product_accum(entry);
+        }
+    } else {
+        for (acc, &entry) in accum.iter_mut().skip(1).zip(entry_coeffs.iter().skip(1)) {
+            *acc += e_in.mul_to_product_accum(entry);
+        }
+    }
+}
+
+#[inline]
+fn finish_gruen_round_poly_from_q_coeffs<E: FieldCore>(
+    split_eq: &GruenSplitEq<E>,
+    mut q_coeffs: Vec<E>,
+    previous_claim: E,
+    skip_linear_coeff: bool,
+) -> UniPoly<E> {
+    trim_trailing_zeros(&mut q_coeffs);
+    if skip_linear_coeff {
+        split_eq
+            .try_gruen_poly_from_coeffs_except_linear(&q_coeffs, previous_claim)
+            .expect("split-eq linear-term recovery should succeed")
+    } else {
+        let q_poly = UniPoly::from_coeffs(q_coeffs);
+        split_eq.gruen_mul(&q_poly)
+    }
 }
 
 #[inline]
@@ -382,18 +448,21 @@ fn compute_entry_coeffs_from_s_x4<E: FieldCore + HasUnreducedOps>(
 fn compute_norm_round_poly_from_s<E: FieldCore + FromSmallInt + HasUnreducedOps>(
     split_eq: &GruenSplitEq<E>,
     range_precomp: &RangeAffineFromSPrecomp<E>,
+    previous_claim: E,
     s_pair: impl Fn(usize) -> (E, E) + Sync,
 ) -> UniPoly<E> {
     let (e_first, e_second) = split_eq.remaining_eq_tables();
     let num_first = e_first.len();
     let rp = range_precomp;
-    let num_coeffs_q = rp.degree_q + 1;
+    let full_num_coeffs_q = rp.degree_q + 1;
+    let skip_linear_coeff = split_eq.can_recover_linear_q_term_from_claim();
+    let num_coeffs_q = full_num_coeffs_q - usize::from(skip_linear_coeff);
 
-    let mut q_coeffs = cfg_fold_reduce!(
+    let q_coeffs = cfg_fold_reduce!(
         0..e_second.len(),
         || vec![E::ProductAccum::ZERO; num_coeffs_q],
         |mut outer_accum, j_high| {
-            debug_assert!(num_coeffs_q <= MAX_AFFINE_COEFFS);
+            debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
             let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
             let base_j = j_high * num_first;
             let full_chunks = e_first.len() / 4;
@@ -420,12 +489,12 @@ fn compute_norm_round_poly_from_s<E: FieldCore + FromSmallInt + HasUnreducedOps>
                 );
                 for (b_idx, bo) in batch_out.iter().enumerate() {
                     let e_in = e_first[jl + b_idx];
-                    for (acc, &entry) in inner_accum[..num_coeffs_q]
-                        .iter_mut()
-                        .zip(bo[..num_coeffs_q].iter())
-                    {
-                        *acc += e_in.mul_to_product_accum(entry);
-                    }
+                    accumulate_dense_entry_coeffs(
+                        &mut inner_accum[..num_coeffs_q],
+                        &bo[..full_num_coeffs_q],
+                        e_in,
+                        skip_linear_coeff,
+                    );
                 }
             }
 
@@ -435,12 +504,12 @@ fn compute_norm_round_poly_from_s<E: FieldCore + FromSmallInt + HasUnreducedOps>
                 let j = base_j + full_chunks * 4 + tail_idx;
                 let (s_0, s_1) = s_pair(j);
                 compute_entry_coeffs_from_s(&mut entry_buf, &mut s_pows_buf, rp, s_0, s_1 - s_0);
-                for (acc, &entry) in inner_accum[..num_coeffs_q]
-                    .iter_mut()
-                    .zip(entry_buf[..num_coeffs_q].iter())
-                {
-                    *acc += e_in.mul_to_product_accum(entry);
-                }
+                accumulate_dense_entry_coeffs(
+                    &mut inner_accum[..num_coeffs_q],
+                    &entry_buf[..full_num_coeffs_q],
+                    e_in,
+                    skip_linear_coeff,
+                );
             }
 
             let e_out = e_second[j_high];
@@ -461,9 +530,7 @@ fn compute_norm_round_poly_from_s<E: FieldCore + FromSmallInt + HasUnreducedOps>
     .map(E::reduce_product_accum)
     .collect::<Vec<_>>();
 
-    trim_trailing_zeros(&mut q_coeffs);
-    let q_poly = UniPoly::from_coeffs(q_coeffs);
-    split_eq.gruen_mul(&q_poly)
+    finish_gruen_round_poly_from_q_coeffs(split_eq, q_coeffs, previous_claim, skip_linear_coeff)
 }
 
 fn compute_norm_round_poly_from_s_compact<
@@ -472,19 +539,22 @@ fn compute_norm_round_poly_from_s_compact<
     split_eq: &GruenSplitEq<E>,
     s_compact: &[i32],
     range_precomp: &RangeAffineFromSPrecomp<E>,
+    previous_claim: E,
 ) -> UniPoly<E> {
     let (e_first, e_second) = split_eq.remaining_eq_tables();
     let num_first = e_first.len();
 
     let rp = range_precomp;
-    let num_coeffs_q = rp.degree_q + 1;
+    let full_num_coeffs_q = rp.degree_q + 1;
+    let skip_linear_coeff = split_eq.can_recover_linear_q_term_from_claim();
+    let num_coeffs_q = full_num_coeffs_q - usize::from(skip_linear_coeff);
 
-    let mut q_coeffs = if rp.compact_coeffs_lut(0, 0).is_some() {
+    let q_coeffs = if rp.compact_coeffs_lut(0, 0).is_some() {
         cfg_fold_reduce!(
             0..e_second.len(),
             || vec![E::ProductAccum::ZERO; num_coeffs_q],
             |mut outer_accum, j_high| {
-                debug_assert!(num_coeffs_q <= MAX_AFFINE_COEFFS);
+                debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
                 let mut inner_pos = [E::MulU64Accum::ZERO; MAX_AFFINE_COEFFS];
                 let mut inner_neg = [E::MulU64Accum::ZERO; MAX_AFFINE_COEFFS];
                 for (j_low, &e_in) in e_first.iter().enumerate() {
@@ -499,6 +569,7 @@ fn compute_norm_round_poly_from_s_compact<
                         &mut inner_neg[..num_coeffs_q],
                         e_in,
                         coeffs,
+                        skip_linear_coeff,
                     );
                 }
                 let e_out = e_second[j_high];
@@ -523,7 +594,7 @@ fn compute_norm_round_poly_from_s_compact<
             0..e_second.len(),
             || vec![E::ProductAccum::ZERO; num_coeffs_q],
             |mut outer_accum, j_high| {
-                debug_assert!(num_coeffs_q <= MAX_AFFINE_COEFFS);
+                debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
                 let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
                 for (j_low, &e_in) in e_first.iter().enumerate() {
                     let j = j_high * num_first + j_low;
@@ -531,10 +602,17 @@ fn compute_norm_round_poly_from_s_compact<
                     let s_1 = E::from_i64(s_compact[2 * j + 1] as i64);
                     let a = s_1 - E::from_i64(s_0_int as i64);
                     let mut a_pow = E::one();
-                    for (i, acc) in inner_accum[..num_coeffs_q].iter_mut().enumerate() {
-                        let h_i_s0 = rp.h_i_lut(s_0_int, i);
-                        let val = a_pow * h_i_s0;
-                        *acc += e_in.mul_to_product_accum(val);
+                    for coeff_idx in 0..full_num_coeffs_q {
+                        let h_i_s0 = rp.h_i_lut(s_0_int, coeff_idx);
+                        if !(skip_linear_coeff && coeff_idx == 1) {
+                            let out_idx = if skip_linear_coeff && coeff_idx > 1 {
+                                coeff_idx - 1
+                            } else {
+                                coeff_idx
+                            };
+                            let val = a_pow * h_i_s0;
+                            inner_accum[out_idx] += e_in.mul_to_product_accum(val);
+                        }
                         a_pow = a_pow * a;
                     }
                 }
@@ -557,9 +635,7 @@ fn compute_norm_round_poly_from_s_compact<
         .collect::<Vec<_>>()
     };
 
-    trim_trailing_zeros(&mut q_coeffs);
-    let q_poly = UniPoly::from_coeffs(q_coeffs);
-    split_eq.gruen_mul(&q_poly)
+    finish_gruen_round_poly_from_q_coeffs(split_eq, q_coeffs, previous_claim, skip_linear_coeff)
 }
 
 enum STable<E: FieldCore> {
@@ -666,7 +742,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     }
 
     #[tracing::instrument(skip_all, name = "HachiStage1Prover::compute_round_compact_prefix_x")]
-    fn compute_round_compact_prefix_x(&self, s_compact: &[i32]) -> UniPoly<E> {
+    fn compute_round_compact_prefix_x(&self, s_compact: &[i32], previous_claim: E) -> UniPoly<E> {
         debug_assert!(self.rounds_completed < self.num_u);
         debug_assert_eq!(
             s_compact.len(),
@@ -681,8 +757,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         let block_size = num_first.min(live_pairs);
 
         let rp = &self.range_precomp;
-        let num_coeffs_q = rp.degree_q + 1;
-        let mut q_coeffs = if rp.compact_coeffs_lut(0, 0).is_some() {
+        let full_num_coeffs_q = rp.degree_q + 1;
+        let skip_linear_coeff = self.split_eq.can_recover_linear_q_term_from_claim();
+        let num_coeffs_q = full_num_coeffs_q - usize::from(skip_linear_coeff);
+        let q_coeffs = if rp.compact_coeffs_lut(0, 0).is_some() {
             cfg_fold_reduce!(
                 0..(1usize << (self.num_vars - self.num_u)),
                 || vec![E::ProductAccum::ZERO; num_coeffs_q],
@@ -716,6 +794,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                                 &mut inner_neg[..num_coeffs_q],
                                 e_in,
                                 coeffs,
+                                skip_linear_coeff,
                             );
                         }
 
@@ -773,12 +852,12 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                                 E::from_i64(s0_i as i64),
                                 E::from_i64((s1_i as i64) - (s0_i as i64)),
                             );
-                            for (acc, &entry) in inner_accum[..num_coeffs_q]
-                                .iter_mut()
-                                .zip(entry_buf[..num_coeffs_q].iter())
-                            {
-                                *acc += e_in.mul_to_product_accum(entry);
-                            }
+                            accumulate_dense_entry_coeffs(
+                                &mut inner_accum[..num_coeffs_q],
+                                &entry_buf[..full_num_coeffs_q],
+                                e_in,
+                                skip_linear_coeff,
+                            );
                         }
 
                         let e_out = e_second[j_high];
@@ -802,13 +881,16 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
             .collect()
         };
 
-        trim_trailing_zeros(&mut q_coeffs);
-        let q_poly = UniPoly::from_coeffs(q_coeffs);
-        self.split_eq.gruen_mul(&q_poly)
+        finish_gruen_round_poly_from_q_coeffs(
+            &self.split_eq,
+            q_coeffs,
+            previous_claim,
+            skip_linear_coeff,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "HachiStage1Prover::compute_round_full_prefix_x")]
-    fn compute_round_full_prefix_x(&self, s_full: &[E]) -> UniPoly<E> {
+    fn compute_round_full_prefix_x(&self, s_full: &[E], previous_claim: E) -> UniPoly<E> {
         debug_assert!(self.rounds_completed < self.num_u);
         let y_len = s_full.len() / self.live_x_cols;
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
@@ -819,12 +901,14 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         let block_size = num_first.min(live_pairs);
 
         let range_pc = &self.range_precomp;
-        let num_coeffs_q = range_pc.degree_q + 1;
-        let mut q_coeffs = cfg_fold_reduce!(
+        let full_num_coeffs_q = range_pc.degree_q + 1;
+        let skip_linear_coeff = self.split_eq.can_recover_linear_q_term_from_claim();
+        let num_coeffs_q = full_num_coeffs_q - usize::from(skip_linear_coeff);
+        let q_coeffs = cfg_fold_reduce!(
             0..y_len,
             || vec![E::ProductAccum::ZERO; num_coeffs_q],
             |mut outer_accum, y| {
-                debug_assert!(num_coeffs_q <= MAX_AFFINE_COEFFS);
+                debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
                 let row_start = y * self.live_x_cols;
                 let row = &s_full[row_start..row_start + self.live_x_cols];
                 let j_base = y * current_x_half;
@@ -870,12 +954,12 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                             let pair_x = pair_base + slot;
                             let j_low = (j_base + pair_x) & (num_first - 1);
                             let e_in = e_first[j_low];
-                            for (acc, &entry) in inner_accum[..num_coeffs_q]
-                                .iter_mut()
-                                .zip(batch_out[slot][..num_coeffs_q].iter())
-                            {
-                                *acc += e_in.mul_to_product_accum(entry);
-                            }
+                            accumulate_dense_entry_coeffs(
+                                &mut inner_accum[..num_coeffs_q],
+                                &batch_out[slot][..full_num_coeffs_q],
+                                e_in,
+                                skip_linear_coeff,
+                            );
                         }
                     }
 
@@ -896,12 +980,12 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                         );
                         let j_low = (j_base + pair_x) & (num_first - 1);
                         let e_in = e_first[j_low];
-                        for (acc, &entry) in inner_accum[..num_coeffs_q]
-                            .iter_mut()
-                            .zip(entry_buf[..num_coeffs_q].iter())
-                        {
-                            *acc += e_in.mul_to_product_accum(entry);
-                        }
+                        accumulate_dense_entry_coeffs(
+                            &mut inner_accum[..num_coeffs_q],
+                            &entry_buf[..full_num_coeffs_q],
+                            e_in,
+                            skip_linear_coeff,
+                        );
                     }
 
                     let e_out = e_second[j_high];
@@ -922,10 +1006,13 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
             }
         );
 
-        let mut q_coeffs: Vec<E> = q_coeffs.drain(..).map(E::reduce_product_accum).collect();
-        trim_trailing_zeros(&mut q_coeffs);
-        let q_poly = UniPoly::from_coeffs(q_coeffs);
-        self.split_eq.gruen_mul(&q_poly)
+        let q_coeffs: Vec<E> = q_coeffs.into_iter().map(E::reduce_product_accum).collect();
+        finish_gruen_round_poly_from_q_coeffs(
+            &self.split_eq,
+            q_coeffs,
+            previous_claim,
+            skip_linear_coeff,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "HachiStage1Prover::fold_s_compact_prefix_x")]
@@ -1038,29 +1125,37 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
         E::zero()
     }
 
-    fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
+    fn compute_round_univariate(&mut self, _round: usize, previous_claim: E) -> UniPoly<E> {
         let use_prefix_x_round = self.use_prefix_x_round();
         let t_round = Instant::now();
-        let poly = match &self.s_table {
-            STable::Compact(s_compact) => {
-                if use_prefix_x_round {
-                    self.compute_round_compact_prefix_x(s_compact)
-                } else {
-                    compute_norm_round_poly_from_s_compact(
-                        &self.split_eq,
-                        s_compact,
-                        &self.range_precomp,
-                    )
+        let poly = if self.split_eq.current_scalar().is_zero() {
+            UniPoly::from_coeffs(vec![E::zero()])
+        } else {
+            match &self.s_table {
+                STable::Compact(s_compact) => {
+                    if use_prefix_x_round {
+                        self.compute_round_compact_prefix_x(s_compact, previous_claim)
+                    } else {
+                        compute_norm_round_poly_from_s_compact(
+                            &self.split_eq,
+                            s_compact,
+                            &self.range_precomp,
+                            previous_claim,
+                        )
+                    }
                 }
-            }
-            STable::Full(s_full) => {
-                if use_prefix_x_round {
-                    self.compute_round_full_prefix_x(s_full)
-                } else {
-                    let s_table = s_full;
-                    compute_norm_round_poly_from_s(&self.split_eq, &self.range_precomp, |j| {
-                        (s_table[2 * j], s_table[2 * j + 1])
-                    })
+                STable::Full(s_full) => {
+                    if use_prefix_x_round {
+                        self.compute_round_full_prefix_x(s_full, previous_claim)
+                    } else {
+                        let s_table = s_full;
+                        compute_norm_round_poly_from_s(
+                            &self.split_eq,
+                            &self.range_precomp,
+                            previous_claim,
+                            |j| (s_table[2 * j], s_table[2 * j + 1]),
+                        )
+                    }
                 }
             }
         };
@@ -1263,6 +1358,7 @@ mod tests {
             &prover.split_eq,
             &s_compact,
             &prover.range_precomp,
+            F::zero(),
         );
 
         assert_eq!(stage1_poly, reference);
@@ -1289,10 +1385,12 @@ mod tests {
             let mut padded_prover =
                 HachiStage1Prover::new(&w_padded, &tau0, b, 1usize << num_u, num_u, num_l);
             let mut challenges = Vec::new();
+            let mut prefix_claim = F::zero();
+            let mut padded_claim = F::zero();
 
             for round in 0..(num_u + num_l) {
-                let prefix_poly = prefix_prover.compute_round_univariate(round, F::zero());
-                let padded_poly = padded_prover.compute_round_univariate(round, F::zero());
+                let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
+                let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
                 assert_eq!(
                     prefix_poly, padded_poly,
                     "round {round} polynomial mismatch live_x_cols={live_x_cols}"
@@ -1300,11 +1398,14 @@ mod tests {
 
                 let challenge = F::from_u64((round as u64) + 29);
                 challenges.push(challenge);
+                prefix_claim = prefix_poly.evaluate(&challenge);
+                padded_claim = padded_poly.evaluate(&challenge);
                 prefix_prover.ingest_challenge(round, challenge);
                 padded_prover.ingest_challenge(round, challenge);
             }
 
             assert_eq!(prefix_prover.final_s_claim(), padded_prover.final_s_claim());
+            assert_eq!(prefix_claim, padded_claim);
             let s_padded: Vec<F> = w_padded
                 .iter()
                 .map(|&w| {
