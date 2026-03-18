@@ -166,9 +166,11 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
 fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevelProof<F>) -> usize {
     let y_ring_size = level.y_ring.serialized_size(Compress::No);
     let v_size = level.v.serialized_size(Compress::No);
-    let sumcheck_size = level.sumcheck_proof.serialized_size(Compress::No);
-    let w_commitment_size = level.w_commitment.serialized_size(Compress::No);
-    let w_eval_size = level.w_eval.serialized_size(Compress::No);
+    let stage1_sumcheck_size = level.stage1.sumcheck.serialized_size(Compress::No);
+    let stage1_s_claim_size = level.stage1.s_claim.serialized_size(Compress::No);
+    let stage2_sumcheck_size = level.stage2.sumcheck.serialized_size(Compress::No);
+    let next_w_commitment_size = level.stage2.next_w_commitment.serialized_size(Compress::No);
+    let next_w_eval_size = level.stage2.next_w_eval.serialized_size(Compress::No);
     let total = level.serialized_size(Compress::No);
 
     eprintln!("[{label}]   hachi_fold L{level_idx}: total={total} bytes");
@@ -184,17 +186,25 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
         level.v.count(),
         level.v.ring_dim(),
     );
-    eprintln!("[{label}]     sumcheck={sumcheck_size} bytes");
+    eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
+    eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
+    eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!(
-        "[{label}]     w_commitment={w_commitment_size} bytes ({} ring elems, D={})",
-        level.w_commitment.count(),
+        "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} ring elems, D={})",
+        level.stage2.next_w_commitment.count(),
         level.w_commit_d(),
     );
-    eprintln!("[{label}]     w_eval={w_eval_size} bytes");
+    eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
 
     debug_assert_eq!(
         total,
-        y_ring_size + v_size + sumcheck_size + w_commitment_size + w_eval_size
+        y_ring_size
+            + v_size
+            + stage1_sumcheck_size
+            + stage1_s_claim_size
+            + stage2_sumcheck_size
+            + next_w_commitment_size
+            + next_w_eval_size
     );
     total
 }

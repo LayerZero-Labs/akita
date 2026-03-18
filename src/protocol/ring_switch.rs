@@ -43,7 +43,7 @@ pub struct RingSwitchOutput<F: FieldCore> {
     pub w_hint: FlatCommitmentHint,
     /// Compact evaluation table of w, stored as y-major slices of the live x prefix.
     /// Populated by the prover; empty on the verifier side.
-    pub w_evals: Vec<i8>,
+    pub w_evals_compact: Vec<i8>,
     /// Physical x width before zero-extension to the next power of two.
     pub live_x_cols: usize,
     /// Evaluation table of M_alpha(x) (tau1-weighted).
@@ -219,13 +219,13 @@ where
     };
 
     let m_evals_x = m_evals_x_result?;
-    let (w_evals, _, _) = w_result?;
+    let (w_evals_compact, _, _) = w_result?;
 
     Ok(RingSwitchOutput {
         w,
         w_commitment,
         w_hint,
-        w_evals,
+        w_evals_compact,
         live_x_cols,
         m_evals_x,
         alpha_evals_y,
@@ -333,7 +333,7 @@ where
         w: Vec::new(),
         w_commitment: w_commitment.clone(),
         w_hint: FlatCommitmentHint::empty(),
-        w_evals: Vec::new(),
+        w_evals_compact: Vec::new(),
         live_x_cols: w_len / D,
         m_evals_x,
         alpha_evals_y,
@@ -687,6 +687,7 @@ pub(crate) fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn expand_m_a<F: CanonicalField, const D: usize>(
     m_a: &[Vec<F>],
     alpha: F,

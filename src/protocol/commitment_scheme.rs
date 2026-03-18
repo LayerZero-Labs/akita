@@ -39,9 +39,14 @@ use crate::protocol::ring_switch::{
     w_ring_element_count, RingSwitchOutput, WCommitmentConfig,
 };
 use crate::protocol::sumcheck::eq_poly::EqPolynomial;
-use crate::protocol::sumcheck::hachi_sumcheck::{HachiSumcheckProver, HachiSumcheckVerifier};
+use crate::protocol::sumcheck::hachi_stage1::{
+    range_check_eval_from_s, HachiStage1Prover, HachiStage1Verifier,
+};
+use crate::protocol::sumcheck::hachi_stage2::{
+    relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier,
+};
 #[cfg(debug_assertions)]
-use crate::protocol::sumcheck::{multilinear_eval, range_check_eval};
+use crate::protocol::sumcheck::multilinear_eval;
 use crate::protocol::sumcheck::{prove_sumcheck, verify_sumcheck};
 use crate::protocol::transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
@@ -76,38 +81,6 @@ const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 /// stops being worthwhile.  If the w vector doesn't shrink by at least
 /// this factor, the overhead of another fold level outweighs the saving.
 const MIN_SHRINK_RATIO: f64 = 0.5;
-
-#[inline]
-fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
-    tau1: &[F],
-    alpha: F,
-    v: &[CyclotomicRing<F, D>],
-    u: &[CyclotomicRing<F, D>],
-    y_ring: &CyclotomicRing<F, D>,
-) -> F {
-    let eq_tau1 = EqPolynomial::evals(tau1);
-    let mut acc = F::zero();
-    let mut row_idx = 0usize;
-
-    for r in v {
-        if row_idx >= eq_tau1.len() {
-            return acc;
-        }
-        acc += eq_tau1[row_idx] * eval_ring_at(r, &alpha);
-        row_idx += 1;
-    }
-    for r in u {
-        if row_idx >= eq_tau1.len() {
-            return acc;
-        }
-        acc += eq_tau1[row_idx] * eval_ring_at(r, &alpha);
-        row_idx += 1;
-    }
-    if row_idx < eq_tau1.len() {
-        acc += eq_tau1[row_idx] * eval_ring_at(y_ring, &alpha);
-    }
-    acc
-}
 
 /// End-to-end PCS wrapper, generic over ring degree `D` and config `Cfg`.
 #[derive(Clone, Copy, Debug, Default)]
@@ -164,8 +137,8 @@ fn prove_level_diagnostic<F, const D: usize, Cfg>(
         let mut val = F::zero();
         for y in 0..d {
             let idx = x + y * x_len;
-            if idx < rs.w_evals.len() {
-                val += rs.alpha_evals_y[y] * F::from_i64(rs.w_evals[idx] as i64);
+            if idx < rs.w_evals_compact.len() {
+                val += rs.alpha_evals_y[y] * F::from_i64(rs.w_evals_compact[idx] as i64);
             }
         }
         *w_at_alpha_x = val;
@@ -220,7 +193,7 @@ fn prove_level_diagnostic<F, const D: usize, Cfg>(
     let verifier_claim = relation_claim_from_rows::<F, D>(&rs.tau1, rs.alpha, v, u, y_ring);
     let x_mask = x_len - 1;
     let mut prover_claim = F::zero();
-    for (idx, &w) in rs.w_evals.iter().enumerate() {
+    for (idx, &w) in rs.w_evals_compact.iter().enumerate() {
         prover_claim +=
             F::from_i64(w as i64) * rs.alpha_evals_y[idx >> rs.num_u] * rs.m_evals_x[idx & x_mask];
     }
@@ -236,11 +209,33 @@ fn prove_level_diagnostic<F, const D: usize, Cfg>(
 #[cfg(debug_assertions)]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn prove_level_selfcheck<F: FieldCore + FromSmallInt>(
+fn prove_stage1_selfcheck<F: FieldCore + FromSmallInt>(
     tau0: &[F],
+    stage1_challenges: &[F],
+    s_claim: F,
+    b: usize,
+    final_claim: F,
+    level: usize,
+) {
+    let eq_val = EqPolynomial::mle(tau0, stage1_challenges);
+    let oracle = eq_val * range_check_eval_from_s(s_claim, b);
+    if oracle != final_claim {
+        tracing::warn!(
+            level,
+            "PROVER stage-1 self-check FAILED: expected != final_claim"
+        );
+    } else {
+        tracing::debug!(level, "PROVER stage-1 self-check OK");
+    }
+}
+
+#[cfg(debug_assertions)]
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn prove_stage2_selfcheck<F: FieldCore + FromSmallInt>(
+    r_stage1: &[F],
     sumcheck_challenges: &[F],
     w_eval: F,
-    b: usize,
     batching_coeff: F,
     alpha_evals_y: &[F],
     m_evals_x: &[F],
@@ -248,17 +243,20 @@ fn prove_level_selfcheck<F: FieldCore + FromSmallInt>(
     final_claim: F,
     level: usize,
 ) {
-    let eq_val = EqPolynomial::mle(tau0, sumcheck_challenges);
-    let norm_oracle = eq_val * range_check_eval(w_eval, b);
+    let eq_val = EqPolynomial::mle(r_stage1, sumcheck_challenges);
+    let virtual_oracle = eq_val * w_eval * (w_eval + F::one());
     let (x_ch, y_ch) = sumcheck_challenges.split_at(num_u);
     let alpha_val = multilinear_eval(alpha_evals_y, y_ch).unwrap();
     let m_val = multilinear_eval(m_evals_x, x_ch).unwrap();
     let relation_oracle = w_eval * alpha_val * m_val;
-    let prover_expected = batching_coeff * norm_oracle + relation_oracle;
+    let prover_expected = batching_coeff * virtual_oracle + relation_oracle;
     if prover_expected != final_claim {
-        tracing::warn!(level, "PROVER self-check FAILED: expected != final_claim");
+        tracing::warn!(
+            level,
+            "PROVER stage-2 self-check FAILED: expected != final_claim"
+        );
     } else {
-        tracing::debug!(level, "PROVER self-check OK");
+        tracing::debug!(level, "PROVER stage-2 self-check OK");
     }
 }
 
@@ -358,8 +356,6 @@ where
         layout,
     )?;
 
-    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
-
     #[cfg(debug_assertions)]
     prove_level_diagnostic::<F, D, Cfg>(
         expanded,
@@ -379,7 +375,7 @@ where
         w,
         w_commitment,
         w_hint,
-        w_evals,
+        w_evals_compact,
         live_x_cols,
         m_evals_x,
         alpha_evals_y,
@@ -394,11 +390,26 @@ where
     let alpha_evals_y_debug = alpha_evals_y.clone();
     #[cfg(debug_assertions)]
     let m_evals_x_debug = m_evals_x.clone();
-    let mut fused_prover = HachiSumcheckProver::new(
+    let mut stage1_prover =
+        HachiStage1Prover::new(&w_evals_compact, &tau0, b, live_x_cols, num_u, num_l);
+    let (stage1_sumcheck, r_stage1, stage1_final_claim) =
+        prove_sumcheck::<F, _, F, _, _>(&mut stage1_prover, transcript, |tr| {
+            tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+        })?;
+    let s_claim = stage1_prover.final_s_claim();
+    #[cfg(not(debug_assertions))]
+    let _ = stage1_final_claim;
+
+    #[cfg(debug_assertions)]
+    prove_stage1_selfcheck(&tau0, &r_stage1, s_claim, b, stage1_final_claim, level);
+
+    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+
+    let mut stage2_prover = HachiStage2Prover::new(
         batching_coeff,
-        w_evals,
-        &tau0,
-        b,
+        w_evals_compact,
+        &r_stage1,
+        s_claim,
         alpha_evals_y,
         m_evals_x,
         live_x_cols,
@@ -407,27 +418,28 @@ where
         relation_claim,
     );
 
-    let (sumcheck_proof, sumcheck_challenges, _final_claim) =
-        prove_sumcheck::<F, _, F, _, _>(&mut fused_prover, transcript, |tr| {
+    let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
+        prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
             tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
         })?;
+    #[cfg(not(debug_assertions))]
+    let _ = stage2_final_claim;
 
     let w_eval = {
         let _span = tracing::info_span!("multilinear_eval", level).entered();
-        fused_prover.final_w_eval()
+        stage2_prover.final_w_eval()
     };
 
     #[cfg(debug_assertions)]
-    prove_level_selfcheck(
-        &tau0,
+    prove_stage2_selfcheck(
+        &r_stage1,
         &sumcheck_challenges,
         w_eval,
-        b,
         batching_coeff,
         &alpha_evals_y_debug,
         &m_evals_x_debug,
         num_u,
-        _final_claim,
+        stage2_final_claim,
         level,
     );
 
@@ -435,7 +447,9 @@ where
         level_proof: HachiLevelProof::new::<D>(
             y_ring,
             quad_eq.v,
-            sumcheck_proof,
+            stage1_sumcheck,
+            s_claim,
+            stage2_sumcheck,
             w_commitment,
             w_eval,
         ),
@@ -948,8 +962,8 @@ where
             let level_d = Cfg::d_at_level(level, current_w.len());
             let commit_d = Cfg::d_at_level(level + 1, 0);
 
-            let last_w_eval = levels.last().unwrap().w_eval;
-            let last_w_commitment = &levels.last().unwrap().w_commitment;
+            let last_w_eval = levels.last().unwrap().stage2.next_w_eval;
+            let last_w_commitment = &levels.last().unwrap().stage2.next_w_commitment;
             let out = dispatch_prove_level::<F, T, D, Cfg>(
                 level_d,
                 &mut ntt_bundle,
@@ -1005,7 +1019,7 @@ where
                 &current_challenges,
                 current_num_u,
                 current_num_l,
-                &levels.last().unwrap().w_commitment,
+                &levels.last().unwrap().stage2.next_w_commitment,
                 setup,
                 &mut commit_ntt_bundle.D_mat,
                 transcript,
@@ -1099,8 +1113,8 @@ where
                 let num_u = challenges.len() - num_l;
 
                 current_point = next_level_opening_point(&challenges, num_u, num_l);
-                current_opening = level_proof.w_eval;
-                current_commitment = level_proof.w_commitment.clone();
+                current_opening = level_proof.stage2.next_w_eval;
+                current_commitment = level_proof.stage2.next_w_commitment.clone();
                 current_basis = BasisMode::Lagrange;
             }
         }
@@ -1130,7 +1144,7 @@ where
 /// Verify one fold level.
 ///
 /// At the final level, `final_w` is provided and the verifier checks w_val
-/// from it directly. At intermediate levels, `level_proof.w_eval` is used.
+/// from it directly. At intermediate levels, `level_proof.stage2.next_w_eval` is used.
 ///
 /// Returns the sumcheck challenges for chaining into the next level.
 #[allow(clippy::too_many_arguments)]
@@ -1207,21 +1221,30 @@ where
         &quad_eq,
         &setup.expanded,
         w_len,
-        &level_proof.w_commitment,
+        &level_proof.stage2.next_w_commitment,
         transcript,
         layout,
     )?;
 
+    let stage1_verifier =
+        HachiStage1Verifier::new(rs.tau0.clone(), level_proof.stage1.s_claim, rs.b);
+    let r_stage1 = verify_sumcheck::<F, _, F, _, _>(
+        &level_proof.stage1.sumcheck,
+        &stage1_verifier,
+        transcript,
+        |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+    )?;
+
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
 
-    let fused_verifier = if is_last {
+    let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
         let (w_evals_full, _, _) = build_w_evals(fw, Cfg::D)?;
-        HachiSumcheckVerifier::new(
+        HachiStage2Verifier::new(
             batching_coeff,
+            level_proof.stage1.s_claim,
             w_evals_full,
-            rs.tau0,
-            rs.b,
+            r_stage1,
             rs.alpha_evals_y,
             rs.m_evals_x,
             rs.tau1,
@@ -1233,11 +1256,11 @@ where
             rs.num_l,
         )
     } else {
-        HachiSumcheckVerifier::new(
+        HachiStage2Verifier::new(
             batching_coeff,
+            level_proof.stage1.s_claim,
             Vec::new(),
-            rs.tau0,
-            rs.b,
+            r_stage1,
             rs.alpha_evals_y,
             rs.m_evals_x,
             rs.tau1,
@@ -1248,12 +1271,12 @@ where
             rs.num_u,
             rs.num_l,
         )
-        .with_w_val_override(level_proof.w_eval)
+        .with_w_eval_override(level_proof.stage2.next_w_eval)
     };
 
     let challenges = verify_sumcheck::<F, _, F, _, _>(
-        &level_proof.sumcheck_proof,
-        &fused_verifier,
+        &level_proof.stage2.sumcheck,
+        &stage2_verifier,
         transcript,
         |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
     )?;
@@ -1265,6 +1288,7 @@ where
 /// by replaying the transcript from the proof data and setup, exactly as the
 /// verifier does.
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn rederive_alpha_and_m_a<F, const D: usize, Cfg>(
     proof: &HachiProof<F>,
     setup: &HachiVerifierSetup<F>,
@@ -1308,7 +1332,7 @@ where
         &y_ring,
         layout,
     )?;
-    transcript.append_serde(ABSORB_SUMCHECK_W, &level0.w_commitment);
+    transcript.append_serde(ABSORB_SUMCHECK_W, &level0.stage2.next_w_commitment);
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
     let m_a = compute_m_a_reference::<F, D, Cfg>(
         &setup.expanded,
@@ -1324,6 +1348,7 @@ where
 /// Re-derive the ring-switch challenge `alpha` and the fused `m_evals_x`
 /// table by replaying the verifier transcript from the proof data and setup.
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn rederive_alpha_and_m_evals_x<F, const D: usize, Cfg>(
     proof: &HachiProof<F>,
     setup: &HachiVerifierSetup<F>,
@@ -1368,7 +1393,7 @@ where
         &y_ring,
         layout,
     )?;
-    transcript.append_serde(ABSORB_SUMCHECK_W, &level0.w_commitment);
+    transcript.append_serde(ABSORB_SUMCHECK_W, &level0.stage2.next_w_commitment);
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
     let m_evals_x = compute_m_evals_x::<F, D, Cfg>(

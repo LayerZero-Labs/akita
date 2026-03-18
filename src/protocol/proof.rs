@@ -490,19 +490,38 @@ impl<F: FieldCore, const D: usize> Eq for HachiCommitmentHint<F, D> {}
 /// [`v_typed`](Self::v_typed), and
 /// [`w_commitment_typed`](Self::w_commitment_typed) to reconstruct
 /// typed ring elements.
+/// Proof payload for stage 1 of a single Hachi level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HachiStage1Proof<F: FieldCore> {
+    /// Stage-1 sumcheck proof over the virtual `S = w(w+1)` table.
+    pub sumcheck: SumcheckProof<F>,
+    /// Claimed evaluation of `S` at the stage-1 output point.
+    pub s_claim: F,
+}
+
+/// Proof payload for stage 2 of a single Hachi level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HachiStage2Proof<F: FieldCore> {
+    /// Stage-2 fused sumcheck proof.
+    pub sumcheck: SumcheckProof<F>,
+    /// Commitment to the next witness `w`
+    /// (ring dim = next level's D, may differ from y_ring/v).
+    pub next_w_commitment: FlatRingVec<F>,
+    /// Claimed evaluation of the next witness `w` at the stage-2 challenge point.
+    pub next_w_eval: F,
+}
+
+/// One recursive Hachi level proof, split into `stage1` and `stage2` payloads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiLevelProof<F: FieldCore> {
     /// `y_ring` from the §3.1 reduction (ring dim = current level's D).
     pub y_ring: FlatRingVec<F>,
     /// `v = D · ŵ` (ring dim = current level's D).
     pub v: FlatRingVec<F>,
-    /// Batched sumcheck proof (F_0 norm + F_α relation, §4.3).
-    pub sumcheck_proof: SumcheckProof<F>,
-    /// Commitment to the sumcheck witness `w`
-    /// (ring dim = next level's D, may differ from y_ring/v).
-    pub w_commitment: FlatRingVec<F>,
-    /// Claimed evaluation of w at the sumcheck challenge point.
-    pub w_eval: F,
+    /// Stage-1 proof payload.
+    pub stage1: HachiStage1Proof<F>,
+    /// Stage-2 proof payload.
+    pub stage2: HachiStage2Proof<F>,
 }
 
 impl<F: FieldCore> HachiLevelProof<F> {
@@ -512,16 +531,24 @@ impl<F: FieldCore> HachiLevelProof<F> {
     pub fn new<const D: usize>(
         y_ring: CyclotomicRing<F, D>,
         v: Vec<CyclotomicRing<F, D>>,
-        sumcheck_proof: SumcheckProof<F>,
-        w_commitment: FlatRingVec<F>,
-        w_eval: F,
+        stage1_sumcheck: SumcheckProof<F>,
+        stage1_s_claim: F,
+        stage2_sumcheck: SumcheckProof<F>,
+        next_w_commitment: FlatRingVec<F>,
+        next_w_eval: F,
     ) -> Self {
         Self {
             y_ring: FlatRingVec::from_single(&y_ring),
             v: FlatRingVec::from_ring_elems(&v),
-            sumcheck_proof,
-            w_commitment,
-            w_eval,
+            stage1: HachiStage1Proof {
+                sumcheck: stage1_sumcheck,
+                s_claim: stage1_s_claim,
+            },
+            stage2: HachiStage2Proof {
+                sumcheck: stage2_sumcheck,
+                next_w_commitment,
+                next_w_eval,
+            },
         }
     }
 
@@ -532,7 +559,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
 
     /// Ring dimension of the w_commitment (next level).
     pub fn w_commit_d(&self) -> usize {
-        self.w_commitment.ring_dim()
+        self.stage2.next_w_commitment.ring_dim()
     }
 
     /// Reconstruct typed `y_ring`.
@@ -559,7 +586,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
     ///
     /// Panics if `D` does not match the stored ring dimension.
     pub fn w_commitment_typed<const D: usize>(&self) -> RingCommitment<F, D> {
-        self.w_commitment.to_ring_commitment()
+        self.stage2.next_w_commitment.to_ring_commitment()
     }
 }
 
@@ -1245,18 +1272,30 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
     ) -> Result<(), SerializationError> {
         self.y_ring.serialize_with_mode(&mut writer, compress)?;
         self.v.serialize_with_mode(&mut writer, compress)?;
-        self.sumcheck_proof
+        self.stage1
+            .sumcheck
             .serialize_with_mode(&mut writer, compress)?;
-        self.w_commitment
+        self.stage1
+            .s_claim
             .serialize_with_mode(&mut writer, compress)?;
-        self.w_eval.serialize_with_mode(&mut writer, compress)
+        self.stage2
+            .sumcheck
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage2
+            .next_w_commitment
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage2
+            .next_w_eval
+            .serialize_with_mode(&mut writer, compress)
     }
     fn serialized_size(&self, compress: Compress) -> usize {
         self.y_ring.serialized_size(compress)
             + self.v.serialized_size(compress)
-            + self.sumcheck_proof.serialized_size(compress)
-            + self.w_commitment.serialized_size(compress)
-            + self.w_eval.serialized_size(compress)
+            + self.stage1.sumcheck.serialized_size(compress)
+            + self.stage1.s_claim.serialized_size(compress)
+            + self.stage2.sumcheck.serialized_size(compress)
+            + self.stage2.next_w_commitment.serialized_size(compress)
+            + self.stage2.next_w_eval.serialized_size(compress)
     }
 }
 
@@ -1264,7 +1303,7 @@ impl<F: FieldCore> Valid for HachiLevelProof<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.y_ring.check()?;
         self.v.check()?;
-        self.w_commitment.check()
+        self.stage2.next_w_commitment.check()
     }
 }
 
@@ -1277,9 +1316,19 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
         Ok(Self {
             y_ring: FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?,
             v: FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?,
-            sumcheck_proof: SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?,
-            w_commitment: FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?,
-            w_eval: F::deserialize_with_mode(&mut reader, compress, validate)?,
+            stage1: HachiStage1Proof {
+                sumcheck: SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?,
+                s_claim: F::deserialize_with_mode(&mut reader, compress, validate)?,
+            },
+            stage2: HachiStage2Proof {
+                sumcheck: SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?,
+                next_w_commitment: FlatRingVec::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                )?,
+                next_w_eval: F::deserialize_with_mode(&mut reader, compress, validate)?,
+            },
         })
     }
 }
