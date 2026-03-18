@@ -111,21 +111,23 @@ fn scalar_to_ring<F: FieldCore, const D: usize>(scalar: F) -> CyclotomicRing<F, 
 }
 
 #[derive(Clone, Copy)]
-enum AggregationAlpha<F: FieldCore, const D: usize> {
+enum AggregationRandomness<F: FieldCore, const D: usize> {
     Scalar(F),
     Ring(CyclotomicRing<F, D>),
 }
 
 #[inline]
-fn sample_aggregation_alpha<F, T, const D: usize>(transcript: &mut T) -> AggregationAlpha<F, D>
+fn sample_aggregation_randomness<F, T, const D: usize>(
+    transcript: &mut T,
+) -> AggregationRandomness<F, D>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
     if safe_to_use_scalar_randomness::<F>() {
-        AggregationAlpha::Scalar(sample_labrador_aggregation_challenge::<F, _>(transcript))
+        AggregationRandomness::Scalar(sample_labrador_aggregation_challenge::<F, _>(transcript))
     } else {
-        AggregationAlpha::Ring(challenge_ring_element(
+        AggregationRandomness::Ring(challenge_ring_element(
             transcript,
             labels::CHALLENGE_LABRADOR_AGGREGATION,
         ))
@@ -134,12 +136,12 @@ where
 
 #[inline]
 fn mul_accumulate_with_alpha<F: FieldCore + CanonicalField, const D: usize>(
-    alpha: &AggregationAlpha<F, D>,
+    alpha: &AggregationRandomness<F, D>,
     coeff: &CyclotomicRing<F, D>,
     dst: &mut CyclotomicRing<F, D>,
 ) {
     match alpha {
-        AggregationAlpha::Scalar(alpha_scalar) => {
+        AggregationRandomness::Scalar(alpha_scalar) => {
             if alpha_scalar.is_zero() {
                 return;
             }
@@ -149,47 +151,51 @@ fn mul_accumulate_with_alpha<F: FieldCore + CanonicalField, const D: usize>(
                 *dst_coeff += *src_coeff * *alpha_scalar;
             }
         }
-        AggregationAlpha::Ring(alpha_ring) => mul_accumulate_term_coeff(alpha_ring, coeff, dst),
+        AggregationRandomness::Ring(alpha_ring) => {
+            mul_accumulate_term_coeff(alpha_ring, coeff, dst)
+        }
     }
 }
 
 #[inline]
 fn accumulate_rhs_with_alpha<F: FieldCore + CanonicalField, const D: usize>(
-    alpha: &AggregationAlpha<F, D>,
+    alpha: &AggregationRandomness<F, D>,
     target: &CyclotomicRing<F, D>,
     acc: &mut CyclotomicRing<F, D>,
 ) {
     match alpha {
-        AggregationAlpha::Scalar(alpha_scalar) => *acc += target.scale(alpha_scalar),
-        AggregationAlpha::Ring(alpha_ring) => alpha_ring.mul_accumulate_into(target, acc),
+        AggregationRandomness::Scalar(alpha_scalar) => *acc += target.scale(alpha_scalar),
+        AggregationRandomness::Ring(alpha_ring) => alpha_ring.mul_accumulate_into(target, acc),
     }
 }
 
 #[inline]
 fn alpha_mul_sparse<F: FieldCore + CanonicalField + FromSmallInt, const D: usize>(
-    alpha: &AggregationAlpha<F, D>,
+    alpha: &AggregationRandomness<F, D>,
     challenge: &SparseChallenge,
 ) -> CyclotomicRing<F, D> {
     match alpha {
-        AggregationAlpha::Scalar(alpha_scalar) => {
+        AggregationRandomness::Scalar(alpha_scalar) => {
             let mut coeffs = [F::zero(); D];
             for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
                 coeffs[pos as usize] += *alpha_scalar * F::from_i64(coeff as i64);
             }
             CyclotomicRing::from_coefficients(coeffs)
         }
-        AggregationAlpha::Ring(alpha_ring) => alpha_ring.mul_by_sparse(challenge),
+        AggregationRandomness::Ring(alpha_ring) => alpha_ring.mul_by_sparse(challenge),
     }
 }
 
 #[inline]
 fn alpha_scale_to_ring<F: FieldCore + CanonicalField, const D: usize>(
-    alpha: &AggregationAlpha<F, D>,
+    alpha: &AggregationRandomness<F, D>,
     scale: F,
 ) -> CyclotomicRing<F, D> {
     match alpha {
-        AggregationAlpha::Scalar(alpha_scalar) => scalar_to_ring::<F, D>(*alpha_scalar * scale),
-        AggregationAlpha::Ring(alpha_ring) => alpha_ring.scale(&scale),
+        AggregationRandomness::Scalar(alpha_scalar) => {
+            scalar_to_ring::<F, D>(*alpha_scalar * scale)
+        }
+        AggregationRandomness::Ring(alpha_ring) => alpha_ring.scale(&scale),
     }
 }
 
@@ -458,6 +464,21 @@ fn accumulate_phi_flat_ring<F: FieldCore + CanonicalField, const D: usize>(
         .for_each(|(dst, src)| mul_accumulate_term_coeff(beta_ref, src, dst));
 }
 
+fn accumulate_phi_flat<F: FieldCore + CanonicalField, const D: usize>(
+    phi_total_flat: &mut [CyclotomicRing<F, D>],
+    phi_flat: &[CyclotomicRing<F, D>],
+    beta: &AggregationRandomness<F, D>,
+) {
+    match beta {
+        AggregationRandomness::Scalar(s) => {
+            accumulate_phi_flat_scalar(phi_total_flat, phi_flat, *s);
+        }
+        AggregationRandomness::Ring(r) => {
+            accumulate_phi_flat_ring(phi_total_flat, phi_flat, *r);
+        }
+    }
+}
+
 /// Aggregate JL projection constraints on the prover side.
 ///
 /// For each of the ⌈128/log q⌉ lifts:
@@ -516,16 +537,9 @@ where
         jl_lift_residuals.push(b_tx);
         transcript.append_serde(labels::ABSORB_LABRADOR_JL_LIFT_RESIDUALS, &b_tx);
 
-        if safe_to_use_scalar_randomness::<F>() {
-            let beta = sample_labrador_aggregation_challenge::<F, _>(transcript);
-            aggregated_rhs += b_full.scale(&beta);
-            accumulate_phi_flat_scalar(&mut phi_total_flat, &phi_flat, beta);
-        } else {
-            let beta: CyclotomicRing<F, D> =
-                challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
-            aggregated_rhs += beta * b_full;
-            accumulate_phi_flat_ring(&mut phi_total_flat, &phi_flat, beta);
-        }
+        let beta = sample_aggregation_randomness::<F, _, D>(transcript);
+        accumulate_rhs_with_alpha(&beta, &b_full, &mut aggregated_rhs);
+        accumulate_phi_flat(&mut phi_total_flat, &phi_flat, &beta);
     }
 
     Ok((phi_total_flat, aggregated_rhs, jl_lift_residuals))
@@ -565,16 +579,9 @@ where
             collapse_to_field::<F>(jl_projection, &omega),
         );
         transcript.append_serde(labels::ABSORB_LABRADOR_JL_LIFT_RESIDUALS, jl_lift_residual);
-        if safe_to_use_scalar_randomness::<F>() {
-            let beta = sample_labrador_aggregation_challenge::<F, _>(transcript);
-            aggregated_rhs += b_full.scale(&beta);
-            accumulate_phi_flat_scalar(&mut phi_total_flat, &phi_flat, beta);
-        } else {
-            let beta: CyclotomicRing<F, D> =
-                challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
-            aggregated_rhs += beta * b_full;
-            accumulate_phi_flat_ring(&mut phi_total_flat, &phi_flat, beta);
-        }
+        let beta = sample_aggregation_randomness::<F, _, D>(transcript);
+        accumulate_rhs_with_alpha(&beta, &b_full, &mut aggregated_rhs);
+        accumulate_phi_flat(&mut phi_total_flat, &phi_flat, &beta);
     }
 
     Ok((phi_total_flat, aggregated_rhs))
@@ -596,12 +603,12 @@ fn mul_accumulate_term_coeff<F: FieldCore + CanonicalField, const D: usize>(
 fn accumulate_scaled_row<F: FieldCore + CanonicalField, const D: usize>(
     dst: &mut [CyclotomicRing<F, D>],
     src: &[CyclotomicRing<F, D>],
-    alpha: &AggregationAlpha<F, D>,
+    alpha: &AggregationRandomness<F, D>,
     scale: F,
 ) {
     debug_assert_eq!(dst.len(), src.len());
     match alpha {
-        AggregationAlpha::Scalar(alpha_scalar) => {
+        AggregationRandomness::Scalar(alpha_scalar) => {
             let scaled_alpha = *alpha_scalar * scale;
             if scaled_alpha.is_zero() {
                 return;
@@ -618,7 +625,7 @@ fn accumulate_scaled_row<F: FieldCore + CanonicalField, const D: usize>(
                     }
                 });
         }
-        AggregationAlpha::Ring(alpha_ring) => {
+        AggregationRandomness::Ring(alpha_ring) => {
             let scaled_alpha = alpha_ring.scale(&scale);
             cfg_iter_mut!(dst)
                 .zip(cfg_iter!(src))
@@ -633,7 +640,7 @@ fn accumulate_statement_row_work<F: FieldCore + CanonicalField, const D: usize>(
     row: &mut [CyclotomicRing<F, D>],
     work: &[(usize, usize)],
     constraints: &[LabradorConstraint<F, D>],
-    alphas: &[AggregationAlpha<F, D>],
+    alphas: &[AggregationRandomness<F, D>],
 ) {
     #[cfg(feature = "parallel")]
     row.par_chunks_mut(STATEMENT_ROW_CHUNK_LEN)
@@ -731,7 +738,7 @@ where
         .iter()
         .zip(statement.inner_opening_payload.iter())
     {
-        let alpha = sample_aggregation_alpha::<F, T, D>(transcript);
+        let alpha = sample_aggregation_randomness::<F, T, D>(transcript);
         accumulate_rhs_with_alpha(&alpha, target, &mut aggregated_rhs);
         let dst = &mut aux_row[inner_opening_start..linear_garbage_start];
         for (dst, src) in dst.iter_mut().zip(b_row.iter()) {
@@ -745,7 +752,7 @@ where
         .iter()
         .zip(statement.linear_garbage_payload.iter())
     {
-        let alpha = sample_aggregation_alpha::<F, T, D>(transcript);
+        let alpha = sample_aggregation_randomness::<F, T, D>(transcript);
         accumulate_rhs_with_alpha(&alpha, target, &mut aggregated_rhs);
         let dst = &mut aux_row[linear_garbage_start..];
         for (dst, src) in dst.iter_mut().zip(d_row.iter()) {
@@ -754,7 +761,7 @@ where
     }
 
     for output_idx in 0..plan.config.inner_commit_rank {
-        let alpha = sample_aggregation_alpha::<F, T, D>(transcript);
+        let alpha = sample_aggregation_randomness::<F, T, D>(transcript);
         let a_row = &plan.setup.a_mat[output_idx];
         for (part_idx, &scale) in pow_b.iter().enumerate() {
             accumulate_scaled_row(&mut z_rows[part_idx], a_row, &alpha, scale);
@@ -772,7 +779,7 @@ where
         }
     }
 
-    let alpha_lg = sample_aggregation_alpha::<F, T, D>(transcript);
+    let alpha_lg = sample_aggregation_randomness::<F, T, D>(transcript);
     for (part_idx, &scale) in pow_b.iter().enumerate() {
         accumulate_scaled_row(&mut z_rows[part_idx], &plan.amortized_phi, &alpha_lg, scale);
     }
@@ -788,7 +795,7 @@ where
         }
     }
 
-    let alpha_diag = sample_aggregation_alpha::<F, T, D>(transcript);
+    let alpha_diag = sample_aggregation_randomness::<F, T, D>(transcript);
     accumulate_rhs_with_alpha(&alpha_diag, &plan.aggregated_rhs, &mut aggregated_rhs);
     for i in 0..plan.row_count {
         let pair = pair_index(i, i, plan.row_count);
@@ -844,9 +851,9 @@ where
     let num_rows = row_lengths.len();
 
     // Phase 1: sample all challenges sequentially (Fiat-Shamir ordering).
-    let alphas: Vec<AggregationAlpha<F, D>> = constraints
+    let alphas: Vec<AggregationRandomness<F, D>> = constraints
         .iter()
-        .map(|_| sample_aggregation_alpha::<F, T, D>(transcript))
+        .map(|_| sample_aggregation_randomness::<F, T, D>(transcript))
         .collect();
 
     // Phase 2: validate bounds (cheap, allows early `?` return).
