@@ -1062,7 +1062,7 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::compute_r_via_poly_division;
-    use crate::algebra::{CyclotomicRing, Fp64};
+    use crate::algebra::{CyclotomicRing, Prime128M8M4M1M0};
     use std::array::from_fn;
 
     use crate::{FieldCore, FromSmallInt};
@@ -1115,7 +1115,7 @@ mod tests {
 
     #[test]
     fn compute_r_matches_schoolbook_reference() {
-        type F = Fp64<4294967197>;
+        type F = Prime128M8M4M1M0;
         const D: usize = 64;
 
         let m: Vec<Vec<CyclotomicRing<F, D>>> = (0..3)

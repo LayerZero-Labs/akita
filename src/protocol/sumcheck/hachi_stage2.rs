@@ -887,9 +887,9 @@ impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckInsta
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Fp64;
+    use crate::algebra::Prime128M8M4M1M0;
 
-    type F = Fp64<4294967197>;
+    type F = Prime128M8M4M1M0;
 
     struct Stage2Params<'a> {
         r_stage1: &'a [F],

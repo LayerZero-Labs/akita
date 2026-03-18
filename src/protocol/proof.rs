@@ -483,13 +483,6 @@ impl<F: FieldCore, const D: usize> PartialEq for HachiCommitmentHint<F, D> {
 
 impl<F: FieldCore, const D: usize> Eq for HachiCommitmentHint<F, D> {}
 
-/// Proof for a single fold level (quad_eq + ring_switch + sumcheck).
-///
-/// D-agnostic: ring elements are stored as [`FlatRingVec`] with their
-/// ring dimension recorded. Use [`y_ring_typed`](Self::y_ring_typed),
-/// [`v_typed`](Self::v_typed), and
-/// [`w_commitment_typed`](Self::w_commitment_typed) to reconstruct
-/// typed ring elements.
 /// Proof payload for stage 1 of a single Hachi level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiStage1Proof<F: FieldCore> {
@@ -511,6 +504,12 @@ pub struct HachiStage2Proof<F: FieldCore> {
     pub next_w_eval: F,
 }
 
+/// Proof for a single fold level (quad_eq + ring_switch + sumcheck).
+///
+/// D-agnostic: ring elements are stored as [`FlatRingVec`] with their
+/// ring dimension recorded. Use [`Self::y_ring_typed`], [`Self::v_typed`], and
+/// [`Self::w_commitment_typed`] to reconstruct typed ring elements.
+///
 /// One recursive Hachi level proof, split into `stage1` and `stage2` payloads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiLevelProof<F: FieldCore> {
