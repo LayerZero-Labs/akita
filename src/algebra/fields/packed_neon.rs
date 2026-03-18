@@ -1,13 +1,14 @@
 //! AArch64 NEON packed backends for Fp32, Fp64, Fp128.
 
 use super::packed::{PackedField, PackedValue};
-use crate::algebra::fields::{Fp128, Fp32, Fp64};
+use super::packed_additive::PackedAdditive;
+use crate::algebra::fields::{Fp128, Fp128x6i32, Fp32, Fp64};
 use crate::FieldCore;
 use core::arch::aarch64::{
-    uint32x2_t, uint32x4_t, uint64x2_t, vaddq_u32, vaddq_u64, vandq_u64, vbslq_u32, vbslq_u64,
-    vcgtq_u64, vcltq_u32, vcltq_u64, vcombine_u32, vdup_n_u32, vdupq_n_s64, vdupq_n_u32,
-    vdupq_n_u64, veorq_u64, vget_low_u32, vminq_u32, vmovn_u64, vmull_high_u32, vmull_u32,
-    vorrq_u64, vshlq_u64, vsubq_u32, vsubq_u64,
+    int32x4_t, uint32x2_t, uint32x4_t, uint64x2_t, vaddq_s32, vaddq_u32, vaddq_u64, vandq_u64,
+    vbslq_u32, vbslq_u64, vcgtq_u64, vcltq_u32, vcltq_u64, vcombine_u32, vdup_n_u32, vdupq_n_s64,
+    vdupq_n_u32, vdupq_n_u64, veorq_u64, vget_low_u32, vminq_u32, vmovn_u64, vmull_high_u32,
+    vmull_u32, vnegq_s32, vorrq_u64, vshlq_u64, vsubq_s32, vsubq_u32, vsubq_u64,
 };
 use core::fmt;
 use core::mem::transmute;
@@ -34,6 +35,16 @@ fn to_vec(x: [u64; 2]) -> uint64x2_t {
 #[inline(always)]
 fn from_vec(v: uint64x2_t) -> [u64; 2] {
     unsafe { transmute::<uint64x2_t, [u64; 2]>(v) }
+}
+
+#[inline(always)]
+fn to_vec_i32(x: [i32; 4]) -> int32x4_t {
+    unsafe { transmute::<[i32; 4], int32x4_t>(x) }
+}
+
+#[inline(always)]
+fn from_vec_i32(v: int32x4_t) -> [i32; 4] {
+    unsafe { transmute::<int32x4_t, [i32; 4]>(v) }
 }
 
 #[inline(always)]
@@ -342,6 +353,210 @@ impl<const P: u128> PackedField for PackedFp128Neon<P> {
     #[inline]
     fn broadcast(value: Self::Scalar) -> Self {
         Self::from_fn(|_| value)
+    }
+}
+
+/// Number of packed additive `Fp128x6i32` lanes.
+pub const FP128X6_I32_WIDTH: usize = 2;
+
+/// NEON packed additive backend for two `Fp128x6i32` values.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PackedFp128x6i32Neon {
+    limbs01: [i32; 4],
+    limbs23: [i32; 4],
+    limbs45: [i32; 4],
+}
+
+impl PackedValue for PackedFp128x6i32Neon {
+    type Value = Fp128x6i32;
+    const WIDTH: usize = FP128X6_I32_WIDTH;
+
+    #[inline]
+    fn from_fn<F>(mut f: F) -> Self
+    where
+        F: FnMut(usize) -> Self::Value,
+    {
+        let lane0 = f(0).0;
+        let lane1 = f(1).0;
+        Self {
+            limbs01: [lane0[0], lane1[0], lane0[1], lane1[1]],
+            limbs23: [lane0[2], lane1[2], lane0[3], lane1[3]],
+            limbs45: [lane0[4], lane1[4], lane0[5], lane1[5]],
+        }
+    }
+
+    #[inline]
+    fn extract(&self, lane: usize) -> Self::Value {
+        debug_assert!(lane < FP128X6_I32_WIDTH);
+        let idx = lane;
+        Fp128x6i32([
+            self.limbs01[idx],
+            self.limbs01[idx + 2],
+            self.limbs23[idx],
+            self.limbs23[idx + 2],
+            self.limbs45[idx],
+            self.limbs45[idx + 2],
+        ])
+    }
+}
+
+impl Add for PackedFp128x6i32Neon {
+    type Output = Self;
+
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        Self {
+            limbs01: from_vec_i32(unsafe {
+                vaddq_s32(to_vec_i32(self.limbs01), to_vec_i32(rhs.limbs01))
+            }),
+            limbs23: from_vec_i32(unsafe {
+                vaddq_s32(to_vec_i32(self.limbs23), to_vec_i32(rhs.limbs23))
+            }),
+            limbs45: from_vec_i32(unsafe {
+                vaddq_s32(to_vec_i32(self.limbs45), to_vec_i32(rhs.limbs45))
+            }),
+        }
+    }
+}
+
+impl AddAssign for PackedFp128x6i32Neon {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl Sub for PackedFp128x6i32Neon {
+    type Output = Self;
+
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        Self {
+            limbs01: from_vec_i32(unsafe {
+                vsubq_s32(to_vec_i32(self.limbs01), to_vec_i32(rhs.limbs01))
+            }),
+            limbs23: from_vec_i32(unsafe {
+                vsubq_s32(to_vec_i32(self.limbs23), to_vec_i32(rhs.limbs23))
+            }),
+            limbs45: from_vec_i32(unsafe {
+                vsubq_s32(to_vec_i32(self.limbs45), to_vec_i32(rhs.limbs45))
+            }),
+        }
+    }
+}
+
+impl SubAssign for PackedFp128x6i32Neon {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl core::ops::Neg for PackedFp128x6i32Neon {
+    type Output = Self;
+
+    #[inline]
+    fn neg(self) -> Self {
+        Self {
+            limbs01: from_vec_i32(unsafe { vnegq_s32(to_vec_i32(self.limbs01)) }),
+            limbs23: from_vec_i32(unsafe { vnegq_s32(to_vec_i32(self.limbs23)) }),
+            limbs45: from_vec_i32(unsafe { vnegq_s32(to_vec_i32(self.limbs45)) }),
+        }
+    }
+}
+
+impl PackedAdditive for PackedFp128x6i32Neon {
+    type Scalar = Fp128x6i32;
+
+    #[inline]
+    fn broadcast(value: Self::Scalar) -> Self {
+        Self::from_fn(|_| value)
+    }
+}
+
+/// Number of packed additive `i32` lanes.
+pub const I32_WIDTH: usize = 4;
+
+/// NEON packed additive backend for four signed `i32` values.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PackedI32Neon {
+    vals: [i32; 4],
+}
+
+impl PackedValue for PackedI32Neon {
+    type Value = i32;
+    const WIDTH: usize = I32_WIDTH;
+
+    #[inline]
+    fn from_fn<F>(mut f: F) -> Self
+    where
+        F: FnMut(usize) -> Self::Value,
+    {
+        Self {
+            vals: [f(0), f(1), f(2), f(3)],
+        }
+    }
+
+    #[inline]
+    fn extract(&self, lane: usize) -> Self::Value {
+        debug_assert!(lane < I32_WIDTH);
+        self.vals[lane]
+    }
+}
+
+impl Add for PackedI32Neon {
+    type Output = Self;
+
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        Self {
+            vals: from_vec_i32(unsafe { vaddq_s32(to_vec_i32(self.vals), to_vec_i32(rhs.vals)) }),
+        }
+    }
+}
+
+impl AddAssign for PackedI32Neon {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl Sub for PackedI32Neon {
+    type Output = Self;
+
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        Self {
+            vals: from_vec_i32(unsafe { vsubq_s32(to_vec_i32(self.vals), to_vec_i32(rhs.vals)) }),
+        }
+    }
+}
+
+impl SubAssign for PackedI32Neon {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl core::ops::Neg for PackedI32Neon {
+    type Output = Self;
+
+    #[inline]
+    fn neg(self) -> Self {
+        Self {
+            vals: from_vec_i32(unsafe { vnegq_s32(to_vec_i32(self.vals)) }),
+        }
+    }
+}
+
+impl PackedAdditive for PackedI32Neon {
+    type Scalar = i32;
+
+    #[inline]
+    fn broadcast(value: Self::Scalar) -> Self {
+        Self { vals: [value; 4] }
     }
 }
 

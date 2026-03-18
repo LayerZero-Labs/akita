@@ -18,7 +18,7 @@ use super::fp32::Fp32;
 use super::fp64::Fp64;
 
 /// Wide unreduced accumulator for `Fp32`: 2 × i32 limbs (16-bit data each).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(C)]
 pub struct Fp32x2i32(pub [i32; 2]);
 
@@ -107,7 +107,7 @@ impl Neg for Fp32x2i32 {
 }
 
 /// Wide unreduced accumulator for `Fp64`: 4 × i32 limbs (16-bit data each).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(C)]
 pub struct Fp64x4i32(pub [i32; 4]);
 
@@ -539,7 +539,7 @@ impl Neg for Fp128x8i32 {
 /// The layout is `[22, 21, 21, 22, 21, 21]` bits so each 64-bit half of the
 /// canonical value decomposes independently into three digits. The widest
 /// digits are 22 bits, giving a safe signed-add headroom of `512`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(C)]
 pub struct Fp128x6i32(pub [i32; 6]);
 

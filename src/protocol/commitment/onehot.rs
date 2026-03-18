@@ -6,8 +6,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::algebra::fields::wide::HasAdditiveWide;
-use crate::algebra::ring::{CyclotomicRing, WideCyclotomicRing};
+use crate::algebra::fields::{HasAdditivePacking, PackedAdditive};
+use crate::algebra::ring::{CyclotomicRing, PackedNegacyclicRing};
 use crate::error::HachiError;
 use crate::protocol::commitment::utils::flat_matrix::RingMatrixView;
 use crate::protocol::hachi_poly_ops::OneHotIndex;
@@ -20,6 +20,63 @@ pub struct SparseBlockEntry {
     pub pos_in_block: usize,
     /// Coefficient indices that are 1 within this ring element.
     pub nonzero_coeffs: Vec<usize>,
+}
+
+/// Flat sparse-block layout for packed one-hot kernels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PackedSparseBlockLayout {
+    positions: Vec<usize>,
+    coeff_offsets: Vec<usize>,
+    coeffs: Vec<usize>,
+}
+
+/// Borrowed sparse entry view over [`PackedSparseBlockLayout`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PackedSparseEntryRef<'a> {
+    /// Position within the block (0..2^M).
+    pub pos_in_block: usize,
+    /// Coefficient indices that are 1 within this ring element.
+    pub nonzero_coeffs: &'a [usize],
+}
+
+impl PackedSparseBlockLayout {
+    /// Build the flat layout used by packed one-hot kernels.
+    pub(crate) fn from_entries(entries: &[SparseBlockEntry]) -> Self {
+        let mut positions = Vec::with_capacity(entries.len());
+        let mut coeff_offsets = Vec::with_capacity(entries.len() + 1);
+        let mut coeffs = Vec::new();
+        coeff_offsets.push(0);
+        for entry in entries {
+            positions.push(entry.pos_in_block);
+            coeffs.extend_from_slice(&entry.nonzero_coeffs);
+            coeff_offsets.push(coeffs.len());
+        }
+        Self {
+            positions,
+            coeff_offsets,
+            coeffs,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.positions.is_empty()
+    }
+
+    #[inline]
+    fn entry(&self, idx: usize) -> PackedSparseEntryRef<'_> {
+        let start = self.coeff_offsets[idx];
+        let end = self.coeff_offsets[idx + 1];
+        PackedSparseEntryRef {
+            pos_in_block: self.positions[idx],
+            nonzero_coeffs: &self.coeffs[start..end],
+        }
+    }
+
+    #[inline]
+    pub(crate) fn entries(&self) -> impl Iterator<Item = PackedSparseEntryRef<'_>> + '_ {
+        (0..self.positions.len()).map(|idx| self.entry(idx))
+    }
 }
 
 /// Map a regular one-hot witness to sparse ring block entries.
@@ -145,46 +202,48 @@ pub(crate) fn inner_ajtai_onehot_t_only<F: FieldCore + CanonicalField, const D: 
 /// Accumulates into `WideCyclotomicRing<W, D>` (carry-free i32 additions),
 /// flushing into reduced ring totals when the signed-add budget is exhausted.
 /// This avoids per-addition modular reduction while keeping overflow explicit.
-fn flush_onehot_wide_chunk<F, const D: usize>(
+fn flush_onehot_wide_chunk<F, P, const D: usize>(
     reduced: &mut [CyclotomicRing<F, D>],
-    wide_chunk: &mut [WideCyclotomicRing<F::AdditiveWide, D>],
+    wide_chunk: &mut [PackedNegacyclicRing<P, D>],
 ) where
-    F: FieldCore + CanonicalField + HasAdditiveWide,
+    F: FieldCore + CanonicalField + HasAdditivePacking,
+    P: PackedAdditive<Scalar = F::AdditiveWide>,
 {
     for (dst, wide) in reduced.iter_mut().zip(wide_chunk.iter_mut()) {
         *dst += wide.reduce();
-        *wide = WideCyclotomicRing::zero();
+        *wide = PackedNegacyclicRing::zero();
     }
 }
 
-fn inner_ajtai_onehot_wide_with_budget<F, const D: usize>(
+fn inner_ajtai_onehot_wide_with_budget<F, P, const D: usize>(
     a: &RingMatrixView<'_, F, D>,
-    sparse_entries: &[SparseBlockEntry],
+    sparse_entries: &PackedSparseBlockLayout,
     _block_len: usize,
     num_digits: usize,
     budget: usize,
 ) -> Vec<CyclotomicRing<F, D>>
 where
-    F: FieldCore + CanonicalField + HasAdditiveWide,
+    F: FieldCore + CanonicalField + HasAdditivePacking,
+    P: PackedAdditive<Scalar = F::AdditiveWide>,
 {
     assert!(budget > 0, "budget must be positive");
     let n_a = a.num_rows();
     let mut reduced = vec![CyclotomicRing::<F, D>::zero(); n_a];
-    let mut wide_chunk = vec![WideCyclotomicRing::<F::AdditiveWide, D>::zero(); n_a];
+    let mut wide_chunk = vec![PackedNegacyclicRing::<P, D>::zero(); n_a];
     let mut remaining_budget = budget;
 
-    for entry in sparse_entries {
+    for entry in sparse_entries.entries() {
         let col = entry.pos_in_block * num_digits;
         let mut consumed = 0usize;
         while consumed < entry.nonzero_coeffs.len() {
             if remaining_budget == 0 {
-                flush_onehot_wide_chunk(&mut reduced, &mut wide_chunk);
+                flush_onehot_wide_chunk::<F, P, D>(&mut reduced, &mut wide_chunk);
                 remaining_budget = budget;
             }
             let take = remaining_budget.min(entry.nonzero_coeffs.len() - consumed);
             let coeff_chunk = &entry.nonzero_coeffs[consumed..consumed + take];
             for (a_idx, t_w) in wide_chunk.iter_mut().enumerate() {
-                let a_wide = WideCyclotomicRing::from_ring(&a.row(a_idx)[col]);
+                let a_wide = PackedNegacyclicRing::<P, D>::from_ring(&a.row(a_idx)[col]);
                 a_wide.mul_by_monomial_sum_into(t_w, coeff_chunk);
             }
             consumed += take;
@@ -193,7 +252,7 @@ where
     }
 
     if remaining_budget != budget {
-        flush_onehot_wide_chunk(&mut reduced, &mut wide_chunk);
+        flush_onehot_wide_chunk::<F, P, D>(&mut reduced, &mut wide_chunk);
     }
 
     reduced
@@ -202,14 +261,14 @@ where
 #[allow(non_snake_case)]
 pub(crate) fn inner_ajtai_onehot_wide<F, const D: usize>(
     A: &RingMatrixView<'_, F, D>,
-    sparse_entries: &[SparseBlockEntry],
+    sparse_entries: &PackedSparseBlockLayout,
     _block_len: usize,
     num_digits: usize,
 ) -> Vec<CyclotomicRing<F, D>>
 where
-    F: FieldCore + CanonicalField + HasAdditiveWide,
+    F: FieldCore + CanonicalField + HasAdditivePacking,
 {
-    inner_ajtai_onehot_wide_with_budget::<F, D>(
+    inner_ajtai_onehot_wide_with_budget::<F, F::AdditivePacking, D>(
         A,
         sparse_entries,
         _block_len,
@@ -221,7 +280,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::fields::{Fp64, Prime128M8M4M1M0};
+    use crate::algebra::fields::{Fp64, HasAdditiveWide, NoAdditivePacking, Prime128M8M4M1M0};
     use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
@@ -336,7 +395,8 @@ mod tests {
         let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
         let a_view = a_flat.view::<D>();
         let ref_result = inner_ajtai_onehot_t_only(&a_matrix, &entries, block_len, num_digits);
-        let wide_result = inner_ajtai_onehot_wide(&a_view, &entries, block_len, num_digits);
+        let packed_entries = PackedSparseBlockLayout::from_entries(&entries);
+        let wide_result = inner_ajtai_onehot_wide(&a_view, &packed_entries, block_len, num_digits);
 
         assert_eq!(ref_result.len(), wide_result.len());
         for (r, w) in ref_result.iter().zip(wide_result.iter()) {
@@ -375,12 +435,58 @@ mod tests {
         let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
         let a_view = a_flat.view::<D>();
         let ref_result = inner_ajtai_onehot_t_only(&a_matrix, &entries, block_len, num_digits);
-        let wide_result = inner_ajtai_onehot_wide(&a_view, &entries, block_len, num_digits);
+        let packed_entries = PackedSparseBlockLayout::from_entries(&entries);
+        let wide_result = inner_ajtai_onehot_wide(&a_view, &packed_entries, block_len, num_digits);
 
         assert_eq!(ref_result.len(), wide_result.len());
         for (r, w) in ref_result.iter().zip(wide_result.iter()) {
             assert_eq!(r, w, "wide result must match reference (Fp128)");
         }
+    }
+
+    #[test]
+    fn wide_backend_parity_fp128() {
+        type F = Prime128M8M4M1M0;
+        const D: usize = 64;
+
+        let mut rng = StdRng::seed_from_u64(0xabcd_1234);
+        let n_a = 2;
+        let block_len = 4;
+        let num_digits = 3;
+        let a_matrix: Vec<Vec<CyclotomicRing<F, D>>> = (0..n_a)
+            .map(|_| {
+                (0..block_len * num_digits)
+                    .map(|_| CyclotomicRing::random(&mut rng))
+                    .collect()
+            })
+            .collect();
+        let entries = vec![
+            SparseBlockEntry {
+                pos_in_block: 0,
+                nonzero_coeffs: vec![1, 9, 17],
+            },
+            SparseBlockEntry {
+                pos_in_block: 2,
+                nonzero_coeffs: vec![0, 15, 31, 63],
+            },
+        ];
+
+        let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
+        let a_view = a_flat.view::<D>();
+        let packed_entries = PackedSparseBlockLayout::from_entries(&entries);
+        let packed = inner_ajtai_onehot_wide(&a_view, &packed_entries, block_len, num_digits);
+        let scalar = inner_ajtai_onehot_wide_with_budget::<
+            F,
+            NoAdditivePacking<<F as HasAdditiveWide>::AdditiveWide>,
+            D,
+        >(
+            &a_view,
+            &packed_entries,
+            block_len,
+            num_digits,
+            <F as HasAdditiveWide>::ADDITIVE_WIDE_HEADROOM,
+        );
+        assert_eq!(packed, scalar);
     }
 
     #[test]
@@ -414,8 +520,12 @@ mod tests {
         let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
         let a_view = a_flat.view::<D>();
         let ref_result = inner_ajtai_onehot_t_only(&a_matrix, &entries, block_len, num_digits);
-        let wide_result =
-            inner_ajtai_onehot_wide_with_budget(&a_view, &entries, block_len, num_digits, 4);
+        let packed_entries = PackedSparseBlockLayout::from_entries(&entries);
+        let wide_result = inner_ajtai_onehot_wide_with_budget::<
+            F,
+            <F as HasAdditivePacking>::AdditivePacking,
+            D,
+        >(&a_view, &packed_entries, block_len, num_digits, 4);
 
         assert_eq!(ref_result.len(), wide_result.len());
         for (r, w) in ref_result.iter().zip(wide_result.iter()) {

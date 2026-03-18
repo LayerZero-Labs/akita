@@ -6,6 +6,7 @@ pub mod fp32;
 pub mod fp64;
 pub mod lift;
 pub mod packed;
+pub mod packed_additive;
 #[cfg(all(
     target_arch = "x86_64",
     target_feature = "avx2",
@@ -34,6 +35,9 @@ pub use fp64::Fp64;
 pub use lift::{ExtField, LiftBase};
 pub use packed::{
     Fp128Packing, Fp32Packing, Fp64Packing, HasPacking, NoPacking, PackedField, PackedValue,
+};
+pub use packed_additive::{
+    Fp128AdditivePacking, HasAdditivePacking, NoAdditivePacking, PackedAdditive, SignedPacking,
 };
 pub use pseudo_mersenne::{
     is_pow2_offset, pow2_offset, pseudo_mersenne_modulus, Pow2Offset128Field, Pow2Offset24Field,

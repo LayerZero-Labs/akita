@@ -4,7 +4,9 @@ use super::config::{
     ensure_block_layout, ensure_matrix_shape_ge, ensure_supported_num_vars,
     validate_and_derive_layout, HachiCommitmentLayout,
 };
-use super::onehot::{inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks};
+use super::onehot::{
+    inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks, PackedSparseBlockLayout,
+};
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
 #[cfg(feature = "disk-persistence")]
@@ -16,7 +18,7 @@ use super::utils::linear::{
 };
 use super::utils::matrix::{derive_public_matrix, sample_public_matrix_seed, PublicMatrixSeed};
 use super::CommitmentConfig;
-use crate::algebra::fields::wide::{HasAdditiveWide, HasWide};
+use crate::algebra::fields::{HasAdditivePacking, HasWide};
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
@@ -396,7 +398,7 @@ pub struct HachiCommitmentCore;
 
 impl<F, const D: usize, Cfg> RingCommitmentScheme<F, D, Cfg> for HachiCommitmentCore
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasAdditiveWide + HasWide + Valid,
+    F: FieldCore + CanonicalField + FieldSampling + HasAdditivePacking + HasWide + Valid,
     Cfg: CommitmentConfig,
 {
     type ProverSetup = HachiProverSetup<F, D>;
@@ -583,6 +585,10 @@ where
 
         let sparse_blocks =
             map_onehot_to_sparse_blocks(onehot_k, indices, layout.r_vars, layout.m_vars, D)?;
+        let packed_sparse_blocks: Vec<PackedSparseBlockLayout> = sparse_blocks
+            .iter()
+            .map(|entries| PackedSparseBlockLayout::from_entries(entries))
+            .collect();
 
         let depth_commit = layout.num_digits_commit;
         let depth_open = layout.num_digits_open;
@@ -591,7 +597,7 @@ where
         let a_view = setup.expanded.A.view::<D>();
         let block_len = layout.block_len;
 
-        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(sparse_blocks)
+        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(packed_sparse_blocks)
             .map(|block_entries| {
                 if block_entries.is_empty() {
                     vec![[0i8; D]; zero_block_len]

@@ -15,14 +15,14 @@
 //! signature will change.  Additional operation methods may be added as the
 //! protocol evolves.
 
-use crate::algebra::fields::wide::HasAdditiveWide;
-use crate::algebra::ring::sparse_challenge::SparseChallenge;
+use crate::algebra::fields::{HasAdditivePacking, PackedAdditive, SignedPacking};
+use crate::algebra::ring::{sparse_challenge::SparseChallenge, PackedNegacyclicRing};
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::onehot::{
-    inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks, SparseBlockEntry,
+    inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks, PackedSparseBlockLayout, SparseBlockEntry,
 };
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
@@ -210,31 +210,36 @@ fn sparse_mul_acc<const D: usize>(
 }
 
 #[inline(always)]
-fn accum_onehot_coeff<const D: usize>(
-    acc: &mut [i32; D],
-    coeff_idx: usize,
+fn packed_sparse_challenge<P, const D: usize>(
     challenge: &SparseChallenge,
-) {
-    debug_assert!(coeff_idx < D);
-    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        let target = coeff_idx + pos as usize;
-        if target < D {
-            acc[target] += coeff as i32;
-        } else {
-            acc[target - D] -= coeff as i32;
-        }
-    }
+) -> PackedNegacyclicRing<P, D>
+where
+    P: PackedAdditive<Scalar = i32>,
+{
+    PackedNegacyclicRing::from_sparse_challenge(challenge)
 }
 
 #[inline(always)]
-fn accum_onehot_entry<const D: usize>(
-    acc: &mut [i32; D],
-    entry: &SparseBlockEntry,
-    challenge: &SparseChallenge,
-) {
-    for &coeff_idx in &entry.nonzero_coeffs {
-        accum_onehot_coeff::<D>(acc, coeff_idx, challenge);
-    }
+fn accum_onehot_coeff_packed<P, const D: usize>(
+    acc: &mut PackedNegacyclicRing<P, D>,
+    coeff_idx: usize,
+    challenge: &PackedNegacyclicRing<P, D>,
+) where
+    P: PackedAdditive<Scalar = i32>,
+{
+    debug_assert!(coeff_idx < D);
+    challenge.shift_accumulate_into(acc, coeff_idx);
+}
+
+#[inline(always)]
+fn accum_onehot_positions_packed<P, const D: usize>(
+    acc: &mut PackedNegacyclicRing<P, D>,
+    nonzero_coeffs: &[usize],
+    challenge: &PackedNegacyclicRing<P, D>,
+) where
+    P: PackedAdditive<Scalar = i32>,
+{
+    challenge.mul_by_monomial_sum_into(acc, nonzero_coeffs);
 }
 
 fn signed_accum_to_ring<F: CanonicalField, const D: usize>(
@@ -1021,6 +1026,40 @@ impl OneHotIndex for usize {
     }
 }
 
+/// Explicit regular one-hot layout in block-major order.
+#[derive(Debug, Clone)]
+struct RegularOneHotLayout<I: OneHotIndex> {
+    block_len: usize,
+    indices: Vec<Option<I>>,
+}
+
+impl<I: OneHotIndex> RegularOneHotLayout<I> {
+    fn new(block_len: usize, indices: &[Option<I>]) -> Self {
+        assert!(block_len > 0, "block_len must be positive");
+        assert_eq!(
+            indices.len() % block_len,
+            0,
+            "regular one-hot indices must align to block size"
+        );
+        Self {
+            block_len,
+            indices: indices.to_vec(),
+        }
+    }
+
+    #[inline]
+    fn num_blocks(&self) -> usize {
+        self.indices.len() / self.block_len
+    }
+
+    #[inline]
+    fn block(&self, block_idx: usize) -> &[Option<I>] {
+        let start = block_idx * self.block_len;
+        let end = start + self.block_len;
+        &self.indices[start..end]
+    }
+}
+
 /// One-hot polynomial: sparse witness with at most one nonzero field element
 /// per chunk of size `onehot_k`.
 ///
@@ -1035,6 +1074,8 @@ pub struct OneHotPoly<F: FieldCore, const D: usize, I: OneHotIndex = usize> {
     indices: Vec<Option<I>>,
     m_vars: usize,
     sparse_blocks: Vec<Vec<SparseBlockEntry>>,
+    regular_layout: Option<RegularOneHotLayout<I>>,
+    packed_sparse_blocks: Vec<PackedSparseBlockLayout>,
     _marker: PhantomData<F>,
 }
 
@@ -1053,11 +1094,19 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         m_vars: usize,
     ) -> Result<Self, HachiError> {
         let sparse_blocks = map_onehot_to_sparse_blocks(onehot_k, &indices, r_vars, m_vars, D)?;
+        let packed_sparse_blocks = sparse_blocks
+            .iter()
+            .map(|entries| PackedSparseBlockLayout::from_entries(entries))
+            .collect();
+        let block_len = 1usize << m_vars;
+        let regular_layout = (onehot_k == D).then(|| RegularOneHotLayout::new(block_len, &indices));
         Ok(Self {
             onehot_k,
             indices,
             m_vars,
             sparse_blocks,
+            regular_layout,
+            packed_sparse_blocks,
             _marker: PhantomData,
         })
     }
@@ -1067,32 +1116,43 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         total_field / D
     }
 
-    fn decompose_fold_regular_onehot(
+    fn decompose_fold_regular_onehot_with_packing<P>(
         &self,
         challenges: &[SparseChallenge],
         block_len: usize,
     ) -> DecomposeFoldWitness<F, D>
     where
         F: CanonicalField,
+        P: PackedAdditive<Scalar = i32>,
     {
-        let num_blocks = challenges.len().min(self.sparse_blocks.len());
+        let layout = self
+            .regular_layout
+            .as_ref()
+            .expect("regular one-hot layout must exist when K == D");
+        debug_assert_eq!(layout.block_len, block_len);
+        let num_blocks = challenges.len().min(layout.num_blocks());
         let modulus = (-F::one()).to_canonical_u128() + 1;
-        let indices = &self.indices;
-        debug_assert_eq!(indices.len(), self.total_ring_elems());
+        let packed_challenges: Vec<PackedNegacyclicRing<P, D>> = challenges
+            .iter()
+            .take(num_blocks)
+            .map(packed_sparse_challenge::<P, D>)
+            .collect();
 
         let coeff_accum: Vec<[i32; D]> = {
             let _span = tracing::info_span!("onehot_regular_accumulate").entered();
             cfg_into_iter!(0..block_len)
                 .map(|elem_idx| {
-                    let mut coeffs = [0i32; D];
-                    let mut ring_idx = elem_idx;
-                    for challenge in challenges.iter().take(num_blocks) {
-                        if let Some(hot_idx) = indices[ring_idx] {
-                            accum_onehot_coeff::<D>(&mut coeffs, hot_idx.as_usize(), challenge);
+                    let mut coeffs = PackedNegacyclicRing::<P, D>::zero();
+                    for (block_idx, challenge) in packed_challenges.iter().enumerate() {
+                        if let Some(hot_idx) = layout.block(block_idx)[elem_idx] {
+                            accum_onehot_coeff_packed::<P, D>(
+                                &mut coeffs,
+                                hot_idx.as_usize(),
+                                challenge,
+                            );
                         }
-                        ring_idx += block_len;
                     }
-                    coeffs
+                    coeffs.unpack_coefficients()
                 })
                 .collect()
         };
@@ -1101,7 +1161,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
     }
 
-    fn decompose_fold_sparse_onehot(
+    fn decompose_fold_sparse_onehot_with_packing<P>(
         &self,
         challenges: &[SparseChallenge],
         block_len: usize,
@@ -1109,29 +1169,37 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     ) -> DecomposeFoldWitness<F, D>
     where
         F: CanonicalField,
+        P: PackedAdditive<Scalar = i32>,
     {
         let inner_width = block_len * num_digits;
-        let num_blocks = challenges.len().min(self.sparse_blocks.len());
+        let num_blocks = challenges.len().min(self.packed_sparse_blocks.len());
         let modulus = (-F::one()).to_canonical_u128() + 1;
+        let packed_challenges: Vec<PackedNegacyclicRing<P, D>> = challenges
+            .iter()
+            .take(num_blocks)
+            .map(packed_sparse_challenge::<P, D>)
+            .collect();
 
-        let coeff_accum = {
+        let coeff_accum: Vec<PackedNegacyclicRing<P, D>> = {
             let _span = tracing::info_span!("onehot_sparse_accumulate").entered();
             cfg_fold_reduce!(
                 0..num_blocks,
-                || vec![[0i32; D]; inner_width],
-                |mut z_local: Vec<[i32; D]>, block_idx: usize| {
-                    let challenge = &challenges[block_idx];
-                    for entry in &self.sparse_blocks[block_idx] {
+                || vec![PackedNegacyclicRing::<P, D>::zero(); inner_width],
+                |mut z_local: Vec<PackedNegacyclicRing<P, D>>, block_idx: usize| {
+                    let challenge = &packed_challenges[block_idx];
+                    for entry in self.packed_sparse_blocks[block_idx].entries() {
                         let z_coeffs = &mut z_local[entry.pos_in_block * num_digits];
-                        accum_onehot_entry::<D>(z_coeffs, entry, challenge);
+                        accum_onehot_positions_packed::<P, D>(
+                            z_coeffs,
+                            entry.nonzero_coeffs,
+                            challenge,
+                        );
                     }
                     z_local
                 },
-                |mut a: Vec<[i32; D]>, b: Vec<[i32; D]>| {
+                |mut a: Vec<PackedNegacyclicRing<P, D>>, b: Vec<PackedNegacyclicRing<P, D>>| {
                     for (ai, bi) in a.iter_mut().zip(b.iter()) {
-                        for (a_coeff, b_coeff) in ai.iter_mut().zip(bi.iter()) {
-                            *a_coeff += *b_coeff;
-                        }
+                        ai.accumulate_from(bi);
                     }
                     a
                 }
@@ -1139,13 +1207,17 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         };
 
         let _span = tracing::info_span!("onehot_sparse_convert").entered();
-        build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+        let centered_coeffs = coeff_accum
+            .into_iter()
+            .map(|ring| ring.unpack_coefficients())
+            .collect();
+        build_decompose_fold_witness::<F, D>(centered_coeffs, modulus)
     }
 }
 
 impl<F, const D: usize, I: OneHotIndex> HachiPolyOps<F, D> for OneHotPoly<F, D, I>
 where
-    F: FieldCore + CanonicalField + HasAdditiveWide,
+    F: FieldCore + CanonicalField + HasAdditivePacking,
 {
     type CommitCache = NttSlotCache<D>;
 
@@ -1205,9 +1277,11 @@ where
         // Build each output ring independently instead of reducing full z
         // vectors across blocks.
         if num_digits == 1 && self.onehot_k == D {
-            self.decompose_fold_regular_onehot(challenges, block_len)
+            self.decompose_fold_regular_onehot_with_packing::<SignedPacking>(challenges, block_len)
         } else {
-            self.decompose_fold_sparse_onehot(challenges, block_len, num_digits)
+            self.decompose_fold_sparse_onehot_with_packing::<SignedPacking>(
+                challenges, block_len, num_digits,
+            )
         }
     }
 
@@ -1225,7 +1299,7 @@ where
         let n_a = a_view.num_rows();
         let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
 
-        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(self.sparse_blocks)
+        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(self.packed_sparse_blocks)
             .map(|block_entries| {
                 if block_entries.is_empty() {
                     vec![[0i8; D]; zero_block_len]
@@ -1257,7 +1331,7 @@ where
         let n_a = a_view.num_rows();
         let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
 
-        let per_block = cfg_iter!(self.sparse_blocks)
+        let per_block = cfg_iter!(self.packed_sparse_blocks)
             .map(|block_entries| {
                 if block_entries.is_empty() {
                     (
@@ -1284,6 +1358,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algebra::fields::NoAdditivePacking;
     use crate::protocol::commitment::{
         CommitmentConfig, HachiCommitmentCore, RingCommitmentScheme,
     };
@@ -1421,6 +1496,134 @@ mod tests {
         assert_eq!(got.z_pre, expected.z_pre);
         assert_eq!(got.centered_coeffs, expected.centered_coeffs);
         assert_eq!(got.centered_inf_norm, expected.centered_inf_norm);
+    }
+
+    #[test]
+    fn onehot_decompose_fold_regular_backend_parity() {
+        let (setup, _) =
+            <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16)
+                .unwrap();
+        let layout = setup.layout();
+        let total_ring = layout.num_blocks * layout.block_len;
+        let onehot_k = TestD;
+        let indices: Vec<Option<usize>> = (0..total_ring)
+            .map(|i| (i % 7 != 0).then_some((i * 5 + 1) % onehot_k))
+            .collect();
+
+        let poly = OneHotPoly::<TestF, TestD>::new(onehot_k, indices, layout.r_vars, layout.m_vars)
+            .unwrap();
+        let challenges: Vec<SparseChallenge> = (0..layout.num_blocks)
+            .map(|i| SparseChallenge {
+                positions: vec![
+                    0u32,
+                    ((i * 3 + 1) % TestD) as u32,
+                    ((i * 7 + 2) % TestD) as u32,
+                ],
+                coeffs: vec![1, -1, 1],
+            })
+            .collect();
+
+        let packed = poly.decompose_fold_regular_onehot_with_packing::<SignedPacking>(
+            &challenges,
+            layout.block_len,
+        );
+        let scalar = poly.decompose_fold_regular_onehot_with_packing::<NoAdditivePacking<i32>>(
+            &challenges,
+            layout.block_len,
+        );
+        assert_eq!(packed.z_pre, scalar.z_pre);
+        assert_eq!(packed.centered_coeffs, scalar.centered_coeffs);
+        assert_eq!(packed.centered_inf_norm, scalar.centered_inf_norm);
+    }
+
+    #[test]
+    fn onehot_decompose_fold_matches_dense_sparse_onehot() {
+        let (setup, _) =
+            <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16)
+                .unwrap();
+        let layout = setup.layout();
+        let total_ring = layout.num_blocks * layout.block_len;
+        let onehot_k = TestD / 4;
+        let num_chunks = total_ring * (TestD / onehot_k);
+        let indices: Vec<Option<usize>> = (0..num_chunks)
+            .map(|i| (i % 5 != 0).then_some((i * 11 + 3) % onehot_k))
+            .collect();
+
+        let poly = OneHotPoly::<TestF, TestD>::new(
+            onehot_k,
+            indices.clone(),
+            layout.r_vars,
+            layout.m_vars,
+        )
+        .unwrap();
+
+        let mut evals = vec![TestF::zero(); num_chunks * onehot_k];
+        for (chunk_idx, hot_idx) in indices.into_iter().enumerate() {
+            if let Some(hot_idx) = hot_idx {
+                evals[chunk_idx * onehot_k + hot_idx] = TestF::from_u64(1);
+            }
+        }
+
+        let alpha = TestD.trailing_zeros() as usize;
+        let num_vars = alpha + layout.m_vars + layout.r_vars;
+        let dense = DensePoly::<TestF, TestD>::from_field_evals(num_vars, &evals).unwrap();
+        let challenges: Vec<SparseChallenge> = (0..layout.num_blocks)
+            .map(|i| SparseChallenge {
+                positions: vec![
+                    0u32,
+                    ((i * 5 + 1) % TestD) as u32,
+                    ((i * 9 + 2) % TestD) as u32,
+                ],
+                coeffs: vec![1, -1, 1],
+            })
+            .collect();
+
+        let got = poly.decompose_fold(&challenges, layout.block_len, 1, layout.log_basis);
+        let expected = dense.decompose_fold(&challenges, layout.block_len, 1, layout.log_basis);
+        assert_eq!(got.z_pre, expected.z_pre);
+        assert_eq!(got.centered_coeffs, expected.centered_coeffs);
+        assert_eq!(got.centered_inf_norm, expected.centered_inf_norm);
+    }
+
+    #[test]
+    fn onehot_decompose_fold_sparse_backend_parity() {
+        let (setup, _) =
+            <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16)
+                .unwrap();
+        let layout = setup.layout();
+        let total_ring = layout.num_blocks * layout.block_len;
+        let onehot_k = TestD / 4;
+        let num_chunks = total_ring * (TestD / onehot_k);
+        let indices: Vec<Option<usize>> = (0..num_chunks)
+            .map(|i| (i % 3 != 0).then_some((i * 13 + 1) % onehot_k))
+            .collect();
+
+        let poly = OneHotPoly::<TestF, TestD>::new(onehot_k, indices, layout.r_vars, layout.m_vars)
+            .unwrap();
+        let challenges: Vec<SparseChallenge> = (0..layout.num_blocks)
+            .map(|i| SparseChallenge {
+                positions: vec![
+                    0u32,
+                    ((i * 2 + 1) % TestD) as u32,
+                    ((i * 4 + 3) % TestD) as u32,
+                ],
+                coeffs: vec![1, -1, 1],
+            })
+            .collect();
+
+        let packed = poly.decompose_fold_sparse_onehot_with_packing::<SignedPacking>(
+            &challenges,
+            layout.block_len,
+            1,
+        );
+        let scalar = poly.decompose_fold_sparse_onehot_with_packing::<NoAdditivePacking<i32>>(
+            &challenges,
+            layout.block_len,
+            1,
+        );
+        assert_eq!(packed.z_pre, scalar.z_pre);
+        assert_eq!(packed.centered_coeffs, scalar.centered_coeffs);
+        assert_eq!(packed.centered_inf_norm, scalar.centered_inf_norm);
     }
 
     #[test]

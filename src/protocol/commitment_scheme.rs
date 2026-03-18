@@ -1,7 +1,6 @@
 //! Commitment scheme trait implementation.
 
-use crate::algebra::fields::wide::{HasAdditiveWide, HasWide};
-use crate::algebra::fields::HasUnreducedOps;
+use crate::algebra::fields::{HasAdditivePacking, HasUnreducedOps, HasWide};
 use crate::algebra::CyclotomicRing;
 #[cfg(debug_assertions)]
 use crate::algebra::SparseChallenge;
@@ -832,7 +831,7 @@ where
     F: FieldCore
         + CanonicalField
         + FieldSampling
-        + HasAdditiveWide
+        + HasAdditivePacking
         + HasWide
         + HasUnreducedOps
         + Valid,
