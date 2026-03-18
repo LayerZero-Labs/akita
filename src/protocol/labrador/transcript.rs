@@ -218,15 +218,6 @@ where
     transcript.append_bytes(labels::ABSORB_LABRADOR_JL_NONCE, &nonce.to_le_bytes());
 }
 
-/// Sample a Labrador aggregation challenge.
-pub fn sample_labrador_aggregation_challenge<F, T>(transcript: &mut T) -> F
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    transcript.challenge_scalar(labels::CHALLENGE_LABRADOR_AGGREGATION)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,13 +334,13 @@ mod tests {
         absorb_labrador_level_context::<F, _>(&mut t1, &ctx).unwrap();
         absorb_labrador_jl_projection::<F, _>(&mut t1, &projection);
         absorb_labrador_jl_nonce::<F, _>(&mut t1, nonce);
-        let c1 = sample_labrador_aggregation_challenge::<F, _>(&mut t1);
+        let c1 = t1.challenge_scalar(labels::CHALLENGE_LABRADOR_AGGREGATION);
 
         let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_RECURSION);
         absorb_labrador_level_context::<F, _>(&mut t2, &ctx).unwrap();
         absorb_labrador_jl_projection::<F, _>(&mut t2, &projection);
         absorb_labrador_jl_nonce::<F, _>(&mut t2, nonce);
-        let c2 = sample_labrador_aggregation_challenge::<F, _>(&mut t2);
+        let c2 = t2.challenge_scalar(labels::CHALLENGE_LABRADOR_AGGREGATION);
 
         assert_eq!(c1, c2, "identical schedule must be replay deterministic");
     }
@@ -373,13 +364,13 @@ mod tests {
         absorb_labrador_level_context::<F, _>(&mut t1, &ctx).unwrap();
         absorb_labrador_jl_projection::<F, _>(&mut t1, &projection);
         absorb_labrador_jl_nonce::<F, _>(&mut t1, TEST_NONCE_LOW);
-        let c1 = sample_labrador_aggregation_challenge::<F, _>(&mut t1);
+        let c1 = t1.challenge_scalar(labels::CHALLENGE_LABRADOR_AGGREGATION);
 
         let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_LABRADOR_RECURSION);
         absorb_labrador_level_context::<F, _>(&mut t2, &ctx).unwrap();
         absorb_labrador_jl_projection::<F, _>(&mut t2, &projection);
         absorb_labrador_jl_nonce::<F, _>(&mut t2, TEST_NONCE_HIGH);
-        let c2 = sample_labrador_aggregation_challenge::<F, _>(&mut t2);
+        let c2 = t2.challenge_scalar(labels::CHALLENGE_LABRADOR_AGGREGATION);
 
         assert_ne!(c1, c2, "nonce must be transcript-binding");
     }

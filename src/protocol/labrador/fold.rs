@@ -130,20 +130,29 @@ where
     absorb_labrador_jl_projection(transcript, &jl_projection);
 
     // Phase 3: JL lift constraints and aggregation (on virtual rows).
-    let (phi_jl_flat, jl_aggregated_rhs, jl_lift_residuals) =
+    let (phi_jl_flat, jl_lift_residuals) =
         aggregate_jl_constraints_prover(&virtual_witness, &jl_matrix, transcript)?;
 
     // Aggregate statement constraints on ORIGINAL rows, then reshape phi.
-    let (phi_stmt_orig, statement_aggregated_rhs) =
+    let (phi_stmt_orig, _statement_aggregated_rhs) =
         aggregate_statement(statement, &orig_row_lengths, transcript)?;
     let phi_stmt = reshape_phi::<F, D>(&phi_stmt_orig, &plan.row_split_counts, virtual_row_len);
 
     let mut phi_total = phi_stmt;
     add_phi_flat_in_place(&mut phi_total, &phi_jl_flat)?;
-    let aggregated_rhs = statement_aggregated_rhs + jl_aggregated_rhs;
 
     // Linear garbage h_ij from aggregated phi and virtual witness.
     let h = compute_linear_garbage(&phi_total, &virtual_witness)?;
+
+    let aggregated_rhs = {
+        let r = virtual_witness.rows().len();
+        cfg_fold_reduce!(
+            (0..r),
+            || CyclotomicRing::<F, D>::zero(),
+            |acc, i| acc + h[pair_index(i, i, r)],
+            |a, b| a + b
+        )
+    };
 
     let linear_garbage_digits =
         tracing::info_span!("labrador::decompose_linear_garbage").in_scope(|| {

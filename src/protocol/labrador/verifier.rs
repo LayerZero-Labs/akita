@@ -18,7 +18,7 @@ use crate::protocol::labrador::johnson_lindenstrauss::LabradorJlMatrix;
 use crate::protocol::labrador::setup::LabradorSetupMatrices;
 use crate::protocol::labrador::transcript::{
     absorb_labrador_jl_projection, absorb_labrador_level_context,
-    sample_labrador_aggregation_challenge, LabradorLevelTranscriptContext,
+    LabradorLevelTranscriptContext,
 };
 use crate::protocol::labrador::types::{
     LabradorLevelProof, LabradorProof, LabradorReducedConstraintPlan, LabradorStatement,
@@ -326,7 +326,7 @@ where
         .iter()
         .map(|target| {
             if safe_to_use_scalar_randomness::<F>() {
-                let alpha_scalar = sample_labrador_aggregation_challenge::<F, _>(transcript);
+                let alpha_scalar = transcript.challenge_scalar(labels::CHALLENGE_LABRADOR_AGGREGATION);
                 aggregated_rhs += target.scale(&alpha_scalar);
                 scalar_to_ring::<F, D>(alpha_scalar)
             } else {
@@ -342,7 +342,7 @@ where
         .iter()
         .map(|target| {
             if safe_to_use_scalar_randomness::<F>() {
-                let alpha_scalar = sample_labrador_aggregation_challenge::<F, _>(transcript);
+                let alpha_scalar = transcript.challenge_scalar(labels::CHALLENGE_LABRADOR_AGGREGATION);
                 aggregated_rhs += target.scale(&alpha_scalar);
                 scalar_to_ring::<F, D>(alpha_scalar)
             } else {
@@ -356,7 +356,7 @@ where
     let a_alphas = (0..plan.config.inner_commit_rank)
         .map(|_| {
             if safe_to_use_scalar_randomness::<F>() {
-                let alpha_scalar = sample_labrador_aggregation_challenge::<F, _>(transcript);
+                let alpha_scalar = transcript.challenge_scalar(labels::CHALLENGE_LABRADOR_AGGREGATION);
                 scalar_to_ring::<F, D>(alpha_scalar)
             } else {
                 challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION)
@@ -364,13 +364,13 @@ where
         })
         .collect();
     let alpha_lg = if safe_to_use_scalar_randomness::<F>() {
-        let alpha_scalar = sample_labrador_aggregation_challenge::<F, _>(transcript);
+        let alpha_scalar = transcript.challenge_scalar(labels::CHALLENGE_LABRADOR_AGGREGATION);
         scalar_to_ring::<F, D>(alpha_scalar)
     } else {
         challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION)
     };
     let alpha_diag = if safe_to_use_scalar_randomness::<F>() {
-        let alpha_scalar = sample_labrador_aggregation_challenge::<F, _>(transcript);
+        let alpha_scalar = transcript.challenge_scalar(labels::CHALLENGE_LABRADOR_AGGREGATION);
         aggregated_rhs += plan.aggregated_rhs.scale(&alpha_scalar);
         scalar_to_ring::<F, D>(alpha_scalar)
     } else {

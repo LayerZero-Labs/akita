@@ -10,10 +10,10 @@
 //! 256 independent scalar collapse challenges per lift. Each collapsed
 //! function produces a polynomial b''(k) whose constant term the verifier
 //! can check. The prover sends b''(k) with the constant term zeroed out.
-//! For 128-bit fields, a scalar challenge β_k folds each lift; otherwise
-//! the ring-element β_k is used.
-//! Statement constraints are folded separately with their own ring-element
-//! challenges. Both contributions are combined by the caller.
+//! Note: If the field size is 128-bit or larger, instead of aggregating constraints
+//! with random ring elements, we aggregate them with random field elements.
+//! This diverges from the paper's protocol. For smaller fields, we precisely
+//! follow the paper protocol.
 
 use crate::algebra::ring::CyclotomicRing;
 use crate::algebra::SparseChallenge;
@@ -28,7 +28,6 @@ use crate::protocol::labrador::constraints::{pair_index, LabradorConstraint, Nex
 use crate::protocol::labrador::johnson_lindenstrauss::{
     restore_constant_term, zero_constant_term_for_proof, LabradorJlMatrix,
 };
-use crate::protocol::labrador::transcript::sample_labrador_aggregation_challenge;
 use crate::protocol::labrador::types::{
     LabradorReducedConstraintPlan, LabradorStatement, LabradorWitness,
 };
@@ -36,6 +35,45 @@ use crate::protocol::labrador::utils::pow2_field;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::{challenge_ring_element, Transcript};
 use crate::{CanonicalField, FieldCore, FromSmallInt};
+
+#[derive(Clone, Copy)]
+enum AggregationRandomness<F: FieldCore, const D: usize> {
+    /// Field is 128-bit or larger: aggregate with random field elements.
+    Scalar(F),
+    /// Field is smaller than 128-bit: aggregate with random ring elements.
+    Ring(CyclotomicRing<F, D>),
+}
+
+#[inline]
+/// Whether constraint aggregation may safely replace ring randomness with scalar randomness.
+///
+/// Security note: for prime moduli with bit-length greater than 128, we can
+/// replace a ring-element challenge with a scalar field challenge and still keep
+/// the claimed security level for the aggregation step.
+pub(crate) fn safe_to_use_scalar_randomness<F: CanonicalField>() -> bool {
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let bits = u128::BITS - modulus.leading_zeros();
+    bits == 128
+}
+
+#[inline]
+fn sample_aggregation_randomness<F, T, const D: usize>(
+    transcript: &mut T,
+) -> AggregationRandomness<F, D>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    if safe_to_use_scalar_randomness::<F>() {
+        AggregationRandomness::Scalar(transcript.challenge_scalar(labels::CHALLENGE_LABRADOR_AGGREGATION))
+    } else {
+        AggregationRandomness::Ring(challenge_ring_element(
+            transcript,
+            labels::CHALLENGE_LABRADOR_AGGREGATION,
+        ))
+    }
+}
+
 
 type AggregatedConstraintSystem<F, const D: usize> =
     (Vec<Vec<CyclotomicRing<F, D>>>, CyclotomicRing<F, D>);
@@ -88,50 +126,10 @@ pub(crate) fn add_phi_flat_in_place<F: FieldCore, const D: usize>(
 }
 
 #[inline]
-fn field_modulus_bits<F: CanonicalField>() -> u32 {
-    let modulus = (-F::one()).to_canonical_u128() + 1;
-    u128::BITS - modulus.leading_zeros()
-}
-
-#[inline]
-/// Whether constraint aggregation may safely replace ring randomness with scalar randomness.
-///
-/// Security note: for prime moduli with bit-length greater than 128, we can
-/// replace a ring-element challenge with a scalar field challenge and still keep
-/// the claimed security level for the aggregation step.
-pub(crate) fn safe_to_use_scalar_randomness<F: CanonicalField>() -> bool {
-    field_modulus_bits::<F>() == 128
-}
-
-#[inline]
 fn scalar_to_ring<F: FieldCore, const D: usize>(scalar: F) -> CyclotomicRing<F, D> {
     let mut coeffs = [F::zero(); D];
     coeffs[0] = scalar;
     CyclotomicRing::from_coefficients(coeffs)
-}
-
-#[derive(Clone, Copy)]
-enum AggregationRandomness<F: FieldCore, const D: usize> {
-    Scalar(F),
-    Ring(CyclotomicRing<F, D>),
-}
-
-#[inline]
-fn sample_aggregation_randomness<F, T, const D: usize>(
-    transcript: &mut T,
-) -> AggregationRandomness<F, D>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    if safe_to_use_scalar_randomness::<F>() {
-        AggregationRandomness::Scalar(sample_labrador_aggregation_challenge::<F, _>(transcript))
-    } else {
-        AggregationRandomness::Ring(challenge_ring_element(
-            transcript,
-            labels::CHALLENGE_LABRADOR_AGGREGATION,
-        ))
-    }
 }
 
 #[inline]
@@ -426,55 +424,31 @@ impl<F: FieldCore + CanonicalField, const D: usize> FlatWitness<F, D> {
     }
 }
 
-/// Fold `phi_flat` into a flat accumulator scaled by `beta`.
-#[tracing::instrument(skip_all, name = "labrador::accumulate_phi_flat_scalar")]
-fn accumulate_phi_flat_scalar<F: FieldCore + CanonicalField, const D: usize>(
-    phi_total_flat: &mut [CyclotomicRing<F, D>],
-    phi_flat: &[CyclotomicRing<F, D>],
-    beta: F,
-) {
-    debug_assert_eq!(phi_total_flat.len(), phi_flat.len());
-    if beta.is_zero() {
-        return;
-    }
-    // In-place accumulation on destination:
-    //   phi_total_flat[i] += beta * phi_flat[i]
-    // using coefficient-wise scalar MAC to avoid dense ring multiplication.
-    cfg_iter_mut!(phi_total_flat)
-        .zip(cfg_iter!(phi_flat))
-        .for_each(|(dst, src)| {
-            for (dst_coeff, src_coeff) in dst.coefficients_mut().iter_mut().zip(src.coefficients())
-            {
-                *dst_coeff += *src_coeff * beta;
-            }
-        });
-}
-
-/// Legacy JL fold: ring-element challenge accumulation.
-#[tracing::instrument(skip_all, name = "labrador::accumulate_phi_flat_ring")]
-fn accumulate_phi_flat_ring<F: FieldCore + CanonicalField, const D: usize>(
-    phi_total_flat: &mut [CyclotomicRing<F, D>],
-    phi_flat: &[CyclotomicRing<F, D>],
-    beta: CyclotomicRing<F, D>,
-) {
-    debug_assert_eq!(phi_total_flat.len(), phi_flat.len());
-    let beta_ref = &beta;
-    cfg_iter_mut!(phi_total_flat)
-        .zip(cfg_iter!(phi_flat))
-        .for_each(|(dst, src)| mul_accumulate_term_coeff(beta_ref, src, dst));
-}
-
 fn accumulate_phi_flat<F: FieldCore + CanonicalField, const D: usize>(
     phi_total_flat: &mut [CyclotomicRing<F, D>],
     phi_flat: &[CyclotomicRing<F, D>],
     beta: &AggregationRandomness<F, D>,
 ) {
+    debug_assert_eq!(phi_total_flat.len(), phi_flat.len());
     match beta {
         AggregationRandomness::Scalar(s) => {
-            accumulate_phi_flat_scalar(phi_total_flat, phi_flat, *s);
+            if s.is_zero() {
+                return;
+            }
+            cfg_iter_mut!(phi_total_flat)
+                .zip(cfg_iter!(phi_flat))
+                .for_each(|(dst, src)| {
+                    for (dst_coeff, src_coeff) in
+                        dst.coefficients_mut().iter_mut().zip(src.coefficients())
+                    {
+                        *dst_coeff += *src_coeff * *s;
+                    }
+                });
         }
         AggregationRandomness::Ring(r) => {
-            accumulate_phi_flat_ring(phi_total_flat, phi_flat, *r);
+            cfg_iter_mut!(phi_total_flat)
+                .zip(cfg_iter!(phi_flat))
+                .for_each(|(dst, src)| mul_accumulate_term_coeff(r, src, dst));
         }
     }
 }
@@ -488,7 +462,7 @@ fn accumulate_phi_flat<F: FieldCore + CanonicalField, const D: usize>(
 ///   4. Transmit b^''(k) (constant term zeroed) and absorb into transcript.
 ///   5. If `q` is 128-bit, use scalar β_k; otherwise use ring β_k.
 ///
-/// Returns `(phi_total_flat, aggregated_rhs, jl_lift_residuals)` where
+/// Returns `(phi_total_flat, jl_lift_residuals)` where
 /// `phi_total_flat` is flattened in row-major order and
 /// `jl_lift_residuals` holds the transmitted polynomials.
 #[allow(clippy::type_complexity)]
@@ -497,14 +471,7 @@ pub(crate) fn aggregate_jl_constraints_prover<F, T, const D: usize>(
     witness: &LabradorWitness<F, D>,
     matrix: &LabradorJlMatrix,
     transcript: &mut T,
-) -> Result<
-    (
-        Vec<CyclotomicRing<F, D>>,
-        CyclotomicRing<F, D>,
-        Vec<CyclotomicRing<F, D>>,
-    ),
-    HachiError,
->
+) -> Result<(Vec<CyclotomicRing<F, D>>, Vec<CyclotomicRing<F, D>>), HachiError>
 where
     F: FieldCore + CanonicalField + FromSmallInt,
     T: Transcript<F>,
@@ -513,7 +480,6 @@ where
     let flat_witness_i8 = try_centered_i8_cache_from_ring_coeffs(&flat_witness.rings);
 
     let mut phi_total_flat = vec![CyclotomicRing::<F, D>::zero(); flat_witness.rings.len()];
-    let mut aggregated_rhs = CyclotomicRing::<F, D>::zero();
     let lifts = jl_lifts::<F>();
     let mut jl_lift_residuals = Vec::with_capacity(lifts);
 
@@ -538,11 +504,10 @@ where
         transcript.append_serde(labels::ABSORB_LABRADOR_JL_LIFT_RESIDUALS, &b_tx);
 
         let beta = sample_aggregation_randomness::<F, _, D>(transcript);
-        accumulate_rhs_with_alpha(&beta, &b_full, &mut aggregated_rhs);
         accumulate_phi_flat(&mut phi_total_flat, &phi_flat, &beta);
     }
 
-    Ok((phi_total_flat, aggregated_rhs, jl_lift_residuals))
+    Ok((phi_total_flat, jl_lift_residuals))
 }
 
 /// Aggregate JL projection constraints on the verifier side.
