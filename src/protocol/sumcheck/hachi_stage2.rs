@@ -1,12 +1,53 @@
 //! Stage-2 fused sumcheck prover/verifier for the Hachi PCS.
 //!
-//! This stage combines the virtual claim over `w(w+1)` with the relation claim
-//! over `w * alpha * m`. The inner scan is fused around a shared local basis so
-//! the same `w0` / `dw` work is reused for both halves.
+//! This stage views the committed witness as a Boolean table
+//! `w : {0,1}^{num_u} x {0,1}^{num_l} -> F`, where `x` indexes the padded
+//! witness columns and `y` indexes the coefficient inside a
+//! `D = 2^{num_l}`-dimensional ring element. Let `a(y)` be the multilinear
+//! extension of `alpha_evals_y = [1, alpha, ..., alpha^(D-1)]`, so on Boolean
+//! inputs `a(y) = alpha^{bin(y)}`. Let `M_alpha` be the ring-switch matrix
+//! after evaluating every ring entry at the transcript challenge `alpha`, and
+//! define the `tau1`-weighted row combination
+//!
+//! `m_tau1(x) = sum_i eq(tau1, i) * M_alpha(i, x)`.
+//!
+//! The Boolean table stored in `m_evals_x` is exactly `x -> m_tau1(x)`.
+//!
+//! If
+//!
+//! `y_alpha = [v_0(alpha), ..., v_{N_D-1}(alpha),`
+//! `           u_0(alpha), ..., u_{N_B-1}(alpha),`
+//! `           y_ring(alpha), 0, ..., 0],`
+//!
+//! then the linear relation claim is
+//!
+//! `relation_claim = sum_i eq(tau1, i) * y_alpha[i]`
+//! `               = sum_{x,y} w(x, y) * a(y) * m_tau1(x)`.
+//!
+//! Stage 1 supplies the carried virtual claim
+//!
+//! `s_claim = w(r_stage1) * (w(r_stage1) + 1)`
+//! `        = sum_z eq(r_stage1, z) * w(z) * (w(z) + 1)`
+//!
+//! for the same multilinear witness table. With `gamma = batching_coeff`, the
+//! exact identity established by this sumcheck is
+//!
+//! `gamma * s_claim + relation_claim =`
+//! `sum_{x,y} [ gamma * eq(r_stage1, (x, y)) * w(x, y) * (w(x, y) + 1)`
+//! `           + w(x, y) * a(y) * m_tau1(x) ]`.
+//!
+//! After all rounds, at `r_stage2 = (r_x, r_y)`, the verifier checks
+//!
+//! `gamma * eq(r_stage1, r_stage2) * w(r_stage2) * (w(r_stage2) + 1)`
+//! `  + w(r_stage2) * a(r_y) * m_tau1(r_x)`,
+//!
+//! exactly the oracle returned by `expected_output_claim()`. The prover fuses
+//! both halves around the same local `w0` / `dw` scan so the witness-side work
+//! is shared between the virtual and relation terms.
 
 use super::eq_poly::EqPolynomial;
 use super::split_eq::GruenSplitEq;
-use super::{fold_evals_in_place, multilinear_eval, trim_trailing_zeros};
+use super::{fold_evals_in_place, multilinear_eval, trim_trailing_zeros, CompactPairFoldLut};
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
 use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::CyclotomicRing;
@@ -113,8 +154,9 @@ pub(crate) fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: u
 
 /// Stage-2 fused virtual-claim + relation sumcheck prover.
 ///
-/// Holds a single `w_table` shared by both halves of stage 2, weighted by
-/// `batching_coeff`. The round polynomial is:
+/// Holds a single `w_table` shared by both halves of stage 2. The virtual half
+/// is pre-weighted by `batching_coeff` through `split_eq`, so the round
+/// polynomial is:
 /// `batching_coeff * virtual_round(t) + relation_round(t)`.
 pub struct HachiStage2Prover<E: FieldCore> {
     w_table: WTable<E>,
@@ -166,7 +208,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
             w_table: WTable::Compact(w_evals_compact),
             batching_coeff,
             s_claim,
-            split_eq: GruenSplitEq::new(r_stage1),
+            split_eq: GruenSplitEq::with_initial_scalar(r_stage1, batching_coeff),
             alpha_compact: alpha_evals_y,
             m_compact: m_evals_x[..live_x_cols].to_vec(),
             live_x_cols,
@@ -226,7 +268,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
         let max_len = virt_poly.coeffs.len().max(relation_poly.coeffs.len());
         let mut combined = vec![E::zero(); max_len];
         for (i, c) in virt_poly.coeffs.iter().enumerate() {
-            combined[i] += self.batching_coeff * *c;
+            combined[i] += *c;
         }
         for (i, c) in relation_poly.coeffs.iter().enumerate() {
             combined[i] += *c;
@@ -566,7 +608,31 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
         self.polys_from_terms(virt_q_coeffs, rel_coeffs)
     }
 
-    fn fold_compact_prefix_x(w_compact: &[i8], live_x_cols: usize, y_len: usize, r: E) -> Vec<E> {
+    #[inline]
+    fn build_compact_w_fold_lut(w_compact: &[i8], r: E) -> CompactPairFoldLut<E> {
+        let min_w = w_compact
+            .iter()
+            .copied()
+            .map(i32::from)
+            .min()
+            .unwrap_or(0)
+            .min(0);
+        let max_w = w_compact
+            .iter()
+            .copied()
+            .map(i32::from)
+            .max()
+            .unwrap_or(0)
+            .max(0);
+        CompactPairFoldLut::from_contiguous_range(min_w, max_w, r)
+    }
+
+    fn fold_compact_prefix_x(
+        w_compact: &[i8],
+        live_x_cols: usize,
+        y_len: usize,
+        fold_lut: &CompactPairFoldLut<E>,
+    ) -> Vec<E> {
         let next_live_x_cols = live_x_cols.div_ceil(2);
         let mut out = vec![E::zero(); y_len * next_live_x_cols];
 
@@ -578,13 +644,12 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                 let row = &w_compact[row_start..row_start + live_x_cols];
                 for (pair_x, dst) in row_out.iter_mut().enumerate() {
                     let left = 2 * pair_x;
-                    let w_0 = E::from_i64(row[left] as i64);
                     let w_1 = if left + 1 < live_x_cols {
-                        E::from_i64(row[left + 1] as i64)
+                        row[left + 1] as i32
                     } else {
-                        E::zero()
+                        0
                     };
-                    *dst = w_0 + r * (w_1 - w_0);
+                    *dst = fold_lut.fold(row[left] as i32, w_1);
                 }
             });
 
@@ -594,13 +659,12 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
             let row = &w_compact[row_start..row_start + live_x_cols];
             for (pair_x, dst) in row_out.iter_mut().enumerate() {
                 let left = 2 * pair_x;
-                let w_0 = E::from_i64(row[left] as i64);
                 let w_1 = if left + 1 < live_x_cols {
-                    E::from_i64(row[left + 1] as i64)
+                    row[left + 1] as i32
                 } else {
-                    E::zero()
+                    0
                 };
-                *dst = w_0 + r * (w_1 - w_0);
+                *dst = fold_lut.fold(row[left] as i32, w_1);
             }
         }
 
@@ -664,19 +728,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
             .collect()
     }
 
-    fn fold_compact_to_full(w_compact: &[i8], r: E) -> Vec<E> {
+    fn fold_compact_to_full(w_compact: &[i8], fold_lut: &CompactPairFoldLut<E>) -> Vec<E> {
         cfg_into_iter!(0..w_compact.len() / 2)
-            .map(|j| {
-                let w_0 = E::from_i64(w_compact[2 * j] as i64);
-                let delta = w_compact[2 * j + 1] as i32 - w_compact[2 * j] as i32;
-                let delta_abs = delta.unsigned_abs() as u64;
-                let r_delta = E::reduce_mul_u64_accum(r.mul_u64_unreduced(delta_abs));
-                if delta < 0 {
-                    w_0 - r_delta
-                } else {
-                    w_0 + r_delta
-                }
-            })
+            .map(|j| fold_lut.fold(w_compact[2 * j] as i32, w_compact[2 * j + 1] as i32))
             .collect()
     }
 }
@@ -735,10 +789,11 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
 
         self.w_table = match mem::replace(&mut self.w_table, WTable::Full(Vec::new())) {
             WTable::Compact(w_compact) => {
+                let fold_lut = Self::build_compact_w_fold_lut(&w_compact, r);
                 let w_full = if use_prefix_x_round {
-                    Self::fold_compact_prefix_x(&w_compact, self.live_x_cols, y_len, r)
+                    Self::fold_compact_prefix_x(&w_compact, self.live_x_cols, y_len, &fold_lut)
                 } else {
-                    Self::fold_compact_to_full(&w_compact, r)
+                    Self::fold_compact_to_full(&w_compact, &fold_lut)
                 };
                 WTable::Full(w_full)
             }
@@ -969,6 +1024,60 @@ mod tests {
                 .copy_from_slice(&w_prefix[src_start..src_start + live_x_cols]);
         }
         padded
+    }
+
+    fn fold_compact_prefix_x_reference(
+        w_compact: &[i8],
+        live_x_cols: usize,
+        y_len: usize,
+        r: F,
+    ) -> Vec<F> {
+        let next_live_x_cols = live_x_cols.div_ceil(2);
+        let mut out = vec![F::zero(); y_len * next_live_x_cols];
+        for (y, row_out) in out.chunks_mut(next_live_x_cols).enumerate() {
+            let row_start = y * live_x_cols;
+            let row = &w_compact[row_start..row_start + live_x_cols];
+            for (pair_x, dst) in row_out.iter_mut().enumerate() {
+                let left = 2 * pair_x;
+                let w_0 = F::from_i64(row[left] as i64);
+                let w_1 = if left + 1 < live_x_cols {
+                    F::from_i64(row[left + 1] as i64)
+                } else {
+                    F::zero()
+                };
+                *dst = w_0 + r * (w_1 - w_0);
+            }
+        }
+        out
+    }
+
+    fn fold_compact_to_full_reference(w_compact: &[i8], r: F) -> Vec<F> {
+        (0..w_compact.len() / 2)
+            .map(|j| {
+                let w_0 = F::from_i64(w_compact[2 * j] as i64);
+                let w_1 = F::from_i64(w_compact[2 * j + 1] as i64);
+                w_0 + r * (w_1 - w_0)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn stage2_compact_fold_lookup_matches_direct_formula() {
+        let r = F::from_u64(53);
+
+        let w_prefix = vec![1, 2, 3, 1, 2, 3, 1, 2, 3, 1];
+        let fold_lut = HachiStage2Prover::<F>::build_compact_w_fold_lut(&w_prefix, r);
+        assert_eq!(
+            HachiStage2Prover::<F>::fold_compact_prefix_x(&w_prefix, 5, 2, &fold_lut),
+            fold_compact_prefix_x_reference(&w_prefix, 5, 2, r)
+        );
+
+        let w_dense = vec![1, 2, 3, 1, 2, 3];
+        let dense_lut = HachiStage2Prover::<F>::build_compact_w_fold_lut(&w_dense, r);
+        assert_eq!(
+            HachiStage2Prover::<F>::fold_compact_to_full(&w_dense, &dense_lut),
+            fold_compact_to_full_reference(&w_dense, r)
+        );
     }
 
     #[test]

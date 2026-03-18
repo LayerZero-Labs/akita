@@ -29,8 +29,8 @@ use crate::FieldCore;
 ///
 /// Instead of storing and folding a full eq table each round, this struct
 /// maintains:
-/// - `current_scalar`: accumulated `eq(τ_bound, r_bound)` from already-bound
-///   variables
+/// - `current_scalar`: accumulated leading scalar times `eq(τ_bound, r_bound)`
+///   from already-bound variables
 /// - `E_first` / `E_second`: suffix-cached eq tables for two halves of the
 ///   remaining (unbound, non-current) variables
 ///
@@ -65,6 +65,19 @@ impl<E: FieldCore> GruenSplitEq<E> {
     ///
     /// Panics if `tau` is empty.
     pub fn new(tau: &[E]) -> Self {
+        Self::with_initial_scalar(tau, E::one())
+    }
+
+    /// Create a new split-eq whose running scalar starts at `initial_scalar`.
+    ///
+    /// This is useful when a round-independent batching scalar should be folded
+    /// into the split-eq factor once up front rather than re-applied to every
+    /// round polynomial after `gruen_mul()`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `tau` is empty.
+    pub fn with_initial_scalar(tau: &[E], initial_scalar: E) -> Self {
         let n = tau.len();
         assert!(n >= 1);
         let m = (n - 1) / 2;
@@ -76,13 +89,14 @@ impl<E: FieldCore> GruenSplitEq<E> {
         Self {
             tau: tau.to_vec(),
             current_round: 0,
-            current_scalar: E::one(),
+            current_scalar: initial_scalar,
             E_first,
             E_second,
         }
     }
 
-    /// The accumulated scalar `Π_{k < current_round} eq(τ[k], r[k])`.
+    /// The accumulated scalar `c * Π_{k < current_round} eq(τ[k], r[k])`,
+    /// where `c` is the constructor-supplied leading scalar.
     pub fn current_scalar(&self) -> E {
         self.current_scalar
     }
@@ -113,7 +127,7 @@ impl<E: FieldCore> GruenSplitEq<E> {
 
     /// Bind the current variable to challenge `r`, advancing to the next round.
     ///
-    /// Updates `current_scalar` with `eq(τ[current_round], r)` and pops the
+    /// Multiplies `current_scalar` by `eq(τ[current_round], r)` and pops the
     /// appropriate split table level.
     pub fn bind(&mut self, r: E) {
         let tau_k = self.tau[self.current_round];
@@ -131,7 +145,8 @@ impl<E: FieldCore> GruenSplitEq<E> {
     /// polynomial `q` (given as evaluations at integer points `0, 1, ..., d`).
     ///
     /// `l(X) = current_scalar · eq(τ_current, X)` is the linear eq factor
-    /// for the current variable. The result has degree `d + 1`.
+    /// for the current variable, including any constructor-supplied leading
+    /// scalar. The result has degree `d + 1`.
     pub fn gruen_mul(&self, q_poly: &UniPoly<E>) -> UniPoly<E> {
         let tau_k = self.current_tau();
         let scalar = self.current_scalar();
