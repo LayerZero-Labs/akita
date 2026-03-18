@@ -646,6 +646,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     }
 
     /// Pointwise multiplication in CRT+NTT domain using a bundled parameter set.
+    #[inline(always)]
     pub fn pointwise_mul_with_params(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
         self.pointwise_mul(rhs, &params.primes)
     }
@@ -654,6 +655,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     ///
     /// On AArch64, this uses the fused NEON pointwise-multiply-accumulate kernel
     /// when available; otherwise it falls back to the scalar loop.
+    #[inline(always)]
     pub fn add_assign_pointwise_mul_with_params(
         &mut self,
         lhs: &Self,

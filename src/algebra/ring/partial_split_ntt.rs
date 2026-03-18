@@ -21,10 +21,13 @@
 use super::CyclotomicRing;
 use crate::algebra::PackedField;
 use crate::{CanonicalField, FieldCore};
+use core::ops::{Add, Mul, Sub};
 use std::array::from_fn;
 
 const CLASS_D: usize = 32;
 const RING_D: usize = 64;
+const CLASS_LOG_D: usize = CLASS_D.trailing_zeros() as usize;
+const CENTERED_I8_LUT_OFFSET: i16 = 128;
 
 /// Cached `k=32` split-domain representation of a `D=64` ring element.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +38,7 @@ pub struct PartialSplitEval32<F: CanonicalField> {
 
 impl<F: CanonicalField> PartialSplitEval32<F> {
     /// The additive identity in split-evaluation form.
+    #[inline(always)]
     pub fn zero() -> Self {
         Self {
             even: [F::zero(); CLASS_D],
@@ -43,6 +47,7 @@ impl<F: CanonicalField> PartialSplitEval32<F> {
     }
 
     /// Convert a `D=64` ring element into the cached split-domain form.
+    #[inline(always)]
     pub fn from_ring(split: &PartialSplitNtt32<F>, ring: &CyclotomicRing<F, RING_D>) -> Self {
         let (mut even, mut odd) = split_even_odd(ring.coefficients());
         split.forward_class_pair(&mut even, &mut odd);
@@ -50,6 +55,7 @@ impl<F: CanonicalField> PartialSplitEval32<F> {
     }
 
     /// Convert centered `i8` coefficients into the cached split-domain form.
+    #[inline(always)]
     pub fn from_i8(split: &PartialSplitNtt32<F>, coeffs: &[i8; RING_D]) -> Self {
         let (even_i8, odd_i8) = split_even_odd_i8(coeffs);
         let (even, odd) = split.forward_class_i8_pair(&even_i8, &odd_i8);
@@ -57,6 +63,7 @@ impl<F: CanonicalField> PartialSplitEval32<F> {
     }
 
     /// Convert the cached split-domain form back to coefficient form.
+    #[inline(always)]
     pub fn to_ring(&self, split: &PartialSplitNtt32<F>) -> CyclotomicRing<F, RING_D> {
         let mut even = self.even;
         let mut odd = self.odd;
@@ -65,42 +72,34 @@ impl<F: CanonicalField> PartialSplitEval32<F> {
     }
 
     /// Pointwise multiplication in split-evaluation form.
+    #[inline(always)]
     pub fn pointwise_mul(&self, rhs: &Self, split: &PartialSplitNtt32<F>) -> Self {
         let mut even = [F::zero(); CLASS_D];
         let mut odd = [F::zero(); CLASS_D];
-        for i in 0..CLASS_D {
-            (even[i], odd[i]) = mul_quadratic_karatsuba(
-                self.even[i],
-                self.odd[i],
-                rhs.even[i],
-                rhs.odd[i],
-                split.eval_roots[i],
-            );
-        }
+        add_mul_quadratic_pairs(
+            &mut even,
+            &mut odd,
+            &self.even,
+            &self.odd,
+            &rhs.even,
+            &rhs.odd,
+            &split.eval_roots,
+        );
         Self { even, odd }
     }
 
-    /// Add another split-evaluation element in place.
-    pub fn add_assign(&mut self, rhs: &Self) {
-        for i in 0..CLASS_D {
-            self.even[i] += rhs.even[i];
-            self.odd[i] += rhs.odd[i];
-        }
-    }
-
     /// Accumulate a pointwise product directly into `self`.
+    #[inline(always)]
     pub fn add_mul_assign(&mut self, lhs: &Self, rhs: &Self, split: &PartialSplitNtt32<F>) {
-        for i in 0..CLASS_D {
-            let (even, odd) = mul_quadratic_karatsuba(
-                lhs.even[i],
-                lhs.odd[i],
-                rhs.even[i],
-                rhs.odd[i],
-                split.eval_roots[i],
-            );
-            self.even[i] += even;
-            self.odd[i] += odd;
-        }
+        add_mul_quadratic_pairs(
+            &mut self.even,
+            &mut self.odd,
+            &lhs.even,
+            &lhs.odd,
+            &rhs.even,
+            &rhs.odd,
+            &split.eval_roots,
+        );
     }
 }
 
@@ -117,6 +116,7 @@ impl<PF: PackedField> PackedPartialSplitEval32<PF> {
     pub const WIDTH: usize = PF::WIDTH;
 
     /// The additive identity in packed split-evaluation form.
+    #[inline(always)]
     pub fn zero() -> Self {
         let zero = PF::broadcast(PF::Scalar::zero());
         Self {
@@ -126,6 +126,7 @@ impl<PF: PackedField> PackedPartialSplitEval32<PF> {
     }
 
     /// Pack one scalar split-domain value per lane.
+    #[inline(always)]
     pub fn from_fn<FN>(mut f: FN) -> Self
     where
         PF::Scalar: CanonicalField,
@@ -136,6 +137,7 @@ impl<PF: PackedField> PackedPartialSplitEval32<PF> {
     }
 
     /// Broadcast one scalar split-domain value to every SIMD lane.
+    #[inline(always)]
     pub fn broadcast(value: &PartialSplitEval32<PF::Scalar>) -> Self
     where
         PF::Scalar: CanonicalField,
@@ -146,57 +148,7 @@ impl<PF: PackedField> PackedPartialSplitEval32<PF> {
         }
     }
 
-    /// Pack a scalar slice into SIMD groups, returning any scalar suffix.
-    pub fn pack_slice_with_suffix(
-        buf: &[PartialSplitEval32<PF::Scalar>],
-    ) -> (Vec<Self>, &[PartialSplitEval32<PF::Scalar>])
-    where
-        PF::Scalar: CanonicalField,
-    {
-        let split = buf.len() - (buf.len() % PF::WIDTH);
-        let (packed, suffix) = buf.split_at(split);
-        let out = packed
-            .chunks_exact(PF::WIDTH)
-            .map(Self::from_chunk)
-            .collect();
-        (out, suffix)
-    }
-
-    /// Accumulate a packed pointwise product directly into `self`.
-    pub fn add_mul_assign(&mut self, lhs: &Self, rhs: &Self, split: &PartialSplitNtt32<PF::Scalar>)
-    where
-        PF::Scalar: CanonicalField,
-    {
-        for i in 0..CLASS_D {
-            let p0 = lhs.even[i] * rhs.even[i];
-            let p1 = lhs.odd[i] * rhs.odd[i];
-            let p2 = (lhs.even[i] + lhs.odd[i]) * (rhs.even[i] + rhs.odd[i]);
-            let r = PF::broadcast(split.eval_roots[i]);
-            self.even[i] = self.even[i] + p0 + r * p1;
-            self.odd[i] = self.odd[i] + p2 - p0 - p1;
-        }
-    }
-
-    /// Convert the packed split-domain value back to coefficient form.
-    pub fn to_rings(
-        &self,
-        split: &PartialSplitNtt32<PF::Scalar>,
-    ) -> Vec<CyclotomicRing<PF::Scalar, RING_D>>
-    where
-        PF::Scalar: CanonicalField,
-    {
-        let mut even = self.even;
-        let mut odd = self.odd;
-        split.inverse_class_pair_packed(&mut even, &mut odd);
-        (0..PF::WIDTH)
-            .map(|lane| {
-                let even_lane = from_fn(|i| even[i].extract(lane));
-                let odd_lane = from_fn(|i| odd[i].extract(lane));
-                merge_even_odd(even_lane, odd_lane)
-            })
-            .collect()
-    }
-
+    #[inline(always)]
     fn from_chunk(chunk: &[PartialSplitEval32<PF::Scalar>]) -> Self
     where
         PF::Scalar: CanonicalField,
@@ -225,6 +177,7 @@ pub struct PackedPartialSplitNtt32<PF: PackedField> {
 
 impl<PF: PackedField> PackedPartialSplitNtt32<PF> {
     /// Accumulate a packed pointwise product directly into `acc`.
+    #[inline(always)]
     pub fn add_mul_assign(
         &self,
         acc: &mut PackedPartialSplitEval32<PF>,
@@ -233,16 +186,19 @@ impl<PF: PackedField> PackedPartialSplitNtt32<PF> {
     ) where
         PF::Scalar: CanonicalField,
     {
-        for i in 0..CLASS_D {
-            let p0 = lhs.even[i] * rhs.even[i];
-            let p1 = lhs.odd[i] * rhs.odd[i];
-            let p2 = (lhs.even[i] + lhs.odd[i]) * (rhs.even[i] + rhs.odd[i]);
-            acc.even[i] = acc.even[i] + p0 + self.eval_roots[i] * p1;
-            acc.odd[i] = acc.odd[i] + p2 - p0 - p1;
-        }
+        add_mul_quadratic_pairs(
+            &mut acc.even,
+            &mut acc.odd,
+            &lhs.even,
+            &lhs.odd,
+            &rhs.even,
+            &rhs.odd,
+            &self.eval_roots,
+        );
     }
 
     /// Append the coefficient-form outputs for every packed lane.
+    #[inline(always)]
     pub fn append_rings(
         &self,
         eval: &PackedPartialSplitEval32<PF>,
@@ -253,29 +209,13 @@ impl<PF: PackedField> PackedPartialSplitNtt32<PF> {
         let mut even = eval.even;
         let mut odd = eval.odd;
         inverse_cyclic_dit_pair_prebroadcast(&mut even, &mut odd, &self.inv_stage_roots);
-        for i in 0..CLASS_D {
-            even[i] = even[i] * self.d_inv_psi_inv[i];
-            odd[i] = odd[i] * self.d_inv_psi_inv[i];
-        }
+        scale_pair_in_place(&mut even, &mut odd, &self.d_inv_psi_inv);
         out.reserve(PF::WIDTH);
         for lane in 0..PF::WIDTH {
             let even_lane = from_fn(|i| even[i].extract(lane));
             let odd_lane = from_fn(|i| odd[i].extract(lane));
             out.push(merge_even_odd(even_lane, odd_lane));
         }
-    }
-
-    /// Convert the packed split-domain value back to coefficient form.
-    pub fn to_rings(
-        &self,
-        eval: &PackedPartialSplitEval32<PF>,
-    ) -> Vec<CyclotomicRing<PF::Scalar, RING_D>>
-    where
-        PF::Scalar: CanonicalField,
-    {
-        let mut out = Vec::with_capacity(PF::WIDTH);
-        self.append_rings(eval, &mut out);
-        out
     }
 }
 
@@ -332,8 +272,7 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
                 *root = cur;
                 cur = cur * omega;
             }
-            let log_n = CLASS_D.trailing_zeros() as usize;
-            from_fn(|i| natural[bit_reverse_index(i, log_n)])
+            from_fn(|i| natural[bit_reverse_index(i, CLASS_LOG_D)])
         };
 
         let mut fwd_stage_roots = [F::zero(); CLASS_D];
@@ -372,11 +311,13 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
     }
 
     /// Roots `r_j` of `Y^32 + 1` in the same slot order used by the transform.
+    #[inline(always)]
     pub fn eval_roots(&self) -> &[F; CLASS_D] {
         &self.eval_roots
     }
 
     /// Broadcast the split-domain tables into a packed SIMD representation.
+    #[inline(always)]
     pub fn packed<PF: PackedField<Scalar = F>>(&self) -> PackedPartialSplitNtt32<PF> {
         PackedPartialSplitNtt32 {
             eval_roots: from_fn(|i| PF::broadcast(self.eval_roots[i])),
@@ -386,6 +327,7 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
     }
 
     /// Forward size-32 negacyclic transform on the class ring `F_p[Y]/(Y^32+1)`.
+    #[inline(always)]
     pub fn forward_class(&self, coeffs: &mut [F; CLASS_D]) {
         for (coeff, psi) in coeffs.iter_mut().zip(self.psi_pows.iter()) {
             *coeff = *coeff * *psi;
@@ -394,25 +336,14 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
     }
 
     /// Forward size-32 negacyclic transform on two class polynomials at once.
+    #[inline(always)]
     pub fn forward_class_pair(&self, lhs: &mut [F; CLASS_D], rhs: &mut [F; CLASS_D]) {
-        for ((lhs_i, rhs_i), psi) in lhs.iter_mut().zip(rhs.iter_mut()).zip(self.psi_pows.iter()) {
-            *lhs_i = *lhs_i * *psi;
-            *rhs_i = *rhs_i * *psi;
-        }
+        scale_pair_in_place(lhs, rhs, &self.psi_pows);
         forward_cyclic_dif_pair(lhs, rhs, &self.fwd_stage_roots);
     }
 
-    /// Forward size-32 negacyclic transform for centered `i8` coefficients.
-    ///
-    /// This uses a full `[-128, 127]` lookup table to avoid repeated
-    /// `i8 -> field` conversions on the hot path.
-    pub fn forward_class_i8(&self, coeffs: &[i8; CLASS_D]) -> [F; CLASS_D] {
-        let mut out = from_fn(|i| self.i8_to_field(coeffs[i]));
-        self.forward_class(&mut out);
-        out
-    }
-
     /// Forward size-32 negacyclic transform for two centered-`i8` classes.
+    #[inline(always)]
     pub fn forward_class_i8_pair(
         &self,
         lhs: &[i8; CLASS_D],
@@ -424,51 +355,21 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
         (out_lhs, out_rhs)
     }
 
-    /// Inverse size-32 negacyclic transform back to class-ring coefficients.
-    pub fn inverse_class(&self, evals: &mut [F; CLASS_D]) {
-        inverse_cyclic_dit(evals, &self.inv_stage_roots);
-        for (eval, fused) in evals.iter_mut().zip(self.d_inv_psi_inv.iter()) {
-            *eval = *eval * *fused;
-        }
-    }
-
     /// Inverse size-32 negacyclic transform on two slot vectors at once.
+    #[inline(always)]
     pub fn inverse_class_pair(&self, lhs: &mut [F; CLASS_D], rhs: &mut [F; CLASS_D]) {
         inverse_cyclic_dit_pair(lhs, rhs, &self.inv_stage_roots);
-        for ((lhs_i, rhs_i), fused) in lhs
-            .iter_mut()
-            .zip(rhs.iter_mut())
-            .zip(self.d_inv_psi_inv.iter())
-        {
-            *lhs_i = *lhs_i * *fused;
-            *rhs_i = *rhs_i * *fused;
-        }
-    }
-
-    /// Inverse size-32 negacyclic transform on two packed slot vectors.
-    pub fn inverse_class_pair_packed<PF: PackedField<Scalar = F>>(
-        &self,
-        lhs: &mut [PF; CLASS_D],
-        rhs: &mut [PF; CLASS_D],
-    ) {
-        inverse_cyclic_dit_pair_packed(lhs, rhs, &self.inv_stage_roots);
-        for ((lhs_i, rhs_i), fused) in lhs
-            .iter_mut()
-            .zip(rhs.iter_mut())
-            .zip(self.d_inv_psi_inv.iter())
-        {
-            let fused = PF::broadcast(*fused);
-            *lhs_i = *lhs_i * fused;
-            *rhs_i = *rhs_i * fused;
-        }
+        scale_pair_in_place(lhs, rhs, &self.d_inv_psi_inv);
     }
 
     /// Forward size-64 cyclic transform over `F_p[X]/(X^64 - 1)`.
+    #[inline(always)]
     pub fn forward_cyclic_ring(&self, coeffs: &mut [F; RING_D]) {
         forward_cyclic_dif64(coeffs, &self.cyclic_fwd_stage_roots);
     }
 
     /// Inverse size-64 cyclic transform over `F_p[X]/(X^64 - 1)`.
+    #[inline(always)]
     pub fn inverse_cyclic_ring(&self, evals: &mut [F; RING_D]) {
         inverse_cyclic_dit64(evals, &self.cyclic_inv_stage_roots);
         for value in evals.iter_mut() {
@@ -477,6 +378,7 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
     }
 
     /// Multiply two `D=64` ring elements using the `k=32` partial split.
+    #[inline(always)]
     pub fn multiply_d64(
         &self,
         lhs: &CyclotomicRing<F, RING_D>,
@@ -490,15 +392,15 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
 
         let mut out_even = [F::zero(); CLASS_D];
         let mut out_odd = [F::zero(); CLASS_D];
-        for i in 0..CLASS_D {
-            (out_even[i], out_odd[i]) = mul_quadratic_karatsuba(
-                lhs_even[i],
-                lhs_odd[i],
-                rhs_even[i],
-                rhs_odd[i],
-                self.eval_roots[i],
-            );
-        }
+        add_mul_quadratic_pairs(
+            &mut out_even,
+            &mut out_odd,
+            &lhs_even,
+            &lhs_odd,
+            &rhs_even,
+            &rhs_odd,
+            &self.eval_roots,
+        );
 
         self.inverse_class_pair(&mut out_even, &mut out_odd);
         merge_even_odd(out_even, out_odd)
@@ -506,6 +408,7 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
 
     /// Multiply a full field-valued `D=64` ring element by centered `i8`
     /// coefficients using the `k=32` partial split.
+    #[inline(always)]
     pub fn multiply_d64_rhs_i8(
         &self,
         lhs: &CyclotomicRing<F, RING_D>,
@@ -519,21 +422,22 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
 
         let mut out_even = [F::zero(); CLASS_D];
         let mut out_odd = [F::zero(); CLASS_D];
-        for i in 0..CLASS_D {
-            (out_even[i], out_odd[i]) = mul_quadratic_karatsuba(
-                lhs_even[i],
-                lhs_odd[i],
-                rhs_even_eval[i],
-                rhs_odd_eval[i],
-                self.eval_roots[i],
-            );
-        }
+        add_mul_quadratic_pairs(
+            &mut out_even,
+            &mut out_odd,
+            &lhs_even,
+            &lhs_odd,
+            &rhs_even_eval,
+            &rhs_odd_eval,
+            &self.eval_roots,
+        );
 
         self.inverse_class_pair(&mut out_even, &mut out_odd);
         merge_even_odd(out_even, out_odd)
     }
 
     /// Multiply two `D=64` coefficient arrays modulo `X^64 - 1`.
+    #[inline(always)]
     pub fn multiply_cyclic_d64(
         &self,
         lhs: &CyclotomicRing<F, RING_D>,
@@ -553,6 +457,7 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
 
     /// Compute the high-half quotient `H` such that
     /// `lhs * rhs = H * X^64 + reduced`, with `deg(H) < 64`.
+    #[inline(always)]
     pub fn unreduced_quotient_d64(
         &self,
         lhs: &CyclotomicRing<F, RING_D>,
@@ -565,9 +470,9 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
         CyclotomicRing::from_coefficients(quotient)
     }
 
-    #[inline]
+    #[inline(always)]
     fn i8_to_field(&self, coeff: i8) -> F {
-        self.centered_i8_lut[(coeff as i16 + 128) as usize]
+        self.centered_i8_lut[(coeff as i16 + CENTERED_I8_LUT_OFFSET) as usize]
     }
 }
 
@@ -617,12 +522,14 @@ fn find_primitive_root_2d<F: CanonicalField>(q: u128, d: usize) -> F {
     panic!("no primitive {}-th root found", 2 * d);
 }
 
+#[inline(always)]
 fn split_even_odd<F: CanonicalField>(coeffs: &[F; RING_D]) -> ([F; CLASS_D], [F; CLASS_D]) {
     let even = from_fn(|i| coeffs[2 * i]);
     let odd = from_fn(|i| coeffs[2 * i + 1]);
     (even, odd)
 }
 
+#[inline(always)]
 fn split_even_odd_i8(coeffs: &[i8; RING_D]) -> ([i8; CLASS_D], [i8; CLASS_D]) {
     let even = from_fn(|i| coeffs[2 * i]);
     let odd = from_fn(|i| coeffs[2 * i + 1]);
@@ -630,7 +537,10 @@ fn split_even_odd_i8(coeffs: &[i8; RING_D]) -> ([i8; CLASS_D], [i8; CLASS_D]) {
 }
 
 #[inline(always)]
-fn mul_quadratic_karatsuba<F: CanonicalField>(a0: F, a1: F, b0: F, b1: F, r: F) -> (F, F) {
+fn mul_quadratic_karatsuba<T>(a0: T, a1: T, b0: T, b1: T, r: T) -> (T, T)
+where
+    T: Copy + Add<Output = T> + Sub<Output = T> + Mul<Output = T>,
+{
     let p0 = a0 * b0;
     let p1 = a1 * b1;
     let p2 = (a0 + a1) * (b0 + b1);
@@ -639,21 +549,51 @@ fn mul_quadratic_karatsuba<F: CanonicalField>(a0: F, a1: F, b0: F, b1: F, r: F) 
     (c0, c1)
 }
 
+#[inline(always)]
+fn add_mul_quadratic_pairs<T>(
+    acc_even: &mut [T; CLASS_D],
+    acc_odd: &mut [T; CLASS_D],
+    lhs_even: &[T; CLASS_D],
+    lhs_odd: &[T; CLASS_D],
+    rhs_even: &[T; CLASS_D],
+    rhs_odd: &[T; CLASS_D],
+    roots: &[T; CLASS_D],
+) where
+    T: Copy + Add<Output = T> + Sub<Output = T> + Mul<Output = T>,
+{
+    for i in 0..CLASS_D {
+        let (even, odd) =
+            mul_quadratic_karatsuba(lhs_even[i], lhs_odd[i], rhs_even[i], rhs_odd[i], roots[i]);
+        acc_even[i] = acc_even[i] + even;
+        acc_odd[i] = acc_odd[i] + odd;
+    }
+}
+
+#[inline(always)]
+fn scale_pair_in_place<T>(lhs: &mut [T; CLASS_D], rhs: &mut [T; CLASS_D], scales: &[T; CLASS_D])
+where
+    T: Copy + Mul<Output = T>,
+{
+    for ((lhs_i, rhs_i), scale) in lhs.iter_mut().zip(rhs.iter_mut()).zip(scales.iter()) {
+        *lhs_i = *lhs_i * *scale;
+        *rhs_i = *rhs_i * *scale;
+    }
+}
+
+#[inline(always)]
 fn merge_even_odd<F: CanonicalField>(
     even: [F; CLASS_D],
     odd: [F; CLASS_D],
 ) -> CyclotomicRing<F, RING_D> {
-    CyclotomicRing::from_coefficients(from_fn(
-        |i| {
-            if i % 2 == 0 {
-                even[i / 2]
-            } else {
-                odd[i / 2]
-            }
-        },
-    ))
+    let mut coeffs = [F::zero(); RING_D];
+    for i in 0..CLASS_D {
+        coeffs[2 * i] = even[i];
+        coeffs[2 * i + 1] = odd[i];
+    }
+    CyclotomicRing::from_coefficients(coeffs)
 }
 
+#[inline(always)]
 fn forward_cyclic_dif<F: CanonicalField>(a: &mut [F; CLASS_D], stage_roots: &[F; CLASS_D]) {
     let mut len = CLASS_D / 2;
     while len > 0 {
@@ -674,6 +614,7 @@ fn forward_cyclic_dif<F: CanonicalField>(a: &mut [F; CLASS_D], stage_roots: &[F;
     }
 }
 
+#[inline(always)]
 fn forward_cyclic_dif_pair<F: CanonicalField>(
     lhs: &mut [F; CLASS_D],
     rhs: &mut [F; CLASS_D],
@@ -704,26 +645,7 @@ fn forward_cyclic_dif_pair<F: CanonicalField>(
     }
 }
 
-fn inverse_cyclic_dit<F: CanonicalField>(a: &mut [F; CLASS_D], stage_roots: &[F; CLASS_D]) {
-    let mut len = 1usize;
-    while len < CLASS_D {
-        let step = stage_roots[len];
-        let mut start = 0usize;
-        while start < CLASS_D {
-            let mut w = F::one();
-            for j in 0..len {
-                let u = a[start + j];
-                let v = a[start + j + len] * w;
-                a[start + j] = u + v;
-                a[start + j + len] = u - v;
-                w = w * step;
-            }
-            start += 2 * len;
-        }
-        len *= 2;
-    }
-}
-
+#[inline(always)]
 fn inverse_cyclic_dit_pair<F: CanonicalField>(
     lhs: &mut [F; CLASS_D],
     rhs: &mut [F; CLASS_D],
@@ -754,36 +676,7 @@ fn inverse_cyclic_dit_pair<F: CanonicalField>(
     }
 }
 
-fn inverse_cyclic_dit_pair_packed<F: CanonicalField, PF: PackedField<Scalar = F>>(
-    lhs: &mut [PF; CLASS_D],
-    rhs: &mut [PF; CLASS_D],
-    stage_roots: &[F; CLASS_D],
-) {
-    let mut len = 1usize;
-    while len < CLASS_D {
-        let step = PF::broadcast(stage_roots[len]);
-        let mut start = 0usize;
-        while start < CLASS_D {
-            let mut w = PF::broadcast(F::one());
-            for j in 0..len {
-                let lhs_u = lhs[start + j];
-                let lhs_v = lhs[start + j + len] * w;
-                lhs[start + j] = lhs_u + lhs_v;
-                lhs[start + j + len] = lhs_u - lhs_v;
-
-                let rhs_u = rhs[start + j];
-                let rhs_v = rhs[start + j + len] * w;
-                rhs[start + j] = rhs_u + rhs_v;
-                rhs[start + j + len] = rhs_u - rhs_v;
-
-                w = w * step;
-            }
-            start += 2 * len;
-        }
-        len *= 2;
-    }
-}
-
+#[inline(always)]
 fn inverse_cyclic_dit_pair_prebroadcast<PF: PackedField>(
     lhs: &mut [PF; CLASS_D],
     rhs: &mut [PF; CLASS_D],
@@ -816,6 +709,7 @@ fn inverse_cyclic_dit_pair_prebroadcast<PF: PackedField>(
     }
 }
 
+#[inline(always)]
 fn forward_cyclic_dif64<F: CanonicalField>(a: &mut [F; RING_D], stage_roots: &[F; RING_D]) {
     let mut len = RING_D / 2;
     while len > 0 {
@@ -836,6 +730,7 @@ fn forward_cyclic_dif64<F: CanonicalField>(a: &mut [F; RING_D], stage_roots: &[F
     }
 }
 
+#[inline(always)]
 fn inverse_cyclic_dit64<F: CanonicalField>(a: &mut [F; RING_D], stage_roots: &[F; RING_D]) {
     let mut len = 1usize;
     while len < RING_D {
@@ -856,6 +751,7 @@ fn inverse_cyclic_dit64<F: CanonicalField>(a: &mut [F; RING_D], stage_roots: &[F
     }
 }
 
+#[inline(always)]
 fn bit_reverse_index(idx: usize, log_n: usize) -> usize {
     idx.reverse_bits() >> (usize::BITS as usize - log_n)
 }
