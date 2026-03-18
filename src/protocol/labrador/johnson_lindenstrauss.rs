@@ -12,16 +12,26 @@ use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake128;
 
 const JL_ROWS: usize = 256;
-const JL_XOF_DOMAIN: &[u8] = b"hachi/labrador-jl-matrix";
+const JL_ROW_XOF_DOMAIN: &[u8] = b"hachi/labrador-jl-matrix-row-v1";
 
-fn expand_jl_seed(seed: &[u8], len: usize) -> Vec<u8> {
+fn expand_jl_seed_row(seed: &[u8], cols: usize, row_idx: usize, row_bytes: usize) -> Vec<u8> {
     let mut xof = Shake128::default();
-    xof.update(JL_XOF_DOMAIN);
+    xof.update(JL_ROW_XOF_DOMAIN);
     xof.update(seed);
+    xof.update(&(cols as u64).to_le_bytes());
+    xof.update(&(row_idx as u64).to_le_bytes());
     let mut reader = xof.finalize_xof();
-    let mut out = vec![0u8; len];
-    reader.read(&mut out);
-    out
+    let mut row = vec![0u8; row_bytes];
+    reader.read(&mut row);
+    row
+}
+
+fn expand_jl_seed(seed: &[u8], cols: usize, row_bytes: usize) -> Vec<Vec<u8>> {
+    // Each row is derived from (seed, cols, row_idx), so generation is
+    // deterministic and safe to parallelize without shared XOF state.
+    cfg_into_iter!(0..JL_ROWS)
+        .map(|row_idx| expand_jl_seed_row(seed, cols, row_idx, row_bytes))
+        .collect()
 }
 
 fn jl_row_bytes(cols: usize) -> Result<usize, HachiError> {
@@ -173,7 +183,7 @@ fn center_witness_by_ring<F: FieldCore + CanonicalField, const D: usize>(
 pub struct LabradorJlMatrix {
     cols: usize,
     row_bytes: usize,
-    packed_rows: Vec<u8>,
+    pub(crate) packed_rows: Vec<Vec<u8>>,
 }
 
 impl LabradorJlMatrix {
@@ -183,13 +193,12 @@ impl LabradorJlMatrix {
     }
 
     pub(crate) fn is_well_formed(&self) -> bool {
-        self.cols > 0 && self.packed_rows.len() == JL_ROWS * self.row_bytes
-    }
-
-    pub(crate) fn row_bytes(&self, row_idx: usize) -> &[u8] {
-        debug_assert!(row_idx < JL_ROWS);
-        let start = row_idx * self.row_bytes;
-        &self.packed_rows[start..start + self.row_bytes]
+        self.cols > 0
+            && self.packed_rows.len() == JL_ROWS
+            && self
+                .packed_rows
+                .iter()
+                .all(|row| row.len() == self.row_bytes)
     }
 
     #[cfg(test)]
@@ -212,9 +221,8 @@ impl LabradorJlMatrix {
         }
 
         let row_bytes = (cols * 2).div_ceil(8);
-        let mut packed_rows = vec![0u8; JL_ROWS * row_bytes];
+        let mut packed_rows = vec![vec![0u8; row_bytes]; JL_ROWS];
         for (row_idx, row) in signs.iter().enumerate() {
-            let start = row_idx * row_bytes;
             for (col_idx, &sign) in row.iter().enumerate() {
                 let pair = match sign {
                     -1 => 0b00,
@@ -226,7 +234,7 @@ impl LabradorJlMatrix {
                         ))
                     }
                 };
-                packed_rows[start + (col_idx >> 2)] |= pair << ((col_idx & 0b11) << 1);
+                packed_rows[row_idx][col_idx >> 2] |= pair << ((col_idx & 0b11) << 1);
             }
         }
 
@@ -242,10 +250,7 @@ impl LabradorJlMatrix {
         if row_idx >= JL_ROWS || col_idx >= self.cols {
             return None;
         }
-        Some(jl_pair_to_sign(jl_pair_at(
-            self.row_bytes(row_idx),
-            col_idx,
-        )))
+        Some(jl_pair_to_sign(jl_pair_at(&self.packed_rows[row_idx], col_idx)))
     }
 
     /// Squeeze a JL matrix directly from the transcript.
@@ -260,9 +265,8 @@ impl LabradorJlMatrix {
         T: Transcript<F>,
     {
         let row_bytes = jl_row_bytes(cols)?;
-        let total_bytes = JL_ROWS * row_bytes;
         let seed = transcript.challenge_bytes(labels::CHALLENGE_LABRADOR_JL_SEED, 32);
-        let packed_rows = expand_jl_seed(&seed, total_bytes);
+        let packed_rows = expand_jl_seed(&seed, cols, row_bytes);
         Ok(Self {
             cols,
             row_bytes,
@@ -289,12 +293,11 @@ impl LabradorJlMatrix {
         F: FieldCore + CanonicalField,
         T: Transcript<F>,
     {
-        let (_row_bytes, seed) = replay_nonce_search_seed::<F, T>(transcript, jl_nonce, cols)?;
-        let total_bytes = JL_ROWS * jl_row_bytes(cols)?;
-        let packed_rows = expand_jl_seed(&seed, total_bytes);
+        let (row_bytes, seed) = replay_nonce_search_seed::<F, T>(transcript, jl_nonce, cols)?;
+        let packed_rows = expand_jl_seed(&seed, cols, row_bytes);
         Ok(Self {
             cols,
-            row_bytes: jl_row_bytes(cols)?,
+            row_bytes,
             packed_rows,
         })
     }
@@ -479,13 +482,18 @@ fn project_streaming<const D: usize>(
     }
     let results: Vec<Option<i64>> = match centered_witness {
         CenteredWitness::I64 { coeffs } => cfg_into_iter!(0..JL_ROWS)
-            .map(|row_idx| project_row_i64(matrix.row_bytes(row_idx), coeffs, total_coeffs))
+            .map(|row_idx| project_row_i64(&matrix.packed_rows[row_idx], coeffs, total_coeffs))
             .collect(),
         CenteredWitness::I128 { rings, sum_abs } => {
             let use_checked = *sum_abs > i128::MAX as u128;
             cfg_into_iter!(0..JL_ROWS)
                 .map(|row_idx| {
-                    project_row_i128(matrix.row_bytes(row_idx), rings, total_coeffs, use_checked)
+                    project_row_i128(
+                        &matrix.packed_rows[row_idx],
+                        rings,
+                        total_coeffs,
+                        use_checked,
+                    )
                 })
                 .collect()
         }

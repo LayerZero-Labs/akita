@@ -65,7 +65,9 @@ where
     T: Transcript<F>,
 {
     if safe_to_use_scalar_randomness::<F>() {
-        AggregationRandomness::Scalar(transcript.challenge_scalar(labels::CHALLENGE_LABRADOR_AGGREGATION))
+        AggregationRandomness::Scalar(
+            transcript.challenge_scalar(labels::CHALLENGE_LABRADOR_AGGREGATION),
+        )
     } else {
         AggregationRandomness::Ring(challenge_ring_element(
             transcript,
@@ -73,7 +75,6 @@ where
         ))
     }
 }
-
 
 type AggregatedConstraintSystem<F, const D: usize> =
     (Vec<Vec<CyclotomicRing<F, D>>>, CyclotomicRing<F, D>);
@@ -372,10 +373,10 @@ pub fn aggregate_jl_contraints_one_lift<F: CanonicalField, const D: usize>(
         .step_by(4)
         .map(|group_start| {
             [
-                matrix.row_bytes(group_start),
-                matrix.row_bytes(group_start + 1),
-                matrix.row_bytes(group_start + 2),
-                matrix.row_bytes(group_start + 3),
+                matrix.packed_rows[group_start].as_slice(),
+                matrix.packed_rows[group_start + 1].as_slice(),
+                matrix.packed_rows[group_start + 2].as_slice(),
+                matrix.packed_rows[group_start + 3].as_slice(),
             ]
         })
         .collect();
@@ -914,7 +915,7 @@ mod tests {
         // φ''_i = Σ_j ω_j · σ_{-1}(π_i^(j))
         for (elem_idx, elem) in expected.iter_mut().enumerate() {
             for (row_idx, &alpha) in omega.iter().enumerate() {
-                let row = matrix.row_bytes(row_idx);
+                let row = &matrix.packed_rows[row_idx];
                 let pi = std::array::from_fn(|local_idx| {
                     let col_idx = elem_idx * D + local_idx;
                     let shift = (col_idx & 0b11) << 1;
