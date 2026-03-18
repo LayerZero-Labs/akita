@@ -429,11 +429,12 @@ fn bench_partial_split_cached_matvec_q128m5823(c: &mut Criterion) {
 
     c.bench_function("ring_partial_split_cached_matvec_d64_q128m5823", |b| {
         b.iter(|| {
-            let out: Vec<R128> = (0..CACHE_MAT_ROWS)
-                .map(|r| {
+            let out: Vec<R128> = matrix
+                .iter()
+                .map(|row| {
                     let mut acc = PartialSplitEval32::zero();
-                    for col in 0..CACHE_MAT_COLS {
-                        acc.add_mul_assign(&matrix[r][col], black_box(&vector[col]), &split);
+                    for (mat_entry, vec_entry) in row.iter().zip(vector.iter()) {
+                        acc.add_mul_assign(mat_entry, black_box(vec_entry), &split);
                     }
                     acc.to_ring(&split)
                 })
@@ -465,11 +466,12 @@ fn bench_partial_split_cached_matvec_i8_rhs_q128m5823(c: &mut Criterion) {
         "ring_partial_split_cached_matvec_i8_rhs_d64_q128m5823",
         |b| {
             b.iter(|| {
-                let out: Vec<R128> = (0..CACHE_MAT_ROWS)
-                    .map(|r| {
+                let out: Vec<R128> = matrix
+                    .iter()
+                    .map(|row| {
                         let mut acc = PartialSplitEval32::zero();
-                        for col in 0..CACHE_MAT_COLS {
-                            acc.add_mul_assign(&matrix[r][col], black_box(&vector[col]), &split);
+                        for (mat_entry, vec_entry) in row.iter().zip(vector.iter()) {
+                            acc.add_mul_assign(mat_entry, black_box(vec_entry), &split);
                         }
                         acc.to_ring(&split)
                     })
@@ -500,15 +502,16 @@ fn bench_partial_split_packed_cached_matvec_q128m5823(c: &mut Criterion) {
             PartialSplitEval32::from_ring(&split, &sample_ring_q128m5823_tag(41, col as u64))
         })
         .collect();
-    let packed_rows = CACHE_MAT_ROWS - (CACHE_MAT_ROWS % PackedPartialSplitEval32::<PF128>::WIDTH);
-    let matrix_packed: Vec<Vec<PackedPartialSplitEval32<PF128>>> = matrix_scalar[..packed_rows]
-        .chunks_exact(PackedPartialSplitEval32::<PF128>::WIDTH)
+    let mut matrix_chunks = matrix_scalar.chunks_exact(PackedPartialSplitEval32::<PF128>::WIDTH);
+    let matrix_packed: Vec<Vec<PackedPartialSplitEval32<PF128>>> = matrix_chunks
+        .by_ref()
         .map(|row_chunk| {
             (0..CACHE_MAT_COLS)
                 .map(|col| PackedPartialSplitEval32::<PF128>::from_fn(|lane| row_chunk[lane][col]))
                 .collect()
         })
         .collect();
+    let matrix_scalar_tail = matrix_chunks.remainder();
     let vector_packed: Vec<PackedPartialSplitEval32<PF128>> = vector_scalar
         .iter()
         .map(PackedPartialSplitEval32::<PF128>::broadcast)
@@ -521,19 +524,15 @@ fn bench_partial_split_packed_cached_matvec_q128m5823(c: &mut Criterion) {
                 let mut out = Vec::with_capacity(CACHE_MAT_ROWS);
                 for packed_row in &matrix_packed {
                     let mut acc = PackedPartialSplitEval32::<PF128>::zero();
-                    for col in 0..CACHE_MAT_COLS {
-                        packed.add_mul_assign(
-                            &mut acc,
-                            &packed_row[col],
-                            black_box(&vector_packed[col]),
-                        );
+                    for (mat_entry, vec_entry) in packed_row.iter().zip(vector_packed.iter()) {
+                        packed.add_mul_assign(&mut acc, mat_entry, black_box(vec_entry));
                     }
                     packed.append_rings(&acc, &mut out);
                 }
-                for row in &matrix_scalar[packed_rows..] {
+                for row in matrix_scalar_tail {
                     let mut acc = PartialSplitEval32::zero();
-                    for col in 0..CACHE_MAT_COLS {
-                        acc.add_mul_assign(&row[col], black_box(&vector_scalar[col]), &split);
+                    for (mat_entry, vec_entry) in row.iter().zip(vector_scalar.iter()) {
+                        acc.add_mul_assign(mat_entry, black_box(vec_entry), &split);
                     }
                     out.push(acc.to_ring(&split));
                 }
@@ -563,13 +562,14 @@ fn bench_crt_simd_cached_matvec_q128m5823(c: &mut Criterion) {
 
     c.bench_function("ring_crt_ntt_simd_cached_matvec_d64_q128m5823_k5", |b| {
         b.iter(|| {
-            let out: Vec<R128> = (0..CACHE_MAT_ROWS)
-                .map(|r| {
+            let out: Vec<R128> = matrix
+                .iter()
+                .map(|row| {
                     let mut acc = N128::zero();
-                    for col in 0..CACHE_MAT_COLS {
+                    for (mat_entry, vec_entry) in row.iter().zip(vector.iter()) {
                         acc.add_assign_pointwise_mul_with_params(
-                            &matrix[r][col],
-                            black_box(&vector[col]),
+                            mat_entry,
+                            black_box(vec_entry),
                             &params,
                         );
                     }
@@ -599,15 +599,16 @@ fn bench_partial_split_packed_cached_matvec_i8_rhs_q128m5823(c: &mut Criterion) 
     let vector_scalar: Vec<PartialSplitEval32<F128>> = (0..CACHE_MAT_COLS)
         .map(|col| PartialSplitEval32::from_i8(&split, &sample_centered_i8(41 + col as u64)))
         .collect();
-    let packed_rows = CACHE_MAT_ROWS - (CACHE_MAT_ROWS % PackedPartialSplitEval32::<PF128>::WIDTH);
-    let matrix_packed: Vec<Vec<PackedPartialSplitEval32<PF128>>> = matrix_scalar[..packed_rows]
-        .chunks_exact(PackedPartialSplitEval32::<PF128>::WIDTH)
+    let mut matrix_chunks = matrix_scalar.chunks_exact(PackedPartialSplitEval32::<PF128>::WIDTH);
+    let matrix_packed: Vec<Vec<PackedPartialSplitEval32<PF128>>> = matrix_chunks
+        .by_ref()
         .map(|row_chunk| {
             (0..CACHE_MAT_COLS)
                 .map(|col| PackedPartialSplitEval32::<PF128>::from_fn(|lane| row_chunk[lane][col]))
                 .collect()
         })
         .collect();
+    let matrix_scalar_tail = matrix_chunks.remainder();
     let vector_packed: Vec<PackedPartialSplitEval32<PF128>> = vector_scalar
         .iter()
         .map(PackedPartialSplitEval32::<PF128>::broadcast)
@@ -620,19 +621,15 @@ fn bench_partial_split_packed_cached_matvec_i8_rhs_q128m5823(c: &mut Criterion) 
                 let mut out = Vec::with_capacity(CACHE_MAT_ROWS);
                 for packed_row in &matrix_packed {
                     let mut acc = PackedPartialSplitEval32::<PF128>::zero();
-                    for col in 0..CACHE_MAT_COLS {
-                        packed.add_mul_assign(
-                            &mut acc,
-                            &packed_row[col],
-                            black_box(&vector_packed[col]),
-                        );
+                    for (mat_entry, vec_entry) in packed_row.iter().zip(vector_packed.iter()) {
+                        packed.add_mul_assign(&mut acc, mat_entry, black_box(vec_entry));
                     }
                     packed.append_rings(&acc, &mut out);
                 }
-                for row in &matrix_scalar[packed_rows..] {
+                for row in matrix_scalar_tail {
                     let mut acc = PartialSplitEval32::zero();
-                    for col in 0..CACHE_MAT_COLS {
-                        acc.add_mul_assign(&row[col], black_box(&vector_scalar[col]), &split);
+                    for (mat_entry, vec_entry) in row.iter().zip(vector_scalar.iter()) {
+                        acc.add_mul_assign(mat_entry, black_box(vec_entry), &split);
                     }
                     out.push(acc.to_ring(&split));
                 }
@@ -664,13 +661,14 @@ fn bench_crt_simd_cached_matvec_i8_rhs_q128m5823(c: &mut Criterion) {
         "ring_crt_ntt_simd_cached_matvec_i8_rhs_d64_q128m5823_k5",
         |b| {
             b.iter(|| {
-                let out: Vec<R128> = (0..CACHE_MAT_ROWS)
-                    .map(|r| {
+                let out: Vec<R128> = matrix
+                    .iter()
+                    .map(|row| {
                         let mut acc = N128::zero();
-                        for col in 0..CACHE_MAT_COLS {
+                        for (mat_entry, vec_entry) in row.iter().zip(vector.iter()) {
                             acc.add_assign_pointwise_mul_with_params(
-                                &matrix[r][col],
-                                black_box(&vector[col]),
+                                mat_entry,
+                                black_box(vec_entry),
                                 &params,
                             );
                         }

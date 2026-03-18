@@ -1400,8 +1400,8 @@ mod tests {
         let got: Vec<R> = (0..ROWS)
             .map(|r| {
                 let mut acc = PartialSplitEval32::zero();
-                for c in 0..COLS {
-                    acc.add_mul_assign(&matrix_eval[r][c], &vector_eval[c], &split);
+                for (mat_entry, vec_entry) in matrix_eval[r].iter().zip(vector_eval.iter()) {
+                    acc.add_mul_assign(mat_entry, vec_entry, &split);
                 }
                 acc.to_ring(&split)
             })
@@ -1410,8 +1410,8 @@ mod tests {
         let expected: Vec<R> = (0..ROWS)
             .map(|r| {
                 let mut acc = R::zero();
-                for c in 0..COLS {
-                    acc += matrix[r][c] * vector[c];
+                for (mat_entry, vec_entry) in matrix[r].iter().zip(vector.iter()) {
+                    acc += *mat_entry * *vec_entry;
                 }
                 acc
             })
@@ -1470,23 +1470,21 @@ mod tests {
             .collect();
 
         let mut got = Vec::with_capacity(rows);
-        let packed_rows = rows - (rows % PackedPartialSplitEval32::<PF>::WIDTH);
-        for row_chunk in
-            matrix_eval[..packed_rows].chunks_exact(PackedPartialSplitEval32::<PF>::WIDTH)
-        {
+        let mut row_chunks = matrix_eval.chunks_exact(PackedPartialSplitEval32::<PF>::WIDTH);
+        for row_chunk in row_chunks.by_ref() {
             let packed_row: Vec<PackedPartialSplitEval32<PF>> = (0..cols)
                 .map(|c| PackedPartialSplitEval32::<PF>::from_fn(|lane| row_chunk[lane][c]))
                 .collect();
             let mut acc = PackedPartialSplitEval32::<PF>::zero();
-            for c in 0..cols {
-                packed.add_mul_assign(&mut acc, &packed_row[c], &vector_packed[c]);
+            for (mat_entry, vec_entry) in packed_row.iter().zip(vector_packed.iter()) {
+                packed.add_mul_assign(&mut acc, mat_entry, vec_entry);
             }
             packed.append_rings(&acc, &mut got);
         }
-        for row in &matrix_eval[packed_rows..] {
+        for row in row_chunks.remainder() {
             let mut acc = PartialSplitEval32::zero();
-            for c in 0..cols {
-                acc.add_mul_assign(&row[c], &vector_eval[c], &split);
+            for (mat_entry, vec_entry) in row.iter().zip(vector_eval.iter()) {
+                acc.add_mul_assign(mat_entry, vec_entry, &split);
             }
             got.push(acc.to_ring(&split));
         }
@@ -1494,8 +1492,8 @@ mod tests {
         let expected: Vec<R> = (0..rows)
             .map(|r| {
                 let mut acc = R::zero();
-                for c in 0..cols {
-                    acc += matrix[r][c] * vector[c];
+                for (mat_entry, vec_entry) in matrix[r].iter().zip(vector.iter()) {
+                    acc += *mat_entry * *vec_entry;
                 }
                 acc
             })
