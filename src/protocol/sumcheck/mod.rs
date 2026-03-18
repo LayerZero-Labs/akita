@@ -29,6 +29,13 @@ pub use crate::algebra::poly::{
 };
 pub use types::{CompressedUniPoly, SumcheckProof, UniPoly};
 
+#[inline]
+pub(crate) fn trim_trailing_zeros<E: FieldCore>(coeffs: &mut Vec<E>) {
+    while coeffs.len() > 1 && coeffs.last().is_some_and(|c| c.is_zero()) {
+        coeffs.pop();
+    }
+}
+
 /// Prover-side sumcheck instance interface.
 ///
 /// This trait encapsulates the protocol-specific logic required to compute each

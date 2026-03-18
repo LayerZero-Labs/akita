@@ -49,7 +49,8 @@ use crate::protocol::sumcheck::hachi_stage2::{
 use crate::protocol::sumcheck::multilinear_eval;
 use crate::protocol::sumcheck::{prove_sumcheck, verify_sumcheck};
 use crate::protocol::transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH,
+    CHALLENGE_SUMCHECK_ROUND,
 };
 use crate::protocol::transcript::Transcript;
 use crate::{dispatch_ring_dim, dispatch_with_d_ntt, dispatch_with_ntt};
@@ -403,6 +404,7 @@ where
     #[cfg(debug_assertions)]
     prove_stage1_selfcheck(&tau0, &r_stage1, s_claim, b, stage1_final_claim, level);
 
+    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
 
     let mut stage2_prover = HachiStage2Prover::new(
@@ -1235,6 +1237,7 @@ where
         |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
     )?;
 
+    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &level_proof.stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
 
     let stage2_verifier = if is_last {

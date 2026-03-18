@@ -5,7 +5,10 @@
 
 use super::eq_poly::EqPolynomial;
 use super::split_eq::GruenSplitEq;
-use super::{fold_evals_in_place, SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
+use super::{
+    fold_evals_in_place, trim_trailing_zeros, SumcheckInstanceProver, SumcheckInstanceVerifier,
+    UniPoly,
+};
 use crate::algebra::fields::HasUnreducedOps;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
@@ -399,12 +402,6 @@ fn compute_entry_coeffs_from_s_x4<E: FieldCore + HasUnreducedOps>(
         ap[1] = ap[1] * a[1];
         ap[2] = ap[2] * a[2];
         ap[3] = ap[3] * a[3];
-    }
-}
-
-fn trim_trailing_zeros<E: FieldCore>(coeffs: &mut Vec<E>) {
-    while coeffs.len() > 1 && coeffs.last().is_some_and(|c| c.is_zero()) {
-        coeffs.pop();
     }
 }
 

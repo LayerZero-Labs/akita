@@ -6,7 +6,7 @@
 
 use super::eq_poly::EqPolynomial;
 use super::split_eq::GruenSplitEq;
-use super::{fold_evals_in_place, multilinear_eval};
+use super::{fold_evals_in_place, multilinear_eval, trim_trailing_zeros};
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
 use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::CyclotomicRing;
@@ -45,13 +45,6 @@ struct CompactLocalBasis<E: FieldCore> {
 
 type CompactVirtAccum<E> = [<E as HasUnreducedOps>::MulU64Accum; 4];
 type CompactRelAccum<E> = [<E as HasUnreducedOps>::MulU64Accum; 6];
-
-#[inline]
-fn trim_trailing_zeros<E: FieldCore>(coeffs: &mut Vec<E>) {
-    while coeffs.len() > 1 && coeffs.last().is_some_and(|c| c.is_zero()) {
-        coeffs.pop();
-    }
-}
 
 #[inline]
 fn coeffs_to_poly<E: FieldCore>(coeffs: [E; 3]) -> UniPoly<E> {
