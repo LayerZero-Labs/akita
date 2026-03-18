@@ -503,6 +503,22 @@ pub struct HachiStage1Proof<F: FieldCore> {
     pub s_claim: F,
 }
 
+impl<F: FieldCore> HachiStage1Proof<F> {
+    /// Whether stage 1 serialized a first-two-round bivariate-skip proof.
+    pub fn has_prefix(&self) -> bool {
+        self.prefix.is_some()
+    }
+
+    /// Serialized size of the stage-1 prefix option field, including the tag byte.
+    pub fn prefix_field_serialized_size(&self, compress: Compress) -> usize {
+        std::mem::size_of::<u8>()
+            + self
+                .prefix
+                .as_ref()
+                .map_or(0, |prefix| prefix.serialized_size(compress))
+    }
+}
+
 /// Proof payload for stage 2 of a single Hachi level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiStage2Proof<F: FieldCore> {
@@ -521,6 +537,22 @@ pub struct HachiStage2Proof<F: FieldCore> {
     pub next_w_commitment: FlatRingVec<F>,
     /// Claimed evaluation of the next witness `w` at the stage-2 challenge point.
     pub next_w_eval: F,
+}
+
+impl<F: FieldCore> HachiStage2Proof<F> {
+    /// Whether stage 2 serialized a first-two-round bivariate-skip proof.
+    pub fn has_prefix(&self) -> bool {
+        self.prefix.is_some()
+    }
+
+    /// Serialized size of the stage-2 prefix option field, including the tag byte.
+    pub fn prefix_field_serialized_size(&self, compress: Compress) -> usize {
+        std::mem::size_of::<u8>()
+            + self
+                .prefix
+                .as_ref()
+                .map_or(0, |prefix| prefix.serialized_size(compress))
+    }
 }
 
 /// Proof for a single fold level (quad_eq + ring_switch + sumcheck).

@@ -166,8 +166,10 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
 fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevelProof<F>) -> usize {
     let y_ring_size = level.y_ring.serialized_size(Compress::No);
     let v_size = level.v.serialized_size(Compress::No);
+    let stage1_prefix_field_size = level.stage1.prefix_field_serialized_size(Compress::No);
     let stage1_sumcheck_size = level.stage1.sumcheck.serialized_size(Compress::No);
     let stage1_s_claim_size = level.stage1.s_claim.serialized_size(Compress::No);
+    let stage2_prefix_field_size = level.stage2.prefix_field_serialized_size(Compress::No);
     let stage2_sumcheck_size = level.stage2.sumcheck.serialized_size(Compress::No);
     let next_w_commitment_size = level.stage2.next_w_commitment.serialized_size(Compress::No);
     let next_w_eval_size = level.stage2.next_w_eval.serialized_size(Compress::No);
@@ -186,8 +188,16 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
         level.v.count(),
         level.v.ring_dim(),
     );
+    eprintln!(
+        "[{label}]     stage1_prefix={stage1_prefix_field_size} bytes (present={})",
+        level.stage1.has_prefix(),
+    );
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
     eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
+    eprintln!(
+        "[{label}]     stage2_prefix={stage2_prefix_field_size} bytes (present={})",
+        level.stage2.has_prefix(),
+    );
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!(
         "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} ring elems, D={})",
@@ -200,8 +210,10 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
         total,
         y_ring_size
             + v_size
+            + stage1_prefix_field_size
             + stage1_sumcheck_size
             + stage1_s_claim_size
+            + stage2_prefix_field_size
             + stage2_sumcheck_size
             + next_w_commitment_size
             + next_w_eval_size
