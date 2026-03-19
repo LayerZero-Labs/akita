@@ -485,7 +485,7 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
     }
 
     fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        let current_w_len = 1usize << max_num_vars;
+        let current_w_len = 1usize.checked_shl(max_num_vars as u32).unwrap_or(0);
         let (_, layout) = hachi_level_layout::<Cfg>(HachiScheduleInputs {
             max_num_vars,
             level: 1,

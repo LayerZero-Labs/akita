@@ -95,7 +95,7 @@ pub fn hachi_root_level_layout<Cfg: CommitmentConfig>(
     let params = Cfg::level_params(HachiScheduleInputs {
         max_num_vars,
         level: 0,
-        current_w_len: 1usize << max_num_vars,
+        current_w_len: 1usize.checked_shl(max_num_vars as u32).unwrap_or(0),
     });
     let alpha = params.d.trailing_zeros() as usize;
     let reduced_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {

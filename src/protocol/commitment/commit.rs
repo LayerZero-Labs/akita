@@ -430,7 +430,7 @@ where
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars,
             level: 0,
-            current_w_len: 1usize << max_num_vars,
+            current_w_len: layout.num_blocks * layout.block_len * D,
         });
         ensure_supported_num_vars(max_num_vars, layout.required_num_vars::<D>()?)?;
 
@@ -548,7 +548,9 @@ where
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,
-            current_w_len: 1usize << setup.expanded.seed.max_num_vars,
+            current_w_len: 1usize
+                .checked_shl(setup.expanded.seed.max_num_vars as u32)
+                .unwrap_or(0),
         });
         u.truncate(root_params.n_b);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
@@ -599,7 +601,9 @@ where
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,
-            current_w_len: 1usize << setup.expanded.seed.max_num_vars,
+            current_w_len: 1usize
+                .checked_shl(setup.expanded.seed.max_num_vars as u32)
+                .unwrap_or(0),
         });
         u.truncate(root_params.n_b);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
@@ -647,7 +651,9 @@ where
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,
-            current_w_len: 1usize << setup.expanded.seed.max_num_vars,
+            current_w_len: 1usize
+                .checked_shl(setup.expanded.seed.max_num_vars as u32)
+                .unwrap_or(0),
         });
         u.truncate(root_params.n_b);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
