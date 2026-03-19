@@ -15,9 +15,9 @@ use crate::protocol::commitment::utils::linear::{
 };
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
-    hachi_level_layout, CommitmentConfig, CommitmentEnvelope, DecompositionParams,
-    HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, HachiScheduleInputs,
-    RingCommitment,
+    hachi_recursive_level_layout_from_params, CommitmentConfig, CommitmentEnvelope,
+    DecompositionParams, HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams,
+    HachiScheduleInputs, RingCommitment,
 };
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{DigitLut, FlatCommitmentHint, FlatRingVec, HachiCommitmentHint};
@@ -494,14 +494,10 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         }
     }
 
-    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        let current_w_len = 1usize.checked_shl(max_num_vars as u32).unwrap_or(0);
-        let (_, layout) = hachi_level_layout::<Cfg>(HachiScheduleInputs {
-            max_num_vars,
-            level: 1,
-            current_w_len,
-        })?;
-        Ok(layout)
+    fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        Err(HachiError::InvalidSetup(
+            "recursive w layout requires active level params".to_string(),
+        ))
     }
 }
 
@@ -524,13 +520,10 @@ pub(crate) fn w_commitment_layout<F: CanonicalField, const D: usize, Cfg: Commit
     level_params: &HachiLevelParams,
     main_layout: HachiCommitmentLayout,
 ) -> Result<HachiCommitmentLayout, HachiError> {
-    let total = w_ring_element_count::<F>(level_params, main_layout)
-        .next_power_of_two()
-        .max(1);
-    let alpha = D.trailing_zeros() as usize;
-    let m_vars = total.trailing_zeros() as usize;
-    let max_num_vars = m_vars + alpha;
-    WCommitmentConfig::<D, Cfg>::commitment_layout(max_num_vars)
+    let current_w_len = w_ring_element_count::<F>(level_params, main_layout)
+        .checked_mul(D)
+        .ok_or_else(|| HachiError::InvalidSetup("w witness length overflow".to_string()))?;
+    hachi_recursive_level_layout_from_params::<Cfg>(level_params, current_w_len)
 }
 
 /// Commit the witness vector `w` (D-agnostic `Vec<i8>`) into `D`-sized ring
@@ -565,11 +558,7 @@ where
         });
     }
 
-    let total = w_digits.len().next_power_of_two().max(1);
-    let alpha = D.trailing_zeros() as usize;
-    let m_vars_total = total.trailing_zeros() as usize;
-    let max_num_vars = m_vars_total + alpha;
-    let w_layout = WCommitmentConfig::<D, Cfg>::commitment_layout(max_num_vars)?;
+    let w_layout = hachi_recursive_level_layout_from_params::<Cfg>(level_params, w.len())?;
 
     let num_blocks = w_layout.num_blocks;
     let block_len = w_layout.block_len;

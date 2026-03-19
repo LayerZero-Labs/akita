@@ -11,9 +11,10 @@ use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{flatten_i8_blocks, mat_vec_mul_ntt_single_i8};
 use crate::protocol::commitment::utils::ntt_cache::{MultiDNttBundle, MultiDNttCaches};
 use crate::protocol::commitment::{
-    AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore,
-    HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, HachiProverSetup,
-    HachiScheduleInputs, HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
+    hachi_recursive_level_layout_from_params, AppendToTranscript, CommitmentConfig,
+    CommitmentScheme, HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup,
+    HachiLevelParams, HachiProverSetup, HachiScheduleInputs, HachiVerifierSetup, RingCommitment,
+    RingCommitmentScheme,
 };
 use crate::protocol::hachi_poly_ops::{BalancedDigitPoly, HachiPolyOps};
 use crate::protocol::labrador_handoff::{labrador_handoff_prove, labrador_handoff_verify};
@@ -82,6 +83,14 @@ const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 /// stops being worthwhile.  If the w vector doesn't shrink by at least
 /// this factor, the overhead of another fold level outweighs the saving.
 const MIN_SHRINK_RATIO: f64 = 0.5;
+
+fn root_current_w_len<const D: usize>(layout: HachiCommitmentLayout) -> usize {
+    layout
+        .num_blocks
+        .checked_mul(layout.block_len)
+        .and_then(|len| len.checked_mul(D))
+        .unwrap_or(0)
+}
 
 /// End-to-end PCS wrapper, generic over ring degree `D` and config `Cfg`.
 #[derive(Clone, Copy, Debug, Default)]
@@ -438,7 +447,6 @@ where
             prove_sumcheck::<F, _, F, _, _>(&mut combined_prover, transcript, |tr| {
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
             })?;
-        let s_claim = combined_prover.final_s_claim();
         let w_eval = {
             let _span = tracing::info_span!("multilinear_eval", level).entered();
             combined_prover.final_w_eval()
@@ -450,20 +458,19 @@ where
             let (x_challenges, y_challenges) = sumcheck_challenges.split_at(num_u);
             let alpha_val = multilinear_eval(&alpha_evals_y_debug, y_challenges).unwrap();
             let m_val = multilinear_eval(&m_evals_x_debug, x_challenges).unwrap();
-            let expected = batching_coeff * eq_val * range_check_eval_from_s(s_claim, b)
+            let s_eval = w_eval * (w_eval + F::one());
+            let expected = batching_coeff * eq_val * s_eval * (s_eval - F::from_u64(2))
                 + w_eval * alpha_val * m_val;
             debug_assert!(combined_final_claim == expected);
         }
         #[cfg(not(debug_assertions))]
         let _ = combined_final_claim;
 
-        transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
         (
             HachiLevelProof::new_combined::<D>(
                 y_ring,
                 quad_eq.v,
                 combined_sumcheck,
-                s_claim,
                 w_commitment,
                 w_eval,
             ),
@@ -734,6 +741,7 @@ fn dispatch_verify_level<F, T, Cfg>(
     is_last: bool,
     final_w: Option<&[F]>,
     level_params: &HachiLevelParams,
+    layout: HachiCommitmentLayout,
 ) -> Result<Vec<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -743,8 +751,6 @@ where
     dispatch_ring_dim!(level_d, |D_LEVEL| {
         let typed_commitment: RingCommitment<F, { D_LEVEL }> =
             current_commitment.try_to_ring_commitment()?;
-        let w_layout =
-            <WCommitmentConfig<{ D_LEVEL }, Cfg>>::commitment_layout(opening_point.len())?;
         verify_one_level::<F, T, { D_LEVEL }, WCommitmentConfig<{ D_LEVEL }, Cfg>>(
             level_proof,
             setup,
@@ -756,7 +762,7 @@ where
             is_last,
             final_w,
             level_params,
-            w_layout,
+            layout,
         )
     })
 }
@@ -772,6 +778,8 @@ fn dispatch_labrador_handoff_prove<F, T, const D: usize, Cfg>(
     current_commitment: &FlatRingVec<F>,
     setup: &HachiProverSetup<F, D>,
     handoff_ntt_d_cache: &mut MultiDNttCaches,
+    level_params: &HachiLevelParams,
+    w_layout: HachiCommitmentLayout,
     transcript: &mut T,
 ) -> Result<HachiProofTail<F>, HachiError>
 where
@@ -799,6 +807,8 @@ where
             current_num_l,
             &setup.expanded,
             &setup.ntt_D,
+            level_params,
+            w_layout,
             transcript,
         );
     }
@@ -820,6 +830,8 @@ where
                 current_num_l,
                 &setup.expanded,
                 ntt_d,
+                level_params,
+                w_layout,
                 transcript,
             )
         }
@@ -834,6 +846,8 @@ fn dispatch_labrador_handoff_verify<F, T, Cfg>(
     opening: &F,
     current_commitment: &FlatRingVec<F>,
     expanded_setup: &HachiExpandedSetup<F>,
+    level_params: &HachiLevelParams,
+    w_layout: HachiCommitmentLayout,
     transcript: &mut T,
 ) -> Result<(), HachiError>
 where
@@ -868,6 +882,8 @@ where
             opening,
             &typed_commitment,
             expanded_setup,
+            level_params,
+            w_layout,
             transcript,
         )
     })
@@ -946,7 +962,7 @@ where
         },
     );
 
-    let w_layout = <WCommitmentConfig<{ D_LEVEL }, Cfg>>::commitment_layout(opening_point.len())?;
+    let w_layout = hachi_recursive_level_layout_from_params::<Cfg>(level_params, current_w.len())?;
     prove_one_level::<F, T, { D_LEVEL }, WCommitmentConfig<{ D_LEVEL }, Cfg>, _>(
         expanded,
         ntt_a,
@@ -1001,7 +1017,7 @@ where
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,
-            current_w_len: poly.num_ring_elems() * D,
+            current_w_len: root_current_w_len::<D>(*layout),
         });
         let mut inner = poly.commit_inner_witness(
             &setup.expanded.A,
@@ -1042,7 +1058,7 @@ where
         let mut ntt_bundle = MultiDNttBundle::new();
         let mut commit_ntt_bundle = MultiDNttBundle::new();
         let max_num_vars = setup.expanded.seed.max_num_vars;
-        let root_w_len = poly.num_ring_elems() * D;
+        let root_w_len = root_current_w_len::<D>(*layout);
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars,
             level: 0,
@@ -1093,7 +1109,7 @@ where
         )?;
         levels.push(out.level_proof);
 
-        let mut prev_poly_len = poly.num_ring_elems() * D;
+        let mut prev_poly_len = root_w_len;
         let mut current_w = out.w;
         let mut current_hint = out.w_hint;
         let mut current_challenges = out.sumcheck_challenges;
@@ -1165,6 +1181,13 @@ where
 
         let tail = if labrador_enabled {
             tracing::info!("labrador handoff started");
+            let handoff_params = Cfg::level_params(HachiScheduleInputs {
+                max_num_vars,
+                level,
+                current_w_len: current_w.len(),
+            });
+            let handoff_layout =
+                hachi_recursive_level_layout_from_params::<Cfg>(&handoff_params, current_w.len())?;
             dispatch_labrador_handoff_prove::<F, T, D, Cfg>(
                 &current_w,
                 &current_hint,
@@ -1174,6 +1197,8 @@ where
                 levels.last().unwrap().next_w_commitment(),
                 setup,
                 &mut commit_ntt_bundle.D_mat,
+                &handoff_params,
+                handoff_layout,
                 transcript,
             )?
         } else {
@@ -1231,7 +1256,7 @@ where
             let current_layout = if i == 0 {
                 *layout
             } else {
-                <WCommitmentConfig<{ D }, Cfg>>::commitment_layout(current_point.len())?
+                hachi_recursive_level_layout_from_params::<Cfg>(&level_params, current_w_len)?
             };
             if level_proof.level_d() != level_d || current_commitment.ring_dim() != level_d {
                 return Err(HachiError::InvalidProof);
@@ -1274,6 +1299,7 @@ where
                     is_last,
                     if is_last { fw_ref } else { None },
                     &level_params,
+                    current_layout,
                 )?
             };
 
@@ -1310,12 +1336,23 @@ where
 
         match &proof.tail {
             HachiProofTail::Labrador(ref tail) => {
+                let handoff_params = Cfg::level_params(HachiScheduleInputs {
+                    max_num_vars,
+                    level: num_levels,
+                    current_w_len,
+                });
+                let handoff_layout = hachi_recursive_level_layout_from_params::<Cfg>(
+                    &handoff_params,
+                    current_w_len,
+                )?;
                 dispatch_labrador_handoff_verify::<F, T, Cfg>(
                     tail,
                     &current_point,
                     &current_opening,
                     &current_commitment,
                     &setup.expanded,
+                    &handoff_params,
+                    handoff_layout,
                     transcript,
                 )?;
             }
@@ -1423,7 +1460,6 @@ where
         (
             NormCheckBody::Combined {
                 sumcheck,
-                s_claim,
                 next_w_eval,
                 ..
             },
@@ -1435,34 +1471,22 @@ where
                 let (w_evals_full, _, _) = build_w_evals(fw, level_params.d)?;
                 CombinedNormRelationVerifier::new_with_full_witness(
                     batching_coeff,
-                    *s_claim,
+                    relation_claim,
                     w_evals_full,
                     rs.tau0,
                     rs.alpha_evals_y,
                     rs.m_evals_x,
-                    rs.tau1,
-                    v_typed,
-                    commitment.u.clone(),
-                    y_ring,
-                    rs.alpha,
                     rs.num_u,
-                    rs.num_l,
                 )
             } else {
                 CombinedNormRelationVerifier::new_with_claimed_w_eval(
                     batching_coeff,
-                    *s_claim,
+                    relation_claim,
                     *next_w_eval,
                     rs.tau0,
                     rs.alpha_evals_y,
                     rs.m_evals_x,
-                    rs.tau1,
-                    v_typed,
-                    commitment.u.clone(),
-                    y_ring,
-                    rs.alpha,
                     rs.num_u,
-                    rs.num_l,
                 )
             };
             if relation_claim != SumcheckInstanceVerifier::input_claim(&combined_verifier) {
@@ -1475,7 +1499,6 @@ where
                     tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
                 })?
             };
-            transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, s_claim);
             Ok(challenges)
         }
         (NormCheckBody::TwoStage { stage1, stage2 }, b) if b != 4 => {
@@ -1642,9 +1665,7 @@ mod tests {
             + level0.v.serialized_size(Compress::No)
             + 1;
         base + match &level0.body {
-            NormCheckBody::Combined {
-                sumcheck, s_claim, ..
-            } => sumcheck.serialized_size(Compress::No) + s_claim.serialized_size(Compress::No),
+            NormCheckBody::Combined { sumcheck, .. } => sumcheck.serialized_size(Compress::No),
             NormCheckBody::TwoStage { stage1, stage2 } => {
                 stage1.sumcheck.serialized_size(Compress::No)
                     + stage1.s_claim.serialized_size(Compress::No)

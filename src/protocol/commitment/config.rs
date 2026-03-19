@@ -173,7 +173,9 @@ pub fn optimal_m_r_split<Cfg: CommitmentConfig>(reduced_vars: usize) -> (usize, 
     let params = Cfg::level_params(HachiScheduleInputs {
         max_num_vars: reduced_vars + Cfg::D.trailing_zeros() as usize,
         level: 0,
-        current_w_len: 1usize << (reduced_vars + Cfg::D.trailing_zeros() as usize),
+        current_w_len: 1usize
+            .checked_shl((reduced_vars + Cfg::D.trailing_zeros() as usize) as u32)
+            .unwrap_or(0),
     });
     optimal_m_r_split_with_params(&params, Cfg::decomposition(), reduced_vars)
 }
@@ -928,12 +930,6 @@ impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> 
             max_n_b: 2,
             max_n_d: 2,
         }
-    }
-
-    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        Fp128BoundedCommitmentConfig::<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>::commitment_layout(
-            max_num_vars,
-        )
     }
 
     fn w_log_basis() -> u32 {

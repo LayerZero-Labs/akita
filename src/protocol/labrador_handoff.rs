@@ -16,8 +16,7 @@ use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::linear::flatten_i8_blocks;
 use crate::protocol::commitment::{
-    CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiScheduleInputs,
-    RingCommitment,
+    CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, RingCommitment,
 };
 use crate::protocol::commitment_scheme::next_level_opening_point;
 use crate::protocol::hachi_poly_ops::{BalancedDigitPoly, HachiPolyOps};
@@ -266,6 +265,8 @@ pub(crate) fn labrador_handoff_prove<F, T, const D_HANDOFF: usize, Cfg>(
     current_num_l: usize,
     expanded_setup: &HachiExpandedSetup<F>,
     ntt_d: &NttSlotCache<D_HANDOFF>,
+    level_params: &HachiLevelParams,
+    w_layout: HachiCommitmentLayout,
     transcript: &mut T,
 ) -> Result<HachiProofTail<F>, HachiError>
 where
@@ -275,6 +276,13 @@ where
 {
     let t0 = Instant::now();
     let mut handoff_transcript = transcript.clone();
+
+    if level_params.d != D_HANDOFF {
+        return Err(HachiError::InvalidInput(format!(
+            "handoff params D={} mismatch witness commitment D={D_HANDOFF}",
+            level_params.d
+        )));
+    }
 
     let opening_point = tracing::info_span!("labrador::handoff_prepare_opening_point")
         .in_scope(|| next_level_opening_point(current_challenges, current_num_u, current_num_l));
@@ -287,7 +295,6 @@ where
         });
     }
 
-    let w_layout = <WCommitmentConfig<D_HANDOFF, Cfg>>::commitment_layout(opening_point.len())?;
     let direct_tail = PackedDigits::from_i8_digits(current_w, w_layout.log_basis);
     let direct_hachi_tail_bytes = direct_tail.serialized_size(Compress::No);
     let target_num_vars = w_layout.m_vars + w_layout.r_vars + alpha;
@@ -328,11 +335,6 @@ where
         handoff_transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
     });
 
-    let level_params = WCommitmentConfig::<D_HANDOFF, Cfg>::level_params(HachiScheduleInputs {
-        max_num_vars: padded_point.len(),
-        level: 1,
-        current_w_len: current_w.len(),
-    });
     let quad_eq = tracing::info_span!("labrador::handoff_quad_eq").in_scope(|| {
         Ok::<_, HachiError>(Box::new(QuadraticEquation::<
             F,
@@ -380,7 +382,7 @@ where
         &quad_eq.v,
         &current_commitment.u,
         &y_ring,
-        &level_params,
+        level_params,
         w_layout,
     )?;
 
@@ -519,6 +521,8 @@ pub(crate) fn labrador_handoff_verify<F, T, const D_HANDOFF: usize, Cfg>(
     opening_value: &F,
     current_commitment: &RingCommitment<F, D_HANDOFF>,
     expanded_setup: &HachiExpandedSetup<F>,
+    level_params: &HachiLevelParams,
+    w_layout: HachiCommitmentLayout,
     transcript: &mut T,
 ) -> Result<(), HachiError>
 where
@@ -527,6 +531,9 @@ where
     Cfg: CommitmentConfig,
 {
     let t0 = Instant::now();
+    if level_params.d != D_HANDOFF {
+        return Err(HachiError::InvalidProof);
+    }
     let alpha_prime = D_HANDOFF.trailing_zeros() as usize;
     if opening_point.len() < alpha_prime {
         return Err(HachiError::InvalidPointDimension {
@@ -545,7 +552,6 @@ where
         return Err(HachiError::InvalidProof);
     }
 
-    let w_layout = <WCommitmentConfig<D_HANDOFF, Cfg>>::commitment_layout(opening_point.len())?;
     let target_num_vars = w_layout.m_vars + w_layout.r_vars + alpha_prime;
     let mut padded_point = opening_point.to_vec();
     padded_point.resize(target_num_vars, F::zero());
@@ -571,11 +577,6 @@ where
     });
 
     // Derive challenges via verifier-side quad eq (absorbs v, samples challenges).
-    let level_params = WCommitmentConfig::<D_HANDOFF, Cfg>::level_params(HachiScheduleInputs {
-        max_num_vars: padded_point.len(),
-        level: 1,
-        current_w_len: w_layout.num_blocks * w_layout.block_len * D_HANDOFF,
-    });
     let quad_eq = tracing::info_span!("labrador::handoff_quad_eq").in_scope(|| {
         QuadraticEquation::<F, D_HANDOFF, WCommitmentConfig<D_HANDOFF, Cfg>>::new_verifier(
             ring_opening_point.clone(),
@@ -602,7 +603,7 @@ where
         &v,
         &current_commitment.u,
         &y_ring,
-        &level_params,
+        level_params,
         w_layout,
     )?;
 

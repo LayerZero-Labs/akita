@@ -193,16 +193,13 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
     match &level.body {
         NormCheckBody::Combined {
             sumcheck,
-            s_claim,
             next_w_commitment,
             next_w_eval,
         } => {
             let combined_sumcheck_size = sumcheck.serialized_size(Compress::No);
-            let combined_s_claim_size = s_claim.serialized_size(Compress::No);
             let next_w_commitment_size = next_w_commitment.serialized_size(Compress::No);
             let next_w_eval_size = next_w_eval.serialized_size(Compress::No);
             eprintln!("[{label}]     combined_sumcheck={combined_sumcheck_size} bytes");
-            eprintln!("[{label}]     combined_s_claim={combined_s_claim_size} bytes");
             eprintln!(
                 "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} ring elems, D={})",
                 next_w_commitment.count(),
@@ -214,7 +211,6 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
                 y_ring_size
                     + v_size
                     + combined_sumcheck_size
-                    + combined_s_claim_size
                     + next_w_commitment_size
                     + next_w_eval_size
             );

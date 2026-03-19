@@ -123,14 +123,34 @@ pub fn hachi_level_layout<Cfg: CommitmentConfig>(
     inputs: HachiScheduleInputs,
 ) -> Result<(HachiLevelParams, HachiCommitmentLayout), HachiError> {
     let params = Cfg::level_params(inputs);
-    let num_ring_elems = inputs.current_w_len / params.d;
+    let layout = hachi_recursive_level_layout_from_params::<Cfg>(&params, inputs.current_w_len)?;
+    Ok((params, layout))
+}
+
+/// Derive a recursive `w`-opening layout from the active level params.
+///
+/// # Errors
+///
+/// Returns an error if the witness length is incompatible with `params.d` or if
+/// the recursive layout derivation overflows.
+pub fn hachi_recursive_level_layout_from_params<Cfg: CommitmentConfig>(
+    params: &HachiLevelParams,
+    current_w_len: usize,
+) -> Result<HachiCommitmentLayout, HachiError> {
+    if current_w_len % params.d != 0 {
+        return Err(HachiError::InvalidInput(format!(
+            "witness length {current_w_len} is not divisible by D={}",
+            params.d
+        )));
+    }
+    let num_ring_elems = current_w_len / params.d;
     let total = num_ring_elems.next_power_of_two().max(1);
     let alpha = params.d.trailing_zeros() as usize;
     let reduced_vars = total.trailing_zeros() as usize;
     let max_num_vars = reduced_vars + alpha;
-    let decomp = recursive_level_decomposition::<Cfg>(&params);
-    let (m_vars, r_vars) = optimal_m_r_split_with_params(&params, decomp, reduced_vars);
-    let layout = layout_from_params(m_vars, r_vars, &params, decomp)?;
+    let decomp = recursive_level_decomposition::<Cfg>(params);
+    let (m_vars, r_vars) = optimal_m_r_split_with_params(params, decomp, reduced_vars);
+    let layout = layout_from_params(m_vars, r_vars, params, decomp)?;
     debug_assert_eq!(layout.m_vars + layout.r_vars + alpha, max_num_vars);
-    Ok((params, layout))
+    Ok(layout)
 }

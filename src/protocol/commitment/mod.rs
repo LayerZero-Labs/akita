@@ -23,7 +23,8 @@ pub use config::{
 };
 pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
 pub use schedule::{
-    hachi_level_layout, hachi_root_level_layout, HachiLevelParams, HachiScheduleInputs,
+    hachi_level_layout, hachi_recursive_level_layout_from_params, hachi_root_level_layout,
+    HachiLevelParams, HachiScheduleInputs,
 };
 pub use scheme::{CommitWitness, CommitmentScheme, RingCommitmentScheme};
 pub use transcript_append::AppendToTranscript;

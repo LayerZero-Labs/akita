@@ -561,8 +561,6 @@ pub enum NormCheckBody<F: FieldCore> {
     Combined {
         /// Combined sumcheck proof.
         sumcheck: SumcheckProof<F>,
-        /// Claimed evaluation of `S = w(w+1)` at the combined output point.
-        s_claim: F,
         /// Commitment to the next witness `w`.
         next_w_commitment: FlatRingVec<F>,
         /// Claimed evaluation of the next witness `w` at the combined output point.
@@ -637,7 +635,6 @@ impl<F: FieldCore> HachiLevelProof<F> {
         y_ring: CyclotomicRing<F, D>,
         v: Vec<CyclotomicRing<F, D>>,
         sumcheck: SumcheckProof<F>,
-        s_claim: F,
         next_w_commitment: FlatRingVec<F>,
         next_w_eval: F,
     ) -> Self {
@@ -646,7 +643,6 @@ impl<F: FieldCore> HachiLevelProof<F> {
             v,
             NormCheckBody::Combined {
                 sumcheck,
-                s_claim,
                 next_w_commitment,
                 next_w_eval,
             },
@@ -760,10 +756,6 @@ impl<F: FieldCore> HachiLevelProof<F> {
         self.body.next_w_eval()
     }
 }
-
-// ---------------------------------------------------------------------------
-// D-erased Labrador proof types for HachiProofTail
-// ---------------------------------------------------------------------------
 
 /// D-erased Labrador level proof.
 ///
@@ -1446,13 +1438,11 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
         match &self.body {
             NormCheckBody::Combined {
                 sumcheck,
-                s_claim,
                 next_w_commitment,
                 next_w_eval,
             } => {
                 0u8.serialize_with_mode(&mut writer, compress)?;
                 sumcheck.serialize_with_mode(&mut writer, compress)?;
-                s_claim.serialize_with_mode(&mut writer, compress)?;
                 next_w_commitment.serialize_with_mode(&mut writer, compress)?;
                 next_w_eval.serialize_with_mode(&mut writer, compress)
             }
@@ -1475,12 +1465,10 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
         base + match &self.body {
             NormCheckBody::Combined {
                 sumcheck,
-                s_claim,
                 next_w_commitment,
                 next_w_eval,
             } => {
                 sumcheck.serialized_size(compress)
-                    + s_claim.serialized_size(compress)
                     + next_w_commitment.serialized_size(compress)
                     + next_w_eval.serialized_size(compress)
             }
@@ -1512,12 +1500,10 @@ impl<F: FieldCore + Valid> Valid for HachiLevelProof<F> {
         match &self.body {
             NormCheckBody::Combined {
                 sumcheck,
-                s_claim,
                 next_w_commitment,
                 next_w_eval,
             } => {
                 sumcheck.check()?;
-                s_claim.check()?;
                 next_w_commitment.check()?;
                 next_w_eval.check()
             }
@@ -1544,7 +1530,6 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
         let body = match body_tag {
             0 => NormCheckBody::Combined {
                 sumcheck: SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?,
-                s_claim: F::deserialize_with_mode(&mut reader, compress, validate)?,
                 next_w_commitment: FlatRingVec::deserialize_with_mode(
                     &mut reader,
                     compress,
