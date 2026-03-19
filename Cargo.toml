@@ -78,10 +78,6 @@ name = "hachi_e2e"
 harness = false
 
 [[bench]]
-name = "norm_sumcheck"
-harness = false
-
-[[bench]]
 name = "labrador_jl_aggregation"
 harness = false
 
