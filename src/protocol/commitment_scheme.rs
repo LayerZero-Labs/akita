@@ -1061,6 +1061,7 @@ where
         if proof.levels.is_empty() {
             return Err(HachiError::InvalidProof);
         }
+        let t_verify_hachi = Instant::now();
 
         let num_levels = proof.levels.len();
         let has_handoff_tail = proof.has_handoff_tail();
@@ -1142,6 +1143,12 @@ where
                 current_basis = BasisMode::Lagrange;
             }
         }
+
+        tracing::info!(
+            levels = num_levels,
+            elapsed_s = t_verify_hachi.elapsed().as_secs_f64(),
+            "hachi verify complete"
+        );
 
         match &proof.tail {
             HachiProofTail::Labrador(ref tail) => {
