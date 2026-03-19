@@ -83,50 +83,7 @@ fn accumulate_pointwise_product_into<W: PrimeWidth, const K: usize, const D: usi
     rhs: &CyclotomicCrtNtt<W, K, D>,
     params: &CrtNttParamSet<W, K, D>,
 ) {
-    #[cfg(target_arch = "aarch64")]
-    if neon::use_neon_ntt() {
-        for k in 0..K {
-            let prime = params.primes[k];
-            unsafe {
-                if size_of::<W>() == size_of::<i32>() {
-                    neon::pointwise_mul_acc_i32(
-                        acc.limbs[k].as_mut_ptr() as *mut i32,
-                        lhs.limbs[k].as_ptr() as *const i32,
-                        rhs.limbs[k].as_ptr() as *const i32,
-                        D,
-                        prime.p.to_i64() as i32,
-                        prime.pinv.to_i64() as i32,
-                    );
-                } else {
-                    neon::pointwise_mul_acc_i16(
-                        acc.limbs[k].as_mut_ptr() as *mut i16,
-                        lhs.limbs[k].as_ptr() as *const i16,
-                        rhs.limbs[k].as_ptr() as *const i16,
-                        D,
-                        prime.p.to_i64() as i16,
-                        prime.pinv.to_i64() as i16,
-                    );
-                }
-            }
-        }
-        return;
-    }
-
-    for k in 0..K {
-        let prime = params.primes[k];
-        let acc_limb = &mut acc.limbs[k];
-        let lhs_limb = &lhs.limbs[k];
-        let rhs_limb = &rhs.limbs[k];
-        for ((acc_coeff, lhs_coeff), rhs_coeff) in acc_limb
-            .iter_mut()
-            .zip(lhs_limb.iter())
-            .zip(rhs_limb.iter())
-        {
-            let prod = prime.mul(*lhs_coeff, *rhs_coeff);
-            let sum = MontCoeff::from_raw(acc_coeff.raw().wrapping_add(prod.raw()));
-            *acc_coeff = prime.reduce_range(sum);
-        }
-    }
+    acc.add_assign_pointwise_mul_with_params(lhs, rhs, params);
 }
 
 fn precompute_dense_mat_ntt_with_params<

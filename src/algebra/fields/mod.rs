@@ -28,6 +28,7 @@ pub mod wide;
 pub use ext::{Ext2, Ext4, Fp2, Fp2Config, Fp4, Fp4Config, NegOneNr, TwoNr, UnitNr};
 pub use fp128::{
     Fp128, Prime128M13M4P0, Prime128M37P3P0, Prime128M52M3P0, Prime128M54P4P0, Prime128M8M4M1M0,
+    Prime128Offset5823,
 };
 pub use fp32::Fp32;
 pub use fp64::Fp64;

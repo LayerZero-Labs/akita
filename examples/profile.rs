@@ -29,8 +29,16 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::prelude::*;
+use tracing_subscriber::EnvFilter;
 
 type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
+
+fn env_flag(name: &str, default: bool) -> bool {
+    env::var(name)
+        .ok()
+        .map(|value| value != "0")
+        .unwrap_or(default)
+}
 
 fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
     poly: &P,
@@ -166,9 +174,11 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
 fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevelProof<F>) -> usize {
     let y_ring_size = level.y_ring.serialized_size(Compress::No);
     let v_size = level.v.serialized_size(Compress::No);
-    let sumcheck_size = level.sumcheck_proof.serialized_size(Compress::No);
-    let w_commitment_size = level.w_commitment.serialized_size(Compress::No);
-    let w_eval_size = level.w_eval.serialized_size(Compress::No);
+    let stage1_sumcheck_size = level.stage1.sumcheck.serialized_size(Compress::No);
+    let stage1_s_claim_size = level.stage1.s_claim.serialized_size(Compress::No);
+    let stage2_sumcheck_size = level.stage2.sumcheck.serialized_size(Compress::No);
+    let next_w_commitment_size = level.stage2.next_w_commitment.serialized_size(Compress::No);
+    let next_w_eval_size = level.stage2.next_w_eval.serialized_size(Compress::No);
     let total = level.serialized_size(Compress::No);
 
     eprintln!("[{label}]   hachi_fold L{level_idx}: total={total} bytes");
@@ -184,17 +194,25 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
         level.v.count(),
         level.v.ring_dim(),
     );
-    eprintln!("[{label}]     sumcheck={sumcheck_size} bytes");
+    eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
+    eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
+    eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!(
-        "[{label}]     w_commitment={w_commitment_size} bytes ({} ring elems, D={})",
-        level.w_commitment.count(),
+        "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} ring elems, D={})",
+        level.stage2.next_w_commitment.count(),
         level.w_commit_d(),
     );
-    eprintln!("[{label}]     w_eval={w_eval_size} bytes");
+    eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
 
     debug_assert_eq!(
         total,
-        y_ring_size + v_size + sumcheck_size + w_commitment_size + w_eval_size
+        y_ring_size
+            + v_size
+            + stage1_sumcheck_size
+            + stage1_s_claim_size
+            + stage2_sumcheck_size
+            + next_w_commitment_size
+            + next_w_eval_size
     );
     total
 }
@@ -397,7 +415,11 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCom
 
     let t0 = Instant::now();
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
-    tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "setup");
+    tracing::info!(
+        label = "dense",
+        elapsed_s = t0.elapsed().as_secs_f64(),
+        "setup"
+    );
 
     run_prove::<D, Cfg, _>("dense", &setup, &poly, &pt, opening, layout);
 }
@@ -419,7 +441,11 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCo
 
     let t0 = Instant::now();
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
-    tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "setup");
+    tracing::info!(
+        label = "onehot",
+        elapsed_s = t0.elapsed().as_secs_f64(),
+        "setup"
+    );
 
     run_prove::<D, Cfg, _>("onehot", &setup, &onehot_poly, &pt, opening, layout);
 }
@@ -452,38 +478,55 @@ fn main() {
         std::process::exit(2);
     }
 
-    let trace_dir = "profile_traces";
-    fs::create_dir_all(trace_dir).ok();
-
     let nv: usize = env::var("HACHI_NUM_VARS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(25);
 
     let mode = env::var("HACHI_MODE").unwrap_or_else(|_| "full".to_string());
+    let enable_trace = env_flag("HACHI_PROFILE_TRACE", true);
+    let enable_ansi = env_flag("HACHI_PROFILE_ANSI", true);
+    let span_events = if env_flag("HACHI_PROFILE_SPAN_CLOSES", true) {
+        FmtSpan::CLOSE
+    } else {
+        FmtSpan::NONE
+    };
+    let log_filter =
+        EnvFilter::try_new(env::var("HACHI_PROFILE_LOG").unwrap_or_else(|_| "trace".to_string()))
+            .unwrap_or_else(|_| EnvFilter::new("trace"));
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let trace_file = format!("{trace_dir}/hachi_nv{nv}_{mode}_{timestamp}.json");
-
-    let (chrome_layer, _guard) = ChromeLayerBuilder::new()
-        .include_args(true)
-        .file(&trace_file)
-        .build();
+    let trace_file = format!("profile_traces/hachi_nv{nv}_{mode}_{timestamp}.json");
 
     let fmt_layer = tracing_subscriber::fmt::layer()
-        .with_span_events(FmtSpan::CLOSE)
+        .with_ansi(enable_ansi)
+        .with_span_events(span_events)
         .compact()
         .with_target(false);
-
-    tracing_subscriber::registry()
-        .with(fmt_layer)
-        .with(chrome_layer)
-        .init();
-
-    tracing::info!(trace_file = %trace_file, "Perfetto trace");
+    let _chrome_guard = if enable_trace {
+        fs::create_dir_all("profile_traces").ok();
+        let (chrome_layer, guard) = ChromeLayerBuilder::new()
+            .include_args(true)
+            .file(&trace_file)
+            .build();
+        tracing_subscriber::registry()
+            .with(log_filter)
+            .with(fmt_layer)
+            .with(chrome_layer)
+            .init();
+        tracing::info!(trace_file = %trace_file, "Perfetto trace");
+        Some(guard)
+    } else {
+        tracing_subscriber::registry()
+            .with(log_filter)
+            .with(fmt_layer)
+            .init();
+        tracing::info!("Perfetto trace disabled");
+        None
+    };
     tracing::info!(num_vars = nv, mode = %mode, "profile config");
 
     match mode.as_str() {
@@ -497,7 +540,7 @@ fn main() {
         "onehot" => {
             type Cfg = Fp128OneHotCommitmentConfig;
             run_onehot_mode::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(
-                "=== onehot (log_commit_bound=1) ===",
+                "=== onehot (1-of-256, log_commit_bound=1) ===",
                 nv,
             );
         }
@@ -519,7 +562,7 @@ fn main() {
             {
                 type Cfg = Fp128OneHotCommitmentConfig;
                 run_onehot_mode::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(
-                    "=== onehot (log_commit_bound=1) ===",
+                    "=== onehot (1-of-256, log_commit_bound=1) ===",
                     nv,
                 );
             }
@@ -534,23 +577,29 @@ fn main() {
         "compare_onehot" => {
             {
                 type Cfg = Fp128BoundedCommitmentConfig<1, 3, 3>;
-                run_onehot_mode::<{ Cfg::D }, Cfg>("=== [A] onehot, basis=3 everywhere ===", nv);
+                run_onehot_mode::<{ Cfg::D }, Cfg>(
+                    "=== [A] onehot (1-of-256), basis=3 everywhere ===",
+                    nv,
+                );
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<1, 2, 2>;
-                run_onehot_mode::<{ Cfg::D }, Cfg>("=== [B] onehot, basis=2 everywhere ===", nv);
+                run_onehot_mode::<{ Cfg::D }, Cfg>(
+                    "=== [B] onehot (1-of-256), basis=2 everywhere ===",
+                    nv,
+                );
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<1, 2, 3>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== [C] onehot, L0 basis=2, w-levels basis=3 ===",
+                    "=== [C] onehot (1-of-256), L0 basis=2, w-levels basis=3 ===",
                     nv,
                 );
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<1, 2, 4>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== [D] onehot, L0 basis=2, w-levels basis=4 ===",
+                    "=== [D] onehot (1-of-256), L0 basis=2, w-levels basis=4 ===",
                     nv,
                 );
             }
@@ -615,7 +664,11 @@ fn main() {
         }
     }
 
-    tracing::info!(trace_file = %trace_file, "Done. Trace saved");
+    if enable_trace {
+        tracing::info!(trace_file = %trace_file, "Done. Trace saved");
+    } else {
+        tracing::info!("Done");
+    }
 }
 
 fn resolve_layout<Cfg: CommitmentConfig>(nv: usize) -> HachiCommitmentLayout {

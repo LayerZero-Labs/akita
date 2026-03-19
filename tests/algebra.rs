@@ -17,9 +17,10 @@ mod tests {
         POW2_OFFSET_PRIMES, POW2_OFFSET_TABLE,
     };
     use hachi_pcs::algebra::{
-        CyclotomicCrtNtt, CyclotomicRing, Fp128, Fp2, Fp2Config, Fp32, Fp4, Fp4Config, Fp64, LimbQ,
-        MontCoeff, Prime128M13M4P0, Prime128M37P3P0, Prime128M52M3P0, Prime128M54P4P0,
-        Prime128M8M4M1M0, ScalarBackend, VectorModule,
+        CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, Fp128, Fp2, Fp2Config, Fp32, Fp4,
+        Fp4Config, Fp64, HasPacking, LimbQ, MontCoeff, PackedPartialSplitEval32,
+        PartialSplitEval32, PartialSplitNtt32, Prime128M13M4P0, Prime128M37P3P0, Prime128M52M3P0,
+        Prime128M54P4P0, Prime128M8M4M1M0, Prime128Offset5823, ScalarBackend, VectorModule,
     };
     use hachi_pcs::primitives::serialization::SerializationError;
     use hachi_pcs::{
@@ -1143,6 +1144,397 @@ mod tests {
         let ntt_result: R = ntt_prod.to_ring(&primes, &twiddles, &garner);
 
         assert_eq!(schoolbook, ntt_result);
+    }
+
+    #[test]
+    fn partial_split_forward_matches_direct_eval_q128m5823() {
+        type F = Prime128Offset5823;
+
+        fn eval_poly(coeffs: &[F; 32], x: F) -> F {
+            coeffs
+                .iter()
+                .rev()
+                .fold(F::zero(), |acc, coeff| acc * x + *coeff)
+        }
+
+        let split = PartialSplitNtt32::<F>::compute();
+        let coeffs: [F; 32] = std::array::from_fn(|i| {
+            let centered = ((i as i64 * 19) % 29) - 14;
+            F::from_i64(centered)
+        });
+
+        let mut got = coeffs;
+        split.forward_class(&mut got);
+
+        let expected: [F; 32] = std::array::from_fn(|i| eval_poly(&coeffs, split.eval_roots()[i]));
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn partial_split_mul_matches_schoolbook_q128m5823() {
+        type F = Prime128Offset5823;
+        type R = CyclotomicRing<F, 64>;
+
+        let split = PartialSplitNtt32::<F>::compute();
+        let a = R::from_coefficients(std::array::from_fn(|i| {
+            let centered = ((i as i64 * 7 + 3) % 41) - 20;
+            F::from_i64(centered)
+        }));
+        let b = R::from_coefficients(std::array::from_fn(|i| {
+            let centered = ((i as i64 * 11 + 5) % 37) - 18;
+            F::from_i64(centered)
+        }));
+
+        let schoolbook = a * b;
+        let split_result = split.multiply_d64(&a, &b);
+
+        assert_eq!(schoolbook, split_result);
+    }
+
+    #[test]
+    fn partial_split_matches_crt_mul_q128m5823() {
+        type F = Prime128Offset5823;
+        type R = CyclotomicRing<F, 64>;
+        type N = CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, 64>;
+
+        let split = PartialSplitNtt32::<F>::compute();
+        let params = CrtNttParamSet::new(q128_primes());
+
+        let a = R::from_coefficients(std::array::from_fn(|i| {
+            let centered = ((i as i64 * 13 + 1) % 33) - 16;
+            F::from_i64(centered)
+        }));
+        let b = R::from_coefficients(std::array::from_fn(|i| {
+            let centered = ((i as i64 * 9 + 7) % 35) - 17;
+            F::from_i64(centered)
+        }));
+
+        let split_result = split.multiply_d64(&a, &b);
+
+        let ntt_a = N::from_ring_with_params(&a, &params);
+        let ntt_b = N::from_ring_with_params(&b, &params);
+        let crt_result: R = ntt_a
+            .pointwise_mul_with_params(&ntt_b, &params)
+            .to_ring_with_params(&params);
+
+        assert_eq!(split_result, crt_result);
+    }
+
+    #[test]
+    fn partial_split_mul_centered_i8_matches_schoolbook_q128m5823() {
+        type F = Prime128Offset5823;
+        type R = CyclotomicRing<F, 64>;
+
+        let split = PartialSplitNtt32::<F>::compute();
+        let lhs = R::from_coefficients(std::array::from_fn(|i| {
+            let centered = ((i as i64 * 7 + 3) % 41) - 20;
+            F::from_i64(centered)
+        }));
+        let rhs_i8: [i8; 64] = std::array::from_fn(|i| (((i * 23 + 11) % 256) as i16 - 128) as i8);
+        let rhs = R::from_coefficients(std::array::from_fn(|i| F::from_i8(rhs_i8[i])));
+
+        let schoolbook = lhs * rhs;
+        let split_result = split.multiply_d64_rhs_i8(&lhs, &rhs_i8);
+
+        assert_eq!(schoolbook, split_result);
+    }
+
+    #[test]
+    fn partial_split_mul_centered_i8_matches_crt_q128m5823() {
+        type F = Prime128Offset5823;
+        type R = CyclotomicRing<F, 64>;
+        type N = CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, 64>;
+
+        let split = PartialSplitNtt32::<F>::compute();
+        let params = CrtNttParamSet::new(q128_primes());
+        let lhs = R::from_coefficients(std::array::from_fn(|i| {
+            let centered = ((i as i64 * 13 + 1) % 33) - 16;
+            F::from_i64(centered)
+        }));
+        let rhs_i8: [i8; 64] = std::array::from_fn(|i| (((i * 19 + 5) % 256) as i16 - 128) as i8);
+
+        let split_result = split.multiply_d64_rhs_i8(&lhs, &rhs_i8);
+        let crt_result: R = N::from_ring_with_params(&lhs, &params)
+            .pointwise_mul_with_params(&N::from_i8_with_params(&rhs_i8, &params), &params)
+            .to_ring_with_params(&params);
+
+        assert_eq!(split_result, crt_result);
+    }
+
+    #[test]
+    fn partial_split_repr_round_trip_q128m5823() {
+        type F = Prime128Offset5823;
+        type R = CyclotomicRing<F, 64>;
+
+        let split = PartialSplitNtt32::<F>::compute();
+        let ring = R::from_coefficients(std::array::from_fn(|i| {
+            let centered = ((i as i64 * 17 + 9) % 53) - 26;
+            F::from_i64(centered)
+        }));
+
+        let eval = PartialSplitEval32::from_ring(&split, &ring);
+        let back = eval.to_ring(&split);
+
+        assert_eq!(ring, back);
+    }
+
+    #[test]
+    fn partial_split_repr_cached_product_matches_schoolbook_q128m5823() {
+        type F = Prime128Offset5823;
+        type R = CyclotomicRing<F, 64>;
+
+        let split = PartialSplitNtt32::<F>::compute();
+        let lhs = R::from_coefficients(std::array::from_fn(|i| {
+            let centered = ((i as i64 * 5 + 7) % 47) - 23;
+            F::from_i64(centered)
+        }));
+        let rhs = R::from_coefficients(std::array::from_fn(|i| {
+            let centered = ((i as i64 * 11 + 3) % 43) - 21;
+            F::from_i64(centered)
+        }));
+
+        let lhs_eval = PartialSplitEval32::from_ring(&split, &lhs);
+        let rhs_eval = PartialSplitEval32::from_ring(&split, &rhs);
+        let cached = lhs_eval.pointwise_mul(&rhs_eval, &split).to_ring(&split);
+
+        assert_eq!(cached, lhs * rhs);
+    }
+
+    #[test]
+    fn partial_split_cyclic_mul_matches_schoolbook_q128m5823() {
+        type F = Prime128Offset5823;
+        type R = CyclotomicRing<F, 64>;
+
+        let split = PartialSplitNtt32::<F>::compute();
+        let lhs = R::from_coefficients(std::array::from_fn(|i| {
+            let centered = ((i as i64 * 5 + 7) % 47) - 23;
+            F::from_i64(centered)
+        }));
+        let rhs = R::from_coefficients(std::array::from_fn(|i| {
+            let centered = ((i as i64 * 11 + 3) % 43) - 21;
+            F::from_i64(centered)
+        }));
+
+        let mut school = [F::zero(); 64];
+        for i in 0..64 {
+            for j in 0..64 {
+                school[(i + j) % 64] += lhs.coefficients()[i] * rhs.coefficients()[j];
+            }
+        }
+
+        assert_eq!(split.multiply_cyclic_d64(&lhs, &rhs), school);
+    }
+
+    #[test]
+    fn partial_split_quotient_matches_schoolbook_high_half_q128m5823() {
+        type F = Prime128Offset5823;
+        type R = CyclotomicRing<F, 64>;
+
+        let split = PartialSplitNtt32::<F>::compute();
+        let lhs = R::from_coefficients(std::array::from_fn(|i| {
+            let centered = ((i as i64 * 7 + 5) % 41) - 20;
+            F::from_i64(centered)
+        }));
+        let rhs = R::from_coefficients(std::array::from_fn(|i| {
+            let centered = ((i as i64 * 9 + 1) % 39) - 19;
+            F::from_i64(centered)
+        }));
+
+        let mut high = [F::zero(); 64];
+        for i in 0..64 {
+            for j in 0..64 {
+                let idx = i + j;
+                if idx >= 64 {
+                    high[idx - 64] += lhs.coefficients()[i] * rhs.coefficients()[j];
+                }
+            }
+        }
+
+        let quotient = split.unreduced_quotient_d64(&lhs, &rhs);
+        assert_eq!(quotient.coefficients(), &high);
+    }
+
+    #[test]
+    fn partial_split_cached_matvec_matches_schoolbook_q128m5823() {
+        type F = Prime128Offset5823;
+        type R = CyclotomicRing<F, 64>;
+
+        const ROWS: usize = 3;
+        const COLS: usize = 5;
+
+        let split = PartialSplitNtt32::<F>::compute();
+        let matrix: Vec<Vec<R>> = (0..ROWS)
+            .map(|r| {
+                (0..COLS)
+                    .map(|c| {
+                        R::from_coefficients(std::array::from_fn(|i| {
+                            let centered = ((i as i64 * 7 + (11 * r + 5 * c) as i64) % 37) - 18;
+                            F::from_i64(centered)
+                        }))
+                    })
+                    .collect()
+            })
+            .collect();
+        let vector: Vec<R> = (0..COLS)
+            .map(|c| {
+                R::from_coefficients(std::array::from_fn(|i| {
+                    let centered = ((i as i64 * 13 + (9 * c) as i64) % 41) - 20;
+                    F::from_i64(centered)
+                }))
+            })
+            .collect();
+
+        let matrix_eval: Vec<Vec<PartialSplitEval32<F>>> = matrix
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|ring| PartialSplitEval32::from_ring(&split, ring))
+                    .collect()
+            })
+            .collect();
+        let vector_eval: Vec<PartialSplitEval32<F>> = vector
+            .iter()
+            .map(|ring| PartialSplitEval32::from_ring(&split, ring))
+            .collect();
+
+        let got: Vec<R> = (0..ROWS)
+            .map(|r| {
+                let mut acc = PartialSplitEval32::zero();
+                for (mat_entry, vec_entry) in matrix_eval[r].iter().zip(vector_eval.iter()) {
+                    acc.add_mul_assign(mat_entry, vec_entry, &split);
+                }
+                acc.to_ring(&split)
+            })
+            .collect();
+
+        let expected: Vec<R> = (0..ROWS)
+            .map(|r| {
+                let mut acc = R::zero();
+                for (mat_entry, vec_entry) in matrix[r].iter().zip(vector.iter()) {
+                    acc += *mat_entry * *vec_entry;
+                }
+                acc
+            })
+            .collect();
+
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn partial_split_packed_cached_matvec_matches_scalar_q128m5823() {
+        type F = Prime128Offset5823;
+        type PF = <F as HasPacking>::Packing;
+        type R = CyclotomicRing<F, 64>;
+
+        let rows = PackedPartialSplitEval32::<PF>::WIDTH + 3;
+        let cols = 5usize;
+
+        let split = PartialSplitNtt32::<F>::compute();
+        let packed = split.packed::<PF>();
+        let matrix: Vec<Vec<R>> = (0..rows)
+            .map(|r| {
+                (0..cols)
+                    .map(|c| {
+                        R::from_coefficients(std::array::from_fn(|i| {
+                            let centered = ((i as i64 * 7 + (11 * r + 5 * c) as i64) % 37) - 18;
+                            F::from_i64(centered)
+                        }))
+                    })
+                    .collect()
+            })
+            .collect();
+        let vector: Vec<R> = (0..cols)
+            .map(|c| {
+                R::from_coefficients(std::array::from_fn(|i| {
+                    let centered = ((i as i64 * 13 + (9 * c) as i64) % 41) - 20;
+                    F::from_i64(centered)
+                }))
+            })
+            .collect();
+
+        let matrix_eval: Vec<Vec<PartialSplitEval32<F>>> = matrix
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|ring| PartialSplitEval32::from_ring(&split, ring))
+                    .collect()
+            })
+            .collect();
+        let vector_eval: Vec<PartialSplitEval32<F>> = vector
+            .iter()
+            .map(|ring| PartialSplitEval32::from_ring(&split, ring))
+            .collect();
+        let vector_packed: Vec<PackedPartialSplitEval32<PF>> = vector_eval
+            .iter()
+            .map(PackedPartialSplitEval32::<PF>::broadcast)
+            .collect();
+
+        let mut got = Vec::with_capacity(rows);
+        let mut row_chunks = matrix_eval.chunks_exact(PackedPartialSplitEval32::<PF>::WIDTH);
+        for row_chunk in row_chunks.by_ref() {
+            let packed_row: Vec<PackedPartialSplitEval32<PF>> = (0..cols)
+                .map(|c| PackedPartialSplitEval32::<PF>::from_fn(|lane| row_chunk[lane][c]))
+                .collect();
+            let mut acc = PackedPartialSplitEval32::<PF>::zero();
+            for (mat_entry, vec_entry) in packed_row.iter().zip(vector_packed.iter()) {
+                packed.add_mul_assign(&mut acc, mat_entry, vec_entry);
+            }
+            packed.append_rings(&acc, &mut got);
+        }
+        for row in row_chunks.remainder() {
+            let mut acc = PartialSplitEval32::zero();
+            for (mat_entry, vec_entry) in row.iter().zip(vector_eval.iter()) {
+                acc.add_mul_assign(mat_entry, vec_entry, &split);
+            }
+            got.push(acc.to_ring(&split));
+        }
+
+        let expected: Vec<R> = (0..rows)
+            .map(|r| {
+                let mut acc = R::zero();
+                for (mat_entry, vec_entry) in matrix[r].iter().zip(vector.iter()) {
+                    acc += *mat_entry * *vec_entry;
+                }
+                acc
+            })
+            .collect();
+
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn crt_add_assign_pointwise_mul_matches_scalar_q128m5823() {
+        type F = Prime128Offset5823;
+        type R = CyclotomicRing<F, 64>;
+        type N = CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, 64>;
+
+        let params = CrtNttParamSet::new(q128_primes());
+        let acc0 = N::from_ring_with_params(
+            &R::from_coefficients(std::array::from_fn(|i| {
+                F::from_i64(((i as i64 * 5 + 1) % 31) - 15)
+            })),
+            &params,
+        );
+        let lhs = N::from_ring_with_params(
+            &R::from_coefficients(std::array::from_fn(|i| {
+                F::from_i64(((i as i64 * 7 + 3) % 37) - 18)
+            })),
+            &params,
+        );
+        let rhs = N::from_ring_with_params(
+            &R::from_coefficients(std::array::from_fn(|i| {
+                F::from_i64(((i as i64 * 11 + 9) % 41) - 20)
+            })),
+            &params,
+        );
+
+        let mut got = acc0.clone();
+        got.add_assign_pointwise_mul_with_params(&lhs, &rhs, &params);
+
+        let expected =
+            acc0.add_reduced_with_params(&lhs.pointwise_mul_with_params(&rhs, &params), &params);
+
+        assert_eq!(got, expected);
     }
 
     #[test]
