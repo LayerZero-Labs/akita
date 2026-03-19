@@ -275,15 +275,19 @@ def render_metric_row(metric: Metric, current: dict[str, object], baseline: dict
     if current_value is None:
         return ""
 
-    if baseline and baseline.get(metric.key) is not None:
+    current_rendered = metric.value_formatter(float(current_value))
+    if baseline is None:
+        return f"| {metric.name} | {current_rendered} | {metric.unit} |"
+
+    if baseline.get(metric.key) is not None:
         baseline_value = baseline[metric.key]
         delta = float(current_value) - float(baseline_value)
         return (
             f"| {metric.name} | {metric.value_formatter(float(baseline_value))} | "
-            f"{metric.value_formatter(float(current_value))} | {metric.delta_formatter(delta)} | {metric.unit} |"
+            f"{current_rendered} | {metric.delta_formatter(delta)} | {metric.unit} |"
         )
 
-    return f"| {metric.name} | {metric.value_formatter(float(current_value))} | {metric.unit} |"
+    return f"| {metric.name} | n/a | {current_rendered} | n/a | {metric.unit} |"
 
 
 def render_report(args: argparse.Namespace) -> int:

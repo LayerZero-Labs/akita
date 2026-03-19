@@ -506,9 +506,9 @@ fn main() {
         .with_span_events(span_events)
         .compact()
         .with_target(false);
-    if enable_trace {
+    let _chrome_guard = if enable_trace {
         fs::create_dir_all("profile_traces").ok();
-        let (chrome_layer, _guard) = ChromeLayerBuilder::new()
+        let (chrome_layer, guard) = ChromeLayerBuilder::new()
             .include_args(true)
             .file(&trace_file)
             .build();
@@ -518,13 +518,15 @@ fn main() {
             .with(chrome_layer)
             .init();
         tracing::info!(trace_file = %trace_file, "Perfetto trace");
+        Some(guard)
     } else {
         tracing_subscriber::registry()
             .with(log_filter)
             .with(fmt_layer)
             .init();
         tracing::info!("Perfetto trace disabled");
-    }
+        None
+    };
     tracing::info!(num_vars = nv, mode = %mode, "profile config");
 
     match mode.as_str() {
