@@ -1731,7 +1731,7 @@ mod tests {
             rows.swap(rank, pivot_row);
             let pivot_inv = rows[rank][col].inv().expect("pivot must be invertible");
             for entry in &mut rows[rank] {
-                *entry = *entry * pivot_inv;
+                *entry *= pivot_inv;
             }
             let pivot_snapshot = rows[rank].clone();
             for (row_idx, row) in rows.iter_mut().enumerate() {
@@ -1917,7 +1917,8 @@ mod tests {
                 for y_row in 0..y_len {
                     let row = &w_compact[y_row * live_x_cols..(y_row + 1) * live_x_cols];
                     let eq_y_weight = eq_y[y_row];
-                    for x_quad in 0..live_x_quads {
+                    for (x_quad, &eq_x_weight) in eq_x_suffix.iter().enumerate().take(live_x_quads)
+                    {
                         let base = 4 * x_quad;
                         let s_quad = std::array::from_fn(|offset| {
                             let idx = base + offset;
@@ -1928,9 +1929,8 @@ mod tests {
                                 F::zero()
                             }
                         });
-                        accum += eq_x_suffix[x_quad]
-                            * eq_y_weight
-                            * stage1_local_norm_raw_eval(s_quad, x, y, b);
+                        accum +=
+                            eq_x_weight * eq_y_weight * stage1_local_norm_raw_eval(s_quad, x, y, b);
                     }
                 }
                 evals_except_boolean_core.push(accum);
@@ -1968,7 +1968,7 @@ mod tests {
             let row = &w_compact[y_idx * live_x_cols..(y_idx + 1) * live_x_cols];
             let alpha = alpha_evals_y[y_idx];
             let eq_y_weight = eq_y[y_idx];
-            for x_quad in 0..live_x_quads {
+            for (x_quad, &eq_x_weight) in eq_x_suffix.iter().enumerate().take(live_x_quads) {
                 let base = 4 * x_quad;
                 let w_quad = std::array::from_fn(|offset| {
                     let idx = base + offset;
@@ -1982,7 +1982,7 @@ mod tests {
                     let idx = base + offset;
                     m_evals_x[idx]
                 });
-                let norm_weight = eq_x_suffix[x_quad] * eq_y_weight;
+                let norm_weight = eq_x_weight * eq_y_weight;
                 for idx in 0..9 {
                     let x = points[idx / 3];
                     let y = points[idx % 3];
