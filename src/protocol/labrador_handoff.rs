@@ -18,10 +18,14 @@ use crate::protocol::commitment::utils::linear::flatten_i8_blocks;
 use crate::protocol::commitment::{
     CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, RingCommitment,
 };
-use crate::protocol::commitment_scheme::next_level_opening_point;
 use crate::protocol::hachi_poly_ops::{BalancedDigitPoly, HachiPolyOps};
 use crate::protocol::labrador::config::{
     estimate_handoff_recursive_proof, logq_bits, LabradorRecursiveSizeEstimate,
+};
+use crate::protocol::labrador::hachi_opening::{
+    direct_tail_from_boundary, estimate_hachi_opening_handoff, hachi_opening_prove,
+    hachi_opening_verify, HachiOpeningClaimRef, HachiOpeningProverWitnessRef, HachiOpeningPublic,
+    HachiOpeningWitnessRef,
 };
 use crate::protocol::labrador::types::{LabradorStatement, LabradorWitness};
 use crate::protocol::labrador::{
@@ -30,7 +34,7 @@ use crate::protocol::labrador::{
 use crate::protocol::opening_point::{ring_opening_point_from_field, BasisMode, RingOpeningPoint};
 use crate::protocol::proof::{
     FlatLabradorProof, FlatLabradorWitness, FlatRingVec, HachiCommitmentHint, HachiProofTail,
-    LabradorTail, PackedDigits,
+    LabradorHandoffKind, LabradorTail, PackedDigits,
 };
 use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::ring_switch::WCommitmentConfig;
@@ -244,38 +248,31 @@ pub(crate) fn hachi_labrador_estimate<
     estimate_handoff_recursive_proof::<F, D>(witness, coeff_bit_bound)
 }
 
-/// Execute the Labrador direct handoff from the Hachi folding loop.
-///
-/// Instead of computing the quotient `r`, evaluating at alpha, and running
-/// sumcheck, this function runs the quadratic equation at D' and hands the
-/// ring-level `Mz = y` directly to Labrador.
-///
-/// # Errors
-///
-/// Propagates errors from the quad eq, Labrador config selection, or Labrador proving.
+#[derive(Debug, Clone)]
+struct LegacyHandoffEstimate {
+    estimated_tail_bytes: usize,
+    proof_bytes: usize,
+    serialized_witness_bytes: usize,
+}
+
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip_all, name = "labrador::handoff_prove")]
-pub(crate) fn labrador_handoff_prove<F, T, const D_HANDOFF: usize, Cfg>(
-    current_w: &[i8],
-    current_hint: &HachiCommitmentHint<F, D_HANDOFF>,
-    current_commitment: &RingCommitment<F, D_HANDOFF>,
-    current_challenges: &[F],
-    current_num_u: usize,
-    current_num_l: usize,
-    expanded_setup: &HachiExpandedSetup<F>,
+fn legacy_labrador_handoff_estimate<F, T, const D_HANDOFF: usize, Cfg>(
+    claim: &HachiOpeningClaimRef<'_, F, D_HANDOFF>,
+    witness_ref: &HachiOpeningProverWitnessRef<'_, F, D_HANDOFF>,
+    _expanded_setup: &HachiExpandedSetup<F>,
     ntt_d: &NttSlotCache<D_HANDOFF>,
     transcript: &mut T,
-) -> Result<HachiProofTail<F>, HachiError>
+) -> Result<LegacyHandoffEstimate, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt + Valid,
+    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt + Valid + HachiSerialize,
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
-    let t0 = Instant::now();
     let mut handoff_transcript = transcript.clone();
-
-    let opening_point = tracing::info_span!("labrador::handoff_prepare_opening_point")
-        .in_scope(|| next_level_opening_point(current_challenges, current_num_u, current_num_l));
+    let current_w = witness_ref.w_digits;
+    let current_hint = witness_ref.hint;
+    let current_commitment = claim.commitment;
+    let opening_point = claim.point.to_vec();
 
     let alpha = D_HANDOFF.trailing_zeros() as usize;
     if opening_point.len() < alpha {
@@ -286,7 +283,224 @@ where
     }
 
     let w_layout = <WCommitmentConfig<D_HANDOFF, Cfg>>::commitment_layout(opening_point.len())?;
-    let direct_tail = PackedDigits::from_i8_digits(current_w, w_layout.log_basis);
+    let target_num_vars = w_layout.m_vars + w_layout.r_vars + alpha;
+    let mut padded_point = opening_point.clone();
+    padded_point.resize(target_num_vars, F::zero());
+    let outer_point = &padded_point[alpha..];
+
+    let ring_opening_point = ring_opening_point_from_field::<F>(
+        outer_point,
+        w_layout.r_vars,
+        w_layout.m_vars,
+        BasisMode::Lagrange,
+    )?;
+
+    let (w_poly, y_ring, w_folded) = {
+        let w_poly = BalancedDigitPoly::<F, D_HANDOFF>::from_i8_digits(current_w)?;
+        let (y_ring, w_folded) = w_poly.evaluate_and_fold(
+            &ring_opening_point.b,
+            &ring_opening_point.a,
+            w_layout.block_len,
+        );
+        (w_poly, y_ring, w_folded)
+    };
+
+    current_commitment.append_to_transcript(ABSORB_COMMITMENT, &mut handoff_transcript);
+    for pt in &padded_point {
+        handoff_transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+    }
+    handoff_transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+
+    let quad_eq = QuadraticEquation::<F, D_HANDOFF, WCommitmentConfig<D_HANDOFF, Cfg>>::new_prover(
+        ntt_d,
+        ring_opening_point,
+        &w_poly,
+        w_folded,
+        current_hint.clone(),
+        &mut handoff_transcript,
+        current_commitment,
+        &y_ring,
+        w_layout,
+    )?;
+
+    let w_hat_flat = quad_eq
+        .w_hat_flat()
+        .ok_or_else(|| HachiError::InvalidInput("missing w_hat_flat".into()))?;
+    let inner_opening_digits = &quad_eq
+        .hint()
+        .ok_or_else(|| HachiError::InvalidInput("missing hint".into()))?
+        .inner_opening_digits;
+    let inner_opening_digits_flat = flatten_i8_blocks(inner_opening_digits);
+    let z_pre = quad_eq
+        .z_pre()
+        .ok_or_else(|| HachiError::InvalidInput("missing z_pre".into()))?;
+
+    let witness = build_labrador_witness(w_hat_flat, &inner_opening_digits_flat, z_pre, w_layout);
+    let witness_norm_bound_sq = witness.norm();
+    let estimate = hachi_labrador_estimate::<F, D_HANDOFF>(&witness, w_layout.log_basis as usize)?;
+    let v_bytes = FlatRingVec::from_ring_elems(&quad_eq.v).serialized_size(Compress::No);
+    let y_ring_bytes = FlatRingVec::from_single(&y_ring).serialized_size(Compress::No);
+    Ok(LegacyHandoffEstimate {
+        estimated_tail_bytes: estimate.proof_bytes
+            + v_bytes
+            + y_ring_bytes
+            + witness_norm_bound_sq.serialized_size(Compress::No),
+        proof_bytes: estimate.proof_bytes,
+        serialized_witness_bytes: FlatLabradorWitness::from_typed(&witness)
+            .serialized_size(Compress::No),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "labrador::handoff_prove")]
+pub(crate) fn labrador_handoff_prove<F, T, const D_HANDOFF: usize, Cfg>(
+    public: &HachiOpeningPublic<F>,
+    witness: HachiOpeningWitnessRef<'_>,
+    current_hint: &HachiCommitmentHint<F, D_HANDOFF>,
+    current_commitment: &RingCommitment<F, D_HANDOFF>,
+    expanded_setup: &HachiExpandedSetup<F>,
+    ntt_d: &NttSlotCache<D_HANDOFF>,
+    transcript: &mut T,
+) -> Result<HachiProofTail<F>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt + Valid + HachiSerialize,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig,
+{
+    let claim = HachiOpeningClaimRef {
+        commitment: current_commitment,
+        point: &public.point,
+        claimed_eval: &public.claimed_eval,
+        witness_log_basis: public.witness_log_basis,
+    };
+    let witness_ref = HachiOpeningProverWitnessRef {
+        w_digits: witness.w_digits,
+        hint: current_hint,
+    };
+    let direct_tail = direct_tail_from_boundary(public, witness);
+    let direct_tail_bytes = direct_tail.serialized_size(Compress::No);
+    let legacy_estimate = legacy_labrador_handoff_estimate::<F, T, D_HANDOFF, Cfg>(
+        &claim,
+        &witness_ref,
+        expanded_setup,
+        ntt_d,
+        transcript,
+    )?;
+    let native_estimate =
+        estimate_hachi_opening_handoff::<F, D_HANDOFF, Cfg>(&claim, &witness_ref, expanded_setup)
+            .ok();
+    tracing::info!(
+        packed_direct_bytes = direct_tail_bytes,
+        legacy_tail_bytes = legacy_estimate.estimated_tail_bytes,
+        legacy_proof_bytes = legacy_estimate.proof_bytes,
+        legacy_witness_bytes = legacy_estimate.serialized_witness_bytes,
+        native_tail_bytes = native_estimate
+            .as_ref()
+            .map(|estimate| estimate.estimated_tail_bytes)
+            .unwrap_or(usize::MAX),
+        native_proof_bytes = native_estimate
+            .as_ref()
+            .map(|estimate| estimate.proof_bytes)
+            .unwrap_or(usize::MAX),
+        native_final_witness_bytes = native_estimate
+            .as_ref()
+            .map(|estimate| estimate.final_witness_bytes)
+            .unwrap_or(usize::MAX),
+        native_witness_bytes = native_estimate
+            .as_ref()
+            .map(|estimate| estimate.serialized_witness_bytes)
+            .unwrap_or(usize::MAX),
+        "labrador handoff frontier comparison"
+    );
+
+    let native_beats_legacy = native_estimate.as_ref().is_some_and(|estimate| {
+        estimate.estimated_tail_bytes < legacy_estimate.estimated_tail_bytes
+    });
+    let native_beats_direct = native_estimate
+        .as_ref()
+        .is_some_and(|estimate| estimate.estimated_tail_bytes < direct_tail_bytes);
+
+    if direct_tail_bytes <= legacy_estimate.estimated_tail_bytes && !native_beats_direct {
+        return Ok(HachiProofTail::Direct(direct_tail));
+    }
+
+    if native_beats_legacy && native_beats_direct {
+        match hachi_opening_prove::<F, T, D_HANDOFF, Cfg>(
+            &claim,
+            &witness_ref,
+            expanded_setup,
+            transcript,
+        ) {
+            Ok(Some(tail)) => return Ok(HachiProofTail::Labrador(Box::new(tail))),
+            Ok(None) => {
+                tracing::info!("native handoff frontend did not beat direct tail on actual bytes");
+            }
+            Err(err) => {
+                tracing::warn!(
+                    ?err,
+                    "native handoff frontend failed; falling back to legacy"
+                );
+            }
+        }
+    }
+
+    if legacy_estimate.estimated_tail_bytes >= direct_tail_bytes {
+        return Ok(HachiProofTail::Direct(direct_tail));
+    }
+
+    let tail = legacy_labrador_handoff_prove::<F, T, D_HANDOFF, Cfg>(
+        &claim,
+        &witness_ref,
+        expanded_setup,
+        ntt_d,
+        transcript,
+    )?;
+    match tail {
+        Some(tail) => Ok(HachiProofTail::Labrador(Box::new(tail))),
+        None => Ok(HachiProofTail::Direct(direct_tail)),
+    }
+}
+
+/// Execute the Labrador direct handoff from the Hachi folding loop.
+///
+/// Instead of computing the quotient `r`, evaluating at alpha, and running
+/// sumcheck, this function runs the quadratic equation at D' and hands the
+/// ring-level `Mz = y` directly to Labrador.
+///
+/// # Errors
+///
+/// Propagates errors from the quad eq, Labrador config selection, or Labrador proving.
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "labrador::legacy_handoff_prove")]
+fn legacy_labrador_handoff_prove<F, T, const D_HANDOFF: usize, Cfg>(
+    claim: &HachiOpeningClaimRef<'_, F, D_HANDOFF>,
+    witness_ref: &HachiOpeningProverWitnessRef<'_, F, D_HANDOFF>,
+    expanded_setup: &HachiExpandedSetup<F>,
+    ntt_d: &NttSlotCache<D_HANDOFF>,
+    transcript: &mut T,
+) -> Result<Option<LabradorTail<F>>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt + Valid + HachiSerialize,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig,
+{
+    let t0 = Instant::now();
+    let mut handoff_transcript = transcript.clone();
+    let current_w = witness_ref.w_digits;
+    let current_hint = witness_ref.hint;
+    let current_commitment = claim.commitment;
+    let opening_point = claim.point.to_vec();
+
+    let alpha = D_HANDOFF.trailing_zeros() as usize;
+    if opening_point.len() < alpha {
+        return Err(HachiError::InvalidPointDimension {
+            expected: alpha,
+            actual: opening_point.len(),
+        });
+    }
+
+    let w_layout = <WCommitmentConfig<D_HANDOFF, Cfg>>::commitment_layout(opening_point.len())?;
+    let direct_tail = PackedDigits::from_i8_digits(current_w, claim.witness_log_basis);
     let direct_hachi_tail_bytes = direct_tail.serialized_size(Compress::No);
     let target_num_vars = w_layout.m_vars + w_layout.r_vars + alpha;
     let mut padded_point = opening_point.clone();
@@ -449,10 +663,6 @@ where
         witness_norm_bound_sq_bytes = witness_norm_bound_sq.serialized_size(Compress::No),
         "labrador_handoff estimated tail comparison"
     );
-    if estimated_labrador_tail_bytes >= direct_hachi_tail_bytes {
-        return Ok(HachiProofTail::Direct(direct_tail));
-    }
-
     let t2 = Instant::now();
     let labrador_proof = prove_with_plan::<F, T, D_HANDOFF>(
         witness,
@@ -478,6 +688,23 @@ where
         )
         .expect("freshly generated Labrador handoff proof must verify");
     }
+    let tail = LabradorTail {
+        handoff_kind: LabradorHandoffKind::Quadratic,
+        labrador_proof: FlatLabradorProof::from_typed(&labrador_proof),
+        v: FlatRingVec::from_ring_elems(&quad_eq.v),
+        y_ring: FlatRingVec::from_single(&y_ring),
+        witness_norm_bound_sq,
+    };
+    let actual_labrador_tail_bytes = tail.serialized_size(Compress::No);
+    tracing::info!(
+        packed_direct_bytes = direct_hachi_tail_bytes,
+        actual_labrador_tail_bytes,
+        levels = labrador_proof.levels.len(),
+        "labrador_handoff actual tail comparison"
+    );
+    if actual_labrador_tail_bytes >= direct_hachi_tail_bytes {
+        return Ok(None);
+    }
     *transcript = handoff_transcript;
 
     tracing::info!(
@@ -486,12 +713,7 @@ where
         "labrador prove complete"
     );
 
-    Ok(HachiProofTail::Labrador(Box::new(LabradorTail {
-        labrador_proof: FlatLabradorProof::from_typed(&labrador_proof),
-        v: FlatRingVec::from_ring_elems(&quad_eq.v),
-        y_ring: FlatRingVec::from_single(&y_ring),
-        witness_norm_bound_sq,
-    })))
+    Ok(Some(tail))
 }
 
 /// Verify the direct Labrador tail of a Hachi proof.
@@ -506,6 +728,41 @@ where
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "labrador::handoff_verify")]
 pub(crate) fn labrador_handoff_verify<F, T, const D_HANDOFF: usize, Cfg>(
+    tail: &LabradorTail<F>,
+    public: &HachiOpeningPublic<F>,
+    current_commitment: &RingCommitment<F, D_HANDOFF>,
+    expanded_setup: &HachiExpandedSetup<F>,
+    transcript: &mut T,
+) -> Result<(), HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt + Valid + HachiSerialize,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig,
+{
+    let claim = HachiOpeningClaimRef {
+        commitment: current_commitment,
+        point: &public.point,
+        claimed_eval: &public.claimed_eval,
+        witness_log_basis: public.witness_log_basis,
+    };
+    match tail.handoff_kind {
+        LabradorHandoffKind::Quadratic => legacy_labrador_handoff_verify::<F, T, D_HANDOFF, Cfg>(
+            tail,
+            claim.point,
+            claim.claimed_eval,
+            current_commitment,
+            expanded_setup,
+            transcript,
+        ),
+        LabradorHandoffKind::Opening => {
+            hachi_opening_verify::<F, T, D_HANDOFF, Cfg>(tail, &claim, expanded_setup, transcript)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "labrador::legacy_handoff_verify")]
+fn legacy_labrador_handoff_verify<F, T, const D_HANDOFF: usize, Cfg>(
     tail: &LabradorTail<F>,
     opening_point: &[F],
     opening_value: &F,

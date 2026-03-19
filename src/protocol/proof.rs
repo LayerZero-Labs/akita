@@ -194,6 +194,14 @@ pub struct FlatRingVec<F> {
 }
 
 impl<F: FieldCore> FlatRingVec<F> {
+    /// Construct an empty vector tagged with a ring dimension.
+    pub fn empty_with_ring_dim(ring_dim: usize) -> Self {
+        Self {
+            coeffs: Vec::new(),
+            ring_dim,
+        }
+    }
+
     /// Wrap a single ring element.
     pub fn from_single<const D: usize>(r: &CyclotomicRing<F, D>) -> Self {
         Self {
@@ -739,23 +747,237 @@ impl<F: FieldCore> FlatLabradorLevelProof<F> {
     }
 }
 
-/// D-erased Labrador witness (rows of ring elements).
-///
-/// Mirrors [`LabradorWitness`] with rows stored as [`FlatRingVec`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FlatLabradorWitness<F: FieldCore> {
-    /// Per-row ring element vectors.
-    pub rows: Vec<FlatRingVec<F>>,
+fn packed_coeff_byte_len(num_coeffs: usize, coeff_bits: u8) -> usize {
+    (num_coeffs * coeff_bits as usize).div_ceil(8)
 }
 
-impl<F: FieldCore> FlatLabradorWitness<F> {
-    /// Convert from the typed `LabradorWitness<F, D>`.
-    pub fn from_typed<const D: usize>(w: &LabradorWitness<F, D>) -> Self {
+fn signed_bits_required(centered: i128) -> usize {
+    if centered >= 0 {
+        let magnitude = centered as u128;
+        magnitude
+            .checked_ilog2()
+            .map_or(1, |bits| bits as usize + 2)
+    } else {
+        let magnitude = (-1 - centered) as u128;
+        magnitude
+            .checked_ilog2()
+            .map_or(1, |bits| bits as usize + 2)
+    }
+}
+
+fn centered_from_canonical(
+    canonical: u128,
+    q: u128,
+    half_q: u128,
+) -> Result<i128, SerializationError> {
+    let negative = canonical > half_q;
+    let magnitude = if negative { q - canonical } else { canonical };
+    let magnitude = i128::try_from(magnitude).map_err(|_| {
+        SerializationError::InvalidData("packed coefficient exceeds i128 range".to_string())
+    })?;
+    Ok(if negative { -magnitude } else { magnitude })
+}
+
+/// Bit-packed signed coefficients for one Labrador witness row.
+///
+/// Coefficients are stored in centered two's-complement form using exactly
+/// `coeff_bits` bits per coefficient.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackedCoeffRow {
+    /// Ring dimension shared by every element in the row.
+    pub ring_dim: usize,
+    /// Number of ring elements in the row.
+    pub ring_elems: usize,
+    /// Signed coefficient width.
+    pub coeff_bits: u8,
+    /// Packed two's-complement coefficient data.
+    pub data: Vec<u8>,
+}
+
+impl PackedCoeffRow {
+    /// Ring dimension shared by every element in the row.
+    pub fn ring_dim(&self) -> usize {
+        self.ring_dim
+    }
+
+    /// Number of logical coefficients stored in this row.
+    pub fn coeff_count(&self) -> usize {
+        self.ring_dim * self.ring_elems
+    }
+
+    /// Number of ring elements stored in the row.
+    pub fn count(&self) -> usize {
+        self.ring_elems
+    }
+
+    /// Packed payload size in bytes.
+    pub fn packed_byte_len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Minimum signed bit width needed for a row of ring elements.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if centered coefficient recovery would exceed `i128`.
+    pub fn detect_coeff_bits<F: CanonicalField, const D: usize>(
+        elems: &[CyclotomicRing<F, D>],
+    ) -> Result<usize, SerializationError> {
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let half_q = q / 2;
+        let mut bits = 1usize;
+        for ring in elems {
+            for coeff in ring.coefficients() {
+                let centered = centered_from_canonical(coeff.to_canonical_u128(), q, half_q)?;
+                bits = bits.max(signed_bits_required(centered));
+            }
+        }
+        Ok(bits)
+    }
+
+    /// Pack a row using the provided signed coefficient width.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any coefficient does not fit in `coeff_bits`.
+    pub fn from_ring_elems_with_bits<F: CanonicalField, const D: usize>(
+        elems: &[CyclotomicRing<F, D>],
+        coeff_bits: usize,
+    ) -> Self {
+        assert!(
+            (1..=128).contains(&coeff_bits),
+            "coeff_bits out of range for PackedCoeffRow"
+        );
+        let coeff_bits_u8 = coeff_bits as u8;
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let half_q = q / 2;
+        let num_coeffs = elems.len() * D;
+        let mut data = vec![0u8; packed_coeff_byte_len(num_coeffs, coeff_bits_u8)];
+        let mut bit_cursor = 0usize;
+
+        for ring in elems {
+            for coeff in ring.coefficients() {
+                let centered = centered_from_canonical(coeff.to_canonical_u128(), q, half_q)
+                    .expect("supported fields must center into i128");
+                assert!(
+                    signed_bits_required(centered) <= coeff_bits,
+                    "coefficient out of range for PackedCoeffRow"
+                );
+                let raw = centered as u128;
+                for bit in 0..coeff_bits {
+                    if ((raw >> bit) & 1) != 0 {
+                        let idx = bit_cursor + bit;
+                        data[idx >> 3] |= 1u8 << (idx & 7);
+                    }
+                }
+                bit_cursor += coeff_bits;
+            }
+        }
+
+        Self {
+            ring_dim: D,
+            ring_elems: elems.len(),
+            coeff_bits: coeff_bits_u8,
+            data,
+        }
+    }
+
+    /// Pack a row using the minimum exact signed coefficient width.
+    ///
+    /// # Panics
+    ///
+    /// Panics if centered coefficient recovery would exceed `i128`.
+    pub fn from_ring_elems<F: CanonicalField, const D: usize>(
+        elems: &[CyclotomicRing<F, D>],
+    ) -> Self {
+        let coeff_bits = Self::detect_coeff_bits(elems)
+            .expect("supported fields must center Labrador witness rows into i128");
+        Self::from_ring_elems_with_bits(elems, coeff_bits)
+    }
+
+    /// Decode the packed row back into ring elements.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D` does not match the stored ring dimension.
+    pub fn to_ring_elems<F: FieldCore + FromSmallInt, const D: usize>(
+        &self,
+    ) -> Vec<CyclotomicRing<F, D>> {
+        assert_eq!(
+            D, self.ring_dim,
+            "D mismatch in PackedCoeffRow::to_ring_elems"
+        );
+        let coeff_bits = self.coeff_bits as usize;
+        let num_coeffs = self.coeff_count();
+        let mut coeffs = Vec::with_capacity(num_coeffs);
+        let mut bit_cursor = 0usize;
+        for _ in 0..num_coeffs {
+            let mut raw = 0u128;
+            for bit in 0..coeff_bits {
+                let idx = bit_cursor + bit;
+                let bit_val = (self.data[idx >> 3] >> (idx & 7)) & 1;
+                raw |= (bit_val as u128) << bit;
+            }
+            let centered = if coeff_bits == 128 {
+                raw as i128
+            } else {
+                let sign_bit = 1u128 << (coeff_bits - 1);
+                if raw & sign_bit != 0 {
+                    (raw | (!0u128 << coeff_bits)) as i128
+                } else {
+                    raw as i128
+                }
+            };
+            coeffs.push(F::from_i128(centered));
+            bit_cursor += coeff_bits;
+        }
+
+        coeffs
+            .chunks_exact(D)
+            .map(CyclotomicRing::from_slice)
+            .collect()
+    }
+}
+
+/// D-erased Labrador witness with packed terminal rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatLabradorWitness {
+    /// Per-row packed coefficient payloads.
+    pub rows: Vec<PackedCoeffRow>,
+}
+
+impl FlatLabradorWitness {
+    /// Convert from the typed `LabradorWitness<F, D>` using exact centered widths.
+    pub fn from_typed<F: CanonicalField, const D: usize>(w: &LabradorWitness<F, D>) -> Self {
         Self {
             rows: w
                 .rows()
                 .iter()
-                .map(|r| FlatRingVec::from_ring_elems(r))
+                .map(|r| PackedCoeffRow::from_ring_elems(r))
+                .collect(),
+        }
+    }
+
+    /// Convert from the typed `LabradorWitness<F, D>` using explicit row widths.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of rows and width hints differ.
+    pub fn from_typed_with_row_bits<F: CanonicalField, const D: usize>(
+        w: &LabradorWitness<F, D>,
+        row_coeff_bits: &[usize],
+    ) -> Self {
+        assert_eq!(
+            w.rows().len(),
+            row_coeff_bits.len(),
+            "row_coeff_bits length mismatch for FlatLabradorWitness"
+        );
+        Self {
+            rows: w
+                .rows()
+                .iter()
+                .zip(row_coeff_bits.iter())
+                .map(|(row, &bits)| PackedCoeffRow::from_ring_elems_with_bits(row, bits))
                 .collect(),
         }
     }
@@ -765,26 +987,34 @@ impl<F: FieldCore> FlatLabradorWitness<F> {
     /// # Panics
     ///
     /// Panics if `D` does not match the stored ring dimension.
-    pub fn to_typed<const D: usize>(&self) -> LabradorWitness<F, D> {
-        let rows: Vec<Vec<CyclotomicRing<F, D>>> = self.rows.iter().map(|r| r.to_vec()).collect();
+    pub fn to_typed<F: FieldCore + FromSmallInt, const D: usize>(&self) -> LabradorWitness<F, D> {
+        let rows: Vec<Vec<CyclotomicRing<F, D>>> = self
+            .rows
+            .iter()
+            .map(PackedCoeffRow::to_ring_elems::<F, D>)
+            .collect();
         LabradorWitness::new_unchecked(rows)
     }
 }
 
 /// D-erased Labrador proof (levels + final witness).
 ///
-/// Mirrors [`LabradorProof`] with all ring data stored as [`FlatRingVec`].
+/// Mirrors [`LabradorProof`] with level payloads stored as [`FlatRingVec`] and
+/// the terminal witness stored as packed rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlatLabradorProof<F: FieldCore> {
     /// Recursive level payloads.
     pub levels: Vec<FlatLabradorLevelProof<F>>,
     /// Final clear witness opened at recursion termination.
-    pub final_opening_witness: FlatLabradorWitness<F>,
+    pub final_opening_witness: FlatLabradorWitness,
 }
 
 impl<F: FieldCore> FlatLabradorProof<F> {
     /// Convert from the typed `LabradorProof<F, D>`.
-    pub fn from_typed<const D: usize>(p: &LabradorProof<F, D>) -> Self {
+    pub fn from_typed<const D: usize>(p: &LabradorProof<F, D>) -> Self
+    where
+        F: CanonicalField,
+    {
         Self {
             levels: p
                 .levels
@@ -794,7 +1024,9 @@ impl<F: FieldCore> FlatLabradorProof<F> {
             final_opening_witness: FlatLabradorWitness::from_typed(&p.final_opening_witness),
         }
     }
+}
 
+impl<F: FieldCore + FromSmallInt> FlatLabradorProof<F> {
     /// Reconstruct the typed `LabradorProof<F, D>`.
     ///
     /// # Panics
@@ -808,16 +1040,30 @@ impl<F: FieldCore> FlatLabradorProof<F> {
     }
 }
 
+/// Labrador handoff frontend used for the proof tail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabradorHandoffKind {
+    /// Legacy quadratic-equation handoff with explicit `v = D * w_hat`.
+    Quadratic,
+    /// Native opening frontend over `current_w` and `current_hint`.
+    Opening,
+}
+
 /// Labrador tail proof data.
 ///
-/// Produced when Hachi's folding loop stops and the ring-level `Mz = y`
-/// relation from the quadratic equation is handed directly to Labrador
-/// without computing quotient `r`, evaluating at alpha, or running sumcheck.
+/// Produced when Hachi's folding loop stops and a Labrador frontend takes over
+/// from the recursive opening claim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabradorTail<F: FieldCore> {
+    /// Which frontend produced this Labrador tail.
+    pub handoff_kind: LabradorHandoffKind,
     /// D-erased full Labrador recursive proof.
     pub labrador_proof: FlatLabradorProof<F>,
-    /// Ring-valued prover message `v = D * w_hat` (public, used to rebuild constraints).
+    /// Frontend-specific public payload.
+    ///
+    /// For [`LabradorHandoffKind::Quadratic`] this stores `v = D * w_hat`.
+    /// For [`LabradorHandoffKind::Opening`] this is empty but still tagged with
+    /// the carried handoff ring dimension so validation can remain uniform.
     pub v: FlatRingVec<F>,
     /// Ring-valued evaluation `y_ring` (public, used to rebuild constraints).
     pub y_ring: FlatRingVec<F>,
@@ -1072,7 +1318,72 @@ impl<F: FieldCore + Valid> HachiDeserialize for FlatLabradorLevelProof<F> {
     }
 }
 
-impl<F: FieldCore> HachiSerialize for FlatLabradorWitness<F> {
+impl HachiSerialize for PackedCoeffRow {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        (self.ring_dim as u32).serialize_with_mode(&mut writer, compress)?;
+        (self.ring_elems as u64).serialize_with_mode(&mut writer, compress)?;
+        self.coeff_bits.serialize_with_mode(&mut writer, compress)?;
+        writer.write_all(&self.data)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, _compress: Compress) -> usize {
+        4 + 8 + 1 + self.data.len()
+    }
+}
+
+impl Valid for PackedCoeffRow {
+    fn check(&self) -> Result<(), SerializationError> {
+        if self.ring_dim == 0 {
+            return Err(SerializationError::InvalidData(
+                "PackedCoeffRow ring_dim must be > 0".to_string(),
+            ));
+        }
+        if self.coeff_bits == 0 || self.coeff_bits > 128 {
+            return Err(SerializationError::InvalidData(
+                "PackedCoeffRow coeff_bits out of range".to_string(),
+            ));
+        }
+        let expected_bytes = packed_coeff_byte_len(self.coeff_count(), self.coeff_bits);
+        if self.data.len() != expected_bytes {
+            return Err(SerializationError::InvalidData(
+                "PackedCoeffRow packed data length mismatch".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl HachiDeserialize for PackedCoeffRow {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let ring_dim = u32::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+        let ring_elems = u64::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+        let coeff_bits = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+        let num_bytes = packed_coeff_byte_len(ring_dim.saturating_mul(ring_elems), coeff_bits);
+        let mut data = vec![0u8; num_bytes];
+        reader.read_exact(&mut data)?;
+        let out = Self {
+            ring_dim,
+            ring_elems,
+            coeff_bits,
+            data,
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
+impl HachiSerialize for FlatLabradorWitness {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1094,12 +1405,12 @@ impl<F: FieldCore> HachiSerialize for FlatLabradorWitness<F> {
     }
 }
 
-impl<F: FieldCore> Valid for FlatLabradorWitness<F> {
+impl Valid for FlatLabradorWitness {
     fn check(&self) -> Result<(), SerializationError> {
-        let expected_ring_dim = self.rows.first().map(FlatRingVec::ring_dim);
+        let expected_ring_dim = self.rows.first().map(|row| row.ring_dim);
         for row in &self.rows {
             row.check()?;
-            if expected_ring_dim.is_some_and(|d| row.ring_dim() != d) {
+            if expected_ring_dim.is_some_and(|d| row.ring_dim != d) {
                 return Err(SerializationError::InvalidData(
                     "FlatLabradorWitness ring-dimension mismatch".to_string(),
                 ));
@@ -1109,7 +1420,7 @@ impl<F: FieldCore> Valid for FlatLabradorWitness<F> {
     }
 }
 
-impl<F: FieldCore + Valid> HachiDeserialize for FlatLabradorWitness<F> {
+impl HachiDeserialize for FlatLabradorWitness {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
@@ -1118,7 +1429,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for FlatLabradorWitness<F> {
         let num_rows = u32::deserialize_with_mode(&mut reader, compress, validate)? as usize;
         let mut rows = Vec::with_capacity(num_rows);
         for _ in 0..num_rows {
-            rows.push(FlatRingVec::deserialize_with_mode(
+            rows.push(PackedCoeffRow::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
@@ -1162,7 +1473,7 @@ impl<F: FieldCore> Valid for FlatLabradorProof<F> {
             .final_opening_witness
             .rows
             .first()
-            .map(FlatRingVec::ring_dim);
+            .map(|row| row.ring_dim);
         for level in &self.levels {
             level.check()?;
             if let Some(d) = expected_ring_dim {
@@ -1213,6 +1524,11 @@ impl<F: FieldCore> HachiSerialize for LabradorTail<F> {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
+        let kind = match self.handoff_kind {
+            LabradorHandoffKind::Quadratic => 0u8,
+            LabradorHandoffKind::Opening => 1u8,
+        };
+        kind.serialize_with_mode(&mut writer, compress)?;
         self.labrador_proof
             .serialize_with_mode(&mut writer, compress)?;
         self.v.serialize_with_mode(&mut writer, compress)?;
@@ -1222,7 +1538,7 @@ impl<F: FieldCore> HachiSerialize for LabradorTail<F> {
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.labrador_proof.serialized_size(compress)
+        1 + self.labrador_proof.serialized_size(compress)
             + self.v.serialized_size(compress)
             + self.y_ring.serialized_size(compress)
             + self.witness_norm_bound_sq.serialized_size(compress)
@@ -1234,10 +1550,31 @@ impl<F: FieldCore> Valid for LabradorTail<F> {
         self.labrador_proof.check()?;
         self.v.check()?;
         self.y_ring.check()?;
+        if self.y_ring.count() != 1 {
+            return Err(SerializationError::InvalidData(
+                "LabradorTail y_ring must contain exactly one ring element".to_string(),
+            ));
+        }
         if self.v.ring_dim() != self.y_ring.ring_dim() {
             return Err(SerializationError::InvalidData(
                 "LabradorTail ring-dimension mismatch".to_string(),
             ));
+        }
+        match self.handoff_kind {
+            LabradorHandoffKind::Quadratic => {
+                if self.v.count() == 0 {
+                    return Err(SerializationError::InvalidData(
+                        "quadratic LabradorTail must carry non-empty v".to_string(),
+                    ));
+                }
+            }
+            LabradorHandoffKind::Opening => {
+                if self.v.count() != 0 {
+                    return Err(SerializationError::InvalidData(
+                        "opening LabradorTail must carry empty v payload".to_string(),
+                    ));
+                }
+            }
         }
         if self
             .labrador_proof
@@ -1267,7 +1604,18 @@ impl<F: FieldCore + Valid> HachiDeserialize for LabradorTail<F> {
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
+        let kind = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+        let handoff_kind = match kind {
+            0 => LabradorHandoffKind::Quadratic,
+            1 => LabradorHandoffKind::Opening,
+            _ => {
+                return Err(SerializationError::InvalidData(format!(
+                    "invalid LabradorTail kind: {kind}"
+                )));
+            }
+        };
         let out = Self {
+            handoff_kind,
             labrador_proof: FlatLabradorProof::deserialize_with_mode(
                 &mut reader,
                 compress,

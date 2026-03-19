@@ -10,9 +10,11 @@ use crate::protocol::labrador::config::{
 use crate::protocol::labrador::fold::prove_level;
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
 use crate::protocol::labrador::setup::LabradorSetup;
-use crate::protocol::labrador::types::{LabradorProof, LabradorStatement, LabradorWitness};
+use crate::protocol::labrador::types::{
+    LabradorLevelProof, LabradorProof, LabradorStatement, LabradorWitness,
+};
 use crate::protocol::labrador::LabradorReductionConfig;
-use crate::protocol::proof::FlatLabradorWitness;
+use crate::protocol::proof::{FlatLabradorLevelProof, FlatLabradorWitness};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt, HachiSerialize};
 use std::sync::Arc;
@@ -66,6 +68,7 @@ where
             plan.virtual_row_len,
             comkey_seed,
         ));
+        let mut attempt_transcript = transcript.clone();
         let fold = prove_level(
             &witness,
             &_statement,
@@ -73,11 +76,39 @@ where
             &plan,
             &setup,
             level_idx,
-            transcript,
+            &mut attempt_transcript,
         )?;
+        let actual_level_bytes = level_size_bytes::<F, D>(&fold.level_proof);
+        let actual_next_witness_bytes = witness_size_bytes::<F, D>(&fold.next_witness);
+        let actual_candidate_bytes = actual_level_bytes + actual_next_witness_bytes;
+        tracing::debug!(
+            current_bytes = before_bytes,
+            estimated_level_bytes = estimate.level_payload_bytes,
+            estimated_next_witness_bytes = estimate.next_witness_bytes,
+            estimated_candidate_bytes = estimate.transition_bytes,
+            actual_level_bytes,
+            actual_next_witness_bytes,
+            actual_candidate_bytes,
+            accept = actual_candidate_bytes < before_bytes,
+            virtual_row_len = plan.virtual_row_len,
+            virtual_row_count,
+            row_split_counts = ?plan.row_split_counts,
+            witness_digit_parts = cfg.witness_digit_parts,
+            witness_digit_bits = cfg.witness_digit_bits,
+            aux_digit_parts = cfg.aux_digit_parts,
+            aux_digit_bits = cfg.aux_digit_bits,
+            inner_commit_rank = cfg.inner_commit_rank,
+            outer_commit_rank = cfg.outer_commit_rank,
+            tail = cfg.tail,
+            "labrador non-tail candidate"
+        );
+        if actual_candidate_bytes >= before_bytes {
+            break;
+        }
         levels.push(fold.level_proof);
         _statement = fold.statement;
         witness = fold.next_witness;
+        *transcript = attempt_transcript;
         level_idx += 1;
     }
 
@@ -110,10 +141,36 @@ where
             level_idx,
             &mut tail_transcript,
         ) {
-            levels.push(tail.level_proof);
-            _statement = tail.statement;
-            witness = tail.next_witness;
-            *transcript = tail_transcript;
+            let actual_level_bytes = level_size_bytes::<F, D>(&tail.level_proof);
+            let actual_next_witness_bytes = witness_size_bytes::<F, D>(&tail.next_witness);
+            let actual_candidate_bytes = actual_level_bytes + actual_next_witness_bytes;
+            tracing::debug!(
+                baseline_bytes,
+                estimated_level_bytes = tail_estimate.level_payload_bytes,
+                estimated_next_witness_bytes = tail_estimate.next_witness_bytes,
+                estimated_candidate_bytes = tail_estimate.transition_bytes,
+                actual_level_bytes,
+                actual_next_witness_bytes,
+                actual_candidate_bytes,
+                accept = actual_candidate_bytes < baseline_bytes,
+                virtual_row_len = tail_plan.virtual_row_len,
+                virtual_row_count,
+                row_split_counts = ?tail_plan.row_split_counts,
+                witness_digit_parts = tail_cfg.witness_digit_parts,
+                witness_digit_bits = tail_cfg.witness_digit_bits,
+                aux_digit_parts = tail_cfg.aux_digit_parts,
+                aux_digit_bits = tail_cfg.aux_digit_bits,
+                inner_commit_rank = tail_cfg.inner_commit_rank,
+                outer_commit_rank = tail_cfg.outer_commit_rank,
+                tail = tail_cfg.tail,
+                "labrador final tail compare"
+            );
+            if actual_candidate_bytes < baseline_bytes {
+                levels.push(tail.level_proof);
+                _statement = tail.statement;
+                witness = tail.next_witness;
+                *transcript = tail_transcript;
+            }
         }
     }
 
@@ -219,12 +276,18 @@ where
             level_idx,
             &mut attempt_transcript,
         )?;
+        let actual_level_bytes = level_size_bytes::<F, D>(&fold.level_proof);
+        let actual_next_witness_bytes = witness_size_bytes::<F, D>(&fold.next_witness);
+        let actual_candidate_bytes = actual_level_bytes + actual_next_witness_bytes;
         tracing::debug!(
             current_bytes = before_bytes,
             estimated_level_bytes = estimate.level_payload_bytes,
             estimated_next_witness_bytes = estimate.next_witness_bytes,
             estimated_candidate_bytes = estimate.transition_bytes,
-            accept = estimate.transition_bytes < before_bytes,
+            actual_level_bytes,
+            actual_next_witness_bytes,
+            actual_candidate_bytes,
+            accept = actual_candidate_bytes < before_bytes,
             virtual_row_len = plan.virtual_row_len,
             virtual_row_count,
             row_split_counts = ?plan.row_split_counts,
@@ -237,6 +300,9 @@ where
             tail = cfg.tail,
             "labrador non-tail candidate"
         );
+        if actual_candidate_bytes >= before_bytes {
+            break;
+        }
 
         *transcript = attempt_transcript;
         levels.push(fold.level_proof);
@@ -290,12 +356,18 @@ where
             level_idx,
             &mut tail_transcript,
         ) {
+            let actual_level_bytes = level_size_bytes::<F, D>(&tail.level_proof);
+            let actual_next_witness_bytes = witness_size_bytes::<F, D>(&tail.next_witness);
+            let actual_candidate_bytes = actual_level_bytes + actual_next_witness_bytes;
             tracing::debug!(
                 baseline_bytes,
                 estimated_level_bytes = tail_estimate.level_payload_bytes,
                 estimated_next_witness_bytes = tail_estimate.next_witness_bytes,
                 estimated_candidate_bytes = tail_estimate.transition_bytes,
-                accept = tail_estimate.transition_bytes < baseline_bytes,
+                actual_level_bytes,
+                actual_next_witness_bytes,
+                actual_candidate_bytes,
+                accept = actual_candidate_bytes < baseline_bytes,
                 virtual_row_len = tail_plan.virtual_row_len,
                 virtual_row_count,
                 row_split_counts = ?tail_plan.row_split_counts,
@@ -308,9 +380,11 @@ where
                 tail = tail_cfg.tail,
                 "labrador final tail compare"
             );
-            levels.push(tail.level_proof);
-            witness = tail.next_witness;
-            *transcript = tail_transcript;
+            if actual_candidate_bytes < baseline_bytes {
+                levels.push(tail.level_proof);
+                witness = tail.next_witness;
+                *transcript = tail_transcript;
+            }
         }
     }
 
@@ -320,10 +394,16 @@ where
     })
 }
 
-fn witness_size_bytes<F: FieldCore + HachiSerialize, const D: usize>(
+fn witness_size_bytes<F: FieldCore + CanonicalField + HachiSerialize, const D: usize>(
     witness: &LabradorWitness<F, D>,
 ) -> usize {
     FlatLabradorWitness::from_typed(witness).serialized_size(Compress::No)
+}
+
+fn level_size_bytes<F: FieldCore + HachiSerialize, const D: usize>(
+    level: &LabradorLevelProof<F, D>,
+) -> usize {
+    FlatLabradorLevelProof::from_typed(level).serialized_size(Compress::No)
 }
 
 #[cfg(test)]
@@ -331,7 +411,9 @@ mod tests {
     use super::*;
     use crate::algebra::fields::Fp64;
     use crate::algebra::ring::CyclotomicRing;
+    use crate::primitives::serialization::Compress;
     use crate::protocol::labrador::{verify, LabradorStatement};
+    use crate::protocol::proof::FlatLabradorProof;
     use crate::protocol::transcript::labels::DOMAIN_LABRADOR_RECURSION;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::FromSmallInt;
@@ -350,6 +432,19 @@ mod tests {
                 .collect()
         };
         LabradorWitness::new(vec![row(6), row(6), row(6)])
+    }
+
+    fn large_mixed_witness() -> LabradorWitness<F, D> {
+        let row = |len: usize| -> Vec<CyclotomicRing<F, D>> {
+            (0..len)
+                .map(|i| {
+                    CyclotomicRing::from_coefficients(std::array::from_fn(|j| {
+                        F::from_i64(((3 * i + 5 * j) as i64 % 9) - 4)
+                    }))
+                })
+                .collect()
+        };
+        LabradorWitness::new_unchecked(vec![row(1376), row(1376), row(1280)])
     }
 
     #[test]
@@ -383,5 +478,26 @@ mod tests {
 
         let mut verify_transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_RECURSION);
         verify(&statement, &proof, &[1u8; 32], &mut verify_transcript).unwrap();
+    }
+
+    #[test]
+    fn prover_never_exceeds_no_recursion_baseline() {
+        let witness = large_mixed_witness();
+        let baseline_bytes = 4 + witness_size_bytes::<F, D>(&witness);
+        let statement = LabradorStatement {
+            inner_opening_payload: Vec::new(),
+            linear_garbage_payload: Vec::new(),
+            challenges: Vec::new(),
+            constraints: Vec::new(),
+            reduced_constraints: None,
+            witness_norm_bound_sq: witness.norm().saturating_mul(256),
+        };
+        let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_LABRADOR_RECURSION);
+        let proof = prove(witness, &statement, &[1u8; 32], &mut transcript).unwrap();
+        let proof_bytes = FlatLabradorProof::from_typed(&proof).serialized_size(Compress::No);
+        assert!(
+            proof_bytes <= baseline_bytes,
+            "proof bytes {proof_bytes} must stay below no-recursion baseline {baseline_bytes}"
+        );
     }
 }

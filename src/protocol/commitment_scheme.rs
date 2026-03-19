@@ -16,6 +16,7 @@ use crate::protocol::commitment::{
     RingCommitment, RingCommitmentScheme,
 };
 use crate::protocol::hachi_poly_ops::{BalancedDigitPoly, HachiPolyOps};
+use crate::protocol::labrador::hachi_opening::{HachiOpeningPublic, HachiOpeningWitnessRef};
 use crate::protocol::labrador_handoff::{labrador_handoff_prove, labrador_handoff_verify};
 #[cfg(debug_assertions)]
 use crate::protocol::opening_point::RingOpeningPoint;
@@ -663,12 +664,8 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn dispatch_labrador_handoff_prove<F, T, const D: usize, Cfg>(
-    current_w: &[i8],
-    current_hint: &FlatCommitmentHint,
-    current_challenges: &[F],
-    current_num_u: usize,
-    current_num_l: usize,
-    current_commitment: &FlatRingVec<F>,
+    public: &HachiOpeningPublic<F>,
+    witness: HachiOpeningWitnessRef<'_>,
     setup: &HachiProverSetup<F, D>,
     handoff_ntt_d_cache: &mut MultiDNttCaches,
     transcript: &mut T,
@@ -678,24 +675,22 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
-    let handoff_d = current_commitment.ring_dim();
-    if current_hint.ring_dim() != handoff_d {
+    let handoff_d = public.commitment.ring_dim();
+    if witness.hint.ring_dim() != handoff_d {
         return Err(HachiError::InvalidInput(format!(
             "handoff hint/commitment D mismatch: hint={}, commitment={handoff_d}",
-            current_hint.ring_dim()
+            witness.hint.ring_dim()
         )));
     }
 
     if handoff_d == D {
-        let typed_hint: HachiCommitmentHint<F, D> = current_hint.to_typed();
-        let typed_commitment: RingCommitment<F, D> = current_commitment.to_ring_commitment();
+        let typed_hint: HachiCommitmentHint<F, D> = witness.hint.to_typed();
+        let typed_commitment: RingCommitment<F, D> = public.commitment.to_ring_commitment();
         return labrador_handoff_prove::<F, T, D, Cfg>(
-            current_w,
+            public,
+            witness,
             &typed_hint,
             &typed_commitment,
-            current_challenges,
-            current_num_u,
-            current_num_l,
             &setup.expanded,
             &setup.ntt_D,
             transcript,
@@ -707,16 +702,14 @@ where
         handoff_ntt_d_cache,
         &setup.expanded,
         |D_HANDOFF, ntt_d| {
-            let typed_hint: HachiCommitmentHint<F, { D_HANDOFF }> = current_hint.to_typed();
+            let typed_hint: HachiCommitmentHint<F, { D_HANDOFF }> = witness.hint.to_typed();
             let typed_commitment: RingCommitment<F, { D_HANDOFF }> =
-                current_commitment.to_ring_commitment();
+                public.commitment.to_ring_commitment();
             labrador_handoff_prove::<F, T, { D_HANDOFF }, Cfg>(
-                current_w,
+                public,
+                witness,
                 &typed_hint,
                 &typed_commitment,
-                current_challenges,
-                current_num_u,
-                current_num_l,
                 &setup.expanded,
                 ntt_d,
                 transcript,
@@ -729,9 +722,7 @@ where
 #[inline(never)]
 fn dispatch_labrador_handoff_verify<F, T, Cfg>(
     tail: &LabradorTail<F>,
-    opening_point: &[F],
-    opening: &F,
-    current_commitment: &FlatRingVec<F>,
+    public: &HachiOpeningPublic<F>,
     expanded_setup: &HachiExpandedSetup<F>,
     transcript: &mut T,
 ) -> Result<(), HachiError>
@@ -740,7 +731,7 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
-    let handoff_d = current_commitment.ring_dim();
+    let handoff_d = public.commitment.ring_dim();
     if tail.v.ring_dim() != handoff_d
         || tail.y_ring.ring_dim() != handoff_d
         || tail.labrador_proof.levels.iter().any(|level| {
@@ -760,11 +751,10 @@ where
 
     dispatch_ring_dim!(handoff_d, |D_HANDOFF| {
         let typed_commitment: RingCommitment<F, { D_HANDOFF }> =
-            current_commitment.try_to_ring_commitment()?;
+            public.commitment.try_to_ring_commitment()?;
         labrador_handoff_verify::<F, T, { D_HANDOFF }, Cfg>(
             tail,
-            opening_point,
-            opening,
+            public,
             &typed_commitment,
             expanded_setup,
             transcript,
@@ -1025,16 +1015,21 @@ where
         } else {
             Cfg::decomposition().log_basis
         };
+        let handoff_public = HachiOpeningPublic {
+            commitment: levels.last().unwrap().stage2.next_w_commitment.clone(),
+            point: next_level_opening_point(&current_challenges, current_num_u, current_num_l),
+            claimed_eval: levels.last().unwrap().stage2.next_w_eval,
+            witness_log_basis: final_w_basis,
+        };
 
         let tail = if labrador_enabled {
             tracing::info!("labrador handoff started");
             dispatch_labrador_handoff_prove::<F, T, D, Cfg>(
-                &current_w,
-                &current_hint,
-                &current_challenges,
-                current_num_u,
-                current_num_l,
-                &levels.last().unwrap().stage2.next_w_commitment,
+                &handoff_public,
+                HachiOpeningWitnessRef {
+                    w_digits: &current_w,
+                    hint: &current_hint,
+                },
                 setup,
                 &mut commit_ntt_bundle.D_mat,
                 transcript,
@@ -1149,14 +1144,23 @@ where
             elapsed_s = t_verify_hachi.elapsed().as_secs_f64(),
             "hachi verify complete"
         );
+        let final_w_basis = if num_levels > 1 {
+            Cfg::w_log_basis()
+        } else {
+            Cfg::decomposition().log_basis
+        };
+        let handoff_public = HachiOpeningPublic {
+            commitment: current_commitment.clone(),
+            point: current_point.clone(),
+            claimed_eval: current_opening,
+            witness_log_basis: final_w_basis,
+        };
 
         match &proof.tail {
             HachiProofTail::Labrador(ref tail) => {
                 dispatch_labrador_handoff_verify::<F, T, Cfg>(
                     tail,
-                    &current_point,
-                    &current_opening,
-                    &current_commitment,
+                    &handoff_public,
                     &setup.expanded,
                     transcript,
                 )?;

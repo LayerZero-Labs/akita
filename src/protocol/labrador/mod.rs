@@ -11,6 +11,8 @@ pub mod config;
 mod constraints;
 pub mod fold;
 pub mod guardrails;
+pub(crate) mod hachi_opening;
+pub(crate) mod hachi_statement;
 pub mod johnson_lindenstrauss;
 pub mod prover;
 pub mod setup;

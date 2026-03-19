@@ -5,6 +5,7 @@ use crate::primitives::serialization::Compress;
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
 use crate::protocol::labrador::types::{LabradorReductionConfig, LabradorWitness};
+use crate::protocol::proof::PackedCoeffRow;
 use crate::{CanonicalField, FieldCore, HachiSerialize};
 use std::f64::consts::{E, PI};
 const LABRADOR_LOGDELTA: f64 = 0.00639138757765197; // log2(1.00444)
@@ -33,6 +34,7 @@ const MAX_COMMITMENT_RANK: usize = 32;
 #[derive(Debug, Clone)]
 struct LabradorWitnessPlanningProfile {
     row_lengths: Vec<usize>,
+    row_coeff_bits: Vec<usize>,
     norm_sum: f64,
     coeff_bit_bound: Option<usize>,
 }
@@ -44,12 +46,18 @@ pub(crate) struct LabradorFoldEstimate {
     pub next_witness_bytes: usize,
     pub transition_bytes: usize,
     next_row_lengths: Vec<usize>,
+    next_row_coeff_bits: Vec<usize>,
     next_norm_sum: f64,
 }
 
 impl LabradorFoldEstimate {
     fn next_profile(&self) -> Result<LabradorWitnessPlanningProfile, HachiError> {
-        LabradorWitnessPlanningProfile::new(self.next_row_lengths.clone(), self.next_norm_sum, None)
+        LabradorWitnessPlanningProfile::new(
+            self.next_row_lengths.clone(),
+            self.next_row_coeff_bits.clone(),
+            self.next_norm_sum,
+            None,
+        )
     }
 }
 
@@ -64,6 +72,7 @@ pub(crate) struct LabradorRecursiveSizeEstimate {
 impl LabradorWitnessPlanningProfile {
     fn new(
         row_lengths: Vec<usize>,
+        row_coeff_bits: Vec<usize>,
         norm_sum: f64,
         coeff_bit_bound: Option<usize>,
     ) -> Result<Self, HachiError> {
@@ -77,6 +86,16 @@ impl LabradorWitnessPlanningProfile {
                 "cannot select config for zero-length Labrador witness".to_string(),
             ));
         }
+        if row_lengths.len() != row_coeff_bits.len() {
+            return Err(HachiError::InvalidInput(
+                "Labrador witness profile row_bits length mismatch".to_string(),
+            ));
+        }
+        if row_coeff_bits.iter().any(|&bits| bits == 0 || bits > 128) {
+            return Err(HachiError::InvalidInput(
+                "Labrador witness profile coeff_bits out of range".to_string(),
+            ));
+        }
         if !norm_sum.is_finite() || norm_sum < 0.0 {
             return Err(HachiError::InvalidInput(
                 "cannot select config for non-finite Labrador witness norm".to_string(),
@@ -84,6 +103,7 @@ impl LabradorWitnessPlanningProfile {
         }
         Ok(Self {
             row_lengths,
+            row_coeff_bits,
             norm_sum,
             coeff_bit_bound,
         })
@@ -93,7 +113,15 @@ impl LabradorWitnessPlanningProfile {
         witness: &LabradorWitness<F, D>,
     ) -> Result<Self, HachiError> {
         let row_lengths = witness.rows().iter().map(|r| r.len()).collect();
-        Self::new(row_lengths, witness.norm() as f64, None)
+        let row_coeff_bits = witness
+            .rows()
+            .iter()
+            .map(|row| {
+                PackedCoeffRow::detect_coeff_bits(row)
+                    .map_err(|err| HachiError::InvalidInput(err.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Self::new(row_lengths, row_coeff_bits, witness.norm() as f64, None)
     }
 
     fn from_handoff_witness<F: FieldCore + CanonicalField, const D: usize>(
@@ -101,8 +129,17 @@ impl LabradorWitnessPlanningProfile {
         coeff_bit_bound: usize,
     ) -> Result<Self, HachiError> {
         let row_lengths = witness.rows().iter().map(|r| r.len()).collect();
+        let row_coeff_bits = witness
+            .rows()
+            .iter()
+            .map(|row| {
+                PackedCoeffRow::detect_coeff_bits(row)
+                    .map_err(|err| HachiError::InvalidInput(err.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         Self::new(
             row_lengths,
+            row_coeff_bits,
             witness.norm() as f64,
             Some(coeff_bit_bound.max(1)),
         )
@@ -526,19 +563,22 @@ fn estimate_plan_with_profile<F: FieldCore + CanonicalField + HachiSerialize, co
     let virtual_row_count: usize = plan.row_split_counts.iter().sum();
     let next_row_lengths =
         estimate_next_row_lengths(virtual_row_count, plan.virtual_row_len, &plan.config);
+    let next_row_coeff_bits = estimate_next_row_coeff_bits(&plan.config);
     let level_payload_bytes = estimate_level_payload_bytes::<F, D>(
         profile.row_lengths.len(),
         virtual_row_count,
         plan.virtual_row_len,
         &plan.config,
     );
-    let next_witness_bytes = estimate_witness_bytes_from_row_lengths::<F, D>(&next_row_lengths);
+    let next_witness_bytes =
+        estimate_witness_bytes_from_row_lengths::<D>(&next_row_lengths, &next_row_coeff_bits);
     Ok(LabradorFoldEstimate {
         plan: plan.clone(),
         level_payload_bytes,
         next_witness_bytes,
         transition_bytes: level_payload_bytes + next_witness_bytes,
         next_row_lengths,
+        next_row_coeff_bits,
         next_norm_sum: next_norm_sum.max(1.0),
     })
 }
@@ -669,7 +709,10 @@ fn simulate_recursive_proof_bytes<
     let mut level_count = 0usize;
 
     while level_count + 1 < LABRADOR_MAX_LEVELS {
-        let before_bytes = estimate_witness_bytes_from_row_lengths::<F, D>(&profile.row_lengths);
+        let before_bytes = estimate_witness_bytes_from_row_lengths::<D>(
+            &profile.row_lengths,
+            &profile.row_coeff_bits,
+        );
         if before_bytes == 0 || profile.row_lengths.len() <= 1 {
             break;
         }
@@ -686,7 +729,10 @@ fn simulate_recursive_proof_bytes<
     }
 
     if level_count + 1 < LABRADOR_MAX_LEVELS {
-        let before_bytes = estimate_witness_bytes_from_row_lengths::<F, D>(&profile.row_lengths);
+        let before_bytes = estimate_witness_bytes_from_row_lengths::<D>(
+            &profile.row_lengths,
+            &profile.row_coeff_bits,
+        );
         if before_bytes > 0 && profile.row_lengths.len() > 1 {
             let tail_estimate = search_best_estimate_with_profile::<F, D>(&profile, true)?;
             if tail_estimate.transition_bytes < before_bytes {
@@ -697,7 +743,8 @@ fn simulate_recursive_proof_bytes<
         }
     }
 
-    let final_witness_bytes = estimate_witness_bytes_from_row_lengths::<F, D>(&profile.row_lengths);
+    let final_witness_bytes =
+        estimate_witness_bytes_from_row_lengths::<D>(&profile.row_lengths, &profile.row_coeff_bits);
     Ok((
         4 + level_payload_total + final_witness_bytes,
         final_witness_bytes,
@@ -720,12 +767,25 @@ fn estimate_next_row_lengths(
     row_lengths
 }
 
-fn estimate_witness_bytes_from_row_lengths<F: FieldCore + HachiSerialize, const D: usize>(
+fn estimate_next_row_coeff_bits(config: &LabradorReductionConfig) -> Vec<usize> {
+    let mut row_coeff_bits = vec![config.witness_digit_bits.max(1); config.witness_digit_parts];
+    if !config.tail {
+        row_coeff_bits.push(config.aux_digit_bits.max(1));
+    }
+    row_coeff_bits
+}
+
+fn estimate_witness_bytes_from_row_lengths<const D: usize>(
     row_lengths: &[usize],
+    row_coeff_bits: &[usize],
 ) -> usize {
+    debug_assert_eq!(row_lengths.len(), row_coeff_bits.len());
     4 + row_lengths
         .iter()
-        .map(|&ring_elems| estimate_flat_ring_vec_bytes::<F, D>(ring_elems))
+        .zip(row_coeff_bits.iter())
+        .map(|(&ring_elems, &coeff_bits)| {
+            estimate_packed_coeff_row_bytes::<D>(ring_elems, coeff_bits)
+        })
         .sum::<usize>()
 }
 
@@ -762,6 +822,11 @@ fn estimate_flat_ring_vec_bytes<F: FieldCore + HachiSerialize, const D: usize>(
     ring_elems: usize,
 ) -> usize {
     4 + 8 + ring_elems * D * F::zero().serialized_size(Compress::No)
+}
+
+fn estimate_packed_coeff_row_bytes<const D: usize>(ring_elems: usize, coeff_bits: usize) -> usize {
+    debug_assert!((1..=128).contains(&coeff_bits));
+    4 + 8 + 1 + (ring_elems * D * coeff_bits).div_ceil(8)
 }
 
 fn estimate_vec_usize_bytes(len: usize) -> usize {
@@ -966,10 +1031,15 @@ mod tests {
     #[test]
     fn planner_can_search_more_than_two_z_parts() {
         let row_lengths = vec![512usize, 512usize, 512usize];
+        let row_coeff_bits = vec![8usize; row_lengths.len()];
         let found = (20..=80).any(|exp| {
-            let profile =
-                LabradorWitnessPlanningProfile::new(row_lengths.clone(), 2f64.powi(exp), None)
-                    .unwrap();
+            let profile = LabradorWitnessPlanningProfile::new(
+                row_lengths.clone(),
+                row_coeff_bits.clone(),
+                2f64.powi(exp),
+                None,
+            )
+            .unwrap();
             plan_fold_with_profile::<F, D>(&profile, false)
                 .map(|plan| plan.config.witness_digit_parts > 2)
                 .unwrap_or(false)
@@ -988,57 +1058,58 @@ mod tests {
     }
 
     #[test]
-    fn print_profile_style_handoff_sis_summary() {
+    fn print_profile_style_role_sis_summary() {
         type F128 = Fp128<0xfffffffffffffffffffffffffffffeed>;
         type Cfg = Fp128FullCommitmentConfig;
         const D128: usize = Cfg::D;
         const MAX_NUM_VARS: usize = 25;
 
         let layout = Cfg::commitment_layout(MAX_NUM_VARS).unwrap();
-        let rank = Cfg::N_D + Cfg::N_B + 2 + Cfg::N_A;
-        let width_ring_elems = layout.d_matrix_width
-            + layout.outer_width
-            + layout.inner_width * layout.num_digits_fold;
-        let beta_inf = (1usize << layout.r_vars)
-            * Cfg::challenge_weight_for_ring_dim(D128)
-            * (1usize << (layout.log_basis - 1));
-        let collision_inf = (2 * beta_inf) as f64;
-        let width_coords = width_ring_elems * D128;
-        let l2_bound = (width_coords as f64).sqrt() * collision_inf;
+        let roles = [
+            ("A", Cfg::N_A, layout.inner_width),
+            ("B", Cfg::N_B, layout.outer_width),
+            ("D", Cfg::N_D, layout.d_matrix_width),
+        ];
+        let collision_inf = 7.0;
 
-        let heuristic_secure =
-            sis_secure_with_params(rank, l2_bound, logq_bits::<F128>() as f64, D128 as f64);
-        let heuristic_max_log2 = (2.0
-            * (logq_bits::<F128>() as f64 * LABRADOR_LOGDELTA * D128 as f64).sqrt()
-            * (rank as f64).sqrt())
-        .min(logq_bits::<F128>() as f64);
-        let estimate =
-            estimate_module_sis_euclidean::<F128, D128>(rank, width_ring_elems, l2_bound).unwrap();
+        for (role, rank, width_ring_elems) in roles {
+            let width_coords = width_ring_elems * D128;
+            let l2_bound = (width_coords as f64).sqrt() * collision_inf;
+            let heuristic_secure =
+                sis_secure_with_params(rank, l2_bound, logq_bits::<F128>() as f64, D128 as f64);
+            let heuristic_max_log2 = (2.0
+                * (logq_bits::<F128>() as f64 * LABRADOR_LOGDELTA * D128 as f64).sqrt()
+                * (rank as f64).sqrt())
+            .min(logq_bits::<F128>() as f64);
+            let estimate =
+                estimate_module_sis_euclidean::<F128, D128>(rank, width_ring_elems, l2_bound)
+                    .unwrap();
 
-        eprintln!(
-            "[labrador::config] profile-style handoff SIS summary: \
-             max_num_vars={MAX_NUM_VARS}, D={D128}, r_vars={}, m_vars={}, \
-             width_ring_elems={}, width_coords={}, rank={}, \
-             log2(bound)={:.2}, heuristic_max_log2={:.2}, heuristic_secure={}, \
-             d_att={}, delta_req={:.6}, beta={}, solution_exists={}, log2(lb)={:.2}, log2(rop_bdgl16)={:.2}",
-            layout.r_vars,
-            layout.m_vars,
-            width_ring_elems,
-            width_coords,
-            rank,
-            l2_bound.log2(),
-            heuristic_max_log2,
-            heuristic_secure,
-            estimate.attack_dimension,
-            estimate.required_delta,
-            estimate.bkz_beta,
-            estimate.solution_exists,
-            estimate.log2_solution_lower_bound,
-            estimate.log2_rop_bdgl16,
-        );
+            eprintln!(
+                "[labrador::config] profile-style role SIS summary: \
+                 max_num_vars={MAX_NUM_VARS}, D={D128}, role={role}, r_vars={}, m_vars={}, \
+                 width_ring_elems={}, width_coords={}, rank={}, \
+                 log2(bound)={:.2}, heuristic_max_log2={:.2}, heuristic_secure={}, \
+                 d_att={}, delta_req={:.6}, beta={}, solution_exists={}, log2(lb)={:.2}, log2(rop_bdgl16)={:.2}",
+                layout.r_vars,
+                layout.m_vars,
+                width_ring_elems,
+                width_coords,
+                rank,
+                l2_bound.log2(),
+                heuristic_max_log2,
+                heuristic_secure,
+                estimate.attack_dimension,
+                estimate.required_delta,
+                estimate.bkz_beta,
+                estimate.solution_exists,
+                estimate.log2_solution_lower_bound,
+                estimate.log2_rop_bdgl16,
+            );
 
-        assert_eq!(estimate.sis_dimension, rank * D128);
-        assert_eq!(estimate.sis_width, width_coords);
-        assert!(estimate.required_delta.is_finite());
+            assert_eq!(estimate.sis_dimension, rank * D128);
+            assert_eq!(estimate.sis_width, width_coords);
+            assert!(estimate.required_delta.is_finite());
+        }
     }
 }

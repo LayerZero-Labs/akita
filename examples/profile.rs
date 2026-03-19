@@ -352,7 +352,7 @@ fn print_labrador_level_breakdown(
     total
 }
 
-fn print_labrador_final_witness_breakdown(label: &str, witness: &FlatLabradorWitness<F>) -> usize {
+fn print_labrador_final_witness_breakdown(label: &str, witness: &FlatLabradorWitness) -> usize {
     let rows_len_size = std::mem::size_of::<u32>();
     let rows_total: usize = witness
         .rows
@@ -366,10 +366,11 @@ fn print_labrador_final_witness_breakdown(label: &str, witness: &FlatLabradorWit
     );
     for (row_idx, row) in witness.rows.iter().enumerate() {
         eprintln!(
-            "[{label}]       row{row_idx}={} bytes ({} ring elems, D={})",
+            "[{label}]       row{row_idx}={} bytes ({} ring elems, D={}, coeff_bits={})",
             row.serialized_size(Compress::No),
             row.count(),
             row.ring_dim(),
+            row.coeff_bits,
         );
     }
     debug_assert_eq!(total, rows_len_size + rows_total);
