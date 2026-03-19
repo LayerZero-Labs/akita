@@ -11,11 +11,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 KV_RE = re.compile(r'([A-Za-z_]+)=(".*?"|\S+)')
 RSS_PATTERNS = [
     re.compile(r"Maximum resident set size \(kbytes\):\s+(\d+)"),
     re.compile(r"^\s*(\d+)\s+maximum resident set size$", re.MULTILINE),
 ]
+ONEHOT_ARITY = 256
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +49,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def parse_kvs(line: str) -> dict[str, str]:
+    line = ANSI_RE.sub("", line)
     out: dict[str, str] = {}
     for key, raw_value in KV_RE.findall(line):
         value = raw_value.rstrip(",")
@@ -81,16 +84,23 @@ def require_int(summary: dict[str, object], key: str) -> int:
     return int(value)
 
 
+def benchmark_name(mode: str, num_vars: int) -> str:
+    if mode == "onehot":
+        return f"1-of-{ONEHOT_ARITY} one-hot with {num_vars} variables"
+    return f"{mode} with {num_vars} variables"
+
+
 def extract_summary(log_text: str, mode: str, num_vars: int) -> dict[str, object]:
     summary: dict[str, object] = {
         "schema_version": 1,
-        "benchmark": f"{mode}_nv{num_vars}",
+        "benchmark": benchmark_name(mode, num_vars),
         "mode": mode,
         "num_vars": num_vars,
         "collected_at": datetime.now(timezone.utc).isoformat(),
     }
 
     for line in log_text.splitlines():
+        line = ANSI_RE.sub("", line)
         kvs = parse_kvs(line)
         if " INFO setup" in line and kvs.get("label") == mode:
             summary["setup_s"] = float(kvs["elapsed_s"])
@@ -169,6 +179,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
     env.setdefault("HACHI_PROFILE_TRACE", "0")
     env.setdefault("HACHI_PROFILE_SPAN_CLOSES", "0")
     env.setdefault("HACHI_PROFILE_LOG", "info")
+    env.setdefault("HACHI_PROFILE_ANSI", "0")
 
     command = time_command(args.binary)
     completed = subprocess.run(command, capture_output=True, text=True, env=env)
@@ -192,6 +203,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "HACHI_PROFILE_TRACE": env["HACHI_PROFILE_TRACE"],
         "HACHI_PROFILE_SPAN_CLOSES": env["HACHI_PROFILE_SPAN_CLOSES"],
         "HACHI_PROFILE_LOG": env["HACHI_PROFILE_LOG"],
+        "HACHI_PROFILE_ANSI": env["HACHI_PROFILE_ANSI"],
     }
 
     write_text(output_dir / "summary.json", json.dumps(summary, indent=2, sort_keys=True) + "\n")
@@ -288,9 +300,14 @@ def render_report(args: argparse.Namespace) -> int:
     baseline_sha = os.environ.get("HACHI_BENCH_BASELINE_SHA")
     baseline_label = os.environ.get("HACHI_BENCH_BASELINE_LABEL")
 
-    print("## Onehot Benchmark Report")
+    print("## One-hot 32 Variables Benchmark Report")
     print()
-    print(f"- Benchmark: `{current['mode']} nv{current['num_vars']}`")
+    print(f"- Benchmark: `{benchmark_name(current['mode'], int(current['num_vars']))}`")
+    if current["mode"] == "onehot":
+        print(
+            f"- Sparsity: `1-of-{ONEHOT_ARITY}` one-hot "
+            f"(equivalently, `1`-sparse over `{ONEHOT_ARITY}` slots, density `{100.0 / ONEHOT_ARITY:.2f}%`)."
+        )
     ref = commit_ref(source_sha)
     if ref:
         print(f"- Commit: {ref}")
@@ -309,7 +326,8 @@ def render_report(args: argparse.Namespace) -> int:
     print(
         "- Command: `target/release/examples/profile` with "
         f"`HACHI_MODE={current['mode']}` `HACHI_NUM_VARS={current['num_vars']}` "
-        "`HACHI_PROFILE_TRACE=0` `HACHI_PROFILE_SPAN_CLOSES=0` `HACHI_PROFILE_LOG=info`."
+        "`HACHI_PROFILE_TRACE=0` `HACHI_PROFILE_SPAN_CLOSES=0` "
+        "`HACHI_PROFILE_LOG=info` `HACHI_PROFILE_ANSI=0`."
     )
     print("- Memory: maximum resident set size from `/usr/bin/time` on the benchmark process.")
     print()

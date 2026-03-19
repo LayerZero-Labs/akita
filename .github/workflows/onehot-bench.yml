@@ -1,4 +1,4 @@
-name: Onehot Benchmark
+name: Onehot 32 Variables Benchmark
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  HACHI_BENCH_ARTIFACT_NAME: onehot-bench-nv32-data
+  HACHI_BENCH_ARTIFACT_NAME: onehot-bench-32-variables-data
   HACHI_BENCH_MODE: onehot
   HACHI_BENCH_NUM_VARS: 32
 
@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   bench:
-    name: Onehot Nv32
+    name: Onehot 32 Variables (1-of-256)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -61,7 +61,7 @@ jobs:
       - name: Build profile example
         run: cargo build --release --quiet --example profile
 
-      - name: Run onehot nv32 benchmark
+      - name: Run onehot 32 variables benchmark (1-of-256)
         run: |
           python3 scripts/onehot_bench_report.py run \
             --binary ./target/release/examples/profile \
@@ -201,7 +201,9 @@ jobs:
           HACHI_BENCH_BASELINE_LABEL: ${{ steps.bench-baseline.outputs.label }}
           HACHI_BENCH_BASELINE_SHA: ${{ steps.bench-baseline.outputs.sha }}
         run: |
-          if [ -f "$HACHI_BENCH_BASELINE_DIR/summary.json" ]; then
+          if [ ! -f "$HACHI_BENCH_ARTIFACT_DIR/summary.json" ]; then
+            echo "Benchmark summary not found; benchmark step likely failed." > "$HACHI_BENCH_REPORT"
+          elif [ -f "$HACHI_BENCH_BASELINE_DIR/summary.json" ]; then
             python3 scripts/onehot_bench_report.py render \
               "$HACHI_BENCH_ARTIFACT_DIR/summary.json" \
               "$HACHI_BENCH_BASELINE_DIR" > "$HACHI_BENCH_REPORT"

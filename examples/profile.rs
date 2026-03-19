@@ -485,6 +485,7 @@ fn main() {
 
     let mode = env::var("HACHI_MODE").unwrap_or_else(|_| "full".to_string());
     let enable_trace = env_flag("HACHI_PROFILE_TRACE", true);
+    let enable_ansi = env_flag("HACHI_PROFILE_ANSI", true);
     let span_events = if env_flag("HACHI_PROFILE_SPAN_CLOSES", true) {
         FmtSpan::CLOSE
     } else {
@@ -501,6 +502,7 @@ fn main() {
     let trace_file = format!("profile_traces/hachi_nv{nv}_{mode}_{timestamp}.json");
 
     let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_ansi(enable_ansi)
         .with_span_events(span_events)
         .compact()
         .with_target(false);
@@ -536,7 +538,7 @@ fn main() {
         "onehot" => {
             type Cfg = Fp128OneHotCommitmentConfig;
             run_onehot_mode::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(
-                "=== onehot (log_commit_bound=1) ===",
+                "=== onehot (1-of-256, log_commit_bound=1) ===",
                 nv,
             );
         }
@@ -558,7 +560,7 @@ fn main() {
             {
                 type Cfg = Fp128OneHotCommitmentConfig;
                 run_onehot_mode::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(
-                    "=== onehot (log_commit_bound=1) ===",
+                    "=== onehot (1-of-256, log_commit_bound=1) ===",
                     nv,
                 );
             }
@@ -573,23 +575,29 @@ fn main() {
         "compare_onehot" => {
             {
                 type Cfg = Fp128BoundedCommitmentConfig<1, 3, 3>;
-                run_onehot_mode::<{ Cfg::D }, Cfg>("=== [A] onehot, basis=3 everywhere ===", nv);
+                run_onehot_mode::<{ Cfg::D }, Cfg>(
+                    "=== [A] onehot (1-of-256), basis=3 everywhere ===",
+                    nv,
+                );
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<1, 2, 2>;
-                run_onehot_mode::<{ Cfg::D }, Cfg>("=== [B] onehot, basis=2 everywhere ===", nv);
+                run_onehot_mode::<{ Cfg::D }, Cfg>(
+                    "=== [B] onehot (1-of-256), basis=2 everywhere ===",
+                    nv,
+                );
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<1, 2, 3>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== [C] onehot, L0 basis=2, w-levels basis=3 ===",
+                    "=== [C] onehot (1-of-256), L0 basis=2, w-levels basis=3 ===",
                     nv,
                 );
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<1, 2, 4>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== [D] onehot, L0 basis=2, w-levels basis=4 ===",
+                    "=== [D] onehot (1-of-256), L0 basis=2, w-levels basis=4 ===",
                     nv,
                 );
             }
