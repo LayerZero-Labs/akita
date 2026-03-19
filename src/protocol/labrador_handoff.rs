@@ -518,6 +518,7 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
+    let t0 = Instant::now();
     let alpha_prime = D_HANDOFF.trailing_zeros() as usize;
     if opening_point.len() < alpha_prime {
         return Err(HachiError::InvalidPointDimension {
@@ -605,9 +606,17 @@ where
     let result =
         verify_labrador::<F, T, D_HANDOFF>(&statement, &labrador_proof, &comkey_seed, transcript);
     if result.is_ok() {
-        tracing::info!("labrador verify OK");
+        tracing::info!(
+            elapsed_s = t0.elapsed().as_secs_f64(),
+            levels = labrador_proof.levels.len(),
+            "labrador verify complete"
+        );
     } else {
-        tracing::error!("labrador verify FAIL");
+        tracing::error!(
+            elapsed_s = t0.elapsed().as_secs_f64(),
+            levels = labrador_proof.levels.len(),
+            "labrador verify FAIL"
+        );
     }
     result?;
 
