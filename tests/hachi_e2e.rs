@@ -119,11 +119,11 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
 }
 
 // ---------------------------------------------------------------------------
-// Dense ("full") prove/verify
+// Dense D=128 ("full") prove/verify
 // ---------------------------------------------------------------------------
 
 #[test]
-fn full_labrador_prove_verify() {
+fn full_d128_labrador_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
@@ -207,17 +207,17 @@ fn full_labrador_prove_verify() {
             proof_kib = proof_bytes as f64 / 1024.0,
             levels = proof.levels.len(),
             tail_kind,
-            "full/nv{FULL_TEST_NV} e2e"
+            "full-d128/nv{FULL_TEST_NV} e2e"
         );
     });
 }
 
 // ---------------------------------------------------------------------------
-// One-hot prove/verify
+// One-hot D=64 prove/verify
 // ---------------------------------------------------------------------------
 
 #[test]
-fn onehot_labrador_prove_verify() {
+fn onehot_d64_labrador_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
@@ -312,7 +312,7 @@ fn onehot_labrador_prove_verify() {
             proof_kib = proof_bytes as f64 / 1024.0,
             levels = proof.levels.len(),
             tail_kind,
-            "onehot/nv{ONEHOT_TEST_NV} e2e"
+            "onehot-d64/nv{ONEHOT_TEST_NV} e2e"
         );
     });
 }

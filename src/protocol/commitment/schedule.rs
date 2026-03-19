@@ -17,7 +17,7 @@ pub struct HachiScheduleInputs {
 }
 
 /// Runtime source of truth for one Hachi level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiLevelParams {
     /// Ring dimension at this level.
     pub d: usize,
@@ -29,13 +29,15 @@ pub struct HachiLevelParams {
     pub n_b: usize,
     /// Active D-matrix rank.
     pub n_d: usize,
-    /// Conservative sparse-challenge mass used by folded-norm bounds.
-    pub challenge_weight: usize,
+    /// Conservative sparse-challenge L1 mass used by folded-norm bounds.
+    pub challenge_l1_mass: usize,
+    /// Stage-1 challenge family sampled at this level.
+    pub stage1_config: SparseChallengeConfig,
 }
 
 impl HachiLevelParams {
     /// Total number of quotient / relation rows in `M`.
-    pub fn m_row_count(self) -> usize {
+    pub fn m_row_count(&self) -> usize {
         self.n_d + self.n_b + 2 + self.n_a
     }
 }
@@ -46,13 +48,13 @@ fn with_log_basis(mut decomp: DecompositionParams, log_basis: u32) -> Decomposit
 }
 
 fn main_level_decomposition<Cfg: CommitmentConfig>(
-    params: HachiLevelParams,
+    params: &HachiLevelParams,
 ) -> DecompositionParams {
     with_log_basis(Cfg::decomposition(), params.log_basis)
 }
 
 fn recursive_level_decomposition<Cfg: CommitmentConfig>(
-    params: HachiLevelParams,
+    params: &HachiLevelParams,
 ) -> DecompositionParams {
     let parent = Cfg::decomposition();
     let parent_open = parent.log_open_bound.unwrap_or(parent.log_commit_bound);
@@ -66,13 +68,13 @@ fn recursive_level_decomposition<Cfg: CommitmentConfig>(
 fn layout_from_params(
     m_vars: usize,
     r_vars: usize,
-    params: HachiLevelParams,
+    params: &HachiLevelParams,
     decomp: DecompositionParams,
 ) -> Result<HachiCommitmentLayout, HachiError> {
     let depth_commit = compute_num_digits(decomp.log_commit_bound, decomp.log_basis);
     let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
     let depth_open = compute_num_digits(open_bound, decomp.log_basis);
-    let depth_fold = compute_num_digits_fold(r_vars, params.challenge_weight, decomp.log_basis);
+    let depth_fold = compute_num_digits_fold(r_vars, params.challenge_l1_mass, decomp.log_basis);
     HachiCommitmentLayout::new_with_decomp(
         m_vars,
         r_vars,
@@ -106,9 +108,10 @@ pub fn hachi_root_level_layout<Cfg: CommitmentConfig>(
             "max_num_vars must leave at least one outer variable".to_string(),
         ));
     }
-    let decomp = main_level_decomposition::<Cfg>(params);
-    let (m_vars, r_vars) = optimal_m_r_split_with_params(params, decomp, reduced_vars);
-    Ok((params, layout_from_params(m_vars, r_vars, params, decomp)?))
+    let decomp = main_level_decomposition::<Cfg>(&params);
+    let (m_vars, r_vars) = optimal_m_r_split_with_params(&params, decomp, reduced_vars);
+    let layout = layout_from_params(m_vars, r_vars, &params, decomp)?;
+    Ok((params, layout))
 }
 
 /// Derive a recursive `w`-opening level's active params and layout.
@@ -125,16 +128,9 @@ pub fn hachi_level_layout<Cfg: CommitmentConfig>(
     let alpha = params.d.trailing_zeros() as usize;
     let reduced_vars = total.trailing_zeros() as usize;
     let max_num_vars = reduced_vars + alpha;
-    let decomp = recursive_level_decomposition::<Cfg>(params);
-    let (m_vars, r_vars) = optimal_m_r_split_with_params(params, decomp, reduced_vars);
-    let layout = layout_from_params(m_vars, r_vars, params, decomp)?;
+    let decomp = recursive_level_decomposition::<Cfg>(&params);
+    let (m_vars, r_vars) = optimal_m_r_split_with_params(&params, decomp, reduced_vars);
+    let layout = layout_from_params(m_vars, r_vars, &params, decomp)?;
     debug_assert_eq!(layout.m_vars + layout.r_vars + alpha, max_num_vars);
     Ok((params, layout))
-}
-
-pub(crate) fn default_stage1_challenge_config(params: HachiLevelParams) -> SparseChallengeConfig {
-    SparseChallengeConfig {
-        weight: params.challenge_weight,
-        nonzero_coeffs: vec![-1, 1],
-    }
 }

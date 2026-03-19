@@ -2,8 +2,8 @@
 
 use hachi_pcs::algebra::CyclotomicRing;
 use hachi_pcs::protocol::commitment::{
-    utils::linear::decompose_block, CommitmentConfig, DecompositionParams, HachiCommitmentCore,
-    HachiCommitmentLayout, RingCommitmentScheme, SmallTestCommitmentConfig,
+    utils::linear::decompose_block, CommitmentConfig, CommitmentEnvelope, DecompositionParams,
+    HachiCommitmentCore, HachiCommitmentLayout, RingCommitmentScheme, SmallTestCommitmentConfig,
 };
 use hachi_pcs::test_utils::*;
 use hachi_pcs::{FromSmallInt, HachiError};
@@ -14,16 +14,28 @@ struct BadDegreeConfig;
 
 impl CommitmentConfig for BadDegreeConfig {
     const D: usize = 32;
-    const N_A: usize = 8;
-    const N_B: usize = 4;
-    const N_D: usize = 4;
-    const CHALLENGE_WEIGHT: usize = 3;
 
     fn decomposition() -> DecompositionParams {
         DecompositionParams {
             log_basis: 3,
             log_commit_bound: 32,
             log_open_bound: None,
+        }
+    }
+
+    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
+        CommitmentEnvelope {
+            max_n_a: 8,
+            max_n_b: 4,
+            max_n_d: 4,
+        }
+    }
+
+    fn stage1_challenge_config(d: usize) -> hachi_pcs::algebra::SparseChallengeConfig {
+        assert_eq!(d, Self::D, "unsupported ring dim {d}");
+        hachi_pcs::algebra::SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
         }
     }
 
@@ -34,6 +46,7 @@ impl CommitmentConfig for BadDegreeConfig {
 
 #[test]
 fn setup_shape_is_consistent() {
+    let envelope = TinyConfig::envelope(16);
     let (p1, v1) =
         <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::setup(16).unwrap();
     let (p2, v2) =
@@ -43,10 +56,10 @@ fn setup_shape_is_consistent() {
     assert_eq!(v1.expanded.seed.max_num_vars, 16);
     assert_eq!(p2.expanded.seed.max_num_vars, 16);
     assert_eq!(v2.expanded.seed.max_num_vars, 16);
-    assert_eq!(p1.expanded.A.num_rows(), TinyConfig::N_A);
+    assert_eq!(p1.expanded.A.num_rows(), envelope.max_n_a);
     assert!(p1.expanded.A.num_cols_at::<D>() >= BLOCK_LEN * num_digits_commit());
-    assert_eq!(p1.expanded.B.num_rows(), TinyConfig::N_B);
-    assert!(p1.expanded.B.num_cols_at::<D>() >= TinyConfig::N_A * num_digits_open() * NUM_BLOCKS);
+    assert_eq!(p1.expanded.B.num_rows(), envelope.max_n_b);
+    assert!(p1.expanded.B.num_cols_at::<D>() >= envelope.max_n_a * num_digits_open() * NUM_BLOCKS);
 }
 
 #[test]
@@ -68,10 +81,13 @@ fn commit_is_deterministic_and_shape_consistent() {
     assert_eq!(w1.t_hat, w2.t_hat);
 
     let num_blocks = NUM_BLOCKS;
-    assert_eq!(w1.commitment.u.len(), TinyConfig::N_B);
+    assert_eq!(w1.commitment.u.len(), TinyConfig::envelope(16).max_n_b);
     assert_eq!(w1.t_hat.len(), num_blocks);
     let depth = num_digits_commit();
-    assert!(w1.t_hat.iter().all(|t| t.len() == TinyConfig::N_A * depth));
+    assert!(w1
+        .t_hat
+        .iter()
+        .all(|t| t.len() == TinyConfig::envelope(16).max_n_a * depth));
 }
 
 #[test]
@@ -115,7 +131,7 @@ fn opening_satisfies_inner_and_outer_equations() {
     for (i, block) in blocks.iter().enumerate() {
         let s_i = decompose_block(block, depth, log_basis);
         let lhs = mat_vec_mul(&psetup.expanded.A, &s_i);
-        let rhs: Vec<CyclotomicRing<F, D>> = (0..TinyConfig::N_A)
+        let rhs: Vec<CyclotomicRing<F, D>> = (0..TinyConfig::envelope(16).max_n_a)
             .map(|j| {
                 let start = j * depth;
                 let end = start + depth;

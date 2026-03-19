@@ -995,12 +995,17 @@ mod tests {
         const MAX_NUM_VARS: usize = 25;
 
         let layout = Cfg::commitment_layout(MAX_NUM_VARS).unwrap();
-        let rank = Cfg::N_D + Cfg::N_B + 2 + Cfg::N_A;
+        let level_params = Cfg::level_params(crate::protocol::commitment::HachiScheduleInputs {
+            max_num_vars: MAX_NUM_VARS,
+            level: 0,
+            current_w_len: layout.num_blocks * layout.block_len * D128,
+        });
+        let rank = level_params.n_d + level_params.n_b + 2 + level_params.n_a;
         let width_ring_elems = layout.d_matrix_width
             + layout.outer_width
             + layout.inner_width * layout.num_digits_fold;
         let beta_inf = (1usize << layout.r_vars)
-            * Cfg::challenge_weight_for_ring_dim(D128)
+            * Cfg::stage1_challenge_config(D128).l1_mass()
             * (1usize << (layout.log_basis - 1));
         let collision_inf = (2 * beta_inf) as f64;
         let width_coords = width_ring_elems * D128;

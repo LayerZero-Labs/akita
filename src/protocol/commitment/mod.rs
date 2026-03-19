@@ -15,9 +15,9 @@ pub use commit::{
 pub use config::optimal_m_r_split;
 pub use config::{
     beta_linf_fold_bound, compute_num_digits, compute_num_digits_fold, CommitmentConfig,
-    DecompositionParams, DynamicSmallTestCommitmentConfig, Fp128AdaptiveOneHotCommitmentConfig,
-    Fp128BoundedCommitmentConfig, Fp128CommitmentConfig, Fp128D64BoundedCommitmentConfig,
-    Fp128FullCommitmentConfig, Fp128HalvingDCommitmentConfig, Fp128LogBasisCommitmentConfig,
+    CommitmentEnvelope, DecompositionParams, DynamicSmallTestCommitmentConfig,
+    Fp128AdaptiveOneHotCommitmentConfig, Fp128BoundedCommitmentConfig, Fp128CommitmentConfig,
+    Fp128D64BoundedCommitmentConfig, Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig,
     Fp128OneHotCommitmentConfig, Fp128Rank2BoundedCommitmentConfig, HachiCommitmentLayout,
     SmallTestCommitmentConfig,
 };

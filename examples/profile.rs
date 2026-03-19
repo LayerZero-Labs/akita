@@ -13,7 +13,7 @@ use hachi_pcs::protocol::opening_point::{
 };
 use hachi_pcs::protocol::proof::{
     FlatLabradorLevelProof, FlatLabradorWitness, HachiLevelProof, HachiProof, HachiProofTail,
-    LabradorTail,
+    LabradorTail, NormCheckBody,
 };
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
@@ -175,11 +175,6 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
 fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevelProof<F>) -> usize {
     let y_ring_size = level.y_ring.serialized_size(Compress::No);
     let v_size = level.v.serialized_size(Compress::No);
-    let stage1_sumcheck_size = level.stage1.sumcheck.serialized_size(Compress::No);
-    let stage1_s_claim_size = level.stage1.s_claim.serialized_size(Compress::No);
-    let stage2_sumcheck_size = level.stage2.sumcheck.serialized_size(Compress::No);
-    let next_w_commitment_size = level.stage2.next_w_commitment.serialized_size(Compress::No);
-    let next_w_eval_size = level.stage2.next_w_eval.serialized_size(Compress::No);
     let total = level.serialized_size(Compress::No);
 
     eprintln!("[{label}]   hachi_fold L{level_idx}: total={total} bytes");
@@ -195,26 +190,62 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
         level.v.count(),
         level.v.ring_dim(),
     );
-    eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
-    eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
-    eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
-    eprintln!(
-        "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} ring elems, D={})",
-        level.stage2.next_w_commitment.count(),
-        level.w_commit_d(),
-    );
-    eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
-
-    debug_assert_eq!(
-        total,
-        y_ring_size
-            + v_size
-            + stage1_sumcheck_size
-            + stage1_s_claim_size
-            + stage2_sumcheck_size
-            + next_w_commitment_size
-            + next_w_eval_size
-    );
+    match &level.body {
+        NormCheckBody::Combined {
+            sumcheck,
+            s_claim,
+            next_w_commitment,
+            next_w_eval,
+        } => {
+            let combined_sumcheck_size = sumcheck.serialized_size(Compress::No);
+            let combined_s_claim_size = s_claim.serialized_size(Compress::No);
+            let next_w_commitment_size = next_w_commitment.serialized_size(Compress::No);
+            let next_w_eval_size = next_w_eval.serialized_size(Compress::No);
+            eprintln!("[{label}]     combined_sumcheck={combined_sumcheck_size} bytes");
+            eprintln!("[{label}]     combined_s_claim={combined_s_claim_size} bytes");
+            eprintln!(
+                "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} ring elems, D={})",
+                next_w_commitment.count(),
+                level.w_commit_d(),
+            );
+            eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
+            debug_assert_eq!(
+                total,
+                y_ring_size
+                    + v_size
+                    + combined_sumcheck_size
+                    + combined_s_claim_size
+                    + next_w_commitment_size
+                    + next_w_eval_size
+            );
+        }
+        NormCheckBody::TwoStage { stage1, stage2 } => {
+            let stage1_sumcheck_size = stage1.sumcheck.serialized_size(Compress::No);
+            let stage1_s_claim_size = stage1.s_claim.serialized_size(Compress::No);
+            let stage2_sumcheck_size = stage2.sumcheck.serialized_size(Compress::No);
+            let next_w_commitment_size = stage2.next_w_commitment.serialized_size(Compress::No);
+            let next_w_eval_size = stage2.next_w_eval.serialized_size(Compress::No);
+            eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
+            eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
+            eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
+            eprintln!(
+                "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} ring elems, D={})",
+                stage2.next_w_commitment.count(),
+                level.w_commit_d(),
+            );
+            eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
+            debug_assert_eq!(
+                total,
+                y_ring_size
+                    + v_size
+                    + stage1_sumcheck_size
+                    + stage1_s_claim_size
+                    + stage2_sumcheck_size
+                    + next_w_commitment_size
+                    + next_w_eval_size
+            );
+        }
+    }
     total
 }
 
@@ -542,21 +573,21 @@ fn main() {
         "full" => {
             type Cfg = Fp128FullCommitmentConfig;
             run_dense_mode::<{ Fp128FullCommitmentConfig::D }, Cfg>(
-                "=== full (dense, log_commit_bound=128) ===",
+                "=== full (D=128 dense, log_commit_bound=128) ===",
                 nv,
             );
         }
         "onehot" => {
             type Cfg = Fp128OneHotCommitmentConfig;
             run_onehot_mode::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(
-                "=== onehot (1-of-256, log_commit_bound=1) ===",
+                "=== onehot (D=64, 1-of-256, log_commit_bound=1) ===",
                 nv,
             );
         }
         "logbasis" => {
             type Cfg = Fp128LogBasisCommitmentConfig;
             run_dense_mode::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(
-                "=== logbasis (dense, log_commit_bound=3) ===",
+                "=== logbasis (D=128 dense, log_commit_bound=3) ===",
                 nv,
             );
         }
@@ -564,21 +595,21 @@ fn main() {
             {
                 type Cfg = Fp128FullCommitmentConfig;
                 run_dense_mode::<{ Fp128FullCommitmentConfig::D }, Cfg>(
-                    "=== full (dense, log_commit_bound=128) ===",
+                    "=== full (D=128 dense, log_commit_bound=128) ===",
                     nv,
                 );
             }
             {
                 type Cfg = Fp128OneHotCommitmentConfig;
                 run_onehot_mode::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(
-                    "=== onehot (1-of-256, log_commit_bound=1) ===",
+                    "=== onehot (D=64, 1-of-256, log_commit_bound=1) ===",
                     nv,
                 );
             }
             {
                 type Cfg = Fp128LogBasisCommitmentConfig;
                 run_dense_mode::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(
-                    "=== logbasis (dense, log_commit_bound=3) ===",
+                    "=== logbasis (D=128 dense, log_commit_bound=3) ===",
                     nv,
                 );
             }
@@ -587,28 +618,28 @@ fn main() {
             {
                 type Cfg = Fp128D64BoundedCommitmentConfig<1, 3, 3>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== [A] onehot (1-of-256), basis=3 everywhere ===",
+                    "=== [A] onehot (D=64, 1-of-256), basis=3 everywhere ===",
                     nv,
                 );
             }
             {
                 type Cfg = Fp128D64BoundedCommitmentConfig<1, 2, 2>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== [B] onehot (1-of-256), basis=2 everywhere ===",
+                    "=== [B] onehot (D=64, 1-of-256), basis=2 everywhere ===",
                     nv,
                 );
             }
             {
                 type Cfg = Fp128D64BoundedCommitmentConfig<1, 2, 3>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== [C] onehot (1-of-256), L0 basis=2, w-levels basis=3 ===",
+                    "=== [C] onehot (D=64, 1-of-256), L0 basis=2, w-levels basis=3 ===",
                     nv,
                 );
             }
             {
                 type Cfg = Fp128D64BoundedCommitmentConfig<1, 2, 4>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== [D] onehot (1-of-256), L0 basis=2, w-levels basis=4 ===",
+                    "=== [D] onehot (D=64, 1-of-256), L0 basis=2, w-levels basis=4 ===",
                     nv,
                 );
             }
@@ -617,28 +648,28 @@ fn main() {
             {
                 type Cfg = Fp128BoundedCommitmentConfig<3, 3, 3>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [A] logbasis coeffs, basis=3 everywhere ===",
+                    "=== [A] logbasis coeffs (D=128), basis=3 everywhere ===",
                     nv,
                 );
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<3, 2, 2>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [B] logbasis coeffs, basis=2 everywhere ===",
+                    "=== [B] logbasis coeffs (D=128), basis=2 everywhere ===",
                     nv,
                 );
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<3, 2, 3>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [C] logbasis coeffs, L0 basis=2, w-levels basis=3 ===",
+                    "=== [C] logbasis coeffs (D=128), L0 basis=2, w-levels basis=3 ===",
                     nv,
                 );
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<3, 2, 4>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [D] logbasis coeffs, L0 basis=2, w-levels basis=4 ===",
+                    "=== [D] logbasis coeffs (D=128), L0 basis=2, w-levels basis=4 ===",
                     nv,
                 );
             }
@@ -647,21 +678,30 @@ fn main() {
             {
                 type Cfg = Fp128BoundedCommitmentConfig<128, 3, 3>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [A] baseline: log_basis=3 everywhere ===",
+                    "=== [A] baseline (D=128): log_basis=3 everywhere ===",
                     nv,
                 );
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<128, 2, 2>;
-                run_dense_mode::<{ Cfg::D }, Cfg>("=== [B] log_basis=2 everywhere ===", nv);
+                run_dense_mode::<{ Cfg::D }, Cfg>(
+                    "=== [B] baseline (D=128): log_basis=2 everywhere ===",
+                    nv,
+                );
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<128, 2, 3>;
-                run_dense_mode::<{ Cfg::D }, Cfg>("=== [C] L0 basis=2, w-levels basis=3 ===", nv);
+                run_dense_mode::<{ Cfg::D }, Cfg>(
+                    "=== [C] baseline (D=128): L0 basis=2, w-levels basis=3 ===",
+                    nv,
+                );
             }
             {
                 type Cfg = Fp128BoundedCommitmentConfig<128, 2, 4>;
-                run_dense_mode::<{ Cfg::D }, Cfg>("=== [D] L0 basis=2, w-levels basis=4 ===", nv);
+                run_dense_mode::<{ Cfg::D }, Cfg>(
+                    "=== [D] baseline (D=128): L0 basis=2, w-levels basis=4 ===",
+                    nv,
+                );
             }
         }
         other => {

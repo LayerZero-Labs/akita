@@ -246,7 +246,7 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     /// Multiply `self` by a sparse challenge element.
     ///
     /// Cost: `O(omega * D)` field additions instead of `O(D^2)` multiplications.
-    /// For `omega=23, D=256` this is 5,888 adds vs 65,536 muls.
+    /// For `omega=31, D=128` this is 3,968 adds vs 16,384 muls.
     pub fn mul_by_sparse(&self, challenge: &SparseChallenge) -> Self
     where
         F: CanonicalField,

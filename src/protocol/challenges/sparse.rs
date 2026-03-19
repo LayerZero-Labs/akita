@@ -6,6 +6,149 @@ use crate::protocol::transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPA
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
 
+#[inline]
+fn next_challenge_u128<F, T>(transcript: &mut T) -> u128
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    transcript
+        .challenge_scalar(CHALLENGE_SPARSE_CHALLENGE)
+        .to_canonical_u128()
+}
+
+fn sample_distinct_positions<F, T>(transcript: &mut T, universe: usize, count: usize) -> Vec<usize>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    let mut seen = vec![false; universe];
+    let mut positions = Vec::with_capacity(count);
+    while positions.len() < count {
+        let pos = (next_challenge_u128::<F, T>(transcript) as usize) % universe;
+        if seen[pos] {
+            continue;
+        }
+        seen[pos] = true;
+        positions.push(pos);
+    }
+    positions
+}
+
+#[inline]
+fn sample_sign<F, T>(transcript: &mut T) -> i16
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    if (next_challenge_u128::<F, T>(transcript) & 1) == 0 {
+        1
+    } else {
+        -1
+    }
+}
+
+fn sample_uniform_sparse<F, T, const D: usize>(
+    transcript: &mut T,
+    weight: usize,
+    nonzero_coeffs: &[i16],
+) -> SparseChallenge
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    let positions = sample_distinct_positions::<F, T>(transcript, D, weight)
+        .into_iter()
+        .map(|pos| pos as u32)
+        .collect();
+    let coeffs = (0..weight)
+        .map(|_| {
+            let coeff_idx =
+                (next_challenge_u128::<F, T>(transcript) as usize) % nonzero_coeffs.len();
+            nonzero_coeffs[coeff_idx]
+        })
+        .collect();
+    SparseChallenge { positions, coeffs }
+}
+
+fn sample_split_half<F, T>(
+    transcript: &mut T,
+    half_size: usize,
+    half_weight: usize,
+    max_mag2_per_half: usize,
+    parity: usize,
+) -> (Vec<u32>, Vec<i16>)
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    let half_positions = sample_distinct_positions::<F, T>(transcript, half_size, half_weight);
+    let mut coeffs: Vec<i16> = (0..half_weight)
+        .map(|_| sample_sign::<F, T>(transcript))
+        .collect();
+
+    let num_mag2 = if max_mag2_per_half == 0 {
+        0
+    } else {
+        (next_challenge_u128::<F, T>(transcript) as usize) % (max_mag2_per_half + 1)
+    };
+    for idx in sample_distinct_positions::<F, T>(transcript, half_weight, num_mag2) {
+        coeffs[idx] *= 2;
+    }
+
+    let positions = half_positions
+        .into_iter()
+        .map(|pos| (2 * pos + parity) as u32)
+        .collect();
+    (positions, coeffs)
+}
+
+fn sample_split_ring_sparse<F, T, const D: usize>(
+    transcript: &mut T,
+    half_weight: usize,
+    max_mag2_per_half: usize,
+) -> SparseChallenge
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    let half_size = D / 2;
+    let (mut even_positions, mut even_coeffs) =
+        sample_split_half::<F, T>(transcript, half_size, half_weight, max_mag2_per_half, 0);
+    let (odd_positions, odd_coeffs) =
+        sample_split_half::<F, T>(transcript, half_size, half_weight, max_mag2_per_half, 1);
+    even_positions.extend(odd_positions);
+    even_coeffs.extend(odd_coeffs);
+    SparseChallenge {
+        positions: even_positions,
+        coeffs: even_coeffs,
+    }
+}
+
+fn sample_exact_shell_sparse<F, T, const D: usize>(
+    transcript: &mut T,
+    count_mag1: usize,
+    count_mag2: usize,
+) -> SparseChallenge
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    let total = count_mag1 + count_mag2;
+    let positions = sample_distinct_positions::<F, T>(transcript, D, total)
+        .into_iter()
+        .map(|pos| pos as u32)
+        .collect();
+    let mut coeffs = Vec::with_capacity(total);
+    for _ in 0..count_mag1 {
+        coeffs.push(sample_sign::<F, T>(transcript));
+    }
+    for _ in 0..count_mag2 {
+        coeffs.push(2 * sample_sign::<F, T>(transcript));
+    }
+    SparseChallenge { positions, coeffs }
+}
+
 /// Sample a sparse ring challenge (exact weight ω) from a transcript.
 ///
 /// This is intentionally deterministic and label-aware:
@@ -37,39 +180,22 @@ where
     transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, label);
     transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, &instance_idx.to_le_bytes());
     transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, &(D as u64).to_le_bytes());
-    transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, &(cfg.weight as u64).to_le_bytes());
-    // Include the coefficient alphabet (as little-endian i16 stream).
-    let mut coeff_bytes = Vec::with_capacity(cfg.nonzero_coeffs.len() * 2);
-    for &c in cfg.nonzero_coeffs.iter() {
-        coeff_bytes.extend_from_slice(&c.to_le_bytes());
-    }
-    transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, &coeff_bytes);
+    transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, &cfg.domain_separator_bytes());
 
-    let mut seen = vec![false; D];
-    let mut positions = Vec::with_capacity(cfg.weight);
-    let mut coeffs = Vec::with_capacity(cfg.weight);
-
-    while positions.len() < cfg.weight {
-        let r = transcript
-            .challenge_scalar(CHALLENGE_SPARSE_CHALLENGE)
-            .to_canonical_u128();
-        let lo = r as u64;
-        let hi = (r >> 64) as u64;
-
-        let pos = (lo % (D as u64)) as usize;
-        if seen[pos] {
-            continue;
-        }
-        seen[pos] = true;
-        positions.push(pos as u32);
-
-        let coeff_idx = (hi % (cfg.nonzero_coeffs.len() as u64)) as usize;
-        let c = cfg.nonzero_coeffs[coeff_idx];
-        debug_assert_ne!(c, 0);
-        coeffs.push(c);
-    }
-
-    Ok(SparseChallenge { positions, coeffs })
+    Ok(match cfg {
+        SparseChallengeConfig::Uniform {
+            weight,
+            nonzero_coeffs,
+        } => sample_uniform_sparse::<F, T, D>(transcript, *weight, nonzero_coeffs),
+        SparseChallengeConfig::SplitRing {
+            half_weight,
+            max_mag2_per_half,
+        } => sample_split_ring_sparse::<F, T, D>(transcript, *half_weight, *max_mag2_per_half),
+        SparseChallengeConfig::ExactShell {
+            count_mag1,
+            count_mag2,
+        } => sample_exact_shell_sparse::<F, T, D>(transcript, *count_mag1, *count_mag2),
+    })
 }
 
 /// Sample `n` sparse challenges from a transcript, returning the sparse

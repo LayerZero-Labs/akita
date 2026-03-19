@@ -56,7 +56,7 @@ use std::time::Instant;
 ///   - N_A constraints: `c^T * G_open * t_hat_slice - A * J * z_pre = 0`
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "labrador::handoff_build_constraints")]
-pub(crate) fn build_hachi_labrador_constraints<F, const D: usize, Cfg>(
+pub(crate) fn build_hachi_labrador_constraints<F, const D: usize>(
     a_mat: &FlatMatrix<F>,
     b_mat: &FlatMatrix<F>,
     d_mat: &FlatMatrix<F>,
@@ -65,11 +65,11 @@ pub(crate) fn build_hachi_labrador_constraints<F, const D: usize, Cfg>(
     v: &[CyclotomicRing<F, D>],
     u: &[CyclotomicRing<F, D>],
     y_eval: &CyclotomicRing<F, D>,
+    level_params: &crate::protocol::commitment::HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<Vec<LabradorConstraint<F, D>>, HachiError>
 where
     F: FieldCore + CanonicalField,
-    Cfg: CommitmentConfig,
 {
     let depth_open = layout.num_digits_open;
     let depth_commit = layout.num_digits_commit;
@@ -80,7 +80,7 @@ where
     let inner_width = block_len * depth_commit;
 
     let w_len = depth_open * num_blocks;
-    let t_len = depth_open * Cfg::N_A * num_blocks;
+    let t_len = depth_open * level_params.n_a * num_blocks;
     let z_len = depth_fold * inner_width;
 
     let g_open = gadget_scalars::<F>(depth_open, log_basis);
@@ -103,11 +103,12 @@ where
         .map(|c| c.to_dense::<F, D>().expect("valid challenge"))
         .collect();
 
-    let mut constraints = Vec::with_capacity(Cfg::N_D + Cfg::N_B + 2 + Cfg::N_A);
+    let mut constraints =
+        Vec::with_capacity(level_params.n_d + level_params.n_b + 2 + level_params.n_a);
 
     // D rows enforce `D_mat * w_hat_flat = v`.
     let d_view = d_mat.view::<D>();
-    for (i, &v_i) in v.iter().enumerate().take(Cfg::N_D) {
+    for (i, &v_i) in v.iter().enumerate().take(level_params.n_d) {
         let d_row = d_view.row(i);
         let coeffs: Vec<CyclotomicRing<F, D>> = d_row.iter().take(w_len).copied().collect();
         constraints.push(LabradorConstraint::new(
@@ -118,7 +119,7 @@ where
 
     // B rows enforce `B_mat * t_hat_flat = u`.
     let b_view = b_mat.view::<D>();
-    for (i, &u_i) in u.iter().enumerate().take(Cfg::N_B) {
+    for (i, &u_i) in u.iter().enumerate().take(level_params.n_b) {
         let b_row = b_view.row(i);
         let coeffs: Vec<CyclotomicRing<F, D>> = b_row.iter().take(t_len).copied().collect();
         constraints.push(LabradorConstraint::new(
@@ -171,11 +172,11 @@ where
 
     // A rows link the folded inner openings back to the same `z` decomposition.
     let a_view = a_mat.view::<D>();
-    for a_idx in 0..Cfg::N_A {
+    for a_idx in 0..level_params.n_a {
         let mut phi_t = vec![CyclotomicRing::<F, D>::zero(); t_len];
         for (i, c_i) in dense_challenges.iter().enumerate() {
             for (d, &g) in g_open.iter().enumerate() {
-                let t_idx = i * (Cfg::N_A * depth_open) + a_idx * depth_open + d;
+                let t_idx = i * (level_params.n_a * depth_open) + a_idx * depth_open + d;
                 phi_t[t_idx] = c_i.scale(&g);
             }
         }
@@ -327,12 +328,12 @@ where
         handoff_transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
     });
 
+    let level_params = WCommitmentConfig::<D_HANDOFF, Cfg>::level_params(HachiScheduleInputs {
+        max_num_vars: padded_point.len(),
+        level: 1,
+        current_w_len: current_w.len(),
+    });
     let quad_eq = tracing::info_span!("labrador::handoff_quad_eq").in_scope(|| {
-        let level_params = WCommitmentConfig::<D_HANDOFF, Cfg>::level_params(HachiScheduleInputs {
-            max_num_vars: padded_point.len(),
-            level: 1,
-            current_w_len: current_w.len(),
-        });
         Ok::<_, HachiError>(Box::new(QuadraticEquation::<
             F,
             D_HANDOFF,
@@ -342,7 +343,7 @@ where
             ring_opening_point.clone(),
             &w_poly,
             w_folded,
-            level_params,
+            level_params.clone(),
             current_hint.clone(),
             &mut handoff_transcript,
             current_commitment,
@@ -370,18 +371,18 @@ where
         .z_pre()
         .ok_or_else(|| HachiError::InvalidInput("missing z_pre".into()))?;
 
-    let constraints =
-        build_hachi_labrador_constraints::<F, D_HANDOFF, WCommitmentConfig<D_HANDOFF, Cfg>>(
-            a_flat,
-            b_flat,
-            d_flat,
-            quad_eq.opening_point(),
-            &quad_eq.challenges,
-            &quad_eq.v,
-            &current_commitment.u,
-            &y_ring,
-            w_layout,
-        )?;
+    let constraints = build_hachi_labrador_constraints::<F, D_HANDOFF>(
+        a_flat,
+        b_flat,
+        d_flat,
+        quad_eq.opening_point(),
+        &quad_eq.challenges,
+        &quad_eq.v,
+        &current_commitment.u,
+        &y_ring,
+        &level_params,
+        w_layout,
+    )?;
 
     let witness = build_labrador_witness(w_hat_flat, &inner_opening_digits_flat, z_pre, w_layout);
     let witness_norm_bound_sq = witness.norm();
@@ -570,16 +571,16 @@ where
     });
 
     // Derive challenges via verifier-side quad eq (absorbs v, samples challenges).
+    let level_params = WCommitmentConfig::<D_HANDOFF, Cfg>::level_params(HachiScheduleInputs {
+        max_num_vars: padded_point.len(),
+        level: 1,
+        current_w_len: w_layout.num_blocks * w_layout.block_len * D_HANDOFF,
+    });
     let quad_eq = tracing::info_span!("labrador::handoff_quad_eq").in_scope(|| {
-        let level_params = WCommitmentConfig::<D_HANDOFF, Cfg>::level_params(HachiScheduleInputs {
-            max_num_vars: padded_point.len(),
-            level: 1,
-            current_w_len: w_layout.num_blocks * w_layout.block_len * D_HANDOFF,
-        });
         QuadraticEquation::<F, D_HANDOFF, WCommitmentConfig<D_HANDOFF, Cfg>>::new_verifier(
             ring_opening_point.clone(),
             v.clone(),
-            level_params,
+            level_params.clone(),
             transcript,
             current_commitment,
             &y_ring,
@@ -592,18 +593,18 @@ where
     let d_flat = &expanded_setup.D_mat;
 
     // Rebuild constraints from public data.
-    let constraints =
-        build_hachi_labrador_constraints::<F, D_HANDOFF, WCommitmentConfig<D_HANDOFF, Cfg>>(
-            a_flat,
-            b_flat,
-            d_flat,
-            quad_eq.opening_point(),
-            &quad_eq.challenges,
-            &v,
-            &current_commitment.u,
-            &y_ring,
-            w_layout,
-        )?;
+    let constraints = build_hachi_labrador_constraints::<F, D_HANDOFF>(
+        a_flat,
+        b_flat,
+        d_flat,
+        quad_eq.opening_point(),
+        &quad_eq.challenges,
+        &v,
+        &current_commitment.u,
+        &y_ring,
+        &level_params,
+        w_layout,
+    )?;
 
     let statement = LabradorStatement {
         inner_opening_payload: Vec::new(),
@@ -715,7 +716,7 @@ mod tests {
             point.clone(),
             &poly,
             w_folded,
-            level_params,
+            level_params.clone(),
             hint,
             &mut transcript,
             &w.commitment,
@@ -729,7 +730,7 @@ mod tests {
         let inner_opening_digits_flat = flatten_i8_blocks(inner_opening_digits);
         let z_pre = quad_eq.z_pre().unwrap();
 
-        let constraints = build_hachi_labrador_constraints::<F, D, TinyConfig>(
+        let constraints = build_hachi_labrador_constraints::<F, D>(
             &setup.expanded.A,
             &setup.expanded.B,
             &setup.expanded.D_mat,
@@ -738,6 +739,7 @@ mod tests {
             &quad_eq.v,
             &w.commitment.u,
             &y_ring,
+            &level_params,
             layout,
         )
         .unwrap();

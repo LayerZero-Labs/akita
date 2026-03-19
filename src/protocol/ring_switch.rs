@@ -15,8 +15,9 @@ use crate::protocol::commitment::utils::linear::{
 };
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
-    hachi_level_layout, CommitmentConfig, DecompositionParams, HachiCommitmentLayout,
-    HachiExpandedSetup, HachiLevelParams, HachiScheduleInputs, RingCommitment,
+    hachi_level_layout, CommitmentConfig, CommitmentEnvelope, DecompositionParams,
+    HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, HachiScheduleInputs,
+    RingCommitment,
 };
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{DigitLut, FlatCommitmentHint, FlatRingVec, HachiCommitmentHint};
@@ -82,7 +83,7 @@ pub fn ring_switch_build_w<F, const D: usize, Cfg>(
     ntt_a: &NttSlotCache<D>,
     ntt_b: &NttSlotCache<D>,
     ntt_d: &NttSlotCache<D>,
-    level_params: HachiLevelParams,
+    level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<Vec<i8>, HachiError>
 where
@@ -164,7 +165,7 @@ pub fn ring_switch_finalize<F, T, const D: usize, Cfg>(
     w: Vec<i8>,
     w_commitment: FlatRingVec<F>,
     w_hint: FlatCommitmentHint,
-    level_params: HachiLevelParams,
+    level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<RingSwitchOutput<F>, HachiError>
 where
@@ -261,7 +262,7 @@ pub fn ring_switch_prover<F, T, const D: usize, Cfg>(
     ntt_a: &NttSlotCache<D>,
     ntt_b: &NttSlotCache<D>,
     ntt_d: &NttSlotCache<D>,
-    level_params: HachiLevelParams,
+    level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<RingSwitchOutput<F>, HachiError>
 where
@@ -312,7 +313,7 @@ pub fn ring_switch_verifier<F, T, const D: usize, Cfg>(
     w_len: usize,
     w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
-    level_params: HachiLevelParams,
+    level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<RingSwitchOutput<F>, HachiError>
 where
@@ -445,8 +446,10 @@ pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D
 /// `log_open_bound = parent's open bound` (opening folds produce full-field
 /// coefficients).
 ///
-/// For `D=512, Cfg=Fp128FullCommitmentConfig`, this is equivalent to
-/// [`Fp128LogBasisCommitmentConfig`](super::commitment::Fp128LogBasisCommitmentConfig).
+/// For `Cfg=Fp128FullCommitmentConfig`, this uses the same decomposition
+/// parameters as
+/// [`Fp128LogBasisCommitmentConfig`](super::commitment::Fp128LogBasisCommitmentConfig),
+/// but at the caller-selected ring dimension `D`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
@@ -454,17 +457,24 @@ pub(crate) struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
 
 impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConfig<D, Cfg> {
     const D: usize = D;
-    const N_A: usize = Cfg::N_A;
-    const N_B: usize = Cfg::N_B;
-    const N_D: usize = Cfg::N_D;
-    const CHALLENGE_WEIGHT: usize = Cfg::CHALLENGE_WEIGHT;
 
-    fn challenge_weight_for_ring_dim(d: usize) -> usize {
-        Cfg::challenge_weight_for_ring_dim(d)
+    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
+        Cfg::envelope(max_num_vars)
     }
 
     fn w_log_basis() -> u32 {
         Cfg::w_log_basis()
+    }
+
+    fn stage1_challenge_config(d: usize) -> crate::algebra::SparseChallengeConfig {
+        Cfg::stage1_challenge_config(d)
+    }
+
+    fn level_params(inputs: HachiScheduleInputs) -> HachiLevelParams {
+        let mut params = Cfg::level_params(inputs);
+        params.log_basis = Cfg::w_log_basis();
+        debug_assert_eq!(params.d, D);
+        params
     }
 
     fn decomposition() -> DecompositionParams {
@@ -499,7 +509,7 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
 ///
 /// Components: w_hat + t_hat + decomposed z_pre + decomposed r.
 pub(crate) fn w_ring_element_count<F: CanonicalField>(
-    level_params: HachiLevelParams,
+    level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> usize {
     let w_hat_count = layout.num_blocks * layout.num_digits_open;
@@ -511,7 +521,7 @@ pub(crate) fn w_ring_element_count<F: CanonicalField>(
 
 /// Compute the w-commitment layout from the main layout.
 pub(crate) fn w_commitment_layout<F: CanonicalField, const D: usize, Cfg: CommitmentConfig>(
-    level_params: HachiLevelParams,
+    level_params: &HachiLevelParams,
     main_layout: HachiCommitmentLayout,
 ) -> Result<HachiCommitmentLayout, HachiError> {
     let total = w_ring_element_count::<F>(level_params, main_layout)
@@ -541,7 +551,7 @@ pub fn commit_w<F, const D: usize, Cfg>(
     w: &[i8],
     ntt_a: &NttSlotCache<D>,
     ntt_b: &NttSlotCache<D>,
-    level_params: HachiLevelParams,
+    level_params: &HachiLevelParams,
 ) -> Result<(RingCommitment<F, D>, HachiCommitmentHint<F, D>), HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -568,7 +578,7 @@ where
     let log_basis = w_layout.log_basis;
     let coeff_len = w_digits.len();
 
-    let t_all = if depth_commit == 1 {
+    let mut t_all = if depth_commit == 1 {
         // `build_w_coeffs` already emits balanced base-`2^log_basis` digits, so
         // the recursive w-commitment can skip the field conversion and feed those
         // planes directly into the tiled NTT mat-vec.
@@ -604,6 +614,9 @@ where
             .collect();
         mat_vec_mul_ntt_i8(ntt_a, &block_slices, depth_commit, log_basis)
     };
+    for t_i in &mut t_all {
+        t_i.truncate(level_params.n_a);
+    }
     let t_hat_per_block: Vec<Vec<[i8; D]>> = cfg_iter!(t_all)
         .map(|t_i| decompose_rows_i8(t_i, depth_open, log_basis))
         .collect();
@@ -832,7 +845,7 @@ pub(crate) fn build_w_evals_compact(
     Ok((compact, num_u, num_l))
 }
 
-pub(crate) fn m_row_count(level_params: HachiLevelParams) -> usize {
+pub(crate) fn m_row_count(level_params: &HachiLevelParams) -> usize {
     level_params.m_row_count()
 }
 
@@ -843,7 +856,7 @@ pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     challenges: &[SparseChallenge],
     alpha: F,
     alpha_pows: &[F],
-    level_params: HachiLevelParams,
+    level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
     tau1: &[F],
 ) -> Result<Vec<F>, HachiError> {

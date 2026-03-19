@@ -45,7 +45,7 @@ fn flatten_w_hat<const D: usize>(w_hat: &[Vec<[i8; D]>]) -> Vec<[i8; D]> {
 fn compute_z_pre<F, const D: usize, P>(
     poly: &P,
     challenges: &[SparseChallenge],
-    level_params: HachiLevelParams,
+    level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<DecomposeFoldWitness<F, D>, HachiError>
 where
@@ -62,7 +62,7 @@ where
     let norm = u128::from(z.centered_inf_norm);
     let beta = crate::protocol::commitment::beta_linf_fold_bound(
         layout.r_vars,
-        level_params.challenge_weight,
+        level_params.challenge_l1_mass,
         layout.log_basis,
     )?;
     if norm > beta {
@@ -165,17 +165,16 @@ where
 
         transcript.append_serde(ABSORB_PROVER_V, &v);
 
-        let challenge_cfg = Cfg::stage1_challenge_config(level_params);
         let challenges = sample_sparse_challenges::<F, T, D>(
             transcript,
             CHALLENGE_STAGE1_FOLD,
             layout.num_blocks,
-            &challenge_cfg,
+            &level_params.stage1_config,
         )?;
 
         let z_pre = {
             let _span = tracing::info_span!("compute_z_pre").entered();
-            compute_z_pre::<F, D, P>(poly, &challenges, level_params, layout)?
+            compute_z_pre::<F, D, P>(poly, &challenges, &level_params, layout)?
         };
 
         let y = generate_y::<F, D>(
@@ -217,12 +216,8 @@ where
         y_ring: &CyclotomicRing<F, D>,
         layout: HachiCommitmentLayout,
     ) -> Result<Self, HachiError> {
-        let challenges = derive_stage1_challenges::<F, T, D, Cfg>(
-            transcript,
-            &v,
-            layout.num_blocks,
-            level_params,
-        )?;
+        let challenges =
+            derive_stage1_challenges::<F, T, D>(transcript, &v, layout.num_blocks, &level_params)?;
         let y = generate_y::<F, D>(
             &v,
             &commitment.u,
@@ -314,23 +309,22 @@ where
     }
 }
 
-pub(crate) fn derive_stage1_challenges<F, T, const D: usize, Cfg: CommitmentConfig>(
+pub(crate) fn derive_stage1_challenges<F, T, const D: usize>(
     transcript: &mut T,
     v: &Vec<CyclotomicRing<F, D>>,
     num_blocks: usize,
-    level_params: HachiLevelParams,
+    level_params: &HachiLevelParams,
 ) -> Result<Vec<SparseChallenge>, HachiError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    let challenge_cfg = Cfg::stage1_challenge_config(level_params);
     transcript.append_serde(ABSORB_PROVER_V, v);
     sample_sparse_challenges::<F, T, D>(
         transcript,
         CHALLENGE_STAGE1_FOLD,
         num_blocks,
-        &challenge_cfg,
+        &level_params.stage1_config,
     )
 }
 
@@ -381,7 +375,7 @@ fn quotient_from_cyclic_and_reduced<F: FieldCore, const D: usize>(
 #[tracing::instrument(skip_all, name = "compute_r_split_eq")]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_r_split_eq<F, const D: usize>(
-    level_params: HachiLevelParams,
+    level_params: &HachiLevelParams,
     _setup: &HachiExpandedSetup<F>,
     challenges: &[SparseChallenge],
     w_hat_flat: &[[i8; D]],
@@ -507,7 +501,7 @@ pub(crate) fn compute_m_a_reference<F, const D: usize>(
     opening_point: &RingOpeningPoint<F>,
     challenges: &[SparseChallenge],
     alpha: &F,
-    level_params: HachiLevelParams,
+    level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<Vec<Vec<F>>, HachiError>
 where
@@ -657,7 +651,7 @@ mod tests {
     use super::*;
     use std::array::from_fn;
 
-    use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
+    use crate::algebra::CyclotomicRing;
     use crate::protocol::challenges::sparse::sample_sparse_challenges;
     use crate::protocol::commitment::HachiProverSetup;
     use crate::protocol::commitment::{
@@ -676,10 +670,7 @@ mod tests {
         let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_SEED);
         transcript.append_serde(ABSORB_PROVER_V, v);
 
-        let challenge_cfg = SparseChallengeConfig {
-            weight: TinyConfig::CHALLENGE_WEIGHT,
-            nonzero_coeffs: vec![-1, 1],
-        };
+        let challenge_cfg = TinyConfig::stage1_challenge_config(D);
         let sparse = sample_sparse_challenges::<F, Blake2bTranscript<F>, D>(
             &mut transcript,
             CHALLENGE_STAGE1_FOLD,
@@ -910,7 +901,7 @@ mod tests {
     fn prove_output_shapes_are_correct() {
         let f = build_fixture();
 
-        assert_eq!(f.quad_eq.v().len(), TinyConfig::N_D);
+        assert_eq!(f.quad_eq.v().len(), TinyConfig::envelope(0).max_n_d);
 
         let w_hat = f.quad_eq.w_hat().unwrap();
         assert_eq!(w_hat.len(), NUM_BLOCKS);

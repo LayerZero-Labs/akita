@@ -287,8 +287,17 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiVerifierSetup<F> {
     }
 }
 
+fn root_current_w_len<const D: usize>(layout: HachiCommitmentLayout) -> usize {
+    layout
+        .num_blocks
+        .checked_mul(layout.block_len)
+        .and_then(|len| len.checked_mul(D))
+        .unwrap_or(0)
+}
+
 #[cfg(feature = "disk-persistence")]
 fn cache_file_name<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
+    let envelope = Cfg::envelope(max_num_vars);
     let family = Cfg::family_key()
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
@@ -296,9 +305,9 @@ fn cache_file_name<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
     format!(
         "hachi_{family}_d{}_na{}_nb{}_nd{}_b{}_wb{}_nv{max_num_vars}.setup",
         Cfg::D,
-        Cfg::N_A,
-        Cfg::N_B,
-        Cfg::N_D,
+        envelope.max_n_a,
+        envelope.max_n_b,
+        envelope.max_n_d,
         Cfg::decomposition().log_basis,
         Cfg::w_log_basis(),
     )
@@ -427,10 +436,11 @@ where
     #[tracing::instrument(skip_all, name = "RingCommitmentScheme::setup")]
     fn setup(max_num_vars: usize) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError> {
         let layout = validate_and_derive_layout::<Cfg, D>(max_num_vars)?;
+        let envelope = Cfg::envelope(max_num_vars);
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars,
             level: 0,
-            current_w_len: layout.num_blocks * layout.block_len * D,
+            current_w_len: root_current_w_len::<D>(layout),
         });
         ensure_supported_num_vars(max_num_vars, layout.required_num_vars::<D>()?)?;
 
@@ -455,15 +465,18 @@ where
             }
         }
 
-        let w_layout = w_commitment_layout::<F, D, Cfg>(root_params, layout)?;
+        let w_layout = w_commitment_layout::<F, D, Cfg>(&root_params, layout)?;
         let a_cols = layout.inner_width.max(w_layout.inner_width);
         let b_cols = layout.outer_width.max(w_layout.outer_width);
         let d_cols = layout.d_matrix_width.max(w_layout.d_matrix_width);
 
         let public_matrix_seed = sample_public_matrix_seed();
-        let a_matrix = derive_public_matrix::<F, D>(Cfg::N_A, a_cols, &public_matrix_seed, b"A");
-        let b_matrix = derive_public_matrix::<F, D>(Cfg::N_B, b_cols, &public_matrix_seed, b"B");
-        let d_matrix = derive_public_matrix::<F, D>(Cfg::N_D, d_cols, &public_matrix_seed, b"D");
+        let a_matrix =
+            derive_public_matrix::<F, D>(envelope.max_n_a, a_cols, &public_matrix_seed, b"A");
+        let b_matrix =
+            derive_public_matrix::<F, D>(envelope.max_n_b, b_cols, &public_matrix_seed, b"B");
+        let d_matrix =
+            derive_public_matrix::<F, D>(envelope.max_n_d, d_cols, &public_matrix_seed, b"D");
 
         let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
         let b_flat = FlatMatrix::from_ring_matrix(&b_matrix);
@@ -493,22 +506,12 @@ where
             ntt_D: ntt_d,
         };
         let verifier_setup = HachiVerifierSetup { expanded };
-        ensure_matrix_shape_ge::<F, D>(
-            &prover_setup.expanded.A,
-            Cfg::N_A,
-            layout.inner_width,
-            "A",
-        )?;
-        ensure_matrix_shape_ge::<F, D>(
-            &prover_setup.expanded.B,
-            Cfg::N_B,
-            layout.outer_width,
-            "B",
-        )?;
+        ensure_matrix_shape_ge::<F, D>(&prover_setup.expanded.A, envelope.max_n_a, a_cols, "A")?;
+        ensure_matrix_shape_ge::<F, D>(&prover_setup.expanded.B, envelope.max_n_b, b_cols, "B")?;
         ensure_matrix_shape_ge::<F, D>(
             &prover_setup.expanded.D_mat,
-            Cfg::N_D,
-            layout.d_matrix_width,
+            envelope.max_n_d,
+            d_cols,
             "D",
         )?;
         Ok((prover_setup, verifier_setup))
@@ -524,20 +527,38 @@ where
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let layout = setup.layout();
+        let root_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars: setup.expanded.seed.max_num_vars,
+            level: 0,
+            current_w_len: root_current_w_len::<D>(layout),
+        });
         ensure_supported_num_vars(
             setup.expanded.seed.max_num_vars,
             layout.required_num_vars::<D>()?,
         )?;
         ensure_block_layout(f_blocks, layout)?;
-        ensure_matrix_shape_ge::<F, D>(&setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
-        ensure_matrix_shape_ge::<F, D>(&setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
+        ensure_matrix_shape_ge::<F, D>(
+            &setup.expanded.A,
+            root_params.n_a,
+            layout.inner_width,
+            "A",
+        )?;
+        ensure_matrix_shape_ge::<F, D>(
+            &setup.expanded.B,
+            root_params.n_b,
+            layout.outer_width,
+            "B",
+        )?;
 
         let depth_commit = layout.num_digits_commit;
         let depth_open = layout.num_digits_open;
         let log_basis = layout.log_basis;
         let block_slices: Vec<&[CyclotomicRing<F, D>]> =
             f_blocks.iter().map(|b| b.as_slice()).collect();
-        let t_all = mat_vec_mul_ntt_i8(&setup.ntt_A, &block_slices, depth_commit, log_basis);
+        let mut t_all = mat_vec_mul_ntt_i8(&setup.ntt_A, &block_slices, depth_commit, log_basis);
+        for t_i in &mut t_all {
+            t_i.truncate(root_params.n_a);
+        }
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
             .map(|t_i| decompose_rows_i8(&t_i, depth_open, log_basis))
             .collect();
@@ -545,13 +566,6 @@ where
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
 
         let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(&setup.ntt_B, &t_hat_flat);
-        let root_params = Cfg::level_params(HachiScheduleInputs {
-            max_num_vars: setup.expanded.seed.max_num_vars,
-            level: 0,
-            current_w_len: 1usize
-                .checked_shl(setup.expanded.seed.max_num_vars as u32)
-                .unwrap_or(0),
-        });
         u.truncate(root_params.n_b);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
@@ -562,6 +576,11 @@ where
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let layout = setup.layout();
+        let root_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars: setup.expanded.seed.max_num_vars,
+            level: 0,
+            current_w_len: root_current_w_len::<D>(layout),
+        });
         let num_blocks = layout.num_blocks;
         let block_len = layout.block_len;
         let max_len = num_blocks
@@ -590,7 +609,10 @@ where
             })
             .collect();
 
-        let t_all = mat_vec_mul_ntt_i8(&setup.ntt_A, &block_slices, depth_commit, log_basis);
+        let mut t_all = mat_vec_mul_ntt_i8(&setup.ntt_A, &block_slices, depth_commit, log_basis);
+        for t_i in &mut t_all {
+            t_i.truncate(root_params.n_a);
+        }
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
             .map(|t_i| decompose_rows_i8(&t_i, depth_open, log_basis))
             .collect();
@@ -598,13 +620,6 @@ where
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
 
         let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(&setup.ntt_B, &t_hat_flat);
-        let root_params = Cfg::level_params(HachiScheduleInputs {
-            max_num_vars: setup.expanded.seed.max_num_vars,
-            level: 0,
-            current_w_len: 1usize
-                .checked_shl(setup.expanded.seed.max_num_vars as u32)
-                .unwrap_or(0),
-        });
         u.truncate(root_params.n_b);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
@@ -616,12 +631,27 @@ where
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let layout = setup.layout();
+        let root_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars: setup.expanded.seed.max_num_vars,
+            level: 0,
+            current_w_len: root_current_w_len::<D>(layout),
+        });
         ensure_supported_num_vars(
             setup.expanded.seed.max_num_vars,
             layout.required_num_vars::<D>()?,
         )?;
-        ensure_matrix_shape_ge::<F, D>(&setup.expanded.A, Cfg::N_A, layout.inner_width, "A")?;
-        ensure_matrix_shape_ge::<F, D>(&setup.expanded.B, Cfg::N_B, layout.outer_width, "B")?;
+        ensure_matrix_shape_ge::<F, D>(
+            &setup.expanded.A,
+            root_params.n_a,
+            layout.inner_width,
+            "A",
+        )?;
+        ensure_matrix_shape_ge::<F, D>(
+            &setup.expanded.B,
+            root_params.n_b,
+            layout.outer_width,
+            "B",
+        )?;
 
         let sparse_blocks =
             map_onehot_to_sparse_blocks(onehot_k, indices, layout.r_vars, layout.m_vars, D)?;
@@ -629,7 +659,7 @@ where
         let depth_commit = layout.num_digits_commit;
         let depth_open = layout.num_digits_open;
         let log_basis = layout.log_basis;
-        let zero_block_len = Cfg::N_A.checked_mul(depth_open).unwrap();
+        let zero_block_len = root_params.n_a.checked_mul(depth_open).unwrap();
         let a_view = setup.expanded.A.view::<D>();
         let block_len = layout.block_len;
 
@@ -638,8 +668,9 @@ where
                 if block_entries.is_empty() {
                     vec![[0i8; D]; zero_block_len]
                 } else {
-                    let t_i =
+                    let mut t_i =
                         inner_ajtai_onehot_wide(&a_view, block_entries, block_len, depth_commit);
+                    t_i.truncate(root_params.n_a);
                     decompose_rows_i8(&t_i, depth_open, log_basis)
                 }
             })
@@ -648,13 +679,6 @@ where
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
 
         let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(&setup.ntt_B, &t_hat_flat);
-        let root_params = Cfg::level_params(HachiScheduleInputs {
-            max_num_vars: setup.expanded.seed.max_num_vars,
-            level: 0,
-            current_w_len: 1usize
-                .checked_shl(setup.expanded.seed.max_num_vars as u32)
-                .unwrap_or(0),
-        });
         u.truncate(root_params.n_b);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
@@ -775,9 +799,9 @@ impl HachiCommitmentCore {
             let level_params = Cfg::level_params(HachiScheduleInputs {
                 max_num_vars: layout_num_vars,
                 level: 0,
-                current_w_len: 1usize << layout_num_vars,
+                current_w_len: root_current_w_len::<D>(layout),
             });
-            let w_layout = w_commitment_layout::<F, D, Cfg>(level_params, layout)?;
+            let w_layout = w_commitment_layout::<F, D, Cfg>(&level_params, layout)?;
             tracing::debug!(?layout, ?w_layout, "setup layout");
             max_inner_width = max_inner_width.max(w_layout.inner_width);
             max_outer_width = max_outer_width.max(w_layout.outer_width);
@@ -846,9 +870,9 @@ impl HachiCommitmentCore {
         let level_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: layout_num_vars,
             level: 0,
-            current_w_len: 1usize << layout_num_vars,
+            current_w_len: root_current_w_len::<D>(new_layout),
         });
-        let w_layout = w_commitment_layout::<F, D, Cfg>(level_params, new_layout)?;
+        let w_layout = w_commitment_layout::<F, D, Cfg>(&level_params, new_layout)?;
         let a_width = existing.A.first_row_len::<D>();
         if a_width < w_layout.inner_width {
             return Err(HachiError::InvalidSetup(format!(
@@ -859,11 +883,12 @@ impl HachiCommitmentCore {
         let b_cols = new_layout.outer_width.max(w_layout.outer_width);
 
         let max_num_vars = new_layout.required_num_vars::<D>()?;
+        let envelope = Cfg::envelope(max_num_vars);
         let seed = existing.seed.public_matrix_seed;
 
         let d_cols = new_layout.d_matrix_width.max(w_layout.d_matrix_width);
-        let b_matrix = derive_public_matrix::<F, D>(Cfg::N_B, b_cols, &seed, b"B");
-        let d_matrix = derive_public_matrix::<F, D>(Cfg::N_D, d_cols, &seed, b"D");
+        let b_matrix = derive_public_matrix::<F, D>(envelope.max_n_b, b_cols, &seed, b"B");
+        let d_matrix = derive_public_matrix::<F, D>(envelope.max_n_d, d_cols, &seed, b"D");
 
         let b_flat = FlatMatrix::from_ring_matrix(&b_matrix);
         let d_flat = FlatMatrix::from_ring_matrix(&d_matrix);
@@ -904,9 +929,9 @@ impl HachiCommitmentCore {
         let level_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: layout_num_vars,
             level: 0,
-            current_w_len: 1usize << layout_num_vars,
+            current_w_len: root_current_w_len::<D>(layout),
         });
-        let w_layout = w_commitment_layout::<F, D, Cfg>(level_params, layout)?;
+        let w_layout = w_commitment_layout::<F, D, Cfg>(&level_params, layout)?;
         let a_cols = layout.inner_width.max(w_layout.inner_width);
         let b_cols = layout.outer_width.max(w_layout.outer_width);
         let d_cols = layout.d_matrix_width.max(w_layout.d_matrix_width);
@@ -933,11 +958,15 @@ impl HachiCommitmentCore {
         F: FieldCore + CanonicalField + FieldSampling,
         Cfg: CommitmentConfig,
     {
+        let envelope = Cfg::envelope(max_num_vars);
         {
             let ring_bytes = std::mem::size_of::<CyclotomicRing<F, D>>();
-            let a_raw_mb = (Cfg::N_A * a_cols * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
-            let b_raw_mb = (Cfg::N_B * b_cols * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
-            let d_raw_mb = (Cfg::N_D * d_cols * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
+            let a_raw_mb =
+                (envelope.max_n_a * a_cols * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
+            let b_raw_mb =
+                (envelope.max_n_b * b_cols * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
+            let d_raw_mb =
+                (envelope.max_n_d * d_cols * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
             tracing::debug!(
                 a_cols,
                 b_cols,
@@ -950,9 +979,12 @@ impl HachiCommitmentCore {
                 "setup matrix sizes"
             );
         }
-        let a_matrix = derive_public_matrix::<F, D>(Cfg::N_A, a_cols, &public_matrix_seed, b"A");
-        let b_matrix = derive_public_matrix::<F, D>(Cfg::N_B, b_cols, &public_matrix_seed, b"B");
-        let d_matrix = derive_public_matrix::<F, D>(Cfg::N_D, d_cols, &public_matrix_seed, b"D");
+        let a_matrix =
+            derive_public_matrix::<F, D>(envelope.max_n_a, a_cols, &public_matrix_seed, b"A");
+        let b_matrix =
+            derive_public_matrix::<F, D>(envelope.max_n_b, b_cols, &public_matrix_seed, b"B");
+        let d_matrix =
+            derive_public_matrix::<F, D>(envelope.max_n_d, d_cols, &public_matrix_seed, b"D");
 
         let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
         let b_flat = FlatMatrix::from_ring_matrix(&b_matrix);
@@ -978,22 +1010,12 @@ impl HachiCommitmentCore {
             ntt_D: ntt_d,
         };
         let verifier_setup = HachiVerifierSetup { expanded };
-        ensure_matrix_shape_ge::<F, D>(
-            &prover_setup.expanded.A,
-            Cfg::N_A,
-            layout.inner_width,
-            "A",
-        )?;
-        ensure_matrix_shape_ge::<F, D>(
-            &prover_setup.expanded.B,
-            Cfg::N_B,
-            layout.outer_width,
-            "B",
-        )?;
+        ensure_matrix_shape_ge::<F, D>(&prover_setup.expanded.A, envelope.max_n_a, a_cols, "A")?;
+        ensure_matrix_shape_ge::<F, D>(&prover_setup.expanded.B, envelope.max_n_b, b_cols, "B")?;
         ensure_matrix_shape_ge::<F, D>(
             &prover_setup.expanded.D_mat,
-            Cfg::N_D,
-            layout.d_matrix_width,
+            envelope.max_n_d,
+            d_cols,
             "D",
         )?;
         Ok((prover_setup, verifier_setup))
@@ -1047,9 +1069,9 @@ mod tests {
             current_w_len: 1usize << layout_b.required_num_vars::<TEST_D>().unwrap(),
         });
         let w_layout_a =
-            w_commitment_layout::<TestF, TEST_D, TinyConfig>(params_a, layout_a).unwrap();
+            w_commitment_layout::<TestF, TEST_D, TinyConfig>(&params_a, layout_a).unwrap();
         let w_layout_b =
-            w_commitment_layout::<TestF, TEST_D, TinyConfig>(params_b, layout_b).unwrap();
+            w_commitment_layout::<TestF, TEST_D, TinyConfig>(&params_b, layout_b).unwrap();
 
         let expected_inner = [
             layout_a.inner_width,

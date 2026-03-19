@@ -1481,7 +1481,7 @@ mod tests {
             current_w_len: layout.num_blocks * layout.block_len * TestD,
         });
         let w_layout =
-            w_commitment_layout::<TestF, TestD, TinyConfig>(level_params, layout).unwrap();
+            w_commitment_layout::<TestF, TestD, TinyConfig>(&level_params, layout).unwrap();
         let digit_commit = digit_poly
             .commit_inner(
                 &setup.expanded.A,

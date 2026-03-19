@@ -50,23 +50,16 @@ use std::time::Instant;
 
 const MAX_AFFINE_COEFFS: usize = 17;
 
-#[derive(Clone, Copy, Debug)]
-struct SparseCoeffEntry {
-    k: u8,
-    abs_coeff: u64,
-    is_neg: bool,
-}
-
 #[derive(Clone, Copy, Debug, Default)]
 struct CompactCoeffEntry {
     abs_coeff: u64,
     is_neg: bool,
 }
 
-fn poly_coeffs_from_roots_int(roots: &[i64]) -> Vec<i64> {
-    let mut coeffs = vec![1i64];
+fn poly_coeffs_from_roots_int(roots: &[i128]) -> Vec<i128> {
+    let mut coeffs = vec![1i128];
     for &root in roots {
-        let mut next = vec![0i64; coeffs.len() + 1];
+        let mut next = vec![0i128; coeffs.len() + 1];
         for (idx, &coeff) in coeffs.iter().enumerate() {
             next[idx] -= coeff * root;
             next[idx + 1] += coeff;
@@ -78,8 +71,8 @@ fn poly_coeffs_from_roots_int(roots: &[i64]) -> Vec<i64> {
 
 #[derive(Clone)]
 struct RangeAffineFromSPrecomp<E: FieldCore> {
-    sparse_entries: Vec<SparseCoeffEntry>,
-    sparse_row_offsets: Vec<usize>,
+    dense_coeffs: Vec<E>,
+    dense_row_offsets: Vec<usize>,
     degree_q: usize,
     /// `h_i(s_0)` for each valid `s_0` and coefficient index `i`.
     /// Indexed as `compact_idx * num_rows + i`, where `compact_idx` is
@@ -96,8 +89,8 @@ struct RangeAffineFromSPrecomp<E: FieldCore> {
 impl<E: FieldCore + FromSmallInt> RangeAffineFromSPrecomp<E> {
     fn new(b: usize) -> Self {
         assert!(b >= 2, "b must be at least 2");
-        let half = (b / 2) as i64;
-        let pair_offsets: Vec<i64> = (0..half).map(|k| k * (k + 1)).collect();
+        let half = (b / 2) as i128;
+        let pair_offsets: Vec<i128> = (0..half).map(|k| k * (k + 1)).collect();
         let range_coeffs = poly_coeffs_from_roots_int(&pair_offsets);
         let degree_q = range_coeffs.len() - 1;
         let num_rows = degree_q + 1;
@@ -105,32 +98,22 @@ impl<E: FieldCore + FromSmallInt> RangeAffineFromSPrecomp<E> {
         let total_elems = num_rows * (num_rows + 1) / 2;
         let mut dense_int = Vec::with_capacity(total_elems);
         let mut dense_row_offsets = Vec::with_capacity(num_rows + 1);
-        let mut sparse_entries = Vec::new();
-        let mut sparse_row_offsets = Vec::with_capacity(num_rows + 1);
 
         for i in 0..num_rows {
             dense_row_offsets.push(dense_int.len());
-            sparse_row_offsets.push(sparse_entries.len());
             let row_len = degree_q - i + 1;
-            let mut binom: i64 = 1;
+            let mut binom: i128 = 1;
             for k in 0..row_len {
                 let m = i + k;
                 let coeff = range_coeffs[m] * binom;
                 dense_int.push(coeff);
-                if coeff != 0 {
-                    sparse_entries.push(SparseCoeffEntry {
-                        k: k as u8,
-                        abs_coeff: coeff.unsigned_abs(),
-                        is_neg: coeff < 0,
-                    });
-                }
                 if k + 1 < row_len {
-                    binom = binom * (m as i64 + 1) / (k as i64 + 1);
+                    binom = binom * (m as i128 + 1) / (k as i128 + 1);
                 }
             }
         }
         dense_row_offsets.push(dense_int.len());
-        sparse_row_offsets.push(sparse_entries.len());
+        let dense_coeffs = dense_int.iter().copied().map(E::from_i128).collect();
 
         let min_s = 0i32;
         let max_s = (half * (half - 1)) as i32;
@@ -149,7 +132,7 @@ impl<E: FieldCore + FromSmallInt> RangeAffineFromSPrecomp<E> {
                 let row = &dense_int[dense_row_offsets[i]..dense_row_offsets[i + 1]];
                 let mut h: i128 = 0;
                 for &c in row.iter().rev() {
-                    h = h * s_val as i128 + c as i128;
+                    h = h * s_val + c;
                 }
                 small_s_lut_int[compact_idx * num_rows + i] = h;
                 small_s_lut[compact_idx * num_rows + i] = E::from_i128(h);
@@ -161,7 +144,7 @@ impl<E: FieldCore + FromSmallInt> RangeAffineFromSPrecomp<E> {
             for (s0_ci, &s0_val) in pair_offsets.iter().enumerate() {
                 let h_base = s0_ci * num_rows;
                 for &s1_val in &pair_offsets {
-                    let delta = (s1_val - s0_val) as i128;
+                    let delta = s1_val - s0_val;
                     let mut delta_pow = 1i128;
                     for &h_i in &small_s_lut_int[h_base..h_base + num_rows] {
                         let coeff = h_i
@@ -188,8 +171,8 @@ impl<E: FieldCore + FromSmallInt> RangeAffineFromSPrecomp<E> {
         };
 
         Self {
-            sparse_entries,
-            sparse_row_offsets,
+            dense_coeffs,
+            dense_row_offsets,
             degree_q,
             small_s_lut,
             compact_coeff_lut,
@@ -210,13 +193,13 @@ impl<E: FieldCore> RangeAffineFromSPrecomp<E> {
         ci as usize
     }
 
-    #[inline]
-    fn sparse_row(&self, i: usize) -> &[SparseCoeffEntry] {
-        &self.sparse_entries[self.sparse_row_offsets[i]..self.sparse_row_offsets[i + 1]]
-    }
-
     fn num_rows(&self) -> usize {
         self.degree_q + 1
+    }
+
+    #[inline]
+    fn dense_row(&self, i: usize) -> &[E] {
+        &self.dense_coeffs[self.dense_row_offsets[i]..self.dense_row_offsets[i + 1]]
     }
 
     #[inline]
@@ -344,35 +327,20 @@ fn finish_gruen_round_poly_from_q_coeffs<E: FieldCore>(
 #[inline]
 fn compute_entry_coeffs_from_s<E: FieldCore + HasUnreducedOps>(
     out: &mut [E],
-    s_pows: &mut [E],
+    _s_pows: &mut [E],
     precomp: &RangeAffineFromSPrecomp<E>,
     s_0: E,
     a: E,
 ) {
-    let deg = precomp.degree_q;
     let num_rows = precomp.num_rows();
     debug_assert!(out.len() >= num_rows);
-    debug_assert!(s_pows.len() > deg);
-
-    s_pows[0] = E::one();
-    for k in 1..=deg {
-        s_pows[k] = s_pows[k - 1] * s_0;
-    }
 
     let mut a_pow = E::one();
     for (i, out_i) in out.iter_mut().enumerate().take(num_rows) {
-        let entries = precomp.sparse_row(i);
-        let mut pos = E::MulU64Accum::ZERO;
-        let mut neg = E::MulU64Accum::ZERO;
-        for entry in entries {
-            let prod = s_pows[entry.k as usize].mul_u64_unreduced(entry.abs_coeff);
-            if entry.is_neg {
-                neg += prod;
-            } else {
-                pos += prod;
-            }
+        let mut h_i = E::zero();
+        for &coeff in precomp.dense_row(i).iter().rev() {
+            h_i = h_i * s_0 + coeff;
         }
-        let h_i = E::reduce_mul_u64_accum(pos) - E::reduce_mul_u64_accum(neg);
         *out_i = a_pow * h_i;
         a_pow = a_pow * a;
     }
@@ -385,57 +353,20 @@ fn compute_entry_coeffs_from_s_x4<E: FieldCore + HasUnreducedOps>(
     s_0: [E; 4],
     a: [E; 4],
 ) {
-    let deg = precomp.degree_q;
     let num_rows = precomp.num_rows();
-
-    let mut pw = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
-    for p in &mut pw {
-        p[0] = E::one();
-    }
-    for k in 1..=deg {
-        pw[0][k] = pw[0][k - 1] * s_0[0];
-        pw[1][k] = pw[1][k - 1] * s_0[1];
-        pw[2][k] = pw[2][k - 1] * s_0[2];
-        pw[3][k] = pw[3][k - 1] * s_0[3];
-    }
 
     let mut ap = [E::one(); 4];
     for i in 0..num_rows {
-        let entries = precomp.sparse_row(i);
-
-        let mut pos0 = E::MulU64Accum::ZERO;
-        let mut neg0 = E::MulU64Accum::ZERO;
-        let mut pos1 = E::MulU64Accum::ZERO;
-        let mut neg1 = E::MulU64Accum::ZERO;
-        let mut pos2 = E::MulU64Accum::ZERO;
-        let mut neg2 = E::MulU64Accum::ZERO;
-        let mut pos3 = E::MulU64Accum::ZERO;
-        let mut neg3 = E::MulU64Accum::ZERO;
-
-        for entry in entries {
-            let k = entry.k as usize;
-            let c = entry.abs_coeff;
-            let p0 = pw[0][k].mul_u64_unreduced(c);
-            let p1 = pw[1][k].mul_u64_unreduced(c);
-            let p2 = pw[2][k].mul_u64_unreduced(c);
-            let p3 = pw[3][k].mul_u64_unreduced(c);
-            if entry.is_neg {
-                neg0 += p0;
-                neg1 += p1;
-                neg2 += p2;
-                neg3 += p3;
-            } else {
-                pos0 += p0;
-                pos1 += p1;
-                pos2 += p2;
-                pos3 += p3;
-            }
+        let mut h0 = E::zero();
+        let mut h1 = E::zero();
+        let mut h2 = E::zero();
+        let mut h3 = E::zero();
+        for &coeff in precomp.dense_row(i).iter().rev() {
+            h0 = h0 * s_0[0] + coeff;
+            h1 = h1 * s_0[1] + coeff;
+            h2 = h2 * s_0[2] + coeff;
+            h3 = h3 * s_0[3] + coeff;
         }
-
-        let h0 = E::reduce_mul_u64_accum(pos0) - E::reduce_mul_u64_accum(neg0);
-        let h1 = E::reduce_mul_u64_accum(pos1) - E::reduce_mul_u64_accum(neg1);
-        let h2 = E::reduce_mul_u64_accum(pos2) - E::reduce_mul_u64_accum(neg2);
-        let h3 = E::reduce_mul_u64_accum(pos3) - E::reduce_mul_u64_accum(neg3);
 
         out[0][i] = ap[0] * h0;
         out[1][i] = ap[1] * h1;
@@ -2031,32 +1962,34 @@ mod tests {
     fn stage1_round0_matches_dense_reference() {
         let num_u = 3usize;
         let num_l = 2usize;
-        let b = 8usize;
         let n = 1usize << (num_u + num_l);
-        let half = (b / 2) as i8;
-        let w_compact: Vec<i8> = (0..n).map(|i| ((i * 5 + 3) % b) as i8 - half).collect();
         let tau0: Vec<F> = (0..(num_u + num_l))
             .map(|i| F::from_u64((i as u64) + 2))
             .collect();
 
-        let mut prover =
-            HachiStage1Prover::new(&w_compact, &tau0, b, 1usize << num_u, num_u, num_l);
-        let stage1_poly = prover.compute_round_univariate(0, F::zero());
-        let s_compact: Vec<i32> = w_compact
-            .iter()
-            .map(|&w| {
-                let w = w as i32;
-                w * (w + 1)
-            })
-            .collect();
-        let reference = compute_norm_round_poly_from_s_compact(
-            &prover.split_eq,
-            &s_compact,
-            &prover.range_precomp,
-            F::zero(),
-        );
+        for b in [4usize, 8, 16, 32] {
+            let half = (b / 2) as i8;
+            let w_compact: Vec<i8> = (0..n).map(|i| ((i * 5 + 3) % b) as i8 - half).collect();
 
-        assert_eq!(stage1_poly, reference);
+            let mut prover =
+                HachiStage1Prover::new(&w_compact, &tau0, b, 1usize << num_u, num_u, num_l);
+            let stage1_poly = prover.compute_round_univariate(0, F::zero());
+            let s_compact: Vec<i32> = w_compact
+                .iter()
+                .map(|&w| {
+                    let w = w as i32;
+                    w * (w + 1)
+                })
+                .collect();
+            let reference = compute_norm_round_poly_from_s_compact(
+                &prover.split_eq,
+                &s_compact,
+                &prover.range_precomp,
+                F::zero(),
+            );
+
+            assert_eq!(stage1_poly, reference, "stage1 round0 mismatch for b={b}");
+        }
     }
 
     #[test]
