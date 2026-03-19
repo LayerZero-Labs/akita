@@ -84,7 +84,7 @@ fn max_linear_garbage_ntt_levels<F: CanonicalField>(config: &LabradorReductionCo
     }
     let modulus = (-F::one()).to_canonical_u128() + 1;
     let field_bits = (u128::BITS - modulus.leading_zeros()) as usize;
-    let aux_bits = config.aux_digit_bits as usize;
+    let aux_bits = config.aux_digit_bits;
     let carry_shift = aux_bits.saturating_mul(config.aux_digit_parts.saturating_sub(1));
     let carry_bits = field_bits.saturating_sub(carry_shift).max(1);
     let max_digit_bits = aux_bits.max(carry_bits);
