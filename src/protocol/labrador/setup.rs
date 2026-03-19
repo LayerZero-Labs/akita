@@ -1,7 +1,10 @@
 //! Labrador commitment key setup.
 
 use crate::algebra::ring::CyclotomicRing;
+use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
+use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
+use crate::protocol::labrador::commit::OUTER_NTT_LOG_BASIS;
 use crate::protocol::labrador::types::LabradorReductionConfig;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use std::sync::Arc;
@@ -64,11 +67,40 @@ impl<F: FieldCore + CanonicalField + FieldSampling, const D: usize> LabradorSetu
     }
 }
 
+#[inline]
+fn pow2_field<F: FieldCore>(exp: u32) -> F {
+    let two = F::one() + F::one();
+    let mut acc = F::one();
+    for _ in 0..exp {
+        acc = acc * two;
+    }
+    acc
+}
+
+#[inline]
+fn max_linear_garbage_ntt_levels<F: CanonicalField>(config: &LabradorReductionConfig) -> usize {
+    if config.aux_digit_parts == 0 || config.aux_digit_bits == 0 {
+        return 0;
+    }
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let field_bits = (u128::BITS - modulus.leading_zeros()) as usize;
+    let aux_bits = config.aux_digit_bits as usize;
+    let carry_shift = aux_bits.saturating_mul(config.aux_digit_parts.saturating_sub(1));
+    let carry_bits = field_bits.saturating_sub(carry_shift).max(1);
+    let max_digit_bits = aux_bits.max(carry_bits);
+    max_digit_bits.div_ceil(OUTER_NTT_LOG_BASIS as usize) + 1
+}
+
 /// Pre-derived commitment-key matrices for one Labrador level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabradorSetup<F: FieldCore, const D: usize> {
     /// Shared matrix payload for prover and verifier-side recursion.
     pub matrices: Arc<LabradorSetupMatrices<F, D>>,
+    /// Precomputed NTT caches for D scaled by `2^{k*OUTER_NTT_LOG_BASIS}`.
+    ///
+    /// Index `k` corresponds to level `k` in i8-basis decomposition of
+    /// linear-garbage digits.
+    pub ntt_d_scaled_levels: Vec<NttSlotCache<D>>,
 }
 
 impl<F: FieldCore + CanonicalField + FieldSampling, const D: usize> LabradorSetup<F, D> {
@@ -86,7 +118,39 @@ impl<F: FieldCore + CanonicalField + FieldSampling, const D: usize> LabradorSetu
             max_witness_len,
             comkey_seed,
         ));
-        Self { matrices }
+        let ntt_d_scaled_levels = if matrices.d_mat.is_empty() {
+            Vec::new()
+        } else {
+            let max_levels = max_linear_garbage_ntt_levels::<F>(config);
+            let mut slots = Vec::with_capacity(max_levels);
+            let scale_step = pow2_field::<F>(OUTER_NTT_LOG_BASIS);
+            let mut scale = F::one();
+            for _ in 0..max_levels {
+                let scaled_d: Vec<Vec<CyclotomicRing<F, D>>> = matrices
+                    .d_mat
+                    .iter()
+                    .map(|row| row.iter().map(|entry| entry.scale(&scale)).collect())
+                    .collect();
+                let scaled_d_flat = FlatMatrix::from_ring_matrix(&scaled_d);
+                match build_ntt_slot(scaled_d_flat.view::<D>()) {
+                    Ok(slot) => slots.push(slot),
+                    Err(err) => {
+                        tracing::debug!(
+                            error = %err,
+                            "failed to precompute Labrador D-matrix scaled NTT caches; using runtime fallback"
+                        );
+                        slots.clear();
+                        break;
+                    }
+                }
+                scale = scale * scale_step;
+            }
+            slots
+        };
+        Self {
+            matrices,
+            ntt_d_scaled_levels,
+        }
     }
 
     /// Return the matrix-only setup used by verifier-side recursion.
@@ -151,6 +215,7 @@ mod tests {
             .d_mat
             .iter()
             .all(|row| row.len() == linear_garbage_digits_len));
+        assert!(!setup.ntt_d_scaled_levels.is_empty());
     }
 
     #[test]
@@ -163,5 +228,6 @@ mod tests {
 
         assert!(setup.matrices.b_mat.is_empty());
         assert!(setup.matrices.d_mat.is_empty());
+        assert!(setup.ntt_d_scaled_levels.is_empty());
     }
 }

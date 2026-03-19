@@ -21,7 +21,7 @@ use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::utils::linear::{
-    mat_vec_mul_crt_ntt_i8_many, try_centered_i8_cache_from_ring_coeffs,
+    mat_vec_mul_crt_ntt_i8_single, try_centered_i8_cache_from_ring_coeffs,
 };
 use crate::protocol::labrador::config::jl_lifts;
 use crate::protocol::labrador::constraints::{pair_index, LabradorConstraint, NextWitnessLayout};
@@ -488,14 +488,9 @@ where
         let omega = sample_jl_collapse_challenge::<F, T>(transcript);
         let phi_flat = aggregate_jl_contraints_one_lift::<F, D>(matrix, &omega)?;
         let b_full = if let Some(witness_i8) = flat_witness_i8.as_ref() {
-            mat_vec_mul_crt_ntt_i8_many(
-                std::slice::from_ref(&phi_flat),
-                std::slice::from_ref(witness_i8),
-            )
-            .ok()
-            .and_then(|mut blocks| blocks.pop())
-            .and_then(|mut row| row.pop())
-            .unwrap_or_else(|| dot_product(&phi_flat, &flat_witness.rings))
+            mat_vec_mul_crt_ntt_i8_single(&phi_flat, witness_i8)
+                .ok()
+                .unwrap_or_else(|| dot_product(&phi_flat, &flat_witness.rings))
         } else {
             dot_product(&phi_flat, &flat_witness.rings)
         };

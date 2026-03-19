@@ -250,7 +250,10 @@ impl LabradorJlMatrix {
         if row_idx >= JL_ROWS || col_idx >= self.cols {
             return None;
         }
-        Some(jl_pair_to_sign(jl_pair_at(&self.packed_rows[row_idx], col_idx)))
+        Some(jl_pair_to_sign(jl_pair_at(
+            &self.packed_rows[row_idx],
+            col_idx,
+        )))
     }
 
     /// Squeeze a JL matrix directly from the transcript.

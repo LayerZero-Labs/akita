@@ -6,12 +6,16 @@ use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::utils::linear::{
-    decompose_rows_with_carry, mat_vec_mul_crt_ntt_i8_many,
+    decompose_rows_with_carry, mat_vec_mul_crt_ntt_i8_labrador_cross, mat_vec_mul_crt_ntt_i8_many,
+    mat_vec_mul_ntt_single_i8,
 };
 use crate::protocol::labrador::aggregation::{
     add_phi_flat_in_place, aggregate_jl_constraints_prover, aggregate_statement,
 };
-use crate::protocol::labrador::commit::ntt_two_tier_commit;
+use crate::protocol::labrador::commit::{
+    decompose_rows_ntt_i8_exact, expand_matrix_for_i8_digits, ntt_two_tier_commit,
+    outer_ntt_digit_levels, OUTER_NTT_LOG_BASIS,
+};
 use crate::protocol::labrador::config::LabradorFoldPlan;
 use crate::protocol::labrador::constraints::{build_next_constraint_plan, pair_index};
 use crate::protocol::labrador::johnson_lindenstrauss::project;
@@ -336,50 +340,113 @@ fn compute_linear_garbage<F: FieldCore + CanonicalField + FromSmallInt, const D:
         }
     }
     let rows = witness.rows();
-    let row_len = phi.first().map_or(0, Vec::len);
-    let pair_count = r * (r + 1) / 2;
 
     if let Some(rows_i8) = try_centered_i8_rows(rows) {
-        if let Ok(cross) = mat_vec_mul_crt_ntt_i8_many(phi, &rows_i8) {
-            let mut out = vec![CyclotomicRing::<F, D>::zero(); pair_count];
-            for i in 0..r {
-                out[pair_index(i, i, r)] = cross[i][i];
-                for j in i + 1..r {
-                    let pair = pair_index(i, j, r);
-                    out[pair] = cross[i][j] + cross[j][i];
-                }
+        match mat_vec_mul_crt_ntt_i8_labrador_cross(phi, &rows_i8) {
+            Ok(out) => {
+                tracing::debug!("linear garbage via direct i8 Labrador-cross CRT+NTT path");
+                return Ok(out);
             }
-            return Ok(out);
+            Err(err) => {
+                tracing::debug!(
+                    error = %err,
+                    "labrador-cross i8 kernel unavailable; falling back to generic i8 CRT+NTT"
+                );
+            }
+        }
+        if let Ok(cross) = mat_vec_mul_crt_ntt_i8_many(phi, &rows_i8) {
+            tracing::debug!("linear garbage via generic direct i8 CRT+NTT path");
+            return Ok(pack_linear_garbage_from_cross::<F, D>(&cross));
         }
     }
 
-    const LINEAR_GARBAGE_COL_BLOCK: usize = 32;
-    let out = cfg_fold_reduce!(
-        (0..row_len.div_ceil(LINEAR_GARBAGE_COL_BLOCK)),
-        || vec![CyclotomicRing::<F, D>::zero(); pair_count],
-        |mut acc, block_idx| {
-            let start = block_idx * LINEAR_GARBAGE_COL_BLOCK;
-            let end = (start + LINEAR_GARBAGE_COL_BLOCK).min(row_len);
-            for col in start..end {
-                for i in 0..r {
-                    phi[i][col].mul_accumulate_into(&rows[i][col], &mut acc[pair_index(i, i, r)]);
-                    for j in i + 1..r {
-                        let pair = pair_index(i, j, r);
-                        phi[i][col].mul_accumulate_into(&rows[j][col], &mut acc[pair]);
-                        phi[j][col].mul_accumulate_into(&rows[i][col], &mut acc[pair]);
-                    }
+    // For large coefficients, avoid generic ring×ring CRT+NTT because its
+    // reconstruction bound can be exceeded. Instead, decompose witness rows to
+    // bounded i8 planes and expand phi columns by powers of two, keeping the
+    // shared i8 backend exact (same strategy as commitment NTT path).
+    let ntt_digit_levels = rows
+        .iter()
+        .map(|row| outer_ntt_digit_levels(row))
+        .max()
+        .unwrap_or(1);
+    let expanded_phi = expand_matrix_for_i8_digits(phi, ntt_digit_levels, OUTER_NTT_LOG_BASIS);
+    let rows_digits: Vec<Vec<[i8; D]>> = cfg_iter!(rows)
+        .map(|row| decompose_rows_ntt_i8_exact(row, ntt_digit_levels, OUTER_NTT_LOG_BASIS))
+        .collect();
+    match mat_vec_mul_crt_ntt_i8_labrador_cross(&expanded_phi, &rows_digits) {
+        Ok(out) => {
+            tracing::debug!(
+                ntt_digit_levels,
+                "linear garbage via decomposed i8 Labrador-cross CRT+NTT path"
+            );
+            return Ok(out);
+        }
+        Err(err) => {
+            tracing::debug!(
+                error = %err,
+                ntt_digit_levels,
+                "labrador-cross decomposed i8 kernel unavailable; falling back to generic i8 CRT+NTT"
+            );
+        }
+    }
+    if let Ok(cross) = mat_vec_mul_crt_ntt_i8_many(&expanded_phi, &rows_digits) {
+        tracing::debug!(
+            ntt_digit_levels,
+            "linear garbage via generic decomposed i8 CRT+NTT path"
+        );
+        return Ok(pack_linear_garbage_from_cross::<F, D>(&cross));
+    }
+
+    tracing::debug!("linear garbage via pair-parallel schoolbook fallback");
+    let pairs: Vec<(usize, usize)> = (0..r).flat_map(|i| (i..r).map(move |j| (i, j))).collect();
+    let out: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(pairs)
+        .map(|(i, j)| {
+            let mut acc = CyclotomicRing::<F, D>::zero();
+            let phi_i = &phi[i];
+            let row_i = &rows[i];
+            if i == j {
+                for (lhs, rhs) in phi_i.iter().zip(row_i.iter()) {
+                    lhs.mul_accumulate_into(rhs, &mut acc);
+                }
+            } else {
+                let phi_j = &phi[j];
+                let row_j = &rows[j];
+                for ((lhs_ij, rhs_ij), (lhs_ji, rhs_ji)) in phi_i
+                    .iter()
+                    .zip(row_j.iter())
+                    .zip(phi_j.iter().zip(row_i.iter()))
+                {
+                    lhs_ij.mul_accumulate_into(rhs_ij, &mut acc);
+                    lhs_ji.mul_accumulate_into(rhs_ji, &mut acc);
                 }
             }
             acc
-        },
-        |mut acc, partial| {
-            for (dst, src) in acc.iter_mut().zip(partial.into_iter()) {
-                *dst += src;
-            }
-            acc
-        }
-    );
+        })
+        .collect();
     Ok(out)
+}
+
+#[tracing::instrument(skip_all, name = "labrador::pack_linear_garbage_from_cross")]
+fn pack_linear_garbage_from_cross<F: FieldCore, const D: usize>(
+    cross: &[Vec<CyclotomicRing<F, D>>],
+) -> Vec<CyclotomicRing<F, D>> {
+    let r = cross.len();
+    let packed_rows: Vec<Vec<CyclotomicRing<F, D>>> = cfg_into_iter!(0..r)
+        .map(|i| {
+            debug_assert_eq!(cross[i].len(), r);
+            let mut packed = Vec::with_capacity(r - i);
+            packed.push(cross[i][i]);
+            for j in i + 1..r {
+                packed.push(cross[i][j] + cross[j][i]);
+            }
+            packed
+        })
+        .collect();
+    let mut out = Vec::with_capacity(r * (r + 1) / 2);
+    for packed in packed_rows {
+        out.extend(packed);
+    }
+    out
 }
 
 /// Compute z = sum_i c_i * s_i (all-row linear combination).
@@ -403,10 +470,37 @@ fn amortize_witness<F: FieldCore + CanonicalField, const D: usize>(
 }
 
 #[tracing::instrument(skip_all, name = "labrador::build_linear_garbage_payload")]
-fn build_linear_garbage_payload<F: FieldCore, const D: usize>(
+fn build_linear_garbage_payload<F: FieldCore + CanonicalField, const D: usize>(
     setup: &LabradorSetup<F, D>,
     linear_garbage_digits: &[CyclotomicRing<F, D>],
 ) -> Vec<CyclotomicRing<F, D>> {
+    if !setup.ntt_d_scaled_levels.is_empty() {
+        let outer_digit_levels = outer_ntt_digit_levels(linear_garbage_digits);
+        if outer_digit_levels <= setup.ntt_d_scaled_levels.len() {
+            let mut digit_planes =
+                vec![vec![[0i8; D]; linear_garbage_digits.len()]; outer_digit_levels];
+            for (idx, ring) in linear_garbage_digits.iter().enumerate() {
+                let digits =
+                    ring.balanced_decompose_pow2_i8(outer_digit_levels, OUTER_NTT_LOG_BASIS);
+                for (level, digit) in digits.into_iter().enumerate() {
+                    digit_planes[level][idx] = digit;
+                }
+            }
+            let mut payload = vec![CyclotomicRing::<F, D>::zero(); setup.matrices.d_mat.len()];
+            for (slot, level_digits) in setup
+                .ntt_d_scaled_levels
+                .iter()
+                .zip(digit_planes.iter())
+                .take(outer_digit_levels)
+            {
+                let partial = mat_vec_mul_ntt_single_i8(slot, level_digits);
+                for (dst, src) in payload.iter_mut().zip(partial.into_iter()) {
+                    *dst += src;
+                }
+            }
+            return payload;
+        }
+    }
     if !setup.matrices.d_mat.is_empty() {
         mat_vec_mul(&setup.matrices.d_mat, linear_garbage_digits)
     } else {
@@ -795,6 +889,55 @@ mod tests {
                 .fold(CyclotomicRing::<F, D>::zero(), |a, b| a + b);
             assert_eq!(*z_elem, expected);
         }
+    }
+
+    #[test]
+    fn linear_garbage_decomposed_ntt_matches_reference() {
+        let r = 3usize;
+        let len = 6usize;
+        let mk_ring = |seed: i64| {
+            CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|k| {
+                let raw = (seed + 5 * k as i64) % 97;
+                F::from_i64(raw - 48)
+            }))
+        };
+
+        let phi: Vec<Vec<CyclotomicRing<F, D>>> = (0..r)
+            .map(|i| {
+                (0..len)
+                    .map(|j| mk_ring(17 * i as i64 + 11 * j as i64))
+                    .collect()
+            })
+            .collect();
+        let witness_rows: Vec<Vec<CyclotomicRing<F, D>>> = (0..r)
+            .map(|i| {
+                (0..len)
+                    .map(|j| mk_ring(23 * i as i64 + 7 * j as i64 + 3))
+                    .collect()
+            })
+            .collect();
+        let witness = LabradorWitness::new_unchecked(witness_rows.clone());
+
+        // Ensure this test exercises the decomposed-i8 NTT path, not the direct i8 path.
+        assert!(try_centered_i8_rows(witness.rows()).is_none());
+
+        let got = compute_linear_garbage(&phi, &witness).unwrap();
+
+        let mut expected = vec![CyclotomicRing::<F, D>::zero(); r * (r + 1) / 2];
+        for i in 0..r {
+            for j in i..r {
+                let pair = pair_index(i, j, r);
+                let mut acc = CyclotomicRing::<F, D>::zero();
+                for col in 0..len {
+                    phi[i][col].mul_accumulate_into(&witness_rows[j][col], &mut acc);
+                    if i != j {
+                        phi[j][col].mul_accumulate_into(&witness_rows[i][col], &mut acc);
+                    }
+                }
+                expected[pair] = acc;
+            }
+        }
+        assert_eq!(got, expected);
     }
 
     #[test]

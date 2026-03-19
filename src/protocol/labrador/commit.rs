@@ -134,7 +134,7 @@ where
 
 type RingVec<F, const D: usize> = Vec<CyclotomicRing<F, D>>;
 type TwoTierResult<F, const D: usize> = Result<(RingVec<F, D>, RingVec<F, D>), HachiError>;
-const OUTER_NTT_LOG_BASIS: u32 = 4;
+pub(crate) const OUTER_NTT_LOG_BASIS: u32 = 4;
 
 fn max_centered_coeff_bits<F: CanonicalField, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
@@ -165,7 +165,7 @@ fn max_centered_coeff_bits<F: CanonicalField, const D: usize>(
     }
 }
 
-fn outer_ntt_digit_levels<F: CanonicalField, const D: usize>(
+pub(crate) fn outer_ntt_digit_levels<F: CanonicalField, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
 ) -> usize {
     let coeff_bits = max_centered_coeff_bits(rows);
@@ -191,7 +191,7 @@ fn pow2_field<F: FieldCore>(exp: u32) -> F {
     acc
 }
 
-fn expand_matrix_for_i8_digits<F: FieldCore, const D: usize>(
+pub(crate) fn expand_matrix_for_i8_digits<F: FieldCore, const D: usize>(
     matrix: &[Vec<CyclotomicRing<F, D>>],
     num_digits: usize,
     log_basis: u32,
@@ -217,7 +217,7 @@ fn expand_matrix_for_i8_digits<F: FieldCore, const D: usize>(
         .collect()
 }
 
-fn decompose_rows_ntt_i8_exact<F: CanonicalField, const D: usize>(
+pub(crate) fn decompose_rows_ntt_i8_exact<F: CanonicalField, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
     num_digits: usize,
     log_basis: u32,
