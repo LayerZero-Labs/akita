@@ -19,21 +19,17 @@
 //!   relation family, so the safe algebra layer keeps the full
 //!   `{0, 1, Infinity}^2` fallback for now.
 
-#![allow(dead_code)]
-
 use super::eq_poly::EqPolynomial;
+#[cfg(test)]
 use super::hachi_stage1::range_check_eval_from_s;
 use super::UniPoly;
 use crate::algebra::fields::HasUnreducedOps;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::primitives::serialization::{
-    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
-};
 use crate::{AdditiveGroup, FieldCore, FromSmallInt};
-use std::io::{Read, Write};
 
 /// Point in a small evaluation domain used by the 2-round prefix kernels.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PrefixPoint<E: FieldCore> {
     Finite(E),
@@ -41,6 +37,7 @@ pub(crate) enum PrefixPoint<E: FieldCore> {
 }
 
 /// Candidate stage-1 domain `{1, -1, 2, Infinity}`.
+#[cfg(test)]
 pub(crate) fn stage1_prefix_points<E: FieldCore + FromSmallInt>() -> [PrefixPoint<E>; 4] {
     [
         PrefixPoint::Finite(E::one()),
@@ -51,6 +48,7 @@ pub(crate) fn stage1_prefix_points<E: FieldCore + FromSmallInt>() -> [PrefixPoin
 }
 
 /// Safe full stage-1 fallback domain `{0, 1, -1, 2, Infinity}`.
+#[cfg(test)]
 pub(crate) fn stage1_full_prefix_points<E: FieldCore + FromSmallInt>() -> [PrefixPoint<E>; 5] {
     [
         PrefixPoint::Finite(E::zero()),
@@ -71,16 +69,6 @@ pub(crate) struct Stage1BivariateSkipProof<E: FieldCore> {
     pub evals_except_boolean_core: Vec<E>,
 }
 
-impl<E: FieldCore + Valid> Stage1BivariateSkipProof<E> {
-    pub(crate) fn new(evals_except_boolean_core: Vec<E>) -> Result<Self, SerializationError> {
-        let out = Self {
-            evals_except_boolean_core,
-        };
-        out.check()?;
-        Ok(out)
-    }
-}
-
 #[inline]
 fn stage1_full_grid_index(x_idx: usize, y_idx: usize) -> usize {
     x_idx * 5 + y_idx
@@ -96,7 +84,6 @@ const STAGE1_B8_S_VALUES: [i64; 4] = [0, 2, 6, 12];
 const STAGE2_B8_W_VALUES: [i64; 8] = [-4, -3, -2, -1, 0, 1, 2, 3];
 const STAGE2_PREFIX_POINT_COUNT: usize = 9;
 const STAGE2_COMPRESSED_POINT_COUNT: usize = STAGE2_PREFIX_POINT_COUNT - 1;
-const STAGE2_BOOLEAN_CORNER_GRID_INDICES: [usize; 4] = [0, 1, 3, 4];
 const STAGE2_COMPRESSED_POINT_INDICES_BY_OMITTED_CORNER: [[usize; STAGE2_COMPRESSED_POINT_COUNT];
     4] = [
     [1, 2, 3, 4, 5, 6, 7, 8],
@@ -416,6 +403,7 @@ fn accum_pointwise_signed<E: FieldCore + HasUnreducedOps, const N: usize>(
 }
 
 #[inline]
+#[cfg(test)]
 fn stage1_b8_s_digit_from_compact_w(w: i8) -> usize {
     let w = i32::from(w);
     debug_assert!((-4..=3).contains(&w));
@@ -442,25 +430,6 @@ fn stage2_b8_w_digit(w: i8) -> usize {
     let w = i32::from(w);
     debug_assert!((-4..=3).contains(&w));
     (w + 4) as usize
-}
-
-#[inline]
-fn stage2_relation_m_point_values<E: FieldCore>(m_quad: [E; 4]) -> [E; STAGE2_PREFIX_POINT_COUNT] {
-    let m00 = m_quad[0];
-    let m10 = m_quad[1];
-    let m01 = m_quad[2];
-    let m11 = m_quad[3];
-    [
-        m00,
-        m01,
-        m01 - m00,
-        m10,
-        m11,
-        m11 - m10,
-        m10 - m00,
-        m11 - m01,
-        m11 - m10 - m01 + m00,
-    ]
 }
 
 #[inline]
@@ -507,24 +476,16 @@ fn stage1_quartic_coeffs_from_prefix_values<E: FieldCore + FromSmallInt>(values:
 }
 
 #[inline]
-fn stage1_eval_quartic_from_prefix_values<E: FieldCore + FromSmallInt>(
-    values: [E; 5],
-    point: PrefixPoint<E>,
-) -> E {
-    match point {
-        PrefixPoint::Infinity => values[4],
-        PrefixPoint::Finite(x) => {
-            let [a0, a1, a2, a3, a4] = stage1_quartic_coeffs_from_prefix_values(values);
-            a0 + x * (a1 + x * (a2 + x * (a3 + x * a4)))
-        }
-    }
+fn stage1_eval_quartic_from_prefix_values<E: FieldCore + FromSmallInt>(values: [E; 5], x: E) -> E {
+    let [a0, a1, a2, a3, a4] = stage1_quartic_coeffs_from_prefix_values(values);
+    a0 + x * (a1 + x * (a2 + x * (a3 + x * a4)))
 }
 
 #[inline]
 fn eval_stage1_biquartic_from_full_grid<E: FieldCore + FromSmallInt>(
     full_grid: [E; 25],
-    x: PrefixPoint<E>,
-    y: PrefixPoint<E>,
+    x: E,
+    y: E,
 ) -> E {
     let x_rows = std::array::from_fn(|x_idx| {
         stage1_eval_quartic_from_prefix_values(
@@ -555,6 +516,7 @@ pub(crate) fn can_use_stage1_two_round_prefix(num_u: usize, b: usize) -> bool {
     skip_all,
     name = "two_round_prefix::build_stage1_bivariate_skip_proof_from_compact"
 )]
+#[cfg(test)]
 pub(crate) fn build_stage1_bivariate_skip_proof_from_compact<
     E: FieldCore + FromSmallInt + HasUnreducedOps,
 >(
@@ -735,6 +697,7 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
     })
 }
 
+#[cfg(test)]
 fn stage1_storage_vector_from_quad<E: FieldCore + FromSmallInt>(quad: [E; 4], b: usize) -> Vec<E> {
     let points = stage1_full_prefix_points::<E>();
     let mut out = Vec::with_capacity(STAGE1_PREFIX_EVAL_COUNT);
@@ -805,16 +768,8 @@ impl<E: FieldCore + FromSmallInt> Stage1BivariateSkipState<E> {
         let evals: Vec<E> = (0..=5u64)
             .map(|x_raw| {
                 let x = E::from_u64(x_raw);
-                let q_x0 = eval_stage1_biquartic_from_full_grid(
-                    self.full_grid,
-                    PrefixPoint::Finite(x),
-                    PrefixPoint::Finite(E::zero()),
-                );
-                let q_x1 = eval_stage1_biquartic_from_full_grid(
-                    self.full_grid,
-                    PrefixPoint::Finite(x),
-                    PrefixPoint::Finite(E::one()),
-                );
+                let q_x0 = eval_stage1_biquartic_from_full_grid(self.full_grid, x, E::zero());
+                let q_x1 = eval_stage1_biquartic_from_full_grid(self.full_grid, x, E::one());
                 Self::linear_eq_eval(self.tau0, x) * (l1_at_0 * q_x0 + l1_at_1 * q_x1)
             })
             .collect();
@@ -828,11 +783,7 @@ impl<E: FieldCore + FromSmallInt> Stage1BivariateSkipState<E> {
                 let y = E::from_u64(y_raw);
                 l0_at_r0
                     * Self::linear_eq_eval(self.tau1, y)
-                    * eval_stage1_biquartic_from_full_grid(
-                        self.full_grid,
-                        PrefixPoint::Finite(r0),
-                        PrefixPoint::Finite(y),
-                    )
+                    * eval_stage1_biquartic_from_full_grid(self.full_grid, r0, y)
             })
             .collect();
         UniPoly::from_evals(&evals)
@@ -840,11 +791,13 @@ impl<E: FieldCore + FromSmallInt> Stage1BivariateSkipState<E> {
 }
 
 /// Proposed reduced stage-2 domain `{1, Infinity}`.
+#[cfg(test)]
 pub(crate) fn stage2_reduced_prefix_points<E: FieldCore + FromSmallInt>() -> [PrefixPoint<E>; 2] {
     [PrefixPoint::Finite(E::one()), PrefixPoint::Infinity]
 }
 
 /// Safe full stage-2 fallback domain `{0, 1, Infinity}`.
+#[cfg(test)]
 pub(crate) fn stage2_full_prefix_points<E: FieldCore + FromSmallInt>() -> [PrefixPoint<E>; 3] {
     [
         PrefixPoint::Finite(E::zero()),
@@ -855,6 +808,7 @@ pub(crate) fn stage2_full_prefix_points<E: FieldCore + FromSmallInt>() -> [Prefi
 
 /// Return the bilinear coefficients for a quad ordered as `[t00, t10, t01, t11]`.
 #[inline]
+#[cfg(test)]
 pub(crate) fn bilinear_coeffs_from_quad<E: FieldCore>(quad: [E; 4]) -> [E; 4] {
     let [t00, t10, t01, t11] = quad;
     [t00, t10 - t00, t01 - t00, t11 - t10 - t01 + t00]
@@ -863,6 +817,7 @@ pub(crate) fn bilinear_coeffs_from_quad<E: FieldCore>(quad: [E; 4]) -> [E; 4] {
 /// Evaluate the bilinear multilinear extension of a quad at ordinary field
 /// points `(x, y)`.
 #[inline]
+#[cfg(test)]
 pub(crate) fn bilinear_eval<E: FieldCore>(quad: [E; 4], x: E, y: E) -> E {
     let [a, b, c, d] = bilinear_coeffs_from_quad(quad);
     a + x * (b + y * d) + y * c
@@ -871,6 +826,7 @@ pub(crate) fn bilinear_eval<E: FieldCore>(quad: [E; 4], x: E, y: E) -> E {
 /// Evaluate a quad on a small domain where `Infinity` means "leading
 /// coefficient in that coordinate".
 #[inline]
+#[cfg(test)]
 pub(crate) fn bilinear_eval_on_prefix_points<E: FieldCore>(
     quad: [E; 4],
     x: PrefixPoint<E>,
@@ -888,6 +844,7 @@ pub(crate) fn bilinear_eval_on_prefix_points<E: FieldCore>(
 /// Evaluate the stage-1 candidate storage contribution used by the original
 /// `{1, -1, 2, Infinity}^2` proposal.
 #[inline]
+#[cfg(test)]
 pub(crate) fn stage1_local_norm_eval<E: FieldCore + FromSmallInt>(
     s_quad: [E; 4],
     x: PrefixPoint<E>,
@@ -905,6 +862,7 @@ pub(crate) fn stage1_local_norm_eval<E: FieldCore + FromSmallInt>(
 /// composed range-check polynomial `range_check(s(X, Y))`, rather than first
 /// evaluating `s` at `Infinity` and then applying the range check.
 #[inline]
+#[cfg(test)]
 pub(crate) fn stage1_local_norm_raw_eval<E: FieldCore + FromSmallInt>(
     s_quad: [E; 4],
     x: PrefixPoint<E>,
@@ -935,6 +893,7 @@ pub(crate) fn stage1_local_norm_raw_eval<E: FieldCore + FromSmallInt>(
 /// `{1, Infinity}^2` storage: evaluate the bilinear witness first, then apply
 /// `w (w + 1)`.
 #[inline]
+#[cfg(test)]
 pub(crate) fn stage2_local_norm_candidate_eval<E: FieldCore>(
     w_quad: [E; 4],
     x: PrefixPoint<E>,
@@ -950,6 +909,7 @@ pub(crate) fn stage2_local_norm_candidate_eval<E: FieldCore>(
 /// At `Infinity`, we take the leading coefficient in that coordinate of
 /// `w(X, Y) * (w(X, Y) + 1)`, so the linear `+w` term drops out.
 #[inline]
+#[cfg(test)]
 pub(crate) fn stage2_local_norm_raw_eval<E: FieldCore>(
     w_quad: [E; 4],
     x: PrefixPoint<E>,
@@ -964,6 +924,7 @@ pub(crate) fn stage2_local_norm_raw_eval<E: FieldCore>(
 
 /// Evaluate the stage-2 local relation contribution for one `(w^4, m^4)` pair.
 #[inline]
+#[cfg(test)]
 pub(crate) fn stage2_local_relation_eval<E: FieldCore>(
     w_quad: [E; 4],
     m_quad: [E; 4],
@@ -986,32 +947,8 @@ pub(crate) enum BooleanCorner {
 }
 
 impl BooleanCorner {
-    #[inline]
-    fn encode(self) -> u8 {
-        match self {
-            Self::ZeroZero => 0,
-            Self::ZeroOne => 1,
-            Self::OneZero => 2,
-            Self::OneOne => 3,
-        }
-    }
-
-    #[inline]
-    fn decode(value: u8) -> Result<Self, SerializationError> {
-        match value {
-            0 => Ok(Self::ZeroZero),
-            1 => Ok(Self::ZeroOne),
-            2 => Ok(Self::OneZero),
-            3 => Ok(Self::OneOne),
-            _ => Err(SerializationError::InvalidData(
-                "invalid BooleanCorner tag".to_string(),
-            )),
-        }
-    }
-}
-
-impl BooleanCorner {
     pub(crate) const ALL: [Self; 4] = [Self::ZeroZero, Self::ZeroOne, Self::OneZero, Self::OneOne];
+    #[cfg(test)]
     pub(crate) const DEFAULT_STAGE2_NORM: Self = Self::ZeroZero;
     pub(crate) const DEFAULT_STAGE2_RELATION: Self = Self::ZeroZero;
 
@@ -1049,6 +986,7 @@ pub(crate) struct Stage2CompressedGrid<E: FieldCore> {
 }
 
 impl<E: FieldCore> Stage2CompressedGrid<E> {
+    #[cfg(test)]
     pub(crate) fn from_full_grid(full_grid: [E; 9], omitted_corner: BooleanCorner) -> Self {
         let omitted_idx = omitted_corner.grid_index();
         let mut out_idx = 0usize;
@@ -1090,6 +1028,7 @@ pub(crate) struct Stage2BivariateSkipProof<E: FieldCore> {
 
 /// Return the stage-2 full-domain grid in row-major `x`-major order over
 /// `{0, 1, Infinity}^2`.
+#[cfg(test)]
 pub(crate) fn stage2_full_grid_values<E: FieldCore + FromSmallInt>(
     mut eval: impl FnMut(PrefixPoint<E>, PrefixPoint<E>) -> E,
 ) -> [E; 9] {
@@ -1103,6 +1042,7 @@ pub(crate) fn stage2_full_grid_values<E: FieldCore + FromSmallInt>(
 
 /// Evaluate a quadratic from its values at `{0, 1, Infinity}`.
 #[inline]
+#[cfg(test)]
 pub(crate) fn eval_quadratic_from_01_inf<E: FieldCore>(
     at_zero: E,
     at_one: E,
@@ -1160,6 +1100,7 @@ fn mul_linear_by_quadratic_coeffs<E: FieldCore>(tau: E, quad: [E; 3]) -> [E; 4] 
 
 /// Evaluate a biquadratic from its full `{0, 1, Infinity}^2` grid.
 #[inline]
+#[cfg(test)]
 pub(crate) fn eval_biquadratic_from_full_grid<E: FieldCore>(
     full_grid: [E; 9],
     x: PrefixPoint<E>,
@@ -1497,210 +1438,6 @@ impl<E: FieldCore + FromSmallInt> Stage2BivariateSkipState<E> {
     #[inline]
     fn linear_eq_eval(tau: E, x: E) -> E {
         tau * x + (E::one() - tau) * (E::one() - x)
-    }
-
-    pub(crate) fn reconstruct_round0_poly(&self) -> UniPoly<E> {
-        let (norm_poly, relation_poly) = self.reconstruct_round0_polys();
-        let max_len = norm_poly.coeffs.len().max(relation_poly.coeffs.len());
-        let mut combined = vec![E::zero(); max_len];
-        for (idx, coeff) in norm_poly.coeffs.iter().enumerate() {
-            combined[idx] += *coeff;
-        }
-        for (idx, coeff) in relation_poly.coeffs.iter().enumerate() {
-            combined[idx] += *coeff;
-        }
-        UniPoly::from_coeffs(combined)
-    }
-
-    pub(crate) fn reconstruct_round1_poly(&self, r0: E) -> UniPoly<E> {
-        let (norm_poly, relation_poly) = self.reconstruct_round1_polys(r0);
-        let max_len = norm_poly.coeffs.len().max(relation_poly.coeffs.len());
-        let mut combined = vec![E::zero(); max_len];
-        for (idx, coeff) in norm_poly.coeffs.iter().enumerate() {
-            combined[idx] += *coeff;
-        }
-        for (idx, coeff) in relation_poly.coeffs.iter().enumerate() {
-            combined[idx] += *coeff;
-        }
-        UniPoly::from_coeffs(combined)
-    }
-}
-
-impl Valid for BooleanCorner {
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
-impl HachiSerialize for BooleanCorner {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.encode().serialize_with_mode(&mut writer, compress)
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.encode().serialized_size(compress)
-    }
-}
-
-impl HachiDeserialize for BooleanCorner {
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        _validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        let value = u8::deserialize_with_mode(&mut reader, compress, Validate::No)?;
-        Self::decode(value)
-    }
-}
-
-impl<E: FieldCore + Valid> Valid for Stage1BivariateSkipProof<E> {
-    fn check(&self) -> Result<(), SerializationError> {
-        if self.evals_except_boolean_core.len() != STAGE1_PREFIX_EVAL_COUNT {
-            return Err(SerializationError::InvalidData(format!(
-                "stage1 prefix expected {} evaluations, found {}",
-                STAGE1_PREFIX_EVAL_COUNT,
-                self.evals_except_boolean_core.len()
-            )));
-        }
-        self.evals_except_boolean_core.check()
-    }
-}
-
-impl<E: FieldCore> HachiSerialize for Stage1BivariateSkipProof<E> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.evals_except_boolean_core
-            .serialize_with_mode(&mut writer, compress)
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.evals_except_boolean_core.serialized_size(compress)
-    }
-}
-
-impl<E: FieldCore + Valid> HachiDeserialize for Stage1BivariateSkipProof<E> {
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        let out = Self {
-            evals_except_boolean_core: Vec::<E>::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-            )?,
-        };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
-    }
-}
-
-impl<E: FieldCore + Valid> Valid for Stage2CompressedGrid<E> {
-    fn check(&self) -> Result<(), SerializationError> {
-        self.omitted_corner.check()?;
-        for eval in &self.evals_except_corner {
-            eval.check()?;
-        }
-        Ok(())
-    }
-}
-
-impl<E: FieldCore> HachiSerialize for Stage2CompressedGrid<E> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.omitted_corner
-            .serialize_with_mode(&mut writer, compress)?;
-        for eval in &self.evals_except_corner {
-            eval.serialize_with_mode(&mut writer, compress)?;
-        }
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.omitted_corner.serialized_size(compress)
-            + self
-                .evals_except_corner
-                .iter()
-                .map(|eval| eval.serialized_size(compress))
-                .sum::<usize>()
-    }
-}
-
-impl<E: FieldCore + Valid> HachiDeserialize for Stage2CompressedGrid<E> {
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        let omitted_corner = BooleanCorner::deserialize_with_mode(&mut reader, compress, validate)?;
-        let mut evals = Vec::with_capacity(8);
-        for _ in 0..8 {
-            evals.push(E::deserialize_with_mode(&mut reader, compress, validate)?);
-        }
-        let out = Self {
-            omitted_corner,
-            evals_except_corner: evals.try_into().map_err(|_| {
-                SerializationError::InvalidData(
-                    "stage2 compressed grid expected exactly 8 evaluations".to_string(),
-                )
-            })?,
-        };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
-    }
-}
-
-impl<E: FieldCore + Valid> Valid for Stage2BivariateSkipProof<E> {
-    fn check(&self) -> Result<(), SerializationError> {
-        self.norm.check()?;
-        self.relation.check()
-    }
-}
-
-impl<E: FieldCore> HachiSerialize for Stage2BivariateSkipProof<E> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.norm.serialize_with_mode(&mut writer, compress)?;
-        self.relation.serialize_with_mode(&mut writer, compress)
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.norm.serialized_size(compress) + self.relation.serialized_size(compress)
-    }
-}
-
-impl<E: FieldCore + Valid> HachiDeserialize for Stage2BivariateSkipProof<E> {
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        let out = Self {
-            norm: Stage2CompressedGrid::deserialize_with_mode(&mut reader, compress, validate)?,
-            relation: Stage2CompressedGrid::deserialize_with_mode(&mut reader, compress, validate)?,
-        };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
     }
 }
 

@@ -33,8 +33,6 @@ use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::ring_switch::eval_ring_at;
 #[cfg(debug_assertions)]
 use crate::protocol::ring_switch::m_row_count;
-#[cfg(test)]
-use crate::protocol::ring_switch::{build_alpha_evals_y, compute_m_evals_x};
 use crate::protocol::ring_switch::{
     build_w_evals, commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_verifier,
     w_ring_element_count, RingSwitchOutput, WCommitmentConfig,
@@ -52,16 +50,11 @@ use crate::protocol::sumcheck::hachi_stage2::{
 };
 #[cfg(debug_assertions)]
 use crate::protocol::sumcheck::multilinear_eval;
-use crate::protocol::sumcheck::two_round_prefix::{
-    Stage1BivariateSkipState, Stage2BivariateSkipState,
-};
 use crate::protocol::sumcheck::{
-    prove_sumcheck_with_omitted_prefix_rounds, verify_sumcheck, verify_sumcheck_with_prefix_rounds,
-    SumcheckInstanceProver, SumcheckInstanceVerifier,
+    prove_sumcheck, verify_sumcheck, SumcheckInstanceProver, SumcheckInstanceVerifier,
 };
 use crate::protocol::transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_STAGE1_PREFIX,
-    ABSORB_SUMCHECK_STAGE2_PREFIX, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH,
     CHALLENGE_SUMCHECK_ROUND,
 };
 use crate::protocol::transcript::Transcript;
@@ -72,14 +65,6 @@ use std::iter;
 use std::marker::PhantomData;
 use std::time::Instant;
 
-#[cfg(test)]
-use crate::protocol::ring_switch::expand_m_a;
-#[cfg(test)]
-use crate::protocol::transcript::labels::{
-    ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, DOMAIN_HACHI_PROTOCOL,
-};
-#[cfg(test)]
-use crate::protocol::transcript::Blake2bTranscript;
 #[cfg(test)]
 use crate::protocol::SmallTestCommitmentConfig;
 #[cfg(test)]
@@ -403,31 +388,14 @@ where
     let alpha_evals_y_debug = alpha_evals_y.clone();
     #[cfg(debug_assertions)]
     let m_evals_x_debug = m_evals_x.clone();
-    let (stage1_prefix, stage1_sumcheck, r_stage1, s_claim) = {
+    let (stage1_sumcheck, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         let mut stage1_prover =
             HachiStage1Prover::new(&w_evals_compact, &tau0, b, live_x_cols, num_u, num_l);
-        let omitted_prefix_rounds = if stage1_prover.can_use_two_round_prefix() {
-            2
-        } else {
-            0
-        };
         let (stage1_sumcheck, r_stage1, stage1_final_claim) =
-            prove_sumcheck_with_omitted_prefix_rounds::<F, _, F, _, _, _>(
-                &mut stage1_prover,
-                transcript,
-                |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-                omitted_prefix_rounds,
-                |round, prover, tr| {
-                    if round == 0 {
-                        if let Some(prefix) = prover.prefix_payload() {
-                            tr.append_serde(ABSORB_SUMCHECK_STAGE1_PREFIX, prefix);
-                        }
-                    }
-                    Ok(())
-                },
-            )?;
-        let stage1_prefix = stage1_prover.prefix_payload().cloned();
+            prove_sumcheck::<F, _, F, _, _>(&mut stage1_prover, transcript, |tr| {
+                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+            })?;
         let s_claim = stage1_prover.final_s_claim();
         #[cfg(not(debug_assertions))]
         let _ = stage1_final_claim;
@@ -435,13 +403,13 @@ where
         #[cfg(debug_assertions)]
         prove_stage1_selfcheck(&tau0, &r_stage1, s_claim, b, stage1_final_claim, level);
 
-        (stage1_prefix, stage1_sumcheck, r_stage1, s_claim)
+        (stage1_sumcheck, r_stage1, s_claim)
     };
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * s_claim + relation_claim;
-    let (stage2_prefix, stage2_sumcheck, sumcheck_challenges, stage2_final_claim, w_eval) = {
+    let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim, w_eval) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         let mut stage2_prover = HachiStage2Prover::new(
             batching_coeff,
@@ -456,27 +424,10 @@ where
             relation_claim,
         );
         debug_assert!(stage2_input_claim == SumcheckInstanceProver::input_claim(&stage2_prover));
-        let omitted_prefix_rounds = if stage2_prover.can_use_two_round_prefix() {
-            2
-        } else {
-            0
-        };
         let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
-            prove_sumcheck_with_omitted_prefix_rounds::<F, _, F, _, _, _>(
-                &mut stage2_prover,
-                transcript,
-                |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-                omitted_prefix_rounds,
-                |round, prover, tr| {
-                    if round == 0 {
-                        if let Some(prefix) = prover.prefix_payload() {
-                            tr.append_serde(ABSORB_SUMCHECK_STAGE2_PREFIX, prefix);
-                        }
-                    }
-                    Ok(())
-                },
-            )?;
-        let stage2_prefix = stage2_prover.prefix_payload().cloned();
+            prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
+                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+            })?;
         #[cfg(not(debug_assertions))]
         let _ = stage2_final_claim;
 
@@ -485,7 +436,6 @@ where
             stage2_prover.final_w_eval()
         };
         (
-            stage2_prefix,
             stage2_sumcheck,
             sumcheck_challenges,
             stage2_final_claim,
@@ -512,10 +462,8 @@ where
         level_proof: HachiLevelProof::new::<D>(
             y_ring,
             quad_eq.v,
-            stage1_prefix,
             stage1_sumcheck,
             s_claim,
-            stage2_prefix,
             stage2_sumcheck,
             w_commitment,
             w_eval,
@@ -694,7 +642,7 @@ where
 {
     dispatch_ring_dim!(level_d, |D_LEVEL| {
         let typed_commitment: RingCommitment<F, { D_LEVEL }> =
-            current_commitment.to_ring_commitment();
+            current_commitment.try_to_ring_commitment()?;
         let w_layout =
             <WCommitmentConfig<{ D_LEVEL }, Cfg>>::commitment_layout(opening_point.len())?;
         verify_one_level::<F, T, { D_LEVEL }, WCommitmentConfig<{ D_LEVEL }, Cfg>>(
@@ -812,7 +760,7 @@ where
 
     dispatch_ring_dim!(handoff_d, |D_HANDOFF| {
         let typed_commitment: RingCommitment<F, { D_HANDOFF }> =
-            current_commitment.to_ring_commitment();
+            current_commitment.try_to_ring_commitment()?;
         labrador_handoff_verify::<F, T, { D_HANDOFF }, Cfg>(
             tail,
             opening_point,
@@ -1135,6 +1083,9 @@ where
             // final level -- verification continues in Labrador.
             let is_last = is_last_hachi && !has_handoff_tail;
             let level_d = Cfg::d_at_level(i, current_point.len());
+            if level_proof.level_d() != level_d || current_commitment.ring_dim() != level_d {
+                return Err(HachiError::InvalidProof);
+            }
             tracing::debug!(
                 level = i,
                 is_last,
@@ -1146,7 +1097,7 @@ where
             let fw_ref = final_w_elems.as_deref();
             let challenges = if i == 0 {
                 let typed_commitment: RingCommitment<F, D> =
-                    current_commitment.to_ring_commitment();
+                    current_commitment.try_to_ring_commitment()?;
                 verify_one_level::<F, T, D, Cfg>(
                     level_proof,
                     setup,
@@ -1179,6 +1130,12 @@ where
                 let num_l = alpha_bits;
                 let num_u = challenges.len() - num_l;
 
+                if i + 1 < num_levels {
+                    let next_level_d = Cfg::d_at_level(i + 1, challenges.len());
+                    if level_proof.w_commit_d() != next_level_d {
+                        return Err(HachiError::InvalidProof);
+                    }
+                }
                 current_point = next_level_opening_point(&challenges, num_u, num_l);
                 current_opening = level_proof.stage2.next_w_eval;
                 current_commitment = level_proof.stage2.next_w_commitment.clone();
@@ -1233,8 +1190,8 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
-    let y_ring: CyclotomicRing<F, D> = level_proof.y_ring_typed();
-    let v_typed: Vec<CyclotomicRing<F, D>> = level_proof.v_typed();
+    let y_ring: CyclotomicRing<F, D> = level_proof.try_y_ring_typed()?;
+    let v_typed: Vec<CyclotomicRing<F, D>> = level_proof.try_v_typed()?;
 
     let alpha_bits = Cfg::D.trailing_zeros() as usize;
     if opening_point.len() < alpha_bits {
@@ -1293,46 +1250,16 @@ where
         layout,
     )?;
 
-    let stage1_tau0 = rs.tau0.clone();
-    let can_use_stage1_prefix = rs.num_u >= 2 && rs.b == 8;
     let stage1_verifier =
-        HachiStage1Verifier::new(stage1_tau0.clone(), level_proof.stage1.s_claim, rs.b);
+        HachiStage1Verifier::new(rs.tau0.clone(), level_proof.stage1.s_claim, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        if let Some(prefix) = level_proof.stage1.prefix.as_ref() {
-            if !can_use_stage1_prefix {
-                return Err(HachiError::InvalidProof);
-            }
-            let prefix_state = Stage1BivariateSkipState::new(prefix, &stage1_tau0, rs.b)
-                .ok_or(HachiError::InvalidProof)?;
-            verify_sumcheck_with_prefix_rounds::<F, _, F, _, _, _, _>(
-                &level_proof.stage1.sumcheck,
-                &stage1_verifier,
-                transcript,
-                |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-                2,
-                |round, tr| {
-                    if round == 0 {
-                        tr.append_serde(ABSORB_SUMCHECK_STAGE1_PREFIX, prefix);
-                    }
-                    Ok(())
-                },
-                |round, _, challenges| match round {
-                    0 => prefix_state.reconstruct_round0_poly().compress(),
-                    1 => prefix_state
-                        .reconstruct_round1_poly(challenges[0])
-                        .compress(),
-                    _ => unreachable!("only two stage1 prefix rounds are reconstructed"),
-                },
-            )?
-        } else {
-            verify_sumcheck::<F, _, F, _, _>(
-                &level_proof.stage1.sumcheck,
-                &stage1_verifier,
-                transcript,
-                |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-            )?
-        }
+        verify_sumcheck::<F, _, F, _, _>(
+            &level_proof.stage1.sumcheck,
+            &stage1_verifier,
+            transcript,
+            |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+        )?
     };
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &level_proof.stage1.s_claim);
@@ -1340,12 +1267,11 @@ where
     let relation_claim =
         relation_claim_from_rows(&rs.tau1, rs.alpha, &v_typed, &commitment.u, &y_ring);
     let stage2_input_claim = batching_coeff * level_proof.stage1.s_claim + relation_claim;
-    let can_use_stage2_prefix = rs.num_u >= 2;
 
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
         let (w_evals_full, _, _) = build_w_evals(fw, Cfg::D)?;
-        HachiStage2Verifier::new(
+        HachiStage2Verifier::new_with_full_witness(
             batching_coeff,
             level_proof.stage1.s_claim,
             w_evals_full,
@@ -1361,10 +1287,10 @@ where
             rs.num_l,
         )
     } else {
-        HachiStage2Verifier::new(
+        HachiStage2Verifier::new_with_claimed_w_eval(
             batching_coeff,
             level_proof.stage1.s_claim,
-            Vec::new(),
+            level_proof.stage2.next_w_eval,
             r_stage1.clone(),
             rs.alpha_evals_y,
             rs.m_evals_x,
@@ -1376,7 +1302,6 @@ where
             rs.num_u,
             rs.num_l,
         )
-        .with_w_eval_override(level_proof.stage2.next_w_eval)
     };
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
         return Err(HachiError::InvalidProof);
@@ -1384,173 +1309,15 @@ where
 
     let challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        if let Some(prefix) = level_proof.stage2.prefix.as_ref() {
-            if !can_use_stage2_prefix {
-                return Err(HachiError::InvalidProof);
-            }
-            let prefix_state = Stage2BivariateSkipState::new(
-                prefix,
-                &r_stage1,
-                level_proof.stage1.s_claim,
-                relation_claim,
-                batching_coeff,
-            )
-            .ok_or(HachiError::InvalidProof)?;
-            verify_sumcheck_with_prefix_rounds::<F, _, F, _, _, _, _>(
-                &level_proof.stage2.sumcheck,
-                &stage2_verifier,
-                transcript,
-                |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-                2,
-                |round, tr| {
-                    if round == 0 {
-                        tr.append_serde(ABSORB_SUMCHECK_STAGE2_PREFIX, prefix);
-                    }
-                    Ok(())
-                },
-                |round, _, challenges| match round {
-                    0 => prefix_state.reconstruct_round0_poly().compress(),
-                    1 => prefix_state
-                        .reconstruct_round1_poly(challenges[0])
-                        .compress(),
-                    _ => unreachable!("only two stage2 prefix rounds are reconstructed"),
-                },
-            )?
-        } else {
-            verify_sumcheck::<F, _, F, _, _>(
-                &level_proof.stage2.sumcheck,
-                &stage2_verifier,
-                transcript,
-                |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-            )?
-        }
+        verify_sumcheck::<F, _, F, _, _>(
+            &level_proof.stage2.sumcheck,
+            &stage2_verifier,
+            transcript,
+            |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+        )?
     };
 
     Ok(challenges)
-}
-
-/// Re-derive the ring-switch challenge `alpha` and the expanded `M_a` vector
-/// by replaying the transcript from the proof data and setup, exactly as the
-/// verifier does.
-#[cfg(test)]
-#[allow(dead_code)]
-pub(crate) fn rederive_alpha_and_m_a<F, const D: usize, Cfg>(
-    proof: &HachiProof<F>,
-    setup: &HachiVerifierSetup<F>,
-    opening_point: &[F],
-    commitment: &RingCommitment<F, D>,
-) -> Result<(F, Vec<F>), HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling + 'static,
-    Cfg: CommitmentConfig,
-{
-    let level0 = proof.levels.first().ok_or(HachiError::InvalidProof)?;
-    let y_ring: CyclotomicRing<F, D> = level0.y_ring_typed();
-    let v_typed: Vec<CyclotomicRing<F, D>> = level0.v_typed();
-
-    let alpha_bits = Cfg::D.trailing_zeros() as usize;
-    if opening_point.len() < alpha_bits {
-        return Err(HachiError::InvalidSetup(
-            "opening point length underflow".to_string(),
-        ));
-    }
-    let layout = Cfg::commitment_layout(opening_point.len())?;
-    let ring_opening_point = ring_opening_point_from_field::<F>(
-        &opening_point[alpha_bits..],
-        layout.r_vars,
-        layout.m_vars,
-        BasisMode::Lagrange,
-    )?;
-    let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_HACHI_PROTOCOL);
-
-    commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
-    for pt in opening_point {
-        transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
-    }
-    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
-
-    let quad_eq = QuadraticEquation::<F, D, Cfg>::new_verifier(
-        ring_opening_point,
-        v_typed,
-        &mut transcript,
-        commitment,
-        &y_ring,
-        layout,
-    )?;
-    transcript.append_serde(ABSORB_SUMCHECK_W, &level0.stage2.next_w_commitment);
-    let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
-    let m_a = compute_m_a_reference::<F, D, Cfg>(
-        &setup.expanded,
-        quad_eq.opening_point(),
-        &quad_eq.challenges,
-        &alpha,
-        layout,
-    )?;
-    let m_a_vec = expand_m_a::<F, D>(&m_a, alpha, layout.log_basis)?;
-    Ok((alpha, m_a_vec))
-}
-
-/// Re-derive the ring-switch challenge `alpha` and the fused `m_evals_x`
-/// table by replaying the verifier transcript from the proof data and setup.
-#[cfg(test)]
-#[allow(dead_code)]
-pub(crate) fn rederive_alpha_and_m_evals_x<F, const D: usize, Cfg>(
-    proof: &HachiProof<F>,
-    setup: &HachiVerifierSetup<F>,
-    opening_point: &[F],
-    commitment: &RingCommitment<F, D>,
-    tau1: &[F],
-) -> Result<(F, Vec<F>), HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling + 'static,
-    Cfg: CommitmentConfig,
-{
-    let level0 = proof.levels.first().ok_or(HachiError::InvalidProof)?;
-    let y_ring: CyclotomicRing<F, D> = level0.y_ring_typed();
-    let v_typed: Vec<CyclotomicRing<F, D>> = level0.v_typed();
-
-    let alpha_bits = Cfg::D.trailing_zeros() as usize;
-    if opening_point.len() < alpha_bits {
-        return Err(HachiError::InvalidSetup(
-            "opening point length underflow".to_string(),
-        ));
-    }
-    let layout = Cfg::commitment_layout(opening_point.len())?;
-    let ring_opening_point = ring_opening_point_from_field::<F>(
-        &opening_point[alpha_bits..],
-        layout.r_vars,
-        layout.m_vars,
-        BasisMode::Lagrange,
-    )?;
-    let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_HACHI_PROTOCOL);
-
-    commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
-    for pt in opening_point {
-        transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
-    }
-    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
-
-    let quad_eq = QuadraticEquation::<F, D, Cfg>::new_verifier(
-        ring_opening_point,
-        v_typed,
-        &mut transcript,
-        commitment,
-        &y_ring,
-        layout,
-    )?;
-    transcript.append_serde(ABSORB_SUMCHECK_W, &level0.stage2.next_w_commitment);
-    let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
-    let alpha_evals_y = build_alpha_evals_y(alpha, D);
-    let m_evals_x = compute_m_evals_x::<F, D, Cfg>(
-        &setup.expanded,
-        quad_eq.opening_point(),
-        &quad_eq.challenges,
-        alpha,
-        &alpha_evals_y,
-        layout,
-        tau1,
-    )?;
-    Ok((alpha, m_evals_x))
 }
 
 fn trace<F: FieldCore + FromSmallInt, const D: usize>(u: &CyclotomicRing<F, D>) -> F {
@@ -1579,6 +1346,73 @@ mod tests {
         let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
         let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
         (poly, evals)
+    }
+
+    fn make_verify_fixture(
+        num_vars: usize,
+    ) -> (
+        HachiVerifierSetup<F>,
+        RingCommitment<F, D>,
+        HachiProof<F>,
+        Vec<F>,
+        F,
+        HachiCommitmentLayout,
+    ) {
+        let alpha = D.trailing_zeros() as usize;
+        let layout = Cfg::commitment_layout(num_vars).unwrap();
+        let full_num_vars = layout.m_vars + layout.r_vars + alpha;
+
+        let (poly, evals) = make_dense_poly(full_num_vars);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(full_num_vars);
+        let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        let (commitment, hint) =
+            <Scheme as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout).unwrap();
+
+        let opening_point: Vec<F> = (0..full_num_vars)
+            .map(|i| F::from_u64((i + 2) as u64))
+            .collect();
+        let lw = lagrange_weights(&opening_point);
+        let opening: F = evals
+            .iter()
+            .zip(lw.iter())
+            .fold(F::zero(), |a, (&c, &w)| a + c * w);
+
+        let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+        let proof = <Scheme as CommitmentScheme<F, D>>::prove(
+            &setup,
+            &poly,
+            &opening_point,
+            hint,
+            &mut prover_transcript,
+            &commitment,
+            BasisMode::Lagrange,
+            &layout,
+        )
+        .unwrap();
+
+        (
+            verifier_setup,
+            commitment,
+            proof,
+            opening_point,
+            opening,
+            layout,
+        )
+    }
+
+    fn serialize_uncompressed_proof<GF: FieldCore>(proof: &HachiProof<GF>) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        proof.serialize_uncompressed(&mut bytes).unwrap();
+        bytes
+    }
+
+    fn level0_next_w_commitment_ring_dim_offset<GF: FieldCore>(proof: &HachiProof<GF>) -> usize {
+        let level0 = &proof.levels[0];
+        4 + level0.y_ring.serialized_size(Compress::No)
+            + level0.v.serialized_size(Compress::No)
+            + level0.stage1.sumcheck.serialized_size(Compress::No)
+            + level0.stage1.s_claim.serialized_size(Compress::No)
+            + level0.stage2.sumcheck.serialized_size(Compress::No)
     }
 
     #[test]
@@ -1681,6 +1515,68 @@ mod tests {
             result.is_err(),
             "verify must reject an incorrect opening value"
         );
+    }
+
+    #[test]
+    fn verify_rejects_malformed_y_ring_dimension_without_panicking() {
+        let (verifier_setup, commitment, proof, opening_point, opening, layout) =
+            make_verify_fixture(16);
+        let mut bytes = serialize_uncompressed_proof(&proof);
+        let bad_d = if D == 1 { 2 } else { 1 };
+        bytes[4..8].copy_from_slice(&(bad_d as u32).to_le_bytes());
+        let malformed = HachiProof::<F>::deserialize_uncompressed_unchecked(&bytes[..]).unwrap();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+            <Scheme as CommitmentScheme<F, D>>::verify(
+                &malformed,
+                &verifier_setup,
+                &mut verifier_transcript,
+                &opening_point,
+                &opening,
+                &commitment,
+                BasisMode::Lagrange,
+                &layout,
+            )
+        }));
+
+        assert!(matches!(result, Ok(Err(HachiError::InvalidProof))));
+    }
+
+    #[test]
+    fn verify_rejects_malformed_next_commitment_dimension_without_panicking() {
+        let HandoffFixture {
+            verifier_setup,
+            commitment,
+            proof,
+            opening_point,
+            opening,
+            layout,
+        } = handoff_fixture();
+        let mut bytes = serialize_uncompressed_proof(&proof);
+        let offset = level0_next_w_commitment_ring_dim_offset(&proof);
+        let current_d = proof.levels[0].w_commit_d();
+        let bad_d = if current_d == 1 { 2 } else { 1 };
+        bytes[offset..offset + 4].copy_from_slice(&(bad_d as u32).to_le_bytes());
+        let malformed =
+            HachiProof::<HandoffField>::deserialize_uncompressed_unchecked(&bytes[..]).unwrap();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut verifier_transcript =
+                Blake2bTranscript::<HandoffField>::new(HANDOFF_FIXTURE_LABEL);
+            <HandoffScheme as CommitmentScheme<HandoffField, { HandoffTestConfig::D }>>::verify(
+                &malformed,
+                &verifier_setup,
+                &mut verifier_transcript,
+                &opening_point,
+                &opening,
+                &commitment,
+                BasisMode::Lagrange,
+                &layout,
+            )
+        }));
+
+        assert!(matches!(result, Ok(Err(HachiError::InvalidProof))));
     }
 
     #[test]

@@ -33,7 +33,7 @@ use super::eq_poly::EqPolynomial;
 use super::split_eq::GruenSplitEq;
 use super::two_round_prefix::{
     build_stage1_bivariate_skip_proof_from_s_compact, can_use_stage1_two_round_prefix,
-    Stage1BivariateSkipProof, Stage1BivariateSkipState,
+    Stage1BivariateSkipState,
 };
 use super::{
     fold_evals_in_place, trim_trailing_zeros, CompactPairFoldLut, SumcheckInstanceProver,
@@ -648,7 +648,6 @@ enum STable<E: FieldCore> {
 }
 
 struct Stage1TwoRoundPrefix<E: FieldCore> {
-    proof: Stage1BivariateSkipProof<E>,
     skip_state: Stage1BivariateSkipState<E>,
     first_challenge: Option<E>,
 }
@@ -764,11 +763,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     }
 
     #[inline]
-    pub(crate) fn prefix_payload(&self) -> Option<&Stage1BivariateSkipProof<E>> {
-        self.two_round_prefix.as_ref().map(|prefix| &prefix.proof)
-    }
-
-    #[inline]
     fn compact_s_values(b: usize) -> Vec<i32> {
         let half = (b / 2) as i32;
         (0..half).map(|k| k * (k + 1)).collect()
@@ -803,7 +797,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
             let skip_state = Stage1BivariateSkipState::new(&proof, &tau0, self.b)
                 .expect("valid bivariate-skip state");
             self.two_round_prefix = Some(Stage1TwoRoundPrefix {
-                proof,
                 skip_state,
                 first_challenge: None,
             });

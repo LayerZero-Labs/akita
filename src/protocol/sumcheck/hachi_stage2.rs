@@ -49,7 +49,7 @@ use super::eq_poly::EqPolynomial;
 use super::split_eq::GruenSplitEq;
 use super::two_round_prefix::{
     build_stage2_bivariate_skip_proof_from_compact, can_use_stage2_two_round_prefix,
-    Stage2BivariateSkipProof, Stage2BivariateSkipState,
+    Stage2BivariateSkipState,
 };
 use super::{fold_evals_in_place, multilinear_eval, trim_trailing_zeros, CompactPairFoldLut};
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
@@ -71,7 +71,6 @@ enum WTable<E: FieldCore> {
 }
 
 struct Stage2TwoRoundPrefix<E: FieldCore> {
-    proof: Stage2BivariateSkipProof<E>,
     skip_state: Stage2BivariateSkipState<E>,
     first_challenge: Option<E>,
 }
@@ -306,11 +305,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
     }
 
     #[inline]
-    pub(crate) fn prefix_payload(&self) -> Option<&Stage2BivariateSkipProof<E>> {
-        self.two_round_prefix.as_ref().map(|prefix| &prefix.proof)
-    }
-
-    #[inline]
     fn can_skip_norm_linear_coeff(&self) -> bool {
         self.split_eq.can_recover_linear_q_term_from_claim()
     }
@@ -390,7 +384,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
             )
             .expect("valid bivariate-skip state");
             self.two_round_prefix = Some(Stage2TwoRoundPrefix {
-                proof,
                 skip_state,
                 first_challenge: None,
             });
@@ -2025,15 +2018,17 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
     }
 }
 
+/// Source of the witness oracle used by the stage-2 verifier.
+enum Stage2WitnessOracle<F: FieldCore> {
+    Full(Vec<F>),
+    ClaimedEval(F),
+}
+
 /// Verifier for the stage-2 fused virtual-claim + relation sumcheck.
 pub struct HachiStage2Verifier<F: FieldCore, const D: usize> {
     batching_coeff: F,
     s_claim: F,
-    w_evals: Vec<F>,
-    /// When set, overrides the `w_eval` computed from `w_evals` in
-    /// `expected_output_claim`. Used at intermediate fold levels where the
-    /// full `w` vector is not available.
-    w_eval_override: Option<F>,
+    witness_oracle: Stage2WitnessOracle<F>,
     r_stage1: Vec<F>,
     alpha_evals_y: Vec<F>,
     m_evals_x: Vec<F>,
@@ -2044,13 +2039,11 @@ pub struct HachiStage2Verifier<F: FieldCore, const D: usize> {
 }
 
 impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> HachiStage2Verifier<F, D> {
-    /// Create a fused verifier for the stage-2 virtual-claim + relation sumcheck.
     #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all, name = "HachiStage2Verifier::new")]
-    pub fn new(
+    fn new(
         batching_coeff: F,
         s_claim: F,
-        w_evals: Vec<F>,
+        witness_oracle: Stage2WitnessOracle<F>,
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
         m_evals_x: Vec<F>,
@@ -2066,8 +2059,7 @@ impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> HachiStage2Ve
         Self {
             batching_coeff,
             s_claim,
-            w_evals,
-            w_eval_override: None,
+            witness_oracle,
             r_stage1,
             alpha_evals_y,
             m_evals_x,
@@ -2078,11 +2070,74 @@ impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> HachiStage2Ve
         }
     }
 
-    /// Set the `w_eval` override for intermediate fold levels where the
-    /// full `w` vector is not available.
-    pub fn with_w_eval_override(mut self, w_eval: F) -> Self {
-        self.w_eval_override = Some(w_eval);
-        self
+    /// Create a fused verifier for the stage-2 sumcheck when the verifier has the full witness.
+    #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip_all, name = "HachiStage2Verifier::new_with_full_witness")]
+    pub fn new_with_full_witness(
+        batching_coeff: F,
+        s_claim: F,
+        w_evals: Vec<F>,
+        r_stage1: Vec<F>,
+        alpha_evals_y: Vec<F>,
+        m_evals_x: Vec<F>,
+        tau1: Vec<F>,
+        v: Vec<CyclotomicRing<F, D>>,
+        u: Vec<CyclotomicRing<F, D>>,
+        y_ring: CyclotomicRing<F, D>,
+        alpha: F,
+        num_u: usize,
+        num_l: usize,
+    ) -> Self {
+        Self::new(
+            batching_coeff,
+            s_claim,
+            Stage2WitnessOracle::Full(w_evals),
+            r_stage1,
+            alpha_evals_y,
+            m_evals_x,
+            tau1,
+            v,
+            u,
+            y_ring,
+            alpha,
+            num_u,
+            num_l,
+        )
+    }
+
+    /// Create a fused verifier for the stage-2 sumcheck when only the final witness evaluation is available.
+    #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip_all, name = "HachiStage2Verifier::new_with_claimed_w_eval")]
+    pub fn new_with_claimed_w_eval(
+        batching_coeff: F,
+        s_claim: F,
+        w_eval: F,
+        r_stage1: Vec<F>,
+        alpha_evals_y: Vec<F>,
+        m_evals_x: Vec<F>,
+        tau1: Vec<F>,
+        v: Vec<CyclotomicRing<F, D>>,
+        u: Vec<CyclotomicRing<F, D>>,
+        y_ring: CyclotomicRing<F, D>,
+        alpha: F,
+        num_u: usize,
+        num_l: usize,
+    ) -> Self {
+        Self::new(
+            batching_coeff,
+            s_claim,
+            Stage2WitnessOracle::ClaimedEval(w_eval),
+            r_stage1,
+            alpha_evals_y,
+            m_evals_x,
+            tau1,
+            v,
+            u,
+            y_ring,
+            alpha,
+            num_u,
+            num_l,
+        )
     }
 }
 
@@ -2103,9 +2158,9 @@ impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckInsta
 
     fn expected_output_claim(&self, challenges: &[F]) -> Result<F, HachiError> {
         let eq_val = EqPolynomial::mle(&self.r_stage1, challenges);
-        let w_eval = match self.w_eval_override {
-            Some(v) => v,
-            None => multilinear_eval(&self.w_evals, challenges)?,
+        let w_eval = match &self.witness_oracle {
+            Stage2WitnessOracle::Full(w_evals) => multilinear_eval(w_evals, challenges)?,
+            Stage2WitnessOracle::ClaimedEval(w_eval) => *w_eval,
         };
         let virtual_oracle = eq_val * w_eval * (w_eval + F::one());
 

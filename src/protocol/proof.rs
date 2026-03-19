@@ -8,9 +8,6 @@ use crate::protocol::commitment::RingCommitment;
 use crate::protocol::labrador::types::{
     LabradorLevelProof, LabradorProof, LabradorReductionConfig, LabradorWitness,
 };
-use crate::protocol::sumcheck::two_round_prefix::{
-    Stage1BivariateSkipProof, Stage2BivariateSkipProof,
-};
 use crate::protocol::sumcheck::SumcheckProof;
 use crate::{CanonicalField, FieldCore, FromSmallInt, HachiDeserialize, HachiSerialize};
 use std::io::{Read, Write};
@@ -252,6 +249,19 @@ impl<F: FieldCore> FlatRingVec<F> {
         CyclotomicRing::from_slice(&self.coeffs)
     }
 
+    /// Reconstruct a single ring element, returning `InvalidProof` on shape mismatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HachiError::InvalidProof`] if the stored ring dimension or
+    /// element count does not match `D`.
+    pub fn try_to_single<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, HachiError> {
+        if self.ring_dim != D || self.coeffs.len() != D {
+            return Err(HachiError::InvalidProof);
+        }
+        Ok(CyclotomicRing::from_slice(&self.coeffs))
+    }
+
     /// Reconstruct a vector of ring elements.
     ///
     /// # Panics
@@ -265,6 +275,23 @@ impl<F: FieldCore> FlatRingVec<F> {
             .collect()
     }
 
+    /// Reconstruct a vector of ring elements, returning `InvalidProof` on shape mismatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HachiError::InvalidProof`] if the stored ring dimension does
+    /// not match `D` or the coefficient buffer is not an exact multiple of `D`.
+    pub fn try_to_vec<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
+        if self.ring_dim != D || self.coeffs.len() % D != 0 {
+            return Err(HachiError::InvalidProof);
+        }
+        Ok(self
+            .coeffs
+            .chunks_exact(D)
+            .map(CyclotomicRing::from_slice)
+            .collect())
+    }
+
     /// Reconstruct a `RingCommitment`.
     ///
     /// # Panics
@@ -272,6 +299,20 @@ impl<F: FieldCore> FlatRingVec<F> {
     /// Panics if `D != ring_dim`.
     pub fn to_ring_commitment<const D: usize>(&self) -> RingCommitment<F, D> {
         RingCommitment { u: self.to_vec() }
+    }
+
+    /// Reconstruct a `RingCommitment`, returning `InvalidProof` on shape mismatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HachiError::InvalidProof`] if the stored ring data is not
+    /// well-formed for ring dimension `D`.
+    pub fn try_to_ring_commitment<const D: usize>(
+        &self,
+    ) -> Result<RingCommitment<F, D>, HachiError> {
+        Ok(RingCommitment {
+            u: self.try_to_vec()?,
+        })
     }
 }
 
@@ -489,70 +530,22 @@ impl<F: FieldCore, const D: usize> Eq for HachiCommitmentHint<F, D> {}
 /// Proof payload for stage 1 of a single Hachi level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiStage1Proof<F: FieldCore> {
-    /// Optional serialized first-two-round bivariate-skip proof for stage 1.
-    ///
-    /// When present, this payload determines the first two x-rounds and the
-    /// `sumcheck` field stores only the suffix proof starting at round 2.
-    pub(crate) prefix: Option<Stage1BivariateSkipProof<F>>,
     /// Stage-1 sumcheck proof over the virtual `S = w(w+1)` table.
-    ///
-    /// This is the full stage-1 proof when `prefix` is `None`, and the suffix
-    /// proof over rounds `2..` when `prefix` is present.
     pub sumcheck: SumcheckProof<F>,
     /// Claimed evaluation of `S` at the stage-1 output point.
     pub s_claim: F,
 }
 
-impl<F: FieldCore> HachiStage1Proof<F> {
-    /// Whether stage 1 serialized a first-two-round bivariate-skip proof.
-    pub fn has_prefix(&self) -> bool {
-        self.prefix.is_some()
-    }
-
-    /// Serialized size of the stage-1 prefix option field, including the tag byte.
-    pub fn prefix_field_serialized_size(&self, compress: Compress) -> usize {
-        std::mem::size_of::<u8>()
-            + self
-                .prefix
-                .as_ref()
-                .map_or(0, |prefix| prefix.serialized_size(compress))
-    }
-}
-
 /// Proof payload for stage 2 of a single Hachi level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiStage2Proof<F: FieldCore> {
-    /// Optional serialized first-two-round bivariate-skip proof for stage 2.
-    ///
-    /// When present, this payload determines the first two x-rounds and the
-    /// `sumcheck` field stores only the suffix proof starting at round 2.
-    pub(crate) prefix: Option<Stage2BivariateSkipProof<F>>,
     /// Stage-2 fused sumcheck proof.
-    ///
-    /// This is the full stage-2 proof when `prefix` is `None`, and the suffix
-    /// proof over rounds `2..` when `prefix` is present.
     pub sumcheck: SumcheckProof<F>,
     /// Commitment to the next witness `w`
     /// (ring dim = next level's D, may differ from y_ring/v).
     pub next_w_commitment: FlatRingVec<F>,
     /// Claimed evaluation of the next witness `w` at the stage-2 challenge point.
     pub next_w_eval: F,
-}
-
-impl<F: FieldCore> HachiStage2Proof<F> {
-    /// Whether stage 2 serialized a first-two-round bivariate-skip proof.
-    pub fn has_prefix(&self) -> bool {
-        self.prefix.is_some()
-    }
-
-    /// Serialized size of the stage-2 prefix option field, including the tag byte.
-    pub fn prefix_field_serialized_size(&self, compress: Compress) -> usize {
-        std::mem::size_of::<u8>()
-            + self
-                .prefix
-                .as_ref()
-                .map_or(0, |prefix| prefix.serialized_size(compress))
-    }
 }
 
 /// Proof for a single fold level (quad_eq + ring_switch + sumcheck).
@@ -582,10 +575,8 @@ impl<F: FieldCore> HachiLevelProof<F> {
     pub(crate) fn new<const D: usize>(
         y_ring: CyclotomicRing<F, D>,
         v: Vec<CyclotomicRing<F, D>>,
-        stage1_prefix: Option<Stage1BivariateSkipProof<F>>,
         stage1_sumcheck: SumcheckProof<F>,
         stage1_s_claim: F,
-        stage2_prefix: Option<Stage2BivariateSkipProof<F>>,
         stage2_sumcheck: SumcheckProof<F>,
         next_w_commitment: FlatRingVec<F>,
         next_w_eval: F,
@@ -594,12 +585,10 @@ impl<F: FieldCore> HachiLevelProof<F> {
             y_ring: FlatRingVec::from_single(&y_ring),
             v: FlatRingVec::from_ring_elems(&v),
             stage1: HachiStage1Proof {
-                prefix: stage1_prefix,
                 sumcheck: stage1_sumcheck,
                 s_claim: stage1_s_claim,
             },
             stage2: HachiStage2Proof {
-                prefix: stage2_prefix,
                 sumcheck: stage2_sumcheck,
                 next_w_commitment,
                 next_w_eval,
@@ -626,6 +615,16 @@ impl<F: FieldCore> HachiLevelProof<F> {
         self.y_ring.to_single()
     }
 
+    /// Reconstruct typed `y_ring`, returning `InvalidProof` on shape mismatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HachiError::InvalidProof`] if the stored `y_ring` does not
+    /// encode exactly one ring element at dimension `D`.
+    pub fn try_y_ring_typed<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, HachiError> {
+        self.y_ring.try_to_single()
+    }
+
     /// Reconstruct typed `v`.
     ///
     /// # Panics
@@ -635,6 +634,16 @@ impl<F: FieldCore> HachiLevelProof<F> {
         self.v.to_vec()
     }
 
+    /// Reconstruct typed `v`, returning `InvalidProof` on shape mismatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HachiError::InvalidProof`] if the stored `v` payload is not
+    /// well-formed for ring dimension `D`.
+    pub fn try_v_typed<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
+        self.v.try_to_vec()
+    }
+
     /// Reconstruct typed `w_commitment`.
     ///
     /// # Panics
@@ -642,6 +651,18 @@ impl<F: FieldCore> HachiLevelProof<F> {
     /// Panics if `D` does not match the stored ring dimension.
     pub fn w_commitment_typed<const D: usize>(&self) -> RingCommitment<F, D> {
         self.stage2.next_w_commitment.to_ring_commitment()
+    }
+
+    /// Reconstruct typed `w_commitment`, returning `InvalidProof` on shape mismatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HachiError::InvalidProof`] if the stored next-level commitment
+    /// is not well-formed for ring dimension `D`.
+    pub fn try_w_commitment_typed<const D: usize>(
+        &self,
+    ) -> Result<RingCommitment<F, D>, HachiError> {
+        self.stage2.next_w_commitment.try_to_ring_commitment()
     }
 }
 
@@ -1327,26 +1348,12 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
     ) -> Result<(), SerializationError> {
         self.y_ring.serialize_with_mode(&mut writer, compress)?;
         self.v.serialize_with_mode(&mut writer, compress)?;
-        match &self.stage1.prefix {
-            None => 0u8.serialize_with_mode(&mut writer, compress)?,
-            Some(prefix) => {
-                1u8.serialize_with_mode(&mut writer, compress)?;
-                prefix.serialize_with_mode(&mut writer, compress)?;
-            }
-        }
         self.stage1
             .sumcheck
             .serialize_with_mode(&mut writer, compress)?;
         self.stage1
             .s_claim
             .serialize_with_mode(&mut writer, compress)?;
-        match &self.stage2.prefix {
-            None => 0u8.serialize_with_mode(&mut writer, compress)?,
-            Some(prefix) => {
-                1u8.serialize_with_mode(&mut writer, compress)?;
-                prefix.serialize_with_mode(&mut writer, compress)?;
-            }
-        }
         self.stage2
             .sumcheck
             .serialize_with_mode(&mut writer, compress)?;
@@ -1360,20 +1367,8 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
     fn serialized_size(&self, compress: Compress) -> usize {
         self.y_ring.serialized_size(compress)
             + self.v.serialized_size(compress)
-            + 1
-            + self
-                .stage1
-                .prefix
-                .as_ref()
-                .map_or(0, |prefix| prefix.serialized_size(compress))
             + self.stage1.sumcheck.serialized_size(compress)
             + self.stage1.s_claim.serialized_size(compress)
-            + 1
-            + self
-                .stage2
-                .prefix
-                .as_ref()
-                .map_or(0, |prefix| prefix.serialized_size(compress))
             + self.stage2.sumcheck.serialized_size(compress)
             + self.stage2.next_w_commitment.serialized_size(compress)
             + self.stage2.next_w_eval.serialized_size(compress)
@@ -1383,14 +1378,22 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
 impl<F: FieldCore + Valid> Valid for HachiLevelProof<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.y_ring.check()?;
+        if self.y_ring.count() != 1 {
+            return Err(SerializationError::InvalidData(
+                "hachi level y_ring must contain exactly one ring element".to_string(),
+            ));
+        }
         self.v.check()?;
-        if let Some(prefix) = &self.stage1.prefix {
-            prefix.check()?;
+        if self.v.ring_dim() != self.y_ring.ring_dim() {
+            return Err(SerializationError::InvalidData(
+                "hachi level v ring dimension must match y_ring".to_string(),
+            ));
         }
-        if let Some(prefix) = &self.stage2.prefix {
-            prefix.check()?;
-        }
-        self.stage2.next_w_commitment.check()
+        self.stage1.sumcheck.check()?;
+        self.stage1.s_claim.check()?;
+        self.stage2.sumcheck.check()?;
+        self.stage2.next_w_commitment.check()?;
+        self.stage2.next_w_eval.check()
     }
 }
 
@@ -1402,45 +1405,17 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
     ) -> Result<Self, SerializationError> {
         let y_ring = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?;
         let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?;
-        let stage1_prefix = match u8::deserialize_with_mode(&mut reader, compress, validate)? {
-            0 => None,
-            1 => Some(Stage1BivariateSkipProof::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-            )?),
-            tag => {
-                return Err(SerializationError::InvalidData(format!(
-                    "unknown stage1 prefix tag: {tag}"
-                )));
-            }
-        };
         let stage1_sumcheck =
             SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?;
         let stage1_s_claim = F::deserialize_with_mode(&mut reader, compress, validate)?;
-        let stage2_prefix = match u8::deserialize_with_mode(&mut reader, compress, validate)? {
-            0 => None,
-            1 => Some(Stage2BivariateSkipProof::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-            )?),
-            tag => {
-                return Err(SerializationError::InvalidData(format!(
-                    "unknown stage2 prefix tag: {tag}"
-                )));
-            }
-        };
-        Ok(Self {
+        let out = Self {
             y_ring,
             v,
             stage1: HachiStage1Proof {
-                prefix: stage1_prefix,
                 sumcheck: stage1_sumcheck,
                 s_claim: stage1_s_claim,
             },
             stage2: HachiStage2Proof {
-                prefix: stage2_prefix,
                 sumcheck: SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?,
                 next_w_commitment: FlatRingVec::deserialize_with_mode(
                     &mut reader,
@@ -1449,7 +1424,11 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
                 )?,
                 next_w_eval: F::deserialize_with_mode(&mut reader, compress, validate)?,
             },
-        })
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
     }
 }
 
@@ -1494,6 +1473,13 @@ impl<F: FieldCore + Valid> Valid for HachiProof<F> {
         for lp in &self.levels {
             lp.check()?;
         }
+        for levels in self.levels.windows(2) {
+            if levels[0].w_commit_d() != levels[1].level_d() {
+                return Err(SerializationError::InvalidData(
+                    "adjacent hachi levels have mismatched commitment dimensions".to_string(),
+                ));
+            }
+        }
         match &self.tail {
             HachiProofTail::Direct(pw) => pw.check(),
             HachiProofTail::Labrador(tail) => tail.check(),
@@ -1533,6 +1519,10 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiProof<F> {
                 )));
             }
         };
-        Ok(Self { levels, tail })
+        let out = Self { levels, tail };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
     }
 }
