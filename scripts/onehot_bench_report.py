@@ -84,6 +84,16 @@ def require_int(summary: dict[str, object], key: str) -> int:
     return int(value)
 
 
+def derive_hachi_labrador_split(total: float, hachi: float, labrador: float) -> tuple[float, float]:
+    if hachi == 0.0 and labrador == 0.0:
+        return total, 0.0
+    if hachi == 0.0:
+        return max(total - labrador, 0.0), labrador
+    if labrador == 0.0:
+        return hachi, max(total - hachi, 0.0)
+    return hachi, labrador
+
+
 def benchmark_name(mode: str, num_vars: int) -> str:
     if mode == "onehot":
         return f"1-of-{ONEHOT_ARITY} one-hot with {num_vars} variables"
@@ -152,18 +162,20 @@ def extract_summary(log_text: str, mode: str, num_vars: int) -> dict[str, object
     prove_total = require_float(summary, "prove_total_s")
     prove_hachi = float(summary.get("prove_hachi_s", 0.0))
     prove_labrador = float(summary.get("prove_labrador_s", 0.0))
-    if prove_hachi == 0.0 and prove_labrador != 0.0:
-        summary["prove_hachi_s"] = max(prove_total - prove_labrador, 0.0)
-    elif prove_labrador == 0.0:
-        summary["prove_labrador_s"] = max(prove_total - prove_hachi, 0.0)
+    summary["prove_hachi_s"], summary["prove_labrador_s"] = derive_hachi_labrador_split(
+        prove_total,
+        prove_hachi,
+        prove_labrador,
+    )
 
     verify_total = require_float(summary, "verify_total_s")
     verify_hachi = float(summary.get("verify_hachi_s", 0.0))
     verify_labrador = float(summary.get("verify_labrador_s", 0.0))
-    if verify_hachi == 0.0 and verify_labrador != 0.0:
-        summary["verify_hachi_s"] = max(verify_total - verify_labrador, 0.0)
-    elif verify_labrador == 0.0:
-        summary["verify_labrador_s"] = max(verify_total - verify_hachi, 0.0)
+    summary["verify_hachi_s"], summary["verify_labrador_s"] = derive_hachi_labrador_split(
+        verify_total,
+        verify_hachi,
+        verify_labrador,
+    )
 
     summary.setdefault("selected_tail", "unknown")
     return summary
