@@ -35,7 +35,8 @@ jobs:
       - name: Initialize benchmark paths
         run: |
           echo "HACHI_BENCH_ARTIFACT_DIR=$RUNNER_TEMP/onehot-bench-artifact" >> "$GITHUB_ENV"
-          echo "HACHI_BENCH_BASELINE_DIR=$RUNNER_TEMP/onehot-bench-baseline" >> "$GITHUB_ENV"
+          echo "HACHI_BENCH_MAIN_BASELINE_DIR=$RUNNER_TEMP/onehot-bench-main-baseline" >> "$GITHUB_ENV"
+          echo "HACHI_BENCH_PREVIOUS_RUN_DIR=$RUNNER_TEMP/onehot-bench-previous-run" >> "$GITHUB_ENV"
           echo "HACHI_BENCH_REPORT=$RUNNER_TEMP/onehot-bench.md" >> "$GITHUB_ENV"
           echo "HACHI_BENCH_COMMENT=$RUNNER_TEMP/onehot-bench-comment.md" >> "$GITHUB_ENV"
           echo "HACHI_BENCH_SOURCE_SHA=$GITHUB_SHA" >> "$GITHUB_ENV"
@@ -80,10 +81,10 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Determine comparison baseline artifact
+      - name: Determine comparison baseline artifacts
         if: always() && github.event_name == 'pull_request'
         continue-on-error: true
-        id: bench-baseline
+        id: bench-baselines
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: |
@@ -96,6 +97,12 @@ jobs:
             const headRef = pullRequest.head.ref;
             const baseRef = process.env.HACHI_BENCH_BASE_REF;
             const mergeBaseSha = process.env.HACHI_BENCH_MERGE_BASE_SHA;
+
+            function setBaselineOutput(prefix, run, label) {
+              core.setOutput(`${prefix}-run-id`, run ? String(run.id) : '');
+              core.setOutput(`${prefix}-sha`, run ? run.head_sha : '');
+              core.setOutput(`${prefix}-label`, run ? label : '');
+            }
 
             async function firstRunWithArtifact(runs) {
               for (const run of runs) {
@@ -137,12 +144,10 @@ jobs:
               return prs.length === 0 || prs.some(pr => pr.number === pullRequest.number);
             });
             const previousPrRun = await firstRunWithArtifact(previousPrCandidates);
-            if (previousPrRun) {
-              core.setOutput('run-id', String(previousPrRun.id));
-              core.setOutput('sha', previousPrRun.head_sha);
-              core.setOutput('label', 'the previous successful PR update');
-              return;
+            if (!previousPrRun) {
+              core.info('No previous PR baseline artifact found.');
             }
+            setBaselineOutput('previous', previousPrRun, 'the previous successful PR update');
 
             const baseRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
               owner,
@@ -165,52 +170,53 @@ jobs:
             const fallbackBaseCandidates = mergeBaseSha
               ? baseCandidates.filter(run => run.head_sha !== mergeBaseSha)
               : baseCandidates;
-            const baseRun =
+            const mainRun =
               exactMergeBaseRun ?? await firstRunWithArtifact(fallbackBaseCandidates);
-            if (baseRun) {
-              const isMergeBase = Boolean(mergeBaseSha) && baseRun.head_sha === mergeBaseSha;
-              core.setOutput('run-id', String(baseRun.id));
-              core.setOutput('sha', baseRun.head_sha);
-              core.setOutput(
-                'label',
-                isMergeBase
-                  ? `merge-base on \`${baseRef}\``
-                  : `the latest successful \`${baseRef}\` run`
-              );
-              return;
+            if (!mainRun) {
+              core.info('No main baseline artifact found.');
             }
+            const mainLabel =
+              mainRun && Boolean(mergeBaseSha) && mainRun.head_sha === mergeBaseSha
+                ? `merge-base on \`${baseRef}\``
+                : `the latest successful \`${baseRef}\` run`;
+            setBaselineOutput('main', mainRun, mainLabel);
 
-            core.info('No comparison baseline artifact found.');
-            core.setOutput('run-id', '');
-            core.setOutput('sha', '');
-            core.setOutput('label', '');
-
-      - name: Download comparison baseline artifact
-        if: always() && steps.bench-baseline.outputs.run-id != ''
+      - name: Download main baseline artifact
+        if: always() && steps.bench-baselines.outputs.main-run-id != ''
         continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ env.HACHI_BENCH_ARTIFACT_NAME }}
-          path: ${{ env.HACHI_BENCH_BASELINE_DIR }}
-          run-id: ${{ steps.bench-baseline.outputs.run-id }}
+          path: ${{ env.HACHI_BENCH_MAIN_BASELINE_DIR }}
+          run-id: ${{ steps.bench-baselines.outputs.main-run-id }}
+          github-token: ${{ github.token }}
+
+      - name: Download previous run artifact
+        if: always() && steps.bench-baselines.outputs.previous-run-id != ''
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ env.HACHI_BENCH_ARTIFACT_NAME }}
+          path: ${{ env.HACHI_BENCH_PREVIOUS_RUN_DIR }}
+          run-id: ${{ steps.bench-baselines.outputs.previous-run-id }}
           github-token: ${{ github.token }}
 
       - name: Render benchmark report
         if: always()
         continue-on-error: true
         env:
-          HACHI_BENCH_BASELINE_LABEL: ${{ steps.bench-baseline.outputs.label }}
-          HACHI_BENCH_BASELINE_SHA: ${{ steps.bench-baseline.outputs.sha }}
+          HACHI_BENCH_MAIN_BASELINE_LABEL: ${{ steps.bench-baselines.outputs.main-label }}
+          HACHI_BENCH_MAIN_BASELINE_SHA: ${{ steps.bench-baselines.outputs.main-sha }}
+          HACHI_BENCH_PREVIOUS_BASELINE_LABEL: ${{ steps.bench-baselines.outputs.previous-label }}
+          HACHI_BENCH_PREVIOUS_BASELINE_SHA: ${{ steps.bench-baselines.outputs.previous-sha }}
         run: |
           if [ ! -f "$HACHI_BENCH_ARTIFACT_DIR/summary.json" ]; then
             echo "Benchmark summary not found; benchmark step likely failed." > "$HACHI_BENCH_REPORT"
-          elif [ -f "$HACHI_BENCH_BASELINE_DIR/summary.json" ]; then
-            python3 scripts/onehot_bench_report.py render \
-              "$HACHI_BENCH_ARTIFACT_DIR/summary.json" \
-              "$HACHI_BENCH_BASELINE_DIR" > "$HACHI_BENCH_REPORT"
           else
             python3 scripts/onehot_bench_report.py render \
-              "$HACHI_BENCH_ARTIFACT_DIR/summary.json" > "$HACHI_BENCH_REPORT"
+              "$HACHI_BENCH_ARTIFACT_DIR/summary.json" \
+              --main-baseline-dir "$HACHI_BENCH_MAIN_BASELINE_DIR" \
+              --previous-baseline-dir "$HACHI_BENCH_PREVIOUS_RUN_DIR" > "$HACHI_BENCH_REPORT"
           fi
           cp "$HACHI_BENCH_REPORT" "$HACHI_BENCH_ARTIFACT_DIR/report.md"
           cat "$HACHI_BENCH_REPORT" >> "$GITHUB_STEP_SUMMARY"

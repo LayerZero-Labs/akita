@@ -39,10 +39,14 @@ def parse_args() -> argparse.Namespace:
     )
     render_parser.add_argument("summary", help="Path to the current summary.json file.")
     render_parser.add_argument(
-        "baseline_dir",
-        nargs="?",
+        "--main-baseline-dir",
         default="",
-        help="Optional artifact directory containing baseline summary.json.",
+        help="Optional artifact directory containing the main-baseline summary.json.",
+    )
+    render_parser.add_argument(
+        "--previous-baseline-dir",
+        default="",
+        help="Optional artifact directory containing the previous-run summary.json.",
     )
 
     return parser.parse_args()
@@ -226,6 +230,15 @@ def load_summary(path: pathlib.Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_optional_summary(dir_path: str) -> dict[str, object] | None:
+    if not dir_path:
+        return None
+    summary_path = pathlib.Path(dir_path) / "summary.json"
+    if not summary_path.exists():
+        return None
+    return load_summary(summary_path)
+
+
 def commit_ref(sha: str | None) -> str | None:
     if not sha:
         return None
@@ -240,24 +253,12 @@ def fmt_seconds(value: float) -> str:
     return f"{value:.3f}"
 
 
-def fmt_delta_seconds(value: float) -> str:
-    return f"{value:+.3f}"
-
-
 def fmt_mib(value_kib: float) -> str:
     return f"{value_kib / 1024.0:.1f}"
 
 
-def fmt_delta_mib(delta_kib: float) -> str:
-    return f"{delta_kib / 1024.0:+.1f}"
-
-
 def fmt_bytes(value: float) -> str:
     return f"{int(round(value)):,}"
-
-
-def fmt_delta_bytes(value: float) -> str:
-    return f"{int(round(value)):+,}"
 
 
 @dataclass(frozen=True)
@@ -266,55 +267,58 @@ class Metric:
     name: str
     unit: str
     value_formatter: callable
-    delta_formatter: callable
 
 
 TIME_METRICS = [
-    Metric("setup_s", "Setup", "s", fmt_seconds, fmt_delta_seconds),
-    Metric("commit_s", "Commit", "s", fmt_seconds, fmt_delta_seconds),
-    Metric("prove_hachi_s", "Prove (Hachi)", "s", fmt_seconds, fmt_delta_seconds),
-    Metric("prove_labrador_s", "Prove (Labrador)", "s", fmt_seconds, fmt_delta_seconds),
-    Metric("prove_total_s", "Prove (Total)", "s", fmt_seconds, fmt_delta_seconds),
-    Metric("verify_hachi_s", "Verify (Hachi)", "s", fmt_seconds, fmt_delta_seconds),
-    Metric("verify_labrador_s", "Verify (Labrador)", "s", fmt_seconds, fmt_delta_seconds),
-    Metric("verify_total_s", "Verify (Total)", "s", fmt_seconds, fmt_delta_seconds),
-    Metric("max_rss_kib", "Max RSS", "MiB", fmt_mib, fmt_delta_mib),
+    Metric("setup_s", "Setup", "s", fmt_seconds),
+    Metric("commit_s", "Commit", "s", fmt_seconds),
+    Metric("prove_hachi_s", "Prove (Hachi)", "s", fmt_seconds),
+    Metric("prove_labrador_s", "Prove (Labrador)", "s", fmt_seconds),
+    Metric("prove_total_s", "Prove (Total)", "s", fmt_seconds),
+    Metric("verify_hachi_s", "Verify (Hachi)", "s", fmt_seconds),
+    Metric("verify_labrador_s", "Verify (Labrador)", "s", fmt_seconds),
+    Metric("verify_total_s", "Verify (Total)", "s", fmt_seconds),
+    Metric("max_rss_kib", "Max RSS", "MiB", fmt_mib),
 ]
 
 
-def render_metric_row(metric: Metric, current: dict[str, object], baseline: dict[str, object] | None) -> str:
+def render_metric_row(
+    metric: Metric,
+    current: dict[str, object],
+    baselines: list[tuple[str, dict[str, object] | None]],
+) -> str:
     current_value = current.get(metric.key)
     if current_value is None:
         return ""
 
-    current_rendered = metric.value_formatter(float(current_value))
-    if baseline is None:
-        return f"| {metric.name} | {current_rendered} | {metric.unit} |"
+    columns: list[str] = []
+    for _, summary in baselines:
+        if summary is None or summary.get(metric.key) is None:
+            columns.append("n/a")
+        else:
+            columns.append(metric.value_formatter(float(summary[metric.key])))
 
-    if baseline.get(metric.key) is not None:
-        baseline_value = baseline[metric.key]
-        delta = float(current_value) - float(baseline_value)
-        return (
-            f"| {metric.name} | {metric.value_formatter(float(baseline_value))} | "
-            f"{current_rendered} | {metric.delta_formatter(delta)} | {metric.unit} |"
-        )
-
-    return f"| {metric.name} | n/a | {current_rendered} | n/a | {metric.unit} |"
+    columns.append(metric.value_formatter(float(current_value)))
+    return f"| {metric.name} | " + " | ".join(columns) + f" | {metric.unit} |"
 
 
 def render_report(args: argparse.Namespace) -> int:
     summary_path = pathlib.Path(args.summary)
     current = load_summary(summary_path)
 
-    baseline_dir = pathlib.Path(args.baseline_dir) if args.baseline_dir else None
-    baseline_summary_path = baseline_dir / "summary.json" if baseline_dir else None
-    baseline = load_summary(baseline_summary_path) if baseline_summary_path and baseline_summary_path.exists() else None
+    baselines: list[tuple[str, dict[str, object] | None]] = [
+        ("Main baseline", load_optional_summary(args.main_baseline_dir)),
+        ("Previous run", load_optional_summary(args.previous_baseline_dir)),
+    ]
+    visible_baselines = [(label, summary) for label, summary in baselines if summary is not None]
 
     source_sha = os.environ.get("HACHI_BENCH_SOURCE_SHA")
     source_subject = os.environ.get("HACHI_BENCH_SOURCE_SUBJECT")
     source_branch = os.environ.get("HACHI_BENCH_SOURCE_BRANCH") or os.environ.get("GITHUB_REF_NAME")
-    baseline_sha = os.environ.get("HACHI_BENCH_BASELINE_SHA")
-    baseline_label = os.environ.get("HACHI_BENCH_BASELINE_LABEL")
+    main_baseline_sha = os.environ.get("HACHI_BENCH_MAIN_BASELINE_SHA")
+    main_baseline_label = os.environ.get("HACHI_BENCH_MAIN_BASELINE_LABEL")
+    previous_baseline_sha = os.environ.get("HACHI_BENCH_PREVIOUS_BASELINE_SHA")
+    previous_baseline_label = os.environ.get("HACHI_BENCH_PREVIOUS_BASELINE_LABEL")
 
     print("## One-hot 32 Variables Benchmark Report")
     print()
@@ -326,19 +330,29 @@ def render_report(args: argparse.Namespace) -> int:
         )
     ref = commit_ref(source_sha)
     if ref:
-        print(f"- Commit: {ref}")
+        print(f"- Latest run: {ref}")
     if source_subject:
         print(f"- Message: {source_subject}")
     if source_branch:
         print(f"- Ref: `{source_branch}`")
-    if baseline:
-        baseline_ref = commit_ref(baseline_sha)
-        if baseline_ref and baseline_label:
-            print(f"- Comparison baseline: {baseline_ref} from {baseline_label}.")
-        elif baseline_ref:
-            print(f"- Comparison baseline: {baseline_ref}.")
-        elif baseline_label:
-            print(f"- Comparison baseline: {baseline_label}.")
+    if visible_baselines:
+        main_ref = commit_ref(main_baseline_sha)
+        if baselines[0][1] is not None:
+            if main_ref and main_baseline_label:
+                print(f"- Main baseline: {main_ref} from {main_baseline_label}.")
+            elif main_ref:
+                print(f"- Main baseline: {main_ref}.")
+            elif main_baseline_label:
+                print(f"- Main baseline: {main_baseline_label}.")
+
+        previous_ref = commit_ref(previous_baseline_sha)
+        if baselines[1][1] is not None:
+            if previous_ref and previous_baseline_label:
+                print(f"- Previous run: {previous_ref} from {previous_baseline_label}.")
+            elif previous_ref:
+                print(f"- Previous run: {previous_ref}.")
+            elif previous_baseline_label:
+                print(f"- Previous run: {previous_baseline_label}.")
     print(
         "- Command: `target/release/examples/profile` with "
         f"`HACHI_MODE={current['mode']}` `HACHI_NUM_VARS={current['num_vars']}` "
@@ -348,15 +362,12 @@ def render_report(args: argparse.Namespace) -> int:
     print("- Memory: maximum resident set size from `/usr/bin/time` on the benchmark process.")
     print()
 
-    if baseline:
-        print("| Metric | Baseline | Current | Delta | Unit |")
-        print("| --- | ---: | ---: | ---: | --- |")
-    else:
-        print("| Metric | Current | Unit |")
-        print("| --- | ---: | --- |")
+    column_labels = [label for label, _ in visible_baselines] + ["Latest run"]
+    print("| Metric | " + " | ".join(column_labels) + " | Unit |")
+    print("| --- | " + " | ".join("---:" for _ in column_labels) + " | --- |")
 
     for metric in TIME_METRICS:
-        row = render_metric_row(metric, current, baseline)
+        row = render_metric_row(metric, current, visible_baselines)
         if row:
             print(row)
 
