@@ -7,7 +7,7 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::protocol::commitment::utils::linear::mat_vec_mul_crt_ntt_i8_many;
 use crate::protocol::labrador::aggregation::{
-    aggregate_jl_constraints_verifier, aggregate_statement,
+    aggregate_jl_constraints_verifier, aggregate_statement, safe_to_use_scalar_randomness,
 };
 use crate::protocol::labrador::comkey::LabradorComKeySeed;
 use crate::protocol::labrador::constraints::{
@@ -294,6 +294,13 @@ struct ReducedStatementAggregationReplay<F: FieldCore, const D: usize> {
     aggregated_rhs: CyclotomicRing<F, D>,
 }
 
+#[inline]
+fn scalar_to_ring<F: FieldCore, const D: usize>(scalar: F) -> CyclotomicRing<F, D> {
+    let mut coeffs = [F::zero(); D];
+    coeffs[0] = scalar;
+    CyclotomicRing::from_coefficients(coeffs)
+}
+
 #[tracing::instrument(skip_all, name = "labrador::prepare_reduced_statement_aggregation")]
 fn prepare_reduced_statement_aggregation<F, T, const D: usize>(
     statement: &LabradorStatement<F, D>,
@@ -317,26 +324,62 @@ where
         .inner_opening_payload
         .iter()
         .map(|target| {
-            let alpha = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
-            aggregated_rhs += alpha * *target;
-            alpha
+            if safe_to_use_scalar_randomness::<F>() {
+                let alpha_scalar =
+                    transcript.challenge_scalar(labels::CHALLENGE_LABRADOR_AGGREGATION);
+                aggregated_rhs += target.scale(&alpha_scalar);
+                scalar_to_ring::<F, D>(alpha_scalar)
+            } else {
+                let alpha =
+                    challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
+                aggregated_rhs += alpha * *target;
+                alpha
+            }
         })
         .collect();
     let d_alphas: Vec<CyclotomicRing<F, D>> = statement
         .linear_garbage_payload
         .iter()
         .map(|target| {
-            let alpha = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
-            aggregated_rhs += alpha * *target;
-            alpha
+            if safe_to_use_scalar_randomness::<F>() {
+                let alpha_scalar =
+                    transcript.challenge_scalar(labels::CHALLENGE_LABRADOR_AGGREGATION);
+                aggregated_rhs += target.scale(&alpha_scalar);
+                scalar_to_ring::<F, D>(alpha_scalar)
+            } else {
+                let alpha =
+                    challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
+                aggregated_rhs += alpha * *target;
+                alpha
+            }
         })
         .collect();
     let a_alphas = (0..plan.config.inner_commit_rank)
-        .map(|_| challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION))
+        .map(|_| {
+            if safe_to_use_scalar_randomness::<F>() {
+                let alpha_scalar =
+                    transcript.challenge_scalar(labels::CHALLENGE_LABRADOR_AGGREGATION);
+                scalar_to_ring::<F, D>(alpha_scalar)
+            } else {
+                challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION)
+            }
+        })
         .collect();
-    let alpha_lg = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
-    let alpha_diag = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
-    aggregated_rhs += alpha_diag * plan.aggregated_rhs;
+    let alpha_lg = if safe_to_use_scalar_randomness::<F>() {
+        let alpha_scalar = transcript.challenge_scalar(labels::CHALLENGE_LABRADOR_AGGREGATION);
+        scalar_to_ring::<F, D>(alpha_scalar)
+    } else {
+        challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION)
+    };
+    let alpha_diag = if safe_to_use_scalar_randomness::<F>() {
+        let alpha_scalar = transcript.challenge_scalar(labels::CHALLENGE_LABRADOR_AGGREGATION);
+        aggregated_rhs += plan.aggregated_rhs.scale(&alpha_scalar);
+        scalar_to_ring::<F, D>(alpha_scalar)
+    } else {
+        let alpha_diag = challenge_ring_element(transcript, labels::CHALLENGE_LABRADOR_AGGREGATION);
+        aggregated_rhs += alpha_diag * plan.aggregated_rhs;
+        alpha_diag
+    };
 
     Ok(ReducedStatementAggregationReplay {
         b_alphas,
