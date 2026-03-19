@@ -76,7 +76,7 @@ impl<F: CanonicalField> PartialSplitEval32<F> {
     pub fn pointwise_mul(&self, rhs: &Self, split: &PartialSplitNtt32<F>) -> Self {
         let mut even = [F::zero(); CLASS_D];
         let mut odd = [F::zero(); CLASS_D];
-        add_mul_quadratic_pairs(
+        mul_quadratic_pairs(
             &mut even,
             &mut odd,
             &self.even,
@@ -176,6 +176,31 @@ pub struct PackedPartialSplitNtt32<PF: PackedField> {
 }
 
 impl<PF: PackedField> PackedPartialSplitNtt32<PF> {
+    /// Multiply two packed split-domain values lane-wise.
+    #[inline(always)]
+    pub fn pointwise_mul(
+        &self,
+        lhs: &PackedPartialSplitEval32<PF>,
+        rhs: &PackedPartialSplitEval32<PF>,
+    ) -> PackedPartialSplitEval32<PF>
+    where
+        PF::Scalar: CanonicalField,
+    {
+        let zero = PF::broadcast(PF::Scalar::zero());
+        let mut even = [zero; CLASS_D];
+        let mut odd = [zero; CLASS_D];
+        mul_quadratic_pairs(
+            &mut even,
+            &mut odd,
+            &lhs.even,
+            &lhs.odd,
+            &rhs.even,
+            &rhs.odd,
+            &self.eval_roots,
+        );
+        PackedPartialSplitEval32 { even, odd }
+    }
+
     /// Accumulate a packed pointwise product directly into `acc`.
     #[inline(always)]
     pub fn add_mul_assign(
@@ -392,7 +417,7 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
 
         let mut out_even = [F::zero(); CLASS_D];
         let mut out_odd = [F::zero(); CLASS_D];
-        add_mul_quadratic_pairs(
+        mul_quadratic_pairs(
             &mut out_even,
             &mut out_odd,
             &lhs_even,
@@ -422,7 +447,7 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
 
         let mut out_even = [F::zero(); CLASS_D];
         let mut out_odd = [F::zero(); CLASS_D];
-        add_mul_quadratic_pairs(
+        mul_quadratic_pairs(
             &mut out_even,
             &mut out_odd,
             &lhs_even,
@@ -547,6 +572,24 @@ where
     let c0 = p0 + r * p1;
     let c1 = p2 - p0 - p1;
     (c0, c1)
+}
+
+#[inline(always)]
+fn mul_quadratic_pairs<T>(
+    out_even: &mut [T; CLASS_D],
+    out_odd: &mut [T; CLASS_D],
+    lhs_even: &[T; CLASS_D],
+    lhs_odd: &[T; CLASS_D],
+    rhs_even: &[T; CLASS_D],
+    rhs_odd: &[T; CLASS_D],
+    roots: &[T; CLASS_D],
+) where
+    T: Copy + Add<Output = T> + Sub<Output = T> + Mul<Output = T>,
+{
+    for i in 0..CLASS_D {
+        (out_even[i], out_odd[i]) =
+            mul_quadratic_karatsuba(lhs_even[i], lhs_odd[i], rhs_even[i], rhs_odd[i], roots[i]);
+    }
 }
 
 #[inline(always)]

@@ -218,12 +218,8 @@ fn bench_cached_mul_batch_scaling_q128m5823(c: &mut Criterion) {
                 b.iter(|| {
                     let mut out = Vec::with_capacity(count);
                     for idx in 0..(count / width) {
-                        let mut acc = PackedPartialSplitEval32::<PF128>::zero();
-                        packed.add_mul_assign(
-                            &mut acc,
-                            &lhs_packed[idx],
-                            black_box(&rhs_packed[idx]),
-                        );
+                        let acc =
+                            packed.pointwise_mul(&lhs_packed[idx], black_box(&rhs_packed[idx]));
                         packed.append_rings(&acc, &mut out);
                     }
                     black_box(out)
@@ -304,12 +300,8 @@ fn bench_cached_mul_batch_scaling_i8_rhs_q128m5823(c: &mut Criterion) {
                 b.iter(|| {
                     let mut out = Vec::with_capacity(count);
                     for idx in 0..(count / width) {
-                        let mut acc = PackedPartialSplitEval32::<PF128>::zero();
-                        packed.add_mul_assign(
-                            &mut acc,
-                            &lhs_packed[idx],
-                            black_box(&rhs_packed[idx]),
-                        );
+                        let acc =
+                            packed.pointwise_mul(&lhs_packed[idx], black_box(&rhs_packed[idx]));
                         packed.append_rings(&acc, &mut out);
                     }
                     black_box(out)
