@@ -3,8 +3,8 @@
 use hachi_pcs::algebra::Fp128;
 use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
-    Fp128BoundedCommitmentConfig, Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig,
-    Fp128OneHotCommitmentConfig, HachiCommitmentLayout,
+    Fp128BoundedCommitmentConfig, Fp128D64BoundedCommitmentConfig, Fp128FullCommitmentConfig,
+    Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig, HachiCommitmentLayout,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
@@ -32,6 +32,7 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
+const ONEHOT_K: usize = 256;
 
 fn env_flag(name: &str, default: bool) -> bool {
     env::var(name)
@@ -426,10 +427,18 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCom
 
 fn run_onehot<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCommitmentLayout) {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
-    let total_ring = layout.num_blocks * layout.block_len;
-    let onehot_k = D;
+    let total_field = (layout.num_blocks * layout.block_len)
+        .checked_mul(D)
+        .expect("total field size overflow");
+    let onehot_k = ONEHOT_K;
+    let total_chunks = total_field / onehot_k;
+    assert_eq!(
+        total_chunks * onehot_k,
+        total_field,
+        "onehot K must divide total field size"
+    );
 
-    let indices: Vec<Option<usize>> = (0..total_ring)
+    let indices: Vec<Option<usize>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..onehot_k)))
         .collect();
     let onehot_poly =
@@ -576,28 +585,28 @@ fn main() {
         }
         "compare_onehot" => {
             {
-                type Cfg = Fp128BoundedCommitmentConfig<1, 3, 3>;
+                type Cfg = Fp128D64BoundedCommitmentConfig<1, 3, 3>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
                     "=== [A] onehot (1-of-256), basis=3 everywhere ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128BoundedCommitmentConfig<1, 2, 2>;
+                type Cfg = Fp128D64BoundedCommitmentConfig<1, 2, 2>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
                     "=== [B] onehot (1-of-256), basis=2 everywhere ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128BoundedCommitmentConfig<1, 2, 3>;
+                type Cfg = Fp128D64BoundedCommitmentConfig<1, 2, 3>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
                     "=== [C] onehot (1-of-256), L0 basis=2, w-levels basis=3 ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128BoundedCommitmentConfig<1, 2, 4>;
+                type Cfg = Fp128D64BoundedCommitmentConfig<1, 2, 4>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
                     "=== [D] onehot (1-of-256), L0 basis=2, w-levels basis=4 ===",
                     nv,

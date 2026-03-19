@@ -1285,7 +1285,7 @@ where
 mod tests {
     use super::*;
     use crate::protocol::commitment::{
-        CommitmentConfig, HachiCommitmentCore, RingCommitmentScheme,
+        CommitmentConfig, HachiCommitmentCore, HachiScheduleInputs, RingCommitmentScheme,
     };
     use crate::protocol::ring_switch::w_commitment_layout;
     use crate::test_utils::{TinyConfig, D as TestD, F as TestF};
@@ -1474,7 +1474,14 @@ mod tests {
         let (setup, _) =
             <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16)
                 .unwrap();
-        let w_layout = w_commitment_layout::<TestF, TestD, TinyConfig>(setup.layout()).unwrap();
+        let layout = setup.layout();
+        let level_params = TinyConfig::level_params(HachiScheduleInputs {
+            max_num_vars: setup.expanded.seed.max_num_vars,
+            level: 0,
+            current_w_len: layout.num_blocks * layout.block_len * TestD,
+        });
+        let w_layout =
+            w_commitment_layout::<TestF, TestD, TinyConfig>(level_params, layout).unwrap();
         let digit_commit = digit_poly
             .commit_inner(
                 &setup.expanded.A,

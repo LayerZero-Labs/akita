@@ -5,6 +5,7 @@ use super::config::{
     validate_and_derive_layout, HachiCommitmentLayout,
 };
 use super::onehot::{inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks};
+use super::schedule::HachiScheduleInputs;
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
 #[cfg(feature = "disk-persistence")]
@@ -287,7 +288,24 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiVerifierSetup<F> {
 }
 
 #[cfg(feature = "disk-persistence")]
-fn get_storage_path(max_num_vars: usize) -> Option<PathBuf> {
+fn cache_file_name<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
+    let family = Cfg::family_key()
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect::<String>();
+    format!(
+        "hachi_{family}_d{}_na{}_nb{}_nd{}_b{}_wb{}_nv{max_num_vars}.setup",
+        Cfg::D,
+        Cfg::N_A,
+        Cfg::N_B,
+        Cfg::N_D,
+        Cfg::decomposition().log_basis,
+        Cfg::w_log_basis(),
+    )
+}
+
+#[cfg(feature = "disk-persistence")]
+fn get_storage_path<Cfg: CommitmentConfig>(max_num_vars: usize) -> Option<PathBuf> {
     let cache_directory = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
         Some(PathBuf::from(local_app_data))
     } else if let Ok(home) = std::env::var("HOME") {
@@ -311,14 +329,17 @@ fn get_storage_path(max_num_vars: usize) -> Option<PathBuf> {
 
     cache_directory.map(|mut path| {
         path.push("hachi");
-        path.push(format!("hachi_{max_num_vars}.setup"));
+        path.push(cache_file_name::<Cfg>(max_num_vars));
         path
     })
 }
 
 #[cfg(feature = "disk-persistence")]
-fn save_expanded_setup<F: FieldCore>(setup: &HachiExpandedSetup<F>, max_num_vars: usize) {
-    let Some(storage_path) = get_storage_path(max_num_vars) else {
+fn save_expanded_setup<F: FieldCore, Cfg: CommitmentConfig>(
+    setup: &HachiExpandedSetup<F>,
+    max_num_vars: usize,
+) {
+    let Some(storage_path) = get_storage_path::<Cfg>(max_num_vars) else {
         tracing::warn!("Could not determine storage directory; skipping setup save");
         return;
     };
@@ -342,10 +363,10 @@ fn save_expanded_setup<F: FieldCore>(setup: &HachiExpandedSetup<F>, max_num_vars
 }
 
 #[cfg(feature = "disk-persistence")]
-fn load_expanded_setup<F: FieldCore + Valid>(
+fn load_expanded_setup<F: FieldCore + Valid, Cfg: CommitmentConfig>(
     max_num_vars: usize,
 ) -> Result<HachiExpandedSetup<F>, HachiError> {
-    let storage_path = get_storage_path(max_num_vars).ok_or_else(|| {
+    let storage_path = get_storage_path::<Cfg>(max_num_vars).ok_or_else(|| {
         HachiError::InvalidSetup("Failed to determine storage directory".to_string())
     })?;
 
@@ -406,17 +427,22 @@ where
     #[tracing::instrument(skip_all, name = "RingCommitmentScheme::setup")]
     fn setup(max_num_vars: usize) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError> {
         let layout = validate_and_derive_layout::<Cfg, D>(max_num_vars)?;
+        let root_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars,
+            level: 0,
+            current_w_len: 1usize << max_num_vars,
+        });
         ensure_supported_num_vars(max_num_vars, layout.required_num_vars::<D>()?)?;
 
         #[cfg(feature = "disk-persistence")]
         {
-            match load_expanded_setup::<F>(max_num_vars) {
+            match load_expanded_setup::<F, Cfg>(max_num_vars) {
                 Ok(expanded) => {
                     tracing::info!("Loaded setup from disk, rebuilding NTT caches");
                     return setup_from_expanded(expanded);
                 }
                 Err(e) => {
-                    if let Some(storage_path) = get_storage_path(max_num_vars) {
+                    if let Some(storage_path) = get_storage_path::<Cfg>(max_num_vars) {
                         let _ = fs::remove_file(&storage_path);
                         tracing::warn!(
                             "Failed to load cached setup from {}: {e}; regenerating",
@@ -429,7 +455,7 @@ where
             }
         }
 
-        let w_layout = w_commitment_layout::<F, D, Cfg>(layout)?;
+        let w_layout = w_commitment_layout::<F, D, Cfg>(root_params, layout)?;
         let a_cols = layout.inner_width.max(w_layout.inner_width);
         let b_cols = layout.outer_width.max(w_layout.outer_width);
         let d_cols = layout.d_matrix_width.max(w_layout.d_matrix_width);
@@ -458,7 +484,7 @@ where
         };
 
         #[cfg(feature = "disk-persistence")]
-        save_expanded_setup(&expanded, max_num_vars);
+        save_expanded_setup::<F, Cfg>(&expanded, max_num_vars);
 
         let prover_setup = HachiProverSetup {
             expanded: expanded.clone(),
@@ -518,7 +544,13 @@ where
 
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
 
-        let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(&setup.ntt_B, &t_hat_flat);
+        let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(&setup.ntt_B, &t_hat_flat);
+        let root_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars: setup.expanded.seed.max_num_vars,
+            level: 0,
+            current_w_len: 1usize << setup.expanded.seed.max_num_vars,
+        });
+        u.truncate(root_params.n_b);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
 
@@ -563,7 +595,13 @@ where
 
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
 
-        let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(&setup.ntt_B, &t_hat_flat);
+        let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(&setup.ntt_B, &t_hat_flat);
+        let root_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars: setup.expanded.seed.max_num_vars,
+            level: 0,
+            current_w_len: 1usize << setup.expanded.seed.max_num_vars,
+        });
+        u.truncate(root_params.n_b);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
 
@@ -605,7 +643,13 @@ where
 
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
 
-        let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(&setup.ntt_B, &t_hat_flat);
+        let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(&setup.ntt_B, &t_hat_flat);
+        let root_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars: setup.expanded.seed.max_num_vars,
+            level: 0,
+            current_w_len: 1usize << setup.expanded.seed.max_num_vars,
+        });
+        u.truncate(root_params.n_b);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
 }
@@ -721,7 +765,13 @@ impl HachiCommitmentCore {
             max_num_digits_open = max_num_digits_open.max(layout.num_digits_open);
             max_num_digits_fold = max_num_digits_fold.max(layout.num_digits_fold);
 
-            let w_layout = w_commitment_layout::<F, D, Cfg>(layout)?;
+            let layout_num_vars = layout.required_num_vars::<D>()?;
+            let level_params = Cfg::level_params(HachiScheduleInputs {
+                max_num_vars: layout_num_vars,
+                level: 0,
+                current_w_len: 1usize << layout_num_vars,
+            });
+            let w_layout = w_commitment_layout::<F, D, Cfg>(level_params, layout)?;
             tracing::debug!(?layout, ?w_layout, "setup layout");
             max_inner_width = max_inner_width.max(w_layout.inner_width);
             max_outer_width = max_outer_width.max(w_layout.outer_width);
@@ -786,7 +836,13 @@ impl HachiCommitmentCore {
             ));
         }
 
-        let w_layout = w_commitment_layout::<F, D, Cfg>(new_layout)?;
+        let layout_num_vars = new_layout.required_num_vars::<D>()?;
+        let level_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars: layout_num_vars,
+            level: 0,
+            current_w_len: 1usize << layout_num_vars,
+        });
+        let w_layout = w_commitment_layout::<F, D, Cfg>(level_params, new_layout)?;
         let a_width = existing.A.first_row_len::<D>();
         if a_width < w_layout.inner_width {
             return Err(HachiError::InvalidSetup(format!(
@@ -838,7 +894,13 @@ impl HachiCommitmentCore {
         F: FieldCore + CanonicalField + FieldSampling,
         Cfg: CommitmentConfig,
     {
-        let w_layout = w_commitment_layout::<F, D, Cfg>(layout)?;
+        let layout_num_vars = layout.required_num_vars::<D>()?;
+        let level_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars: layout_num_vars,
+            level: 0,
+            current_w_len: 1usize << layout_num_vars,
+        });
+        let w_layout = w_commitment_layout::<F, D, Cfg>(level_params, layout)?;
         let a_cols = layout.inner_width.max(w_layout.inner_width);
         let b_cols = layout.outer_width.max(w_layout.outer_width);
         let d_cols = layout.d_matrix_width.max(w_layout.d_matrix_width);
@@ -968,8 +1030,20 @@ mod tests {
             HachiCommitmentLayout::new::<TinyConfig>(4, 2, &TinyConfig::decomposition()).unwrap();
         let layout_b =
             HachiCommitmentLayout::new::<TinyConfig>(1, 6, &TinyConfig::decomposition()).unwrap();
-        let w_layout_a = w_commitment_layout::<TestF, TEST_D, TinyConfig>(layout_a).unwrap();
-        let w_layout_b = w_commitment_layout::<TestF, TEST_D, TinyConfig>(layout_b).unwrap();
+        let params_a = TinyConfig::level_params(HachiScheduleInputs {
+            max_num_vars: layout_a.required_num_vars::<TEST_D>().unwrap(),
+            level: 0,
+            current_w_len: 1usize << layout_a.required_num_vars::<TEST_D>().unwrap(),
+        });
+        let params_b = TinyConfig::level_params(HachiScheduleInputs {
+            max_num_vars: layout_b.required_num_vars::<TEST_D>().unwrap(),
+            level: 0,
+            current_w_len: 1usize << layout_b.required_num_vars::<TEST_D>().unwrap(),
+        });
+        let w_layout_a =
+            w_commitment_layout::<TestF, TEST_D, TinyConfig>(params_a, layout_a).unwrap();
+        let w_layout_b =
+            w_commitment_layout::<TestF, TEST_D, TinyConfig>(params_b, layout_b).unwrap();
 
         let expected_inner = [
             layout_a.inner_width,

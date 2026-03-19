@@ -3,7 +3,7 @@
 //! This module encapsulates the stage-1 prover logic and the generation of
 //! the quadratic equation components M, y, z, and v.
 
-use crate::algebra::{CyclotomicRing, SparseChallenge, SparseChallengeConfig};
+use crate::algebra::{CyclotomicRing, SparseChallenge};
 #[cfg(any(test, debug_assertions))]
 use crate::cfg_into_iter;
 use crate::error::HachiError;
@@ -16,7 +16,7 @@ use crate::protocol::commitment::utils::linear::{
     unreduced_quotient_rows_ntt_cached_centered_i32,
 };
 use crate::protocol::commitment::{
-    CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, RingCommitment,
+    CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, RingCommitment,
 };
 use crate::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps};
 use crate::protocol::opening_point::RingOpeningPoint;
@@ -42,14 +42,14 @@ fn flatten_w_hat<const D: usize>(w_hat: &[Vec<[i8; D]>]) -> Vec<[i8; D]> {
     w_hat.iter().flat_map(|v| v.iter().copied()).collect()
 }
 
-fn compute_z_pre<F, const D: usize, Cfg, P>(
+fn compute_z_pre<F, const D: usize, P>(
     poly: &P,
     challenges: &[SparseChallenge],
+    level_params: HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<DecomposeFoldWitness<F, D>, HachiError>
 where
     F: FieldCore + CanonicalField,
-    Cfg: CommitmentConfig,
     P: HachiPolyOps<F, D>,
 {
     let z = poly.decompose_fold(
@@ -60,7 +60,11 @@ where
     );
 
     let norm = u128::from(z.centered_inf_norm);
-    let beta = Cfg::beta_bound(layout)?;
+    let beta = crate::protocol::commitment::beta_linf_fold_bound(
+        layout.r_vars,
+        level_params.challenge_weight,
+        layout.log_basis,
+    )?;
     if norm > beta {
         return Err(HachiError::InvalidInput(format!(
             "prover abort: ||z||_inf = {norm} > beta = {beta}"
@@ -124,6 +128,7 @@ where
         ring_opening_point: RingOpeningPoint<F>,
         poly: &P,
         pre_folded: Vec<CyclotomicRing<F, D>>,
+        level_params: HachiLevelParams,
         mut hint: HachiCommitmentHint<F, D>,
         transcript: &mut T,
         commitment: &RingCommitment<F, D>,
@@ -153,15 +158,14 @@ where
         let v = {
             let _span =
                 tracing::info_span!("compute_v", w_hat_flat_len = w_hat_flat.len()).entered();
-            compute_v(ntt_d, &w_hat_flat)
+            let mut v = compute_v(ntt_d, &w_hat_flat);
+            v.truncate(level_params.n_d);
+            v
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &v);
 
-        let challenge_cfg = SparseChallengeConfig {
-            weight: Cfg::challenge_weight_for_ring_dim(D),
-            nonzero_coeffs: vec![-1, 1],
-        };
+        let challenge_cfg = Cfg::stage1_challenge_config(level_params);
         let challenges = sample_sparse_challenges::<F, T, D>(
             transcript,
             CHALLENGE_STAGE1_FOLD,
@@ -171,10 +175,17 @@ where
 
         let z_pre = {
             let _span = tracing::info_span!("compute_z_pre").entered();
-            compute_z_pre::<F, D, Cfg, P>(poly, &challenges, layout)?
+            compute_z_pre::<F, D, P>(poly, &challenges, level_params, layout)?
         };
 
-        let y = generate_y::<F, D>(&v, &commitment.u, y_ring, Cfg::N_D, Cfg::N_B, Cfg::N_A)?;
+        let y = generate_y::<F, D>(
+            &v,
+            &commitment.u,
+            y_ring,
+            level_params.n_d,
+            level_params.n_b,
+            level_params.n_a,
+        )?;
 
         Ok(Self {
             v,
@@ -200,14 +211,26 @@ where
     pub fn new_verifier<T: Transcript<F>>(
         ring_opening_point: RingOpeningPoint<F>,
         v: Vec<CyclotomicRing<F, D>>,
+        level_params: HachiLevelParams,
         transcript: &mut T,
         commitment: &RingCommitment<F, D>,
         y_ring: &CyclotomicRing<F, D>,
         layout: HachiCommitmentLayout,
     ) -> Result<Self, HachiError> {
-        let challenges =
-            derive_stage1_challenges::<F, T, D, Cfg>(transcript, &v, layout.num_blocks)?;
-        let y = generate_y::<F, D>(&v, &commitment.u, y_ring, Cfg::N_D, Cfg::N_B, Cfg::N_A)?;
+        let challenges = derive_stage1_challenges::<F, T, D, Cfg>(
+            transcript,
+            &v,
+            layout.num_blocks,
+            level_params,
+        )?;
+        let y = generate_y::<F, D>(
+            &v,
+            &commitment.u,
+            y_ring,
+            level_params.n_d,
+            level_params.n_b,
+            level_params.n_a,
+        )?;
 
         Ok(Self {
             v,
@@ -295,15 +318,13 @@ pub(crate) fn derive_stage1_challenges<F, T, const D: usize, Cfg: CommitmentConf
     transcript: &mut T,
     v: &Vec<CyclotomicRing<F, D>>,
     num_blocks: usize,
+    level_params: HachiLevelParams,
 ) -> Result<Vec<SparseChallenge>, HachiError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    let challenge_cfg = SparseChallengeConfig {
-        weight: Cfg::challenge_weight_for_ring_dim(D),
-        nonzero_coeffs: vec![-1, 1],
-    };
+    let challenge_cfg = Cfg::stage1_challenge_config(level_params);
     transcript.append_serde(ABSORB_PROVER_V, v);
     sample_sparse_challenges::<F, T, D>(
         transcript,
@@ -359,7 +380,8 @@ fn quotient_from_cyclic_and_reduced<F: FieldCore, const D: usize>(
 #[allow(clippy::too_many_arguments, clippy::needless_borrow)]
 #[tracing::instrument(skip_all, name = "compute_r_split_eq")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn compute_r_split_eq<F, const D: usize, Cfg>(
+pub(crate) fn compute_r_split_eq<F, const D: usize>(
+    level_params: HachiLevelParams,
     _setup: &HachiExpandedSetup<F>,
     challenges: &[SparseChallenge],
     w_hat_flat: &[[i8; D]],
@@ -375,9 +397,8 @@ pub(crate) fn compute_r_split_eq<F, const D: usize, Cfg>(
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
 where
     F: FieldCore + CanonicalField,
-    Cfg: CommitmentConfig,
 {
-    let num_rows = Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A;
+    let num_rows = level_params.m_row_count();
 
     let t_hat_flat = flatten_i8_blocks(t_hat);
 
@@ -413,21 +434,21 @@ where
     let mut quotient_buf = vec![F::zero(); D];
 
     for row_idx in 0..num_rows {
-        if row_idx < Cfg::N_D {
+        if row_idx < level_params.n_d {
             result.push(quotient_from_cyclic_and_reduced(
                 &d_cyclic[row_idx],
                 &y[row_idx],
             ));
-        } else if row_idx < Cfg::N_D + Cfg::N_B {
+        } else if row_idx < level_params.n_d + level_params.n_b {
             result.push(quotient_from_cyclic_and_reduced(
-                &b_cyclic[row_idx - Cfg::N_D],
+                &b_cyclic[row_idx - level_params.n_d],
                 &y[row_idx],
             ));
-        } else if row_idx >= Cfg::N_D + Cfg::N_B + 2 {
+        } else if row_idx >= level_params.n_d + level_params.n_b + 2 {
             // A-rows: NTT-accelerated A*z_pre + sparse challenge terms
             let t_row = Instant::now();
             let _span = tracing::info_span!("A_row").entered();
-            let a_idx = row_idx - (Cfg::N_D + Cfg::N_B + 2);
+            let a_idx = row_idx - (level_params.n_d + level_params.n_b + 2);
 
             quotient_buf.fill(F::zero());
             for (i, t_rows_i) in t.iter().enumerate() {
@@ -445,7 +466,7 @@ where
         } else {
             let t_row = Instant::now();
 
-            if row_idx == Cfg::N_D + Cfg::N_B {
+            if row_idx == level_params.n_d + level_params.n_b {
                 let _span = tracing::info_span!("bTw_row").entered();
                 // `b^T · G · ŵ - y_ring` is degree < D, so its quotient is zero.
                 result.push(CyclotomicRing::<F, D>::zero());
@@ -481,16 +502,16 @@ where
 /// organized as rows of field elements, without materializing ring-valued `M`.
 #[cfg(any(test, debug_assertions))]
 #[tracing::instrument(skip_all, name = "compute_m_a_reference")]
-pub(crate) fn compute_m_a_reference<F, const D: usize, Cfg>(
+pub(crate) fn compute_m_a_reference<F, const D: usize>(
     setup: &HachiExpandedSetup<F>,
     opening_point: &RingOpeningPoint<F>,
     challenges: &[SparseChallenge],
     alpha: &F,
+    level_params: HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<Vec<Vec<F>>, HachiError>
 where
     F: FieldCore + CanonicalField,
-    Cfg: CommitmentConfig,
 {
     let depth_commit = layout.num_digits_commit;
     let depth_open = layout.num_digits_open;
@@ -499,7 +520,7 @@ where
     let num_blocks = opening_point.b.len();
     let block_len = layout.block_len;
     let w_len = depth_open * num_blocks;
-    let t_len = depth_open * Cfg::N_A * num_blocks;
+    let t_len = depth_open * level_params.n_a * num_blocks;
     let z_len = depth_fold * depth_commit * block_len;
     let total_cols = w_len + t_len + z_len;
 
@@ -537,9 +558,9 @@ where
         })
         .collect();
 
-    let mut rows = Vec::with_capacity(Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A);
-    rows.extend(d_rows);
-    rows.extend(b_rows);
+    let mut rows = Vec::with_capacity(level_params.m_row_count());
+    rows.extend(d_rows.into_iter().take(level_params.n_d));
+    rows.extend(b_rows.into_iter().take(level_params.n_b));
 
     // Row 3: b^T · G · ŵ = y_ring (ŵ uses delta_open)
     {
@@ -575,11 +596,11 @@ where
 
     // Row 5: (c^T ⊗ G_open) · t̂ = A · J · ẑ
     // t̂ uses delta_open (t = A*s has full-field coefficients); ẑ uses delta_commit
-    for a_idx in 0..Cfg::N_A {
+    for a_idx in 0..level_params.n_a {
         let mut full = vec![F::zero(); total_cols];
         for (i, &c_alpha) in c_alphas.iter().enumerate() {
             for (d, &g) in g1_open.iter().enumerate() {
-                let t_idx = i * (Cfg::N_A * depth_open) + a_idx * depth_open + d;
+                let t_idx = i * (level_params.n_a * depth_open) + a_idx * depth_open + d;
                 full[w_len + t_idx] = c_alpha * g;
             }
         }
@@ -639,7 +660,9 @@ mod tests {
     use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
     use crate::protocol::challenges::sparse::sample_sparse_challenges;
     use crate::protocol::commitment::HachiProverSetup;
-    use crate::protocol::commitment::{HachiCommitmentCore, RingCommitmentScheme};
+    use crate::protocol::commitment::{
+        HachiCommitmentCore, HachiScheduleInputs, RingCommitmentScheme,
+    };
     use crate::protocol::hachi_poly_ops::DensePoly;
     use crate::protocol::proof::HachiCommitmentHint;
     use crate::protocol::transcript::Blake2bTranscript;
@@ -704,11 +727,17 @@ mod tests {
         let y_ring = CyclotomicRing::<F, D>::zero();
         let layout = setup.layout();
         let w_folded = poly.fold_blocks(&point.a, layout.block_len);
+        let level_params = TinyConfig::level_params(HachiScheduleInputs {
+            max_num_vars: setup.expanded.seed.max_num_vars,
+            level: 0,
+            current_w_len: layout.num_blocks * layout.block_len * D,
+        });
         let quad_eq = QuadraticEquation::<F, D, TinyConfig>::new_prover(
             &setup.ntt_D,
             point.clone(),
             &poly,
             w_folded,
+            level_params,
             hint,
             &mut transcript,
             &w.commitment,

@@ -1,8 +1,10 @@
 //! Configuration presets for ring-native commitment construction.
 
+use super::schedule::{default_stage1_challenge_config, HachiLevelParams, HachiScheduleInputs};
 use super::utils::flat_matrix::FlatMatrix;
 use super::utils::math::checked_pow2;
 use crate::algebra::ring::CyclotomicRing;
+use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
@@ -132,7 +134,11 @@ pub fn compute_num_digits_fold(r_vars: usize, challenge_weight: usize, log_basis
 /// For the full-field config (`δ_commit = 43`), z_pre dominates and the
 /// result is near-balanced (`m ≈ r`). For narrow configs (`δ_commit = 1`),
 /// the w_hat/t_hat term matters more and the result skews to `m ≈ r + 4`.
-pub fn optimal_m_r_split<Cfg: CommitmentConfig>(reduced_vars: usize) -> (usize, usize) {
+pub(super) fn optimal_m_r_split_with_params(
+    params: HachiLevelParams,
+    decomp: DecompositionParams,
+    reduced_vars: usize,
+) -> (usize, usize) {
     // Guard: for S >= 53, shifts could overflow u64. Fall back to balanced
     // split (this threshold is far beyond any practical polynomial size).
     if reduced_vars <= 2 || reduced_vars >= 53 {
@@ -140,22 +146,18 @@ pub fn optimal_m_r_split<Cfg: CommitmentConfig>(reduced_vars: usize) -> (usize, 
         return (reduced_vars - r, r);
     }
 
-    let decomp = Cfg::decomposition();
     let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
     let delta_open = compute_num_digits(open_bound, decomp.log_basis) as u64;
     let delta_commit = compute_num_digits(decomp.log_commit_bound, decomp.log_basis) as u64;
-    let c1 = delta_open + Cfg::N_A as u64 * delta_commit;
+    let c1 = delta_open + params.n_a as u64 * delta_commit;
 
     let mut best_r = reduced_vars / 2;
     let mut best_cost = u64::MAX;
 
     for r in 1..reduced_vars {
         let m = reduced_vars - r;
-        let delta_fold = compute_num_digits_fold(
-            r,
-            Cfg::challenge_weight_for_ring_dim(Cfg::D),
-            decomp.log_basis,
-        ) as u64;
+        let delta_fold =
+            compute_num_digits_fold(r, params.challenge_weight, decomp.log_basis) as u64;
         let cost = c1 * (1u64 << r) + delta_commit * delta_fold * (1u64 << m);
         if cost < best_cost {
             best_cost = cost;
@@ -164,6 +166,26 @@ pub fn optimal_m_r_split<Cfg: CommitmentConfig>(reduced_vars: usize) -> (usize, 
     }
 
     (reduced_vars - best_r, best_r)
+}
+
+/// Find the `(m_vars, r_vars)` split using the level-0 params of `Cfg`.
+pub fn optimal_m_r_split<Cfg: CommitmentConfig>(reduced_vars: usize) -> (usize, usize) {
+    let params = Cfg::level_params(HachiScheduleInputs {
+        max_num_vars: reduced_vars + Cfg::D.trailing_zeros() as usize,
+        level: 0,
+        current_w_len: 1usize << (reduced_vars + Cfg::D.trailing_zeros() as usize),
+    });
+    optimal_m_r_split_with_params(params, Cfg::decomposition(), reduced_vars)
+}
+
+const D64_CHALLENGE_MASS: usize = 54;
+const D64_STAGE1_SUPPORT: usize = 21;
+
+fn d64_stage1_challenge_config(_level_params: HachiLevelParams) -> SparseChallengeConfig {
+    SparseChallengeConfig {
+        weight: D64_STAGE1_SUPPORT,
+        nonzero_coeffs: vec![-2, -1, 1, 2],
+    }
 }
 
 /// Runtime commitment layout authority for ring-native commitments.
@@ -402,6 +424,30 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Decomposition parameters (gadget base and coefficient bounds).
     fn decomposition() -> DecompositionParams;
 
+    /// Stable identifier for setup-cache versioning and fixture selection.
+    fn family_key() -> &'static str {
+        std::any::type_name::<Self>()
+    }
+
+    /// Deterministically derive the active params for one level from public inputs.
+    fn level_params(inputs: HachiScheduleInputs) -> HachiLevelParams {
+        HachiLevelParams {
+            d: Self::d_at_level(inputs.level, inputs.current_w_len),
+            log_basis: if inputs.level == 0 {
+                Self::decomposition().log_basis
+            } else {
+                Self::w_log_basis()
+            },
+            n_a: Self::n_a_at_level(inputs.level),
+            n_b: Self::n_b_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
+            n_d: Self::n_d_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
+            challenge_weight: Self::challenge_weight_for_ring_dim(Self::d_at_level(
+                inputs.level,
+                inputs.current_w_len,
+            )),
+        }
+    }
+
     /// Choose the runtime commitment layout for `max_num_vars`.
     ///
     /// # Errors
@@ -429,7 +475,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// The default implementation returns `Self::D` at all levels (constant D).
     /// Override for decreasing-D schedules.
-    fn d_at_level(_level: usize, _w_num_vars: usize) -> usize {
+    fn d_at_level(_level: usize, _current_w_len: usize) -> usize {
         Self::D
     }
 
@@ -441,6 +487,16 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         Self::N_A
     }
 
+    /// Outer commitment matrix rank at a given fold level.
+    fn n_b_at_level(_level: usize, _max_num_vars: usize, _current_w_len: usize) -> usize {
+        Self::N_B
+    }
+
+    /// Prover D-matrix rank at a given fold level.
+    fn n_d_at_level(_level: usize, _max_num_vars: usize, _current_w_len: usize) -> usize {
+        Self::N_D
+    }
+
     /// Challenge weight (Hamming weight ω) appropriate for ring dimension `d`.
     ///
     /// The default returns `Self::CHALLENGE_WEIGHT` for any `d`, which is
@@ -449,6 +505,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// ≥128 bits of challenge entropy as D decreases).
     fn challenge_weight_for_ring_dim(_d: usize) -> usize {
         Self::CHALLENGE_WEIGHT
+    }
+
+    /// Sparse challenge family used at this level.
+    fn stage1_challenge_config(level_params: HachiLevelParams) -> SparseChallengeConfig {
+        default_stage1_challenge_config(level_params)
     }
 
     /// Gadget base for recursive w-opening levels (levels 1+).
@@ -483,7 +544,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 ///
 /// Returns an error when parameters are out of range or intermediate products
 /// overflow `u128`.
-pub(crate) fn beta_linf_fold_bound(
+pub fn beta_linf_fold_bound(
     r: usize,
     challenge_weight: usize,
     log_basis: u32,
@@ -568,19 +629,19 @@ pub(super) fn ensure_block_layout<F: FieldCore, const D: usize>(
 
 /// Ensure matrix has at least the expected dimensions.
 ///
-/// Matrices may be wider than the main layout requires when widened to
-/// accommodate the w-commitment's column counts.
+/// Matrix envelopes may have more rows and columns than the active level uses.
+/// Callers are expected to consume only the active row prefix.
 ///
 /// # Errors
 ///
-/// Returns an error if row count mismatches or any row is too narrow.
+/// Returns an error if row count is too small or any row is too narrow.
 pub(super) fn ensure_matrix_shape_ge<F: FieldCore, const D: usize>(
     mat: &FlatMatrix<F>,
     expected_rows: usize,
     min_cols: usize,
     name: &str,
 ) -> Result<(), HachiError> {
-    if mat.num_rows() != expected_rows {
+    if mat.num_rows() < expected_rows {
         return Err(HachiError::InvalidSize {
             expected: expected_rows,
             actual: mat.num_rows(),
@@ -731,14 +792,60 @@ impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> 
     }
 }
 
+/// D=64, rank-1 everywhere.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Fp128D64BoundedCommitmentConfig<
+    const LOG_COMMIT_BOUND: u32,
+    const LOG_BASIS: u32,
+    const W_LOG_BASIS: u32 = LOG_BASIS,
+>;
+
+impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> CommitmentConfig
+    for Fp128D64BoundedCommitmentConfig<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>
+{
+    const D: usize = 64;
+    const N_A: usize = 1;
+    const N_B: usize = 1;
+    const N_D: usize = 1;
+    const CHALLENGE_WEIGHT: usize = D64_CHALLENGE_MASS;
+
+    fn decomposition() -> DecompositionParams {
+        Fp128BoundedCommitmentConfig::<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>::decomposition()
+    }
+
+    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        let alpha = Self::D.trailing_zeros() as usize;
+        let reduced_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
+            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
+        })?;
+        if reduced_vars == 0 {
+            return Err(HachiError::InvalidSetup(
+                "max_num_vars must leave at least one outer variable".to_string(),
+            ));
+        }
+        let (m_vars, r_vars) = optimal_m_r_split::<Self>(reduced_vars);
+        HachiCommitmentLayout::new::<Self>(m_vars, r_vars, &Self::decomposition())
+    }
+
+    fn w_log_basis() -> u32 {
+        W_LOG_BASIS
+    }
+
+    fn stage1_challenge_config(level_params: HachiLevelParams) -> SparseChallengeConfig {
+        d64_stage1_challenge_config(level_params)
+    }
+
+    fn labrador_handoff_threshold() -> usize {
+        usize::MAX
+    }
+}
+
 /// Full-field (128-bit) coefficient bound, base-8 decomposition.
 pub type Fp128FullCommitmentConfig = Fp128BoundedCommitmentConfig<128, 3>;
 
-/// Binary (1-bit) coefficient bound, base-8 decomposition.
-///
-/// Reduces `delta_commit` from 43 to 1 compared to [`Fp128FullCommitmentConfig`],
-/// shrinking the dominant `z_pre` witness component by ~43x.
-pub type Fp128OneHotCommitmentConfig = Fp128BoundedCommitmentConfig<1, 3>;
+/// Binary (1-bit) D=64 onehot preset with the coarse adaptive outer-rank
+/// schedule.
+pub type Fp128OneHotCommitmentConfig = Fp128AdaptiveOneHotCommitmentConfig;
 
 /// Log-basis (3-bit) coefficient bound, base-8 decomposition.
 ///
@@ -747,6 +854,119 @@ pub type Fp128LogBasisCommitmentConfig = Fp128BoundedCommitmentConfig<3, 3>;
 
 /// Alias for [`Fp128FullCommitmentConfig`].
 pub type Fp128CommitmentConfig = Fp128FullCommitmentConfig;
+
+/// D=64, rank-2 everywhere.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Fp128Rank2BoundedCommitmentConfig<
+    const LOG_COMMIT_BOUND: u32,
+    const LOG_BASIS: u32,
+    const W_LOG_BASIS: u32 = LOG_BASIS,
+>;
+
+impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> CommitmentConfig
+    for Fp128Rank2BoundedCommitmentConfig<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>
+{
+    const D: usize = 64;
+    const N_A: usize = 1;
+    const N_B: usize = 2;
+    const N_D: usize = 2;
+    const CHALLENGE_WEIGHT: usize = D64_CHALLENGE_MASS;
+
+    fn decomposition() -> DecompositionParams {
+        Fp128BoundedCommitmentConfig::<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>::decomposition()
+    }
+
+    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        Fp128BoundedCommitmentConfig::<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>::commitment_layout(
+            max_num_vars,
+        )
+    }
+
+    fn w_log_basis() -> u32 {
+        W_LOG_BASIS
+    }
+
+    fn n_b_at_level(_level: usize, _max_num_vars: usize, _current_w_len: usize) -> usize {
+        2
+    }
+
+    fn n_d_at_level(_level: usize, _max_num_vars: usize, _current_w_len: usize) -> usize {
+        2
+    }
+
+    fn stage1_challenge_config(level_params: HachiLevelParams) -> SparseChallengeConfig {
+        d64_stage1_challenge_config(level_params)
+    }
+
+    fn labrador_handoff_threshold() -> usize {
+        usize::MAX
+    }
+}
+
+/// D=64 onehot preset with the coarse adaptive outer-rank schedule from the
+/// current local planning note: rank-2 only in the short early window.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Fp128AdaptiveOneHotCommitmentConfig;
+
+impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
+    const D: usize = 64;
+    const N_A: usize = 1;
+    const N_B: usize = 2;
+    const N_D: usize = 2;
+    const CHALLENGE_WEIGHT: usize = D64_CHALLENGE_MASS;
+
+    fn decomposition() -> DecompositionParams {
+        DecompositionParams {
+            log_basis: 3,
+            log_commit_bound: 1,
+            log_open_bound: Some(128),
+        }
+    }
+
+    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        let alpha = Self::D.trailing_zeros() as usize;
+        let reduced_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
+            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
+        })?;
+        if reduced_vars == 0 {
+            return Err(HachiError::InvalidSetup(
+                "max_num_vars must leave at least one outer variable".to_string(),
+            ));
+        }
+        let (m_vars, r_vars) = optimal_m_r_split::<Self>(reduced_vars);
+        HachiCommitmentLayout::new::<Self>(m_vars, r_vars, &Self::decomposition())
+    }
+
+    fn n_b_at_level(level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {
+        if max_num_vars >= 44 {
+            if level <= 1 {
+                2
+            } else {
+                1
+            }
+        } else if max_num_vars >= 38 {
+            if level == 0 {
+                2
+            } else {
+                1
+            }
+        } else {
+            1
+        }
+    }
+
+    fn n_d_at_level(level: usize, max_num_vars: usize, current_w_len: usize) -> usize {
+        Self::n_b_at_level(level, max_num_vars, current_w_len)
+    }
+
+    fn stage1_challenge_config(level_params: HachiLevelParams) -> SparseChallengeConfig {
+        d64_stage1_challenge_config(level_params)
+    }
+
+    fn labrador_handoff_threshold() -> usize {
+        usize::MAX
+    }
+}
 
 /// Halving-D commitment config for Fp128 (D=256 → 128).
 ///

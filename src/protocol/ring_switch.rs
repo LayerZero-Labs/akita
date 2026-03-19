@@ -15,8 +15,8 @@ use crate::protocol::commitment::utils::linear::{
 };
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
-    optimal_m_r_split, CommitmentConfig, DecompositionParams, HachiCommitmentLayout,
-    HachiExpandedSetup, RingCommitment,
+    hachi_level_layout, CommitmentConfig, DecompositionParams, HachiCommitmentLayout,
+    HachiExpandedSetup, HachiLevelParams, HachiScheduleInputs, RingCommitment,
 };
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{DigitLut, FlatCommitmentHint, FlatRingVec, HachiCommitmentHint};
@@ -82,6 +82,7 @@ pub fn ring_switch_build_w<F, const D: usize, Cfg>(
     ntt_a: &NttSlotCache<D>,
     ntt_b: &NttSlotCache<D>,
     ntt_d: &NttSlotCache<D>,
+    level_params: HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<Vec<i8>, HachiError>
 where
@@ -118,7 +119,8 @@ where
         .w_folded()
         .ok_or_else(|| HachiError::InvalidInput("missing w_folded in prover".to_string()))?;
 
-    let r = compute_r_split_eq::<F, D, Cfg>(
+    let r = compute_r_split_eq::<F, D>(
+        level_params,
         setup,
         &quad_eq.challenges,
         w_hat_flat,
@@ -162,6 +164,7 @@ pub fn ring_switch_finalize<F, T, const D: usize, Cfg>(
     w: Vec<i8>,
     w_commitment: FlatRingVec<F>,
     w_hint: FlatCommitmentHint,
+    level_params: HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<RingSwitchOutput<F>, HachiError>
 where
@@ -177,7 +180,7 @@ where
     let num_ring_elems = w.len() / D;
     let live_x_cols = num_ring_elems;
     let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    let m_rows = m_row_count::<Cfg>();
+    let m_rows = m_row_count(level_params);
     let num_sc_vars = num_u + num_l;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
@@ -191,12 +194,13 @@ where
     #[cfg(feature = "parallel")]
     let (m_evals_x_result, w_result) = rayon::join(
         || {
-            compute_m_evals_x::<F, D, Cfg>(
+            compute_m_evals_x::<F, D>(
                 setup,
                 opening_point,
                 challenges,
                 alpha,
                 &alpha_evals_y,
+                level_params,
                 layout,
                 &tau1,
             )
@@ -205,12 +209,13 @@ where
     );
     #[cfg(not(feature = "parallel"))]
     let (m_evals_x_result, w_result) = {
-        let m_evals_x = compute_m_evals_x::<F, D, Cfg>(
+        let m_evals_x = compute_m_evals_x::<F, D>(
             setup,
             opening_point,
             challenges,
             alpha,
             &alpha_evals_y,
+            level_params,
             layout,
             &tau1,
         )?;
@@ -256,6 +261,7 @@ pub fn ring_switch_prover<F, T, const D: usize, Cfg>(
     ntt_a: &NttSlotCache<D>,
     ntt_b: &NttSlotCache<D>,
     ntt_d: &NttSlotCache<D>,
+    level_params: HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<RingSwitchOutput<F>, HachiError>
 where
@@ -263,9 +269,17 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
-    let w = ring_switch_build_w::<F, D, Cfg>(quad_eq, setup, ntt_a, ntt_b, ntt_d, layout)?;
+    let w = ring_switch_build_w::<F, D, Cfg>(
+        quad_eq,
+        setup,
+        ntt_a,
+        ntt_b,
+        ntt_d,
+        level_params,
+        layout,
+    )?;
 
-    let (w_commitment, w_hint) = commit_w::<F, D, Cfg>(&w, ntt_a, ntt_b)?;
+    let (w_commitment, w_hint) = commit_w::<F, D, Cfg>(&w, ntt_a, ntt_b, level_params)?;
 
     let w_commitment_flat = FlatRingVec::from_commitment(&w_commitment);
     let w_hint_flat = FlatCommitmentHint::from_typed(w_hint);
@@ -277,6 +291,7 @@ where
         w,
         w_commitment_flat,
         w_hint_flat,
+        level_params,
         layout,
     )
 }
@@ -297,6 +312,7 @@ pub fn ring_switch_verifier<F, T, const D: usize, Cfg>(
     w_len: usize,
     w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
+    level_params: HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<RingSwitchOutput<F>, HachiError>
 where
@@ -311,7 +327,7 @@ where
     let num_ring_elems = w_len / D;
     let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
     let num_l = D.trailing_zeros() as usize;
-    let m_rows = m_row_count::<Cfg>();
+    let m_rows = m_row_count(level_params);
     let num_sc_vars = num_u + num_l;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
@@ -319,12 +335,13 @@ where
     let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
 
-    let m_evals_x = compute_m_evals_x::<F, D, Cfg>(
+    let m_evals_x = compute_m_evals_x::<F, D>(
         setup,
         quad_eq.opening_point(),
         &quad_eq.challenges,
         alpha,
         &alpha_evals_y,
+        level_params,
         layout,
         &tau1,
     )?;
@@ -468,38 +485,36 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
     }
 
     fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        let alpha = D.trailing_zeros() as usize;
-        let reduced_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
-            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
+        let current_w_len = 1usize << max_num_vars;
+        let (_, layout) = hachi_level_layout::<Cfg>(HachiScheduleInputs {
+            max_num_vars,
+            level: 1,
+            current_w_len,
         })?;
-        if reduced_vars == 0 {
-            return Err(HachiError::InvalidSetup(
-                "max_num_vars must leave at least one outer variable".to_string(),
-            ));
-        }
-        let (m_vars, r_vars) = optimal_m_r_split::<Self>(reduced_vars);
-        HachiCommitmentLayout::new::<Self>(m_vars, r_vars, &Self::decomposition())
+        Ok(layout)
     }
 }
 
 /// Total ring elements in the w polynomial, computed from the main layout.
 ///
 /// Components: w_hat + t_hat + decomposed z_pre + decomposed r.
-pub(crate) fn w_ring_element_count<F: CanonicalField, Cfg: CommitmentConfig>(
+pub(crate) fn w_ring_element_count<F: CanonicalField>(
+    level_params: HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> usize {
     let w_hat_count = layout.num_blocks * layout.num_digits_open;
-    let t_hat_count = layout.num_blocks * Cfg::N_A * layout.num_digits_open;
+    let t_hat_count = layout.num_blocks * level_params.n_a * layout.num_digits_open;
     let z_pre_count = layout.inner_width * layout.num_digits_fold;
-    let r_count = m_row_count::<Cfg>() * r_decomp_levels::<F>(layout.log_basis);
+    let r_count = m_row_count(level_params) * r_decomp_levels::<F>(layout.log_basis);
     w_hat_count + t_hat_count + z_pre_count + r_count
 }
 
 /// Compute the w-commitment layout from the main layout.
 pub(crate) fn w_commitment_layout<F: CanonicalField, const D: usize, Cfg: CommitmentConfig>(
+    level_params: HachiLevelParams,
     main_layout: HachiCommitmentLayout,
 ) -> Result<HachiCommitmentLayout, HachiError> {
-    let total = w_ring_element_count::<F, Cfg>(main_layout)
+    let total = w_ring_element_count::<F>(level_params, main_layout)
         .next_power_of_two()
         .max(1);
     let alpha = D.trailing_zeros() as usize;
@@ -526,6 +541,7 @@ pub fn commit_w<F, const D: usize, Cfg>(
     w: &[i8],
     ntt_a: &NttSlotCache<D>,
     ntt_b: &NttSlotCache<D>,
+    level_params: HachiLevelParams,
 ) -> Result<(RingCommitment<F, D>, HachiCommitmentHint<F, D>), HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -593,7 +609,8 @@ where
         .collect();
 
     let t_hat_flat = flatten_i8_blocks(&t_hat_per_block);
-    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(ntt_b, &t_hat_flat);
+    let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(ntt_b, &t_hat_flat);
+    u.truncate(level_params.n_b);
     let hint = HachiCommitmentHint::with_t(t_hat_per_block, t_all);
     Ok((RingCommitment { u }, hint))
 }
@@ -815,22 +832,21 @@ pub(crate) fn build_w_evals_compact(
     Ok((compact, num_u, num_l))
 }
 
-pub(crate) fn m_row_count<Cfg: CommitmentConfig>() -> usize {
-    Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A
+pub(crate) fn m_row_count(level_params: HachiLevelParams) -> usize {
+    level_params.m_row_count()
 }
 
-pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize, Cfg>(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     setup: &HachiExpandedSetup<F>,
     opening_point: &RingOpeningPoint<F>,
     challenges: &[SparseChallenge],
     alpha: F,
     alpha_pows: &[F],
+    level_params: HachiLevelParams,
     layout: HachiCommitmentLayout,
     tau1: &[F],
-) -> Result<Vec<F>, HachiError>
-where
-    Cfg: CommitmentConfig,
-{
+) -> Result<Vec<F>, HachiError> {
     if alpha_pows.len() != D {
         return Err(HachiError::InvalidSize {
             expected: D,
@@ -845,10 +861,10 @@ where
     let num_blocks = opening_point.b.len();
     let block_len = layout.block_len;
     let w_len = depth_open * num_blocks;
-    let t_len = depth_open * Cfg::N_A * num_blocks;
+    let t_len = depth_open * level_params.n_a * num_blocks;
     let inner_width = block_len * depth_commit;
     let z_len = depth_fold * inner_width;
-    let rows = m_row_count::<Cfg>();
+    let rows = m_row_count(level_params);
     let levels = r_decomp_levels::<F>(log_basis);
     let total_cols = w_len
         .checked_add(t_len)
@@ -880,9 +896,9 @@ where
     let b_view = setup.B.view::<D>();
     let a_view = setup.A.view::<D>();
 
-    let row3_weight = eq_tau1[Cfg::N_D + Cfg::N_B];
-    let row4_weight = eq_tau1[Cfg::N_D + Cfg::N_B + 1];
-    let a_weights = &eq_tau1[(Cfg::N_D + Cfg::N_B + 2)..rows];
+    let row3_weight = eq_tau1[level_params.n_d + level_params.n_b];
+    let row4_weight = eq_tau1[level_params.n_d + level_params.n_b + 1];
+    let a_weights = &eq_tau1[(level_params.n_d + level_params.n_b + 2)..rows];
 
     let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
         .map(|x| {
@@ -891,7 +907,7 @@ where
             let mut acc = (row3_weight * opening_point.b[block_idx]
                 + row4_weight * c_alphas[block_idx])
                 * g1_open[digit_idx];
-            for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(Cfg::N_D) {
+            for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(level_params.n_d) {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&d_view.row(row_idx)[x], alpha_pows);
                 }
@@ -903,12 +919,15 @@ where
 
     let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
         .map(|x| {
-            let block_idx = x / (Cfg::N_A * depth_open);
-            let rem = x % (Cfg::N_A * depth_open);
+            let block_idx = x / (level_params.n_a * depth_open);
+            let rem = x % (level_params.n_a * depth_open);
             let a_idx = rem / depth_open;
             let digit_idx = rem % depth_open;
             let mut acc = a_weights[a_idx] * c_alphas[block_idx] * g1_open[digit_idx];
-            for (row_idx, eq_i) in eq_tau1[Cfg::N_D..(Cfg::N_D + Cfg::N_B)].iter().enumerate() {
+            for (row_idx, eq_i) in eq_tau1[level_params.n_d..(level_params.n_d + level_params.n_b)]
+                .iter()
+                .enumerate()
+            {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[x], alpha_pows);
                 }

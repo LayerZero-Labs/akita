@@ -3,6 +3,7 @@
 mod commit;
 mod config;
 pub mod onehot;
+mod schedule;
 mod scheme;
 pub(crate) mod transcript_append;
 mod types;
@@ -13,12 +14,17 @@ pub use commit::{
 };
 pub use config::optimal_m_r_split;
 pub use config::{
-    compute_num_digits, compute_num_digits_fold, CommitmentConfig, DecompositionParams,
-    DynamicSmallTestCommitmentConfig, Fp128BoundedCommitmentConfig, Fp128CommitmentConfig,
+    beta_linf_fold_bound, compute_num_digits, compute_num_digits_fold, CommitmentConfig,
+    DecompositionParams, DynamicSmallTestCommitmentConfig, Fp128AdaptiveOneHotCommitmentConfig,
+    Fp128BoundedCommitmentConfig, Fp128CommitmentConfig, Fp128D64BoundedCommitmentConfig,
     Fp128FullCommitmentConfig, Fp128HalvingDCommitmentConfig, Fp128LogBasisCommitmentConfig,
-    Fp128OneHotCommitmentConfig, HachiCommitmentLayout, SmallTestCommitmentConfig,
+    Fp128OneHotCommitmentConfig, Fp128Rank2BoundedCommitmentConfig, HachiCommitmentLayout,
+    SmallTestCommitmentConfig,
 };
 pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
+pub use schedule::{
+    hachi_level_layout, hachi_root_level_layout, HachiLevelParams, HachiScheduleInputs,
+};
 pub use scheme::{CommitWitness, CommitmentScheme, RingCommitmentScheme};
 pub use transcript_append::AppendToTranscript;
 pub use types::{

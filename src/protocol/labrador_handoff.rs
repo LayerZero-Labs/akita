@@ -16,7 +16,8 @@ use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::linear::flatten_i8_blocks;
 use crate::protocol::commitment::{
-    CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, RingCommitment,
+    CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiScheduleInputs,
+    RingCommitment,
 };
 use crate::protocol::commitment_scheme::next_level_opening_point;
 use crate::protocol::hachi_poly_ops::{BalancedDigitPoly, HachiPolyOps};
@@ -327,6 +328,11 @@ where
     });
 
     let quad_eq = tracing::info_span!("labrador::handoff_quad_eq").in_scope(|| {
+        let level_params = WCommitmentConfig::<D_HANDOFF, Cfg>::level_params(HachiScheduleInputs {
+            max_num_vars: padded_point.len(),
+            level: 1,
+            current_w_len: current_w.len(),
+        });
         Ok::<_, HachiError>(Box::new(QuadraticEquation::<
             F,
             D_HANDOFF,
@@ -336,6 +342,7 @@ where
             ring_opening_point.clone(),
             &w_poly,
             w_folded,
+            level_params,
             current_hint.clone(),
             &mut handoff_transcript,
             current_commitment,
@@ -564,9 +571,15 @@ where
 
     // Derive challenges via verifier-side quad eq (absorbs v, samples challenges).
     let quad_eq = tracing::info_span!("labrador::handoff_quad_eq").in_scope(|| {
+        let level_params = WCommitmentConfig::<D_HANDOFF, Cfg>::level_params(HachiScheduleInputs {
+            max_num_vars: padded_point.len(),
+            level: 1,
+            current_w_len: 0,
+        });
         QuadraticEquation::<F, D_HANDOFF, WCommitmentConfig<D_HANDOFF, Cfg>>::new_verifier(
             ring_opening_point.clone(),
             v.clone(),
+            level_params,
             transcript,
             current_commitment,
             &y_ring,
@@ -653,7 +666,9 @@ fn matches_opening_claim<F: FieldCore + CanonicalField, const D: usize>(
 mod tests {
     use super::*;
     use crate::protocol::commitment::utils::linear::flatten_i8_blocks;
-    use crate::protocol::commitment::{HachiCommitmentCore, RingCommitmentScheme};
+    use crate::protocol::commitment::{
+        HachiCommitmentCore, HachiScheduleInputs, RingCommitmentScheme,
+    };
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
     use crate::protocol::proof::HachiCommitmentHint;
     use crate::protocol::quadratic_equation::QuadraticEquation;
@@ -689,12 +704,18 @@ mod tests {
         let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_SEED);
         let layout = setup.layout();
         let (y_ring, w_folded) = poly.evaluate_and_fold(&point.b, &point.a, layout.block_len);
+        let level_params = TinyConfig::level_params(HachiScheduleInputs {
+            max_num_vars: setup.expanded.seed.max_num_vars,
+            level: 0,
+            current_w_len: layout.num_blocks * layout.block_len * D,
+        });
 
         let quad_eq = QuadraticEquation::<F, D, TinyConfig>::new_prover(
             &setup.ntt_D,
             point.clone(),
             &poly,
             w_folded,
+            level_params,
             hint,
             &mut transcript,
             &w.commitment,

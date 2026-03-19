@@ -16,6 +16,7 @@ use std::sync::{Mutex, Once};
 use std::time::Instant;
 
 type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
+const ONEHOT_K: usize = 256;
 // Keep the default e2e tests small enough for `cargo test`; the larger nv=25
 // workloads remain covered by `benches/hachi_e2e.rs`, while still triggering
 // the standard Labrador handoff path.
@@ -73,8 +74,19 @@ fn purge_setup_cache(max_num_vars: usize) {
         });
     if let Ok(mut path) = cache_dir {
         path.push("hachi");
-        path.push(format!("hachi_{max_num_vars}.setup"));
-        let _ = std::fs::remove_file(&path);
+        if let Ok(entries) = std::fs::read_dir(&path) {
+            let needle = format!("_nv{max_num_vars}.setup");
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                if entry_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("hachi_") && name.ends_with(&needle))
+                {
+                    let _ = std::fs::remove_file(entry_path);
+                }
+            }
+        }
     }
 }
 
@@ -213,11 +225,15 @@ fn onehot_labrador_prove_verify() {
         const D: usize = Cfg::D;
 
         let layout = Cfg::commitment_layout(ONEHOT_TEST_NV).expect("layout");
-        let total_ring = layout.num_blocks * layout.block_len;
-        let onehot_k = D;
+        let total_field = (layout.num_blocks * layout.block_len)
+            .checked_mul(D)
+            .expect("total field size overflow");
+        let onehot_k = ONEHOT_K;
+        let total_chunks = total_field / onehot_k;
+        assert_eq!(total_chunks * onehot_k, total_field);
 
         let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
-        let indices: Vec<Option<usize>> = (0..total_ring)
+        let indices: Vec<Option<usize>> = (0..total_chunks)
             .map(|_| Some(rng.gen_range(0..onehot_k)))
             .collect();
 
