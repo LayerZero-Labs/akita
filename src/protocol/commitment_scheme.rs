@@ -1145,7 +1145,7 @@ where
         let mut current_commitment = FlatRingVec::from_commitment(commitment);
         let mut current_basis = basis;
         let max_num_vars = setup.expanded.seed.max_num_vars;
-        let mut current_w_len = 1usize << max_num_vars;
+        let mut current_w_len = layout.num_blocks * layout.block_len * D;
 
         for (i, level_proof) in proof.levels.iter().enumerate() {
             let is_last_hachi = i == num_levels - 1;

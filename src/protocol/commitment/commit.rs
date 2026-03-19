@@ -1101,7 +1101,7 @@ mod tests {
         use std::fs;
 
         fn cleanup_setup_file(max_num_vars: usize) {
-            if let Some(path) = get_storage_path(max_num_vars) {
+            if let Some(path) = get_storage_path::<TinyConfig>(max_num_vars) {
                 let _ = fs::remove_file(path);
             }
         }
@@ -1119,7 +1119,7 @@ mod tests {
                 )
                 .unwrap();
 
-            let loaded = load_expanded_setup::<TestF>(MAX_VARS).unwrap();
+            let loaded = load_expanded_setup::<TestF, TinyConfig>(MAX_VARS).unwrap();
             assert_eq!(loaded, prover_setup.expanded);
 
             cleanup_setup_file(MAX_VARS);
@@ -1164,7 +1164,7 @@ mod tests {
                 )
                 .unwrap();
 
-            let loaded_expanded = load_expanded_setup::<TestF>(MAX_VARS).unwrap();
+            let loaded_expanded = load_expanded_setup::<TestF, TinyConfig>(MAX_VARS).unwrap();
             let (disk_setup, _) = setup_from_expanded::<TestF, TEST_D>(loaded_expanded).unwrap();
 
             let layout = fresh_setup.layout();

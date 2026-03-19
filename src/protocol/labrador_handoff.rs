@@ -574,7 +574,7 @@ where
         let level_params = WCommitmentConfig::<D_HANDOFF, Cfg>::level_params(HachiScheduleInputs {
             max_num_vars: padded_point.len(),
             level: 1,
-            current_w_len: 0,
+            current_w_len: w_layout.num_blocks * w_layout.block_len * D_HANDOFF,
         });
         QuadraticEquation::<F, D_HANDOFF, WCommitmentConfig<D_HANDOFF, Cfg>>::new_verifier(
             ring_opening_point.clone(),
