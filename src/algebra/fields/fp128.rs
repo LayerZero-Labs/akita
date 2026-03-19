@@ -899,6 +899,8 @@ pub type Prime128M52M3P0 = Fp128<0xffffffffffffffffffeffffffffffff9>;
 pub type Prime128M54P4P0 = Fp128<0xffffffffffffffffffc0000000000011>;
 /// `p = 2^128 − 2^8 − 2^4 − 2^1 − 2^0`  (C = 275).
 pub type Prime128M8M4M1M0 = Fp128<0xfffffffffffffffffffffffffffffeed>;
+/// `p = 2^128 − 5823`  (C = 5823).
+pub type Prime128Offset5823 = Fp128<0xffffffffffffffffffffffffffffe941>;
 /// `p = 2^128 − 2^18 − 2^0`  (C = 2^18 + 1).
 pub type Prime128M18M0 = Fp128<0xfffffffffffffffffffffffffffbffff>;
 /// `p = 2^128 − 2^54 + 2^0`  (C = 2^54 − 1).
