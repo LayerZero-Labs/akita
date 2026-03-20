@@ -2006,57 +2006,57 @@ mod tests {
     #[test]
     fn stage1_prefix_aware_rounds_match_explicit_zero_padding() {
         let num_l = 2usize;
-        let b = 8usize;
-        let half = (b / 2) as i8;
+        for b in [4usize, 8] {
+            let half = (b / 2) as i8;
+            for live_x_cols in [5usize, 6usize] {
+                let num_u = live_x_cols.next_power_of_two().trailing_zeros() as usize;
+                let y_len = 1usize << num_l;
+                let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+                    .map(|i| ((i * 7 + 5) % b) as i8 - half)
+                    .collect();
+                let w_padded = pad_compact_rows(&w_prefix, live_x_cols, num_u, num_l);
+                let tau0: Vec<F> = (0..(num_u + num_l))
+                    .map(|i| F::from_u64((i as u64) + 19))
+                    .collect();
+                let mut prefix_prover =
+                    HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+                let mut padded_prover =
+                    HachiStage1Prover::new(&w_padded, &tau0, b, 1usize << num_u, num_u, num_l);
+                let mut challenges = Vec::new();
+                let mut prefix_claim = F::zero();
+                let mut padded_claim = F::zero();
 
-        for live_x_cols in [5usize, 6usize] {
-            let num_u = live_x_cols.next_power_of_two().trailing_zeros() as usize;
-            let y_len = 1usize << num_l;
-            let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
-                .map(|i| ((i * 7 + 5) % b) as i8 - half)
-                .collect();
-            let w_padded = pad_compact_rows(&w_prefix, live_x_cols, num_u, num_l);
-            let tau0: Vec<F> = (0..(num_u + num_l))
-                .map(|i| F::from_u64((i as u64) + 19))
-                .collect();
-            let mut prefix_prover =
-                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
-            let mut padded_prover =
-                HachiStage1Prover::new(&w_padded, &tau0, b, 1usize << num_u, num_u, num_l);
-            let mut challenges = Vec::new();
-            let mut prefix_claim = F::zero();
-            let mut padded_claim = F::zero();
+                for round in 0..(num_u + num_l) {
+                    let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
+                    let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
+                    assert_eq!(
+                        prefix_poly, padded_poly,
+                        "round {round} polynomial mismatch live_x_cols={live_x_cols} b={b}"
+                    );
 
-            for round in 0..(num_u + num_l) {
-                let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
-                let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
+                    let challenge = F::from_u64((round as u64) + 29);
+                    challenges.push(challenge);
+                    prefix_claim = prefix_poly.evaluate(&challenge);
+                    padded_claim = padded_poly.evaluate(&challenge);
+                    prefix_prover.ingest_challenge(round, challenge);
+                    padded_prover.ingest_challenge(round, challenge);
+                }
+
+                assert_eq!(prefix_prover.final_s_claim(), padded_prover.final_s_claim());
+                assert_eq!(prefix_claim, padded_claim);
+                let s_padded: Vec<F> = w_padded
+                    .iter()
+                    .map(|&w| {
+                        let w = F::from_i64(w as i64);
+                        w * (w + F::one())
+                    })
+                    .collect();
                 assert_eq!(
-                    prefix_poly, padded_poly,
-                    "round {round} polynomial mismatch live_x_cols={live_x_cols}"
+                    prefix_prover.final_s_claim(),
+                    multilinear_eval(&s_padded, &challenges).unwrap(),
+                    "final s-claim mismatch live_x_cols={live_x_cols} b={b}"
                 );
-
-                let challenge = F::from_u64((round as u64) + 29);
-                challenges.push(challenge);
-                prefix_claim = prefix_poly.evaluate(&challenge);
-                padded_claim = padded_poly.evaluate(&challenge);
-                prefix_prover.ingest_challenge(round, challenge);
-                padded_prover.ingest_challenge(round, challenge);
             }
-
-            assert_eq!(prefix_prover.final_s_claim(), padded_prover.final_s_claim());
-            assert_eq!(prefix_claim, padded_claim);
-            let s_padded: Vec<F> = w_padded
-                .iter()
-                .map(|&w| {
-                    let w = F::from_i64(w as i64);
-                    w * (w + F::one())
-                })
-                .collect();
-            assert_eq!(
-                prefix_prover.final_s_claim(),
-                multilinear_eval(&s_padded, &challenges).unwrap(),
-                "final s-claim mismatch live_x_cols={live_x_cols}"
-            );
         }
     }
 
@@ -2065,55 +2065,57 @@ mod tests {
         let num_u = 3usize;
         let num_l = 2usize;
         let live_x_cols = 6usize;
-        let b = 8usize;
-        let half = (b / 2) as i8;
         let y_len = 1usize << num_l;
-        let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
-            .map(|i| ((i * 9 + 5) % b) as i8 - half)
-            .collect();
-        let s_compact: Vec<i16> = w_prefix
-            .iter()
-            .map(|&w| {
-                let w = w as i32;
-                (w * (w + 1)) as i16
-            })
-            .collect();
-        let tau0: Vec<F> = (0..(num_u + num_l))
-            .map(|i| F::from_u64((i as u64) + 53))
-            .collect();
+        for b in [4usize, 8] {
+            let half = (b / 2) as i8;
+            let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+                .map(|i| ((i * 9 + 5) % b) as i8 - half)
+                .collect();
+            let s_compact: Vec<i16> = w_prefix
+                .iter()
+                .map(|&w| {
+                    let w = w as i32;
+                    (w * (w + 1)) as i16
+                })
+                .collect();
+            let tau0: Vec<F> = (0..(num_u + num_l))
+                .map(|i| F::from_u64((i as u64) + 53))
+                .collect();
 
-        let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
-        let round0 = prover.compute_round_univariate(0, F::zero());
-        let r0 = F::from_u64(61);
-        let claim1 = round0.evaluate(&r0);
-        prover.ingest_challenge(0, r0);
-        let round1 = prover.compute_round_univariate(1, claim1);
-        let r1 = F::from_u64(67);
-        let claim2 = round1.evaluate(&r1);
+            let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+            let round0 = prover.compute_round_univariate(0, F::zero());
+            let r0 = F::from_u64(61);
+            let claim1 = round0.evaluate(&r0);
+            prover.ingest_challenge(0, r0);
+            let round1 = prover.compute_round_univariate(1, claim1);
+            let r1 = F::from_u64(67);
+            let claim2 = round1.evaluate(&r1);
 
-        let expected_s_full = HachiStage1Prover::<F>::fold_s_compact_to_round2(
-            &s_compact,
-            live_x_cols,
-            y_len,
-            r0,
-            r1,
-        );
-        let mut expected = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
-        expected.split_eq.bind(r0);
-        expected.split_eq.bind(r1);
-        expected.live_x_cols = live_x_cols.div_ceil(4);
-        expected.rounds_completed = 2;
-        let expected_round2 = expected.compute_round_full_prefix_x(&expected_s_full, claim2);
+            let expected_s_full = HachiStage1Prover::<F>::fold_s_compact_to_round2(
+                &s_compact,
+                live_x_cols,
+                y_len,
+                r0,
+                r1,
+            );
+            let mut expected =
+                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+            expected.split_eq.bind(r0);
+            expected.split_eq.bind(r1);
+            expected.live_x_cols = live_x_cols.div_ceil(4);
+            expected.rounds_completed = 2;
+            let expected_round2 = expected.compute_round_full_prefix_x(&expected_s_full, claim2);
 
-        prover.ingest_challenge(1, r1);
+            prover.ingest_challenge(1, r1);
 
-        match &prover.s_table {
-            STable::Full(s_full) => assert_eq!(s_full, &expected_s_full),
-            STable::Compact(_) => {
-                panic!("expected fused stage1 transition to materialize full table")
+            match &prover.s_table {
+                STable::Full(s_full) => assert_eq!(s_full, &expected_s_full),
+                STable::Compact(_) => {
+                    panic!("expected fused stage1 transition to materialize full table")
+                }
             }
+            assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
         }
-        assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
     }
 
     #[test]
@@ -2121,62 +2123,65 @@ mod tests {
         let num_u = 5usize;
         let num_l = 2usize;
         let live_x_cols = 12usize;
-        let b = 8usize;
-        let half = (b / 2) as i8;
         let y_len = 1usize << num_l;
-        let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
-            .map(|i| ((i * 5 + 11) % b) as i8 - half)
-            .collect();
-        let tau0: Vec<F> = (0..(num_u + num_l))
-            .map(|i| F::from_u64((i as u64) + 101))
-            .collect();
+        for b in [4usize, 8] {
+            let half = (b / 2) as i8;
+            let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+                .map(|i| ((i * 5 + 11) % b) as i8 - half)
+                .collect();
+            let tau0: Vec<F> = (0..(num_u + num_l))
+                .map(|i| F::from_u64((i as u64) + 101))
+                .collect();
 
-        let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
-        let round0 = prover.compute_round_univariate(0, F::zero());
-        let r0 = F::from_u64(107);
-        let claim1 = round0.evaluate(&r0);
-        prover.ingest_challenge(0, r0);
+            let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+            let round0 = prover.compute_round_univariate(0, F::zero());
+            let r0 = F::from_u64(107);
+            let claim1 = round0.evaluate(&r0);
+            prover.ingest_challenge(0, r0);
 
-        let round1 = prover.compute_round_univariate(1, claim1);
-        let r1 = F::from_u64(109);
-        let claim2 = round1.evaluate(&r1);
-        prover.ingest_challenge(1, r1);
+            let round1 = prover.compute_round_univariate(1, claim1);
+            let r1 = F::from_u64(109);
+            let claim2 = round1.evaluate(&r1);
+            prover.ingest_challenge(1, r1);
 
-        let round2 = prover.compute_round_univariate(2, claim2);
-        let r2 = F::from_u64(113);
-        let claim3 = round2.evaluate(&r2);
+            let round2 = prover.compute_round_univariate(2, claim2);
+            let r2 = F::from_u64(113);
+            let claim3 = round2.evaluate(&r2);
 
-        let mut expected = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
-        let expected_round0 = expected.compute_round_univariate(0, F::zero());
-        assert_eq!(expected_round0, round0);
-        expected.ingest_challenge(0, r0);
-        let expected_round1 = expected.compute_round_univariate(1, claim1);
-        assert_eq!(expected_round1, round1);
-        expected.ingest_challenge(1, r1);
-        let expected_round2 = expected.compute_round_univariate(2, claim2);
-        assert_eq!(expected_round2, round2);
+            let mut expected =
+                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+            let expected_round0 = expected.compute_round_univariate(0, F::zero());
+            assert_eq!(expected_round0, round0);
+            expected.ingest_challenge(0, r0);
+            let expected_round1 = expected.compute_round_univariate(1, claim1);
+            assert_eq!(expected_round1, round1);
+            expected.ingest_challenge(1, r1);
+            let expected_round2 = expected.compute_round_univariate(2, claim2);
+            assert_eq!(expected_round2, round2);
 
-        let current_s_full = match &expected.s_table {
-            STable::Full(s_full) => s_full.clone(),
-            STable::Compact(_) => panic!("expected later prefix state to be full"),
-        };
-        let expected_next_s_full = HachiStage1Prover::<F>::fold_s_full_prefix_x(
-            &current_s_full,
-            expected.live_x_cols,
-            y_len,
-            r2,
-        );
-        expected.split_eq.bind(r2);
-        expected.live_x_cols = expected.live_x_cols.div_ceil(2);
-        expected.rounds_completed += 1;
-        let expected_round3 = expected.compute_round_full_prefix_x(&expected_next_s_full, claim3);
+            let current_s_full = match &expected.s_table {
+                STable::Full(s_full) => s_full.clone(),
+                STable::Compact(_) => panic!("expected later prefix state to be full"),
+            };
+            let expected_next_s_full = HachiStage1Prover::<F>::fold_s_full_prefix_x(
+                &current_s_full,
+                expected.live_x_cols,
+                y_len,
+                r2,
+            );
+            expected.split_eq.bind(r2);
+            expected.live_x_cols = expected.live_x_cols.div_ceil(2);
+            expected.rounds_completed += 1;
+            let expected_round3 =
+                expected.compute_round_full_prefix_x(&expected_next_s_full, claim3);
 
-        prover.ingest_challenge(2, r2);
+            prover.ingest_challenge(2, r2);
 
-        match &prover.s_table {
-            STable::Full(s_full) => assert_eq!(s_full, &expected_next_s_full),
-            STable::Compact(_) => panic!("expected fused later prefix stage to stay full"),
+            match &prover.s_table {
+                STable::Full(s_full) => assert_eq!(s_full, &expected_next_s_full),
+                STable::Compact(_) => panic!("expected fused later prefix stage to stay full"),
+            }
+            assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
         }
-        assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
     }
 }
