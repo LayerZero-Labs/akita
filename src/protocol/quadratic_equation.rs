@@ -20,6 +20,8 @@ use crate::protocol::proof::HachiCommitmentHint;
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use std::iter::repeat_n;
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -140,8 +142,7 @@ where
             let _span = tracing::info_span!("decompose_w_hat").entered();
             let depth_open = layout.num_digits_open;
             let log_basis = layout.log_basis;
-            let w_hat: Vec<Vec<[i8; D]>> = pre_folded
-                .iter()
+            let w_hat: Vec<Vec<[i8; D]>> = cfg_iter!(pre_folded)
                 .map(|w_i| w_i.balanced_decompose_pow2_i8(depth_open, log_basis))
                 .collect();
             let w_hat_flat = flatten_w_hat(&w_hat);
