@@ -33,7 +33,7 @@ pub struct PackedDigits {
 /// Wraps `FromSmallInt::digit_lut` with convenient signed-digit indexing.
 /// Index a digit `d ∈ [-b/2, b/2)` via [`get`](DigitLut::get).
 pub(crate) struct DigitLut<F> {
-    table: [F; 16],
+    table: [F; 32],
     half_b: i8,
 }
 

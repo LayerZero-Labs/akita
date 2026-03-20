@@ -144,12 +144,12 @@ impl<const P: u128> Fp128<P> {
     }
 
     /// Const-evaluable lookup table for balanced digits in `[-b/2, b/2)`
-    /// where `b = 2^log_basis`. Requires `log_basis <= 4`.
-    pub const fn digit_lut(log_basis: u32) -> [Self; 16] {
-        assert!(log_basis > 0 && log_basis <= 4);
+    /// where `b = 2^log_basis`. Requires `log_basis <= 5`.
+    pub const fn digit_lut(log_basis: u32) -> [Self; 32] {
+        assert!(log_basis > 0 && log_basis <= 5);
         let b = 1u32 << log_basis;
         let half_b = (b / 2) as i64;
-        let mut lut = [Self(pack(0, 0)); 16];
+        let mut lut = [Self(pack(0, 0)); 32];
         let mut i = 0u32;
         while i < b {
             lut[i as usize] = Self::from_i64_const(i as i64 - half_b);
@@ -860,7 +860,7 @@ impl<const P: u128> FromSmallInt for Fp128<P> {
         Self::from_i64_const(val)
     }
 
-    fn digit_lut(log_basis: u32) -> [Self; 16] {
+    fn digit_lut(log_basis: u32) -> [Self; 32] {
         Self::digit_lut(log_basis)
     }
 }

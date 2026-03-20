@@ -15,9 +15,9 @@ use crate::protocol::commitment::utils::linear::{
 };
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
-    hachi_recursive_level_layout_from_params, CommitmentConfig, CommitmentEnvelope,
-    DecompositionParams, HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams,
-    HachiScheduleInputs, RingCommitment,
+    hachi_recursive_level_layout_from_params, recursive_level_decomposition_from_root,
+    CommitmentConfig, CommitmentEnvelope, DecompositionParams, HachiCommitmentLayout,
+    HachiExpandedSetup, HachiLevelParams, HachiScheduleInputs, RingCommitment,
 };
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{DigitLut, FlatCommitmentHint, FlatRingVec, HachiCommitmentHint};
@@ -462,36 +462,32 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::envelope(max_num_vars)
     }
 
-    fn w_log_basis() -> u32 {
-        Cfg::w_log_basis()
-    }
-
     fn stage1_challenge_config(d: usize) -> crate::algebra::SparseChallengeConfig {
         Cfg::stage1_challenge_config(d)
     }
 
-    fn level_params(inputs: HachiScheduleInputs) -> HachiLevelParams {
-        let mut params = Cfg::level_params(inputs);
-        params.log_basis = Cfg::w_log_basis();
+    fn level_params_with_log_basis(
+        inputs: HachiScheduleInputs,
+        log_basis: u32,
+    ) -> HachiLevelParams {
+        let params = Cfg::level_params_with_log_basis(inputs, log_basis);
         debug_assert_eq!(params.d, D);
         params
     }
 
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        Cfg::log_basis_at_level(inputs)
+    }
+
+    fn schedule_key(max_num_vars: usize) -> String {
+        Cfg::schedule_key(max_num_vars)
+    }
+
     fn decomposition() -> DecompositionParams {
-        let parent = Cfg::decomposition();
-        let w_basis = Cfg::w_log_basis();
-        let parent_open = parent.log_open_bound.unwrap_or(parent.log_commit_bound);
-        DecompositionParams {
-            log_basis: w_basis,
-            // w entries come from a balanced decomposition; use w_basis for
-            // the commit bound since that's the widest digit range at any
-            // recursive level (level-0 entries fit in parent.log_basis <= w_basis).
-            log_commit_bound: w_basis,
-            // Opening folds w with arbitrary field-element weights, producing
-            // full-field-size coefficients that need the same decomposition
-            // depth as the parent's opening bound.
-            log_open_bound: Some(parent_open),
-        }
+        recursive_level_decomposition_from_root(
+            Cfg::decomposition(),
+            Cfg::decomposition().log_basis,
+        )
     }
 
     fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
@@ -516,6 +512,7 @@ pub(crate) fn w_ring_element_count<F: CanonicalField>(
 }
 
 /// Compute the w-commitment layout from the main layout.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn w_commitment_layout<F: CanonicalField, const D: usize, Cfg: CommitmentConfig>(
     level_params: &HachiLevelParams,
     main_layout: HachiCommitmentLayout,

@@ -53,13 +53,13 @@ pub struct CrtNttParamSet<W: PrimeWidth, const K: usize, const D: usize> {
 
 /// Precomputed Montgomery forms for small balanced digit values.
 ///
-/// Covers the full `{-8, ..., 7}` range (16 entries per CRT prime),
-/// which is sufficient for any `log_basis <= 4`. Storing the Montgomery
+/// Covers the full `{-16, ..., 15}` range (32 entries per CRT prime),
+/// which is sufficient for any `log_basis <= 5`. Storing the Montgomery
 /// representation eliminates one `from_canonical` (a Montgomery multiply)
 /// per coefficient in the `from_i8` hot path.
 #[derive(Debug, Clone)]
 pub struct DigitMontLut<W: PrimeWidth, const K: usize> {
-    vals: [[MontCoeff<W>; 16]; K],
+    vals: [[MontCoeff<W>; 32]; K],
 }
 
 /// Precomputed Montgomery forms for centered integer coefficients in
@@ -70,17 +70,17 @@ pub struct CenteredMontLut<W: PrimeWidth, const K: usize> {
     offset: i32,
 }
 
-const DIGIT_LUT_HALF_B: i16 = 8;
+const DIGIT_LUT_HALF_B: i16 = 16;
 
 impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
     /// Build the lookup table from CRT primes.
     ///
-    /// Covers digit values in `{-8, ..., 7}` (balanced representation for
-    /// `log_basis <= 4`).
+    /// Covers digit values in `{-16, ..., 15}` (balanced representation for
+    /// `log_basis <= 5`).
     pub fn new<const D: usize>(params: &CrtNttParamSet<W, K, D>) -> Self {
-        let mut vals = [[MontCoeff::from_raw(W::default()); 16]; K];
+        let mut vals = [[MontCoeff::from_raw(W::default()); 32]; K];
         for (k, prime) in params.primes.iter().enumerate() {
-            for v_idx in 0..16u8 {
+            for v_idx in 0..32u8 {
                 let v = v_idx as i64 - DIGIT_LUT_HALF_B as i64;
                 vals[k][v_idx as usize] = prime.from_canonical(W::from_i64(v));
             }

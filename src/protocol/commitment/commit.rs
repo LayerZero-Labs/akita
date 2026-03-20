@@ -25,8 +25,11 @@ use crate::parallel::*;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
+use crate::protocol::commitment_scheme::should_stop_folding;
 use crate::protocol::hachi_poly_ops::OneHotIndex;
+#[cfg(test)]
 use crate::protocol::ring_switch::w_commitment_layout;
+use crate::protocol::ring_switch::w_ring_element_count;
 use crate::{cfg_into_iter, cfg_iter, CanonicalField, FieldCore, FieldSampling};
 #[cfg(feature = "disk-persistence")]
 use std::fs;
@@ -295,6 +298,105 @@ pub(crate) fn root_current_w_len<const D: usize>(layout: HachiCommitmentLayout) 
         .unwrap_or(0)
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct LayoutChainStats {
+    max_inner_width: usize,
+    max_outer_width: usize,
+    max_d_matrix_width: usize,
+    max_r_vars: usize,
+    max_num_digits_open: usize,
+    max_num_digits_fold: usize,
+    max_log_basis: u32,
+}
+
+impl LayoutChainStats {
+    fn include(&mut self, layout: HachiCommitmentLayout) {
+        self.max_inner_width = self.max_inner_width.max(layout.inner_width);
+        self.max_outer_width = self.max_outer_width.max(layout.outer_width);
+        self.max_d_matrix_width = self.max_d_matrix_width.max(layout.d_matrix_width);
+        self.max_r_vars = self.max_r_vars.max(layout.r_vars);
+        self.max_num_digits_open = self.max_num_digits_open.max(layout.num_digits_open);
+        self.max_num_digits_fold = self.max_num_digits_fold.max(layout.num_digits_fold);
+        self.max_log_basis = self.max_log_basis.max(layout.log_basis);
+    }
+}
+
+fn scan_layout_chain<F, const D: usize, Cfg>(
+    max_num_vars: usize,
+    root_layout: HachiCommitmentLayout,
+) -> Result<LayoutChainStats, HachiError>
+where
+    F: FieldCore + CanonicalField,
+    Cfg: CommitmentConfig,
+{
+    let mut stats = LayoutChainStats::default();
+    stats.include(root_layout);
+
+    let can_use_planned_root =
+        Cfg::commitment_layout(max_num_vars).is_ok_and(|planned_root| planned_root == root_layout);
+    if can_use_planned_root {
+        if let Some(plan) = Cfg::schedule_plan(max_num_vars)? {
+            for state in plan.states.iter().skip(1) {
+                let params = Cfg::level_params(HachiScheduleInputs {
+                    max_num_vars,
+                    level: state.level,
+                    current_w_len: state.current_w_len,
+                });
+                let layout = super::hachi_recursive_level_layout_from_params::<Cfg>(
+                    &params,
+                    state.current_w_len,
+                )?;
+                stats.include(layout);
+            }
+            return Ok(stats);
+        }
+    }
+
+    let root_inputs = HachiScheduleInputs {
+        max_num_vars,
+        level: 0,
+        current_w_len: root_current_w_len::<D>(root_layout),
+    };
+    let root_params = Cfg::level_params_with_log_basis(root_inputs, root_layout.log_basis);
+    let mut prev_w_len = root_inputs.current_w_len;
+    let mut level = 1usize;
+    let mut current_w_len = w_ring_element_count::<F>(&root_params, root_layout) * root_params.d;
+    let mut current_params = Cfg::level_params(HachiScheduleInputs {
+        max_num_vars,
+        level,
+        current_w_len,
+    });
+    let mut current_layout =
+        super::hachi_recursive_level_layout_from_params::<Cfg>(&current_params, current_w_len)?;
+    stats.include(current_layout);
+
+    loop {
+        if should_stop_folding(current_w_len, prev_w_len) {
+            break;
+        }
+
+        let next_w_len =
+            w_ring_element_count::<F>(&current_params, current_layout) * current_params.d;
+        let next_level = level + 1;
+        let next_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars,
+            level: next_level,
+            current_w_len: next_w_len,
+        });
+        let next_layout =
+            super::hachi_recursive_level_layout_from_params::<Cfg>(&next_params, next_w_len)?;
+        stats.include(next_layout);
+
+        prev_w_len = current_w_len;
+        current_w_len = next_w_len;
+        current_params = next_params;
+        current_layout = next_layout;
+        level = next_level;
+    }
+
+    Ok(stats)
+}
+
 #[cfg(feature = "disk-persistence")]
 fn cache_file_name<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
     let envelope = Cfg::envelope(max_num_vars);
@@ -302,14 +404,16 @@ fn cache_file_name<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
+    let schedule = Cfg::schedule_key(max_num_vars)
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect::<String>();
     format!(
-        "hachi_{family}_d{}_na{}_nb{}_nd{}_b{}_wb{}_nv{max_num_vars}.setup",
+        "hachi_{family}_sched_{schedule}_d{}_na{}_nb{}_nd{}_nv{max_num_vars}.setup",
         Cfg::D,
         envelope.max_n_a,
         envelope.max_n_b,
         envelope.max_n_d,
-        Cfg::decomposition().log_basis,
-        Cfg::w_log_basis(),
     )
 }
 
@@ -437,11 +541,6 @@ where
     fn setup(max_num_vars: usize) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError> {
         let layout = validate_and_derive_layout::<Cfg, D>(max_num_vars)?;
         let envelope = Cfg::envelope(max_num_vars);
-        let root_params = Cfg::level_params(HachiScheduleInputs {
-            max_num_vars,
-            level: 0,
-            current_w_len: root_current_w_len::<D>(layout),
-        });
         ensure_supported_num_vars(max_num_vars, layout.required_num_vars::<D>()?)?;
 
         #[cfg(feature = "disk-persistence")]
@@ -465,10 +564,10 @@ where
             }
         }
 
-        let w_layout = w_commitment_layout::<F, D, Cfg>(&root_params, layout)?;
-        let a_cols = layout.inner_width.max(w_layout.inner_width);
-        let b_cols = layout.outer_width.max(w_layout.outer_width);
-        let d_cols = layout.d_matrix_width.max(w_layout.d_matrix_width);
+        let chain_stats = scan_layout_chain::<F, D, Cfg>(max_num_vars, layout)?;
+        let a_cols = chain_stats.max_inner_width;
+        let b_cols = chain_stats.max_outer_width;
+        let d_cols = chain_stats.max_d_matrix_width;
 
         let public_matrix_seed = sample_public_matrix_seed();
         let a_matrix =
@@ -778,37 +877,20 @@ impl HachiCommitmentCore {
         let mut max_r_vars = 0usize;
         let mut max_num_digits_open = 0usize;
         let mut max_num_digits_fold = 0usize;
+        let mut max_log_basis = first_layout.log_basis;
 
         for &layout in layouts {
-            if layout.log_basis != first_layout.log_basis {
-                return Err(HachiError::InvalidSetup(format!(
-                    "setup_with_layouts requires a shared log_basis (expected {}, got {})",
-                    first_layout.log_basis, layout.log_basis
-                )));
-            }
-
-            max_num_vars = max_num_vars.max(layout.required_num_vars::<D>()?);
-            max_inner_width = max_inner_width.max(layout.inner_width);
-            max_outer_width = max_outer_width.max(layout.outer_width);
-            max_d_matrix_width = max_d_matrix_width.max(layout.d_matrix_width);
-            max_r_vars = max_r_vars.max(layout.r_vars);
-            max_num_digits_open = max_num_digits_open.max(layout.num_digits_open);
-            max_num_digits_fold = max_num_digits_fold.max(layout.num_digits_fold);
-
             let layout_num_vars = layout.required_num_vars::<D>()?;
-            let level_params = Cfg::level_params(HachiScheduleInputs {
-                max_num_vars: layout_num_vars,
-                level: 0,
-                current_w_len: root_current_w_len::<D>(layout),
-            });
-            let w_layout = w_commitment_layout::<F, D, Cfg>(&level_params, layout)?;
-            tracing::debug!(?layout, ?w_layout, "setup layout");
-            max_inner_width = max_inner_width.max(w_layout.inner_width);
-            max_outer_width = max_outer_width.max(w_layout.outer_width);
-            max_d_matrix_width = max_d_matrix_width.max(w_layout.d_matrix_width);
-            max_r_vars = max_r_vars.max(w_layout.r_vars);
-            max_num_digits_open = max_num_digits_open.max(w_layout.num_digits_open);
-            max_num_digits_fold = max_num_digits_fold.max(w_layout.num_digits_fold);
+            let chain_stats = scan_layout_chain::<F, D, Cfg>(layout_num_vars, layout)?;
+            tracing::debug!(?layout, ?chain_stats, "setup layout chain");
+            max_num_vars = max_num_vars.max(layout_num_vars);
+            max_inner_width = max_inner_width.max(chain_stats.max_inner_width);
+            max_outer_width = max_outer_width.max(chain_stats.max_outer_width);
+            max_d_matrix_width = max_d_matrix_width.max(chain_stats.max_d_matrix_width);
+            max_r_vars = max_r_vars.max(chain_stats.max_r_vars);
+            max_num_digits_open = max_num_digits_open.max(chain_stats.max_num_digits_open);
+            max_num_digits_fold = max_num_digits_fold.max(chain_stats.max_num_digits_fold);
+            max_log_basis = max_log_basis.max(chain_stats.max_log_basis);
         }
 
         let envelope_layout = Self::layout_envelope::<D>(
@@ -819,7 +901,7 @@ impl HachiCommitmentCore {
             max_r_vars,
             max_num_digits_open,
             max_num_digits_fold,
-            first_layout.log_basis,
+            max_log_basis,
         )?;
         tracing::debug!(?envelope_layout, max_num_vars, "setup envelope");
         let public_matrix_seed = sample_public_matrix_seed();
@@ -867,26 +949,21 @@ impl HachiCommitmentCore {
         }
 
         let layout_num_vars = new_layout.required_num_vars::<D>()?;
-        let level_params = Cfg::level_params(HachiScheduleInputs {
-            max_num_vars: layout_num_vars,
-            level: 0,
-            current_w_len: root_current_w_len::<D>(new_layout),
-        });
-        let w_layout = w_commitment_layout::<F, D, Cfg>(&level_params, new_layout)?;
+        let chain_stats = scan_layout_chain::<F, D, Cfg>(layout_num_vars, new_layout)?;
         let a_width = existing.A.first_row_len::<D>();
-        if a_width < w_layout.inner_width {
+        if a_width < chain_stats.max_inner_width {
             return Err(HachiError::InvalidSetup(format!(
-                "existing A width {a_width} < w inner_width {}",
-                w_layout.inner_width
+                "existing A width {a_width} < required inner_width {}",
+                chain_stats.max_inner_width
             )));
         }
-        let b_cols = new_layout.outer_width.max(w_layout.outer_width);
+        let b_cols = chain_stats.max_outer_width;
 
         let max_num_vars = new_layout.required_num_vars::<D>()?;
         let envelope = Cfg::envelope(max_num_vars);
         let seed = existing.seed.public_matrix_seed;
 
-        let d_cols = new_layout.d_matrix_width.max(w_layout.d_matrix_width);
+        let d_cols = chain_stats.max_d_matrix_width;
         let b_matrix = derive_public_matrix::<F, D>(envelope.max_n_b, b_cols, &seed, b"B");
         let d_matrix = derive_public_matrix::<F, D>(envelope.max_n_d, d_cols, &seed, b"D");
 
@@ -926,15 +1003,10 @@ impl HachiCommitmentCore {
         Cfg: CommitmentConfig,
     {
         let layout_num_vars = layout.required_num_vars::<D>()?;
-        let level_params = Cfg::level_params(HachiScheduleInputs {
-            max_num_vars: layout_num_vars,
-            level: 0,
-            current_w_len: root_current_w_len::<D>(layout),
-        });
-        let w_layout = w_commitment_layout::<F, D, Cfg>(&level_params, layout)?;
-        let a_cols = layout.inner_width.max(w_layout.inner_width);
-        let b_cols = layout.outer_width.max(w_layout.outer_width);
-        let d_cols = layout.d_matrix_width.max(w_layout.d_matrix_width);
+        let chain_stats = scan_layout_chain::<F, D, Cfg>(layout_num_vars, layout)?;
+        let a_cols = chain_stats.max_inner_width;
+        let b_cols = chain_stats.max_outer_width;
+        let d_cols = chain_stats.max_d_matrix_width;
 
         Self::setup_with_matrix_widths_and_seed::<F, D, Cfg>(
             layout,

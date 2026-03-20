@@ -1,6 +1,9 @@
 //! Configuration presets for ring-native commitment construction.
 
-use super::schedule::{hachi_root_level_layout, HachiLevelParams, HachiScheduleInputs};
+use super::schedule::{
+    hachi_root_level_layout, planned_log_basis_at_level, planned_schedule_key, HachiLevelParams,
+    HachiScheduleInputs, HachiSchedulePlan,
+};
 use super::utils::flat_matrix::FlatMatrix;
 use super::utils::math::checked_pow2;
 use crate::algebra::ring::CyclotomicRing;
@@ -459,23 +462,51 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         std::any::type_name::<Self>()
     }
 
-    /// Deterministically derive the active params for one level from public inputs.
-    fn level_params(inputs: HachiScheduleInputs) -> HachiLevelParams {
+    /// Build one level's active params from public inputs and an explicit basis.
+    fn level_params_with_log_basis(
+        inputs: HachiScheduleInputs,
+        log_basis: u32,
+    ) -> HachiLevelParams {
         let d = Self::d_at_level(inputs.level, inputs.current_w_len);
         let stage1_config = Self::stage1_challenge_config(d);
         HachiLevelParams {
             d,
-            log_basis: if inputs.level == 0 {
-                Self::decomposition().log_basis
-            } else {
-                Self::w_log_basis()
-            },
+            log_basis,
             n_a: Self::n_a_at_level(inputs.level),
             n_b: Self::n_b_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
             n_d: Self::n_d_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
             challenge_l1_mass: stage1_config.l1_mass(),
             stage1_config,
         }
+    }
+
+    /// Deterministically choose the active basis for one level from public inputs.
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        let _ = inputs;
+        Self::decomposition().log_basis
+    }
+
+    /// Stable identity for the active log-basis schedule at `max_num_vars`.
+    fn schedule_key(_max_num_vars: usize) -> String {
+        format!("static_v1_b{}", Self::decomposition().log_basis)
+    }
+
+    /// Optional full schedule plan for configs with an explicit planner.
+    ///
+    /// `None` means callers should fall back to the legacy local stop heuristic.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the config's planner cannot derive a valid
+    /// schedule from the public inputs.
+    fn schedule_plan(_max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
+        Ok(None)
+    }
+
+    /// Deterministically derive the active params for one level from public inputs.
+    fn level_params(inputs: HachiScheduleInputs) -> HachiLevelParams {
+        let log_basis = Self::log_basis_at_level(inputs);
+        Self::level_params_with_log_basis(inputs, log_basis)
     }
 
     /// Choose the runtime commitment layout for `max_num_vars`.
@@ -533,19 +564,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Sparse challenge family used at this level.
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig;
-
-    /// Gadget base for recursive w-opening levels (levels 1+).
-    ///
-    /// At level 0, the decomposition uses `Self::decomposition().log_basis`.
-    /// At recursive levels, the `WCommitmentConfig` uses this value instead.
-    /// A larger basis at w-levels reduces decomposition depth (`delta_open`)
-    /// at the cost of a higher-degree norm sumcheck — acceptable because the
-    /// w-level witness is much smaller than the level-0 witness.
-    ///
-    /// Default: same as the level-0 basis.
-    fn w_log_basis() -> u32 {
-        Self::decomposition().log_basis
-    }
 
     /// Witness length (in i8 digits) above which the prover hands off to
     /// Labrador (D'=64) instead of sending the witness directly.
@@ -747,17 +765,8 @@ impl CommitmentConfig for DynamicSmallTestCommitmentConfig {
     }
 
     fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        let alpha = Self::D.trailing_zeros() as usize;
-        let reduced_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
-            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
-        })?;
-        if reduced_vars == 0 {
-            return Err(HachiError::InvalidSetup(
-                "max_num_vars must leave at least one outer variable".to_string(),
-            ));
-        }
-        let (m_vars, r_vars) = optimal_m_r_split::<Self>(reduced_vars);
-        HachiCommitmentLayout::new::<Self>(m_vars, r_vars, &Self::decomposition())
+        let (_, layout) = hachi_root_level_layout::<Self>(max_num_vars)?;
+        Ok(layout)
     }
 }
 
@@ -770,15 +779,10 @@ impl CommitmentConfig for DynamicSmallTestCommitmentConfig {
 /// - `LOG_COMMIT_BOUND`: bit-width of the largest polynomial coefficient the
 ///   commitment decomposition must represent.
 /// - `LOG_BASIS`: base-2 log of the gadget base at level 0.
-/// - `W_LOG_BASIS`: base-2 log of the gadget base at recursive w-opening
-///   levels (levels 1+). A larger w-basis reduces `delta_open` (fewer
-///   decomposition digits) at the cost of a higher-degree norm sumcheck at
-///   those levels — acceptable because the w-level witness is much smaller.
-///
 /// # Aliases
 ///
-/// - [`Fp128FullCommitmentConfig`] = `<128, 3, 3>` over `D = 128`
-/// - [`Fp128LogBasisCommitmentConfig`] = `<3, 3, 3>` over `D = 128`
+/// - [`Fp128FullCommitmentConfig`] = adaptive full-field preset over `D = 128`
+/// - [`Fp128LogBasisCommitmentConfig`] = adaptive log-bounded preset over `D = 128`
 /// - [`Fp128OneHotCommitmentConfig`] = adaptive `D = 64` onehot preset
 /// - [`Fp128CommitmentConfig`] — alias for `Fp128FullCommitmentConfig`
 ///
@@ -821,22 +825,21 @@ impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> 
         d128_stage1_challenge_config(d)
     }
 
-    fn w_log_basis() -> u32 {
-        W_LOG_BASIS
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        if inputs.level == 0 {
+            LOG_BASIS
+        } else {
+            W_LOG_BASIS
+        }
+    }
+
+    fn schedule_key(_max_num_vars: usize) -> String {
+        format!("static_v1_root{LOG_BASIS}_rec{W_LOG_BASIS}")
     }
 
     fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        let alpha = Self::D.trailing_zeros() as usize;
-        let reduced_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
-            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
-        })?;
-        if reduced_vars == 0 {
-            return Err(HachiError::InvalidSetup(
-                "max_num_vars must leave at least one outer variable".to_string(),
-            ));
-        }
-        let (m_vars, r_vars) = optimal_m_r_split::<Self>(reduced_vars);
-        HachiCommitmentLayout::new::<Self>(m_vars, r_vars, &Self::decomposition())
+        let (_, layout) = hachi_root_level_layout::<Self>(max_num_vars)?;
+        Ok(layout)
     }
 }
 
@@ -866,21 +869,20 @@ impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> 
     }
 
     fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        let alpha = Self::D.trailing_zeros() as usize;
-        let reduced_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
-            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
-        })?;
-        if reduced_vars == 0 {
-            return Err(HachiError::InvalidSetup(
-                "max_num_vars must leave at least one outer variable".to_string(),
-            ));
-        }
-        let (m_vars, r_vars) = optimal_m_r_split::<Self>(reduced_vars);
-        HachiCommitmentLayout::new::<Self>(m_vars, r_vars, &Self::decomposition())
+        let (_, layout) = hachi_root_level_layout::<Self>(max_num_vars)?;
+        Ok(layout)
     }
 
-    fn w_log_basis() -> u32 {
-        W_LOG_BASIS
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        if inputs.level == 0 {
+            LOG_BASIS
+        } else {
+            W_LOG_BASIS
+        }
+    }
+
+    fn schedule_key(_max_num_vars: usize) -> String {
+        format!("static_v1_root{LOG_BASIS}_rec{W_LOG_BASIS}")
     }
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
@@ -892,17 +894,67 @@ impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> 
     }
 }
 
-/// Full-field (128-bit) coefficient bound, D=128, base-8 decomposition.
-pub type Fp128FullCommitmentConfig = Fp128BoundedCommitmentConfig<128, 3>;
+/// Adaptive `D=128`, rank-1 family that chooses the level basis by proof bytes.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Fp128AdaptiveBoundedCommitmentConfig<const LOG_COMMIT_BOUND: u32>;
+
+impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
+    for Fp128AdaptiveBoundedCommitmentConfig<LOG_COMMIT_BOUND>
+{
+    const D: usize = 128;
+
+    fn decomposition() -> DecompositionParams {
+        DecompositionParams {
+            log_basis: 3,
+            log_commit_bound: LOG_COMMIT_BOUND,
+            log_open_bound: if LOG_COMMIT_BOUND < 128 {
+                Some(128)
+            } else {
+                None
+            },
+        }
+    }
+
+    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
+        CommitmentEnvelope {
+            max_n_a: 1,
+            max_n_b: 1,
+            max_n_d: 1,
+        }
+    }
+
+    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        d128_stage1_challenge_config(d)
+    }
+
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        planned_log_basis_at_level::<Self>(inputs, 2, 5)
+            .expect("adaptive schedule must be derivable from public inputs")
+    }
+
+    fn schedule_key(max_num_vars: usize) -> String {
+        planned_schedule_key::<Self>(max_num_vars, 2, 5)
+            .expect("adaptive schedule key must be derivable from public inputs")
+    }
+
+    fn schedule_plan(max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
+        Ok(Some(super::schedule::planned_schedule::<Self>(
+            max_num_vars,
+            2,
+            5,
+        )?))
+    }
+}
+
+/// Full-field (128-bit) coefficient family with adaptive per-level basis.
+pub type Fp128FullCommitmentConfig = Fp128AdaptiveBoundedCommitmentConfig<128>;
 
 /// Binary (1-bit) D=64 onehot preset with the coarse adaptive outer-rank
 /// schedule.
 pub type Fp128OneHotCommitmentConfig = Fp128AdaptiveOneHotCommitmentConfig;
 
-/// Log-basis (3-bit) coefficient bound, D=128, base-8 decomposition.
-///
-/// For recursive w-openings where entries are already balanced digits.
-pub type Fp128LogBasisCommitmentConfig = Fp128BoundedCommitmentConfig<3, 3>;
+/// Log-bounded coefficient family with adaptive per-level basis.
+pub type Fp128LogBasisCommitmentConfig = Fp128AdaptiveBoundedCommitmentConfig<3>;
 
 /// Alias for [`Fp128FullCommitmentConfig`].
 pub type Fp128CommitmentConfig = Fp128FullCommitmentConfig;
@@ -932,8 +984,16 @@ impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> 
         }
     }
 
-    fn w_log_basis() -> u32 {
-        W_LOG_BASIS
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        if inputs.level == 0 {
+            LOG_BASIS
+        } else {
+            W_LOG_BASIS
+        }
+    }
+
+    fn schedule_key(_max_num_vars: usize) -> String {
+        format!("static_v1_root{LOG_BASIS}_rec{W_LOG_BASIS}")
     }
 
     fn n_b_at_level(_level: usize, _max_num_vars: usize, _current_w_len: usize) -> usize {
@@ -978,17 +1038,8 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
     }
 
     fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        let alpha = Self::D.trailing_zeros() as usize;
-        let reduced_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
-            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
-        })?;
-        if reduced_vars == 0 {
-            return Err(HachiError::InvalidSetup(
-                "max_num_vars must leave at least one outer variable".to_string(),
-            ));
-        }
-        let (m_vars, r_vars) = optimal_m_r_split::<Self>(reduced_vars);
-        HachiCommitmentLayout::new::<Self>(m_vars, r_vars, &Self::decomposition())
+        let (_, layout) = hachi_root_level_layout::<Self>(max_num_vars)?;
+        Ok(layout)
     }
 
     fn n_b_at_level(level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {
@@ -1015,6 +1066,24 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
         d64_stage1_challenge_config(d)
+    }
+
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        planned_log_basis_at_level::<Self>(inputs, 2, 5)
+            .expect("adaptive schedule must be derivable from public inputs")
+    }
+
+    fn schedule_key(max_num_vars: usize) -> String {
+        planned_schedule_key::<Self>(max_num_vars, 2, 5)
+            .expect("adaptive schedule key must be derivable from public inputs")
+    }
+
+    fn schedule_plan(max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
+        Ok(Some(super::schedule::planned_schedule::<Self>(
+            max_num_vars,
+            2,
+            5,
+        )?))
     }
 
     fn labrador_handoff_threshold() -> usize {

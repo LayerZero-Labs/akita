@@ -333,7 +333,7 @@ where
 ///
 /// `prev_w_len` is the polynomial length at the previous level (or the
 /// original polynomial's field-element count for level 0).
-fn should_stop_folding(w_len: usize, prev_w_len: usize) -> bool {
+pub(crate) fn should_stop_folding(w_len: usize, prev_w_len: usize) -> bool {
     if w_len <= MIN_W_LEN_FOR_FOLDING {
         return true;
     }
@@ -871,11 +871,20 @@ where
         let mut current_num_u = out.num_u;
         let mut current_num_l = out.num_l;
         let mut level = 1usize;
+        let planned_num_levels = Cfg::schedule_plan(max_num_vars)?.map(|plan| plan.levels.len());
 
         // Subsequent levels: recursive w-opening with WCommitmentConfig.
         // Each level dispatches to the ring dimension from Cfg::d_at_level.
         // The w-commitment is produced at the NEXT level's D.
-        while !should_stop_folding(current_w.len(), prev_poly_len) {
+        loop {
+            let should_continue = if let Some(num_levels) = planned_num_levels {
+                level < num_levels
+            } else {
+                !should_stop_folding(current_w.len(), prev_poly_len)
+            };
+            if !should_continue {
+                break;
+            }
             let level_params = Cfg::level_params(HachiScheduleInputs {
                 max_num_vars,
                 level,
@@ -928,21 +937,17 @@ where
         let labrador_enabled = current_w.len() > Cfg::labrador_handoff_threshold()
             // && handoff_ring_dim <= 64
             && std::env::var("HACHI_NO_LABRADOR").as_deref() != Ok("1");
-        let final_w_basis = if level > 1 {
-            Cfg::w_log_basis()
-        } else {
-            Cfg::decomposition().log_basis
-        };
+        let final_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars,
+            level,
+            current_w_len: current_w.len(),
+        });
+        let final_w_basis = final_params.log_basis;
 
         let tail = if labrador_enabled {
             tracing::info!("labrador handoff started");
-            let handoff_params = Cfg::level_params(HachiScheduleInputs {
-                max_num_vars,
-                level,
-                current_w_len: current_w.len(),
-            });
             let handoff_layout =
-                hachi_recursive_level_layout_from_params::<Cfg>(&handoff_params, current_w.len())?;
+                hachi_recursive_level_layout_from_params::<Cfg>(&final_params, current_w.len())?;
             dispatch_labrador_handoff_prove::<F, T, D, Cfg>(
                 &current_w,
                 &current_hint,
@@ -952,7 +957,7 @@ where
                 levels.last().unwrap().next_w_commitment(),
                 setup,
                 &mut commit_ntt_bundle.D_mat,
-                &handoff_params,
+                &final_params,
                 handoff_layout,
                 transcript,
             )?
@@ -995,6 +1000,11 @@ where
         let mut current_commitment = FlatRingVec::from_commitment(commitment);
         let mut current_basis = basis;
         let max_num_vars = setup.expanded.seed.max_num_vars;
+        if let Some(plan) = Cfg::schedule_plan(max_num_vars)? {
+            if num_levels != plan.levels.len() {
+                return Err(HachiError::InvalidProof);
+            }
+        }
         let mut current_w_len = layout.num_blocks * layout.block_len * D;
 
         for (i, level_proof) in proof.levels.iter().enumerate() {
