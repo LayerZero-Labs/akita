@@ -37,7 +37,7 @@ pub(crate) struct DigitLut<F> {
 impl<F: FieldCore + FromSmallInt> DigitLut<F> {
     #[inline]
     pub(crate) fn new(log_basis: u32) -> Self {
-        assert!(log_basis > 0 && log_basis <= 7, "log_basis out of range");
+        assert!(log_basis > 0 && log_basis <= 5, "log_basis out of range");
         let half_b = 1i8 << (log_basis - 1);
         let table = (-(half_b as i16)..(half_b as i16))
             .map(|digit| F::from_i64(digit as i64))
@@ -80,7 +80,7 @@ impl PackedDigits {
     ///
     /// Panics (in debug) if any element does not fit in `log_basis` bits.
     pub fn from_i8_digits(w: &[i8], log_basis: u32) -> Self {
-        assert!(log_basis > 0 && log_basis <= 7, "log_basis out of range");
+        assert!(log_basis > 0 && log_basis <= 5, "log_basis out of range");
         let half_b = 1i8 << (log_basis - 1);
 
         let bits = log_basis as usize;
@@ -620,52 +620,26 @@ pub struct HachiStage2Proof<F: FieldCore> {
     pub next_w_eval: F,
 }
 
-/// Sumcheck payload for a single Hachi level.
-///
-/// The protocol uses one of two shapes depending on `log_basis`:
-/// - `Combined` for `b = 4`, where a single sumcheck batches the norm and
-///   relation checks together.
-/// - `TwoStage` for `b >= 8`, where stage 1 proves the norm-range identity and
-///   stage 2 batches the carried virtual claim with the relation check.
+/// Two-stage norm-check payload for a single Hachi level.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NormCheckBody<F: FieldCore> {
-    /// Single-stage combined norm + relation sumcheck.
-    Combined {
-        /// Combined sumcheck proof.
-        sumcheck: SumcheckProof<F>,
-        /// Commitment to the next witness `w`.
-        next_w_commitment: FlatRingVec<F>,
-        /// Claimed evaluation of the next witness `w` at the combined output point.
-        next_w_eval: F,
-    },
-    /// Existing two-stage norm then relation-batched sumcheck.
-    TwoStage {
-        /// Stage-1 norm-check payload.
-        stage1: HachiStage1Proof<F>,
-        /// Stage-2 fused payload.
-        stage2: HachiStage2Proof<F>,
-    },
+pub struct NormCheckBody<F: FieldCore> {
+    /// Stage-1 norm-check payload.
+    pub stage1: HachiStage1Proof<F>,
+    /// Stage-2 fused payload.
+    pub stage2: HachiStage2Proof<F>,
 }
 
 impl<F: FieldCore> NormCheckBody<F> {
     /// Commitment to the next witness `w`.
     #[inline]
     pub fn next_w_commitment(&self) -> &FlatRingVec<F> {
-        match self {
-            Self::Combined {
-                next_w_commitment, ..
-            } => next_w_commitment,
-            Self::TwoStage { stage2, .. } => &stage2.next_w_commitment,
-        }
+        &self.stage2.next_w_commitment
     }
 
     /// Claimed evaluation of the next witness `w`.
     #[inline]
     pub fn next_w_eval(&self) -> F {
-        match self {
-            Self::Combined { next_w_eval, .. } => *next_w_eval,
-            Self::TwoStage { stage2, .. } => stage2.next_w_eval,
-        }
+        self.stage2.next_w_eval
     }
 }
 
@@ -675,20 +649,20 @@ impl<F: FieldCore> NormCheckBody<F> {
 /// ring dimension recorded. Use [`Self::y_ring_typed`], [`Self::v_typed`], and
 /// [`Self::w_commitment_typed`] to reconstruct typed ring elements.
 ///
-/// One recursive Hachi level proof with a basis-dependent norm-check body.
+/// One recursive Hachi level proof with a two-stage norm-check body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiLevelProof<F: FieldCore> {
     /// `y_ring` from the §3.1 reduction (ring dim = current level's D).
     pub y_ring: FlatRingVec<F>,
     /// `v = D · ŵ` (ring dim = current level's D).
     pub v: FlatRingVec<F>,
-    /// Basis-dependent norm-check proof payload.
+    /// Two-stage norm-check proof payload.
     pub body: NormCheckBody<F>,
 }
 
 impl<F: FieldCore> HachiLevelProof<F> {
-    /// Construct from typed ring elements for the current level and a
-    /// basis-dependent norm-check body.
+    /// Construct from typed ring elements for the current level and its
+    /// two-stage norm-check body.
     pub(crate) fn new<const D: usize>(
         y_ring: CyclotomicRing<F, D>,
         v: Vec<CyclotomicRing<F, D>>,
@@ -701,27 +675,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
         }
     }
 
-    /// Construct a level proof for the single-stage combined norm + relation
-    /// sumcheck used when `b = 4`.
-    pub(crate) fn new_combined<const D: usize>(
-        y_ring: CyclotomicRing<F, D>,
-        v: Vec<CyclotomicRing<F, D>>,
-        sumcheck: SumcheckProof<F>,
-        next_w_commitment: FlatRingVec<F>,
-        next_w_eval: F,
-    ) -> Self {
-        Self::new::<D>(
-            y_ring,
-            v,
-            NormCheckBody::Combined {
-                sumcheck,
-                next_w_commitment,
-                next_w_eval,
-            },
-        )
-    }
-
-    /// Construct a level proof for the two-stage norm-check used when `b >= 8`.
+    /// Construct a level proof for the two-stage norm-check.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_two_stage<const D: usize>(
         y_ring: CyclotomicRing<F, D>,
@@ -735,7 +689,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
         Self::new::<D>(
             y_ring,
             v,
-            NormCheckBody::TwoStage {
+            NormCheckBody {
                 stage1: HachiStage1Proof {
                     sumcheck: stage1_sumcheck,
                     s_claim: stage1_s_claim,
@@ -1507,51 +1461,34 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
     ) -> Result<(), SerializationError> {
         self.y_ring.serialize_with_mode(&mut writer, compress)?;
         self.v.serialize_with_mode(&mut writer, compress)?;
-        match &self.body {
-            NormCheckBody::Combined {
-                sumcheck,
-                next_w_commitment,
-                next_w_eval,
-            } => {
-                0u8.serialize_with_mode(&mut writer, compress)?;
-                sumcheck.serialize_with_mode(&mut writer, compress)?;
-                next_w_commitment.serialize_with_mode(&mut writer, compress)?;
-                next_w_eval.serialize_with_mode(&mut writer, compress)
-            }
-            NormCheckBody::TwoStage { stage1, stage2 } => {
-                1u8.serialize_with_mode(&mut writer, compress)?;
-                stage1.sumcheck.serialize_with_mode(&mut writer, compress)?;
-                stage1.s_claim.serialize_with_mode(&mut writer, compress)?;
-                stage2.sumcheck.serialize_with_mode(&mut writer, compress)?;
-                stage2
-                    .next_w_commitment
-                    .serialize_with_mode(&mut writer, compress)?;
-                stage2
-                    .next_w_eval
-                    .serialize_with_mode(&mut writer, compress)
-            }
-        }
+        self.body
+            .stage1
+            .sumcheck
+            .serialize_with_mode(&mut writer, compress)?;
+        self.body
+            .stage1
+            .s_claim
+            .serialize_with_mode(&mut writer, compress)?;
+        self.body
+            .stage2
+            .sumcheck
+            .serialize_with_mode(&mut writer, compress)?;
+        self.body
+            .stage2
+            .next_w_commitment
+            .serialize_with_mode(&mut writer, compress)?;
+        self.body
+            .stage2
+            .next_w_eval
+            .serialize_with_mode(&mut writer, compress)
     }
     fn serialized_size(&self, compress: Compress) -> usize {
-        let base = self.y_ring.serialized_size(compress) + self.v.serialized_size(compress) + 1;
-        base + match &self.body {
-            NormCheckBody::Combined {
-                sumcheck,
-                next_w_commitment,
-                next_w_eval,
-            } => {
-                sumcheck.serialized_size(compress)
-                    + next_w_commitment.serialized_size(compress)
-                    + next_w_eval.serialized_size(compress)
-            }
-            NormCheckBody::TwoStage { stage1, stage2 } => {
-                stage1.sumcheck.serialized_size(compress)
-                    + stage1.s_claim.serialized_size(compress)
-                    + stage2.sumcheck.serialized_size(compress)
-                    + stage2.next_w_commitment.serialized_size(compress)
-                    + stage2.next_w_eval.serialized_size(compress)
-            }
-        }
+        let base = self.y_ring.serialized_size(compress) + self.v.serialized_size(compress);
+        base + self.body.stage1.sumcheck.serialized_size(compress)
+            + self.body.stage1.s_claim.serialized_size(compress)
+            + self.body.stage2.sumcheck.serialized_size(compress)
+            + self.body.stage2.next_w_commitment.serialized_size(compress)
+            + self.body.stage2.next_w_eval.serialized_size(compress)
     }
 }
 
@@ -1569,24 +1506,11 @@ impl<F: FieldCore + Valid> Valid for HachiLevelProof<F> {
                 "hachi level v ring dimension must match y_ring".to_string(),
             ));
         }
-        match &self.body {
-            NormCheckBody::Combined {
-                sumcheck,
-                next_w_commitment,
-                next_w_eval,
-            } => {
-                sumcheck.check()?;
-                next_w_commitment.check()?;
-                next_w_eval.check()
-            }
-            NormCheckBody::TwoStage { stage1, stage2 } => {
-                stage1.sumcheck.check()?;
-                stage1.s_claim.check()?;
-                stage2.sumcheck.check()?;
-                stage2.next_w_commitment.check()?;
-                stage2.next_w_eval.check()
-            }
-        }
+        self.body.stage1.sumcheck.check()?;
+        self.body.stage1.s_claim.check()?;
+        self.body.stage2.sumcheck.check()?;
+        self.body.stage2.next_w_commitment.check()?;
+        self.body.stage2.next_w_eval.check()
     }
 }
 
@@ -1598,9 +1522,12 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
     ) -> Result<Self, SerializationError> {
         let y_ring = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?;
         let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?;
-        let body_tag = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-        let body = match body_tag {
-            0 => NormCheckBody::Combined {
+        let body = NormCheckBody {
+            stage1: HachiStage1Proof {
+                sumcheck: SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?,
+                s_claim: F::deserialize_with_mode(&mut reader, compress, validate)?,
+            },
+            stage2: HachiStage2Proof {
                 sumcheck: SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?,
                 next_w_commitment: FlatRingVec::deserialize_with_mode(
                     &mut reader,
@@ -1609,35 +1536,6 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
                 )?,
                 next_w_eval: F::deserialize_with_mode(&mut reader, compress, validate)?,
             },
-            1 => {
-                let stage1_sumcheck =
-                    SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?;
-                let stage1_s_claim = F::deserialize_with_mode(&mut reader, compress, validate)?;
-                NormCheckBody::TwoStage {
-                    stage1: HachiStage1Proof {
-                        sumcheck: stage1_sumcheck,
-                        s_claim: stage1_s_claim,
-                    },
-                    stage2: HachiStage2Proof {
-                        sumcheck: SumcheckProof::deserialize_with_mode(
-                            &mut reader,
-                            compress,
-                            validate,
-                        )?,
-                        next_w_commitment: FlatRingVec::deserialize_with_mode(
-                            &mut reader,
-                            compress,
-                            validate,
-                        )?,
-                        next_w_eval: F::deserialize_with_mode(&mut reader, compress, validate)?,
-                    },
-                }
-            }
-            other => {
-                return Err(SerializationError::InvalidData(format!(
-                    "invalid hachi level norm-check body tag {other}"
-                )))
-            }
         };
         let out = Self { y_ring, v, body };
         if matches!(validate, Validate::Yes) {

@@ -21,15 +21,12 @@ use crate::protocol::opening_point::{
 };
 use crate::protocol::proof::{
     FlatCommitmentHint, FlatRingVec, HachiCommitmentHint, HachiLevelProof, HachiProof,
-    HachiProofTail, LabradorTail, NormCheckBody, PackedDigits,
+    HachiProofTail, LabradorTail, PackedDigits,
 };
 use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::ring_switch::{
     build_w_evals, commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_verifier,
     w_ring_element_count, RingSwitchOutput, WCommitmentConfig,
-};
-use crate::protocol::sumcheck::hachi_combined::{
-    CombinedNormRelationProver, CombinedNormRelationVerifier,
 };
 use crate::protocol::sumcheck::hachi_stage1::{HachiStage1Prover, HachiStage1Verifier};
 use crate::protocol::sumcheck::hachi_stage2::{
@@ -223,13 +220,30 @@ where
         b,
         alpha: _,
     } = rs;
-    let (level_proof, sumcheck_challenges) = if b == 4 {
-        let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
-        let _sumcheck_span = tracing::info_span!("combined_sumcheck").entered();
-        let mut combined_prover = CombinedNormRelationProver::new(
+    let (stage1_sumcheck, r_stage1, s_claim) = {
+        let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+        let mut stage1_prover =
+            HachiStage1Prover::new(&w_evals_compact, &tau0, b, live_x_cols, num_u, num_l);
+        let (stage1_sumcheck, r_stage1, stage1_final_claim) =
+            prove_sumcheck::<F, _, F, _, _>(&mut stage1_prover, transcript, |tr| {
+                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+            })?;
+        let s_claim = stage1_prover.final_s_claim();
+        let _ = stage1_final_claim;
+
+        (stage1_sumcheck, r_stage1, s_claim)
+    };
+
+    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
+    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+        let mut stage2_prover = HachiStage2Prover::new(
             batching_coeff,
             w_evals_compact,
-            &tau0,
+            &r_stage1,
+            s_claim,
+            b,
             alpha_evals_y,
             m_evals_x,
             live_x_cols,
@@ -237,87 +251,35 @@ where
             num_l,
             relation_claim,
         );
-        let (combined_sumcheck, sumcheck_challenges, _combined_final_claim) =
-            prove_sumcheck::<F, _, F, _, _>(&mut combined_prover, transcript, |tr| {
+        let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim) =
+            prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
             })?;
+
         let w_eval = {
             let _span = tracing::info_span!("multilinear_eval", level).entered();
-            combined_prover.final_w_eval()
+            stage2_prover.final_w_eval()
         };
-
         (
-            HachiLevelProof::new_combined::<D>(
-                y_ring,
-                quad_eq.v,
-                combined_sumcheck,
-                w_commitment,
-                w_eval,
-            ),
+            stage2_sumcheck,
             sumcheck_challenges,
-        )
-    } else {
-        let (stage1_sumcheck, r_stage1, s_claim) = {
-            let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-            let mut stage1_prover =
-                HachiStage1Prover::new(&w_evals_compact, &tau0, b, live_x_cols, num_u, num_l);
-            let (stage1_sumcheck, r_stage1, stage1_final_claim) =
-                prove_sumcheck::<F, _, F, _, _>(&mut stage1_prover, transcript, |tr| {
-                    tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
-                })?;
-            let s_claim = stage1_prover.final_s_claim();
-            let _ = stage1_final_claim;
-
-            (stage1_sumcheck, r_stage1, s_claim)
-        };
-
-        transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
-        let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
-        let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
-            let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-            let mut stage2_prover = HachiStage2Prover::new(
-                batching_coeff,
-                w_evals_compact,
-                &r_stage1,
-                s_claim,
-                b,
-                alpha_evals_y,
-                m_evals_x,
-                live_x_cols,
-                num_u,
-                num_l,
-                relation_claim,
-            );
-            let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim) =
-                prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
-                    tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
-                })?;
-
-            let w_eval = {
-                let _span = tracing::info_span!("multilinear_eval", level).entered();
-                stage2_prover.final_w_eval()
-            };
-            (
-                stage2_sumcheck,
-                sumcheck_challenges,
-                _stage2_final_claim,
-                w_eval,
-            )
-        };
-
-        (
-            HachiLevelProof::new_two_stage::<D>(
-                y_ring,
-                quad_eq.v,
-                stage1_sumcheck,
-                s_claim,
-                stage2_sumcheck,
-                w_commitment,
-                w_eval,
-            ),
-            sumcheck_challenges,
+            _stage2_final_claim,
+            w_eval,
         )
     };
+
+    let (level_proof, sumcheck_challenges) = (
+        HachiLevelProof::new_two_stage::<D>(
+            y_ring,
+            quad_eq.v,
+            stage1_sumcheck,
+            s_claim,
+            stage2_sumcheck,
+            w_commitment,
+            w_eval,
+        ),
+        sumcheck_challenges,
+    );
 
     Ok(ProveLevelOutput {
         level_proof,
@@ -1223,120 +1185,67 @@ where
     )?;
     let relation_claim =
         relation_claim_from_rows(&rs.tau1, rs.alpha, &v_typed, &commitment.u, &y_ring);
-    match (&level_proof.body, rs.b) {
-        (
-            NormCheckBody::Combined {
-                sumcheck,
-                next_w_eval,
-                ..
-            },
-            4,
-        ) => {
-            let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
-            let combined_verifier = if is_last {
-                let fw = final_w.ok_or(HachiError::InvalidProof)?;
-                let (w_evals_full, _, _) = build_w_evals(fw, level_params.d)?;
-                CombinedNormRelationVerifier::new_with_full_witness(
-                    batching_coeff,
-                    relation_claim,
-                    w_evals_full,
-                    rs.tau0,
-                    rs.alpha_evals_y,
-                    rs.m_evals_x,
-                    rs.num_u,
-                )
-            } else {
-                CombinedNormRelationVerifier::new_with_claimed_w_eval(
-                    batching_coeff,
-                    relation_claim,
-                    *next_w_eval,
-                    rs.tau0,
-                    rs.alpha_evals_y,
-                    rs.m_evals_x,
-                    rs.num_u,
-                )
-            };
-            if relation_claim != SumcheckInstanceVerifier::input_claim(&combined_verifier) {
-                return Err(HachiError::InvalidProof);
-            }
+    let stage1 = &level_proof.body.stage1;
+    let stage2 = &level_proof.body.stage2;
+    let stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), stage1.s_claim, rs.b);
+    let r_stage1 = {
+        let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+        verify_sumcheck::<F, _, F, _, _>(&stage1.sumcheck, &stage1_verifier, transcript, |tr| {
+            tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+        })?
+    };
 
-            let challenges = {
-                let _sumcheck_span = tracing::info_span!("combined_sumcheck").entered();
-                verify_sumcheck::<F, _, F, _, _>(sumcheck, &combined_verifier, transcript, |tr| {
-                    tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
-                })?
-            };
-            Ok(challenges)
-        }
-        (NormCheckBody::TwoStage { stage1, stage2 }, b) if b != 4 => {
-            let stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), stage1.s_claim, rs.b);
-            let r_stage1 = {
-                let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-                verify_sumcheck::<F, _, F, _, _>(
-                    &stage1.sumcheck,
-                    &stage1_verifier,
-                    transcript,
-                    |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-                )?
-            };
+    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
+    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
 
-            transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
-            let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
-            let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
-
-            let stage2_verifier = if is_last {
-                let fw = final_w.ok_or(HachiError::InvalidProof)?;
-                let (w_evals_full, _, _) = build_w_evals(fw, level_params.d)?;
-                HachiStage2Verifier::new_with_full_witness(
-                    batching_coeff,
-                    stage1.s_claim,
-                    w_evals_full,
-                    r_stage1.clone(),
-                    rs.alpha_evals_y,
-                    rs.m_evals_x,
-                    rs.tau1,
-                    v_typed,
-                    commitment.u.clone(),
-                    y_ring,
-                    rs.alpha,
-                    rs.num_u,
-                    rs.num_l,
-                )
-            } else {
-                HachiStage2Verifier::new_with_claimed_w_eval(
-                    batching_coeff,
-                    stage1.s_claim,
-                    stage2.next_w_eval,
-                    r_stage1.clone(),
-                    rs.alpha_evals_y,
-                    rs.m_evals_x,
-                    rs.tau1,
-                    v_typed,
-                    commitment.u.clone(),
-                    y_ring,
-                    rs.alpha,
-                    rs.num_u,
-                    rs.num_l,
-                )
-            };
-            if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
-                return Err(HachiError::InvalidProof);
-            }
-
-            let challenges = {
-                let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-                verify_sumcheck::<F, _, F, _, _>(
-                    &stage2.sumcheck,
-                    &stage2_verifier,
-                    transcript,
-                    |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-                )?
-            };
-
-            Ok(challenges)
-        }
-        _ => Err(HachiError::InvalidProof),
+    let stage2_verifier = if is_last {
+        let fw = final_w.ok_or(HachiError::InvalidProof)?;
+        let (w_evals_full, _, _) = build_w_evals(fw, level_params.d)?;
+        HachiStage2Verifier::new_with_full_witness(
+            batching_coeff,
+            stage1.s_claim,
+            w_evals_full,
+            r_stage1.clone(),
+            rs.alpha_evals_y,
+            rs.m_evals_x,
+            rs.tau1,
+            v_typed,
+            commitment.u.clone(),
+            y_ring,
+            rs.alpha,
+            rs.num_u,
+            rs.num_l,
+        )
+    } else {
+        HachiStage2Verifier::new_with_claimed_w_eval(
+            batching_coeff,
+            stage1.s_claim,
+            stage2.next_w_eval,
+            r_stage1.clone(),
+            rs.alpha_evals_y,
+            rs.m_evals_x,
+            rs.tau1,
+            v_typed,
+            commitment.u.clone(),
+            y_ring,
+            rs.alpha,
+            rs.num_u,
+            rs.num_l,
+        )
+    };
+    if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
+        return Err(HachiError::InvalidProof);
     }
+
+    let challenges = {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+        verify_sumcheck::<F, _, F, _, _>(&stage2.sumcheck, &stage2_verifier, transcript, |tr| {
+            tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+        })?
+    };
+
+    Ok(challenges)
 }
 
 fn trace<F: FieldCore + FromSmallInt, const D: usize>(u: &CyclotomicRing<F, D>) -> F {
@@ -1429,16 +1338,10 @@ mod tests {
         let level0 = &proof.levels[0];
         let base = 4
             + level0.y_ring.serialized_size(Compress::No)
-            + level0.v.serialized_size(Compress::No)
-            + 1;
-        base + match &level0.body {
-            NormCheckBody::Combined { sumcheck, .. } => sumcheck.serialized_size(Compress::No),
-            NormCheckBody::TwoStage { stage1, stage2 } => {
-                stage1.sumcheck.serialized_size(Compress::No)
-                    + stage1.s_claim.serialized_size(Compress::No)
-                    + stage2.sumcheck.serialized_size(Compress::No)
-            }
-        }
+            + level0.v.serialized_size(Compress::No);
+        base + level0.body.stage1.sumcheck.serialized_size(Compress::No)
+            + level0.body.stage1.s_claim.serialized_size(Compress::No)
+            + level0.body.stage2.sumcheck.serialized_size(Compress::No)
     }
 
     #[test]

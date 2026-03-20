@@ -12,7 +12,7 @@ use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
 };
-use hachi_pcs::protocol::proof::{HachiProof, HachiProofTail, NormCheckBody};
+use hachi_pcs::protocol::proof::{HachiProof, HachiProofTail};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::{CommitmentConfig, RingCommitment};
 use hachi_pcs::{
@@ -507,14 +507,6 @@ fn full_d128_basis2_prove_verify() {
         let (verifier_setup, commitment, proof, opening_point, opening, layout) =
             make_dense_basis2_fixture(BASIS2_TEST_NV, b"hachi_e2e/basis2");
 
-        assert!(
-            proof
-                .levels
-                .iter()
-                .any(|level| matches!(level.body, NormCheckBody::Combined { .. })),
-            "basis-2 proof should exercise the combined b=4 path"
-        );
-
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/basis2");
         let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
             &proof,
@@ -536,7 +528,7 @@ fn full_d128_basis2_prove_verify() {
 }
 
 #[test]
-fn full_d128_basis2_rejects_tampered_combined_sumcheck() {
+fn full_d128_basis2_rejects_tampered_stage1_sumcheck() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
@@ -546,25 +538,23 @@ fn full_d128_basis2_rejects_tampered_combined_sumcheck() {
         let (verifier_setup, commitment, proof, opening_point, opening, layout) =
             make_dense_basis2_fixture(BASIS2_TEST_NV, b"hachi_e2e/basis2-tamper");
         let mut malformed = proof.clone();
-        let combined_level = malformed
+        let stage1_sumcheck = &mut malformed
             .levels
             .iter_mut()
-            .find(|level| matches!(level.body, NormCheckBody::Combined { .. }))
-            .expect("basis-2 proof should contain a combined level");
-        match &mut combined_level.body {
-            NormCheckBody::Combined { sumcheck, .. } => {
-                let round0 = sumcheck
-                    .round_polys
-                    .first_mut()
-                    .expect("combined sumcheck should contain at least one round");
-                let coeff0 = round0
-                    .coeffs_except_linear_term
-                    .first_mut()
-                    .expect("combined round polynomial should contain a constant term");
-                *coeff0 += F::from_canonical_u128_reduced(1);
-            }
-            NormCheckBody::TwoStage { .. } => unreachable!("expected combined b=4 level"),
-        }
+            .next()
+            .expect("basis-2 proof should contain at least one level")
+            .body
+            .stage1
+            .sumcheck;
+        let round0 = stage1_sumcheck
+            .round_polys
+            .first_mut()
+            .expect("stage1 sumcheck should contain at least one round");
+        let coeff0 = round0
+            .coeffs_except_linear_term
+            .first_mut()
+            .expect("stage1 round polynomial should contain a constant term");
+        *coeff0 += F::from_canonical_u128_reduced(1);
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/basis2-tamper");
         let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
@@ -578,10 +568,7 @@ fn full_d128_basis2_rejects_tampered_combined_sumcheck() {
             &layout,
         );
 
-        assert!(
-            result.is_err(),
-            "tampered combined sumcheck must be rejected"
-        );
+        assert!(result.is_err(), "tampered stage1 sumcheck must be rejected");
     });
 }
 

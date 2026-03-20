@@ -22,7 +22,7 @@ Two workspace members: `hachi-pcs` (root) and `derive` (proc macros).
 - `src/algebra/` — concrete fields, rings, NTT, domains, polynomial utilities
 - `src/protocol/commitment/` — configs, layouts, schedules, commitments, onehot helpers, utilities
 - `src/protocol/commitment_scheme.rs` — top-level `HachiCommitmentScheme` commit/prove/verify wiring
-- `src/protocol/sumcheck/` — generic sumcheck plus `hachi_combined`, `hachi_stage1`, `hachi_stage2`, `two_round_prefix`
+- `src/protocol/sumcheck/` — generic sumcheck plus `hachi_stage1`, `hachi_stage2`, `two_round_prefix`
 - `src/protocol/labrador/` — recursive Labrador prover/verifier, folding, aggregation, JL, setup
 - `src/protocol/labrador_handoff.rs` — bridge from Hachi proof state into Labrador
 - `src/protocol/proof.rs` — proof object layout and flattened proof/witness encodings

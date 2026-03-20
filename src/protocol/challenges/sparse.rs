@@ -6,8 +6,9 @@
 //! chain with a single seed derivation followed by fast XOF expansion,
 //! providing ~6x speedup for large batch sizes (e.g. 4096 challenges).
 //!
-//! Position sampling uses Fisher-Yates partial shuffle, eliminating
-//! rejection-sampling waste.
+//! Position and shell sampling use bitmask rejection sampling to achieve
+//! zero modulo bias, ensuring ≥128-bit security in the Fiat–Shamir
+//! challenge distribution.
 
 use crate::algebra::ring::{CyclotomicRing, SparseChallenge, SparseChallengeConfig};
 use crate::error::HachiError;
@@ -19,42 +20,87 @@ use sha3::Shake256;
 
 const SPARSE_PRG_DOMAIN: &[u8] = b"hachi/sparse-challenge-prg";
 
-/// Cursor over a byte buffer for extracting random values.
-struct ByteCursor<'a> {
-    buf: &'a [u8],
-    pos: usize,
+type ShakeReader = <Shake256 as ExtendableOutput>::Reader;
+
+/// Streaming cursor backed by a SHAKE256 XOF for extracting random values
+/// with zero modulo bias via bitmask rejection sampling.
+struct XofCursor {
+    reader: ShakeReader,
 }
 
-impl<'a> ByteCursor<'a> {
+impl XofCursor {
+    fn from_seed(seed: &[u8]) -> Self {
+        let mut xof = Shake256::default();
+        xof.update(SPARSE_PRG_DOMAIN);
+        xof.update(seed);
+        Self {
+            reader: xof.finalize_xof(),
+        }
+    }
+
     #[inline]
-    fn new(buf: &'a [u8]) -> Self {
-        Self { buf, pos: 0 }
+    fn fill(&mut self, buf: &mut [u8]) {
+        self.reader.read(buf);
     }
 
     #[inline]
     fn next_u32(&mut self) -> u32 {
-        let bytes: [u8; 4] = self.buf[self.pos..self.pos + 4].try_into().unwrap();
-        self.pos += 4;
-        u32::from_le_bytes(bytes)
+        let mut buf = [0u8; 4];
+        self.fill(&mut buf);
+        u32::from_le_bytes(buf)
     }
 
     #[inline]
     fn next_u64(&mut self) -> u64 {
-        let bytes: [u8; 8] = self.buf[self.pos..self.pos + 8].try_into().unwrap();
-        self.pos += 8;
-        u64::from_le_bytes(bytes)
+        let mut buf = [0u8; 8];
+        self.fill(&mut buf);
+        u64::from_le_bytes(buf)
     }
 
     #[inline]
     fn next_u8(&mut self) -> u8 {
-        let b = self.buf[self.pos];
-        self.pos += 1;
-        b
+        let mut buf = [0u8; 1];
+        self.fill(&mut buf);
+        buf[0]
     }
 
+    /// Uniformly sample from `0..modulus` using bitmask rejection sampling.
+    /// Zero modulo bias; expected < 2 draws per call.
     #[inline]
     fn next_usize_mod(&mut self, modulus: usize) -> usize {
-        (self.next_u32() as usize) % modulus
+        debug_assert!(modulus > 0);
+        if modulus == 1 {
+            return 0;
+        }
+        let bits = usize::BITS - (modulus - 1).leading_zeros();
+        let mask: usize = (1 << bits) - 1;
+        loop {
+            let val = (self.next_u32() as usize) & mask;
+            if val < modulus {
+                return val;
+            }
+        }
+    }
+
+    /// Uniformly sample from `0..modulus` (u64) using bitmask rejection sampling.
+    #[inline]
+    fn next_u64_mod(&mut self, modulus: u64) -> u64 {
+        debug_assert!(modulus > 0);
+        if modulus == 1 {
+            return 0;
+        }
+        let bits = u64::BITS - (modulus - 1).leading_zeros();
+        let mask: u64 = if bits == 64 {
+            u64::MAX
+        } else {
+            (1u64 << bits) - 1
+        };
+        loop {
+            let val = self.next_u64() & mask;
+            if val < modulus {
+                return val;
+            }
+        }
     }
 
     #[inline]
@@ -67,39 +113,8 @@ impl<'a> ByteCursor<'a> {
     }
 }
 
-/// Upper bound on random bytes consumed when sampling one challenge.
-fn max_challenge_bytes(cfg: &SparseChallengeConfig) -> usize {
-    match cfg {
-        SparseChallengeConfig::Uniform { weight, .. } => {
-            // Fisher-Yates positions: weight × 4 bytes
-            // Coefficient indices:    weight × 4 bytes
-            weight * 8
-        }
-        SparseChallengeConfig::SplitRing {
-            half_weight,
-            max_mag2_per_half,
-        } => {
-            // Per half:
-            //   Fisher-Yates positions over D/2:   half_weight × 4 bytes
-            //   Signs:                             half_weight × 1 byte
-            //   shell draw over j = 0..max:        8 bytes
-            //   Fisher-Yates mag2 positions:       max_mag2_per_half × 4 bytes
-            2 * (half_weight * 4 + half_weight + 8 + max_mag2_per_half * 4)
-        }
-        SparseChallengeConfig::ExactShell {
-            count_mag1,
-            count_mag2,
-        } => {
-            let total = count_mag1 + count_mag2;
-            // Fisher-Yates positions: total × 4 bytes
-            // Signs:                  total × 1 byte
-            total * 5
-        }
-    }
-}
-
 /// Fisher-Yates partial shuffle: sample `count` distinct values from `0..universe`.
-fn sample_distinct_positions(cursor: &mut ByteCursor, universe: usize, count: usize) -> Vec<usize> {
+fn sample_distinct_positions(cursor: &mut XofCursor, universe: usize, count: usize) -> Vec<usize> {
     debug_assert!(count <= universe);
     let mut perm: Vec<usize> = (0..universe).collect();
     for i in 0..count {
@@ -111,7 +126,7 @@ fn sample_distinct_positions(cursor: &mut ByteCursor, universe: usize, count: us
 }
 
 fn sample_uniform_sparse(
-    cursor: &mut ByteCursor,
+    cursor: &mut XofCursor,
     d: usize,
     weight: usize,
     nonzero_coeffs: &[i16],
@@ -147,7 +162,7 @@ fn binomial_u64(n: usize, k: usize) -> u64 {
 }
 
 fn sample_split_shell_count(
-    cursor: &mut ByteCursor,
+    cursor: &mut XofCursor,
     half_weight: usize,
     max_mag2_per_half: usize,
 ) -> usize {
@@ -157,7 +172,7 @@ fn sample_split_shell_count(
     let total_shells: u64 = (0..=max_mag2_per_half)
         .map(|j| binomial_u64(half_weight, j))
         .sum();
-    let mut draw = cursor.next_u64() % total_shells;
+    let mut draw = cursor.next_u64_mod(total_shells);
     for j in 0..=max_mag2_per_half {
         let shell_size = binomial_u64(half_weight, j);
         if draw < shell_size {
@@ -169,7 +184,7 @@ fn sample_split_shell_count(
 }
 
 fn sample_split_half(
-    cursor: &mut ByteCursor,
+    cursor: &mut XofCursor,
     half_size: usize,
     half_weight: usize,
     max_mag2_per_half: usize,
@@ -190,7 +205,7 @@ fn sample_split_half(
 }
 
 fn sample_split_ring_sparse(
-    cursor: &mut ByteCursor,
+    cursor: &mut XofCursor,
     d: usize,
     half_weight: usize,
     max_mag2_per_half: usize,
@@ -209,7 +224,7 @@ fn sample_split_ring_sparse(
 }
 
 fn sample_exact_shell_sparse(
-    cursor: &mut ByteCursor,
+    cursor: &mut XofCursor,
     d: usize,
     count_mag1: usize,
     count_mag2: usize,
@@ -229,9 +244,9 @@ fn sample_exact_shell_sparse(
     SparseChallenge { positions, coeffs }
 }
 
-/// Parse a single sparse challenge from a byte cursor.
+/// Parse a single sparse challenge from a streaming XOF cursor.
 fn parse_challenge<const D: usize>(
-    cursor: &mut ByteCursor,
+    cursor: &mut XofCursor,
     cfg: &SparseChallengeConfig,
 ) -> SparseChallenge {
     match cfg {
@@ -250,30 +265,16 @@ fn parse_challenge<const D: usize>(
     }
 }
 
-/// Expand a seed into `total_bytes` of PRG output via SHAKE256 XOF.
-fn prg_expand_sparse(seed: &[u8], total_bytes: usize) -> Vec<u8> {
-    let mut xof = Shake256::default();
-    xof.update(SPARSE_PRG_DOMAIN);
-    xof.update(seed);
-    let mut out = vec![0u8; total_bytes];
-    xof.finalize_xof().read(&mut out);
-    out
-}
-
-/// Absorb context into the transcript, derive a PRG seed, and expand into
-/// challenge randomness via SHAKE256. Returns the expanded byte buffer.
-fn derive_and_expand<F, T>(
-    transcript: &mut T,
-    absorb_data: &[u8],
-    total_bytes: usize,
-) -> Vec<u8>
+/// Absorb context into the transcript, derive a PRG seed, and create a
+/// streaming XOF cursor for challenge randomness.
+fn derive_xof_cursor<F, T>(transcript: &mut T, absorb_data: &[u8]) -> XofCursor
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
     transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, absorb_data);
     let seed = transcript.challenge_bytes(CHALLENGE_SPARSE_CHALLENGE, 32);
-    prg_expand_sparse(&seed, total_bytes)
+    XofCursor::from_seed(&seed)
 }
 
 /// Sample a sparse ring challenge (exact weight ω) from a transcript.
@@ -305,8 +306,7 @@ where
     absorb_buf.extend_from_slice(&(D as u64).to_le_bytes());
     absorb_buf.extend_from_slice(&domain_sep);
 
-    let bytes = derive_and_expand::<F, T>(transcript, &absorb_buf, max_challenge_bytes(cfg));
-    let mut cursor = ByteCursor::new(&bytes);
+    let mut cursor = derive_xof_cursor::<F, T>(transcript, &absorb_buf);
     Ok(parse_challenge::<D>(&mut cursor, cfg))
 }
 
@@ -315,7 +315,8 @@ where
 ///
 /// Absorbs the context (label, count, ring degree, config) into the
 /// transcript once, derives a single 32-byte PRG seed, and expands it
-/// via SHAKE256 XOF into all per-challenge randomness in one pass.
+/// via SHAKE256 XOF into all per-challenge randomness in one streaming
+/// pass.
 ///
 /// # Errors
 ///
@@ -341,16 +342,12 @@ where
     absorb_buf.extend_from_slice(&(D as u64).to_le_bytes());
     absorb_buf.extend_from_slice(&domain_sep);
 
-    let bytes_per = max_challenge_bytes(cfg);
-    let all_bytes = derive_and_expand::<F, T>(transcript, &absorb_buf, bytes_per * n);
-
-    Ok((0..n)
-        .map(|i| {
-            let start = i * bytes_per;
-            let mut cursor = ByteCursor::new(&all_bytes[start..start + bytes_per]);
-            parse_challenge::<D>(&mut cursor, cfg)
-        })
-        .collect())
+    let mut cursor = derive_xof_cursor::<F, T>(transcript, &absorb_buf);
+    let mut challenges = Vec::with_capacity(n);
+    for _ in 0..n {
+        challenges.push(parse_challenge::<D>(&mut cursor, cfg));
+    }
+    Ok(challenges)
 }
 
 /// Sample `n` sparse challenges from a transcript and convert them to dense

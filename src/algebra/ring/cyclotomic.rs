@@ -565,8 +565,8 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     {
         let levels = out.len();
         assert!(
-            log_basis > 0 && log_basis <= 7,
-            "log_basis must be in 1..=7 for i8 output"
+            log_basis > 0 && log_basis <= 5,
+            "log_basis must be in 1..=5 for i8 output"
         );
         assert!(
             (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
