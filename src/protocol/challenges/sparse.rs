@@ -123,6 +123,9 @@ fn sample_uniform_sparse(
 
 #[inline]
 fn binomial_u64(n: usize, k: usize) -> u64 {
+    if k > n {
+        return 0;
+    }
     let k = k.min(n - k);
     let mut numer = 1u128;
     let mut denom = 1u128;
