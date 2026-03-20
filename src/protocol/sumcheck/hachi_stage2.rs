@@ -2777,13 +2777,8 @@ mod tests {
             m_evals_x.clone(),
             params,
         );
-        let mut direct = new_stage2_test_prover(
-            F::from_u64(191),
-            w_prefix,
-            alpha_evals_y,
-            m_evals_x,
-            params,
-        );
+        let mut direct =
+            new_stage2_test_prover(F::from_u64(191), w_prefix, alpha_evals_y, m_evals_x, params);
         direct.prefix_r_stage1 = None;
 
         let mut prover_claim = prover.input_claim();

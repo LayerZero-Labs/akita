@@ -221,7 +221,12 @@ fn sparse_mul_acc<const D: usize>(
 ) {
     #[cfg(target_arch = "aarch64")]
     {
-        if neon::use_neon_ntt() && challenge.coeffs.iter().all(|&coeff| coeff.unsigned_abs() <= 2) {
+        if neon::use_neon_ntt()
+            && challenge
+                .coeffs
+                .iter()
+                .all(|&coeff| coeff.unsigned_abs() <= 2)
+        {
             unsafe {
                 decompose_fold_neon::sparse_mul_acc_neon(
                     digit_plane.as_ptr(),

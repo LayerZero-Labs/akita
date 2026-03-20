@@ -37,9 +37,7 @@ use crate::protocol::sumcheck::hachi_stage2::{
 };
 #[cfg(debug_assertions)]
 use crate::protocol::sumcheck::multilinear_eval;
-use crate::protocol::sumcheck::{
-    prove_sumcheck, verify_sumcheck, SumcheckInstanceVerifier,
-};
+use crate::protocol::sumcheck::{prove_sumcheck, verify_sumcheck, SumcheckInstanceVerifier};
 use crate::protocol::transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH,
     CHALLENGE_SUMCHECK_ROUND,
