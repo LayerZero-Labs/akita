@@ -259,15 +259,96 @@ fn accum_onehot_coeff<const D: usize>(
     }
 }
 
+/// Precompute dense rotation table for a sparse challenge.
+///
+/// `table[c]` holds the i32 coefficients of `challenge * X^c` in the ring
+/// `Z[X]/(X^D + 1)`.  Because D is a power of two, `X^D = -1`, so
+/// positions that wrap past D get negated.
+///
+/// The table is 16 KB for D=64, fitting entirely in L1 cache.
+/// Fill `table[ci]` with the coefficients of `challenge * X^ci` in `Z[X]/(X^D+1)`.
+///
+/// Uses a two-phase approach: first scatter the sparse challenge into a dense
+/// `[i32; D]` buffer (42 writes), then derive each rotation via memcpy + negate
+/// (~64 ops per row, NEON-friendly) instead of the old scatter approach
+/// (~42 random-access ops per row, branch-heavy).
 #[inline(always)]
-fn accum_onehot_entry<const D: usize>(
-    acc: &mut [i32; D],
-    entry: &SparseBlockEntry,
-    challenge: &SparseChallenge,
-) {
-    for &coeff_idx in &entry.nonzero_coeffs {
-        accum_onehot_coeff::<D>(acc, coeff_idx, challenge);
+fn fill_rotated_challenge<const D: usize>(table: &mut [[i32; D]], challenge: &SparseChallenge) {
+    debug_assert!(D.is_power_of_two());
+    debug_assert!(table.len() >= D);
+
+    let mut dense = [0i32; D];
+    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+        dense[pos as usize] = coeff as i32;
     }
+
+    for (ci, row) in table.iter_mut().enumerate().take(D) {
+        let split = D - ci;
+        row[ci..D].copy_from_slice(&dense[..split]);
+        for (dst, src) in row[..ci].iter_mut().zip(dense[split..].iter()) {
+            *dst = -*src;
+        }
+    }
+}
+
+/// Position-parallel accumulation for `decompose_fold_sparse_onehot`.
+///
+/// Replaces the old `cfg_fold_reduce!` that allocated one `inner_width × D`
+/// accumulator per Rayon leaf task.  This version:
+///
+/// 1. Uses one accumulator per hardware thread (explicit chunking).
+/// 2. Precomputes a dense rotation table per challenge so that each
+///    entry becomes a branchless 64-element vector addition.
+/// 3. Reduces the per-thread accumulators in parallel over positions.
+fn sparse_onehot_accumulate<const D: usize>(
+    sparse_blocks: &[Vec<SparseBlockEntry>],
+    challenges: &[SparseChallenge],
+    num_blocks: usize,
+    inner_width: usize,
+    num_digits: usize,
+) -> Vec<[i32; D]> {
+    #[cfg(feature = "parallel")]
+    let num_threads = rayon::current_num_threads();
+    #[cfg(not(feature = "parallel"))]
+    let num_threads = 1;
+
+    let pos_chunk = inner_width.div_ceil(num_threads);
+
+    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..num_threads)
+        .map(|tid| {
+            let pos_start = tid * pos_chunk;
+            let pos_end = (pos_start + pos_chunk).min(inner_width);
+            let len = pos_end - pos_start;
+            let mut acc = vec![[0i32; D]; len];
+            let mut rotated = vec![[0i32; D]; D];
+
+            for block_idx in 0..num_blocks {
+                let entries = &sparse_blocks[block_idx];
+                let lo = entries.partition_point(|e| e.pos_in_block * num_digits < pos_start);
+                let hi = entries.partition_point(|e| e.pos_in_block * num_digits < pos_end);
+                if lo >= hi {
+                    continue;
+                }
+
+                fill_rotated_challenge::<D>(&mut rotated, &challenges[block_idx]);
+
+                for entry in &entries[lo..hi] {
+                    let local_pos = entry.pos_in_block * num_digits - pos_start;
+                    for &ci in &entry.nonzero_coeffs {
+                        let rot = &rotated[ci];
+                        let dst = &mut acc[local_pos];
+                        for k in 0..D {
+                            dst[k] += rot[k];
+                        }
+                    }
+                }
+            }
+
+            acc
+        })
+        .collect();
+
+    chunks.into_iter().flatten().collect()
 }
 
 fn signed_accum_to_ring<F: CanonicalField, const D: usize>(
@@ -1149,25 +1230,12 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
 
         let coeff_accum = {
             let _span = tracing::info_span!("onehot_sparse_accumulate").entered();
-            cfg_fold_reduce!(
-                0..num_blocks,
-                || vec![[0i32; D]; inner_width],
-                |mut z_local: Vec<[i32; D]>, block_idx: usize| {
-                    let challenge = &challenges[block_idx];
-                    for entry in &self.sparse_blocks[block_idx] {
-                        let z_coeffs = &mut z_local[entry.pos_in_block * num_digits];
-                        accum_onehot_entry::<D>(z_coeffs, entry, challenge);
-                    }
-                    z_local
-                },
-                |mut a: Vec<[i32; D]>, b: Vec<[i32; D]>| {
-                    for (ai, bi) in a.iter_mut().zip(b.iter()) {
-                        for (a_coeff, b_coeff) in ai.iter_mut().zip(bi.iter()) {
-                            *a_coeff += *b_coeff;
-                        }
-                    }
-                    a
-                }
+            sparse_onehot_accumulate::<D>(
+                &self.sparse_blocks,
+                challenges,
+                num_blocks,
+                inner_width,
+                num_digits,
             )
         };
 
