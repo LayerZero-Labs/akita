@@ -295,7 +295,7 @@ where
         });
     }
 
-    let direct_tail = PackedDigits::from_i8_digits(current_w, w_layout.log_basis);
+    let direct_tail = PackedDigits::from_i8_digits_with_min_bits(current_w, w_layout.log_basis);
     let direct_hachi_tail_bytes = direct_tail.serialized_size(Compress::No);
     let target_num_vars = w_layout.m_vars + w_layout.r_vars + alpha;
     let mut padded_point = opening_point.clone();

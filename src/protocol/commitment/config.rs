@@ -959,60 +959,6 @@ pub type Fp128LogBasisCommitmentConfig = Fp128AdaptiveBoundedCommitmentConfig<3>
 /// Alias for [`Fp128FullCommitmentConfig`].
 pub type Fp128CommitmentConfig = Fp128FullCommitmentConfig;
 
-/// D=64, rank-2 everywhere.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Fp128Rank2BoundedCommitmentConfig<
-    const LOG_COMMIT_BOUND: u32,
-    const LOG_BASIS: u32,
-    const W_LOG_BASIS: u32 = LOG_BASIS,
->;
-
-impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> CommitmentConfig
-    for Fp128Rank2BoundedCommitmentConfig<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>
-{
-    const D: usize = 64;
-
-    fn decomposition() -> DecompositionParams {
-        Fp128BoundedCommitmentConfig::<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>::decomposition()
-    }
-
-    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
-        CommitmentEnvelope {
-            max_n_a: 1,
-            max_n_b: 2,
-            max_n_d: 2,
-        }
-    }
-
-    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
-        if inputs.level == 0 {
-            LOG_BASIS
-        } else {
-            W_LOG_BASIS
-        }
-    }
-
-    fn schedule_key(_max_num_vars: usize) -> String {
-        format!("static_v1_root{LOG_BASIS}_rec{W_LOG_BASIS}")
-    }
-
-    fn n_b_at_level(_level: usize, _max_num_vars: usize, _current_w_len: usize) -> usize {
-        2
-    }
-
-    fn n_d_at_level(_level: usize, _max_num_vars: usize, _current_w_len: usize) -> usize {
-        2
-    }
-
-    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
-        d64_stage1_challenge_config(d)
-    }
-
-    fn labrador_handoff_threshold() -> usize {
-        usize::MAX
-    }
-}
-
 /// D=64 onehot preset with the coarse adaptive outer-rank schedule from the
 /// current local planning note: rank-2 only in the short early window.
 #[derive(Clone, Copy, Debug, Default)]

@@ -942,8 +942,6 @@ where
             level,
             current_w_len: current_w.len(),
         });
-        let final_w_basis = final_params.log_basis;
-
         let tail = if labrador_enabled {
             tracing::info!("labrador handoff started");
             let handoff_layout =
@@ -962,7 +960,8 @@ where
                 transcript,
             )?
         } else {
-            let final_w = PackedDigits::from_i8_digits(&current_w, final_w_basis);
+            let final_w =
+                PackedDigits::from_i8_digits_with_min_bits(&current_w, final_params.log_basis);
             HachiProofTail::Direct(final_w)
         };
 

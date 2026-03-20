@@ -22,29 +22,27 @@ use std::marker::PhantomData;
 pub struct PackedDigits {
     /// Number of logical elements.
     pub num_elems: usize,
-    /// Bits per element (= `log_basis` from the commitment config).
+    /// Bits per element used for packing.
     pub bits_per_elem: u32,
     /// Bit-packed two's-complement data.
     pub data: Vec<u8>,
 }
 
-/// Precomputed lookup table mapping balanced digit index → field element.
-///
-/// Wraps `FromSmallInt::digit_lut` with convenient signed-digit indexing.
-/// Index a digit `d ∈ [-b/2, b/2)` via [`get`](DigitLut::get).
+/// Signed-digit lookup table used by proof tails and recursive commitments.
 pub(crate) struct DigitLut<F> {
-    table: [F; 32],
+    table: Vec<F>,
     half_b: i8,
 }
 
 impl<F: FieldCore + FromSmallInt> DigitLut<F> {
     #[inline]
     pub(crate) fn new(log_basis: u32) -> Self {
+        assert!(log_basis > 0 && log_basis <= 7, "log_basis out of range");
         let half_b = 1i8 << (log_basis - 1);
-        Self {
-            table: F::digit_lut(log_basis),
-            half_b,
-        }
+        let table = (-(half_b as i16)..(half_b as i16))
+            .map(|digit| F::from_i64(digit as i64))
+            .collect();
+        Self { table, half_b }
     }
 
     #[inline(always)]
@@ -54,6 +52,26 @@ impl<F: FieldCore + FromSmallInt> DigitLut<F> {
 }
 
 impl PackedDigits {
+    /// Smallest `bits_per_elem` that can encode every signed digit in `w`.
+    pub fn required_bits_per_elem(w: &[i8]) -> u32 {
+        let required_half_b = w.iter().fold(1i16, |acc, &signed| {
+            let needed = if signed >= 0 {
+                signed as i16 + 1
+            } else {
+                -(signed as i16)
+            };
+            acc.max(needed)
+        });
+
+        let mut bits = 1u32;
+        let mut half_b = 1i16;
+        while half_b < required_half_b {
+            bits += 1;
+            half_b <<= 1;
+        }
+        bits
+    }
+
     /// Pack balanced i8 digits into bit-packed form.
     ///
     /// Each element must be in `[-b/2, b/2)` where `b = 2^log_basis`.
@@ -92,12 +110,18 @@ impl PackedDigits {
         }
     }
 
-    /// Unpack to field elements using a precomputed lookup table.
+    /// Pack digits using at least `min_bits_per_elem`, widening if needed so
+    /// every element in `w` fits the chosen two's-complement range.
+    pub fn from_i8_digits_with_min_bits(w: &[i8], min_bits_per_elem: u32) -> Self {
+        let bits_per_elem = min_bits_per_elem.max(Self::required_bits_per_elem(w));
+        Self::from_i8_digits(w, bits_per_elem)
+    }
+
+    /// Unpack to field elements.
     pub fn to_field_elems<F: FieldCore + FromSmallInt>(&self) -> Vec<F> {
         let bits = self.bits_per_elem as usize;
         let mask = (1u8 << bits) - 1;
         let sign_bit = 1u8 << (bits - 1);
-        let lut = DigitLut::<F>::new(self.bits_per_elem);
 
         let mut out = Vec::with_capacity(self.num_elems);
         for i in 0..self.num_elems {
@@ -113,7 +137,7 @@ impl PackedDigits {
             } else {
                 raw as i8
             };
-            out.push(lut.get(signed));
+            out.push(F::from_i64(signed as i64));
         }
         out
     }

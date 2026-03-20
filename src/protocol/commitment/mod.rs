@@ -20,7 +20,7 @@ pub use config::{
     Fp128AdaptiveBoundedCommitmentConfig, Fp128AdaptiveOneHotCommitmentConfig,
     Fp128BoundedCommitmentConfig, Fp128CommitmentConfig, Fp128D64BoundedCommitmentConfig,
     Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig,
-    Fp128Rank2BoundedCommitmentConfig, HachiCommitmentLayout, SmallTestCommitmentConfig,
+    HachiCommitmentLayout, SmallTestCommitmentConfig,
 };
 pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
 pub(crate) use schedule::recursive_level_decomposition_from_root;

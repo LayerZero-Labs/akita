@@ -78,6 +78,15 @@ type DenseBasis2Fixture = (
     HachiCommitmentLayout,
 );
 
+type DenseFixture<const D: usize, Cfg> = (
+    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::VerifierSetup,
+    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::Commitment,
+    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::Proof,
+    Vec<F>,
+    F,
+    HachiCommitmentLayout,
+);
+
 fn make_dense_basis2_fixture(nv: usize, transcript_label: &'static [u8]) -> DenseBasis2Fixture {
     type Cfg = Fp128BoundedCommitmentConfig<128, 2, 2>;
     const D: usize = Cfg::D;
@@ -128,14 +137,7 @@ fn make_dense_basis2_fixture(nv: usize, transcript_label: &'static [u8]) -> Dens
 fn make_dense_fixture<const D: usize, Cfg: CommitmentConfig>(
     nv: usize,
     transcript_label: &'static [u8],
-) -> (
-    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::VerifierSetup,
-    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::Commitment,
-    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::Proof,
-    Vec<F>,
-    F,
-    HachiCommitmentLayout,
-)
+) -> DenseFixture<D, Cfg>
 where
     HachiCommitmentScheme<D, Cfg>: CommitmentScheme<F, D>,
 {
