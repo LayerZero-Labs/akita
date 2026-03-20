@@ -760,6 +760,10 @@ fn mat_vec_mul_digits_i8_with_params<
         return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
     }
 
+    if n_a <= 2 && num_blocks >= 16 {
+        return mat_vec_mul_digits_i8_block_parallel(ntt_mat, blocks, params);
+    }
+
     let lut = DigitMontLut::new(params);
     let tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
     let num_tiles = inner_width.div_ceil(tw);
@@ -808,6 +812,46 @@ fn mat_vec_mul_digits_i8_with_params<
         .map(|row_accs| {
             row_accs
                 .into_iter()
+                .map(|acc| acc.to_ring_with_params(params))
+                .collect()
+        })
+        .collect()
+}
+
+/// Block-parallel fast path for small `n_a` and many blocks.
+///
+/// Parallelizes over blocks (high fanout) instead of column tiles (low fanout).
+/// With many blocks but few matrix rows, the old tile-based approach had limited
+/// parallelism (few tiles) while this path gives num_blocks-way parallelism.
+fn mat_vec_mul_digits_i8_block_parallel<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    blocks: &[&[[i8; D]]],
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    let n_a = ntt_mat.len();
+    let lut = DigitMontLut::new(params);
+
+    cfg_into_iter!(blocks)
+        .map(|block| {
+            let mut accs: Vec<CyclotomicCrtNtt<W, K, D>> =
+                vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
+
+            for (j, digit) in block.iter().enumerate() {
+                if is_zero_plane(digit) {
+                    continue;
+                }
+                let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
+                    accumulate_pointwise_product_into(acc, &mat_row[j], &ntt_d, params);
+                }
+            }
+
+            accs.into_iter()
                 .map(|acc| acc.to_ring_with_params(params))
                 .collect()
         })
