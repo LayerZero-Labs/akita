@@ -676,6 +676,11 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         .unwrap();
 
         assert_eq!(proof.levels.len(), plan.levels.len());
+        assert_eq!(
+            proof.size(),
+            plan.exact_proof_bytes,
+            "planner should match the direct-tail proof size"
+        );
         let mut serialized = Vec::new();
         proof
             .serialize_compressed(&mut serialized)

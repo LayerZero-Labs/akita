@@ -271,25 +271,16 @@ fn hachi_level_proof_bytes(
     let next_eval_bytes = elem_bytes;
     let rounds = sumcheck_rounds(level_params.d, next_w_len);
     let b = 1usize << layout.log_basis;
+    let stage1_degree = b / 2 + 1;
 
-    if b == 4 {
-        y_bytes
-            + v_bytes
-            + 1
-            + sumcheck_bytes(rounds, 5, elem_bytes)
-            + next_commit_bytes
-            + next_eval_bytes
-    } else {
-        let stage1_degree = b / 2 + 1;
-        y_bytes
-            + v_bytes
-            + 1
-            + sumcheck_bytes(rounds, stage1_degree, elem_bytes)
-            + elem_bytes
-            + sumcheck_bytes(rounds, 3, elem_bytes)
-            + next_commit_bytes
-            + next_eval_bytes
-    }
+    // Every level now uses the same two-stage norm-check body, even for b = 4.
+    y_bytes
+        + v_bytes
+        + sumcheck_bytes(rounds, stage1_degree, elem_bytes)
+        + elem_bytes
+        + sumcheck_bytes(rounds, 3, elem_bytes)
+        + next_commit_bytes
+        + next_eval_bytes
 }
 
 fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
@@ -610,10 +601,27 @@ pub fn hachi_recursive_level_layout_from_params<Cfg: CommitmentConfig>(
 mod tests {
     use super::*;
     use crate::algebra::Prime128M8M4M1M0;
+    use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
+    use crate::primitives::serialization::{Compress, HachiSerialize};
     use crate::protocol::commitment::{
         Fp128AdaptiveBoundedCommitmentConfig, Fp128AdaptiveOneHotCommitmentConfig,
     };
+    use crate::protocol::proof::{FlatRingVec, HachiLevelProof};
     use crate::protocol::ring_switch::w_ring_element_count;
+    use crate::protocol::sumcheck::{CompressedUniPoly, SumcheckProof};
+    use crate::FieldCore;
+
+    type F = Prime128M8M4M1M0;
+
+    fn dummy_sumcheck(rounds: usize, degree: usize) -> SumcheckProof<F> {
+        SumcheckProof {
+            round_polys: (0..rounds)
+                .map(|_| CompressedUniPoly {
+                    coeffs_except_linear_term: vec![F::zero(); degree],
+                })
+                .collect(),
+        }
+    }
 
     fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(max_num_vars: usize) {
         let plan = Cfg::schedule_plan(max_num_vars)
@@ -645,6 +653,71 @@ mod tests {
         for max_num_vars in [15, 30, 44] {
             assert_plan_matches_runtime_w_sizes::<Fp128AdaptiveOneHotCommitmentConfig>(
                 max_num_vars,
+            );
+        }
+    }
+
+    #[test]
+    fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
+        const D: usize = 64;
+        let stage1_config = SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        let next_level_params = HachiLevelParams {
+            d: D,
+            log_basis: 2,
+            n_a: 2,
+            n_b: 3,
+            n_d: 2,
+            challenge_l1_mass: stage1_config.l1_mass(),
+            stage1_config: stage1_config.clone(),
+        };
+        let next_w_len = D * 8;
+
+        for log_basis in 2..=5 {
+            let level_params = HachiLevelParams {
+                d: D,
+                log_basis,
+                n_a: 2,
+                n_b: 2,
+                n_d: 2,
+                challenge_l1_mass: stage1_config.l1_mass(),
+                stage1_config: stage1_config.clone(),
+            };
+            let layout = HachiCommitmentLayout {
+                m_vars: 0,
+                r_vars: 0,
+                num_blocks: 1,
+                block_len: 1,
+                inner_width: 1,
+                outer_width: 1,
+                d_matrix_width: 1,
+                num_digits_commit: 1,
+                num_digits_open: 1,
+                num_digits_fold: 1,
+                log_basis,
+            };
+            let rounds = sumcheck_rounds(D, next_w_len);
+            let stage1_degree = (1usize << log_basis) / 2 + 1;
+            let next_commitment = FlatRingVec::from_ring_elems(&vec![
+                CyclotomicRing::<F, D>::zero();
+                next_level_params.n_b
+            ]);
+            let level_proof = HachiLevelProof::new_two_stage::<D>(
+                CyclotomicRing::<F, D>::zero(),
+                vec![CyclotomicRing::<F, D>::zero(); level_params.n_d],
+                dummy_sumcheck(rounds, stage1_degree),
+                F::zero(),
+                dummy_sumcheck(rounds, 3),
+                next_commitment,
+                F::zero(),
+            );
+
+            assert_eq!(
+                hachi_level_proof_bytes(128, &level_params, layout, &next_level_params, next_w_len),
+                level_proof.serialized_size(Compress::No),
+                "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
         }
     }
