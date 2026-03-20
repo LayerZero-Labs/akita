@@ -16,6 +16,7 @@
 //! protocol evolves.
 
 use crate::algebra::fields::wide::HasWide;
+use crate::algebra::ring::cyclotomic::WideCyclotomicRing;
 use crate::algebra::ring::sparse_challenge::SparseChallenge;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
@@ -364,6 +365,62 @@ fn signed_accum_to_ring<F: CanonicalField, const D: usize>(
         }
     });
     CyclotomicRing::from_coefficients(coeffs)
+}
+
+/// Position-partitioned accumulation for `BalancedDigitPoly::decompose_fold`.
+///
+/// Each thread owns a contiguous slice of output positions and iterates all
+/// blocks, avoiding the large per-task accumulators and reduce phase of
+/// `cfg_fold_reduce!`.
+fn balanced_digit_decompose_fold_partitioned<const D: usize>(
+    coeffs: &[[i8; D]],
+    challenges: &[SparseChallenge],
+    active_blocks: usize,
+    block_len: usize,
+    num_digits: usize,
+    inner_width: usize,
+) -> Vec<[i32; D]> {
+    #[cfg(feature = "parallel")]
+    let num_threads = rayon::current_num_threads();
+    #[cfg(not(feature = "parallel"))]
+    let num_threads = 1;
+
+    let actual_threads = num_threads.min(inner_width).max(1);
+    let pos_chunk = inner_width.div_ceil(actual_threads);
+
+    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
+        .map(|tid| {
+            let pos_start = tid * pos_chunk;
+            let pos_end = (pos_start + pos_chunk).min(inner_width);
+            let len = pos_end - pos_start;
+            let mut acc = vec![[0i32; D]; len];
+
+            let elem_start = pos_start / num_digits;
+            let elem_end = pos_end.div_ceil(num_digits);
+
+            for (challenge, block_idx) in challenges[..active_blocks].iter().zip(0..) {
+                let block_start: usize = block_idx * block_len;
+                let block_end = (block_start + block_len).min(coeffs.len());
+
+                let lo = elem_start.min(block_end.saturating_sub(block_start));
+                let hi = elem_end.min(block_end.saturating_sub(block_start));
+
+                for elem_idx in lo..hi {
+                    let out_pos = elem_idx * num_digits;
+                    if out_pos >= pos_start && out_pos < pos_end {
+                        sparse_mul_acc::<D>(
+                            &coeffs[block_start + elem_idx],
+                            challenge,
+                            &mut acc[out_pos - pos_start],
+                        );
+                    }
+                }
+            }
+            acc
+        })
+        .collect();
+
+    chunks.into_iter().flatten().collect()
 }
 
 fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
@@ -969,6 +1026,7 @@ where
             .collect()
     }
 
+    #[tracing::instrument(skip_all, name = "BalancedDigitPoly::decompose_fold")]
     fn decompose_fold(
         &self,
         challenges: &[SparseChallenge],
@@ -978,32 +1036,17 @@ where
     ) -> DecomposeFoldWitness<F, D> {
         let inner_width = block_len * num_digits;
         let num_blocks = self.num_ring_elems().div_ceil(block_len);
+        let active_blocks = challenges.len().min(num_blocks);
 
         let q = (-F::one()).to_canonical_u128() + 1;
-        let coeff_accum = cfg_fold_reduce!(
-            0..challenges.len().min(num_blocks),
-            || vec![[0i32; D]; inner_width],
-            |mut z_local: Vec<[i32; D]>, block_idx| {
-                let challenge = &challenges[block_idx];
-                for (elem_idx, digit_plane) in
-                    self.block_slice(block_idx, block_len).iter().enumerate()
-                {
-                    sparse_mul_acc::<D>(
-                        digit_plane,
-                        challenge,
-                        &mut z_local[elem_idx * num_digits],
-                    );
-                }
-                z_local
-            },
-            |mut a: Vec<[i32; D]>, b: Vec<[i32; D]>| {
-                for (ai, bi) in a.iter_mut().zip(b.iter()) {
-                    for (a_coeff, b_coeff) in ai.iter_mut().zip(bi.iter()) {
-                        *a_coeff += *b_coeff;
-                    }
-                }
-                a
-            }
+        let coeffs = self.coeffs;
+        let coeff_accum = balanced_digit_decompose_fold_partitioned::<D>(
+            coeffs,
+            challenges,
+            active_blocks,
+            block_len,
+            num_digits,
+            inner_width,
         );
         build_decompose_fold_witness::<F, D>(coeff_accum, q)
     }
@@ -1317,7 +1360,7 @@ where
         &self,
         a_matrix: &FlatMatrix<F>,
         _ntt_a: &NttSlotCache<D>,
-        block_len: usize,
+        _block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
@@ -1325,19 +1368,17 @@ where
         let a_view = a_matrix.view::<D>();
         let n_a = a_view.num_rows();
         let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
+        let num_blocks = self.sparse_blocks.len();
 
-        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(self.sparse_blocks)
-            .map(|block_entries| {
-                if block_entries.is_empty() {
+        let t_all =
+            onehot_column_sweep_ajtai::<F, D>(&a_view, &self.sparse_blocks, n_a, num_digits_commit);
+
+        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(0..num_blocks)
+            .map(|b| {
+                if t_all[b].iter().all(|r| *r == CyclotomicRing::zero()) {
                     vec![[0i8; D]; zero_block_len]
                 } else {
-                    let t_i = inner_ajtai_onehot_wide(
-                        &a_view,
-                        block_entries,
-                        block_len,
-                        num_digits_commit,
-                    );
-                    decompose_rows_i8(&t_i, num_digits_open, log_basis)
+                    decompose_rows_i8(&t_all[b], num_digits_open, log_basis)
                 }
             })
             .collect();
@@ -1345,11 +1386,12 @@ where
         Ok(t_hat_all)
     }
 
+    #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner_witness")]
     fn commit_inner_witness(
         &self,
         a_matrix: &FlatMatrix<F>,
         _ntt_a: &NttSlotCache<D>,
-        block_len: usize,
+        _block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
@@ -1358,28 +1400,134 @@ where
         let n_a = a_view.num_rows();
         let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
 
-        let per_block = cfg_iter!(self.sparse_blocks)
-            .map(|block_entries| {
-                if block_entries.is_empty() {
-                    (
-                        vec![CyclotomicRing::<F, D>::zero(); n_a],
-                        vec![[0i8; D]; zero_block_len],
-                    )
+        let t =
+            onehot_column_sweep_ajtai::<F, D>(&a_view, &self.sparse_blocks, n_a, num_digits_commit);
+
+        let t_hat: Vec<Vec<[i8; D]>> = cfg_iter!(t)
+            .map(|t_i| {
+                if t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
+                    vec![[0i8; D]; zero_block_len]
                 } else {
-                    let t_i = inner_ajtai_onehot_wide(
-                        &a_view,
-                        block_entries,
-                        block_len,
-                        num_digits_commit,
-                    );
-                    let t_hat_i = decompose_rows_i8(&t_i, num_digits_open, log_basis);
-                    (t_i, t_hat_i)
+                    decompose_rows_i8(t_i, num_digits_open, log_basis)
                 }
             })
-            .collect::<Vec<_>>();
-        let (t, t_hat): (Vec<_>, Vec<_>) = per_block.into_iter().unzip();
+            .collect();
+
         Ok(CommitInnerWitness { t, t_hat })
     }
+}
+
+/// Column-sweep Ajtai commitment for one-hot sparse blocks.
+///
+/// Two-level tiling: threads partition blocks evenly (outer, for parallelism),
+/// then within each thread, blocks are processed in L2-sized tiles (inner,
+/// for cache locality). For each tile the entries are bucketed by A-column
+/// so each column is loaded and widened exactly once, before scattering into
+/// L2-resident block accumulators.
+///
+/// Falls back to the original block-by-block path when blocks_per_thread is
+/// small enough that accumulators already fit in L2.
+fn onehot_column_sweep_ajtai<F, const D: usize>(
+    a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
+    sparse_blocks: &[Vec<SparseBlockEntry>],
+    n_a: usize,
+    num_digits_commit: usize,
+) -> Vec<Vec<CyclotomicRing<F, D>>>
+where
+    F: FieldCore + CanonicalField + HasWide,
+    F::Wide: crate::AdditiveGroup + From<F> + crate::algebra::fields::wide::ReduceTo<F>,
+{
+    let num_blocks = sparse_blocks.len();
+    let num_cols = a_view.num_cols();
+
+    let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
+    let block_tile = if accum_bytes > 0 {
+        ((1usize << 21) / accum_bytes).max(1)
+    } else {
+        num_blocks
+    };
+
+    #[cfg(feature = "parallel")]
+    let num_threads = rayon::current_num_threads().min(num_blocks).max(1);
+    #[cfg(not(feature = "parallel"))]
+    let num_threads = 1;
+
+    let blocks_per_thread = num_blocks.div_ceil(num_threads);
+
+    // For small block counts, the column-sweep bucketing overhead exceeds
+    // its benefit. Fall back to the direct block-by-block path.
+    const SWEEP_THRESHOLD: usize = 128;
+    if blocks_per_thread <= SWEEP_THRESHOLD {
+        return cfg_iter!(sparse_blocks)
+            .map(|block_entries| {
+                inner_ajtai_onehot_wide(a_view, block_entries, 0, num_digits_commit)
+            })
+            .collect();
+    }
+
+    let thread_results: Vec<Vec<Vec<CyclotomicRing<F, D>>>> = cfg_into_iter!(0..num_threads)
+        .map(|tid| {
+            let block_start = tid * blocks_per_thread;
+            let block_end = (block_start + blocks_per_thread).min(num_blocks);
+            if block_start >= block_end {
+                return Vec::new();
+            }
+            let my_blocks = &sparse_blocks[block_start..block_end];
+            let my_count = my_blocks.len();
+
+            let mut result: Vec<Vec<CyclotomicRing<F, D>>> =
+                vec![vec![CyclotomicRing::zero(); n_a]; my_count];
+
+            for tile_start in (0..my_count).step_by(block_tile) {
+                let tile_end = (tile_start + block_tile).min(my_count);
+                let tile_blocks = &my_blocks[tile_start..tile_end];
+                let tile_len = tile_blocks.len();
+
+                let mut col_entries: Vec<Vec<(u32, u8)>> = vec![Vec::new(); num_cols];
+                for (local_b, block_entries) in tile_blocks.iter().enumerate() {
+                    for entry in block_entries {
+                        let col = entry.pos_in_block * num_digits_commit;
+                        for &ci in &entry.nonzero_coeffs {
+                            col_entries[col].push((local_b as u32, ci as u8));
+                        }
+                    }
+                }
+
+                let mut accums: Vec<Vec<WideCyclotomicRing<F::Wide, D>>> = (0..tile_len)
+                    .map(|_| vec![WideCyclotomicRing::zero(); n_a])
+                    .collect();
+
+                for a_idx in 0..n_a {
+                    let a_row = a_view.row(a_idx);
+                    for (col, entries) in col_entries.iter().enumerate() {
+                        if entries.is_empty() {
+                            continue;
+                        }
+                        let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
+                        for &(lb, ci) in entries {
+                            a_wide.shift_accumulate_into(
+                                &mut accums[lb as usize][a_idx],
+                                ci as usize,
+                            );
+                        }
+                    }
+                }
+
+                for (local_b, row_accums) in accums.into_iter().enumerate() {
+                    result[tile_start + local_b] =
+                        row_accums.into_iter().map(|w| w.reduce()).collect();
+                }
+            }
+
+            result
+        })
+        .collect();
+
+    let mut out: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(num_blocks);
+    for thread_blocks in thread_results {
+        out.extend(thread_blocks);
+    }
+    out
 }
 
 #[cfg(test)]
