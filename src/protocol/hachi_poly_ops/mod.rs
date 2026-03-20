@@ -23,7 +23,8 @@ use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::onehot::{
-    inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks, SparseBlockEntry,
+    inner_ajtai_onehot_wide, map_onehot_to_regular_blocks, map_onehot_to_sparse_blocks,
+    RegularOneHotEntry, SparseBlockEntry,
 };
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
@@ -243,23 +244,6 @@ fn sparse_mul_acc<const D: usize>(
     sparse_mul_acc_scalar::<D>(digit_plane, challenge, acc);
 }
 
-#[inline(always)]
-fn accum_onehot_coeff<const D: usize>(
-    acc: &mut [i32; D],
-    coeff_idx: usize,
-    challenge: &SparseChallenge,
-) {
-    debug_assert!(coeff_idx < D);
-    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        let target = coeff_idx + pos as usize;
-        if target < D {
-            acc[target] += coeff as i32;
-        } else {
-            acc[target - D] -= coeff as i32;
-        }
-    }
-}
-
 /// Precompute dense rotation table for a sparse challenge.
 ///
 /// `table[c]` holds the i32 coefficients of `challenge * X^c` in the ring
@@ -341,6 +325,55 @@ fn sparse_onehot_accumulate<const D: usize>(
                         for k in 0..D {
                             dst[k] += rot[k];
                         }
+                    }
+                }
+            }
+
+            acc
+        })
+        .collect();
+
+    chunks.into_iter().flatten().collect()
+}
+
+/// Position-partitioned accumulation for regular one-hot witnesses where each
+/// nonzero ring element has exactly one hot coefficient.
+fn regular_onehot_accumulate<const D: usize>(
+    regular_blocks: &[Vec<RegularOneHotEntry>],
+    challenges: &[SparseChallenge],
+    num_blocks: usize,
+    block_len: usize,
+) -> Vec<[i32; D]> {
+    #[cfg(feature = "parallel")]
+    let num_threads = rayon::current_num_threads();
+    #[cfg(not(feature = "parallel"))]
+    let num_threads = 1;
+
+    let actual_threads = num_threads.min(block_len).max(1);
+    let pos_chunk = block_len.div_ceil(actual_threads);
+
+    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
+        .map(|tid| {
+            let pos_start = tid * pos_chunk;
+            let pos_end = (pos_start + pos_chunk).min(block_len);
+            let len = pos_end - pos_start;
+            let mut acc = vec![[0i32; D]; len];
+            let mut rotated = vec![[0i32; D]; D];
+
+            for block_idx in 0..num_blocks {
+                let entries = &regular_blocks[block_idx];
+                let lo = entries.partition_point(|entry| entry.pos_in_block() < pos_start);
+                let hi = entries.partition_point(|entry| entry.pos_in_block() < pos_end);
+                if lo >= hi {
+                    continue;
+                }
+
+                fill_rotated_challenge::<D>(&mut rotated, &challenges[block_idx]);
+                for entry in &entries[lo..hi] {
+                    let dst = &mut acc[entry.pos_in_block() - pos_start];
+                    let rot = &rotated[entry.coeff_idx()];
+                    for k in 0..D {
+                        dst[k] += rot[k];
                     }
                 }
             }
@@ -1187,12 +1220,29 @@ impl OneHotIndex for usize {
 /// Generic over `I`: the index type stored per chunk. Use `u8` when
 /// `onehot_k <= 256` to cut per-entry memory from 16 bytes to 2 bytes.
 #[derive(Debug, Clone)]
+enum OneHotBlocks {
+    Regular(Vec<Vec<RegularOneHotEntry>>),
+    General(Vec<Vec<SparseBlockEntry>>),
+}
+
+/// Only switch to the compact regular layout once the one-hot witness is large
+/// enough for the legacy sparse metadata to become the dominant cost.
+const REGULAR_ONEHOT_MIN_CHUNKS: usize = 1 << 28;
+
+/// One-hot polynomial: sparse witness with at most one nonzero field element
+/// per chunk of size `onehot_k`.
+///
+/// Exploits sparsity in all four operations, avoiding inner ring
+/// multiplications during commit and decomposing only nonzero monomials.
+///
+/// Generic over `I`: the index type accepted at construction time. Use `u8`
+/// when `onehot_k <= 256` to reduce temporary index storage before the
+/// polynomial is converted into its internal sparse layout.
+#[derive(Debug, Clone)]
 pub struct OneHotPoly<F: FieldCore, const D: usize, I: OneHotIndex = usize> {
-    onehot_k: usize,
-    indices: Vec<Option<I>>,
     m_vars: usize,
-    sparse_blocks: Vec<Vec<SparseBlockEntry>>,
-    _marker: PhantomData<F>,
+    blocks: OneHotBlocks,
+    _marker: PhantomData<(F, I)>,
 }
 
 impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
@@ -1209,49 +1259,65 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         r_vars: usize,
         m_vars: usize,
     ) -> Result<Self, HachiError> {
-        let sparse_blocks = map_onehot_to_sparse_blocks(onehot_k, &indices, r_vars, m_vars, D)?;
+        let use_regular_blocks =
+            onehot_k >= D && onehot_k % D == 0 && indices.len() >= REGULAR_ONEHOT_MIN_CHUNKS;
+        let blocks = if use_regular_blocks {
+            OneHotBlocks::Regular(map_onehot_to_regular_blocks(
+                onehot_k, &indices, r_vars, m_vars, D,
+            )?)
+        } else {
+            OneHotBlocks::General(map_onehot_to_sparse_blocks(
+                onehot_k, &indices, r_vars, m_vars, D,
+            )?)
+        };
         Ok(Self {
-            onehot_k,
-            indices,
             m_vars,
-            sparse_blocks,
+            blocks,
             _marker: PhantomData,
         })
     }
 
+    fn num_blocks(&self) -> usize {
+        match &self.blocks {
+            OneHotBlocks::Regular(blocks) => blocks.len(),
+            OneHotBlocks::General(blocks) => blocks.len(),
+        }
+    }
+
     fn total_ring_elems(&self) -> usize {
-        let total_field = self.indices.len() * self.onehot_k;
-        total_field / D
+        self.num_blocks() * (1usize << self.m_vars)
     }
 
     fn decompose_fold_regular_onehot(
         &self,
+        regular_blocks: &[Vec<RegularOneHotEntry>],
         challenges: &[SparseChallenge],
         block_len: usize,
+        num_digits: usize,
     ) -> DecomposeFoldWitness<F, D>
     where
         F: CanonicalField,
     {
-        let num_blocks = challenges.len().min(self.sparse_blocks.len());
+        let num_blocks = challenges.len().min(regular_blocks.len());
         let modulus = (-F::one()).to_canonical_u128() + 1;
-        let indices = &self.indices;
-        debug_assert_eq!(indices.len(), self.total_ring_elems());
 
-        let coeff_accum: Vec<[i32; D]> = {
+        let coeff_accum_digit0: Vec<[i32; D]> = {
             let _span = tracing::info_span!("onehot_regular_accumulate").entered();
-            cfg_into_iter!(0..block_len)
-                .map(|elem_idx| {
-                    let mut coeffs = [0i32; D];
-                    let mut ring_idx = elem_idx;
-                    for challenge in challenges.iter().take(num_blocks) {
-                        if let Some(hot_idx) = indices[ring_idx] {
-                            accum_onehot_coeff::<D>(&mut coeffs, hot_idx.as_usize(), challenge);
-                        }
-                        ring_idx += block_len;
-                    }
-                    coeffs
-                })
-                .collect()
+            regular_onehot_accumulate::<D>(regular_blocks, challenges, num_blocks, block_len)
+        };
+
+        let coeff_accum = if num_digits == 1 {
+            coeff_accum_digit0
+        } else {
+            let _span = tracing::info_span!("onehot_regular_expand").entered();
+            let mut expanded = Vec::with_capacity(block_len * num_digits);
+            for coeffs in coeff_accum_digit0 {
+                expanded.push(coeffs);
+                for _ in 1..num_digits {
+                    expanded.push([0i32; D]);
+                }
+            }
+            expanded
         };
 
         let _span = tracing::info_span!("onehot_regular_convert").entered();
@@ -1260,6 +1326,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
 
     fn decompose_fold_sparse_onehot(
         &self,
+        sparse_blocks: &[Vec<SparseBlockEntry>],
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
@@ -1268,13 +1335,13 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         F: CanonicalField,
     {
         let inner_width = block_len * num_digits;
-        let num_blocks = challenges.len().min(self.sparse_blocks.len());
+        let num_blocks = challenges.len().min(sparse_blocks.len());
         let modulus = (-F::one()).to_canonical_u128() + 1;
 
         let coeff_accum = {
             let _span = tracing::info_span!("onehot_sparse_accumulate").entered();
             sparse_onehot_accumulate::<D>(
-                &self.sparse_blocks,
+                sparse_blocks,
                 challenges,
                 num_blocks,
                 inner_width,
@@ -1299,41 +1366,72 @@ where
 
     fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
         let block_len = 1usize << self.m_vars;
-        cfg_fold_reduce!(
-            0..self.sparse_blocks.len(),
-            || CyclotomicRing::<F, D>::zero(),
-            |mut acc: CyclotomicRing<F, D>, block_idx: usize| {
-                let block_offset = block_idx * block_len;
-                for entry in &self.sparse_blocks[block_idx] {
-                    let ring_idx = block_offset + entry.pos_in_block;
-                    if ring_idx < scalars.len() {
-                        let s = scalars[ring_idx];
-                        for &ci in &entry.nonzero_coeffs {
-                            acc.coeffs[ci] += s;
+        match &self.blocks {
+            OneHotBlocks::Regular(blocks) => cfg_fold_reduce!(
+                0..blocks.len(),
+                || CyclotomicRing::<F, D>::zero(),
+                |mut acc: CyclotomicRing<F, D>, block_idx: usize| {
+                    let block_offset = block_idx * block_len;
+                    for entry in &blocks[block_idx] {
+                        let ring_idx = block_offset + entry.pos_in_block();
+                        if ring_idx < scalars.len() {
+                            acc.coeffs[entry.coeff_idx()] += scalars[ring_idx];
                         }
                     }
-                }
-                acc
-            },
-            |a, b| a + b
-        )
+                    acc
+                },
+                |a, b| a + b
+            ),
+            OneHotBlocks::General(blocks) => cfg_fold_reduce!(
+                0..blocks.len(),
+                || CyclotomicRing::<F, D>::zero(),
+                |mut acc: CyclotomicRing<F, D>, block_idx: usize| {
+                    let block_offset = block_idx * block_len;
+                    for entry in &blocks[block_idx] {
+                        let ring_idx = block_offset + entry.pos_in_block;
+                        if ring_idx < scalars.len() {
+                            let s = scalars[ring_idx];
+                            for &ci in &entry.nonzero_coeffs {
+                                acc.coeffs[ci] += s;
+                            }
+                        }
+                    }
+                    acc
+                },
+                |a, b| a + b
+            ),
+        }
     }
 
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
-        cfg_iter!(self.sparse_blocks)
-            .map(|entries| {
-                let mut coeffs_acc = [F::zero(); D];
-                for entry in entries {
-                    if entry.pos_in_block < scalars.len() && entry.pos_in_block < block_len {
-                        let s = scalars[entry.pos_in_block];
-                        for &ci in &entry.nonzero_coeffs {
-                            coeffs_acc[ci] += s;
+        match &self.blocks {
+            OneHotBlocks::Regular(blocks) => cfg_iter!(blocks)
+                .map(|entries| {
+                    let mut coeffs_acc = [F::zero(); D];
+                    for entry in entries {
+                        let pos = entry.pos_in_block();
+                        if pos < scalars.len() && pos < block_len {
+                            coeffs_acc[entry.coeff_idx()] += scalars[pos];
                         }
                     }
-                }
-                CyclotomicRing::from_coefficients(coeffs_acc)
-            })
-            .collect()
+                    CyclotomicRing::from_coefficients(coeffs_acc)
+                })
+                .collect(),
+            OneHotBlocks::General(blocks) => cfg_iter!(blocks)
+                .map(|entries| {
+                    let mut coeffs_acc = [F::zero(); D];
+                    for entry in entries {
+                        if entry.pos_in_block < scalars.len() && entry.pos_in_block < block_len {
+                            let s = scalars[entry.pos_in_block];
+                            for &ci in &entry.nonzero_coeffs {
+                                coeffs_acc[ci] += s;
+                            }
+                        }
+                    }
+                    CyclotomicRing::from_coefficients(coeffs_acc)
+                })
+                .collect(),
+        }
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold")]
@@ -1344,14 +1442,13 @@ where
         num_digits: usize,
         _log_basis: u32,
     ) -> DecomposeFoldWitness<F, D> {
-        // In the common regular one-hot case used by the large onehot profile,
-        // each chunk is exactly one ring element with one hot coefficient.
-        // Build each output ring independently instead of reducing full z
-        // vectors across blocks.
-        if num_digits == 1 && self.onehot_k == D {
-            self.decompose_fold_regular_onehot(challenges, block_len)
-        } else {
-            self.decompose_fold_sparse_onehot(challenges, block_len, num_digits)
+        match &self.blocks {
+            OneHotBlocks::Regular(blocks) => {
+                self.decompose_fold_regular_onehot(blocks, challenges, block_len, num_digits)
+            }
+            OneHotBlocks::General(blocks) => {
+                self.decompose_fold_sparse_onehot(blocks, challenges, block_len, num_digits)
+            }
         }
     }
 
@@ -1368,10 +1465,16 @@ where
         let a_view = a_matrix.view::<D>();
         let n_a = a_view.num_rows();
         let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
-        let num_blocks = self.sparse_blocks.len();
+        let num_blocks = self.num_blocks();
 
-        let t_all =
-            onehot_column_sweep_ajtai::<F, D>(&a_view, &self.sparse_blocks, n_a, num_digits_commit);
+        let t_all = match &self.blocks {
+            OneHotBlocks::Regular(blocks) => {
+                onehot_column_sweep_ajtai_regular::<F, D>(&a_view, blocks, n_a, num_digits_commit)
+            }
+            OneHotBlocks::General(blocks) => {
+                onehot_column_sweep_ajtai::<F, D>(&a_view, blocks, n_a, num_digits_commit)
+            }
+        };
 
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(0..num_blocks)
             .map(|b| {
@@ -1400,8 +1503,14 @@ where
         let n_a = a_view.num_rows();
         let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
 
-        let t =
-            onehot_column_sweep_ajtai::<F, D>(&a_view, &self.sparse_blocks, n_a, num_digits_commit);
+        let t = match &self.blocks {
+            OneHotBlocks::Regular(blocks) => {
+                onehot_column_sweep_ajtai_regular::<F, D>(&a_view, blocks, n_a, num_digits_commit)
+            }
+            OneHotBlocks::General(blocks) => {
+                onehot_column_sweep_ajtai::<F, D>(&a_view, blocks, n_a, num_digits_commit)
+            }
+        };
 
         let t_hat: Vec<Vec<[i8; D]>> = cfg_iter!(t)
             .map(|t_i| {
@@ -1415,6 +1524,130 @@ where
 
         Ok(CommitInnerWitness { t, t_hat })
     }
+}
+
+fn inner_ajtai_regular_onehot_wide<F, const D: usize>(
+    a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
+    regular_entries: &[RegularOneHotEntry],
+    num_digits: usize,
+) -> Vec<CyclotomicRing<F, D>>
+where
+    F: FieldCore + CanonicalField + HasWide,
+    F::Wide: crate::AdditiveGroup + From<F> + crate::algebra::fields::wide::ReduceTo<F>,
+{
+    let n_a = a_view.num_rows();
+    let mut t_wide = vec![WideCyclotomicRing::<F::Wide, D>::zero(); n_a];
+
+    for entry in regular_entries {
+        let col = entry.pos_in_block() * num_digits;
+        let coeff_idx = entry.coeff_idx();
+        for (a_idx, t_w) in t_wide.iter_mut().enumerate() {
+            let a_wide = WideCyclotomicRing::from_ring(&a_view.row(a_idx)[col]);
+            a_wide.shift_accumulate_into(t_w, coeff_idx);
+        }
+    }
+
+    t_wide.into_iter().map(|w| w.reduce()).collect()
+}
+
+/// Column-sweep Ajtai commitment for regular one-hot blocks.
+fn onehot_column_sweep_ajtai_regular<F, const D: usize>(
+    a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
+    regular_blocks: &[Vec<RegularOneHotEntry>],
+    n_a: usize,
+    num_digits_commit: usize,
+) -> Vec<Vec<CyclotomicRing<F, D>>>
+where
+    F: FieldCore + CanonicalField + HasWide,
+    F::Wide: crate::AdditiveGroup + From<F> + crate::algebra::fields::wide::ReduceTo<F>,
+{
+    let num_blocks = regular_blocks.len();
+    let num_cols = a_view.num_cols();
+
+    let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
+    let block_tile = if accum_bytes > 0 {
+        ((1usize << 21) / accum_bytes).max(1)
+    } else {
+        num_blocks
+    };
+
+    #[cfg(feature = "parallel")]
+    let num_threads = rayon::current_num_threads().min(num_blocks).max(1);
+    #[cfg(not(feature = "parallel"))]
+    let num_threads = 1;
+
+    let blocks_per_thread = num_blocks.div_ceil(num_threads);
+
+    const SWEEP_THRESHOLD: usize = 128;
+    if blocks_per_thread <= SWEEP_THRESHOLD {
+        return cfg_iter!(regular_blocks)
+            .map(|block_entries| {
+                inner_ajtai_regular_onehot_wide(a_view, block_entries, num_digits_commit)
+            })
+            .collect();
+    }
+
+    let thread_results: Vec<Vec<Vec<CyclotomicRing<F, D>>>> = cfg_into_iter!(0..num_threads)
+        .map(|tid| {
+            let block_start = tid * blocks_per_thread;
+            let block_end = (block_start + blocks_per_thread).min(num_blocks);
+            if block_start >= block_end {
+                return Vec::new();
+            }
+            let my_blocks = &regular_blocks[block_start..block_end];
+            let my_count = my_blocks.len();
+
+            let mut result: Vec<Vec<CyclotomicRing<F, D>>> =
+                vec![vec![CyclotomicRing::zero(); n_a]; my_count];
+
+            for tile_start in (0..my_count).step_by(block_tile) {
+                let tile_end = (tile_start + block_tile).min(my_count);
+                let tile_blocks = &my_blocks[tile_start..tile_end];
+                let tile_len = tile_blocks.len();
+
+                let mut col_entries: Vec<Vec<(u32, u16)>> = vec![Vec::new(); num_cols];
+                for (local_b, block_entries) in tile_blocks.iter().enumerate() {
+                    for entry in block_entries {
+                        let col = entry.pos_in_block() * num_digits_commit;
+                        col_entries[col].push((local_b as u32, entry.coeff_idx() as u16));
+                    }
+                }
+
+                let mut accums: Vec<Vec<WideCyclotomicRing<F::Wide, D>>> = (0..tile_len)
+                    .map(|_| vec![WideCyclotomicRing::zero(); n_a])
+                    .collect();
+
+                for a_idx in 0..n_a {
+                    let a_row = a_view.row(a_idx);
+                    for (col, entries) in col_entries.iter().enumerate() {
+                        if entries.is_empty() {
+                            continue;
+                        }
+                        let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
+                        for &(lb, ci) in entries {
+                            a_wide.shift_accumulate_into(
+                                &mut accums[lb as usize][a_idx],
+                                ci as usize,
+                            );
+                        }
+                    }
+                }
+
+                for (local_b, row_accums) in accums.into_iter().enumerate() {
+                    result[tile_start + local_b] =
+                        row_accums.into_iter().map(|w| w.reduce()).collect();
+                }
+            }
+
+            result
+        })
+        .collect();
+
+    let mut out: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(num_blocks);
+    for thread_blocks in thread_results {
+        out.extend(thread_blocks);
+    }
+    out
 }
 
 /// Column-sweep Ajtai commitment for one-hot sparse blocks.
@@ -1533,6 +1766,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::commitment::onehot::map_onehot_to_regular_blocks;
     use crate::protocol::commitment::{
         CommitmentConfig, HachiCommitmentCore, HachiScheduleInputs, RingCommitmentScheme,
     };
@@ -1541,6 +1775,21 @@ mod tests {
     use crate::FromSmallInt;
     #[cfg(target_arch = "aarch64")]
     use crate::{algebra::ntt::neon, protocol::hachi_poly_ops::decompose_fold_neon};
+
+    fn regular_onehot_poly(
+        onehot_k: usize,
+        indices: Vec<Option<usize>>,
+        r_vars: usize,
+        m_vars: usize,
+    ) -> OneHotPoly<TestF, TestD> {
+        let blocks = map_onehot_to_regular_blocks(onehot_k, &indices, r_vars, m_vars, TestD)
+            .expect("regular onehot blocks");
+        OneHotPoly {
+            m_vars,
+            blocks: OneHotBlocks::Regular(blocks),
+            _marker: PhantomData,
+        }
+    }
 
     #[test]
     fn dense_poly_from_field_evals_roundtrip() {
@@ -1598,13 +1847,7 @@ mod tests {
         let num_chunks = total_ring;
         let indices: Vec<Option<usize>> = (0..num_chunks).map(|i| Some(i % onehot_k)).collect();
 
-        let poly = OneHotPoly::<TestF, TestD>::new(
-            onehot_k,
-            indices.clone(),
-            layout.r_vars,
-            layout.m_vars,
-        )
-        .unwrap();
+        let poly = regular_onehot_poly(onehot_k, indices.clone(), layout.r_vars, layout.m_vars);
 
         let t_hat_poly = poly
             .commit_inner(
@@ -1638,13 +1881,7 @@ mod tests {
             .map(|i| (i % 11 != 0).then_some((i * 7 + 3) % onehot_k))
             .collect();
 
-        let poly = OneHotPoly::<TestF, TestD>::new(
-            onehot_k,
-            indices.clone(),
-            layout.r_vars,
-            layout.m_vars,
-        )
-        .unwrap();
+        let poly = regular_onehot_poly(onehot_k, indices.clone(), layout.r_vars, layout.m_vars);
 
         let mut evals = vec![TestF::zero(); total_ring * onehot_k];
         for (chunk_idx, hot_idx) in indices.into_iter().enumerate() {

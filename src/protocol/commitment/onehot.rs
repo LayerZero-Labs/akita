@@ -22,6 +22,50 @@ pub struct SparseBlockEntry {
     pub nonzero_coeffs: Vec<usize>,
 }
 
+/// Compact regular one-hot entry used when each nonzero ring element carries a
+/// single hot coefficient.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegularOneHotEntry {
+    pos_in_block: u32,
+    coeff_idx: u16,
+}
+
+impl RegularOneHotEntry {
+    #[inline]
+    /// Construct a compact regular one-hot entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either the block position or coefficient index does
+    /// not fit in the compact storage format.
+    pub fn new(pos_in_block: usize, coeff_idx: usize) -> Result<Self, HachiError> {
+        Ok(Self {
+            pos_in_block: u32::try_from(pos_in_block).map_err(|_| {
+                HachiError::InvalidInput(format!(
+                    "regular one-hot block position {pos_in_block} does not fit in u32"
+                ))
+            })?,
+            coeff_idx: u16::try_from(coeff_idx).map_err(|_| {
+                HachiError::InvalidInput(format!(
+                    "regular one-hot coefficient index {coeff_idx} does not fit in u16"
+                ))
+            })?,
+        })
+    }
+
+    #[inline]
+    /// Position within the block (0..2^M).
+    pub fn pos_in_block(self) -> usize {
+        self.pos_in_block as usize
+    }
+
+    #[inline]
+    /// Hot coefficient index inside the ring element.
+    pub fn coeff_idx(self) -> usize {
+        self.coeff_idx as usize
+    }
+}
+
 /// Map a regular one-hot witness to sparse ring block entries.
 ///
 /// - `onehot_k`: chunk size K. The witness has T chunks of K field elements,
@@ -105,6 +149,81 @@ pub fn map_onehot_to_sparse_blocks<I: OneHotIndex>(
             pos_in_block,
             nonzero_coeffs,
         });
+    }
+
+    Ok(blocks)
+}
+
+/// Map a one-hot witness to compact regular block entries when each nonzero
+/// ring element contains a single hot coefficient.
+///
+/// This applies to the common `K >= D` case, where each chunk spans one or
+/// more ring elements but still contributes exactly one nonzero coefficient in
+/// exactly one ring element.
+///
+/// # Errors
+///
+/// Returns an error if the layout is incompatible with the compact regular
+/// representation, any hot index is out of range, or the witness dimensions do
+/// not fill the configured commitment layout.
+pub fn map_onehot_to_regular_blocks<I: OneHotIndex>(
+    onehot_k: usize,
+    indices: &[Option<I>],
+    r: usize,
+    m: usize,
+    d: usize,
+) -> Result<Vec<Vec<RegularOneHotEntry>>, HachiError> {
+    if onehot_k == 0 || d == 0 {
+        return Err(HachiError::InvalidInput(
+            "onehot_k and D must be nonzero".into(),
+        ));
+    }
+    if onehot_k < d || onehot_k % d != 0 {
+        return Err(HachiError::InvalidInput(format!(
+            "regular one-hot layout requires K >= D with K divisible by D, got K={onehot_k}, D={d}"
+        )));
+    }
+
+    let num_chunks = indices.len();
+    let total_field_elems = num_chunks
+        .checked_mul(onehot_k)
+        .ok_or_else(|| HachiError::InvalidInput("T*K overflow".into()))?;
+    if total_field_elems % d != 0 {
+        return Err(HachiError::InvalidInput(format!(
+            "T*K={total_field_elems} is not divisible by D={d}"
+        )));
+    }
+    let total_ring_elems = total_field_elems / d;
+    let num_blocks = 1usize << r;
+    let block_len = 1usize << m;
+    if total_ring_elems != num_blocks * block_len {
+        return Err(HachiError::InvalidSize {
+            expected: num_blocks * block_len,
+            actual: total_ring_elems,
+        });
+    }
+
+    let mut blocks: Vec<Vec<RegularOneHotEntry>> = vec![Vec::new(); num_blocks];
+    for (chunk_idx, opt) in indices.iter().enumerate() {
+        let Some(&idx_raw) = opt.as_ref() else {
+            continue;
+        };
+        let idx = idx_raw.as_usize();
+        if idx >= onehot_k {
+            return Err(HachiError::InvalidInput(format!(
+                "index {idx} out of range for chunk size K={onehot_k} at position {chunk_idx}"
+            )));
+        }
+
+        let field_pos = chunk_idx
+            .checked_mul(onehot_k)
+            .and_then(|base| base.checked_add(idx))
+            .ok_or_else(|| HachiError::InvalidInput("field position overflow".into()))?;
+        let ring_elem_idx = field_pos / d;
+        let coeff_idx = field_pos % d;
+        let block_idx = ring_elem_idx / block_len;
+        let pos_in_block = ring_elem_idx % block_len;
+        blocks[block_idx].push(RegularOneHotEntry::new(pos_in_block, coeff_idx)?);
     }
 
     Ok(blocks)

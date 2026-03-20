@@ -543,7 +543,6 @@ fn full_d128_basis2_rejects_tampered_stage1_sumcheck() {
             .iter_mut()
             .next()
             .expect("basis-2 proof should contain at least one level")
-            .body
             .stage1
             .sumcheck;
         let round0 = stage1_sumcheck

@@ -190,8 +190,8 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
         level.v.count(),
         level.v.ring_dim(),
     );
-    let stage1 = &level.body.stage1;
-    let stage2 = &level.body.stage2;
+    let stage1 = &level.stage1;
+    let stage2 = &level.stage2;
     let stage1_sumcheck_size = stage1.sumcheck.serialized_size(Compress::No);
     let stage1_s_claim_size = stage1.s_claim.serialized_size(Compress::No);
     let stage2_sumcheck_size = stage2.sumcheck.serialized_size(Compress::No);

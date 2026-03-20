@@ -1185,8 +1185,8 @@ where
     )?;
     let relation_claim =
         relation_claim_from_rows(&rs.tau1, rs.alpha, &v_typed, &commitment.u, &y_ring);
-    let stage1 = &level_proof.body.stage1;
-    let stage2 = &level_proof.body.stage2;
+    let stage1 = &level_proof.stage1;
+    let stage2 = &level_proof.stage2;
     let stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), stage1.s_claim, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -1339,9 +1339,9 @@ mod tests {
         let base = 4
             + level0.y_ring.serialized_size(Compress::No)
             + level0.v.serialized_size(Compress::No);
-        base + level0.body.stage1.sumcheck.serialized_size(Compress::No)
-            + level0.body.stage1.s_claim.serialized_size(Compress::No)
-            + level0.body.stage2.sumcheck.serialized_size(Compress::No)
+        base + level0.stage1.sumcheck.serialized_size(Compress::No)
+            + level0.stage1.s_claim.serialized_size(Compress::No)
+            + level0.stage2.sumcheck.serialized_size(Compress::No)
     }
 
     #[test]
