@@ -324,6 +324,10 @@ where
 }
 
 /// Add only the high-half quotient contribution of `challenge * ring`.
+///
+/// Skips the first `D - pos` coefficients per challenge term that cannot
+/// contribute (degree < D), cutting iteration count roughly in half.
+#[inline(always)]
 fn add_sparse_ring_product_high_half<F: FieldCore + CanonicalField, const D: usize>(
     quotient: &mut [F],
     challenge: &SparseChallenge,
@@ -333,13 +337,34 @@ fn add_sparse_ring_product_high_half<F: FieldCore + CanonicalField, const D: usi
     for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
         let c = F::from_i64(coeff as i64);
         let p = pos as usize;
-        for (s, &r_s) in rc.iter().enumerate() {
-            let deg = p + s;
-            if deg >= D {
-                quotient[deg - D] += c * r_s;
-            }
+        for s in (D - p)..D {
+            quotient[p + s - D] += c * rc[s];
         }
     }
+}
+
+/// Parallel high-half accumulation over blocks.
+///
+/// Replaces `for (i, ring) in rings { add_sparse_ring_product_high_half(...) }`
+/// with a fold-reduce giving block-level parallelism.
+fn parallel_high_half_accumulate<F: FieldCore + CanonicalField, const D: usize>(
+    challenges: &[SparseChallenge],
+    rings: &[CyclotomicRing<F, D>],
+) -> Vec<F> {
+    cfg_fold_reduce!(
+        0..rings.len(),
+        || vec![F::zero(); D],
+        |mut acc: Vec<F>, i: usize| {
+            add_sparse_ring_product_high_half::<F, D>(&mut acc, &challenges[i], &rings[i]);
+            acc
+        },
+        |mut a: Vec<F>, b: Vec<F>| {
+            for (ai, bi) in a.iter_mut().zip(b.iter()) {
+                *ai += *bi;
+            }
+            a
+        }
+    )
 }
 
 fn quotient_from_cyclic_and_reduced<F: FieldCore, const D: usize>(
@@ -410,7 +435,6 @@ where
 
     let mut result = Vec::with_capacity(num_rows);
     let mut other_time = 0.0f64;
-    let mut quotient_buf = vec![F::zero(); D];
 
     for row_idx in 0..num_rows {
         if row_idx < level_params.n_d {
@@ -424,23 +448,36 @@ where
                 &y[row_idx],
             ));
         } else if row_idx >= level_params.n_d + level_params.n_b + 2 {
-            // A-rows: NTT-accelerated A*z_pre + sparse challenge terms
             let t_row = Instant::now();
             let _span = tracing::info_span!("A_row").entered();
             let a_idx = row_idx - (level_params.n_d + level_params.n_b + 2);
 
-            quotient_buf.fill(F::zero());
-            for (i, t_rows_i) in t.iter().enumerate() {
-                if let Some(t_row_i) = t_rows_i.get(a_idx) {
-                    add_sparse_ring_product_high_half(&mut quotient_buf, &challenges[i], t_row_i);
+            let mut quotient = cfg_fold_reduce!(
+                0..t.len(),
+                || vec![F::zero(); D],
+                |mut acc: Vec<F>, i: usize| {
+                    if let Some(t_row_i) = t[i].get(a_idx) {
+                        add_sparse_ring_product_high_half::<F, D>(
+                            &mut acc,
+                            &challenges[i],
+                            t_row_i,
+                        );
+                    }
+                    acc
+                },
+                |mut a: Vec<F>, b: Vec<F>| {
+                    for (ai, bi) in a.iter_mut().zip(b.iter()) {
+                        *ai += *bi;
+                    }
+                    a
                 }
-            }
+            );
 
             let a_q = a_quotients[a_idx].coefficients();
             for k in 0..D {
-                quotient_buf[k] -= a_q[k];
+                quotient[k] -= a_q[k];
             }
-            result.push(CyclotomicRing::from_slice(&quotient_buf));
+            result.push(CyclotomicRing::from_slice(&quotient));
             other_time += t_row.elapsed().as_secs_f64();
         } else {
             let t_row = Instant::now();
@@ -451,13 +488,9 @@ where
                 result.push(CyclotomicRing::<F, D>::zero());
             } else {
                 let _span = tracing::info_span!("challenge_fold_row").entered();
-                quotient_buf.fill(F::zero());
-                for (i, w_f) in w_folded.iter().enumerate() {
-                    add_sparse_ring_product_high_half(&mut quotient_buf, &challenges[i], w_f);
-                }
-                // `a^T · G · J · z_hat` contributes only low-degree terms, so it
-                // cannot affect the high-half quotient we need here.
-                result.push(CyclotomicRing::from_slice(&quotient_buf));
+                let quotient =
+                    parallel_high_half_accumulate::<F, D>(challenges, w_folded);
+                result.push(CyclotomicRing::from_slice(&quotient));
             }
             other_time += t_row.elapsed().as_secs_f64();
         }
