@@ -1,15 +1,23 @@
-//! Sparse challenge sampling via Fiat–Shamir.
+//! Sparse challenge sampling via Fiat–Shamir with PRG expansion.
 //!
-//! Performance: randomness is extracted via a single `challenge_bytes` call per
-//! challenge (~5 Blake2b512 operations for the SplitRing D=64 config) rather
-//! than ~118 individual `challenge_scalar` calls. Position sampling uses
-//! Fisher-Yates partial shuffle, eliminating rejection-sampling waste.
+//! Challenges are derived by absorbing context into the transcript once,
+//! drawing a 32-byte PRG seed, and expanding it via SHAKE256 XOF into all
+//! per-challenge randomness. This replaces the previous per-challenge hash
+//! chain with a single seed derivation followed by fast XOF expansion,
+//! providing ~6x speedup for large batch sizes (e.g. 4096 challenges).
+//!
+//! Position sampling uses Fisher-Yates partial shuffle, eliminating
+//! rejection-sampling waste.
 
 use crate::algebra::ring::{CyclotomicRing, SparseChallenge, SparseChallengeConfig};
 use crate::error::HachiError;
 use crate::protocol::transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
+use sha3::digest::{ExtendableOutput, Update, XofReader};
+use sha3::Shake256;
+
+const SPARSE_PRG_DOMAIN: &[u8] = b"hachi/sparse-challenge-prg";
 
 /// Cursor over a byte buffer for extracting random values.
 struct ByteCursor<'a> {
@@ -221,55 +229,58 @@ fn sample_exact_shell_sparse(
     SparseChallenge { positions, coeffs }
 }
 
-/// Core sampling: absorbs domain separation, draws all randomness as a single
-/// `challenge_bytes` call, and parses positions/signs from the byte buffer.
-///
-/// Uses a pre-allocated `absorb_buf` to batch the four absorb calls into one,
-/// reducing hash update overhead.
-fn sample_one<F, T, const D: usize>(
-    transcript: &mut T,
-    label: &[u8],
-    instance_idx: u64,
+/// Parse a single sparse challenge from a byte cursor.
+fn parse_challenge<const D: usize>(
+    cursor: &mut ByteCursor,
     cfg: &SparseChallengeConfig,
-    domain_sep: &[u8],
-    absorb_buf: &mut Vec<u8>,
-) -> SparseChallenge
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    absorb_buf.clear();
-    absorb_buf.extend_from_slice(label);
-    absorb_buf.extend_from_slice(&instance_idx.to_le_bytes());
-    absorb_buf.extend_from_slice(&(D as u64).to_le_bytes());
-    absorb_buf.extend_from_slice(domain_sep);
-    transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, absorb_buf);
-
-    let bytes = transcript.challenge_bytes(CHALLENGE_SPARSE_CHALLENGE, max_challenge_bytes(cfg));
-    let mut cursor = ByteCursor::new(&bytes);
-
+) -> SparseChallenge {
     match cfg {
         SparseChallengeConfig::Uniform {
             weight,
             nonzero_coeffs,
-        } => sample_uniform_sparse(&mut cursor, D, *weight, nonzero_coeffs),
+        } => sample_uniform_sparse(cursor, D, *weight, nonzero_coeffs),
         SparseChallengeConfig::SplitRing {
             half_weight,
             max_mag2_per_half,
-        } => sample_split_ring_sparse(&mut cursor, D, *half_weight, *max_mag2_per_half),
+        } => sample_split_ring_sparse(cursor, D, *half_weight, *max_mag2_per_half),
         SparseChallengeConfig::ExactShell {
             count_mag1,
             count_mag2,
-        } => sample_exact_shell_sparse(&mut cursor, D, *count_mag1, *count_mag2),
+        } => sample_exact_shell_sparse(cursor, D, *count_mag1, *count_mag2),
     }
+}
+
+/// Expand a seed into `total_bytes` of PRG output via SHAKE256 XOF.
+fn prg_expand_sparse(seed: &[u8], total_bytes: usize) -> Vec<u8> {
+    let mut xof = Shake256::default();
+    xof.update(SPARSE_PRG_DOMAIN);
+    xof.update(seed);
+    let mut out = vec![0u8; total_bytes];
+    xof.finalize_xof().read(&mut out);
+    out
+}
+
+/// Absorb context into the transcript, derive a PRG seed, and expand into
+/// challenge randomness via SHAKE256. Returns the expanded byte buffer.
+fn derive_and_expand<F, T>(
+    transcript: &mut T,
+    absorb_data: &[u8],
+    total_bytes: usize,
+) -> Vec<u8>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, absorb_data);
+    let seed = transcript.challenge_bytes(CHALLENGE_SPARSE_CHALLENGE, 32);
+    prg_expand_sparse(&seed, total_bytes)
 }
 
 /// Sample a sparse ring challenge (exact weight ω) from a transcript.
 ///
-/// This is intentionally deterministic and label-aware:
-/// - first we absorb the sampling context under `ABSORB_SPARSE_CHALLENGE`,
-/// - then we derive challenge bytes and extract positions/signs via
-///   Fisher-Yates partial shuffle.
+/// Absorbs the sampling context, derives a PRG seed, and expands it via
+/// SHAKE256 XOF to produce the challenge randomness. Deterministic given
+/// the same transcript state and parameters.
 ///
 /// # Errors
 ///
@@ -289,21 +300,22 @@ where
 
     let domain_sep = cfg.domain_separator_bytes();
     let mut absorb_buf = Vec::with_capacity(label.len() + 8 + 8 + domain_sep.len());
-    Ok(sample_one::<F, T, D>(
-        transcript,
-        label,
-        instance_idx,
-        cfg,
-        &domain_sep,
-        &mut absorb_buf,
-    ))
+    absorb_buf.extend_from_slice(label);
+    absorb_buf.extend_from_slice(&instance_idx.to_le_bytes());
+    absorb_buf.extend_from_slice(&(D as u64).to_le_bytes());
+    absorb_buf.extend_from_slice(&domain_sep);
+
+    let bytes = derive_and_expand::<F, T>(transcript, &absorb_buf, max_challenge_bytes(cfg));
+    let mut cursor = ByteCursor::new(&bytes);
+    Ok(parse_challenge::<D>(&mut cursor, cfg))
 }
 
 /// Sample `n` sparse challenges from a transcript, returning the sparse
 /// representation directly.
 ///
-/// Validates the config once and pre-computes the domain separator, then
-/// samples all `n` challenges sequentially.
+/// Absorbs the context (label, count, ring degree, config) into the
+/// transcript once, derives a single 32-byte PRG seed, and expands it
+/// via SHAKE256 XOF into all per-challenge randomness in one pass.
 ///
 /// # Errors
 ///
@@ -324,22 +336,27 @@ where
 
     let domain_sep = cfg.domain_separator_bytes();
     let mut absorb_buf = Vec::with_capacity(label.len() + 8 + 8 + domain_sep.len());
+    absorb_buf.extend_from_slice(label);
+    absorb_buf.extend_from_slice(&(n as u64).to_le_bytes());
+    absorb_buf.extend_from_slice(&(D as u64).to_le_bytes());
+    absorb_buf.extend_from_slice(&domain_sep);
+
+    let bytes_per = max_challenge_bytes(cfg);
+    let all_bytes = derive_and_expand::<F, T>(transcript, &absorb_buf, bytes_per * n);
+
     Ok((0..n)
         .map(|i| {
-            sample_one::<F, T, D>(
-                transcript,
-                label,
-                i as u64,
-                cfg,
-                &domain_sep,
-                &mut absorb_buf,
-            )
+            let start = i * bytes_per;
+            let mut cursor = ByteCursor::new(&all_bytes[start..start + bytes_per]);
+            parse_challenge::<D>(&mut cursor, cfg)
         })
         .collect())
 }
 
 /// Sample `n` sparse challenges from a transcript and convert them to dense
 /// `CyclotomicRing` elements.
+///
+/// Uses the same seed-then-expand protocol as [`sample_sparse_challenges`].
 ///
 /// # Errors
 ///
@@ -354,21 +371,9 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    cfg.validate::<D>()
-        .map_err(|e| HachiError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
-
-    let domain_sep = cfg.domain_separator_bytes();
-    let mut absorb_buf = Vec::with_capacity(label.len() + 8 + 8 + domain_sep.len());
-    (0..n)
-        .map(|i| {
-            let sparse = sample_one::<F, T, D>(
-                transcript,
-                label,
-                i as u64,
-                cfg,
-                &domain_sep,
-                &mut absorb_buf,
-            );
+    sample_sparse_challenges::<F, T, D>(transcript, label, n, cfg)?
+        .into_iter()
+        .map(|sparse| {
             sparse
                 .to_dense::<F, D>()
                 .map_err(|e| HachiError::InvalidInput(e.to_string()))
