@@ -15,8 +15,10 @@ use crate::protocol::commitment::utils::linear::{
 };
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
-    optimal_m_r_split, CommitmentConfig, DecompositionParams, HachiCommitmentLayout,
-    HachiExpandedSetup, RingCommitment,
+    hachi_recursive_level_layout_from_params, recursive_level_decomposition_from_root,
+    recursive_r_decomp_levels_for_bound, CommitmentConfig, CommitmentEnvelope, DecompositionParams,
+    HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, HachiScheduleInputs,
+    RingCommitment,
 };
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{DigitLut, FlatCommitmentHint, FlatRingVec, HachiCommitmentHint};
@@ -82,6 +84,7 @@ pub fn ring_switch_build_w<F, const D: usize, Cfg>(
     ntt_a: &NttSlotCache<D>,
     ntt_b: &NttSlotCache<D>,
     ntt_d: &NttSlotCache<D>,
+    level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<Vec<i8>, HachiError>
 where
@@ -96,37 +99,35 @@ where
         );
     }
     let w_hat = quad_eq
-        .w_hat()
+        .take_w_hat()
         .ok_or_else(|| HachiError::InvalidInput("missing w_hat in prover".to_string()))?;
     let w_hat_flat = quad_eq
-        .w_hat_flat()
+        .take_w_hat_flat()
         .ok_or_else(|| HachiError::InvalidInput("missing w_hat_flat in prover".to_string()))?;
-    let z_pre_centered = quad_eq
-        .z_pre_centered()
+    let z_pre = quad_eq
+        .take_z_pre()
         .ok_or_else(|| HachiError::InvalidInput("missing centered z_pre in prover".to_string()))?;
-    let z_pre_centered_inf_norm = quad_eq.z_pre_centered_inf_norm().ok_or_else(|| {
-        HachiError::InvalidInput("missing centered z_pre norm in prover".to_string())
-    })?;
     let hint = quad_eq
-        .hint()
+        .take_hint()
         .ok_or_else(|| HachiError::InvalidInput("missing hint in prover".to_string()))?;
     let inner_opening_digits = &hint.inner_opening_digits;
     let t = hint.t().ok_or_else(|| {
         HachiError::InvalidInput("missing recomposed t in prover hint".to_string())
     })?;
     let w_folded = quad_eq
-        .w_folded()
+        .take_w_folded()
         .ok_or_else(|| HachiError::InvalidInput("missing w_folded in prover".to_string()))?;
 
-    let r = compute_r_split_eq::<F, D, Cfg>(
+    let r = compute_r_split_eq::<F, D>(
+        level_params,
         setup,
         &quad_eq.challenges,
-        w_hat_flat,
+        &w_hat_flat,
         inner_opening_digits,
         t,
-        w_folded,
-        z_pre_centered,
-        z_pre_centered_inf_norm,
+        &w_folded,
+        &z_pre.centered_coeffs,
+        z_pre.centered_inf_norm,
         quad_eq.y(),
         ntt_a,
         ntt_b,
@@ -134,7 +135,13 @@ where
     )?;
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
-        build_w_coeffs::<F, D>(w_hat, inner_opening_digits, z_pre_centered, &r, layout)
+        build_w_coeffs::<F, D>(
+            &w_hat,
+            inner_opening_digits,
+            &z_pre.centered_coeffs,
+            &r,
+            layout,
+        )
     };
     Ok(w)
 }
@@ -162,6 +169,7 @@ pub fn ring_switch_finalize<F, T, const D: usize, Cfg>(
     w: Vec<i8>,
     w_commitment: FlatRingVec<F>,
     w_hint: FlatCommitmentHint,
+    level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<RingSwitchOutput<F>, HachiError>
 where
@@ -177,7 +185,7 @@ where
     let num_ring_elems = w.len() / D;
     let live_x_cols = num_ring_elems;
     let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    let m_rows = m_row_count::<Cfg>();
+    let m_rows = m_row_count(level_params);
     let num_sc_vars = num_u + num_l;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
@@ -191,12 +199,13 @@ where
     #[cfg(feature = "parallel")]
     let (m_evals_x_result, w_result) = rayon::join(
         || {
-            compute_m_evals_x::<F, D, Cfg>(
+            compute_m_evals_x::<F, D>(
                 setup,
                 opening_point,
                 challenges,
                 alpha,
                 &alpha_evals_y,
+                level_params,
                 layout,
                 &tau1,
             )
@@ -205,12 +214,13 @@ where
     );
     #[cfg(not(feature = "parallel"))]
     let (m_evals_x_result, w_result) = {
-        let m_evals_x = compute_m_evals_x::<F, D, Cfg>(
+        let m_evals_x = compute_m_evals_x::<F, D>(
             setup,
             opening_point,
             challenges,
             alpha,
             &alpha_evals_y,
+            level_params,
             layout,
             &tau1,
         )?;
@@ -256,6 +266,7 @@ pub fn ring_switch_prover<F, T, const D: usize, Cfg>(
     ntt_a: &NttSlotCache<D>,
     ntt_b: &NttSlotCache<D>,
     ntt_d: &NttSlotCache<D>,
+    level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<RingSwitchOutput<F>, HachiError>
 where
@@ -263,9 +274,17 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
-    let w = ring_switch_build_w::<F, D, Cfg>(quad_eq, setup, ntt_a, ntt_b, ntt_d, layout)?;
+    let w = ring_switch_build_w::<F, D, Cfg>(
+        quad_eq,
+        setup,
+        ntt_a,
+        ntt_b,
+        ntt_d,
+        level_params,
+        layout,
+    )?;
 
-    let (w_commitment, w_hint) = commit_w::<F, D, Cfg>(&w, ntt_a, ntt_b)?;
+    let (w_commitment, w_hint) = commit_w::<F, D, Cfg>(&w, ntt_a, ntt_b, level_params)?;
 
     let w_commitment_flat = FlatRingVec::from_commitment(&w_commitment);
     let w_hint_flat = FlatCommitmentHint::from_typed(w_hint);
@@ -277,6 +296,7 @@ where
         w,
         w_commitment_flat,
         w_hint_flat,
+        level_params,
         layout,
     )
 }
@@ -297,6 +317,7 @@ pub fn ring_switch_verifier<F, T, const D: usize, Cfg>(
     w_len: usize,
     w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
+    level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<RingSwitchOutput<F>, HachiError>
 where
@@ -311,7 +332,7 @@ where
     let num_ring_elems = w_len / D;
     let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
     let num_l = D.trailing_zeros() as usize;
-    let m_rows = m_row_count::<Cfg>();
+    let m_rows = m_row_count(level_params);
     let num_sc_vars = num_u + num_l;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
@@ -319,12 +340,13 @@ where
     let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
 
-    let m_evals_x = compute_m_evals_x::<F, D, Cfg>(
+    let m_evals_x = compute_m_evals_x::<F, D>(
         setup,
         quad_eq.opening_point(),
         &quad_eq.challenges,
         alpha,
         &alpha_evals_y,
+        level_params,
         layout,
         &tau1,
     )?;
@@ -428,8 +450,10 @@ pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D
 /// `log_open_bound = parent's open bound` (opening folds produce full-field
 /// coefficients).
 ///
-/// For `D=512, Cfg=Fp128FullCommitmentConfig`, this is equivalent to
-/// [`Fp128LogBasisCommitmentConfig`](super::commitment::Fp128LogBasisCommitmentConfig).
+/// For `Cfg=Fp128FullCommitmentConfig`, this uses the same decomposition
+/// parameters as
+/// [`Fp128LogBasisCommitmentConfig`](super::commitment::Fp128LogBasisCommitmentConfig),
+/// but at the caller-selected ring dimension `D`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
@@ -437,75 +461,70 @@ pub(crate) struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
 
 impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConfig<D, Cfg> {
     const D: usize = D;
-    const N_A: usize = Cfg::N_A;
-    const N_B: usize = Cfg::N_B;
-    const N_D: usize = Cfg::N_D;
-    const CHALLENGE_WEIGHT: usize = Cfg::CHALLENGE_WEIGHT;
 
-    fn challenge_weight_for_ring_dim(d: usize) -> usize {
-        Cfg::challenge_weight_for_ring_dim(d)
+    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
+        Cfg::envelope(max_num_vars)
     }
 
-    fn w_log_basis() -> u32 {
-        Cfg::w_log_basis()
+    fn stage1_challenge_config(d: usize) -> crate::algebra::SparseChallengeConfig {
+        Cfg::stage1_challenge_config(d)
+    }
+
+    fn level_params_with_log_basis(
+        inputs: HachiScheduleInputs,
+        log_basis: u32,
+    ) -> HachiLevelParams {
+        let params = Cfg::level_params_with_log_basis(inputs, log_basis);
+        debug_assert_eq!(params.d, D);
+        params
+    }
+
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        Cfg::log_basis_at_level(inputs)
+    }
+
+    fn schedule_key(max_num_vars: usize) -> String {
+        Cfg::schedule_key(max_num_vars)
     }
 
     fn decomposition() -> DecompositionParams {
-        let parent = Cfg::decomposition();
-        let w_basis = Cfg::w_log_basis();
-        let parent_open = parent.log_open_bound.unwrap_or(parent.log_commit_bound);
-        DecompositionParams {
-            log_basis: w_basis,
-            // w entries come from a balanced decomposition; use w_basis for
-            // the commit bound since that's the widest digit range at any
-            // recursive level (level-0 entries fit in parent.log_basis <= w_basis).
-            log_commit_bound: w_basis,
-            // Opening folds w with arbitrary field-element weights, producing
-            // full-field-size coefficients that need the same decomposition
-            // depth as the parent's opening bound.
-            log_open_bound: Some(parent_open),
-        }
+        recursive_level_decomposition_from_root(
+            Cfg::decomposition(),
+            Cfg::decomposition().log_basis,
+        )
     }
 
-    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        let alpha = D.trailing_zeros() as usize;
-        let reduced_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
-            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
-        })?;
-        if reduced_vars == 0 {
-            return Err(HachiError::InvalidSetup(
-                "max_num_vars must leave at least one outer variable".to_string(),
-            ));
-        }
-        let (m_vars, r_vars) = optimal_m_r_split::<Self>(reduced_vars);
-        HachiCommitmentLayout::new::<Self>(m_vars, r_vars, &Self::decomposition())
+    fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        Err(HachiError::InvalidSetup(
+            "recursive w layout requires active level params".to_string(),
+        ))
     }
 }
 
 /// Total ring elements in the w polynomial, computed from the main layout.
 ///
 /// Components: w_hat + t_hat + decomposed z_pre + decomposed r.
-pub(crate) fn w_ring_element_count<F: CanonicalField, Cfg: CommitmentConfig>(
+pub(crate) fn w_ring_element_count<F: CanonicalField>(
+    level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> usize {
     let w_hat_count = layout.num_blocks * layout.num_digits_open;
-    let t_hat_count = layout.num_blocks * Cfg::N_A * layout.num_digits_open;
+    let t_hat_count = layout.num_blocks * level_params.n_a * layout.num_digits_open;
     let z_pre_count = layout.inner_width * layout.num_digits_fold;
-    let r_count = m_row_count::<Cfg>() * r_decomp_levels::<F>(layout.log_basis);
+    let r_count = m_row_count(level_params) * r_decomp_levels::<F>(layout.log_basis);
     w_hat_count + t_hat_count + z_pre_count + r_count
 }
 
 /// Compute the w-commitment layout from the main layout.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn w_commitment_layout<F: CanonicalField, const D: usize, Cfg: CommitmentConfig>(
+    level_params: &HachiLevelParams,
     main_layout: HachiCommitmentLayout,
 ) -> Result<HachiCommitmentLayout, HachiError> {
-    let total = w_ring_element_count::<F, Cfg>(main_layout)
-        .next_power_of_two()
-        .max(1);
-    let alpha = D.trailing_zeros() as usize;
-    let m_vars = total.trailing_zeros() as usize;
-    let max_num_vars = m_vars + alpha;
-    WCommitmentConfig::<D, Cfg>::commitment_layout(max_num_vars)
+    let current_w_len = w_ring_element_count::<F>(level_params, main_layout)
+        .checked_mul(D)
+        .ok_or_else(|| HachiError::InvalidSetup("w witness length overflow".to_string()))?;
+    hachi_recursive_level_layout_from_params::<Cfg>(level_params, current_w_len)
 }
 
 /// Commit the witness vector `w` (D-agnostic `Vec<i8>`) into `D`-sized ring
@@ -526,6 +545,7 @@ pub fn commit_w<F, const D: usize, Cfg>(
     w: &[i8],
     ntt_a: &NttSlotCache<D>,
     ntt_b: &NttSlotCache<D>,
+    level_params: &HachiLevelParams,
 ) -> Result<(RingCommitment<F, D>, HachiCommitmentHint<F, D>), HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -539,11 +559,7 @@ where
         });
     }
 
-    let total = w_digits.len().next_power_of_two().max(1);
-    let alpha = D.trailing_zeros() as usize;
-    let m_vars_total = total.trailing_zeros() as usize;
-    let max_num_vars = m_vars_total + alpha;
-    let w_layout = WCommitmentConfig::<D, Cfg>::commitment_layout(max_num_vars)?;
+    let w_layout = hachi_recursive_level_layout_from_params::<Cfg>(level_params, w.len())?;
 
     let num_blocks = w_layout.num_blocks;
     let block_len = w_layout.block_len;
@@ -552,7 +568,7 @@ where
     let log_basis = w_layout.log_basis;
     let coeff_len = w_digits.len();
 
-    let t_all = if depth_commit == 1 {
+    let mut t_all = if depth_commit == 1 {
         // `build_w_coeffs` already emits balanced base-`2^log_basis` digits, so
         // the recursive w-commitment can skip the field conversion and feed those
         // planes directly into the tiled NTT mat-vec.
@@ -588,12 +604,16 @@ where
             .collect();
         mat_vec_mul_ntt_i8(ntt_a, &block_slices, depth_commit, log_basis)
     };
+    for t_i in &mut t_all {
+        t_i.truncate(level_params.n_a);
+    }
     let t_hat_per_block: Vec<Vec<[i8; D]>> = cfg_iter!(t_all)
         .map(|t_i| decompose_rows_i8(t_i, depth_open, log_basis))
         .collect();
 
     let t_hat_flat = flatten_i8_blocks(&t_hat_per_block);
-    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(ntt_b, &t_hat_flat);
+    let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(ntt_b, &t_hat_flat);
+    u.truncate(level_params.n_b);
     let hint = HachiCommitmentHint::with_t(t_hat_per_block, t_all);
     Ok((RingCommitment { u }, hint))
 }
@@ -660,30 +680,8 @@ fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basis: u
 
 pub(crate) fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
     let modulus = detect_field_modulus::<F>();
-    let bits = 128 - (modulus.saturating_sub(1)).leading_zeros() as usize;
-    let lb = log_basis as usize;
-    let mut levels = (bits + lb.saturating_sub(1)) / lb.max(1);
-    if levels == 0 {
-        levels = 1;
-    }
-
-    let total_bits = levels * lb;
-    if total_bits <= bits {
-        let b = 1u128 << log_basis;
-        let half_q = modulus / 2;
-        let half_b_minus_1 = b / 2 - 1;
-        let b_minus_1 = b - 1;
-        let mut b_pow = 1u128;
-        for _ in 0..levels {
-            b_pow = b_pow.saturating_mul(b);
-        }
-        let max_positive = half_b_minus_1.saturating_mul((b_pow - 1) / b_minus_1);
-        if max_positive < half_q {
-            levels += 1;
-        }
-    }
-
-    levels
+    let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
+    recursive_r_decomp_levels_for_bound(field_bits, modulus / 2, log_basis)
 }
 
 #[cfg(test)]
@@ -815,22 +813,21 @@ pub(crate) fn build_w_evals_compact(
     Ok((compact, num_u, num_l))
 }
 
-pub(crate) fn m_row_count<Cfg: CommitmentConfig>() -> usize {
-    Cfg::N_D + Cfg::N_B + 1 + 1 + Cfg::N_A
+pub(crate) fn m_row_count(level_params: &HachiLevelParams) -> usize {
+    level_params.m_row_count()
 }
 
-pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize, Cfg>(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     setup: &HachiExpandedSetup<F>,
     opening_point: &RingOpeningPoint<F>,
     challenges: &[SparseChallenge],
     alpha: F,
     alpha_pows: &[F],
+    level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
     tau1: &[F],
-) -> Result<Vec<F>, HachiError>
-where
-    Cfg: CommitmentConfig,
-{
+) -> Result<Vec<F>, HachiError> {
     if alpha_pows.len() != D {
         return Err(HachiError::InvalidSize {
             expected: D,
@@ -845,10 +842,10 @@ where
     let num_blocks = opening_point.b.len();
     let block_len = layout.block_len;
     let w_len = depth_open * num_blocks;
-    let t_len = depth_open * Cfg::N_A * num_blocks;
+    let t_len = depth_open * level_params.n_a * num_blocks;
     let inner_width = block_len * depth_commit;
     let z_len = depth_fold * inner_width;
-    let rows = m_row_count::<Cfg>();
+    let rows = m_row_count(level_params);
     let levels = r_decomp_levels::<F>(log_basis);
     let total_cols = w_len
         .checked_add(t_len)
@@ -880,9 +877,9 @@ where
     let b_view = setup.B.view::<D>();
     let a_view = setup.A.view::<D>();
 
-    let row3_weight = eq_tau1[Cfg::N_D + Cfg::N_B];
-    let row4_weight = eq_tau1[Cfg::N_D + Cfg::N_B + 1];
-    let a_weights = &eq_tau1[(Cfg::N_D + Cfg::N_B + 2)..rows];
+    let row3_weight = eq_tau1[level_params.n_d + level_params.n_b];
+    let row4_weight = eq_tau1[level_params.n_d + level_params.n_b + 1];
+    let a_weights = &eq_tau1[(level_params.n_d + level_params.n_b + 2)..rows];
 
     let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
         .map(|x| {
@@ -891,7 +888,7 @@ where
             let mut acc = (row3_weight * opening_point.b[block_idx]
                 + row4_weight * c_alphas[block_idx])
                 * g1_open[digit_idx];
-            for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(Cfg::N_D) {
+            for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(level_params.n_d) {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&d_view.row(row_idx)[x], alpha_pows);
                 }
@@ -903,12 +900,15 @@ where
 
     let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
         .map(|x| {
-            let block_idx = x / (Cfg::N_A * depth_open);
-            let rem = x % (Cfg::N_A * depth_open);
+            let block_idx = x / (level_params.n_a * depth_open);
+            let rem = x % (level_params.n_a * depth_open);
             let a_idx = rem / depth_open;
             let digit_idx = rem % depth_open;
             let mut acc = a_weights[a_idx] * c_alphas[block_idx] * g1_open[digit_idx];
-            for (row_idx, eq_i) in eq_tau1[Cfg::N_D..(Cfg::N_D + Cfg::N_B)].iter().enumerate() {
+            for (row_idx, eq_i) in eq_tau1[level_params.n_d..(level_params.n_d + level_params.n_b)]
+                .iter()
+                .enumerate()
+            {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[x], alpha_pows);
                 }
@@ -981,8 +981,8 @@ fn balanced_decompose_centered_i32_i8_into<const D: usize>(
 ) {
     let levels = out.len();
     assert!(
-        log_basis > 0 && log_basis <= 7,
-        "log_basis must be in 1..=7 for i8 output"
+        log_basis > 0 && log_basis <= 5,
+        "log_basis must be in 1..=5 for i8 output"
     );
     assert!(
         (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
@@ -1015,8 +1015,6 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     let num_digits_fold = layout.num_digits_fold;
     let levels = r_decomp_levels::<F>(log_basis);
 
-    let t_hat_flat = t_hat.iter().flat_map(|v| v.iter());
-
     let w_hat_planes: usize = w_hat.iter().map(|v| v.len()).sum();
     let t_hat_planes: usize = t_hat.iter().map(|v| v.len()).sum();
     let z_count = w_hat_planes + t_hat_planes + z_pre_centered.len() * num_digits_fold;
@@ -1032,27 +1030,33 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
         total_field = (z_count + r_hat_count) * D,
         "build_w_coeffs"
     );
-    let mut out = Vec::with_capacity((z_count + r_hat_count) * D);
-    let mut digit_scratch = vec![[0i8; D]; num_digits_fold.max(levels)];
+    let total_planes = z_count + r_hat_count;
+    let total_elems = total_planes * D;
+
+    let mut out = Vec::with_capacity(total_elems);
     for block in w_hat {
         for digits in block {
             out.extend_from_slice(digits);
         }
     }
-    for digits in t_hat_flat {
-        out.extend_from_slice(digits);
+    for block in t_hat {
+        for digits in block {
+            out.extend_from_slice(digits);
+        }
     }
+    let mut z_planes = vec![[0i8; D]; num_digits_fold];
     for z_j in z_pre_centered {
-        let z_planes = &mut digit_scratch[..num_digits_fold];
-        balanced_decompose_centered_i32_i8_into(z_j, z_planes, log_basis);
-        for plane in z_planes.iter() {
+        z_planes.fill([0i8; D]);
+        balanced_decompose_centered_i32_i8_into(z_j, &mut z_planes, log_basis);
+        for plane in &z_planes {
             out.extend_from_slice(plane);
         }
     }
+    let mut r_planes = vec![[0i8; D]; levels];
     for ri in r {
-        let r_planes = &mut digit_scratch[..levels];
-        ri.balanced_decompose_pow2_i8_into(r_planes, log_basis);
-        for plane in r_planes.iter() {
+        r_planes.fill([0i8; D]);
+        ri.balanced_decompose_pow2_i8_into(&mut r_planes, log_basis);
+        for plane in &r_planes {
             out.extend_from_slice(plane);
         }
     }

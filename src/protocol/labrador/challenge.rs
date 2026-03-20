@@ -14,10 +14,8 @@ use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake128;
 use std::sync::OnceLock;
 
-/// Number of `±1` coefficients in a challenge polynomial.
-pub const LABRADOR_TAU1: usize = 32;
-/// Number of `±2` coefficients in a challenge polynomial.
-pub const LABRADOR_TAU2: usize = 8;
+/// Maximum challenge support across the supported ring-dimension profiles.
+const MAX_LABRADOR_CHALLENGE_SUPPORT: usize = 32 + 8;
 /// Operator norm bound used by C's challenge rejection sampler.
 pub const LABRADOR_CHALLENGE_OPNORM_BOUND: f64 = 14.0;
 const LABRADOR_CHALLENGE_OPNORM_BOUND_SQ: f64 =
@@ -27,11 +25,30 @@ const SHAKE128_RATE: usize = 168;
 const SINGLE_CHALLENGE_BLOCKS: usize = 2;
 const SINGLE_CHALLENGE_BLOCK_BYTES: usize = SINGLE_CHALLENGE_BLOCKS * SHAKE128_RATE;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LabradorChallengeProfile {
+    pub tau1: usize,
+    pub tau2: usize,
+}
+
+pub(crate) const fn labrador_challenge_profile(d: usize) -> LabradorChallengeProfile {
+    match d {
+        256 => LabradorChallengeProfile { tau1: 23, tau2: 0 },
+        128 => LabradorChallengeProfile { tau1: 31, tau2: 0 },
+        _ => LabradorChallengeProfile { tau1: 32, tau2: 8 },
+    }
+}
+
+pub(crate) const fn labrador_second_moment(d: usize) -> usize {
+    let profile = labrador_challenge_profile(d);
+    profile.tau1 + 4 * profile.tau2
+}
+
 /// Sample Labrador challenge polynomials as signed coefficient arrays.
 ///
-/// The output follows C `polyvec_challenge`: each polynomial has exactly
-/// `LABRADOR_TAU1` coefficients in `{±1}`, `LABRADOR_TAU2` coefficients in
-/// `{±2}`, all other coefficients 0, and must satisfy operator-norm bound.
+/// The output follows C `polyvec_challenge`: each polynomial has exactly the
+/// per-ring-dimension `(tau1, tau2)` support profile in `{±1}` and `{±2}`,
+/// all other coefficients 0, and must satisfy operator-norm bound.
 ///
 /// # Errors
 ///
@@ -122,11 +139,13 @@ pub fn sample_labrador_sparse_challenges<const D: usize>(
     seed: &[u8; 16],
     stream_id: u64,
 ) -> Result<Vec<SparseChallenge>, HachiError> {
+    let profile = labrador_challenge_profile(D);
+    let support_len = profile.tau1 + profile.tau2;
     Ok(sample_labrador_challenge_coeffs::<D>(len, seed, stream_id)?
         .into_iter()
         .map(|poly| {
-            let mut positions = Vec::with_capacity(LABRADOR_TAU1 + LABRADOR_TAU2);
-            let mut coeffs = Vec::with_capacity(LABRADOR_TAU1 + LABRADOR_TAU2);
+            let mut positions = Vec::with_capacity(support_len);
+            let mut coeffs = Vec::with_capacity(support_len);
             for (idx, coeff) in poly.into_iter().enumerate() {
                 if coeff != 0 {
                     positions.push(idx as u32);
@@ -139,15 +158,17 @@ pub fn sample_labrador_sparse_challenges<const D: usize>(
 }
 
 fn validate_challenge_params<const D: usize>() -> Result<(), HachiError> {
+    let profile = labrador_challenge_profile(D);
     ensure_power_of_two(D, "challenge sampler degree D")?;
     if D > 256 {
         return Err(HachiError::InvalidInput(format!(
             "challenge sampler expects D <= 256, got {D}"
         )));
     }
-    if LABRADOR_TAU1 + LABRADOR_TAU2 > D {
+    if profile.tau1 + profile.tau2 > D {
         return Err(HachiError::InvalidInput(format!(
-            "tau1 + tau2 exceeds ring degree: {LABRADOR_TAU1} + {LABRADOR_TAU2} > {D}"
+            "tau1 + tau2 exceeds ring degree: {} + {} > {D}",
+            profile.tau1, profile.tau2
         )));
     }
     Ok(())
@@ -158,8 +179,10 @@ fn consume_challenge_buffer<const D: usize>(
     target_len: usize,
     buf: &[u8],
 ) -> usize {
-    let sign_bytes = (LABRADOR_TAU1 + LABRADOR_TAU2).div_ceil(8);
-    let min_bytes = LABRADOR_TAU1 + LABRADOR_TAU2 + sign_bytes;
+    let profile = labrador_challenge_profile(D);
+    let support_len = profile.tau1 + profile.tau2;
+    let sign_bytes = support_len.div_ceil(8);
+    let min_bytes = support_len + sign_bytes;
     let mut produced = 0usize;
     let mut cursor = 0usize;
 
@@ -171,13 +194,13 @@ fn consume_challenge_buffer<const D: usize>(
         }
 
         let mut poly = [0i16; D];
-        let mut k = D - LABRADOR_TAU1 - LABRADOR_TAU2;
+        let mut k = D - support_len;
         while k < D && cursor < buf.len() {
             let b = (buf[cursor] as usize) & (D - 1);
             cursor += 1;
             if b <= k {
                 poly[k] = poly[b];
-                let mut value = if k < D - LABRADOR_TAU2 { 1 } else { 2 };
+                let mut value = if k < D - profile.tau2 { 1 } else { 2 };
                 if (signs & 1) == 1 {
                     value = -value;
                 }
@@ -284,15 +307,16 @@ fn challenge_operator_norm_dense_reference<const D: usize>(coeffs: &[i16; D]) ->
 
 #[cfg(test)]
 fn challenge_operator_norm<const D: usize>(coeffs: &[i16; D]) -> f64 {
+    let support_limit = labrador_challenge_profile(D).tau1 + labrador_challenge_profile(D).tau2;
     let table = challenge_opnorm_table::<D>();
-    let mut support_idx = [0usize; LABRADOR_TAU1 + LABRADOR_TAU2];
-    let mut support_coeff = [0.0f64; LABRADOR_TAU1 + LABRADOR_TAU2];
+    let mut support_idx = [0usize; MAX_LABRADOR_CHALLENGE_SUPPORT];
+    let mut support_coeff = [0.0f64; MAX_LABRADOR_CHALLENGE_SUPPORT];
     let mut support_len = 0usize;
     for (idx, &coeff) in coeffs.iter().enumerate() {
         if coeff == 0 {
             continue;
         }
-        if support_len == support_idx.len() {
+        if support_len == support_limit {
             #[cfg(test)]
             {
                 return challenge_operator_norm_dense_reference(coeffs);
@@ -327,15 +351,16 @@ fn challenge_operator_norm<const D: usize>(coeffs: &[i16; D]) -> f64 {
 }
 
 fn challenge_operator_norm_with_bound<const D: usize>(coeffs: &[i16; D], bound_sq: f64) -> bool {
+    let support_limit = labrador_challenge_profile(D).tau1 + labrador_challenge_profile(D).tau2;
     let table = challenge_opnorm_table::<D>();
-    let mut support_idx = [0usize; LABRADOR_TAU1 + LABRADOR_TAU2];
-    let mut support_coeff = [0.0f64; LABRADOR_TAU1 + LABRADOR_TAU2];
+    let mut support_idx = [0usize; MAX_LABRADOR_CHALLENGE_SUPPORT];
+    let mut support_coeff = [0.0f64; MAX_LABRADOR_CHALLENGE_SUPPORT];
     let mut support_len = 0usize;
     for (idx, &coeff) in coeffs.iter().enumerate() {
         if coeff == 0 {
             continue;
         }
-        if support_len == support_idx.len() {
+        if support_len == support_limit {
             #[cfg(test)]
             {
                 let norm = challenge_operator_norm_dense_reference(coeffs);

@@ -22,10 +22,10 @@ pub mod transcript;
 pub use commitment::{
     optimal_m_r_split, AppendToTranscript, CommitmentConfig, CommitmentScheme, DummyProof,
     DynamicSmallTestCommitmentConfig, Fp128BoundedCommitmentConfig, Fp128CommitmentConfig,
-    Fp128FullCommitmentConfig, Fp128HalvingDCommitmentConfig, Fp128LogBasisCommitmentConfig,
-    Fp128OneHotCommitmentConfig, HachiCommitment, HachiCommitmentCore, HachiCommitmentLayout,
-    HachiExpandedSetup, HachiOpeningClaim, HachiOpeningPoint, HachiProverSetup, HachiSetupSeed,
-    HachiVerifierSetup, RingCommitment, RingCommitmentScheme, SmallTestCommitmentConfig,
+    Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig,
+    HachiCommitment, HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup,
+    HachiOpeningClaim, HachiOpeningPoint, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup,
+    RingCommitment, RingCommitmentScheme, SmallTestCommitmentConfig,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly};

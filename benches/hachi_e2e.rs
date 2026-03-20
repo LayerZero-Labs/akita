@@ -333,49 +333,67 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
 
 fn bench_full_nv15(c: &mut Criterion) {
     bench_dense_phases::<{ Fp128FullCommitmentConfig::D }, Fp128FullCommitmentConfig>(
-        c, "full", 15,
+        c,
+        "full-d128",
+        15,
     );
 }
 fn bench_full_nv20(c: &mut Criterion) {
     bench_dense_phases::<{ Fp128FullCommitmentConfig::D }, Fp128FullCommitmentConfig>(
-        c, "full", 20,
+        c,
+        "full-d128",
+        20,
     );
 }
 fn bench_full_nv25(c: &mut Criterion) {
     bench_dense_phases::<{ Fp128FullCommitmentConfig::D }, Fp128FullCommitmentConfig>(
-        c, "full", 25,
+        c,
+        "full-d128",
+        25,
     );
 }
 
 fn bench_onehot_nv15(c: &mut Criterion) {
     bench_onehot_phases::<{ Fp128OneHotCommitmentConfig::D }, Fp128OneHotCommitmentConfig>(
-        c, "onehot", 15,
+        c,
+        "onehot-d64",
+        15,
     );
 }
 fn bench_onehot_nv20(c: &mut Criterion) {
     bench_onehot_phases::<{ Fp128OneHotCommitmentConfig::D }, Fp128OneHotCommitmentConfig>(
-        c, "onehot", 20,
+        c,
+        "onehot-d64",
+        20,
     );
 }
 fn bench_onehot_nv25(c: &mut Criterion) {
     bench_onehot_phases::<{ Fp128OneHotCommitmentConfig::D }, Fp128OneHotCommitmentConfig>(
-        c, "onehot", 25,
+        c,
+        "onehot-d64",
+        25,
     );
 }
 
 fn bench_logbasis_nv15(c: &mut Criterion) {
     bench_dense_phases::<{ Fp128LogBasisCommitmentConfig::D }, Fp128LogBasisCommitmentConfig>(
-        c, "logbasis", 15,
+        c,
+        "logbasis-d128",
+        15,
     );
 }
 fn bench_logbasis_nv20(c: &mut Criterion) {
     bench_dense_phases::<{ Fp128LogBasisCommitmentConfig::D }, Fp128LogBasisCommitmentConfig>(
-        c, "logbasis", 20,
+        c,
+        "logbasis-d128",
+        20,
     );
 }
 fn bench_logbasis_nv25(c: &mut Criterion) {
     bench_dense_phases::<{ Fp128LogBasisCommitmentConfig::D }, Fp128LogBasisCommitmentConfig>(
-        c, "logbasis", 25,
+        c,
+        "logbasis-d128",
+        25,
     );
 }
 

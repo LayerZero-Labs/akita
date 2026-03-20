@@ -2,7 +2,7 @@
 //!
 //! Many lattice protocols sample "short/sparse" ring challenges whose coefficients
 //! are mostly zero and whose non-zero coefficients come from a tiny integer alphabet
-//! (e.g. `{±1}` or `{±1,±2}`), with a fixed Hamming weight `ω`.
+//! (e.g. `{±1}` or `{±1,±2}`).
 //!
 //! This module provides a minimal representation that is:
 //! - independent of any specific protocol (Hachi/Greyhound/SuperNeo, etc.),
@@ -14,41 +14,199 @@ use crate::algebra::fields::LiftBase;
 use crate::{CanonicalField, FieldCore};
 use rand_core::RngCore;
 
-/// Configuration for sampling a sparse challenge.
+/// Specifies the distribution from which sparse ring challenges are sampled.
 ///
-/// This intentionally avoids redundant knobs: the distribution is determined by:
-/// - exact `weight` (Hamming weight),
-/// - and a list of allowed **non-zero** integer coefficients.
+/// A sparse challenge is a "short" element of the cyclotomic ring
+/// `F[X]/(X^D + 1)` with few non-zero coefficients drawn from a small integer
+/// alphabet. Different families trade off challenge entropy against the
+/// resulting coefficient mass, which in turn affects the folded witness bounds
+/// used by the protocol.
+///
+/// All families produce the same sampled output type [`SparseChallenge`], so the
+/// downstream arithmetic is uniform regardless of which family was used.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SparseChallengeConfig {
-    /// Exact Hamming weight ω.
-    pub weight: usize,
-    /// Allowed non-zero coefficients (small signed integers).
+pub enum SparseChallengeConfig {
+    /// Uniform sparse challenge over the full ring.
     ///
-    /// Examples:
-    /// - `{±1}`: `vec![-1, 1]`
-    /// - `{±1,±2}`: `vec![-2, -1, 1, 2]`
-    pub nonzero_coeffs: Vec<i16>,
+    /// Sampling chooses `weight` distinct positions from `0..D`, then assigns
+    /// each position a coefficient drawn uniformly from `nonzero_coeffs`.
+    ///
+    /// The worst-case L1 mass is
+    /// `weight * max(|c| for c in nonzero_coeffs)`.
+    Uniform {
+        /// Exact number of non-zero coefficients.
+        weight: usize,
+        /// Allowed small non-zero coefficients, e.g. `[-1, 1]` or
+        /// `[-2, -1, 1, 2]`.
+        nonzero_coeffs: Vec<i16>,
+    },
+
+    /// Split-ring sparse challenge with an independent budget in each parity
+    /// half.
+    ///
+    /// The `D` coefficient positions are partitioned into the even indices and
+    /// the odd indices, each of size `D / 2`. In each half, sampling chooses
+    /// `half_weight` distinct positions, assigns each a random sign, and then
+    /// chooses a shell with between `0` and `max_mag2_per_half` magnitude-2
+    /// entries uniformly over the full union of shells
+    /// `C_{half_weight,<=max_mag2_per_half}` before upgrading that many
+    /// positions from magnitude 1 to magnitude 2. The two halves are
+    /// interleaved back into one ring element.
+    ///
+    /// The worst-case L1 mass is `2 * (half_weight + max_mag2_per_half)`.
+    SplitRing {
+        /// Number of active positions in each parity half.
+        half_weight: usize,
+        /// Maximum number of magnitude-2 coefficients in each parity half.
+        max_mag2_per_half: usize,
+    },
+
+    /// Exact-shell sparse challenge over the full ring.
+    ///
+    /// Sampling chooses `count_mag1 + count_mag2` distinct positions from
+    /// `0..D`, assigns `count_mag1` of them a random sign with magnitude 1, and
+    /// assigns the remaining `count_mag2` a random sign with magnitude 2.
+    ///
+    /// The L1 mass is exact: `count_mag1 + 2 * count_mag2`.
+    ExactShell {
+        /// Number of coefficients with magnitude 1.
+        count_mag1: usize,
+        /// Number of coefficients with magnitude 2.
+        count_mag2: usize,
+    },
+}
+
+fn validate_uniform_coeffs(nonzero_coeffs: &[i16]) -> Result<(), &'static str> {
+    if nonzero_coeffs.is_empty() {
+        return Err("nonzero_coeffs must be non-empty");
+    }
+    if nonzero_coeffs.contains(&0) {
+        return Err("nonzero_coeffs must not contain 0");
+    }
+    Ok(())
 }
 
 impl SparseChallengeConfig {
+    /// Worst-case sum of absolute values of the sampled coefficients.
+    #[inline]
+    pub fn l1_mass(&self) -> usize {
+        match self {
+            Self::Uniform {
+                weight,
+                nonzero_coeffs,
+            } => {
+                let max_coeff = nonzero_coeffs
+                    .iter()
+                    .map(|c| c.unsigned_abs() as usize)
+                    .max()
+                    .unwrap_or(0);
+                weight.saturating_mul(max_coeff)
+            }
+            Self::SplitRing {
+                half_weight,
+                max_mag2_per_half,
+            } => 2 * (half_weight + max_mag2_per_half),
+            Self::ExactShell {
+                count_mag1,
+                count_mag2,
+            } => count_mag1 + 2 * count_mag2,
+        }
+    }
+
+    /// Total number of non-zero coefficients sampled from this family.
+    #[inline]
+    pub fn hamming_weight(&self) -> usize {
+        match self {
+            Self::Uniform { weight, .. } => *weight,
+            Self::SplitRing { half_weight, .. } => 2 * half_weight,
+            Self::ExactShell {
+                count_mag1,
+                count_mag2,
+            } => count_mag1 + count_mag2,
+        }
+    }
+
+    /// Canonical byte encoding used for transcript domain separation.
+    #[inline]
+    pub fn domain_separator_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        match self {
+            Self::Uniform {
+                weight,
+                nonzero_coeffs,
+            } => {
+                out.push(0);
+                out.extend_from_slice(&(*weight as u64).to_le_bytes());
+                out.extend_from_slice(&(nonzero_coeffs.len() as u64).to_le_bytes());
+                for &c in nonzero_coeffs {
+                    out.extend_from_slice(&c.to_le_bytes());
+                }
+            }
+            Self::SplitRing {
+                half_weight,
+                max_mag2_per_half,
+            } => {
+                out.push(1);
+                out.extend_from_slice(&(*half_weight as u64).to_le_bytes());
+                out.extend_from_slice(&(*max_mag2_per_half as u64).to_le_bytes());
+            }
+            Self::ExactShell {
+                count_mag1,
+                count_mag2,
+            } => {
+                out.push(2);
+                out.extend_from_slice(&(*count_mag1 as u64).to_le_bytes());
+                out.extend_from_slice(&(*count_mag2 as u64).to_le_bytes());
+            }
+        }
+        out
+    }
+
     /// Validate basic invariants for a given ring degree `D`.
     ///
     /// # Errors
     ///
-    /// Returns an error if `weight > D`, if `nonzero_coeffs` is empty, or if it
-    /// contains `0`.
+    /// Returns an error if the family parameters are inconsistent with ring
+    /// degree `D`.
     pub fn validate<const D: usize>(&self) -> Result<(), &'static str> {
-        if self.weight > D {
-            return Err("weight must be <= ring degree D");
+        match self {
+            Self::Uniform {
+                weight,
+                nonzero_coeffs,
+            } => {
+                if *weight > D {
+                    return Err("weight must be <= ring degree D");
+                }
+                validate_uniform_coeffs(nonzero_coeffs)
+            }
+            Self::SplitRing {
+                half_weight,
+                max_mag2_per_half,
+            } => {
+                if D == 0 || D % 2 != 0 {
+                    return Err("split-ring family requires an even ring degree");
+                }
+                if *half_weight > D / 2 {
+                    return Err("half_weight must be <= D / 2");
+                }
+                if *max_mag2_per_half > *half_weight {
+                    return Err("max_mag2_per_half must be <= half_weight");
+                }
+                Ok(())
+            }
+            Self::ExactShell {
+                count_mag1,
+                count_mag2,
+            } => {
+                if count_mag1
+                    .checked_add(*count_mag2)
+                    .is_none_or(|weight| weight > D)
+                {
+                    return Err("count_mag1 + count_mag2 must be <= ring degree D");
+                }
+                Ok(())
+            }
         }
-        if self.nonzero_coeffs.is_empty() {
-            return Err("nonzero_coeffs must be non-empty");
-        }
-        if self.nonzero_coeffs.contains(&0) {
-            return Err("nonzero_coeffs must not contain 0");
-        }
-        Ok(())
     }
 }
 

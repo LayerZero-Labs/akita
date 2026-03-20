@@ -4,8 +4,8 @@ Estimate SIS security for a prospective Hachi D=64 one-hot family.
 
 This script is meant to be readable on its own. It fixes one concrete
 prospective `D = 64` parameter regime, explains the challenge family in plain
-language, and prints the extracted SIS instances that determine the security
-floor.
+language, and prints the role-specific SIS instances (`A`, `B`, and `D`) that
+determine the proof-aligned binding floor.
 
 The setup studied here is:
 
@@ -53,7 +53,7 @@ Glossary for the printed quantities:
 - `width_ring`: SIS width measured in ring elements; the estimator sees
   `m = width_ring * D` field coordinates
 - `collision_inf`: `l_inf` collision bound passed to the estimator
-- `A_fullwidth`, `B`, `D`, `M_code`, `M_tight`: the extracted SIS instances
+- `A_fullwidth`, `B`, `D`: the extracted role-specific SIS instances
 - `overall floor`: the minimum security estimate across those instances
 
 Modeling choices:
@@ -118,7 +118,7 @@ HELP_EPILOG = dedent(
       challenge_mass
                    conservative L1 bound for the sparse challenge family
       delta_*      base-8 digit counts used in the extracted bounds
-      A/B/D/M      SIS instances reported by the script
+      A/B/D        role-specific SIS instances reported by the script
     """
 )
 
@@ -137,7 +137,7 @@ TERMINOLOGY_LINES = [
     ("inner/outer/D widths", "ring-element counts of the A, B, and D SIS instances"),
     ("width_ring", "SIS width measured in ring elements; field-coordinate width is width_ring * D"),
     ("collision_inf", "l_inf collision bound passed to the SIS estimator"),
-    ("A/B/D/M", "the extracted SIS instances whose minimum gives the overall floor"),
+    ("A/B/D", "the role-specific SIS instances whose minimum gives the overall floor"),
 ]
 
 
@@ -447,19 +447,10 @@ def main_configuration_estimates(
     b_bits = estimate_sec_bits(SIS, RC, log, n_b, outer_width, 7)
     d_bits = estimate_sec_bits(SIS, RC, log, n_d, d_matrix_width, 7)
 
-    m_collision_inf = 2 * ((1 << layout.r_vars) * MAX_ABS_CHALLENGE_COEFF)
-    m_rank = n_a + n_b + n_d + 2
-    m_code_width = d_matrix_width + outer_width + inner_width * layout.delta_fold_code
-    m_tight_width = d_matrix_width + outer_width + inner_width * layout.delta_fold_tight
-    m_code_bits = estimate_sec_bits(SIS, RC, log, m_rank, m_code_width, m_collision_inf)
-    m_tight_bits = estimate_sec_bits(SIS, RC, log, m_rank, m_tight_width, m_collision_inf)
-
     return [
         LayerEstimate("A_fullwidth", a_bits, n_a, inner_width, 2),
         LayerEstimate("B", b_bits, n_b, outer_width, 7),
         LayerEstimate("D", d_bits, n_d, d_matrix_width, 7),
-        LayerEstimate("M_code", m_code_bits, m_rank, m_code_width, m_collision_inf),
-        LayerEstimate("M_tight", m_tight_bits, m_rank, m_tight_width, m_collision_inf),
     ]
 
 
@@ -471,15 +462,11 @@ def sweep_rank1_cutoff(SIS, RC, log, min_nv: int, max_nv: int, n_a: int, challen
         layout = best_layout_onehot(nv, n_a=n_a, challenge_mass=challenge_mass)
         outer_width = layout.outer_width(n_a)
         d_matrix_width = layout.d_matrix_width
-        m_rank = n_a + 1 + 1 + 2
-        m_collision_inf = 2 * ((1 << layout.r_vars) * MAX_ABS_CHALLENGE_COEFF)
-        m_tight_width = d_matrix_width + outer_width + layout.inner_width * layout.delta_fold_tight
 
         a_bits = estimate_sec_bits(SIS, RC, log, n_a, layout.inner_width, 2)
         b_bits = estimate_sec_bits(SIS, RC, log, 1, outer_width, 7)
         d_bits = estimate_sec_bits(SIS, RC, log, 1, d_matrix_width, 7)
-        m_bits = estimate_sec_bits(SIS, RC, log, m_rank, m_tight_width, m_collision_inf)
-        overall = min(a_bits, b_bits, d_bits, m_bits)
+        overall = min(a_bits, b_bits, d_bits)
         rows.append(
             {
                 "nv": nv,
@@ -490,7 +477,6 @@ def sweep_rank1_cutoff(SIS, RC, log, min_nv: int, max_nv: int, n_a: int, challen
                 "B_bits": b_bits,
                 "D_bits": d_bits,
                 "BD_floor_bits": min(b_bits, d_bits),
-                "M_bits": m_bits,
                 "overall_bits": overall,
             }
         )
@@ -556,12 +542,9 @@ def print_main_configuration(
     inner_width = layout.inner_width
     outer_width = layout.outer_width(n_a)
     d_matrix_width = layout.d_matrix_width
-    m_code_width = d_matrix_width + outer_width + inner_width * layout.delta_fold_code
-    m_tight_width = d_matrix_width + outer_width + inner_width * layout.delta_fold_tight
-    m_collision_inf = 2 * ((1 << layout.r_vars) * MAX_ABS_CHALLENGE_COEFF)
 
     print_header("Main configuration estimate")
-    print("This section estimates a single parameter point for the family above.")
+    print("This section estimates a single proof-aligned parameter point for the family above.")
     print()
     print(f"main nv              = {layout.nv}")
     print(f"N_A, N_B, N_D        = {n_a}, {n_b}, {n_d}")
@@ -576,9 +559,6 @@ def print_main_configuration(
     print(f"inner_width          = {inner_width}")
     print(f"outer_width          = {outer_width}")
     print(f"d_matrix_width       = {d_matrix_width}")
-    print(f"M_code width         = {m_code_width}")
-    print(f"M_tight width        = {m_tight_width}")
-    print(f"collision_inf(M)     = {m_collision_inf}")
     print()
     print(f"{'layer':<12} {'sec_bits':>10} {'rank':>8} {'width_ring':>14} {'collision_inf':>14}")
     for estimate in estimates:
@@ -592,8 +572,6 @@ def print_main_configuration(
     print("Layer legend:")
     print("- A_fullwidth: conservative full-support proxy for the inner A layer")
     print("- B / D: outer commitment layers with digit-collision bound 7")
-    print("- M_code: folded witness width using the generic code-style delta_fold proxy")
-    print("- M_tight: folded witness width using the tighter onehot-aware delta_fold")
     print()
     print(f"overall floor        = {fmt(overall)} bits ({overall_layer})")
 
@@ -603,18 +581,18 @@ def print_sweep(rows: list[dict], cutoff: int | None) -> None:
     print("This sweep fixes N_B = N_D = 1 and searches for the largest nv with overall >= 128 bits.")
     print(
         "Columns: nv = total variables, m_vars/r_vars = layout split, "
-        "d_fold = delta_fold_tight, A/B/D/M = security bits by layer."
+        "d_fold = delta_fold_tight, A/B/D = security bits by layer."
     )
     print()
     print(
         f"{'nv':>4} {'m_vars':>7} {'r_vars':>7} {'d_fold':>7} "
-        f"{'A':>8} {'B/D':>8} {'M':>8} {'overall':>8}"
+        f"{'A':>8} {'B/D':>8} {'overall':>8}"
     )
     for row in rows:
         print(
             f"{row['nv']:>4} {row['m_vars']:>7} {row['r_vars']:>7} {row['delta_fold']:>7} "
             f"{fmt(row['A_bits']):>8} {fmt(row['BD_floor_bits']):>8} "
-            f"{fmt(row['M_bits']):>8} {fmt(row['overall_bits']):>8}"
+            f"{fmt(row['overall_bits']):>8}"
         )
     print()
     if cutoff is None:

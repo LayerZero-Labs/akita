@@ -22,29 +22,27 @@ use std::marker::PhantomData;
 pub struct PackedDigits {
     /// Number of logical elements.
     pub num_elems: usize,
-    /// Bits per element (= `log_basis` from the commitment config).
+    /// Bits per element used for packing.
     pub bits_per_elem: u32,
     /// Bit-packed two's-complement data.
     pub data: Vec<u8>,
 }
 
-/// Precomputed lookup table mapping balanced digit index → field element.
-///
-/// Wraps `FromSmallInt::digit_lut` with convenient signed-digit indexing.
-/// Index a digit `d ∈ [-b/2, b/2)` via [`get`](DigitLut::get).
+/// Signed-digit lookup table used by proof tails and recursive commitments.
 pub(crate) struct DigitLut<F> {
-    table: [F; 16],
+    table: Vec<F>,
     half_b: i8,
 }
 
 impl<F: FieldCore + FromSmallInt> DigitLut<F> {
     #[inline]
     pub(crate) fn new(log_basis: u32) -> Self {
+        assert!(log_basis > 0 && log_basis <= 5, "log_basis out of range");
         let half_b = 1i8 << (log_basis - 1);
-        Self {
-            table: F::digit_lut(log_basis),
-            half_b,
-        }
+        let table = (-(half_b as i16)..(half_b as i16))
+            .map(|digit| F::from_i64(digit as i64))
+            .collect();
+        Self { table, half_b }
     }
 
     #[inline(always)]
@@ -54,6 +52,26 @@ impl<F: FieldCore + FromSmallInt> DigitLut<F> {
 }
 
 impl PackedDigits {
+    /// Smallest `bits_per_elem` that can encode every signed digit in `w`.
+    pub fn required_bits_per_elem(w: &[i8]) -> u32 {
+        let required_half_b = w.iter().fold(1i16, |acc, &signed| {
+            let needed = if signed >= 0 {
+                signed as i16 + 1
+            } else {
+                -(signed as i16)
+            };
+            acc.max(needed)
+        });
+
+        let mut bits = 1u32;
+        let mut half_b = 1i16;
+        while half_b < required_half_b {
+            bits += 1;
+            half_b <<= 1;
+        }
+        bits
+    }
+
     /// Pack balanced i8 digits into bit-packed form.
     ///
     /// Each element must be in `[-b/2, b/2)` where `b = 2^log_basis`.
@@ -62,7 +80,7 @@ impl PackedDigits {
     ///
     /// Panics (in debug) if any element does not fit in `log_basis` bits.
     pub fn from_i8_digits(w: &[i8], log_basis: u32) -> Self {
-        assert!(log_basis > 0 && log_basis <= 7, "log_basis out of range");
+        assert!(log_basis > 0 && log_basis <= 5, "log_basis out of range");
         let half_b = 1i8 << (log_basis - 1);
 
         let bits = log_basis as usize;
@@ -92,12 +110,18 @@ impl PackedDigits {
         }
     }
 
-    /// Unpack to field elements using a precomputed lookup table.
+    /// Pack digits using at least `min_bits_per_elem`, widening if needed so
+    /// every element in `w` fits the chosen two's-complement range.
+    pub fn from_i8_digits_with_min_bits(w: &[i8], min_bits_per_elem: u32) -> Self {
+        let bits_per_elem = min_bits_per_elem.max(Self::required_bits_per_elem(w));
+        Self::from_i8_digits(w, bits_per_elem)
+    }
+
+    /// Unpack to field elements.
     pub fn to_field_elems<F: FieldCore + FromSmallInt>(&self) -> Vec<F> {
         let bits = self.bits_per_elem as usize;
         let mask = (1u8 << bits) - 1;
         let sign_bit = 1u8 << (bits - 1);
-        let lut = DigitLut::<F>::new(self.bits_per_elem);
 
         let mut out = Vec::with_capacity(self.num_elems);
         for i in 0..self.num_elems {
@@ -113,7 +137,7 @@ impl PackedDigits {
             } else {
                 raw as i8
             };
-            out.push(lut.get(signed));
+            out.push(F::from_i64(signed as i64));
         }
         out
     }
@@ -417,6 +441,54 @@ impl FlatCommitmentHint {
         HachiCommitmentHint::new(inner_opening_digits)
     }
 
+    /// Reconstruct a typed hint and eagerly recompose the cached `t` rows in
+    /// the same pass, avoiding a second traversal through `inner_opening_digits`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `num_digits_open` is zero or if any digit block
+    /// length is not divisible by `num_digits_open`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D != ring_dim`.
+    pub fn to_typed_with_t<F: CanonicalField, const D: usize>(
+        &self,
+        num_digits_open: usize,
+        log_basis: u32,
+    ) -> Result<HachiCommitmentHint<F, D>, HachiError> {
+        assert_eq!(D, self.ring_dim, "D mismatch in to_typed_with_t");
+        if num_digits_open == 0 {
+            return Err(HachiError::InvalidSetup(
+                "num_digits_open must be nonzero when reconstructing commitment hint".to_string(),
+            ));
+        }
+        let mut inner_opening_digits = Vec::with_capacity(self.block_sizes.len());
+        let mut t = Vec::with_capacity(self.block_sizes.len());
+        let mut offset = 0;
+        for &block_size in &self.block_sizes {
+            if block_size % num_digits_open != 0 {
+                return Err(HachiError::InvalidSetup(format!(
+                    "inner-opening digit block has {block_size} planes, expected a multiple of num_digits_open={num_digits_open}",
+                )));
+            }
+            let mut block = Vec::with_capacity(block_size);
+            for _ in 0..block_size {
+                let mut plane = [0i8; D];
+                plane.copy_from_slice(&self.data[offset..offset + D]);
+                offset += D;
+                block.push(plane);
+            }
+            let t_block = block
+                .chunks(num_digits_open)
+                .map(|digits| CyclotomicRing::gadget_recompose_pow2_i8(digits, log_basis))
+                .collect();
+            inner_opening_digits.push(block);
+            t.push(t_block);
+        }
+        Ok(HachiCommitmentHint::with_t(inner_opening_digits, t))
+    }
+
     /// Ring dimension stored in this hint.
     pub fn ring_dim(&self) -> usize {
         self.ring_dim
@@ -554,25 +626,39 @@ pub struct HachiStage2Proof<F: FieldCore> {
 /// ring dimension recorded. Use [`Self::y_ring_typed`], [`Self::v_typed`], and
 /// [`Self::w_commitment_typed`] to reconstruct typed ring elements.
 ///
-/// One recursive Hachi level proof, split into `stage1` and `stage2` payloads.
+/// One recursive Hachi level proof with inline stage-1 and stage-2 sumchecks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiLevelProof<F: FieldCore> {
     /// `y_ring` from the §3.1 reduction (ring dim = current level's D).
     pub y_ring: FlatRingVec<F>,
     /// `v = D · ŵ` (ring dim = current level's D).
     pub v: FlatRingVec<F>,
-    /// Stage-1 proof payload.
+    /// Stage-1 norm-check payload.
     pub stage1: HachiStage1Proof<F>,
-    /// Stage-2 proof payload.
+    /// Stage-2 fused payload.
     pub stage2: HachiStage2Proof<F>,
 }
 
 impl<F: FieldCore> HachiLevelProof<F> {
-    /// Construct from typed ring elements for the current level and a
-    /// pre-erased `FlatRingVec` for the w-commitment (which may be at a
-    /// different D).
-    #[allow(clippy::too_many_arguments)]
+    /// Construct from typed ring elements for the current level and its
+    /// inline two-stage norm-check payloads.
     pub(crate) fn new<const D: usize>(
+        y_ring: CyclotomicRing<F, D>,
+        v: Vec<CyclotomicRing<F, D>>,
+        stage1: HachiStage1Proof<F>,
+        stage2: HachiStage2Proof<F>,
+    ) -> Self {
+        Self {
+            y_ring: FlatRingVec::from_single(&y_ring),
+            v: FlatRingVec::from_ring_elems(&v),
+            stage1,
+            stage2,
+        }
+    }
+
+    /// Construct a level proof for the two-stage norm-check.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_two_stage<const D: usize>(
         y_ring: CyclotomicRing<F, D>,
         v: Vec<CyclotomicRing<F, D>>,
         stage1_sumcheck: SumcheckProof<F>,
@@ -581,19 +667,19 @@ impl<F: FieldCore> HachiLevelProof<F> {
         next_w_commitment: FlatRingVec<F>,
         next_w_eval: F,
     ) -> Self {
-        Self {
-            y_ring: FlatRingVec::from_single(&y_ring),
-            v: FlatRingVec::from_ring_elems(&v),
-            stage1: HachiStage1Proof {
+        Self::new::<D>(
+            y_ring,
+            v,
+            HachiStage1Proof {
                 sumcheck: stage1_sumcheck,
                 s_claim: stage1_s_claim,
             },
-            stage2: HachiStage2Proof {
+            HachiStage2Proof {
                 sumcheck: stage2_sumcheck,
                 next_w_commitment,
                 next_w_eval,
             },
-        }
+        )
     }
 
     /// Ring dimension of y_ring and v (current level).
@@ -644,13 +730,18 @@ impl<F: FieldCore> HachiLevelProof<F> {
         self.v.try_to_vec()
     }
 
+    /// Commitment to the next witness `w`.
+    pub fn next_w_commitment(&self) -> &FlatRingVec<F> {
+        &self.stage2.next_w_commitment
+    }
+
     /// Reconstruct typed `w_commitment`.
     ///
     /// # Panics
     ///
     /// Panics if `D` does not match the stored ring dimension.
     pub fn w_commitment_typed<const D: usize>(&self) -> RingCommitment<F, D> {
-        self.stage2.next_w_commitment.to_ring_commitment()
+        self.next_w_commitment().to_ring_commitment()
     }
 
     /// Reconstruct typed `w_commitment`, returning `InvalidProof` on shape mismatch.
@@ -662,13 +753,14 @@ impl<F: FieldCore> HachiLevelProof<F> {
     pub fn try_w_commitment_typed<const D: usize>(
         &self,
     ) -> Result<RingCommitment<F, D>, HachiError> {
-        self.stage2.next_w_commitment.try_to_ring_commitment()
+        self.next_w_commitment().try_to_ring_commitment()
+    }
+
+    /// Claimed evaluation of the next witness `w` at the norm-check output point.
+    pub fn next_w_eval(&self) -> F {
+        self.stage2.next_w_eval
     }
 }
-
-// ---------------------------------------------------------------------------
-// D-erased Labrador proof types for HachiProofTail
-// ---------------------------------------------------------------------------
 
 /// D-erased Labrador level proof.
 ///
@@ -1365,9 +1457,8 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
             .serialize_with_mode(&mut writer, compress)
     }
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.y_ring.serialized_size(compress)
-            + self.v.serialized_size(compress)
-            + self.stage1.sumcheck.serialized_size(compress)
+        let base = self.y_ring.serialized_size(compress) + self.v.serialized_size(compress);
+        base + self.stage1.sumcheck.serialized_size(compress)
             + self.stage1.s_claim.serialized_size(compress)
             + self.stage2.sumcheck.serialized_size(compress)
             + self.stage2.next_w_commitment.serialized_size(compress)
@@ -1405,25 +1496,20 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
     ) -> Result<Self, SerializationError> {
         let y_ring = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?;
         let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?;
-        let stage1_sumcheck =
-            SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?;
-        let stage1_s_claim = F::deserialize_with_mode(&mut reader, compress, validate)?;
+        let stage1 = HachiStage1Proof {
+            sumcheck: SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?,
+            s_claim: F::deserialize_with_mode(&mut reader, compress, validate)?,
+        };
+        let stage2 = HachiStage2Proof {
+            sumcheck: SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?,
+            next_w_commitment: FlatRingVec::deserialize_with_mode(&mut reader, compress, validate)?,
+            next_w_eval: F::deserialize_with_mode(&mut reader, compress, validate)?,
+        };
         let out = Self {
             y_ring,
             v,
-            stage1: HachiStage1Proof {
-                sumcheck: stage1_sumcheck,
-                s_claim: stage1_s_claim,
-            },
-            stage2: HachiStage2Proof {
-                sumcheck: SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?,
-                next_w_commitment: FlatRingVec::deserialize_with_mode(
-                    &mut reader,
-                    compress,
-                    validate,
-                )?,
-                next_w_eval: F::deserialize_with_mode(&mut reader, compress, validate)?,
-            },
+            stage1,
+            stage2,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;

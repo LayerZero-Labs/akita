@@ -3,6 +3,7 @@
 use crate::error::HachiError;
 use crate::primitives::serialization::Compress;
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
+use crate::protocol::labrador::challenge::labrador_second_moment;
 use crate::protocol::labrador::guardrails::LABRADOR_MAX_LEVELS;
 use crate::protocol::labrador::types::{LabradorReductionConfig, LabradorWitness};
 use crate::{CanonicalField, FieldCore, HachiSerialize};
@@ -10,8 +11,6 @@ use std::f64::consts::{E, PI};
 const LABRADOR_LOGDELTA: f64 = 0.00639138757765197; // log2(1.00444)
 const LABRADOR_T: f64 = 14.0;
 const LABRADOR_SLACK: f64 = 2.0;
-const LABRADOR_TAU1: f64 = 32.0;
-const LABRADOR_TAU2: f64 = 8.0;
 
 /// Full fold-level plan: security parameters plus witness reshaping layout.
 #[derive(Debug, Clone)]
@@ -329,12 +328,12 @@ fn plan_fold_with_profile<F: FieldCore + CanonicalField + HachiSerialize, const 
     search_best_estimate_with_profile::<F, D>(profile, tail).map(|estimate| estimate.plan)
 }
 
-fn coeff_varz_cap(coeff_bit_bound: usize) -> Option<f64> {
+fn coeff_varz_cap<const D: usize>(coeff_bit_bound: usize) -> Option<f64> {
     let exp = coeff_bit_bound.checked_mul(2)?;
     if exp > i32::MAX as usize {
         return None;
     }
-    let cap = 2f64.powi(exp as i32) / 12.0 * (LABRADOR_TAU1 + 4.0 * LABRADOR_TAU2);
+    let cap = 2f64.powi(exp as i32) / 12.0 * labrador_second_moment(D) as f64;
     (cap.is_finite() && cap > 0.0).then_some(cap)
 }
 
@@ -362,9 +361,9 @@ fn search_best_estimate_with_profile<
         let virtual_row_count_f = virtual_row_count as f64;
 
         let mut varz = profile.norm_sum / (virtual_row_len as f64 * d);
-        varz *= LABRADOR_TAU1 + 4.0 * LABRADOR_TAU2;
+        varz *= labrador_second_moment(D) as f64;
         if let Some(coeff_bit_bound) = profile.coeff_bit_bound {
-            if let Some(varz_cap) = coeff_varz_cap(coeff_bit_bound) {
+            if let Some(varz_cap) = coeff_varz_cap::<D>(coeff_bit_bound) {
                 varz = varz.min(varz_cap);
             }
         }
@@ -552,9 +551,9 @@ fn estimate_next_norm_sum_for_config<F: CanonicalField, const D: usize>(
     let logq_bits = logq_bits::<F>();
     let d = D as f64;
     let mut varz = profile.norm_sum / (virtual_row_len as f64 * d);
-    varz *= LABRADOR_TAU1 + 4.0 * LABRADOR_TAU2;
+    varz *= labrador_second_moment(D) as f64;
     if let Some(coeff_bit_bound) = profile.coeff_bit_bound {
-        if let Some(varz_cap) = coeff_varz_cap(coeff_bit_bound) {
+        if let Some(varz_cap) = coeff_varz_cap::<D>(coeff_bit_bound) {
             varz = varz.min(varz_cap);
         }
     }
@@ -995,12 +994,17 @@ mod tests {
         const MAX_NUM_VARS: usize = 25;
 
         let layout = Cfg::commitment_layout(MAX_NUM_VARS).unwrap();
-        let rank = Cfg::N_D + Cfg::N_B + 2 + Cfg::N_A;
+        let level_params = Cfg::level_params(crate::protocol::commitment::HachiScheduleInputs {
+            max_num_vars: MAX_NUM_VARS,
+            level: 0,
+            current_w_len: layout.num_blocks * layout.block_len * D128,
+        });
+        let rank = level_params.n_d + level_params.n_b + 2 + level_params.n_a;
         let width_ring_elems = layout.d_matrix_width
             + layout.outer_width
             + layout.inner_width * layout.num_digits_fold;
         let beta_inf = (1usize << layout.r_vars)
-            * Cfg::challenge_weight_for_ring_dim(D128)
+            * Cfg::stage1_challenge_config(D128).l1_mass()
             * (1usize << (layout.log_basis - 1));
         let collision_inf = (2 * beta_inf) as f64;
         let width_coords = width_ring_elems * D128;

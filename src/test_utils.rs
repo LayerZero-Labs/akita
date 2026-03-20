@@ -6,12 +6,12 @@
 
 use std::array::from_fn;
 
-use crate::algebra::{CyclotomicRing, Fp64};
+use crate::algebra::{CyclotomicRing, Fp64, SparseChallengeConfig};
 use crate::error::HachiError;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::{
-    compute_num_digits, compute_num_digits_fold, CommitmentConfig, DecompositionParams,
-    HachiCommitmentLayout,
+    compute_num_digits, compute_num_digits_fold, CommitmentConfig, CommitmentEnvelope,
+    DecompositionParams, HachiCommitmentLayout,
 };
 use crate::{FieldCore, FromSmallInt};
 
@@ -26,16 +26,28 @@ pub struct TinyConfig;
 
 impl CommitmentConfig for TinyConfig {
     const D: usize = 64;
-    const N_A: usize = 2;
-    const N_B: usize = 2;
-    const N_D: usize = 2;
-    const CHALLENGE_WEIGHT: usize = 3;
 
     fn decomposition() -> DecompositionParams {
         DecompositionParams {
             log_basis: 3,
             log_commit_bound: 32,
             log_open_bound: None,
+        }
+    }
+
+    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
+        CommitmentEnvelope {
+            max_n_a: 2,
+            max_n_b: 2,
+            max_n_d: 2,
+        }
+    }
+
+    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        assert_eq!(d, Self::D, "unsupported ring dim {d}");
+        SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
         }
     }
 
@@ -53,7 +65,7 @@ pub fn log_basis() -> u32 {
     TinyConfig::decomposition().log_basis
 }
 /// Inner Ajtai row count from `TinyConfig`.
-pub const N_A: usize = TinyConfig::N_A;
+pub const N_A: usize = 2;
 
 /// Decomposition depth for original coefficients under `TinyConfig`.
 pub fn num_digits_commit() -> usize {
@@ -71,7 +83,11 @@ pub fn num_digits_open() -> usize {
 /// Decomposition depth for the folded witness `z_pre` under `TinyConfig`.
 pub fn num_digits_fold() -> usize {
     let d = TinyConfig::decomposition();
-    compute_num_digits_fold(1, TinyConfig::CHALLENGE_WEIGHT, d.log_basis)
+    compute_num_digits_fold(
+        1,
+        TinyConfig::stage1_challenge_config(D).l1_mass(),
+        d.log_basis,
+    )
 }
 
 /// Dense matrix-vector multiply over cyclotomic rings.

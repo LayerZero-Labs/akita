@@ -415,7 +415,7 @@ fn stage1_b8_s_digit_from_compact_w(w: i8) -> usize {
 }
 
 #[inline]
-fn stage1_b8_s_digit_from_compact_s(s: i32) -> usize {
+fn stage1_b8_s_digit_from_compact_s(s: i16) -> usize {
     match s {
         0 => 0,
         2 => 1,
@@ -613,7 +613,7 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact<
 pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
     E: FieldCore + FromSmallInt + HasUnreducedOps,
 >(
-    s_compact: &[i32],
+    s_compact: &[i16],
     tau0: &[E],
     b: usize,
     live_x_cols: usize,
@@ -1195,8 +1195,8 @@ pub(crate) fn recover_stage2_norm_grid_from_claim<E: FieldCore>(
 
 /// Whether stage 2 has enough x-rounds to use the 2-round prefix path.
 #[inline]
-pub(crate) fn can_use_stage2_two_round_prefix(num_u: usize) -> bool {
-    num_u >= 2
+pub(crate) fn can_use_stage2_two_round_prefix(num_u: usize, b: usize) -> bool {
+    num_u >= 2 && b == 8
 }
 
 /// Build the stage-2 first-two-round bivariate-skip proof from the compact witness
@@ -1207,6 +1207,7 @@ pub(crate) fn can_use_stage2_two_round_prefix(num_u: usize) -> bool {
     skip_all,
     name = "two_round_prefix::build_stage2_bivariate_skip_proof_from_compact"
 )]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
     E: FieldCore + FromSmallInt + HasUnreducedOps,
 >(
@@ -1214,11 +1215,12 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
     alpha_evals_y: &[E],
     m_evals_x: &[E],
     r_stage1: &[E],
+    b: usize,
     live_x_cols: usize,
     num_u: usize,
     num_l: usize,
 ) -> Option<Stage2BivariateSkipProof<E>> {
-    if !can_use_stage2_two_round_prefix(num_u) {
+    if !can_use_stage2_two_round_prefix(num_u, b) {
         return None;
     }
 
@@ -1679,16 +1681,18 @@ mod tests {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_stage2_bivariate_skip_proof_from_compact_reference(
         w_compact: &[i8],
         alpha_evals_y: &[F],
         m_evals_x: &[F],
         r_stage1: &[F],
+        b: usize,
         live_x_cols: usize,
         num_u: usize,
         num_l: usize,
     ) -> Option<Stage2BivariateSkipProof<F>> {
-        if !can_use_stage2_two_round_prefix(num_u) {
+        if !can_use_stage2_two_round_prefix(num_u, b) {
             return None;
         }
 
@@ -1889,6 +1893,7 @@ mod tests {
                 &alpha_evals_y,
                 &m_evals_x,
                 &r_stage1,
+                8,
                 5,
                 3,
                 1,
@@ -1898,9 +1903,70 @@ mod tests {
                 &alpha_evals_y,
                 &m_evals_x,
                 &r_stage1,
+                8,
                 5,
                 3,
                 1,
+            ),
+        );
+    }
+
+    #[test]
+    fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() {
+        let live_x_cols = 34_519usize;
+        let num_u = 16usize;
+        let num_l = 6usize;
+        let y_len = 1usize << num_l;
+        let w_compact: Vec<i8> = (0..(live_x_cols * y_len))
+            .map(|i| ((i * 37 + 11) % 8) as i8 - 4)
+            .collect();
+        let alpha_evals_y: Vec<F> = (0..y_len)
+            .map(|i| {
+                F::from_u64(
+                    (i as u64)
+                        .wrapping_mul(0x9e37_79b9)
+                        .wrapping_add(0x1234_5678),
+                )
+            })
+            .collect();
+        let m_evals_x: Vec<F> = (0..(1usize << num_u))
+            .map(|i| {
+                F::from_u64(
+                    (i as u64)
+                        .wrapping_mul(0x85eb_ca6b)
+                        .wrapping_add(0xc2b2_ae35),
+                )
+            })
+            .collect();
+        let r_stage1: Vec<F> = (0..(num_u + num_l))
+            .map(|i| {
+                F::from_u64(
+                    (i as u64)
+                        .wrapping_mul(0x27d4_eb2d)
+                        .wrapping_add(0x1656_67b1),
+                )
+            })
+            .collect();
+        assert_eq!(
+            build_stage2_bivariate_skip_proof_from_compact(
+                &w_compact,
+                &alpha_evals_y,
+                &m_evals_x,
+                &r_stage1,
+                8,
+                live_x_cols,
+                num_u,
+                num_l,
+            ),
+            build_stage2_bivariate_skip_proof_from_compact_reference(
+                &w_compact,
+                &alpha_evals_y,
+                &m_evals_x,
+                &r_stage1,
+                8,
+                live_x_cols,
+                num_u,
+                num_l,
             ),
         );
     }

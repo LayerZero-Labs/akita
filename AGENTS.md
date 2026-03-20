@@ -9,27 +9,63 @@ Hachi is a lattice-based polynomial commitment scheme (PCS) with transparent set
 ## Essential Commands
 
 ```bash
-cargo clippy --all --message-format=short -q -- -D warnings
 cargo fmt -q
-cargo test          # no nextest yet
+cargo clippy --all --message-format=short -q -- -D warnings
+cargo test
 ```
 
 ## Crate Structure
 
 Two workspace members: `hachi-pcs` (root) and `derive` (proc macros).
 
-- `src/primitives/` — Core traits: `FieldCore`, `Module`, `MultilinearLagrange`, `Transcript`, serialization
-- `src/algebra/` — Concrete backends: prime fields, extension fields, cyclotomic rings, NTT, domains
-- `src/protocol/` — Protocol layer: commitment, prover, verifier, opening (ring-switch), challenges, transcript
-- `src/error.rs` — Error types
+- `src/primitives/` — field/module traits, multilinear representations, serialization, transcripts
+- `src/algebra/` — concrete fields, rings, NTT, domains, polynomial utilities
+- `src/protocol/commitment/` — configs, layouts, schedules, commitments, onehot helpers, utilities
+- `src/protocol/commitment_scheme.rs` — top-level `HachiCommitmentScheme` commit/prove/verify wiring
+- `src/protocol/sumcheck/` — generic sumcheck plus `hachi_stage1`, `hachi_stage2`, `two_round_prefix`
+- `src/protocol/labrador/` — recursive Labrador prover/verifier, folding, aggregation, JL, setup
+- `src/protocol/labrador_handoff.rs` — bridge from Hachi proof state into Labrador
+- `src/protocol/proof.rs` — proof object layout and flattened proof/witness encodings
+- `src/protocol/opening_point.rs` — field-to-ring opening reduction
+- `src/protocol/ring_switch.rs` — ring-switch proof logic
+- `src/protocol/hachi_poly_ops/` — dense and one-hot polynomial operations
+- `src/protocol/dispatch.rs` — protocol orchestration helpers
+- `src/protocol/challenges/` — sparse challenge sampling
+- `src/protocol/transcript/` — Fiat-Shamir transcript helpers and labels
+- `src/protocol/prg.rs` — protocol PRG utilities
+- `src/error.rs` — error types
+- `examples/profile.rs` — profiling and proof-size harness
+- `tests/` — end-to-end protocol tests
 
 ## Key Abstractions
 
-- `CommitmentScheme` / `StreamingCommitmentScheme` — top-level PCS traits
-- `FieldCore` + `PseudoMersenneField` + `Module` — arithmetic over lattice-friendly fields and rings
-- `MultilinearLagrange` — multilinear polynomial in Lagrange basis
-- `Transcript` — Fiat-Shamir
+- `HachiCommitmentScheme` — top-level PCS `commit` / `prove` / `verify`
+- `CommitmentConfig` + `HachiCommitmentLayout` — recursion schedule and layout knobs
+- `DensePoly`, `OneHotPoly`, `HachiPolyOps` — polynomial backends consumed by the scheme
+- `HachiProof`, `HachiLevelProof`, `HachiProofTail` — serialized proof structure
+- `Blake2bTranscript`, `Transcript` — Fiat-Shamir layer
+- `LabradorProof`, `LabradorWitness`, `LabradorSetup` — recursive handoff subprotocol
 
 ## Feature Flags
 
-- `parallel` — Rayon parallelization
+- `parallel` — Rayon parallelization (default)
+- `disk-persistence` — disk-backed persistence paths used by some commitment flows
+
+## Profiling
+
+Canonical run:
+
+```bash
+HACHI_MODE=onehot HACHI_NUM_VARS=32 cargo run --release --example profile
+```
+
+Knobs:
+
+- `HACHI_MODE=full|onehot|logbasis|all|compare_onehot|compare_logbasis|compare_basis`
+- `HACHI_NUM_VARS=<n>` — number of variables, default `25`
+- `HACHI_PROFILE_TRACE=0|1` — write a Perfetto JSON trace to `profile_traces/`, default `1`
+- `HACHI_PROFILE_LOG=<filter>` — tracing filter, default `trace`
+- `HACHI_PROFILE_ANSI=0|1` — ANSI log colors, default `1`
+- `HACHI_PROFILE_SPAN_CLOSES=0|1` — emit close-span timing events, default `1`
+- `HACHI_ALLOW_DEBUG_PROFILE=1` — bypass the `--release` guard for debugging only
+- Default features enable `parallel`; use `RAYON_NUM_THREADS=<n>` to cap threads or `--no-default-features` to profile without Rayon
