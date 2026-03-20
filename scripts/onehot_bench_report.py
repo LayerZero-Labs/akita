@@ -88,15 +88,6 @@ def require_int(summary: dict[str, object], key: str) -> int:
     return int(value)
 
 
-def derive_hachi_labrador_split(total: float, hachi: float, labrador: float) -> tuple[float, float]:
-    if hachi == 0.0 and labrador == 0.0:
-        return total, 0.0
-    if hachi == 0.0:
-        return max(total - labrador, 0.0), labrador
-    if labrador == 0.0:
-        return hachi, max(total - hachi, 0.0)
-    return hachi, labrador
-
 
 def benchmark_name(mode: str, num_vars: int) -> str:
     if mode == "onehot":
@@ -124,18 +115,10 @@ def extract_summary(log_text: str, mode: str, num_vars: int) -> dict[str, object
             summary["prove_hachi_s"] = float(kvs["elapsed_s"])
             if "levels" in kvs:
                 summary["hachi_levels"] = int(kvs["levels"])
-        elif "labrador prove complete" in line:
-            summary["prove_labrador_s"] = float(kvs["elapsed_s"])
-            if "levels" in kvs:
-                summary["labrador_levels"] = int(kvs["levels"])
         elif " INFO prove" in line and kvs.get("label") == mode:
             summary["prove_total_s"] = float(kvs["elapsed_s"])
         elif "hachi verify complete" in line:
             summary["verify_hachi_s"] = float(kvs["elapsed_s"])
-        elif "labrador verify complete" in line:
-            summary["verify_labrador_s"] = float(kvs["elapsed_s"])
-            if "levels" in kvs and "labrador_levels" not in summary:
-                summary["labrador_levels"] = int(kvs["levels"])
         elif "verify OK" in line and kvs.get("label") == mode:
             summary["verify_total_s"] = float(kvs["elapsed_s"])
         elif "proof summary" in line and kvs.get("label") == mode:
@@ -144,16 +127,6 @@ def extract_summary(log_text: str, mode: str, num_vars: int) -> dict[str, object
             summary["tail_bytes"] = int(kvs["tail_bytes"])
             if "levels" in kvs and "hachi_levels" not in summary:
                 summary["hachi_levels"] = int(kvs["levels"])
-        elif "estimated tail comparison" in line:
-            if "selected_tail" in kvs:
-                summary["selected_tail"] = kvs["selected_tail"]
-            if "packed_direct_bytes" in kvs:
-                summary["packed_direct_bytes"] = int(kvs["packed_direct_bytes"])
-            if "estimated_labrador_tail_bytes" in kvs:
-                summary["estimated_labrador_tail_bytes"] = int(
-                    kvs["estimated_labrador_tail_bytes"]
-                )
-
     for index, pattern in enumerate(RSS_PATTERNS):
         rss_match = pattern.search(log_text)
         if rss_match:
@@ -163,25 +136,6 @@ def extract_summary(log_text: str, mode: str, num_vars: int) -> dict[str, object
             summary["max_rss_kib"] = rss_value
             break
 
-    prove_total = require_float(summary, "prove_total_s")
-    prove_hachi = float(summary.get("prove_hachi_s", 0.0))
-    prove_labrador = float(summary.get("prove_labrador_s", 0.0))
-    summary["prove_hachi_s"], summary["prove_labrador_s"] = derive_hachi_labrador_split(
-        prove_total,
-        prove_hachi,
-        prove_labrador,
-    )
-
-    verify_total = require_float(summary, "verify_total_s")
-    verify_hachi = float(summary.get("verify_hachi_s", 0.0))
-    verify_labrador = float(summary.get("verify_labrador_s", 0.0))
-    summary["verify_hachi_s"], summary["verify_labrador_s"] = derive_hachi_labrador_split(
-        verify_total,
-        verify_hachi,
-        verify_labrador,
-    )
-
-    summary.setdefault("selected_tail", "unknown")
     return summary
 
 
@@ -273,10 +227,8 @@ TIME_METRICS = [
     Metric("setup_s", "Setup", "s", fmt_seconds),
     Metric("commit_s", "Commit", "s", fmt_seconds),
     Metric("prove_hachi_s", "Prove (Hachi)", "s", fmt_seconds),
-    Metric("prove_labrador_s", "Prove (Labrador)", "s", fmt_seconds),
     Metric("prove_total_s", "Prove (Total)", "s", fmt_seconds),
     Metric("verify_hachi_s", "Verify (Hachi)", "s", fmt_seconds),
-    Metric("verify_labrador_s", "Verify (Labrador)", "s", fmt_seconds),
     Metric("verify_total_s", "Verify (Total)", "s", fmt_seconds),
     Metric("max_rss_kib", "Max RSS", "MiB", fmt_mib),
 ]
@@ -372,13 +324,10 @@ def render_report(args: argparse.Namespace) -> int:
             print(row)
 
     print()
-    print(f"- Tail: `{current.get('selected_tail', 'unknown')}`")
     if current.get("proof_size_bytes") is not None:
         print(f"- Proof size: `{fmt_bytes(float(current['proof_size_bytes']))} B`")
     if current.get("hachi_levels") is not None:
         print(f"- Hachi levels: `{current['hachi_levels']}`")
-    if current.get("labrador_levels") is not None:
-        print(f"- Labrador levels: `{current['labrador_levels']}`")
 
     return 0
 

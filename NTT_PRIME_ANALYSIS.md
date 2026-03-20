@@ -7,7 +7,7 @@ This note records the current analysis for small NTT primes and CRT coverage tar
 - NIST ML-KEM: `paper/standards/NIST.FIPS.203.pdf`
 - NIST ML-DSA: `paper/standards/NIST.FIPS.204.pdf`
 - Current small-prime table: `src/algebra/ntt/tables.rs`
-- Labrador generator heuristic: `../labrador/data.py`
+- Original generator heuristic: `data.py` (external)
 
 ## Why does `2D` divide `p - 1`?
 
@@ -103,7 +103,7 @@ Two common thresholds:
 
 1. Minimal uniqueness target:
    - `P = prod(p_i) > q`
-2. Labrador conservative heuristic:
+2. Conservative heuristic:
    - `P > 128 * q^2` (from `data.py`, with `FIXME` comment)
 
 ### Limb counts at `D = 64` with current small-prime pool
@@ -120,9 +120,9 @@ Two common thresholds:
 
 - Only one qualifying prime (`12289`) under `p < 2^14`, so neither threshold is achievable.
 
-## What is Labrador's safety margin doing?
+## What is the safety margin doing?
 
-In Labrador code, prime selection stops at:
+In the original reference code, prime selection stops at:
 
 - `P > 128 * q^2`
 

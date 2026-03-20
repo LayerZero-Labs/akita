@@ -6,7 +6,6 @@ use crate::algebra::ntt::{MontCoeff, PrimeWidth};
 use crate::algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
 };
-use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter};
@@ -15,49 +14,10 @@ use std::array::from_fn;
 use std::mem::size_of;
 
 use super::crt_ntt::NttSlotCache;
+#[cfg(test)]
 use super::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
-
-#[inline(always)]
-fn try_centered_i8<F: CanonicalField>(coeff: F, q: u128, half_q: u128) -> Option<i8> {
-    let canonical = coeff.to_canonical_u128();
-    let centered = if canonical > half_q {
-        -((q - canonical) as i128)
-    } else {
-        canonical as i128
-    };
-    if (i8::MIN as i128..=i8::MAX as i128).contains(&centered) {
-        Some(centered as i8)
-    } else {
-        None
-    }
-}
-
-const FAST_I8_DIGIT_MIN: i8 = -8;
-const FAST_I8_DIGIT_MAX: i8 = 7;
-
-pub(crate) fn try_centered_i8_cache_from_ring_coeffs<F: CanonicalField, const D: usize>(
-    coeffs: &[CyclotomicRing<F, D>],
-) -> Option<Vec<[i8; D]>> {
-    let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    let mut out = Vec::with_capacity(coeffs.len());
-
-    for ring in coeffs {
-        let mut digits = [0i8; D];
-        for (dst, coeff) in digits.iter_mut().zip(ring.coeffs.iter()) {
-            let centered = try_centered_i8(*coeff, q, half_q)?;
-            // The small-digit CRT+NTT fast path uses a fixed LUT for [-8, 7].
-            // Larger centered coefficients must fall back to the generic path.
-            if !(FAST_I8_DIGIT_MIN..=FAST_I8_DIGIT_MAX).contains(&centered) {
-                return None;
-            }
-            *dst = centered;
-        }
-        out.push(digits);
-    }
-
-    Some(out)
-}
+#[cfg(test)]
+use crate::error::HachiError;
 
 #[cfg(test)]
 pub(crate) fn mat_vec_mul_unchecked<F: FieldCore + CanonicalField, const D: usize>(
@@ -86,6 +46,7 @@ fn accumulate_pointwise_product_into<W: PrimeWidth, const K: usize, const D: usi
     acc.add_assign_pointwise_mul_with_params(lhs, rhs, params);
 }
 
+#[cfg(test)]
 fn precompute_dense_mat_ntt_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -102,21 +63,6 @@ fn precompute_dense_mat_ntt_with_params<
                 .collect()
         })
         .collect()
-}
-
-fn mat_vec_mul_dense_i8_many_with_params<
-    F: FieldCore + CanonicalField,
-    W: PrimeWidth,
-    const K: usize,
-    const D: usize,
->(
-    mat: &[Vec<CyclotomicRing<F, D>>],
-    vecs: &[Vec<[i8; D]>],
-    params: &CrtNttParamSet<W, K, D>,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    let ntt_mat = precompute_dense_mat_ntt_with_params(mat, params);
-    let blocks: Vec<&[[i8; D]]> = vecs.iter().map(Vec::as_slice).collect();
-    mat_vec_mul_digits_i8_with_params(&ntt_mat, &blocks, params)
 }
 
 #[cfg(test)]
@@ -206,191 +152,6 @@ pub(crate) fn mat_vec_mul_crt_ntt_many<F: FieldCore + CanonicalField, const D: u
         ProtocolCrtNttParams::Q32(p) => mat_vec_mul_dense_many_with_params(mat, vecs, p),
         ProtocolCrtNttParams::Q64(p) => mat_vec_mul_dense_many_with_params(mat, vecs, p),
         ProtocolCrtNttParams::Q128(p) => mat_vec_mul_dense_many_with_params(mat, vecs, p),
-    };
-    Ok(out)
-}
-
-#[tracing::instrument(skip_all, name = "mat_vec_mul_crt_ntt_i8_many")]
-pub(crate) fn mat_vec_mul_crt_ntt_i8_many<F: FieldCore + CanonicalField, const D: usize>(
-    mat: &[Vec<CyclotomicRing<F, D>>],
-    vecs: &[Vec<[i8; D]>],
-) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError> {
-    let params = select_crt_ntt_params::<F, D>()?;
-    let out = match &params {
-        ProtocolCrtNttParams::Q32(p) => mat_vec_mul_dense_i8_many_with_params(mat, vecs, p),
-        ProtocolCrtNttParams::Q64(p) => mat_vec_mul_dense_i8_many_with_params(mat, vecs, p),
-        ProtocolCrtNttParams::Q128(p) => mat_vec_mul_dense_i8_many_with_params(mat, vecs, p),
-    };
-    Ok(out)
-}
-
-fn mat_vec_mul_i8_single_with_params<
-    F: FieldCore + CanonicalField,
-    W: PrimeWidth,
-    const K: usize,
-    const D: usize,
->(
-    row: &[CyclotomicRing<F, D>],
-    vec: &[[i8; D]],
-    params: &CrtNttParamSet<W, K, D>,
-) -> CyclotomicRing<F, D> {
-    let width = row.len();
-    if width == 0 {
-        return CyclotomicRing::<F, D>::zero();
-    }
-
-    let ntt_row: Vec<CyclotomicCrtNtt<W, K, D>> = cfg_iter!(row)
-        .map(|a| CyclotomicCrtNtt::from_ring_with_params(a, params))
-        .collect();
-    let lut = DigitMontLut::new(params);
-    let tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
-    let num_tiles = width.div_ceil(tw);
-
-    let final_acc: CyclotomicCrtNtt<W, K, D> = cfg_fold_reduce!(
-        0..num_tiles,
-        || CyclotomicCrtNtt::<W, K, D>::zero(),
-        |mut acc: CyclotomicCrtNtt<W, K, D>, tile_idx| {
-            let tile_start = tile_idx * tw;
-            let tile_end = (tile_start + tw).min(width);
-            for (j, digit) in vec[tile_start..tile_end].iter().enumerate() {
-                if is_zero_plane(digit) {
-                    continue;
-                }
-                let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
-                accumulate_pointwise_product_into(
-                    &mut acc,
-                    &ntt_row[tile_start + j],
-                    &ntt_d,
-                    params,
-                );
-            }
-            acc
-        },
-        |mut a: CyclotomicCrtNtt<W, K, D>, b| {
-            add_ntt_into(&mut a, &b, params);
-            a
-        }
-    );
-    final_acc.to_ring_with_params(params)
-}
-
-#[tracing::instrument(skip_all, name = "mat_vec_mul_crt_ntt_i8_single")]
-pub(crate) fn mat_vec_mul_crt_ntt_i8_single<F: FieldCore + CanonicalField, const D: usize>(
-    row: &[CyclotomicRing<F, D>],
-    vec: &[[i8; D]],
-) -> Result<CyclotomicRing<F, D>, HachiError> {
-    if row.len() != vec.len() {
-        return Err(HachiError::InvalidInput(
-            "single i8 mat-vec requires equal row/vector width".to_string(),
-        ));
-    }
-    let params = select_crt_ntt_params::<F, D>()?;
-    let out = match &params {
-        ProtocolCrtNttParams::Q32(p) => mat_vec_mul_i8_single_with_params(row, vec, p),
-        ProtocolCrtNttParams::Q64(p) => mat_vec_mul_i8_single_with_params(row, vec, p),
-        ProtocolCrtNttParams::Q128(p) => mat_vec_mul_i8_single_with_params(row, vec, p),
-    };
-    Ok(out)
-}
-
-fn mat_vec_mul_i8_labrador_cross_with_params<
-    F: FieldCore + CanonicalField,
-    W: PrimeWidth,
-    const K: usize,
-    const D: usize,
->(
-    mat: &[Vec<CyclotomicRing<F, D>>],
-    vecs: &[Vec<[i8; D]>],
-    params: &CrtNttParamSet<W, K, D>,
-) -> Vec<CyclotomicRing<F, D>> {
-    let r = mat.len();
-    let pair_count = r * (r + 1) / 2;
-    if r == 0 {
-        return Vec::new();
-    }
-    let width = mat.first().map_or(0, Vec::len);
-    if width == 0 {
-        return vec![CyclotomicRing::<F, D>::zero(); pair_count];
-    }
-
-    let ntt_mat = precompute_dense_mat_ntt_with_params(mat, params);
-    let lut = DigitMontLut::new(params);
-    let vecs_ntt: Vec<Vec<CyclotomicCrtNtt<W, K, D>>> = cfg_iter!(vecs)
-        .map(|vec| {
-            vec.iter()
-                .map(|digit| CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut))
-                .collect()
-        })
-        .collect();
-
-    let pairs: Vec<(usize, usize)> = (0..r).flat_map(|i| (i..r).map(move |j| (i, j))).collect();
-    cfg_into_iter!(pairs)
-        .map(|(i, j)| {
-            let mut acc_ij = CyclotomicCrtNtt::<W, K, D>::zero();
-            if i == j {
-                for col in 0..width {
-                    accumulate_pointwise_product_into(
-                        &mut acc_ij,
-                        &ntt_mat[i][col],
-                        &vecs_ntt[i][col],
-                        params,
-                    );
-                }
-                acc_ij.to_ring_with_params(params)
-            } else {
-                let mut acc_ji = CyclotomicCrtNtt::<W, K, D>::zero();
-                for col in 0..width {
-                    accumulate_pointwise_product_into(
-                        &mut acc_ij,
-                        &ntt_mat[i][col],
-                        &vecs_ntt[j][col],
-                        params,
-                    );
-                    accumulate_pointwise_product_into(
-                        &mut acc_ji,
-                        &ntt_mat[j][col],
-                        &vecs_ntt[i][col],
-                        params,
-                    );
-                }
-                let mut out = acc_ij.to_ring_with_params(params);
-                out += acc_ji.to_ring_with_params(params);
-                out
-            }
-        })
-        .collect()
-}
-
-#[tracing::instrument(skip_all, name = "mat_vec_mul_crt_ntt_i8_labrador_cross")]
-pub(crate) fn mat_vec_mul_crt_ntt_i8_labrador_cross<
-    F: FieldCore + CanonicalField,
-    const D: usize,
->(
-    mat: &[Vec<CyclotomicRing<F, D>>],
-    vecs: &[Vec<[i8; D]>],
-) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-    if mat.len() != vecs.len() {
-        return Err(HachiError::InvalidInput(
-            "labrador cross expects mat rows == vec block count".to_string(),
-        ));
-    }
-    let width = mat.first().map_or(0, Vec::len);
-    if mat.iter().any(|row| row.len() != width) {
-        return Err(HachiError::InvalidInput(
-            "labrador cross requires rectangular matrix".to_string(),
-        ));
-    }
-    if vecs.iter().any(|vec| vec.len() != width) {
-        return Err(HachiError::InvalidInput(
-            "labrador cross requires vec widths to match matrix width".to_string(),
-        ));
-    }
-
-    let params = select_crt_ntt_params::<F, D>()?;
-    let out = match &params {
-        ProtocolCrtNttParams::Q32(p) => mat_vec_mul_i8_labrador_cross_with_params(mat, vecs, p),
-        ProtocolCrtNttParams::Q64(p) => mat_vec_mul_i8_labrador_cross_with_params(mat, vecs, p),
-        ProtocolCrtNttParams::Q128(p) => mat_vec_mul_i8_labrador_cross_with_params(mat, vecs, p),
     };
     Ok(out)
 }
@@ -1494,8 +1255,7 @@ fn quotient_single_centered_i32_with_params<
 #[cfg(test)]
 mod tests {
     use super::{
-        flatten_i8_blocks, mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_i8_labrador_cross,
-        mat_vec_mul_crt_ntt_i8_many, mat_vec_mul_crt_ntt_i8_single, mat_vec_mul_crt_ntt_many,
+        flatten_i8_blocks, mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many,
         mat_vec_mul_digits_i8_with_params, mat_vec_mul_i8_with_params,
         mat_vec_mul_single_i8_blocks_with_params, mat_vec_mul_single_i8_cyclic_blocks_with_params,
         mat_vec_mul_single_i8_cyclic_with_params, mat_vec_mul_single_i8_with_params,
@@ -1603,73 +1363,6 @@ mod tests {
         let got =
             mat_vec_mul_crt_ntt_many(&mat, &vecs).expect("batched CRT+NTT mat-vec should succeed");
         assert_eq!(expected, got);
-    }
-
-    #[test]
-    fn labrador_cross_i8_matches_generic_i8_many_pack_q32_d64() {
-        type F = Fp64<4294967197>;
-        const D: usize = 64;
-        let r = 4usize;
-        let w = 6usize;
-
-        let mat: Vec<Vec<CyclotomicRing<F, D>>> = (0..r)
-            .map(|i| {
-                (0..w)
-                    .map(|j| {
-                        CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
-                            let raw = ((i as i64 * 13 + j as i64 * 7 + k as i64) % 9) - 4;
-                            F::from_i64(raw)
-                        }))
-                    })
-                    .collect()
-            })
-            .collect();
-        let vecs: Vec<Vec<[i8; D]>> = (0..r)
-            .map(|i| {
-                (0..w)
-                    .map(|j| std::array::from_fn(|k| ((i + j + k) % 7) as i8 - 3))
-                    .collect()
-            })
-            .collect();
-
-        let cross =
-            mat_vec_mul_crt_ntt_i8_many(&mat, &vecs).expect("generic i8 CRT+NTT should succeed");
-        let mut expected = Vec::with_capacity(r * (r + 1) / 2);
-        for i in 0..r {
-            expected.push(cross[i][i]);
-            for j in i + 1..r {
-                expected.push(cross[i][j] + cross[j][i]);
-            }
-        }
-
-        let got = mat_vec_mul_crt_ntt_i8_labrador_cross(&mat, &vecs)
-            .expect("labrador cross i8 kernel should succeed");
-        assert_eq!(got, expected);
-    }
-
-    #[test]
-    fn single_i8_matvec_matches_generic_i8_many_q32_d64() {
-        type F = Fp64<4294967197>;
-        const D: usize = 64;
-        let width = 9usize;
-        let row: Vec<CyclotomicRing<F, D>> = (0..width)
-            .map(|j| {
-                CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
-                    let raw = ((11 * j as i64 + 5 * k as i64) % 11) - 5;
-                    F::from_i64(raw)
-                }))
-            })
-            .collect();
-        let vec: Vec<[i8; D]> = (0..width)
-            .map(|j| std::array::from_fn(|k| ((3 * j + k) % 9) as i8 - 4))
-            .collect();
-
-        let expected =
-            mat_vec_mul_crt_ntt_i8_many(std::slice::from_ref(&row), std::slice::from_ref(&vec))
-                .expect("generic i8-many mat-vec should succeed")[0][0];
-        let got =
-            mat_vec_mul_crt_ntt_i8_single(&row, &vec).expect("single i8 mat-vec should succeed");
-        assert_eq!(got, expected);
     }
 
     #[test]

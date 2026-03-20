@@ -7,9 +7,7 @@ use crate::algebra::fields::lift::ExtField;
 use crate::algebra::ring::CyclotomicRing;
 use crate::algebra::SparseChallenge;
 use crate::error::HachiError;
-use crate::protocol::labrador::challenge::{
-    sample_labrador_challenges, sample_labrador_sparse_challenges,
-};
+use crate::protocol::challenges::rejection::{sample_challenges, sample_sparse_challenges};
 use crate::{CanonicalField, FieldCore, FromSmallInt, HachiSerialize};
 
 pub use hash::{Blake2bTranscript, HashTranscript, KeccakTranscript};
@@ -75,7 +73,7 @@ where
 
 /// Sample a sparse ring-element challenge with operator-norm rejection sampling.
 ///
-/// Squeezes a 16-byte seed from the transcript, then delegates to the Labrador
+/// Squeezes a 16-byte seed from the transcript, then delegates to the
 /// rejection sampler which produces a polynomial with exactly `TAU1` coefficients
 /// in {+/-1} and `TAU2` in {+/-2}, retrying until the operator norm is bounded.
 ///
@@ -114,7 +112,7 @@ where
     let seed: [u8; 16] = seed_vec
         .try_into()
         .map_err(|_| HachiError::InvalidInput("rejection sampler seed length mismatch".into()))?;
-    sample_labrador_challenges::<F, D>(len, &seed, REJECTION_SAMPLER_SINGLE_NONCE)
+    sample_challenges::<F, D>(len, &seed, REJECTION_SAMPLER_SINGLE_NONCE)
 }
 
 /// Sample multiple sparse ring-element challenges from one transcript-bound seed.
@@ -135,5 +133,5 @@ where
     let seed: [u8; 16] = seed_vec
         .try_into()
         .map_err(|_| HachiError::InvalidInput("rejection sampler seed length mismatch".into()))?;
-    sample_labrador_sparse_challenges::<D>(len, &seed, REJECTION_SAMPLER_SINGLE_NONCE)
+    sample_sparse_challenges::<D>(len, &seed, REJECTION_SAMPLER_SINGLE_NONCE)
 }
