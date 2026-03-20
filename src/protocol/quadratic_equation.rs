@@ -5,6 +5,8 @@
 
 use crate::algebra::{CyclotomicRing, SparseChallenge};
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
@@ -20,8 +22,6 @@ use crate::protocol::proof::HachiCommitmentHint;
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
-#[cfg(feature = "parallel")]
-use crate::parallel::*;
 use std::iter::repeat_n;
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -406,32 +406,42 @@ where
 
     let t_hat_flat = flatten_i8_blocks(t_hat);
 
-    // D/B rows already know their reduced outputs `y`, so only the cyclic side
-    // must be computed here; quotient = (cyc - reduced) / 2.
-    let t_d = Instant::now();
-    let d_cyclic = {
-        let _span = tracing::info_span!("D_rows_ntt").entered();
-        mat_vec_mul_ntt_single_i8_cyclic(ntt_d, w_hat_flat)
+    #[cfg(feature = "parallel")]
+    let (d_cyclic, b_cyclic, a_quotients) = {
+        let t_all = Instant::now();
+        let ((d_cyc, b_cyc), a_quot) = rayon::join(
+            || {
+                rayon::join(
+                    || mat_vec_mul_ntt_single_i8_cyclic(ntt_d, w_hat_flat),
+                    || mat_vec_mul_ntt_single_i8_cyclic(ntt_b, &t_hat_flat),
+                )
+            },
+            || {
+                unreduced_quotient_rows_ntt_cached_centered_i32(
+                    ntt_a,
+                    z_pre_centered,
+                    z_pre_centered_inf_norm,
+                )
+            },
+        );
+        tracing::debug!(
+            ntt_total_s = t_all.elapsed().as_secs_f64(),
+            "ntt_rows parallel"
+        );
+        (d_cyc, b_cyc, a_quot)
     };
-    let d_time = t_d.elapsed().as_secs_f64();
 
-    let t_b = Instant::now();
-    let b_cyclic = {
-        let _span = tracing::info_span!("B_rows_ntt").entered();
-        mat_vec_mul_ntt_single_i8_cyclic(ntt_b, &t_hat_flat)
-    };
-    let b_time = t_b.elapsed().as_secs_f64();
-
-    let t_a = Instant::now();
-    let a_quotients = {
-        let _span = tracing::info_span!("A_rows_ntt").entered();
-        unreduced_quotient_rows_ntt_cached_centered_i32(
+    #[cfg(not(feature = "parallel"))]
+    let (d_cyclic, b_cyclic, a_quotients) = {
+        let d_cyclic = mat_vec_mul_ntt_single_i8_cyclic(ntt_d, w_hat_flat);
+        let b_cyclic = mat_vec_mul_ntt_single_i8_cyclic(ntt_b, &t_hat_flat);
+        let a_quotients = unreduced_quotient_rows_ntt_cached_centered_i32(
             ntt_a,
             z_pre_centered,
             z_pre_centered_inf_norm,
-        )
+        );
+        (d_cyclic, b_cyclic, a_quotients)
     };
-    let a_time = t_a.elapsed().as_secs_f64();
 
     let mut result = Vec::with_capacity(num_rows);
     let mut other_time = 0.0f64;
@@ -488,21 +498,14 @@ where
                 result.push(CyclotomicRing::<F, D>::zero());
             } else {
                 let _span = tracing::info_span!("challenge_fold_row").entered();
-                let quotient =
-                    parallel_high_half_accumulate::<F, D>(challenges, w_folded);
+                let quotient = parallel_high_half_accumulate::<F, D>(challenges, w_folded);
                 result.push(CyclotomicRing::from_slice(&quotient));
             }
             other_time += t_row.elapsed().as_secs_f64();
         }
     }
 
-    tracing::debug!(
-        d_ntt_s = d_time,
-        b_ntt_s = b_time,
-        a_ntt_s = a_time,
-        other_s = other_time,
-        "compute_r breakdown"
-    );
+    tracing::debug!(other_s = other_time, "compute_r breakdown");
 
     Ok(result)
 }

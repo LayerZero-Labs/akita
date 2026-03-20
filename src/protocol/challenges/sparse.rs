@@ -223,21 +223,27 @@ fn sample_exact_shell_sparse(
 
 /// Core sampling: absorbs domain separation, draws all randomness as a single
 /// `challenge_bytes` call, and parses positions/signs from the byte buffer.
+///
+/// Uses a pre-allocated `absorb_buf` to batch the four absorb calls into one,
+/// reducing hash update overhead.
 fn sample_one<F, T, const D: usize>(
     transcript: &mut T,
     label: &[u8],
     instance_idx: u64,
     cfg: &SparseChallengeConfig,
     domain_sep: &[u8],
+    absorb_buf: &mut Vec<u8>,
 ) -> SparseChallenge
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, label);
-    transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, &instance_idx.to_le_bytes());
-    transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, &(D as u64).to_le_bytes());
-    transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, domain_sep);
+    absorb_buf.clear();
+    absorb_buf.extend_from_slice(label);
+    absorb_buf.extend_from_slice(&instance_idx.to_le_bytes());
+    absorb_buf.extend_from_slice(&(D as u64).to_le_bytes());
+    absorb_buf.extend_from_slice(domain_sep);
+    transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, absorb_buf);
 
     let bytes = transcript.challenge_bytes(CHALLENGE_SPARSE_CHALLENGE, max_challenge_bytes(cfg));
     let mut cursor = ByteCursor::new(&bytes);
@@ -282,12 +288,14 @@ where
         .map_err(|e| HachiError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
 
     let domain_sep = cfg.domain_separator_bytes();
+    let mut absorb_buf = Vec::with_capacity(label.len() + 8 + 8 + domain_sep.len());
     Ok(sample_one::<F, T, D>(
         transcript,
         label,
         instance_idx,
         cfg,
         &domain_sep,
+        &mut absorb_buf,
     ))
 }
 
@@ -315,8 +323,18 @@ where
         .map_err(|e| HachiError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
 
     let domain_sep = cfg.domain_separator_bytes();
+    let mut absorb_buf = Vec::with_capacity(label.len() + 8 + 8 + domain_sep.len());
     Ok((0..n)
-        .map(|i| sample_one::<F, T, D>(transcript, label, i as u64, cfg, &domain_sep))
+        .map(|i| {
+            sample_one::<F, T, D>(
+                transcript,
+                label,
+                i as u64,
+                cfg,
+                &domain_sep,
+                &mut absorb_buf,
+            )
+        })
         .collect())
 }
 
@@ -340,9 +358,17 @@ where
         .map_err(|e| HachiError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
 
     let domain_sep = cfg.domain_separator_bytes();
+    let mut absorb_buf = Vec::with_capacity(label.len() + 8 + 8 + domain_sep.len());
     (0..n)
         .map(|i| {
-            let sparse = sample_one::<F, T, D>(transcript, label, i as u64, cfg, &domain_sep);
+            let sparse = sample_one::<F, T, D>(
+                transcript,
+                label,
+                i as u64,
+                cfg,
+                &domain_sep,
+                &mut absorb_buf,
+            );
             sparse
                 .to_dense::<F, D>()
                 .map_err(|e| HachiError::InvalidInput(e.to_string()))
