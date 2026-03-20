@@ -166,6 +166,7 @@ struct PlannerConfig {
     min_log_basis: u32,
     max_log_basis: u32,
     field_bits: u32,
+    half_field_bound: u128,
 }
 
 fn field_bits(root_decomp: DecompositionParams) -> u32 {
@@ -194,7 +195,11 @@ fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
     8 + rounds * compressed_unipoly_bytes(degree, elem_bytes)
 }
 
-fn recursive_r_decomp_levels(field_bits: u32, log_basis: u32) -> usize {
+pub(crate) fn recursive_r_decomp_levels_for_bound(
+    field_bits: u32,
+    half_field_bound: u128,
+    log_basis: u32,
+) -> usize {
     let bits = field_bits as usize;
     let lb = log_basis as usize;
     let mut levels = compute_num_digits(field_bits, log_basis);
@@ -205,7 +210,6 @@ fn recursive_r_decomp_levels(field_bits: u32, log_basis: u32) -> usize {
     let total_bits = levels * lb;
     if total_bits <= bits {
         let b = 1u128 << log_basis;
-        let half_field_bound = 1u128 << field_bits.saturating_sub(1);
         let half_b_minus_1 = b / 2 - 1;
         let b_minus_1 = b - 1;
         let mut b_pow = 1u128;
@@ -223,23 +227,26 @@ fn recursive_r_decomp_levels(field_bits: u32, log_basis: u32) -> usize {
 
 pub(crate) fn planned_w_ring_element_count(
     field_bits: u32,
+    half_field_bound: u128,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> usize {
     let w_hat_count = layout.num_blocks * layout.num_digits_open;
     let t_hat_count = layout.num_blocks * level_params.n_a * layout.num_digits_open;
     let z_pre_count = layout.inner_width * layout.num_digits_fold;
-    let r_count =
-        level_params.m_row_count() * recursive_r_decomp_levels(field_bits, layout.log_basis);
+    let r_count = level_params.m_row_count()
+        * recursive_r_decomp_levels_for_bound(field_bits, half_field_bound, layout.log_basis);
     w_hat_count + t_hat_count + z_pre_count + r_count
 }
 
 pub(crate) fn planned_next_w_len(
     field_bits: u32,
+    half_field_bound: u128,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> usize {
-    planned_w_ring_element_count(field_bits, level_params, layout) * level_params.d
+    planned_w_ring_element_count(field_bits, half_field_bound, level_params, layout)
+        * level_params.d
 }
 
 fn sumcheck_rounds(level_d: usize, next_w_len: usize) -> usize {
@@ -331,7 +338,7 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
     if let Ok((params, layout)) =
         current_level_layout_with_log_basis::<Cfg>(inputs, state.log_basis)
     {
-        let next_w_len = planned_next_w_len(cfg.field_bits, &params, layout);
+        let next_w_len = planned_next_w_len(cfg.field_bits, cfg.half_field_bound, &params, layout);
         if next_w_len < state.current_w_len {
             let next_level = state.level + 1;
             let next_inputs = HachiScheduleInputs {
@@ -401,6 +408,7 @@ pub(crate) fn planned_schedule<Cfg: CommitmentConfig>(
         min_log_basis,
         max_log_basis,
         field_bits: field_bits(Cfg::decomposition()),
+        half_field_bound: Cfg::planner_half_field_bound(),
     };
     let mut memo = HashMap::new();
     let mut best: Option<PlannedSuffix> = None;
@@ -411,7 +419,12 @@ pub(crate) fn planned_schedule<Cfg: CommitmentConfig>(
         else {
             continue;
         };
-        let next_w_len = planned_next_w_len(cfg.field_bits, &root_params, root_layout);
+        let next_w_len = planned_next_w_len(
+            cfg.field_bits,
+            cfg.half_field_bound,
+            &root_params,
+            root_layout,
+        );
 
         let next_level = 1usize;
         let next_inputs = HachiScheduleInputs {
@@ -517,7 +530,7 @@ pub(crate) fn planned_schedule_key<Cfg: CommitmentConfig>(
     max_log_basis: u32,
 ) -> Result<String, HachiError> {
     let schedule = planned_schedule::<Cfg>(max_num_vars, min_log_basis, max_log_basis)?;
-    let mut key = String::from("planner_v1");
+    let mut key = String::from("planner_v2");
     for state in schedule.states {
         let _ = write!(key, "_l{}b{}", state.level, state.log_basis);
     }
@@ -591,4 +604,48 @@ pub fn hachi_recursive_level_layout_from_params<Cfg: CommitmentConfig>(
     let layout = layout_from_params(m_vars, r_vars, params, decomp)?;
     debug_assert_eq!(layout.m_vars + layout.r_vars + alpha, max_num_vars);
     Ok(layout)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::algebra::Prime128M8M4M1M0;
+    use crate::protocol::commitment::{
+        Fp128AdaptiveBoundedCommitmentConfig, Fp128AdaptiveOneHotCommitmentConfig,
+    };
+    use crate::protocol::ring_switch::w_ring_element_count;
+
+    fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(max_num_vars: usize) {
+        let plan = Cfg::schedule_plan(max_num_vars)
+            .expect("planner should succeed")
+            .expect("config should provide a planner");
+        for level in &plan.levels {
+            let runtime_next_w_len =
+                w_ring_element_count::<Prime128M8M4M1M0>(&level.params, level.layout)
+                    * level.params.d;
+            assert_eq!(
+                runtime_next_w_len, level.next_inputs.current_w_len,
+                "planner/runtime next_w_len mismatch at level {} for max_num_vars={max_num_vars}",
+                level.inputs.level
+            );
+        }
+    }
+
+    #[test]
+    fn adaptive_bounded_plan_matches_runtime_next_w_len() {
+        for max_num_vars in [14, 20, 30] {
+            assert_plan_matches_runtime_w_sizes::<Fp128AdaptiveBoundedCommitmentConfig<128>>(
+                max_num_vars,
+            );
+        }
+    }
+
+    #[test]
+    fn adaptive_onehot_plan_matches_runtime_next_w_len() {
+        for max_num_vars in [15, 30, 44] {
+            assert_plan_matches_runtime_w_sizes::<Fp128AdaptiveOneHotCommitmentConfig>(
+                max_num_vars,
+            );
+        }
+    }
 }

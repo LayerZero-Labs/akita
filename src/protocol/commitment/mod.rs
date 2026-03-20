@@ -23,10 +23,12 @@ pub use config::{
     HachiCommitmentLayout, SmallTestCommitmentConfig,
 };
 pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
-pub(crate) use schedule::recursive_level_decomposition_from_root;
 pub use schedule::{
     hachi_level_layout, hachi_recursive_level_layout_from_params, hachi_root_level_layout,
     HachiLevelParams, HachiScheduleInputs, HachiSchedulePlan,
+};
+pub(crate) use schedule::{
+    recursive_level_decomposition_from_root, recursive_r_decomp_levels_for_bound,
 };
 pub use scheme::{CommitWitness, CommitmentScheme, RingCommitmentScheme};
 pub use transcript_append::AppendToTranscript;

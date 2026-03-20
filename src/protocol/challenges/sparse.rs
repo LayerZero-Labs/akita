@@ -204,6 +204,7 @@ where
 /// # Errors
 ///
 /// Returns an error if challenge sampling fails.
+#[tracing::instrument(skip_all, name = "sample_sparse_challenges")]
 pub fn sample_sparse_challenges<F, T, const D: usize>(
     transcript: &mut T,
     label: &[u8],

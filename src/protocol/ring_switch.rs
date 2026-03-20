@@ -16,8 +16,9 @@ use crate::protocol::commitment::utils::linear::{
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
     hachi_recursive_level_layout_from_params, recursive_level_decomposition_from_root,
-    CommitmentConfig, CommitmentEnvelope, DecompositionParams, HachiCommitmentLayout,
-    HachiExpandedSetup, HachiLevelParams, HachiScheduleInputs, RingCommitment,
+    recursive_r_decomp_levels_for_bound, CommitmentConfig, CommitmentEnvelope, DecompositionParams,
+    HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, HachiScheduleInputs,
+    RingCommitment,
 };
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{DigitLut, FlatCommitmentHint, FlatRingVec, HachiCommitmentHint};
@@ -676,30 +677,8 @@ fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basis: u
 
 pub(crate) fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
     let modulus = detect_field_modulus::<F>();
-    let bits = 128 - (modulus.saturating_sub(1)).leading_zeros() as usize;
-    let lb = log_basis as usize;
-    let mut levels = (bits + lb.saturating_sub(1)) / lb.max(1);
-    if levels == 0 {
-        levels = 1;
-    }
-
-    let total_bits = levels * lb;
-    if total_bits <= bits {
-        let b = 1u128 << log_basis;
-        let half_q = modulus / 2;
-        let half_b_minus_1 = b / 2 - 1;
-        let b_minus_1 = b - 1;
-        let mut b_pow = 1u128;
-        for _ in 0..levels {
-            b_pow = b_pow.saturating_mul(b);
-        }
-        let max_positive = half_b_minus_1.saturating_mul((b_pow - 1) / b_minus_1);
-        if max_positive < half_q {
-            levels += 1;
-        }
-    }
-
-    levels
+    let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
+    recursive_r_decomp_levels_for_bound(field_bits, modulus / 2, log_basis)
 }
 
 #[cfg(test)]

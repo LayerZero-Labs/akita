@@ -6,8 +6,9 @@ use super::schedule::{
 };
 use super::utils::flat_matrix::FlatMatrix;
 use super::utils::math::checked_pow2;
+use super::utils::norm::detect_field_modulus;
 use crate::algebra::ring::CyclotomicRing;
-use crate::algebra::SparseChallengeConfig;
+use crate::algebra::{Prime128M8M4M1M0, SparseChallengeConfig};
 use crate::error::HachiError;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
@@ -204,6 +205,10 @@ fn d128_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
         "d128_stage1_challenge_config requires d=128, got {d}"
     );
     uniform_pm1_stage1_challenge(31)
+}
+
+fn fp128_half_field_bound() -> u128 {
+    detect_field_modulus::<Prime128M8M4M1M0>() / 2
 }
 
 /// Runtime commitment layout authority for ring-native commitments.
@@ -501,6 +506,17 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// schedule from the public inputs.
     fn schedule_plan(_max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
         Ok(None)
+    }
+
+    /// Half-range bound used by the planner when sizing recursive `r`.
+    ///
+    /// By default this uses the decomposition bit bound as a conservative
+    /// power-of-two proxy. Configs with a known concrete field modulus should
+    /// override this with the exact centered range used at runtime.
+    fn planner_half_field_bound() -> u128 {
+        let decomp = Self::decomposition();
+        let field_bits = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
+        1u128 << field_bits.saturating_sub(1)
     }
 
     /// Deterministically derive the active params for one level from public inputs.
@@ -825,6 +841,10 @@ impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> 
         d128_stage1_challenge_config(d)
     }
 
+    fn planner_half_field_bound() -> u128 {
+        fp128_half_field_bound()
+    }
+
     fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
         if inputs.level == 0 {
             LOG_BASIS
@@ -889,6 +909,10 @@ impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> 
         d64_stage1_challenge_config(d)
     }
 
+    fn planner_half_field_bound() -> u128 {
+        fp128_half_field_bound()
+    }
+
     fn labrador_handoff_threshold() -> usize {
         usize::MAX
     }
@@ -925,6 +949,10 @@ impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
         d128_stage1_challenge_config(d)
+    }
+
+    fn planner_half_field_bound() -> u128 {
+        fp128_half_field_bound()
     }
 
     fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
@@ -1012,6 +1040,10 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
         d64_stage1_challenge_config(d)
+    }
+
+    fn planner_half_field_bound() -> u128 {
+        fp128_half_field_bound()
     }
 
     fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
