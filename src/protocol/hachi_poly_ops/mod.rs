@@ -1225,10 +1225,6 @@ enum OneHotBlocks {
     General(Vec<Vec<SparseBlockEntry>>),
 }
 
-/// Only switch to the compact regular layout once the one-hot witness is large
-/// enough for the legacy sparse metadata to become the dominant cost.
-const REGULAR_ONEHOT_MIN_CHUNKS: usize = 1 << 28;
-
 /// One-hot polynomial: sparse witness with at most one nonzero field element
 /// per chunk of size `onehot_k`.
 ///
@@ -1259,8 +1255,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         r_vars: usize,
         m_vars: usize,
     ) -> Result<Self, HachiError> {
-        let use_regular_blocks =
-            onehot_k >= D && onehot_k % D == 0 && indices.len() >= REGULAR_ONEHOT_MIN_CHUNKS;
+        let use_regular_blocks = onehot_k >= D && onehot_k % D == 0;
         let blocks = if use_regular_blocks {
             OneHotBlocks::Regular(map_onehot_to_regular_blocks(
                 onehot_k, &indices, r_vars, m_vars, D,

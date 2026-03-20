@@ -288,9 +288,20 @@ where
         self.w_hat.take()
     }
 
+    /// Take ownership of the flattened witness digits, leaving `None` in its place.
+    pub fn take_w_hat_flat(&mut self) -> Option<Vec<[i8; D]>> {
+        self.w_hat_flat.take()
+    }
+
     /// Get the pre-decomposition folded ring elements (prover only).
     pub fn w_folded(&self) -> Option<&[CyclotomicRing<F, D>]> {
         self.w_folded.as_deref()
+    }
+
+    /// Take ownership of the pre-decomposition folded witness, leaving `None`
+    /// in its place.
+    pub fn take_w_folded(&mut self) -> Option<Vec<CyclotomicRing<F, D>>> {
+        self.w_folded.take()
     }
 
     /// Get the commitment hint (prover only).

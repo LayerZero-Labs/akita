@@ -439,11 +439,11 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCo
         "onehot K must divide total field size"
     );
 
-    let indices: Vec<Option<usize>> = (0..total_chunks)
-        .map(|_| Some(rng.gen_range(0..onehot_k)))
+    let indices: Vec<Option<u8>> = (0..total_chunks)
+        .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
         .collect();
     let onehot_poly =
-        OneHotPoly::<F, D>::new(onehot_k, indices, layout.r_vars, layout.m_vars).unwrap();
+        OneHotPoly::<F, D, u8>::new(onehot_k, indices, layout.r_vars, layout.m_vars).unwrap();
     let pt: Vec<F> = (0..nv)
         .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
         .collect();

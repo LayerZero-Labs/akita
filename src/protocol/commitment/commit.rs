@@ -36,6 +36,7 @@ use std::fs;
 use std::io::{Read, Write};
 #[cfg(feature = "disk-persistence")]
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Seed-only stage for deterministic setup expansion.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,7 +75,7 @@ pub struct HachiExpandedSetup<F: FieldCore> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiProverSetup<F: FieldCore, const D: usize> {
     /// Expanded matrix stage used by both prover and verifier.
-    pub expanded: HachiExpandedSetup<F>,
+    pub expanded: Arc<HachiExpandedSetup<F>>,
     /// NTT cache for the A matrix.
     pub ntt_A: NttSlotCache<D>,
     /// NTT cache for the B matrix.
@@ -87,7 +88,7 @@ pub struct HachiProverSetup<F: FieldCore, const D: usize> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiVerifierSetup<F: FieldCore> {
     /// Expanded matrix stage used for verification.
-    pub expanded: HachiExpandedSetup<F>,
+    pub expanded: Arc<HachiExpandedSetup<F>>,
 }
 
 impl<F: FieldCore> HachiExpandedSetup<F> {
@@ -285,7 +286,9 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiVerifierSetup<F> {
         validate: Validate,
     ) -> Result<Self, SerializationError> {
         Ok(Self {
-            expanded: HachiExpandedSetup::deserialize_with_mode(reader, compress, validate)?,
+            expanded: Arc::new(HachiExpandedSetup::deserialize_with_mode(
+                reader, compress, validate,
+            )?),
         })
     }
 }
@@ -336,17 +339,8 @@ where
         Cfg::commitment_layout(max_num_vars).is_ok_and(|planned_root| planned_root == root_layout);
     if can_use_planned_root {
         if let Some(plan) = Cfg::schedule_plan(max_num_vars)? {
-            for state in plan.states.iter().skip(1) {
-                let params = Cfg::level_params(HachiScheduleInputs {
-                    max_num_vars,
-                    level: state.level,
-                    current_w_len: state.current_w_len,
-                });
-                let layout = super::hachi_recursive_level_layout_from_params::<Cfg>(
-                    &params,
-                    state.current_w_len,
-                )?;
-                stats.include(layout);
+            for level in plan.levels.iter().skip(1) {
+                stats.include(level.layout);
             }
             return Ok(stats);
         }
@@ -509,13 +503,14 @@ fn load_expanded_setup<F: FieldCore + Valid, Cfg: CommitmentConfig>(
 pub(crate) fn setup_from_expanded<F: FieldCore + CanonicalField, const D: usize>(
     expanded: HachiExpandedSetup<F>,
 ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError> {
+    let expanded = Arc::new(expanded);
     let (ntt_a, ntt_b, ntt_d) = build_ntt_slots(
         expanded.A.view::<D>(),
         expanded.B.view::<D>(),
         expanded.D_mat.view::<D>(),
     )?;
     let prover_setup = HachiProverSetup {
-        expanded: expanded.clone(),
+        expanded: Arc::clone(&expanded),
         ntt_A: ntt_a,
         ntt_B: ntt_b,
         ntt_D: ntt_d,
@@ -570,21 +565,28 @@ where
         let d_cols = chain_stats.max_d_matrix_width;
 
         let public_matrix_seed = sample_public_matrix_seed();
-        let a_matrix =
-            derive_public_matrix::<F, D>(envelope.max_n_a, a_cols, &public_matrix_seed, b"A");
-        let b_matrix =
-            derive_public_matrix::<F, D>(envelope.max_n_b, b_cols, &public_matrix_seed, b"B");
-        let d_matrix =
-            derive_public_matrix::<F, D>(envelope.max_n_d, d_cols, &public_matrix_seed, b"D");
-
-        let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
-        let b_flat = FlatMatrix::from_ring_matrix(&b_matrix);
-        let d_flat = FlatMatrix::from_ring_matrix(&d_matrix);
-
-        let ntt_a = build_ntt_slot(a_flat.view::<D>())?;
-        let ntt_b = build_ntt_slot(b_flat.view::<D>())?;
-        let ntt_d = build_ntt_slot(d_flat.view::<D>())?;
-        let expanded = HachiExpandedSetup {
+        let (a_flat, ntt_a) = {
+            let a_matrix =
+                derive_public_matrix::<F, D>(envelope.max_n_a, a_cols, &public_matrix_seed, b"A");
+            let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
+            let ntt_a = build_ntt_slot(a_flat.view::<D>())?;
+            (a_flat, ntt_a)
+        };
+        let (b_flat, ntt_b) = {
+            let b_matrix =
+                derive_public_matrix::<F, D>(envelope.max_n_b, b_cols, &public_matrix_seed, b"B");
+            let b_flat = FlatMatrix::from_ring_matrix(&b_matrix);
+            let ntt_b = build_ntt_slot(b_flat.view::<D>())?;
+            (b_flat, ntt_b)
+        };
+        let (d_flat, ntt_d) = {
+            let d_matrix =
+                derive_public_matrix::<F, D>(envelope.max_n_d, d_cols, &public_matrix_seed, b"D");
+            let d_flat = FlatMatrix::from_ring_matrix(&d_matrix);
+            let ntt_d = build_ntt_slot(d_flat.view::<D>())?;
+            (d_flat, ntt_d)
+        };
+        let expanded = Arc::new(HachiExpandedSetup {
             seed: HachiSetupSeed {
                 max_num_vars,
                 layout,
@@ -593,13 +595,13 @@ where
             A: a_flat,
             B: b_flat,
             D_mat: d_flat,
-        };
+        });
 
         #[cfg(feature = "disk-persistence")]
         save_expanded_setup::<F, Cfg>(&expanded, max_num_vars);
 
         let prover_setup = HachiProverSetup {
-            expanded: expanded.clone(),
+            expanded: Arc::clone(&expanded),
             ntt_A: ntt_a,
             ntt_B: ntt_b,
             ntt_D: ntt_d,
@@ -663,7 +665,6 @@ where
             .collect();
 
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
-
         let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(&setup.ntt_B, &t_hat_flat);
         u.truncate(root_params.n_b);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
@@ -717,7 +718,6 @@ where
             .collect();
 
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
-
         let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(&setup.ntt_B, &t_hat_flat);
         u.truncate(root_params.n_b);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
@@ -776,7 +776,6 @@ where
             .collect();
 
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
-
         let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(&setup.ntt_B, &t_hat_flat);
         u.truncate(root_params.n_b);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
@@ -964,16 +963,20 @@ impl HachiCommitmentCore {
         let seed = existing.seed.public_matrix_seed;
 
         let d_cols = chain_stats.max_d_matrix_width;
-        let b_matrix = derive_public_matrix::<F, D>(envelope.max_n_b, b_cols, &seed, b"B");
-        let d_matrix = derive_public_matrix::<F, D>(envelope.max_n_d, d_cols, &seed, b"D");
-
-        let b_flat = FlatMatrix::from_ring_matrix(&b_matrix);
-        let d_flat = FlatMatrix::from_ring_matrix(&d_matrix);
-
+        let (b_flat, ntt_b) = {
+            let b_matrix = derive_public_matrix::<F, D>(envelope.max_n_b, b_cols, &seed, b"B");
+            let b_flat = FlatMatrix::from_ring_matrix(&b_matrix);
+            let ntt_b = build_ntt_slot(b_flat.view::<D>())?;
+            (b_flat, ntt_b)
+        };
+        let (d_flat, ntt_d) = {
+            let d_matrix = derive_public_matrix::<F, D>(envelope.max_n_d, d_cols, &seed, b"D");
+            let d_flat = FlatMatrix::from_ring_matrix(&d_matrix);
+            let ntt_d = build_ntt_slot(d_flat.view::<D>())?;
+            (d_flat, ntt_d)
+        };
         let ntt_a = build_ntt_slot(existing.A.view::<D>())?;
-        let ntt_b = build_ntt_slot(b_flat.view::<D>())?;
-        let ntt_d = build_ntt_slot(d_flat.view::<D>())?;
-        let expanded = HachiExpandedSetup {
+        let expanded = Arc::new(HachiExpandedSetup {
             seed: HachiSetupSeed {
                 max_num_vars,
                 layout: new_layout,
@@ -982,9 +985,9 @@ impl HachiCommitmentCore {
             A: existing.A.clone(),
             B: b_flat,
             D_mat: d_flat,
-        };
+        });
         let prover_setup = HachiProverSetup {
-            expanded: expanded.clone(),
+            expanded: Arc::clone(&expanded),
             ntt_A: ntt_a,
             ntt_B: ntt_b,
             ntt_D: ntt_d,
@@ -1051,21 +1054,28 @@ impl HachiCommitmentCore {
                 "setup matrix sizes"
             );
         }
-        let a_matrix =
-            derive_public_matrix::<F, D>(envelope.max_n_a, a_cols, &public_matrix_seed, b"A");
-        let b_matrix =
-            derive_public_matrix::<F, D>(envelope.max_n_b, b_cols, &public_matrix_seed, b"B");
-        let d_matrix =
-            derive_public_matrix::<F, D>(envelope.max_n_d, d_cols, &public_matrix_seed, b"D");
-
-        let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
-        let b_flat = FlatMatrix::from_ring_matrix(&b_matrix);
-        let d_flat = FlatMatrix::from_ring_matrix(&d_matrix);
-
-        let ntt_a = build_ntt_slot(a_flat.view::<D>())?;
-        let ntt_b = build_ntt_slot(b_flat.view::<D>())?;
-        let ntt_d = build_ntt_slot(d_flat.view::<D>())?;
-        let expanded = HachiExpandedSetup {
+        let (a_flat, ntt_a) = {
+            let a_matrix =
+                derive_public_matrix::<F, D>(envelope.max_n_a, a_cols, &public_matrix_seed, b"A");
+            let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
+            let ntt_a = build_ntt_slot(a_flat.view::<D>())?;
+            (a_flat, ntt_a)
+        };
+        let (b_flat, ntt_b) = {
+            let b_matrix =
+                derive_public_matrix::<F, D>(envelope.max_n_b, b_cols, &public_matrix_seed, b"B");
+            let b_flat = FlatMatrix::from_ring_matrix(&b_matrix);
+            let ntt_b = build_ntt_slot(b_flat.view::<D>())?;
+            (b_flat, ntt_b)
+        };
+        let (d_flat, ntt_d) = {
+            let d_matrix =
+                derive_public_matrix::<F, D>(envelope.max_n_d, d_cols, &public_matrix_seed, b"D");
+            let d_flat = FlatMatrix::from_ring_matrix(&d_matrix);
+            let ntt_d = build_ntt_slot(d_flat.view::<D>())?;
+            (d_flat, ntt_d)
+        };
+        let expanded = Arc::new(HachiExpandedSetup {
             seed: HachiSetupSeed {
                 max_num_vars,
                 layout,
@@ -1074,9 +1084,9 @@ impl HachiCommitmentCore {
             A: a_flat,
             B: b_flat,
             D_mat: d_flat,
-        };
+        });
         let prover_setup = HachiProverSetup {
-            expanded: expanded.clone(),
+            expanded: Arc::clone(&expanded),
             ntt_A: ntt_a,
             ntt_B: ntt_b,
             ntt_D: ntt_d,
@@ -1114,10 +1124,10 @@ mod tests {
             .unwrap();
         let decoded = HachiExpandedSetup::<TestF>::deserialize_compressed(&bytes[..]).unwrap();
 
-        assert_eq!(decoded, prover_setup.expanded);
+        assert_eq!(decoded, prover_setup.expanded.as_ref().clone());
 
         let derived_verifier = HachiVerifierSetup {
-            expanded: decoded.clone(),
+            expanded: Arc::new(decoded.clone()),
         };
         assert_eq!(derived_verifier, verifier_setup);
     }
@@ -1220,7 +1230,7 @@ mod tests {
                 .unwrap();
 
             let loaded = load_expanded_setup::<TestF, TinyConfig>(MAX_VARS).unwrap();
-            assert_eq!(loaded, prover_setup.expanded);
+            assert_eq!(loaded, prover_setup.expanded.as_ref().clone());
 
             cleanup_setup_file(MAX_VARS);
         }

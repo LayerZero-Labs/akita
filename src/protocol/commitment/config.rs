@@ -1004,11 +1004,12 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
         }
     }
 
-    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
+    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
+        let root_rank = usize::from(max_num_vars >= 38) + 1;
         CommitmentEnvelope {
             max_n_a: 1,
-            max_n_b: 2,
-            max_n_d: 2,
+            max_n_b: root_rank,
+            max_n_d: root_rank,
         }
     }
 

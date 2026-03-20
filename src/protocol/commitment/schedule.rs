@@ -432,30 +432,35 @@ pub(crate) fn planned_schedule<Cfg: CommitmentConfig>(
                 &next_level_params,
                 next_w_len,
             );
-            let suffix = best_recursive_suffix::<Cfg>(
-                cfg,
-                &mut memo,
-                PlannerState {
-                    level: next_level,
-                    current_w_len: next_w_len,
-                    log_basis: next_log_basis,
-                },
-            )?;
-            let candidate_bytes = level_bytes + suffix.no_wrapper_bytes;
+            let mut levels = Vec::new();
+            levels.push(HachiPlannedLevel {
+                inputs: root_inputs,
+                params: root_params.clone(),
+                layout: root_layout,
+                next_inputs,
+                next_level_log_basis: next_log_basis,
+                level_bytes,
+            });
+            let candidate_bytes = if next_w_len < root_inputs.current_w_len {
+                let suffix = best_recursive_suffix::<Cfg>(
+                    cfg,
+                    &mut memo,
+                    PlannerState {
+                        level: next_level,
+                        current_w_len: next_w_len,
+                        log_basis: next_log_basis,
+                    },
+                )?;
+                let suffix_bytes = suffix.no_wrapper_bytes;
+                levels.extend(suffix.levels);
+                level_bytes + suffix_bytes
+            } else {
+                level_bytes + packed_digits_bytes(next_w_len, next_log_basis)
+            };
             if best
                 .as_ref()
                 .is_none_or(|existing| candidate_bytes < existing.no_wrapper_bytes)
             {
-                let mut levels = Vec::with_capacity(suffix.levels.len() + 1);
-                levels.push(HachiPlannedLevel {
-                    inputs: root_inputs,
-                    params: root_params.clone(),
-                    layout: root_layout,
-                    next_inputs,
-                    next_level_log_basis: next_log_basis,
-                    level_bytes,
-                });
-                levels.extend(suffix.levels);
                 best = Some(PlannedSuffix {
                     levels,
                     no_wrapper_bytes: candidate_bytes,

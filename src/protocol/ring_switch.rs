@@ -99,38 +99,35 @@ where
         );
     }
     let w_hat = quad_eq
-        .w_hat()
+        .take_w_hat()
         .ok_or_else(|| HachiError::InvalidInput("missing w_hat in prover".to_string()))?;
     let w_hat_flat = quad_eq
-        .w_hat_flat()
+        .take_w_hat_flat()
         .ok_or_else(|| HachiError::InvalidInput("missing w_hat_flat in prover".to_string()))?;
-    let z_pre_centered = quad_eq
-        .z_pre_centered()
+    let z_pre = quad_eq
+        .take_z_pre()
         .ok_or_else(|| HachiError::InvalidInput("missing centered z_pre in prover".to_string()))?;
-    let z_pre_centered_inf_norm = quad_eq.z_pre_centered_inf_norm().ok_or_else(|| {
-        HachiError::InvalidInput("missing centered z_pre norm in prover".to_string())
-    })?;
     let hint = quad_eq
-        .hint()
+        .take_hint()
         .ok_or_else(|| HachiError::InvalidInput("missing hint in prover".to_string()))?;
     let inner_opening_digits = &hint.inner_opening_digits;
     let t = hint.t().ok_or_else(|| {
         HachiError::InvalidInput("missing recomposed t in prover hint".to_string())
     })?;
     let w_folded = quad_eq
-        .w_folded()
+        .take_w_folded()
         .ok_or_else(|| HachiError::InvalidInput("missing w_folded in prover".to_string()))?;
 
     let r = compute_r_split_eq::<F, D>(
         level_params,
         setup,
         &quad_eq.challenges,
-        w_hat_flat,
+        &w_hat_flat,
         inner_opening_digits,
         t,
-        w_folded,
-        z_pre_centered,
-        z_pre_centered_inf_norm,
+        &w_folded,
+        &z_pre.centered_coeffs,
+        z_pre.centered_inf_norm,
         quad_eq.y(),
         ntt_a,
         ntt_b,
@@ -138,7 +135,13 @@ where
     )?;
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
-        build_w_coeffs::<F, D>(w_hat, inner_opening_digits, z_pre_centered, &r, layout)
+        build_w_coeffs::<F, D>(
+            &w_hat,
+            inner_opening_digits,
+            &z_pre.centered_coeffs,
+            &r,
+            layout,
+        )
     };
     Ok(w)
 }
@@ -1012,8 +1015,6 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     let num_digits_fold = layout.num_digits_fold;
     let levels = r_decomp_levels::<F>(log_basis);
 
-    let t_hat_flat = t_hat.iter().flat_map(|v| v.iter());
-
     let w_hat_planes: usize = w_hat.iter().map(|v| v.len()).sum();
     let t_hat_planes: usize = t_hat.iter().map(|v| v.len()).sum();
     let z_count = w_hat_planes + t_hat_planes + z_pre_centered.len() * num_digits_fold;
@@ -1032,38 +1033,30 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     let total_planes = z_count + r_hat_count;
     let total_elems = total_planes * D;
 
-    let z_decomposed: Vec<Vec<[i8; D]>> = cfg_iter!(z_pre_centered)
-        .map(|z_j| {
-            let mut planes = vec![[0i8; D]; num_digits_fold];
-            balanced_decompose_centered_i32_i8_into(z_j, &mut planes, log_basis);
-            planes
-        })
-        .collect();
-
-    let r_decomposed: Vec<Vec<[i8; D]>> = cfg_iter!(r)
-        .map(|ri| {
-            let mut planes = vec![[0i8; D]; levels];
-            ri.balanced_decompose_pow2_i8_into(&mut planes, log_basis);
-            planes
-        })
-        .collect();
-
     let mut out = Vec::with_capacity(total_elems);
     for block in w_hat {
         for digits in block {
             out.extend_from_slice(digits);
         }
     }
-    for digits in t_hat_flat {
-        out.extend_from_slice(digits);
+    for block in t_hat {
+        for digits in block {
+            out.extend_from_slice(digits);
+        }
     }
-    for planes in &z_decomposed {
-        for plane in planes {
+    let mut z_planes = vec![[0i8; D]; num_digits_fold];
+    for z_j in z_pre_centered {
+        z_planes.fill([0i8; D]);
+        balanced_decompose_centered_i32_i8_into(z_j, &mut z_planes, log_basis);
+        for plane in &z_planes {
             out.extend_from_slice(plane);
         }
     }
-    for planes in &r_decomposed {
-        for plane in planes {
+    let mut r_planes = vec![[0i8; D]; levels];
+    for ri in r {
+        r_planes.fill([0i8; D]);
+        ri.balanced_decompose_pow2_i8_into(&mut r_planes, log_basis);
+        for plane in &r_planes {
             out.extend_from_slice(plane);
         }
     }
