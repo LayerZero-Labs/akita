@@ -1029,8 +1029,26 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
         total_field = (z_count + r_hat_count) * D,
         "build_w_coeffs"
     );
-    let mut out = Vec::with_capacity((z_count + r_hat_count) * D);
-    let mut digit_scratch = vec![[0i8; D]; num_digits_fold.max(levels)];
+    let total_planes = z_count + r_hat_count;
+    let total_elems = total_planes * D;
+
+    let z_decomposed: Vec<Vec<[i8; D]>> = cfg_iter!(z_pre_centered)
+        .map(|z_j| {
+            let mut planes = vec![[0i8; D]; num_digits_fold];
+            balanced_decompose_centered_i32_i8_into(z_j, &mut planes, log_basis);
+            planes
+        })
+        .collect();
+
+    let r_decomposed: Vec<Vec<[i8; D]>> = cfg_iter!(r)
+        .map(|ri| {
+            let mut planes = vec![[0i8; D]; levels];
+            ri.balanced_decompose_pow2_i8_into(&mut planes, log_basis);
+            planes
+        })
+        .collect();
+
+    let mut out = Vec::with_capacity(total_elems);
     for block in w_hat {
         for digits in block {
             out.extend_from_slice(digits);
@@ -1039,17 +1057,13 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     for digits in t_hat_flat {
         out.extend_from_slice(digits);
     }
-    for z_j in z_pre_centered {
-        let z_planes = &mut digit_scratch[..num_digits_fold];
-        balanced_decompose_centered_i32_i8_into(z_j, z_planes, log_basis);
-        for plane in z_planes.iter() {
+    for planes in &z_decomposed {
+        for plane in planes {
             out.extend_from_slice(plane);
         }
     }
-    for ri in r {
-        let r_planes = &mut digit_scratch[..levels];
-        ri.balanced_decompose_pow2_i8_into(r_planes, log_basis);
-        for plane in r_planes.iter() {
+    for planes in &r_decomposed {
+        for plane in planes {
             out.extend_from_slice(plane);
         }
     }
