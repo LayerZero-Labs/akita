@@ -415,7 +415,7 @@ fn stage1_b8_s_digit_from_compact_w(w: i8) -> usize {
 }
 
 #[inline]
-fn stage1_b8_s_digit_from_compact_s(s: i32) -> usize {
+fn stage1_b8_s_digit_from_compact_s(s: i16) -> usize {
     match s {
         0 => 0,
         2 => 1,
@@ -613,7 +613,7 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact<
 pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
     E: FieldCore + FromSmallInt + HasUnreducedOps,
 >(
-    s_compact: &[i32],
+    s_compact: &[i16],
     tau0: &[E],
     b: usize,
     live_x_cols: usize,

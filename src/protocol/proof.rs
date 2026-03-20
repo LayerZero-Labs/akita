@@ -441,6 +441,54 @@ impl FlatCommitmentHint {
         HachiCommitmentHint::new(inner_opening_digits)
     }
 
+    /// Reconstruct a typed hint and eagerly recompose the cached `t` rows in
+    /// the same pass, avoiding a second traversal through `inner_opening_digits`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `num_digits_open` is zero or if any digit block
+    /// length is not divisible by `num_digits_open`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `D != ring_dim`.
+    pub fn to_typed_with_t<F: CanonicalField, const D: usize>(
+        &self,
+        num_digits_open: usize,
+        log_basis: u32,
+    ) -> Result<HachiCommitmentHint<F, D>, HachiError> {
+        assert_eq!(D, self.ring_dim, "D mismatch in to_typed_with_t");
+        if num_digits_open == 0 {
+            return Err(HachiError::InvalidSetup(
+                "num_digits_open must be nonzero when reconstructing commitment hint".to_string(),
+            ));
+        }
+        let mut inner_opening_digits = Vec::with_capacity(self.block_sizes.len());
+        let mut t = Vec::with_capacity(self.block_sizes.len());
+        let mut offset = 0;
+        for &block_size in &self.block_sizes {
+            if block_size % num_digits_open != 0 {
+                return Err(HachiError::InvalidSetup(format!(
+                    "inner-opening digit block has {block_size} planes, expected a multiple of num_digits_open={num_digits_open}",
+                )));
+            }
+            let mut block = Vec::with_capacity(block_size);
+            for _ in 0..block_size {
+                let mut plane = [0i8; D];
+                plane.copy_from_slice(&self.data[offset..offset + D]);
+                offset += D;
+                block.push(plane);
+            }
+            let t_block = block
+                .chunks(num_digits_open)
+                .map(|digits| CyclotomicRing::gadget_recompose_pow2_i8(digits, log_basis))
+                .collect();
+            inner_opening_digits.push(block);
+            t.push(t_block);
+        }
+        Ok(HachiCommitmentHint::with_t(inner_opening_digits, t))
+    }
+
     /// Ring dimension stored in this hint.
     pub fn ring_dim(&self) -> usize {
         self.ring_dim

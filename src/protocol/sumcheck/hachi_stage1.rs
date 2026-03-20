@@ -83,7 +83,7 @@ struct RangeAffineFromSPrecomp<E: FieldCore> {
     /// `b/2`-element valid-value set `{k(k+1) : k = 0..half-1}`.
     s_to_compact: Vec<u8>,
     num_valid_s: usize,
-    min_s: i32,
+    min_s: i16,
 }
 
 impl<E: FieldCore + FromSmallInt> RangeAffineFromSPrecomp<E> {
@@ -115,14 +115,19 @@ impl<E: FieldCore + FromSmallInt> RangeAffineFromSPrecomp<E> {
         dense_row_offsets.push(dense_int.len());
         let dense_coeffs = dense_int.iter().copied().map(E::from_i128).collect();
 
-        let min_s = 0i32;
-        let max_s = (half * (half - 1)) as i32;
-        let raw_range = (max_s - min_s + 1) as usize;
+        let min_s = 0i16;
+        let max_s_i128 = half * (half - 1);
+        assert!(
+            max_s_i128 <= i16::MAX as i128,
+            "compact s range exceeds i16 for b={b}"
+        );
+        let max_s = max_s_i128 as i16;
+        let raw_range = (i32::from(max_s) - i32::from(min_s) + 1) as usize;
         let num_valid_s = half as usize;
 
         let mut s_to_compact = vec![u8::MAX; raw_range];
         for (compact_idx, &s_val) in pair_offsets.iter().enumerate() {
-            s_to_compact[(s_val as i32 - min_s) as usize] = compact_idx as u8;
+            s_to_compact[(s_val as i16 - min_s) as usize] = compact_idx as u8;
         }
 
         let mut small_s_lut = vec![E::zero(); num_valid_s * num_rows];
@@ -185,7 +190,7 @@ impl<E: FieldCore + FromSmallInt> RangeAffineFromSPrecomp<E> {
 
 impl<E: FieldCore> RangeAffineFromSPrecomp<E> {
     #[inline]
-    fn compact_index(&self, s_int: i32) -> usize {
+    fn compact_index(&self, s_int: i16) -> usize {
         let raw = (s_int - self.min_s) as usize;
         debug_assert!(raw < self.s_to_compact.len());
         let ci = self.s_to_compact[raw];
@@ -203,13 +208,13 @@ impl<E: FieldCore> RangeAffineFromSPrecomp<E> {
     }
 
     #[inline]
-    fn h_i_lut(&self, s_0_int: i32, i: usize) -> E {
+    fn h_i_lut(&self, s_0_int: i16, i: usize) -> E {
         let ci = self.compact_index(s_0_int);
         self.small_s_lut[ci * self.num_rows() + i]
     }
 
     #[inline]
-    fn compact_coeffs_lut(&self, s_0_int: i32, s_1_int: i32) -> Option<&[CompactCoeffEntry]> {
+    fn compact_coeffs_lut(&self, s_0_int: i16, s_1_int: i16) -> Option<&[CompactCoeffEntry]> {
         let lut = self.compact_coeff_lut.as_ref()?;
         let num_rows = self.num_rows();
         let pair_idx = self.compact_index(s_0_int) * self.num_valid_s + self.compact_index(s_1_int);
@@ -472,7 +477,7 @@ fn compute_norm_round_poly_from_s_compact<
     E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps,
 >(
     split_eq: &GruenSplitEq<E>,
-    s_compact: &[i32],
+    s_compact: &[i16],
     range_precomp: &RangeAffineFromSPrecomp<E>,
     previous_claim: E,
 ) -> UniPoly<E> {
@@ -534,8 +539,8 @@ fn compute_norm_round_poly_from_s_compact<
                 for (j_low, &e_in) in e_first.iter().enumerate() {
                     let j = j_high * num_first + j_low;
                     let s_0_int = s_compact[2 * j];
-                    let s_1 = E::from_i64(s_compact[2 * j + 1] as i64);
-                    let a = s_1 - E::from_i64(s_0_int as i64);
+                    let s_1 = E::from_i64(i64::from(s_compact[2 * j + 1]));
+                    let a = s_1 - E::from_i64(i64::from(s_0_int));
                     let mut a_pow = E::one();
                     for coeff_idx in 0..full_num_coeffs_q {
                         let h_i_s0 = rp.h_i_lut(s_0_int, coeff_idx);
@@ -574,8 +579,16 @@ fn compute_norm_round_poly_from_s_compact<
 }
 
 enum STable<E: FieldCore> {
-    Compact(Vec<i32>),
+    Compact(Vec<i16>),
     Full(Vec<E>),
+}
+
+#[inline]
+fn compact_s_from_w(w: i8) -> i16 {
+    let w = i32::from(w);
+    let s = w * (w + 1);
+    debug_assert!(s >= 0);
+    s as i16
 }
 
 struct Stage1TwoRoundPrefix<E: FieldCore> {
@@ -621,10 +634,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
 
         let s_table = w_evals_compact
             .iter()
-            .map(|&w| {
-                let w = w as i32;
-                w * (w + 1)
-            })
+            .copied()
+            .map(compact_s_from_w)
             .collect();
 
         Self {
@@ -694,8 +705,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     }
 
     #[inline]
-    fn compact_s_values(b: usize) -> Vec<i32> {
-        let half = (b / 2) as i32;
+    fn compact_s_values(b: usize) -> Vec<i16> {
+        let half = (b / 2) as i16;
         (0..half).map(|k| k * (k + 1)).collect()
     }
 
@@ -738,18 +749,18 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     }
 
     #[inline]
-    fn direct_fold_s_quad_to_round2(s00: i32, s10: i32, s01: i32, s11: i32, r0: E, r1: E) -> E {
-        let s00 = E::from_i64(s00 as i64);
-        let s10 = E::from_i64(s10 as i64);
-        let s01 = E::from_i64(s01 as i64);
-        let s11 = E::from_i64(s11 as i64);
+    fn direct_fold_s_quad_to_round2(s00: i16, s10: i16, s01: i16, s11: i16, r0: E, r1: E) -> E {
+        let s00 = E::from_i64(i64::from(s00));
+        let s10 = E::from_i64(i64::from(s10));
+        let s01 = E::from_i64(i64::from(s01));
+        let s11 = E::from_i64(i64::from(s11));
         let x0 = s00 + r0 * (s10 - s00);
         let x1 = s01 + r0 * (s11 - s01);
         x0 + r1 * (x1 - x0)
     }
 
     #[inline]
-    fn stage1_b8_s_digit_from_compact_s(s: i32) -> usize {
+    fn stage1_b8_s_digit_from_compact_s(s: i16) -> usize {
         match s {
             0 => 0,
             2 => 1,
@@ -760,7 +771,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     }
 
     #[inline]
-    fn stage1_b8_quad_lookup_index_from_row(row: &[i32], base: usize) -> usize {
+    fn stage1_b8_quad_lookup_index_from_row(row: &[i16], base: usize) -> usize {
         let d0 = row
             .get(base)
             .copied()
@@ -785,7 +796,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     }
 
     fn build_round2_s_lookup(r0: E, r1: E) -> Vec<E> {
-        const S_VALUES: [i32; 4] = [0, 2, 6, 12];
+        const S_VALUES: [i16; 4] = [0, 2, 6, 12];
         (0..256usize)
             .map(|idx| {
                 let d0 = idx & 0b11;
@@ -806,7 +817,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
 
     #[tracing::instrument(skip_all, name = "HachiStage1Prover::fold_s_compact_to_round2")]
     fn fold_s_compact_to_round2(
-        s_compact: &[i32],
+        s_compact: &[i16],
         live_x_cols: usize,
         y_len: usize,
         r0: E,
@@ -837,7 +848,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     )]
     fn fuse_compact_to_round2_and_compute_round(
         &self,
-        s_compact: &[i32],
+        s_compact: &[i16],
         previous_claim: E,
         r0: E,
         r1: E,
@@ -1322,7 +1333,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     }
 
     #[tracing::instrument(skip_all, name = "HachiStage1Prover::compute_round_compact_prefix_x")]
-    fn compute_round_compact_prefix_x(&self, s_compact: &[i32], previous_claim: E) -> UniPoly<E> {
+    fn compute_round_compact_prefix_x(&self, s_compact: &[i16], previous_claim: E) -> UniPoly<E> {
         debug_assert!(self.rounds_completed < self.num_u);
         debug_assert_eq!(
             s_compact.len(),
@@ -1429,8 +1440,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                                 &mut entry_buf,
                                 &mut s_pows_buf,
                                 rp,
-                                E::from_i64(s0_i as i64),
-                                E::from_i64((s1_i as i64) - (s0_i as i64)),
+                                E::from_i64(i64::from(s0_i)),
+                                E::from_i64(i64::from(s1_i - s0_i)),
                             );
                             accumulate_dense_entry_coeffs(
                                 &mut inner_accum[..num_coeffs_q],
@@ -1597,7 +1608,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
 
     #[tracing::instrument(skip_all, name = "HachiStage1Prover::fold_s_compact_prefix_x")]
     fn fold_s_compact_prefix_x(
-        s_compact: &[i32],
+        s_compact: &[i16],
         live_x_cols: usize,
         y_len: usize,
         fold_lut: &CompactPairFoldLut<E>,
@@ -1683,7 +1694,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     }
 
     #[tracing::instrument(skip_all, name = "HachiStage1Prover::fold_s_compact_to_full")]
-    fn fold_s_compact_to_full(s_compact: &[i32], fold_lut: &CompactPairFoldLut<E>) -> Vec<E> {
+    fn fold_s_compact_to_full(s_compact: &[i16], fold_lut: &CompactPairFoldLut<E>) -> Vec<E> {
         cfg_into_iter!(0..s_compact.len() / 2)
             .map(|j| fold_lut.fold(s_compact[2 * j], s_compact[2 * j + 1]))
             .collect()
@@ -1904,7 +1915,7 @@ mod tests {
     }
 
     fn fold_s_compact_prefix_x_reference(
-        s_compact: &[i32],
+        s_compact: &[i16],
         live_x_cols: usize,
         y_len: usize,
         r: F,
@@ -1916,9 +1927,9 @@ mod tests {
             let row = &s_compact[row_start..row_start + live_x_cols];
             for (pair_x, dst) in row_out.iter_mut().enumerate() {
                 let left = 2 * pair_x;
-                let s_0 = F::from_i64(row[left] as i64);
+                let s_0 = F::from_i64(i64::from(row[left]));
                 let s_1 = if left + 1 < live_x_cols {
-                    F::from_i64(row[left + 1] as i64)
+                    F::from_i64(i64::from(row[left + 1]))
                 } else {
                     F::zero()
                 };
@@ -1928,11 +1939,11 @@ mod tests {
         out
     }
 
-    fn fold_s_compact_to_full_reference(s_compact: &[i32], r: F) -> Vec<F> {
+    fn fold_s_compact_to_full_reference(s_compact: &[i16], r: F) -> Vec<F> {
         (0..s_compact.len() / 2)
             .map(|j| {
-                let s_0 = F::from_i64(s_compact[2 * j] as i64);
-                let s_1 = F::from_i64(s_compact[2 * j + 1] as i64);
+                let s_0 = F::from_i64(i64::from(s_compact[2 * j]));
+                let s_1 = F::from_i64(i64::from(s_compact[2 * j + 1]));
                 s_0 + r * (s_1 - s_0)
             })
             .collect()
@@ -1974,11 +1985,11 @@ mod tests {
             let mut prover =
                 HachiStage1Prover::new(&w_compact, &tau0, b, 1usize << num_u, num_u, num_l);
             let stage1_poly = prover.compute_round_univariate(0, F::zero());
-            let s_compact: Vec<i32> = w_compact
+            let s_compact: Vec<i16> = w_compact
                 .iter()
                 .map(|&w| {
                     let w = w as i32;
-                    w * (w + 1)
+                    (w * (w + 1)) as i16
                 })
                 .collect();
             let reference = compute_norm_round_poly_from_s_compact(
@@ -2060,11 +2071,11 @@ mod tests {
         let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
             .map(|i| ((i * 9 + 5) % b) as i8 - half)
             .collect();
-        let s_compact: Vec<i32> = w_prefix
+        let s_compact: Vec<i16> = w_prefix
             .iter()
             .map(|&w| {
                 let w = w as i32;
-                w * (w + 1)
+                (w * (w + 1)) as i16
             })
             .collect();
         let tau0: Vec<F> = (0..(num_u + num_l))

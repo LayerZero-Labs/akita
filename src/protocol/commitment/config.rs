@@ -584,10 +584,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Witness length (in i8 digits) above which the prover hands off to
     /// Labrador (D'=64) instead of sending the witness directly.
     ///
-    /// The default returns 65 536 (64 Ki). Override to a lower value in test
-    /// configs to exercise the Labrador tail path with smaller polynomials.
+    /// The default keeps the current direct-tail optimum (`w_len = 84_096`)
+    /// on the direct path. Override to a lower value in test configs to
+    /// exercise the Labrador tail path with smaller polynomials.
     fn labrador_handoff_threshold() -> usize {
-        65_536
+        84_096
     }
 }
 
@@ -1017,13 +1018,7 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
     }
 
     fn n_b_at_level(level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {
-        if max_num_vars >= 44 {
-            if level <= 1 {
-                2
-            } else {
-                1
-            }
-        } else if max_num_vars >= 38 {
+        if max_num_vars >= 38 {
             if level == 0 {
                 2
             } else {

@@ -551,7 +551,8 @@ where
     }
 
     if handoff_d == D {
-        let typed_hint: HachiCommitmentHint<F, D> = current_hint.to_typed();
+        let typed_hint: HachiCommitmentHint<F, D> =
+            current_hint.to_typed_with_t(w_layout.num_digits_open, w_layout.log_basis)?;
         let typed_commitment: RingCommitment<F, D> = current_commitment.to_ring_commitment();
         return labrador_handoff_prove::<F, T, D, Cfg>(
             current_w,
@@ -573,7 +574,8 @@ where
         handoff_ntt_d_cache,
         &setup.expanded,
         |D_HANDOFF, ntt_d| {
-            let typed_hint: HachiCommitmentHint<F, { D_HANDOFF }> = current_hint.to_typed();
+            let typed_hint: HachiCommitmentHint<F, { D_HANDOFF }> =
+                current_hint.to_typed_with_t(w_layout.num_digits_open, w_layout.log_basis)?;
             let typed_commitment: RingCommitment<F, { D_HANDOFF }> =
                 current_commitment.to_ring_commitment();
             labrador_handoff_prove::<F, T, { D_HANDOFF }, Cfg>(
@@ -692,8 +694,10 @@ where
         }
     }
 
+    let w_layout = hachi_recursive_level_layout_from_params::<Cfg>(level_params, current_w.len())?;
     let w_commitment: RingCommitment<F, { D_LEVEL }> = last_w_commitment.to_ring_commitment();
-    let typed_hint: HachiCommitmentHint<F, { D_LEVEL }> = current_hint.to_typed();
+    let typed_hint: HachiCommitmentHint<F, { D_LEVEL }> =
+        current_hint.to_typed_with_t(w_layout.num_digits_open, w_layout.log_basis)?;
 
     let commit_fn: CommitFn<'_, F> = Box::new(
         |w: &[i8],
@@ -717,7 +721,6 @@ where
         },
     );
 
-    let w_layout = hachi_recursive_level_layout_from_params::<Cfg>(level_params, current_w.len())?;
     prove_one_level::<F, T, { D_LEVEL }, WCommitmentConfig<{ D_LEVEL }, Cfg>, _>(
         expanded,
         ntt_a,

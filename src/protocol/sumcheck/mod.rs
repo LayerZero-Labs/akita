@@ -47,14 +47,14 @@ pub(crate) fn trim_trailing_zeros<E: FieldCore>(coeffs: &mut Vec<E>) {
 /// always `left + r * (right - left)`, and the set of possible `(left, right)`
 /// pairs is tiny.
 pub(crate) struct CompactPairFoldLut<E: FieldCore> {
-    min_value: i32,
+    min_value: i16,
     value_to_index: Vec<usize>,
     pair_values: Vec<E>,
     num_values: usize,
 }
 
 impl<E: FieldCore + FromSmallInt + HasUnreducedOps> CompactPairFoldLut<E> {
-    pub(crate) fn from_allowed_values(allowed_values: &[i32], r: E) -> Self {
+    pub(crate) fn from_allowed_values(allowed_values: &[i16], r: E) -> Self {
         assert!(
             !allowed_values.is_empty(),
             "allowed_values must be non-empty"
@@ -96,16 +96,16 @@ impl<E: FieldCore + FromSmallInt + HasUnreducedOps> CompactPairFoldLut<E> {
         }
     }
 
-    pub(crate) fn from_contiguous_range(min_value: i32, max_value: i32, r: E) -> Self {
+    pub(crate) fn from_contiguous_range(min_value: i16, max_value: i16, r: E) -> Self {
         assert!(min_value <= max_value, "invalid compact fold range");
-        let allowed_values: Vec<i32> = (min_value..=max_value).collect();
+        let allowed_values: Vec<i16> = (min_value..=max_value).collect();
         Self::from_allowed_values(&allowed_values, r)
     }
 }
 
 impl<E: FieldCore> CompactPairFoldLut<E> {
     #[inline]
-    fn index_of(&self, value: i32) -> usize {
+    fn index_of(&self, value: i16) -> usize {
         let offset = (value - self.min_value) as usize;
         let idx = self.value_to_index[offset];
         debug_assert_ne!(idx, usize::MAX, "value missing from compact fold LUT");
@@ -113,7 +113,7 @@ impl<E: FieldCore> CompactPairFoldLut<E> {
     }
 
     #[inline]
-    pub(crate) fn fold(&self, left: i32, right: i32) -> E {
+    pub(crate) fn fold(&self, left: i16, right: i16) -> E {
         let left_idx = self.index_of(left);
         let right_idx = self.index_of(right);
         self.pair_values[left_idx * self.num_values + right_idx]

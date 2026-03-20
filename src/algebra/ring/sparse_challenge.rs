@@ -47,9 +47,11 @@ pub enum SparseChallengeConfig {
     /// The `D` coefficient positions are partitioned into the even indices and
     /// the odd indices, each of size `D / 2`. In each half, sampling chooses
     /// `half_weight` distinct positions, assigns each a random sign, and then
-    /// upgrades up to `max_mag2_per_half` of those positions from magnitude 1
-    /// to magnitude 2. The two halves are interleaved back into one ring
-    /// element.
+    /// chooses a shell with between `0` and `max_mag2_per_half` magnitude-2
+    /// entries uniformly over the full union of shells
+    /// `C_{half_weight,<=max_mag2_per_half}` before upgrading that many
+    /// positions from magnitude 1 to magnitude 2. The two halves are
+    /// interleaved back into one ring element.
     ///
     /// The worst-case L1 mass is `2 * (half_weight + max_mag2_per_half)`.
     SplitRing {

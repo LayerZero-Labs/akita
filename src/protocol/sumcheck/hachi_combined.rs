@@ -591,12 +591,12 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> CombinedNor
 
     #[inline]
     fn build_compact_w_fold_lut(r: E) -> CompactPairFoldLut<E> {
-        CompactPairFoldLut::from_contiguous_range(-2, 1, r)
+        CompactPairFoldLut::from_contiguous_range(-2i16, 1i16, r)
     }
 
     fn fold_w_compact_to_full(w_compact: &[i8], fold_lut: &CompactPairFoldLut<E>) -> Vec<E> {
         (0..w_compact.len() / 2)
-            .map(|j| fold_lut.fold(i32::from(w_compact[2 * j]), i32::from(w_compact[2 * j + 1])))
+            .map(|j| fold_lut.fold(i16::from(w_compact[2 * j]), i16::from(w_compact[2 * j + 1])))
             .collect()
     }
 
@@ -613,7 +613,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> CombinedNor
             for (pair_x, dst) in row_out.iter_mut().enumerate() {
                 let left = 2 * pair_x;
                 let w1 = row.get(left + 1).copied().unwrap_or_default();
-                *dst = fold_lut.fold(i32::from(row[left]), i32::from(w1));
+                *dst = fold_lut.fold(i16::from(row[left]), i16::from(w1));
             }
         }
         out

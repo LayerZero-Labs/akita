@@ -1786,7 +1786,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
             .max()
             .unwrap_or(0)
             .max(0);
-        CompactPairFoldLut::from_contiguous_range(min_w, max_w, r)
+        CompactPairFoldLut::from_contiguous_range(min_w as i16, max_w as i16, r)
     }
 
     fn fold_compact_prefix_x(
@@ -1807,11 +1807,11 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                 for (pair_x, dst) in row_out.iter_mut().enumerate() {
                     let left = 2 * pair_x;
                     let w_1 = if left + 1 < live_x_cols {
-                        row[left + 1] as i32
+                        i16::from(row[left + 1])
                     } else {
                         0
                     };
-                    *dst = fold_lut.fold(row[left] as i32, w_1);
+                    *dst = fold_lut.fold(i16::from(row[left]), w_1);
                 }
             });
 
@@ -1822,11 +1822,11 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
             for (pair_x, dst) in row_out.iter_mut().enumerate() {
                 let left = 2 * pair_x;
                 let w_1 = if left + 1 < live_x_cols {
-                    row[left + 1] as i32
+                    i16::from(row[left + 1])
                 } else {
                     0
                 };
-                *dst = fold_lut.fold(row[left] as i32, w_1);
+                *dst = fold_lut.fold(i16::from(row[left]), w_1);
             }
         }
 
@@ -1890,7 +1890,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
 
     fn fold_compact_to_full(w_compact: &[i8], fold_lut: &CompactPairFoldLut<E>) -> Vec<E> {
         cfg_into_iter!(0..w_compact.len() / 2)
-            .map(|j| fold_lut.fold(w_compact[2 * j] as i32, w_compact[2 * j + 1] as i32))
+            .map(|j| fold_lut.fold(i16::from(w_compact[2 * j]), i16::from(w_compact[2 * j + 1])))
             .collect()
     }
 }
