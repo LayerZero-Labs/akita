@@ -19,7 +19,6 @@ Example:
     --witness-log-bits 4 \
     --current-w-digits 143680 \
     --n-a 1 \
-    --n-b 1 \
     --n-d 1 \
     --num-blocks 528 \
     --block-len 1024 \
@@ -46,10 +45,6 @@ def packed_digits_bytes(num_elems: int, bits_per_elem: int) -> int:
 def flat_ring_vec_bytes(ring_len: int, ring_dim: int, field_bytes: int) -> int:
     coeff_count = ring_len * ring_dim
     return 4 + 8 + coeff_count * field_bytes
-
-
-def flat_labrador_witness_bytes(row_lengths: list[int], ring_dim: int, field_bytes: int) -> int:
-    return 4 + sum(flat_ring_vec_bytes(row_len, ring_dim, field_bytes) for row_len in row_lengths)
 
 
 def packed_coeff_row_bytes(ring_len: int, ring_dim: int, coeff_bits: int) -> int:
@@ -98,6 +93,8 @@ def build_reports(args: argparse.Namespace) -> tuple[int, FrontierReport, Fronti
         legacy_row_bits,
         args.ring_dim,
     )
+    # The public tail payload matches `LabradorTail`: `v` has `n_d` ring
+    # elements, `y_ring` is a single ring element, and the norm bound is u128.
     legacy_public_bytes = (
         1
         + flat_ring_vec_bytes(args.n_d, args.ring_dim, args.field_bytes)
@@ -185,7 +182,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--witness-log-bits", type=int, required=True)
     parser.add_argument("--current-w-digits", type=int, required=True)
     parser.add_argument("--n-a", type=int, required=True)
-    parser.add_argument("--n-b", type=int, required=True)
     parser.add_argument("--n-d", type=int, required=True)
     parser.add_argument("--num-blocks", type=int, required=True)
     parser.add_argument("--block-len", type=int, required=True)

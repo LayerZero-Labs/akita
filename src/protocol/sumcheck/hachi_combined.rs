@@ -829,9 +829,9 @@ mod tests {
         let mut acc = F::zero();
         for y in 0..y_len {
             let row = &w_compact[y * live_x_cols..(y + 1) * live_x_cols];
-            for x in 0..x_len {
+            for (x, &m_eval_x) in m_evals_x.iter().enumerate().take(x_len) {
                 let w = row.get(x).copied().unwrap_or_default();
-                acc += F::from_i64(w as i64) * alpha_evals_y[y] * m_evals_x[x];
+                acc += F::from_i64(w as i64) * alpha_evals_y[y] * m_eval_x;
             }
         }
         acc
@@ -876,14 +876,14 @@ mod tests {
         let current_x_mask = (1usize << current_x_width).wrapping_sub(1);
         let mut norm_inner = F::zero();
         let mut relation = F::zero();
-        for j_high in 0..num_second {
+        for (j_high, &eq_second) in e_second.iter().enumerate().take(num_second) {
             let base = j_high * num_first;
             for (j_low, _) in e_first.iter().enumerate() {
                 let j = base + j_low;
                 let w0 = F::from_i64(i64::from(w_compact[2 * j]));
                 let w1 = F::from_i64(i64::from(w_compact[2 * j + 1]));
                 let w_t = w0 + t * (w1 - w0);
-                norm_inner += e_first[j_low] * e_second[j_high] * direct_b4_range_check_from_w(w_t);
+                norm_inner += e_first[j_low] * eq_second * direct_b4_range_check_from_w(w_t);
 
                 let p0 = prover.alpha_compact[(2 * j) >> current_x_width]
                     * prover.m_compact[(2 * j) & current_x_mask];
@@ -946,14 +946,14 @@ mod tests {
         let current_x_mask = (1usize << current_x_width).wrapping_sub(1);
         let mut norm_inner = F::zero();
         let mut relation = F::zero();
-        for j_high in 0..num_second {
+        for (j_high, &eq_second) in e_second.iter().enumerate().take(num_second) {
             let base = j_high * num_first;
             for (j_low, _) in e_first.iter().enumerate() {
                 let j = base + j_low;
                 let w0 = w_full[2 * j];
                 let w1 = w_full[2 * j + 1];
                 let w_t = w0 + t * (w1 - w0);
-                norm_inner += e_first[j_low] * e_second[j_high] * direct_b4_range_check_from_w(w_t);
+                norm_inner += e_first[j_low] * eq_second * direct_b4_range_check_from_w(w_t);
 
                 let p0 = prover.alpha_compact[(2 * j) >> current_x_width]
                     * prover.m_compact[(2 * j) & current_x_mask];

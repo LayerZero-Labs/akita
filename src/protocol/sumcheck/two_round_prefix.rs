@@ -1681,6 +1681,7 @@ mod tests {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_stage2_bivariate_skip_proof_from_compact_reference(
         w_compact: &[i8],
         alpha_evals_y: &[F],
@@ -1906,6 +1907,48 @@ mod tests {
                 5,
                 3,
                 1,
+            ),
+        );
+    }
+
+    #[test]
+    fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() {
+        let live_x_cols = 34_519usize;
+        let num_u = 16usize;
+        let num_l = 6usize;
+        let y_len = 1usize << num_l;
+        let w_compact: Vec<i8> = (0..(live_x_cols * y_len))
+            .map(|i| ((i * 37 + 11) % 8) as i8 - 4)
+            .collect();
+        let alpha_evals_y: Vec<F> = (0..y_len)
+            .map(|i| F::from_u64((i as u64).wrapping_mul(0x9e37_79b9).wrapping_add(0x1234_5678)))
+            .collect();
+        let m_evals_x: Vec<F> = (0..(1usize << num_u))
+            .map(|i| F::from_u64((i as u64).wrapping_mul(0x85eb_ca6b).wrapping_add(0xc2b2_ae35)))
+            .collect();
+        let r_stage1: Vec<F> = (0..(num_u + num_l))
+            .map(|i| F::from_u64((i as u64).wrapping_mul(0x27d4_eb2d).wrapping_add(0x1656_67b1)))
+            .collect();
+        assert_eq!(
+            build_stage2_bivariate_skip_proof_from_compact(
+                &w_compact,
+                &alpha_evals_y,
+                &m_evals_x,
+                &r_stage1,
+                8,
+                live_x_cols,
+                num_u,
+                num_l,
+            ),
+            build_stage2_bivariate_skip_proof_from_compact_reference(
+                &w_compact,
+                &alpha_evals_y,
+                &m_evals_x,
+                &r_stage1,
+                8,
+                live_x_cols,
+                num_u,
+                num_l,
             ),
         );
     }

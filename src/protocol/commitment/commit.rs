@@ -287,7 +287,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiVerifierSetup<F> {
     }
 }
 
-fn root_current_w_len<const D: usize>(layout: HachiCommitmentLayout) -> usize {
+pub(crate) fn root_current_w_len<const D: usize>(layout: HachiCommitmentLayout) -> usize {
     layout
         .num_blocks
         .checked_mul(layout.block_len)

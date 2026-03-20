@@ -228,9 +228,10 @@ where
 
     for round in 0..num_rounds {
         let g = instance.compute_round_univariate(round, claim);
+        let round_sum = g.evaluate(&E::zero()) + g.evaluate(&E::one());
         debug_assert!(
-            g.evaluate(&E::zero()) + g.evaluate(&E::one()) == claim,
-            "sumcheck round univariate does not match previous claim hint"
+            round_sum == claim,
+            "sumcheck round {round} univariate does not match previous claim hint"
         );
 
         let compressed = g.compress();

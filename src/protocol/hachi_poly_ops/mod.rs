@@ -158,6 +158,28 @@ fn extract_balanced_digit(c: &mut i128, p: &DecomposeParams) -> i32 {
 ///
 /// `digit_plane` is `[i8; D]`, `acc` is `[i32; D]`.
 /// Each challenge term rotates the digit plane and adds/subtracts contiguously.
+#[inline(always)]
+fn sparse_mul_acc_add_scalar<const D: usize>(digit_plane: &[i8], acc: &mut [i32; D], p: usize) {
+    let split = D - p;
+    for i in 0..split {
+        acc[i + p] += digit_plane[i] as i32;
+    }
+    for i in split..D {
+        acc[i - split] -= digit_plane[i] as i32;
+    }
+}
+
+#[inline(always)]
+fn sparse_mul_acc_sub_scalar<const D: usize>(digit_plane: &[i8], acc: &mut [i32; D], p: usize) {
+    let split = D - p;
+    for i in 0..split {
+        acc[i + p] -= digit_plane[i] as i32;
+    }
+    for i in split..D {
+        acc[i - split] += digit_plane[i] as i32;
+    }
+}
+
 fn sparse_mul_acc_scalar<const D: usize>(
     digit_plane: &[i8],
     challenge: &SparseChallenge,
@@ -165,20 +187,26 @@ fn sparse_mul_acc_scalar<const D: usize>(
 ) {
     for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
         let p = pos as usize;
-        let split = D - p;
-        if coeff > 0 {
-            for i in 0..split {
-                acc[i + p] += digit_plane[i] as i32;
+        match coeff {
+            1 => sparse_mul_acc_add_scalar::<D>(digit_plane, acc, p),
+            -1 => sparse_mul_acc_sub_scalar::<D>(digit_plane, acc, p),
+            2 => {
+                sparse_mul_acc_add_scalar::<D>(digit_plane, acc, p);
+                sparse_mul_acc_add_scalar::<D>(digit_plane, acc, p);
             }
-            for i in split..D {
-                acc[i - split] -= digit_plane[i] as i32;
+            -2 => {
+                sparse_mul_acc_sub_scalar::<D>(digit_plane, acc, p);
+                sparse_mul_acc_sub_scalar::<D>(digit_plane, acc, p);
             }
-        } else {
-            for i in 0..split {
-                acc[i + p] -= digit_plane[i] as i32;
-            }
-            for i in split..D {
-                acc[i - split] += digit_plane[i] as i32;
+            _ => {
+                let split = D - p;
+                let c = coeff as i32;
+                for i in 0..split {
+                    acc[i + p] += c * digit_plane[i] as i32;
+                }
+                for i in split..D {
+                    acc[i - split] -= c * digit_plane[i] as i32;
+                }
             }
         }
     }
@@ -193,7 +221,7 @@ fn sparse_mul_acc<const D: usize>(
 ) {
     #[cfg(target_arch = "aarch64")]
     {
-        if neon::use_neon_ntt() {
+        if neon::use_neon_ntt() && challenge.coeffs.iter().all(|&coeff| coeff.unsigned_abs() <= 2) {
             unsafe {
                 decompose_fold_neon::sparse_mul_acc_neon(
                     digit_plane.as_ptr(),
@@ -1290,6 +1318,8 @@ mod tests {
     use crate::protocol::ring_switch::w_commitment_layout;
     use crate::test_utils::{TinyConfig, D as TestD, F as TestF};
     use crate::FromSmallInt;
+    #[cfg(target_arch = "aarch64")]
+    use crate::{algebra::ntt::neon, protocol::hachi_poly_ops::decompose_fold_neon};
 
     #[test]
     fn dense_poly_from_field_evals_roundtrip() {
@@ -1504,5 +1534,54 @@ mod tests {
             .unwrap();
 
         assert_eq!(digit_commit, dense_commit);
+    }
+
+    #[test]
+    fn balanced_digit_poly_decompose_fold_respects_mag2_challenges() {
+        let digits: Vec<i8> = (0..TestD).map(|i| (i % 5) as i8 - 2).collect();
+        let poly = BalancedDigitPoly::<TestF, TestD>::from_i8_digits(&digits).unwrap();
+        let challenge = SparseChallenge {
+            positions: vec![0, 3, 11],
+            coeffs: vec![2, -1, -2],
+        };
+
+        let got = poly.decompose_fold(std::slice::from_ref(&challenge), 1, 1, 3);
+
+        let ring = CyclotomicRing::<TestF, TestD>::from_coefficients(from_fn(|idx| {
+            TestF::from_i64(digits[idx] as i64)
+        }));
+        let expected = challenge.to_dense::<TestF, TestD>().unwrap() * ring;
+
+        assert_eq!(got.z_pre, vec![expected]);
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn sparse_mul_acc_neon_matches_scalar_for_mag2_challenges() {
+        if !neon::use_neon_ntt() {
+            return;
+        }
+
+        let digit_plane: [i8; TestD] = from_fn(|idx| ((idx % 7) as i8) - 3);
+        let challenge = SparseChallenge {
+            positions: vec![0, 5, 17, 31],
+            coeffs: vec![2, -1, -2, 1],
+        };
+
+        let mut scalar = [0i32; TestD];
+        sparse_mul_acc_scalar::<TestD>(&digit_plane, &challenge, &mut scalar);
+
+        let mut via_neon = [0i32; TestD];
+        unsafe {
+            decompose_fold_neon::sparse_mul_acc_neon(
+                digit_plane.as_ptr(),
+                via_neon.as_mut_ptr(),
+                TestD,
+                &challenge.positions,
+                &challenge.coeffs,
+            );
+        }
+
+        assert_eq!(via_neon, scalar);
     }
 }

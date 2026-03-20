@@ -176,6 +176,7 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
     let y_ring_size = level.y_ring.serialized_size(Compress::No);
     let v_size = level.v.serialized_size(Compress::No);
     let total = level.serialized_size(Compress::No);
+    let body_tag_size = std::mem::size_of::<u8>();
 
     eprintln!("[{label}]   hachi_fold L{level_idx}: total={total} bytes");
     eprintln!(
@@ -200,6 +201,7 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
             let next_w_commitment_size = next_w_commitment.serialized_size(Compress::No);
             let next_w_eval_size = next_w_eval.serialized_size(Compress::No);
             eprintln!("[{label}]     combined_sumcheck={combined_sumcheck_size} bytes");
+            eprintln!("[{label}]     body_tag={body_tag_size} byte");
             eprintln!(
                 "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} ring elems, D={})",
                 next_w_commitment.count(),
@@ -210,6 +212,7 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
                 total,
                 y_ring_size
                     + v_size
+                    + body_tag_size
                     + combined_sumcheck_size
                     + next_w_commitment_size
                     + next_w_eval_size
@@ -224,6 +227,7 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
             eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
             eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
             eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
+            eprintln!("[{label}]     body_tag={body_tag_size} byte");
             eprintln!(
                 "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} ring elems, D={})",
                 stage2.next_w_commitment.count(),
@@ -234,6 +238,7 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
                 total,
                 y_ring_size
                     + v_size
+                    + body_tag_size
                     + stage1_sumcheck_size
                     + stage1_s_claim_size
                     + stage2_sumcheck_size

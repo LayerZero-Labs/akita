@@ -63,10 +63,7 @@ fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
-fn make_dense_basis2_fixture(
-    nv: usize,
-    transcript_label: &'static [u8],
-) -> (
+type DenseBasis2Fixture = (
     <HachiCommitmentScheme<128, Fp128BoundedCommitmentConfig<128, 2, 2>> as CommitmentScheme<
         F,
         128,
@@ -76,7 +73,9 @@ fn make_dense_basis2_fixture(
     Vec<F>,
     F,
     HachiCommitmentLayout,
-) {
+);
+
+fn make_dense_basis2_fixture(nv: usize, transcript_label: &'static [u8]) -> DenseBasis2Fixture {
     type Cfg = Fp128BoundedCommitmentConfig<128, 2, 2>;
     const D: usize = Cfg::D;
     let layout = Cfg::commitment_layout(nv).expect("layout");

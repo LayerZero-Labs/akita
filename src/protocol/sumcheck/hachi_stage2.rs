@@ -147,6 +147,23 @@ fn reduce_compact_rel<E: FieldCore + HasUnreducedOps>(rel: CompactRelAccum<E>) -
 }
 
 #[inline]
+fn stage2_eq_block(
+    j_base: usize,
+    blk: usize,
+    num_first: usize,
+    first_bits: usize,
+    block_size: usize,
+    live_pairs: usize,
+) -> (usize, usize) {
+    debug_assert!(num_first.is_power_of_two());
+    let j = j_base + blk;
+    let j_high = j >> first_bits;
+    let bucket_remaining = num_first - (j & (num_first - 1));
+    let blk_end = (blk + block_size.min(bucket_remaining)).min(live_pairs);
+    (j_high, blk_end)
+}
+
+#[inline]
 pub(crate) fn accumulate_relation_coeffs<E: FieldCore>(
     rel: &mut [E; 3],
     w0: E,
@@ -582,8 +599,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
 
                     let mut blk = 0usize;
                     while blk < live_pairs {
-                        let blk_end = (blk + block_size).min(live_pairs);
-                        let j_high = (j_base + blk) >> first_bits;
+                        let (j_high, blk_end) = stage2_eq_block(
+                            j_base, blk, num_first, first_bits, block_size, live_pairs,
+                        );
                         let mut inner_virt = [E::zero(); 2];
 
                         for pair_x in blk..blk_end {
@@ -650,8 +668,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                     let j_base = y * current_x_half;
                     let mut blk = 0usize;
                     while blk < live_pairs {
-                        let blk_end = (blk + block_size).min(live_pairs);
-                        let j_high = (j_base + blk) >> first_bits;
+                        let (j_high, blk_end) = stage2_eq_block(
+                            j_base, blk, num_first, first_bits, block_size, live_pairs,
+                        );
                         let mut inner_virt = [E::zero(); 2];
 
                         for pair_x in blk..blk_end {
@@ -716,8 +735,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
 
                     let mut blk = 0usize;
                     while blk < live_pairs {
-                        let blk_end = (blk + block_size).min(live_pairs);
-                        let j_high = (j_base + blk) >> first_bits;
+                        let (j_high, blk_end) = stage2_eq_block(
+                            j_base, blk, num_first, first_bits, block_size, live_pairs,
+                        );
                         let mut inner_virt = [E::zero(); 3];
 
                         for pair_x in blk..blk_end {
@@ -787,8 +807,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                     let j_base = y * current_x_half;
                     let mut blk = 0usize;
                     while blk < live_pairs {
-                        let blk_end = (blk + block_size).min(live_pairs);
-                        let j_high = (j_base + blk) >> first_bits;
+                        let (j_high, blk_end) = stage2_eq_block(
+                            j_base, blk, num_first, first_bits, block_size, live_pairs,
+                        );
                         let mut inner_virt = [E::zero(); 3];
 
                         for pair_x in blk..blk_end {
@@ -886,8 +907,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
 
                     let mut blk = 0usize;
                     while blk < live_pairs {
-                        let blk_end = (blk + block_size).min(live_pairs);
-                        let j_high = (j_base + blk) >> first_bits;
+                        let (j_high, blk_end) = stage2_eq_block(
+                            j_base, blk, num_first, first_bits, block_size, live_pairs,
+                        );
                         let mut inner_virt = [E::zero(); 2];
 
                         for pair_x in blk..blk_end {
@@ -950,8 +972,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                     let j_base = y * next_current_x_half;
                     let mut blk = 0usize;
                     while blk < live_pairs {
-                        let blk_end = (blk + block_size).min(live_pairs);
-                        let j_high = (j_base + blk) >> first_bits;
+                        let (j_high, blk_end) = stage2_eq_block(
+                            j_base, blk, num_first, first_bits, block_size, live_pairs,
+                        );
                         let mut inner_virt = [E::zero(); 2];
 
                         for pair_x in blk..blk_end {
@@ -1012,8 +1035,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
 
                     let mut blk = 0usize;
                     while blk < live_pairs {
-                        let blk_end = (blk + block_size).min(live_pairs);
-                        let j_high = (j_base + blk) >> first_bits;
+                        let (j_high, blk_end) = stage2_eq_block(
+                            j_base, blk, num_first, first_bits, block_size, live_pairs,
+                        );
                         let mut inner_virt = [E::zero(); 3];
 
                         for pair_x in blk..blk_end {
@@ -1079,8 +1103,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                     let j_base = y * next_current_x_half;
                     let mut blk = 0usize;
                     while blk < live_pairs {
-                        let blk_end = (blk + block_size).min(live_pairs);
-                        let j_high = (j_base + blk) >> first_bits;
+                        let (j_high, blk_end) = stage2_eq_block(
+                            j_base, blk, num_first, first_bits, block_size, live_pairs,
+                        );
                         let mut inner_virt = [E::zero(); 3];
 
                         for pair_x in blk..blk_end {
@@ -1141,12 +1166,14 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
             let (virt_poly, rel_poly) = {
                 let prefix = self.ensure_two_round_prefix();
                 if rounds_completed == 0 {
-                    prefix.skip_state.reconstruct_round0_polys()
+                    let (virt_poly, rel_poly) = prefix.skip_state.reconstruct_round0_polys();
+                    (virt_poly, rel_poly)
                 } else {
                     let r0 = prefix
                         .first_challenge
                         .expect("round 1 prefix polynomial requested before ingesting round 0");
-                    prefix.skip_state.reconstruct_round1_polys(r0)
+                    let (virt_poly, rel_poly) = prefix.skip_state.reconstruct_round1_polys(r0);
+                    (virt_poly, rel_poly)
                 }
             };
             let combined = self.combine_polys(&virt_poly, &rel_poly);
@@ -1349,8 +1376,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
 
                     let mut blk = 0usize;
                     while blk < live_pairs {
-                        let blk_end = (blk + block_size).min(live_pairs);
-                        let j_high = (j_base + blk) >> first_bits;
+                        let (j_high, blk_end) = stage2_eq_block(
+                            j_base, blk, num_first, first_bits, block_size, live_pairs,
+                        );
                         let mut inner_virt = [E::MulU64Accum::ZERO; 2];
 
                         for pair_x in blk..blk_end {
@@ -1421,8 +1449,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
 
                     let mut blk = 0usize;
                     while blk < live_pairs {
-                        let blk_end = (blk + block_size).min(live_pairs);
-                        let j_high = (j_base + blk) >> first_bits;
+                        let (j_high, blk_end) = stage2_eq_block(
+                            j_base, blk, num_first, first_bits, block_size, live_pairs,
+                        );
                         let mut inner_virt = [E::MulU64Accum::ZERO; 4];
 
                         for pair_x in blk..blk_end {
@@ -1517,8 +1546,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
 
                     let mut blk = 0usize;
                     while blk < live_pairs {
-                        let blk_end = (blk + block_size).min(live_pairs);
-                        let j_high = (j_base + blk) >> first_bits;
+                        let (j_high, blk_end) = stage2_eq_block(
+                            j_base, blk, num_first, first_bits, block_size, live_pairs,
+                        );
                         let mut inner_virt = [E::zero(); 2];
 
                         for pair_x in blk..blk_end {
@@ -1574,8 +1604,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
 
                     let mut blk = 0usize;
                     while blk < live_pairs {
-                        let blk_end = (blk + block_size).min(live_pairs);
-                        let j_high = (j_base + blk) >> first_bits;
+                        let (j_high, blk_end) = stage2_eq_block(
+                            j_base, blk, num_first, first_bits, block_size, live_pairs,
+                        );
                         let mut inner_virt = [E::zero(); 3];
 
                         for pair_x in blk..blk_end {
@@ -2219,6 +2250,25 @@ mod tests {
         multilinear_eval(&s_evals, params.r_stage1).expect("valid stage-2 witness shape")
     }
 
+    fn relation_claim_from_compact_rows(
+        w_compact: &[i8],
+        alpha_evals_y: &[F],
+        m_evals_x: &[F],
+        params: &Stage2Params<'_>,
+    ) -> F {
+        let x_len = 1usize << params.num_u;
+        let mut claim = F::zero();
+        for (y, &alpha) in alpha_evals_y.iter().enumerate() {
+            let row_start = y * params.live_x_cols;
+            let row = &w_compact[row_start..row_start + params.live_x_cols];
+            for (x, &m_eval_x) in m_evals_x.iter().enumerate().take(x_len) {
+                let w = row.get(x).copied().unwrap_or_default();
+                claim += F::from_i64(w as i64) * alpha * m_eval_x;
+            }
+        }
+        claim
+    }
+
     fn new_stage2_test_prover(
         batching_coeff: F,
         w_compact: Vec<i8>,
@@ -2227,6 +2277,8 @@ mod tests {
         params: Stage2Params<'_>,
     ) -> HachiStage2Prover<F> {
         let s_claim = s_claim_from_compact_rows(&w_compact, &params);
+        let relation_claim =
+            relation_claim_from_compact_rows(&w_compact, &alpha_evals_y, &m_evals_x, &params);
         HachiStage2Prover::new(
             batching_coeff,
             w_compact,
@@ -2238,7 +2290,7 @@ mod tests {
             params.live_x_cols,
             params.num_u,
             params.num_l,
-            F::zero(),
+            relation_claim,
         )
     }
 
@@ -2689,5 +2741,140 @@ mod tests {
         }
         assert_eq!(prover.m_compact, expected_next_m_compact);
         assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
+    }
+
+    #[test]
+    fn stage2_large_odd_sparse_boolean_two_round_prefix_matches_direct_path() {
+        let num_u = 16usize;
+        let num_l = 6usize;
+        let live_x_cols = 34_519usize;
+        let b = 8usize;
+        let y_len = 1usize << num_l;
+        let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+            .map(|i| if (i * 73 + 19) % 17 == 0 { -1 } else { 0 })
+            .collect();
+        let r_stage1: Vec<F> = (0..(num_u + num_l))
+            .map(|i| F::from_u64((3 * i as u64) + 167))
+            .collect();
+        let alpha_evals_y: Vec<F> = (0..y_len)
+            .map(|i| F::from_u64((5 * i as u64) + 173))
+            .collect();
+        let m_evals_x: Vec<F> = (0..(1usize << num_u))
+            .map(|i| F::from_u64((7 * i as u64) + 179))
+            .collect();
+        let params = Stage2Params {
+            r_stage1: &r_stage1,
+            b,
+            live_x_cols,
+            num_u,
+            num_l,
+        };
+
+        let mut prover = new_stage2_test_prover(
+            F::from_u64(191),
+            w_prefix.clone(),
+            alpha_evals_y.clone(),
+            m_evals_x.clone(),
+            params,
+        );
+        let mut direct = new_stage2_test_prover(
+            F::from_u64(191),
+            w_prefix,
+            alpha_evals_y,
+            m_evals_x,
+            params,
+        );
+        direct.prefix_r_stage1 = None;
+
+        let mut prover_claim = prover.input_claim();
+        let mut direct_claim = direct.input_claim();
+
+        for round in 0..(num_u + num_l) {
+            let prover_poly = prover.compute_round_univariate(round, prover_claim);
+            let direct_poly = direct.compute_round_univariate(round, direct_claim);
+            assert_eq!(
+                prover_poly, direct_poly,
+                "round {round} polynomial mismatch for large odd sparse boolean witness"
+            );
+
+            let challenge = F::from_u64((11 * round as u64) + 197);
+            prover_claim = prover_poly.evaluate(&challenge);
+            direct_claim = direct_poly.evaluate(&challenge);
+            prover.ingest_challenge(round, challenge);
+            direct.ingest_challenge(round, challenge);
+        }
+
+        assert_eq!(prover_claim, direct_claim);
+        assert_eq!(prover.final_w_eval(), direct.final_w_eval());
+    }
+
+    #[test]
+    fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
+        let num_u = 16usize;
+        let num_l = 6usize;
+        let live_x_cols = 34_519usize;
+        let b = 8usize;
+        let y_len = 1usize << num_l;
+        let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+            .map(|i| if (i * 73 + 19) % 17 == 0 { -1 } else { 0 })
+            .collect();
+        let w_padded = pad_compact_rows(&w_prefix, live_x_cols, num_u, num_l);
+        let r_stage1: Vec<F> = (0..(num_u + num_l))
+            .map(|i| F::from_u64((3 * i as u64) + 223))
+            .collect();
+        let alpha_evals_y: Vec<F> = (0..y_len)
+            .map(|i| F::from_u64((5 * i as u64) + 227))
+            .collect();
+        let m_evals_x: Vec<F> = (0..(1usize << num_u))
+            .map(|i| F::from_u64((7 * i as u64) + 229))
+            .collect();
+
+        let mut prefix_prover = new_stage2_test_prover(
+            F::from_u64(233),
+            w_prefix,
+            alpha_evals_y.clone(),
+            m_evals_x.clone(),
+            Stage2Params {
+                r_stage1: &r_stage1,
+                b,
+                live_x_cols,
+                num_u,
+                num_l,
+            },
+        );
+        let mut padded_prover = new_stage2_test_prover(
+            F::from_u64(233),
+            w_padded,
+            alpha_evals_y,
+            m_evals_x,
+            Stage2Params {
+                r_stage1: &r_stage1,
+                b,
+                live_x_cols: 1usize << num_u,
+                num_u,
+                num_l,
+            },
+        );
+
+        let mut prefix_claim = prefix_prover.input_claim();
+        let mut padded_claim = padded_prover.input_claim();
+
+        for round in 0..(num_u + num_l) {
+            let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
+            let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
+            assert_eq!(
+                prefix_poly, padded_poly,
+                "round {round} polynomial mismatch for padded large odd sparse boolean witness"
+            );
+
+            let challenge = F::from_u64((13 * round as u64) + 239);
+            prefix_claim = prefix_poly.evaluate(&challenge);
+            padded_claim = padded_poly.evaluate(&challenge);
+            prefix_prover.ingest_challenge(round, challenge);
+            padded_prover.ingest_challenge(round, challenge);
+        }
+
+        assert_eq!(prefix_claim, padded_claim);
+        assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
     }
 }

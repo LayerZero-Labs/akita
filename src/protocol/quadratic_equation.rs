@@ -4,11 +4,7 @@
 //! the quadratic equation components M, y, z, and v.
 
 use crate::algebra::{CyclotomicRing, SparseChallenge};
-#[cfg(any(test, debug_assertions))]
-use crate::cfg_into_iter;
 use crate::error::HachiError;
-#[cfg(all(feature = "parallel", any(test, debug_assertions)))]
-use crate::parallel::*;
 use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
@@ -21,8 +17,6 @@ use crate::protocol::commitment::{
 use crate::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps};
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::HachiCommitmentHint;
-#[cfg(any(test, debug_assertions))]
-use crate::protocol::ring_switch::eval_ring_at;
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
@@ -328,18 +322,6 @@ where
     )
 }
 
-#[cfg(any(test, debug_assertions))]
-fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basis: u32) -> Vec<F> {
-    let base = F::from_canonical_u128_reduced(1u128 << log_basis);
-    let mut out = Vec::with_capacity(levels);
-    let mut power = F::one();
-    for _ in 0..levels {
-        out.push(power);
-        power = power * base;
-    }
-    out
-}
-
 /// Add only the high-half quotient contribution of `challenge * ring`.
 fn add_sparse_ring_product_high_half<F: FieldCore + CanonicalField, const D: usize>(
     quotient: &mut [F],
@@ -350,9 +332,11 @@ fn add_sparse_ring_product_high_half<F: FieldCore + CanonicalField, const D: usi
     for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
         let c = F::from_i64(coeff as i64);
         let p = pos as usize;
-        let start = D.saturating_sub(p);
-        for (s, &r_s) in rc.iter().enumerate().skip(start) {
-            quotient[p + s - D] += c * r_s;
+        for (s, &r_s) in rc.iter().enumerate() {
+            let deg = p + s;
+            if deg >= D {
+                quotient[deg - D] += c * r_s;
+            }
         }
     }
 }
@@ -487,131 +471,6 @@ where
     );
 
     Ok(result)
-}
-
-/// Reference helper for tests/debug diagnostics: split-eq replacement for
-/// `generate_m` + `eval_ring_matrix_at`.
-///
-/// Computes the field-element evaluations of each M entry at `alpha`,
-/// organized as rows of field elements, without materializing ring-valued `M`.
-#[cfg(any(test, debug_assertions))]
-#[tracing::instrument(skip_all, name = "compute_m_a_reference")]
-pub(crate) fn compute_m_a_reference<F, const D: usize>(
-    setup: &HachiExpandedSetup<F>,
-    opening_point: &RingOpeningPoint<F>,
-    challenges: &[SparseChallenge],
-    alpha: &F,
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
-) -> Result<Vec<Vec<F>>, HachiError>
-where
-    F: FieldCore + CanonicalField,
-{
-    let depth_commit = layout.num_digits_commit;
-    let depth_open = layout.num_digits_open;
-    let depth_fold = layout.num_digits_fold;
-    let log_basis = layout.log_basis;
-    let num_blocks = opening_point.b.len();
-    let block_len = layout.block_len;
-    let w_len = depth_open * num_blocks;
-    let t_len = depth_open * level_params.n_a * num_blocks;
-    let z_len = depth_fold * depth_commit * block_len;
-    let total_cols = w_len + t_len + z_len;
-
-    let g1_open = gadget_row_scalars::<F>(depth_open, log_basis);
-    let g1_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
-    let j1 = gadget_row_scalars::<F>(depth_fold, log_basis);
-
-    let c_alphas: Vec<F> = challenges
-        .iter()
-        .map(|c| eval_ring_at(&c.to_dense::<F, D>().expect("valid challenge"), alpha))
-        .collect();
-
-    let d_view = setup.D_mat.view::<D>();
-    let b_view = setup.B.view::<D>();
-
-    let d_rows: Vec<Vec<F>> = cfg_into_iter!(0..d_view.num_rows())
-        .map(|i| {
-            let d_row = d_view.row(i);
-            let mut full = vec![F::zero(); total_cols];
-            for (j, ring) in d_row.iter().take(w_len).enumerate() {
-                full[j] = eval_ring_at(ring, alpha);
-            }
-            full
-        })
-        .collect();
-
-    let b_rows: Vec<Vec<F>> = cfg_into_iter!(0..b_view.num_rows())
-        .map(|i| {
-            let b_row = b_view.row(i);
-            let mut full = vec![F::zero(); total_cols];
-            for (j, ring) in b_row.iter().take(t_len).enumerate() {
-                full[w_len + j] = eval_ring_at(ring, alpha);
-            }
-            full
-        })
-        .collect();
-
-    let mut rows = Vec::with_capacity(level_params.m_row_count());
-    rows.extend(d_rows.into_iter().take(level_params.n_d));
-    rows.extend(b_rows.into_iter().take(level_params.n_b));
-
-    // Row 3: b^T · G · ŵ = y_ring (ŵ uses delta_open)
-    {
-        let mut full = vec![F::zero(); total_cols];
-        for (i, &b_i) in opening_point.b.iter().enumerate() {
-            for (d, &g) in g1_open.iter().enumerate() {
-                full[i * depth_open + d] = b_i * g;
-            }
-        }
-        rows.push(full);
-    }
-
-    // Row 4: (c^T ⊗ G) · ŵ = a^T · G · J · ẑ
-    {
-        let mut full = vec![F::zero(); total_cols];
-        for (i, &c_alpha) in c_alphas.iter().enumerate() {
-            for (d, &g) in g1_open.iter().enumerate() {
-                full[i * depth_open + d] = c_alpha * g;
-            }
-        }
-        let z_offset = w_len + t_len;
-        for (i, &a_i) in opening_point.a.iter().enumerate() {
-            for (d, &g) in g1_commit.iter().enumerate() {
-                let ag = a_i * g;
-                for (t, &j) in j1.iter().enumerate() {
-                    let idx = (i * depth_commit + d) * depth_fold + t;
-                    full[z_offset + idx] = -(ag * j);
-                }
-            }
-        }
-        rows.push(full);
-    }
-
-    // Row 5: (c^T ⊗ G_open) · t̂ = A · J · ẑ
-    // t̂ uses delta_open (t = A*s has full-field coefficients); ẑ uses delta_commit
-    for a_idx in 0..level_params.n_a {
-        let mut full = vec![F::zero(); total_cols];
-        for (i, &c_alpha) in c_alphas.iter().enumerate() {
-            for (d, &g) in g1_open.iter().enumerate() {
-                let t_idx = i * (level_params.n_a * depth_open) + a_idx * depth_open + d;
-                full[w_len + t_idx] = c_alpha * g;
-            }
-        }
-        let z_offset = w_len + t_len;
-        let a_view = setup.A.view::<D>();
-        let a_row = a_view.row(a_idx);
-        let inner_width = block_len * depth_commit;
-        for (k, ring) in a_row.iter().take(inner_width).enumerate() {
-            let ring_alpha = eval_ring_at(ring, alpha);
-            for (t, &j) in j1.iter().enumerate() {
-                full[z_offset + k * depth_fold + t] = -(ring_alpha * j);
-            }
-        }
-        rows.push(full);
-    }
-
-    Ok(rows)
 }
 
 pub(crate) fn generate_y<F, const D: usize>(

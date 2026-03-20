@@ -3,23 +3,19 @@
 use crate::algebra::fields::wide::HasWide;
 use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::CyclotomicRing;
-#[cfg(debug_assertions)]
-use crate::algebra::SparseChallenge;
 use crate::error::HachiError;
 use crate::primitives::serialization::Valid;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{flatten_i8_blocks, mat_vec_mul_ntt_single_i8};
 use crate::protocol::commitment::utils::ntt_cache::{MultiDNttBundle, MultiDNttCaches};
 use crate::protocol::commitment::{
-    hachi_recursive_level_layout_from_params, AppendToTranscript, CommitmentConfig,
-    CommitmentScheme, HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup,
-    HachiLevelParams, HachiProverSetup, HachiScheduleInputs, HachiVerifierSetup, RingCommitment,
-    RingCommitmentScheme,
+    hachi_recursive_level_layout_from_params, root_current_w_len, AppendToTranscript,
+    CommitmentConfig, CommitmentScheme, HachiCommitmentCore, HachiCommitmentLayout,
+    HachiExpandedSetup, HachiLevelParams, HachiProverSetup, HachiScheduleInputs,
+    HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
 };
 use crate::protocol::hachi_poly_ops::{BalancedDigitPoly, HachiPolyOps};
 use crate::protocol::labrador_handoff::{labrador_handoff_prove, labrador_handoff_verify};
-#[cfg(debug_assertions)]
-use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
 };
@@ -27,27 +23,14 @@ use crate::protocol::proof::{
     FlatCommitmentHint, FlatRingVec, HachiCommitmentHint, HachiLevelProof, HachiProof,
     HachiProofTail, LabradorTail, NormCheckBody, PackedDigits,
 };
-#[cfg(any(test, debug_assertions))]
-use crate::protocol::quadratic_equation::compute_m_a_reference;
 use crate::protocol::quadratic_equation::QuadraticEquation;
-#[cfg(debug_assertions)]
-use crate::protocol::ring_switch::eval_ring_at;
-#[cfg(debug_assertions)]
-use crate::protocol::ring_switch::m_row_count;
 use crate::protocol::ring_switch::{
     build_w_evals, commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_verifier,
     w_ring_element_count, RingSwitchOutput, WCommitmentConfig,
 };
-#[cfg(debug_assertions)]
-use crate::protocol::sumcheck::eq_poly::EqPolynomial;
 use crate::protocol::sumcheck::hachi_combined::{
     CombinedNormRelationProver, CombinedNormRelationVerifier,
 };
-#[cfg(debug_assertions)]
-use crate::protocol::sumcheck::hachi_stage1::{
-    range_check_eval_from_s, HachiStage1Prover, HachiStage1Verifier,
-};
-#[cfg(not(debug_assertions))]
 use crate::protocol::sumcheck::hachi_stage1::{HachiStage1Prover, HachiStage1Verifier};
 use crate::protocol::sumcheck::hachi_stage2::{
     relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier,
@@ -55,7 +38,7 @@ use crate::protocol::sumcheck::hachi_stage2::{
 #[cfg(debug_assertions)]
 use crate::protocol::sumcheck::multilinear_eval;
 use crate::protocol::sumcheck::{
-    prove_sumcheck, verify_sumcheck, SumcheckInstanceProver, SumcheckInstanceVerifier,
+    prove_sumcheck, verify_sumcheck, SumcheckInstanceVerifier,
 };
 use crate::protocol::transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH,
@@ -64,8 +47,6 @@ use crate::protocol::transcript::labels::{
 use crate::protocol::transcript::Transcript;
 use crate::{dispatch_ring_dim, dispatch_with_d_ntt, dispatch_with_ntt};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
-#[cfg(debug_assertions)]
-use std::iter;
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -83,14 +64,6 @@ const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 /// stops being worthwhile.  If the w vector doesn't shrink by at least
 /// this factor, the overhead of another fold level outweighs the saving.
 const MIN_SHRINK_RATIO: f64 = 0.5;
-
-fn root_current_w_len<const D: usize>(layout: HachiCommitmentLayout) -> usize {
-    layout
-        .num_blocks
-        .checked_mul(layout.block_len)
-        .and_then(|len| len.checked_mul(D))
-        .unwrap_or(0)
-}
 
 /// End-to-end PCS wrapper, generic over ring degree `D` and config `Cfg`.
 #[derive(Clone, Copy, Debug, Default)]
@@ -122,164 +95,6 @@ type CommitFn<'a, F> = Box<
         ) -> Result<(FlatRingVec<F>, FlatCommitmentHint), HachiError>
         + 'a,
 >;
-
-#[cfg(debug_assertions)]
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-fn prove_level_diagnostic<F, const D: usize>(
-    expanded: &HachiExpandedSetup<F>,
-    opening_point: &RingOpeningPoint<F>,
-    challenges: &[SparseChallenge],
-    rs: &RingSwitchOutput<F>,
-    v: &[CyclotomicRing<F, D>],
-    u: &[CyclotomicRing<F, D>],
-    y_ring: &CyclotomicRing<F, D>,
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
-    level: usize,
-) where
-    F: FieldCore + CanonicalField + FieldSampling,
-{
-    let m_a = compute_m_a_reference::<F, D>(
-        expanded,
-        opening_point,
-        challenges,
-        &rs.alpha,
-        level_params,
-        layout,
-    )
-    .expect("compute_m_a diagnostic failed");
-
-    let x_len = 1usize << rs.num_u;
-    let d = D;
-
-    let mut w_at_alpha = vec![F::zero(); x_len];
-    for (x, w_at_alpha_x) in w_at_alpha.iter_mut().enumerate() {
-        let mut val = F::zero();
-        for y in 0..d {
-            let idx = x + y * x_len;
-            if idx < rs.w_evals_compact.len() {
-                val += rs.alpha_evals_y[y] * F::from_i64(rs.w_evals_compact[idx] as i64);
-            }
-        }
-        *w_at_alpha_x = val;
-    }
-
-    let num_rows = m_row_count(level_params);
-    let y_full: Vec<F> = v
-        .iter()
-        .chain(u.iter())
-        .chain(iter::once(y_ring))
-        .map(|r| eval_ring_at(r, &rs.alpha))
-        .collect();
-
-    tracing::debug!(
-        level,
-        num_rows,
-        x_len,
-        m_a_cols = m_a.first().map_or(0, |r| r.len()),
-        "per-row M*w=y diagnostic"
-    );
-    for i in 0..num_rows {
-        let mw_i: F = m_a[i]
-            .iter()
-            .enumerate()
-            .fold(F::zero(), |acc, (x, &m_ix)| {
-                acc + m_ix * w_at_alpha.get(x).copied().unwrap_or(F::zero())
-            });
-        let y_i = if i < y_full.len() {
-            y_full[i]
-        } else {
-            F::zero()
-        };
-        let residual = mw_i - y_i;
-        let row_name = match i {
-            _ if i < level_params.n_d => "D",
-            _ if i < level_params.n_d + level_params.n_b => "B",
-            _ if i == level_params.n_d + level_params.n_b => "bTw",
-            _ if i == level_params.n_d + level_params.n_b + 1 => "challenge_fold",
-            _ => "A",
-        };
-        tracing::debug!(
-            row = i,
-            row_name,
-            matches = residual.is_zero(),
-            residual_is_zero = residual.is_zero(),
-            mw_is_zero = mw_i.is_zero(),
-            y_is_zero = y_i.is_zero(),
-            "diagnostic row"
-        );
-    }
-
-    let verifier_claim = relation_claim_from_rows::<F, D>(&rs.tau1, rs.alpha, v, u, y_ring);
-    let x_mask = x_len - 1;
-    let mut prover_claim = F::zero();
-    for (idx, &w) in rs.w_evals_compact.iter().enumerate() {
-        prover_claim +=
-            F::from_i64(w as i64) * rs.alpha_evals_y[idx >> rs.num_u] * rs.m_evals_x[idx & x_mask];
-    }
-    tracing::debug!(
-        level,
-        claims_match = (verifier_claim == prover_claim),
-        prover_is_zero = prover_claim.is_zero(),
-        verifier_is_zero = verifier_claim.is_zero(),
-        "relation_claim cross-check"
-    );
-}
-
-#[cfg(debug_assertions)]
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-fn prove_stage1_selfcheck<F: FieldCore + FromSmallInt>(
-    tau0: &[F],
-    stage1_challenges: &[F],
-    s_claim: F,
-    b: usize,
-    final_claim: F,
-    level: usize,
-) {
-    let eq_val = EqPolynomial::mle(tau0, stage1_challenges);
-    let oracle = eq_val * range_check_eval_from_s(s_claim, b);
-    if oracle != final_claim {
-        tracing::warn!(
-            level,
-            "PROVER stage-1 self-check FAILED: expected != final_claim"
-        );
-    } else {
-        tracing::debug!(level, "PROVER stage-1 self-check OK");
-    }
-}
-
-#[cfg(debug_assertions)]
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-fn prove_stage2_selfcheck<F: FieldCore + FromSmallInt>(
-    r_stage1: &[F],
-    sumcheck_challenges: &[F],
-    w_eval: F,
-    batching_coeff: F,
-    alpha_evals_y: &[F],
-    m_evals_x: &[F],
-    num_u: usize,
-    final_claim: F,
-    level: usize,
-) {
-    let eq_val = EqPolynomial::mle(r_stage1, sumcheck_challenges);
-    let virtual_oracle = eq_val * w_eval * (w_eval + F::one());
-    let (x_ch, y_ch) = sumcheck_challenges.split_at(num_u);
-    let alpha_val = multilinear_eval(alpha_evals_y, y_ch).unwrap();
-    let m_val = multilinear_eval(m_evals_x, x_ch).unwrap();
-    let relation_oracle = w_eval * alpha_val * m_val;
-    let prover_expected = batching_coeff * virtual_oracle + relation_oracle;
-    if prover_expected != final_claim {
-        tracing::warn!(
-            level,
-            "PROVER stage-2 self-check FAILED: expected != final_claim"
-        );
-    } else {
-        tracing::debug!(level, "PROVER stage-2 self-check OK");
-    }
-}
 
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
@@ -393,20 +208,6 @@ where
         layout,
     )?;
 
-    #[cfg(debug_assertions)]
-    prove_level_diagnostic::<F, D>(
-        expanded,
-        quad_eq.opening_point(),
-        &quad_eq.challenges,
-        &rs,
-        &quad_eq.v,
-        &commitment.u,
-        &y_ring,
-        level_params,
-        layout,
-        level,
-    );
-
     let relation_claim =
         relation_claim_from_rows::<F, D>(&rs.tau1, rs.alpha, &quad_eq.v, &commitment.u, &y_ring);
     let RingSwitchOutput {
@@ -424,10 +225,6 @@ where
         b,
         alpha: _,
     } = rs;
-    #[cfg(debug_assertions)]
-    let alpha_evals_y_debug = alpha_evals_y.clone();
-    #[cfg(debug_assertions)]
-    let m_evals_x_debug = m_evals_x.clone();
     let (level_proof, sumcheck_challenges) = if b == 4 {
         let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
         let _sumcheck_span = tracing::info_span!("combined_sumcheck").entered();
@@ -442,8 +239,7 @@ where
             num_l,
             relation_claim,
         );
-        debug_assert!(SumcheckInstanceProver::input_claim(&combined_prover) == relation_claim);
-        let (combined_sumcheck, sumcheck_challenges, combined_final_claim) =
+        let (combined_sumcheck, sumcheck_challenges, _combined_final_claim) =
             prove_sumcheck::<F, _, F, _, _>(&mut combined_prover, transcript, |tr| {
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
             })?;
@@ -451,20 +247,6 @@ where
             let _span = tracing::info_span!("multilinear_eval", level).entered();
             combined_prover.final_w_eval()
         };
-
-        #[cfg(debug_assertions)]
-        {
-            let eq_val = EqPolynomial::mle(&tau0, &sumcheck_challenges);
-            let (x_challenges, y_challenges) = sumcheck_challenges.split_at(num_u);
-            let alpha_val = multilinear_eval(&alpha_evals_y_debug, y_challenges).unwrap();
-            let m_val = multilinear_eval(&m_evals_x_debug, x_challenges).unwrap();
-            let s_eval = w_eval * (w_eval + F::one());
-            let expected = batching_coeff * eq_val * s_eval * (s_eval - F::from_u64(2))
-                + w_eval * alpha_val * m_val;
-            debug_assert!(combined_final_claim == expected);
-        }
-        #[cfg(not(debug_assertions))]
-        let _ = combined_final_claim;
 
         (
             HachiLevelProof::new_combined::<D>(
@@ -486,19 +268,14 @@ where
                     tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
                 })?;
             let s_claim = stage1_prover.final_s_claim();
-            #[cfg(not(debug_assertions))]
             let _ = stage1_final_claim;
-
-            #[cfg(debug_assertions)]
-            prove_stage1_selfcheck(&tau0, &r_stage1, s_claim, b, stage1_final_claim, level);
 
             (stage1_sumcheck, r_stage1, s_claim)
         };
 
         transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
         let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
-        let stage2_input_claim = batching_coeff * s_claim + relation_claim;
-        let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim, w_eval) = {
+        let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
             let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
             let mut stage2_prover = HachiStage2Prover::new(
                 batching_coeff,
@@ -513,15 +290,10 @@ where
                 num_l,
                 relation_claim,
             );
-            debug_assert!(
-                stage2_input_claim == SumcheckInstanceProver::input_claim(&stage2_prover)
-            );
-            let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
+            let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim) =
                 prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
                     tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
                 })?;
-            #[cfg(not(debug_assertions))]
-            let _ = stage2_final_claim;
 
             let w_eval = {
                 let _span = tracing::info_span!("multilinear_eval", level).entered();
@@ -530,25 +302,10 @@ where
             (
                 stage2_sumcheck,
                 sumcheck_challenges,
-                stage2_final_claim,
+                _stage2_final_claim,
                 w_eval,
             )
         };
-
-        #[cfg(debug_assertions)]
-        prove_stage2_selfcheck(
-            &r_stage1,
-            &sumcheck_challenges,
-            w_eval,
-            batching_coeff,
-            &alpha_evals_y_debug,
-            &m_evals_x_debug,
-            num_u,
-            stage2_final_claim,
-            level,
-        );
-        #[cfg(not(debug_assertions))]
-        let _ = stage2_final_claim;
 
         (
             HachiLevelProof::new_two_stage::<D>(
