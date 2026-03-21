@@ -16,7 +16,7 @@ use crate::protocol::commitment::utils::linear::{
 use crate::protocol::commitment::{
     CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, RingCommitment,
 };
-use crate::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps};
+use crate::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps, RecursiveWitnessView};
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::HachiCommitmentHint;
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
@@ -34,6 +34,10 @@ fn compute_v<F: FieldCore + CanonicalField, const D: usize>(
     mat_vec_mul_ntt_single_i8(ntt_d, w_hat_flat)
 }
 
+fn flatten_w_hat<const D: usize>(w_hat: &[Vec<[i8; D]>]) -> Vec<[i8; D]> {
+    w_hat.iter().flat_map(|v| v.iter().copied()).collect()
+}
+
 fn compute_z_pre<F, const D: usize, P>(
     poly: &P,
     challenges: &[SparseChallenge],
@@ -45,6 +49,37 @@ where
     P: HachiPolyOps<F, D>,
 {
     let z = poly.decompose_fold(
+        challenges,
+        layout.block_len,
+        layout.num_digits_commit,
+        layout.log_basis,
+    );
+
+    let norm = u128::from(z.centered_inf_norm);
+    let beta = crate::protocol::commitment::beta_linf_fold_bound(
+        layout.r_vars,
+        level_params.challenge_l1_mass,
+        layout.log_basis,
+    )?;
+    if norm > beta {
+        return Err(HachiError::InvalidInput(format!(
+            "prover abort: ||z||_inf = {norm} > beta = {beta}"
+        )));
+    }
+
+    Ok(z)
+}
+
+fn compute_z_pre_recursive<F, const D: usize>(
+    witness: &RecursiveWitnessView<'_, F, D>,
+    challenges: &[SparseChallenge],
+    level_params: &HachiLevelParams,
+    layout: HachiCommitmentLayout,
+) -> Result<DecomposeFoldWitness<F, D>, HachiError>
+where
+    F: FieldCore + CanonicalField,
+{
+    let z = witness.decompose_fold(
         challenges,
         layout.block_len,
         layout.num_digits_commit,
@@ -166,6 +201,92 @@ where
         let z_pre = {
             let _span = tracing::info_span!("compute_z_pre").entered();
             compute_z_pre::<F, D, P>(poly, &challenges, &level_params, layout)?
+        };
+
+        let y = generate_y::<F, D>(
+            &v,
+            &commitment.u,
+            y_ring,
+            level_params.n_d,
+            level_params.n_b,
+            level_params.n_a,
+        )?;
+
+        Ok(Self {
+            v,
+            challenges,
+            y,
+            opening_point: ring_opening_point,
+            z_pre: Some(z_pre),
+            w_hat: Some(w_hat),
+            w_hat_flat: Some(w_hat_flat),
+            w_folded: Some(pre_folded),
+            hint: Some(hint),
+            _marker: PhantomData,
+        })
+    }
+
+    /// Recursive prover constructor: same as [`Self::new_prover`] but driven by
+    /// the dedicated recursive witness view instead of the root polynomial trait.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the norm check, challenge sampling, or matrix
+    /// generation fails.
+    #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip_all, name = "QuadraticEquation::new_recursive_prover")]
+    #[inline(never)]
+    pub(crate) fn new_recursive_prover<T: Transcript<F>>(
+        ntt_d: &NttSlotCache<D>,
+        ring_opening_point: RingOpeningPoint<F>,
+        witness: &RecursiveWitnessView<'_, F, D>,
+        pre_folded: Vec<CyclotomicRing<F, D>>,
+        level_params: HachiLevelParams,
+        mut hint: HachiCommitmentHint<F, D>,
+        transcript: &mut T,
+        commitment: &RingCommitment<F, D>,
+        y_ring: &CyclotomicRing<F, D>,
+        layout: HachiCommitmentLayout,
+    ) -> Result<Self, HachiError> {
+        {
+            let x: u8 = 0;
+            tracing::trace!(
+                stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
+                "QuadraticEquation::new_recursive_prover"
+            );
+        }
+        let (w_hat, w_hat_flat) = {
+            let _span = tracing::info_span!("decompose_w_hat").entered();
+            let depth_open = layout.num_digits_open;
+            let log_basis = layout.log_basis;
+            let w_hat: Vec<Vec<[i8; D]>> = cfg_iter!(pre_folded)
+                .map(|w_i| w_i.balanced_decompose_pow2_i8(depth_open, log_basis))
+                .collect();
+            let w_hat_flat = flatten_w_hat(&w_hat);
+            (w_hat, w_hat_flat)
+        };
+        hint.ensure_t_recomposed(layout.num_digits_open, layout.log_basis)?;
+
+        let v = {
+            let _span =
+                tracing::info_span!("compute_v", w_hat_flat_len = w_hat_flat.len()).entered();
+            let mut v = compute_v(ntt_d, &w_hat_flat);
+            v.truncate(level_params.n_d);
+            v
+        };
+
+        transcript.append_serde(ABSORB_PROVER_V, &v);
+
+        let challenges = sample_sparse_challenges::<F, T, D>(
+            transcript,
+            CHALLENGE_STAGE1_FOLD,
+            layout.num_blocks,
+            &level_params.stage1_config,
+        )?;
+
+        let z_pre = {
+            let _span = tracing::info_span!("compute_z_pre").entered();
+            compute_z_pre_recursive::<F, D>(witness, &challenges, &level_params, layout)?
         };
 
         let y = generate_y::<F, D>(

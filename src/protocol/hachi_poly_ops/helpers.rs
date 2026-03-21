@@ -366,7 +366,7 @@ pub(super) fn signed_accum_to_ring<F: CanonicalField, const D: usize>(
 }
 
 /// Position-partitioned accumulation for
-/// [`BalancedDigitPoly::decompose_fold`](super::BalancedDigitPoly).
+/// [`RecursiveWitnessView::decompose_fold`](super::RecursiveWitnessView).
 pub(super) fn balanced_digit_decompose_fold_partitioned<const D: usize>(
     coeffs: &[[i8; D]],
     challenges: &[SparseChallenge],

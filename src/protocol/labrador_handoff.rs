@@ -19,7 +19,7 @@ use crate::protocol::commitment::{
     CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, RingCommitment,
 };
 use crate::protocol::commitment_scheme::next_level_opening_point;
-use crate::protocol::hachi_poly_ops::{BalancedDigitPoly, HachiPolyOps};
+use crate::protocol::hachi_poly_ops::RecursiveWitnessFlat;
 use crate::protocol::labrador::config::{
     estimate_handoff_recursive_proof, logq_bits, LabradorRecursiveSizeEstimate,
 };
@@ -257,7 +257,7 @@ pub(crate) fn hachi_labrador_estimate<
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "labrador::handoff_prove")]
 pub(crate) fn labrador_handoff_prove<F, T, const D_HANDOFF: usize, Cfg>(
-    current_w: &[i8],
+    current_w: &RecursiveWitnessFlat,
     current_hint: &HachiCommitmentHint<F, D_HANDOFF>,
     current_commitment: &RingCommitment<F, D_HANDOFF>,
     current_challenges: &[F],
@@ -295,7 +295,8 @@ where
         });
     }
 
-    let direct_tail = PackedDigits::from_i8_digits_with_min_bits(current_w, w_layout.log_basis);
+    let direct_tail =
+        PackedDigits::from_i8_digits_with_min_bits(current_w.as_i8_digits(), w_layout.log_basis);
     let direct_hachi_tail_bytes = direct_tail.serialized_size(Compress::No);
     let target_num_vars = w_layout.m_vars + w_layout.r_vars + alpha;
     let mut padded_point = opening_point.clone();
@@ -318,13 +319,13 @@ where
 
     let (w_poly, y_ring, w_folded) = tracing::info_span!("labrador::handoff_fold_witness")
         .in_scope(|| {
-            let w_poly = BalancedDigitPoly::<F, D_HANDOFF>::from_i8_digits(current_w)?;
-            let (y_ring, w_folded) = w_poly.evaluate_and_fold(
+            let w_view = current_w.view::<F, D_HANDOFF>()?;
+            let (y_ring, w_folded) = w_view.evaluate_and_fold(
                 &ring_opening_point.b,
                 &ring_opening_point.a,
                 w_layout.block_len,
             );
-            Ok::<_, HachiError>((w_poly, y_ring, w_folded))
+            Ok::<_, HachiError>((w_view, y_ring, w_folded))
         })?;
 
     tracing::info_span!("labrador::handoff_absorb_claims").in_scope(|| {
@@ -340,7 +341,7 @@ where
             F,
             D_HANDOFF,
             WCommitmentConfig<D_HANDOFF, Cfg>,
-        >::new_prover(
+        >::new_recursive_prover(
             ntt_d,
             ring_opening_point.clone(),
             &w_poly,

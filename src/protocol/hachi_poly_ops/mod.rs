@@ -1,22 +1,25 @@
 //! Operation-centric polynomial trait for the Hachi commitment scheme.
 //!
 //! [`HachiPolyOps`] exposes the operations the Hachi commit/prove paths need
-//! from a polynomial, rather than raw coefficient access.  Three concrete
-//! implementations handle every operation in their own optimal way:
+//! from a caller-provided root polynomial, rather than raw coefficient access.
+//! Two concrete implementations handle those root operations in their own
+//! optimal way:
 //!
 //! - [`DensePoly`] — standard dense algorithms (decompose + NTT matvec).
 //! - [`OneHotPoly`] — sparse monomial tricks, avoids all inner ring
 //!   multiplications.
-//! - `BalancedDigitPoly` — recursive `w` witness whose coefficients are
-//!   already balanced base-`2^log_basis` digits; skips the field→ring
-//!   round-trip.
+//!
+//! Recursive levels do not use [`HachiPolyOps`]. They operate on
+//! [`RecursiveWitnessFlat`] / [`RecursiveWitnessView`], which model the
+//! D-agnostic `w` witness produced by ring switching.
 //!
 //! # Module layout
 //!
 //! - `dense` — [`DensePoly`] and its [`HachiPolyOps`] impl.
 //! - `onehot` — [`OneHotPoly`], [`OneHotIndex`], and column-sweep Ajtai
 //!   commit helpers.
-//! - `balanced_digit` — `BalancedDigitPoly` and its [`HachiPolyOps`] impl.
+//! - `recursive_witness` — recursive `w` owner/view types and digit-native
+//!   operations for later folding levels.
 //! - `helpers` — shared internal helpers: decomposition, sparse
 //!   multiply-accumulate, position-partitioned accumulation.
 //! - `decompose_fold_neon` — AArch64 NEON kernel for the sparse-mul-acc
@@ -29,16 +32,16 @@
 //! signature will change.  Additional operation methods may be added as the
 //! protocol evolves.
 
-mod balanced_digit;
 #[cfg(target_arch = "aarch64")]
 mod decompose_fold_neon;
 mod dense;
 mod helpers;
 mod onehot;
+mod recursive_witness;
 
-pub(crate) use balanced_digit::BalancedDigitPoly;
 pub use dense::DensePoly;
 pub use onehot::{OneHotIndex, OneHotPoly};
+pub(crate) use recursive_witness::{RecursiveWitnessFlat, RecursiveWitnessView};
 
 use crate::algebra::ring::sparse_challenge::SparseChallenge;
 use crate::algebra::CyclotomicRing;
@@ -371,7 +374,7 @@ mod tests {
     }
 
     #[test]
-    fn balanced_digit_poly_matches_dense_recursive_w_ops() {
+    fn recursive_witness_matches_dense_recursive_w_ops() {
         let log_basis = TinyConfig::decomposition().log_basis;
         let digits: Vec<i8> = (0..(3 * TestD)).map(|i| (i % 7) as i8 - 3).collect();
         let field_evals: Vec<TestF> = digits.iter().map(|&d| TestF::from_i64(d as i64)).collect();
@@ -384,15 +387,16 @@ mod tests {
             &padded,
         )
         .unwrap();
-        let digit_poly = BalancedDigitPoly::<TestF, TestD>::from_i8_digits(&digits).unwrap();
+        let witness = RecursiveWitnessFlat::from_i8_digits(digits.clone());
+        let digit_view = witness.view::<TestF, TestD>().unwrap();
 
-        assert_eq!(digit_poly.num_ring_elems(), dense.num_ring_elems());
+        assert_eq!(digit_view.num_ring_elems(), dense.num_ring_elems());
 
-        let eval_scalars: Vec<TestF> = (0..digit_poly.num_ring_elems())
+        let eval_scalars: Vec<TestF> = (0..digit_view.num_ring_elems())
             .map(|i| TestF::from_u64((i + 2) as u64))
             .collect();
         assert_eq!(
-            digit_poly.evaluate_ring(&eval_scalars),
+            digit_view.evaluate_ring(&eval_scalars),
             dense.evaluate_ring(&eval_scalars)
         );
 
@@ -401,18 +405,18 @@ mod tests {
             .map(|i| TestF::from_u64((i + 5) as u64))
             .collect();
         assert_eq!(
-            digit_poly.fold_blocks(&fold_scalars, block_len),
+            digit_view.fold_blocks(&fold_scalars, block_len),
             dense.fold_blocks(&fold_scalars, block_len)
         );
 
-        let num_blocks = digit_poly.num_ring_elems().div_ceil(block_len);
+        let num_blocks = digit_view.num_ring_elems().div_ceil(block_len);
         let challenges: Vec<SparseChallenge> = (0..num_blocks)
             .map(|i| SparseChallenge {
                 positions: vec![0u32, ((i + 3) % TestD) as u32],
                 coeffs: vec![1, -1],
             })
             .collect();
-        let got = digit_poly.decompose_fold(&challenges, block_len, 1, log_basis);
+        let got = digit_view.decompose_fold(&challenges, block_len, 1, log_basis);
         let expected = dense.decompose_fold(&challenges, block_len, 1, log_basis);
         assert_eq!(got.z_pre, expected.z_pre);
         assert_eq!(got.centered_coeffs, expected.centered_coeffs);
@@ -429,7 +433,7 @@ mod tests {
         });
         let w_layout =
             w_commitment_layout::<TestF, TestD, TinyConfig>(&level_params, layout).unwrap();
-        let digit_commit = digit_poly
+        let digit_commit = digit_view
             .commit_inner(
                 &setup.expanded.A,
                 &setup.ntt_A,
@@ -451,12 +455,37 @@ mod tests {
             .unwrap();
 
         assert_eq!(digit_commit, dense_commit);
+
+        let digit_witness = digit_view
+            .commit_inner_witness(
+                &setup.expanded.A,
+                &setup.ntt_A,
+                w_layout.block_len,
+                w_layout.num_digits_commit,
+                w_layout.num_digits_open,
+                w_layout.log_basis,
+            )
+            .unwrap();
+        let dense_witness = dense
+            .commit_inner_witness(
+                &setup.expanded.A,
+                &setup.ntt_A,
+                w_layout.block_len,
+                w_layout.num_digits_commit,
+                w_layout.num_digits_open,
+                w_layout.log_basis,
+            )
+            .unwrap();
+
+        assert_eq!(digit_witness.t_hat, dense_witness.t_hat);
+        assert_eq!(digit_witness.t, dense_witness.t);
     }
 
     #[test]
-    fn balanced_digit_poly_decompose_fold_respects_mag2_challenges() {
+    fn recursive_witness_decompose_fold_respects_mag2_challenges() {
         let digits: Vec<i8> = (0..TestD).map(|i| (i % 5) as i8 - 2).collect();
-        let poly = BalancedDigitPoly::<TestF, TestD>::from_i8_digits(&digits).unwrap();
+        let witness = RecursiveWitnessFlat::from_i8_digits(digits.clone());
+        let poly = witness.view::<TestF, TestD>().unwrap();
         let challenge = SparseChallenge {
             positions: vec![0, 3, 11],
             coeffs: vec![2, -1, -2],
@@ -470,6 +499,19 @@ mod tests {
         let expected = challenge.to_dense::<TestF, TestD>().unwrap() * ring;
 
         assert_eq!(got.z_pre, vec![expected]);
+    }
+
+    #[test]
+    fn recursive_witness_view_rejects_non_divisible_digit_length() {
+        let witness = RecursiveWitnessFlat::from_i8_digits(vec![1, -1, 2]);
+        let err = witness.view::<TestF, TestD>().unwrap_err();
+        match err {
+            HachiError::InvalidSize { expected, actual } => {
+                assert_eq!(expected, TestD);
+                assert_eq!(actual, 3);
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[cfg(target_arch = "aarch64")]

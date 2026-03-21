@@ -21,6 +21,7 @@ use crate::protocol::commitment::{
     HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, HachiScheduleInputs,
     RingCommitment,
 };
+use crate::protocol::hachi_poly_ops::RecursiveWitnessFlat;
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{DigitLut, FlatCommitmentHint, FlatRingVec, HachiCommitmentHint};
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
@@ -36,9 +37,9 @@ use std::marker::PhantomData;
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
-pub struct RingSwitchOutput<F: FieldCore> {
+pub(crate) struct RingSwitchOutput<F: FieldCore> {
     /// The witness vector w as balanced digits in `[-b/2, b/2)`.
-    pub w: Vec<i8>,
+    pub w: RecursiveWitnessFlat,
     /// D-erased commitment to w.
     pub w_commitment: FlatRingVec<F>,
     /// D-erased prover hint for the w-commitment.
@@ -69,7 +70,7 @@ pub struct RingSwitchOutput<F: FieldCore> {
 /// Build the witness vector `w` from the quadratic equation state.
 ///
 /// This is the first half of the ring switch: it computes `r` and assembles
-/// `w` as a flat `Vec<i8>`. The resulting `w` is D-agnostic and can be
+/// `w` as a flat recursive witness. The resulting `w` is D-agnostic and can be
 /// committed at any ring dimension via [`commit_w`].
 ///
 /// # Errors
@@ -78,7 +79,7 @@ pub struct RingSwitchOutput<F: FieldCore> {
 #[tracing::instrument(skip_all, name = "ring_switch_build_w")]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn ring_switch_build_w<F, const D: usize, Cfg>(
+pub(crate) fn ring_switch_build_w<F, const D: usize, Cfg>(
     quad_eq: &mut QuadraticEquation<F, D, Cfg>,
     setup: &HachiExpandedSetup<F>,
     ntt_a: &NttSlotCache<D>,
@@ -86,7 +87,7 @@ pub fn ring_switch_build_w<F, const D: usize, Cfg>(
     ntt_d: &NttSlotCache<D>,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
-) -> Result<Vec<i8>, HachiError>
+) -> Result<RecursiveWitnessFlat, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     Cfg: CommitmentConfig,
@@ -162,11 +163,11 @@ where
 #[tracing::instrument(skip_all, name = "ring_switch_finalize")]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn ring_switch_finalize<F, T, const D: usize, Cfg>(
+pub(crate) fn ring_switch_finalize<F, T, const D: usize, Cfg>(
     quad_eq: &QuadraticEquation<F, D, Cfg>,
     setup: &HachiExpandedSetup<F>,
     transcript: &mut T,
-    w: Vec<i8>,
+    w: RecursiveWitnessFlat,
     w_commitment: FlatRingVec<F>,
     w_hint: FlatCommitmentHint,
     level_params: &HachiLevelParams,
@@ -210,7 +211,7 @@ where
                 &tau1,
             )
         },
-        || build_w_evals_compact(&w, D),
+        || build_w_evals_compact(w.as_i8_digits(), D),
     );
     #[cfg(not(feature = "parallel"))]
     let (m_evals_x_result, w_result) = {
@@ -224,7 +225,7 @@ where
             layout,
             &tau1,
         )?;
-        let w_compact = build_w_evals_compact(&w, D);
+        let w_compact = build_w_evals_compact(w.as_i8_digits(), D);
         (Ok(m_evals_x), w_compact)
     };
 
@@ -257,9 +258,10 @@ where
 ///
 /// Returns an error if z_pre/w_hat is missing, commitment fails, or matrix expansion fails.
 #[tracing::instrument(skip_all, name = "ring_switch_prover")]
+#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn ring_switch_prover<F, T, const D: usize, Cfg>(
+pub(crate) fn ring_switch_prover<F, T, const D: usize, Cfg>(
     quad_eq: &mut QuadraticEquation<F, D, Cfg>,
     setup: &HachiExpandedSetup<F>,
     transcript: &mut T,
@@ -311,7 +313,7 @@ where
 /// Returns an error if matrix expansion fails.
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 #[inline(never)]
-pub fn ring_switch_verifier<F, T, const D: usize, Cfg>(
+pub(crate) fn ring_switch_verifier<F, T, const D: usize, Cfg>(
     quad_eq: &QuadraticEquation<F, D, Cfg>,
     setup: &HachiExpandedSetup<F>,
     w_len: usize,
@@ -352,7 +354,7 @@ where
     )?;
 
     Ok(RingSwitchOutput {
-        w: Vec::new(),
+        w: RecursiveWitnessFlat::default(),
         w_commitment: w_commitment.clone(),
         w_hint: FlatCommitmentHint::empty(),
         w_evals_compact: Vec::new(),
@@ -541,8 +543,8 @@ pub(crate) fn w_commitment_layout<F: CanonicalField, const D: usize, Cfg: Commit
 /// Returns an error if the commitment layout derivation or NTT mat-vec fails.
 #[tracing::instrument(skip_all, name = "commit_w")]
 #[inline(never)]
-pub fn commit_w<F, const D: usize, Cfg>(
-    w: &[i8],
+pub(crate) fn commit_w<F, const D: usize, Cfg>(
+    w: &RecursiveWitnessFlat,
     ntt_a: &NttSlotCache<D>,
     ntt_b: &NttSlotCache<D>,
     level_params: &HachiLevelParams,
@@ -551,7 +553,7 @@ where
     F: FieldCore + CanonicalField + FieldSampling,
     Cfg: CommitmentConfig,
 {
-    let (w_digits, remainder) = w.as_chunks::<D>();
+    let (w_digits, remainder) = w.as_i8_digits().as_chunks::<D>();
     if !remainder.is_empty() {
         return Err(HachiError::InvalidSize {
             expected: D,
@@ -1040,7 +1042,7 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     z_pre_centered: &[[i32; D]],
     r: &[CyclotomicRing<F, D>],
     layout: HachiCommitmentLayout,
-) -> Vec<i8> {
+) -> RecursiveWitnessFlat {
     let log_basis = layout.log_basis;
     let num_digits_fold = layout.num_digits_fold;
     let levels = r_decomp_levels::<F>(log_basis);
@@ -1090,7 +1092,7 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
             out.extend_from_slice(plane);
         }
     }
-    out
+    RecursiveWitnessFlat::from_i8_digits(out)
 }
 
 #[cfg(test)]

@@ -14,7 +14,7 @@ use crate::protocol::commitment::{
     HachiExpandedSetup, HachiLevelParams, HachiProverSetup, HachiScheduleInputs,
     HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
 };
-use crate::protocol::hachi_poly_ops::{BalancedDigitPoly, HachiPolyOps};
+use crate::protocol::hachi_poly_ops::{HachiPolyOps, RecursiveWitnessFlat, RecursiveWitnessView};
 use crate::protocol::labrador_handoff::{labrador_handoff_prove, labrador_handoff_verify};
 use crate::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
@@ -72,7 +72,7 @@ pub struct HachiCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
 /// the commitment hint is stored as [`FlatCommitmentHint`].
 struct ProveLevelOutput<F: FieldCore> {
     level_proof: HachiLevelProof<F>,
-    w: Vec<i8>,
+    w: RecursiveWitnessFlat,
     w_hint: FlatCommitmentHint,
     sumcheck_challenges: Vec<F>,
     num_u: usize,
@@ -85,7 +85,7 @@ struct ProveLevelOutput<F: FieldCore> {
 /// polynomial (using `Cfg`) and recursive w-openings (using `WCommitmentConfig`).
 type CommitFn<'a, F> = Box<
     dyn FnOnce(
-            &[i8],
+            &RecursiveWitnessFlat,
             HachiScheduleInputs,
         ) -> Result<(FlatRingVec<F>, FlatCommitmentHint), HachiError>
         + 'a,
@@ -159,7 +159,7 @@ where
     }
     transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
 
-    let mut quad_eq = Box::new(QuadraticEquation::<F, { D }, Cfg>::new_prover(
+    let quad_eq = Box::new(QuadraticEquation::<F, { D }, Cfg>::new_prover(
         ntt_d,
         ring_opening_point,
         poly,
@@ -172,6 +172,45 @@ where
         layout,
     )?);
 
+    finish_prove_level::<F, T, D, Cfg>(
+        expanded,
+        ntt_a,
+        ntt_b,
+        ntt_d,
+        commit_w_fn,
+        max_num_vars,
+        transcript,
+        commitment,
+        level,
+        level_params,
+        layout,
+        quad_eq,
+        y_ring,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn finish_prove_level<F, T, const D: usize, Cfg>(
+    expanded: &HachiExpandedSetup<F>,
+    ntt_a: &NttSlotCache<D>,
+    ntt_b: &NttSlotCache<D>,
+    ntt_d: &NttSlotCache<D>,
+    commit_w_fn: CommitFn<'_, F>,
+    max_num_vars: usize,
+    transcript: &mut T,
+    commitment: &RingCommitment<F, D>,
+    level: usize,
+    level_params: &HachiLevelParams,
+    layout: HachiCommitmentLayout,
+    mut quad_eq: Box<QuadraticEquation<F, { D }, Cfg>>,
+    y_ring: CyclotomicRing<F, D>,
+) -> Result<ProveLevelOutput<F>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig,
+{
     let w = ring_switch_build_w::<F, { D }, Cfg>(
         &mut quad_eq,
         expanded,
@@ -291,6 +330,107 @@ where
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn prove_one_recursive_level<F, T, const D: usize, Cfg>(
+    expanded: &HachiExpandedSetup<F>,
+    ntt_a: &NttSlotCache<D>,
+    ntt_b: &NttSlotCache<D>,
+    ntt_d: &NttSlotCache<D>,
+    commit_w_fn: CommitFn<'_, F>,
+    witness: &RecursiveWitnessView<'_, F, D>,
+    max_num_vars: usize,
+    opening_point: &[F],
+    hint: HachiCommitmentHint<F, D>,
+    transcript: &mut T,
+    commitment: &RingCommitment<F, D>,
+    level: usize,
+    level_params: &HachiLevelParams,
+    layout: HachiCommitmentLayout,
+) -> Result<ProveLevelOutput<F>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig,
+{
+    {
+        let x: u8 = 0;
+        tracing::trace!(
+            stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
+            level,
+            "prove_one_recursive_level"
+        );
+    }
+    let alpha = level_params.d.trailing_zeros() as usize;
+    if opening_point.len() < alpha {
+        return Err(HachiError::InvalidPointDimension {
+            expected: alpha,
+            actual: opening_point.len(),
+        });
+    }
+    let target_num_vars = layout.m_vars + layout.r_vars + alpha;
+    let mut padded_point = opening_point.to_vec();
+    padded_point.resize(target_num_vars, F::zero());
+    let outer_point = &padded_point[alpha..];
+
+    let ring_opening_point = {
+        let _span = tracing::info_span!("ring_opening_point", level).entered();
+        ring_opening_point_from_field::<F>(
+            outer_point,
+            layout.r_vars,
+            layout.m_vars,
+            BasisMode::Lagrange,
+        )?
+    };
+
+    let fold_scalars = &ring_opening_point.a;
+    let eval_outer_scalars = &ring_opening_point.b;
+    let (y_ring, w_folded) = {
+        let _span = tracing::info_span!(
+            "evaluate_and_fold",
+            level,
+            num_ring_elems = witness.num_ring_elems()
+        )
+        .entered();
+        witness.evaluate_and_fold(eval_outer_scalars, fold_scalars, layout.block_len)
+    };
+
+    commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+    for pt in &padded_point {
+        transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+    }
+    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+
+    let quad_eq = Box::new(QuadraticEquation::<F, { D }, Cfg>::new_recursive_prover(
+        ntt_d,
+        ring_opening_point,
+        witness,
+        w_folded,
+        level_params.clone(),
+        hint,
+        transcript,
+        commitment,
+        &y_ring,
+        layout,
+    )?);
+
+    finish_prove_level::<F, T, D, Cfg>(
+        expanded,
+        ntt_a,
+        ntt_b,
+        ntt_d,
+        commit_w_fn,
+        max_num_vars,
+        transcript,
+        commitment,
+        level,
+        level_params,
+        layout,
+        quad_eq,
+        y_ring,
+    )
+}
+
 /// Whether the prover should stop folding and send `w` directly.
 ///
 /// `prev_w_len` is the polynomial length at the previous level (or the
@@ -333,7 +473,7 @@ fn dispatch_commit<F, Cfg>(
     commit_params: HachiLevelParams,
     commit_ntt_bundle: &mut MultiDNttBundle,
     expanded: &HachiExpandedSetup<F>,
-    w: &[i8],
+    w: &RecursiveWitnessFlat,
 ) -> Result<(FlatRingVec<F>, FlatCommitmentHint), HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -375,7 +515,7 @@ fn dispatch_prove_level<F, T, const D: usize, Cfg>(
     setup_ntt_d: &NttSlotCache<D>,
     commit_ntt_bundle: &mut MultiDNttBundle,
     max_num_vars: usize,
-    current_w: &[i8],
+    current_w: &RecursiveWitnessFlat,
     current_hint: &FlatCommitmentHint,
     current_challenges: &[F],
     current_num_u: usize,
@@ -487,7 +627,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn dispatch_labrador_handoff_prove<F, T, const D: usize, Cfg>(
-    current_w: &[i8],
+    current_w: &RecursiveWitnessFlat,
     current_hint: &FlatCommitmentHint,
     current_challenges: &[F],
     current_num_u: usize,
@@ -619,7 +759,7 @@ fn prove_subsequent_level<F, T, const D_LEVEL: usize, Cfg>(
     ntt_d: &NttSlotCache<D_LEVEL>,
     commit_ntt_bundle: &mut MultiDNttBundle,
     max_num_vars: usize,
-    current_w: &[i8],
+    current_w: &RecursiveWitnessFlat,
     current_hint: &FlatCommitmentHint,
     current_challenges: &[F],
     current_num_u: usize,
@@ -637,18 +777,22 @@ where
 {
     let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
 
-    let w_poly = BalancedDigitPoly::<F, { D_LEVEL }>::from_i8_digits(current_w)?;
+    let w_view = current_w.view::<F, { D_LEVEL }>()?;
     let opening_point = next_level_opening_point(current_challenges, current_num_u, current_num_l);
 
     #[cfg(debug_assertions)]
     {
-        let mut field_evals: Vec<F> = current_w.iter().map(|&d| F::from_i8(d)).collect();
-        field_evals.resize(w_poly.num_ring_elems() * D_LEVEL, F::zero());
+        let mut field_evals: Vec<F> = current_w
+            .as_i8_digits()
+            .iter()
+            .map(|&d| F::from_i8(d))
+            .collect();
+        field_evals.resize(w_view.num_ring_elems() * D_LEVEL, F::zero());
         let direct_eval = multilinear_eval(&field_evals, &opening_point).unwrap();
         if last_w_eval != direct_eval {
             tracing::error!(
                 level,
-                ring_elems = w_poly.num_ring_elems(),
+                ring_elems = w_view.num_ring_elems(),
                 field_len = field_evals.len(),
                 point_len = opening_point.len(),
                 "BUG: w_eval mismatch! prev_level w_eval != w_poly eval at opening_point"
@@ -665,7 +809,7 @@ where
     drop(_setup_span);
 
     let commit_fn: CommitFn<'_, F> = Box::new(
-        |w: &[i8],
+        |w: &RecursiveWitnessFlat,
          next_inputs: HachiScheduleInputs|
          -> Result<(FlatRingVec<F>, FlatCommitmentHint), HachiError> {
             let next_params = Cfg::level_params(next_inputs);
@@ -686,19 +830,18 @@ where
         },
     );
 
-    prove_one_level::<F, T, { D_LEVEL }, WCommitmentConfig<{ D_LEVEL }, Cfg>, _>(
+    prove_one_recursive_level::<F, T, { D_LEVEL }, WCommitmentConfig<{ D_LEVEL }, Cfg>>(
         expanded,
         ntt_a,
         ntt_b,
         ntt_d,
         commit_fn,
-        &w_poly,
+        &w_view,
         max_num_vars,
         &opening_point,
         typed_hint,
         transcript,
         &w_commitment,
-        BasisMode::Lagrange,
         level,
         level_params,
         w_layout,
@@ -792,7 +935,7 @@ where
         // The w-commitment is produced at the next level's params, derived from
         // public state once `w` has been built.
         let commit_fn_0: CommitFn<'_, F> = Box::new(
-            |w: &[i8],
+            |w: &RecursiveWitnessFlat,
              next_inputs: HachiScheduleInputs|
              -> Result<(FlatRingVec<F>, FlatCommitmentHint), HachiError> {
                 let next_params = Cfg::level_params(next_inputs);
@@ -926,8 +1069,10 @@ where
                 transcript,
             )?
         } else {
-            let final_w =
-                PackedDigits::from_i8_digits_with_min_bits(&current_w, final_params.log_basis);
+            let final_w = PackedDigits::from_i8_digits_with_min_bits(
+                current_w.as_i8_digits(),
+                final_params.log_basis,
+            );
             HachiProofTail::Direct(final_w)
         };
 

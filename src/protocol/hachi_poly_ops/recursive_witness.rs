@@ -1,9 +1,10 @@
-//! Balanced-digit polynomial for the recursive `w` witness.
+//! Recursive witness helpers for later Hachi prove levels.
 //!
-//! [`BalancedDigitPoly`] implements [`HachiPolyOps`](super::HachiPolyOps) for
-//! ring polynomials whose coefficients are already `i8` balanced digits.  This
-//! avoids the field→ring round-trip that [`super::DensePoly`] requires, making
-//! it the natural representation for later prove levels.
+//! Recursive levels do not operate on a caller-provided polynomial anymore.
+//! Instead they carry a flat digit witness `w` that is re-chunked under the
+//! current ring dimension `D` on demand. [`RecursiveWitnessFlat`] owns the
+//! D-agnostic digit buffer, while [`RecursiveWitnessView`] provides the
+//! zero-copy D-specific operations used by recursive folding and handoff paths.
 
 use crate::algebra::ring::sparse_challenge::SparseChallenge;
 use crate::algebra::CyclotomicRing;
@@ -18,26 +19,52 @@ use crate::protocol::commitment::utils::linear::{
 use crate::protocol::hachi_poly_ops::helpers::{
     balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
 };
-use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
+use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness};
 use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
 use std::array::from_fn;
 use std::marker::PhantomData;
 
-/// Ring polynomial whose coefficients are already balanced base-`2^log_basis`
-/// digits.
-///
-/// This is the recursive `w` witness used by Hachi's later prove levels. Unlike
-/// [`super::DensePoly`], it can skip the `i8 -> field -> dense ring` round-trip
-/// and operate on the digit planes directly.
-#[derive(Debug, Clone)]
-pub(crate) struct BalancedDigitPoly<'a, F: FieldCore, const D: usize> {
+/// D-agnostic owner for the recursive witness vector `w`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct RecursiveWitnessFlat {
+    digits: Vec<i8>,
+}
+
+impl RecursiveWitnessFlat {
+    pub(crate) fn from_i8_digits(digits: Vec<i8>) -> Self {
+        Self { digits }
+    }
+
+    pub(crate) fn as_i8_digits(&self) -> &[i8] {
+        &self.digits
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.digits.len()
+    }
+
+    pub(crate) fn view<F: FieldCore, const D: usize>(
+        &self,
+    ) -> Result<RecursiveWitnessView<'_, F, D>, HachiError> {
+        RecursiveWitnessView::from_i8_digits(&self.digits)
+    }
+}
+
+impl AsRef<[i8]> for RecursiveWitnessFlat {
+    fn as_ref(&self) -> &[i8] {
+        self.as_i8_digits()
+    }
+}
+
+/// D-specific zero-copy view over a flat recursive witness.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RecursiveWitnessView<'a, F: FieldCore, const D: usize> {
     coeffs: &'a [[i8; D]],
     padded_ring_elems: usize,
     _marker: PhantomData<F>,
 }
 
-impl<'a, F: FieldCore, const D: usize> BalancedDigitPoly<'a, F, D> {
-    /// Wrap a flat digit vector laid out as consecutive ring coefficients.
+impl<'a, F: FieldCore, const D: usize> RecursiveWitnessView<'a, F, D> {
     pub(crate) fn from_i8_digits(digits: &'a [i8]) -> Result<Self, HachiError> {
         let (coeffs, remainder) = digits.as_chunks::<D>();
         if !remainder.is_empty() {
@@ -63,19 +90,18 @@ impl<'a, F: FieldCore, const D: usize> BalancedDigitPoly<'a, F, D> {
             &self.coeffs[start..(start + block_len).min(self.coeffs.len())]
         }
     }
+
+    pub(crate) fn num_ring_elems(&self) -> usize {
+        self.padded_ring_elems
+    }
 }
 
-impl<'a, F, const D: usize> HachiPolyOps<F, D> for BalancedDigitPoly<'a, F, D>
+impl<'a, F, const D: usize> RecursiveWitnessView<'a, F, D>
 where
     F: FieldCore + CanonicalField,
 {
-    type CommitCache = NttSlotCache<D>;
-
-    fn num_ring_elems(&self) -> usize {
-        self.padded_ring_elems
-    }
-
-    fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
         let total = cfg_fold_reduce!(
             0..self.coeffs.len().min(scalars.len()),
             || [F::zero(); D],
@@ -99,7 +125,7 @@ where
         CyclotomicRing::from_coefficients(total)
     }
 
-    fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
+    pub(crate) fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
         let num_blocks = self.num_ring_elems().div_ceil(block_len);
         cfg_into_iter!(0..num_blocks)
             .map(|block_idx| {
@@ -120,8 +146,24 @@ where
             .collect()
     }
 
-    #[tracing::instrument(skip_all, name = "BalancedDigitPoly::decompose_fold")]
-    fn decompose_fold(
+    pub(crate) fn evaluate_and_fold(
+        &self,
+        eval_outer_scalars: &[F],
+        fold_scalars: &[F],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        let folded = self.fold_blocks(fold_scalars, block_len);
+        let eval = folded
+            .iter()
+            .zip(eval_outer_scalars.iter())
+            .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
+                acc + f_i.scale(s_i)
+            });
+        (eval, folded)
+    }
+
+    #[tracing::instrument(skip_all, name = "RecursiveWitnessView::decompose_fold")]
+    pub(crate) fn decompose_fold(
         &self,
         challenges: &[SparseChallenge],
         block_len: usize,
@@ -145,7 +187,8 @@ where
         build_decompose_fold_witness::<F, D>(coeff_accum, q)
     }
 
-    fn commit_inner(
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn commit_inner(
         &self,
         _a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
@@ -190,7 +233,8 @@ where
         Ok(results)
     }
 
-    fn commit_inner_witness(
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn commit_inner_witness(
         &self,
         _a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
