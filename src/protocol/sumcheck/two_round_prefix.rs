@@ -25,7 +25,7 @@
 use super::eq_poly::EqPolynomial;
 #[cfg(test)]
 use super::hachi_stage1::range_check_eval_from_s;
-use super::{trim_trailing_zeros, UniPoly};
+use super::UniPoly;
 use crate::algebra::fields::HasUnreducedOps;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
@@ -1348,9 +1348,7 @@ fn add_quadratic_coeffs<E: FieldCore>(lhs: [E; 3], rhs: [E; 3]) -> [E; 3] {
 
 #[inline]
 fn coeff_array_to_poly<E: FieldCore, const N: usize>(coeffs: [E; N]) -> UniPoly<E> {
-    let mut coeffs = coeffs.to_vec();
-    trim_trailing_zeros(&mut coeffs);
-    UniPoly::from_coeffs(coeffs)
+    UniPoly::from_coeffs(coeffs.to_vec())
 }
 
 #[inline]

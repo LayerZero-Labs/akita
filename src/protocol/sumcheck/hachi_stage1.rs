@@ -36,8 +36,8 @@ use super::two_round_prefix::{
     Stage1BivariateSkipState,
 };
 use super::{
-    fold_evals_in_place, trim_trailing_zeros, CompactPairFoldLut, SumcheckInstanceProver,
-    SumcheckInstanceVerifier, UniPoly,
+    fold_evals_in_place, CompactPairFoldLut, SumcheckInstanceProver, SumcheckInstanceVerifier,
+    UniPoly,
 };
 use crate::algebra::fields::HasUnreducedOps;
 use crate::error::HachiError;
@@ -314,11 +314,10 @@ fn accumulate_dense_entry_coeffs<E: FieldCore + HasUnreducedOps>(
 #[inline]
 fn finish_gruen_round_poly_from_q_coeffs<E: FieldCore>(
     split_eq: &GruenSplitEq<E>,
-    mut q_coeffs: Vec<E>,
+    q_coeffs: Vec<E>,
     previous_claim: E,
     skip_linear_coeff: bool,
 ) -> UniPoly<E> {
-    trim_trailing_zeros(&mut q_coeffs);
     if skip_linear_coeff {
         split_eq
             .try_gruen_poly_from_coeffs_except_linear(&q_coeffs, previous_claim)
@@ -954,12 +953,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                         let e_in = e_first[j_low];
                         let left_quad = 2 * pair_x;
                         let left_base = 8 * pair_x;
-                        let s0 = quad_fold_lut
-                            [quad_index_fn(row, left_base)];
+                        let s0 = quad_fold_lut[quad_index_fn(row, left_base)];
                         row_out[left_quad] = s0;
                         let s1 = if left_quad + 1 < next_live_x_cols {
-                            let s1 = quad_fold_lut
-                                [quad_index_fn(row, left_base + 4)];
+                            let s1 = quad_fold_lut[quad_index_fn(row, left_base + 4)];
                             row_out[left_quad + 1] = s1;
                             s1
                         } else {
@@ -1022,12 +1019,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                         let e_in = e_first[j_low];
                         let left_quad = 2 * pair_x;
                         let left_base = 8 * pair_x;
-                        let s0 = quad_fold_lut
-                            [quad_index_fn(row, left_base)];
+                        let s0 = quad_fold_lut[quad_index_fn(row, left_base)];
                         row_out[left_quad] = s0;
                         let s1 = if left_quad + 1 < next_live_x_cols {
-                            let s1 = quad_fold_lut
-                                [quad_index_fn(row, left_base + 4)];
+                            let s1 = quad_fold_lut[quad_index_fn(row, left_base + 4)];
                             row_out[left_quad + 1] = s1;
                             s1
                         } else {

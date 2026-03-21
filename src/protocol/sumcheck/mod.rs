@@ -349,6 +349,65 @@ where
     Ok(challenges)
 }
 
+/// Run the sumcheck round loop and return the challenges and final accumulated
+/// claim, **without** performing the oracle check.  The caller is responsible
+/// for verifying the oracle equality afterwards (e.g. via
+/// [`check_sumcheck_output_claim`]).
+///
+/// This is useful when the oracle check requires external data that is only
+/// available after the sumcheck challenges have been determined (e.g. deferred
+/// `m_val` computation in stage 2).
+///
+/// # Errors
+///
+/// Returns [`HachiError::InvalidSize`] if the proof round count does not match
+/// the verifier, or [`HachiError::InvalidInput`] if any round polynomial
+/// exceeds the degree bound.
+#[tracing::instrument(skip_all, name = "verify_sumcheck_rounds_only")]
+pub fn verify_sumcheck_rounds_only<F, T, E, S, V>(
+    proof: &SumcheckProof<E>,
+    verifier: &V,
+    transcript: &mut T,
+    mut sample_challenge: S,
+) -> Result<(Vec<E>, E), HachiError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+    E: FieldCore,
+    S: FnMut(&mut T) -> E,
+    V: SumcheckInstanceVerifier<E>,
+{
+    let num_rounds = verifier.num_rounds();
+    if proof.round_polys.len() != num_rounds {
+        return Err(HachiError::InvalidSize {
+            expected: num_rounds,
+            actual: proof.round_polys.len(),
+        });
+    }
+
+    let mut claim = verifier.input_claim();
+    transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &claim);
+
+    let degree_bound = verifier.degree_bound();
+    let mut challenges = Vec::with_capacity(num_rounds);
+
+    for poly in proof.round_polys.iter() {
+        if poly.degree() > degree_bound {
+            return Err(HachiError::InvalidInput(format!(
+                "sumcheck round poly degree {} exceeds bound {}",
+                poly.degree(),
+                degree_bound
+            )));
+        }
+        transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
+        let r_i = sample_challenge(transcript);
+        challenges.push(r_i);
+        claim = poly.eval_from_hint(&claim, &r_i);
+    }
+
+    Ok((challenges, claim))
+}
+
 /// Enforce the final sumcheck oracle equality for the provided challenge point.
 ///
 /// This is useful when some prefix rounds are reconstructed outside the generic

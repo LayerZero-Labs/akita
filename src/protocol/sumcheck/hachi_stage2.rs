@@ -193,6 +193,7 @@ pub(crate) fn accumulate_relation_coeffs_signed<E: FieldCore + HasUnreducedOps>(
 }
 
 #[inline]
+#[tracing::instrument(skip_all, name = "relation_claim_from_rows")]
 pub(crate) fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
     tau1: &[F],
     alpha: F,
@@ -668,14 +669,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                             let e_in = e_first[j_low];
                             let left_quad = 2 * pair_x;
                             let left_base = 8 * pair_x;
-                            let w0 = quad_fold_lut
-                                [quad_index_fn(row, left_base)];
+                            let w0 = quad_fold_lut[quad_index_fn(row, left_base)];
                             row_out[left_quad] = w0;
                             let w1 = if left_quad + 1 < next_live_x_cols {
-                                let w1 = quad_fold_lut[quad_index_fn(
-                                    row,
-                                    left_base + 4,
-                                )];
+                                let w1 = quad_fold_lut[quad_index_fn(row, left_base + 4)];
                                 row_out[left_quad + 1] = w1;
                                 w1
                             } else {
@@ -737,14 +734,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                             let e_in = e_first[j_low];
                             let left_quad = 2 * pair_x;
                             let left_base = 8 * pair_x;
-                            let w0 = quad_fold_lut
-                                [quad_index_fn(row, left_base)];
+                            let w0 = quad_fold_lut[quad_index_fn(row, left_base)];
                             row_out[left_quad] = w0;
                             let w1 = if left_quad + 1 < next_live_x_cols {
-                                let w1 = quad_fold_lut[quad_index_fn(
-                                    row,
-                                    left_base + 4,
-                                )];
+                                let w1 = quad_fold_lut[quad_index_fn(row, left_base + 4)];
                                 row_out[left_quad + 1] = w1;
                                 w1
                             } else {
@@ -804,14 +797,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                             let e_in = e_first[j_low];
                             let left_quad = 2 * pair_x;
                             let left_base = 8 * pair_x;
-                            let w0 = quad_fold_lut
-                                [quad_index_fn(row, left_base)];
+                            let w0 = quad_fold_lut[quad_index_fn(row, left_base)];
                             row_out[left_quad] = w0;
                             let w1 = if left_quad + 1 < next_live_x_cols {
-                                let w1 = quad_fold_lut[quad_index_fn(
-                                    row,
-                                    left_base + 4,
-                                )];
+                                let w1 = quad_fold_lut[quad_index_fn(row, left_base + 4)];
                                 row_out[left_quad + 1] = w1;
                                 w1
                             } else {
@@ -876,14 +865,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                             let e_in = e_first[j_low];
                             let left_quad = 2 * pair_x;
                             let left_base = 8 * pair_x;
-                            let w0 = quad_fold_lut
-                                [quad_index_fn(row, left_base)];
+                            let w0 = quad_fold_lut[quad_index_fn(row, left_base)];
                             row_out[left_quad] = w0;
                             let w1 = if left_quad + 1 < next_live_x_cols {
-                                let w1 = quad_fold_lut[quad_index_fn(
-                                    row,
-                                    left_base + 4,
-                                )];
+                                let w1 = quad_fold_lut[quad_index_fn(row, left_base + 4)];
                                 row_out[left_quad + 1] = w1;
                                 w1
                             } else {
@@ -2123,14 +2108,24 @@ enum Stage2WitnessOracle<F: FieldCore> {
     ClaimedEval(F),
 }
 
+/// Source of the `m_tau1` oracle for the stage-2 verifier.
+enum Stage2MOracle<F: FieldCore> {
+    /// Precomputed full Boolean evaluation table (used by tests / prover-side
+    /// verifier). `multilinear_eval` gives `m_val`.
+    Table(Vec<F>),
+    /// Deferred: the caller will compute `m_val` externally after the sumcheck
+    /// determines the challenge point, skipping the full-table allocation.
+    Deferred,
+}
+
 /// Verifier for the stage-2 fused virtual-claim + relation sumcheck.
 pub struct HachiStage2Verifier<F: FieldCore, const D: usize> {
     batching_coeff: F,
     s_claim: F,
     witness_oracle: Stage2WitnessOracle<F>,
+    m_oracle: Stage2MOracle<F>,
     r_stage1: Vec<F>,
     alpha_evals_y: Vec<F>,
-    m_evals_x: Vec<F>,
     num_u: usize,
     num_l: usize,
     relation_claim: F,
@@ -2143,25 +2138,25 @@ impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> HachiStage2Ve
         batching_coeff: F,
         s_claim: F,
         witness_oracle: Stage2WitnessOracle<F>,
+        m_oracle: Stage2MOracle<F>,
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
-        m_evals_x: Vec<F>,
-        tau1: Vec<F>,
-        v: Vec<CyclotomicRing<F, D>>,
-        u: Vec<CyclotomicRing<F, D>>,
-        y_ring: CyclotomicRing<F, D>,
+        tau1: &[F],
+        v: &[CyclotomicRing<F, D>],
+        u: &[CyclotomicRing<F, D>],
+        y_ring: &CyclotomicRing<F, D>,
         alpha: F,
         num_u: usize,
         num_l: usize,
     ) -> Self {
-        let relation_claim = relation_claim_from_rows::<F, D>(&tau1, alpha, &v, &u, &y_ring);
+        let relation_claim = relation_claim_from_rows::<F, D>(tau1, alpha, v, u, y_ring);
         Self {
             batching_coeff,
             s_claim,
             witness_oracle,
+            m_oracle,
             r_stage1,
             alpha_evals_y,
-            m_evals_x,
             num_u,
             num_l,
             relation_claim,
@@ -2191,20 +2186,21 @@ impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> HachiStage2Ve
             batching_coeff,
             s_claim,
             Stage2WitnessOracle::Full(w_evals),
+            Stage2MOracle::Table(m_evals_x),
             r_stage1,
             alpha_evals_y,
-            m_evals_x,
-            tau1,
-            v,
-            u,
-            y_ring,
+            &tau1,
+            &v,
+            &u,
+            &y_ring,
             alpha,
             num_u,
             num_l,
         )
     }
 
-    /// Create a fused verifier for the stage-2 sumcheck when only the final witness evaluation is available.
+    /// Create a fused verifier for the stage-2 sumcheck when only the final
+    /// witness evaluation is available and `m_val` will be computed lazily.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "HachiStage2Verifier::new_with_claimed_w_eval")]
     pub fn new_with_claimed_w_eval(
@@ -2213,7 +2209,6 @@ impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> HachiStage2Ve
         w_eval: F,
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
-        m_evals_x: Vec<F>,
         tau1: Vec<F>,
         v: Vec<CyclotomicRing<F, D>>,
         u: Vec<CyclotomicRing<F, D>>,
@@ -2226,13 +2221,13 @@ impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> HachiStage2Ve
             batching_coeff,
             s_claim,
             Stage2WitnessOracle::ClaimedEval(w_eval),
+            Stage2MOracle::Deferred,
             r_stage1,
             alpha_evals_y,
-            m_evals_x,
-            tau1,
-            v,
-            u,
-            y_ring,
+            &tau1,
+            &v,
+            &u,
+            &y_ring,
             alpha,
             num_u,
             num_l,
@@ -2243,6 +2238,16 @@ impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> HachiStage2Ve
         match &self.witness_oracle {
             Stage2WitnessOracle::Full(w_evals) => multilinear_eval(w_evals, challenges),
             Stage2WitnessOracle::ClaimedEval(w_eval) => Ok(*w_eval),
+        }
+    }
+
+    fn m_eval(&self, x_challenges: &[F]) -> Result<F, HachiError> {
+        match &self.m_oracle {
+            Stage2MOracle::Table(m_evals_x) => multilinear_eval(m_evals_x, x_challenges),
+            Stage2MOracle::Deferred => Err(HachiError::InvalidInput(
+                "deferred m_eval requires setup context; caller must check oracle externally"
+                    .to_string(),
+            )),
         }
     }
 }
@@ -2262,14 +2267,21 @@ impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckInsta
         self.batching_coeff * self.s_claim + self.relation_claim
     }
 
+    #[tracing::instrument(skip_all, name = "stage2_expected_output_claim")]
     fn expected_output_claim(&self, challenges: &[F]) -> Result<F, HachiError> {
         let eq_val = EqPolynomial::mle(&self.r_stage1, challenges);
-        let w_eval = self.witness_eval(challenges)?;
+        let w_eval = {
+            let _span = tracing::info_span!("stage2_witness_eval").entered();
+            self.witness_eval(challenges)?
+        };
         let virtual_oracle = eq_val * w_eval * (w_eval + F::one());
 
         let (x_challenges, y_challenges) = challenges.split_at(self.num_u);
         let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
-        let m_val = multilinear_eval(&self.m_evals_x, x_challenges)?;
+        let m_val = {
+            let _span = tracing::info_span!("stage2_m_eval").entered();
+            self.m_eval(x_challenges)?
+        };
         let relation_oracle = w_eval * alpha_val * m_val;
 
         Ok(self.batching_coeff * virtual_oracle + relation_oracle)
