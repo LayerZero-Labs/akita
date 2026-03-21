@@ -901,9 +901,7 @@ where
             "hachi prove complete"
         );
 
-        // let handoff_ring_dim = current_hint.ring_dim();
         let labrador_enabled = current_w.len() > Cfg::labrador_handoff_threshold()
-            // && handoff_ring_dim <= 64
             && std::env::var("HACHI_NO_LABRADOR").as_deref() != Ok("1");
         let final_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars,
@@ -1095,7 +1093,7 @@ where
     }
 
     fn protocol_name() -> &'static [u8] {
-        unimplemented!()
+        b"Hachi"
     }
 }
 

@@ -34,10 +34,6 @@ fn compute_v<F: FieldCore + CanonicalField, const D: usize>(
     mat_vec_mul_ntt_single_i8(ntt_d, w_hat_flat)
 }
 
-fn flatten_w_hat<const D: usize>(w_hat: &[Vec<[i8; D]>]) -> Vec<[i8; D]> {
-    w_hat.iter().flat_map(|v| v.iter().copied()).collect()
-}
-
 fn compute_z_pre<F, const D: usize, P>(
     poly: &P,
     challenges: &[SparseChallenge],
@@ -145,7 +141,7 @@ where
             let w_hat: Vec<Vec<[i8; D]>> = cfg_iter!(pre_folded)
                 .map(|w_i| w_i.balanced_decompose_pow2_i8(depth_open, log_basis))
                 .collect();
-            let w_hat_flat = flatten_w_hat(&w_hat);
+            let w_hat_flat = flatten_i8_blocks(&w_hat);
             (w_hat, w_hat_flat)
         };
         hint.ensure_t_recomposed(layout.num_digits_open, layout.log_basis)?;
@@ -394,7 +390,6 @@ fn quotient_from_cyclic_and_reduced<F: FieldCore, const D: usize>(
 /// Uses split-eq factoring: `kron(left, gadget) · decomposed = left · pre_decomp`.
 #[allow(clippy::too_many_arguments, clippy::needless_borrow)]
 #[tracing::instrument(skip_all, name = "compute_r_split_eq")]
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_r_split_eq<F, const D: usize>(
     level_params: &HachiLevelParams,
     _setup: &HachiExpandedSetup<F>,

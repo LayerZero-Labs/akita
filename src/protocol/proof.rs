@@ -452,6 +452,7 @@ impl FlatCommitmentHint {
     /// # Panics
     ///
     /// Panics if `D != ring_dim`.
+    #[tracing::instrument(skip_all, name = "FlatCommitmentHint::to_typed_with_t")]
     pub fn to_typed_with_t<F: CanonicalField, const D: usize>(
         &self,
         num_digits_open: usize,
