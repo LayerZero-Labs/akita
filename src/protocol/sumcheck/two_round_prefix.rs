@@ -1,23 +1,26 @@
-//! Local algebra for 2-round x-quad prefix kernels.
+//! Bivariate-skip ("two-round prefix") prover and verifier for stages 1 and 2.
 //!
-//! These helpers model a single 4-value x-quad in the first two x rounds,
-//! using the point semantics we intend to reuse in the eventual batched-prefix
-//! implementation:
+//! When at least two x-rounds remain, the first two rounds of each stage's
+//! sumcheck can be collapsed into a single bivariate evaluation over each
+//! 4-value x-quad.  The prover sends a grid of evaluations at a small product
+//! domain; the verifier reconstructs the two univariate round polynomials from
+//! that grid plus the known claim.
 //!
-//! - finite points are ordinary evaluations of the bilinear multilinear
-//!   extension over the quad;
+//! Point semantics for the evaluation domains:
+//!
+//! - Finite points are ordinary evaluations of the bilinear multilinear
+//!   extension over the quad.
 //! - `Infinity` means "take the leading coefficient in that coordinate".
 //!
-//! The tests pin down three facts we rely on before wiring this into the prover:
+//! Stage 1 (`b = 4`): domain `{0, 1, Infinity}^2`, 9-point grid with the
+//! four Boolean corners omitted (5 stored values).
 //!
-//! - Stage 1's candidate `{1, -1, 2, Infinity}^2` storage really is a
-//!   15-dimensional family because `(1, 1)` is always zero, but reconstructing the
-//!   actual first two rounds needs the safe `{0, 1, -1, 2, Infinity}^2`
-//!   fallback with the four Boolean corners omitted, for a 21-value payload.
-//! - Stage 2's proposed reduced `{1, Infinity}^2` storage is not enough, by
-//!   itself, to recover the local round messages for either the norm or the
-//!   relation family, so the safe algebra layer keeps the full
-//!   `{0, 1, Infinity}^2` fallback for now.
+//! Stage 1 (`b = 8`): domain `{0, 1, -1, 2, Infinity}^2`, 25-point grid
+//! with the four Boolean corners omitted (21 stored values).
+//!
+//! Stage 2 (`b = 8`): domain `{0, 1, Infinity}^2`, 9-point grid.  The norm
+//! and relation families each store a compressed grid with one Boolean corner
+//! omitted (8 stored values each), recovered via the known claim.
 
 use super::eq_poly::EqPolynomial;
 #[cfg(test)]
@@ -88,6 +91,7 @@ fn stage1_is_boolean_corner(x_idx: usize, y_idx: usize) -> bool {
 const LOOKUP_PREFIX_INF: i64 = i64::MIN;
 const STAGE1_B4_S_VALUES: [i64; 2] = [0, 2];
 const STAGE1_B8_S_VALUES: [i64; 4] = [0, 2, 6, 12];
+const STAGE2_B4_W_VALUES: [i64; 4] = [-2, -1, 0, 1];
 const STAGE2_B8_W_VALUES: [i64; 8] = [-4, -3, -2, -1, 0, 1, 2, 3];
 const STAGE2_PREFIX_POINT_COUNT: usize = 9;
 const STAGE2_COMPRESSED_POINT_COUNT: usize = STAGE2_PREFIX_POINT_COUNT - 1;
@@ -203,10 +207,12 @@ const fn stage1_lookup_points_i64() -> [(i64, i64); STAGE1_PREFIX_EVAL_COUNT] {
 const STAGE1_PREFIX_LOOKUP_POINTS_I64: [(i64, i64); STAGE1_PREFIX_EVAL_COUNT] =
     stage1_lookup_points_i64();
 
+#[inline(always)]
 const fn stage1_b4_lookup_index_from_digits(digits: [usize; 4]) -> usize {
     digits[0] | (digits[1] << 1) | (digits[2] << 2) | (digits[3] << 3)
 }
 
+#[inline(always)]
 const fn stage1_b8_lookup_index_from_digits(digits: [usize; 4]) -> usize {
     digits[0] | (digits[1] << 2) | (digits[2] << 4) | (digits[3] << 6)
 }
@@ -297,6 +303,12 @@ const STAGE2_PREFIX_LOOKUP_POINTS_I64: [(i64, i64); STAGE2_PREFIX_POINT_COUNT] =
     (LOOKUP_PREFIX_INF, LOOKUP_PREFIX_INF),
 ];
 
+#[inline(always)]
+const fn stage2_b4_lookup_index_from_digits(digits: [usize; 4]) -> usize {
+    digits[0] | (digits[1] << 2) | (digits[2] << 4) | (digits[3] << 6)
+}
+
+#[inline(always)]
 const fn stage2_b8_lookup_index_from_digits(digits: [usize; 4]) -> usize {
     digits[0] | (digits[1] << 3) | (digits[2] << 6) | (digits[3] << 9)
 }
@@ -326,6 +338,96 @@ const fn compress_stage2_lookup_values(
     }
     out
 }
+
+const fn build_stage2_b4_norm_lookup_table() -> [[i64; STAGE2_PREFIX_POINT_COUNT]; 256] {
+    let mut table = [[0i64; STAGE2_PREFIX_POINT_COUNT]; 256];
+    let mut d0 = 0usize;
+    while d0 < 4 {
+        let mut d1 = 0usize;
+        while d1 < 4 {
+            let mut d2 = 0usize;
+            while d2 < 4 {
+                let mut d3 = 0usize;
+                while d3 < 4 {
+                    let quad = [
+                        STAGE2_B4_W_VALUES[d0],
+                        STAGE2_B4_W_VALUES[d1],
+                        STAGE2_B4_W_VALUES[d2],
+                        STAGE2_B4_W_VALUES[d3],
+                    ];
+                    let table_idx = stage2_b4_lookup_index_from_digits([d0, d1, d2, d3]);
+                    let mut point_idx = 0usize;
+                    while point_idx < STAGE2_PREFIX_POINT_COUNT {
+                        let (x, y) = STAGE2_PREFIX_LOOKUP_POINTS_I64[point_idx];
+                        table[table_idx][point_idx] = stage2_local_norm_raw_eval_i64(quad, x, y);
+                        point_idx += 1;
+                    }
+                    d3 += 1;
+                }
+                d2 += 1;
+            }
+            d1 += 1;
+        }
+        d0 += 1;
+    }
+    table
+}
+
+static STAGE2_B4_NORM_LOOKUP_TABLE: [[i64; STAGE2_PREFIX_POINT_COUNT]; 256] =
+    build_stage2_b4_norm_lookup_table();
+
+const fn build_stage2_b4_relation_weight_table() -> [[i64; STAGE2_PREFIX_POINT_COUNT]; 256] {
+    let mut table = [[0i64; STAGE2_PREFIX_POINT_COUNT]; 256];
+    let mut d0 = 0usize;
+    while d0 < 4 {
+        let mut d1 = 0usize;
+        while d1 < 4 {
+            let mut d2 = 0usize;
+            while d2 < 4 {
+                let mut d3 = 0usize;
+                while d3 < 4 {
+                    let quad = [
+                        STAGE2_B4_W_VALUES[d0],
+                        STAGE2_B4_W_VALUES[d1],
+                        STAGE2_B4_W_VALUES[d2],
+                        STAGE2_B4_W_VALUES[d3],
+                    ];
+                    let table_idx = stage2_b4_lookup_index_from_digits([d0, d1, d2, d3]);
+                    let mut point_idx = 0usize;
+                    while point_idx < STAGE2_PREFIX_POINT_COUNT {
+                        let (x, y) = STAGE2_PREFIX_LOOKUP_POINTS_I64[point_idx];
+                        table[table_idx][point_idx] =
+                            lookup_bilinear_eval_on_prefix_points(quad, x, y);
+                        point_idx += 1;
+                    }
+                    d3 += 1;
+                }
+                d2 += 1;
+            }
+            d1 += 1;
+        }
+        d0 += 1;
+    }
+    table
+}
+
+static STAGE2_B4_RELATION_WEIGHT_TABLE: [[i64; STAGE2_PREFIX_POINT_COUNT]; 256] =
+    build_stage2_b4_relation_weight_table();
+
+const fn build_stage2_b4_relation_weight_compressed_table(
+) -> [[i64; STAGE2_COMPRESSED_POINT_COUNT]; 256] {
+    let mut table = [[0i64; STAGE2_COMPRESSED_POINT_COUNT]; 256];
+    let mut table_idx = 0usize;
+    while table_idx < 256 {
+        table[table_idx] =
+            compress_stage2_lookup_values(STAGE2_B4_RELATION_WEIGHT_TABLE[table_idx], 0);
+        table_idx += 1;
+    }
+    table
+}
+
+static STAGE2_B4_RELATION_WEIGHT_COMPRESSED_TABLE: [[i64; STAGE2_COMPRESSED_POINT_COUNT]; 256] =
+    build_stage2_b4_relation_weight_compressed_table();
 
 const fn build_stage2_b8_norm_lookup_table() -> [[i64; STAGE2_PREFIX_POINT_COUNT]; 4096] {
     let mut table = [[0i64; STAGE2_PREFIX_POINT_COUNT]; 4096];
@@ -479,6 +581,7 @@ fn accum_pointwise_signed<E: FieldCore + HasUnreducedOps, const N: usize>(
     }
 }
 
+#[inline(always)]
 fn stage1_b4_s_digit_from_compact_s(s: i16) -> usize {
     match s {
         0 => 0,
@@ -487,7 +590,7 @@ fn stage1_b4_s_digit_from_compact_s(s: i16) -> usize {
     }
 }
 
-#[inline]
+#[inline(always)]
 fn stage1_b8_s_digit_from_compact_s(s: i16) -> usize {
     match s {
         0 => 0,
@@ -498,7 +601,14 @@ fn stage1_b8_s_digit_from_compact_s(s: i16) -> usize {
     }
 }
 
-#[inline]
+#[inline(always)]
+fn stage2_b4_w_digit(w: i8) -> usize {
+    let w = i32::from(w);
+    debug_assert!((-2..=1).contains(&w));
+    (w + 2) as usize
+}
+
+#[inline(always)]
 fn stage2_b8_w_digit(w: i8) -> usize {
     let w = i32::from(w);
     debug_assert!((-4..=3).contains(&w));
@@ -1403,6 +1513,28 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
         })
         .collect();
 
+    let w_digit_fn: fn(i8) -> usize = match b {
+        4 => stage2_b4_w_digit,
+        8 => stage2_b8_w_digit,
+        _ => unreachable!("unsupported stage-2 two-round prefix basis"),
+    };
+    let lookup_index_fn: fn([usize; 4]) -> usize = match b {
+        4 => stage2_b4_lookup_index_from_digits,
+        8 => stage2_b8_lookup_index_from_digits,
+        _ => unreachable!(),
+    };
+    let default_digit = b / 2;
+    let norm_table: &[[i64; STAGE2_PREFIX_POINT_COUNT]] = match b {
+        4 => &STAGE2_B4_NORM_LOOKUP_TABLE,
+        8 => &STAGE2_B8_NORM_LOOKUP_TABLE,
+        _ => unreachable!(),
+    };
+    let rel_table: &[[i64; STAGE2_COMPRESSED_POINT_COUNT]] = match b {
+        4 => &STAGE2_B4_RELATION_WEIGHT_COMPRESSED_TABLE,
+        8 => &STAGE2_B8_RELATION_WEIGHT_COMPRESSED_TABLE,
+        _ => unreachable!(),
+    };
+
     let (norm_pos, norm_neg, rel_accum) = cfg_fold_reduce!(
         0..y_len,
         || {
@@ -1420,26 +1552,26 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
             let mut row_rel_neg = [E::MulU64Accum::ZERO; STAGE2_COMPRESSED_POINT_COUNT];
             for (x_quad, &eq_x_weight) in eq_x_suffix.iter().take(live_x_quads).enumerate() {
                 let base = 4 * x_quad;
-                let lookup_idx = stage2_b8_lookup_index_from_digits([
+                let lookup_idx = lookup_index_fn([
                     if base < live_x_cols {
-                        stage2_b8_w_digit(row[base])
+                        w_digit_fn(row[base])
                     } else {
-                        4
+                        default_digit
                     },
                     if base + 1 < live_x_cols {
-                        stage2_b8_w_digit(row[base + 1])
+                        w_digit_fn(row[base + 1])
                     } else {
-                        4
+                        default_digit
                     },
                     if base + 2 < live_x_cols {
-                        stage2_b8_w_digit(row[base + 2])
+                        w_digit_fn(row[base + 2])
                     } else {
-                        4
+                        default_digit
                     },
                     if base + 3 < live_x_cols {
-                        stage2_b8_w_digit(row[base + 3])
+                        w_digit_fn(row[base + 3])
                     } else {
-                        4
+                        default_digit
                     },
                 ]);
                 let norm_weight = eq_x_weight * eq_y_weight;
@@ -1447,14 +1579,14 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
                     &mut norm_pos,
                     &mut norm_neg,
                     norm_weight,
-                    &STAGE2_B8_NORM_LOOKUP_TABLE[lookup_idx],
+                    &norm_table[lookup_idx],
                     norm_point_indices,
                 );
                 accum_pointwise_signed(
                     &mut row_rel_pos,
                     &mut row_rel_neg,
                     &m_point_values_by_quad[x_quad],
-                    &STAGE2_B8_RELATION_WEIGHT_COMPRESSED_TABLE[lookup_idx],
+                    &rel_table[lookup_idx],
                 );
             }
             for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {

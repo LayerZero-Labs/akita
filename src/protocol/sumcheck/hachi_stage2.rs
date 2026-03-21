@@ -461,14 +461,66 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
         x0 + r1 * (x1 - x0)
     }
 
-    #[inline]
+    #[inline(always)]
+    fn stage2_b4_w_digit(w: i8) -> usize {
+        let w = i32::from(w);
+        debug_assert!((-2..=1).contains(&w));
+        (w + 2) as usize
+    }
+
+    #[inline(always)]
+    fn stage2_b4_quad_lookup_index_from_row(row: &[i8], base: usize) -> usize {
+        let d0 = row
+            .get(base)
+            .copied()
+            .map(Self::stage2_b4_w_digit)
+            .unwrap_or(2);
+        let d1 = row
+            .get(base + 1)
+            .copied()
+            .map(Self::stage2_b4_w_digit)
+            .unwrap_or(2);
+        let d2 = row
+            .get(base + 2)
+            .copied()
+            .map(Self::stage2_b4_w_digit)
+            .unwrap_or(2);
+        let d3 = row
+            .get(base + 3)
+            .copied()
+            .map(Self::stage2_b4_w_digit)
+            .unwrap_or(2);
+        d0 | (d1 << 2) | (d2 << 4) | (d3 << 6)
+    }
+
+    fn build_round2_w_lookup_b4(r0: E, r1: E) -> Vec<E> {
+        const W_VALUES: [i8; 4] = [-2, -1, 0, 1];
+        (0..256usize)
+            .map(|idx| {
+                let d0 = idx & 0b11;
+                let d1 = (idx >> 2) & 0b11;
+                let d2 = (idx >> 4) & 0b11;
+                let d3 = (idx >> 6) & 0b11;
+                Self::direct_fold_w_quad_to_round2(
+                    W_VALUES[d0],
+                    W_VALUES[d1],
+                    W_VALUES[d2],
+                    W_VALUES[d3],
+                    r0,
+                    r1,
+                )
+            })
+            .collect()
+    }
+
+    #[inline(always)]
     fn stage2_b8_w_digit(w: i8) -> usize {
         let w = i32::from(w);
         debug_assert!((-4..=3).contains(&w));
         (w + 4) as usize
     }
 
-    #[inline]
+    #[inline(always)]
     fn stage2_b8_quad_lookup_index_from_row(row: &[i8], base: usize) -> usize {
         let d0 = row
             .get(base)
@@ -493,7 +545,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
         d0 | (d1 << 3) | (d2 << 6) | (d3 << 9)
     }
 
-    fn build_round2_w_lookup(r0: E, r1: E) -> Vec<E> {
+    fn build_round2_w_lookup_b8(r0: E, r1: E) -> Vec<E> {
         const W_VALUES: [i8; 8] = [-4, -3, -2, -1, 0, 1, 2, 3];
         (0..4096usize)
             .map(|idx| {
@@ -582,7 +634,14 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
         let block_size = num_first.min(live_pairs);
         let alpha_compact = &self.alpha_compact;
         let m_round2 = Self::fold_m_to_round2(&self.m_compact, r0, r1);
-        let quad_fold_lut = Self::build_round2_w_lookup(r0, r1);
+        let quad_fold_lut = match self.b {
+            4 => Self::build_round2_w_lookup_b4(r0, r1),
+            _ => Self::build_round2_w_lookup_b8(r0, r1),
+        };
+        let quad_index_fn: fn(&[i8], usize) -> usize = match self.b {
+            4 => Self::stage2_b4_quad_lookup_index_from_row,
+            _ => Self::stage2_b8_quad_lookup_index_from_row,
+        };
         let mut out = vec![E::zero(); y_len * next_live_x_cols];
 
         if self.can_skip_norm_linear_coeff() {
@@ -610,10 +669,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                             let left_quad = 2 * pair_x;
                             let left_base = 8 * pair_x;
                             let w0 = quad_fold_lut
-                                [Self::stage2_b8_quad_lookup_index_from_row(row, left_base)];
+                                [quad_index_fn(row, left_base)];
                             row_out[left_quad] = w0;
                             let w1 = if left_quad + 1 < next_live_x_cols {
-                                let w1 = quad_fold_lut[Self::stage2_b8_quad_lookup_index_from_row(
+                                let w1 = quad_fold_lut[quad_index_fn(
                                     row,
                                     left_base + 4,
                                 )];
@@ -679,10 +738,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                             let left_quad = 2 * pair_x;
                             let left_base = 8 * pair_x;
                             let w0 = quad_fold_lut
-                                [Self::stage2_b8_quad_lookup_index_from_row(row, left_base)];
+                                [quad_index_fn(row, left_base)];
                             row_out[left_quad] = w0;
                             let w1 = if left_quad + 1 < next_live_x_cols {
-                                let w1 = quad_fold_lut[Self::stage2_b8_quad_lookup_index_from_row(
+                                let w1 = quad_fold_lut[quad_index_fn(
                                     row,
                                     left_base + 4,
                                 )];
@@ -746,10 +805,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                             let left_quad = 2 * pair_x;
                             let left_base = 8 * pair_x;
                             let w0 = quad_fold_lut
-                                [Self::stage2_b8_quad_lookup_index_from_row(row, left_base)];
+                                [quad_index_fn(row, left_base)];
                             row_out[left_quad] = w0;
                             let w1 = if left_quad + 1 < next_live_x_cols {
-                                let w1 = quad_fold_lut[Self::stage2_b8_quad_lookup_index_from_row(
+                                let w1 = quad_fold_lut[quad_index_fn(
                                     row,
                                     left_base + 4,
                                 )];
@@ -818,10 +877,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                             let left_quad = 2 * pair_x;
                             let left_base = 8 * pair_x;
                             let w0 = quad_fold_lut
-                                [Self::stage2_b8_quad_lookup_index_from_row(row, left_base)];
+                                [quad_index_fn(row, left_base)];
                             row_out[left_quad] = w0;
                             let w1 = if left_quad + 1 < next_live_x_cols {
-                                let w1 = quad_fold_lut[Self::stage2_b8_quad_lookup_index_from_row(
+                                let w1 = quad_fold_lut[quad_index_fn(
                                     row,
                                     left_base + 4,
                                 )];

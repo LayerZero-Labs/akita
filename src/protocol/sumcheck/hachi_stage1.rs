@@ -759,7 +759,61 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         x0 + r1 * (x1 - x0)
     }
 
-    #[inline]
+    #[inline(always)]
+    fn stage1_b4_s_digit_from_compact_s(s: i16) -> usize {
+        match s {
+            0 => 0,
+            2 => 1,
+            other => unreachable!("unexpected compact s value {other}"),
+        }
+    }
+
+    #[inline(always)]
+    fn stage1_b4_quad_lookup_index_from_row(row: &[i16], base: usize) -> usize {
+        let d0 = row
+            .get(base)
+            .copied()
+            .map(Self::stage1_b4_s_digit_from_compact_s)
+            .unwrap_or(0);
+        let d1 = row
+            .get(base + 1)
+            .copied()
+            .map(Self::stage1_b4_s_digit_from_compact_s)
+            .unwrap_or(0);
+        let d2 = row
+            .get(base + 2)
+            .copied()
+            .map(Self::stage1_b4_s_digit_from_compact_s)
+            .unwrap_or(0);
+        let d3 = row
+            .get(base + 3)
+            .copied()
+            .map(Self::stage1_b4_s_digit_from_compact_s)
+            .unwrap_or(0);
+        d0 | (d1 << 1) | (d2 << 2) | (d3 << 3)
+    }
+
+    fn build_round2_s_lookup_b4(r0: E, r1: E) -> Vec<E> {
+        const S_VALUES: [i16; 2] = [0, 2];
+        (0..16usize)
+            .map(|idx| {
+                let d0 = idx & 0b1;
+                let d1 = (idx >> 1) & 0b1;
+                let d2 = (idx >> 2) & 0b1;
+                let d3 = (idx >> 3) & 0b1;
+                Self::direct_fold_s_quad_to_round2(
+                    S_VALUES[d0],
+                    S_VALUES[d1],
+                    S_VALUES[d2],
+                    S_VALUES[d3],
+                    r0,
+                    r1,
+                )
+            })
+            .collect()
+    }
+
+    #[inline(always)]
     fn stage1_b8_s_digit_from_compact_s(s: i16) -> usize {
         match s {
             0 => 0,
@@ -770,7 +824,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn stage1_b8_quad_lookup_index_from_row(row: &[i16], base: usize) -> usize {
         let d0 = row
             .get(base)
@@ -795,7 +849,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         d0 | (d1 << 2) | (d2 << 4) | (d3 << 6)
     }
 
-    fn build_round2_s_lookup(r0: E, r1: E) -> Vec<E> {
+    fn build_round2_s_lookup_b8(r0: E, r1: E) -> Vec<E> {
         const S_VALUES: [i16; 4] = [0, 2, 6, 12];
         (0..256usize)
             .map(|idx| {
@@ -863,7 +917,14 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros();
         let block_size = num_first.min(live_pairs);
-        let quad_fold_lut = Self::build_round2_s_lookup(r0, r1);
+        let quad_fold_lut = match self.b {
+            4 => Self::build_round2_s_lookup_b4(r0, r1),
+            _ => Self::build_round2_s_lookup_b8(r0, r1),
+        };
+        let quad_index_fn: fn(&[i16], usize) -> usize = match self.b {
+            4 => Self::stage1_b4_quad_lookup_index_from_row,
+            _ => Self::stage1_b8_quad_lookup_index_from_row,
+        };
 
         let range_pc = &self.range_precomp;
         let full_num_coeffs_q = range_pc.degree_q + 1;
@@ -894,11 +955,11 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                         let left_quad = 2 * pair_x;
                         let left_base = 8 * pair_x;
                         let s0 = quad_fold_lut
-                            [Self::stage1_b8_quad_lookup_index_from_row(row, left_base)];
+                            [quad_index_fn(row, left_base)];
                         row_out[left_quad] = s0;
                         let s1 = if left_quad + 1 < next_live_x_cols {
                             let s1 = quad_fold_lut
-                                [Self::stage1_b8_quad_lookup_index_from_row(row, left_base + 4)];
+                                [quad_index_fn(row, left_base + 4)];
                             row_out[left_quad + 1] = s1;
                             s1
                         } else {
@@ -962,11 +1023,11 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                         let left_quad = 2 * pair_x;
                         let left_base = 8 * pair_x;
                         let s0 = quad_fold_lut
-                            [Self::stage1_b8_quad_lookup_index_from_row(row, left_base)];
+                            [quad_index_fn(row, left_base)];
                         row_out[left_quad] = s0;
                         let s1 = if left_quad + 1 < next_live_x_cols {
                             let s1 = quad_fold_lut
-                                [Self::stage1_b8_quad_lookup_index_from_row(row, left_base + 4)];
+                                [quad_index_fn(row, left_base + 4)];
                             row_out[left_quad + 1] = s1;
                             s1
                         } else {
