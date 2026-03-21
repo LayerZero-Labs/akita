@@ -50,6 +50,7 @@ use std::time::Instant;
 
 const MAX_AFFINE_COEFFS: usize = 17;
 const MAX_COMPACT_COEFF_LUT_B: usize = 16;
+const MAX_FIELD_COEFF_LUT_B: usize = 32;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct CompactCoeffEntry {
@@ -80,6 +81,7 @@ struct RangeAffineFromSPrecomp<E: FieldCore> {
     /// obtained from `s_to_compact`.
     small_s_lut: Vec<E>,
     compact_coeff_lut: Option<Vec<CompactCoeffEntry>>,
+    field_coeff_lut: Option<Vec<E>>,
     /// Maps raw `s` integer (offset by `min_s`) to a compact index into the
     /// `b/2`-element valid-value set `{k(k+1) : k = 0..half-1}`.
     s_to_compact: Vec<u8>,
@@ -175,6 +177,23 @@ impl<E: FieldCore + FromSmallInt> RangeAffineFromSPrecomp<E> {
         } else {
             None
         };
+        let field_coeff_lut = if b > MAX_COMPACT_COEFF_LUT_B && b <= MAX_FIELD_COEFF_LUT_B {
+            let mut lut = Vec::with_capacity(num_valid_s * num_valid_s * num_rows);
+            for (s0_ci, &s0_val) in pair_offsets.iter().enumerate() {
+                let h_base = s0_ci * num_rows;
+                for &s1_val in &pair_offsets {
+                    let delta = E::from_i128(s1_val - s0_val);
+                    let mut delta_pow = E::one();
+                    for &h_i in &small_s_lut[h_base..h_base + num_rows] {
+                        lut.push(h_i * delta_pow);
+                        delta_pow = delta_pow * delta;
+                    }
+                }
+            }
+            Some(lut)
+        } else {
+            None
+        };
 
         Self {
             dense_coeffs,
@@ -182,6 +201,7 @@ impl<E: FieldCore + FromSmallInt> RangeAffineFromSPrecomp<E> {
             degree_q,
             small_s_lut,
             compact_coeff_lut,
+            field_coeff_lut,
             s_to_compact,
             num_valid_s,
             min_s,
@@ -215,11 +235,24 @@ impl<E: FieldCore> RangeAffineFromSPrecomp<E> {
     }
 
     #[inline]
+    fn pair_coeff_lut_start(&self, s_0_int: i16, s_1_int: i16) -> usize {
+        let pair_idx = self.compact_index(s_0_int) * self.num_valid_s + self.compact_index(s_1_int);
+        pair_idx * self.num_rows()
+    }
+
+    #[inline]
     fn compact_coeffs_lut(&self, s_0_int: i16, s_1_int: i16) -> Option<&[CompactCoeffEntry]> {
         let lut = self.compact_coeff_lut.as_ref()?;
         let num_rows = self.num_rows();
-        let pair_idx = self.compact_index(s_0_int) * self.num_valid_s + self.compact_index(s_1_int);
-        let start = pair_idx * num_rows;
+        let start = self.pair_coeff_lut_start(s_0_int, s_1_int);
+        Some(&lut[start..start + num_rows])
+    }
+
+    #[inline]
+    fn field_coeffs_lut(&self, s_0_int: i16, s_1_int: i16) -> Option<&[E]> {
+        let lut = self.field_coeff_lut.as_ref()?;
+        let num_rows = self.num_rows();
+        let start = self.pair_coeff_lut_start(s_0_int, s_1_int);
         Some(&lut[start..start + num_rows])
     }
 }
@@ -515,6 +548,44 @@ fn compute_norm_round_poly_from_s_compact<
                 let e_out = e_second[j_high];
                 for k in 0..num_coeffs_q {
                     let inner_reduced = reduce_small_coeff_accum(inner_pos[k], inner_neg[k]);
+                    outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                }
+                outer_accum
+            },
+            |mut a, b_vec| {
+                for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
+                    *ai += *bi;
+                }
+                a
+            }
+        )
+        .into_iter()
+        .map(E::reduce_product_accum)
+        .collect::<Vec<_>>()
+    } else if rp.field_coeffs_lut(0, 0).is_some() {
+        cfg_fold_reduce!(
+            0..e_second.len(),
+            || vec![E::ProductAccum::ZERO; num_coeffs_q],
+            |mut outer_accum, j_high| {
+                debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
+                let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                for (j_low, &e_in) in e_first.iter().enumerate() {
+                    let j = j_high * num_first + j_low;
+                    let s_0_int = s_compact[2 * j];
+                    let s_1_int = s_compact[2 * j + 1];
+                    let coeffs = rp
+                        .field_coeffs_lut(s_0_int, s_1_int)
+                        .expect("missing field coefficient LUT");
+                    accumulate_dense_entry_coeffs(
+                        &mut inner_accum[..num_coeffs_q],
+                        coeffs,
+                        e_in,
+                        skip_linear_coeff,
+                    );
+                }
+                let e_out = e_second[j_high];
+                for k in 0..num_coeffs_q {
+                    let inner_reduced = E::reduce_product_accum(inner_accum[k]);
                     outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
                 }
                 outer_accum
@@ -1466,6 +1537,61 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
             .into_iter()
             .map(E::reduce_product_accum)
             .collect()
+        } else if rp.field_coeffs_lut(0, 0).is_some() {
+            cfg_fold_reduce!(
+                0..(1usize << (self.num_vars - self.num_u)),
+                || vec![E::ProductAccum::ZERO; num_coeffs_q],
+                |mut outer_accum, y| {
+                    let row_start = y * self.live_x_cols;
+                    let row = &s_compact[row_start..row_start + self.live_x_cols];
+                    let j_base = y * current_x_half;
+
+                    let mut blk = 0usize;
+                    while blk < live_pairs {
+                        let blk_end = (blk + block_size).min(live_pairs);
+                        let j_high = (j_base + blk) >> first_bits;
+                        let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+
+                        for pair_x in blk..blk_end {
+                            let j_low = (j_base + pair_x) & (num_first - 1);
+                            let e_in = e_first[j_low];
+                            let left = 2 * pair_x;
+                            let s0_i = row[left];
+                            let s1_i = if left + 1 < self.live_x_cols {
+                                row[left + 1]
+                            } else {
+                                0
+                            };
+                            let coeffs = rp
+                                .field_coeffs_lut(s0_i, s1_i)
+                                .expect("missing field coefficient LUT");
+                            accumulate_dense_entry_coeffs(
+                                &mut inner_accum[..num_coeffs_q],
+                                coeffs,
+                                e_in,
+                                skip_linear_coeff,
+                            );
+                        }
+
+                        let e_out = e_second[j_high];
+                        for k in 0..num_coeffs_q {
+                            let inner_reduced = E::reduce_product_accum(inner_accum[k]);
+                            outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                        }
+                        blk = blk_end;
+                    }
+                    outer_accum
+                },
+                |mut ca, cb| {
+                    for (ai, bi) in ca.iter_mut().zip(cb.iter()) {
+                        *ai += *bi;
+                    }
+                    ca
+                }
+            )
+            .into_iter()
+            .map(E::reduce_product_accum)
+            .collect()
         } else {
             cfg_fold_reduce!(
                 0..(1usize << (self.num_vars - self.num_u)),
@@ -2075,9 +2201,23 @@ mod tests {
     }
 
     #[test]
+    fn stage1_field_coeff_lut_reaches_b32() {
+        for b in [4usize, 8, 16] {
+            let precomp = RangeAffineFromSPrecomp::<F>::new(b);
+            assert!(precomp.field_coeffs_lut(0, 0).is_none());
+        }
+
+        let precomp = RangeAffineFromSPrecomp::<F>::new(32);
+        assert!(
+            precomp.field_coeffs_lut(0, 0).is_some(),
+            "expected field coefficient LUT for b=32"
+        );
+    }
+
+    #[test]
     fn stage1_prefix_aware_rounds_match_explicit_zero_padding() {
         let num_l = 2usize;
-        for b in [4usize, 8, 16] {
+        for b in [4usize, 8, 16, 32] {
             let half = (b / 2) as i8;
             for live_x_cols in [5usize, 6usize] {
                 let num_u = live_x_cols.next_power_of_two().trailing_zeros() as usize;
