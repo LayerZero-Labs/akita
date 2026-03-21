@@ -49,6 +49,7 @@ use crate::{
 use std::time::Instant;
 
 const MAX_AFFINE_COEFFS: usize = 17;
+const MAX_COMPACT_COEFF_LUT_B: usize = 16;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct CompactCoeffEntry {
@@ -144,7 +145,7 @@ impl<E: FieldCore + FromSmallInt> RangeAffineFromSPrecomp<E> {
             }
         }
 
-        let compact_coeff_lut = if b <= 8 {
+        let compact_coeff_lut = if b <= MAX_COMPACT_COEFF_LUT_B {
             let mut lut = Vec::with_capacity(num_valid_s * num_valid_s * num_rows);
             for (s0_ci, &s0_val) in pair_offsets.iter().enumerate() {
                 let h_base = s0_ci * num_rows;
@@ -2060,9 +2061,23 @@ mod tests {
     }
 
     #[test]
+    fn stage1_compact_coeff_lut_reaches_b16() {
+        for b in [4usize, 8, 16] {
+            let precomp = RangeAffineFromSPrecomp::<F>::new(b);
+            assert!(
+                precomp.compact_coeffs_lut(0, 0).is_some(),
+                "expected compact coefficient LUT for b={b}"
+            );
+        }
+
+        let precomp = RangeAffineFromSPrecomp::<F>::new(32);
+        assert!(precomp.compact_coeffs_lut(0, 0).is_none());
+    }
+
+    #[test]
     fn stage1_prefix_aware_rounds_match_explicit_zero_padding() {
         let num_l = 2usize;
-        for b in [4usize, 8] {
+        for b in [4usize, 8, 16] {
             let half = (b / 2) as i8;
             for live_x_cols in [5usize, 6usize] {
                 let num_u = live_x_cols.next_power_of_two().trailing_zeros() as usize;
