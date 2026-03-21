@@ -4,6 +4,7 @@
 //! sumcheck instances by expanding the ring elements into their coefficient
 //! vectors and setting up the evaluation tables.
 
+use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::{CyclotomicRing, SparseChallenge};
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
@@ -23,7 +24,6 @@ use crate::protocol::commitment::{
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{DigitLut, FlatCommitmentHint, FlatRingVec, HachiCommitmentHint};
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
-use crate::algebra::eq_poly::EqPolynomial;
 use crate::protocol::transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };

@@ -17,6 +17,7 @@ pub mod uni_poly;
 
 // Flat re-exports for convenience.
 pub use backend::{CrtReconstruct, NttPrimeOps, NttTransform, RingBackend, ScalarBackend};
+pub use eq_poly::EqPolynomial;
 pub use fields::{
     is_pow2_offset, pow2_offset, pseudo_mersenne_modulus, ExtField, Fp128, Fp128Packing, Fp2,
     Fp2Config, Fp32, Fp32Packing, Fp4, Fp4Config, Fp64, Fp64Packing, HasPacking, LiftBase,
@@ -26,10 +27,7 @@ pub use fields::{
     Prime128M54P4P0, Prime128M8M4M1M0, Prime128Offset5823, POW2_OFFSET_IMPLEMENTED_MAX_BITS,
     POW2_OFFSET_MAX, POW2_OFFSET_PRIMES, POW2_OFFSET_TABLE,
 };
-pub use eq_poly::EqPolynomial;
 pub use module::VectorModule;
-pub use split_eq::GruenSplitEq;
-pub use uni_poly::{CompressedUniPoly, UniPoly};
 pub use ntt::tables;
 pub use ntt::{GarnerData, LimbQ, MontCoeff, NttPrime, PrimeWidth, RADIX_BITS};
 pub use ring::{
@@ -37,3 +35,5 @@ pub use ring::{
     DigitMontLut, PackedPartialSplitEval32, PackedPartialSplitNtt32, PartialSplitEval32,
     PartialSplitNtt32, SparseChallenge, SparseChallengeConfig,
 };
+pub use split_eq::GruenSplitEq;
+pub use uni_poly::{CompressedUniPoly, UniPoly};

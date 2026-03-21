@@ -45,16 +45,16 @@
 //! both halves around the same local `w0` / `dw` scan so the witness-side work
 //! is shared between the virtual and relation terms.
 
-use crate::algebra::eq_poly::EqPolynomial;
-use crate::algebra::split_eq::GruenSplitEq;
 use super::two_round_prefix::{
     build_stage2_bivariate_skip_proof_from_compact, can_use_stage2_two_round_prefix,
     Stage2BivariateSkipState,
 };
 use super::{fold_evals_in_place, multilinear_eval, CompactPairFoldLut};
-use crate::algebra::poly::trim_trailing_zeros;
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
+use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::fields::HasUnreducedOps;
+use crate::algebra::poly::trim_trailing_zeros;
+use crate::algebra::split_eq::GruenSplitEq;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]

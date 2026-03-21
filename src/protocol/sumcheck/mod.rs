@@ -34,7 +34,6 @@ pub use crate::algebra::poly::{
 pub use crate::algebra::uni_poly::{CompressedUniPoly, UniPoly};
 pub use types::SumcheckProof;
 
-
 /// Precomputed lookup table for folding pairs of small integer values at a
 /// fixed challenge `r`.
 ///

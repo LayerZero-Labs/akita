@@ -29,8 +29,6 @@
 //!
 //! degree 4, so round polynomials have degree 5.
 
-use crate::algebra::eq_poly::EqPolynomial;
-use crate::algebra::split_eq::GruenSplitEq;
 use super::two_round_prefix::{
     build_stage1_bivariate_skip_proof_from_s_compact, can_use_stage1_two_round_prefix,
     Stage1BivariateSkipState,
@@ -39,7 +37,9 @@ use super::{
     fold_evals_in_place, CompactPairFoldLut, SumcheckInstanceProver, SumcheckInstanceVerifier,
     UniPoly,
 };
+use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::fields::HasUnreducedOps;
+use crate::algebra::split_eq::GruenSplitEq;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
