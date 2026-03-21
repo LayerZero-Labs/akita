@@ -182,23 +182,24 @@ impl XofCursor {
     }
 }
 
-/// Fisher-Yates partial shuffle: sample `count` distinct values from `0..universe`.
+/// Fisher-Yates partial shuffle: sample `out.len()` distinct values from
+/// `0..universe` into `out`.
 ///
 /// Uses a stack buffer (universe ≤ 128, the max ring degree) to avoid
 /// per-call heap allocation.
 #[inline]
-fn sample_distinct_positions(cursor: &mut XofCursor, universe: usize, count: usize) -> Vec<usize> {
-    debug_assert!(count <= universe);
+fn sample_distinct_positions_into(cursor: &mut XofCursor, universe: usize, out: &mut [u32]) {
+    debug_assert!(out.len() <= universe);
     debug_assert!(universe <= 128, "universe must fit stack buffer");
     let mut perm = [0usize; 128];
     for (i, slot) in perm[..universe].iter_mut().enumerate() {
         *slot = i;
     }
-    for i in 0..count {
+    for (i, dst) in out.iter_mut().enumerate() {
         let j = i + cursor.next_usize_mod(universe - i);
         perm.swap(i, j);
+        *dst = perm[i] as u32;
     }
-    perm[..count].to_vec()
 }
 
 fn sample_uniform_sparse(
@@ -207,10 +208,8 @@ fn sample_uniform_sparse(
     weight: usize,
     nonzero_coeffs: &[i16],
 ) -> SparseChallenge {
-    let positions = sample_distinct_positions(cursor, d, weight)
-        .into_iter()
-        .map(|pos| pos as u32)
-        .collect();
+    let mut positions = vec![0u32; weight];
+    sample_distinct_positions_into(cursor, d, &mut positions);
     let coeffs = (0..weight)
         .map(|_| {
             let coeff_idx = cursor.next_usize_mod(nonzero_coeffs.len());
@@ -340,10 +339,8 @@ fn sample_exact_shell_sparse(
     count_mag2: usize,
 ) -> SparseChallenge {
     let total = count_mag1 + count_mag2;
-    let positions = sample_distinct_positions(cursor, d, total)
-        .into_iter()
-        .map(|pos| pos as u32)
-        .collect();
+    let mut positions = vec![0u32; total];
+    sample_distinct_positions_into(cursor, d, &mut positions);
     let mut coeffs = Vec::with_capacity(total);
     for _ in 0..count_mag1 {
         coeffs.push(cursor.next_sign());
@@ -373,6 +370,21 @@ fn parse_challenge<const D: usize>(
             count_mag2,
         } => sample_exact_shell_sparse(cursor, D, *count_mag1, *count_mag2),
     }
+}
+
+#[inline]
+fn sparse_challenge_absorb_buf<const D: usize>(
+    label: &[u8],
+    instance_tag: u64,
+    cfg: &SparseChallengeConfig,
+) -> Vec<u8> {
+    let domain_sep = cfg.domain_separator_bytes();
+    let mut absorb_buf = Vec::with_capacity(label.len() + 8 + 8 + domain_sep.len());
+    absorb_buf.extend_from_slice(label);
+    absorb_buf.extend_from_slice(&instance_tag.to_le_bytes());
+    absorb_buf.extend_from_slice(&(D as u64).to_le_bytes());
+    absorb_buf.extend_from_slice(&domain_sep);
+    absorb_buf
 }
 
 /// Absorb context into the transcript, derive a PRG seed, and create a
@@ -409,13 +421,7 @@ where
     cfg.validate::<D>()
         .map_err(|e| HachiError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
 
-    let domain_sep = cfg.domain_separator_bytes();
-    let mut absorb_buf = Vec::with_capacity(label.len() + 8 + 8 + domain_sep.len());
-    absorb_buf.extend_from_slice(label);
-    absorb_buf.extend_from_slice(&instance_idx.to_le_bytes());
-    absorb_buf.extend_from_slice(&(D as u64).to_le_bytes());
-    absorb_buf.extend_from_slice(&domain_sep);
-
+    let absorb_buf = sparse_challenge_absorb_buf::<D>(label, instance_idx, cfg);
     let mut cursor = derive_xof_cursor::<F, T>(transcript, &absorb_buf);
     Ok(parse_challenge::<D>(&mut cursor, cfg))
 }
@@ -445,13 +451,7 @@ where
     cfg.validate::<D>()
         .map_err(|e| HachiError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
 
-    let domain_sep = cfg.domain_separator_bytes();
-    let mut absorb_buf = Vec::with_capacity(label.len() + 8 + 8 + domain_sep.len());
-    absorb_buf.extend_from_slice(label);
-    absorb_buf.extend_from_slice(&(n as u64).to_le_bytes());
-    absorb_buf.extend_from_slice(&(D as u64).to_le_bytes());
-    absorb_buf.extend_from_slice(&domain_sep);
-
+    let absorb_buf = sparse_challenge_absorb_buf::<D>(label, n as u64, cfg);
     let mut cursor = derive_xof_cursor::<F, T>(transcript, &absorb_buf);
     let mut challenges = Vec::with_capacity(n);
     for _ in 0..n {

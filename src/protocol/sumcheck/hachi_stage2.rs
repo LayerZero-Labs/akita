@@ -59,6 +59,7 @@ use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
+use crate::protocol::proof::PackedDigits;
 use crate::protocol::ring_switch::eval_ring_at;
 use crate::{cfg_fold_reduce, cfg_into_iter};
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
@@ -224,6 +225,45 @@ pub(crate) fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: u
         acc += eq_tau1[row_idx] * eval_ring_at(y_ring, &alpha);
     }
     acc
+}
+
+fn packed_witness_eval<F: FieldCore + FromSmallInt>(
+    packed_witness: &PackedDigits,
+    challenges: &[F],
+    num_u: usize,
+    num_l: usize,
+) -> Result<F, HachiError> {
+    if challenges.len() != num_u + num_l {
+        return Err(HachiError::InvalidSize {
+            expected: num_u + num_l,
+            actual: challenges.len(),
+        });
+    }
+
+    let d = 1usize << num_l;
+    if packed_witness.num_elems % d != 0 {
+        return Err(HachiError::InvalidProof);
+    }
+
+    let (x_challenges, y_challenges) = challenges.split_at(num_u);
+    let eq_x = EqPolynomial::evals(x_challenges);
+    let eq_y = EqPolynomial::evals(y_challenges);
+    let live_x_cols = packed_witness.num_elems / d;
+
+    let mut acc = F::zero();
+    for (x, &x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
+        let base = x << num_l;
+        let mut y_eval = F::zero();
+        for (y, &y_weight) in eq_y.iter().enumerate() {
+            let digit = packed_witness
+                .digit_at(base + y)
+                .ok_or(HachiError::InvalidProof)?;
+            y_eval += y_weight * F::from_i64(digit as i64);
+        }
+        acc += x_weight * y_eval;
+    }
+
+    Ok(acc)
 }
 
 /// Stage-2 fused virtual-claim + relation sumcheck prover.
@@ -2104,16 +2144,16 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
 }
 
 /// Source of the witness oracle used by the stage-2 verifier.
-enum Stage2WitnessOracle<F: FieldCore> {
-    Full(Vec<F>),
+enum Stage2WitnessOracle<'a, F: FieldCore> {
+    Packed(&'a PackedDigits),
     ClaimedEval(F),
 }
 
 /// Verifier for the stage-2 fused virtual-claim + relation sumcheck.
-pub struct HachiStage2Verifier<F: FieldCore, const D: usize> {
+pub struct HachiStage2Verifier<'a, F: FieldCore, const D: usize> {
     batching_coeff: F,
     s_claim: F,
-    witness_oracle: Stage2WitnessOracle<F>,
+    witness_oracle: Stage2WitnessOracle<'a, F>,
     r_stage1: Vec<F>,
     alpha_evals_y: Vec<F>,
     m_evals_x: Vec<F>,
@@ -2123,24 +2163,26 @@ pub struct HachiStage2Verifier<F: FieldCore, const D: usize> {
     _marker: PhantomData<[F; D]>,
 }
 
-impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> HachiStage2Verifier<F, D> {
+impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
+    HachiStage2Verifier<'a, F, D>
+{
     #[allow(clippy::too_many_arguments)]
     fn new(
         batching_coeff: F,
         s_claim: F,
-        witness_oracle: Stage2WitnessOracle<F>,
+        witness_oracle: Stage2WitnessOracle<'a, F>,
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
         m_evals_x: Vec<F>,
-        tau1: Vec<F>,
-        v: Vec<CyclotomicRing<F, D>>,
-        u: Vec<CyclotomicRing<F, D>>,
-        y_ring: CyclotomicRing<F, D>,
+        tau1: &[F],
+        v: &[CyclotomicRing<F, D>],
+        u: &[CyclotomicRing<F, D>],
+        y_ring: &CyclotomicRing<F, D>,
         alpha: F,
         num_u: usize,
         num_l: usize,
     ) -> Self {
-        let relation_claim = relation_claim_from_rows::<F, D>(&tau1, alpha, &v, &u, &y_ring);
+        let relation_claim = relation_claim_from_rows::<F, D>(tau1, alpha, v, u, y_ring);
         Self {
             batching_coeff,
             s_claim,
@@ -2155,20 +2197,21 @@ impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> HachiStage2Ve
         }
     }
 
-    /// Create a fused verifier for the stage-2 sumcheck when the verifier has the full witness.
+    /// Create a fused verifier for the stage-2 sumcheck when the verifier holds
+    /// the packed direct tail.
     #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all, name = "HachiStage2Verifier::new_with_full_witness")]
-    pub fn new_with_full_witness(
+    #[tracing::instrument(skip_all, name = "HachiStage2Verifier::new_with_packed_witness")]
+    pub fn new_with_packed_witness(
         batching_coeff: F,
         s_claim: F,
-        w_evals: Vec<F>,
+        packed_witness: &'a PackedDigits,
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
         m_evals_x: Vec<F>,
-        tau1: Vec<F>,
-        v: Vec<CyclotomicRing<F, D>>,
-        u: Vec<CyclotomicRing<F, D>>,
-        y_ring: CyclotomicRing<F, D>,
+        tau1: &[F],
+        v: &[CyclotomicRing<F, D>],
+        u: &[CyclotomicRing<F, D>],
+        y_ring: &CyclotomicRing<F, D>,
         alpha: F,
         num_u: usize,
         num_l: usize,
@@ -2176,7 +2219,7 @@ impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> HachiStage2Ve
         Self::new(
             batching_coeff,
             s_claim,
-            Stage2WitnessOracle::Full(w_evals),
+            Stage2WitnessOracle::Packed(packed_witness),
             r_stage1,
             alpha_evals_y,
             m_evals_x,
@@ -2190,7 +2233,8 @@ impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> HachiStage2Ve
         )
     }
 
-    /// Create a fused verifier for the stage-2 sumcheck when only the final witness evaluation is available.
+    /// Create a fused verifier for the stage-2 sumcheck when only the final
+    /// witness evaluation is available.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "HachiStage2Verifier::new_with_claimed_w_eval")]
     pub fn new_with_claimed_w_eval(
@@ -2200,10 +2244,10 @@ impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> HachiStage2Ve
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
         m_evals_x: Vec<F>,
-        tau1: Vec<F>,
-        v: Vec<CyclotomicRing<F, D>>,
-        u: Vec<CyclotomicRing<F, D>>,
-        y_ring: CyclotomicRing<F, D>,
+        tau1: &[F],
+        v: &[CyclotomicRing<F, D>],
+        u: &[CyclotomicRing<F, D>],
+        y_ring: &CyclotomicRing<F, D>,
         alpha: F,
         num_u: usize,
         num_l: usize,
@@ -2227,14 +2271,20 @@ impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> HachiStage2Ve
 
     pub(crate) fn witness_eval(&self, challenges: &[F]) -> Result<F, HachiError> {
         match &self.witness_oracle {
-            Stage2WitnessOracle::Full(w_evals) => multilinear_eval(w_evals, challenges),
+            Stage2WitnessOracle::Packed(packed_witness) => {
+                packed_witness_eval(packed_witness, challenges, self.num_u, self.num_l)
+            }
             Stage2WitnessOracle::ClaimedEval(w_eval) => Ok(*w_eval),
         }
     }
+
+    fn m_eval(&self, x_challenges: &[F]) -> Result<F, HachiError> {
+        multilinear_eval(&self.m_evals_x, x_challenges)
+    }
 }
 
-impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckInstanceVerifier<F>
-    for HachiStage2Verifier<F, D>
+impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckInstanceVerifier<F>
+    for HachiStage2Verifier<'a, F, D>
 {
     fn num_rounds(&self) -> usize {
         self.num_u + self.num_l
@@ -2261,7 +2311,7 @@ impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckInsta
         let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
         let m_val = {
             let _span = tracing::info_span!("stage2_m_eval").entered();
-            multilinear_eval(&self.m_evals_x, x_challenges)?
+            self.m_eval(x_challenges)?
         };
         let relation_oracle = w_eval * alpha_val * m_val;
 
@@ -2273,6 +2323,7 @@ impl<F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckInsta
 mod tests {
     use super::*;
     use crate::algebra::Prime128M8M4M1M0;
+    use crate::protocol::ring_switch::build_w_evals;
     use crate::protocol::sumcheck::multilinear_eval;
 
     type F = Prime128M8M4M1M0;
@@ -2408,6 +2459,32 @@ mod tests {
                 .copy_from_slice(&w_prefix[src_start..src_start + live_x_cols]);
         }
         padded
+    }
+
+    #[test]
+    fn packed_witness_eval_matches_materialized_table() {
+        let d = 4usize;
+        let w_digits = vec![3, -1, 2, 0, -2, 1, 4, -3, 1, 0, -4, 2];
+        let packed = PackedDigits::from_i8_digits(&w_digits, 4);
+        let w_field: Vec<F> = w_digits
+            .iter()
+            .map(|&digit| F::from_i64(digit as i64))
+            .collect();
+        let (w_evals, num_u, num_l) = build_w_evals(&w_field, d).expect("valid witness shape");
+        let challenges = vec![
+            F::from_u64(2),
+            F::from_u64(5),
+            F::from_u64(7),
+            F::from_u64(11),
+        ];
+
+        assert_eq!(num_u + num_l, challenges.len());
+
+        let expected = multilinear_eval(&w_evals, &challenges).expect("matching table shape");
+        let actual =
+            packed_witness_eval(&packed, &challenges, num_u, num_l).expect("valid packed witness");
+
+        assert_eq!(actual, expected);
     }
 
     fn fold_compact_prefix_x_reference(

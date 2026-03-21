@@ -18,7 +18,7 @@ use crate::protocol::commitment::{
 };
 use crate::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps, RecursiveWitnessView};
 use crate::protocol::opening_point::RingOpeningPoint;
-use crate::protocol::proof::HachiCommitmentHint;
+use crate::protocol::proof::{HachiCommitmentHint, RingSliceSerializer};
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
@@ -244,7 +244,7 @@ where
         level_params: HachiLevelParams,
         mut hint: HachiCommitmentHint<F, D>,
         transcript: &mut T,
-        commitment: &RingCommitment<F, D>,
+        commitment: &[CyclotomicRing<F, D>],
         y_ring: &CyclotomicRing<F, D>,
         layout: HachiCommitmentLayout,
     ) -> Result<Self, HachiError> {
@@ -291,7 +291,7 @@ where
 
         let y = generate_y::<F, D>(
             &v,
-            &commitment.u,
+            commitment,
             y_ring,
             level_params.n_d,
             level_params.n_b,
@@ -308,47 +308,6 @@ where
             w_hat_flat: Some(w_hat_flat),
             w_folded: Some(pre_folded),
             hint: Some(hint),
-            _marker: PhantomData,
-        })
-    }
-
-    /// Verifier constructor: Derives challenges and computes M and y.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if challenge derivation fails.
-    #[tracing::instrument(skip_all, name = "QuadraticEquation::new_verifier")]
-    #[inline(never)]
-    pub fn new_verifier<T: Transcript<F>>(
-        ring_opening_point: RingOpeningPoint<F>,
-        v: Vec<CyclotomicRing<F, D>>,
-        level_params: HachiLevelParams,
-        transcript: &mut T,
-        commitment: &RingCommitment<F, D>,
-        y_ring: &CyclotomicRing<F, D>,
-        layout: HachiCommitmentLayout,
-    ) -> Result<Self, HachiError> {
-        let challenges =
-            derive_stage1_challenges::<F, T, D>(transcript, &v, layout.num_blocks, &level_params)?;
-        let y = generate_y::<F, D>(
-            &v,
-            &commitment.u,
-            y_ring,
-            level_params.n_d,
-            level_params.n_b,
-            level_params.n_a,
-        )?;
-
-        Ok(Self {
-            v,
-            challenges,
-            y,
-            opening_point: ring_opening_point,
-            z_pre: None,
-            w_hat: None,
-            w_hat_flat: None,
-            w_folded: None,
-            hint: None,
             _marker: PhantomData,
         })
     }
@@ -434,7 +393,7 @@ where
 
 pub(crate) fn derive_stage1_challenges<F, T, const D: usize>(
     transcript: &mut T,
-    v: &Vec<CyclotomicRing<F, D>>,
+    v: &[CyclotomicRing<F, D>],
     num_blocks: usize,
     level_params: &HachiLevelParams,
 ) -> Result<Vec<SparseChallenge>, HachiError>
@@ -442,7 +401,7 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    transcript.append_serde(ABSORB_PROVER_V, v);
+    transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(v));
     sample_sparse_challenges::<F, T, D>(
         transcript,
         CHALLENGE_STAGE1_FOLD,

@@ -11,12 +11,11 @@ use crate::algebra::SparseChallenge;
 use crate::error::HachiError;
 use crate::primitives::poly::multilinear_lagrange_basis;
 use crate::primitives::serialization::{Compress, Valid};
-use crate::protocol::commitment::transcript_append::AppendToTranscript;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::linear::flatten_i8_blocks;
 use crate::protocol::commitment::{
-    CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, RingCommitment,
+    CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams,
 };
 use crate::protocol::commitment_scheme::next_level_opening_point;
 use crate::protocol::hachi_poly_ops::RecursiveWitnessFlat;
@@ -30,9 +29,9 @@ use crate::protocol::labrador::{
 use crate::protocol::opening_point::{ring_opening_point_from_field, BasisMode, RingOpeningPoint};
 use crate::protocol::proof::{
     FlatLabradorProof, FlatLabradorWitness, FlatRingVec, HachiCommitmentHint, HachiProofTail,
-    LabradorTail, PackedDigits,
+    LabradorTail, PackedDigits, ProofRingVec,
 };
-use crate::protocol::quadratic_equation::QuadraticEquation;
+use crate::protocol::quadratic_equation::{derive_stage1_challenges, QuadraticEquation};
 use crate::protocol::ring_switch::WCommitmentConfig;
 use crate::protocol::transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use crate::protocol::transcript::Transcript;
@@ -259,7 +258,7 @@ pub(crate) fn hachi_labrador_estimate<
 pub(crate) fn labrador_handoff_prove<F, T, const D_HANDOFF: usize, Cfg>(
     current_w: &RecursiveWitnessFlat,
     current_hint: &HachiCommitmentHint<F, D_HANDOFF>,
-    current_commitment: &RingCommitment<F, D_HANDOFF>,
+    current_commitment: &FlatRingVec<F>,
     current_challenges: &[F],
     current_num_u: usize,
     current_num_l: usize,
@@ -328,13 +327,20 @@ where
             Ok::<_, HachiError>((w_view, y_ring, w_folded))
         })?;
 
-    tracing::info_span!("labrador::handoff_absorb_claims").in_scope(|| {
-        current_commitment.append_to_transcript(ABSORB_COMMITMENT, &mut handoff_transcript);
-        for pt in &padded_point {
-            handoff_transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
-        }
-        handoff_transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
-    });
+    tracing::info_span!("labrador::handoff_absorb_claims").in_scope(
+        || -> Result<(), HachiError> {
+            current_commitment.append_as_ring_commitment::<_, D_HANDOFF>(
+                ABSORB_COMMITMENT,
+                &mut handoff_transcript,
+            )?;
+            for pt in &padded_point {
+                handoff_transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+            }
+            handoff_transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+            Ok(())
+        },
+    )?;
+    let current_commitment_u = current_commitment.as_ring_slice::<D_HANDOFF>()?;
 
     let quad_eq = tracing::info_span!("labrador::handoff_quad_eq").in_scope(|| {
         Ok::<_, HachiError>(Box::new(QuadraticEquation::<
@@ -349,7 +355,7 @@ where
             level_params.clone(),
             current_hint.clone(),
             &mut handoff_transcript,
-            current_commitment,
+            current_commitment_u,
             &y_ring,
             w_layout,
         )?))
@@ -381,7 +387,7 @@ where
         quad_eq.opening_point(),
         &quad_eq.challenges,
         &quad_eq.v,
-        &current_commitment.u,
+        current_commitment_u,
         &y_ring,
         level_params,
         w_layout,
@@ -440,8 +446,8 @@ where
         "labrador_handoff witness/constraints"
     );
 
-    let v_bytes = FlatRingVec::from_ring_elems(&quad_eq.v).serialized_size(Compress::No);
-    let y_ring_bytes = FlatRingVec::from_single(&y_ring).serialized_size(Compress::No);
+    let v_bytes = ProofRingVec::from_ring_elems(&quad_eq.v).serialized_size(Compress::No);
+    let y_ring_bytes = ProofRingVec::from_single(&y_ring).serialized_size(Compress::No);
     let estimated_labrador_tail_bytes = estimate.proof_bytes
         + v_bytes
         + y_ring_bytes
@@ -499,8 +505,8 @@ where
 
     Ok(HachiProofTail::Labrador(Box::new(LabradorTail {
         labrador_proof: FlatLabradorProof::from_typed(&labrador_proof),
-        v: FlatRingVec::from_ring_elems(&quad_eq.v),
-        y_ring: FlatRingVec::from_single(&y_ring),
+        v: ProofRingVec::from_ring_elems(&quad_eq.v),
+        y_ring: ProofRingVec::from_single(&y_ring),
         witness_norm_bound_sq,
     })))
 }
@@ -516,11 +522,11 @@ where
 /// Propagates errors from constraint reconstruction or Labrador verification.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "labrador::handoff_verify")]
-pub(crate) fn labrador_handoff_verify<F, T, const D_HANDOFF: usize, Cfg>(
+pub(crate) fn labrador_handoff_verify<F, T, const D_HANDOFF: usize>(
     tail: &LabradorTail<F>,
     opening_point: &[F],
     opening_value: &F,
-    current_commitment: &RingCommitment<F, D_HANDOFF>,
+    current_commitment: &ProofRingVec<F>,
     expanded_setup: &HachiExpandedSetup<F>,
     level_params: &HachiLevelParams,
     w_layout: HachiCommitmentLayout,
@@ -529,7 +535,6 @@ pub(crate) fn labrador_handoff_verify<F, T, const D_HANDOFF: usize, Cfg>(
 where
     F: FieldCore + CanonicalField + FieldSampling + FromSmallInt + Valid,
     T: Transcript<F>,
-    Cfg: CommitmentConfig,
 {
     let t0 = Instant::now();
     if level_params.d != D_HANDOFF {
@@ -543,12 +548,13 @@ where
         });
     }
 
-    let v: Vec<CyclotomicRing<F, D_HANDOFF>> = tail.v.to_vec();
-    let y_ring: CyclotomicRing<F, D_HANDOFF> = tail.y_ring.to_single();
+    let current_commitment_u = current_commitment.as_ring_slice::<D_HANDOFF>()?;
+    let v = tail.v.as_ring_slice::<D_HANDOFF>()?;
+    let y_ring = tail.y_ring.as_single_ring::<D_HANDOFF>()?;
     let labrador_proof = tail.labrador_proof.to_typed::<D_HANDOFF>();
 
     if !tracing::info_span!("labrador::handoff_match_opening_claim")
-        .in_scope(|| matches_opening_claim::<F, D_HANDOFF>(&y_ring, opening_point, opening_value))
+        .in_scope(|| matches_opening_claim::<F, D_HANDOFF>(y_ring, opening_point, opening_value))
     {
         return Err(HachiError::InvalidProof);
     }
@@ -569,26 +575,27 @@ where
         })?;
 
     // Replay transcript against the carried Hachi commitment.
-    tracing::info_span!("labrador::handoff_absorb_claims").in_scope(|| {
-        current_commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
-        for pt in &padded_point {
-            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
-        }
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
-    });
+    tracing::info_span!("labrador::handoff_absorb_claims").in_scope(
+        || -> Result<(), HachiError> {
+            current_commitment
+                .append_as_ring_slice::<_, D_HANDOFF>(ABSORB_COMMITMENT, transcript)?;
+            for pt in &padded_point {
+                transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+            }
+            transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
+            Ok(())
+        },
+    )?;
 
-    // Derive challenges via verifier-side quad eq (absorbs v, samples challenges).
-    let quad_eq = tracing::info_span!("labrador::handoff_quad_eq").in_scope(|| {
-        QuadraticEquation::<F, D_HANDOFF, WCommitmentConfig<D_HANDOFF, Cfg>>::new_verifier(
-            ring_opening_point.clone(),
-            v.clone(),
-            level_params.clone(),
-            transcript,
-            current_commitment,
-            &y_ring,
-            w_layout,
-        )
-    })?;
+    let stage1_challenges =
+        tracing::info_span!("labrador::handoff_stage1_challenges").in_scope(|| {
+            derive_stage1_challenges::<F, T, D_HANDOFF>(
+                transcript,
+                v,
+                w_layout.num_blocks,
+                level_params,
+            )
+        })?;
 
     let a_flat = &expanded_setup.A;
     let b_flat = &expanded_setup.B;
@@ -599,11 +606,11 @@ where
         a_flat,
         b_flat,
         d_flat,
-        quad_eq.opening_point(),
-        &quad_eq.challenges,
-        &v,
-        &current_commitment.u,
-        &y_ring,
+        &ring_opening_point,
+        &stage1_challenges,
+        v,
+        current_commitment_u,
+        y_ring,
         level_params,
         w_layout,
     )?;

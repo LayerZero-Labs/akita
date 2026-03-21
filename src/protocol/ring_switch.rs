@@ -23,8 +23,9 @@ use crate::protocol::commitment::{
 };
 use crate::protocol::hachi_poly_ops::RecursiveWitnessFlat;
 use crate::protocol::opening_point::RingOpeningPoint;
-use crate::protocol::proof::{DigitLut, FlatCommitmentHint, FlatRingVec, HachiCommitmentHint};
+use crate::protocol::proof::{DigitLut, FlatRingVec, HachiCommitmentHint, ProofRingVec};
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
+use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
 use crate::protocol::transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
@@ -40,15 +41,36 @@ use std::marker::PhantomData;
 pub(crate) struct RingSwitchOutput<F: FieldCore> {
     /// The witness vector w as balanced digits in `[-b/2, b/2)`.
     pub w: RecursiveWitnessFlat,
-    /// D-erased commitment to w.
-    pub w_commitment: FlatRingVec<F>,
-    /// D-erased prover hint for the w-commitment.
-    pub w_hint: FlatCommitmentHint,
+    /// Runtime commitment to w (prover only).
+    pub w_commitment: Option<FlatRingVec<F>>,
+    /// Runtime-only prover hint cache for the w-commitment.
+    pub w_hint: Option<RecursiveCommitmentHintCache<F>>,
     /// Compact evaluation table of w, stored as y-major slices of the live x prefix.
     /// Populated by the prover; empty on the verifier side.
     pub w_evals_compact: Vec<i8>,
     /// Physical x width before zero-extension to the next power of two.
     pub live_x_cols: usize,
+    /// Evaluation table of M_alpha(x) (tau1-weighted).
+    pub m_evals_x: Vec<F>,
+    /// Evaluation table of alpha powers (y dimension).
+    pub alpha_evals_y: Vec<F>,
+    /// Number of upper variable bits.
+    pub num_u: usize,
+    /// Number of lower variable bits.
+    pub num_l: usize,
+    /// Challenge tau0 for F_0 sumcheck.
+    pub tau0: Vec<F>,
+    /// Challenge tau1 for F_alpha sumcheck.
+    pub tau1: Vec<F>,
+    /// Basis size b = 2^LOG_BASIS.
+    pub b: usize,
+    /// Ring-switch challenge alpha.
+    pub alpha: F,
+}
+
+/// Verifier-side ring-switch output, carrying only the data needed to replay
+/// the fused stage-1/stage-2 checks.
+pub(crate) struct RingSwitchVerifyOutput<F: FieldCore> {
     /// Evaluation table of M_alpha(x) (tau1-weighted).
     pub m_evals_x: Vec<F>,
     /// Evaluation table of alpha powers (y dimension).
@@ -89,7 +111,7 @@ pub(crate) fn ring_switch_build_w<F, const D: usize, Cfg>(
     layout: HachiCommitmentLayout,
 ) -> Result<RecursiveWitnessFlat, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + FieldSampling + crate::FromSmallInt,
     Cfg: CommitmentConfig,
 {
     {
@@ -169,7 +191,8 @@ pub(crate) fn ring_switch_finalize<F, T, const D: usize, Cfg>(
     transcript: &mut T,
     w: RecursiveWitnessFlat,
     w_commitment: FlatRingVec<F>,
-    w_hint: FlatCommitmentHint,
+    w_commitment_proof: &ProofRingVec<F>,
+    w_hint: RecursiveCommitmentHintCache<F>,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<RingSwitchOutput<F>, HachiError>
@@ -178,7 +201,7 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
-    transcript.append_serde(ABSORB_SUMCHECK_W, &w_commitment);
+    transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment_proof);
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
 
@@ -234,8 +257,8 @@ where
 
     Ok(RingSwitchOutput {
         w,
-        w_commitment,
-        w_hint,
+        w_commitment: Some(w_commitment),
+        w_hint: Some(w_hint),
         w_evals_compact,
         live_x_cols,
         m_evals_x,
@@ -289,7 +312,8 @@ where
     let (w_commitment, w_hint) = commit_w::<F, D, Cfg>(&w, ntt_a, ntt_b, level_params)?;
 
     let w_commitment_flat = FlatRingVec::from_commitment(&w_commitment);
-    let w_hint_flat = FlatCommitmentHint::from_typed(w_hint);
+    let w_commitment_proof = w_commitment_flat.to_proof_ring_vec();
+    let w_hint_cache = RecursiveCommitmentHintCache::from_typed(w_hint)?;
 
     ring_switch_finalize::<F, T, D, Cfg>(
         quad_eq,
@@ -297,7 +321,8 @@ where
         transcript,
         w,
         w_commitment_flat,
-        w_hint_flat,
+        &w_commitment_proof,
+        w_hint_cache,
         level_params,
         layout,
     )
@@ -305,27 +330,25 @@ where
 
 /// Replay the verifier side of ring switching to reconstruct evaluation tables.
 ///
-/// Takes the w-commitment as a [`FlatRingVec`] so the verifier does not need
-/// to know D_COMMIT (the commitment's ring dimension).
-///
 /// # Errors
 ///
 /// Returns an error if matrix expansion fails.
+#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 #[inline(never)]
-pub(crate) fn ring_switch_verifier<F, T, const D: usize, Cfg>(
-    quad_eq: &QuadraticEquation<F, D, Cfg>,
+pub(crate) fn ring_switch_verifier<F, T, const D: usize>(
+    opening_point: &RingOpeningPoint<F>,
+    challenges: &[SparseChallenge],
     setup: &HachiExpandedSetup<F>,
     w_len: usize,
-    w_commitment: &FlatRingVec<F>,
+    w_commitment: &ProofRingVec<F>,
     transcript: &mut T,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
-) -> Result<RingSwitchOutput<F>, HachiError>
+) -> Result<RingSwitchVerifyOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
-    Cfg: CommitmentConfig,
 {
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
 
@@ -341,11 +364,10 @@ where
     let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
     let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
-
     let m_evals_x = compute_m_evals_x::<F, D>(
         setup,
-        quad_eq.opening_point(),
-        &quad_eq.challenges,
+        opening_point,
+        challenges,
         alpha,
         &alpha_evals_y,
         level_params,
@@ -353,12 +375,7 @@ where
         &tau1,
     )?;
 
-    Ok(RingSwitchOutput {
-        w: RecursiveWitnessFlat::default(),
-        w_commitment: w_commitment.clone(),
-        w_hint: FlatCommitmentHint::empty(),
-        w_evals_compact: Vec::new(),
-        live_x_cols: w_len / D,
+    Ok(RingSwitchVerifyOutput {
         m_evals_x,
         alpha_evals_y,
         num_u,
@@ -630,23 +647,18 @@ pub(crate) fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D
     acc
 }
 
-/// Evaluate a ring element at pre-scaled `weight * alpha_pows`, computing
-/// `sum_k coeffs[k] * scaled_alpha_pows[k]`.
 #[inline]
-fn eval_ring_at_scaled_pows<F: FieldCore, const D: usize>(
+fn eval_ring_at_pows<F: FieldCore, const D: usize>(
     r: &CyclotomicRing<F, D>,
-    scaled_alpha_pows: &[F; D],
+    alpha_pows: &[F],
 ) -> F {
+    debug_assert_eq!(alpha_pows.len(), D);
     r.coefficients()
         .iter()
-        .zip(scaled_alpha_pows.iter())
-        .fold(F::zero(), |acc, (coeff, s)| acc + *coeff * *s)
-}
-
-#[inline]
-fn scale_alpha_pows<F: FieldCore, const D: usize>(alpha_pows: &[F], weight: F) -> [F; D] {
-    debug_assert_eq!(alpha_pows.len(), D);
-    std::array::from_fn(|k| alpha_pows[k] * weight)
+        .zip(alpha_pows.iter())
+        .fold(F::zero(), |acc, (coeff, alpha_pow)| {
+            acc + *coeff * *alpha_pow
+        })
 }
 
 #[inline]
@@ -752,6 +764,7 @@ pub(crate) fn expand_m_a<F: CanonicalField, const D: usize>(
 /// # Errors
 ///
 /// Returns an error if `w.len()` is not a multiple of `d`.
+#[cfg(test)]
 pub(crate) fn build_w_evals<F: FieldCore>(
     w: &[F],
     d: usize,
@@ -874,9 +887,10 @@ pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
     let r_gadget = gadget_row_scalars::<F>(levels, log_basis);
     let x_len = total_cols.next_power_of_two();
-    let mut out = vec![F::zero(); x_len];
+    let mut out = Vec::with_capacity(x_len);
 
-    let c_alphas: Vec<F> = cfg_into_iter!(challenges)
+    let c_alphas: Vec<F> = challenges
+        .iter()
         .map(|challenge| eval_sparse_challenge_at_pows::<F, D>(challenge, alpha_pows))
         .collect::<Result<_, _>>()?;
 
@@ -888,103 +902,78 @@ pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     let row4_weight = eq_tau1[level_params.n_d + level_params.n_b + 1];
     let a_weights = &eq_tau1[(level_params.n_d + level_params.n_b + 2)..rows];
 
-    // Pre-scale alpha_pows by each row's eq_tau1 weight, eliminating one
-    // multiply per column per row in the hot loops.
-    let d_scaled: Vec<(usize, [F; D])> = (0..level_params.n_d)
-        .filter(|&i| !eq_tau1[i].is_zero())
-        .map(|i| (i, scale_alpha_pows::<F, D>(alpha_pows, eq_tau1[i])))
-        .collect();
-    let b_scaled: Vec<(usize, [F; D])> = (0..level_params.n_b)
-        .filter(|&i| !eq_tau1[level_params.n_d + i].is_zero())
-        .map(|i| {
-            (
-                i,
-                scale_alpha_pows::<F, D>(alpha_pows, eq_tau1[level_params.n_d + i]),
-            )
-        })
-        .collect();
-    let a_scaled: Vec<(usize, [F; D])> = (0..level_params.n_a)
-        .filter(|&i| !a_weights[i].is_zero())
-        .map(|i| (i, scale_alpha_pows::<F, D>(alpha_pows, a_weights[i])))
-        .collect();
-
-    // Precompute per-block scalar part for w-section.
-    let w_block_scalars: Vec<F> = cfg_into_iter!(0..num_blocks)
-        .map(|b| row3_weight * opening_point.b[b] + row4_weight * c_alphas[b])
-        .collect();
-
-    let w_offset = 0;
-    cfg_iter_mut!(out[w_offset..w_offset + w_len])
-        .enumerate()
-        .for_each(|(x, dst)| {
+    let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
+        .map(|x| {
             let block_idx = x / depth_open;
             let digit_idx = x % depth_open;
-            let mut acc = w_block_scalars[block_idx] * g1_open[digit_idx];
-            for &(row_idx, ref scaled) in &d_scaled {
-                acc += eval_ring_at_scaled_pows(&d_view.row(row_idx)[x], scaled);
+            let mut acc = (row3_weight * opening_point.b[block_idx]
+                + row4_weight * c_alphas[block_idx])
+                * g1_open[digit_idx];
+            for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(level_params.n_d) {
+                if !eq_i.is_zero() {
+                    acc += *eq_i * eval_ring_at_pows(&d_view.row(row_idx)[x], alpha_pows);
+                }
             }
-            *dst = acc;
-        });
-
-    // Precompute per-block scalar part for t-section.
-    let t_stride = level_params.n_a * depth_open;
-    let t_block_scalars: Vec<Vec<F>> = cfg_into_iter!(0..num_blocks)
-        .map(|b| {
-            a_weights
-                .iter()
-                .map(|aw| *aw * c_alphas[b])
-                .collect::<Vec<_>>()
+            acc
         })
         .collect();
+    out.extend(w_segment);
 
-    let t_offset = w_len;
-    cfg_iter_mut!(out[t_offset..t_offset + t_len])
-        .enumerate()
-        .for_each(|(x, dst)| {
-            let block_idx = x / t_stride;
-            let rem = x % t_stride;
+    let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
+        .map(|x| {
+            let block_idx = x / (level_params.n_a * depth_open);
+            let rem = x % (level_params.n_a * depth_open);
             let a_idx = rem / depth_open;
             let digit_idx = rem % depth_open;
-            let mut acc = t_block_scalars[block_idx][a_idx] * g1_open[digit_idx];
-            for &(row_idx, ref scaled) in &b_scaled {
-                acc += eval_ring_at_scaled_pows(&b_view.row(row_idx)[x], scaled);
+            let mut acc = a_weights[a_idx] * c_alphas[block_idx] * g1_open[digit_idx];
+            for (row_idx, eq_i) in eq_tau1[level_params.n_d..(level_params.n_d + level_params.n_b)]
+                .iter()
+                .enumerate()
+            {
+                if !eq_i.is_zero() {
+                    acc += *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[x], alpha_pows);
+                }
             }
-            *dst = acc;
-        });
+            acc
+        })
+        .collect();
+    out.extend(t_segment);
 
     let z_base: Vec<F> = cfg_into_iter!(0..inner_width)
         .map(|k| {
             let block_idx = k / depth_commit;
             let digit_idx = k % depth_commit;
             let mut acc = row4_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
-            for &(a_idx, ref scaled) in &a_scaled {
-                acc += eval_ring_at_scaled_pows(&a_view.row(a_idx)[k], scaled);
+            for (a_idx, eq_i) in a_weights.iter().enumerate() {
+                if !eq_i.is_zero() {
+                    acc += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[k], alpha_pows);
+                }
             }
             acc
         })
         .collect();
 
-    let z_offset = w_len + t_len;
-    cfg_iter_mut!(out[z_offset..z_offset + z_len])
-        .enumerate()
-        .for_each(|(idx, dst)| {
+    let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
+        .map(|idx| {
             let k = idx / depth_fold;
             let fold_idx = idx % depth_fold;
-            *dst = -(z_base[k] * fold_gadget[fold_idx]);
-        });
+            -(z_base[k] * fold_gadget[fold_idx])
+        })
+        .collect();
+    out.extend(z_segment);
 
     let alpha_pow_d = alpha_pows[D - 1] * alpha;
     let denom = alpha_pow_d + F::one();
-    let r_offset = z_offset + z_len;
     let r_tail_len = rows * levels;
-    cfg_iter_mut!(out[r_offset..r_offset + r_tail_len])
-        .enumerate()
-        .for_each(|(idx, dst)| {
+    let r_tail: Vec<F> = cfg_into_iter!(0..r_tail_len)
+        .map(|idx| {
             let row_idx = idx / levels;
             let level_idx = idx % levels;
-            *dst = -(eq_tau1[row_idx] * denom * r_gadget[level_idx]);
-        });
-
+            -(eq_tau1[row_idx] * denom * r_gadget[level_idx])
+        })
+        .collect();
+    out.extend(r_tail);
+    out.resize(x_len, F::zero());
     Ok(out)
 }
 

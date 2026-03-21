@@ -179,8 +179,8 @@ fn field_bytes(field_bits: u32) -> usize {
     (field_bits as usize).div_ceil(8)
 }
 
-fn flat_ring_vec_bytes(ring_len: usize, ring_dim: usize, elem_bytes: usize) -> usize {
-    4 + 8 + ring_len * ring_dim * elem_bytes
+fn proof_ring_vec_bytes(ring_len: usize, ring_dim: usize, elem_bytes: usize) -> usize {
+    8 + ring_len * ring_dim * elem_bytes
 }
 
 fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
@@ -264,10 +264,10 @@ fn hachi_level_proof_bytes(
     next_w_len: usize,
 ) -> usize {
     let elem_bytes = field_bytes(field_bits);
-    let y_bytes = flat_ring_vec_bytes(1, level_params.d, elem_bytes);
-    let v_bytes = flat_ring_vec_bytes(level_params.n_d, level_params.d, elem_bytes);
+    let y_bytes = proof_ring_vec_bytes(1, level_params.d, elem_bytes);
+    let v_bytes = proof_ring_vec_bytes(level_params.n_d, level_params.d, elem_bytes);
     let next_commit_bytes =
-        flat_ring_vec_bytes(next_level_params.n_b, next_level_params.d, elem_bytes);
+        proof_ring_vec_bytes(next_level_params.n_b, next_level_params.d, elem_bytes);
     let next_eval_bytes = elem_bytes;
     let rounds = sumcheck_rounds(level_params.d, next_w_len);
     let b = 1usize << layout.log_basis;
@@ -708,7 +708,8 @@ mod tests {
             let next_commitment = FlatRingVec::from_ring_elems(&vec![
                 CyclotomicRing::<F, D>::zero();
                 next_level_params.n_b
-            ]);
+            ])
+            .to_proof_ring_vec();
             let level_proof = HachiLevelProof::new_two_stage::<D>(
                 CyclotomicRing::<F, D>::zero(),
                 vec![CyclotomicRing::<F, D>::zero(); level_params.n_d],

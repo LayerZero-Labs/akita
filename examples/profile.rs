@@ -172,7 +172,12 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
     }
 }
 
+fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
+    coeff_len / d
+}
+
 fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevelProof<F>) -> usize {
+    let level_d = level.level_d();
     let y_ring_size = level.y_ring.serialized_size(Compress::No);
     let v_size = level.v.serialized_size(Compress::No);
     let total = level.serialized_size(Compress::No);
@@ -180,15 +185,13 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
     eprintln!("[{label}]   hachi_fold L{level_idx}: total={total} bytes");
     eprintln!(
         "[{label}]     y_ring={} bytes ({} ring elems, D={})",
-        y_ring_size,
-        level.y_ring.count(),
-        level.y_ring.ring_dim(),
+        y_ring_size, 1, level_d,
     );
     eprintln!(
         "[{label}]     v={} bytes ({} ring elems, D={})",
         v_size,
-        level.v.count(),
-        level.v.ring_dim(),
+        ring_elem_count(level.v.coeff_len(), level_d),
+        level_d,
     );
     let stage1 = &level.stage1;
     let stage2 = &level.stage2;
@@ -201,9 +204,8 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
     eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!(
-        "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} ring elems, D={})",
-        stage2.next_w_commitment.count(),
-        level.w_commit_d(),
+        "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} coeffs)",
+        stage2.next_w_commitment.coeff_len(),
     );
     eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
     debug_assert_eq!(
@@ -220,6 +222,7 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
 }
 
 fn print_labrador_tail_breakdown(label: &str, tail: &LabradorTail<F>) -> usize {
+    let handoff_d = tail.v.coeff_len();
     let labrador_proof_size = tail.labrador_proof.serialized_size(Compress::No);
     let v_size = tail.v.serialized_size(Compress::No);
     let y_ring_size = tail.y_ring.serialized_size(Compress::No);
@@ -231,15 +234,11 @@ fn print_labrador_tail_breakdown(label: &str, tail: &LabradorTail<F>) -> usize {
     eprintln!("[{label}]     labrador_proof={labrador_proof_size} bytes");
     eprintln!(
         "[{label}]     v={} bytes ({} ring elems, D={})",
-        v_size,
-        tail.v.count(),
-        tail.v.ring_dim(),
+        v_size, 1, handoff_d,
     );
     eprintln!(
         "[{label}]     y_ring={} bytes ({} ring elems, D={})",
-        y_ring_size,
-        tail.y_ring.count(),
-        tail.y_ring.ring_dim(),
+        y_ring_size, 1, handoff_d,
     );
     eprintln!("[{label}]     witness_norm_bound_sq={witness_norm_bound_sq_size} bytes");
     debug_assert_eq!(
@@ -270,9 +269,13 @@ fn print_labrador_tail_breakdown(label: &str, tail: &LabradorTail<F>) -> usize {
     debug_assert_eq!(labrador_proof_size, labrador_accounted);
 
     for (i, level) in tail.labrador_proof.levels.iter().enumerate() {
-        print_labrador_level_breakdown(label, i, level);
+        print_labrador_level_breakdown(label, i, level, handoff_d);
     }
-    print_labrador_final_witness_breakdown(label, &tail.labrador_proof.final_opening_witness);
+    print_labrador_final_witness_breakdown(
+        label,
+        &tail.labrador_proof.final_opening_witness,
+        handoff_d,
+    );
 
     total
 }
@@ -281,6 +284,7 @@ fn print_labrador_level_breakdown(
     label: &str,
     level_idx: usize,
     level: &FlatLabradorLevelProof<F>,
+    handoff_d: usize,
 ) -> usize {
     let tail_flag_size = std::mem::size_of::<u8>();
     let input_row_lengths_size = level.input_row_lengths.serialized_size(Compress::No);
@@ -318,14 +322,14 @@ fn print_labrador_level_breakdown(
     eprintln!(
         "[{label}]       msg inner_opening_payload={} bytes ({} ring elems, D={})",
         inner_opening_payload_size,
-        level.inner_opening_payload.count(),
-        level.inner_opening_payload.ring_dim(),
+        ring_elem_count(level.inner_opening_payload.coeff_len(), handoff_d),
+        handoff_d,
     );
     eprintln!(
         "[{label}]       msg linear_garbage_payload={} bytes ({} ring elems, D={})",
         linear_garbage_payload_size,
-        level.linear_garbage_payload.count(),
-        level.linear_garbage_payload.ring_dim(),
+        ring_elem_count(level.linear_garbage_payload.coeff_len(), handoff_d),
+        handoff_d,
     );
     eprintln!(
         "[{label}]       msg jl_projection={jl_projection_size} bytes, jl_nonce={jl_nonce_size} bytes"
@@ -333,8 +337,8 @@ fn print_labrador_level_breakdown(
     eprintln!(
         "[{label}]       msg jl_lift_residuals={} bytes ({} ring elems, D={})",
         jl_lift_residuals_size,
-        level.jl_lift_residuals.count(),
-        level.jl_lift_residuals.ring_dim(),
+        ring_elem_count(level.jl_lift_residuals.coeff_len(), handoff_d),
+        handoff_d,
     );
 
     debug_assert_eq!(
@@ -354,7 +358,11 @@ fn print_labrador_level_breakdown(
     total
 }
 
-fn print_labrador_final_witness_breakdown(label: &str, witness: &FlatLabradorWitness<F>) -> usize {
+fn print_labrador_final_witness_breakdown(
+    label: &str,
+    witness: &FlatLabradorWitness<F>,
+    handoff_d: usize,
+) -> usize {
     let rows_len_size = std::mem::size_of::<u32>();
     let rows_total: usize = witness
         .rows
@@ -370,8 +378,8 @@ fn print_labrador_final_witness_breakdown(label: &str, witness: &FlatLabradorWit
         eprintln!(
             "[{label}]       row{row_idx}={} bytes ({} ring elems, D={})",
             row.serialized_size(Compress::No),
-            row.count(),
-            row.ring_dim(),
+            ring_elem_count(row.coeff_len(), handoff_d),
+            handoff_d,
         );
     }
     debug_assert_eq!(total, rows_len_size + rows_total);
