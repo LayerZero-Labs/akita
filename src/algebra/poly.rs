@@ -7,7 +7,7 @@ use crate::parallel::*;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::protocol::sumcheck::eq_poly::EqPolynomial;
+use super::eq_poly::EqPolynomial;
 use crate::{cfg_fold_reduce, AdditiveGroup, FieldCore, FromSmallInt};
 use std::io::{Read, Write};
 use std::ops::{Add, Neg, Sub};
@@ -252,4 +252,13 @@ pub fn multilinear_eval_small<E: FieldCore + HasWide + FromSmallInt>(
         |a, b| a + b
     );
     Ok(<E::Wide as ReduceTo<E>>::reduce(outer_accum))
+}
+
+/// Remove trailing zero coefficients from a coefficient vector, preserving
+/// at least one element.
+#[inline]
+pub fn trim_trailing_zeros<E: FieldCore>(coeffs: &mut Vec<E>) {
+    while coeffs.len() > 1 && coeffs.last().is_some_and(|c| c.is_zero()) {
+        coeffs.pop();
+    }
 }

@@ -29,8 +29,8 @@
 //!
 //! degree 4, so round polynomials have degree 5.
 
-use super::eq_poly::EqPolynomial;
-use super::split_eq::GruenSplitEq;
+use crate::algebra::eq_poly::EqPolynomial;
+use crate::algebra::split_eq::GruenSplitEq;
 use super::two_round_prefix::{
     build_stage1_bivariate_skip_proof_from_s_compact, can_use_stage1_two_round_prefix,
     Stage1BivariateSkipState,

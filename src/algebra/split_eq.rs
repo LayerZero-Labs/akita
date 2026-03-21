@@ -22,7 +22,7 @@
 //! O(1) pops per round instead of an O(2^n) fold.
 
 use super::eq_poly::EqPolynomial;
-use super::UniPoly;
+use super::uni_poly::UniPoly;
 use crate::{FieldCore, FromSmallInt};
 
 /// Split equality polynomial with Gruen scalar accumulation.
@@ -253,8 +253,8 @@ impl<E: FieldCore + FromSmallInt> GruenSplitEq<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algebra::poly::fold_evals_in_place;
     use crate::algebra::Prime128M8M4M1M0;
-    use crate::protocol::sumcheck::fold_evals_in_place;
     use crate::{FieldSampling, FromSmallInt};
     use rand::rngs::StdRng;
     use rand::SeedableRng;

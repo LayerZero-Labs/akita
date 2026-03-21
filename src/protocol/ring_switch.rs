@@ -23,7 +23,7 @@ use crate::protocol::commitment::{
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{DigitLut, FlatCommitmentHint, FlatRingVec, HachiCommitmentHint};
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
-use crate::protocol::sumcheck::eq_poly::EqPolynomial;
+use crate::algebra::eq_poly::EqPolynomial;
 use crate::protocol::transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };

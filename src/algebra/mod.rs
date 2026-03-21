@@ -6,11 +6,14 @@
 //! - Low-level NTT and CRT+NTT arithmetic scaffolding (`ntt`)
 
 pub mod backend;
+pub mod eq_poly;
 pub mod fields;
 pub mod module;
 pub mod ntt;
 pub mod poly;
 pub mod ring;
+pub mod split_eq;
+pub mod uni_poly;
 
 // Flat re-exports for convenience.
 pub use backend::{CrtReconstruct, NttPrimeOps, NttTransform, RingBackend, ScalarBackend};
@@ -23,7 +26,10 @@ pub use fields::{
     Prime128M54P4P0, Prime128M8M4M1M0, Prime128Offset5823, POW2_OFFSET_IMPLEMENTED_MAX_BITS,
     POW2_OFFSET_MAX, POW2_OFFSET_PRIMES, POW2_OFFSET_TABLE,
 };
+pub use eq_poly::EqPolynomial;
 pub use module::VectorModule;
+pub use split_eq::GruenSplitEq;
+pub use uni_poly::{CompressedUniPoly, UniPoly};
 pub use ntt::tables;
 pub use ntt::{GarnerData, LimbQ, MontCoeff, NttPrime, PrimeWidth, RADIX_BITS};
 pub use ring::{
