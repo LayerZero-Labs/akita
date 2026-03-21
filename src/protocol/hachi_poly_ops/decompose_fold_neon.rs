@@ -1,7 +1,10 @@
-//! AArch64 NEON kernel for sparse-multiply-accumulate in `decompose_fold`.
+//! AArch64 NEON kernel for sparse-multiply-accumulate in the decompose-fold
+//! pipeline.
 //!
-//! Rotates an i8 digit plane by each challenge position and accumulates
-//! into an i32 accumulator using widening add/sub (`SADDW` / `SSUBW`).
+//! Called from [`super::helpers::sparse_mul_acc`] when NEON is available and
+//! challenge coefficients have magnitude ≤ 2.  Rotates an i8 digit plane by
+//! each challenge position and accumulates into an i32 accumulator using
+//! widening add/sub (`SADDW` / `SSUBW`).
 
 use std::arch::aarch64::*;
 
