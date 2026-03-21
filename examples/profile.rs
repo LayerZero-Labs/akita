@@ -116,14 +116,13 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
 
 fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
     let top_levels_len_size = std::mem::size_of::<u32>();
-    let top_tail_tag_size = std::mem::size_of::<u8>();
     let hachi_levels_total: usize = proof
         .levels
         .iter()
         .map(|level| level.serialized_size(Compress::No))
         .sum();
     let tail_total = proof.tail.direct.serialized_size(Compress::No);
-    let accounted_total = top_levels_len_size + top_tail_tag_size + hachi_levels_total + tail_total;
+    let accounted_total = top_levels_len_size + hachi_levels_total + tail_total;
 
     tracing::info!(
         label,
@@ -135,9 +134,7 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
         "proof summary"
     );
     debug_assert_eq!(accounted_total, proof.size());
-    eprintln!(
-        "[{label}]   proof framing: levels_len={top_levels_len_size} bytes, tail_tag={top_tail_tag_size} byte"
-    );
+    eprintln!("[{label}]   proof framing: levels_len={top_levels_len_size} bytes");
 
     for (i, lp) in proof.levels.iter().enumerate() {
         print_hachi_level_breakdown(label, i, lp);
