@@ -7,19 +7,19 @@
 //! - [`DensePoly`] — standard dense algorithms (decompose + NTT matvec).
 //! - [`OneHotPoly`] — sparse monomial tricks, avoids all inner ring
 //!   multiplications.
-//! - [`BalancedDigitPoly`] — recursive `w` witness whose coefficients are
+//! - `BalancedDigitPoly` — recursive `w` witness whose coefficients are
 //!   already balanced base-`2^log_basis` digits; skips the field→ring
 //!   round-trip.
 //!
 //! # Module layout
 //!
-//! - [`dense`] — [`DensePoly`] and its [`HachiPolyOps`] impl.
-//! - [`onehot`] — [`OneHotPoly`], [`OneHotIndex`], and column-sweep Ajtai
+//! - `dense` — [`DensePoly`] and its [`HachiPolyOps`] impl.
+//! - `onehot` — [`OneHotPoly`], [`OneHotIndex`], and column-sweep Ajtai
 //!   commit helpers.
-//! - [`balanced_digit`] — [`BalancedDigitPoly`] and its [`HachiPolyOps`] impl.
-//! - [`helpers`] — shared internal helpers: decomposition, sparse
+//! - `balanced_digit` — `BalancedDigitPoly` and its [`HachiPolyOps`] impl.
+//! - `helpers` — shared internal helpers: decomposition, sparse
 //!   multiply-accumulate, position-partitioned accumulation.
-//! - [`decompose_fold_neon`] — AArch64 NEON kernel for the sparse-mul-acc
+//! - `decompose_fold_neon` — AArch64 NEON kernel for the sparse-mul-acc
 //!   hot loop (conditionally compiled).
 //!
 //! # Extensibility

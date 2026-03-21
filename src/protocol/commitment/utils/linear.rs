@@ -1,8 +1,10 @@
 //! Linear algebra helpers for ring commitment.
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", feature = "parallel"))]
 use crate::algebra::ntt::neon;
-use crate::algebra::ntt::{MontCoeff, PrimeWidth};
+#[cfg(feature = "parallel")]
+use crate::algebra::ntt::MontCoeff;
+use crate::algebra::ntt::PrimeWidth;
 use crate::algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
 };
@@ -658,6 +660,7 @@ const TARGET_L2_CACHE_BYTES: usize = 1024 * 1024;
 const TARGET_L2_CACHE_BYTES: usize = 1024 * 1024;
 const CENTERED_LUT_MAX_ABS: u32 = (1 << 16) - 1;
 
+#[cfg(feature = "parallel")]
 #[inline]
 fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
     acc: &mut CyclotomicCrtNtt<W, K, D>,

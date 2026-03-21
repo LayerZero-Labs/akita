@@ -337,6 +337,7 @@ pub(crate) unsafe fn pointwise_mul_acc_i32(
 /// 4-wide add-and-reduce for a single CRT limb (i32).
 ///
 /// `acc[i] = reduce_range(acc[i] + other[i])` for `i in 0..d`.
+#[cfg(feature = "parallel")]
 pub(crate) unsafe fn add_reduce_i32(acc: *mut i32, other: *const i32, d: usize, p: i32) {
     let p_q = vdupq_n_s32(p);
     let mut i = 0;
@@ -676,6 +677,7 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
 }
 
 /// 8-wide add-and-reduce for a single CRT limb (i16).
+#[cfg(feature = "parallel")]
 pub(crate) unsafe fn add_reduce_i16(acc: *mut i16, other: *const i16, d: usize, p: i16) {
     let p_q = vdupq_n_s16(p);
     let mut i = 0;
