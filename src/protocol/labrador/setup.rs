@@ -6,6 +6,7 @@ use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
 use crate::protocol::labrador::commit::OUTER_NTT_LOG_BASIS;
 use crate::protocol::labrador::types::LabradorReductionConfig;
+use crate::protocol::labrador::utils::pow2_field;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use std::sync::Arc;
 
@@ -68,16 +69,6 @@ impl<F: FieldCore + CanonicalField + FieldSampling, const D: usize> LabradorSetu
 }
 
 #[inline]
-fn pow2_field<F: FieldCore>(exp: u32) -> F {
-    let two = F::one() + F::one();
-    let mut acc = F::one();
-    for _ in 0..exp {
-        acc = acc * two;
-    }
-    acc
-}
-
-#[inline]
 fn max_linear_garbage_ntt_levels<F: CanonicalField>(config: &LabradorReductionConfig) -> usize {
     if config.aux_digit_parts == 0 || config.aux_digit_bits == 0 {
         return 0;
@@ -123,7 +114,7 @@ impl<F: FieldCore + CanonicalField + FieldSampling, const D: usize> LabradorSetu
         } else {
             let max_levels = max_linear_garbage_ntt_levels::<F>(config);
             let mut slots = Vec::with_capacity(max_levels);
-            let scale_step = pow2_field::<F>(OUTER_NTT_LOG_BASIS);
+            let scale_step = pow2_field::<F>(OUTER_NTT_LOG_BASIS as usize);
             let mut scale = F::one();
             for _ in 0..max_levels {
                 let scaled_d: Vec<Vec<CyclotomicRing<F, D>>> = matrices

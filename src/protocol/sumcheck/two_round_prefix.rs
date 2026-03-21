@@ -24,6 +24,7 @@
 
 #[cfg(test)]
 use super::hachi_stage1::range_check_eval_from_s;
+use super::hachi_stage2::reduce_signed_accum;
 use super::UniPoly;
 use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::fields::HasUnreducedOps;
@@ -520,14 +521,6 @@ static STAGE2_B8_RELATION_WEIGHT_COMPRESSED_TABLE: [[i64; STAGE2_COMPRESSED_POIN
     build_stage2_b8_relation_weight_compressed_table();
 
 #[inline]
-fn reduce_signed_lookup_accum<E: FieldCore + HasUnreducedOps>(
-    pos: E::MulU64Accum,
-    neg: E::MulU64Accum,
-) -> E {
-    E::reduce_mul_u64_accum(pos) - E::reduce_mul_u64_accum(neg)
-}
-
-#[inline]
 fn accum_lookup_vector_signed<E: FieldCore + HasUnreducedOps, const N: usize>(
     pos: &mut [E::MulU64Accum; N],
     neg: &mut [E::MulU64Accum; N],
@@ -582,7 +575,7 @@ fn accum_pointwise_signed<E: FieldCore + HasUnreducedOps, const N: usize>(
 }
 
 #[inline(always)]
-fn stage1_b4_s_digit_from_compact_s(s: i16) -> usize {
+pub(super) fn stage1_b4_s_digit_from_compact_s(s: i16) -> usize {
     match s {
         0 => 0,
         2 => 1,
@@ -591,7 +584,7 @@ fn stage1_b4_s_digit_from_compact_s(s: i16) -> usize {
 }
 
 #[inline(always)]
-fn stage1_b8_s_digit_from_compact_s(s: i16) -> usize {
+pub(super) fn stage1_b8_s_digit_from_compact_s(s: i16) -> usize {
     match s {
         0 => 0,
         2 => 1,
@@ -602,17 +595,22 @@ fn stage1_b8_s_digit_from_compact_s(s: i16) -> usize {
 }
 
 #[inline(always)]
-fn stage2_b4_w_digit(w: i8) -> usize {
+pub(super) fn stage2_b4_w_digit(w: i8) -> usize {
     let w = i32::from(w);
     debug_assert!((-2..=1).contains(&w));
     (w + 2) as usize
 }
 
 #[inline(always)]
-fn stage2_b8_w_digit(w: i8) -> usize {
+pub(super) fn stage2_b8_w_digit(w: i8) -> usize {
     let w = i32::from(w);
     debug_assert!((-4..=3).contains(&w));
     (w + 4) as usize
+}
+
+#[inline]
+fn linear_eq_eval<E: FieldCore>(tau: E, x: E) -> E {
+    tau * x + (E::one() - tau) * (E::one() - x)
 }
 
 #[inline]
@@ -809,7 +807,7 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
                 }
             );
             (0..STAGE1_B4_PREFIX_EVAL_COUNT)
-                .map(|idx| reduce_signed_lookup_accum::<E>(pos[idx], neg[idx]))
+                .map(|idx| reduce_signed_accum::<E>(pos[idx], neg[idx]))
                 .collect()
         }
         8 => {
@@ -870,7 +868,7 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
                 }
             );
             (0..STAGE1_PREFIX_EVAL_COUNT)
-                .map(|idx| reduce_signed_lookup_accum::<E>(pos[idx], neg[idx]))
+                .map(|idx| reduce_signed_accum::<E>(pos[idx], neg[idx]))
                 .collect()
         }
         _ => unreachable!("unsupported stage-1 two-round prefix basis"),
@@ -993,11 +991,6 @@ impl<E: FieldCore + FromSmallInt> Stage1BivariateSkipState<E> {
             Self::B8(state) => state.reconstruct_round1_poly(r0),
         }
     }
-
-    #[inline]
-    fn linear_eq_eval(tau: E, x: E) -> E {
-        tau * x + (E::one() - tau) * (E::one() - x)
-    }
 }
 
 impl<E: FieldCore + FromSmallInt> Stage1B4BivariateSkipState<E> {
@@ -1013,7 +1006,7 @@ impl<E: FieldCore + FromSmallInt> Stage1B4BivariateSkipState<E> {
         let y_values: [E; 3] =
             std::array::from_fn(|y_idx| eval_quadratic_from_coeffs(self.x_row_coeffs[y_idx], r0));
         let q_y = quadratic_coeffs_from_01_inf(y_values[0], y_values[1], y_values[2]);
-        let round0_eq = Stage1BivariateSkipState::<E>::linear_eq_eval(self.tau0, r0);
+        let round0_eq = linear_eq_eval(self.tau0, r0);
         let coeffs = mul_linear_by_quadratic_coeffs(self.tau1, q_y).map(|coeff| round0_eq * coeff);
         coeff_array_to_poly(coeffs)
     }
@@ -1028,20 +1021,19 @@ impl<E: FieldCore + FromSmallInt> Stage1B8BivariateSkipState<E> {
                 let x = E::from_u64(x_raw);
                 let q_x0 = eval_stage1_biquartic_from_full_grid(self.full_grid, x, E::zero());
                 let q_x1 = eval_stage1_biquartic_from_full_grid(self.full_grid, x, E::one());
-                Stage1BivariateSkipState::<E>::linear_eq_eval(self.tau0, x)
-                    * (l1_at_0 * q_x0 + l1_at_1 * q_x1)
+                linear_eq_eval(self.tau0, x) * (l1_at_0 * q_x0 + l1_at_1 * q_x1)
             })
             .collect();
         UniPoly::from_evals(&evals)
     }
 
     fn reconstruct_round1_poly(&self, r0: E) -> UniPoly<E> {
-        let l0_at_r0 = Stage1BivariateSkipState::<E>::linear_eq_eval(self.tau0, r0);
+        let l0_at_r0 = linear_eq_eval(self.tau0, r0);
         let evals: Vec<E> = (0..=5u64)
             .map(|y_raw| {
                 let y = E::from_u64(y_raw);
                 l0_at_r0
-                    * Stage1BivariateSkipState::<E>::linear_eq_eval(self.tau1, y)
+                    * linear_eq_eval(self.tau1, y)
                     * eval_stage1_biquartic_from_full_grid(self.full_grid, r0, y)
             })
             .collect();
@@ -1588,7 +1580,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
                 );
             }
             for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {
-                let row_rel = reduce_signed_lookup_accum::<E>(row_rel_pos[idx], row_rel_neg[idx]);
+                let row_rel = reduce_signed_accum::<E>(row_rel_pos[idx], row_rel_neg[idx]);
                 rel_accum[idx] += alpha.mul_to_product_accum(row_rel);
             }
             (norm_pos, norm_neg, rel_accum)
@@ -1608,7 +1600,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
         }
     );
     let norm_evals_except_corner: [E; STAGE2_COMPRESSED_POINT_COUNT] =
-        std::array::from_fn(|idx| reduce_signed_lookup_accum::<E>(norm_pos[idx], norm_neg[idx]));
+        std::array::from_fn(|idx| reduce_signed_accum::<E>(norm_pos[idx], norm_neg[idx]));
     let relation_evals_except_corner: [E; STAGE2_COMPRESSED_POINT_COUNT] =
         std::array::from_fn(|idx| E::reduce_product_accum(rel_accum[idx]));
     Some(Stage2BivariateSkipProof {
@@ -1704,7 +1696,7 @@ impl<E: FieldCore + FromSmallInt> Stage2BivariateSkipState<E> {
         });
         let norm_q =
             quadratic_coeffs_from_01_inf(norm_y_values[0], norm_y_values[1], norm_y_values[2]);
-        let round0_eq = Self::linear_eq_eval(self.tau0, r0);
+        let round0_eq = linear_eq_eval(self.tau0, r0);
         let mut norm_coeffs = mul_linear_by_quadratic_coeffs(self.tau1, norm_q);
         for coeff in &mut norm_coeffs {
             *coeff = self.batching_coeff * round0_eq * *coeff;
@@ -1721,11 +1713,6 @@ impl<E: FieldCore + FromSmallInt> Stage2BivariateSkipState<E> {
             UniPoly::from_coeffs(norm_coeffs.to_vec()),
             UniPoly::from_coeffs(relation_coeffs.to_vec()),
         )
-    }
-
-    #[inline]
-    fn linear_eq_eval(tau: E, x: E) -> E {
-        tau * x + (E::one() - tau) * (E::one() - x)
     }
 }
 

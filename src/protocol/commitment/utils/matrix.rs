@@ -3,8 +3,10 @@
 use crate::algebra::ring::CyclotomicRing;
 use crate::{FieldCore, FieldSampling};
 use rand_core::{CryptoRng, RngCore};
-use sha3::digest::{ExtendableOutput, Update, XofReader};
+use sha3::digest::{ExtendableOutput, XofReader};
 use sha3::Shake256;
+
+use crate::protocol::prg::absorb_len_prefixed;
 
 /// Public seed used to derive commitment matrices.
 pub(crate) type PublicMatrixSeed = [u8; 32];
@@ -100,13 +102,6 @@ impl RngCore for ShakeXofRng {
 }
 
 impl CryptoRng for ShakeXofRng {}
-
-fn absorb_len_prefixed(xof: &mut Shake256, label: &[u8], data: &[u8]) {
-    xof.update(&(label.len() as u64).to_le_bytes());
-    xof.update(label);
-    xof.update(&(data.len() as u64).to_le_bytes());
-    xof.update(data);
-}
 
 #[cfg(test)]
 mod tests {

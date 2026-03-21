@@ -31,7 +31,7 @@
 
 use super::two_round_prefix::{
     build_stage1_bivariate_skip_proof_from_s_compact, can_use_stage1_two_round_prefix,
-    Stage1BivariateSkipState,
+    stage1_b4_s_digit_from_compact_s, stage1_b8_s_digit_from_compact_s, Stage1BivariateSkipState,
 };
 use super::{
     fold_evals_in_place, CompactPairFoldLut, SumcheckInstanceProver, SumcheckInstanceVerifier,
@@ -831,35 +831,26 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     }
 
     #[inline(always)]
-    fn stage1_b4_s_digit_from_compact_s(s: i16) -> usize {
-        match s {
-            0 => 0,
-            2 => 1,
-            other => unreachable!("unexpected compact s value {other}"),
-        }
-    }
-
-    #[inline(always)]
     fn stage1_b4_quad_lookup_index_from_row(row: &[i16], base: usize) -> usize {
         let d0 = row
             .get(base)
             .copied()
-            .map(Self::stage1_b4_s_digit_from_compact_s)
+            .map(stage1_b4_s_digit_from_compact_s)
             .unwrap_or(0);
         let d1 = row
             .get(base + 1)
             .copied()
-            .map(Self::stage1_b4_s_digit_from_compact_s)
+            .map(stage1_b4_s_digit_from_compact_s)
             .unwrap_or(0);
         let d2 = row
             .get(base + 2)
             .copied()
-            .map(Self::stage1_b4_s_digit_from_compact_s)
+            .map(stage1_b4_s_digit_from_compact_s)
             .unwrap_or(0);
         let d3 = row
             .get(base + 3)
             .copied()
-            .map(Self::stage1_b4_s_digit_from_compact_s)
+            .map(stage1_b4_s_digit_from_compact_s)
             .unwrap_or(0);
         d0 | (d1 << 1) | (d2 << 2) | (d3 << 3)
     }
@@ -885,37 +876,26 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     }
 
     #[inline(always)]
-    fn stage1_b8_s_digit_from_compact_s(s: i16) -> usize {
-        match s {
-            0 => 0,
-            2 => 1,
-            6 => 2,
-            12 => 3,
-            other => unreachable!("unexpected compact s value {other}"),
-        }
-    }
-
-    #[inline(always)]
     fn stage1_b8_quad_lookup_index_from_row(row: &[i16], base: usize) -> usize {
         let d0 = row
             .get(base)
             .copied()
-            .map(Self::stage1_b8_s_digit_from_compact_s)
+            .map(stage1_b8_s_digit_from_compact_s)
             .unwrap_or(0);
         let d1 = row
             .get(base + 1)
             .copied()
-            .map(Self::stage1_b8_s_digit_from_compact_s)
+            .map(stage1_b8_s_digit_from_compact_s)
             .unwrap_or(0);
         let d2 = row
             .get(base + 2)
             .copied()
-            .map(Self::stage1_b8_s_digit_from_compact_s)
+            .map(stage1_b8_s_digit_from_compact_s)
             .unwrap_or(0);
         let d3 = row
             .get(base + 3)
             .copied()
-            .map(Self::stage1_b8_s_digit_from_compact_s)
+            .map(stage1_b8_s_digit_from_compact_s)
             .unwrap_or(0);
         d0 | (d1 << 2) | (d2 << 4) | (d3 << 6)
     }

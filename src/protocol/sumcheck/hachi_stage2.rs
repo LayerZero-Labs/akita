@@ -47,7 +47,7 @@
 
 use super::two_round_prefix::{
     build_stage2_bivariate_skip_proof_from_compact, can_use_stage2_two_round_prefix,
-    Stage2BivariateSkipState,
+    stage2_b4_w_digit, stage2_b8_w_digit, Stage2BivariateSkipState,
 };
 use super::{fold_evals_in_place, multilinear_eval, CompactPairFoldLut};
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
@@ -113,7 +113,7 @@ fn accum_small_signed<E: FieldCore + HasUnreducedOps>(
 }
 
 #[inline]
-fn reduce_signed_accum<E: FieldCore + HasUnreducedOps>(
+pub(super) fn reduce_signed_accum<E: FieldCore + HasUnreducedOps>(
     pos: E::MulU64Accum,
     neg: E::MulU64Accum,
 ) -> E {
@@ -504,33 +504,22 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
     }
 
     #[inline(always)]
-    fn stage2_b4_w_digit(w: i8) -> usize {
-        let w = i32::from(w);
-        debug_assert!((-2..=1).contains(&w));
-        (w + 2) as usize
-    }
-
-    #[inline(always)]
     fn stage2_b4_quad_lookup_index_from_row(row: &[i8], base: usize) -> usize {
-        let d0 = row
-            .get(base)
-            .copied()
-            .map(Self::stage2_b4_w_digit)
-            .unwrap_or(2);
+        let d0 = row.get(base).copied().map(stage2_b4_w_digit).unwrap_or(2);
         let d1 = row
             .get(base + 1)
             .copied()
-            .map(Self::stage2_b4_w_digit)
+            .map(stage2_b4_w_digit)
             .unwrap_or(2);
         let d2 = row
             .get(base + 2)
             .copied()
-            .map(Self::stage2_b4_w_digit)
+            .map(stage2_b4_w_digit)
             .unwrap_or(2);
         let d3 = row
             .get(base + 3)
             .copied()
-            .map(Self::stage2_b4_w_digit)
+            .map(stage2_b4_w_digit)
             .unwrap_or(2);
         d0 | (d1 << 2) | (d2 << 4) | (d3 << 6)
     }
@@ -556,33 +545,22 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
     }
 
     #[inline(always)]
-    fn stage2_b8_w_digit(w: i8) -> usize {
-        let w = i32::from(w);
-        debug_assert!((-4..=3).contains(&w));
-        (w + 4) as usize
-    }
-
-    #[inline(always)]
     fn stage2_b8_quad_lookup_index_from_row(row: &[i8], base: usize) -> usize {
-        let d0 = row
-            .get(base)
-            .copied()
-            .map(Self::stage2_b8_w_digit)
-            .unwrap_or(4);
+        let d0 = row.get(base).copied().map(stage2_b8_w_digit).unwrap_or(4);
         let d1 = row
             .get(base + 1)
             .copied()
-            .map(Self::stage2_b8_w_digit)
+            .map(stage2_b8_w_digit)
             .unwrap_or(4);
         let d2 = row
             .get(base + 2)
             .copied()
-            .map(Self::stage2_b8_w_digit)
+            .map(stage2_b8_w_digit)
             .unwrap_or(4);
         let d3 = row
             .get(base + 3)
             .copied()
-            .map(Self::stage2_b8_w_digit)
+            .map(stage2_b8_w_digit)
             .unwrap_or(4);
         d0 | (d1 << 3) | (d2 << 6) | (d3 << 9)
     }

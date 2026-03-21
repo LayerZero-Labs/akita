@@ -10,7 +10,7 @@
 //!   multiplications.
 //!
 //! Recursive levels do not use [`HachiPolyOps`]. They operate on
-//! [`RecursiveWitnessFlat`] / [`RecursiveWitnessView`], which model the
+//! `RecursiveWitnessFlat` / `RecursiveWitnessView`, which model the
 //! D-agnostic `w` witness produced by ring switching.
 //!
 //! # Module layout

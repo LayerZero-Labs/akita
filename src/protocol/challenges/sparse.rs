@@ -10,7 +10,7 @@
 //! zero modulo bias, ensuring ≥128-bit security in the Fiat–Shamir
 //! challenge distribution.
 
-use crate::algebra::ring::{CyclotomicRing, SparseChallenge, SparseChallengeConfig};
+use crate::algebra::ring::{SparseChallenge, SparseChallengeConfig};
 use crate::error::HachiError;
 use crate::protocol::transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
 use crate::protocol::transcript::Transcript;
@@ -458,32 +458,4 @@ where
         challenges.push(parse_challenge::<D>(&mut cursor, cfg));
     }
     Ok(challenges)
-}
-
-/// Sample `n` sparse challenges from a transcript and convert them to dense
-/// `CyclotomicRing` elements.
-///
-/// Uses the same seed-then-expand protocol as [`sample_sparse_challenges`].
-///
-/// # Errors
-///
-/// Returns an error if challenge sampling or dense conversion fails.
-pub fn sample_dense_challenges<F, T, const D: usize>(
-    transcript: &mut T,
-    label: &[u8],
-    n: usize,
-    cfg: &SparseChallengeConfig,
-) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    sample_sparse_challenges::<F, T, D>(transcript, label, n, cfg)?
-        .into_iter()
-        .map(|sparse| {
-            sparse
-                .to_dense::<F, D>()
-                .map_err(|e| HachiError::InvalidInput(e.to_string()))
-        })
-        .collect()
 }

@@ -4,7 +4,7 @@ use crate::algebra::ring::CyclotomicRing;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::utils::linear::try_centered_i8_cache_from_ring_coeffs;
-use crate::{CanonicalField, FieldCore, FromSmallInt};
+use crate::{CanonicalField, FieldCore};
 
 pub(crate) fn mat_vec_mul<F: FieldCore, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
@@ -30,8 +30,8 @@ pub(crate) fn try_centered_i8_rows<F: CanonicalField, const D: usize>(
         .collect()
 }
 
-pub(crate) fn pow2_field<F: FieldCore + FromSmallInt>(exp: usize) -> F {
-    let two = F::from_u64(2);
+pub(crate) fn pow2_field<F: FieldCore>(exp: usize) -> F {
+    let two = F::one() + F::one();
     let mut acc = F::one();
     for _ in 0..exp {
         acc = acc * two;

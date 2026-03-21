@@ -26,35 +26,11 @@ use std::iter::repeat_n;
 use std::marker::PhantomData;
 use std::time::Instant;
 
-/// **Step 4.** Compute `v = D · ŵ` (first prover message).
-fn compute_v<F: FieldCore + CanonicalField, const D: usize>(
-    ntt_d: &NttSlotCache<D>,
-    w_hat_flat: &[[i8; D]],
-) -> Vec<CyclotomicRing<F, D>> {
-    mat_vec_mul_ntt_single_i8(ntt_d, w_hat_flat)
-}
-
-fn flatten_w_hat<const D: usize>(w_hat: &[Vec<[i8; D]>]) -> Vec<[i8; D]> {
-    w_hat.iter().flat_map(|v| v.iter().copied()).collect()
-}
-
-fn compute_z_pre<F, const D: usize, P>(
-    poly: &P,
-    challenges: &[SparseChallenge],
+fn validate_decompose_fold<F: FieldCore + CanonicalField, const D: usize>(
+    z: DecomposeFoldWitness<F, D>,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
-) -> Result<DecomposeFoldWitness<F, D>, HachiError>
-where
-    F: FieldCore + CanonicalField,
-    P: HachiPolyOps<F, D>,
-{
-    let z = poly.decompose_fold(
-        challenges,
-        layout.block_len,
-        layout.num_digits_commit,
-        layout.log_basis,
-    );
-
+) -> Result<DecomposeFoldWitness<F, D>, HachiError> {
     let norm = u128::from(z.centered_inf_norm);
     let beta = crate::protocol::commitment::beta_linf_fold_bound(
         layout.r_vars,
@@ -66,38 +42,6 @@ where
             "prover abort: ||z||_inf = {norm} > beta = {beta}"
         )));
     }
-
-    Ok(z)
-}
-
-fn compute_z_pre_recursive<F, const D: usize>(
-    witness: &RecursiveWitnessView<'_, F, D>,
-    challenges: &[SparseChallenge],
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
-) -> Result<DecomposeFoldWitness<F, D>, HachiError>
-where
-    F: FieldCore + CanonicalField,
-{
-    let z = witness.decompose_fold(
-        challenges,
-        layout.block_len,
-        layout.num_digits_commit,
-        layout.log_basis,
-    );
-
-    let norm = u128::from(z.centered_inf_norm);
-    let beta = crate::protocol::commitment::beta_linf_fold_bound(
-        layout.r_vars,
-        level_params.challenge_l1_mass,
-        layout.log_basis,
-    )?;
-    if norm > beta {
-        return Err(HachiError::InvalidInput(format!(
-            "prover abort: ||z||_inf = {norm} > beta = {beta}"
-        )));
-    }
-
     Ok(z)
 }
 
@@ -184,7 +128,7 @@ where
         let v = {
             let _span =
                 tracing::info_span!("compute_v", w_hat_flat_len = w_hat_flat.len()).entered();
-            let mut v = compute_v(ntt_d, &w_hat_flat);
+            let mut v = mat_vec_mul_ntt_single_i8(ntt_d, &w_hat_flat);
             v.truncate(level_params.n_d);
             v
         };
@@ -200,7 +144,13 @@ where
 
         let z_pre = {
             let _span = tracing::info_span!("compute_z_pre").entered();
-            compute_z_pre::<F, D, P>(poly, &challenges, &level_params, layout)?
+            let z = poly.decompose_fold(
+                &challenges,
+                layout.block_len,
+                layout.num_digits_commit,
+                layout.log_basis,
+            );
+            validate_decompose_fold(z, &level_params, layout)?
         };
 
         let y = generate_y::<F, D>(
@@ -262,7 +212,7 @@ where
             let w_hat: Vec<Vec<[i8; D]>> = cfg_iter!(pre_folded)
                 .map(|w_i| w_i.balanced_decompose_pow2_i8(depth_open, log_basis))
                 .collect();
-            let w_hat_flat = flatten_w_hat(&w_hat);
+            let w_hat_flat = flatten_i8_blocks(&w_hat);
             (w_hat, w_hat_flat)
         };
         hint.ensure_t_recomposed(layout.num_digits_open, layout.log_basis)?;
@@ -270,7 +220,7 @@ where
         let v = {
             let _span =
                 tracing::info_span!("compute_v", w_hat_flat_len = w_hat_flat.len()).entered();
-            let mut v = compute_v(ntt_d, &w_hat_flat);
+            let mut v = mat_vec_mul_ntt_single_i8(ntt_d, &w_hat_flat);
             v.truncate(level_params.n_d);
             v
         };
@@ -286,7 +236,13 @@ where
 
         let z_pre = {
             let _span = tracing::info_span!("compute_z_pre").entered();
-            compute_z_pre_recursive::<F, D>(witness, &challenges, &level_params, layout)?
+            let z = witness.decompose_fold(
+                &challenges,
+                layout.block_len,
+                layout.num_digits_commit,
+                layout.log_basis,
+            );
+            validate_decompose_fold(z, &level_params, layout)?
         };
 
         let y = generate_y::<F, D>(

@@ -159,12 +159,6 @@ macro_rules! dispatch_with_d_ntt {
 /// The set of supported ring dimensions for [`dispatch_ring_dim!`].
 pub const SUPPORTED_RING_DIMS: &[usize] = &[64, 128, 256, 512, 1024];
 
-/// Returns true if `d` is one of the [`SUPPORTED_RING_DIMS`].
-#[inline]
-pub fn is_supported_ring_dim(d: usize) -> bool {
-    SUPPORTED_RING_DIMS.contains(&d)
-}
-
 #[cfg(test)]
 mod tests {
     #[test]

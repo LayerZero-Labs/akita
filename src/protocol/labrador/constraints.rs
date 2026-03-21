@@ -212,39 +212,6 @@ where
 }
 
 /// Build the recursive target relation for the next Labrador level.
-#[allow(clippy::too_many_arguments)]
-#[allow(dead_code)]
-#[tracing::instrument(skip_all, name = "labrador::build_next_constraints")]
-pub(crate) fn build_next_constraints<F, const D: usize>(
-    phi_total: &[Vec<CyclotomicRing<F, D>>],
-    aggregated_rhs: &CyclotomicRing<F, D>,
-    challenges: &[SparseChallenge],
-    row_lengths: &[usize],
-    max_len: usize,
-    config: &LabradorReductionConfig,
-    inner_opening_payload: &[CyclotomicRing<F, D>],
-    linear_garbage_payload: &[CyclotomicRing<F, D>],
-    setup: &LabradorSetupMatrices<F, D>,
-) -> Result<Vec<LabradorConstraint<F, D>>, HachiError>
-where
-    F: FieldCore + CanonicalField + FromSmallInt,
-{
-    let (layout, pow_b, pow_bu, amortized_phi) =
-        prepare_next_constraint_inputs(phi_total, challenges, row_lengths, max_len, config)?;
-    build_constraints_from_prepared(
-        layout,
-        config,
-        challenges,
-        &pow_b,
-        &pow_bu,
-        &amortized_phi,
-        aggregated_rhs,
-        inner_opening_payload,
-        linear_garbage_payload,
-        setup,
-    )
-}
-
 #[tracing::instrument(skip_all, name = "labrador::build_next_constraint_plan")]
 pub(crate) fn build_next_constraint_plan<F, const D: usize>(
     phi_total: &[Vec<CyclotomicRing<F, D>>],

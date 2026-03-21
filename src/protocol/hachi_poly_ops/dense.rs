@@ -11,10 +11,12 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
-use crate::protocol::commitment::utils::linear::{decompose_rows_i8, mat_vec_mul_ntt_i8};
+use crate::protocol::commitment::utils::linear::{
+    decompose_rows_i8, mat_vec_mul_ntt_i8, try_centered_i8,
+};
 use crate::protocol::hachi_poly_ops::helpers::{
     build_decompose_fold_witness, decompose_ring_interleaved, decompose_ring_single_digit,
-    sparse_mul_acc, try_centered_i8, try_small_i8_cache_from_ring_coeffs, DecomposeParams,
+    sparse_mul_acc, try_small_i8_cache_from_ring_coeffs, DecomposeParams,
 };
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
 use crate::{cfg_into_iter, CanonicalField, FieldCore};

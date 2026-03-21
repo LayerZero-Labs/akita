@@ -9,6 +9,7 @@ use crate::algebra::CyclotomicRing;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::onehot::{RegularOneHotEntry, SparseBlockEntry};
+use crate::protocol::commitment::utils::linear::try_centered_i8;
 use crate::protocol::hachi_poly_ops::DecomposeFoldWitness;
 use crate::{cfg_into_iter, cfg_iter, CanonicalField};
 use std::array::from_fn;
@@ -88,21 +89,6 @@ fn to_signed(canonical: u128, p: &DecomposeParams) -> i128 {
         -((p.q - canonical) as i128)
     } else {
         canonical as i128
-    }
-}
-
-#[inline(always)]
-pub(super) fn try_centered_i8<F: CanonicalField>(coeff: F, q: u128, half_q: u128) -> Option<i8> {
-    let canonical = coeff.to_canonical_u128();
-    let centered = if canonical > half_q {
-        -((q - canonical) as i128)
-    } else {
-        canonical as i128
-    };
-    if (i8::MIN as i128..=i8::MAX as i128).contains(&centered) {
-        Some(centered as i8)
-    } else {
-        None
     }
 }
 
@@ -375,6 +361,10 @@ pub(super) fn balanced_digit_decompose_fold_partitioned<const D: usize>(
     num_digits: usize,
     inner_width: usize,
 ) -> Vec<[i32; D]> {
+    debug_assert_eq!(
+        num_digits, 1,
+        "multi-digit decomposition is not implemented for partitioned accumulation"
+    );
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]

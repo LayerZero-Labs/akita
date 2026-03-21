@@ -978,210 +978,6 @@ where
     Ok(())
 }
 
-#[allow(clippy::too_many_lines)]
-#[allow(dead_code)]
-fn verify_single_level<F, T, const D: usize>(
-    statement: &LabradorStatement<F, D>,
-    level: &LabradorLevelProof<F, D>,
-    witness: &LabradorWitness<F, D>,
-    comkey_seed: &LabradorComKeySeed,
-    transcript: &mut T,
-) -> Result<(), HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
-    T: Transcript<F>,
-{
-    let virtual_row_len = level.virtual_row_len;
-    let virtual_row_count = validate_level_shape(level, false)?;
-    let layout = NextWitnessLayout::new(virtual_row_count, &level.config);
-    let expected_rows = layout.num_rows();
-    if witness.rows().len() != expected_rows {
-        return Err(HachiError::InvalidProof);
-    }
-    for row in witness.rows().iter().take(level.config.witness_digit_parts) {
-        if row.len() != virtual_row_len {
-            return Err(HachiError::InvalidProof);
-        }
-    }
-
-    let aux = &witness.rows()[layout.aux_row];
-    if aux.len() != layout.aux_row_len() {
-        return Err(HachiError::InvalidProof);
-    }
-    let (inner_opening_digits, linear_garbage_digits) =
-        aux.split_at(layout.inner_opening_digits_len);
-
-    absorb_labrador_level_context(
-        transcript,
-        &LabradorLevelTranscriptContext {
-            level_index: 0,
-            tail: level.tail,
-            input_row_lengths: level.input_row_lengths.clone(),
-            witness_digit_parts: level.config.witness_digit_parts,
-            witness_digit_bits: level.config.witness_digit_bits,
-            aux_digit_parts: level.config.aux_digit_parts,
-            aux_digit_bits: level.config.aux_digit_bits,
-            inner_commit_rank: level.config.inner_commit_rank,
-            outer_commit_rank: level.config.outer_commit_rank,
-        },
-    )?;
-    transcript.append_serde(
-        labels::ABSORB_LABRADOR_INNER_OPENING_PAYLOAD,
-        &level.inner_opening_payload,
-    );
-
-    let virt_total_len = virtual_row_count * virtual_row_len;
-    let jl_cols = virt_total_len * D;
-    let jl_matrix =
-        LabradorJlMatrix::replay_nonce_search::<F, T>(transcript, level.jl_nonce, jl_cols)?;
-    absorb_labrador_jl_projection(transcript, &level.jl_projection);
-
-    let virt_row_lengths = vec![virtual_row_len; virtual_row_count];
-    let (phi_jl_flat, b_jl) = aggregate_jl_constraints_verifier(
-        &virt_row_lengths,
-        &level.jl_projection,
-        &jl_matrix,
-        &level.jl_lift_residuals,
-        transcript,
-    )?;
-    let (phi_stmt_orig, b_stmt) =
-        aggregate_statement(statement, &level.input_row_lengths, transcript)?;
-    let phi_stmt = reshape_phi_verifier::<F, D>(
-        &phi_stmt_orig,
-        &level.input_row_lengths,
-        &level.row_split_counts,
-        virtual_row_len,
-    )?;
-
-    let mut phi_total = phi_stmt;
-    add_phi_flat_in_place(&mut phi_total, &phi_jl_flat)?;
-    let aggregated_rhs = b_stmt + b_jl;
-
-    transcript.append_serde(
-        labels::ABSORB_LABRADOR_LINEAR_GARBAGE_PAYLOAD,
-        &level.linear_garbage_payload,
-    );
-    let challenges = replay_amortize_challenges::<F, T, D>(transcript, virtual_row_count)?;
-
-    let z_parts: Vec<Vec<CyclotomicRing<F, D>>> = witness
-        .rows()
-        .iter()
-        .take(level.config.witness_digit_parts)
-        .cloned()
-        .collect();
-    let z = recompose_from_parts(&z_parts, level.config.witness_digit_bits as u32)?;
-
-    let t_flat = recompose_flat(
-        inner_opening_digits,
-        level.config.aux_digit_parts,
-        level.config.aux_digit_bits as u32,
-    )?;
-    let h_flat = recompose_flat(
-        linear_garbage_digits,
-        level.config.aux_digit_parts,
-        level.config.aux_digit_bits as u32,
-    )?;
-    if t_flat.len() != virtual_row_count * level.config.inner_commit_rank {
-        return Err(HachiError::InvalidProof);
-    }
-    if h_flat.len() != virtual_row_count * (virtual_row_count + 1) / 2 {
-        return Err(HachiError::InvalidProof);
-    }
-    let mut t_by_row = Vec::with_capacity(virtual_row_count);
-    for chunk in t_flat.chunks(level.config.inner_commit_rank) {
-        t_by_row.push(chunk.to_vec());
-    }
-
-    if !statement.inner_opening_payload.is_empty()
-        && statement.inner_opening_payload != level.inner_opening_payload
-    {
-        return Err(HachiError::InvalidProof);
-    }
-    if !statement.linear_garbage_payload.is_empty()
-        && statement.linear_garbage_payload != level.linear_garbage_payload
-    {
-        return Err(HachiError::InvalidProof);
-    }
-
-    let setup = LabradorSetupMatrices::new(
-        &level.config,
-        virtual_row_count,
-        virtual_row_len,
-        comkey_seed,
-    );
-
-    if level.config.outer_commit_rank > 0 {
-        let inner_opening_payload_check = mat_vec_mul(&setup.b_mat, inner_opening_digits);
-        if inner_opening_payload_check != level.inner_opening_payload {
-            return Err(HachiError::InvalidProof);
-        }
-        let linear_garbage_payload_check = mat_vec_mul(&setup.d_mat, linear_garbage_digits);
-        if linear_garbage_payload_check != level.linear_garbage_payload {
-            return Err(HachiError::InvalidProof);
-        }
-    } else {
-        if level.inner_opening_payload != inner_opening_digits {
-            return Err(HachiError::InvalidProof);
-        }
-        if level.linear_garbage_payload != linear_garbage_digits {
-            return Err(HachiError::InvalidProof);
-        }
-    }
-
-    let computed_norm = witness.norm();
-    if computed_norm > level.next_witness_norm_sq {
-        return Err(HachiError::InvalidProof);
-    }
-
-    if projection_norm_sq(&level.jl_projection)
-        > 256u128.saturating_mul(statement.witness_norm_bound_sq)
-    {
-        return Err(HachiError::InvalidProof);
-    }
-
-    let az = mat_vec_mul(&setup.a_mat, &z);
-    let mut rhs = vec![CyclotomicRing::<F, D>::zero(); level.config.inner_commit_rank];
-    for (i, t_row) in t_by_row.iter().enumerate() {
-        for k in 0..level.config.inner_commit_rank {
-            t_row[k].mul_by_sparse_into(&challenges[i], &mut rhs[k]);
-        }
-    }
-    if az != rhs {
-        return Err(HachiError::InvalidProof);
-    }
-
-    let mut amortized_phi = vec![CyclotomicRing::<F, D>::zero(); virtual_row_len];
-    for (i, phi_row) in phi_total.iter().enumerate() {
-        for (j, elem) in phi_row.iter().enumerate() {
-            elem.mul_by_sparse_into(&challenges[i], &mut amortized_phi[j]);
-        }
-    }
-    let lhs = dot_product(&amortized_phi, &z);
-    let mut rhs = CyclotomicRing::<F, D>::zero();
-    let mut idx = 0usize;
-    for i in 0..virtual_row_count {
-        for j in i..virtual_row_count {
-            rhs += h_flat[idx]
-                .mul_by_sparse(&challenges[i])
-                .mul_by_sparse(&challenges[j]);
-            idx += 1;
-        }
-    }
-    if lhs != rhs {
-        return Err(HachiError::InvalidProof);
-    }
-
-    let mut diag_sum = CyclotomicRing::<F, D>::zero();
-    for i in 0..virtual_row_count {
-        let idx = pair_index(i, i, virtual_row_count);
-        diag_sum += h_flat[idx];
-    }
-    if diag_sum - aggregated_rhs != CyclotomicRing::<F, D>::zero() {
-        return Err(HachiError::InvalidProof);
-    }
-
-    Ok(())
-}
 fn projection_norm_sq(projection: &[i64; 256]) -> u128 {
     projection.iter().fold(0u128, |acc, &v| {
         let x = v as i128;
@@ -1406,6 +1202,7 @@ fn accumulate_decomposed_h_rhs<F: FieldCore + CanonicalField, const D: usize>(
     Ok((rhs, diag_sum))
 }
 
+#[allow(dead_code)]
 #[tracing::instrument(skip_all, name = "labrador::recompose_from_parts")]
 fn recompose_from_parts<F: FieldCore + CanonicalField, const D: usize>(
     parts: &[Vec<CyclotomicRing<F, D>>],
@@ -1431,6 +1228,7 @@ fn recompose_from_parts<F: FieldCore + CanonicalField, const D: usize>(
     Ok(out)
 }
 
+#[allow(dead_code)]
 #[tracing::instrument(skip_all, name = "labrador::recompose_flat")]
 fn recompose_flat<F: FieldCore + CanonicalField, const D: usize>(
     flat: &[CyclotomicRing<F, D>],

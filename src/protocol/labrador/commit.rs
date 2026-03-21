@@ -9,7 +9,7 @@ use crate::protocol::commitment::utils::linear::{
 };
 use crate::protocol::labrador::comkey::{derive_extendable_comkey_matrix, LabradorComKeySeed};
 use crate::protocol::labrador::types::{LabradorReductionConfig, LabradorWitness};
-use crate::protocol::labrador::utils::{mat_vec_mul, try_centered_i8_rows};
+use crate::protocol::labrador::utils::{mat_vec_mul, pow2_field, try_centered_i8_rows};
 use crate::{cfg_iter, CanonicalField, FieldCore, FieldSampling};
 
 /// Commitment artifacts needed by downstream Labrador flows.
@@ -182,21 +182,12 @@ fn witness_ntt_digit_levels<F: CanonicalField, const D: usize>(
         .unwrap_or(1)
 }
 
-fn pow2_field<F: FieldCore>(exp: u32) -> F {
-    let two = F::one() + F::one();
-    let mut acc = F::one();
-    for _ in 0..exp {
-        acc = acc * two;
-    }
-    acc
-}
-
 pub(crate) fn expand_matrix_for_i8_digits<F: FieldCore, const D: usize>(
     matrix: &[Vec<CyclotomicRing<F, D>>],
     num_digits: usize,
     log_basis: u32,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    let scale_step = pow2_field::<F>(log_basis);
+    let scale_step = pow2_field::<F>(log_basis as usize);
     let mut scales = Vec::with_capacity(num_digits);
     let mut scale = F::one();
     for _ in 0..num_digits {
@@ -445,7 +436,7 @@ mod tests {
         const D128: usize = 256;
 
         let row = |seed: i64, scale_exp: u32| -> Vec<CyclotomicRing<F128, D128>> {
-            let scale = pow2_field::<F128>(scale_exp);
+            let scale = pow2_field::<F128>(scale_exp as usize);
             (0..28)
                 .map(|j| {
                     CyclotomicRing::from_coefficients(std::array::from_fn(|k| {

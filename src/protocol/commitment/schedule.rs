@@ -561,19 +561,6 @@ pub fn hachi_root_level_layout<Cfg: CommitmentConfig>(
     Ok((params, layout))
 }
 
-/// Derive a recursive `w`-opening level's active params and layout.
-///
-/// # Errors
-///
-/// Returns an error if the recursive layout derivation overflows.
-pub fn hachi_level_layout<Cfg: CommitmentConfig>(
-    inputs: HachiScheduleInputs,
-) -> Result<(HachiLevelParams, HachiCommitmentLayout), HachiError> {
-    let params = Cfg::level_params(inputs);
-    let layout = hachi_recursive_level_layout_from_params::<Cfg>(&params, inputs.current_w_len)?;
-    Ok((params, layout))
-}
-
 /// Derive a recursive `w`-opening layout from the active level params.
 ///
 /// # Errors

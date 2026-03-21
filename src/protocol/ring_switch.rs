@@ -281,53 +281,6 @@ where
 ///
 /// Returns an error if z_pre/w_hat is missing, commitment fails, or matrix expansion fails.
 #[tracing::instrument(skip_all, name = "ring_switch_prover")]
-#[allow(dead_code)]
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-pub(crate) fn ring_switch_prover<F, T, const D: usize, Cfg>(
-    quad_eq: &mut QuadraticEquation<F, D, Cfg>,
-    setup: &HachiExpandedSetup<F>,
-    transcript: &mut T,
-    ntt_a: &NttSlotCache<D>,
-    ntt_b: &NttSlotCache<D>,
-    ntt_d: &NttSlotCache<D>,
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
-) -> Result<RingSwitchOutput<F>, HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling,
-    T: Transcript<F>,
-    Cfg: CommitmentConfig,
-{
-    let w = ring_switch_build_w::<F, D, Cfg>(
-        quad_eq,
-        setup,
-        ntt_a,
-        ntt_b,
-        ntt_d,
-        level_params,
-        layout,
-    )?;
-
-    let (w_commitment, w_hint) = commit_w::<F, D, Cfg>(&w, ntt_a, ntt_b, level_params)?;
-
-    let w_commitment_flat = FlatRingVec::from_commitment(&w_commitment);
-    let w_commitment_proof = w_commitment_flat.to_proof_ring_vec();
-    let w_hint_cache = RecursiveCommitmentHintCache::from_typed(w_hint)?;
-
-    ring_switch_finalize::<F, T, D, Cfg>(
-        quad_eq,
-        setup,
-        transcript,
-        w,
-        w_commitment_flat,
-        &w_commitment_proof,
-        w_hint_cache,
-        level_params,
-        layout,
-    )
-}
-
 /// Replay the verifier side of ring switching to reconstruct evaluation tables.
 ///
 /// # Errors
@@ -701,64 +654,6 @@ pub(crate) fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
     let modulus = detect_field_modulus::<F>();
     let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
     recursive_r_decomp_levels_for_bound(field_bits, modulus / 2, log_basis)
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-pub(crate) fn expand_m_a<F: CanonicalField, const D: usize>(
-    m_a: &[Vec<F>],
-    alpha: F,
-    log_basis: u32,
-) -> Result<Vec<F>, HachiError> {
-    if m_a.is_empty() {
-        return Ok(Vec::new());
-    }
-    let rows = m_a.len();
-    let cols = m_a[0].len();
-    if cols == 0 {
-        return Ok(vec![F::zero(); rows]);
-    }
-    for row in m_a.iter() {
-        if row.len() != cols {
-            return Err(HachiError::InvalidSize {
-                expected: cols,
-                actual: row.len(),
-            });
-        }
-    }
-
-    let levels = r_decomp_levels::<F>(log_basis);
-    let total_cols = cols
-        .checked_add(
-            rows.checked_mul(levels)
-                .ok_or_else(|| HachiError::InvalidSetup("expanded M width overflow".to_string()))?,
-        )
-        .ok_or_else(|| HachiError::InvalidSetup("expanded M width overflow".to_string()))?;
-
-    let base = F::from_canonical_u128_reduced(1u128 << log_basis);
-    let mut gadget_row = Vec::with_capacity(levels);
-    let mut power = F::one();
-    for _ in 0..levels {
-        gadget_row.push(power);
-        power = power * base;
-    }
-
-    let mut alpha_pow = F::one();
-    for _ in 0..D {
-        alpha_pow = alpha_pow * alpha;
-    }
-    let denom = alpha_pow + F::one();
-
-    let mut out = vec![F::zero(); rows * total_cols];
-    for (i, m_a_row) in m_a.iter().enumerate() {
-        let row_start = i * total_cols;
-        out[row_start..row_start + cols].copy_from_slice(m_a_row);
-        let r_start = row_start + cols + i * levels;
-        for (j, g) in gadget_row.iter().enumerate() {
-            out[r_start + j] = -denom * *g;
-        }
-    }
-    Ok(out)
 }
 
 /// # Errors

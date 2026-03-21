@@ -286,7 +286,7 @@ fn absorb_matrix_context(
     absorb_len_prefixed(xof, b"col", &(context.col as u64).to_le_bytes());
 }
 
-fn absorb_len_prefixed(xof: &mut Shake256, label: &[u8], data: &[u8]) {
+pub(crate) fn absorb_len_prefixed(xof: &mut Shake256, label: &[u8], data: &[u8]) {
     xof.update(&(label.len() as u64).to_le_bytes());
     xof.update(label);
     xof.update(&(data.len() as u64).to_le_bytes());
