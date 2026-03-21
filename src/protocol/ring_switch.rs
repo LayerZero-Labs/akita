@@ -28,7 +28,7 @@ use crate::protocol::transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
 use crate::protocol::transcript::Transcript;
-use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter};
+use crate::{cfg_into_iter, cfg_iter};
 use crate::{CanonicalField, FieldCore, FieldSampling};
 #[cfg(test)]
 use std::array::from_fn;
@@ -312,8 +312,8 @@ where
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 #[inline(never)]
 pub fn ring_switch_verifier<F, T, const D: usize, Cfg>(
-    _quad_eq: &QuadraticEquation<F, D, Cfg>,
-    _setup: &HachiExpandedSetup<F>,
+    quad_eq: &QuadraticEquation<F, D, Cfg>,
+    setup: &HachiExpandedSetup<F>,
     w_len: usize,
     w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
@@ -340,13 +340,24 @@ where
     let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
 
+    let m_evals_x = compute_m_evals_x::<F, D>(
+        setup,
+        quad_eq.opening_point(),
+        &quad_eq.challenges,
+        alpha,
+        &alpha_evals_y,
+        level_params,
+        layout,
+        &tau1,
+    )?;
+
     Ok(RingSwitchOutput {
         w: Vec::new(),
         w_commitment: w_commitment.clone(),
         w_hint: FlatCommitmentHint::empty(),
         w_evals_compact: Vec::new(),
         live_x_cols: w_len / D,
-        m_evals_x: Vec::new(),
+        m_evals_x,
         alpha_evals_y,
         num_u,
         num_l,
@@ -617,18 +628,23 @@ pub(crate) fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D
     acc
 }
 
+/// Evaluate a ring element at pre-scaled `weight * alpha_pows`, computing
+/// `sum_k coeffs[k] * scaled_alpha_pows[k]`.
 #[inline]
-fn eval_ring_at_pows<F: FieldCore, const D: usize>(
+fn eval_ring_at_scaled_pows<F: FieldCore, const D: usize>(
     r: &CyclotomicRing<F, D>,
-    alpha_pows: &[F],
+    scaled_alpha_pows: &[F; D],
 ) -> F {
-    debug_assert_eq!(alpha_pows.len(), D);
     r.coefficients()
         .iter()
-        .zip(alpha_pows.iter())
-        .fold(F::zero(), |acc, (coeff, alpha_pow)| {
-            acc + *coeff * *alpha_pow
-        })
+        .zip(scaled_alpha_pows.iter())
+        .fold(F::zero(), |acc, (coeff, s)| acc + *coeff * *s)
+}
+
+#[inline]
+fn scale_alpha_pows<F: FieldCore, const D: usize>(alpha_pows: &[F], weight: F) -> [F; D] {
+    debug_assert_eq!(alpha_pows.len(), D);
+    std::array::from_fn(|k| alpha_pows[k] * weight)
 }
 
 #[inline]
@@ -856,10 +872,9 @@ pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
     let r_gadget = gadget_row_scalars::<F>(levels, log_basis);
     let x_len = total_cols.next_power_of_two();
-    let mut out = Vec::with_capacity(x_len);
+    let mut out = vec![F::zero(); x_len];
 
-    let c_alphas: Vec<F> = challenges
-        .iter()
+    let c_alphas: Vec<F> = cfg_into_iter!(challenges)
         .map(|challenge| eval_sparse_challenge_at_pows::<F, D>(challenge, alpha_pows))
         .collect::<Result<_, _>>()?;
 
@@ -871,241 +886,104 @@ pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     let row4_weight = eq_tau1[level_params.n_d + level_params.n_b + 1];
     let a_weights = &eq_tau1[(level_params.n_d + level_params.n_b + 2)..rows];
 
-    let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
-        .map(|x| {
+    // Pre-scale alpha_pows by each row's eq_tau1 weight, eliminating one
+    // multiply per column per row in the hot loops.
+    let d_scaled: Vec<(usize, [F; D])> = (0..level_params.n_d)
+        .filter(|&i| !eq_tau1[i].is_zero())
+        .map(|i| (i, scale_alpha_pows::<F, D>(alpha_pows, eq_tau1[i])))
+        .collect();
+    let b_scaled: Vec<(usize, [F; D])> = (0..level_params.n_b)
+        .filter(|&i| !eq_tau1[level_params.n_d + i].is_zero())
+        .map(|i| {
+            (
+                i,
+                scale_alpha_pows::<F, D>(alpha_pows, eq_tau1[level_params.n_d + i]),
+            )
+        })
+        .collect();
+    let a_scaled: Vec<(usize, [F; D])> = (0..level_params.n_a)
+        .filter(|&i| !a_weights[i].is_zero())
+        .map(|i| (i, scale_alpha_pows::<F, D>(alpha_pows, a_weights[i])))
+        .collect();
+
+    // Precompute per-block scalar part for w-section.
+    let w_block_scalars: Vec<F> = cfg_into_iter!(0..num_blocks)
+        .map(|b| row3_weight * opening_point.b[b] + row4_weight * c_alphas[b])
+        .collect();
+
+    let w_offset = 0;
+    cfg_iter_mut!(out[w_offset..w_offset + w_len])
+        .enumerate()
+        .for_each(|(x, dst)| {
             let block_idx = x / depth_open;
             let digit_idx = x % depth_open;
-            let mut acc = (row3_weight * opening_point.b[block_idx]
-                + row4_weight * c_alphas[block_idx])
-                * g1_open[digit_idx];
-            for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(level_params.n_d) {
-                if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&d_view.row(row_idx)[x], alpha_pows);
-                }
+            let mut acc = w_block_scalars[block_idx] * g1_open[digit_idx];
+            for &(row_idx, ref scaled) in &d_scaled {
+                acc += eval_ring_at_scaled_pows(&d_view.row(row_idx)[x], scaled);
             }
-            acc
+            *dst = acc;
+        });
+
+    // Precompute per-block scalar part for t-section.
+    let t_stride = level_params.n_a * depth_open;
+    let t_block_scalars: Vec<Vec<F>> = cfg_into_iter!(0..num_blocks)
+        .map(|b| {
+            a_weights
+                .iter()
+                .map(|aw| *aw * c_alphas[b])
+                .collect::<Vec<_>>()
         })
         .collect();
-    out.extend(w_segment);
 
-    let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
-        .map(|x| {
-            let block_idx = x / (level_params.n_a * depth_open);
-            let rem = x % (level_params.n_a * depth_open);
+    let t_offset = w_len;
+    cfg_iter_mut!(out[t_offset..t_offset + t_len])
+        .enumerate()
+        .for_each(|(x, dst)| {
+            let block_idx = x / t_stride;
+            let rem = x % t_stride;
             let a_idx = rem / depth_open;
             let digit_idx = rem % depth_open;
-            let mut acc = a_weights[a_idx] * c_alphas[block_idx] * g1_open[digit_idx];
-            for (row_idx, eq_i) in eq_tau1[level_params.n_d..(level_params.n_d + level_params.n_b)]
-                .iter()
-                .enumerate()
-            {
-                if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[x], alpha_pows);
-                }
+            let mut acc = t_block_scalars[block_idx][a_idx] * g1_open[digit_idx];
+            for &(row_idx, ref scaled) in &b_scaled {
+                acc += eval_ring_at_scaled_pows(&b_view.row(row_idx)[x], scaled);
             }
-            acc
-        })
-        .collect();
-    out.extend(t_segment);
+            *dst = acc;
+        });
 
     let z_base: Vec<F> = cfg_into_iter!(0..inner_width)
         .map(|k| {
             let block_idx = k / depth_commit;
             let digit_idx = k % depth_commit;
             let mut acc = row4_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
-            for (a_idx, eq_i) in a_weights.iter().enumerate() {
-                if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[k], alpha_pows);
-                }
+            for &(a_idx, ref scaled) in &a_scaled {
+                acc += eval_ring_at_scaled_pows(&a_view.row(a_idx)[k], scaled);
             }
             acc
         })
         .collect();
 
-    let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
-        .map(|idx| {
+    let z_offset = w_len + t_len;
+    cfg_iter_mut!(out[z_offset..z_offset + z_len])
+        .enumerate()
+        .for_each(|(idx, dst)| {
             let k = idx / depth_fold;
             let fold_idx = idx % depth_fold;
-            -(z_base[k] * fold_gadget[fold_idx])
-        })
-        .collect();
-    out.extend(z_segment);
+            *dst = -(z_base[k] * fold_gadget[fold_idx]);
+        });
 
     let alpha_pow_d = alpha_pows[D - 1] * alpha;
     let denom = alpha_pow_d + F::one();
+    let r_offset = z_offset + z_len;
     let r_tail_len = rows * levels;
-    let r_tail: Vec<F> = cfg_into_iter!(0..r_tail_len)
-        .map(|idx| {
+    cfg_iter_mut!(out[r_offset..r_offset + r_tail_len])
+        .enumerate()
+        .for_each(|(idx, dst)| {
             let row_idx = idx / levels;
             let level_idx = idx % levels;
-            -(eq_tau1[row_idx] * denom * r_gadget[level_idx])
-        })
-        .collect();
-    out.extend(r_tail);
-    out.resize(x_len, F::zero());
+            *dst = -(eq_tau1[row_idx] * denom * r_gadget[level_idx]);
+        });
+
     Ok(out)
-}
-
-/// Compute `m_val = MLE(m_evals_x)(r_x)` directly without materializing the
-/// full Boolean evaluation table.  This weights each live column by `eq(r_x, x)`
-/// and sums, saving the O(2^num_u) table allocation and the subsequent
-/// `multilinear_eval` pass.
-#[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip_all, name = "compute_m_eval_at_point")]
-pub(crate) fn compute_m_eval_at_point<F: FieldCore + CanonicalField, const D: usize>(
-    setup: &HachiExpandedSetup<F>,
-    opening_point: &RingOpeningPoint<F>,
-    challenges: &[SparseChallenge],
-    alpha: F,
-    alpha_pows: &[F],
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
-    tau1: &[F],
-    r_x: &[F],
-) -> Result<F, HachiError> {
-    if alpha_pows.len() != D {
-        return Err(HachiError::InvalidSize {
-            expected: D,
-            actual: alpha_pows.len(),
-        });
-    }
-
-    let depth_commit = layout.num_digits_commit;
-    let depth_open = layout.num_digits_open;
-    let depth_fold = layout.num_digits_fold;
-    let log_basis = layout.log_basis;
-    let num_blocks = opening_point.b.len();
-    let block_len = layout.block_len;
-    let w_len = depth_open * num_blocks;
-    let t_len = depth_open * level_params.n_a * num_blocks;
-    let inner_width = block_len * depth_commit;
-    let z_len = depth_fold * inner_width;
-    let rows = m_row_count(level_params);
-    let levels = r_decomp_levels::<F>(log_basis);
-    let total_cols = w_len
-        .checked_add(t_len)
-        .and_then(|cols| cols.checked_add(z_len))
-        .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
-        .ok_or_else(|| HachiError::InvalidSetup("expanded M width overflow".to_string()))?;
-
-    let eq_tau1 = EqPolynomial::evals(tau1);
-    if eq_tau1.len() < rows {
-        return Err(HachiError::InvalidSize {
-            expected: rows,
-            actual: eq_tau1.len(),
-        });
-    }
-
-    let num_u = r_x.len();
-    let x_len = total_cols.next_power_of_two();
-    debug_assert_eq!(x_len, 1usize << num_u);
-    let eq_rx = EqPolynomial::evals(r_x);
-
-    let g1_open = gadget_row_scalars::<F>(depth_open, log_basis);
-    let g1_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
-    let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
-    let r_gadget = gadget_row_scalars::<F>(levels, log_basis);
-
-    let c_alphas: Vec<F> = challenges
-        .iter()
-        .map(|challenge| eval_sparse_challenge_at_pows::<F, D>(challenge, alpha_pows))
-        .collect::<Result<_, _>>()?;
-
-    let d_view = setup.D_mat.view::<D>();
-    let b_view = setup.B.view::<D>();
-    let a_view = setup.A.view::<D>();
-
-    let row3_weight = eq_tau1[level_params.n_d + level_params.n_b];
-    let row4_weight = eq_tau1[level_params.n_d + level_params.n_b + 1];
-    let a_weights = &eq_tau1[(level_params.n_d + level_params.n_b + 2)..rows];
-
-    let n_d = level_params.n_d;
-
-    let w_acc: F = cfg_fold_reduce!(
-        0..w_len,
-        F::zero,
-        |acc, x| {
-            let block_idx = x / depth_open;
-            let digit_idx = x % depth_open;
-            let mut val = (row3_weight * opening_point.b[block_idx]
-                + row4_weight * c_alphas[block_idx])
-                * g1_open[digit_idx];
-            for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(n_d) {
-                if !eq_i.is_zero() {
-                    val += *eq_i * eval_ring_at_pows(&d_view.row(row_idx)[x], alpha_pows);
-                }
-            }
-            acc + eq_rx[x] * val
-        },
-        |a, b| a + b
-    );
-
-    let col_offset_t = w_len;
-    let n_d_plus_nb = level_params.n_d + level_params.n_b;
-    let n_a = level_params.n_a;
-    let t_acc: F = cfg_fold_reduce!(
-        0..t_len,
-        F::zero,
-        |acc, x| {
-            let block_idx = x / (n_a * depth_open);
-            let rem = x % (n_a * depth_open);
-            let a_idx = rem / depth_open;
-            let digit_idx = rem % depth_open;
-            let mut val = a_weights[a_idx] * c_alphas[block_idx] * g1_open[digit_idx];
-            for (row_idx, eq_i) in eq_tau1[n_d..n_d_plus_nb].iter().enumerate() {
-                if !eq_i.is_zero() {
-                    val += *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[x], alpha_pows);
-                }
-            }
-            acc + eq_rx[col_offset_t + x] * val
-        },
-        |a, b| a + b
-    );
-
-    let z_base: Vec<F> = (0..inner_width)
-        .map(|k| {
-            let block_idx = k / depth_commit;
-            let digit_idx = k % depth_commit;
-            let mut v = row4_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
-            for (a_idx, eq_i) in a_weights.iter().enumerate() {
-                if !eq_i.is_zero() {
-                    v += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[k], alpha_pows);
-                }
-            }
-            v
-        })
-        .collect();
-
-    let col_offset_z = w_len + t_len;
-    let z_acc: F = cfg_fold_reduce!(
-        0..z_len,
-        F::zero,
-        |acc, idx| {
-            let k = idx / depth_fold;
-            let fold_idx = idx % depth_fold;
-            let val = -(z_base[k] * fold_gadget[fold_idx]);
-            acc + eq_rx[col_offset_z + idx] * val
-        },
-        |a, b| a + b
-    );
-
-    let alpha_pow_d = alpha_pows[D - 1] * alpha;
-    let denom = alpha_pow_d + F::one();
-    let r_tail_len = rows * levels;
-    let col_offset_r = w_len + t_len + z_len;
-    let r_acc: F = cfg_fold_reduce!(
-        0..r_tail_len,
-        F::zero,
-        |acc, idx| {
-            let row_idx = idx / levels;
-            let level_idx = idx % levels;
-            let val = -(eq_tau1[row_idx] * denom * r_gadget[level_idx]);
-            acc + eq_rx[col_offset_r + idx] * val
-        },
-        |a, b| a + b
-    );
-
-    Ok(w_acc + t_acc + z_acc + r_acc)
 }
 
 pub(crate) fn build_alpha_evals_y<F: FieldCore>(alpha: F, d: usize) -> Vec<F> {

@@ -25,19 +25,16 @@ use crate::protocol::proof::{
 };
 use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::ring_switch::{
-    build_w_evals, commit_w, compute_m_eval_at_point, compute_m_evals_x, ring_switch_build_w,
-    ring_switch_finalize, ring_switch_verifier, w_ring_element_count, RingSwitchOutput,
-    WCommitmentConfig,
+    build_w_evals, commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_verifier,
+    w_ring_element_count, RingSwitchOutput, WCommitmentConfig,
 };
-use crate::protocol::sumcheck::eq_poly::EqPolynomial;
 use crate::protocol::sumcheck::hachi_stage1::{HachiStage1Prover, HachiStage1Verifier};
 use crate::protocol::sumcheck::hachi_stage2::{
     relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier,
 };
+#[cfg(debug_assertions)]
 use crate::protocol::sumcheck::multilinear_eval;
-use crate::protocol::sumcheck::{
-    prove_sumcheck, verify_sumcheck, verify_sumcheck_rounds_only, SumcheckInstanceVerifier,
-};
+use crate::protocol::sumcheck::{prove_sumcheck, verify_sumcheck, SumcheckInstanceVerifier};
 use crate::protocol::transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH,
     CHALLENGE_SUMCHECK_ROUND,
@@ -638,6 +635,8 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
+    let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
+
     let w_poly = BalancedDigitPoly::<F, { D_LEVEL }>::from_i8_digits(current_w)?;
     let opening_point = next_level_opening_point(current_challenges, current_num_u, current_num_l);
 
@@ -663,6 +662,7 @@ where
     let w_commitment: RingCommitment<F, { D_LEVEL }> = last_w_commitment.to_ring_commitment();
     let typed_hint: HachiCommitmentHint<F, { D_LEVEL }> =
         current_hint.to_typed_with_t(w_layout.num_digits_open, w_layout.log_basis)?;
+    drop(_setup_span);
 
     let commit_fn: CommitFn<'_, F> = Box::new(
         |w: &[i8],
@@ -1203,26 +1203,16 @@ where
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
 
-    if is_last {
+    let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
         let (w_evals_full, _, _) = build_w_evals(fw, level_params.d)?;
-        let m_evals_x = compute_m_evals_x::<F, D>(
-            &setup.expanded,
-            quad_eq.opening_point(),
-            &quad_eq.challenges,
-            rs.alpha,
-            &rs.alpha_evals_y,
-            level_params,
-            layout,
-            &rs.tau1,
-        )?;
-        let stage2_verifier = HachiStage2Verifier::new_with_full_witness(
+        HachiStage2Verifier::new_with_full_witness(
             batching_coeff,
             stage1.s_claim,
             w_evals_full,
             r_stage1.clone(),
             rs.alpha_evals_y,
-            m_evals_x,
+            rs.m_evals_x,
             rs.tau1,
             v_typed,
             commitment.u.clone(),
@@ -1230,72 +1220,36 @@ where
             rs.alpha,
             rs.num_u,
             rs.num_l,
-        );
-        if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
-            return Err(HachiError::InvalidProof);
-        }
-        let challenges = {
-            let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-            verify_sumcheck::<F, _, F, _, _>(
-                &stage2.sumcheck,
-                &stage2_verifier,
-                transcript,
-                |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-            )?
-        };
-        Ok(challenges)
+        )
     } else {
-        let stage2_verifier = HachiStage2Verifier::new_with_claimed_w_eval(
+        HachiStage2Verifier::new_with_claimed_w_eval(
             batching_coeff,
             stage1.s_claim,
             stage2.next_w_eval,
             r_stage1.clone(),
-            rs.alpha_evals_y.clone(),
-            rs.tau1.clone(),
+            rs.alpha_evals_y,
+            rs.m_evals_x,
+            rs.tau1,
             v_typed,
             commitment.u.clone(),
             y_ring,
             rs.alpha,
             rs.num_u,
             rs.num_l,
-        );
-        if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
-            return Err(HachiError::InvalidProof);
-        }
-        let (challenges, final_claim) = {
-            let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-            verify_sumcheck_rounds_only::<F, _, F, _, _>(
-                &stage2.sumcheck,
-                &stage2_verifier,
-                transcript,
-                |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-            )?
-        };
-
-        let (x_challenges, y_challenges) = challenges.split_at(rs.num_u);
-        let eq_val = EqPolynomial::mle(&r_stage1, &challenges);
-        let w_eval = stage2.next_w_eval;
-        let virtual_oracle = eq_val * w_eval * (w_eval + F::one());
-        let alpha_val = multilinear_eval(&rs.alpha_evals_y, y_challenges)?;
-        let m_val = compute_m_eval_at_point::<F, D>(
-            &setup.expanded,
-            quad_eq.opening_point(),
-            &quad_eq.challenges,
-            rs.alpha,
-            &rs.alpha_evals_y,
-            level_params,
-            layout,
-            &rs.tau1,
-            x_challenges,
-        )?;
-        let expected = batching_coeff * virtual_oracle + w_eval * alpha_val * m_val;
-        if final_claim != expected {
-            tracing::error!("stage2 verify_sumcheck MISMATCH (deferred m_val)");
-            return Err(HachiError::InvalidProof);
-        }
-
-        Ok(challenges)
+        )
+    };
+    if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
+        return Err(HachiError::InvalidProof);
     }
+
+    let challenges = {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+        verify_sumcheck::<F, _, F, _, _>(&stage2.sumcheck, &stage2_verifier, transcript, |tr| {
+            tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+        })?
+    };
+
+    Ok(challenges)
 }
 
 fn trace<F: FieldCore + FromSmallInt, const D: usize>(u: &CyclotomicRing<F, D>) -> F {

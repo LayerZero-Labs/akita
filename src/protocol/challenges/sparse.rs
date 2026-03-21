@@ -22,10 +22,14 @@ const SPARSE_PRG_DOMAIN: &[u8] = b"hachi/sparse-challenge-prg";
 
 type ShakeReader = <Shake256 as ExtendableOutput>::Reader;
 
-/// Streaming cursor backed by a SHAKE256 XOF for extracting random values
-/// with zero modulo bias via bitmask rejection sampling.
+const XOF_BUF_SIZE: usize = 4096;
+
+/// Streaming cursor backed by a SHAKE256 XOF with a 4 KB internal buffer
+/// (~30 rate blocks) to amortize squeeze calls.
 struct XofCursor {
     reader: ShakeReader,
+    buf: Box<[u8; XOF_BUF_SIZE]>,
+    pos: usize,
 }
 
 impl XofCursor {
@@ -33,39 +37,64 @@ impl XofCursor {
         let mut xof = Shake256::default();
         xof.update(SPARSE_PRG_DOMAIN);
         xof.update(seed);
-        Self {
+        let mut cursor = Self {
             reader: xof.finalize_xof(),
-        }
+            buf: Box::new([0u8; XOF_BUF_SIZE]),
+            pos: XOF_BUF_SIZE,
+        };
+        cursor.refill();
+        cursor
     }
 
     #[inline]
-    fn fill(&mut self, buf: &mut [u8]) {
-        self.reader.read(buf);
-    }
-
-    #[inline]
-    fn next_u32(&mut self) -> u32 {
-        let mut buf = [0u8; 4];
-        self.fill(&mut buf);
-        u32::from_le_bytes(buf)
-    }
-
-    #[inline]
-    fn next_u64(&mut self) -> u64 {
-        let mut buf = [0u8; 8];
-        self.fill(&mut buf);
-        u64::from_le_bytes(buf)
+    fn refill(&mut self) {
+        self.reader.read(self.buf.as_mut());
+        self.pos = 0;
     }
 
     #[inline]
     fn next_u8(&mut self) -> u8 {
-        let mut buf = [0u8; 1];
-        self.fill(&mut buf);
-        buf[0]
+        if self.pos >= XOF_BUF_SIZE {
+            self.refill();
+        }
+        let b = self.buf[self.pos];
+        self.pos += 1;
+        b
     }
 
-    /// Uniformly sample from `0..modulus` using bitmask rejection sampling.
-    /// Zero modulo bias; expected < 2 draws per call.
+    #[inline]
+    fn next_u32(&mut self) -> u32 {
+        if self.pos + 4 <= XOF_BUF_SIZE {
+            let val = u32::from_le_bytes(self.buf[self.pos..self.pos + 4].try_into().unwrap());
+            self.pos += 4;
+            val
+        } else {
+            let mut tmp = [0u8; 4];
+            for b in &mut tmp {
+                *b = self.next_u8();
+            }
+            u32::from_le_bytes(tmp)
+        }
+    }
+
+    #[inline]
+    fn next_u64(&mut self) -> u64 {
+        if self.pos + 8 <= XOF_BUF_SIZE {
+            let val = u64::from_le_bytes(self.buf[self.pos..self.pos + 8].try_into().unwrap());
+            self.pos += 8;
+            val
+        } else {
+            let mut tmp = [0u8; 8];
+            for b in &mut tmp {
+                *b = self.next_u8();
+            }
+            u64::from_le_bytes(tmp)
+        }
+    }
+
+    /// Uniformly sample from `0..modulus` using bitmask rejection sampling
+    /// with minimal XOF consumption. Uses 1-byte reads when the modulus
+    /// fits in 8 bits, 2-byte reads for 16 bits, else 4 bytes.
     #[inline]
     fn next_usize_mod(&mut self, modulus: usize) -> usize {
         debug_assert!(modulus > 0);
@@ -73,11 +102,31 @@ impl XofCursor {
             return 0;
         }
         let bits = usize::BITS - (modulus - 1).leading_zeros();
-        let mask: usize = (1 << bits) - 1;
-        loop {
-            let val = (self.next_u32() as usize) & mask;
-            if val < modulus {
-                return val;
+        if bits <= 8 {
+            let mask = ((1u16 << bits) - 1) as u8;
+            loop {
+                let val = (self.next_u8() & mask) as usize;
+                if val < modulus {
+                    return val;
+                }
+            }
+        } else if bits <= 16 {
+            let mask = (1usize << bits) - 1;
+            loop {
+                let lo = self.next_u8() as usize;
+                let hi = self.next_u8() as usize;
+                let val = (lo | (hi << 8)) & mask;
+                if val < modulus {
+                    return val;
+                }
+            }
+        } else {
+            let mask: usize = (1 << bits) - 1;
+            loop {
+                let val = (self.next_u32() as usize) & mask;
+                if val < modulus {
+                    return val;
+                }
             }
         }
     }
@@ -111,18 +160,45 @@ impl XofCursor {
             -1
         }
     }
+
+    /// Batch-draw random signs into a pre-allocated slice, packing 8 signs
+    /// per XOF byte to minimize consumption.
+    #[inline]
+    fn fill_signs(&mut self, out: &mut [i16]) {
+        let mut chunks = out.chunks_exact_mut(8);
+        for chunk in &mut chunks {
+            let byte = self.next_u8();
+            for (i, s) in chunk.iter_mut().enumerate() {
+                *s = if (byte >> i) & 1 == 0 { 1 } else { -1 };
+            }
+        }
+        let remainder = chunks.into_remainder();
+        if !remainder.is_empty() {
+            let byte = self.next_u8();
+            for (i, s) in remainder.iter_mut().enumerate() {
+                *s = if (byte >> i) & 1 == 0 { 1 } else { -1 };
+            }
+        }
+    }
 }
 
 /// Fisher-Yates partial shuffle: sample `count` distinct values from `0..universe`.
+///
+/// Uses a stack buffer (universe ≤ 128, the max ring degree) to avoid
+/// per-call heap allocation.
+#[inline]
 fn sample_distinct_positions(cursor: &mut XofCursor, universe: usize, count: usize) -> Vec<usize> {
     debug_assert!(count <= universe);
-    let mut perm: Vec<usize> = (0..universe).collect();
+    debug_assert!(universe <= 128, "universe must fit stack buffer");
+    let mut perm = [0usize; 128];
+    for (i, slot) in perm[..universe].iter_mut().enumerate() {
+        *slot = i;
+    }
     for i in 0..count {
         let j = i + cursor.next_usize_mod(universe - i);
         perm.swap(i, j);
     }
-    perm.truncate(count);
-    perm
+    perm[..count].to_vec()
 }
 
 fn sample_uniform_sparse(
@@ -183,25 +259,47 @@ fn sample_split_shell_count(
     unreachable!("split-ring shell sampler exhausted cumulative mass")
 }
 
-fn sample_split_half(
+/// Sample one half of a split-ring challenge, writing positions and coeffs
+/// into the provided output slices (must be `half_weight` long).
+#[inline]
+fn sample_split_half_into(
     cursor: &mut XofCursor,
     half_size: usize,
     half_weight: usize,
     max_mag2_per_half: usize,
     parity: usize,
-) -> (Vec<u32>, Vec<i16>) {
-    let half_positions = sample_distinct_positions(cursor, half_size, half_weight);
-    let mut coeffs: Vec<i16> = (0..half_weight).map(|_| cursor.next_sign()).collect();
-    let num_mag2 = sample_split_shell_count(cursor, half_weight, max_mag2_per_half);
-    for idx in sample_distinct_positions(cursor, half_weight, num_mag2) {
-        coeffs[idx] *= 2;
+    out_positions: &mut [u32],
+    out_coeffs: &mut [i16],
+) {
+    debug_assert!(half_size <= 64);
+    debug_assert!(half_weight <= 64);
+    let mut perm = [0usize; 64];
+    for (i, slot) in perm[..half_size].iter_mut().enumerate() {
+        *slot = i;
     }
+    for i in 0..half_weight {
+        let j = i + cursor.next_usize_mod(half_size - i);
+        perm.swap(i, j);
+    }
+    for (p, &perm_val) in out_positions.iter_mut().zip(perm.iter()) {
+        *p = (2 * perm_val + parity) as u32;
+    }
+    cursor.fill_signs(out_coeffs);
 
-    let positions = half_positions
-        .into_iter()
-        .map(|pos| (2 * pos + parity) as u32)
-        .collect();
-    (positions, coeffs)
+    let num_mag2 = sample_split_shell_count(cursor, half_weight, max_mag2_per_half);
+    if num_mag2 > 0 {
+        let mut mag2_perm = [0usize; 64];
+        for (i, slot) in mag2_perm[..half_weight].iter_mut().enumerate() {
+            *slot = i;
+        }
+        for i in 0..num_mag2 {
+            let j = i + cursor.next_usize_mod(half_weight - i);
+            mag2_perm.swap(i, j);
+        }
+        for &idx in &mag2_perm[..num_mag2] {
+            out_coeffs[idx] *= 2;
+        }
+    }
 }
 
 fn sample_split_ring_sparse(
@@ -211,16 +309,28 @@ fn sample_split_ring_sparse(
     max_mag2_per_half: usize,
 ) -> SparseChallenge {
     let half_size = d / 2;
-    let (mut even_positions, mut even_coeffs) =
-        sample_split_half(cursor, half_size, half_weight, max_mag2_per_half, 0);
-    let (odd_positions, odd_coeffs) =
-        sample_split_half(cursor, half_size, half_weight, max_mag2_per_half, 1);
-    even_positions.extend(odd_positions);
-    even_coeffs.extend(odd_coeffs);
-    SparseChallenge {
-        positions: even_positions,
-        coeffs: even_coeffs,
-    }
+    let total_weight = 2 * half_weight;
+    let mut positions = vec![0u32; total_weight];
+    let mut coeffs = vec![0i16; total_weight];
+    sample_split_half_into(
+        cursor,
+        half_size,
+        half_weight,
+        max_mag2_per_half,
+        0,
+        &mut positions[..half_weight],
+        &mut coeffs[..half_weight],
+    );
+    sample_split_half_into(
+        cursor,
+        half_size,
+        half_weight,
+        max_mag2_per_half,
+        1,
+        &mut positions[half_weight..],
+        &mut coeffs[half_weight..],
+    );
+    SparseChallenge { positions, coeffs }
 }
 
 fn sample_exact_shell_sparse(

@@ -134,6 +134,21 @@ pub fn multilinear_eval<E: FieldCore>(evals: &[E], point: &[E]) -> Result<E, Hac
             actual: evals.len(),
         });
     }
+
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        const PARALLEL_THRESHOLD: usize = 14;
+        if point.len() > PARALLEL_THRESHOLD {
+            let eq_table = EqPolynomial::evals_parallel(point, None);
+            return Ok(evals
+                .par_iter()
+                .zip(eq_table.par_iter())
+                .fold(|| E::zero(), |acc, (e, eq)| acc + *e * *eq)
+                .reduce(|| E::zero(), |a, b| a + b));
+        }
+    }
+
     Ok(multilinear_eval_ref(evals, point))
 }
 
