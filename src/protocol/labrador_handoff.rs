@@ -55,9 +55,7 @@ use std::time::Instant;
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "labrador::handoff_build_constraints")]
 pub(crate) fn build_hachi_labrador_constraints<F, const D: usize>(
-    a_mat: &FlatMatrix<F>,
-    b_mat: &FlatMatrix<F>,
-    d_mat: &FlatMatrix<F>,
+    shared_matrix: &FlatMatrix<F>,
     opening_point: &RingOpeningPoint<F>,
     challenges: &[SparseChallenge],
     v: &[CyclotomicRing<F, D>],
@@ -104,10 +102,9 @@ where
     let mut constraints =
         Vec::with_capacity(level_params.n_d + level_params.n_b + 2 + level_params.n_a);
 
-    // D rows enforce `D_mat * w_hat_flat = v`.
-    let d_view = d_mat.view::<D>();
+    let shared_view = shared_matrix.view::<D>();
     for (i, &v_i) in v.iter().enumerate().take(level_params.n_d) {
-        let d_row = d_view.row(i);
+        let d_row = shared_view.row(i);
         let coeffs: Vec<CyclotomicRing<F, D>> = d_row.iter().take(w_len).copied().collect();
         constraints.push(LabradorConstraint::new(
             vec![LabradorConstraintTerm::new(0, 0, coeffs)],
@@ -115,10 +112,8 @@ where
         ));
     }
 
-    // B rows enforce `B_mat * t_hat_flat = u`.
-    let b_view = b_mat.view::<D>();
     for (i, &u_i) in u.iter().enumerate().take(level_params.n_b) {
-        let b_row = b_view.row(i);
+        let b_row = shared_view.row(i);
         let coeffs: Vec<CyclotomicRing<F, D>> = b_row.iter().take(t_len).copied().collect();
         constraints.push(LabradorConstraint::new(
             vec![LabradorConstraintTerm::new(1, 0, coeffs)],
@@ -168,8 +163,6 @@ where
         ));
     }
 
-    // A rows link the folded inner openings back to the same `z` decomposition.
-    let a_view = a_mat.view::<D>();
     for a_idx in 0..level_params.n_a {
         let mut phi_t = vec![CyclotomicRing::<F, D>::zero(); t_len];
         for (i, c_i) in dense_challenges.iter().enumerate() {
@@ -180,7 +173,7 @@ where
         }
 
         let mut phi_z = vec![CyclotomicRing::<F, D>::zero(); z_len];
-        let a_row = a_view.row(a_idx);
+        let a_row = shared_view.row(a_idx);
         for (k, &a_ring) in a_row.iter().take(inner_width).enumerate() {
             for (t, &j) in j_fold.iter().enumerate() {
                 phi_z[k * depth_fold + t] = -(a_ring.scale(&j));
@@ -263,7 +256,7 @@ pub(crate) fn labrador_handoff_prove<F, T, const D_HANDOFF: usize, Cfg>(
     current_num_u: usize,
     current_num_l: usize,
     expanded_setup: &HachiExpandedSetup<F>,
-    ntt_d: &NttSlotCache<D_HANDOFF>,
+    ntt_shared: &NttSlotCache<D_HANDOFF>,
     level_params: &HachiLevelParams,
     w_layout: HachiCommitmentLayout,
     transcript: &mut T,
@@ -312,9 +305,7 @@ where
             )
         })?;
 
-    let a_flat = &expanded_setup.A;
-    let b_flat = &expanded_setup.B;
-    let d_flat = &expanded_setup.D_mat;
+    let shared_flat = &expanded_setup.shared_matrix;
 
     let (w_poly, y_ring, w_folded) = tracing::info_span!("labrador::handoff_fold_witness")
         .in_scope(|| {
@@ -348,7 +339,7 @@ where
             D_HANDOFF,
             WCommitmentConfig<D_HANDOFF, Cfg>,
         >::new_recursive_prover(
-            ntt_d,
+            ntt_shared,
             ring_opening_point.clone(),
             &w_poly,
             w_folded,
@@ -381,9 +372,7 @@ where
         .ok_or_else(|| HachiError::InvalidInput("missing z_pre".into()))?;
 
     let constraints = build_hachi_labrador_constraints::<F, D_HANDOFF>(
-        a_flat,
-        b_flat,
-        d_flat,
+        shared_flat,
         quad_eq.opening_point(),
         &quad_eq.challenges,
         &quad_eq.v,
@@ -597,15 +586,10 @@ where
             )
         })?;
 
-    let a_flat = &expanded_setup.A;
-    let b_flat = &expanded_setup.B;
-    let d_flat = &expanded_setup.D_mat;
+    let shared_flat = &expanded_setup.shared_matrix;
 
-    // Rebuild constraints from public data.
     let constraints = build_hachi_labrador_constraints::<F, D_HANDOFF>(
-        a_flat,
-        b_flat,
-        d_flat,
+        shared_flat,
         &ring_opening_point,
         &stage1_challenges,
         v,
@@ -721,7 +705,7 @@ mod tests {
         });
 
         let quad_eq = QuadraticEquation::<F, D, TinyConfig>::new_prover(
-            &setup.ntt_D,
+            &setup.ntt_shared,
             point.clone(),
             &poly,
             w_folded,
@@ -740,9 +724,7 @@ mod tests {
         let z_pre = quad_eq.z_pre().unwrap();
 
         let constraints = build_hachi_labrador_constraints::<F, D>(
-            &setup.expanded.A,
-            &setup.expanded.B,
-            &setup.expanded.D_mat,
+            &setup.expanded.shared_matrix,
             quad_eq.opening_point(),
             &quad_eq.challenges,
             &quad_eq.v,

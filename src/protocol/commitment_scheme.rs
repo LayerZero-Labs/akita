@@ -7,7 +7,7 @@ use crate::error::HachiError;
 use crate::primitives::serialization::Valid;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{flatten_i8_blocks, mat_vec_mul_ntt_single_i8};
-use crate::protocol::commitment::utils::ntt_cache::{MultiDNttBundle, MultiDNttCaches};
+use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
 use crate::protocol::commitment::{
     hachi_recursive_level_layout_from_params, root_current_w_len, AppendToTranscript,
     CommitmentConfig, CommitmentScheme, HachiCommitmentCore, HachiCommitmentLayout,
@@ -41,7 +41,7 @@ use crate::protocol::transcript::labels::{
     CHALLENGE_SUMCHECK_ROUND,
 };
 use crate::protocol::transcript::Transcript;
-use crate::{dispatch_ring_dim, dispatch_with_d_ntt, dispatch_with_ntt};
+use crate::{dispatch_ring_dim, dispatch_with_ntt};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -111,9 +111,7 @@ type CommitFn<'a, F> = Box<
 #[inline(never)]
 fn prove_one_level<F, T, const D: usize, Cfg, P>(
     expanded: &HachiExpandedSetup<F>,
-    ntt_a: &NttSlotCache<D>,
-    ntt_b: &NttSlotCache<D>,
-    ntt_d: &NttSlotCache<D>,
+    ntt_shared: &NttSlotCache<D>,
     commit_w_fn: CommitFn<'_, F>,
     poly: &P,
     max_num_vars: usize,
@@ -176,7 +174,7 @@ where
     transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
 
     let quad_eq = Box::new(QuadraticEquation::<F, { D }, Cfg>::new_prover(
-        ntt_d,
+        ntt_shared,
         ring_opening_point,
         poly,
         w_folded,
@@ -190,9 +188,7 @@ where
 
     finish_prove_level::<F, T, D, Cfg>(
         expanded,
-        ntt_a,
-        ntt_b,
-        ntt_d,
+        ntt_shared,
         commit_w_fn,
         max_num_vars,
         transcript,
@@ -209,9 +205,7 @@ where
 #[inline(never)]
 fn finish_prove_level<F, T, const D: usize, Cfg>(
     expanded: &HachiExpandedSetup<F>,
-    ntt_a: &NttSlotCache<D>,
-    ntt_b: &NttSlotCache<D>,
-    ntt_d: &NttSlotCache<D>,
+    ntt_shared: &NttSlotCache<D>,
     commit_w_fn: CommitFn<'_, F>,
     max_num_vars: usize,
     transcript: &mut T,
@@ -230,9 +224,7 @@ where
     let w = ring_switch_build_w::<F, { D }, Cfg>(
         &mut quad_eq,
         expanded,
-        ntt_a,
-        ntt_b,
-        ntt_d,
+        ntt_shared,
         level_params,
         layout,
     )?;
@@ -358,9 +350,7 @@ where
 #[inline(never)]
 fn prove_one_recursive_level<F, T, const D: usize, Cfg>(
     expanded: &HachiExpandedSetup<F>,
-    ntt_a: &NttSlotCache<D>,
-    ntt_b: &NttSlotCache<D>,
-    ntt_d: &NttSlotCache<D>,
+    ntt_shared: &NttSlotCache<D>,
     commit_w_fn: CommitFn<'_, F>,
     witness: &RecursiveWitnessView<'_, F, D>,
     max_num_vars: usize,
@@ -427,7 +417,7 @@ where
     let commitment_u = commitment.as_ring_slice::<D>()?;
 
     let quad_eq = Box::new(QuadraticEquation::<F, { D }, Cfg>::new_recursive_prover(
-        ntt_d,
+        ntt_shared,
         ring_opening_point,
         witness,
         w_folded,
@@ -441,9 +431,7 @@ where
 
     finish_prove_level::<F, T, D, Cfg>(
         expanded,
-        ntt_a,
-        ntt_b,
-        ntt_d,
+        ntt_shared,
         commit_w_fn,
         max_num_vars,
         transcript,
@@ -496,7 +484,7 @@ pub(crate) fn next_level_opening_point<F: FieldCore>(
 #[inline(never)]
 fn dispatch_commit<F, Cfg>(
     commit_params: HachiLevelParams,
-    commit_ntt_bundle: &mut MultiDNttBundle,
+    commit_ntt_cache: &mut MultiDNttCaches,
     expanded: &HachiExpandedSetup<F>,
     w: &RecursiveWitnessFlat,
 ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>
@@ -507,13 +495,12 @@ where
     let commit_d = commit_params.d;
     dispatch_with_ntt!(
         commit_d,
-        commit_ntt_bundle,
+        commit_ntt_cache,
         expanded,
-        |D_COMMIT, ca, cb, _cd| {
+        |D_COMMIT, ntt_shared| {
             let (wc, wh) = commit_w::<F, { D_COMMIT }, WCommitmentConfig<{ D_COMMIT }, Cfg>>(
                 w,
-                ca,
-                cb,
+                ntt_shared,
                 &commit_params,
             )?;
             Ok((
@@ -533,12 +520,10 @@ where
 #[inline(never)]
 fn dispatch_prove_level<F, T, const D: usize, Cfg>(
     level_d: usize,
-    ntt_bundle: &mut MultiDNttBundle,
+    ntt_cache: &mut MultiDNttCaches,
     expanded: &HachiExpandedSetup<F>,
-    setup_ntt_a: &NttSlotCache<D>,
-    setup_ntt_b: &NttSlotCache<D>,
-    setup_ntt_d: &NttSlotCache<D>,
-    commit_ntt_bundle: &mut MultiDNttBundle,
+    setup_ntt_shared: &NttSlotCache<D>,
+    commit_ntt_cache: &mut MultiDNttCaches,
     max_num_vars: usize,
     current_state: &RecursiveProverState<F>,
     transcript: &mut T,
@@ -553,10 +538,8 @@ where
     if level_d == D {
         prove_subsequent_level::<F, T, D, Cfg>(
             expanded,
-            setup_ntt_a,
-            setup_ntt_b,
-            setup_ntt_d,
-            commit_ntt_bundle,
+            setup_ntt_shared,
+            commit_ntt_cache,
             max_num_vars,
             current_state,
             transcript,
@@ -564,25 +547,18 @@ where
             level_params,
         )
     } else {
-        dispatch_with_ntt!(
-            level_d,
-            ntt_bundle,
-            expanded,
-            |D_LEVEL, ntt_a, ntt_b, ntt_d| {
-                prove_subsequent_level::<F, T, { D_LEVEL }, Cfg>(
-                    expanded,
-                    ntt_a,
-                    ntt_b,
-                    ntt_d,
-                    commit_ntt_bundle,
-                    max_num_vars,
-                    current_state,
-                    transcript,
-                    level,
-                    level_params,
-                )
-            }
-        )
+        dispatch_with_ntt!(level_d, ntt_cache, expanded, |D_LEVEL, ntt_shared| {
+            prove_subsequent_level::<F, T, { D_LEVEL }, Cfg>(
+                expanded,
+                ntt_shared,
+                commit_ntt_cache,
+                max_num_vars,
+                current_state,
+                transcript,
+                level,
+                level_params,
+            )
+        })
     }
 }
 
@@ -627,7 +603,7 @@ where
 fn dispatch_labrador_handoff_prove<F, T, const D: usize, Cfg>(
     current_state: &RecursiveProverState<F>,
     setup: &HachiProverSetup<F, D>,
-    handoff_ntt_d_cache: &mut MultiDNttCaches,
+    handoff_ntt_cache: &mut MultiDNttCaches,
     level_params: &HachiLevelParams,
     w_layout: HachiCommitmentLayout,
     transcript: &mut T,
@@ -655,18 +631,18 @@ where
             current_state.num_u,
             current_state.num_l,
             &setup.expanded,
-            &setup.ntt_D,
+            &setup.ntt_shared,
             level_params,
             w_layout,
             transcript,
         );
     }
 
-    dispatch_with_d_ntt!(
+    dispatch_with_ntt!(
         handoff_d,
-        handoff_ntt_d_cache,
+        handoff_ntt_cache,
         &setup.expanded,
-        |D_HANDOFF, ntt_d| {
+        |D_HANDOFF, ntt_shared| {
             let typed_hint: HachiCommitmentHint<F, { D_HANDOFF }> =
                 current_state.hint.to_typed::<{ D_HANDOFF }>()?;
             labrador_handoff_prove::<F, T, { D_HANDOFF }, Cfg>(
@@ -677,7 +653,7 @@ where
                 current_state.num_u,
                 current_state.num_l,
                 &setup.expanded,
-                ntt_d,
+                ntt_shared,
                 level_params,
                 w_layout,
                 transcript,
@@ -739,10 +715,8 @@ where
 #[inline(never)]
 fn prove_subsequent_level<F, T, const D_LEVEL: usize, Cfg>(
     expanded: &HachiExpandedSetup<F>,
-    ntt_a: &NttSlotCache<D_LEVEL>,
-    ntt_b: &NttSlotCache<D_LEVEL>,
-    ntt_d: &NttSlotCache<D_LEVEL>,
-    commit_ntt_bundle: &mut MultiDNttBundle,
+    ntt_shared: &NttSlotCache<D_LEVEL>,
+    commit_ntt_cache: &mut MultiDNttCaches,
     max_num_vars: usize,
     current_state: &RecursiveProverState<F>,
     transcript: &mut T,
@@ -799,8 +773,7 @@ where
             if next_params.d == D_LEVEL {
                 let (wc, wh) = commit_w::<F, { D_LEVEL }, WCommitmentConfig<{ D_LEVEL }, Cfg>>(
                     w,
-                    ntt_a,
-                    ntt_b,
+                    ntt_shared,
                     &next_params,
                 )?;
                 Ok((
@@ -808,16 +781,14 @@ where
                     RecursiveCommitmentHintCache::from_typed(wh)?,
                 ))
             } else {
-                dispatch_commit::<F, Cfg>(next_params, commit_ntt_bundle, expanded, w)
+                dispatch_commit::<F, Cfg>(next_params, commit_ntt_cache, expanded, w)
             }
         },
     );
 
     prove_one_recursive_level::<F, T, { D_LEVEL }, WCommitmentConfig<{ D_LEVEL }, Cfg>>(
         expanded,
-        ntt_a,
-        ntt_b,
-        ntt_d,
+        ntt_shared,
         commit_fn,
         &w_view,
         max_num_vars,
@@ -869,8 +840,8 @@ where
             current_w_len: root_current_w_len::<D>(*layout),
         });
         let mut inner = poly.commit_inner_witness(
-            &setup.expanded.A,
-            &setup.ntt_A,
+            &setup.expanded.shared_matrix,
+            &setup.ntt_shared,
             layout.block_len,
             layout.num_digits_commit,
             layout.num_digits_open,
@@ -884,7 +855,7 @@ where
         }
         let inner_opening_digits_flat = flatten_i8_blocks(&inner.t_hat);
         let mut u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_single_i8(&setup.ntt_B, &inner_opening_digits_flat);
+            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, &inner_opening_digits_flat);
         u.truncate(root_params.n_b);
         let hint = HachiCommitmentHint::with_t(inner.t_hat, inner.t);
         Ok((RingCommitment { u }, hint))
@@ -904,8 +875,8 @@ where
         let t_prove_total = Instant::now();
         let mut levels = Vec::new();
 
-        let mut ntt_bundle = MultiDNttBundle::new();
-        let mut commit_ntt_bundle = MultiDNttBundle::new();
+        let mut ntt_cache = MultiDNttCaches::new();
+        let mut commit_ntt_cache = MultiDNttCaches::new();
         let max_num_vars = setup.expanded.seed.max_num_vars;
         let root_w_len = root_current_w_len::<D>(*layout);
         let root_params = Cfg::level_params(HachiScheduleInputs {
@@ -923,8 +894,7 @@ where
              -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError> {
                 let next_params = Cfg::level_params(next_inputs);
                 if next_params.d == D {
-                    let (wc, wh) =
-                        commit_w::<F, D, Cfg>(w, &setup.ntt_A, &setup.ntt_B, &next_params)?;
+                    let (wc, wh) = commit_w::<F, D, Cfg>(w, &setup.ntt_shared, &next_params)?;
                     Ok((
                         FlatRingVec::from_commitment(&wc),
                         RecursiveCommitmentHintCache::from_typed(wh)?,
@@ -932,7 +902,7 @@ where
                 } else {
                     dispatch_commit::<F, Cfg>(
                         next_params,
-                        &mut commit_ntt_bundle,
+                        &mut commit_ntt_cache,
                         &setup.expanded,
                         w,
                     )
@@ -941,9 +911,7 @@ where
         );
         let out = prove_one_level::<F, T, D, Cfg, P>(
             &setup.expanded,
-            &setup.ntt_A,
-            &setup.ntt_B,
-            &setup.ntt_D,
+            &setup.ntt_shared,
             commit_fn_0,
             poly,
             max_num_vars,
@@ -984,12 +952,10 @@ where
 
             let out = dispatch_prove_level::<F, T, D, Cfg>(
                 level_d,
-                &mut ntt_bundle,
+                &mut ntt_cache,
                 &setup.expanded,
-                &setup.ntt_A,
-                &setup.ntt_B,
-                &setup.ntt_D,
-                &mut commit_ntt_bundle,
+                &setup.ntt_shared,
+                &mut commit_ntt_cache,
                 max_num_vars,
                 &current_state,
                 transcript,
@@ -1026,7 +992,7 @@ where
             dispatch_labrador_handoff_prove::<F, T, D, Cfg>(
                 &current_state,
                 setup,
-                &mut commit_ntt_bundle.D_mat,
+                &mut commit_ntt_cache,
                 &final_params,
                 handoff_layout,
                 transcript,

@@ -167,21 +167,50 @@ fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
     }
 }
 
-/// Build NTT slot caches for three matrices, computing CRT+NTT parameters once.
+/// Row-bounded access macro for `NttSlotCache` variants.
+macro_rules! impl_row_views {
+    () => {
+        /// Return the first `n` rows of the negacyclic NTT cache.
+        pub fn neg_rows(&self, n: usize) -> NttRowView<'_, D> {
+            match self {
+                NttSlotCache::Q32 { neg, params, .. } => NttRowView::Q32(&neg[..n], params),
+                NttSlotCache::Q64 { neg, params, .. } => NttRowView::Q64(&neg[..n], params),
+                NttSlotCache::Q128 { neg, params, .. } => NttRowView::Q128(&neg[..n], params),
+            }
+        }
+
+        /// Return the first `n` rows of the cyclic NTT cache.
+        pub fn cyc_rows(&self, n: usize) -> NttRowView<'_, D> {
+            match self {
+                NttSlotCache::Q32 { cyc, params, .. } => NttRowView::Q32(&cyc[..n], params),
+                NttSlotCache::Q64 { cyc, params, .. } => NttRowView::Q64(&cyc[..n], params),
+                NttSlotCache::Q128 { cyc, params, .. } => NttRowView::Q128(&cyc[..n], params),
+            }
+        }
+    };
+}
+
+impl<const D: usize> NttSlotCache<D> {
+    impl_row_views!();
+}
+
+/// A row-bounded view into an NTT cache, carrying the params reference.
 ///
-/// # Errors
-///
-/// Returns an error if no CRT+NTT parameter set matches the field modulus and ring degree.
-#[tracing::instrument(skip_all, name = "build_ntt_slots")]
-#[allow(non_snake_case)]
-pub fn build_ntt_slots<F: FieldCore + CanonicalField, const D: usize>(
-    A: RingMatrixView<'_, F, D>,
-    B: RingMatrixView<'_, F, D>,
-    D_mat: RingMatrixView<'_, F, D>,
-) -> Result<(NttSlotCache<D>, NttSlotCache<D>, NttSlotCache<D>), HachiError> {
-    let params = select_crt_ntt_params::<F, D>()?;
-    let slot_a = build_ntt_slot_from_params(A, params.clone());
-    let slot_b = build_ntt_slot_from_params(B, params.clone());
-    let slot_d = build_ntt_slot_from_params(D_mat, params);
-    Ok((slot_a, slot_b, slot_d))
+/// Consumers can use this to pass row-sliced NTT data to mat-vec functions
+/// without copying. The view borrows from the parent `NttSlotCache`.
+#[derive(Debug)]
+#[allow(missing_docs, clippy::large_enum_variant)]
+pub enum NttRowView<'a, const D: usize> {
+    Q32(
+        &'a [Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>],
+        &'a CrtNttParamSet<i16, Q32_NUM_PRIMES, D>,
+    ),
+    Q64(
+        &'a [Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>],
+        &'a CrtNttParamSet<i32, Q64_NUM_PRIMES, D>,
+    ),
+    Q128(
+        &'a [Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>],
+        &'a CrtNttParamSet<i32, Q128_NUM_PRIMES, D>,
+    ),
 }

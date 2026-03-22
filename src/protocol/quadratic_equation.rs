@@ -437,9 +437,7 @@ pub(crate) fn compute_r_split_eq<F, const D: usize>(
     z_pre_centered: &[[i32; D]],
     z_pre_centered_inf_norm: u32,
     y: &[CyclotomicRing<F, D>],
-    ntt_a: &NttSlotCache<D>,
-    ntt_b: &NttSlotCache<D>,
-    ntt_d: &NttSlotCache<D>,
+    ntt_shared: &NttSlotCache<D>,
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
 where
     F: FieldCore + CanonicalField,
@@ -454,13 +452,13 @@ where
         let ((d_cyc, b_cyc), a_quot) = rayon::join(
             || {
                 rayon::join(
-                    || mat_vec_mul_ntt_single_i8_cyclic(ntt_d, w_hat_flat),
-                    || mat_vec_mul_ntt_single_i8_cyclic(ntt_b, &t_hat_flat),
+                    || mat_vec_mul_ntt_single_i8_cyclic(ntt_shared, w_hat_flat),
+                    || mat_vec_mul_ntt_single_i8_cyclic(ntt_shared, &t_hat_flat),
                 )
             },
             || {
                 unreduced_quotient_rows_ntt_cached_centered_i32(
-                    ntt_a,
+                    ntt_shared,
                     z_pre_centered,
                     z_pre_centered_inf_norm,
                 )
@@ -475,10 +473,10 @@ where
 
     #[cfg(not(feature = "parallel"))]
     let (d_cyclic, b_cyclic, a_quotients) = {
-        let d_cyclic = mat_vec_mul_ntt_single_i8_cyclic(ntt_d, w_hat_flat);
-        let b_cyclic = mat_vec_mul_ntt_single_i8_cyclic(ntt_b, &t_hat_flat);
+        let d_cyclic = mat_vec_mul_ntt_single_i8_cyclic(ntt_shared, w_hat_flat);
+        let b_cyclic = mat_vec_mul_ntt_single_i8_cyclic(ntt_shared, &t_hat_flat);
         let a_quotients = unreduced_quotient_rows_ntt_cached_centered_i32(
-            ntt_a,
+            ntt_shared,
             z_pre_centered,
             z_pre_centered_inf_norm,
         );
@@ -662,7 +660,7 @@ mod tests {
             current_w_len: layout.num_blocks * layout.block_len * D,
         });
         let quad_eq = QuadraticEquation::<F, D, TinyConfig>::new_prover(
-            &setup.ntt_D,
+            &setup.ntt_shared,
             point.clone(),
             &poly,
             w_folded,
@@ -709,7 +707,7 @@ mod tests {
                 .flat_map(|v| v.iter().copied())
                 .collect::<Vec<_>>(),
         );
-        let lhs = mat_vec_mul(&f.setup.expanded.D_mat, &w_hat_flat);
+        let lhs = mat_vec_mul(&f.setup.expanded.shared_matrix, &w_hat_flat);
 
         assert_eq!(lhs, f.quad_eq.v(), "Row 1 failed: D · ŵ ≠ v");
     }
@@ -729,7 +727,10 @@ mod tests {
                 CyclotomicRing::from_coefficients(coeffs)
             })
             .collect();
-        let lhs = mat_vec_mul(&f.setup.expanded.B, &inner_opening_digits_flat_ring);
+        let lhs = mat_vec_mul(
+            &f.setup.expanded.shared_matrix,
+            &inner_opening_digits_flat_ring,
+        );
 
         assert_eq!(
             lhs, f.commitment_u,
@@ -827,7 +828,7 @@ mod tests {
 
         let z_hat = derive_z_hat(f.quad_eq.z_pre().unwrap());
         let z_recovered = recompose_z_hat(&z_hat);
-        let rhs = mat_vec_mul(&f.setup.expanded.A, &z_recovered);
+        let rhs = mat_vec_mul(&f.setup.expanded.shared_matrix, &z_recovered);
 
         assert_eq!(
             lhs, rhs,

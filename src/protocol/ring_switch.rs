@@ -104,9 +104,7 @@ pub(crate) struct RingSwitchVerifyOutput<F: FieldCore> {
 pub(crate) fn ring_switch_build_w<F, const D: usize, Cfg>(
     quad_eq: &mut QuadraticEquation<F, D, Cfg>,
     setup: &HachiExpandedSetup<F>,
-    ntt_a: &NttSlotCache<D>,
-    ntt_b: &NttSlotCache<D>,
-    ntt_d: &NttSlotCache<D>,
+    ntt_shared: &NttSlotCache<D>,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<RecursiveWitnessFlat, HachiError>
@@ -152,9 +150,7 @@ where
         &z_pre.centered_coeffs,
         z_pre.centered_inf_norm,
         quad_eq.y(),
-        ntt_a,
-        ntt_b,
-        ntt_d,
+        ntt_shared,
     )?;
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
@@ -515,8 +511,7 @@ pub(crate) fn w_commitment_layout<F: CanonicalField, const D: usize, Cfg: Commit
 #[inline(never)]
 pub(crate) fn commit_w<F, const D: usize, Cfg>(
     w: &RecursiveWitnessFlat,
-    ntt_a: &NttSlotCache<D>,
-    ntt_b: &NttSlotCache<D>,
+    ntt_shared: &NttSlotCache<D>,
     level_params: &HachiLevelParams,
 ) -> Result<(RingCommitment<F, D>, HachiCommitmentHint<F, D>), HachiError>
 where
@@ -554,7 +549,7 @@ where
                 }
             })
             .collect();
-        mat_vec_mul_ntt_digits_i8(ntt_a, &block_slices)
+        mat_vec_mul_ntt_digits_i8(ntt_shared, &block_slices)
     } else {
         let lut = DigitLut::<F>::new(log_basis);
         let ring_elems: Vec<CyclotomicRing<F, D>> = w_digits
@@ -574,7 +569,7 @@ where
                 }
             })
             .collect();
-        mat_vec_mul_ntt_i8(ntt_a, &block_slices, depth_commit, log_basis)
+        mat_vec_mul_ntt_i8(ntt_shared, &block_slices, depth_commit, log_basis)
     };
     for t_i in &mut t_all {
         t_i.truncate(level_params.n_a);
@@ -584,7 +579,7 @@ where
         .collect();
 
     let t_hat_flat = flatten_i8_blocks(&t_hat_per_block);
-    let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(ntt_b, &t_hat_flat);
+    let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(ntt_shared, &t_hat_flat);
     u.truncate(level_params.n_b);
     let hint = HachiCommitmentHint::with_t(t_hat_per_block, t_all);
     Ok((RingCommitment { u }, hint))
@@ -789,9 +784,7 @@ pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
         .map(|challenge| eval_sparse_challenge_at_pows::<F, D>(challenge, alpha_pows))
         .collect::<Result<_, _>>()?;
 
-    let d_view = setup.D_mat.view::<D>();
-    let b_view = setup.B.view::<D>();
-    let a_view = setup.A.view::<D>();
+    let shared_view = setup.shared_matrix.view::<D>();
 
     let row3_weight = eq_tau1[level_params.n_d + level_params.n_b];
     let row4_weight = eq_tau1[level_params.n_d + level_params.n_b + 1];
@@ -806,7 +799,7 @@ pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
                 * g1_open[digit_idx];
             for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(level_params.n_d) {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&d_view.row(row_idx)[x], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&shared_view.row(row_idx)[x], alpha_pows);
                 }
             }
             acc
@@ -826,7 +819,7 @@ pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
                 .enumerate()
             {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[x], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&shared_view.row(row_idx)[x], alpha_pows);
                 }
             }
             acc
@@ -841,7 +834,7 @@ pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
             let mut acc = row4_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
             for (a_idx, eq_i) in a_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[k], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&shared_view.row(a_idx)[k], alpha_pows);
                 }
             }
             acc

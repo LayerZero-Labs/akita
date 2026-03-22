@@ -639,7 +639,9 @@ fn mat_vec_mul_digits_i8_with_params<
         return vec![];
     }
     let n_a = ntt_mat.len();
-    let inner_width = ntt_mat.first().map_or(0, |row| row.len());
+    let mat_width = ntt_mat.first().map_or(0, |row| row.len());
+    let max_data_width = blocks.iter().map(|b| b.len()).max().unwrap_or(0);
+    let inner_width = mat_width.min(max_data_width);
     if inner_width == 0 || n_a == 0 {
         return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
     }
@@ -759,7 +761,13 @@ fn mat_vec_mul_i8_with_params<
         return vec![];
     }
     let n_a = ntt_mat.len();
-    let inner_width = ntt_mat.first().map_or(0, |row| row.len());
+    let mat_width = ntt_mat.first().map_or(0, |row| row.len());
+    let max_data_width = blocks
+        .iter()
+        .map(|b| b.len() * num_digits)
+        .max()
+        .unwrap_or(0);
+    let inner_width = mat_width.min(max_data_width);
     if inner_width == 0 || n_a == 0 {
         return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
     }

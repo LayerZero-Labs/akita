@@ -1,15 +1,13 @@
 //! Ring-native §4.1 commitment core implementation.
 
 use super::config::{
-    ensure_block_layout, ensure_matrix_shape_ge, ensure_supported_num_vars,
-    validate_and_derive_layout, HachiCommitmentLayout,
+    ensure_block_layout, ensure_supported_num_vars, validate_and_derive_layout,
+    HachiCommitmentLayout,
 };
 use super::onehot::{inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks};
 use super::schedule::HachiScheduleInputs;
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
-#[cfg(feature = "disk-persistence")]
-use super::utils::crt_ntt::build_ntt_slots;
 use super::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use super::utils::flat_matrix::FlatMatrix;
 use super::utils::linear::{
@@ -49,39 +47,33 @@ pub struct HachiSetupSeed {
     pub public_matrix_seed: PublicMatrixSeed,
 }
 
-/// Expanded setup stage containing coefficient-form matrices stored as
-/// D-agnostic flat field-element arrays.
+/// Expanded setup stage containing a single shared coefficient-form matrix
+/// stored as a D-agnostic flat field-element array.
 ///
-/// The same `HachiExpandedSetup` can be viewed at different ring dimensions by
-/// calling [`FlatMatrix::view`] or [`FlatMatrix::row`] with the desired
-/// const-generic `D`.
-#[allow(non_snake_case)]
+/// All role matrices (A, B, D) are row/column prefixes of this shared matrix.
+/// See `SHARED_PREFIX_BINDING.md` for the security argument. The same setup
+/// can be viewed at different ring dimensions by calling [`FlatMatrix::view`]
+/// with the desired const-generic `D`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiExpandedSetup<F: FieldCore> {
     /// Setup seed and runtime layout metadata.
     pub seed: HachiSetupSeed,
-    /// Inner matrix `A`.
-    pub A: FlatMatrix<F>,
-    /// Outer matrix `B`.
-    pub B: FlatMatrix<F>,
-    /// Prover matrix `D ∈ R_q^{n_D × δ·2^R}` (§4.2).
-    pub D_mat: FlatMatrix<F>,
+    /// Shared backing matrix (max_rows × max_cols). Each role matrix
+    /// (A, B, D) is a row/column prefix of this matrix.
+    pub shared_matrix: FlatMatrix<F>,
 }
 
-/// Prover setup artifact (expanded setup + per-matrix NTT caches).
+/// Prover setup artifact (expanded setup + single shared NTT cache).
 ///
-/// The NTT caches are tied to a specific ring dimension D.
-#[allow(non_snake_case)]
+/// The NTT cache is tied to a specific ring dimension D and covers the
+/// full shared backing matrix. Role-specific mat-vec operations use row
+/// slicing and input-vector-length column clamping.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiProverSetup<F: FieldCore, const D: usize> {
     /// Expanded matrix stage used by both prover and verifier.
     pub expanded: Arc<HachiExpandedSetup<F>>,
-    /// NTT cache for the A matrix.
-    pub ntt_A: NttSlotCache<D>,
-    /// NTT cache for the B matrix.
-    pub ntt_B: NttSlotCache<D>,
-    /// NTT cache for the D matrix.
-    pub ntt_D: NttSlotCache<D>,
+    /// Shared NTT cache for the backing matrix at ring dimension D.
+    pub ntt_shared: NttSlotCache<D>,
 }
 
 /// Verifier setup artifact derived from prover setup.
@@ -190,9 +182,7 @@ impl HachiDeserialize for HachiSetupSeed {
 impl<F: FieldCore + Valid> Valid for HachiExpandedSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.seed.check()?;
-        self.A.check()?;
-        self.B.check()?;
-        self.D_mat.check()?;
+        self.shared_matrix.check()?;
         Ok(())
     }
 }
@@ -204,17 +194,13 @@ impl<F: FieldCore> HachiSerialize for HachiExpandedSetup<F> {
         compress: Compress,
     ) -> Result<(), SerializationError> {
         self.seed.serialize_with_mode(&mut writer, compress)?;
-        self.A.serialize_with_mode(&mut writer, compress)?;
-        self.B.serialize_with_mode(&mut writer, compress)?;
-        self.D_mat.serialize_with_mode(&mut writer, compress)?;
+        self.shared_matrix
+            .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.seed.serialized_size(compress)
-            + self.A.serialized_size(compress)
-            + self.B.serialized_size(compress)
-            + self.D_mat.serialized_size(compress)
+        self.seed.serialized_size(compress) + self.shared_matrix.serialized_size(compress)
     }
 }
 
@@ -226,9 +212,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiExpandedSetup<F> {
     ) -> Result<Self, SerializationError> {
         let out = Self {
             seed: HachiSetupSeed::deserialize_with_mode(&mut reader, compress, validate)?,
-            A: FlatMatrix::deserialize_with_mode(&mut reader, compress, validate)?,
-            B: FlatMatrix::deserialize_with_mode(&mut reader, compress, validate)?,
-            D_mat: FlatMatrix::deserialize_with_mode(&mut reader, compress, validate)?,
+            shared_matrix: FlatMatrix::deserialize_with_mode(&mut reader, compress, validate)?,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -498,22 +482,16 @@ fn load_expanded_setup<F: FieldCore + Valid, Cfg: CommitmentConfig>(
 }
 
 /// Build prover and verifier setup from a pre-existing expanded setup by
-/// reconstructing the NTT caches.
+/// reconstructing the NTT cache.
 #[cfg(feature = "disk-persistence")]
 pub(crate) fn setup_from_expanded<F: FieldCore + CanonicalField, const D: usize>(
     expanded: HachiExpandedSetup<F>,
 ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError> {
     let expanded = Arc::new(expanded);
-    let (ntt_a, ntt_b, ntt_d) = build_ntt_slots(
-        expanded.A.view::<D>(),
-        expanded.B.view::<D>(),
-        expanded.D_mat.view::<D>(),
-    )?;
+    let ntt_shared = build_ntt_slot(expanded.shared_matrix.view::<D>())?;
     let prover_setup = HachiProverSetup {
         expanded: Arc::clone(&expanded),
-        ntt_A: ntt_a,
-        ntt_B: ntt_b,
-        ntt_D: ntt_d,
+        ntt_shared,
     };
     let verifier_setup = HachiVerifierSetup { expanded };
     Ok((prover_setup, verifier_setup))
@@ -564,37 +542,25 @@ where
         let b_cols = chain_stats.max_outer_width;
         let d_cols = chain_stats.max_d_matrix_width;
 
+        let max_rows = [envelope.max_n_a, envelope.max_n_b, envelope.max_n_d]
+            .into_iter()
+            .max()
+            .unwrap();
+        let max_cols = [a_cols, b_cols, d_cols].into_iter().max().unwrap();
+
         let public_matrix_seed = sample_public_matrix_seed();
-        let (a_flat, ntt_a) = {
-            let a_matrix =
-                derive_public_matrix::<F, D>(envelope.max_n_a, a_cols, &public_matrix_seed, b"A");
-            let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
-            let ntt_a = build_ntt_slot(a_flat.view::<D>())?;
-            (a_flat, ntt_a)
-        };
-        let (b_flat, ntt_b) = {
-            let b_matrix =
-                derive_public_matrix::<F, D>(envelope.max_n_b, b_cols, &public_matrix_seed, b"B");
-            let b_flat = FlatMatrix::from_ring_matrix(&b_matrix);
-            let ntt_b = build_ntt_slot(b_flat.view::<D>())?;
-            (b_flat, ntt_b)
-        };
-        let (d_flat, ntt_d) = {
-            let d_matrix =
-                derive_public_matrix::<F, D>(envelope.max_n_d, d_cols, &public_matrix_seed, b"D");
-            let d_flat = FlatMatrix::from_ring_matrix(&d_matrix);
-            let ntt_d = build_ntt_slot(d_flat.view::<D>())?;
-            (d_flat, ntt_d)
-        };
+        let shared_ring_matrix =
+            derive_public_matrix::<F, D>(max_rows, max_cols, &public_matrix_seed);
+        let shared_flat = FlatMatrix::from_ring_matrix(&shared_ring_matrix);
+        let ntt_shared = build_ntt_slot(shared_flat.view::<D>())?;
+
         let expanded = Arc::new(HachiExpandedSetup {
             seed: HachiSetupSeed {
                 max_num_vars,
                 layout,
                 public_matrix_seed,
             },
-            A: a_flat,
-            B: b_flat,
-            D_mat: d_flat,
+            shared_matrix: shared_flat,
         });
 
         #[cfg(feature = "disk-persistence")]
@@ -602,19 +568,9 @@ where
 
         let prover_setup = HachiProverSetup {
             expanded: Arc::clone(&expanded),
-            ntt_A: ntt_a,
-            ntt_B: ntt_b,
-            ntt_D: ntt_d,
+            ntt_shared,
         };
         let verifier_setup = HachiVerifierSetup { expanded };
-        ensure_matrix_shape_ge::<F, D>(&prover_setup.expanded.A, envelope.max_n_a, a_cols, "A")?;
-        ensure_matrix_shape_ge::<F, D>(&prover_setup.expanded.B, envelope.max_n_b, b_cols, "B")?;
-        ensure_matrix_shape_ge::<F, D>(
-            &prover_setup.expanded.D_mat,
-            envelope.max_n_d,
-            d_cols,
-            "D",
-        )?;
         Ok((prover_setup, verifier_setup))
     }
 
@@ -638,25 +594,14 @@ where
             layout.required_num_vars::<D>()?,
         )?;
         ensure_block_layout(f_blocks, layout)?;
-        ensure_matrix_shape_ge::<F, D>(
-            &setup.expanded.A,
-            root_params.n_a,
-            layout.inner_width,
-            "A",
-        )?;
-        ensure_matrix_shape_ge::<F, D>(
-            &setup.expanded.B,
-            root_params.n_b,
-            layout.outer_width,
-            "B",
-        )?;
 
         let depth_commit = layout.num_digits_commit;
         let depth_open = layout.num_digits_open;
         let log_basis = layout.log_basis;
         let block_slices: Vec<&[CyclotomicRing<F, D>]> =
             f_blocks.iter().map(|b| b.as_slice()).collect();
-        let mut t_all = mat_vec_mul_ntt_i8(&setup.ntt_A, &block_slices, depth_commit, log_basis);
+        let mut t_all =
+            mat_vec_mul_ntt_i8(&setup.ntt_shared, &block_slices, depth_commit, log_basis);
         for t_i in &mut t_all {
             t_i.truncate(root_params.n_a);
         }
@@ -665,7 +610,8 @@ where
             .collect();
 
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
-        let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(&setup.ntt_B, &t_hat_flat);
+        let mut u: Vec<CyclotomicRing<F, D>> =
+            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, &t_hat_flat);
         u.truncate(root_params.n_b);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
@@ -709,7 +655,8 @@ where
             })
             .collect();
 
-        let mut t_all = mat_vec_mul_ntt_i8(&setup.ntt_A, &block_slices, depth_commit, log_basis);
+        let mut t_all =
+            mat_vec_mul_ntt_i8(&setup.ntt_shared, &block_slices, depth_commit, log_basis);
         for t_i in &mut t_all {
             t_i.truncate(root_params.n_a);
         }
@@ -718,7 +665,8 @@ where
             .collect();
 
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
-        let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(&setup.ntt_B, &t_hat_flat);
+        let mut u: Vec<CyclotomicRing<F, D>> =
+            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, &t_hat_flat);
         u.truncate(root_params.n_b);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
@@ -739,18 +687,6 @@ where
             setup.expanded.seed.max_num_vars,
             layout.required_num_vars::<D>()?,
         )?;
-        ensure_matrix_shape_ge::<F, D>(
-            &setup.expanded.A,
-            root_params.n_a,
-            layout.inner_width,
-            "A",
-        )?;
-        ensure_matrix_shape_ge::<F, D>(
-            &setup.expanded.B,
-            root_params.n_b,
-            layout.outer_width,
-            "B",
-        )?;
 
         let sparse_blocks =
             map_onehot_to_sparse_blocks(onehot_k, indices, layout.r_vars, layout.m_vars, D)?;
@@ -759,7 +695,7 @@ where
         let depth_open = layout.num_digits_open;
         let log_basis = layout.log_basis;
         let zero_block_len = root_params.n_a.checked_mul(depth_open).unwrap();
-        let a_view = setup.expanded.A.view::<D>();
+        let a_view = setup.expanded.shared_matrix.view::<D>();
         let block_len = layout.block_len;
 
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(sparse_blocks)
@@ -776,7 +712,8 @@ where
             .collect();
 
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
-        let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(&setup.ntt_B, &t_hat_flat);
+        let mut u: Vec<CyclotomicRing<F, D>> =
+            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, &t_hat_flat);
         u.truncate(root_params.n_b);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
@@ -915,12 +852,15 @@ impl HachiCommitmentCore {
     }
 
     /// Like `setup_with_layout` but reuses an existing setup's random seed and
-    /// A matrix (which depends only on `m_vars`). Only regenerates B and D
-    /// matrices for the new `r_vars`.
+    /// shared matrix (which is prefix-stable). Only extends the shared matrix
+    /// if the new layout requires wider columns or more rows.
     ///
     /// Use this when creating a mega-polynomial setup that shares `m_vars` with
-    /// an individual polynomial setup — avoids re-deriving and NTT-transforming
-    /// the A matrix.
+    /// an individual polynomial setup.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the envelope contains zero rows or the layout chain has zero columns.
     ///
     /// # Errors
     ///
@@ -947,50 +887,48 @@ impl HachiCommitmentCore {
             ));
         }
 
-        let layout_num_vars = new_layout.required_num_vars::<D>()?;
-        let chain_stats = scan_layout_chain::<F, D, Cfg>(layout_num_vars, new_layout)?;
-        let a_width = existing.A.first_row_len::<D>();
-        if a_width < chain_stats.max_inner_width {
-            return Err(HachiError::InvalidSetup(format!(
-                "existing A width {a_width} < required inner_width {}",
-                chain_stats.max_inner_width
-            )));
-        }
-        let b_cols = chain_stats.max_outer_width;
-
         let max_num_vars = new_layout.required_num_vars::<D>()?;
         let envelope = Cfg::envelope(max_num_vars);
         let seed = existing.seed.public_matrix_seed;
 
+        let layout_num_vars = new_layout.required_num_vars::<D>()?;
+        let chain_stats = scan_layout_chain::<F, D, Cfg>(layout_num_vars, new_layout)?;
+        let a_cols = chain_stats.max_inner_width;
+        let b_cols = chain_stats.max_outer_width;
         let d_cols = chain_stats.max_d_matrix_width;
-        let (b_flat, ntt_b) = {
-            let b_matrix = derive_public_matrix::<F, D>(envelope.max_n_b, b_cols, &seed, b"B");
-            let b_flat = FlatMatrix::from_ring_matrix(&b_matrix);
-            let ntt_b = build_ntt_slot(b_flat.view::<D>())?;
-            (b_flat, ntt_b)
+
+        let max_rows = [envelope.max_n_a, envelope.max_n_b, envelope.max_n_d]
+            .into_iter()
+            .max()
+            .unwrap();
+        let max_cols = [a_cols, b_cols, d_cols].into_iter().max().unwrap();
+
+        let existing_rows = existing.shared_matrix.num_rows();
+        let existing_cols = existing.shared_matrix.first_row_len::<D>();
+
+        let (shared_flat, ntt_shared) = if existing_rows >= max_rows && existing_cols >= max_cols {
+            let ntt_shared = build_ntt_slot(existing.shared_matrix.view::<D>())?;
+            (existing.shared_matrix.clone(), ntt_shared)
+        } else {
+            let actual_rows = max_rows.max(existing_rows);
+            let actual_cols = max_cols.max(existing_cols);
+            let shared_ring_matrix = derive_public_matrix::<F, D>(actual_rows, actual_cols, &seed);
+            let shared_flat = FlatMatrix::from_ring_matrix(&shared_ring_matrix);
+            let ntt_shared = build_ntt_slot(shared_flat.view::<D>())?;
+            (shared_flat, ntt_shared)
         };
-        let (d_flat, ntt_d) = {
-            let d_matrix = derive_public_matrix::<F, D>(envelope.max_n_d, d_cols, &seed, b"D");
-            let d_flat = FlatMatrix::from_ring_matrix(&d_matrix);
-            let ntt_d = build_ntt_slot(d_flat.view::<D>())?;
-            (d_flat, ntt_d)
-        };
-        let ntt_a = build_ntt_slot(existing.A.view::<D>())?;
+
         let expanded = Arc::new(HachiExpandedSetup {
             seed: HachiSetupSeed {
                 max_num_vars,
                 layout: new_layout,
                 public_matrix_seed: seed,
             },
-            A: existing.A.clone(),
-            B: b_flat,
-            D_mat: d_flat,
+            shared_matrix: shared_flat,
         });
         let prover_setup = HachiProverSetup {
             expanded: Arc::clone(&expanded),
-            ntt_A: ntt_a,
-            ntt_B: ntt_b,
-            ntt_D: ntt_d,
+            ntt_shared,
         };
         let verifier_setup = HachiVerifierSetup { expanded };
         Ok((prover_setup, verifier_setup))
@@ -1034,72 +972,43 @@ impl HachiCommitmentCore {
         Cfg: CommitmentConfig,
     {
         let envelope = Cfg::envelope(max_num_vars);
+        let max_rows = [envelope.max_n_a, envelope.max_n_b, envelope.max_n_d]
+            .into_iter()
+            .max()
+            .unwrap();
+        let max_cols = [a_cols, b_cols, d_cols].into_iter().max().unwrap();
         {
             let ring_bytes = std::mem::size_of::<CyclotomicRing<F, D>>();
-            let a_raw_mb =
-                (envelope.max_n_a * a_cols * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
-            let b_raw_mb =
-                (envelope.max_n_b * b_cols * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
-            let d_raw_mb =
-                (envelope.max_n_d * d_cols * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
+            let shared_mb = (max_rows * max_cols * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
             tracing::debug!(
                 a_cols,
                 b_cols,
                 d_cols,
+                max_rows,
+                max_cols,
                 ring_bytes,
-                a_mb = a_raw_mb,
-                b_mb = b_raw_mb,
-                d_mb = d_raw_mb,
-                total_mb = a_raw_mb + b_raw_mb + d_raw_mb,
-                "setup matrix sizes"
+                shared_mb,
+                "setup shared matrix size"
             );
         }
-        let (a_flat, ntt_a) = {
-            let a_matrix =
-                derive_public_matrix::<F, D>(envelope.max_n_a, a_cols, &public_matrix_seed, b"A");
-            let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
-            let ntt_a = build_ntt_slot(a_flat.view::<D>())?;
-            (a_flat, ntt_a)
-        };
-        let (b_flat, ntt_b) = {
-            let b_matrix =
-                derive_public_matrix::<F, D>(envelope.max_n_b, b_cols, &public_matrix_seed, b"B");
-            let b_flat = FlatMatrix::from_ring_matrix(&b_matrix);
-            let ntt_b = build_ntt_slot(b_flat.view::<D>())?;
-            (b_flat, ntt_b)
-        };
-        let (d_flat, ntt_d) = {
-            let d_matrix =
-                derive_public_matrix::<F, D>(envelope.max_n_d, d_cols, &public_matrix_seed, b"D");
-            let d_flat = FlatMatrix::from_ring_matrix(&d_matrix);
-            let ntt_d = build_ntt_slot(d_flat.view::<D>())?;
-            (d_flat, ntt_d)
-        };
+        let shared_ring_matrix =
+            derive_public_matrix::<F, D>(max_rows, max_cols, &public_matrix_seed);
+        let shared_flat = FlatMatrix::from_ring_matrix(&shared_ring_matrix);
+        let ntt_shared = build_ntt_slot(shared_flat.view::<D>())?;
+
         let expanded = Arc::new(HachiExpandedSetup {
             seed: HachiSetupSeed {
                 max_num_vars,
                 layout,
                 public_matrix_seed,
             },
-            A: a_flat,
-            B: b_flat,
-            D_mat: d_flat,
+            shared_matrix: shared_flat,
         });
         let prover_setup = HachiProverSetup {
             expanded: Arc::clone(&expanded),
-            ntt_A: ntt_a,
-            ntt_B: ntt_b,
-            ntt_D: ntt_d,
+            ntt_shared,
         };
         let verifier_setup = HachiVerifierSetup { expanded };
-        ensure_matrix_shape_ge::<F, D>(&prover_setup.expanded.A, envelope.max_n_a, a_cols, "A")?;
-        ensure_matrix_shape_ge::<F, D>(&prover_setup.expanded.B, envelope.max_n_b, b_cols, "B")?;
-        ensure_matrix_shape_ge::<F, D>(
-            &prover_setup.expanded.D_mat,
-            envelope.max_n_d,
-            d_cols,
-            "D",
-        )?;
         Ok((prover_setup, verifier_setup))
     }
 }
@@ -1200,9 +1109,10 @@ mod tests {
         assert_eq!(envelope.inner_width, expected_inner);
         assert_eq!(envelope.outer_width, expected_outer);
         assert_eq!(envelope.d_matrix_width, expected_d);
-        assert_eq!(setup.expanded.A.first_row_len::<TEST_D>(), expected_inner);
-        assert_eq!(setup.expanded.B.first_row_len::<TEST_D>(), expected_outer);
-        assert_eq!(setup.expanded.D_mat.first_row_len::<TEST_D>(), expected_d);
+        let shared_cols = setup.expanded.shared_matrix.first_row_len::<TEST_D>();
+        assert!(shared_cols >= expected_inner);
+        assert!(shared_cols >= expected_outer);
+        assert!(shared_cols >= expected_d);
     }
 
     #[cfg(feature = "disk-persistence")]

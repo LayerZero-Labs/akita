@@ -747,9 +747,9 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
             max_d_width = max_d_width.max(recursive_layout.d_matrix_width);
         }
 
-        assert!(setup.expanded.A.first_row_len::<D>() >= max_inner);
-        assert!(setup.expanded.B.first_row_len::<D>() >= max_outer);
-        assert!(setup.expanded.D_mat.first_row_len::<D>() >= max_d_width);
+        assert!(setup.expanded.shared_matrix.first_row_len::<D>() >= max_inner);
+        assert!(setup.expanded.shared_matrix.first_row_len::<D>() >= max_outer);
+        assert!(setup.expanded.shared_matrix.first_row_len::<D>() >= max_d_width);
     });
 }
 

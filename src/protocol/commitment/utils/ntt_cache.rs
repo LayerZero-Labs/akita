@@ -2,7 +2,7 @@
 //!
 //! Wraps per-D [`NttSlotCache`] bundles with lazy computation and memoization.
 //! A single [`MultiDNttCaches`] can hold NTT caches for any subset of supported
-//! ring dimensions, built on demand from a shared [`FlatMatrix`].
+//! ring dimensions, built on demand from the shared [`FlatMatrix`].
 
 use super::crt_ntt::{build_ntt_slot, NttSlotCache};
 use super::flat_matrix::FlatMatrix;
@@ -82,24 +82,5 @@ impl MultiDNttCaches {
 impl Default for MultiDNttCaches {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Bundle of three multi-D NTT caches for the A, B, and D matrices.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[allow(non_snake_case)]
-pub struct MultiDNttBundle {
-    /// NTT caches for the A matrix at various ring dimensions.
-    pub A: MultiDNttCaches,
-    /// NTT caches for the B matrix at various ring dimensions.
-    pub B: MultiDNttCaches,
-    /// NTT caches for the D matrix at various ring dimensions.
-    pub D_mat: MultiDNttCaches,
-}
-
-impl MultiDNttBundle {
-    /// Empty bundle.
-    pub fn new() -> Self {
-        Self::default()
     }
 }

@@ -279,8 +279,8 @@ mod tests {
 
         let t_hat_poly = poly
             .commit_inner(
-                &setup.expanded.A,
-                &setup.ntt_A,
+                &setup.expanded.shared_matrix,
+                &setup.ntt_shared,
                 layout.block_len,
                 layout.num_digits_commit,
                 layout.num_digits_open,
@@ -313,8 +313,8 @@ mod tests {
 
         let t_hat_poly = poly
             .commit_inner(
-                &setup.expanded.A,
-                &setup.ntt_A,
+                &setup.expanded.shared_matrix,
+                &setup.ntt_shared,
                 layout.block_len,
                 layout.num_digits_commit,
                 layout.num_digits_open,
@@ -435,8 +435,8 @@ mod tests {
             w_commitment_layout::<TestF, TestD, TinyConfig>(&level_params, layout).unwrap();
         let digit_commit = digit_view
             .commit_inner(
-                &setup.expanded.A,
-                &setup.ntt_A,
+                &setup.expanded.shared_matrix,
+                &setup.ntt_shared,
                 w_layout.block_len,
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
@@ -445,8 +445,8 @@ mod tests {
             .unwrap();
         let dense_commit = dense
             .commit_inner(
-                &setup.expanded.A,
-                &setup.ntt_A,
+                &setup.expanded.shared_matrix,
+                &setup.ntt_shared,
                 w_layout.block_len,
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
@@ -458,8 +458,8 @@ mod tests {
 
         let digit_witness = digit_view
             .commit_inner_witness(
-                &setup.expanded.A,
-                &setup.ntt_A,
+                &setup.expanded.shared_matrix,
+                &setup.ntt_shared,
                 w_layout.block_len,
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
@@ -468,8 +468,8 @@ mod tests {
             .unwrap();
         let dense_witness = dense
             .commit_inner_witness(
-                &setup.expanded.A,
-                &setup.ntt_A,
+                &setup.expanded.shared_matrix,
+                &setup.ntt_shared,
                 w_layout.block_len,
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
