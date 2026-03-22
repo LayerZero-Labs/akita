@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, Once};
 use std::time::Instant;
 
-type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
+type F = Fp128<0xffffffffffffffffffffffffffffe941>;
 const ONEHOT_K: usize = 256;
 // Keep the default e2e tests small enough for `cargo test`; the larger nv=25
 // workloads remain covered by `benches/hachi_e2e.rs`, while still triggering

@@ -592,7 +592,7 @@ pub fn hachi_recursive_level_layout_from_params<Cfg: CommitmentConfig>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128M8M4M1M0;
+    use crate::algebra::Prime128Offset5823;
     use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
     use crate::primitives::serialization::{Compress, HachiSerialize};
     use crate::protocol::commitment::{
@@ -603,7 +603,7 @@ mod tests {
     use crate::protocol::sumcheck::{CompressedUniPoly, SumcheckProof};
     use crate::FieldCore;
 
-    type F = Prime128M8M4M1M0;
+    type F = Prime128Offset5823;
 
     fn dummy_sumcheck(rounds: usize, degree: usize) -> SumcheckProof<F> {
         SumcheckProof {
@@ -621,7 +621,7 @@ mod tests {
             .expect("config should provide a planner");
         for level in &plan.levels {
             let runtime_next_w_len =
-                w_ring_element_count::<Prime128M8M4M1M0>(&level.params, level.layout)
+                w_ring_element_count::<Prime128Offset5823>(&level.params, level.layout)
                     * level.params.d;
             assert_eq!(
                 runtime_next_w_len, level.next_inputs.current_w_len,

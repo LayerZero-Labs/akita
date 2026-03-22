@@ -1679,7 +1679,7 @@ mod tests {
         }
     }
 
-    type HandoffField = crate::algebra::Fp128<0xfffffffffffffffffffffffffffffeed>;
+    type HandoffField = crate::algebra::Fp128<0xffffffffffffffffffffffffffffe941>;
     type HandoffScheme = HachiCommitmentScheme<{ HandoffTestConfig::D }, HandoffTestConfig>;
     const HANDOFF_FIXTURE_LABEL: &[u8] = b"test/labrador-tail-fixture";
     const HANDOFF_SPLICE_LABEL: &[u8] = b"test/labrador-tail-splice";

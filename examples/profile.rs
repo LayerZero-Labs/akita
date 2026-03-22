@@ -31,7 +31,7 @@ use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
-type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
+type F = Fp128<0xffffffffffffffffffffffffffffe941>;
 const ONEHOT_K: usize = 256;
 
 fn env_flag(name: &str, default: bool) -> bool {

@@ -511,13 +511,13 @@ fn project_streaming<const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::fields::{Fp64, Prime128M13M4P0};
+    use crate::algebra::fields::{Fp64, Prime128Offset5823};
     use crate::protocol::transcript::labels::DOMAIN_LABRADOR_RECURSION;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::FromSmallInt;
 
     type F = Fp64<4294967197>;
-    type F128 = Prime128M13M4P0;
+    type F128 = Prime128Offset5823;
     const D: usize = 64;
 
     fn sample_witness_from_seed_generic<G>(seed: u64) -> LabradorWitness<G, D>

@@ -870,7 +870,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::fields::Prime128M13M4P0;
+    use crate::algebra::fields::Prime128Offset5823;
     use crate::algebra::{Pow2Offset32Field, Pow2Offset64Field};
     use crate::protocol::transcript::labels::DOMAIN_LABRADOR_RECURSION;
     use crate::protocol::transcript::Blake2bTranscript;
@@ -890,7 +890,7 @@ mod tests {
             "64-bit field must use legacy JL aggregation schedule"
         );
         assert!(
-            safe_to_use_scalar_randomness::<Prime128M13M4P0>(),
+            safe_to_use_scalar_randomness::<Prime128Offset5823>(),
             "128-bit field should use scalar JL aggregation schedule"
         );
     }
@@ -951,7 +951,7 @@ mod tests {
 
     #[test]
     fn aggregate_jl_contraints_one_lift_matches_naive_fp128() {
-        type F128 = Prime128M13M4P0;
+        type F128 = Prime128Offset5823;
         let mut transcript = Blake2bTranscript::<F128>::new(DOMAIN_LABRADOR_RECURSION);
         let matrix = LabradorJlMatrix::generate::<F128, _>(&mut transcript, TEST_COLS).unwrap();
         let omega = sample_jl_collapse_challenge::<F128, _>(&mut transcript);

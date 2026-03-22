@@ -19,16 +19,14 @@ mod tests {
     use hachi_pcs::algebra::{
         CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, Fp128, Fp2, Fp2Config, Fp32, Fp4,
         Fp4Config, Fp64, HasPacking, LimbQ, MontCoeff, PackedPartialSplitEval32,
-        PartialSplitEval32, PartialSplitNtt32, Prime128M13M4P0, Prime128M37P3P0, Prime128M52M3P0,
-        Prime128M54P4P0, Prime128M8M4M1M0, Prime128Offset5823, ScalarBackend, VectorModule,
+        PartialSplitEval32, PartialSplitNtt32, Prime128Offset275, Prime128Offset5823,
+        ScalarBackend, VectorModule,
     };
     use hachi_pcs::primitives::serialization::SerializationError;
     use hachi_pcs::{
         CanonicalField, FieldCore, FieldSampling, FromSmallInt, HachiDeserialize, HachiSerialize,
         Invertible, Module, PseudoMersenneField,
     };
-
-    const P_159: u128 = 340282366920938463463374607431768211297u128;
 
     #[test]
     fn fp32_basic_arith() {
@@ -52,7 +50,7 @@ mod tests {
 
     #[test]
     fn fp128_basic_arith() {
-        type F = Fp128<P_159>;
+        type F = Prime128Offset5823;
 
         let a = F::from_u64(123);
         let b = F::from_u64(456);
@@ -139,19 +137,12 @@ mod tests {
     }
 
     #[test]
-    fn fp128_sparse_primes_match_biguint_oracle() {
-        // These are the five sparse `2^128 - c` primes we care about.
-        const P13: u128 = 0xffffffffffffffffffffffffffffdff1u128;
-        const P37: u128 = 0xffffffffffffffffffffffe000000009u128;
-        const P52: u128 = 0xffffffffffffffffffeffffffffffff9u128;
-        const P54: u128 = 0xffffffffffffffffffc0000000000011u128;
+    fn fp128_primes_match_biguint_oracle() {
         const P275: u128 = 0xfffffffffffffffffffffffffffffeedu128;
+        const P5823: u128 = 0xffffffffffffffffffffffffffffe941u128;
 
-        check_solinas_prime::<Prime128M13M4P0>(P13, 2_000, 13);
-        check_solinas_prime::<Prime128M37P3P0>(P37, 2_000, 37);
-        check_solinas_prime::<Prime128M52M3P0>(P52, 2_000, 52);
-        check_solinas_prime::<Prime128M54P4P0>(P54, 2_000, 54);
-        check_solinas_prime::<Prime128M8M4M1M0>(P275, 2_000, 275);
+        check_solinas_prime::<Prime128Offset275>(P275, 2_000, 275);
+        check_solinas_prime::<Prime128Offset5823>(P5823, 2_000, 5823);
     }
 
     struct NR;
@@ -204,7 +195,7 @@ mod tests {
     fn inv_zero_returns_none() {
         assert!(Fp32::<251>::zero().inv().is_none());
         assert!(Fp64::<4294967197>::zero().inv().is_none());
-        assert!(Fp128::<P_159>::zero().inv().is_none());
+        assert!(Prime128Offset5823::zero().inv().is_none());
     }
 
     #[test]
@@ -221,7 +212,7 @@ mod tests {
         let inv64 = x64.inv_or_zero();
         assert_eq!(x64 * inv64, F64::one());
 
-        type F128 = Fp128<P_159>;
+        type F128 = Prime128Offset5823;
         assert_eq!(F128::zero().inv_or_zero(), F128::zero());
         let x128 = F128::from_u64(12345);
         let inv128 = x128.inv_or_zero();
@@ -263,7 +254,7 @@ mod tests {
 
     #[test]
     fn field_identities_fp128() {
-        type F = Fp128<P_159>;
+        type F = Prime128Offset5823;
         let a = F::from_u64(999999);
         let b = F::from_u64(888888);
         let c = F::from_u64(777777);
@@ -296,7 +287,7 @@ mod tests {
 
     #[test]
     fn serialization_round_trip_fp128() {
-        type F = Fp128<P_159>;
+        type F = Prime128Offset5823;
         let val = F::from_u64(999999999);
         let mut buf = Vec::new();
         val.serialize_compressed(&mut buf).unwrap();
@@ -373,21 +364,21 @@ mod tests {
         let unchecked64 = F64::deserialize_compressed_unchecked(&bad64[..]).unwrap();
         assert_eq!(unchecked64, F64::zero());
 
-        type F128 = Fp128<P_159>;
-        let bad128 = P_159.to_le_bytes();
+        type F128 = Prime128Offset5823;
+        const P5823: u128 = 0xffffffffffffffffffffffffffffe941u128;
+        let bad128 = P5823.to_le_bytes();
         let err128 = F128::deserialize_compressed(&bad128[..]).unwrap_err();
         assert!(matches!(err128, SerializationError::InvalidData(_)));
         let unchecked128 = F128::deserialize_compressed_unchecked(&bad128[..]).unwrap();
         assert_eq!(unchecked128, F128::zero());
 
-        // Sparse 128-bit prime: same checked/unchecked behavior.
-        type S13 = Prime128M13M4P0;
-        const P13: u128 = 0xffffffffffffffffffffffffffffdff1u128;
-        let bad13 = P13.to_le_bytes();
-        let err13 = S13::deserialize_compressed(&bad13[..]).unwrap_err();
-        assert!(matches!(err13, SerializationError::InvalidData(_)));
-        let unchecked13 = S13::deserialize_compressed_unchecked(&bad13[..]).unwrap();
-        assert_eq!(unchecked13, S13::zero());
+        type F128b = Prime128Offset275;
+        const P275B: u128 = 0xfffffffffffffffffffffffffffffeedu128;
+        let bad275 = P275B.to_le_bytes();
+        let err275 = F128b::deserialize_compressed(&bad275[..]).unwrap_err();
+        assert!(matches!(err275, SerializationError::InvalidData(_)));
+        let unchecked275 = F128b::deserialize_compressed_unchecked(&bad275[..]).unwrap();
+        assert_eq!(unchecked275, F128b::zero());
     }
 
     #[test]
@@ -1614,7 +1605,9 @@ mod tests {
                 pseudo_mersenne_modulus(bits, offset as u128),
                 "2^k-offset modulus mismatch for k={bits}, offset={offset}"
             );
-            assert_eq!(modulus % 8, 5);
+            if bits < 128 {
+                assert_eq!(modulus % 8, 5);
+            }
         }
 
         let x = Pow2Offset128Field::from_u64(1234567);

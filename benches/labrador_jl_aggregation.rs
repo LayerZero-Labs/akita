@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use hachi_pcs::algebra::fields::Prime128M13M4P0;
+use hachi_pcs::algebra::fields::Prime128Offset5823;
 use hachi_pcs::algebra::{Pow2Offset32Field, Pow2Offset64Field};
 use hachi_pcs::protocol::labrador::aggregation::aggregate_jl_contraints_one_lift;
 use hachi_pcs::protocol::labrador::LabradorJlMatrix;
@@ -51,7 +51,7 @@ fn bench_aggregate_jl_contraints_one_lift_fp64(c: &mut Criterion) {
 }
 
 fn bench_aggregate_jl_contraints_one_lift_fp128(c: &mut Criterion) {
-    type F128 = Prime128M13M4P0;
+    type F128 = Prime128Offset5823;
     bench_aggregate_jl_contraints_one_lift_for_field::<F128>(c, "fp128");
 }
 

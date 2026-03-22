@@ -254,12 +254,12 @@ impl<E: FieldCore + FromSmallInt> GruenSplitEq<E> {
 mod tests {
     use super::*;
     use crate::algebra::poly::fold_evals_in_place;
-    use crate::algebra::Prime128M8M4M1M0;
+    use crate::algebra::Prime128Offset5823;
     use crate::{FieldSampling, FromSmallInt};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
-    type F = Prime128M8M4M1M0;
+    type F = Prime128Offset5823;
 
     #[test]
     fn gruen_eq_matches_full_eq_table() {

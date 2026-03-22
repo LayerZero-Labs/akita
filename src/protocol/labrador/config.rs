@@ -988,7 +988,7 @@ mod tests {
 
     #[test]
     fn print_profile_style_handoff_sis_summary() {
-        type F128 = Fp128<0xfffffffffffffffffffffffffffffeed>;
+        type F128 = Fp128<0xffffffffffffffffffffffffffffe941>;
         type Cfg = Fp128FullCommitmentConfig;
         const D128: usize = Cfg::D;
         const MAX_NUM_VARS: usize = 25;

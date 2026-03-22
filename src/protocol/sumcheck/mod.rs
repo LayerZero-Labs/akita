@@ -453,11 +453,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128M8M4M1M0;
+    use crate::algebra::Prime128Offset5823;
     use crate::protocol::transcript::labels as tr_labels;
     use crate::protocol::transcript::Blake2bTranscript;
 
-    type F = Prime128M8M4M1M0;
+    type F = Prime128Offset5823;
 
     #[derive(Clone)]
     struct ToyMlInstance {

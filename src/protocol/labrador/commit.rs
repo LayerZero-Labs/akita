@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn ntt_two_tier_commit_matches_schoolbook_fp128_non_tail() {
-        type F128 = Fp128<0xfffffffffffffffffffffffffffffeed>;
+        type F128 = Fp128<0xffffffffffffffffffffffffffffe941>;
         const D128: usize = 256;
 
         let row = |seed: i64, len: usize| -> Vec<CyclotomicRing<F128, D128>> {
@@ -432,7 +432,7 @@ mod tests {
 
     #[test]
     fn commit_witness_ntt_matches_schoolbook_on_large_tail_digits() {
-        type F128 = Fp128<0xfffffffffffffffffffffffffffffeed>;
+        type F128 = Fp128<0xffffffffffffffffffffffffffffe941>;
         const D128: usize = 256;
 
         let row = |seed: i64, scale_exp: u32| -> Vec<CyclotomicRing<F128, D128>> {

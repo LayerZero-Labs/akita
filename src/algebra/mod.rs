@@ -23,9 +23,8 @@ pub use fields::{
     Fp2Config, Fp32, Fp32Packing, Fp4, Fp4Config, Fp64, Fp64Packing, HasPacking, LiftBase,
     NoPacking, PackedField, PackedValue, Pow2Offset128Field, Pow2Offset24Field, Pow2Offset30Field,
     Pow2Offset31Field, Pow2Offset32Field, Pow2Offset40Field, Pow2Offset48Field, Pow2Offset56Field,
-    Pow2Offset64Field, Pow2OffsetPrimeSpec, Prime128M13M4P0, Prime128M37P3P0, Prime128M52M3P0,
-    Prime128M54P4P0, Prime128M8M4M1M0, Prime128Offset5823, POW2_OFFSET_IMPLEMENTED_MAX_BITS,
-    POW2_OFFSET_MAX, POW2_OFFSET_PRIMES, POW2_OFFSET_TABLE,
+    Pow2Offset64Field, Pow2OffsetPrimeSpec, Prime128Offset275, Prime128Offset5823,
+    POW2_OFFSET_IMPLEMENTED_MAX_BITS, POW2_OFFSET_MAX, POW2_OFFSET_PRIMES, POW2_OFFSET_TABLE,
 };
 pub use module::VectorModule;
 pub use ntt::tables;

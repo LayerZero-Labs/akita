@@ -2054,10 +2054,10 @@ impl<F: FieldCore + FromSmallInt> SumcheckInstanceVerifier<F> for HachiStage1Ver
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128M8M4M1M0;
+    use crate::algebra::Prime128Offset5823;
     use crate::protocol::sumcheck::multilinear_eval;
 
-    type F = Prime128M8M4M1M0;
+    type F = Prime128Offset5823;
 
     fn pad_compact_rows(
         w_prefix: &[i8],

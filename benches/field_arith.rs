@@ -3,9 +3,8 @@
 use ark_bn254::Fr as BN254Fr;
 use ark_ff::{AdditiveGroup, Field};
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use hachi_pcs::algebra::fields::fp128::{Prime128M18M0, Prime128M54P0};
 use hachi_pcs::algebra::fields::fp32::Fp32;
-use hachi_pcs::algebra::{HasPacking, PackedField, PackedValue, Prime128M13M4P0, Prime128M8M4M1M0};
+use hachi_pcs::algebra::{HasPacking, PackedField, PackedValue, Prime128Offset5823};
 use hachi_pcs::algebra::{
     Pow2Offset24Field, Pow2Offset30Field, Pow2Offset31Field, Pow2Offset32Field, Pow2Offset40Field,
     Pow2Offset48Field, Pow2Offset56Field, Pow2Offset64Field,
@@ -35,72 +34,19 @@ fn env_usize(name: &str, default: usize) -> usize {
 }
 
 fn bench_mul(c: &mut Criterion) {
-    type F13 = Prime128M13M4P0;
-    type F275 = Prime128M8M4M1M0;
-    type F2p18p1 = Prime128M18M0;
-    type F2p54m1 = Prime128M54P0;
+    type F = Prime128Offset5823;
 
     let mut rng = StdRng::seed_from_u64(0x5eed);
-    let inputs_u128: Vec<u128> = (0..2048).map(|_| rand_u128(&mut rng)).collect();
-
-    let inputs_f13: Vec<F13> = inputs_u128
-        .iter()
-        .copied()
-        .map(F13::from_canonical_u128_reduced)
-        .collect();
-
-    let inputs_f275: Vec<F275> = inputs_u128
-        .iter()
-        .copied()
-        .map(F275::from_canonical_u128_reduced)
-        .collect();
-    let inputs_f2p18p1: Vec<F2p18p1> = inputs_u128
-        .iter()
-        .copied()
-        .map(F2p18p1::from_canonical_u128_reduced)
-        .collect();
-    let inputs_f2p54m1: Vec<F2p54m1> = inputs_u128
-        .iter()
-        .copied()
-        .map(F2p54m1::from_canonical_u128_reduced)
+    let inputs: Vec<F> = (0..2048)
+        .map(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng)))
         .collect();
 
     let mut group = c.benchmark_group("field_mul");
 
-    group.bench_function("fp128_prime128m13m4p0", |b| {
+    group.bench_function("fp128_offset5823", |b| {
         b.iter(|| {
-            let mut acc = F13::one();
-            for x in inputs_f13.iter() {
-                acc = acc * *x + acc;
-            }
-            black_box(acc)
-        })
-    });
-
-    group.bench_function("fp128_prime128m8m4m1m0", |b| {
-        b.iter(|| {
-            let mut acc = F275::one();
-            for x in inputs_f275.iter() {
-                acc = acc * *x + acc;
-            }
-            black_box(acc)
-        })
-    });
-
-    group.bench_function("fp128_prime128m18m0_shift_special", |b| {
-        b.iter(|| {
-            let mut acc = F2p18p1::one();
-            for x in inputs_f2p18p1.iter() {
-                acc = acc * *x + acc;
-            }
-            black_box(acc)
-        })
-    });
-
-    group.bench_function("fp128_prime128m54p0_shift_special", |b| {
-        b.iter(|| {
-            let mut acc = F2p54m1::one();
-            for x in inputs_f2p54m1.iter() {
+            let mut acc = F::one();
+            for x in inputs.iter() {
                 acc = acc * *x + acc;
             }
             black_box(acc)
@@ -111,27 +57,19 @@ fn bench_mul(c: &mut Criterion) {
 }
 
 fn bench_mul_only(c: &mut Criterion) {
-    type F13 = Prime128M13M4P0;
-    type F2p18p1 = Prime128M18M0;
-    type F2p54m1 = Prime128M54P0;
+    type F = Prime128Offset5823;
 
     let mut rng = StdRng::seed_from_u64(0x5eed);
-    let inputs_f13: Vec<F13> = (0..2048)
-        .map(|_| F13::from_canonical_u128_reduced(rand_u128(&mut rng)))
-        .collect();
-    let inputs_f2p18p1: Vec<F2p18p1> = (0..2048)
-        .map(|_| F2p18p1::from_canonical_u128_reduced(rand_u128(&mut rng)))
-        .collect();
-    let inputs_f2p54m1: Vec<F2p54m1> = (0..2048)
-        .map(|_| F2p54m1::from_canonical_u128_reduced(rand_u128(&mut rng)))
+    let inputs: Vec<F> = (0..2048)
+        .map(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng)))
         .collect();
 
     let mut group = c.benchmark_group("field_mul_only");
 
     group.bench_function("mul_chain_2048", |b| {
         b.iter(|| {
-            let mut acc = F13::one();
-            for x in inputs_f13.iter() {
+            let mut acc = F::one();
+            for x in inputs.iter() {
                 acc *= *x;
             }
             black_box(acc)
@@ -140,9 +78,9 @@ fn bench_mul_only(c: &mut Criterion) {
 
     group.bench_function("mul_chain_16384", |b| {
         b.iter(|| {
-            let mut acc = F13::one();
+            let mut acc = F::one();
             for _ in 0..8 {
-                for x in inputs_f13.iter() {
+                for x in inputs.iter() {
                     acc *= *x;
                 }
             }
@@ -152,31 +90,11 @@ fn bench_mul_only(c: &mut Criterion) {
 
     group.bench_function("mul_parallel_1024", |b| {
         b.iter(|| {
-            let mut sum = F13::zero();
-            for pair in inputs_f13.chunks_exact(2) {
+            let mut sum = F::zero();
+            for pair in inputs.chunks_exact(2) {
                 sum += pair[0] * pair[1];
             }
             black_box(sum)
-        })
-    });
-
-    group.bench_function("mul_chain_2048_special_m18m0", |b| {
-        b.iter(|| {
-            let mut acc = F2p18p1::one();
-            for x in inputs_f2p18p1.iter() {
-                acc *= *x;
-            }
-            black_box(acc)
-        })
-    });
-
-    group.bench_function("mul_chain_2048_special_m54p0", |b| {
-        b.iter(|| {
-            let mut acc = F2p54m1::one();
-            for x in inputs_f2p54m1.iter() {
-                acc *= *x;
-            }
-            black_box(acc)
         })
     });
 
@@ -186,7 +104,7 @@ fn bench_mul_only(c: &mut Criterion) {
 fn bench_mul_isolated(c: &mut Criterion) {
     use ark_ff::UniformRand;
 
-    type F13 = Prime128M13M4P0;
+    type F13 = Prime128Offset5823;
 
     let mut rng = StdRng::seed_from_u64(0x5eed);
     let a_fp128 = F13::from_canonical_u128_reduced(rand_u128(&mut rng));
@@ -305,7 +223,7 @@ fn bench_mul_isolated(c: &mut Criterion) {
 }
 
 fn bench_sqr(c: &mut Criterion) {
-    type F13 = Prime128M13M4P0;
+    type F13 = Prime128Offset5823;
 
     let mut rng = StdRng::seed_from_u64(0x5eed);
     let start = F13::from_canonical_u128_reduced(rand_u128(&mut rng));
@@ -336,7 +254,7 @@ fn bench_sqr(c: &mut Criterion) {
 }
 
 fn bench_inv(c: &mut Criterion) {
-    type F13 = Prime128M13M4P0;
+    type F13 = Prime128Offset5823;
 
     let mut rng = StdRng::seed_from_u64(0x1a2b_3c4d_5e6f_7788);
     let inputs: Vec<F13> = (0..256)
@@ -428,7 +346,7 @@ fn bench_bn254(c: &mut Criterion) {
 }
 
 fn bench_packed_fp128_backend(c: &mut Criterion) {
-    type F = Prime128M13M4P0;
+    type F = Prime128Offset5823;
     type PF = <F as HasPacking>::Packing;
     let packed_streams = env_usize("HACHI_BENCH_PACKED_STREAMS", 8);
     let latency_iters = env_usize("HACHI_BENCH_LATENCY_ITERS", 4096);
@@ -677,7 +595,7 @@ fn bench_fp32_fp64_mul(c: &mut Criterion) {
 }
 
 fn bench_widening_ops(c: &mut Criterion) {
-    type F = Prime128M8M4M1M0;
+    type F = Prime128Offset5823;
 
     let mut rng = StdRng::seed_from_u64(0x01de_be0c_0001);
     let a = F::from_canonical_u128_reduced(rand_u128(&mut rng));
@@ -793,7 +711,7 @@ fn bench_widening_ops(c: &mut Criterion) {
 }
 
 fn bench_accumulator_pattern(c: &mut Criterion) {
-    type F = Prime128M8M4M1M0;
+    type F = Prime128Offset5823;
 
     let mut rng = StdRng::seed_from_u64(0xacc0_1a70_0002);
     let inputs_a: Vec<F> = (0..256)
@@ -905,11 +823,11 @@ fn bench_throughput(c: &mut Criterion) {
     let b56: Vec<Pow2Offset56Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let a64: Vec<Pow2Offset64Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let b64: Vec<Pow2Offset64Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let a128: Vec<Prime128M8M4M1M0> = (0..n)
-        .map(|_| Prime128M8M4M1M0::from_canonical_u128_reduced(rand_u128(&mut rng)))
+    let a128: Vec<Prime128Offset5823> = (0..n)
+        .map(|_| Prime128Offset5823::from_canonical_u128_reduced(rand_u128(&mut rng)))
         .collect();
-    let b128: Vec<Prime128M8M4M1M0> = (0..n)
-        .map(|_| Prime128M8M4M1M0::from_canonical_u128_reduced(rand_u128(&mut rng)))
+    let b128: Vec<Prime128Offset5823> = (0..n)
+        .map(|_| Prime128Offset5823::from_canonical_u128_reduced(rand_u128(&mut rng)))
         .collect();
 
     let mut out24 = vec![Pow2Offset24Field::zero(); n as usize];
@@ -921,7 +839,7 @@ fn bench_throughput(c: &mut Criterion) {
     let mut out48 = vec![Pow2Offset48Field::zero(); n as usize];
     let mut out56 = vec![Pow2Offset56Field::zero(); n as usize];
     let mut out64 = vec![Pow2Offset64Field::zero(); n as usize];
-    let mut out128 = vec![Prime128M8M4M1M0::zero(); n as usize];
+    let mut out128 = vec![Prime128Offset5823::zero(); n as usize];
 
     let mut group = c.benchmark_group("throughput");
     group.throughput(Throughput::Elements(n));
@@ -1038,7 +956,7 @@ fn bench_packed_throughput(c: &mut Criterion) {
     packed_bench!(group, "fp64_48b", Pow2Offset48Field, P48, &mut rng, n);
     packed_bench!(group, "fp64_56b", Pow2Offset56Field, P56, &mut rng, n);
     packed_bench!(group, "fp64_64b", Pow2Offset64Field, P64, &mut rng, n);
-    packed_bench!(group, "fp128", Prime128M8M4M1M0, P128, &mut rng, n);
+    packed_bench!(group, "fp128", Prime128Offset5823, P128, &mut rng, n);
 
     group.finish();
 }
@@ -1083,16 +1001,16 @@ fn bench_parallel_throughput(c: &mut Criterion) {
     let rhs31: Vec<Pow2Offset31Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let lhs64: Vec<Pow2Offset64Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
     let rhs64: Vec<Pow2Offset64Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let lhs128: Vec<Prime128M13M4P0> = (0..n)
-        .map(|_| Prime128M13M4P0::from_canonical_u128_reduced(rand_u128(&mut rng)))
+    let lhs128: Vec<Prime128Offset5823> = (0..n)
+        .map(|_| Prime128Offset5823::from_canonical_u128_reduced(rand_u128(&mut rng)))
         .collect();
-    let rhs128: Vec<Prime128M13M4P0> = (0..n)
-        .map(|_| Prime128M13M4P0::from_canonical_u128_reduced(rand_u128(&mut rng)))
+    let rhs128: Vec<Prime128Offset5823> = (0..n)
+        .map(|_| Prime128Offset5823::from_canonical_u128_reduced(rand_u128(&mut rng)))
         .collect();
 
     type P31 = Fp32Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_31 }>;
     type P64 = Fp64Packing<{ hachi_pcs::algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_64 }>;
-    type F128 = Prime128M13M4P0;
+    type F128 = Prime128Offset5823;
     type P128 = <F128 as HasPacking>::Packing;
     let chunk31_p = (chunk / P31::WIDTH).max(1);
     let chunk64_p = (chunk / P64::WIDTH).max(1);
@@ -1423,7 +1341,7 @@ fn bench_packed_sumcheck_mix(c: &mut Criterion) {
     sumcheck_bench!(group, "fp64_48b", Pow2Offset48Field, P48, &mut rng, n);
     sumcheck_bench!(group, "fp64_56b", Pow2Offset56Field, P56, &mut rng, n);
     sumcheck_bench!(group, "fp64_64b", Pow2Offset64Field, P64, &mut rng, n);
-    sumcheck_bench!(group, "fp128", Prime128M8M4M1M0, P128, &mut rng, n);
+    sumcheck_bench!(group, "fp128", Prime128Offset5823, P128, &mut rng, n);
 
     group.finish();
 }

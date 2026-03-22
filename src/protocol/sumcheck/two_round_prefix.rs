@@ -1719,12 +1719,12 @@ impl<E: FieldCore + FromSmallInt> Stage2BivariateSkipState<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128M8M4M1M0;
+    use crate::algebra::Prime128Offset5823;
     use crate::protocol::sumcheck::hachi_stage1::HachiStage1Prover;
     use crate::protocol::sumcheck::SumcheckInstanceProver;
     use std::collections::HashMap;
 
-    type F = Prime128M8M4M1M0;
+    type F = Prime128Offset5823;
 
     fn gaussian_rank(mut rows: Vec<Vec<F>>) -> usize {
         rows.retain(|row| row.iter().any(|x| !x.is_zero()));

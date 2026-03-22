@@ -7,7 +7,7 @@ use super::schedule::{
 use super::utils::math::checked_pow2;
 use super::utils::norm::detect_field_modulus;
 use crate::algebra::ring::CyclotomicRing;
-use crate::algebra::{Prime128M8M4M1M0, SparseChallengeConfig};
+use crate::algebra::{Prime128Offset5823, SparseChallengeConfig};
 use crate::error::HachiError;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
@@ -207,7 +207,7 @@ fn d128_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
 }
 
 fn fp128_half_field_bound() -> u128 {
-    detect_field_modulus::<Prime128M8M4M1M0>() / 2
+    detect_field_modulus::<Prime128Offset5823>() / 2
 }
 
 /// Runtime commitment layout authority for ring-native commitments.
