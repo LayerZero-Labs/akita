@@ -182,19 +182,48 @@ impl XofCursor {
     }
 }
 
+/// Max ring dimension supported by the stack-buffer sampling paths.
+/// Public API functions reject `D` above this with an error before
+/// reaching the sampling internals.
+const MAX_STACK_RING_DIM: usize = 128;
+
 /// Fisher-Yates partial shuffle: sample `out.len()` distinct values from
 /// `0..universe` into `out`.
 ///
-/// Uses a stack buffer (universe ≤ 128, the max ring degree) to avoid
+/// Uses a stack buffer (universe ≤ [`MAX_STACK_RING_DIM`]) to avoid
 /// per-call heap allocation.
+///
+/// # Safety contract
+///
+/// Caller must ensure `universe <= MAX_STACK_RING_DIM`. The public API
+/// enforces this via a fallible check that returns `Err` instead of
+/// panicking.
 #[inline]
 fn sample_distinct_positions_into(cursor: &mut XofCursor, universe: usize, out: &mut [u32]) {
     debug_assert!(out.len() <= universe);
-    debug_assert!(universe <= 128, "universe must fit stack buffer");
-    let mut perm = [0usize; 128];
+    debug_assert!(universe <= MAX_STACK_RING_DIM);
+    let mut perm = [0usize; MAX_STACK_RING_DIM];
     for (i, slot) in perm[..universe].iter_mut().enumerate() {
         *slot = i;
     }
+    for (i, dst) in out.iter_mut().enumerate() {
+        let j = i + cursor.next_usize_mod(universe - i);
+        perm.swap(i, j);
+        *dst = perm[i] as u32;
+    }
+}
+
+/// Heap-backed variant of [`sample_distinct_positions_into`] for ring
+/// dimensions larger than [`MAX_STACK_RING_DIM`]. Not used on the
+/// current hot path.
+#[allow(dead_code)]
+fn sample_distinct_positions_into_general(
+    cursor: &mut XofCursor,
+    universe: usize,
+    out: &mut [u32],
+) {
+    debug_assert!(out.len() <= universe);
+    let mut perm: Vec<usize> = (0..universe).collect();
     for (i, dst) in out.iter_mut().enumerate() {
         let j = i + cursor.next_usize_mod(universe - i);
         perm.swap(i, j);
@@ -260,6 +289,14 @@ fn sample_split_shell_count(
 
 /// Sample one half of a split-ring challenge, writing positions and coeffs
 /// into the provided output slices (must be `half_weight` long).
+///
+/// Uses stack buffers (half_size ≤ `MAX_STACK_RING_DIM / 2`,
+/// half_weight ≤ `MAX_STACK_RING_DIM / 2`).
+///
+/// # Safety contract
+///
+/// Caller must ensure the size bounds. The public API enforces this
+/// via a fallible `D <= MAX_STACK_RING_DIM` check.
 #[inline]
 fn sample_split_half_into(
     cursor: &mut XofCursor,
@@ -270,8 +307,8 @@ fn sample_split_half_into(
     out_positions: &mut [u32],
     out_coeffs: &mut [i16],
 ) {
-    debug_assert!(half_size <= 64);
-    debug_assert!(half_weight <= 64);
+    debug_assert!(half_size <= MAX_STACK_RING_DIM / 2);
+    debug_assert!(half_weight <= MAX_STACK_RING_DIM / 2);
     let mut perm = [0usize; 64];
     for (i, slot) in perm[..half_size].iter_mut().enumerate() {
         *slot = i;
@@ -291,6 +328,42 @@ fn sample_split_half_into(
         for (i, slot) in mag2_perm[..half_weight].iter_mut().enumerate() {
             *slot = i;
         }
+        for i in 0..num_mag2 {
+            let j = i + cursor.next_usize_mod(half_weight - i);
+            mag2_perm.swap(i, j);
+        }
+        for &idx in &mag2_perm[..num_mag2] {
+            out_coeffs[idx] *= 2;
+        }
+    }
+}
+
+/// Heap-backed variant of [`sample_split_half_into`] for ring dimensions
+/// where `half_size > 64` or `half_weight > 64`. Not used on the current
+/// hot path.
+#[allow(dead_code)]
+fn sample_split_half_into_general(
+    cursor: &mut XofCursor,
+    half_size: usize,
+    half_weight: usize,
+    max_mag2_per_half: usize,
+    parity: usize,
+    out_positions: &mut [u32],
+    out_coeffs: &mut [i16],
+) {
+    let mut perm: Vec<usize> = (0..half_size).collect();
+    for i in 0..half_weight {
+        let j = i + cursor.next_usize_mod(half_size - i);
+        perm.swap(i, j);
+    }
+    for (p, &perm_val) in out_positions.iter_mut().zip(perm.iter()) {
+        *p = (2 * perm_val + parity) as u32;
+    }
+    cursor.fill_signs(out_coeffs);
+
+    let num_mag2 = sample_split_shell_count(cursor, half_weight, max_mag2_per_half);
+    if num_mag2 > 0 {
+        let mut mag2_perm: Vec<usize> = (0..half_weight).collect();
         for i in 0..num_mag2 {
             let j = i + cursor.next_usize_mod(half_weight - i);
             mag2_perm.swap(i, j);
@@ -418,6 +491,11 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
+    if D > MAX_STACK_RING_DIM {
+        return Err(HachiError::InvalidInput(format!(
+            "ring dimension {D} exceeds sampling stack-buffer limit ({MAX_STACK_RING_DIM})"
+        )));
+    }
     cfg.validate::<D>()
         .map_err(|e| HachiError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
 
@@ -448,6 +526,11 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
+    if D > MAX_STACK_RING_DIM {
+        return Err(HachiError::InvalidInput(format!(
+            "ring dimension {D} exceeds sampling stack-buffer limit ({MAX_STACK_RING_DIM})"
+        )));
+    }
     cfg.validate::<D>()
         .map_err(|e| HachiError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
 
