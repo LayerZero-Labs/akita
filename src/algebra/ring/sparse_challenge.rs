@@ -325,7 +325,7 @@ impl SparseChallenge {
 
 /// Sample a dense ternary ring element with coefficients in `{-1, 0, 1}`.
 ///
-/// Distribution matches Labrador C's ternary nibble LUT (`0xA815`), yielding
+/// Distribution matches the ternary nibble LUT (`0xA815`), yielding
 /// probabilities `5/16, 6/16, 5/16` for `-1, 0, 1` respectively.
 pub fn sample_ternary<F: FieldCore + CanonicalField, R: RngCore, const D: usize>(
     rng: &mut R,
