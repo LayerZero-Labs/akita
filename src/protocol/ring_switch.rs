@@ -4,6 +4,7 @@
 //! sumcheck instances by expanding the ring elements into their coefficient
 //! vectors and setting up the evaluation tables.
 
+use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::{CyclotomicRing, SparseChallenge};
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
@@ -20,10 +21,11 @@ use crate::protocol::commitment::{
     HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, HachiScheduleInputs,
     RingCommitment,
 };
+use crate::protocol::hachi_poly_ops::RecursiveWitnessFlat;
 use crate::protocol::opening_point::RingOpeningPoint;
-use crate::protocol::proof::{DigitLut, FlatCommitmentHint, FlatRingVec, HachiCommitmentHint};
+use crate::protocol::proof::{DigitLut, FlatRingVec, HachiCommitmentHint, ProofRingVec};
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
-use crate::protocol::sumcheck::eq_poly::EqPolynomial;
+use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
 use crate::protocol::transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
@@ -36,13 +38,13 @@ use std::marker::PhantomData;
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
-pub struct RingSwitchOutput<F: FieldCore> {
+pub(crate) struct RingSwitchOutput<F: FieldCore> {
     /// The witness vector w as balanced digits in `[-b/2, b/2)`.
-    pub w: Vec<i8>,
-    /// D-erased commitment to w.
-    pub w_commitment: FlatRingVec<F>,
-    /// D-erased prover hint for the w-commitment.
-    pub w_hint: FlatCommitmentHint,
+    pub w: RecursiveWitnessFlat,
+    /// Runtime commitment to w (prover only).
+    pub w_commitment: Option<FlatRingVec<F>>,
+    /// Runtime-only prover hint cache for the w-commitment.
+    pub w_hint: Option<RecursiveCommitmentHintCache<F>>,
     /// Compact evaluation table of w, stored as y-major slices of the live x prefix.
     /// Populated by the prover; empty on the verifier side.
     pub w_evals_compact: Vec<i8>,
@@ -66,10 +68,31 @@ pub struct RingSwitchOutput<F: FieldCore> {
     pub alpha: F,
 }
 
+/// Verifier-side ring-switch output, carrying only the data needed to replay
+/// the fused stage-1/stage-2 checks.
+pub(crate) struct RingSwitchVerifyOutput<F: FieldCore> {
+    /// Evaluation table of M_alpha(x) (tau1-weighted).
+    pub m_evals_x: Vec<F>,
+    /// Evaluation table of alpha powers (y dimension).
+    pub alpha_evals_y: Vec<F>,
+    /// Number of upper variable bits.
+    pub num_u: usize,
+    /// Number of lower variable bits.
+    pub num_l: usize,
+    /// Challenge tau0 for F_0 sumcheck.
+    pub tau0: Vec<F>,
+    /// Challenge tau1 for F_alpha sumcheck.
+    pub tau1: Vec<F>,
+    /// Basis size b = 2^LOG_BASIS.
+    pub b: usize,
+    /// Ring-switch challenge alpha.
+    pub alpha: F,
+}
+
 /// Build the witness vector `w` from the quadratic equation state.
 ///
 /// This is the first half of the ring switch: it computes `r` and assembles
-/// `w` as a flat `Vec<i8>`. The resulting `w` is D-agnostic and can be
+/// `w` as a flat recursive witness. The resulting `w` is D-agnostic and can be
 /// committed at any ring dimension via [`commit_w`].
 ///
 /// # Errors
@@ -78,17 +101,15 @@ pub struct RingSwitchOutput<F: FieldCore> {
 #[tracing::instrument(skip_all, name = "ring_switch_build_w")]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn ring_switch_build_w<F, const D: usize, Cfg>(
+pub(crate) fn ring_switch_build_w<F, const D: usize, Cfg>(
     quad_eq: &mut QuadraticEquation<F, D, Cfg>,
     setup: &HachiExpandedSetup<F>,
-    ntt_a: &NttSlotCache<D>,
-    ntt_b: &NttSlotCache<D>,
-    ntt_d: &NttSlotCache<D>,
+    ntt_shared: &NttSlotCache<D>,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
-) -> Result<Vec<i8>, HachiError>
+) -> Result<RecursiveWitnessFlat, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + FieldSampling + crate::FromSmallInt,
     Cfg: CommitmentConfig,
 {
     {
@@ -129,9 +150,7 @@ where
         &z_pre.centered_coeffs,
         z_pre.centered_inf_norm,
         quad_eq.y(),
-        ntt_a,
-        ntt_b,
-        ntt_d,
+        ntt_shared,
     )?;
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
@@ -162,13 +181,14 @@ where
 #[tracing::instrument(skip_all, name = "ring_switch_finalize")]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn ring_switch_finalize<F, T, const D: usize, Cfg>(
+pub(crate) fn ring_switch_finalize<F, T, const D: usize, Cfg>(
     quad_eq: &QuadraticEquation<F, D, Cfg>,
     setup: &HachiExpandedSetup<F>,
     transcript: &mut T,
-    w: Vec<i8>,
+    w: RecursiveWitnessFlat,
     w_commitment: FlatRingVec<F>,
-    w_hint: FlatCommitmentHint,
+    w_commitment_proof: &ProofRingVec<F>,
+    w_hint: RecursiveCommitmentHintCache<F>,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
 ) -> Result<RingSwitchOutput<F>, HachiError>
@@ -177,7 +197,7 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
-    transcript.append_serde(ABSORB_SUMCHECK_W, &w_commitment);
+    transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment_proof);
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
 
@@ -210,7 +230,7 @@ where
                 &tau1,
             )
         },
-        || build_w_evals_compact(&w, D),
+        || build_w_evals_compact(w.as_i8_digits(), D),
     );
     #[cfg(not(feature = "parallel"))]
     let (m_evals_x_result, w_result) = {
@@ -224,7 +244,7 @@ where
             layout,
             &tau1,
         )?;
-        let w_compact = build_w_evals_compact(&w, D);
+        let w_compact = build_w_evals_compact(w.as_i8_digits(), D);
         (Ok(m_evals_x), w_compact)
     };
 
@@ -233,8 +253,8 @@ where
 
     Ok(RingSwitchOutput {
         w,
-        w_commitment,
-        w_hint,
+        w_commitment: Some(w_commitment),
+        w_hint: Some(w_hint),
         w_evals_compact,
         live_x_cols,
         m_evals_x,
@@ -257,73 +277,27 @@ where
 ///
 /// Returns an error if z_pre/w_hat is missing, commitment fails, or matrix expansion fails.
 #[tracing::instrument(skip_all, name = "ring_switch_prover")]
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-pub fn ring_switch_prover<F, T, const D: usize, Cfg>(
-    quad_eq: &mut QuadraticEquation<F, D, Cfg>,
-    setup: &HachiExpandedSetup<F>,
-    transcript: &mut T,
-    ntt_a: &NttSlotCache<D>,
-    ntt_b: &NttSlotCache<D>,
-    ntt_d: &NttSlotCache<D>,
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
-) -> Result<RingSwitchOutput<F>, HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling,
-    T: Transcript<F>,
-    Cfg: CommitmentConfig,
-{
-    let w = ring_switch_build_w::<F, D, Cfg>(
-        quad_eq,
-        setup,
-        ntt_a,
-        ntt_b,
-        ntt_d,
-        level_params,
-        layout,
-    )?;
-
-    let (w_commitment, w_hint) = commit_w::<F, D, Cfg>(&w, ntt_a, ntt_b, level_params)?;
-
-    let w_commitment_flat = FlatRingVec::from_commitment(&w_commitment);
-    let w_hint_flat = FlatCommitmentHint::from_typed(w_hint);
-
-    ring_switch_finalize::<F, T, D, Cfg>(
-        quad_eq,
-        setup,
-        transcript,
-        w,
-        w_commitment_flat,
-        w_hint_flat,
-        level_params,
-        layout,
-    )
-}
-
 /// Replay the verifier side of ring switching to reconstruct evaluation tables.
-///
-/// Takes the w-commitment as a [`FlatRingVec`] so the verifier does not need
-/// to know D_COMMIT (the commitment's ring dimension).
 ///
 /// # Errors
 ///
 /// Returns an error if matrix expansion fails.
+#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 #[inline(never)]
-pub fn ring_switch_verifier<F, T, const D: usize, Cfg>(
-    quad_eq: &QuadraticEquation<F, D, Cfg>,
+pub(crate) fn ring_switch_verifier<F, T, const D: usize>(
+    opening_point: &RingOpeningPoint<F>,
+    challenges: &[SparseChallenge],
     setup: &HachiExpandedSetup<F>,
     w_len: usize,
-    w_commitment: &FlatRingVec<F>,
+    w_commitment: &ProofRingVec<F>,
     transcript: &mut T,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
-) -> Result<RingSwitchOutput<F>, HachiError>
+) -> Result<RingSwitchVerifyOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
-    Cfg: CommitmentConfig,
 {
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
 
@@ -339,11 +313,10 @@ where
     let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
     let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
-
     let m_evals_x = compute_m_evals_x::<F, D>(
         setup,
-        quad_eq.opening_point(),
-        &quad_eq.challenges,
+        opening_point,
+        challenges,
         alpha,
         &alpha_evals_y,
         level_params,
@@ -351,12 +324,7 @@ where
         &tau1,
     )?;
 
-    Ok(RingSwitchOutput {
-        w: Vec::new(),
-        w_commitment: w_commitment.clone(),
-        w_hint: FlatCommitmentHint::empty(),
-        w_evals_compact: Vec::new(),
-        live_x_cols: w_len / D,
+    Ok(RingSwitchVerifyOutput {
         m_evals_x,
         alpha_evals_y,
         num_u,
@@ -541,17 +509,16 @@ pub(crate) fn w_commitment_layout<F: CanonicalField, const D: usize, Cfg: Commit
 /// Returns an error if the commitment layout derivation or NTT mat-vec fails.
 #[tracing::instrument(skip_all, name = "commit_w")]
 #[inline(never)]
-pub fn commit_w<F, const D: usize, Cfg>(
-    w: &[i8],
-    ntt_a: &NttSlotCache<D>,
-    ntt_b: &NttSlotCache<D>,
+pub(crate) fn commit_w<F, const D: usize, Cfg>(
+    w: &RecursiveWitnessFlat,
+    ntt_shared: &NttSlotCache<D>,
     level_params: &HachiLevelParams,
 ) -> Result<(RingCommitment<F, D>, HachiCommitmentHint<F, D>), HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     Cfg: CommitmentConfig,
 {
-    let (w_digits, remainder) = w.as_chunks::<D>();
+    let (w_digits, remainder) = w.as_i8_digits().as_chunks::<D>();
     if !remainder.is_empty() {
         return Err(HachiError::InvalidSize {
             expected: D,
@@ -568,7 +535,7 @@ where
     let log_basis = w_layout.log_basis;
     let coeff_len = w_digits.len();
 
-    let mut t_all = if depth_commit == 1 {
+    let t_all = if depth_commit == 1 {
         // `build_w_coeffs` already emits balanced base-`2^log_basis` digits, so
         // the recursive w-commitment can skip the field conversion and feed those
         // planes directly into the tiled NTT mat-vec.
@@ -582,7 +549,7 @@ where
                 }
             })
             .collect();
-        mat_vec_mul_ntt_digits_i8(ntt_a, &block_slices)
+        mat_vec_mul_ntt_digits_i8(ntt_shared, level_params.n_a, &block_slices)
     } else {
         let lut = DigitLut::<F>::new(log_basis);
         let ring_elems: Vec<CyclotomicRing<F, D>> = w_digits
@@ -602,18 +569,21 @@ where
                 }
             })
             .collect();
-        mat_vec_mul_ntt_i8(ntt_a, &block_slices, depth_commit, log_basis)
+        mat_vec_mul_ntt_i8(
+            ntt_shared,
+            level_params.n_a,
+            &block_slices,
+            depth_commit,
+            log_basis,
+        )
     };
-    for t_i in &mut t_all {
-        t_i.truncate(level_params.n_a);
-    }
     let t_hat_per_block: Vec<Vec<[i8; D]>> = cfg_iter!(t_all)
         .map(|t_i| decompose_rows_i8(t_i, depth_open, log_basis))
         .collect();
 
     let t_hat_flat = flatten_i8_blocks(&t_hat_per_block);
-    let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(ntt_b, &t_hat_flat);
-    u.truncate(level_params.n_b);
+    let u: Vec<CyclotomicRing<F, D>> =
+        mat_vec_mul_ntt_single_i8(ntt_shared, level_params.n_b, &t_hat_flat);
     let hint = HachiCommitmentHint::with_t(t_hat_per_block, t_all);
     Ok((RingCommitment { u }, hint))
 }
@@ -684,67 +654,10 @@ pub(crate) fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
     recursive_r_decomp_levels_for_bound(field_bits, modulus / 2, log_basis)
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
-pub(crate) fn expand_m_a<F: CanonicalField, const D: usize>(
-    m_a: &[Vec<F>],
-    alpha: F,
-    log_basis: u32,
-) -> Result<Vec<F>, HachiError> {
-    if m_a.is_empty() {
-        return Ok(Vec::new());
-    }
-    let rows = m_a.len();
-    let cols = m_a[0].len();
-    if cols == 0 {
-        return Ok(vec![F::zero(); rows]);
-    }
-    for row in m_a.iter() {
-        if row.len() != cols {
-            return Err(HachiError::InvalidSize {
-                expected: cols,
-                actual: row.len(),
-            });
-        }
-    }
-
-    let levels = r_decomp_levels::<F>(log_basis);
-    let total_cols = cols
-        .checked_add(
-            rows.checked_mul(levels)
-                .ok_or_else(|| HachiError::InvalidSetup("expanded M width overflow".to_string()))?,
-        )
-        .ok_or_else(|| HachiError::InvalidSetup("expanded M width overflow".to_string()))?;
-
-    let base = F::from_canonical_u128_reduced(1u128 << log_basis);
-    let mut gadget_row = Vec::with_capacity(levels);
-    let mut power = F::one();
-    for _ in 0..levels {
-        gadget_row.push(power);
-        power = power * base;
-    }
-
-    let mut alpha_pow = F::one();
-    for _ in 0..D {
-        alpha_pow = alpha_pow * alpha;
-    }
-    let denom = alpha_pow + F::one();
-
-    let mut out = vec![F::zero(); rows * total_cols];
-    for (i, m_a_row) in m_a.iter().enumerate() {
-        let row_start = i * total_cols;
-        out[row_start..row_start + cols].copy_from_slice(m_a_row);
-        let r_start = row_start + cols + i * levels;
-        for (j, g) in gadget_row.iter().enumerate() {
-            out[r_start + j] = -denom * *g;
-        }
-    }
-    Ok(out)
-}
-
 /// # Errors
 ///
 /// Returns an error if `w.len()` is not a multiple of `d`.
+#[cfg(test)]
 pub(crate) fn build_w_evals<F: FieldCore>(
     w: &[F],
     d: usize,
@@ -818,6 +731,7 @@ pub(crate) fn m_row_count(level_params: &HachiLevelParams) -> usize {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "compute_m_evals_x")]
 pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     setup: &HachiExpandedSetup<F>,
     opening_point: &RingOpeningPoint<F>,
@@ -873,9 +787,7 @@ pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
         .map(|challenge| eval_sparse_challenge_at_pows::<F, D>(challenge, alpha_pows))
         .collect::<Result<_, _>>()?;
 
-    let d_view = setup.D_mat.view::<D>();
-    let b_view = setup.B.view::<D>();
-    let a_view = setup.A.view::<D>();
+    let shared_view = setup.shared_matrix.view::<D>();
 
     let row3_weight = eq_tau1[level_params.n_d + level_params.n_b];
     let row4_weight = eq_tau1[level_params.n_d + level_params.n_b + 1];
@@ -890,7 +802,7 @@ pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
                 * g1_open[digit_idx];
             for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(level_params.n_d) {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&d_view.row(row_idx)[x], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&shared_view.row(row_idx)[x], alpha_pows);
                 }
             }
             acc
@@ -910,7 +822,7 @@ pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
                 .enumerate()
             {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[x], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&shared_view.row(row_idx)[x], alpha_pows);
                 }
             }
             acc
@@ -925,7 +837,7 @@ pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
             let mut acc = row4_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
             for (a_idx, eq_i) in a_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[k], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&shared_view.row(a_idx)[k], alpha_pows);
                 }
             }
             acc
@@ -1010,7 +922,7 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     z_pre_centered: &[[i32; D]],
     r: &[CyclotomicRing<F, D>],
     layout: HachiCommitmentLayout,
-) -> Vec<i8> {
+) -> RecursiveWitnessFlat {
     let log_basis = layout.log_basis;
     let num_digits_fold = layout.num_digits_fold;
     let levels = r_decomp_levels::<F>(log_basis);
@@ -1060,13 +972,13 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
             out.extend_from_slice(plane);
         }
     }
-    out
+    RecursiveWitnessFlat::from_i8_digits(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::compute_r_via_poly_division;
-    use crate::algebra::{CyclotomicRing, Prime128M8M4M1M0};
+    use crate::algebra::{CyclotomicRing, Prime128Offset5823};
     use std::array::from_fn;
 
     use crate::{FieldCore, FromSmallInt};
@@ -1119,7 +1031,7 @@ mod tests {
 
     #[test]
     fn compute_r_matches_schoolbook_reference() {
-        type F = Prime128M8M4M1M0;
+        type F = Prime128Offset5823;
         const D: usize = 64;
 
         let m: Vec<Vec<CyclotomicRing<F, D>>> = (0..3)

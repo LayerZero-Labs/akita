@@ -1,7 +1,8 @@
 //! `2^k - offset` pseudo-Mersenne registry and field aliases.
 //!
-//! This module models the specific flavor where each modulus is the smallest
-//! prime below `2^k` with `q % 8 == 5`, written as `q = 2^k - offset`.
+//! For `k < 128`, each modulus is the smallest prime below `2^k` with
+//! `q % 8 == 5`.  The `k = 128` entry uses `q = 2^128 - 5823` instead
+//! (chosen for 64-ring / 32-split compatibility; `q ≡ 1 (mod 8)`).
 
 use super::{Fp128, Fp32, Fp64};
 
@@ -12,7 +13,7 @@ pub const POW2_OFFSET_TABLE: [i16; 256] = [
     115, 59, 123, 27, 139, 395, 315, 131, 67, 27, 195, 27, 99, 107, 259, 171, 259, 59, 115, 203,
     19, 83, 19, 35, 411, 107, 475, 35, 427, 123, 43, 11, 67, 1307, 51, 315, 139, 35, 19, 35, 67,
     299, 99, 75, 315, 83, 51, 3, 211, 147, 595, 51, 115, 99, 99, 483, 339, 395, 139, 1187, 171, 59,
-    91, 195, 835, 75, 211, 11, 67, 3, 451, 563, 867, 395, 531, 3, 67, 59, 579, 203, 507, 275, 315,
+    91, 195, 835, 75, 211, 11, 67, 3, 451, 563, 867, 395, 531, 3, 67, 59, 579, 203, 507, 5823, 315,
     27, 315, 347, 99, 603, 795, 243, 339, 203, 187, 27, 171, 1491, 355, 83, 355, 1371, 387, 347,
     99, 3, 195, 539, 171, 243, 499, 195, 19, 155, 91, 75, 1011, 627, 867, 155, 115, 1811, 771,
     1467, 643, 195, 19, 155, 531, 3, 267, 563, 339, 563, 507, 107, 283, 267, 147, 59, 339, 371,
@@ -92,7 +93,7 @@ pub const POW2_OFFSET_56: u16 = 27;
 /// `offset` for `k = 64`.
 pub const POW2_OFFSET_64: u16 = 59;
 /// `offset` for `k = 128`.
-pub const POW2_OFFSET_128: u16 = 275;
+pub const POW2_OFFSET_128: u16 = 5823;
 
 /// `2^24 - 3`.
 pub const POW2_OFFSET_MODULUS_24: u32 = ((1u128 << 24) - (POW2_OFFSET_24 as u128)) as u32;
@@ -110,7 +111,7 @@ pub const POW2_OFFSET_MODULUS_48: u64 = ((1u128 << 48) - (POW2_OFFSET_48 as u128
 pub const POW2_OFFSET_MODULUS_56: u64 = ((1u128 << 56) - (POW2_OFFSET_56 as u128)) as u64;
 /// `2^64 - 59`.
 pub const POW2_OFFSET_MODULUS_64: u64 = u64::MAX - ((POW2_OFFSET_64 as u64) - 1);
-/// `2^128 - 275`.
+/// `2^128 - 5823`.
 pub const POW2_OFFSET_MODULUS_128: u128 = u128::MAX - (POW2_OFFSET_128 as u128 - 1);
 
 /// Alias for `2^24 - offset`.
@@ -134,7 +135,8 @@ pub type Pow2Offset128Field = Fp128<POW2_OFFSET_MODULUS_128>;
 
 /// `2^k - offset` profiles currently enabled in-code.
 ///
-/// Each listed modulus satisfies `q % 8 == 5`.
+/// For `k < 128` each modulus satisfies `q % 8 == 5`.
+/// The 128-bit entry uses `q = 2^128 - 5823` (`q ≡ 1 mod 8`).
 pub const POW2_OFFSET_PRIMES: [Pow2OffsetPrimeSpec; 7] = [
     Pow2OffsetPrimeSpec {
         bits: 24,

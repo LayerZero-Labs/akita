@@ -255,7 +255,7 @@ mod tests {
     use super::{HasPacking, PackedField, PackedValue};
     use crate::algebra::fields::{
         Pow2Offset24Field, Pow2Offset31Field, Pow2Offset32Field, Pow2Offset40Field,
-        Pow2Offset64Field, Prime128M13M4P0,
+        Pow2Offset64Field, Prime128Offset5823,
     };
     use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
     use rand::{rngs::StdRng, RngCore, SeedableRng};
@@ -337,7 +337,7 @@ mod tests {
 
     #[test]
     fn packed_fp128_add_sub_mul_match_scalar() {
-        type F = Prime128M13M4P0;
+        type F = Prime128Offset5823;
         type PF = <F as HasPacking>::Packing;
 
         let mut rng = StdRng::seed_from_u64(0x55aa_4422_1177_0033);
@@ -399,7 +399,7 @@ mod tests {
 
     #[test]
     fn fp128_broadcast_and_extract_roundtrip() {
-        type F = Prime128M13M4P0;
+        type F = Prime128Offset5823;
         type PF = <F as HasPacking>::Packing;
         check_broadcast_roundtrip::<F, PF>(F::from_u64(42));
     }

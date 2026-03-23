@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, Once};
 use std::time::Instant;
 
-type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
+type F = Fp128<0xffffffffffffffffffffffffffffe941>;
 const ONEHOT_K: usize = 256;
 const FULL_TEST_NV: usize = 14;
 const ONEHOT_TEST_NV: usize = 15;
@@ -579,9 +579,9 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
             max_d_width = max_d_width.max(recursive_layout.d_matrix_width);
         }
 
-        assert!(setup.expanded.A.first_row_len::<D>() >= max_inner);
-        assert!(setup.expanded.B.first_row_len::<D>() >= max_outer);
-        assert!(setup.expanded.D_mat.first_row_len::<D>() >= max_d_width);
+        assert!(setup.expanded.shared_matrix.first_row_len::<D>() >= max_inner);
+        assert!(setup.expanded.shared_matrix.first_row_len::<D>() >= max_outer);
+        assert!(setup.expanded.shared_matrix.first_row_len::<D>() >= max_d_width);
     });
 }
 

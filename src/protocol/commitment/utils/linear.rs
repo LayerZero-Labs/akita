@@ -1,8 +1,10 @@
 //! Linear algebra helpers for ring commitment.
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", feature = "parallel"))]
 use crate::algebra::ntt::neon;
-use crate::algebra::ntt::{MontCoeff, PrimeWidth};
+#[cfg(feature = "parallel")]
+use crate::algebra::ntt::MontCoeff;
+use crate::algebra::ntt::PrimeWidth;
 use crate::algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
 };
@@ -18,6 +20,21 @@ use super::crt_ntt::NttSlotCache;
 use super::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
 #[cfg(test)]
 use crate::error::HachiError;
+
+#[inline(always)]
+pub(crate) fn try_centered_i8<F: CanonicalField>(coeff: F, q: u128, half_q: u128) -> Option<i8> {
+    let canonical = coeff.to_canonical_u128();
+    let centered = if canonical > half_q {
+        -((q - canonical) as i128)
+    } else {
+        canonical as i128
+    };
+    if (i8::MIN as i128..=i8::MAX as i128).contains(&centered) {
+        Some(centered as i8)
+    } else {
+        None
+    }
+}
 
 #[cfg(test)]
 pub(crate) fn mat_vec_mul_unchecked<F: FieldCore + CanonicalField, const D: usize>(
@@ -292,11 +309,12 @@ pub fn unreduced_quotient_rows_ntt_cached_centered_i32<
 }
 
 macro_rules! dispatch_slot {
-    ($slot:expr, $func:ident $(, $arg:expr)*) => {{
+    ($slot:expr, $num_rows:expr, $func:ident $(, $arg:expr)*) => {{
+        let n = $num_rows;
         match $slot {
-            NttSlotCache::Q32 { neg, params: p, .. } => $func(neg, $($arg,)* p),
-            NttSlotCache::Q64 { neg, params: p, .. } => $func(neg, $($arg,)* p),
-            NttSlotCache::Q128 { neg, params: p, .. } => $func(neg, $($arg,)* p),
+            NttSlotCache::Q32 { neg, params: p, .. } => $func(&neg[..n], $($arg,)* p),
+            NttSlotCache::Q64 { neg, params: p, .. } => $func(&neg[..n], $($arg,)* p),
+            NttSlotCache::Q128 { neg, params: p, .. } => $func(&neg[..n], $($arg,)* p),
         }
     }};
 }
@@ -324,19 +342,6 @@ pub fn decompose_block<F: FieldCore + CanonicalField, const D: usize>(
             &mut out[i * num_digits..(i + 1) * num_digits],
             log_basis,
         );
-    }
-    out
-}
-
-/// Decompose each ring element in `rows` into `num_digits` gadget components.
-pub fn decompose_rows<F: FieldCore + CanonicalField, const D: usize>(
-    rows: &[CyclotomicRing<F, D>],
-    num_digits: usize,
-    log_basis: u32,
-) -> Vec<CyclotomicRing<F, D>> {
-    let mut out = vec![CyclotomicRing::<F, D>::zero(); rows.len() * num_digits];
-    for (i, row) in rows.iter().enumerate() {
-        row.balanced_decompose_pow2_into(&mut out[i * num_digits..(i + 1) * num_digits], log_basis);
     }
     out
 }
@@ -388,7 +393,7 @@ pub fn decompose_block_i8<F: FieldCore + CanonicalField, const D: usize>(
     out
 }
 
-/// Like [`decompose_rows`] but outputs `[i8; D]` digit planes instead of ring elements.
+/// Decompose each ring element in `rows` into `[i8; D]` digit planes.
 pub fn decompose_rows_i8<F: FieldCore + CanonicalField, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
     num_digits: usize,
@@ -419,8 +424,8 @@ const TARGET_L2_CACHE_BYTES: usize = 1024 * 1024;
 const TARGET_L2_CACHE_BYTES: usize = 1024 * 1024;
 const CENTERED_LUT_MAX_ABS: u32 = (1 << 16) - 1;
 
+#[cfg(feature = "parallel")]
 #[inline]
-#[allow(dead_code)]
 fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
     acc: &mut CyclotomicCrtNtt<W, K, D>,
     other: &CyclotomicCrtNtt<W, K, D>,
@@ -474,12 +479,14 @@ fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8")]
 pub fn mat_vec_mul_ntt_i8<F: FieldCore + CanonicalField, const D: usize>(
     slot: &NttSlotCache<D>,
+    num_rows: usize,
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     dispatch_slot!(
         slot,
+        num_rows,
         mat_vec_mul_i8_with_params,
         blocks,
         num_digits,
@@ -496,9 +503,10 @@ pub fn mat_vec_mul_ntt_i8<F: FieldCore + CanonicalField, const D: usize>(
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_digits_i8")]
 pub fn mat_vec_mul_ntt_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
     slot: &NttSlotCache<D>,
+    num_rows: usize,
     blocks: &[&[[i8; D]]],
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    dispatch_slot!(slot, mat_vec_mul_digits_i8_with_params, blocks)
+    dispatch_slot!(slot, num_rows, mat_vec_mul_digits_i8_with_params, blocks)
 }
 
 fn mat_vec_mul_digits_i8_with_params<
@@ -516,7 +524,9 @@ fn mat_vec_mul_digits_i8_with_params<
         return vec![];
     }
     let n_a = ntt_mat.len();
-    let inner_width = ntt_mat.first().map_or(0, |row| row.len());
+    let mat_width = ntt_mat.first().map_or(0, |row| row.len());
+    let max_data_width = blocks.iter().map(|b| b.len()).max().unwrap_or(0);
+    let inner_width = mat_width.min(max_data_width);
     if inner_width == 0 || n_a == 0 {
         return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
     }
@@ -636,7 +646,13 @@ fn mat_vec_mul_i8_with_params<
         return vec![];
     }
     let n_a = ntt_mat.len();
-    let inner_width = ntt_mat.first().map_or(0, |row| row.len());
+    let mat_width = ntt_mat.first().map_or(0, |row| row.len());
+    let max_data_width = blocks
+        .iter()
+        .map(|b| b.len() * num_digits)
+        .max()
+        .unwrap_or(0);
+    let inner_width = mat_width.min(max_data_width);
     if inner_width == 0 || n_a == 0 {
         return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
     }
@@ -717,33 +733,18 @@ fn mat_vec_mul_i8_with_params<
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_single_i8")]
 pub fn mat_vec_mul_ntt_single_i8<F: FieldCore + CanonicalField, const D: usize>(
     slot: &NttSlotCache<D>,
+    num_rows: usize,
     vec: &[[i8; D]],
 ) -> Vec<CyclotomicRing<F, D>> {
     match slot {
-        NttSlotCache::Q32 { neg, params: p, .. } => mat_vec_mul_single_i8_with_params(neg, vec, p),
-        NttSlotCache::Q64 { neg, params: p, .. } => mat_vec_mul_single_i8_with_params(neg, vec, p),
-        NttSlotCache::Q128 { neg, params: p, .. } => mat_vec_mul_single_i8_with_params(neg, vec, p),
-    }
-}
-
-/// Block-preserving variant of [`mat_vec_mul_ntt_single_i8`].
-///
-/// This avoids flattening `Vec<Vec<[i8; D]>>` into one large side buffer when
-/// the caller already owns digit planes grouped by block.
-#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_single_i8_blocks")]
-pub fn mat_vec_mul_ntt_single_i8_blocks<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &NttSlotCache<D>,
-    blocks: &[Vec<[i8; D]>],
-) -> Vec<CyclotomicRing<F, D>> {
-    match slot {
         NttSlotCache::Q32 { neg, params: p, .. } => {
-            mat_vec_mul_single_i8_blocks_with_params(neg, blocks, p)
+            mat_vec_mul_single_i8_with_params(&neg[..num_rows], vec, p)
         }
         NttSlotCache::Q64 { neg, params: p, .. } => {
-            mat_vec_mul_single_i8_blocks_with_params(neg, blocks, p)
+            mat_vec_mul_single_i8_with_params(&neg[..num_rows], vec, p)
         }
         NttSlotCache::Q128 { neg, params: p, .. } => {
-            mat_vec_mul_single_i8_blocks_with_params(neg, blocks, p)
+            mat_vec_mul_single_i8_with_params(&neg[..num_rows], vec, p)
         }
     }
 }
@@ -752,36 +753,18 @@ pub fn mat_vec_mul_ntt_single_i8_blocks<F: FieldCore + CanonicalField, const D: 
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_single_i8_cyclic")]
 pub fn mat_vec_mul_ntt_single_i8_cyclic<F: FieldCore + CanonicalField, const D: usize>(
     slot: &NttSlotCache<D>,
+    num_rows: usize,
     vec: &[[i8; D]],
 ) -> Vec<CyclotomicRing<F, D>> {
     match slot {
         NttSlotCache::Q32 { cyc, params: p, .. } => {
-            mat_vec_mul_single_i8_cyclic_with_params(cyc, vec, p)
+            mat_vec_mul_single_i8_cyclic_with_params(&cyc[..num_rows], vec, p)
         }
         NttSlotCache::Q64 { cyc, params: p, .. } => {
-            mat_vec_mul_single_i8_cyclic_with_params(cyc, vec, p)
+            mat_vec_mul_single_i8_cyclic_with_params(&cyc[..num_rows], vec, p)
         }
         NttSlotCache::Q128 { cyc, params: p, .. } => {
-            mat_vec_mul_single_i8_cyclic_with_params(cyc, vec, p)
-        }
-    }
-}
-
-/// Block-preserving cyclic variant of [`mat_vec_mul_ntt_single_i8_cyclic`].
-#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_single_i8_cyclic_blocks")]
-pub fn mat_vec_mul_ntt_single_i8_cyclic_blocks<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &NttSlotCache<D>,
-    blocks: &[Vec<[i8; D]>],
-) -> Vec<CyclotomicRing<F, D>> {
-    match slot {
-        NttSlotCache::Q32 { cyc, params: p, .. } => {
-            mat_vec_mul_single_i8_cyclic_blocks_with_params(cyc, blocks, p)
-        }
-        NttSlotCache::Q64 { cyc, params: p, .. } => {
-            mat_vec_mul_single_i8_cyclic_blocks_with_params(cyc, blocks, p)
-        }
-        NttSlotCache::Q128 { cyc, params: p, .. } => {
-            mat_vec_mul_single_i8_cyclic_blocks_with_params(cyc, blocks, p)
+            mat_vec_mul_single_i8_cyclic_with_params(&cyc[..num_rows], vec, p)
         }
     }
 }
@@ -843,6 +826,7 @@ fn mat_vec_mul_single_i8_with_params<
         .collect()
 }
 
+#[cfg(test)]
 fn block_plane_len<const D: usize>(blocks: &[Vec<[i8; D]>], inner_width: usize) -> usize {
     blocks
         .iter()
@@ -850,6 +834,7 @@ fn block_plane_len<const D: usize>(blocks: &[Vec<[i8; D]>], inner_width: usize) 
         .min(inner_width)
 }
 
+#[cfg(test)]
 fn mat_vec_mul_single_i8_blocks_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -974,6 +959,7 @@ fn mat_vec_mul_single_i8_cyclic_with_params<
         .collect()
 }
 
+#[cfg(test)]
 fn mat_vec_mul_single_i8_cyclic_blocks_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -1038,123 +1024,6 @@ fn mat_vec_mul_single_i8_cyclic_blocks_with_params<
     final_accs
         .into_iter()
         .map(|acc| acc.to_ring_cyclic(params))
-        .collect()
-}
-
-/// Like [`unreduced_quotient_rows_ntt_cached`] but accepts i8 digit planes
-/// instead of ring elements, using direct i8 -> CRT+NTT conversion.
-/// Column-tiled with zero-skip for all-zero digit planes.
-#[tracing::instrument(skip_all, name = "unreduced_quotient_rows_ntt_cached_i8")]
-pub fn unreduced_quotient_rows_ntt_cached_i8<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &NttSlotCache<D>,
-    vec: &[[i8; D]],
-) -> Vec<CyclotomicRing<F, D>> {
-    match slot {
-        NttSlotCache::Q32 {
-            neg,
-            cyc,
-            params: p,
-        } => quotient_single_i8_with_params(neg, cyc, vec, p),
-        NttSlotCache::Q64 {
-            neg,
-            cyc,
-            params: p,
-        } => quotient_single_i8_with_params(neg, cyc, vec, p),
-        NttSlotCache::Q128 {
-            neg,
-            cyc,
-            params: p,
-        } => quotient_single_i8_with_params(neg, cyc, vec, p),
-    }
-}
-
-fn quotient_single_i8_with_params<
-    F: FieldCore + CanonicalField,
-    W: PrimeWidth,
-    const K: usize,
-    const D: usize,
->(
-    ntt_neg: &[Vec<CyclotomicCrtNtt<W, K, D>>],
-    ntt_cyc: &[Vec<CyclotomicCrtNtt<W, K, D>>],
-    vec: &[[i8; D]],
-    params: &CrtNttParamSet<W, K, D>,
-) -> Vec<CyclotomicRing<F, D>> {
-    let n_a = ntt_neg.len();
-    let inner_width = ntt_neg.first().map_or(0, |row| row.len());
-    if inner_width == 0 || n_a == 0 {
-        return vec![CyclotomicRing::<F, D>::zero(); n_a];
-    }
-
-    let lut = DigitMontLut::new(params);
-    let vec_len = vec.len().min(inner_width);
-    let tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
-    let num_tiles = vec_len.div_ceil(tw);
-
-    let zero = CyclotomicCrtNtt::<W, K, D>::zero();
-
-    let (final_neg, final_cyc): (
-        Vec<CyclotomicCrtNtt<W, K, D>>,
-        Vec<CyclotomicCrtNtt<W, K, D>>,
-    ) = cfg_fold_reduce!(
-        0..num_tiles,
-        || (vec![zero.clone(); n_a], vec![zero.clone(); n_a]),
-        |mut accs: (
-            Vec<CyclotomicCrtNtt<W, K, D>>,
-            Vec<CyclotomicCrtNtt<W, K, D>>
-        ),
-         tile_idx| {
-            let tile_start = tile_idx * tw;
-            let tile_end = (tile_start + tw).min(vec_len);
-            for (j, digit) in vec[tile_start..tile_end].iter().enumerate() {
-                if is_zero_plane(digit) {
-                    continue;
-                }
-                let ntt_d_neg = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
-                let ntt_d_cyc = CyclotomicCrtNtt::from_i8_cyclic_with_lut(digit, params, &lut);
-                let col = tile_start + j;
-                for (row, (acc_neg, acc_cyc)) in
-                    accs.0.iter_mut().zip(accs.1.iter_mut()).enumerate()
-                {
-                    accumulate_pointwise_product_into(
-                        acc_neg,
-                        &ntt_neg[row][col],
-                        &ntt_d_neg,
-                        params,
-                    );
-                    accumulate_pointwise_product_into(
-                        acc_cyc,
-                        &ntt_cyc[row][col],
-                        &ntt_d_cyc,
-                        params,
-                    );
-                }
-            }
-            accs
-        },
-        |mut a: (
-            Vec<CyclotomicCrtNtt<W, K, D>>,
-            Vec<CyclotomicCrtNtt<W, K, D>>
-        ),
-         b| {
-            for row in 0..n_a {
-                add_ntt_into(&mut a.0[row], &b.0[row], params);
-                add_ntt_into(&mut a.1[row], &b.1[row], params);
-            }
-            a
-        }
-    );
-
-    final_neg
-        .into_iter()
-        .zip(final_cyc)
-        .map(|(neg_acc, cyc_acc)| {
-            let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring_with_params(params);
-            let cyc_ring: CyclotomicRing<F, D> = cyc_acc.to_ring_cyclic(params);
-            let neg_c = neg_ring.coefficients();
-            let cyc_c = cyc_ring.coefficients();
-            let q: [F; D] = from_fn(|k| (cyc_c[k] - neg_c[k]) * F::TWO_INV);
-            CyclotomicRing::from_coefficients(q)
-        })
         .collect()
 }
 
@@ -1250,6 +1119,238 @@ fn quotient_single_centered_i32_with_params<
             CyclotomicRing::from_coefficients(q)
         })
         .collect()
+}
+
+/// Minimum number of Rayon work-units for the fused kernel.
+///
+/// The fused kernel replaces three separate `cfg_fold_reduce` calls
+/// (each creating ~N tiles) with a single call. To preserve the ~3N total
+/// work-units that rayon::join previously provided, we enforce at least
+/// this many tiles so Rayon's work-stealing keeps all cores busy.
+const MIN_FUSED_TILES: usize = 30;
+
+/// Fused column-tiled kernel for the three split-eq mat-vec products.
+///
+/// Replaces three separate NTT-cached mat-vec calls (D-cyclic, B-cyclic,
+/// A-quotient) with a single pass over the shared NTT cache. Within each
+/// column tile, cache entries are loaded once and reused across all three
+/// products with their exact row bounds, eliminating redundant DRAM reads.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn fused_split_eq_quotients_with_params<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    ntt_neg: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_cyc: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    n_d: usize,
+    n_b: usize,
+    n_a: usize,
+    w_hat: &[[i8; D]],
+    t_hat: &[[i8; D]],
+    z_pre: &[[i32; D]],
+    z_pre_max_abs: u32,
+    params: &CrtNttParamSet<W, K, D>,
+) -> (
+    Vec<CyclotomicRing<F, D>>,
+    Vec<CyclotomicRing<F, D>>,
+    Vec<CyclotomicRing<F, D>>,
+) {
+    let mat_width = ntt_cyc.first().map_or(0, |row| row.len());
+    let w_len = w_hat.len().min(mat_width);
+    let t_len = t_hat.len().min(mat_width);
+    let z_len = z_pre.len().min(mat_width);
+    let max_col = w_len.max(t_len).max(z_len);
+
+    if max_col == 0 {
+        return (
+            vec![CyclotomicRing::<F, D>::zero(); n_d],
+            vec![CyclotomicRing::<F, D>::zero(); n_b],
+            vec![CyclotomicRing::<F, D>::zero(); n_a],
+        );
+    }
+
+    let lut = DigitMontLut::new(params);
+    let centered_lut = (z_pre_max_abs <= CENTERED_LUT_MAX_ABS)
+        .then(|| CenteredMontLut::<W, K>::new(params, z_pre_max_abs as i32));
+
+    let base_tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
+    let tw = base_tw.min(max_col.div_ceil(MIN_FUSED_TILES).max(1));
+    let num_tiles = max_col.div_ceil(tw);
+    let zero = CyclotomicCrtNtt::<W, K, D>::zero();
+
+    let (d_accs, b_accs, a_neg_accs, a_cyc_accs) = cfg_fold_reduce!(
+        0..num_tiles,
+        || (
+            vec![zero.clone(); n_d],
+            vec![zero.clone(); n_b],
+            vec![zero.clone(); n_a],
+            vec![zero.clone(); n_a],
+        ),
+        |mut accs: (
+            Vec<CyclotomicCrtNtt<W, K, D>>,
+            Vec<CyclotomicCrtNtt<W, K, D>>,
+            Vec<CyclotomicCrtNtt<W, K, D>>,
+            Vec<CyclotomicCrtNtt<W, K, D>>,
+        ),
+         tile_idx| {
+            let tile_start = tile_idx * tw;
+            let tile_end = (tile_start + tw).min(max_col);
+
+            for j in tile_start..tile_end {
+                if j < w_len && !is_zero_plane(&w_hat[j]) {
+                    let ntt_w = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&w_hat[j], params, &lut);
+                    for (acc_d, cyc_row) in accs.0.iter_mut().zip(ntt_cyc.iter()) {
+                        accumulate_pointwise_product_into(acc_d, &cyc_row[j], &ntt_w, params);
+                    }
+                }
+
+                if j < t_len && !is_zero_plane(&t_hat[j]) {
+                    let ntt_t = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&t_hat[j], params, &lut);
+                    for (acc_b, cyc_row) in accs.1.iter_mut().zip(ntt_cyc.iter()) {
+                        accumulate_pointwise_product_into(acc_b, &cyc_row[j], &ntt_t, params);
+                    }
+                }
+
+                if j < z_len && !is_zero_centered_row(&z_pre[j]) {
+                    let (ntt_z_neg, ntt_z_cyc) = if let Some(ref clut) = centered_lut {
+                        CyclotomicCrtNtt::from_centered_i32_pair_with_lut(&z_pre[j], params, clut)
+                    } else {
+                        CyclotomicCrtNtt::from_centered_i32_pair_with_params(&z_pre[j], params)
+                    };
+                    for ((acc_neg, acc_cyc), (neg_row, cyc_row)) in accs
+                        .2
+                        .iter_mut()
+                        .zip(accs.3.iter_mut())
+                        .zip(ntt_neg.iter().zip(ntt_cyc.iter()))
+                    {
+                        accumulate_pointwise_product_into(acc_neg, &neg_row[j], &ntt_z_neg, params);
+                        accumulate_pointwise_product_into(acc_cyc, &cyc_row[j], &ntt_z_cyc, params);
+                    }
+                }
+            }
+            accs
+        },
+        |mut a: (
+            Vec<CyclotomicCrtNtt<W, K, D>>,
+            Vec<CyclotomicCrtNtt<W, K, D>>,
+            Vec<CyclotomicCrtNtt<W, K, D>>,
+            Vec<CyclotomicCrtNtt<W, K, D>>,
+        ),
+         b| {
+            for r in 0..n_d {
+                add_ntt_into(&mut a.0[r], &b.0[r], params);
+            }
+            for r in 0..n_b {
+                add_ntt_into(&mut a.1[r], &b.1[r], params);
+            }
+            for r in 0..n_a {
+                add_ntt_into(&mut a.2[r], &b.2[r], params);
+                add_ntt_into(&mut a.3[r], &b.3[r], params);
+            }
+            a
+        }
+    );
+
+    let d_result = d_accs
+        .into_iter()
+        .map(|acc| acc.to_ring_cyclic(params))
+        .collect();
+
+    let b_result = b_accs
+        .into_iter()
+        .map(|acc| acc.to_ring_cyclic(params))
+        .collect();
+
+    let a_result = a_neg_accs
+        .into_iter()
+        .zip(a_cyc_accs)
+        .map(|(neg_acc, cyc_acc)| {
+            let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring_with_params(params);
+            let cyc_ring: CyclotomicRing<F, D> = cyc_acc.to_ring_cyclic(params);
+            let neg_c = neg_ring.coefficients();
+            let cyc_c = cyc_ring.coefficients();
+            let q: [F; D] = from_fn(|k| (cyc_c[k] - neg_c[k]) * F::TWO_INV);
+            CyclotomicRing::from_coefficients(q)
+        })
+        .collect();
+
+    (d_result, b_result, a_result)
+}
+
+/// Fused split-eq quotient kernel dispatching over [`NttSlotCache`] variants.
+///
+/// Computes three NTT-cached mat-vec products in a single tiled pass:
+/// - D-cyclic: `cyc[0..n_d] · w_hat` (cyclic domain)
+/// - B-cyclic: `cyc[0..n_b] · t_hat` (cyclic domain)
+/// - A-quotient: `(cyc[0..n_a]·z_cyc − neg[0..n_a]·z_neg) / 2`
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[tracing::instrument(skip_all, name = "fused_split_eq_quotients")]
+pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField, const D: usize>(
+    slot: &NttSlotCache<D>,
+    n_d: usize,
+    n_b: usize,
+    n_a: usize,
+    w_hat: &[[i8; D]],
+    t_hat: &[[i8; D]],
+    z_pre: &[[i32; D]],
+    z_pre_max_abs: u32,
+) -> (
+    Vec<CyclotomicRing<F, D>>,
+    Vec<CyclotomicRing<F, D>>,
+    Vec<CyclotomicRing<F, D>>,
+) {
+    match slot {
+        NttSlotCache::Q32 {
+            neg,
+            cyc,
+            params: p,
+        } => fused_split_eq_quotients_with_params(
+            neg,
+            cyc,
+            n_d,
+            n_b,
+            n_a,
+            w_hat,
+            t_hat,
+            z_pre,
+            z_pre_max_abs,
+            p,
+        ),
+        NttSlotCache::Q64 {
+            neg,
+            cyc,
+            params: p,
+        } => fused_split_eq_quotients_with_params(
+            neg,
+            cyc,
+            n_d,
+            n_b,
+            n_a,
+            w_hat,
+            t_hat,
+            z_pre,
+            z_pre_max_abs,
+            p,
+        ),
+        NttSlotCache::Q128 {
+            neg,
+            cyc,
+            params: p,
+        } => fused_split_eq_quotients_with_params(
+            neg,
+            cyc,
+            n_d,
+            n_b,
+            n_a,
+            w_hat,
+            t_hat,
+            z_pre,
+            z_pre_max_abs,
+            p,
+        ),
+    }
 }
 
 #[cfg(test)]

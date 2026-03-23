@@ -4,11 +4,10 @@ use super::schedule::{
     hachi_root_level_layout, planned_log_basis_at_level, planned_schedule_key, HachiLevelParams,
     HachiScheduleInputs, HachiSchedulePlan,
 };
-use super::utils::flat_matrix::FlatMatrix;
 use super::utils::math::checked_pow2;
 use super::utils::norm::detect_field_modulus;
 use crate::algebra::ring::CyclotomicRing;
-use crate::algebra::{Prime128M8M4M1M0, SparseChallengeConfig};
+use crate::algebra::{Prime128Offset5823, SparseChallengeConfig};
 use crate::error::HachiError;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
@@ -208,7 +207,7 @@ fn d128_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
 }
 
 fn fp128_half_field_bound() -> u128 {
-    detect_field_modulus::<Prime128M8M4M1M0>() / 2
+    detect_field_modulus::<Prime128Offset5823>() / 2
 }
 
 /// Runtime commitment layout authority for ring-native commitments.
@@ -677,32 +676,6 @@ pub(super) fn ensure_block_layout<F: FieldCore, const D: usize>(
 /// Ensure matrix has at least the expected dimensions.
 ///
 /// Matrix envelopes may have more rows and columns than the active level uses.
-/// Callers are expected to consume only the active row prefix.
-///
-/// # Errors
-///
-/// Returns an error if row count is too small or any row is too narrow.
-pub(super) fn ensure_matrix_shape_ge<F: FieldCore, const D: usize>(
-    mat: &FlatMatrix<F>,
-    expected_rows: usize,
-    min_cols: usize,
-    name: &str,
-) -> Result<(), HachiError> {
-    if mat.num_rows() < expected_rows {
-        return Err(HachiError::InvalidSize {
-            expected: expected_rows,
-            actual: mat.num_rows(),
-        });
-    }
-    let actual_cols = mat.num_cols_at::<D>();
-    if actual_cols < min_cols {
-        return Err(HachiError::InvalidSetup(format!(
-            "{name} has width {actual_cols}, expected >= {min_cols}",
-        )));
-    }
-    Ok(())
-}
-
 /// Small correctness-first config for tests and local benchmarks.
 ///
 /// Fixed layout (m_vars=4, r_vars=2) for fast test iteration. For larger

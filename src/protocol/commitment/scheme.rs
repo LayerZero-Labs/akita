@@ -37,7 +37,9 @@ impl<C, F: FieldCore, const D: usize> CommitWitness<C, F, D> {
 /// Commitment-scheme interface used by Hachi protocol code.
 ///
 /// Generic over field `F` and cyclotomic ring degree `D`.
-/// Polynomials are provided as `impl HachiPolyOps<F, D>`.
+/// Caller-provided root polynomials are provided as `impl HachiPolyOps<F, D>`.
+/// Recursive `w` witnesses are internal to the protocol and no longer modelled
+/// through this trait.
 pub trait CommitmentScheme<F, const D: usize>: Clone + Send + Sync + 'static
 where
     F: FieldCore + CanonicalField,
@@ -81,7 +83,8 @@ where
     /// Produce an opening proof at `opening_point` with a caller-specified layout.
     ///
     /// The layout must match the one used during commitment. Recursive w-opening
-    /// levels derive their own layouts internally via `WCommitmentConfig`.
+    /// levels derive their own layouts internally via `WCommitmentConfig` and
+    /// use the dedicated recursive witness runtime rather than `HachiPolyOps`.
     ///
     /// `basis` selects the polynomial representation (see [`BasisMode`]).
     ///

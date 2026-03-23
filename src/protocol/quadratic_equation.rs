@@ -10,15 +10,14 @@ use crate::parallel::*;
 use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
-    flatten_i8_blocks, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
-    unreduced_quotient_rows_ntt_cached_centered_i32,
+    flatten_i8_blocks, fused_split_eq_quotients, mat_vec_mul_ntt_single_i8,
 };
 use crate::protocol::commitment::{
     CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, RingCommitment,
 };
-use crate::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps};
+use crate::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps, RecursiveWitnessView};
 use crate::protocol::opening_point::RingOpeningPoint;
-use crate::protocol::proof::HachiCommitmentHint;
+use crate::protocol::proof::{HachiCommitmentHint, RingSliceSerializer};
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
@@ -26,35 +25,11 @@ use std::iter::repeat_n;
 use std::marker::PhantomData;
 use std::time::Instant;
 
-/// **Step 4.** Compute `v = D · ŵ` (first prover message).
-fn compute_v<F: FieldCore + CanonicalField, const D: usize>(
-    ntt_d: &NttSlotCache<D>,
-    w_hat_flat: &[[i8; D]],
-) -> Vec<CyclotomicRing<F, D>> {
-    mat_vec_mul_ntt_single_i8(ntt_d, w_hat_flat)
-}
-
-fn flatten_w_hat<const D: usize>(w_hat: &[Vec<[i8; D]>]) -> Vec<[i8; D]> {
-    w_hat.iter().flat_map(|v| v.iter().copied()).collect()
-}
-
-fn compute_z_pre<F, const D: usize, P>(
-    poly: &P,
-    challenges: &[SparseChallenge],
+fn validate_decompose_fold<F: FieldCore + CanonicalField, const D: usize>(
+    z: DecomposeFoldWitness<F, D>,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
-) -> Result<DecomposeFoldWitness<F, D>, HachiError>
-where
-    F: FieldCore + CanonicalField,
-    P: HachiPolyOps<F, D>,
-{
-    let z = poly.decompose_fold(
-        challenges,
-        layout.block_len,
-        layout.num_digits_commit,
-        layout.log_basis,
-    );
-
+) -> Result<DecomposeFoldWitness<F, D>, HachiError> {
     let norm = u128::from(z.centered_inf_norm);
     let beta = crate::protocol::commitment::beta_linf_fold_bound(
         layout.r_vars,
@@ -66,7 +41,6 @@ where
             "prover abort: ||z||_inf = {norm} > beta = {beta}"
         )));
     }
-
     Ok(z)
 }
 
@@ -145,7 +119,7 @@ where
             let w_hat: Vec<Vec<[i8; D]>> = cfg_iter!(pre_folded)
                 .map(|w_i| w_i.balanced_decompose_pow2_i8(depth_open, log_basis))
                 .collect();
-            let w_hat_flat = flatten_w_hat(&w_hat);
+            let w_hat_flat = flatten_i8_blocks(&w_hat);
             (w_hat, w_hat_flat)
         };
         hint.ensure_t_recomposed(layout.num_digits_open, layout.log_basis)?;
@@ -153,9 +127,7 @@ where
         let v = {
             let _span =
                 tracing::info_span!("compute_v", w_hat_flat_len = w_hat_flat.len()).entered();
-            let mut v = compute_v(ntt_d, &w_hat_flat);
-            v.truncate(level_params.n_d);
-            v
+            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, &w_hat_flat)
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &v);
@@ -169,7 +141,13 @@ where
 
         let z_pre = {
             let _span = tracing::info_span!("compute_z_pre").entered();
-            compute_z_pre::<F, D, P>(poly, &challenges, &level_params, layout)?
+            let z = poly.decompose_fold(
+                &challenges,
+                layout.block_len,
+                layout.num_digits_commit,
+                layout.log_basis,
+            );
+            validate_decompose_fold(z, &level_params, layout)?
         };
 
         let y = generate_y::<F, D>(
@@ -195,27 +173,76 @@ where
         })
     }
 
-    /// Verifier constructor: Derives challenges and computes M and y.
+    /// Recursive prover constructor: same as [`Self::new_prover`] but driven by
+    /// the dedicated recursive witness view instead of the root polynomial trait.
     ///
     /// # Errors
     ///
-    /// Returns an error if challenge derivation fails.
-    #[tracing::instrument(skip_all, name = "QuadraticEquation::new_verifier")]
+    /// Returns an error if the norm check, challenge sampling, or matrix
+    /// generation fails.
+    #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip_all, name = "QuadraticEquation::new_recursive_prover")]
     #[inline(never)]
-    pub fn new_verifier<T: Transcript<F>>(
+    pub(crate) fn new_recursive_prover<T: Transcript<F>>(
+        ntt_d: &NttSlotCache<D>,
         ring_opening_point: RingOpeningPoint<F>,
-        v: Vec<CyclotomicRing<F, D>>,
+        witness: &RecursiveWitnessView<'_, F, D>,
+        pre_folded: Vec<CyclotomicRing<F, D>>,
         level_params: HachiLevelParams,
+        mut hint: HachiCommitmentHint<F, D>,
         transcript: &mut T,
-        commitment: &RingCommitment<F, D>,
+        commitment: &[CyclotomicRing<F, D>],
         y_ring: &CyclotomicRing<F, D>,
         layout: HachiCommitmentLayout,
     ) -> Result<Self, HachiError> {
-        let challenges =
-            derive_stage1_challenges::<F, T, D>(transcript, &v, layout.num_blocks, &level_params)?;
+        {
+            let x: u8 = 0;
+            tracing::trace!(
+                stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
+                "QuadraticEquation::new_recursive_prover"
+            );
+        }
+        let (w_hat, w_hat_flat) = {
+            let _span = tracing::info_span!("decompose_w_hat").entered();
+            let depth_open = layout.num_digits_open;
+            let log_basis = layout.log_basis;
+            let w_hat: Vec<Vec<[i8; D]>> = cfg_iter!(pre_folded)
+                .map(|w_i| w_i.balanced_decompose_pow2_i8(depth_open, log_basis))
+                .collect();
+            let w_hat_flat = flatten_i8_blocks(&w_hat);
+            (w_hat, w_hat_flat)
+        };
+        hint.ensure_t_recomposed(layout.num_digits_open, layout.log_basis)?;
+
+        let v = {
+            let _span =
+                tracing::info_span!("compute_v", w_hat_flat_len = w_hat_flat.len()).entered();
+            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, &w_hat_flat)
+        };
+
+        transcript.append_serde(ABSORB_PROVER_V, &v);
+
+        let challenges = sample_sparse_challenges::<F, T, D>(
+            transcript,
+            CHALLENGE_STAGE1_FOLD,
+            layout.num_blocks,
+            &level_params.stage1_config,
+        )?;
+
+        let z_pre = {
+            let _span = tracing::info_span!("compute_z_pre").entered();
+            let z = witness.decompose_fold(
+                &challenges,
+                layout.block_len,
+                layout.num_digits_commit,
+                layout.log_basis,
+            );
+            validate_decompose_fold(z, &level_params, layout)?
+        };
+
         let y = generate_y::<F, D>(
             &v,
-            &commitment.u,
+            commitment,
             y_ring,
             level_params.n_d,
             level_params.n_b,
@@ -227,11 +254,11 @@ where
             challenges,
             y,
             opening_point: ring_opening_point,
-            z_pre: None,
-            w_hat: None,
-            w_hat_flat: None,
-            w_folded: None,
-            hint: None,
+            z_pre: Some(z_pre),
+            w_hat: Some(w_hat),
+            w_hat_flat: Some(w_hat_flat),
+            w_folded: Some(pre_folded),
+            hint: Some(hint),
             _marker: PhantomData,
         })
     }
@@ -317,7 +344,7 @@ where
 
 pub(crate) fn derive_stage1_challenges<F, T, const D: usize>(
     transcript: &mut T,
-    v: &Vec<CyclotomicRing<F, D>>,
+    v: &[CyclotomicRing<F, D>],
     num_blocks: usize,
     level_params: &HachiLevelParams,
 ) -> Result<Vec<SparseChallenge>, HachiError>
@@ -325,7 +352,7 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    transcript.append_serde(ABSORB_PROVER_V, v);
+    transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(v));
     sample_sparse_challenges::<F, T, D>(
         transcript,
         CHALLENGE_STAGE1_FOLD,
@@ -394,7 +421,6 @@ fn quotient_from_cyclic_and_reduced<F: FieldCore, const D: usize>(
 /// Uses split-eq factoring: `kron(left, gadget) · decomposed = left · pre_decomp`.
 #[allow(clippy::too_many_arguments, clippy::needless_borrow)]
 #[tracing::instrument(skip_all, name = "compute_r_split_eq")]
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_r_split_eq<F, const D: usize>(
     level_params: &HachiLevelParams,
     _setup: &HachiExpandedSetup<F>,
@@ -406,9 +432,7 @@ pub(crate) fn compute_r_split_eq<F, const D: usize>(
     z_pre_centered: &[[i32; D]],
     z_pre_centered_inf_norm: u32,
     y: &[CyclotomicRing<F, D>],
-    ntt_a: &NttSlotCache<D>,
-    ntt_b: &NttSlotCache<D>,
-    ntt_d: &NttSlotCache<D>,
+    ntt_shared: &NttSlotCache<D>,
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
 where
     F: FieldCore + CanonicalField,
@@ -417,42 +441,16 @@ where
 
     let t_hat_flat = flatten_i8_blocks(t_hat);
 
-    #[cfg(feature = "parallel")]
-    let (d_cyclic, b_cyclic, a_quotients) = {
-        let t_all = Instant::now();
-        let ((d_cyc, b_cyc), a_quot) = rayon::join(
-            || {
-                rayon::join(
-                    || mat_vec_mul_ntt_single_i8_cyclic(ntt_d, w_hat_flat),
-                    || mat_vec_mul_ntt_single_i8_cyclic(ntt_b, &t_hat_flat),
-                )
-            },
-            || {
-                unreduced_quotient_rows_ntt_cached_centered_i32(
-                    ntt_a,
-                    z_pre_centered,
-                    z_pre_centered_inf_norm,
-                )
-            },
-        );
-        tracing::debug!(
-            ntt_total_s = t_all.elapsed().as_secs_f64(),
-            "ntt_rows parallel"
-        );
-        (d_cyc, b_cyc, a_quot)
-    };
-
-    #[cfg(not(feature = "parallel"))]
-    let (d_cyclic, b_cyclic, a_quotients) = {
-        let d_cyclic = mat_vec_mul_ntt_single_i8_cyclic(ntt_d, w_hat_flat);
-        let b_cyclic = mat_vec_mul_ntt_single_i8_cyclic(ntt_b, &t_hat_flat);
-        let a_quotients = unreduced_quotient_rows_ntt_cached_centered_i32(
-            ntt_a,
-            z_pre_centered,
-            z_pre_centered_inf_norm,
-        );
-        (d_cyclic, b_cyclic, a_quotients)
-    };
+    let (d_cyclic, b_cyclic, a_quotients) = fused_split_eq_quotients::<F, D>(
+        ntt_shared,
+        level_params.n_d,
+        level_params.n_b,
+        level_params.n_a,
+        w_hat_flat,
+        &t_hat_flat,
+        z_pre_centered,
+        z_pre_centered_inf_norm,
+    );
 
     let mut result = Vec::with_capacity(num_rows);
     let mut other_time = 0.0f64;
@@ -631,7 +629,7 @@ mod tests {
             current_w_len: layout.num_blocks * layout.block_len * D,
         });
         let quad_eq = QuadraticEquation::<F, D, TinyConfig>::new_prover(
-            &setup.ntt_D,
+            &setup.ntt_shared,
             point.clone(),
             &poly,
             w_folded,
@@ -678,7 +676,7 @@ mod tests {
                 .flat_map(|v| v.iter().copied())
                 .collect::<Vec<_>>(),
         );
-        let lhs = mat_vec_mul(&f.setup.expanded.D_mat, &w_hat_flat);
+        let lhs = mat_vec_mul(&f.setup.expanded.shared_matrix, &w_hat_flat);
 
         assert_eq!(lhs, f.quad_eq.v(), "Row 1 failed: D · ŵ ≠ v");
     }
@@ -698,7 +696,10 @@ mod tests {
                 CyclotomicRing::from_coefficients(coeffs)
             })
             .collect();
-        let lhs = mat_vec_mul(&f.setup.expanded.B, &inner_opening_digits_flat_ring);
+        let lhs = mat_vec_mul(
+            &f.setup.expanded.shared_matrix,
+            &inner_opening_digits_flat_ring,
+        );
 
         assert_eq!(
             lhs, f.commitment_u,
@@ -796,7 +797,7 @@ mod tests {
 
         let z_hat = derive_z_hat(f.quad_eq.z_pre().unwrap());
         let z_recovered = recompose_z_hat(&z_hat);
-        let rhs = mat_vec_mul(&f.setup.expanded.A, &z_recovered);
+        let rhs = mat_vec_mul(&f.setup.expanded.shared_matrix, &z_recovered);
 
         assert_eq!(
             lhs, rhs,

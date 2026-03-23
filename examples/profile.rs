@@ -28,7 +28,7 @@ use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
-type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
+type F = Fp128<0xffffffffffffffffffffffffffffe941>;
 const ONEHOT_K: usize = 256;
 
 fn env_flag(name: &str, default: bool) -> bool {
@@ -148,7 +148,12 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
     );
 }
 
+fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
+    coeff_len / d
+}
+
 fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevelProof<F>) -> usize {
+    let level_d = level.level_d();
     let y_ring_size = level.y_ring.serialized_size(Compress::No);
     let v_size = level.v.serialized_size(Compress::No);
     let total = level.serialized_size(Compress::No);
@@ -156,15 +161,13 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
     eprintln!("[{label}]   hachi_fold L{level_idx}: total={total} bytes");
     eprintln!(
         "[{label}]     y_ring={} bytes ({} ring elems, D={})",
-        y_ring_size,
-        level.y_ring.count(),
-        level.y_ring.ring_dim(),
+        y_ring_size, 1, level_d,
     );
     eprintln!(
         "[{label}]     v={} bytes ({} ring elems, D={})",
         v_size,
-        level.v.count(),
-        level.v.ring_dim(),
+        ring_elem_count(level.v.coeff_len(), level_d),
+        level_d,
     );
     let stage1 = &level.stage1;
     let stage2 = &level.stage2;
@@ -177,9 +180,8 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
     eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!(
-        "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} ring elems, D={})",
-        stage2.next_w_commitment.count(),
-        level.w_commit_d(),
+        "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} coeffs)",
+        stage2.next_w_commitment.coeff_len(),
     );
     eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
     debug_assert_eq!(

@@ -179,8 +179,8 @@ fn field_bytes(field_bits: u32) -> usize {
     (field_bits as usize).div_ceil(8)
 }
 
-fn flat_ring_vec_bytes(ring_len: usize, ring_dim: usize, elem_bytes: usize) -> usize {
-    4 + 8 + ring_len * ring_dim * elem_bytes
+fn proof_ring_vec_bytes(ring_len: usize, ring_dim: usize, elem_bytes: usize) -> usize {
+    8 + ring_len * ring_dim * elem_bytes
 }
 
 fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
@@ -264,10 +264,10 @@ fn hachi_level_proof_bytes(
     next_w_len: usize,
 ) -> usize {
     let elem_bytes = field_bytes(field_bits);
-    let y_bytes = flat_ring_vec_bytes(1, level_params.d, elem_bytes);
-    let v_bytes = flat_ring_vec_bytes(level_params.n_d, level_params.d, elem_bytes);
+    let y_bytes = proof_ring_vec_bytes(1, level_params.d, elem_bytes);
+    let v_bytes = proof_ring_vec_bytes(level_params.n_d, level_params.d, elem_bytes);
     let next_commit_bytes =
-        flat_ring_vec_bytes(next_level_params.n_b, next_level_params.d, elem_bytes);
+        proof_ring_vec_bytes(next_level_params.n_b, next_level_params.d, elem_bytes);
     let next_eval_bytes = elem_bytes;
     let rounds = sumcheck_rounds(level_params.d, next_w_len);
     let b = 1usize << layout.log_basis;
@@ -561,19 +561,6 @@ pub fn hachi_root_level_layout<Cfg: CommitmentConfig>(
     Ok((params, layout))
 }
 
-/// Derive a recursive `w`-opening level's active params and layout.
-///
-/// # Errors
-///
-/// Returns an error if the recursive layout derivation overflows.
-pub fn hachi_level_layout<Cfg: CommitmentConfig>(
-    inputs: HachiScheduleInputs,
-) -> Result<(HachiLevelParams, HachiCommitmentLayout), HachiError> {
-    let params = Cfg::level_params(inputs);
-    let layout = hachi_recursive_level_layout_from_params::<Cfg>(&params, inputs.current_w_len)?;
-    Ok((params, layout))
-}
-
 /// Derive a recursive `w`-opening layout from the active level params.
 ///
 /// # Errors
@@ -605,7 +592,7 @@ pub fn hachi_recursive_level_layout_from_params<Cfg: CommitmentConfig>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128M8M4M1M0;
+    use crate::algebra::Prime128Offset5823;
     use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
     use crate::primitives::serialization::{Compress, HachiSerialize};
     use crate::protocol::commitment::{
@@ -616,7 +603,7 @@ mod tests {
     use crate::protocol::sumcheck::{CompressedUniPoly, SumcheckProof};
     use crate::FieldCore;
 
-    type F = Prime128M8M4M1M0;
+    type F = Prime128Offset5823;
 
     fn dummy_sumcheck(rounds: usize, degree: usize) -> SumcheckProof<F> {
         SumcheckProof {
@@ -634,7 +621,7 @@ mod tests {
             .expect("config should provide a planner");
         for level in &plan.levels {
             let runtime_next_w_len =
-                w_ring_element_count::<Prime128M8M4M1M0>(&level.params, level.layout)
+                w_ring_element_count::<Prime128Offset5823>(&level.params, level.layout)
                     * level.params.d;
             assert_eq!(
                 runtime_next_w_len, level.next_inputs.current_w_len,
@@ -708,7 +695,8 @@ mod tests {
             let next_commitment = FlatRingVec::from_ring_elems(&vec![
                 CyclotomicRing::<F, D>::zero();
                 next_level_params.n_b
-            ]);
+            ])
+            .to_proof_ring_vec();
             let level_proof = HachiLevelProof::new_two_stage::<D>(
                 CyclotomicRing::<F, D>::zero(),
                 vec![CyclotomicRing::<F, D>::zero(); level_params.n_d],

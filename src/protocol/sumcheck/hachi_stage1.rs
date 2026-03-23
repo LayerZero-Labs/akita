@@ -29,17 +29,17 @@
 //!
 //! degree 4, so round polynomials have degree 5.
 
-use super::eq_poly::EqPolynomial;
-use super::split_eq::GruenSplitEq;
 use super::two_round_prefix::{
     build_stage1_bivariate_skip_proof_from_s_compact, can_use_stage1_two_round_prefix,
-    Stage1BivariateSkipState,
+    stage1_b4_s_digit_from_compact_s, stage1_b8_s_digit_from_compact_s, Stage1BivariateSkipState,
 };
 use super::{
-    fold_evals_in_place, trim_trailing_zeros, CompactPairFoldLut, SumcheckInstanceProver,
-    SumcheckInstanceVerifier, UniPoly,
+    fold_evals_in_place, CompactPairFoldLut, SumcheckInstanceProver, SumcheckInstanceVerifier,
+    UniPoly,
 };
+use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::fields::HasUnreducedOps;
+use crate::algebra::split_eq::GruenSplitEq;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
@@ -49,6 +49,8 @@ use crate::{
 use std::time::Instant;
 
 const MAX_AFFINE_COEFFS: usize = 17;
+const MAX_COMPACT_COEFF_LUT_B: usize = 16;
+const MAX_FIELD_COEFF_LUT_B: usize = 32;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct CompactCoeffEntry {
@@ -79,6 +81,7 @@ struct RangeAffineFromSPrecomp<E: FieldCore> {
     /// obtained from `s_to_compact`.
     small_s_lut: Vec<E>,
     compact_coeff_lut: Option<Vec<CompactCoeffEntry>>,
+    field_coeff_lut: Option<Vec<E>>,
     /// Maps raw `s` integer (offset by `min_s`) to a compact index into the
     /// `b/2`-element valid-value set `{k(k+1) : k = 0..half-1}`.
     s_to_compact: Vec<u8>,
@@ -144,7 +147,7 @@ impl<E: FieldCore + FromSmallInt> RangeAffineFromSPrecomp<E> {
             }
         }
 
-        let compact_coeff_lut = if b <= 8 {
+        let compact_coeff_lut = if b <= MAX_COMPACT_COEFF_LUT_B {
             let mut lut = Vec::with_capacity(num_valid_s * num_valid_s * num_rows);
             for (s0_ci, &s0_val) in pair_offsets.iter().enumerate() {
                 let h_base = s0_ci * num_rows;
@@ -174,6 +177,23 @@ impl<E: FieldCore + FromSmallInt> RangeAffineFromSPrecomp<E> {
         } else {
             None
         };
+        let field_coeff_lut = if b > MAX_COMPACT_COEFF_LUT_B && b <= MAX_FIELD_COEFF_LUT_B {
+            let mut lut = Vec::with_capacity(num_valid_s * num_valid_s * num_rows);
+            for (s0_ci, &s0_val) in pair_offsets.iter().enumerate() {
+                let h_base = s0_ci * num_rows;
+                for &s1_val in &pair_offsets {
+                    let delta = E::from_i128(s1_val - s0_val);
+                    let mut delta_pow = E::one();
+                    for &h_i in &small_s_lut[h_base..h_base + num_rows] {
+                        lut.push(h_i * delta_pow);
+                        delta_pow = delta_pow * delta;
+                    }
+                }
+            }
+            Some(lut)
+        } else {
+            None
+        };
 
         Self {
             dense_coeffs,
@@ -181,6 +201,7 @@ impl<E: FieldCore + FromSmallInt> RangeAffineFromSPrecomp<E> {
             degree_q,
             small_s_lut,
             compact_coeff_lut,
+            field_coeff_lut,
             s_to_compact,
             num_valid_s,
             min_s,
@@ -214,11 +235,24 @@ impl<E: FieldCore> RangeAffineFromSPrecomp<E> {
     }
 
     #[inline]
+    fn pair_coeff_lut_start(&self, s_0_int: i16, s_1_int: i16) -> usize {
+        let pair_idx = self.compact_index(s_0_int) * self.num_valid_s + self.compact_index(s_1_int);
+        pair_idx * self.num_rows()
+    }
+
+    #[inline]
     fn compact_coeffs_lut(&self, s_0_int: i16, s_1_int: i16) -> Option<&[CompactCoeffEntry]> {
         let lut = self.compact_coeff_lut.as_ref()?;
         let num_rows = self.num_rows();
-        let pair_idx = self.compact_index(s_0_int) * self.num_valid_s + self.compact_index(s_1_int);
-        let start = pair_idx * num_rows;
+        let start = self.pair_coeff_lut_start(s_0_int, s_1_int);
+        Some(&lut[start..start + num_rows])
+    }
+
+    #[inline]
+    fn field_coeffs_lut(&self, s_0_int: i16, s_1_int: i16) -> Option<&[E]> {
+        let lut = self.field_coeff_lut.as_ref()?;
+        let num_rows = self.num_rows();
+        let start = self.pair_coeff_lut_start(s_0_int, s_1_int);
         Some(&lut[start..start + num_rows])
     }
 }
@@ -314,11 +348,10 @@ fn accumulate_dense_entry_coeffs<E: FieldCore + HasUnreducedOps>(
 #[inline]
 fn finish_gruen_round_poly_from_q_coeffs<E: FieldCore>(
     split_eq: &GruenSplitEq<E>,
-    mut q_coeffs: Vec<E>,
+    q_coeffs: Vec<E>,
     previous_claim: E,
     skip_linear_coeff: bool,
 ) -> UniPoly<E> {
-    trim_trailing_zeros(&mut q_coeffs);
     if skip_linear_coeff {
         split_eq
             .try_gruen_poly_from_coeffs_except_linear(&q_coeffs, previous_claim)
@@ -515,6 +548,44 @@ fn compute_norm_round_poly_from_s_compact<
                 let e_out = e_second[j_high];
                 for k in 0..num_coeffs_q {
                     let inner_reduced = reduce_small_coeff_accum(inner_pos[k], inner_neg[k]);
+                    outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                }
+                outer_accum
+            },
+            |mut a, b_vec| {
+                for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
+                    *ai += *bi;
+                }
+                a
+            }
+        )
+        .into_iter()
+        .map(E::reduce_product_accum)
+        .collect::<Vec<_>>()
+    } else if rp.field_coeffs_lut(0, 0).is_some() {
+        cfg_fold_reduce!(
+            0..e_second.len(),
+            || vec![E::ProductAccum::ZERO; num_coeffs_q],
+            |mut outer_accum, j_high| {
+                debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
+                let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                for (j_low, &e_in) in e_first.iter().enumerate() {
+                    let j = j_high * num_first + j_low;
+                    let s_0_int = s_compact[2 * j];
+                    let s_1_int = s_compact[2 * j + 1];
+                    let coeffs = rp
+                        .field_coeffs_lut(s_0_int, s_1_int)
+                        .expect("missing field coefficient LUT");
+                    accumulate_dense_entry_coeffs(
+                        &mut inner_accum[..num_coeffs_q],
+                        coeffs,
+                        e_in,
+                        skip_linear_coeff,
+                    );
+                }
+                let e_out = e_second[j_high];
+                for k in 0..num_coeffs_q {
+                    let inner_reduced = E::reduce_product_accum(inner_accum[k]);
                     outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
                 }
                 outer_accum
@@ -759,43 +830,77 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         x0 + r1 * (x1 - x0)
     }
 
-    #[inline]
-    fn stage1_b8_s_digit_from_compact_s(s: i16) -> usize {
-        match s {
-            0 => 0,
-            2 => 1,
-            6 => 2,
-            12 => 3,
-            other => unreachable!("unexpected compact s value {other}"),
-        }
-    }
-
-    #[inline]
-    fn stage1_b8_quad_lookup_index_from_row(row: &[i16], base: usize) -> usize {
+    #[inline(always)]
+    fn stage1_b4_quad_lookup_index_from_row(row: &[i16], base: usize) -> usize {
         let d0 = row
             .get(base)
             .copied()
-            .map(Self::stage1_b8_s_digit_from_compact_s)
+            .map(stage1_b4_s_digit_from_compact_s)
             .unwrap_or(0);
         let d1 = row
             .get(base + 1)
             .copied()
-            .map(Self::stage1_b8_s_digit_from_compact_s)
+            .map(stage1_b4_s_digit_from_compact_s)
             .unwrap_or(0);
         let d2 = row
             .get(base + 2)
             .copied()
-            .map(Self::stage1_b8_s_digit_from_compact_s)
+            .map(stage1_b4_s_digit_from_compact_s)
             .unwrap_or(0);
         let d3 = row
             .get(base + 3)
             .copied()
-            .map(Self::stage1_b8_s_digit_from_compact_s)
+            .map(stage1_b4_s_digit_from_compact_s)
+            .unwrap_or(0);
+        d0 | (d1 << 1) | (d2 << 2) | (d3 << 3)
+    }
+
+    fn build_round2_s_lookup_b4(r0: E, r1: E) -> Vec<E> {
+        const S_VALUES: [i16; 2] = [0, 2];
+        (0..16usize)
+            .map(|idx| {
+                let d0 = idx & 0b1;
+                let d1 = (idx >> 1) & 0b1;
+                let d2 = (idx >> 2) & 0b1;
+                let d3 = (idx >> 3) & 0b1;
+                Self::direct_fold_s_quad_to_round2(
+                    S_VALUES[d0],
+                    S_VALUES[d1],
+                    S_VALUES[d2],
+                    S_VALUES[d3],
+                    r0,
+                    r1,
+                )
+            })
+            .collect()
+    }
+
+    #[inline(always)]
+    fn stage1_b8_quad_lookup_index_from_row(row: &[i16], base: usize) -> usize {
+        let d0 = row
+            .get(base)
+            .copied()
+            .map(stage1_b8_s_digit_from_compact_s)
+            .unwrap_or(0);
+        let d1 = row
+            .get(base + 1)
+            .copied()
+            .map(stage1_b8_s_digit_from_compact_s)
+            .unwrap_or(0);
+        let d2 = row
+            .get(base + 2)
+            .copied()
+            .map(stage1_b8_s_digit_from_compact_s)
+            .unwrap_or(0);
+        let d3 = row
+            .get(base + 3)
+            .copied()
+            .map(stage1_b8_s_digit_from_compact_s)
             .unwrap_or(0);
         d0 | (d1 << 2) | (d2 << 4) | (d3 << 6)
     }
 
-    fn build_round2_s_lookup(r0: E, r1: E) -> Vec<E> {
+    fn build_round2_s_lookup_b8(r0: E, r1: E) -> Vec<E> {
         const S_VALUES: [i16; 4] = [0, 2, 6, 12];
         (0..256usize)
             .map(|idx| {
@@ -863,7 +968,14 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros();
         let block_size = num_first.min(live_pairs);
-        let quad_fold_lut = Self::build_round2_s_lookup(r0, r1);
+        let quad_fold_lut = match self.b {
+            4 => Self::build_round2_s_lookup_b4(r0, r1),
+            _ => Self::build_round2_s_lookup_b8(r0, r1),
+        };
+        let quad_index_fn: fn(&[i16], usize) -> usize = match self.b {
+            4 => Self::stage1_b4_quad_lookup_index_from_row,
+            _ => Self::stage1_b8_quad_lookup_index_from_row,
+        };
 
         let range_pc = &self.range_precomp;
         let full_num_coeffs_q = range_pc.degree_q + 1;
@@ -893,12 +1005,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                         let e_in = e_first[j_low];
                         let left_quad = 2 * pair_x;
                         let left_base = 8 * pair_x;
-                        let s0 = quad_fold_lut
-                            [Self::stage1_b8_quad_lookup_index_from_row(row, left_base)];
+                        let s0 = quad_fold_lut[quad_index_fn(row, left_base)];
                         row_out[left_quad] = s0;
                         let s1 = if left_quad + 1 < next_live_x_cols {
-                            let s1 = quad_fold_lut
-                                [Self::stage1_b8_quad_lookup_index_from_row(row, left_base + 4)];
+                            let s1 = quad_fold_lut[quad_index_fn(row, left_base + 4)];
                             row_out[left_quad + 1] = s1;
                             s1
                         } else {
@@ -961,12 +1071,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                         let e_in = e_first[j_low];
                         let left_quad = 2 * pair_x;
                         let left_base = 8 * pair_x;
-                        let s0 = quad_fold_lut
-                            [Self::stage1_b8_quad_lookup_index_from_row(row, left_base)];
+                        let s0 = quad_fold_lut[quad_index_fn(row, left_base)];
                         row_out[left_quad] = s0;
                         let s1 = if left_quad + 1 < next_live_x_cols {
-                            let s1 = quad_fold_lut
-                                [Self::stage1_b8_quad_lookup_index_from_row(row, left_base + 4)];
+                            let s1 = quad_fold_lut[quad_index_fn(row, left_base + 4)];
                             row_out[left_quad + 1] = s1;
                             s1
                         } else {
@@ -1404,6 +1512,61 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                         *ai += *bi;
                     }
                     a
+                }
+            )
+            .into_iter()
+            .map(E::reduce_product_accum)
+            .collect()
+        } else if rp.field_coeffs_lut(0, 0).is_some() {
+            cfg_fold_reduce!(
+                0..(1usize << (self.num_vars - self.num_u)),
+                || vec![E::ProductAccum::ZERO; num_coeffs_q],
+                |mut outer_accum, y| {
+                    let row_start = y * self.live_x_cols;
+                    let row = &s_compact[row_start..row_start + self.live_x_cols];
+                    let j_base = y * current_x_half;
+
+                    let mut blk = 0usize;
+                    while blk < live_pairs {
+                        let blk_end = (blk + block_size).min(live_pairs);
+                        let j_high = (j_base + blk) >> first_bits;
+                        let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+
+                        for pair_x in blk..blk_end {
+                            let j_low = (j_base + pair_x) & (num_first - 1);
+                            let e_in = e_first[j_low];
+                            let left = 2 * pair_x;
+                            let s0_i = row[left];
+                            let s1_i = if left + 1 < self.live_x_cols {
+                                row[left + 1]
+                            } else {
+                                0
+                            };
+                            let coeffs = rp
+                                .field_coeffs_lut(s0_i, s1_i)
+                                .expect("missing field coefficient LUT");
+                            accumulate_dense_entry_coeffs(
+                                &mut inner_accum[..num_coeffs_q],
+                                coeffs,
+                                e_in,
+                                skip_linear_coeff,
+                            );
+                        }
+
+                        let e_out = e_second[j_high];
+                        for k in 0..num_coeffs_q {
+                            let inner_reduced = E::reduce_product_accum(inner_accum[k]);
+                            outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                        }
+                        blk = blk_end;
+                    }
+                    outer_accum
+                },
+                |mut ca, cb| {
+                    for (ai, bi) in ca.iter_mut().zip(cb.iter()) {
+                        *ai += *bi;
+                    }
+                    ca
                 }
             )
             .into_iter()
@@ -1891,10 +2054,10 @@ impl<F: FieldCore + FromSmallInt> SumcheckInstanceVerifier<F> for HachiStage1Ver
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128M8M4M1M0;
+    use crate::algebra::Prime128Offset5823;
     use crate::protocol::sumcheck::multilinear_eval;
 
-    type F = Prime128M8M4M1M0;
+    type F = Prime128Offset5823;
 
     fn pad_compact_rows(
         w_prefix: &[i8],
@@ -2004,59 +2167,87 @@ mod tests {
     }
 
     #[test]
+    fn stage1_compact_coeff_lut_reaches_b16() {
+        for b in [4usize, 8, 16] {
+            let precomp = RangeAffineFromSPrecomp::<F>::new(b);
+            assert!(
+                precomp.compact_coeffs_lut(0, 0).is_some(),
+                "expected compact coefficient LUT for b={b}"
+            );
+        }
+
+        let precomp = RangeAffineFromSPrecomp::<F>::new(32);
+        assert!(precomp.compact_coeffs_lut(0, 0).is_none());
+    }
+
+    #[test]
+    fn stage1_field_coeff_lut_reaches_b32() {
+        for b in [4usize, 8, 16] {
+            let precomp = RangeAffineFromSPrecomp::<F>::new(b);
+            assert!(precomp.field_coeffs_lut(0, 0).is_none());
+        }
+
+        let precomp = RangeAffineFromSPrecomp::<F>::new(32);
+        assert!(
+            precomp.field_coeffs_lut(0, 0).is_some(),
+            "expected field coefficient LUT for b=32"
+        );
+    }
+
+    #[test]
     fn stage1_prefix_aware_rounds_match_explicit_zero_padding() {
         let num_l = 2usize;
-        let b = 8usize;
-        let half = (b / 2) as i8;
+        for b in [4usize, 8, 16, 32] {
+            let half = (b / 2) as i8;
+            for live_x_cols in [5usize, 6usize] {
+                let num_u = live_x_cols.next_power_of_two().trailing_zeros() as usize;
+                let y_len = 1usize << num_l;
+                let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+                    .map(|i| ((i * 7 + 5) % b) as i8 - half)
+                    .collect();
+                let w_padded = pad_compact_rows(&w_prefix, live_x_cols, num_u, num_l);
+                let tau0: Vec<F> = (0..(num_u + num_l))
+                    .map(|i| F::from_u64((i as u64) + 19))
+                    .collect();
+                let mut prefix_prover =
+                    HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+                let mut padded_prover =
+                    HachiStage1Prover::new(&w_padded, &tau0, b, 1usize << num_u, num_u, num_l);
+                let mut challenges = Vec::new();
+                let mut prefix_claim = F::zero();
+                let mut padded_claim = F::zero();
 
-        for live_x_cols in [5usize, 6usize] {
-            let num_u = live_x_cols.next_power_of_two().trailing_zeros() as usize;
-            let y_len = 1usize << num_l;
-            let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
-                .map(|i| ((i * 7 + 5) % b) as i8 - half)
-                .collect();
-            let w_padded = pad_compact_rows(&w_prefix, live_x_cols, num_u, num_l);
-            let tau0: Vec<F> = (0..(num_u + num_l))
-                .map(|i| F::from_u64((i as u64) + 19))
-                .collect();
-            let mut prefix_prover =
-                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
-            let mut padded_prover =
-                HachiStage1Prover::new(&w_padded, &tau0, b, 1usize << num_u, num_u, num_l);
-            let mut challenges = Vec::new();
-            let mut prefix_claim = F::zero();
-            let mut padded_claim = F::zero();
+                for round in 0..(num_u + num_l) {
+                    let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
+                    let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
+                    assert_eq!(
+                        prefix_poly, padded_poly,
+                        "round {round} polynomial mismatch live_x_cols={live_x_cols} b={b}"
+                    );
 
-            for round in 0..(num_u + num_l) {
-                let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
-                let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
+                    let challenge = F::from_u64((round as u64) + 29);
+                    challenges.push(challenge);
+                    prefix_claim = prefix_poly.evaluate(&challenge);
+                    padded_claim = padded_poly.evaluate(&challenge);
+                    prefix_prover.ingest_challenge(round, challenge);
+                    padded_prover.ingest_challenge(round, challenge);
+                }
+
+                assert_eq!(prefix_prover.final_s_claim(), padded_prover.final_s_claim());
+                assert_eq!(prefix_claim, padded_claim);
+                let s_padded: Vec<F> = w_padded
+                    .iter()
+                    .map(|&w| {
+                        let w = F::from_i64(w as i64);
+                        w * (w + F::one())
+                    })
+                    .collect();
                 assert_eq!(
-                    prefix_poly, padded_poly,
-                    "round {round} polynomial mismatch live_x_cols={live_x_cols}"
+                    prefix_prover.final_s_claim(),
+                    multilinear_eval(&s_padded, &challenges).unwrap(),
+                    "final s-claim mismatch live_x_cols={live_x_cols} b={b}"
                 );
-
-                let challenge = F::from_u64((round as u64) + 29);
-                challenges.push(challenge);
-                prefix_claim = prefix_poly.evaluate(&challenge);
-                padded_claim = padded_poly.evaluate(&challenge);
-                prefix_prover.ingest_challenge(round, challenge);
-                padded_prover.ingest_challenge(round, challenge);
             }
-
-            assert_eq!(prefix_prover.final_s_claim(), padded_prover.final_s_claim());
-            assert_eq!(prefix_claim, padded_claim);
-            let s_padded: Vec<F> = w_padded
-                .iter()
-                .map(|&w| {
-                    let w = F::from_i64(w as i64);
-                    w * (w + F::one())
-                })
-                .collect();
-            assert_eq!(
-                prefix_prover.final_s_claim(),
-                multilinear_eval(&s_padded, &challenges).unwrap(),
-                "final s-claim mismatch live_x_cols={live_x_cols}"
-            );
         }
     }
 
@@ -2065,55 +2256,57 @@ mod tests {
         let num_u = 3usize;
         let num_l = 2usize;
         let live_x_cols = 6usize;
-        let b = 8usize;
-        let half = (b / 2) as i8;
         let y_len = 1usize << num_l;
-        let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
-            .map(|i| ((i * 9 + 5) % b) as i8 - half)
-            .collect();
-        let s_compact: Vec<i16> = w_prefix
-            .iter()
-            .map(|&w| {
-                let w = w as i32;
-                (w * (w + 1)) as i16
-            })
-            .collect();
-        let tau0: Vec<F> = (0..(num_u + num_l))
-            .map(|i| F::from_u64((i as u64) + 53))
-            .collect();
+        for b in [4usize, 8] {
+            let half = (b / 2) as i8;
+            let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+                .map(|i| ((i * 9 + 5) % b) as i8 - half)
+                .collect();
+            let s_compact: Vec<i16> = w_prefix
+                .iter()
+                .map(|&w| {
+                    let w = w as i32;
+                    (w * (w + 1)) as i16
+                })
+                .collect();
+            let tau0: Vec<F> = (0..(num_u + num_l))
+                .map(|i| F::from_u64((i as u64) + 53))
+                .collect();
 
-        let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
-        let round0 = prover.compute_round_univariate(0, F::zero());
-        let r0 = F::from_u64(61);
-        let claim1 = round0.evaluate(&r0);
-        prover.ingest_challenge(0, r0);
-        let round1 = prover.compute_round_univariate(1, claim1);
-        let r1 = F::from_u64(67);
-        let claim2 = round1.evaluate(&r1);
+            let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+            let round0 = prover.compute_round_univariate(0, F::zero());
+            let r0 = F::from_u64(61);
+            let claim1 = round0.evaluate(&r0);
+            prover.ingest_challenge(0, r0);
+            let round1 = prover.compute_round_univariate(1, claim1);
+            let r1 = F::from_u64(67);
+            let claim2 = round1.evaluate(&r1);
 
-        let expected_s_full = HachiStage1Prover::<F>::fold_s_compact_to_round2(
-            &s_compact,
-            live_x_cols,
-            y_len,
-            r0,
-            r1,
-        );
-        let mut expected = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
-        expected.split_eq.bind(r0);
-        expected.split_eq.bind(r1);
-        expected.live_x_cols = live_x_cols.div_ceil(4);
-        expected.rounds_completed = 2;
-        let expected_round2 = expected.compute_round_full_prefix_x(&expected_s_full, claim2);
+            let expected_s_full = HachiStage1Prover::<F>::fold_s_compact_to_round2(
+                &s_compact,
+                live_x_cols,
+                y_len,
+                r0,
+                r1,
+            );
+            let mut expected =
+                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+            expected.split_eq.bind(r0);
+            expected.split_eq.bind(r1);
+            expected.live_x_cols = live_x_cols.div_ceil(4);
+            expected.rounds_completed = 2;
+            let expected_round2 = expected.compute_round_full_prefix_x(&expected_s_full, claim2);
 
-        prover.ingest_challenge(1, r1);
+            prover.ingest_challenge(1, r1);
 
-        match &prover.s_table {
-            STable::Full(s_full) => assert_eq!(s_full, &expected_s_full),
-            STable::Compact(_) => {
-                panic!("expected fused stage1 transition to materialize full table")
+            match &prover.s_table {
+                STable::Full(s_full) => assert_eq!(s_full, &expected_s_full),
+                STable::Compact(_) => {
+                    panic!("expected fused stage1 transition to materialize full table")
+                }
             }
+            assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
         }
-        assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
     }
 
     #[test]
@@ -2121,62 +2314,65 @@ mod tests {
         let num_u = 5usize;
         let num_l = 2usize;
         let live_x_cols = 12usize;
-        let b = 8usize;
-        let half = (b / 2) as i8;
         let y_len = 1usize << num_l;
-        let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
-            .map(|i| ((i * 5 + 11) % b) as i8 - half)
-            .collect();
-        let tau0: Vec<F> = (0..(num_u + num_l))
-            .map(|i| F::from_u64((i as u64) + 101))
-            .collect();
+        for b in [4usize, 8] {
+            let half = (b / 2) as i8;
+            let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+                .map(|i| ((i * 5 + 11) % b) as i8 - half)
+                .collect();
+            let tau0: Vec<F> = (0..(num_u + num_l))
+                .map(|i| F::from_u64((i as u64) + 101))
+                .collect();
 
-        let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
-        let round0 = prover.compute_round_univariate(0, F::zero());
-        let r0 = F::from_u64(107);
-        let claim1 = round0.evaluate(&r0);
-        prover.ingest_challenge(0, r0);
+            let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+            let round0 = prover.compute_round_univariate(0, F::zero());
+            let r0 = F::from_u64(107);
+            let claim1 = round0.evaluate(&r0);
+            prover.ingest_challenge(0, r0);
 
-        let round1 = prover.compute_round_univariate(1, claim1);
-        let r1 = F::from_u64(109);
-        let claim2 = round1.evaluate(&r1);
-        prover.ingest_challenge(1, r1);
+            let round1 = prover.compute_round_univariate(1, claim1);
+            let r1 = F::from_u64(109);
+            let claim2 = round1.evaluate(&r1);
+            prover.ingest_challenge(1, r1);
 
-        let round2 = prover.compute_round_univariate(2, claim2);
-        let r2 = F::from_u64(113);
-        let claim3 = round2.evaluate(&r2);
+            let round2 = prover.compute_round_univariate(2, claim2);
+            let r2 = F::from_u64(113);
+            let claim3 = round2.evaluate(&r2);
 
-        let mut expected = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
-        let expected_round0 = expected.compute_round_univariate(0, F::zero());
-        assert_eq!(expected_round0, round0);
-        expected.ingest_challenge(0, r0);
-        let expected_round1 = expected.compute_round_univariate(1, claim1);
-        assert_eq!(expected_round1, round1);
-        expected.ingest_challenge(1, r1);
-        let expected_round2 = expected.compute_round_univariate(2, claim2);
-        assert_eq!(expected_round2, round2);
+            let mut expected =
+                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+            let expected_round0 = expected.compute_round_univariate(0, F::zero());
+            assert_eq!(expected_round0, round0);
+            expected.ingest_challenge(0, r0);
+            let expected_round1 = expected.compute_round_univariate(1, claim1);
+            assert_eq!(expected_round1, round1);
+            expected.ingest_challenge(1, r1);
+            let expected_round2 = expected.compute_round_univariate(2, claim2);
+            assert_eq!(expected_round2, round2);
 
-        let current_s_full = match &expected.s_table {
-            STable::Full(s_full) => s_full.clone(),
-            STable::Compact(_) => panic!("expected later prefix state to be full"),
-        };
-        let expected_next_s_full = HachiStage1Prover::<F>::fold_s_full_prefix_x(
-            &current_s_full,
-            expected.live_x_cols,
-            y_len,
-            r2,
-        );
-        expected.split_eq.bind(r2);
-        expected.live_x_cols = expected.live_x_cols.div_ceil(2);
-        expected.rounds_completed += 1;
-        let expected_round3 = expected.compute_round_full_prefix_x(&expected_next_s_full, claim3);
+            let current_s_full = match &expected.s_table {
+                STable::Full(s_full) => s_full.clone(),
+                STable::Compact(_) => panic!("expected later prefix state to be full"),
+            };
+            let expected_next_s_full = HachiStage1Prover::<F>::fold_s_full_prefix_x(
+                &current_s_full,
+                expected.live_x_cols,
+                y_len,
+                r2,
+            );
+            expected.split_eq.bind(r2);
+            expected.live_x_cols = expected.live_x_cols.div_ceil(2);
+            expected.rounds_completed += 1;
+            let expected_round3 =
+                expected.compute_round_full_prefix_x(&expected_next_s_full, claim3);
 
-        prover.ingest_challenge(2, r2);
+            prover.ingest_challenge(2, r2);
 
-        match &prover.s_table {
-            STable::Full(s_full) => assert_eq!(s_full, &expected_next_s_full),
-            STable::Compact(_) => panic!("expected fused later prefix stage to stay full"),
+            match &prover.s_table {
+                STable::Full(s_full) => assert_eq!(s_full, &expected_next_s_full),
+                STable::Compact(_) => panic!("expected fused later prefix stage to stay full"),
+            }
+            assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
         }
-        assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
     }
 }

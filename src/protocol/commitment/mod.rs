@@ -24,8 +24,8 @@ pub use config::{
 };
 pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
 pub use schedule::{
-    hachi_level_layout, hachi_recursive_level_layout_from_params, hachi_root_level_layout,
-    HachiLevelParams, HachiScheduleInputs, HachiSchedulePlan,
+    hachi_recursive_level_layout_from_params, hachi_root_level_layout, HachiLevelParams,
+    HachiScheduleInputs, HachiSchedulePlan,
 };
 pub(crate) use schedule::{
     recursive_level_decomposition_from_root, recursive_r_decomp_levels_for_bound,

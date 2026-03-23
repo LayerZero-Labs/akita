@@ -16,7 +16,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;
 
-type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
+type F = Fp128<0xffffffffffffffffffffffffffffe941>;
 
 fn make_dense_evals<Cfg: CommitmentConfig>(nv: usize) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(0xdead_beef);

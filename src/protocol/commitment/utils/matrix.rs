@@ -3,13 +3,16 @@
 use crate::algebra::ring::CyclotomicRing;
 use crate::{FieldCore, FieldSampling};
 use rand_core::{CryptoRng, RngCore};
-use sha3::digest::{ExtendableOutput, Update, XofReader};
+use sha3::digest::{ExtendableOutput, XofReader};
 use sha3::Shake256;
+
+use crate::protocol::prg::absorb_len_prefixed;
 
 /// Public seed used to derive commitment matrices.
 pub(crate) type PublicMatrixSeed = [u8; 32];
 
 const PUBLIC_MATRIX_DOMAIN: &[u8] = b"hachi/commitment/public-matrix";
+const SHARED_MATRIX_LABEL: &[u8] = b"shared";
 
 /// Fixed public seed for deterministic, reproducible setup.
 pub(crate) fn sample_public_matrix_seed() -> PublicMatrixSeed {
@@ -20,25 +23,19 @@ pub(crate) fn sample_public_matrix_seed() -> PublicMatrixSeed {
 
 /// Derive a public matrix from a seed using domain-separated SHAKE expansion.
 ///
-/// This follows the same high-level pattern used in NIST lattice specs:
-/// derive deterministic public structure from a seed + indices, then sample
-/// coefficients via rejection-sampling at the field layer.
-///
-/// NOTE: Potential future hardening:
-/// move toward stricter ML-KEM/ML-DSA-style byte layout and parsing rules
-/// (fixed-format seed/index encoding and scheme-specific expansion details)
-/// if we decide to maximize standards-shape interoperability.
+/// All role matrices (A, B, D) share one backing matrix with a fixed label
+/// (`"shared"`). Each role is a row/column prefix of the shared matrix.
+/// See `SHARED_PREFIX_BINDING.md` for the security argument.
 pub(crate) fn derive_public_matrix<F: FieldCore + FieldSampling, const D: usize>(
     rows: usize,
     cols: usize,
     seed: &PublicMatrixSeed,
-    matrix_label: &[u8],
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     (0..rows)
         .map(|r| {
             (0..cols)
                 .map(|c| {
-                    let mut entry_rng = ShakeXofRng::new(seed, matrix_label, rows, cols, r, c);
+                    let mut entry_rng = ShakeXofRng::new(seed, r, c);
                     CyclotomicRing::random(&mut entry_rng)
                 })
                 .collect()
@@ -51,23 +48,14 @@ struct ShakeXofRng {
 }
 
 impl ShakeXofRng {
-    // Dimensions (`rows`, `cols`) are intentionally excluded from the domain
-    // separator so that a matrix derived at one size is a prefix of the same
-    // matrix derived at a larger size.  Each entry is uniquely identified by
-    // `(seed, matrix_label, row, col)`, which is sufficient for collision
-    // resistance while enabling setup reuse across poly/mega-poly layouts.
-    fn new(
-        seed: &PublicMatrixSeed,
-        matrix_label: &[u8],
-        _rows: usize,
-        _cols: usize,
-        row: usize,
-        col: usize,
-    ) -> Self {
+    // Each entry is uniquely identified by `(seed, row, col)` with a fixed
+    // matrix label, so a matrix derived at one size is a prefix of the same
+    // matrix derived at a larger size.
+    fn new(seed: &PublicMatrixSeed, row: usize, col: usize) -> Self {
         let mut xof = Shake256::default();
         absorb_len_prefixed(&mut xof, b"domain", PUBLIC_MATRIX_DOMAIN);
         absorb_len_prefixed(&mut xof, b"seed", seed);
-        absorb_len_prefixed(&mut xof, b"matrix", matrix_label);
+        absorb_len_prefixed(&mut xof, b"matrix", SHARED_MATRIX_LABEL);
         absorb_len_prefixed(&mut xof, b"row", &(row as u64).to_le_bytes());
         absorb_len_prefixed(&mut xof, b"col", &(col as u64).to_le_bytes());
         Self {
@@ -101,13 +89,6 @@ impl RngCore for ShakeXofRng {
 
 impl CryptoRng for ShakeXofRng {}
 
-fn absorb_len_prefixed(xof: &mut Shake256, label: &[u8], data: &[u8]) {
-    xof.update(&(label.len() as u64).to_le_bytes());
-    xof.update(label);
-    xof.update(&(data.len() as u64).to_le_bytes());
-    xof.update(data);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,16 +100,20 @@ mod tests {
     #[test]
     fn matrix_derivation_is_deterministic_for_same_seed() {
         let seed = [42u8; 32];
-        let m1 = derive_public_matrix::<F, D>(3, 5, &seed, b"A");
-        let m2 = derive_public_matrix::<F, D>(3, 5, &seed, b"A");
+        let m1 = derive_public_matrix::<F, D>(3, 5, &seed);
+        let m2 = derive_public_matrix::<F, D>(3, 5, &seed);
         assert_eq!(m1, m2);
     }
 
     #[test]
-    fn matrix_derivation_domain_separates_labels() {
+    fn matrix_derivation_is_prefix_stable() {
         let seed = [7u8; 32];
-        let a = derive_public_matrix::<F, D>(2, 3, &seed, b"A");
-        let b = derive_public_matrix::<F, D>(2, 3, &seed, b"B");
-        assert_ne!(a, b);
+        let small = derive_public_matrix::<F, D>(2, 3, &seed);
+        let large = derive_public_matrix::<F, D>(4, 6, &seed);
+        for r in 0..2 {
+            for c in 0..3 {
+                assert_eq!(small[r][c], large[r][c]);
+            }
+        }
     }
 }

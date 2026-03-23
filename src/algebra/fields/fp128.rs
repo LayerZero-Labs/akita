@@ -4,11 +4,11 @@
 //! on both AArch64 and x86-64.  The offset `c` is computed at compile time
 //! from the const-generic modulus `P`.
 //!
-//! ## Naming convention for built-in primes
+//! ## Built-in primes
 //!
-//! The built-in type names encode the **signed terms as they appear in the
-//! modulus `p`** (excluding the leading `+2^128` term).  For example,
-//! `Prime128M13M4P0` denotes `p = 2^128 − 2^13 − 2^4 + 2^0`.
+//! Two primes are provided: `Prime128Offset275` (`p = 2^128 − 275`) and
+//! `Prime128Offset5823` (`p = 2^128 − 5823`).  The latter is the default
+//! for all protocol usage.
 
 use std::io::{Read, Write};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
@@ -889,22 +889,10 @@ impl<const P: u128> PseudoMersenneField for Fp128<P> {
     const MODULUS_OFFSET: u128 = Self::C;
 }
 
-/// `p = 2^128 − 2^13 − 2^4 + 2^0`  (C = 8207).
-pub type Prime128M13M4P0 = Fp128<0xffffffffffffffffffffffffffffdff1>;
-/// `p = 2^128 − 2^37 + 2^3 + 2^0`  (C = 137438953463).
-pub type Prime128M37P3P0 = Fp128<0xffffffffffffffffffffffe000000009>;
-/// `p = 2^128 − 2^52 − 2^3 + 2^0`  (C = 4503599627370487).
-pub type Prime128M52M3P0 = Fp128<0xffffffffffffffffffeffffffffffff9>;
-/// `p = 2^128 − 2^54 + 2^4 + 2^0`  (C = 18014398509481967).
-pub type Prime128M54P4P0 = Fp128<0xffffffffffffffffffc0000000000011>;
-/// `p = 2^128 − 2^8 − 2^4 − 2^1 − 2^0`  (C = 275).
-pub type Prime128M8M4M1M0 = Fp128<0xfffffffffffffffffffffffffffffeed>;
-/// `p = 2^128 − 5823`  (C = 5823).
+/// `p = 2^128 − 275`  (C = 275).
+pub type Prime128Offset275 = Fp128<0xfffffffffffffffffffffffffffffeed>;
+/// `p = 2^128 − 5823`  (C = 5823).  Default for all protocol usage.
 pub type Prime128Offset5823 = Fp128<0xffffffffffffffffffffffffffffe941>;
-/// `p = 2^128 − 2^18 − 2^0`  (C = 2^18 + 1).
-pub type Prime128M18M0 = Fp128<0xfffffffffffffffffffffffffffbffff>;
-/// `p = 2^128 − 2^54 + 2^0`  (C = 2^54 − 1).
-pub type Prime128M54P0 = Fp128<0xffffffffffffffffffc0000000000001>;
 
 #[cfg(test)]
 mod tests {
@@ -914,7 +902,7 @@ mod tests {
     use rand::SeedableRng;
     use rand_core::RngCore;
 
-    type F = Prime128M8M4M1M0;
+    type F = Prime128Offset5823;
 
     #[test]
     fn to_limbs_roundtrip() {
@@ -1045,17 +1033,10 @@ mod tests {
 
     #[test]
     fn solinas_reduce_cross_prime() {
-        // Verify with Prime128M18M0 (C = 2^18 + 1, shift+add path)
-        type G = Prime128M18M0;
+        type G = Prime128Offset275;
         let c = G::from_canonical_u128_reduced(<G as PseudoMersenneField>::MODULUS_OFFSET);
         let expected = c * c - G::one();
         assert_eq!(G::solinas_reduce(&[u64::MAX; 4]), expected);
-
-        // Verify with Prime128M54P0 (C = 2^54 - 1, shift-sub path)
-        type H = Prime128M54P0;
-        let c = H::from_canonical_u128_reduced(<H as PseudoMersenneField>::MODULUS_OFFSET);
-        let expected = c * c - H::one();
-        assert_eq!(H::solinas_reduce(&[u64::MAX; 4]), expected);
     }
 
     #[test]

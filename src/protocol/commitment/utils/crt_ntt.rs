@@ -167,21 +167,13 @@ fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
     }
 }
 
-/// Build NTT slot caches for three matrices, computing CRT+NTT parameters once.
-///
-/// # Errors
-///
-/// Returns an error if no CRT+NTT parameter set matches the field modulus and ring degree.
-#[tracing::instrument(skip_all, name = "build_ntt_slots")]
-#[allow(non_snake_case)]
-pub fn build_ntt_slots<F: FieldCore + CanonicalField, const D: usize>(
-    A: RingMatrixView<'_, F, D>,
-    B: RingMatrixView<'_, F, D>,
-    D_mat: RingMatrixView<'_, F, D>,
-) -> Result<(NttSlotCache<D>, NttSlotCache<D>, NttSlotCache<D>), HachiError> {
-    let params = select_crt_ntt_params::<F, D>()?;
-    let slot_a = build_ntt_slot_from_params(A, params.clone());
-    let slot_b = build_ntt_slot_from_params(B, params.clone());
-    let slot_d = build_ntt_slot_from_params(D_mat, params);
-    Ok((slot_a, slot_b, slot_d))
+impl<const D: usize> NttSlotCache<D> {
+    /// Number of matrix rows stored in this cache.
+    pub fn num_rows(&self) -> usize {
+        match self {
+            NttSlotCache::Q32 { neg, .. } => neg.len(),
+            NttSlotCache::Q64 { neg, .. } => neg.len(),
+            NttSlotCache::Q128 { neg, .. } => neg.len(),
+        }
+    }
 }

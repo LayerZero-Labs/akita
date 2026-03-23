@@ -100,13 +100,13 @@ This file is the **single source of truth** for implementation status and near-t
 - [x] Division-free fixed-iteration reduction for `Fp32/Fp64` multiplication paths
 - [x] Division-free fixed-iteration CRT final projection (replaced `% q` in scalar reconstruction path)
 - [x] Rejection-sampled `FieldSampling::sample()` for all field types (no modular bias)
-- [x] Pow2Offset pseudo-Mersenne registry + aliases (`q = 2^k - offset`, bounded `k <= 128`, `q % 8 == 5`) (`src/algebra/fields/pseudo_mersenne.rs`)
+- [x] Pow2Offset pseudo-Mersenne registry + aliases (`q = 2^k - offset`, bounded `k <= 128`) (`src/algebra/fields/pseudo_mersenne.rs`)
 - [x] Constant-time review notes for current algebra/ring paths (`CONSTANT_TIME_NOTES.md`)
 - [x] Deterministic parameter presets
   - [x] `q = 2^32 - 99` constants scaffold (`src/algebra/ntt/tables.rs`)
   - [x] `Pow2Offset` presets selected for 64/128-bit path:
     - `q = 2^64 - 59` (`POW2_OFFSET_MODULUS_64`)
-    - `q = 2^128 - 275` (`POW2_OFFSET_MODULUS_128`)
+    - `q = 2^128 - 5823` (`POW2_OFFSET_MODULUS_128`)
     - source: `src/algebra/fields/pseudo_mersenne.rs`
 - [x] `Module` implementations:
   - [x] `VectorModule<F, N>` (fixed-length vectors; `Module` via scalar*vector mul) (`src/algebra/module.rs`)
@@ -130,7 +130,7 @@ This file is the **single source of truth** for implementation status and near-t
   - [x] NTT forward/inverse round-trips (single prime and all Q32 primes)
   - [x] Cyclotomic CRT+NTT full round-trip (`from_ring` -> `to_ring`)
   - [x] Scalar backend path equivalence (`*_with_backend` vs default path)
-  - [x] Pow2Offset profile invariants (`q = 2^k - offset`, `q % 8 == 5`)
+  - [x] Pow2Offset profile invariants (`q = 2^k - offset`)
   - [x] `FieldSampling::sample()` output bound checks
   - [x] Checked deserialization rejects non-canonical field encodings
   - [x] Galois automorphism checks (`sigma` composition + multiplicativity)

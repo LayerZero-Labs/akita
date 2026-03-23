@@ -1,28 +1,32 @@
-//! Local algebra for 2-round x-quad prefix kernels.
+//! Bivariate-skip ("two-round prefix") prover and verifier for stages 1 and 2.
 //!
-//! These helpers model a single 4-value x-quad in the first two x rounds,
-//! using the point semantics we intend to reuse in the eventual batched-prefix
-//! implementation:
+//! When at least two x-rounds remain, the first two rounds of each stage's
+//! sumcheck can be collapsed into a single bivariate evaluation over each
+//! 4-value x-quad.  The prover sends a grid of evaluations at a small product
+//! domain; the verifier reconstructs the two univariate round polynomials from
+//! that grid plus the known claim.
 //!
-//! - finite points are ordinary evaluations of the bilinear multilinear
-//!   extension over the quad;
+//! Point semantics for the evaluation domains:
+//!
+//! - Finite points are ordinary evaluations of the bilinear multilinear
+//!   extension over the quad.
 //! - `Infinity` means "take the leading coefficient in that coordinate".
 //!
-//! The tests pin down three facts we rely on before wiring this into the prover:
+//! Stage 1 (`b = 4`): domain `{0, 1, Infinity}^2`, 9-point grid with the
+//! four Boolean corners omitted (5 stored values).
 //!
-//! - Stage 1's candidate `{1, -1, 2, Infinity}^2` storage really is a
-//!   15-dimensional family because `(1, 1)` is always zero, but reconstructing the
-//!   actual first two rounds needs the safe `{0, 1, -1, 2, Infinity}^2`
-//!   fallback with the four Boolean corners omitted, for a 21-value payload.
-//! - Stage 2's proposed reduced `{1, Infinity}^2` storage is not enough, by
-//!   itself, to recover the local round messages for either the norm or the
-//!   relation family, so the safe algebra layer keeps the full
-//!   `{0, 1, Infinity}^2` fallback for now.
+//! Stage 1 (`b = 8`): domain `{0, 1, -1, 2, Infinity}^2`, 25-point grid
+//! with the four Boolean corners omitted (21 stored values).
+//!
+//! Stage 2 (`b = 8`): domain `{0, 1, Infinity}^2`, 9-point grid.  The norm
+//! and relation families each store a compressed grid with one Boolean corner
+//! omitted (8 stored values each), recovered via the known claim.
 
-use super::eq_poly::EqPolynomial;
 #[cfg(test)]
 use super::hachi_stage1::range_check_eval_from_s;
+use super::hachi_stage2::reduce_signed_accum;
 use super::UniPoly;
+use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::fields::HasUnreducedOps;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
@@ -59,8 +63,14 @@ pub(crate) fn stage1_full_prefix_points<E: FieldCore + FromSmallInt>() -> [Prefi
     ]
 }
 
-/// Number of stored evaluations in the stage-1 2-round bivariate-skip proof after
-/// omitting the four Boolean corners from `{0,1,-1,2,Infinity}^2`.
+/// Number of stored evaluations in the stage-1 `b = 4` 2-round bivariate-skip
+/// proof after omitting the four Boolean corners from `{0,1,Infinity}^2`.
+pub(crate) const STAGE1_B4_PREFIX_EVAL_COUNT: usize = 5;
+
+const STAGE1_B4_NONBOOLEAN_GRID_INDICES: [usize; STAGE1_B4_PREFIX_EVAL_COUNT] = [2, 5, 6, 7, 8];
+
+/// Number of stored evaluations in the stage-1 `b = 8` 2-round bivariate-skip
+/// proof after omitting the four Boolean corners from `{0,1,-1,2,Infinity}^2`.
 pub(crate) const STAGE1_PREFIX_EVAL_COUNT: usize = 21;
 
 /// Serializable stage-1 first-two-round bivariate-skip proof.
@@ -80,7 +90,9 @@ fn stage1_is_boolean_corner(x_idx: usize, y_idx: usize) -> bool {
 }
 
 const LOOKUP_PREFIX_INF: i64 = i64::MIN;
+const STAGE1_B4_S_VALUES: [i64; 2] = [0, 2];
 const STAGE1_B8_S_VALUES: [i64; 4] = [0, 2, 6, 12];
+const STAGE2_B4_W_VALUES: [i64; 4] = [-2, -1, 0, 1];
 const STAGE2_B8_W_VALUES: [i64; 8] = [-4, -3, -2, -1, 0, 1, 2, 3];
 const STAGE2_PREFIX_POINT_COUNT: usize = 9;
 const STAGE2_COMPRESSED_POINT_COUNT: usize = STAGE2_PREFIX_POINT_COUNT - 1;
@@ -130,6 +142,27 @@ const fn stage1_b8_range_check_from_s(s: i64) -> i64 {
     s * (s - 2) * (s - 6) * (s - 12)
 }
 
+const fn stage1_b4_range_check_from_s(s: i64) -> i64 {
+    s * (s - 2)
+}
+
+const fn stage1_b4_local_norm_raw_eval_i64(s_quad: [i64; 4], x: i64, y: i64) -> i64 {
+    let [_, bx, cy, dxy] = lookup_bilinear_coeffs_from_quad(s_quad);
+    let x_is_inf = x == LOOKUP_PREFIX_INF;
+    let y_is_inf = y == LOOKUP_PREFIX_INF;
+    if !x_is_inf && !y_is_inf {
+        stage1_b4_range_check_from_s(lookup_bilinear_eval_on_prefix_points(s_quad, x, y))
+    } else if x_is_inf && !y_is_inf {
+        let linear = bx + y * dxy;
+        linear * linear
+    } else if !x_is_inf && y_is_inf {
+        let linear = cy + x * dxy;
+        linear * linear
+    } else {
+        dxy * dxy
+    }
+}
+
 const fn stage1_b8_local_norm_raw_eval_i64(s_quad: [i64; 4], x: i64, y: i64) -> i64 {
     let [_, bx, cy, dxy] = lookup_bilinear_coeffs_from_quad(s_quad);
     let x_is_inf = x == LOOKUP_PREFIX_INF;
@@ -144,6 +177,14 @@ const fn stage1_b8_local_norm_raw_eval_i64(s_quad: [i64; 4], x: i64, y: i64) -> 
         pow_i64(dxy, 4)
     }
 }
+
+const STAGE1_B4_PREFIX_LOOKUP_POINTS_I64: [(i64, i64); STAGE1_B4_PREFIX_EVAL_COUNT] = [
+    (0, LOOKUP_PREFIX_INF),
+    (1, LOOKUP_PREFIX_INF),
+    (LOOKUP_PREFIX_INF, 0),
+    (LOOKUP_PREFIX_INF, 1),
+    (LOOKUP_PREFIX_INF, LOOKUP_PREFIX_INF),
+];
 
 const fn stage1_lookup_points_i64() -> [(i64, i64); STAGE1_PREFIX_EVAL_COUNT] {
     let coords = [0i64, 1, -1, 2, LOOKUP_PREFIX_INF];
@@ -167,9 +208,52 @@ const fn stage1_lookup_points_i64() -> [(i64, i64); STAGE1_PREFIX_EVAL_COUNT] {
 const STAGE1_PREFIX_LOOKUP_POINTS_I64: [(i64, i64); STAGE1_PREFIX_EVAL_COUNT] =
     stage1_lookup_points_i64();
 
+#[inline(always)]
+const fn stage1_b4_lookup_index_from_digits(digits: [usize; 4]) -> usize {
+    digits[0] | (digits[1] << 1) | (digits[2] << 2) | (digits[3] << 3)
+}
+
+#[inline(always)]
 const fn stage1_b8_lookup_index_from_digits(digits: [usize; 4]) -> usize {
     digits[0] | (digits[1] << 2) | (digits[2] << 4) | (digits[3] << 6)
 }
+
+const fn build_stage1_b4_prefix_lookup_table() -> [[i64; STAGE1_B4_PREFIX_EVAL_COUNT]; 16] {
+    let mut table = [[0i64; STAGE1_B4_PREFIX_EVAL_COUNT]; 16];
+    let mut d0 = 0usize;
+    while d0 < 2 {
+        let mut d1 = 0usize;
+        while d1 < 2 {
+            let mut d2 = 0usize;
+            while d2 < 2 {
+                let mut d3 = 0usize;
+                while d3 < 2 {
+                    let quad = [
+                        STAGE1_B4_S_VALUES[d0],
+                        STAGE1_B4_S_VALUES[d1],
+                        STAGE1_B4_S_VALUES[d2],
+                        STAGE1_B4_S_VALUES[d3],
+                    ];
+                    let table_idx = stage1_b4_lookup_index_from_digits([d0, d1, d2, d3]);
+                    let mut point_idx = 0usize;
+                    while point_idx < STAGE1_B4_PREFIX_EVAL_COUNT {
+                        let (x, y) = STAGE1_B4_PREFIX_LOOKUP_POINTS_I64[point_idx];
+                        table[table_idx][point_idx] = stage1_b4_local_norm_raw_eval_i64(quad, x, y);
+                        point_idx += 1;
+                    }
+                    d3 += 1;
+                }
+                d2 += 1;
+            }
+            d1 += 1;
+        }
+        d0 += 1;
+    }
+    table
+}
+
+static STAGE1_B4_PREFIX_LOOKUP_TABLE: [[i64; STAGE1_B4_PREFIX_EVAL_COUNT]; 16] =
+    build_stage1_b4_prefix_lookup_table();
 
 const fn build_stage1_b8_prefix_lookup_table() -> [[i64; STAGE1_PREFIX_EVAL_COUNT]; 256] {
     let mut table = [[0i64; STAGE1_PREFIX_EVAL_COUNT]; 256];
@@ -220,6 +304,12 @@ const STAGE2_PREFIX_LOOKUP_POINTS_I64: [(i64, i64); STAGE2_PREFIX_POINT_COUNT] =
     (LOOKUP_PREFIX_INF, LOOKUP_PREFIX_INF),
 ];
 
+#[inline(always)]
+const fn stage2_b4_lookup_index_from_digits(digits: [usize; 4]) -> usize {
+    digits[0] | (digits[1] << 2) | (digits[2] << 4) | (digits[3] << 6)
+}
+
+#[inline(always)]
 const fn stage2_b8_lookup_index_from_digits(digits: [usize; 4]) -> usize {
     digits[0] | (digits[1] << 3) | (digits[2] << 6) | (digits[3] << 9)
 }
@@ -249,6 +339,96 @@ const fn compress_stage2_lookup_values(
     }
     out
 }
+
+const fn build_stage2_b4_norm_lookup_table() -> [[i64; STAGE2_PREFIX_POINT_COUNT]; 256] {
+    let mut table = [[0i64; STAGE2_PREFIX_POINT_COUNT]; 256];
+    let mut d0 = 0usize;
+    while d0 < 4 {
+        let mut d1 = 0usize;
+        while d1 < 4 {
+            let mut d2 = 0usize;
+            while d2 < 4 {
+                let mut d3 = 0usize;
+                while d3 < 4 {
+                    let quad = [
+                        STAGE2_B4_W_VALUES[d0],
+                        STAGE2_B4_W_VALUES[d1],
+                        STAGE2_B4_W_VALUES[d2],
+                        STAGE2_B4_W_VALUES[d3],
+                    ];
+                    let table_idx = stage2_b4_lookup_index_from_digits([d0, d1, d2, d3]);
+                    let mut point_idx = 0usize;
+                    while point_idx < STAGE2_PREFIX_POINT_COUNT {
+                        let (x, y) = STAGE2_PREFIX_LOOKUP_POINTS_I64[point_idx];
+                        table[table_idx][point_idx] = stage2_local_norm_raw_eval_i64(quad, x, y);
+                        point_idx += 1;
+                    }
+                    d3 += 1;
+                }
+                d2 += 1;
+            }
+            d1 += 1;
+        }
+        d0 += 1;
+    }
+    table
+}
+
+static STAGE2_B4_NORM_LOOKUP_TABLE: [[i64; STAGE2_PREFIX_POINT_COUNT]; 256] =
+    build_stage2_b4_norm_lookup_table();
+
+const fn build_stage2_b4_relation_weight_table() -> [[i64; STAGE2_PREFIX_POINT_COUNT]; 256] {
+    let mut table = [[0i64; STAGE2_PREFIX_POINT_COUNT]; 256];
+    let mut d0 = 0usize;
+    while d0 < 4 {
+        let mut d1 = 0usize;
+        while d1 < 4 {
+            let mut d2 = 0usize;
+            while d2 < 4 {
+                let mut d3 = 0usize;
+                while d3 < 4 {
+                    let quad = [
+                        STAGE2_B4_W_VALUES[d0],
+                        STAGE2_B4_W_VALUES[d1],
+                        STAGE2_B4_W_VALUES[d2],
+                        STAGE2_B4_W_VALUES[d3],
+                    ];
+                    let table_idx = stage2_b4_lookup_index_from_digits([d0, d1, d2, d3]);
+                    let mut point_idx = 0usize;
+                    while point_idx < STAGE2_PREFIX_POINT_COUNT {
+                        let (x, y) = STAGE2_PREFIX_LOOKUP_POINTS_I64[point_idx];
+                        table[table_idx][point_idx] =
+                            lookup_bilinear_eval_on_prefix_points(quad, x, y);
+                        point_idx += 1;
+                    }
+                    d3 += 1;
+                }
+                d2 += 1;
+            }
+            d1 += 1;
+        }
+        d0 += 1;
+    }
+    table
+}
+
+static STAGE2_B4_RELATION_WEIGHT_TABLE: [[i64; STAGE2_PREFIX_POINT_COUNT]; 256] =
+    build_stage2_b4_relation_weight_table();
+
+const fn build_stage2_b4_relation_weight_compressed_table(
+) -> [[i64; STAGE2_COMPRESSED_POINT_COUNT]; 256] {
+    let mut table = [[0i64; STAGE2_COMPRESSED_POINT_COUNT]; 256];
+    let mut table_idx = 0usize;
+    while table_idx < 256 {
+        table[table_idx] =
+            compress_stage2_lookup_values(STAGE2_B4_RELATION_WEIGHT_TABLE[table_idx], 0);
+        table_idx += 1;
+    }
+    table
+}
+
+static STAGE2_B4_RELATION_WEIGHT_COMPRESSED_TABLE: [[i64; STAGE2_COMPRESSED_POINT_COUNT]; 256] =
+    build_stage2_b4_relation_weight_compressed_table();
 
 const fn build_stage2_b8_norm_lookup_table() -> [[i64; STAGE2_PREFIX_POINT_COUNT]; 4096] {
     let mut table = [[0i64; STAGE2_PREFIX_POINT_COUNT]; 4096];
@@ -341,14 +521,6 @@ static STAGE2_B8_RELATION_WEIGHT_COMPRESSED_TABLE: [[i64; STAGE2_COMPRESSED_POIN
     build_stage2_b8_relation_weight_compressed_table();
 
 #[inline]
-fn reduce_signed_lookup_accum<E: FieldCore + HasUnreducedOps>(
-    pos: E::MulU64Accum,
-    neg: E::MulU64Accum,
-) -> E {
-    E::reduce_mul_u64_accum(pos) - E::reduce_mul_u64_accum(neg)
-}
-
-#[inline]
 fn accum_lookup_vector_signed<E: FieldCore + HasUnreducedOps, const N: usize>(
     pos: &mut [E::MulU64Accum; N],
     neg: &mut [E::MulU64Accum; N],
@@ -402,20 +574,17 @@ fn accum_pointwise_signed<E: FieldCore + HasUnreducedOps, const N: usize>(
     }
 }
 
-#[inline]
-#[cfg(test)]
-fn stage1_b8_s_digit_from_compact_w(w: i8) -> usize {
-    let w = i32::from(w);
-    debug_assert!((-4..=3).contains(&w));
-    if w < 0 {
-        (-w - 1) as usize
-    } else {
-        w as usize
+#[inline(always)]
+pub(super) fn stage1_b4_s_digit_from_compact_s(s: i16) -> usize {
+    match s {
+        0 => 0,
+        2 => 1,
+        other => unreachable!("unexpected compact s value {other}"),
     }
 }
 
-#[inline]
-fn stage1_b8_s_digit_from_compact_s(s: i16) -> usize {
+#[inline(always)]
+pub(super) fn stage1_b8_s_digit_from_compact_s(s: i16) -> usize {
     match s {
         0 => 0,
         2 => 1,
@@ -425,11 +594,23 @@ fn stage1_b8_s_digit_from_compact_s(s: i16) -> usize {
     }
 }
 
-#[inline]
-fn stage2_b8_w_digit(w: i8) -> usize {
+#[inline(always)]
+pub(super) fn stage2_b4_w_digit(w: i8) -> usize {
+    let w = i32::from(w);
+    debug_assert!((-2..=1).contains(&w));
+    (w + 2) as usize
+}
+
+#[inline(always)]
+pub(super) fn stage2_b8_w_digit(w: i8) -> usize {
     let w = i32::from(w);
     debug_assert!((-4..=3).contains(&w));
     (w + 4) as usize
+}
+
+#[inline]
+fn linear_eq_eval<E: FieldCore>(tau: E, x: E) -> E {
+    tau * x + (E::one() - tau) * (E::one() - x)
 }
 
 #[inline]
@@ -505,7 +686,7 @@ fn eval_stage1_biquartic_from_full_grid<E: FieldCore + FromSmallInt>(
 /// Whether stage 1 has enough x-rounds to use the 2-round prefix path.
 #[inline]
 pub(crate) fn can_use_stage1_two_round_prefix(num_u: usize, b: usize) -> bool {
-    num_u >= 2 && b == 8
+    num_u >= 2 && matches!(b, 4 | 8)
 }
 
 /// Build the stage-1 first-two-round bivariate-skip proof from the compact witness
@@ -527,81 +708,15 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact<
     num_u: usize,
     num_l: usize,
 ) -> Option<Stage1BivariateSkipProof<E>> {
-    if !can_use_stage1_two_round_prefix(num_u, b) {
-        return None;
-    }
-
-    let y_len = 1usize << num_l;
-    assert_eq!(w_compact.len(), live_x_cols * y_len);
-    assert_eq!(tau0.len(), num_u + num_l);
-
-    let eq_x_suffix = EqPolynomial::evals(&tau0[2..num_u]);
-    let eq_y = EqPolynomial::evals(&tau0[num_u..]);
-    let live_x_quads = live_x_cols.div_ceil(4);
-    debug_assert!(eq_x_suffix.len() >= live_x_quads);
-
-    let (pos, neg) = cfg_fold_reduce!(
-        0..y_len,
-        || {
-            (
-                [E::MulU64Accum::ZERO; STAGE1_PREFIX_EVAL_COUNT],
-                [E::MulU64Accum::ZERO; STAGE1_PREFIX_EVAL_COUNT],
-            )
-        },
-        |(mut pos, mut neg), y_row| {
-            let row = &w_compact[y_row * live_x_cols..(y_row + 1) * live_x_cols];
-            let eq_y_weight = eq_y[y_row];
-            for (x_quad, &eq_x_weight) in eq_x_suffix.iter().take(live_x_quads).enumerate() {
-                let base = 4 * x_quad;
-                let lookup_idx = stage1_b8_lookup_index_from_digits([
-                    if base < live_x_cols {
-                        stage1_b8_s_digit_from_compact_w(row[base])
-                    } else {
-                        0
-                    },
-                    if base + 1 < live_x_cols {
-                        stage1_b8_s_digit_from_compact_w(row[base + 1])
-                    } else {
-                        0
-                    },
-                    if base + 2 < live_x_cols {
-                        stage1_b8_s_digit_from_compact_w(row[base + 2])
-                    } else {
-                        0
-                    },
-                    if base + 3 < live_x_cols {
-                        stage1_b8_s_digit_from_compact_w(row[base + 3])
-                    } else {
-                        0
-                    },
-                ]);
-                let weight = eq_x_weight * eq_y_weight;
-                accum_lookup_vector_signed(
-                    &mut pos,
-                    &mut neg,
-                    weight,
-                    &STAGE1_B8_PREFIX_LOOKUP_TABLE[lookup_idx],
-                );
-            }
-            (pos, neg)
-        },
-        |(mut pos_a, mut neg_a), (pos_b, neg_b)| {
-            for (dst, src) in pos_a.iter_mut().zip(pos_b.iter()) {
-                *dst += *src;
-            }
-            for (dst, src) in neg_a.iter_mut().zip(neg_b.iter()) {
-                *dst += *src;
-            }
-            (pos_a, neg_a)
-        }
-    );
-    let evals_except_boolean_core = (0..STAGE1_PREFIX_EVAL_COUNT)
-        .map(|idx| reduce_signed_lookup_accum::<E>(pos[idx], neg[idx]))
+    let s_compact: Vec<i16> = w_compact
+        .iter()
+        .copied()
+        .map(|w| {
+            let w = i32::from(w);
+            (w * (w + 1)) as i16
+        })
         .collect();
-
-    Some(Stage1BivariateSkipProof {
-        evals_except_boolean_core,
-    })
+    build_stage1_bivariate_skip_proof_from_s_compact(&s_compact, tau0, b, live_x_cols, num_u, num_l)
 }
 
 /// Build the stage-1 first-two-round bivariate-skip proof from the compact
@@ -633,64 +748,131 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
     let live_x_quads = live_x_cols.div_ceil(4);
     debug_assert!(eq_x_suffix.len() >= live_x_quads);
 
-    let (pos, neg) = cfg_fold_reduce!(
-        0..y_len,
-        || {
-            (
-                [E::MulU64Accum::ZERO; STAGE1_PREFIX_EVAL_COUNT],
-                [E::MulU64Accum::ZERO; STAGE1_PREFIX_EVAL_COUNT],
-            )
-        },
-        |(mut pos, mut neg), y_row| {
-            let row = &s_compact[y_row * live_x_cols..(y_row + 1) * live_x_cols];
-            let eq_y_weight = eq_y[y_row];
-            for (x_quad, &eq_x_weight) in eq_x_suffix.iter().take(live_x_quads).enumerate() {
-                let base = 4 * x_quad;
-                let lookup_idx = stage1_b8_lookup_index_from_digits([
-                    if base < live_x_cols {
-                        stage1_b8_s_digit_from_compact_s(row[base])
-                    } else {
-                        0
-                    },
-                    if base + 1 < live_x_cols {
-                        stage1_b8_s_digit_from_compact_s(row[base + 1])
-                    } else {
-                        0
-                    },
-                    if base + 2 < live_x_cols {
-                        stage1_b8_s_digit_from_compact_s(row[base + 2])
-                    } else {
-                        0
-                    },
-                    if base + 3 < live_x_cols {
-                        stage1_b8_s_digit_from_compact_s(row[base + 3])
-                    } else {
-                        0
-                    },
-                ]);
-                let weight = eq_x_weight * eq_y_weight;
-                accum_lookup_vector_signed(
-                    &mut pos,
-                    &mut neg,
-                    weight,
-                    &STAGE1_B8_PREFIX_LOOKUP_TABLE[lookup_idx],
-                );
-            }
-            (pos, neg)
-        },
-        |(mut pos_a, mut neg_a), (pos_b, neg_b)| {
-            for (dst, src) in pos_a.iter_mut().zip(pos_b.iter()) {
-                *dst += *src;
-            }
-            for (dst, src) in neg_a.iter_mut().zip(neg_b.iter()) {
-                *dst += *src;
-            }
-            (pos_a, neg_a)
+    let evals_except_boolean_core = match b {
+        4 => {
+            let (pos, neg) = cfg_fold_reduce!(
+                0..y_len,
+                || {
+                    (
+                        [E::MulU64Accum::ZERO; STAGE1_B4_PREFIX_EVAL_COUNT],
+                        [E::MulU64Accum::ZERO; STAGE1_B4_PREFIX_EVAL_COUNT],
+                    )
+                },
+                |(mut pos, mut neg), y_row| {
+                    let row = &s_compact[y_row * live_x_cols..(y_row + 1) * live_x_cols];
+                    let eq_y_weight = eq_y[y_row];
+                    for (x_quad, &eq_x_weight) in eq_x_suffix.iter().take(live_x_quads).enumerate()
+                    {
+                        let base = 4 * x_quad;
+                        let lookup_idx = stage1_b4_lookup_index_from_digits([
+                            if base < live_x_cols {
+                                stage1_b4_s_digit_from_compact_s(row[base])
+                            } else {
+                                0
+                            },
+                            if base + 1 < live_x_cols {
+                                stage1_b4_s_digit_from_compact_s(row[base + 1])
+                            } else {
+                                0
+                            },
+                            if base + 2 < live_x_cols {
+                                stage1_b4_s_digit_from_compact_s(row[base + 2])
+                            } else {
+                                0
+                            },
+                            if base + 3 < live_x_cols {
+                                stage1_b4_s_digit_from_compact_s(row[base + 3])
+                            } else {
+                                0
+                            },
+                        ]);
+                        let weight = eq_x_weight * eq_y_weight;
+                        accum_lookup_vector_signed(
+                            &mut pos,
+                            &mut neg,
+                            weight,
+                            &STAGE1_B4_PREFIX_LOOKUP_TABLE[lookup_idx],
+                        );
+                    }
+                    (pos, neg)
+                },
+                |(mut pos_a, mut neg_a), (pos_b, neg_b)| {
+                    for (dst, src) in pos_a.iter_mut().zip(pos_b.iter()) {
+                        *dst += *src;
+                    }
+                    for (dst, src) in neg_a.iter_mut().zip(neg_b.iter()) {
+                        *dst += *src;
+                    }
+                    (pos_a, neg_a)
+                }
+            );
+            (0..STAGE1_B4_PREFIX_EVAL_COUNT)
+                .map(|idx| reduce_signed_accum::<E>(pos[idx], neg[idx]))
+                .collect()
         }
-    );
-    let evals_except_boolean_core = (0..STAGE1_PREFIX_EVAL_COUNT)
-        .map(|idx| reduce_signed_lookup_accum::<E>(pos[idx], neg[idx]))
-        .collect();
+        8 => {
+            let (pos, neg) = cfg_fold_reduce!(
+                0..y_len,
+                || {
+                    (
+                        [E::MulU64Accum::ZERO; STAGE1_PREFIX_EVAL_COUNT],
+                        [E::MulU64Accum::ZERO; STAGE1_PREFIX_EVAL_COUNT],
+                    )
+                },
+                |(mut pos, mut neg), y_row| {
+                    let row = &s_compact[y_row * live_x_cols..(y_row + 1) * live_x_cols];
+                    let eq_y_weight = eq_y[y_row];
+                    for (x_quad, &eq_x_weight) in eq_x_suffix.iter().take(live_x_quads).enumerate()
+                    {
+                        let base = 4 * x_quad;
+                        let lookup_idx = stage1_b8_lookup_index_from_digits([
+                            if base < live_x_cols {
+                                stage1_b8_s_digit_from_compact_s(row[base])
+                            } else {
+                                0
+                            },
+                            if base + 1 < live_x_cols {
+                                stage1_b8_s_digit_from_compact_s(row[base + 1])
+                            } else {
+                                0
+                            },
+                            if base + 2 < live_x_cols {
+                                stage1_b8_s_digit_from_compact_s(row[base + 2])
+                            } else {
+                                0
+                            },
+                            if base + 3 < live_x_cols {
+                                stage1_b8_s_digit_from_compact_s(row[base + 3])
+                            } else {
+                                0
+                            },
+                        ]);
+                        let weight = eq_x_weight * eq_y_weight;
+                        accum_lookup_vector_signed(
+                            &mut pos,
+                            &mut neg,
+                            weight,
+                            &STAGE1_B8_PREFIX_LOOKUP_TABLE[lookup_idx],
+                        );
+                    }
+                    (pos, neg)
+                },
+                |(mut pos_a, mut neg_a), (pos_b, neg_b)| {
+                    for (dst, src) in pos_a.iter_mut().zip(pos_b.iter()) {
+                        *dst += *src;
+                    }
+                    for (dst, src) in neg_a.iter_mut().zip(neg_b.iter()) {
+                        *dst += *src;
+                    }
+                    (pos_a, neg_a)
+                }
+            );
+            (0..STAGE1_PREFIX_EVAL_COUNT)
+                .map(|idx| reduce_signed_accum::<E>(pos[idx], neg[idx]))
+                .collect()
+        }
+        _ => unreachable!("unsupported stage-1 two-round prefix basis"),
+    };
 
     Some(Stage1BivariateSkipProof {
         evals_except_boolean_core,
@@ -720,49 +902,118 @@ fn stage1_storage_vector_from_quad<E: FieldCore + FromSmallInt>(quad: [E; 4], b:
 /// State needed to reconstruct the first two stage-1 rounds from the
 /// serialized bivariate-skip proof.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Stage1BivariateSkipState<E: FieldCore> {
+pub(crate) struct Stage1B4BivariateSkipState<E: FieldCore> {
+    x_row_coeffs: [[E; 3]; 3],
+    tau0: E,
+    tau1: E,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Stage1B8BivariateSkipState<E: FieldCore> {
     full_grid: [E; 25],
     tau0: E,
     tau1: E,
 }
 
-impl<E: FieldCore + FromSmallInt> Stage1BivariateSkipState<E> {
-    pub(crate) fn new(proof: &Stage1BivariateSkipProof<E>, tau0: &[E], b: usize) -> Option<Self> {
-        if tau0.len() < 2
-            || proof.evals_except_boolean_core.len() != STAGE1_PREFIX_EVAL_COUNT
-            || b != 8
-        {
-            return None;
-        }
-
-        let mut full_grid = [E::zero(); 25];
-        let mut payload_idx = 0usize;
-        for x_idx in 0..5 {
-            for y_idx in 0..5 {
-                if stage1_is_boolean_corner(x_idx, y_idx) {
-                    continue;
-                }
-                full_grid[stage1_full_grid_index(x_idx, y_idx)] =
-                    proof.evals_except_boolean_core[payload_idx];
-                payload_idx += 1;
-            }
-        }
-
-        Some(Self {
-            full_grid,
-            tau0: tau0[0],
-            tau1: tau0[1],
-        })
-    }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Stage1BivariateSkipState<E: FieldCore> {
+    B4(Stage1B4BivariateSkipState<E>),
+    B8(Stage1B8BivariateSkipState<E>),
 }
 
 impl<E: FieldCore + FromSmallInt> Stage1BivariateSkipState<E> {
-    #[inline]
-    fn linear_eq_eval(tau: E, x: E) -> E {
-        tau * x + (E::one() - tau) * (E::one() - x)
+    pub(crate) fn new(proof: &Stage1BivariateSkipProof<E>, tau0: &[E], b: usize) -> Option<Self> {
+        if tau0.len() < 2 {
+            return None;
+        }
+
+        match b {
+            4 => {
+                if proof.evals_except_boolean_core.len() != STAGE1_B4_PREFIX_EVAL_COUNT {
+                    return None;
+                }
+                let mut full_grid = [E::zero(); 9];
+                for (payload_idx, &grid_idx) in STAGE1_B4_NONBOOLEAN_GRID_INDICES.iter().enumerate()
+                {
+                    full_grid[grid_idx] = proof.evals_except_boolean_core[payload_idx];
+                }
+                let x_row_coeffs = std::array::from_fn(|y_idx| {
+                    quadratic_coeffs_from_01_inf(
+                        full_grid[y_idx],
+                        full_grid[3 + y_idx],
+                        full_grid[6 + y_idx],
+                    )
+                });
+                Some(Self::B4(Stage1B4BivariateSkipState {
+                    x_row_coeffs,
+                    tau0: tau0[0],
+                    tau1: tau0[1],
+                }))
+            }
+            8 => {
+                if proof.evals_except_boolean_core.len() != STAGE1_PREFIX_EVAL_COUNT {
+                    return None;
+                }
+
+                let mut full_grid = [E::zero(); 25];
+                let mut payload_idx = 0usize;
+                for x_idx in 0..5 {
+                    for y_idx in 0..5 {
+                        if stage1_is_boolean_corner(x_idx, y_idx) {
+                            continue;
+                        }
+                        full_grid[stage1_full_grid_index(x_idx, y_idx)] =
+                            proof.evals_except_boolean_core[payload_idx];
+                        payload_idx += 1;
+                    }
+                }
+
+                Some(Self::B8(Stage1B8BivariateSkipState {
+                    full_grid,
+                    tau0: tau0[0],
+                    tau1: tau0[1],
+                }))
+            }
+            _ => None,
+        }
     }
 
     pub(crate) fn reconstruct_round0_poly(&self) -> UniPoly<E> {
+        match self {
+            Self::B4(state) => state.reconstruct_round0_poly(),
+            Self::B8(state) => state.reconstruct_round0_poly(),
+        }
+    }
+
+    pub(crate) fn reconstruct_round1_poly(&self, r0: E) -> UniPoly<E> {
+        match self {
+            Self::B4(state) => state.reconstruct_round1_poly(r0),
+            Self::B8(state) => state.reconstruct_round1_poly(r0),
+        }
+    }
+}
+
+impl<E: FieldCore + FromSmallInt> Stage1B4BivariateSkipState<E> {
+    fn reconstruct_round0_poly(&self) -> UniPoly<E> {
+        let q_x = add_quadratic_coeffs(
+            scale_quadratic_coeffs(self.x_row_coeffs[0], E::one() - self.tau1),
+            scale_quadratic_coeffs(self.x_row_coeffs[1], self.tau1),
+        );
+        coeff_array_to_poly(mul_linear_by_quadratic_coeffs(self.tau0, q_x))
+    }
+
+    fn reconstruct_round1_poly(&self, r0: E) -> UniPoly<E> {
+        let y_values: [E; 3] =
+            std::array::from_fn(|y_idx| eval_quadratic_from_coeffs(self.x_row_coeffs[y_idx], r0));
+        let q_y = quadratic_coeffs_from_01_inf(y_values[0], y_values[1], y_values[2]);
+        let round0_eq = linear_eq_eval(self.tau0, r0);
+        let coeffs = mul_linear_by_quadratic_coeffs(self.tau1, q_y).map(|coeff| round0_eq * coeff);
+        coeff_array_to_poly(coeffs)
+    }
+}
+
+impl<E: FieldCore + FromSmallInt> Stage1B8BivariateSkipState<E> {
+    fn reconstruct_round0_poly(&self) -> UniPoly<E> {
         let l1_at_0 = E::one() - self.tau1;
         let l1_at_1 = self.tau1;
         let evals: Vec<E> = (0..=5u64)
@@ -770,19 +1021,19 @@ impl<E: FieldCore + FromSmallInt> Stage1BivariateSkipState<E> {
                 let x = E::from_u64(x_raw);
                 let q_x0 = eval_stage1_biquartic_from_full_grid(self.full_grid, x, E::zero());
                 let q_x1 = eval_stage1_biquartic_from_full_grid(self.full_grid, x, E::one());
-                Self::linear_eq_eval(self.tau0, x) * (l1_at_0 * q_x0 + l1_at_1 * q_x1)
+                linear_eq_eval(self.tau0, x) * (l1_at_0 * q_x0 + l1_at_1 * q_x1)
             })
             .collect();
         UniPoly::from_evals(&evals)
     }
 
-    pub(crate) fn reconstruct_round1_poly(&self, r0: E) -> UniPoly<E> {
-        let l0_at_r0 = Self::linear_eq_eval(self.tau0, r0);
+    fn reconstruct_round1_poly(&self, r0: E) -> UniPoly<E> {
+        let l0_at_r0 = linear_eq_eval(self.tau0, r0);
         let evals: Vec<E> = (0..=5u64)
             .map(|y_raw| {
                 let y = E::from_u64(y_raw);
                 l0_at_r0
-                    * Self::linear_eq_eval(self.tau1, y)
+                    * linear_eq_eval(self.tau1, y)
                     * eval_stage1_biquartic_from_full_grid(self.full_grid, r0, y)
             })
             .collect();
@@ -1088,6 +1339,11 @@ fn add_quadratic_coeffs<E: FieldCore>(lhs: [E; 3], rhs: [E; 3]) -> [E; 3] {
 }
 
 #[inline]
+fn coeff_array_to_poly<E: FieldCore, const N: usize>(coeffs: [E; N]) -> UniPoly<E> {
+    UniPoly::from_coeffs(coeffs.to_vec())
+}
+
+#[inline]
 fn mul_linear_by_quadratic_coeffs<E: FieldCore>(tau: E, quad: [E; 3]) -> [E; 4] {
     let [l0, l1] = linear_eq_coeffs(tau);
     [
@@ -1196,7 +1452,7 @@ pub(crate) fn recover_stage2_norm_grid_from_claim<E: FieldCore>(
 /// Whether stage 2 has enough x-rounds to use the 2-round prefix path.
 #[inline]
 pub(crate) fn can_use_stage2_two_round_prefix(num_u: usize, b: usize) -> bool {
-    num_u >= 2 && b == 8
+    num_u >= 2 && matches!(b, 4 | 8)
 }
 
 /// Build the stage-2 first-two-round bivariate-skip proof from the compact witness
@@ -1247,6 +1503,28 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
         })
         .collect();
 
+    let w_digit_fn: fn(i8) -> usize = match b {
+        4 => stage2_b4_w_digit,
+        8 => stage2_b8_w_digit,
+        _ => unreachable!("unsupported stage-2 two-round prefix basis"),
+    };
+    let lookup_index_fn: fn([usize; 4]) -> usize = match b {
+        4 => stage2_b4_lookup_index_from_digits,
+        8 => stage2_b8_lookup_index_from_digits,
+        _ => unreachable!(),
+    };
+    let default_digit = b / 2;
+    let norm_table: &[[i64; STAGE2_PREFIX_POINT_COUNT]] = match b {
+        4 => &STAGE2_B4_NORM_LOOKUP_TABLE,
+        8 => &STAGE2_B8_NORM_LOOKUP_TABLE,
+        _ => unreachable!(),
+    };
+    let rel_table: &[[i64; STAGE2_COMPRESSED_POINT_COUNT]] = match b {
+        4 => &STAGE2_B4_RELATION_WEIGHT_COMPRESSED_TABLE,
+        8 => &STAGE2_B8_RELATION_WEIGHT_COMPRESSED_TABLE,
+        _ => unreachable!(),
+    };
+
     let (norm_pos, norm_neg, rel_accum) = cfg_fold_reduce!(
         0..y_len,
         || {
@@ -1264,26 +1542,26 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
             let mut row_rel_neg = [E::MulU64Accum::ZERO; STAGE2_COMPRESSED_POINT_COUNT];
             for (x_quad, &eq_x_weight) in eq_x_suffix.iter().take(live_x_quads).enumerate() {
                 let base = 4 * x_quad;
-                let lookup_idx = stage2_b8_lookup_index_from_digits([
+                let lookup_idx = lookup_index_fn([
                     if base < live_x_cols {
-                        stage2_b8_w_digit(row[base])
+                        w_digit_fn(row[base])
                     } else {
-                        4
+                        default_digit
                     },
                     if base + 1 < live_x_cols {
-                        stage2_b8_w_digit(row[base + 1])
+                        w_digit_fn(row[base + 1])
                     } else {
-                        4
+                        default_digit
                     },
                     if base + 2 < live_x_cols {
-                        stage2_b8_w_digit(row[base + 2])
+                        w_digit_fn(row[base + 2])
                     } else {
-                        4
+                        default_digit
                     },
                     if base + 3 < live_x_cols {
-                        stage2_b8_w_digit(row[base + 3])
+                        w_digit_fn(row[base + 3])
                     } else {
-                        4
+                        default_digit
                     },
                 ]);
                 let norm_weight = eq_x_weight * eq_y_weight;
@@ -1291,18 +1569,18 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
                     &mut norm_pos,
                     &mut norm_neg,
                     norm_weight,
-                    &STAGE2_B8_NORM_LOOKUP_TABLE[lookup_idx],
+                    &norm_table[lookup_idx],
                     norm_point_indices,
                 );
                 accum_pointwise_signed(
                     &mut row_rel_pos,
                     &mut row_rel_neg,
                     &m_point_values_by_quad[x_quad],
-                    &STAGE2_B8_RELATION_WEIGHT_COMPRESSED_TABLE[lookup_idx],
+                    &rel_table[lookup_idx],
                 );
             }
             for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {
-                let row_rel = reduce_signed_lookup_accum::<E>(row_rel_pos[idx], row_rel_neg[idx]);
+                let row_rel = reduce_signed_accum::<E>(row_rel_pos[idx], row_rel_neg[idx]);
                 rel_accum[idx] += alpha.mul_to_product_accum(row_rel);
             }
             (norm_pos, norm_neg, rel_accum)
@@ -1322,7 +1600,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
         }
     );
     let norm_evals_except_corner: [E; STAGE2_COMPRESSED_POINT_COUNT] =
-        std::array::from_fn(|idx| reduce_signed_lookup_accum::<E>(norm_pos[idx], norm_neg[idx]));
+        std::array::from_fn(|idx| reduce_signed_accum::<E>(norm_pos[idx], norm_neg[idx]));
     let relation_evals_except_corner: [E; STAGE2_COMPRESSED_POINT_COUNT] =
         std::array::from_fn(|idx| E::reduce_product_accum(rel_accum[idx]));
     Some(Stage2BivariateSkipProof {
@@ -1418,7 +1696,7 @@ impl<E: FieldCore + FromSmallInt> Stage2BivariateSkipState<E> {
         });
         let norm_q =
             quadratic_coeffs_from_01_inf(norm_y_values[0], norm_y_values[1], norm_y_values[2]);
-        let round0_eq = Self::linear_eq_eval(self.tau0, r0);
+        let round0_eq = linear_eq_eval(self.tau0, r0);
         let mut norm_coeffs = mul_linear_by_quadratic_coeffs(self.tau1, norm_q);
         for coeff in &mut norm_coeffs {
             *coeff = self.batching_coeff * round0_eq * *coeff;
@@ -1436,22 +1714,17 @@ impl<E: FieldCore + FromSmallInt> Stage2BivariateSkipState<E> {
             UniPoly::from_coeffs(relation_coeffs.to_vec()),
         )
     }
-
-    #[inline]
-    fn linear_eq_eval(tau: E, x: E) -> E {
-        tau * x + (E::one() - tau) * (E::one() - x)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128M8M4M1M0;
+    use crate::algebra::Prime128Offset5823;
     use crate::protocol::sumcheck::hachi_stage1::HachiStage1Prover;
     use crate::protocol::sumcheck::SumcheckInstanceProver;
     use std::collections::HashMap;
 
-    type F = Prime128M8M4M1M0;
+    type F = Prime128Offset5823;
 
     fn gaussian_rank(mut rows: Vec<Vec<F>>) -> usize {
         rows.retain(|row| row.iter().any(|x| !x.is_zero()));

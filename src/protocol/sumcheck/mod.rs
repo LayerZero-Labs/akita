@@ -1,8 +1,12 @@
 //! Sumcheck protocol: traits, proof driver, and concrete instances.
 //!
-//! Types (`UniPoly`, `CompressedUniPoly`, `SumcheckProof`) live in the
-//! [`types`] submodule. Polynomial evaluation utilities (`multilinear_eval`,
-//! `fold_evals_in_place`, `range_check_eval`) live in [`crate::algebra::poly`].
+//! Polynomial data types (`UniPoly`, `CompressedUniPoly`) live in
+//! [`crate::algebra::uni_poly`]. `SumcheckProof` (which depends on the
+//! transcript) lives in the [`types`] submodule. Polynomial evaluation
+//! utilities (`multilinear_eval`, `fold_evals_in_place`, `range_check_eval`)
+//! live in [`crate::algebra::poly`]. The equality polynomial and split-eq
+//! structures live in [`crate::algebra::eq_poly`] and
+//! [`crate::algebra::split_eq`].
 //!
 //! ## Temporary duplication notice (Jolt integration)
 //!
@@ -13,10 +17,8 @@
 //! pragmatic workaround.
 
 pub mod batched_sumcheck;
-pub mod eq_poly;
 pub mod hachi_stage1;
 pub mod hachi_stage2;
-pub mod split_eq;
 pub mod two_round_prefix;
 pub mod types;
 
@@ -29,14 +31,8 @@ use crate::{CanonicalField, FieldCore, FromSmallInt};
 pub use crate::algebra::poly::{
     fold_evals_in_place, multilinear_eval, multilinear_eval_small, range_check_eval,
 };
-pub use types::{CompressedUniPoly, SumcheckProof, UniPoly};
-
-#[inline]
-pub(crate) fn trim_trailing_zeros<E: FieldCore>(coeffs: &mut Vec<E>) {
-    while coeffs.len() > 1 && coeffs.last().is_some_and(|c| c.is_zero()) {
-        coeffs.pop();
-    }
-}
+pub use crate::algebra::uni_poly::{CompressedUniPoly, UniPoly};
+pub use types::SumcheckProof;
 
 /// Precomputed lookup table for folding pairs of small integer values at a
 /// fixed challenge `r`.
@@ -457,11 +453,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128M8M4M1M0;
+    use crate::algebra::Prime128Offset5823;
     use crate::protocol::transcript::labels as tr_labels;
     use crate::protocol::transcript::Blake2bTranscript;
 
-    type F = Prime128M8M4M1M0;
+    type F = Prime128Offset5823;
 
     #[derive(Clone)]
     struct ToyMlInstance {
