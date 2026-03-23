@@ -495,7 +495,7 @@ pub(crate) fn planned_schedule<Cfg: CommitmentConfig>(
         states,
         levels: best.levels,
         no_wrapper_bytes: best.no_wrapper_bytes,
-        exact_proof_bytes: best.no_wrapper_bytes + 5,
+        exact_proof_bytes: best.no_wrapper_bytes + 4,
     })
 }
 

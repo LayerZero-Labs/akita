@@ -59,11 +59,6 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
         })
     }
 
-    /// Ring dimension encoded in this cache.
-    pub(crate) fn ring_dim(&self) -> usize {
-        self.ring_dim
-    }
-
     /// Reconstruct the typed prover hint without recomputing `t`.
     pub(crate) fn to_typed<const D: usize>(&self) -> Result<HachiCommitmentHint<F, D>, HachiError> {
         if self.ring_dim != D {

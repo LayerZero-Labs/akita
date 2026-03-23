@@ -3,4 +3,5 @@
 //! These utilities derive structured challenges (e.g. sparse ring elements) from
 //! the transcript while keeping the low-level representations in the algebra layer.
 
+pub mod rejection;
 pub mod sparse;

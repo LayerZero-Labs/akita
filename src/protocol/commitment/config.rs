@@ -579,16 +579,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Sparse challenge family used at this level.
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig;
-
-    /// Witness length (in i8 digits) above which the prover hands off to
-    /// Labrador (D'=64) instead of sending the witness directly.
-    ///
-    /// The default keeps the current direct-tail optimum (`w_len = 84_096`)
-    /// on the direct path. Override to a lower value in test configs to
-    /// exercise the Labrador tail path with smaller polynomials.
-    fn labrador_handoff_threshold() -> usize {
-        84_096
-    }
 }
 
 /// Deterministic upper bound for the stage-1 folded-witness infinity norm.
@@ -886,10 +876,6 @@ impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> 
     fn planner_half_field_bound() -> u128 {
         fp128_half_field_bound()
     }
-
-    fn labrador_handoff_threshold() -> usize {
-        usize::MAX
-    }
 }
 
 /// Adaptive `D=128`, rank-1 family that chooses the level basis by proof bytes.
@@ -1031,9 +1017,5 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
             2,
             5,
         )?))
-    }
-
-    fn labrador_handoff_threshold() -> usize {
-        usize::MAX
     }
 }

@@ -23,8 +23,6 @@ Two workspace members: `hachi-pcs` (root) and `derive` (proc macros).
 - `src/protocol/commitment/` — configs, layouts, schedules, commitments, onehot helpers, utilities
 - `src/protocol/commitment_scheme.rs` — top-level `HachiCommitmentScheme` commit/prove/verify wiring
 - `src/protocol/sumcheck/` — generic sumcheck plus `hachi_stage1`, `hachi_stage2`, `two_round_prefix`
-- `src/protocol/labrador/` — recursive Labrador prover/verifier, folding, aggregation, JL, setup
-- `src/protocol/labrador_handoff.rs` — bridge from Hachi proof state into Labrador
 - `src/protocol/proof.rs` — proof object layout and flattened proof/witness encodings
 - `src/protocol/opening_point.rs` — field-to-ring opening reduction
 - `src/protocol/ring_switch.rs` — ring-switch proof logic
@@ -44,7 +42,6 @@ Two workspace members: `hachi-pcs` (root) and `derive` (proc macros).
 - `DensePoly`, `OneHotPoly`, `HachiPolyOps` — polynomial backends consumed by the scheme
 - `HachiProof`, `HachiLevelProof`, `HachiProofTail` — serialized proof structure
 - `Blake2bTranscript`, `Transcript` — Fiat-Shamir layer
-- `LabradorProof`, `LabradorWitness`, `LabradorSetup` — recursive handoff subprotocol
 
 ## Feature Flags
 
