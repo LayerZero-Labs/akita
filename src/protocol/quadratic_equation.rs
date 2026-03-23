@@ -10,8 +10,7 @@ use crate::parallel::*;
 use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
-    flatten_i8_blocks, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
-    unreduced_quotient_rows_ntt_cached_centered_i32,
+    flatten_i8_blocks, fused_split_eq_quotients, mat_vec_mul_ntt_single_i8,
 };
 use crate::protocol::commitment::{
     CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, RingCommitment,
@@ -128,9 +127,7 @@ where
         let v = {
             let _span =
                 tracing::info_span!("compute_v", w_hat_flat_len = w_hat_flat.len()).entered();
-            let mut v = mat_vec_mul_ntt_single_i8(ntt_d, &w_hat_flat);
-            v.truncate(level_params.n_d);
-            v
+            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, &w_hat_flat)
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &v);
@@ -220,9 +217,7 @@ where
         let v = {
             let _span =
                 tracing::info_span!("compute_v", w_hat_flat_len = w_hat_flat.len()).entered();
-            let mut v = mat_vec_mul_ntt_single_i8(ntt_d, &w_hat_flat);
-            v.truncate(level_params.n_d);
-            v
+            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, &w_hat_flat)
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &v);
@@ -446,42 +441,16 @@ where
 
     let t_hat_flat = flatten_i8_blocks(t_hat);
 
-    #[cfg(feature = "parallel")]
-    let (d_cyclic, b_cyclic, a_quotients) = {
-        let t_all = Instant::now();
-        let ((d_cyc, b_cyc), a_quot) = rayon::join(
-            || {
-                rayon::join(
-                    || mat_vec_mul_ntt_single_i8_cyclic(ntt_shared, w_hat_flat),
-                    || mat_vec_mul_ntt_single_i8_cyclic(ntt_shared, &t_hat_flat),
-                )
-            },
-            || {
-                unreduced_quotient_rows_ntt_cached_centered_i32(
-                    ntt_shared,
-                    z_pre_centered,
-                    z_pre_centered_inf_norm,
-                )
-            },
-        );
-        tracing::debug!(
-            ntt_total_s = t_all.elapsed().as_secs_f64(),
-            "ntt_rows parallel"
-        );
-        (d_cyc, b_cyc, a_quot)
-    };
-
-    #[cfg(not(feature = "parallel"))]
-    let (d_cyclic, b_cyclic, a_quotients) = {
-        let d_cyclic = mat_vec_mul_ntt_single_i8_cyclic(ntt_shared, w_hat_flat);
-        let b_cyclic = mat_vec_mul_ntt_single_i8_cyclic(ntt_shared, &t_hat_flat);
-        let a_quotients = unreduced_quotient_rows_ntt_cached_centered_i32(
-            ntt_shared,
-            z_pre_centered,
-            z_pre_centered_inf_norm,
-        );
-        (d_cyclic, b_cyclic, a_quotients)
-    };
+    let (d_cyclic, b_cyclic, a_quotients) = fused_split_eq_quotients::<F, D>(
+        ntt_shared,
+        level_params.n_d,
+        level_params.n_b,
+        level_params.n_a,
+        w_hat_flat,
+        &t_hat_flat,
+        z_pre_centered,
+        z_pre_centered_inf_norm,
+    );
 
     let mut result = Vec::with_capacity(num_rows);
     let mut other_time = 0.0f64;

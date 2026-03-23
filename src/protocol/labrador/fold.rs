@@ -493,7 +493,7 @@ fn build_linear_garbage_payload<F: FieldCore + CanonicalField, const D: usize>(
                 .zip(digit_planes.iter())
                 .take(outer_digit_levels)
             {
-                let partial = mat_vec_mul_ntt_single_i8(slot, level_digits);
+                let partial = mat_vec_mul_ntt_single_i8(slot, slot.num_rows(), level_digits);
                 for (dst, src) in payload.iter_mut().zip(partial.into_iter()) {
                     *dst += src;
                 }

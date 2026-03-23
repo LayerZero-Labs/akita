@@ -289,7 +289,13 @@ where
             })
             .collect();
 
-        let t_all = mat_vec_mul_ntt_i8(ntt_a, &block_slices, num_digits_commit, log_basis);
+        let t_all = mat_vec_mul_ntt_i8(
+            ntt_a,
+            ntt_a.num_rows(),
+            &block_slices,
+            num_digits_commit,
+            log_basis,
+        );
 
         let results: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
             .map(|t_i| decompose_rows_i8(&t_i, num_digits_open, log_basis))
@@ -321,7 +327,13 @@ where
             })
             .collect();
 
-        let t = mat_vec_mul_ntt_i8(ntt_a, &block_slices, num_digits_commit, log_basis);
+        let t = mat_vec_mul_ntt_i8(
+            ntt_a,
+            ntt_a.num_rows(),
+            &block_slices,
+            num_digits_commit,
+            log_basis,
+        );
         let t_hat = cfg_iter!(t)
             .map(|t_i| decompose_rows_i8(t_i, num_digits_open, log_basis))
             .collect();

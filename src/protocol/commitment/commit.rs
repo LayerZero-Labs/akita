@@ -600,19 +600,20 @@ where
         let log_basis = layout.log_basis;
         let block_slices: Vec<&[CyclotomicRing<F, D>]> =
             f_blocks.iter().map(|b| b.as_slice()).collect();
-        let mut t_all =
-            mat_vec_mul_ntt_i8(&setup.ntt_shared, &block_slices, depth_commit, log_basis);
-        for t_i in &mut t_all {
-            t_i.truncate(root_params.n_a);
-        }
+        let t_all = mat_vec_mul_ntt_i8(
+            &setup.ntt_shared,
+            root_params.n_a,
+            &block_slices,
+            depth_commit,
+            log_basis,
+        );
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
             .map(|t_i| decompose_rows_i8(&t_i, depth_open, log_basis))
             .collect();
 
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
-        let mut u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, &t_hat_flat);
-        u.truncate(root_params.n_b);
+        let u: Vec<CyclotomicRing<F, D>> =
+            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, root_params.n_b, &t_hat_flat);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
 
@@ -655,19 +656,20 @@ where
             })
             .collect();
 
-        let mut t_all =
-            mat_vec_mul_ntt_i8(&setup.ntt_shared, &block_slices, depth_commit, log_basis);
-        for t_i in &mut t_all {
-            t_i.truncate(root_params.n_a);
-        }
+        let t_all = mat_vec_mul_ntt_i8(
+            &setup.ntt_shared,
+            root_params.n_a,
+            &block_slices,
+            depth_commit,
+            log_basis,
+        );
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
             .map(|t_i| decompose_rows_i8(&t_i, depth_open, log_basis))
             .collect();
 
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
-        let mut u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, &t_hat_flat);
-        u.truncate(root_params.n_b);
+        let u: Vec<CyclotomicRing<F, D>> =
+            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, root_params.n_b, &t_hat_flat);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
 
@@ -712,9 +714,8 @@ where
             .collect();
 
         let t_hat_flat = flatten_i8_blocks(&t_hat_all);
-        let mut u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, &t_hat_flat);
-        u.truncate(root_params.n_b);
+        let u: Vec<CyclotomicRing<F, D>> =
+            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, root_params.n_b, &t_hat_flat);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
     }
 }

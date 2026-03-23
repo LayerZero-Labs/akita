@@ -535,7 +535,7 @@ where
     let log_basis = w_layout.log_basis;
     let coeff_len = w_digits.len();
 
-    let mut t_all = if depth_commit == 1 {
+    let t_all = if depth_commit == 1 {
         // `build_w_coeffs` already emits balanced base-`2^log_basis` digits, so
         // the recursive w-commitment can skip the field conversion and feed those
         // planes directly into the tiled NTT mat-vec.
@@ -549,7 +549,7 @@ where
                 }
             })
             .collect();
-        mat_vec_mul_ntt_digits_i8(ntt_shared, &block_slices)
+        mat_vec_mul_ntt_digits_i8(ntt_shared, level_params.n_a, &block_slices)
     } else {
         let lut = DigitLut::<F>::new(log_basis);
         let ring_elems: Vec<CyclotomicRing<F, D>> = w_digits
@@ -569,18 +569,21 @@ where
                 }
             })
             .collect();
-        mat_vec_mul_ntt_i8(ntt_shared, &block_slices, depth_commit, log_basis)
+        mat_vec_mul_ntt_i8(
+            ntt_shared,
+            level_params.n_a,
+            &block_slices,
+            depth_commit,
+            log_basis,
+        )
     };
-    for t_i in &mut t_all {
-        t_i.truncate(level_params.n_a);
-    }
     let t_hat_per_block: Vec<Vec<[i8; D]>> = cfg_iter!(t_all)
         .map(|t_i| decompose_rows_i8(t_i, depth_open, log_basis))
         .collect();
 
     let t_hat_flat = flatten_i8_blocks(&t_hat_per_block);
-    let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(ntt_shared, &t_hat_flat);
-    u.truncate(level_params.n_b);
+    let u: Vec<CyclotomicRing<F, D>> =
+        mat_vec_mul_ntt_single_i8(ntt_shared, level_params.n_b, &t_hat_flat);
     let hint = HachiCommitmentHint::with_t(t_hat_per_block, t_all);
     Ok((RingCommitment { u }, hint))
 }

@@ -854,9 +854,11 @@ where
             t_hat_i.truncate(root_params.n_a * layout.num_digits_open);
         }
         let inner_opening_digits_flat = flatten_i8_blocks(&inner.t_hat);
-        let mut u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, &inner_opening_digits_flat);
-        u.truncate(root_params.n_b);
+        let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
+            &setup.ntt_shared,
+            root_params.n_b,
+            &inner_opening_digits_flat,
+        );
         let hint = HachiCommitmentHint::with_t(inner.t_hat, inner.t);
         Ok((RingCommitment { u }, hint))
     }

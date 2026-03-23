@@ -200,11 +200,12 @@ where
         let num_blocks = self.num_ring_elems().div_ceil(block_len);
         let coeff_len = self.coeffs.len();
 
+        let n_rows = ntt_a.num_rows();
         let t_all = if num_digits_commit == 1 {
             let block_slices: Vec<&[[i8; D]]> = (0..num_blocks)
                 .map(|block_idx| self.block_slice(block_idx, block_len))
                 .collect();
-            mat_vec_mul_ntt_digits_i8(ntt_a, &block_slices)
+            mat_vec_mul_ntt_digits_i8(ntt_a, n_rows, &block_slices)
         } else {
             let ring_elems: Vec<CyclotomicRing<F, D>> = self
                 .coeffs
@@ -224,7 +225,7 @@ where
                     }
                 })
                 .collect();
-            mat_vec_mul_ntt_i8(ntt_a, &block_slices, num_digits_commit, log_basis)
+            mat_vec_mul_ntt_i8(ntt_a, n_rows, &block_slices, num_digits_commit, log_basis)
         };
 
         let results = cfg_into_iter!(t_all)
@@ -245,12 +246,13 @@ where
     ) -> Result<CommitInnerWitness<F, D>, HachiError> {
         let num_blocks = self.num_ring_elems().div_ceil(block_len);
         let coeff_len = self.coeffs.len();
+        let n_rows = ntt_a.num_rows();
 
         let t = if num_digits_commit == 1 {
             let block_slices: Vec<&[[i8; D]]> = (0..num_blocks)
                 .map(|block_idx| self.block_slice(block_idx, block_len))
                 .collect();
-            mat_vec_mul_ntt_digits_i8(ntt_a, &block_slices)
+            mat_vec_mul_ntt_digits_i8(ntt_a, n_rows, &block_slices)
         } else {
             let ring_elems: Vec<CyclotomicRing<F, D>> = self
                 .coeffs
@@ -270,7 +272,7 @@ where
                     }
                 })
                 .collect();
-            mat_vec_mul_ntt_i8(ntt_a, &block_slices, num_digits_commit, log_basis)
+            mat_vec_mul_ntt_i8(ntt_a, n_rows, &block_slices, num_digits_commit, log_basis)
         };
 
         let t_hat = cfg_iter!(t)
