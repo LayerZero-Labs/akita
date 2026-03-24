@@ -391,7 +391,29 @@ where
     t_wide.into_iter().map(|w| w.reduce()).collect()
 }
 
+/// L2 cache budget (in bytes) for the tile of wide accumulators in the
+/// column-sweep commit.  Each tile's `accums` allocation is capped to this
+/// size so the scatter loop stays L2-resident.
+///
+/// 2 MB is a conservative middle ground: fits in Apple M-series L2
+/// (~4 MB/core) and exceeds most x86 per-core L2 (~256 KB–1 MB) only
+/// modestly, relying on the shared L3 backstop.
+///
+// TODO: benchmark column-sweep on x86 vs ARM with budget values
+// (512 KB, 1 MB, 2 MB, 4 MB) at production configs to determine
+// whether a smaller or arch-specific budget helps on x86.
+const L2_TILE_BUDGET: usize = 1 << 21;
+
 /// Column-sweep Ajtai commitment for regular one-hot blocks.
+///
+/// Two-level tiling: threads partition blocks evenly (outer, for parallelism),
+/// then within each thread, blocks are processed in L2-sized tiles (inner,
+/// for cache locality).  For each tile the entries are bucketed by A-column
+/// so each column is loaded and widened exactly once, before scattering into
+/// L2-resident block accumulators.
+///
+/// Falls back to the original block-by-block path when blocks_per_thread is
+/// small enough that accumulators already fit in L2.
 fn onehot_column_sweep_ajtai_regular<F, const D: usize>(
     a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
     regular_blocks: &[Vec<RegularOneHotEntry>],
@@ -407,7 +429,7 @@ where
 
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
     let block_tile = if accum_bytes > 0 {
-        ((1usize << 21) / accum_bytes).max(1)
+        (L2_TILE_BUDGET / accum_bytes).max(1)
     } else {
         num_blocks
     };
@@ -438,15 +460,18 @@ where
             let my_blocks = &regular_blocks[block_start..block_end];
             let my_count = my_blocks.len();
 
-            let mut result: Vec<Vec<CyclotomicRing<F, D>>> =
-                vec![vec![CyclotomicRing::zero(); n_a]; my_count];
+            let mut result: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(my_count);
+            result.resize_with(my_count, Vec::new);
+
+            // Reuse across tiles so that Vec capacities from earlier tiles
+            // carry over, avoiding repeated heap growth.
+            let mut col_entries: Vec<Vec<(u32, u16)>> = vec![Vec::new(); num_cols];
 
             for tile_start in (0..my_count).step_by(block_tile) {
                 let tile_end = (tile_start + block_tile).min(my_count);
                 let tile_blocks = &my_blocks[tile_start..tile_end];
                 let tile_len = tile_blocks.len();
 
-                let mut col_entries: Vec<Vec<(u32, u16)>> = vec![Vec::new(); num_cols];
                 for (local_b, block_entries) in tile_blocks.iter().enumerate() {
                     for entry in block_entries {
                         let col = entry.pos_in_block() * num_digits_commit;
@@ -477,6 +502,10 @@ where
                 for (local_b, row_accums) in accums.into_iter().enumerate() {
                     result[tile_start + local_b] =
                         row_accums.into_iter().map(|w| w.reduce()).collect();
+                }
+
+                for bucket in &mut col_entries {
+                    bucket.clear();
                 }
             }
 
@@ -516,7 +545,7 @@ where
 
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
     let block_tile = if accum_bytes > 0 {
-        ((1usize << 21) / accum_bytes).max(1)
+        (L2_TILE_BUDGET / accum_bytes).max(1)
     } else {
         num_blocks
     };
@@ -547,15 +576,16 @@ where
             let my_blocks = &sparse_blocks[block_start..block_end];
             let my_count = my_blocks.len();
 
-            let mut result: Vec<Vec<CyclotomicRing<F, D>>> =
-                vec![vec![CyclotomicRing::zero(); n_a]; my_count];
+            let mut result: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(my_count);
+            result.resize_with(my_count, Vec::new);
+
+            let mut col_entries: Vec<Vec<(u32, u8)>> = vec![Vec::new(); num_cols];
 
             for tile_start in (0..my_count).step_by(block_tile) {
                 let tile_end = (tile_start + block_tile).min(my_count);
                 let tile_blocks = &my_blocks[tile_start..tile_end];
                 let tile_len = tile_blocks.len();
 
-                let mut col_entries: Vec<Vec<(u32, u8)>> = vec![Vec::new(); num_cols];
                 for (local_b, block_entries) in tile_blocks.iter().enumerate() {
                     for entry in block_entries {
                         let col = entry.pos_in_block * num_digits_commit;
@@ -588,6 +618,10 @@ where
                 for (local_b, row_accums) in accums.into_iter().enumerate() {
                     result[tile_start + local_b] =
                         row_accums.into_iter().map(|w| w.reduce()).collect();
+                }
+
+                for bucket in &mut col_entries {
+                    bucket.clear();
                 }
             }
 
