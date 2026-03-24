@@ -428,76 +428,73 @@ where
             .collect();
     }
 
-    let thread_results: Vec<Vec<Vec<CyclotomicRing<F, D>>>> = cfg_into_iter!(0..num_threads)
-        .map(|tid| {
-            let block_start = tid * blocks_per_thread;
-            let block_end = (block_start + blocks_per_thread).min(num_blocks);
-            if block_start >= block_end {
-                return Vec::new();
-            }
-            let my_blocks = &regular_blocks[block_start..block_end];
-            let my_count = my_blocks.len();
+    let chunk_size = blocks_per_thread.div_ceil(16).max(1);
 
-            let mut result: Vec<Vec<CyclotomicRing<F, D>>> =
-                vec![vec![CyclotomicRing::zero(); n_a]; my_count];
+    let chunk_results: Vec<Vec<Vec<CyclotomicRing<F, D>>>> =
+        cfg_chunks!(regular_blocks, chunk_size)
+            .map(|my_blocks| {
+                let my_count = my_blocks.len();
+                let mut result: Vec<Vec<CyclotomicRing<F, D>>> =
+                    vec![vec![CyclotomicRing::zero(); n_a]; my_count];
 
-            for tile_start in (0..my_count).step_by(block_tile) {
-                let tile_end = (tile_start + block_tile).min(my_count);
-                let tile_blocks = &my_blocks[tile_start..tile_end];
-                let tile_len = tile_blocks.len();
+                for tile_start in (0..my_count).step_by(block_tile) {
+                    let tile_end = (tile_start + block_tile).min(my_count);
+                    let tile_blocks = &my_blocks[tile_start..tile_end];
+                    let tile_len = tile_blocks.len();
 
-                let mut col_entries: Vec<Vec<(u32, u16)>> = vec![Vec::new(); num_cols];
-                for (local_b, block_entries) in tile_blocks.iter().enumerate() {
-                    for entry in block_entries {
-                        let col = entry.pos_in_block() * num_digits_commit;
-                        col_entries[col].push((local_b as u32, entry.coeff_idx() as u16));
+                    let mut col_entries: Vec<Vec<(u32, u16)>> = vec![Vec::new(); num_cols];
+                    for (local_b, block_entries) in tile_blocks.iter().enumerate() {
+                        for entry in block_entries {
+                            let col = entry.pos_in_block() * num_digits_commit;
+                            col_entries[col]
+                                .push((local_b as u32, entry.coeff_idx() as u16));
+                        }
+                    }
+
+                    let mut accums: Vec<Vec<WideCyclotomicRing<F::Wide, D>>> = (0..tile_len)
+                        .map(|_| vec![WideCyclotomicRing::zero(); n_a])
+                        .collect();
+
+                    for a_idx in 0..n_a {
+                        let a_row = a_view.row(a_idx);
+                        for (col, entries) in col_entries.iter().enumerate() {
+                            if entries.is_empty() {
+                                continue;
+                            }
+                            let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
+                            for &(lb, ci) in entries {
+                                a_wide.shift_accumulate_into(
+                                    &mut accums[lb as usize][a_idx],
+                                    ci as usize,
+                                );
+                            }
+                        }
+                    }
+
+                    for (local_b, row_accums) in accums.into_iter().enumerate() {
+                        result[tile_start + local_b] =
+                            row_accums.into_iter().map(|w| w.reduce()).collect();
                     }
                 }
 
-                let mut accums: Vec<Vec<WideCyclotomicRing<F::Wide, D>>> = (0..tile_len)
-                    .map(|_| vec![WideCyclotomicRing::zero(); n_a])
-                    .collect();
-
-                for a_idx in 0..n_a {
-                    let a_row = a_view.row(a_idx);
-                    for (col, entries) in col_entries.iter().enumerate() {
-                        if entries.is_empty() {
-                            continue;
-                        }
-                        let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
-                        for &(lb, ci) in entries {
-                            a_wide.shift_accumulate_into(
-                                &mut accums[lb as usize][a_idx],
-                                ci as usize,
-                            );
-                        }
-                    }
-                }
-
-                for (local_b, row_accums) in accums.into_iter().enumerate() {
-                    result[tile_start + local_b] =
-                        row_accums.into_iter().map(|w| w.reduce()).collect();
-                }
-            }
-
-            result
-        })
-        .collect();
+                result
+            })
+            .collect();
 
     let mut out: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(num_blocks);
-    for thread_blocks in thread_results {
-        out.extend(thread_blocks);
+    for chunk in chunk_results {
+        out.extend(chunk);
     }
     out
 }
 
 /// Column-sweep Ajtai commitment for one-hot sparse blocks.
 ///
-/// Two-level tiling: threads partition blocks evenly (outer, for parallelism),
-/// then within each thread, blocks are processed in L2-sized tiles (inner,
-/// for cache locality). For each tile the entries are bucketed by A-column
-/// so each column is loaded and widened exactly once, before scattering into
-/// L2-resident block accumulators.
+/// Two-level tiling: Rayon work-steals over small chunks of blocks (outer,
+/// for parallelism and load balance), then within each chunk, blocks are
+/// processed in L2-sized tiles (inner, for cache locality). For each tile
+/// the entries are bucketed by A-column so each column is loaded and widened
+/// exactly once, before scattering into L2-resident block accumulators.
 ///
 /// Falls back to the original block-by-block path when blocks_per_thread is
 /// small enough that accumulators already fit in L2.
@@ -537,67 +534,63 @@ where
             .collect();
     }
 
-    let thread_results: Vec<Vec<Vec<CyclotomicRing<F, D>>>> = cfg_into_iter!(0..num_threads)
-        .map(|tid| {
-            let block_start = tid * blocks_per_thread;
-            let block_end = (block_start + blocks_per_thread).min(num_blocks);
-            if block_start >= block_end {
-                return Vec::new();
-            }
-            let my_blocks = &sparse_blocks[block_start..block_end];
-            let my_count = my_blocks.len();
+    let chunk_size = blocks_per_thread.div_ceil(16).max(1);
 
-            let mut result: Vec<Vec<CyclotomicRing<F, D>>> =
-                vec![vec![CyclotomicRing::zero(); n_a]; my_count];
+    let chunk_results: Vec<Vec<Vec<CyclotomicRing<F, D>>>> =
+        cfg_chunks!(sparse_blocks, chunk_size)
+            .map(|my_blocks| {
+                let my_count = my_blocks.len();
+                let mut result: Vec<Vec<CyclotomicRing<F, D>>> =
+                    vec![vec![CyclotomicRing::zero(); n_a]; my_count];
 
-            for tile_start in (0..my_count).step_by(block_tile) {
-                let tile_end = (tile_start + block_tile).min(my_count);
-                let tile_blocks = &my_blocks[tile_start..tile_end];
-                let tile_len = tile_blocks.len();
+                for tile_start in (0..my_count).step_by(block_tile) {
+                    let tile_end = (tile_start + block_tile).min(my_count);
+                    let tile_blocks = &my_blocks[tile_start..tile_end];
+                    let tile_len = tile_blocks.len();
 
-                let mut col_entries: Vec<Vec<(u32, u8)>> = vec![Vec::new(); num_cols];
-                for (local_b, block_entries) in tile_blocks.iter().enumerate() {
-                    for entry in block_entries {
-                        let col = entry.pos_in_block * num_digits_commit;
-                        for &ci in &entry.nonzero_coeffs {
-                            col_entries[col].push((local_b as u32, ci as u8));
+                    let mut col_entries: Vec<Vec<(u32, u8)>> = vec![Vec::new(); num_cols];
+                    for (local_b, block_entries) in tile_blocks.iter().enumerate() {
+                        for entry in block_entries {
+                            let col = entry.pos_in_block * num_digits_commit;
+                            for &ci in &entry.nonzero_coeffs {
+                                col_entries[col].push((local_b as u32, ci as u8));
+                            }
                         }
+                    }
+
+                    let mut accums: Vec<Vec<WideCyclotomicRing<F::Wide, D>>> = (0..tile_len)
+                        .map(|_| vec![WideCyclotomicRing::zero(); n_a])
+                        .collect();
+
+                    for a_idx in 0..n_a {
+                        let a_row = a_view.row(a_idx);
+                        for (col, entries) in col_entries.iter().enumerate() {
+                            if entries.is_empty() {
+                                continue;
+                            }
+                            let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
+                            for &(lb, ci) in entries {
+                                a_wide.shift_accumulate_into(
+                                    &mut accums[lb as usize][a_idx],
+                                    ci as usize,
+                                );
+                            }
+                        }
+                    }
+
+                    for (local_b, row_accums) in accums.into_iter().enumerate() {
+                        result[tile_start + local_b] =
+                            row_accums.into_iter().map(|w| w.reduce()).collect();
                     }
                 }
 
-                let mut accums: Vec<Vec<WideCyclotomicRing<F::Wide, D>>> = (0..tile_len)
-                    .map(|_| vec![WideCyclotomicRing::zero(); n_a])
-                    .collect();
-
-                for a_idx in 0..n_a {
-                    let a_row = a_view.row(a_idx);
-                    for (col, entries) in col_entries.iter().enumerate() {
-                        if entries.is_empty() {
-                            continue;
-                        }
-                        let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
-                        for &(lb, ci) in entries {
-                            a_wide.shift_accumulate_into(
-                                &mut accums[lb as usize][a_idx],
-                                ci as usize,
-                            );
-                        }
-                    }
-                }
-
-                for (local_b, row_accums) in accums.into_iter().enumerate() {
-                    result[tile_start + local_b] =
-                        row_accums.into_iter().map(|w| w.reduce()).collect();
-                }
-            }
-
-            result
-        })
-        .collect();
+                result
+            })
+            .collect();
 
     let mut out: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(num_blocks);
-    for thread_blocks in thread_results {
-        out.extend(thread_blocks);
+    for chunk in chunk_results {
+        out.extend(chunk);
     }
     out
 }
