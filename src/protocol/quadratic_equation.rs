@@ -601,7 +601,7 @@ mod tests {
 
     fn build_fixture() -> Fixture {
         let (setup, _) =
-            <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::setup(16).unwrap();
+            <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::setup(16, 1).unwrap();
 
         let blocks = sample_blocks();
         let w =

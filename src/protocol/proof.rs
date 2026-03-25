@@ -787,6 +787,55 @@ impl<F: FieldCore, const D: usize> PartialEq for HachiCommitmentHint<F, D> {
 
 impl<F: FieldCore, const D: usize> Eq for HachiCommitmentHint<F, D> {}
 
+/// Prover-side hint produced by batched root commitment.
+///
+/// Stores per-polynomial `t_hat` blocks and, when available, the corresponding
+/// undecomposed `t_i` rows needed by later batched opening work.
+#[derive(Debug, Clone)]
+pub struct HachiBatchedCommitmentHint<F: FieldCore, const D: usize> {
+    /// Per-polynomial decomposed inner-opening digit blocks.
+    pub inner_opening_digits: Vec<Vec<Vec<[i8; D]>>>,
+    /// Optional recomposed `t_i` rows grouped by polynomial then block.
+    t: Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
+    _marker: PhantomData<F>,
+}
+
+impl<F: FieldCore, const D: usize> HachiBatchedCommitmentHint<F, D> {
+    /// Construct a new batched hint from per-polynomial i8 digit plane blocks.
+    pub fn new(inner_opening_digits: Vec<Vec<Vec<[i8; D]>>>) -> Self {
+        Self {
+            inner_opening_digits,
+            t: None,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Construct a batched hint that also preserves the undecomposed `t_i` rows.
+    pub fn with_t(
+        inner_opening_digits: Vec<Vec<Vec<[i8; D]>>>,
+        t: Vec<Vec<Vec<CyclotomicRing<F, D>>>>,
+    ) -> Self {
+        Self {
+            inner_opening_digits,
+            t: Some(t),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Get the optional recomposed `t_i` rows grouped by polynomial.
+    pub fn t(&self) -> Option<&[Vec<Vec<CyclotomicRing<F, D>>>]> {
+        self.t.as_deref()
+    }
+}
+
+impl<F: FieldCore, const D: usize> PartialEq for HachiBatchedCommitmentHint<F, D> {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner_opening_digits == other.inner_opening_digits
+    }
+}
+
+impl<F: FieldCore, const D: usize> Eq for HachiBatchedCommitmentHint<F, D> {}
+
 /// Proof payload for stage 1 of a single Hachi level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiStage1Proof<F: FieldCore> {

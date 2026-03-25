@@ -19,8 +19,8 @@ use crate::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
 };
 use crate::protocol::proof::{
-    FlatRingVec, HachiCommitmentHint, HachiLevelProof, HachiProof, HachiProofTail, PackedDigits,
-    ProofRingVec,
+    FlatRingVec, HachiBatchedCommitmentHint, HachiCommitmentHint, HachiLevelProof, HachiProof,
+    HachiProofTail, PackedDigits, ProofRingVec,
 };
 use crate::protocol::quadratic_equation::{derive_stage1_challenges, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
@@ -700,12 +700,15 @@ where
     type Commitment = RingCommitment<F, D>;
     type Proof = HachiProof<F>;
     type CommitHint = HachiCommitmentHint<F, D>;
+    type BatchedCommitHint = HachiBatchedCommitmentHint<F, D>;
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::setup_prover")]
-    fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
-        let (setup, _) =
-            <HachiCommitmentCore as RingCommitmentScheme<F, { D }, Cfg>>::setup(max_num_vars)
-                .expect("commitment setup failed");
+    fn setup_prover(max_num_vars: usize, max_num_batched_polys: usize) -> Self::ProverSetup {
+        let (setup, _) = <HachiCommitmentCore as RingCommitmentScheme<F, { D }, Cfg>>::setup(
+            max_num_vars,
+            max_num_batched_polys,
+        )
+        .expect("commitment setup failed");
         setup
     }
 
@@ -748,6 +751,65 @@ where
             &inner_opening_digits_flat,
         );
         let hint = HachiCommitmentHint::with_t(inner.t_hat, inner.t);
+        Ok((RingCommitment { u }, hint))
+    }
+
+    #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_commit")]
+    fn batched_commit<P: HachiPolyOps<F, D>>(
+        polys: &[P],
+        setup: &Self::ProverSetup,
+        layout: &HachiCommitmentLayout,
+    ) -> Result<(Self::Commitment, Self::BatchedCommitHint), HachiError> {
+        if polys.is_empty() {
+            return Err(HachiError::InvalidInput(
+                "batched_commit requires at least one polynomial".to_string(),
+            ));
+        }
+        if polys.len() > setup.expanded.seed.max_num_batched_polys {
+            return Err(HachiError::InvalidInput(format!(
+                "batched_commit received {} polynomials but setup supports at most {}",
+                polys.len(),
+                setup.expanded.seed.max_num_batched_polys
+            )));
+        }
+        setup.assert_layout_fits(layout);
+        let root_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars: setup.expanded.seed.max_num_vars,
+            level: 0,
+            current_w_len: root_current_w_len::<D>(*layout),
+        });
+
+        let mut t_by_poly = Vec::with_capacity(polys.len());
+        let mut t_hat_by_poly = Vec::with_capacity(polys.len());
+        let mut inner_opening_digits_flat = Vec::with_capacity(polys.len() * layout.outer_width);
+        for poly in polys {
+            let mut inner = poly.commit_inner_witness(
+                &setup.expanded.shared_matrix,
+                &setup.ntt_shared,
+                layout.block_len,
+                layout.num_digits_commit,
+                layout.num_digits_open,
+                layout.log_basis,
+            )?;
+            for t_i in &mut inner.t {
+                t_i.truncate(root_params.n_a);
+            }
+            for t_hat_i in &mut inner.t_hat {
+                t_hat_i.truncate(root_params.n_a * layout.num_digits_open);
+            }
+            inner_opening_digits_flat.extend(flatten_i8_blocks(&inner.t_hat));
+            t_by_poly.push(inner.t);
+            t_hat_by_poly.push(inner.t_hat);
+        }
+
+        // The widened root setup packs logical B_ell slices consecutively, so a
+        // single mat-vec over the concatenated digits computes Σ_ell B_ell * t_hat_ell.
+        let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
+            &setup.ntt_shared,
+            root_params.n_b,
+            &inner_opening_digits_flat,
+        );
+        let hint = HachiBatchedCommitmentHint::with_t(t_hat_by_poly, t_by_poly);
         Ok((RingCommitment { u }, hint))
     }
 
@@ -1195,7 +1257,7 @@ mod tests {
         let full_num_vars = layout.m_vars + layout.r_vars + alpha;
 
         let (poly, evals) = make_dense_poly(full_num_vars);
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(full_num_vars);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(full_num_vars, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let (commitment, hint) =
             <Scheme as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout).unwrap();
@@ -1240,6 +1302,72 @@ mod tests {
     }
 
     #[test]
+    fn batched_commit_singleton_matches_single_commit() {
+        let alpha = D.trailing_zeros() as usize;
+        let layout = Cfg::commitment_layout(16).unwrap();
+        let num_vars = layout.m_vars + layout.r_vars + alpha;
+        let (poly, _) = make_dense_poly(num_vars);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1);
+
+        let (single_commitment, single_hint) =
+            <Scheme as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout).unwrap();
+        let (batched_commitment, batched_hint) =
+            <Scheme as CommitmentScheme<F, D>>::batched_commit(&[&poly], &setup, &layout).unwrap();
+
+        assert_eq!(batched_commitment, single_commitment);
+        assert_eq!(batched_hint.inner_opening_digits.len(), 1);
+        assert_eq!(
+            batched_hint.inner_opening_digits[0].as_slice(),
+            single_hint.inner_opening_digits.as_slice()
+        );
+        assert_eq!(
+            batched_hint.t().unwrap()[0].as_slice(),
+            single_hint.t().unwrap()
+        );
+    }
+
+    #[test]
+    fn batched_commit_uses_distinct_b_slices() {
+        let alpha = D.trailing_zeros() as usize;
+        let layout = Cfg::commitment_layout(16).unwrap();
+        let num_vars = layout.m_vars + layout.r_vars + alpha;
+        let len = 1usize << num_vars;
+        let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 1) as u64)).collect();
+        let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 3 + 7) as u64)).collect();
+        let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
+        let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2);
+
+        let (batched_commitment, batched_hint) =
+            <Scheme as CommitmentScheme<F, D>>::batched_commit(
+                &[&poly_a, &poly_b],
+                &setup,
+                &layout,
+            )
+            .unwrap();
+
+        let root_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars: setup.expanded.seed.max_num_vars,
+            level: 0,
+            current_w_len: root_current_w_len::<D>(layout),
+        });
+        let mut expected_u = vec![CyclotomicRing::<F, D>::zero(); root_params.n_b];
+        for (poly_idx, poly_digits) in batched_hint.inner_opening_digits.iter().enumerate() {
+            let mut padded_digits = vec![[0i8; D]; poly_idx * layout.outer_width];
+            padded_digits.extend(flatten_i8_blocks(poly_digits));
+            let contrib =
+                mat_vec_mul_ntt_single_i8(&setup.ntt_shared, root_params.n_b, &padded_digits);
+            for (expected, term) in expected_u.iter_mut().zip(contrib) {
+                *expected += term;
+            }
+        }
+
+        assert_eq!(batched_hint.inner_opening_digits.len(), 2);
+        assert_eq!(batched_hint.t().unwrap().len(), 2);
+        assert_eq!(batched_commitment.u, expected_u);
+    }
+
+    #[test]
     fn verify_passes_for_consistent_opening() {
         let alpha = D.trailing_zeros() as usize;
         let layout = Cfg::commitment_layout(16).unwrap();
@@ -1247,7 +1375,7 @@ mod tests {
 
         let (poly, evals) = make_dense_poly(num_vars);
 
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
         let (commitment, hint) =
@@ -1296,7 +1424,7 @@ mod tests {
 
         let (poly, evals) = make_dense_poly(num_vars);
 
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
         let (commitment, hint) =
@@ -1376,7 +1504,7 @@ mod tests {
         let coeffs: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
         let poly = DensePoly::<F, D>::from_field_evals(num_vars, &coeffs).unwrap();
 
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
         let (commitment, hint) =

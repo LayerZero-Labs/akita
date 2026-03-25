@@ -298,23 +298,38 @@ where
         &self,
         a_matrix: &FlatMatrix<F>,
         _ntt_a: &NttSlotCache<D>,
-        _block_len: usize,
+        block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
     ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
         let a_view = a_matrix.view::<D>();
         let n_a = a_view.num_rows();
-        let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
         let num_blocks = self.num_blocks();
+        let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
+        if active_a_cols > a_view.num_cols() {
+            return Err(HachiError::InvalidSetup(format!(
+                "active A width {active_a_cols} exceeds setup envelope {}",
+                a_view.num_cols()
+            )));
+        }
+        let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
 
         let t_all = match &self.blocks {
-            OneHotBlocks::Regular(blocks) => {
-                onehot_column_sweep_ajtai_regular::<F, D>(&a_view, blocks, n_a, num_digits_commit)
-            }
-            OneHotBlocks::General(blocks) => {
-                onehot_column_sweep_ajtai::<F, D>(&a_view, blocks, n_a, num_digits_commit)
-            }
+            OneHotBlocks::Regular(blocks) => onehot_column_sweep_ajtai_regular::<F, D>(
+                &a_view,
+                blocks,
+                n_a,
+                active_a_cols,
+                num_digits_commit,
+            ),
+            OneHotBlocks::General(blocks) => onehot_column_sweep_ajtai::<F, D>(
+                &a_view,
+                blocks,
+                n_a,
+                active_a_cols,
+                num_digits_commit,
+            ),
         };
 
         let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(0..num_blocks)
@@ -335,22 +350,37 @@ where
         &self,
         a_matrix: &FlatMatrix<F>,
         _ntt_a: &NttSlotCache<D>,
-        _block_len: usize,
+        block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
     ) -> Result<CommitInnerWitness<F, D>, HachiError> {
         let a_view = a_matrix.view::<D>();
         let n_a = a_view.num_rows();
+        let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
+        if active_a_cols > a_view.num_cols() {
+            return Err(HachiError::InvalidSetup(format!(
+                "active A width {active_a_cols} exceeds setup envelope {}",
+                a_view.num_cols()
+            )));
+        }
         let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
 
         let t = match &self.blocks {
-            OneHotBlocks::Regular(blocks) => {
-                onehot_column_sweep_ajtai_regular::<F, D>(&a_view, blocks, n_a, num_digits_commit)
-            }
-            OneHotBlocks::General(blocks) => {
-                onehot_column_sweep_ajtai::<F, D>(&a_view, blocks, n_a, num_digits_commit)
-            }
+            OneHotBlocks::Regular(blocks) => onehot_column_sweep_ajtai_regular::<F, D>(
+                &a_view,
+                blocks,
+                n_a,
+                active_a_cols,
+                num_digits_commit,
+            ),
+            OneHotBlocks::General(blocks) => onehot_column_sweep_ajtai::<F, D>(
+                &a_view,
+                blocks,
+                n_a,
+                active_a_cols,
+                num_digits_commit,
+            ),
         };
 
         let t_hat: Vec<Vec<[i8; D]>> = cfg_iter!(t)
@@ -365,6 +395,12 @@ where
 
         Ok(CommitInnerWitness { t, t_hat })
     }
+}
+
+fn num_cols_a(block_len: usize, num_digits_commit: usize) -> Result<usize, HachiError> {
+    block_len
+        .checked_mul(num_digits_commit)
+        .ok_or_else(|| HachiError::InvalidSetup("active A width overflow".to_string()))
 }
 
 fn inner_ajtai_regular_onehot_wide<F, const D: usize>(
@@ -404,6 +440,9 @@ where
 // whether a smaller or arch-specific budget helps on x86.
 const L2_TILE_BUDGET: usize = 1 << 21;
 
+/// Minimum blocks-per-thread required before enabling the column-sweep kernel.
+const SWEEP_THRESHOLD: usize = 32;
+
 /// Column-sweep Ajtai commitment for regular one-hot blocks.
 ///
 /// Two-level tiling: threads partition blocks evenly (outer, for parallelism),
@@ -418,6 +457,7 @@ fn onehot_column_sweep_ajtai_regular<F, const D: usize>(
     a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
     regular_blocks: &[Vec<RegularOneHotEntry>],
     n_a: usize,
+    active_a_cols: usize,
     num_digits_commit: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
@@ -425,7 +465,11 @@ where
     F::Wide: crate::AdditiveGroup + From<F> + crate::algebra::fields::wide::ReduceTo<F>,
 {
     let num_blocks = regular_blocks.len();
-    let num_cols = a_view.num_cols();
+    debug_assert!(
+        active_a_cols <= a_view.num_cols(),
+        "active A width exceeds setup envelope"
+    );
+    let num_cols = active_a_cols;
 
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
     let block_tile = if accum_bytes > 0 {
@@ -441,7 +485,6 @@ where
 
     let blocks_per_thread = num_blocks.div_ceil(num_threads);
 
-    const SWEEP_THRESHOLD: usize = 128;
     if blocks_per_thread <= SWEEP_THRESHOLD {
         return cfg_iter!(regular_blocks)
             .map(|block_entries| {
@@ -534,6 +577,7 @@ fn onehot_column_sweep_ajtai<F, const D: usize>(
     a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
     sparse_blocks: &[Vec<SparseBlockEntry>],
     n_a: usize,
+    active_a_cols: usize,
     num_digits_commit: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
@@ -541,7 +585,11 @@ where
     F::Wide: crate::AdditiveGroup + From<F> + crate::algebra::fields::wide::ReduceTo<F>,
 {
     let num_blocks = sparse_blocks.len();
-    let num_cols = a_view.num_cols();
+    debug_assert!(
+        active_a_cols <= a_view.num_cols(),
+        "active A width exceeds setup envelope"
+    );
+    let num_cols = active_a_cols;
 
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
     let block_tile = if accum_bytes > 0 {
@@ -557,7 +605,6 @@ where
 
     let blocks_per_thread = num_blocks.div_ceil(num_threads);
 
-    const SWEEP_THRESHOLD: usize = 128;
     if blocks_per_thread <= SWEEP_THRESHOLD {
         return cfg_iter!(sparse_blocks)
             .map(|block_entries| {

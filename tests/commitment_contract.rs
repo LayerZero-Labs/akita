@@ -97,8 +97,9 @@ impl CommitmentScheme<F, 1> for DummyScheme {
     type Commitment = HachiCommitment;
     type Proof = DummyProof;
     type CommitHint = HachiCommitment;
+    type BatchedCommitHint = HachiCommitment;
 
-    fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
+    fn setup_prover(max_num_vars: usize, _max_num_batched_polys: usize) -> Self::ProverSetup {
         DummySetup {
             _max_num_vars: max_num_vars,
         }
@@ -113,6 +114,15 @@ impl CommitmentScheme<F, 1> for DummyScheme {
         _setup: &Self::ProverSetup,
         _layout: &HachiCommitmentLayout,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError> {
+        let c = HachiCommitment(0);
+        Ok((c, c))
+    }
+
+    fn batched_commit<P: HachiPolyOps<F, 1>>(
+        _polys: &[P],
+        _setup: &Self::ProverSetup,
+        _layout: &HachiCommitmentLayout,
+    ) -> Result<(Self::Commitment, Self::BatchedCommitHint), HachiError> {
         let c = HachiCommitment(0);
         Ok((c, c))
     }
@@ -163,7 +173,7 @@ fn commitment_scheme_round_trip() {
     };
     let opening_point = [F::from_u64(11), F::from_u64(13)];
 
-    let psetup = DummyScheme::setup_prover(poly.num_vars());
+    let psetup = DummyScheme::setup_prover(poly.num_vars(), 1);
     let vsetup = DummyScheme::setup_verifier(&psetup);
 
     let layout = HachiCommitmentLayout {

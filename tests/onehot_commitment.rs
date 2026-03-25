@@ -8,7 +8,7 @@ use hachi_pcs::{FieldCore, FromSmallInt};
 type Core = HachiCommitmentCore;
 
 fn psetup() -> <Core as RingCommitmentScheme<F, D, TinyConfig>>::ProverSetup {
-    <Core as RingCommitmentScheme<F, D, TinyConfig>>::setup(16)
+    <Core as RingCommitmentScheme<F, D, TinyConfig>>::setup(16, 1)
         .unwrap()
         .0
 }

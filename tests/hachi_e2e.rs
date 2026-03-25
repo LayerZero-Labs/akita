@@ -98,7 +98,7 @@ fn make_dense_basis2_fixture(nv: usize, transcript_label: &'static [u8]) -> Dens
     #[cfg(feature = "disk-persistence")]
     purge_setup_cache(nv);
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
     let verifier_setup =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
     let (commitment, hint) =
@@ -149,7 +149,7 @@ where
     #[cfg(feature = "disk-persistence")]
     purge_setup_cache(nv);
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
     let verifier_setup =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
     let (commitment, hint) =
@@ -264,8 +264,10 @@ fn full_d128_prove_verify() {
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(FULL_TEST_NV);
 
-        let setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(FULL_TEST_NV);
+        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+            FULL_TEST_NV,
+            1,
+        );
         let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
             &poly, &setup, &layout,
         )
@@ -486,7 +488,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(nv);
 
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
@@ -556,7 +558,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
 
         let nv = FULL_TEST_NV;
         let layout = Cfg::commitment_layout(nv).expect("layout");
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
         let plan = Cfg::schedule_plan(nv)
             .expect("schedule plan")
             .expect("adaptive full config should expose a schedule plan");

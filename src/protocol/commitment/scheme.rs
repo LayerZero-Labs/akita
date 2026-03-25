@@ -54,13 +54,15 @@ where
     type Proof: Clone + Send + Sync;
     /// Prover-side hint produced at commitment time.
     type CommitHint: Clone + Send + Sync;
+    /// Prover-side hint produced by batched root commitment.
+    type BatchedCommitHint: Clone + Send + Sync;
 
-    /// Build prover setup for maximum polynomial dimension.
+    /// Build prover setup for maximum polynomial dimension and batch capacity.
     ///
     /// # Panics
     ///
     /// Panics if internal setup fails (programming error, not adversarial input).
-    fn setup_prover(max_num_vars: usize) -> Self::ProverSetup;
+    fn setup_prover(max_num_vars: usize, max_num_batched_polys: usize) -> Self::ProverSetup;
 
     /// Derive verifier setup from prover setup.
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;
@@ -79,6 +81,21 @@ where
         setup: &Self::ProverSetup,
         layout: &HachiCommitmentLayout,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError>;
+
+    /// Commit to multiple polynomials sharing one opening point.
+    ///
+    /// The setup must be provisioned with `max_num_batched_polys` at least as
+    /// large as `polys.len()`. This only aggregates the root commitment layer;
+    /// proving and verification for batched openings are handled separately.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when setup/parameter constraints are not satisfied.
+    fn batched_commit<P: HachiPolyOps<F, D>>(
+        polys: &[P],
+        setup: &Self::ProverSetup,
+        layout: &HachiCommitmentLayout,
+    ) -> Result<(Self::Commitment, Self::BatchedCommitHint), HachiError>;
 
     /// Produce an opening proof at `opening_point` with a caller-specified layout.
     ///
@@ -145,10 +162,16 @@ where
 
     /// Construct commitment setup for at most `max_num_vars` variables.
     ///
+    /// `max_num_batched_polys` sizes the widened root `B` and `D` matrices used
+    /// by batched same-point openings.
+    ///
     /// # Errors
     ///
     /// Returns an error if dimensions are inconsistent with `Cfg`.
-    fn setup(max_num_vars: usize) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError>;
+    fn setup(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError>;
 
     /// Read the runtime layout carried by `setup`.
     ///

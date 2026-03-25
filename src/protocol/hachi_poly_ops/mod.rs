@@ -222,6 +222,95 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     }
 }
 
+impl<F, const D: usize, P> HachiPolyOps<F, D> for &P
+where
+    F: FieldCore,
+    P: HachiPolyOps<F, D>,
+{
+    type CommitCache = P::CommitCache;
+
+    fn num_ring_elems(&self) -> usize {
+        <P as HachiPolyOps<F, D>>::num_ring_elems(*self)
+    }
+
+    fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
+        <P as HachiPolyOps<F, D>>::evaluate_ring(*self, scalars)
+    }
+
+    fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
+        <P as HachiPolyOps<F, D>>::fold_blocks(*self, scalars, block_len)
+    }
+
+    fn evaluate_and_fold(
+        &self,
+        eval_outer_scalars: &[F],
+        fold_scalars: &[F],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        <P as HachiPolyOps<F, D>>::evaluate_and_fold(
+            *self,
+            eval_outer_scalars,
+            fold_scalars,
+            block_len,
+        )
+    }
+
+    fn decompose_fold(
+        &self,
+        challenges: &[SparseChallenge],
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> DecomposeFoldWitness<F, D> {
+        <P as HachiPolyOps<F, D>>::decompose_fold(
+            *self, challenges, block_len, num_digits, log_basis,
+        )
+    }
+
+    fn commit_inner(
+        &self,
+        a_matrix: &FlatMatrix<F>,
+        ntt_a: &NttSlotCache<D>,
+        block_len: usize,
+        num_digits_commit: usize,
+        num_digits_open: usize,
+        log_basis: u32,
+    ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
+        <P as HachiPolyOps<F, D>>::commit_inner(
+            *self,
+            a_matrix,
+            ntt_a,
+            block_len,
+            num_digits_commit,
+            num_digits_open,
+            log_basis,
+        )
+    }
+
+    fn commit_inner_witness(
+        &self,
+        a_matrix: &FlatMatrix<F>,
+        ntt_a: &NttSlotCache<D>,
+        block_len: usize,
+        num_digits_commit: usize,
+        num_digits_open: usize,
+        log_basis: u32,
+    ) -> Result<CommitInnerWitness<F, D>, HachiError>
+    where
+        F: CanonicalField,
+    {
+        <P as HachiPolyOps<F, D>>::commit_inner_witness(
+            *self,
+            a_matrix,
+            ntt_a,
+            block_len,
+            num_digits_commit,
+            num_digits_open,
+            log_basis,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,7 +354,7 @@ mod tests {
     #[test]
     fn dense_commit_inner_matches_ring_commit() {
         let (setup, _) =
-            <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16)
+            <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16, 1)
                 .unwrap();
         let layout = setup.layout();
         let num_ring = layout.num_blocks * layout.block_len;
@@ -301,7 +390,7 @@ mod tests {
     #[test]
     fn onehot_commit_inner_matches_ring_commit_onehot() {
         let (setup, _) =
-            <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16)
+            <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16, 1)
                 .unwrap();
         let layout = setup.layout();
         let total_ring = layout.num_blocks * layout.block_len;
@@ -334,7 +423,7 @@ mod tests {
     #[test]
     fn onehot_decompose_fold_matches_dense_regular_onehot() {
         let (setup, _) =
-            <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16)
+            <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16, 1)
                 .unwrap();
         let layout = setup.layout();
         let total_ring = layout.num_blocks * layout.block_len;
@@ -423,7 +512,7 @@ mod tests {
         assert_eq!(got.centered_inf_norm, expected.centered_inf_norm);
 
         let (setup, _) =
-            <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16)
+            <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16, 1)
                 .unwrap();
         let layout = setup.layout();
         let level_params = TinyConfig::level_params(HachiScheduleInputs {
