@@ -19,13 +19,15 @@ cargo test
 Two workspace members: `hachi-pcs` (root) and `derive` (proc macros).
 
 - `src/primitives/` — field/module traits, multilinear representations, serialization, transcripts
-- `src/algebra/` — concrete fields, rings, NTT, domains, polynomial utilities
+- `src/algebra/` — concrete fields, rings, NTT, polynomial utilities (eq_poly, split_eq, uni_poly)
 - `src/protocol/commitment/` — configs, layouts, schedules, commitments, onehot helpers, utilities
 - `src/protocol/commitment_scheme.rs` — top-level `HachiCommitmentScheme` commit/prove/verify wiring
 - `src/protocol/sumcheck/` — generic sumcheck plus `hachi_stage1`, `hachi_stage2`, `two_round_prefix`
 - `src/protocol/proof.rs` — proof object layout and flattened proof/witness encodings
 - `src/protocol/opening_point.rs` — field-to-ring opening reduction
 - `src/protocol/ring_switch.rs` — ring-switch proof logic
+- `src/protocol/quadratic_equation.rs` — quadratic equation handling
+- `src/protocol/recursive_runtime.rs` — recursive level scheduling
 - `src/protocol/hachi_poly_ops/` — dense and one-hot polynomial operations
 - `src/protocol/dispatch.rs` — protocol orchestration helpers
 - `src/protocol/challenges/` — sparse challenge sampling
@@ -33,6 +35,7 @@ Two workspace members: `hachi-pcs` (root) and `derive` (proc macros).
 - `src/protocol/prg.rs` — protocol PRG utilities
 - `src/error.rs` — error types
 - `examples/profile.rs` — profiling and proof-size harness
+- `scripts/` — Python estimation scripts, hook installer
 - `tests/` — end-to-end protocol tests
 
 ## Key Abstractions
