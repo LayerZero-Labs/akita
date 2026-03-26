@@ -55,6 +55,20 @@ macro_rules! cfg_chunks {
     }};
 }
 
+/// Runs two closures potentially in parallel via `rayon::join`.
+///
+/// Without `parallel`: runs them sequentially and returns the pair.
+#[macro_export]
+macro_rules! cfg_join {
+    ($f_a:expr, $f_b:expr) => {{
+        #[cfg(feature = "parallel")]
+        let result = rayon::join($f_a, $f_b);
+        #[cfg(not(feature = "parallel"))]
+        let result = ($f_a(), $f_b());
+        result
+    }};
+}
+
 /// Parallel fold-reduce over a range.
 ///
 /// With `parallel`: `range.into_par_iter().fold(identity, fold_op).reduce(identity, reduce_op)`.
