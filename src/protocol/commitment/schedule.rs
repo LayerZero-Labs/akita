@@ -40,7 +40,13 @@ pub struct HachiLevelParams {
 impl HachiLevelParams {
     /// Total number of quotient / relation rows in `M`.
     pub fn m_row_count(&self) -> usize {
-        self.n_d + self.n_b + 2 + self.n_a
+        self.m_row_count_with_public_outputs(1)
+    }
+
+    /// Total number of quotient / relation rows when the root carries
+    /// `num_public_outputs` public `y` rows.
+    pub fn m_row_count_with_public_outputs(&self, num_public_outputs: usize) -> usize {
+        self.n_d + self.n_b + num_public_outputs + 1 + self.n_a
     }
 }
 
@@ -514,8 +520,36 @@ pub(crate) fn planned_log_basis_at_level<Cfg: CommitmentConfig>(
         state.level,
         inputs.level.min(schedule.terminal_state().level)
     );
-    if inputs.level > 0 {
-        debug_assert_eq!(state.current_w_len, inputs.current_w_len);
+    if inputs.level > 0 && state.current_w_len != inputs.current_w_len {
+        let cfg = PlannerConfig {
+            max_num_vars: inputs.max_num_vars,
+            min_log_basis,
+            max_log_basis,
+            field_bits: field_bits(Cfg::decomposition()),
+            half_field_bound: Cfg::planner_half_field_bound(),
+        };
+        let mut memo = HashMap::new();
+        let mut best: Option<(u32, usize)> = None;
+        for log_basis in min_log_basis..=max_log_basis {
+            let suffix = best_recursive_suffix::<Cfg>(
+                cfg,
+                &mut memo,
+                PlannerState {
+                    level: inputs.level,
+                    current_w_len: inputs.current_w_len,
+                    log_basis,
+                },
+            )?;
+            if best
+                .as_ref()
+                .is_none_or(|(_, best_bytes)| suffix.no_wrapper_bytes < *best_bytes)
+            {
+                best = Some((log_basis, suffix.no_wrapper_bytes));
+            }
+        }
+        return best.map(|(log_basis, _)| log_basis).ok_or_else(|| {
+            HachiError::InvalidSetup("no valid adaptive log basis found".to_string())
+        });
     }
     Ok(state.log_basis)
 }

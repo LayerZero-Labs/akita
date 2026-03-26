@@ -52,6 +52,8 @@ where
     type Commitment: Clone + PartialEq + Send + Sync + AppendToTranscript<F>;
     /// Evaluation/opening proof object.
     type Proof: Clone + Send + Sync;
+    /// Batched same-point evaluation/opening proof object.
+    type BatchedProof: Clone + Send + Sync;
     /// Prover-side hint produced at commitment time.
     type CommitHint: Clone + Send + Sync;
     /// Prover-side hint produced by batched root commitment.
@@ -120,6 +122,26 @@ where
         layout: &HachiCommitmentLayout,
     ) -> Result<Self::Proof, HachiError>;
 
+    /// Produce a same-point batched opening proof for multiple polynomials.
+    ///
+    /// The layout must match the one used during batched commitment. All
+    /// polynomials share the same `opening_point`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the opening point is invalid or proof generation fails.
+    #[allow(clippy::too_many_arguments)]
+    fn batched_prove<T: Transcript<F>, P: HachiPolyOps<F, D>>(
+        setup: &Self::ProverSetup,
+        polys: &[P],
+        opening_point: &[F],
+        hint: Self::BatchedCommitHint,
+        transcript: &mut T,
+        commitment: &Self::Commitment,
+        basis: BasisMode,
+        layout: &HachiCommitmentLayout,
+    ) -> Result<Self::BatchedProof, HachiError>;
+
     /// Verify an opening proof with a caller-specified layout.
     ///
     /// The layout must be reconstructed deterministically by the verifier —
@@ -138,6 +160,26 @@ where
         transcript: &mut T,
         opening_point: &[F],
         opening: &F,
+        commitment: &Self::Commitment,
+        basis: BasisMode,
+        layout: &HachiCommitmentLayout,
+    ) -> Result<(), HachiError>;
+
+    /// Verify a same-point batched opening proof.
+    ///
+    /// The verifier reconstructs the root layout deterministically and replays
+    /// the transcript against all claimed `openings` in slice order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when verification fails.
+    #[allow(clippy::too_many_arguments)]
+    fn batched_verify<T: Transcript<F>>(
+        proof: &Self::BatchedProof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut T,
+        opening_point: &[F],
+        openings: &[F],
         commitment: &Self::Commitment,
         basis: BasisMode,
         layout: &HachiCommitmentLayout,

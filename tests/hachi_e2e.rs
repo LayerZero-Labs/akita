@@ -11,7 +11,7 @@ use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
 };
-use hachi_pcs::protocol::proof::HachiProof;
+use hachi_pcs::protocol::proof::{HachiBatchedProof, HachiProof};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::{CommitmentConfig, RingCommitment};
 use hachi_pcs::{
@@ -200,12 +200,16 @@ fn purge_setup_cache(max_num_vars: usize) {
         path.push("hachi");
         if let Ok(entries) = std::fs::read_dir(&path) {
             let needle = format!("_nv{max_num_vars}.setup");
+            let batch_needle = format!("_nv{max_num_vars}_batch");
             for entry in entries.flatten() {
                 let entry_path = entry.path();
                 if entry_path
                     .file_name()
                     .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.starts_with("hachi_") && name.ends_with(&needle))
+                    .is_some_and(|name| {
+                        name.starts_with("hachi_")
+                            && (name.ends_with(&needle) || name.contains(&batch_needle))
+                    })
                 {
                     let _ = std::fs::remove_file(entry_path);
                 }
@@ -543,6 +547,94 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         assert!(
             result.is_ok(),
             "adaptive onehot direct-tail verification must pass: {:?}",
+            result.err()
+        );
+    });
+}
+
+#[test]
+fn batched_onehot_same_point_round_trip() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = Fp128OneHotCommitmentConfig;
+        const D: usize = Cfg::D;
+
+        let nv = ONEHOT_TEST_NV;
+        let layout = Cfg::commitment_layout(nv).expect("layout");
+        let total_field = (layout.num_blocks * layout.block_len)
+            .checked_mul(D)
+            .expect("total field size overflow");
+        let total_chunks = total_field / ONEHOT_K;
+        assert_eq!(total_chunks * ONEHOT_K, total_field);
+
+        let mut rng_a = StdRng::seed_from_u64(0x1234_5678);
+        let mut rng_b = StdRng::seed_from_u64(0x8765_4321);
+        let indices_a: Vec<Option<usize>> = (0..total_chunks)
+            .map(|_| Some(rng_a.gen_range(0..ONEHOT_K)))
+            .collect();
+        let indices_b: Vec<Option<usize>> = (0..total_chunks)
+            .map(|_| Some(rng_b.gen_range(0..ONEHOT_K)))
+            .collect();
+        let poly_a =
+            OneHotPoly::<F, D>::new(ONEHOT_K, indices_a, layout.r_vars, layout.m_vars).unwrap();
+        let poly_b =
+            OneHotPoly::<F, D>::new(ONEHOT_K, indices_b, layout.r_vars, layout.m_vars).unwrap();
+        let pt = random_point(nv);
+        let openings = vec![
+            opening_from_poly(&poly_a, &pt, &layout),
+            opening_from_poly(&poly_b, &pt, &layout),
+        ];
+
+        #[cfg(feature = "disk-persistence")]
+        purge_setup_cache(nv);
+
+        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 2);
+        let verifier_setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        let (commitment, hint) =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(
+                &[&poly_a, &poly_b],
+                &setup,
+                &layout,
+            )
+            .unwrap();
+
+        let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot");
+        let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+            &setup,
+            &[&poly_a, &poly_b],
+            &pt,
+            hint,
+            &mut prover_transcript,
+            &commitment,
+            BasisMode::Lagrange,
+            &layout,
+        )
+        .unwrap();
+
+        let mut serialized = Vec::new();
+        proof
+            .serialize_compressed(&mut serialized)
+            .expect("serialize batched onehot proof");
+        let mut cursor = std::io::Cursor::new(serialized);
+        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor)
+            .expect("deserialize batched onehot proof");
+
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot");
+        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &pt,
+            &openings,
+            &commitment,
+            BasisMode::Lagrange,
+            &layout,
+        );
+        assert!(
+            result.is_ok(),
+            "batched onehot verification must pass: {:?}",
             result.err()
         );
     });

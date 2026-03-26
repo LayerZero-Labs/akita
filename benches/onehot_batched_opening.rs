@@ -1,0 +1,287 @@
+#![allow(missing_docs)]
+
+use criterion::measurement::WallTime;
+use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode, Throughput};
+use hachi_pcs::algebra::Fp128;
+use hachi_pcs::protocol::commitment::Fp128OneHotCommitmentConfig;
+use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
+use hachi_pcs::protocol::hachi_poly_ops::{HachiPolyOps, OneHotPoly};
+use hachi_pcs::protocol::opening_point::{
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
+};
+use hachi_pcs::protocol::transcript::Blake2bTranscript;
+use hachi_pcs::protocol::{CommitmentConfig, HachiCommitmentLayout};
+use hachi_pcs::{BasisMode, CanonicalField, CommitmentScheme, Transcript};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
+use std::time::{Duration, Instant};
+
+type F = Fp128<0xffffffffffffffffffffffffffffe941>;
+type Cfg = Fp128OneHotCommitmentConfig;
+const D: usize = Cfg::D;
+
+const SINGLE_NUM_VARS: usize = 34;
+const BATCH_NUM_VARS: usize = 29;
+const BATCH_SIZE: usize = 1 << 5;
+const ONEHOT_K: usize = D;
+const TOTAL_FIELD_ELEMS: u64 = 1u64 << SINGLE_NUM_VARS;
+
+fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>) {
+    group.sample_size(10);
+    group.sampling_mode(SamplingMode::Flat);
+    group.warm_up_time(Duration::from_secs(3));
+    group.measurement_time(Duration::from_secs(20));
+    group.throughput(Throughput::Elements(TOTAL_FIELD_ELEMS));
+}
+
+fn make_onehot_poly(num_vars: usize, seed: u64) -> OneHotPoly<F, D, u8> {
+    let layout = Cfg::commitment_layout(num_vars).expect("benchmark layout");
+    let total_ring = layout.num_blocks * layout.block_len;
+    assert_eq!(total_ring * ONEHOT_K, 1usize << num_vars);
+
+    let mut rng = StdRng::seed_from_u64(seed);
+    let indices: Vec<Option<u8>> = (0..total_ring)
+        .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
+        .collect();
+
+    OneHotPoly::<F, D, u8>::new(ONEHOT_K, indices, layout.r_vars, layout.m_vars)
+        .expect("benchmark onehot poly")
+}
+
+fn random_point(nv: usize) -> Vec<F> {
+    let mut rng = StdRng::seed_from_u64(0xcafe_babe);
+    (0..nv)
+        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .collect()
+}
+
+fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
+    poly: &P,
+    point: &[F],
+    layout: &HachiCommitmentLayout,
+) -> F {
+    let alpha_bits = D.trailing_zeros() as usize;
+    assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
+
+    let inner_point = &point[..alpha_bits];
+    let reduced_point = &point[alpha_bits..];
+    let ring_opening_point = ring_opening_point_from_field(
+        reduced_point,
+        layout.r_vars,
+        layout.m_vars,
+        BasisMode::Lagrange,
+    )
+    .expect("opening point shape should match layout");
+
+    let (y_ring, _) = poly.evaluate_and_fold(
+        &ring_opening_point.b,
+        &ring_opening_point.a,
+        layout.block_len,
+    );
+    let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, BasisMode::Lagrange)
+        .expect("inner opening point should match ring dimension");
+    (y_ring * v.sigma_m1()).coefficients()[0]
+}
+
+fn bench_single_case(c: &mut Criterion) {
+    let layout = Cfg::commitment_layout(SINGLE_NUM_VARS).expect("single layout");
+    let poly = make_onehot_poly(SINGLE_NUM_VARS, 0x0bee_fcaf_e000_0034);
+    let point = random_point(SINGLE_NUM_VARS);
+    let opening = opening_from_poly(&poly, &point, &layout);
+
+    let setup =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(SINGLE_NUM_VARS, 1);
+    let verifier_setup =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+    let (commitment, hint) =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout)
+            .expect("single commit");
+
+    let mut group = c.benchmark_group("hachi/onehot_opening/single_1xnv34");
+    configure_group(&mut group);
+
+    group.bench_function("prove", |b| {
+        b.iter_custom(|iters| {
+            let mut total = Duration::ZERO;
+            for _ in 0..iters {
+                let prove_hint = hint.clone();
+                let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
+                let start = Instant::now();
+                let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
+                    &setup,
+                    &poly,
+                    &point,
+                    prove_hint,
+                    &mut transcript,
+                    &commitment,
+                    BasisMode::Lagrange,
+                    &layout,
+                )
+                .expect("single prove");
+                total += start.elapsed();
+                black_box(proof);
+            }
+            total
+        })
+    });
+
+    let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
+        &setup,
+        &poly,
+        &point,
+        hint,
+        &mut prover_transcript,
+        &commitment,
+        BasisMode::Lagrange,
+        &layout,
+    )
+    .expect("single benchmark proof");
+
+    group.bench_function("verify", |b| {
+        b.iter_custom(|iters| {
+            let mut total = Duration::ZERO;
+            for _ in 0..iters {
+                let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
+                let start = Instant::now();
+                <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
+                    &proof,
+                    &verifier_setup,
+                    &mut transcript,
+                    &point,
+                    &opening,
+                    &commitment,
+                    BasisMode::Lagrange,
+                    &layout,
+                )
+                .expect("single verify");
+                total += start.elapsed();
+            }
+            total
+        })
+    });
+
+    group.finish();
+}
+
+fn bench_batched_case(c: &mut Criterion) {
+    let layout = Cfg::commitment_layout(BATCH_NUM_VARS).expect("batch layout");
+    let polys: Vec<OneHotPoly<F, D, u8>> = (0..BATCH_SIZE)
+        .map(|idx| make_onehot_poly(BATCH_NUM_VARS, 0x0bee_fcaf_e000_2900 + idx as u64))
+        .collect();
+    let point = random_point(BATCH_NUM_VARS);
+    let openings: Vec<F> = polys
+        .iter()
+        .map(|poly| opening_from_poly(poly, &point, &layout))
+        .collect();
+
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+        BATCH_NUM_VARS,
+        BATCH_SIZE,
+    );
+    let verifier_setup =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+    let (commitment, hint) =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(
+            &polys, &setup, &layout,
+        )
+        .expect("batched commit");
+
+    let mut group = c.benchmark_group("hachi/onehot_opening/batched_32xnv29");
+    configure_group(&mut group);
+
+    group.bench_function("prove", |b| {
+        b.iter_custom(|iters| {
+            let mut total = Duration::ZERO;
+            for _ in 0..iters {
+                let prove_hint = hint.clone();
+                let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
+                let start = Instant::now();
+                let proof =
+                    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+                        &setup,
+                        &polys,
+                        &point,
+                        prove_hint,
+                        &mut transcript,
+                        &commitment,
+                        BasisMode::Lagrange,
+                        &layout,
+                    )
+                    .expect("batched prove");
+                total += start.elapsed();
+                black_box(proof);
+            }
+            total
+        })
+    });
+
+    let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+        &setup,
+        &polys,
+        &point,
+        hint,
+        &mut prover_transcript,
+        &commitment,
+        BasisMode::Lagrange,
+        &layout,
+    )
+    .expect("batched benchmark proof");
+
+    group.bench_function("verify", |b| {
+        b.iter_custom(|iters| {
+            let mut total = Duration::ZERO;
+            for _ in 0..iters {
+                let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
+                let start = Instant::now();
+                <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+                    &proof,
+                    &verifier_setup,
+                    &mut transcript,
+                    &point,
+                    &openings,
+                    &commitment,
+                    BasisMode::Lagrange,
+                    &layout,
+                )
+                .expect("batched verify");
+                total += start.elapsed();
+            }
+            total
+        })
+    });
+
+    group.finish();
+}
+
+fn bench_onehot_batched_opening(c: &mut Criterion) {
+    bench_single_case(c);
+    bench_batched_case(c);
+}
+
+criterion_group!(onehot_batched_opening_benches, bench_onehot_batched_opening);
+
+/// Set `HACHI_PARALLEL=0` to run benchmarks single-threaded.
+fn main() {
+    #[cfg(feature = "parallel")]
+    {
+        let num_threads = if std::env::var("HACHI_PARALLEL")
+            .map(|v| v == "0")
+            .unwrap_or(false)
+        {
+            tracing::info!("HACHI_PARALLEL=0: running single-threaded");
+            1
+        } else {
+            0
+        };
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .stack_size(64 * 1024 * 1024)
+            .build_global()
+            .ok();
+    }
+
+    onehot_batched_opening_benches();
+    Criterion::default().configure_from_args().final_summary();
+}

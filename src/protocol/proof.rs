@@ -826,6 +826,17 @@ impl<F: FieldCore, const D: usize> HachiBatchedCommitmentHint<F, D> {
     pub fn t(&self) -> Option<&[Vec<Vec<CyclotomicRing<F, D>>>]> {
         self.t.as_deref()
     }
+
+    /// Flatten the batched hint into one root-hint view over all claims.
+    pub fn into_flattened(self) -> HachiCommitmentHint<F, D> {
+        let inner_opening_digits = self.inner_opening_digits.into_iter().flatten().collect();
+        match self.t {
+            Some(t) => {
+                HachiCommitmentHint::with_t(inner_opening_digits, t.into_iter().flatten().collect())
+            }
+            None => HachiCommitmentHint::new(inner_opening_digits),
+        }
+    }
 }
 
 impl<F: FieldCore, const D: usize> PartialEq for HachiBatchedCommitmentHint<F, D> {
@@ -1000,6 +1011,107 @@ impl<F: FieldCore> HachiLevelProof<F> {
     /// Claimed evaluation of the next witness `w` at the norm-check output point.
     pub fn next_w_eval(&self) -> F {
         self.stage2.next_w_eval
+    }
+}
+
+/// Root proof payload for same-point batched openings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HachiBatchedRootProof<F: FieldCore> {
+    /// Root public outputs `y_ell` stored as a ring vector.
+    pub y_rings: ProofRingVec<F>,
+    /// Aggregated `v = Σ_ell D_ell · w_hat_ell`.
+    pub v: ProofRingVec<F>,
+    /// Stage-1 norm-check payload.
+    pub stage1: HachiStage1Proof<F>,
+    /// Stage-2 fused payload.
+    pub stage2: HachiStage2Proof<F>,
+}
+
+impl<F: FieldCore> HachiBatchedRootProof<F> {
+    /// Construct from typed ring elements for the batched root level.
+    pub(crate) fn new<const D: usize>(
+        y_rings: Vec<CyclotomicRing<F, D>>,
+        v: Vec<CyclotomicRing<F, D>>,
+        stage1: HachiStage1Proof<F>,
+        stage2: HachiStage2Proof<F>,
+    ) -> Self {
+        Self {
+            y_rings: ProofRingVec::from_ring_elems(&y_rings),
+            v: ProofRingVec::from_ring_elems(&v),
+            stage1,
+            stage2,
+        }
+    }
+
+    /// Construct a batched root proof for the two-stage norm-check.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_two_stage<const D: usize>(
+        y_rings: Vec<CyclotomicRing<F, D>>,
+        v: Vec<CyclotomicRing<F, D>>,
+        stage1_sumcheck: SumcheckProof<F>,
+        stage1_s_claim: F,
+        stage2_sumcheck: SumcheckProof<F>,
+        next_w_commitment: ProofRingVec<F>,
+        next_w_eval: F,
+    ) -> Self {
+        Self::new::<D>(
+            y_rings,
+            v,
+            HachiStage1Proof {
+                sumcheck: stage1_sumcheck,
+                s_claim: stage1_s_claim,
+            },
+            HachiStage2Proof {
+                sumcheck: stage2_sumcheck,
+                next_w_commitment,
+                next_w_eval,
+            },
+        )
+    }
+
+    /// Borrow the stored root `y` ring vector.
+    pub fn y_rings(&self) -> &ProofRingVec<F> {
+        &self.y_rings
+    }
+
+    /// Borrow the stored root `v` ring vector.
+    pub fn v(&self) -> &ProofRingVec<F> {
+        &self.v
+    }
+
+    /// Commitment to the next witness `w`.
+    pub fn next_w_commitment(&self) -> &ProofRingVec<F> {
+        &self.stage2.next_w_commitment
+    }
+
+    /// Claimed evaluation of the next witness `w` at the norm-check output point.
+    pub fn next_w_eval(&self) -> F {
+        self.stage2.next_w_eval
+    }
+}
+
+/// Hachi PCS proof for same-point batched openings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HachiBatchedProof<F: FieldCore> {
+    /// Batched root proof over all original-polynomial claims.
+    pub root: HachiBatchedRootProof<F>,
+    /// Recursive proofs for subsequent `w` openings.
+    pub levels: Vec<HachiLevelProof<F>>,
+    /// Proof tail: direct final witness as packed digits.
+    pub tail: HachiProofTail<F>,
+}
+
+impl<F: FieldCore> HachiBatchedProof<F> {
+    /// Access the final witness.
+    pub fn final_w(&self) -> &PackedDigits {
+        &self.tail.direct
+    }
+}
+
+impl<F: FieldCore + HachiSerialize> HachiBatchedProof<F> {
+    /// Returns the proof size in bytes (uncompressed).
+    pub fn size(&self) -> usize {
+        self.serialized_size(Compress::No)
     }
 }
 
@@ -1186,6 +1298,171 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
             stage1,
             stage2,
         };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
+impl<F: FieldCore> HachiSerialize for HachiBatchedRootProof<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.y_rings.serialize_with_mode(&mut writer, compress)?;
+        self.v.serialize_with_mode(&mut writer, compress)?;
+        self.stage1
+            .sumcheck
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage1
+            .s_claim
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage2
+            .sumcheck
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage2
+            .next_w_commitment
+            .serialize_with_mode(&mut writer, compress)?;
+        self.stage2
+            .next_w_eval
+            .serialize_with_mode(&mut writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.y_rings.serialized_size(compress)
+            + self.v.serialized_size(compress)
+            + self.stage1.sumcheck.serialized_size(compress)
+            + self.stage1.s_claim.serialized_size(compress)
+            + self.stage2.sumcheck.serialized_size(compress)
+            + self.stage2.next_w_commitment.serialized_size(compress)
+            + self.stage2.next_w_eval.serialized_size(compress)
+    }
+}
+
+impl<F: FieldCore + Valid> Valid for HachiBatchedRootProof<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.y_rings.check()?;
+        self.v.check()?;
+        self.stage1.sumcheck.check()?;
+        self.stage1.s_claim.check()?;
+        self.stage2.sumcheck.check()?;
+        self.stage2.next_w_commitment.check()?;
+        self.stage2.next_w_eval.check()
+    }
+}
+
+impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedRootProof<F> {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let y_rings = ProofRingVec::deserialize_with_mode(&mut reader, compress, validate)?;
+        let v = ProofRingVec::deserialize_with_mode(&mut reader, compress, validate)?;
+        let stage1 = HachiStage1Proof {
+            sumcheck: SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?,
+            s_claim: F::deserialize_with_mode(&mut reader, compress, validate)?,
+        };
+        let stage2 = HachiStage2Proof {
+            sumcheck: SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?,
+            next_w_commitment: ProofRingVec::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            next_w_eval: F::deserialize_with_mode(&mut reader, compress, validate)?,
+        };
+        let out = Self {
+            y_rings,
+            v,
+            stage1,
+            stage2,
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
+impl<F: FieldCore> HachiSerialize for HachiBatchedProof<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.root.serialize_with_mode(&mut writer, compress)?;
+        (self.levels.len() as u32).serialize_with_mode(&mut writer, compress)?;
+        for level in &self.levels {
+            level.serialize_with_mode(&mut writer, compress)?;
+        }
+        self.tail.direct.serialize_with_mode(&mut writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.root.serialized_size(compress)
+            + 4
+            + self
+                .levels
+                .iter()
+                .map(|l| l.serialized_size(compress))
+                .sum::<usize>()
+            + self.tail.direct.serialized_size(compress)
+    }
+}
+
+impl<F: FieldCore + Valid> Valid for HachiBatchedProof<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.root.check()?;
+        for level in &self.levels {
+            level.check()?;
+        }
+        if let Some(first) = self.levels.first() {
+            if !self
+                .root
+                .next_w_commitment()
+                .can_decode_vec(first.level_d())
+            {
+                return Err(SerializationError::InvalidData(
+                    "batched root proof has mismatched next-commitment dimension".to_string(),
+                ));
+            }
+        }
+        for levels in self.levels.windows(2) {
+            if !levels[0]
+                .next_w_commitment()
+                .can_decode_vec(levels[1].level_d())
+            {
+                return Err(SerializationError::InvalidData(
+                    "adjacent hachi levels have mismatched commitment dimensions".to_string(),
+                ));
+            }
+        }
+        self.tail.direct.check()
+    }
+}
+
+impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedProof<F> {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let root = HachiBatchedRootProof::deserialize_with_mode(&mut reader, compress, validate)?;
+        let num_levels = u32::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+        let mut levels = Vec::with_capacity(num_levels);
+        for _ in 0..num_levels {
+            levels.push(HachiLevelProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?);
+        }
+        let pw = PackedDigits::deserialize_with_mode(&mut reader, compress, validate)?;
+        let tail = HachiProofTail::new(pw);
+        let out = Self { root, levels, tail };
         if matches!(validate, Validate::Yes) {
             out.check()?;
         }

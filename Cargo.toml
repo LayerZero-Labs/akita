@@ -81,6 +81,10 @@ harness = false
 name = "onehot_batched_commit"
 harness = false
 
+[[bench]]
+name = "onehot_batched_opening"
+harness = false
+
 [lints.rust]
 missing_docs = "warn"
 unreachable_pub = "warn"

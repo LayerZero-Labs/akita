@@ -96,6 +96,7 @@ impl CommitmentScheme<F, 1> for DummyScheme {
     type VerifierSetup = DummySetup;
     type Commitment = HachiCommitment;
     type Proof = DummyProof;
+    type BatchedProof = DummyProof;
     type CommitHint = HachiCommitment;
     type BatchedCommitHint = HachiCommitment;
 
@@ -142,12 +143,46 @@ impl CommitmentScheme<F, 1> for DummyScheme {
         Ok(DummyProof(q.to_canonical_u128()))
     }
 
+    fn batched_prove<T: Transcript<F>, P: HachiPolyOps<F, 1>>(
+        _setup: &Self::ProverSetup,
+        _polys: &[P],
+        _opening_point: &[F],
+        _hint: Self::BatchedCommitHint,
+        transcript: &mut T,
+        commitment: &Self::Commitment,
+        _basis: BasisMode,
+        _layout: &HachiCommitmentLayout,
+    ) -> Result<Self::BatchedProof, HachiError> {
+        commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
+        let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
+        Ok(DummyProof(q.to_canonical_u128()))
+    }
+
     fn verify<T: Transcript<F>>(
         proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
         transcript: &mut T,
         _opening_point: &[F],
         _opening: &F,
+        commitment: &Self::Commitment,
+        _basis: BasisMode,
+        _layout: &HachiCommitmentLayout,
+    ) -> Result<(), HachiError> {
+        commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
+        let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
+        if proof.0 == q.to_canonical_u128() {
+            Ok(())
+        } else {
+            Err(HachiError::InvalidProof)
+        }
+    }
+
+    fn batched_verify<T: Transcript<F>>(
+        proof: &Self::BatchedProof,
+        _setup: &Self::VerifierSetup,
+        transcript: &mut T,
+        _opening_point: &[F],
+        _openings: &[F],
         commitment: &Self::Commitment,
         _basis: BasisMode,
         _layout: &HachiCommitmentLayout,

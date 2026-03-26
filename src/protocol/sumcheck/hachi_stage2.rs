@@ -201,7 +201,7 @@ pub(crate) fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: u
     alpha: F,
     v: &[CyclotomicRing<F, D>],
     u: &[CyclotomicRing<F, D>],
-    y_ring: &CyclotomicRing<F, D>,
+    y_rings: &[CyclotomicRing<F, D>],
 ) -> F {
     let eq_tau1 = EqPolynomial::evals(tau1);
     let mut acc = F::zero();
@@ -221,8 +221,12 @@ pub(crate) fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: u
         acc += eq_tau1[row_idx] * eval_ring_at(r, &alpha);
         row_idx += 1;
     }
-    if row_idx < eq_tau1.len() {
+    for y_ring in y_rings {
+        if row_idx >= eq_tau1.len() {
+            return acc;
+        }
         acc += eq_tau1[row_idx] * eval_ring_at(y_ring, &alpha);
+        row_idx += 1;
     }
     acc
 }
@@ -2155,12 +2159,12 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         tau1: &[F],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
-        y_ring: &CyclotomicRing<F, D>,
+        y_rings: &[CyclotomicRing<F, D>],
         alpha: F,
         num_u: usize,
         num_l: usize,
     ) -> Self {
-        let relation_claim = relation_claim_from_rows::<F, D>(tau1, alpha, v, u, y_ring);
+        let relation_claim = relation_claim_from_rows::<F, D>(tau1, alpha, v, u, y_rings);
         Self {
             batching_coeff,
             s_claim,
@@ -2194,6 +2198,45 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         num_u: usize,
         num_l: usize,
     ) -> Self {
+        Self::new_with_packed_witness_batched(
+            batching_coeff,
+            s_claim,
+            packed_witness,
+            r_stage1,
+            alpha_evals_y,
+            m_evals_x,
+            tau1,
+            v,
+            u,
+            std::slice::from_ref(y_ring),
+            alpha,
+            num_u,
+            num_l,
+        )
+    }
+
+    /// Create a fused verifier for the stage-2 sumcheck with multiple public
+    /// root outputs at the batched opening point.
+    #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(
+        skip_all,
+        name = "HachiStage2Verifier::new_with_packed_witness_batched"
+    )]
+    pub fn new_with_packed_witness_batched(
+        batching_coeff: F,
+        s_claim: F,
+        packed_witness: &'a PackedDigits,
+        r_stage1: Vec<F>,
+        alpha_evals_y: Vec<F>,
+        m_evals_x: Vec<F>,
+        tau1: &[F],
+        v: &[CyclotomicRing<F, D>],
+        u: &[CyclotomicRing<F, D>],
+        y_rings: &[CyclotomicRing<F, D>],
+        alpha: F,
+        num_u: usize,
+        num_l: usize,
+    ) -> Self {
         Self::new(
             batching_coeff,
             s_claim,
@@ -2204,7 +2247,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
             tau1,
             v,
             u,
-            y_ring,
+            y_rings,
             alpha,
             num_u,
             num_l,
@@ -2230,6 +2273,45 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         num_u: usize,
         num_l: usize,
     ) -> Self {
+        Self::new_with_claimed_w_eval_batched(
+            batching_coeff,
+            s_claim,
+            r_stage1,
+            alpha_evals_y,
+            m_evals_x,
+            tau1,
+            v,
+            u,
+            std::slice::from_ref(y_ring),
+            alpha,
+            num_u,
+            num_l,
+            w_eval,
+        )
+    }
+
+    /// Create a fused verifier for the stage-2 sumcheck with multiple public
+    /// root outputs and a claimed witness evaluation.
+    #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(
+        skip_all,
+        name = "HachiStage2Verifier::new_with_claimed_w_eval_batched"
+    )]
+    pub fn new_with_claimed_w_eval_batched(
+        batching_coeff: F,
+        s_claim: F,
+        r_stage1: Vec<F>,
+        alpha_evals_y: Vec<F>,
+        m_evals_x: Vec<F>,
+        tau1: &[F],
+        v: &[CyclotomicRing<F, D>],
+        u: &[CyclotomicRing<F, D>],
+        y_rings: &[CyclotomicRing<F, D>],
+        alpha: F,
+        num_u: usize,
+        num_l: usize,
+        w_eval: F,
+    ) -> Self {
         Self::new(
             batching_coeff,
             s_claim,
@@ -2240,7 +2322,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
             tau1,
             v,
             u,
-            y_ring,
+            y_rings,
             alpha,
             num_u,
             num_l,

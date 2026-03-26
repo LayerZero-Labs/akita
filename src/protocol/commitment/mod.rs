@@ -9,7 +9,7 @@ pub(crate) mod transcript_append;
 mod types;
 pub mod utils;
 
-pub(crate) use commit::root_current_w_len;
+pub(crate) use commit::{root_batched_layout, root_current_w_len};
 pub use commit::{
     HachiCommitmentCore, HachiExpandedSetup, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup,
 };
