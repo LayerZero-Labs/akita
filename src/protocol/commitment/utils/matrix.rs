@@ -1,11 +1,15 @@
 //! Matrix sampling helpers for setup.
 
 use crate::algebra::ring::CyclotomicRing;
+use crate::cfg_into_iter;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::{FieldCore, FieldSampling};
 use rand_core::{CryptoRng, RngCore};
 use sha3::digest::{ExtendableOutput, XofReader};
 use sha3::Shake256;
 
+use super::flat_matrix::FlatMatrix;
 use crate::protocol::prg::absorb_len_prefixed;
 
 /// Public seed used to derive commitment matrices.
@@ -26,12 +30,13 @@ pub(crate) fn sample_public_matrix_seed() -> PublicMatrixSeed {
 /// All role matrices (A, B, D) share one backing matrix with a fixed label
 /// (`"shared"`). Each role is a row/column prefix of the shared matrix.
 /// See `SHARED_PREFIX_BINDING.md` for the security argument.
+#[cfg(test)]
 pub(crate) fn derive_public_matrix<F: FieldCore + FieldSampling, const D: usize>(
     rows: usize,
     cols: usize,
     seed: &PublicMatrixSeed,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    (0..rows)
+    cfg_into_iter!(0..rows)
         .map(|r| {
             (0..cols)
                 .map(|c| {
@@ -41,6 +46,42 @@ pub(crate) fn derive_public_matrix<F: FieldCore + FieldSampling, const D: usize>
                 .collect()
         })
         .collect()
+}
+
+/// Derive a public matrix directly into [`FlatMatrix`] storage, parallelized
+/// at the individual entry level.
+///
+/// Avoids the intermediate `Vec<Vec<CyclotomicRing>>` allocation and
+/// copy that [`derive_public_matrix`] + [`FlatMatrix::from_ring_matrix`]
+/// would require.
+#[tracing::instrument(skip_all, name = "derive_public_matrix_flat")]
+pub(crate) fn derive_public_matrix_flat<F: FieldCore + FieldSampling, const D: usize>(
+    rows: usize,
+    cols: usize,
+    seed: &PublicMatrixSeed,
+) -> FlatMatrix<F> {
+    let total = rows * cols;
+    let ring_elements: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..total)
+        .map(|idx| {
+            let r = idx / cols;
+            let c = idx % cols;
+            let mut entry_rng = ShakeXofRng::new(seed, r, c);
+            CyclotomicRing::random(&mut entry_rng)
+        })
+        .collect();
+
+    // SAFETY: CyclotomicRing<F, D> is #[repr(transparent)] over [F; D], so
+    // Vec<CyclotomicRing<F, D>> and Vec<F> share the same backing allocation
+    // layout (same element alignment, same total byte count).
+    let data = unsafe {
+        let ptr = ring_elements.as_ptr() as *mut F;
+        let len = ring_elements.len() * D;
+        let cap = ring_elements.capacity() * D;
+        std::mem::forget(ring_elements);
+        Vec::from_raw_parts(ptr, len, cap)
+    };
+
+    FlatMatrix::from_flat_data(data, rows, cols, D)
 }
 
 struct ShakeXofRng {

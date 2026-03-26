@@ -55,6 +55,26 @@ impl<F: FieldCore> FlatMatrix<F> {
         self.cols_ring * self.gen_ring_dim
     }
 
+    /// Build from pre-flattened field-element data.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `data.len() != num_rows * cols_ring * gen_ring_dim`.
+    pub(crate) fn from_flat_data(
+        data: Vec<F>,
+        num_rows: usize,
+        cols_ring: usize,
+        gen_ring_dim: usize,
+    ) -> Self {
+        debug_assert_eq!(data.len(), num_rows * cols_ring * gen_ring_dim);
+        Self {
+            data,
+            num_rows,
+            cols_ring,
+            gen_ring_dim,
+        }
+    }
+
     /// Build from a `Vec<Vec<CyclotomicRing<F, D>>>`, flattening ring elements
     /// into contiguous field-element storage.
     pub fn from_ring_matrix<const D: usize>(mat: &[Vec<CyclotomicRing<F, D>>]) -> Self {
