@@ -6,11 +6,10 @@ use crate::algebra::ntt::tables::{
     Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES, RING_DEGREE,
 };
 use crate::algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
-use crate::cfg_into_iter;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::{CanonicalField, FieldCore};
+use crate::{cfg_into_iter, cfg_join, CanonicalField, FieldCore};
 
 use super::flat_matrix::RingMatrixView;
 use super::norm::detect_field_modulus;
@@ -149,21 +148,30 @@ fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
     params: ProtocolCrtNttParams<D>,
 ) -> NttSlotCache<D> {
     match params {
-        ProtocolCrtNttParams::Q32(p) => NttSlotCache::Q32 {
-            neg: convert_mat(mat, &p),
-            cyc: convert_mat_cyclic(mat, &p),
-            params: p,
-        },
-        ProtocolCrtNttParams::Q64(p) => NttSlotCache::Q64 {
-            neg: convert_mat(mat, &p),
-            cyc: convert_mat_cyclic(mat, &p),
-            params: p,
-        },
-        ProtocolCrtNttParams::Q128(p) => NttSlotCache::Q128 {
-            neg: convert_mat(mat, &p),
-            cyc: convert_mat_cyclic(mat, &p),
-            params: p,
-        },
+        ProtocolCrtNttParams::Q32(p) => {
+            let (neg, cyc) = cfg_join!(|| convert_mat(mat, &p), || convert_mat_cyclic(mat, &p));
+            NttSlotCache::Q32 {
+                neg,
+                cyc,
+                params: p,
+            }
+        }
+        ProtocolCrtNttParams::Q64(p) => {
+            let (neg, cyc) = cfg_join!(|| convert_mat(mat, &p), || convert_mat_cyclic(mat, &p));
+            NttSlotCache::Q64 {
+                neg,
+                cyc,
+                params: p,
+            }
+        }
+        ProtocolCrtNttParams::Q128(p) => {
+            let (neg, cyc) = cfg_join!(|| convert_mat(mat, &p), || convert_mat_cyclic(mat, &p));
+            NttSlotCache::Q128 {
+                neg,
+                cyc,
+                params: p,
+            }
+        }
     }
 }
 

@@ -13,7 +13,9 @@ use super::utils::flat_matrix::FlatMatrix;
 use super::utils::linear::{
     decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_single_i8,
 };
-use super::utils::matrix::{derive_public_matrix, sample_public_matrix_seed, PublicMatrixSeed};
+use super::utils::matrix::{
+    derive_public_matrix_flat, sample_public_matrix_seed, PublicMatrixSeed,
+};
 use super::CommitmentConfig;
 use crate::algebra::fields::wide::HasWide;
 use crate::algebra::CyclotomicRing;
@@ -541,9 +543,8 @@ where
         let max_cols = [a_cols, b_cols, d_cols].into_iter().max().unwrap();
 
         let public_matrix_seed = sample_public_matrix_seed();
-        let shared_ring_matrix =
-            derive_public_matrix::<F, D>(max_rows, max_cols, &public_matrix_seed);
-        let shared_flat = FlatMatrix::from_ring_matrix(&shared_ring_matrix);
+        let shared_flat =
+            derive_public_matrix_flat::<F, D>(max_rows, max_cols, &public_matrix_seed);
         let ntt_shared = build_ntt_slot(shared_flat.view::<D>())?;
 
         let expanded = Arc::new(HachiExpandedSetup {
@@ -905,8 +906,7 @@ impl HachiCommitmentCore {
         } else {
             let actual_rows = max_rows.max(existing_rows);
             let actual_cols = max_cols.max(existing_cols);
-            let shared_ring_matrix = derive_public_matrix::<F, D>(actual_rows, actual_cols, &seed);
-            let shared_flat = FlatMatrix::from_ring_matrix(&shared_ring_matrix);
+            let shared_flat = derive_public_matrix_flat::<F, D>(actual_rows, actual_cols, &seed);
             let ntt_shared = build_ntt_slot(shared_flat.view::<D>())?;
             (shared_flat, ntt_shared)
         };
@@ -984,9 +984,8 @@ impl HachiCommitmentCore {
                 "setup shared matrix size"
             );
         }
-        let shared_ring_matrix =
-            derive_public_matrix::<F, D>(max_rows, max_cols, &public_matrix_seed);
-        let shared_flat = FlatMatrix::from_ring_matrix(&shared_ring_matrix);
+        let shared_flat =
+            derive_public_matrix_flat::<F, D>(max_rows, max_cols, &public_matrix_seed);
         let ntt_shared = build_ntt_slot(shared_flat.view::<D>())?;
 
         let expanded = Arc::new(HachiExpandedSetup {
