@@ -473,7 +473,8 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
                 if suffix.cost == usize::MAX {
                     continue;
                 }
-                let total = root_prefix + suffix.cost + 4;
+                let root_entry_commit = ring_vec_bytes(root_nb as usize, root_cfg.d);
+                let total = root_entry_commit + root_prefix + suffix.cost + 4;
                 let is_better = overall_best
                     .as_ref()
                     .map_or(true, |(best_total, _, _)| total < *best_total);
@@ -492,7 +493,7 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
                         delta_commit: root_lc.delta_commit,
                         w_ring: root_lc.w_ring_elems,
                         next_w_len: root_lc.next_w_len,
-                        level_bytes: root_prefix,
+                        level_bytes: root_entry_commit + root_prefix,
                         label: root_cfg.label,
                     });
                     levels.extend_from_slice(&suffix.levels);
@@ -541,27 +542,27 @@ mod tests {
         let opts = PlannerOptions::new(1, 32);
         let sched = run_universal_planner(&opts);
         // Improved over Python's 54,116 B (which had depth-bound memo bug)
-        assert_eq!(sched.total_bytes, 52_548, "onehot nv=32");
+        assert_eq!(sched.total_bytes, 51_442, "onehot nv=32");
     }
 
     #[test]
     fn full_32_optimal() {
         let opts = PlannerOptions::new(128, 32);
         let sched = run_universal_planner(&opts);
-        assert_eq!(sched.total_bytes, 55_572, "full nv=32");
+        assert_eq!(sched.total_bytes, 54_402, "full nv=32");
     }
 
     #[test]
     fn full_25_optimal() {
         let opts = PlannerOptions::new(128, 25);
         let sched = run_universal_planner(&opts);
-        assert_eq!(sched.total_bytes, 52_428, "full nv=25");
+        assert_eq!(sched.total_bytes, 50_866, "full nv=25");
     }
 
     #[test]
     fn onehot_44_optimal() {
         let opts = PlannerOptions::new(1, 44);
         let sched = run_universal_planner(&opts);
-        assert_eq!(sched.total_bytes, 59_236, "onehot nv=44");
+        assert_eq!(sched.total_bytes, 58_704, "onehot nv=44");
     }
 }
