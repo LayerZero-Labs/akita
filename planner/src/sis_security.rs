@@ -1,10 +1,27 @@
-/// Max secure SIS width (in ring elements) at 128-bit security for
-/// `(D, collision_inf, rank)`, verified with lattice-estimator
-/// (BDGL16 + lgsa, q = 2^128 - 275).
+/// Maximum Module-SIS rank considered by the planner.
 ///
-/// Indexed as `[rank-1]` for ranks 1..4.
-/// collision_inf values: root onehot A-role = 2, balanced base-2^lb digits = 2^lb - 1.
-fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; 4]> {
+/// The SIS width table below was generated for ranks 1..=MAX_RANK only.
+/// If this constant is changed, the table must be re-verified with the
+/// lattice estimator.
+pub const MAX_RANK: u32 = 4;
+const _: () = assert!(MAX_RANK == 4, "SIS width table only covers ranks 1..=4");
+
+/// Max secure SIS width (in ring elements) at 128-bit security, indexed by
+/// `[rank - 1]` for ranks `1..=MAX_RANK`.
+///
+/// Verified with lattice-estimator (BDGL16 + lgsa, q = 2^128 - 275).
+///
+/// Parameters:
+/// - `d`: ring dimension of ZqX/(X^D + 1). One of {16, 32, 64}.
+/// - `collision_inf`: worst-case L-infinity norm of the difference between
+///   two valid witness vectors that collide under the SIS commitment.
+///   For onehot polynomials, the root level A-role uses collision_inf = 2
+///   (coefficients are 0 or 1, balanced-digit bound is 2). For dense
+///   polynomials the root uses 2^lb - 1 like any other level. At all
+///   recursive levels, witness entries are balanced base-2^lb digits with
+///   range [-(2^lb/2 - 1), 2^lb/2 - 1], giving collision_inf = 2^lb - 1
+///   (e.g. lb=2 -> 3, lb=3 -> 7, ..., lb=7 -> 127).
+fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; MAX_RANK as usize]> {
     match (d, collision_inf) {
         // D=16
         (16, 2) => Some([158, 10_450, 260_593, 200_000]),
@@ -34,9 +51,12 @@ fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; 4]> {
     }
 }
 
-/// Smallest Module-SIS rank (1..4) whose width cap covers `width`.
+/// Returns the smallest Module-SIS rank in `1..=MAX_RANK` that provides
+/// 128-bit security for an SIS instance with `width` ring-element columns
+/// at ring dimension `d` and collision bound `collision_inf`.
 ///
-/// Returns `None` if no rank up to 4 is sufficient.
+/// Returns `None` if the `(d, collision_inf)` pair is not in the table, or
+/// if no rank up to `MAX_RANK` can accommodate the requested width.
 pub fn min_rank_for_secure_width(d: u32, collision_inf: u32, width: usize) -> Option<u32> {
     let widths = sis_max_widths(d, collision_inf)?;
     for (i, &max_w) in widths.iter().enumerate() {
@@ -58,6 +78,11 @@ mod tests {
         assert_eq!(min_rank_for_secure_width(32, 7, 960), Some(2));
         assert_eq!(min_rank_for_secure_width(16, 7, 32), Some(2));
         assert_eq!(min_rank_for_secure_width(16, 7, 31), Some(1));
+    }
+
+    #[test]
+    fn exceeds_max_rank() {
+        assert_eq!(min_rank_for_secure_width(16, 127, 3_000), None);
     }
 
     #[test]
