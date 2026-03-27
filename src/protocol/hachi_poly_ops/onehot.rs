@@ -929,7 +929,7 @@ mod tests {
         indices1[29] = Some(11usize);
         indices1[64] = Some(19usize);
         indices1[100] = Some(21usize);
-        let polys = vec![
+        let polys = [
             OneHotPoly::<F, D>::new(block_len, indices0, 1, 6).unwrap(),
             OneHotPoly::<F, D>::new(block_len, indices1, 1, 6).unwrap(),
         ];
