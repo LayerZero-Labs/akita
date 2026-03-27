@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn stage1_lb4() {
         let cost = stage1_bytes_optimized(17, 4);
-        let expected_stages = 1 * (17 * 4 * 16) + 1 * (17 * 2 * 16);
+        let expected_stages = (17 * 4 * 16) + (17 * 2 * 16);
         let expected_claims = 2 * 16;
         assert_eq!(cost, expected_stages + expected_claims);
     }

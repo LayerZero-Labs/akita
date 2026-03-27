@@ -402,7 +402,7 @@ impl Planner {
         min_rank_for_secure_width(d, (1u32 << tail_lb) - 1, ring_elems)
     }
 
-    fn best_from(&mut self, w_len: usize, cur_d: u32, prev_lb: u32, depth: usize) -> BestSuffix {
+    fn best_from(&mut self, w_len: usize, cur_d: u32, prev_lb: u32) -> BestSuffix {
         let key = (w_len, cur_d, prev_lb);
         if let Some(existing) = self.memo.get(&key) {
             return existing.clone();
@@ -423,53 +423,54 @@ impl Planner {
             };
         }
 
-        if depth > 0 {
-            let cfgs: Vec<RingConfig> = self.cfgs_for_d(cur_d).cloned().collect();
-            let unique_ds = self.unique_ds.clone();
-            let monotone_d = self.opts.monotone_d;
+        // Recursion terminates naturally: try_level requires next_w_len < w_len,
+        // so w_len strictly decreases at each level. Memoization prevents
+        // revisiting the same (w_len, D, lb) state.
+        let cfgs: Vec<RingConfig> = self.cfgs_for_d(cur_d).cloned().collect();
+        let unique_ds = self.unique_ds.clone();
+        let monotone_d = self.opts.monotone_d;
 
-            for cfg in &cfgs {
-                for lb in MIN_LB..=MAX_LB {
-                    let result = self.try_level(cfg, 1, w_len, lb, lb);
-                    let Some((prefix, lc, nb_self, nd_self)) = result else {
+        for cfg in &cfgs {
+            for lb in MIN_LB..=MAX_LB {
+                let result = self.try_level(cfg, 1, w_len, lb, lb);
+                let Some((prefix, lc, nb_self, nd_self)) = result else {
+                    continue;
+                };
+                let entry_commit = ring_vec_bytes(nb_self as usize, cur_d);
+
+                for &next_d in &unique_ds {
+                    if monotone_d && next_d > cur_d {
                         continue;
-                    };
-                    let entry_commit = ring_vec_bytes(nb_self as usize, cur_d);
-
-                    for &next_d in &unique_ds {
-                        if monotone_d && next_d > cur_d {
-                            continue;
-                        }
-                        let suffix = self.best_from(lc.next_w_len, next_d, lb, depth - 1);
-                        if suffix.cost == usize::MAX {
-                            continue;
-                        }
-                        let total = entry_commit + prefix + suffix.cost;
-                        if total < best.cost {
-                            let mut levels = Vec::with_capacity(1 + suffix.levels.len());
-                            levels.push(PlannedLevel {
-                                d: cfg.d,
-                                lb,
-                                m_vars: lc.m_vars,
-                                r_vars: lc.r_vars,
-                                na: cfg.n_a,
-                                nb: nb_self,
-                                nd: nd_self,
-                                delta_open: lc.delta_open,
-                                delta_fold: lc.delta_fold,
-                                delta_commit: lc.delta_commit,
-                                w_ring: lc.w_ring_elems,
-                                next_w_len: lc.next_w_len,
-                                level_bytes: entry_commit + prefix,
-                                label: cfg.label,
-                            });
-                            levels.extend_from_slice(&suffix.levels);
-                            best = BestSuffix {
-                                cost: total,
-                                levels,
-                                tail_lb: suffix.tail_lb,
-                            };
-                        }
+                    }
+                    let suffix = self.best_from(lc.next_w_len, next_d, lb);
+                    if suffix.cost == usize::MAX {
+                        continue;
+                    }
+                    let total = entry_commit + prefix + suffix.cost;
+                    if total < best.cost {
+                        let mut levels = Vec::with_capacity(1 + suffix.levels.len());
+                        levels.push(PlannedLevel {
+                            d: cfg.d,
+                            lb,
+                            m_vars: lc.m_vars,
+                            r_vars: lc.r_vars,
+                            na: cfg.n_a,
+                            nb: nb_self,
+                            nd: nd_self,
+                            delta_open: lc.delta_open,
+                            delta_fold: lc.delta_fold,
+                            delta_commit: lc.delta_commit,
+                            w_ring: lc.w_ring_elems,
+                            next_w_len: lc.next_w_len,
+                            level_bytes: entry_commit + prefix,
+                            label: cfg.label,
+                        });
+                        levels.extend_from_slice(&suffix.levels);
+                        best = BestSuffix {
+                            cost: total,
+                            levels,
+                            tail_lb: suffix.tail_lb,
+                        };
                     }
                 }
             }
@@ -512,7 +513,7 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
                 if opts.monotone_d && next_d > root_cfg.d {
                     continue;
                 }
-                let suffix = planner.best_from(root_lc.next_w_len, next_d, root_lb, 8);
+                let suffix = planner.best_from(root_lc.next_w_len, next_d, root_lb);
                 if suffix.cost == usize::MAX {
                     continue;
                 }
@@ -580,30 +581,31 @@ mod tests {
     }
 
     #[test]
-    fn onehot_32_matches_python() {
+    fn onehot_32_optimal() {
         let opts = PlannerOptions::new(1, 32);
         let sched = run_universal_planner(&opts);
-        assert_eq!(sched.total_bytes, 54_116, "onehot nv=32 should be 54,116 B");
+        // Improved over Python's 54,116 B (which had depth-bound memo bug)
+        assert_eq!(sched.total_bytes, 52_548, "onehot nv=32");
     }
 
     #[test]
-    fn full_32_matches_python() {
+    fn full_32_optimal() {
         let opts = PlannerOptions::new(128, 32);
         let sched = run_universal_planner(&opts);
-        assert_eq!(sched.total_bytes, 57_132, "full nv=32 should be 57,132 B");
+        assert_eq!(sched.total_bytes, 55_572, "full nv=32");
     }
 
     #[test]
-    fn full_25_matches_python() {
+    fn full_25_optimal() {
         let opts = PlannerOptions::new(128, 25);
         let sched = run_universal_planner(&opts);
-        assert_eq!(sched.total_bytes, 52_988, "full nv=25 should be 52,988 B");
+        assert_eq!(sched.total_bytes, 52_428, "full nv=25");
     }
 
     #[test]
-    fn onehot_44_matches_python() {
+    fn onehot_44_optimal() {
         let opts = PlannerOptions::new(1, 44);
         let sched = run_universal_planner(&opts);
-        assert_eq!(sched.total_bytes, 60_564, "onehot nv=44 should be 60,564 B");
+        assert_eq!(sched.total_bytes, 59_236, "onehot nv=44");
     }
 }
