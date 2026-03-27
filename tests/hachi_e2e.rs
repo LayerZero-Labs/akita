@@ -641,6 +641,98 @@ fn batched_onehot_same_point_round_trip() {
 }
 
 #[test]
+fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = Fp128OneHotCommitmentConfig;
+        const D: usize = Cfg::D;
+        const NV: usize = 30;
+        const BATCH_SIZE: usize = 4;
+
+        let layout = hachi_batched_root_layout::<Cfg, D>(NV, BATCH_SIZE).expect("layout");
+        let total_field = (layout.num_blocks * layout.block_len)
+            .checked_mul(D)
+            .expect("total field size overflow");
+        let total_chunks = total_field / ONEHOT_K;
+        assert_eq!(total_chunks * ONEHOT_K, total_field);
+
+        let polys: Vec<OneHotPoly<F, D>> = (0..BATCH_SIZE)
+            .map(|poly_idx| {
+                let mut rng = StdRng::seed_from_u64(0x600d_f00d_1234_0000 + poly_idx as u64);
+                let indices: Vec<Option<usize>> = (0..total_chunks)
+                    .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
+                    .collect();
+                OneHotPoly::<F, D>::new(ONEHOT_K, indices, layout.r_vars, layout.m_vars).unwrap()
+            })
+            .collect();
+        let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
+        let pt = random_point(NV);
+        let openings: Vec<F> = polys
+            .iter()
+            .map(|poly| opening_from_poly(poly, &pt, &layout))
+            .collect();
+
+        #[cfg(feature = "disk-persistence")]
+        purge_setup_cache(NV);
+
+        let setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, BATCH_SIZE);
+        let verifier_setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        let (commitment, hint) =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(
+                &poly_refs, &setup, &layout,
+            )
+            .unwrap();
+
+        let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-4x30");
+        let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+            &setup,
+            &poly_refs,
+            &pt,
+            hint,
+            &mut prover_transcript,
+            &commitment,
+            BasisMode::Lagrange,
+            &layout,
+        )
+        .unwrap();
+
+        let mut serialized = Vec::new();
+        proof
+            .serialize_compressed(&mut serialized)
+            .expect("serialize batched onehot proof");
+        let mut cursor = std::io::Cursor::new(serialized);
+        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor)
+            .expect("deserialize batched onehot proof");
+
+        assert!(
+            decoded.final_w().num_elems <= 86_144,
+            "expected byte-aware batched schedule to keep folding, got final_w with {} elems",
+            decoded.final_w().num_elems
+        );
+
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-4x30");
+        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &pt,
+            &openings,
+            &commitment,
+            BasisMode::Lagrange,
+            &layout,
+        );
+        assert!(
+            result.is_ok(),
+            "batched onehot 4x30 verification must pass: {:?}",
+            result.err()
+        );
+    });
+}
+
+#[test]
 fn adaptive_full_setup_covers_planned_schedule_envelope() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();

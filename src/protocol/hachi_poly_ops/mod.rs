@@ -237,6 +237,29 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         let t = recompose_commit_inner_blocks::<F, D>(&t_hat, num_digits_open, log_basis)?;
         Ok(CommitInnerWitness { t, t_hat })
     }
+
+    /// Optional fused batched variant of [`commit_inner_witness`](Self::commit_inner_witness).
+    ///
+    /// Implementations can override this when many same-layout polynomials admit
+    /// a faster shared A-matrix accumulation path during batched commit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the fused commit path fails.
+    fn commit_inner_witness_batched(
+        _polys: &[&Self],
+        _a_matrix: &FlatMatrix<F>,
+        _ntt_a: &NttSlotCache<D>,
+        _block_len: usize,
+        _num_digits_commit: usize,
+        _num_digits_open: usize,
+        _log_basis: u32,
+    ) -> Result<Option<Vec<CommitInnerWitness<F, D>>>, HachiError>
+    where
+        F: CanonicalField,
+    {
+        Ok(None)
+    }
 }
 
 impl<F, const D: usize, P> HachiPolyOps<F, D> for &P
@@ -329,6 +352,30 @@ where
     {
         <P as HachiPolyOps<F, D>>::commit_inner_witness(
             *self,
+            a_matrix,
+            ntt_a,
+            block_len,
+            num_digits_commit,
+            num_digits_open,
+            log_basis,
+        )
+    }
+
+    fn commit_inner_witness_batched(
+        polys: &[&Self],
+        a_matrix: &FlatMatrix<F>,
+        ntt_a: &NttSlotCache<D>,
+        block_len: usize,
+        num_digits_commit: usize,
+        num_digits_open: usize,
+        log_basis: u32,
+    ) -> Result<Option<Vec<CommitInnerWitness<F, D>>>, HachiError>
+    where
+        F: CanonicalField,
+    {
+        let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
+        P::commit_inner_witness_batched(
+            &inner_refs,
             a_matrix,
             ntt_a,
             block_len,

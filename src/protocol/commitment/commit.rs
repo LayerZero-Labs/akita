@@ -5,7 +5,10 @@ use super::config::{
     HachiCommitmentLayout,
 };
 use super::onehot::{inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks};
-use super::schedule::{recursive_r_decomp_levels_for_bound, HachiScheduleInputs};
+use super::schedule::{
+    batched_root_level_proof_bytes, estimated_recursive_suffix_bytes,
+    recursive_r_decomp_levels_for_bound, HachiScheduleInputs,
+};
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
 use super::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
@@ -485,13 +488,48 @@ where
             .and_then(|count| count.checked_add(r_count))
             .ok_or_else(|| HachiError::InvalidSetup("batched witness cost overflow".to_string()))?;
 
-        let candidate = (witness_cost, r_vars, m_vars, num_digits_fold);
+        let next_w_len = witness_cost.checked_mul(root_params.d).ok_or_else(|| {
+            HachiError::InvalidSetup("batched next w length overflow".to_string())
+        })?;
+        let candidate_layout = HachiCommitmentLayout::new_with_decomp(
+            m_vars,
+            r_vars,
+            root_params.n_a,
+            root_layout.num_digits_commit,
+            root_layout.num_digits_open,
+            num_digits_fold,
+            root_layout.log_basis,
+        )?;
+        let next_inputs = HachiScheduleInputs {
+            max_num_vars,
+            level: 1,
+            current_w_len: next_w_len,
+        };
+        let next_level_params = Cfg::level_params(next_inputs);
+        let root_proof_cost = batched_root_level_proof_bytes(
+            field_bits,
+            root_params,
+            candidate_layout,
+            &next_level_params,
+            next_w_len,
+            num_claims,
+        );
+        let suffix_cost = estimated_recursive_suffix_bytes::<Cfg>(max_num_vars, 1, next_w_len)?;
+        let candidate = (
+            root_proof_cost.checked_add(suffix_cost).ok_or_else(|| {
+                HachiError::InvalidSetup("batched proof cost overflow".to_string())
+            })?,
+            witness_cost,
+            r_vars,
+            m_vars,
+            num_digits_fold,
+        );
         if best.is_none_or(|current| candidate < current) {
             best = Some(candidate);
         }
     }
 
-    let (_, r_vars, m_vars, num_digits_fold) = best.ok_or_else(|| {
+    let (_, _, r_vars, m_vars, num_digits_fold) = best.ok_or_else(|| {
         HachiError::InvalidSetup("failed to derive batched root split".to_string())
     })?;
     Ok((m_vars, r_vars, num_digits_fold))

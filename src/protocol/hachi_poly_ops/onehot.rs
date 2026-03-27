@@ -425,14 +425,14 @@ where
         let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
 
         let t_all = match &self.blocks {
-            OneHotBlocks::Regular(blocks) => onehot_column_sweep_ajtai_regular::<F, D>(
+            OneHotBlocks::Regular(blocks) => onehot_column_sweep_ajtai_regular::<_, F, D>(
                 &a_view,
                 blocks,
                 n_a,
                 active_a_cols,
                 num_digits_commit,
             ),
-            OneHotBlocks::General(blocks) => onehot_column_sweep_ajtai::<F, D>(
+            OneHotBlocks::General(blocks) => onehot_column_sweep_ajtai::<_, F, D>(
                 &a_view,
                 blocks,
                 n_a,
@@ -476,14 +476,14 @@ where
         let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
 
         let t = match &self.blocks {
-            OneHotBlocks::Regular(blocks) => onehot_column_sweep_ajtai_regular::<F, D>(
+            OneHotBlocks::Regular(blocks) => onehot_column_sweep_ajtai_regular::<_, F, D>(
                 &a_view,
                 blocks,
                 n_a,
                 active_a_cols,
                 num_digits_commit,
             ),
-            OneHotBlocks::General(blocks) => onehot_column_sweep_ajtai::<F, D>(
+            OneHotBlocks::General(blocks) => onehot_column_sweep_ajtai::<_, F, D>(
                 &a_view,
                 blocks,
                 n_a,
@@ -503,6 +503,95 @@ where
             .collect();
 
         Ok(CommitInnerWitness { t, t_hat })
+    }
+
+    fn commit_inner_witness_batched(
+        polys: &[&Self],
+        a_matrix: &FlatMatrix<F>,
+        _ntt_a: &NttSlotCache<D>,
+        block_len: usize,
+        num_digits_commit: usize,
+        num_digits_open: usize,
+        log_basis: u32,
+    ) -> Result<Option<Vec<CommitInnerWitness<F, D>>>, HachiError>
+    where
+        F: CanonicalField,
+    {
+        if polys.is_empty() {
+            return Ok(Some(Vec::new()));
+        }
+
+        let a_view = a_matrix.view::<D>();
+        let n_a = a_view.num_rows();
+        let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
+        if active_a_cols > a_view.num_cols() {
+            return Err(HachiError::InvalidSetup(format!(
+                "active A width {active_a_cols} exceeds setup envelope {}",
+                a_view.num_cols()
+            )));
+        }
+        let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
+        let blocks_per_poly = polys[0].num_blocks();
+
+        let t_flat = match &polys[0].blocks {
+            OneHotBlocks::Regular(_) => {
+                let mut flat_blocks = Vec::with_capacity(polys.len() * blocks_per_poly);
+                for poly in polys {
+                    let OneHotBlocks::Regular(blocks) = &poly.blocks else {
+                        return Ok(None);
+                    };
+                    if blocks.len() != blocks_per_poly {
+                        return Ok(None);
+                    }
+                    flat_blocks.extend(blocks.iter().map(Vec::as_slice));
+                }
+                onehot_column_sweep_ajtai_regular::<_, F, D>(
+                    &a_view,
+                    &flat_blocks,
+                    n_a,
+                    active_a_cols,
+                    num_digits_commit,
+                )
+            }
+            OneHotBlocks::General(_) => {
+                let mut flat_blocks = Vec::with_capacity(polys.len() * blocks_per_poly);
+                for poly in polys {
+                    let OneHotBlocks::General(blocks) = &poly.blocks else {
+                        return Ok(None);
+                    };
+                    if blocks.len() != blocks_per_poly {
+                        return Ok(None);
+                    }
+                    flat_blocks.extend(blocks.iter().map(Vec::as_slice));
+                }
+                onehot_column_sweep_ajtai::<_, F, D>(
+                    &a_view,
+                    &flat_blocks,
+                    n_a,
+                    active_a_cols,
+                    num_digits_commit,
+                )
+            }
+        };
+
+        let witnesses = t_flat
+            .chunks(blocks_per_poly)
+            .map(|poly_t| {
+                let t = poly_t.to_vec();
+                let t_hat: Vec<Vec<[i8; D]>> = cfg_iter!(t)
+                    .map(|t_i| {
+                        if t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
+                            vec![[0i8; D]; zero_block_len]
+                        } else {
+                            decompose_rows_i8(t_i, num_digits_open, log_basis)
+                        }
+                    })
+                    .collect();
+                CommitInnerWitness { t, t_hat }
+            })
+            .collect();
+
+        Ok(Some(witnesses))
     }
 }
 
@@ -611,14 +700,15 @@ const SWEEP_THRESHOLD: usize = 32;
 ///
 /// Falls back to the original block-by-block path when blocks_per_thread is
 /// small enough that accumulators already fit in L2.
-fn onehot_column_sweep_ajtai_regular<F, const D: usize>(
+fn onehot_column_sweep_ajtai_regular<B, F, const D: usize>(
     a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
-    regular_blocks: &[Vec<RegularOneHotEntry>],
+    regular_blocks: &[B],
     n_a: usize,
     active_a_cols: usize,
     num_digits_commit: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
+    B: AsRef<[RegularOneHotEntry]> + Sync,
     F: FieldCore + CanonicalField + HasWide,
     F::Wide: crate::AdditiveGroup + From<F> + crate::algebra::fields::wide::ReduceTo<F>,
 {
@@ -629,11 +719,15 @@ where
     );
     if regular_blocks
         .iter()
-        .any(|block_entries| block_entries.len() > MAX_WIDE_SHIFT_ACCUMULATIONS)
+        .any(|block_entries| block_entries.as_ref().len() > MAX_WIDE_SHIFT_ACCUMULATIONS)
     {
         return cfg_iter!(regular_blocks)
             .map(|block_entries| {
-                inner_ajtai_regular_onehot_chunked(a_view, block_entries, num_digits_commit)
+                inner_ajtai_regular_onehot_chunked(
+                    a_view,
+                    block_entries.as_ref(),
+                    num_digits_commit,
+                )
             })
             .collect();
     }
@@ -656,7 +750,7 @@ where
     if blocks_per_thread <= SWEEP_THRESHOLD {
         return cfg_iter!(regular_blocks)
             .map(|block_entries| {
-                inner_ajtai_regular_onehot_wide(a_view, block_entries, num_digits_commit)
+                inner_ajtai_regular_onehot_wide(a_view, block_entries.as_ref(), num_digits_commit)
             })
             .collect();
     }
@@ -684,7 +778,7 @@ where
                 let tile_len = tile_blocks.len();
 
                 for (local_b, block_entries) in tile_blocks.iter().enumerate() {
-                    for entry in block_entries {
+                    for entry in block_entries.as_ref() {
                         let col = entry.pos_in_block() * num_digits_commit;
                         col_entries[col].push((local_b as u32, entry.coeff_idx() as u16));
                     }
@@ -741,14 +835,15 @@ where
 ///
 /// Falls back to the original block-by-block path when blocks_per_thread is
 /// small enough that accumulators already fit in L2.
-fn onehot_column_sweep_ajtai<F, const D: usize>(
+fn onehot_column_sweep_ajtai<B, F, const D: usize>(
     a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
-    sparse_blocks: &[Vec<SparseBlockEntry>],
+    sparse_blocks: &[B],
     n_a: usize,
     active_a_cols: usize,
     num_digits_commit: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
+    B: AsRef<[SparseBlockEntry]> + Sync,
     F: FieldCore + CanonicalField + HasWide,
     F::Wide: crate::AdditiveGroup + From<F> + crate::algebra::fields::wide::ReduceTo<F>,
 {
@@ -776,7 +871,7 @@ where
     if blocks_per_thread <= SWEEP_THRESHOLD {
         return cfg_iter!(sparse_blocks)
             .map(|block_entries| {
-                inner_ajtai_onehot_wide(a_view, block_entries, 0, num_digits_commit)
+                inner_ajtai_onehot_wide(a_view, block_entries.as_ref(), 0, num_digits_commit)
             })
             .collect();
     }
@@ -802,7 +897,7 @@ where
                 let tile_len = tile_blocks.len();
 
                 for (local_b, block_entries) in tile_blocks.iter().enumerate() {
-                    for entry in block_entries {
+                    for entry in block_entries.as_ref() {
                         let col = entry.pos_in_block * num_digits_commit;
                         for &ci in &entry.nonzero_coeffs {
                             col_entries[col].push((local_b as u32, ci as u8));
@@ -906,7 +1001,7 @@ mod tests {
         let a_view = a_flat.view::<D>();
 
         let got =
-            onehot_column_sweep_ajtai_regular::<F, D>(&a_view, &regular_blocks, 1, block_len, 1);
+            onehot_column_sweep_ajtai_regular::<_, F, D>(&a_view, &regular_blocks, 1, block_len, 1);
         let expected = inner_ajtai_regular_onehot_reduced::<F, D>(&a_view, &regular_blocks[0], 1);
 
         assert_eq!(got.len(), 1);

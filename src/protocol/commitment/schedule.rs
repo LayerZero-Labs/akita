@@ -189,7 +189,7 @@ fn proof_ring_vec_bytes(ring_len: usize, ring_dim: usize, elem_bytes: usize) -> 
     8 + ring_len * ring_dim * elem_bytes
 }
 
-fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
+pub(crate) fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
     8 + 1 + (num_elems * bits_per_elem as usize).div_ceil(8)
 }
 
@@ -262,7 +262,7 @@ fn sumcheck_rounds(level_d: usize, next_w_len: usize) -> usize {
     num_u + num_l
 }
 
-fn hachi_level_proof_bytes(
+pub(crate) fn hachi_level_proof_bytes(
     field_bits: u32,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
@@ -280,6 +280,33 @@ fn hachi_level_proof_bytes(
     let stage1_degree = b / 2 + 1;
 
     // Every level now uses the same two-stage norm-check body, even for b = 4.
+    y_bytes
+        + v_bytes
+        + sumcheck_bytes(rounds, stage1_degree, elem_bytes)
+        + elem_bytes
+        + sumcheck_bytes(rounds, 3, elem_bytes)
+        + next_commit_bytes
+        + next_eval_bytes
+}
+
+pub(crate) fn batched_root_level_proof_bytes(
+    field_bits: u32,
+    level_params: &HachiLevelParams,
+    layout: HachiCommitmentLayout,
+    next_level_params: &HachiLevelParams,
+    next_w_len: usize,
+    num_claims: usize,
+) -> usize {
+    let elem_bytes = field_bytes(field_bits);
+    let y_bytes = proof_ring_vec_bytes(num_claims, level_params.d, elem_bytes);
+    let v_bytes = proof_ring_vec_bytes(level_params.n_d, level_params.d, elem_bytes);
+    let next_commit_bytes =
+        proof_ring_vec_bytes(next_level_params.n_b, next_level_params.d, elem_bytes);
+    let next_eval_bytes = elem_bytes;
+    let rounds = sumcheck_rounds(level_params.d, next_w_len);
+    let b = 1usize << layout.log_basis;
+    let stage1_degree = b / 2 + 1;
+
     y_bytes
         + v_bytes
         + sumcheck_bytes(rounds, stage1_degree, elem_bytes)
@@ -385,6 +412,76 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
 
     memo.insert(state, best.clone());
     Ok(best)
+}
+
+pub(crate) fn planned_recursive_suffix_bytes<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    level: usize,
+    current_w_len: usize,
+    min_log_basis: u32,
+    max_log_basis: u32,
+) -> Result<usize, HachiError> {
+    let inputs = HachiScheduleInputs {
+        max_num_vars,
+        level,
+        current_w_len,
+    };
+    let current_log_basis = Cfg::log_basis_at_level(inputs);
+    let cfg = PlannerConfig {
+        max_num_vars,
+        min_log_basis,
+        max_log_basis,
+        field_bits: field_bits(Cfg::decomposition()),
+        half_field_bound: Cfg::planner_half_field_bound(),
+    };
+    let mut memo = HashMap::new();
+    let suffix = best_recursive_suffix::<Cfg>(
+        cfg,
+        &mut memo,
+        PlannerState {
+            level,
+            current_w_len,
+            log_basis: current_log_basis,
+        },
+    )?;
+    Ok(suffix.no_wrapper_bytes)
+}
+
+pub(crate) fn estimated_recursive_suffix_bytes<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    level: usize,
+    current_w_len: usize,
+) -> Result<usize, HachiError> {
+    let inputs = HachiScheduleInputs {
+        max_num_vars,
+        level,
+        current_w_len,
+    };
+    let current_log_basis = Cfg::log_basis_at_level(inputs);
+    let direct_bytes = packed_digits_bytes(current_w_len, current_log_basis);
+
+    if let Some(planned_bytes) = Cfg::recursive_suffix_bytes(max_num_vars, level, current_w_len)? {
+        return Ok(planned_bytes.min(direct_bytes));
+    }
+
+    let (params, layout) = current_level_layout_with_log_basis::<Cfg>(inputs, current_log_basis)?;
+    let field_bits = field_bits(Cfg::decomposition());
+    let next_w_len =
+        planned_next_w_len(field_bits, Cfg::planner_half_field_bound(), &params, layout);
+    if next_w_len >= current_w_len {
+        return Ok(direct_bytes);
+    }
+
+    let next_inputs = HachiScheduleInputs {
+        max_num_vars,
+        level: level + 1,
+        current_w_len: next_w_len,
+    };
+    let next_level_params = Cfg::level_params(next_inputs);
+    let continue_bytes =
+        hachi_level_proof_bytes(field_bits, &params, layout, &next_level_params, next_w_len)
+            + packed_digits_bytes(next_w_len, next_level_params.log_basis);
+    Ok(direct_bytes.min(continue_bytes))
 }
 
 pub(crate) fn planned_schedule<Cfg: CommitmentConfig>(

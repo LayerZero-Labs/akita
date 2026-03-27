@@ -1,8 +1,8 @@
 //! Configuration presets for ring-native commitment construction.
 
 use super::schedule::{
-    hachi_root_level_layout, planned_log_basis_at_level, planned_schedule_key, HachiLevelParams,
-    HachiScheduleInputs, HachiSchedulePlan,
+    hachi_root_level_layout, planned_log_basis_at_level, planned_recursive_suffix_bytes,
+    planned_schedule_key, HachiLevelParams, HachiScheduleInputs, HachiSchedulePlan,
 };
 use super::utils::math::checked_pow2;
 use super::utils::norm::detect_field_modulus;
@@ -507,6 +507,23 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         Ok(None)
     }
 
+    /// Optional proof-size planner for recursive suffixes that start from an
+    /// arbitrary witness state.
+    ///
+    /// `None` means callers should fall back to a local byte comparison.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the config's planner cannot derive a valid
+    /// suffix from the public inputs.
+    fn recursive_suffix_bytes(
+        _max_num_vars: usize,
+        _level: usize,
+        _current_w_len: usize,
+    ) -> Result<Option<usize>, HachiError> {
+        Ok(None)
+    }
+
     /// Half-range bound used by the planner when sizing recursive `r`.
     ///
     /// By default this uses the decomposition bit bound as a conservative
@@ -932,6 +949,20 @@ impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
             5,
         )?))
     }
+
+    fn recursive_suffix_bytes(
+        max_num_vars: usize,
+        level: usize,
+        current_w_len: usize,
+    ) -> Result<Option<usize>, HachiError> {
+        Ok(Some(planned_recursive_suffix_bytes::<Self>(
+            max_num_vars,
+            level,
+            current_w_len,
+            2,
+            5,
+        )?))
+    }
 }
 
 /// Full-field (128-bit) coefficient family with adaptive per-level basis.
@@ -1014,6 +1045,20 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
     fn schedule_plan(max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
         Ok(Some(super::schedule::planned_schedule::<Self>(
             max_num_vars,
+            2,
+            5,
+        )?))
+    }
+
+    fn recursive_suffix_bytes(
+        max_num_vars: usize,
+        level: usize,
+        current_w_len: usize,
+    ) -> Result<Option<usize>, HachiError> {
+        Ok(Some(planned_recursive_suffix_bytes::<Self>(
+            max_num_vars,
+            level,
+            current_w_len,
             2,
             5,
         )?))

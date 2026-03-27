@@ -9,10 +9,11 @@ use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{flatten_i8_blocks, mat_vec_mul_ntt_single_i8};
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
 use crate::protocol::commitment::{
-    hachi_recursive_level_layout_from_params, root_current_w_len, scale_batched_root_layout,
-    AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore,
-    HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, HachiProverSetup,
-    HachiScheduleInputs, HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
+    estimated_recursive_suffix_bytes, hachi_recursive_level_layout_from_params,
+    packed_digits_bytes, root_current_w_len, scale_batched_root_layout, AppendToTranscript,
+    CommitmentConfig, CommitmentScheme, HachiCommitmentCore, HachiCommitmentLayout,
+    HachiExpandedSetup, HachiLevelParams, HachiProverSetup, HachiScheduleInputs,
+    HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
 };
 use crate::protocol::hachi_poly_ops::{HachiPolyOps, RecursiveWitnessFlat, RecursiveWitnessView};
 use crate::protocol::opening_point::{
@@ -706,13 +707,18 @@ pub(crate) fn should_stop_folding(w_len: usize, prev_w_len: usize) -> bool {
     ratio > MIN_SHRINK_RATIO
 }
 
-fn checked_root_input_len<const D: usize>(
-    layout: HachiCommitmentLayout,
-    num_claims: usize,
-) -> Result<usize, HachiError> {
-    root_current_w_len::<D>(layout)
-        .checked_mul(num_claims)
-        .ok_or_else(|| HachiError::InvalidSetup("batched root input length overflow".to_string()))
+fn should_continue_folding_by_bytes<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    level: usize,
+    current_w_len: usize,
+) -> Result<bool, HachiError> {
+    let inputs = HachiScheduleInputs {
+        max_num_vars,
+        level,
+        current_w_len,
+    };
+    let direct_bytes = packed_digits_bytes(current_w_len, Cfg::log_basis_at_level(inputs));
+    Ok(estimated_recursive_suffix_bytes::<Cfg>(max_num_vars, level, current_w_len)? < direct_bytes)
 }
 
 /// Derive the opening point for the next fold level from the sumcheck
@@ -1048,15 +1054,33 @@ where
         let mut t_by_poly = Vec::with_capacity(polys.len());
         let mut t_hat_by_poly = Vec::with_capacity(polys.len());
         let mut inner_opening_digits_flat = Vec::with_capacity(polys.len() * layout.outer_width);
-        for poly in polys {
-            let mut inner = poly.commit_inner_witness(
-                &setup.expanded.shared_matrix,
-                &setup.ntt_shared,
-                layout.block_len,
-                layout.num_digits_commit,
-                layout.num_digits_open,
-                layout.log_basis,
-            )?;
+        let poly_refs: Vec<&P> = polys.iter().collect();
+        let inner_witnesses = if let Some(witnesses) = P::commit_inner_witness_batched(
+            &poly_refs,
+            &setup.expanded.shared_matrix,
+            &setup.ntt_shared,
+            layout.block_len,
+            layout.num_digits_commit,
+            layout.num_digits_open,
+            layout.log_basis,
+        )? {
+            witnesses
+        } else {
+            polys
+                .iter()
+                .map(|poly| {
+                    poly.commit_inner_witness(
+                        &setup.expanded.shared_matrix,
+                        &setup.ntt_shared,
+                        layout.block_len,
+                        layout.num_digits_commit,
+                        layout.num_digits_open,
+                        layout.log_basis,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        for mut inner in inner_witnesses {
             for t_i in &mut inner.t {
                 t_i.truncate(root_params.n_a);
             }
@@ -1288,12 +1312,12 @@ where
             batched_layout,
         )?;
 
-        let mut prev_poly_len = checked_root_input_len::<D>(*layout, polys.len())?;
         let mut current_state = next_state;
         let mut level = 1usize;
 
         loop {
-            if should_stop_folding(current_state.w.len(), prev_poly_len) {
+            if !should_continue_folding_by_bytes::<Cfg>(max_num_vars, level, current_state.w.len())?
+            {
                 break;
             }
             let level_params = Cfg::level_params(HachiScheduleInputs {
@@ -1318,7 +1342,6 @@ where
 
             levels.push(out.level_proof);
 
-            prev_poly_len = current_state.w.len();
             current_state = out.next_state;
             level += 1;
         }
