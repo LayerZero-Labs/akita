@@ -171,7 +171,7 @@ impl<PF: PackedField> PackedPartialSplitEval32<PF> {
 #[derive(Clone, Copy)]
 pub struct PackedPartialSplitNtt32<PF: PackedField> {
     eval_roots: [PF; CLASS_D],
-    inv_stage_roots: [PF; CLASS_D],
+    inv_twiddles: [PF; CLASS_D],
     d_inv_psi_inv: [PF; CLASS_D],
 }
 
@@ -233,7 +233,7 @@ impl<PF: PackedField> PackedPartialSplitNtt32<PF> {
     {
         let mut even = eval.even;
         let mut odd = eval.odd;
-        inverse_cyclic_dit_pair_prebroadcast(&mut even, &mut odd, &self.inv_stage_roots);
+        inverse_cyclic_dit_pair_prebroadcast(&mut even, &mut odd, &self.inv_twiddles);
         scale_pair_in_place(&mut even, &mut odd, &self.d_inv_psi_inv);
         out.reserve(PF::WIDTH);
         for lane in 0..PF::WIDTH {
@@ -247,13 +247,13 @@ impl<PF: PackedField> PackedPartialSplitNtt32<PF> {
 /// Precomputed `k=32` split-NTT data for `F_p[X]/(X^64 + 1)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PartialSplitNtt32<F: CanonicalField> {
-    fwd_stage_roots: [F; CLASS_D],
-    inv_stage_roots: [F; CLASS_D],
+    fwd_twiddles: [F; CLASS_D],
+    inv_twiddles: [F; CLASS_D],
     psi_pows: [F; CLASS_D],
     d_inv_psi_inv: [F; CLASS_D],
     eval_roots: [F; CLASS_D],
-    cyclic_fwd_stage_roots: [F; RING_D],
-    cyclic_inv_stage_roots: [F; RING_D],
+    cyclic_fwd_twiddles: [F; RING_D],
+    cyclic_inv_twiddles: [F; RING_D],
     cyclic_d_inv: F,
     centered_i8_lut: [F; 256],
 }
@@ -309,6 +309,8 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
             inv_stage_roots[len] = pow_field(omega_inv, exp);
             len *= 2;
         }
+        let fwd_twiddles = expand_stage_roots(&fwd_stage_roots);
+        let inv_twiddles = expand_stage_roots(&inv_stage_roots);
 
         let mut cyclic_fwd_stage_roots = [F::zero(); RING_D];
         let mut cyclic_inv_stage_roots = [F::zero(); RING_D];
@@ -319,17 +321,19 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
             cyclic_inv_stage_roots[len] = pow_field(psi_inv, exp);
             len *= 2;
         }
+        let cyclic_fwd_twiddles = expand_stage_roots(&cyclic_fwd_stage_roots);
+        let cyclic_inv_twiddles = expand_stage_roots(&cyclic_inv_stage_roots);
 
         let centered_i8_lut = from_fn(|idx| F::from_i64(idx as i64 - 128));
 
         Self {
-            fwd_stage_roots,
-            inv_stage_roots,
+            fwd_twiddles,
+            inv_twiddles,
             psi_pows,
             d_inv_psi_inv,
             eval_roots,
-            cyclic_fwd_stage_roots,
-            cyclic_inv_stage_roots,
+            cyclic_fwd_twiddles,
+            cyclic_inv_twiddles,
             cyclic_d_inv,
             centered_i8_lut,
         }
@@ -346,7 +350,7 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
     pub fn packed<PF: PackedField<Scalar = F>>(&self) -> PackedPartialSplitNtt32<PF> {
         PackedPartialSplitNtt32 {
             eval_roots: from_fn(|i| PF::broadcast(self.eval_roots[i])),
-            inv_stage_roots: from_fn(|i| PF::broadcast(self.inv_stage_roots[i])),
+            inv_twiddles: from_fn(|i| PF::broadcast(self.inv_twiddles[i])),
             d_inv_psi_inv: from_fn(|i| PF::broadcast(self.d_inv_psi_inv[i])),
         }
     }
@@ -357,14 +361,14 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
         for (coeff, psi) in coeffs.iter_mut().zip(self.psi_pows.iter()) {
             *coeff = *coeff * *psi;
         }
-        forward_cyclic_dif(coeffs, &self.fwd_stage_roots);
+        forward_cyclic_dif(coeffs, &self.fwd_twiddles);
     }
 
     /// Forward size-32 negacyclic transform on two class polynomials at once.
     #[inline(always)]
     pub fn forward_class_pair(&self, lhs: &mut [F; CLASS_D], rhs: &mut [F; CLASS_D]) {
         scale_pair_in_place(lhs, rhs, &self.psi_pows);
-        forward_cyclic_dif_pair(lhs, rhs, &self.fwd_stage_roots);
+        forward_cyclic_dif_pair(lhs, rhs, &self.fwd_twiddles);
     }
 
     /// Forward size-32 negacyclic transform for two centered-`i8` classes.
@@ -383,20 +387,20 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
     /// Inverse size-32 negacyclic transform on two slot vectors at once.
     #[inline(always)]
     pub fn inverse_class_pair(&self, lhs: &mut [F; CLASS_D], rhs: &mut [F; CLASS_D]) {
-        inverse_cyclic_dit_pair(lhs, rhs, &self.inv_stage_roots);
+        inverse_cyclic_dit_pair(lhs, rhs, &self.inv_twiddles);
         scale_pair_in_place(lhs, rhs, &self.d_inv_psi_inv);
     }
 
     /// Forward size-64 cyclic transform over `F_p[X]/(X^64 - 1)`.
     #[inline(always)]
     pub fn forward_cyclic_ring(&self, coeffs: &mut [F; RING_D]) {
-        forward_cyclic_dif64(coeffs, &self.cyclic_fwd_stage_roots);
+        forward_cyclic_dif64(coeffs, &self.cyclic_fwd_twiddles);
     }
 
     /// Inverse size-64 cyclic transform over `F_p[X]/(X^64 - 1)`.
     #[inline(always)]
     pub fn inverse_cyclic_ring(&self, evals: &mut [F; RING_D]) {
-        inverse_cyclic_dit64(evals, &self.cyclic_inv_stage_roots);
+        inverse_cyclic_dit64(evals, &self.cyclic_inv_twiddles);
         for value in evals.iter_mut() {
             *value = *value * self.cyclic_d_inv;
         }
@@ -513,6 +517,22 @@ fn powers<F: CanonicalField>(base: F) -> [F; CLASS_D] {
         cur = cur * base;
     }
     out
+}
+
+fn expand_stage_roots<F: CanonicalField, const N: usize>(stage_roots: &[F; N]) -> [F; N] {
+    let mut twiddles = [F::zero(); N];
+    let mut len = 1usize;
+    while len < N {
+        let base = len - 1;
+        let step = stage_roots[len];
+        let mut w = F::one();
+        for j in 0..len {
+            twiddles[base + j] = w;
+            w = w * step;
+        }
+        len *= 2;
+    }
+    twiddles
 }
 
 fn pow_field<F: FieldCore>(mut base: F, mut exp: u128) -> F {
@@ -637,19 +657,18 @@ fn merge_even_odd<F: CanonicalField>(
 }
 
 #[inline(always)]
-fn forward_cyclic_dif<F: CanonicalField>(a: &mut [F; CLASS_D], stage_roots: &[F; CLASS_D]) {
+fn forward_cyclic_dif<F: CanonicalField>(a: &mut [F; CLASS_D], twiddles: &[F; CLASS_D]) {
     let mut len = CLASS_D / 2;
     while len > 0 {
-        let step = stage_roots[len];
+        let twiddle_base = len - 1;
         let mut start = 0usize;
         while start < CLASS_D {
-            let mut w = F::one();
             for j in 0..len {
+                let w = twiddles[twiddle_base + j];
                 let u = a[start + j];
                 let v = a[start + j + len];
                 a[start + j] = u + v;
                 a[start + j + len] = (u - v) * w;
-                w = w * step;
             }
             start += 2 * len;
         }
@@ -661,15 +680,15 @@ fn forward_cyclic_dif<F: CanonicalField>(a: &mut [F; CLASS_D], stage_roots: &[F;
 fn forward_cyclic_dif_pair<F: CanonicalField>(
     lhs: &mut [F; CLASS_D],
     rhs: &mut [F; CLASS_D],
-    stage_roots: &[F; CLASS_D],
+    twiddles: &[F; CLASS_D],
 ) {
     let mut len = CLASS_D / 2;
     while len > 0 {
-        let step = stage_roots[len];
+        let twiddle_base = len - 1;
         let mut start = 0usize;
         while start < CLASS_D {
-            let mut w = F::one();
             for j in 0..len {
+                let w = twiddles[twiddle_base + j];
                 let lhs_u = lhs[start + j];
                 let lhs_v = lhs[start + j + len];
                 lhs[start + j] = lhs_u + lhs_v;
@@ -679,8 +698,6 @@ fn forward_cyclic_dif_pair<F: CanonicalField>(
                 let rhs_v = rhs[start + j + len];
                 rhs[start + j] = rhs_u + rhs_v;
                 rhs[start + j + len] = (rhs_u - rhs_v) * w;
-
-                w = w * step;
             }
             start += 2 * len;
         }
@@ -692,15 +709,15 @@ fn forward_cyclic_dif_pair<F: CanonicalField>(
 fn inverse_cyclic_dit_pair<F: CanonicalField>(
     lhs: &mut [F; CLASS_D],
     rhs: &mut [F; CLASS_D],
-    stage_roots: &[F; CLASS_D],
+    twiddles: &[F; CLASS_D],
 ) {
     let mut len = 1usize;
     while len < CLASS_D {
-        let step = stage_roots[len];
+        let twiddle_base = len - 1;
         let mut start = 0usize;
         while start < CLASS_D {
-            let mut w = F::one();
             for j in 0..len {
+                let w = twiddles[twiddle_base + j];
                 let lhs_u = lhs[start + j];
                 let lhs_v = lhs[start + j + len] * w;
                 lhs[start + j] = lhs_u + lhs_v;
@@ -710,8 +727,6 @@ fn inverse_cyclic_dit_pair<F: CanonicalField>(
                 let rhs_v = rhs[start + j + len] * w;
                 rhs[start + j] = rhs_u + rhs_v;
                 rhs[start + j + len] = rhs_u - rhs_v;
-
-                w = w * step;
             }
             start += 2 * len;
         }
@@ -723,17 +738,17 @@ fn inverse_cyclic_dit_pair<F: CanonicalField>(
 fn inverse_cyclic_dit_pair_prebroadcast<PF: PackedField>(
     lhs: &mut [PF; CLASS_D],
     rhs: &mut [PF; CLASS_D],
-    stage_roots: &[PF; CLASS_D],
+    twiddles: &[PF; CLASS_D],
 ) where
     PF::Scalar: CanonicalField,
 {
     let mut len = 1usize;
     while len < CLASS_D {
-        let step = stage_roots[len];
+        let twiddle_base = len - 1;
         let mut start = 0usize;
         while start < CLASS_D {
-            let mut w = PF::broadcast(PF::Scalar::one());
             for j in 0..len {
+                let w = twiddles[twiddle_base + j];
                 let lhs_u = lhs[start + j];
                 let lhs_v = lhs[start + j + len] * w;
                 lhs[start + j] = lhs_u + lhs_v;
@@ -743,8 +758,6 @@ fn inverse_cyclic_dit_pair_prebroadcast<PF: PackedField>(
                 let rhs_v = rhs[start + j + len] * w;
                 rhs[start + j] = rhs_u + rhs_v;
                 rhs[start + j + len] = rhs_u - rhs_v;
-
-                w = w * step;
             }
             start += 2 * len;
         }
@@ -753,19 +766,18 @@ fn inverse_cyclic_dit_pair_prebroadcast<PF: PackedField>(
 }
 
 #[inline(always)]
-fn forward_cyclic_dif64<F: CanonicalField>(a: &mut [F; RING_D], stage_roots: &[F; RING_D]) {
+fn forward_cyclic_dif64<F: CanonicalField>(a: &mut [F; RING_D], twiddles: &[F; RING_D]) {
     let mut len = RING_D / 2;
     while len > 0 {
-        let step = stage_roots[len];
+        let twiddle_base = len - 1;
         let mut start = 0usize;
         while start < RING_D {
-            let mut w = F::one();
             for j in 0..len {
+                let w = twiddles[twiddle_base + j];
                 let u = a[start + j];
                 let v = a[start + j + len];
                 a[start + j] = u + v;
                 a[start + j + len] = (u - v) * w;
-                w = w * step;
             }
             start += 2 * len;
         }
@@ -774,19 +786,18 @@ fn forward_cyclic_dif64<F: CanonicalField>(a: &mut [F; RING_D], stage_roots: &[F
 }
 
 #[inline(always)]
-fn inverse_cyclic_dit64<F: CanonicalField>(a: &mut [F; RING_D], stage_roots: &[F; RING_D]) {
+fn inverse_cyclic_dit64<F: CanonicalField>(a: &mut [F; RING_D], twiddles: &[F; RING_D]) {
     let mut len = 1usize;
     while len < RING_D {
-        let step = stage_roots[len];
+        let twiddle_base = len - 1;
         let mut start = 0usize;
         while start < RING_D {
-            let mut w = F::one();
             for j in 0..len {
+                let w = twiddles[twiddle_base + j];
                 let u = a[start + j];
                 let v = a[start + j + len] * w;
                 a[start + j] = u + v;
                 a[start + j + len] = u - v;
-                w = w * step;
             }
             start += 2 * len;
         }
