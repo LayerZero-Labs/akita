@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use crate::digit_math::{compute_num_digits, compute_num_digits_fold, r_decomp_levels};
+use crate::digit_math::{
+    compute_num_digits, compute_num_digits_fold, optimal_m_r_split, r_decomp_levels,
+};
 use crate::proof_size::{
     baseline_packed_digits_bytes, baseline_ring_vec_bytes, baseline_sumcheck_bytes, elem_bytes,
     sumcheck_rounds,
@@ -31,43 +33,6 @@ pub struct BaselineParams {
     pub max_lb: u32,
 }
 
-fn optimal_m_r_split(
-    n_a: u32,
-    challenge_l1_mass: usize,
-    log_commit_bound: u32,
-    log_basis: u32,
-    reduced_vars: usize,
-) -> (usize, usize) {
-    if reduced_vars <= 2 || reduced_vars >= 53 {
-        let r = reduced_vars / 2;
-        return (reduced_vars - r, r);
-    }
-
-    let open_bound = if log_commit_bound < 128 {
-        128
-    } else {
-        log_commit_bound
-    };
-    let delta_open = compute_num_digits(open_bound, log_basis) as u64;
-    let delta_commit = compute_num_digits(log_commit_bound, log_basis) as u64;
-    let c1 = delta_open + n_a as u64 * delta_commit;
-
-    let mut best_r = reduced_vars / 2;
-    let mut best_cost = u64::MAX;
-
-    for r in 1..reduced_vars {
-        let m = reduced_vars - r;
-        let delta_fold = compute_num_digits_fold(r, challenge_l1_mass, log_basis) as u64;
-        let cost = c1 * (1u64 << r) + delta_commit * delta_fold * (1u64 << m);
-        if cost < best_cost {
-            best_cost = cost;
-            best_r = r;
-        }
-    }
-
-    (reduced_vars - best_r, best_r)
-}
-
 fn compute_level(
     bp: &BaselineParams,
     level: usize,
@@ -85,7 +50,7 @@ fn compute_level(
         (rp2.trailing_zeros() as usize, lb)
     };
 
-    let (m, r) = optimal_m_r_split(bp.n_a, bp.challenge_l1_mass, log_cb, lb, reduced);
+    let (m, r) = optimal_m_r_split(bp.n_a, bp.challenge_l1_mass, log_cb, lb, reduced, 0);
     let op = if log_cb < 128 { 128 } else { log_cb };
     let d_open = compute_num_digits(op, lb);
     let d_commit = compute_num_digits(log_cb, lb);
@@ -118,7 +83,7 @@ fn level_bytes(bp: &BaselineParams, lb: u32, rounds: usize) -> usize {
 pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
     type MemoKey = (usize, usize, u32);
     type LevelEntry = (u32, usize, usize, usize); // (lb, bytes, next_w, rounds)
-    type MemoVal = (usize, Vec<LevelEntry>);
+    type MemoVal = (usize, Vec<LevelEntry>, u32); // (cost, levels, tail_lb)
     let mut memo: HashMap<MemoKey, MemoVal> = HashMap::new();
 
     fn best_suffix(
@@ -134,19 +99,19 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
         }
 
         let tail = baseline_packed_digits_bytes(w_len, lb);
-        let mut best: MemoVal = (tail, Vec::new());
+        let mut best: MemoVal = (tail, Vec::new(), lb);
 
         let (_, _, _, _, _, _, nw, rnds) = compute_level(bp, level, w_len, lb);
         if nw < w_len {
             for nlb in lb.max(bp.min_lb)..=bp.max_lb {
                 let lbytes = level_bytes(bp, lb, rnds);
-                let (sb, sl) = best_suffix(bp, memo, level + 1, nw, nlb);
+                let (sb, sl, stlb) = best_suffix(bp, memo, level + 1, nw, nlb);
                 let cand = lbytes + sb;
                 if cand < best.0 {
                     let mut levels = Vec::with_capacity(1 + sl.len());
                     levels.push((lb, lbytes, nw, rnds));
                     levels.extend(sl);
-                    best = (cand, levels);
+                    best = (cand, levels, stlb);
                 }
             }
         }
@@ -165,30 +130,29 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
         }
         for nlb in rlb.max(bp.min_lb)..=bp.max_lb {
             let rb = level_bytes(bp, rlb, rnds);
-            let (sb, sl) = best_suffix(bp, &mut memo, 1, nw, nlb);
+            let (sb, sl, stlb) = best_suffix(bp, &mut memo, 1, nw, nlb);
             let total = rb + sb;
-            let is_better = overall.as_ref().map_or(true, |(best, _)| total < *best);
+            let is_better = overall.as_ref().map_or(true, |(best, _, _)| total < *best);
             if is_better {
                 let mut levels = Vec::with_capacity(1 + sl.len());
                 levels.push((rlb, rb, nw, rnds));
                 levels.extend(sl);
-                overall = Some((total, levels));
+                overall = Some((total, levels, stlb));
             }
         }
     }
 
-    let (total_no_wrapper, levels) = overall?;
+    let (total_no_wrapper, levels, tail_lb) = overall?;
     let total = total_no_wrapper + 4;
-    let last_lb = levels.last()?.0;
     let term_w = levels.last()?.2;
-    let tail_bytes = crate::proof_size::packed_digits_bytes(term_w, last_lb);
+    let tail_bytes = crate::proof_size::packed_digits_bytes(term_w, tail_lb);
 
     Some(BaselineResult {
         total,
         num_levels: levels.len(),
         tail_bytes,
         final_w_len: term_w,
-        final_lb: last_lb,
+        final_lb: tail_lb,
     })
 }
 
@@ -240,5 +204,30 @@ mod tests {
     fn baseline_full128_32() {
         let r = run_baseline_planner(&full128_params(32)).unwrap();
         assert_eq!(r.total, 173_197);
+    }
+
+    #[test]
+    fn tail_lb_matches_terminal_packing() {
+        for &(builder, nvs) in &[
+            (
+                onehot_params as fn(usize) -> BaselineParams,
+                &[20, 25, 30, 32][..],
+            ),
+            (
+                full128_params as fn(usize) -> BaselineParams,
+                &[20, 25, 32][..],
+            ),
+        ] {
+            for &nv in nvs {
+                let Some(r) = run_baseline_planner(&builder(nv)) else {
+                    continue;
+                };
+                assert_eq!(
+                    r.tail_bytes,
+                    crate::proof_size::packed_digits_bytes(r.final_w_len, r.final_lb),
+                    "tail_bytes inconsistent at nv={nv}"
+                );
+            }
+        }
     }
 }

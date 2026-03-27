@@ -76,6 +76,56 @@ pub fn r_decomp_levels(field_bits: u32, half_field_bound: u128, log_basis: u32) 
     levels
 }
 
+/// Find the (m, r) split of `reduced_vars` that minimizes witness size.
+///
+/// When `num_ring > 0` (tight z_pre mode), `m_eff` uses the actual ring count
+/// instead of `2^m`. Pass `num_ring = 0` for the standard power-of-two fallback.
+pub fn optimal_m_r_split(
+    n_a: u32,
+    challenge_l1_mass: usize,
+    log_commit_bound: u32,
+    log_basis: u32,
+    reduced_vars: usize,
+    num_ring: usize,
+) -> (usize, usize) {
+    if reduced_vars <= 2 || reduced_vars >= 53 {
+        let r = reduced_vars / 2;
+        return (reduced_vars - r, r);
+    }
+
+    let open_bound = if log_commit_bound < 128 {
+        128
+    } else {
+        log_commit_bound
+    };
+    let delta_open = compute_num_digits(open_bound, log_basis) as u64;
+    let delta_commit = compute_num_digits(log_commit_bound, log_basis) as u64;
+    let c1 = delta_open + n_a as u64 * delta_commit;
+
+    let mut best_r = reduced_vars / 2;
+    let mut best_cost = u64::MAX;
+
+    for r in 1..reduced_vars {
+        let m = reduced_vars - r;
+        let delta_fold = compute_num_digits_fold(r, challenge_l1_mass, log_basis) as u64;
+        let m_eff = if num_ring > 0 {
+            num_ring.div_ceil(1usize << r) as u64
+        } else {
+            1u64 << m
+        };
+        let cost = c1.saturating_mul(1u64 << r)
+            + delta_commit
+                .saturating_mul(delta_fold)
+                .saturating_mul(m_eff);
+        if cost < best_cost {
+            best_cost = cost;
+            best_r = r;
+        }
+    }
+
+    (reduced_vars - best_r, best_r)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

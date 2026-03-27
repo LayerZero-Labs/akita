@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use crate::digit_math::{compute_num_digits, compute_num_digits_fold, r_decomp_levels};
+use crate::digit_math::{
+    compute_num_digits, compute_num_digits_fold, optimal_m_r_split, r_decomp_levels,
+};
 use crate::proof_size::{
     elem_bytes, packed_digits_bytes, ring_vec_bytes, stage1_bytes_optimized, sumcheck_bytes,
     sumcheck_rounds,
@@ -92,52 +94,6 @@ struct LevelComputation {
     w_ring_elems: usize,
     next_w_len: usize,
     rounds: usize,
-}
-
-fn optimal_m_r_split(
-    n_a: u32,
-    challenge_l1_mass: usize,
-    log_commit_bound: u32,
-    log_basis: u32,
-    reduced_vars: usize,
-    num_ring: usize,
-) -> (usize, usize) {
-    if reduced_vars <= 2 || reduced_vars >= 53 {
-        let r = reduced_vars / 2;
-        return (reduced_vars - r, r);
-    }
-
-    let open_bound = if log_commit_bound < 128 {
-        128
-    } else {
-        log_commit_bound
-    };
-    let delta_open = compute_num_digits(open_bound, log_basis) as u64;
-    let delta_commit = compute_num_digits(log_commit_bound, log_basis) as u64;
-    let c1 = delta_open + n_a as u64 * delta_commit;
-
-    let mut best_r = reduced_vars / 2;
-    let mut best_cost = u64::MAX;
-
-    for r in 1..reduced_vars {
-        let m = reduced_vars - r;
-        let delta_fold = compute_num_digits_fold(r, challenge_l1_mass, log_basis) as u64;
-        let m_eff = if num_ring > 0 {
-            num_ring.div_ceil(1usize << r) as u64
-        } else {
-            1u64 << m
-        };
-        let cost = c1.saturating_mul(1u64 << r)
-            + delta_commit
-                .saturating_mul(delta_fold)
-                .saturating_mul(m_eff);
-        if cost < best_cost {
-            best_cost = cost;
-            best_r = r;
-        }
-    }
-
-    (reduced_vars - best_r, best_r)
 }
 
 struct LevelWitnessArgs {
