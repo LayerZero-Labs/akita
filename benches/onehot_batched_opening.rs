@@ -3,7 +3,7 @@
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode, Throughput};
 use hachi_pcs::algebra::Fp128;
-use hachi_pcs::protocol::commitment::Fp128OneHotCommitmentConfig;
+use hachi_pcs::protocol::commitment::{hachi_batched_root_layout, Fp128OneHotCommitmentConfig};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
@@ -34,9 +34,9 @@ fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>) {
     group.throughput(Throughput::Elements(TOTAL_FIELD_ELEMS));
 }
 
-fn make_onehot_poly(num_vars: usize, seed: u64) -> OneHotPoly<F, D, u8> {
-    let layout = Cfg::commitment_layout(num_vars).expect("benchmark layout");
+fn make_onehot_poly(layout: &HachiCommitmentLayout, seed: u64) -> OneHotPoly<F, D, u8> {
     let total_ring = layout.num_blocks * layout.block_len;
+    let num_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
     assert_eq!(total_ring * ONEHOT_K, 1usize << num_vars);
 
     let mut rng = StdRng::seed_from_u64(seed);
@@ -85,7 +85,7 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
 
 fn bench_single_case(c: &mut Criterion) {
     let layout = Cfg::commitment_layout(SINGLE_NUM_VARS).expect("single layout");
-    let poly = make_onehot_poly(SINGLE_NUM_VARS, 0x0bee_fcaf_e000_0034);
+    let poly = make_onehot_poly(&layout, 0x0bee_fcaf_e000_0034);
     let point = random_point(SINGLE_NUM_VARS);
     let opening = opening_from_poly(&poly, &point, &layout);
 
@@ -165,9 +165,10 @@ fn bench_single_case(c: &mut Criterion) {
 }
 
 fn bench_batched_case(c: &mut Criterion) {
-    let layout = Cfg::commitment_layout(BATCH_NUM_VARS).expect("batch layout");
+    let layout =
+        hachi_batched_root_layout::<Cfg, D>(BATCH_NUM_VARS, BATCH_SIZE).expect("batch layout");
     let polys: Vec<OneHotPoly<F, D, u8>> = (0..BATCH_SIZE)
-        .map(|idx| make_onehot_poly(BATCH_NUM_VARS, 0x0bee_fcaf_e000_2900 + idx as u64))
+        .map(|idx| make_onehot_poly(&layout, 0x0bee_fcaf_e000_2900 + idx as u64))
         .collect();
     let point = random_point(BATCH_NUM_VARS);
     let openings: Vec<F> = polys

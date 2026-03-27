@@ -830,10 +830,11 @@ impl<F: FieldCore, const D: usize> HachiBatchedCommitmentHint<F, D> {
     /// Flatten the batched hint into one root-hint view over all claims.
     pub fn into_flattened(self) -> HachiCommitmentHint<F, D> {
         let inner_opening_digits = self.inner_opening_digits.into_iter().flatten().collect();
-        match self.t {
-            Some(t) => {
-                HachiCommitmentHint::with_t(inner_opening_digits, t.into_iter().flatten().collect())
-            }
+        let t = self
+            .t
+            .map(|rows_by_poly| rows_by_poly.into_iter().flatten().collect());
+        match t {
+            Some(t) => HachiCommitmentHint::with_t(inner_opening_digits, t),
             None => HachiCommitmentHint::new(inner_opening_digits),
         }
     }

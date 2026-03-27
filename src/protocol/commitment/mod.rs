@@ -9,10 +9,13 @@ pub(crate) mod transcript_append;
 mod types;
 pub mod utils;
 
-pub(crate) use commit::{root_batched_layout, root_current_w_len};
+#[cfg(test)]
+pub(crate) use commit::root_batched_layout;
 pub use commit::{
-    HachiCommitmentCore, HachiExpandedSetup, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup,
+    hachi_batched_root_layout, HachiCommitmentCore, HachiExpandedSetup, HachiProverSetup,
+    HachiSetupSeed, HachiVerifierSetup,
 };
+pub(crate) use commit::{root_current_w_len, scale_batched_root_layout};
 pub use config::optimal_m_r_split;
 pub use config::{
     beta_linf_fold_bound, compute_num_digits, compute_num_digits_fold, CommitmentConfig,

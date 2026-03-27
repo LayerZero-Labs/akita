@@ -40,6 +40,8 @@ mod onehot;
 mod recursive_witness;
 
 pub use dense::DensePoly;
+#[cfg(test)]
+pub(crate) use onehot::OneHotBlocks;
 pub use onehot::{OneHotIndex, OneHotPoly};
 pub(crate) use recursive_witness::{RecursiveWitnessFlat, RecursiveWitnessView};
 
@@ -165,6 +167,24 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         num_digits: usize,
         log_basis: u32,
     ) -> DecomposeFoldWitness<F, D>;
+
+    /// Optional fused batched variant of [`decompose_fold`](Self::decompose_fold).
+    ///
+    /// Implementations can override this when many claims at one opening point
+    /// admit a faster shared accumulation path. The default falls back to
+    /// per-polynomial processing in the caller.
+    fn decompose_fold_batched(
+        _polys: &[Self],
+        _challenges: &[SparseChallenge],
+        _block_len: usize,
+        _num_digits: usize,
+        _log_basis: u32,
+    ) -> Option<DecomposeFoldWitness<F, D>>
+    where
+        Self: Sized,
+    {
+        None
+    }
 
     /// **Op 4 — commit: per-block inner Ajtai.**
     ///

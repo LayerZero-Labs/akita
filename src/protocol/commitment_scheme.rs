@@ -9,7 +9,7 @@ use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{flatten_i8_blocks, mat_vec_mul_ntt_single_i8};
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
 use crate::protocol::commitment::{
-    hachi_recursive_level_layout_from_params, root_batched_layout, root_current_w_len,
+    hachi_recursive_level_layout_from_params, root_current_w_len, scale_batched_root_layout,
     AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore,
     HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, HachiProverSetup,
     HachiScheduleInputs, HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
@@ -312,7 +312,7 @@ where
             num_l,
             relation_claim,
         );
-        let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim) =
+        let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
             prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
             })?;
@@ -324,7 +324,7 @@ where
         (
             stage2_sumcheck,
             sumcheck_challenges,
-            _stage2_final_claim,
+            stage2_final_claim,
             w_eval,
         )
     };
@@ -554,7 +554,7 @@ where
             num_l,
             relation_claim,
         );
-        let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim) =
+        let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
             prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
             })?;
@@ -566,7 +566,7 @@ where
         (
             stage2_sumcheck,
             sumcheck_challenges,
-            _stage2_final_claim,
+            stage2_final_claim,
             w_eval,
         )
     };
@@ -1033,8 +1033,11 @@ where
                 setup.expanded.seed.max_num_batched_polys
             )));
         }
-        let batched_layout =
-            root_batched_layout::<Cfg, D>(setup.expanded.seed.max_num_vars, *layout, polys.len())?;
+        let batched_layout = scale_batched_root_layout::<Cfg, D>(
+            setup.expanded.seed.max_num_vars,
+            *layout,
+            polys.len(),
+        )?;
         setup.assert_layout_fits(&batched_layout);
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
@@ -1236,7 +1239,8 @@ where
         let mut commit_ntt_cache = MultiDNttCaches::new();
         let max_num_vars = setup.expanded.seed.max_num_vars;
         let root_w_len = root_current_w_len::<D>(*layout);
-        let batched_layout = root_batched_layout::<Cfg, D>(max_num_vars, *layout, polys.len())?;
+        let batched_layout =
+            scale_batched_root_layout::<Cfg, D>(max_num_vars, *layout, polys.len())?;
         setup.assert_layout_fits(&batched_layout);
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars,
@@ -1490,7 +1494,8 @@ where
 
         let t_verify_hachi = Instant::now();
         let max_num_vars = setup.expanded.seed.max_num_vars;
-        let batched_layout = root_batched_layout::<Cfg, D>(max_num_vars, *layout, num_claims)?;
+        let batched_layout =
+            scale_batched_root_layout::<Cfg, D>(max_num_vars, *layout, num_claims)?;
         setup.expanded.assert_layout_fits(&batched_layout);
 
         let final_w = Some(proof.final_w());
@@ -1936,15 +1941,31 @@ fn trace<F: FieldCore + FromSmallInt, const D: usize>(u: &CyclotomicRing<F, D>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algebra::Fp128;
     use crate::protocol::commitment::CommitmentConfig;
-    use crate::protocol::hachi_poly_ops::DensePoly;
-    use crate::protocol::opening_point::{lagrange_weights, monomial_weights};
+    use crate::protocol::commitment::Fp128OneHotCommitmentConfig;
+    use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
+    use crate::protocol::opening_point::{
+        lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
+        ring_opening_point_from_field,
+    };
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::test_utils::F;
     use crate::{CommitmentScheme, FromSmallInt, HachiDeserialize};
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
+    use std::sync::Once;
+    use tracing_subscriber::fmt::format::FmtSpan;
+    use tracing_subscriber::prelude::*;
+    use tracing_subscriber::EnvFilter;
     type Cfg = SmallTestCommitmentConfig;
     const D: usize = Cfg::D;
     type Scheme = HachiCommitmentScheme<D, Cfg>;
+    type OneHotF = Fp128<0xffffffffffffffffffffffffffffe941>;
+    type OneHotCfg = Fp128OneHotCommitmentConfig;
+    const ONEHOT_D: usize = OneHotCfg::D;
+    const BENCH_ONEHOT_K: usize = ONEHOT_D;
+    type OneHotScheme = HachiCommitmentScheme<ONEHOT_D, OneHotCfg>;
 
     fn make_dense_poly(num_vars: usize) -> (DensePoly<F, D>, Vec<F>) {
         let len = 1usize << num_vars;
@@ -2020,6 +2041,122 @@ mod tests {
             .fold(F::zero(), |a, (&c, &w)| a + c * w)
     }
 
+    fn init_debug_tracing() {
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            let fmt_layer = tracing_subscriber::fmt::layer()
+                .compact()
+                .with_target(false)
+                .with_span_events(FmtSpan::CLOSE);
+            tracing_subscriber::registry()
+                .with(EnvFilter::new("info"))
+                .with(fmt_layer)
+                .init();
+        });
+    }
+
+    fn init_debug_rayon_pool() {
+        #[cfg(feature = "parallel")]
+        {
+            static INIT: Once = Once::new();
+            INIT.call_once(|| {
+                rayon::ThreadPoolBuilder::new()
+                    .stack_size(64 * 1024 * 1024)
+                    .build_global()
+                    .ok();
+            });
+        }
+    }
+
+    fn run_debug_on_large_stack(f: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(f)
+            .expect("failed to spawn debug thread")
+            .join()
+            .expect("debug thread panicked");
+    }
+
+    fn debug_random_point(nv: usize) -> Vec<OneHotF> {
+        let mut rng = StdRng::seed_from_u64(0xcafe_babe);
+        (0..nv)
+            .map(|_| OneHotF::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect()
+    }
+
+    fn debug_make_onehot_poly(
+        layout: &HachiCommitmentLayout,
+        seed: u64,
+    ) -> OneHotPoly<OneHotF, ONEHOT_D, u8> {
+        let total_ring = layout.num_blocks * layout.block_len;
+        let num_vars = layout.m_vars + layout.r_vars + ONEHOT_D.trailing_zeros() as usize;
+        assert_eq!(total_ring * BENCH_ONEHOT_K, 1usize << num_vars);
+
+        let mut rng = StdRng::seed_from_u64(seed);
+        let indices: Vec<Option<u8>> = (0..total_ring)
+            .map(|_| Some(rng.gen_range(0..BENCH_ONEHOT_K) as u8))
+            .collect();
+
+        OneHotPoly::<OneHotF, ONEHOT_D, u8>::new(
+            BENCH_ONEHOT_K,
+            indices,
+            layout.r_vars,
+            layout.m_vars,
+        )
+        .expect("debug onehot poly")
+    }
+
+    fn debug_opening_from_poly<P: HachiPolyOps<OneHotF, ONEHOT_D>>(
+        poly: &P,
+        point: &[OneHotF],
+        layout: &HachiCommitmentLayout,
+    ) -> OneHotF {
+        let alpha_bits = ONEHOT_D.trailing_zeros() as usize;
+        assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
+
+        let inner_point = &point[..alpha_bits];
+        let reduced_point = &point[alpha_bits..];
+        let ring_opening_point = ring_opening_point_from_field(
+            reduced_point,
+            layout.r_vars,
+            layout.m_vars,
+            BasisMode::Lagrange,
+        )
+        .expect("debug opening point");
+
+        let (y_ring, _) = poly.evaluate_and_fold(
+            &ring_opening_point.b,
+            &ring_opening_point.a,
+            layout.block_len,
+        );
+        let v = reduce_inner_opening_to_ring_element::<OneHotF, ONEHOT_D>(
+            inner_point,
+            BasisMode::Lagrange,
+        )
+        .expect("debug inner opening point");
+        (y_ring * v.sigma_m1()).coefficients()[0]
+    }
+
+    fn debug_relation_sum_from_tables(
+        w_evals_compact: &[i8],
+        live_x_cols: usize,
+        alpha_evals_y: &[OneHotF],
+        m_evals_x: &[OneHotF],
+        start_x: usize,
+        end_x: usize,
+    ) -> OneHotF {
+        let mut acc = OneHotF::zero();
+        for x in start_x..end_x {
+            let mut y_eval = OneHotF::zero();
+            for (y, alpha_eval) in alpha_evals_y.iter().enumerate() {
+                y_eval +=
+                    *alpha_eval * OneHotF::from_i64(w_evals_compact[y * live_x_cols + x] as i64);
+            }
+            acc += y_eval * m_evals_x[x];
+        }
+        acc
+    }
+
     #[test]
     fn batched_commit_singleton_matches_single_commit() {
         let alpha = D.trailing_zeros() as usize;
@@ -2043,6 +2180,805 @@ mod tests {
             batched_hint.t().unwrap()[0].as_slice(),
             single_hint.t().unwrap()
         );
+    }
+
+    #[test]
+    #[ignore = "manual tracing-only relation-claim check"]
+    fn debug_batched_root_relation_claim_matches_tables() {
+        init_debug_tracing();
+        init_debug_rayon_pool();
+        run_debug_on_large_stack(|| {
+            const BATCH_NUM_VARS: usize = 29;
+            const BATCH_SIZE: usize = 1 << 5;
+
+            let batch_layout = crate::protocol::commitment::hachi_batched_root_layout::<
+                OneHotCfg,
+                ONEHOT_D,
+            >(BATCH_NUM_VARS, BATCH_SIZE)
+            .expect("batch debug layout");
+            let batched_root_layout = crate::protocol::commitment::root_batched_layout::<
+                OneHotCfg,
+                ONEHOT_D,
+            >(BATCH_NUM_VARS, batch_layout, BATCH_SIZE)
+            .expect("batched debug root layout");
+            let batch_root_params = OneHotCfg::level_params(HachiScheduleInputs {
+                max_num_vars: BATCH_NUM_VARS,
+                level: 0,
+                current_w_len: root_current_w_len::<ONEHOT_D>(batch_layout),
+            });
+
+            let batch_polys: Vec<OneHotPoly<OneHotF, ONEHOT_D, u8>> = (0..BATCH_SIZE)
+                .map(|idx| {
+                    debug_make_onehot_poly(&batch_layout, 0x0bee_fcaf_e000_2900 + idx as u64)
+                })
+                .collect();
+            let batch_setup = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(
+                BATCH_NUM_VARS,
+                BATCH_SIZE,
+            );
+            let (batch_commitment, batch_hint) = <OneHotScheme as CommitmentScheme<
+                OneHotF,
+                ONEHOT_D,
+            >>::batched_commit(
+                &batch_polys, &batch_setup, &batch_layout
+            )
+            .expect("batched debug commit");
+
+            let batch_point = debug_random_point(BATCH_NUM_VARS);
+            let alpha = batch_root_params.d.trailing_zeros() as usize;
+            let target_num_vars = batch_layout.m_vars + batch_layout.r_vars + alpha;
+            let mut padded_point = batch_point.clone();
+            padded_point.resize(target_num_vars, OneHotF::zero());
+            let outer_point = &padded_point[alpha..];
+            let ring_opening_point = ring_opening_point_from_field::<OneHotF>(
+                outer_point,
+                batch_layout.r_vars,
+                batch_layout.m_vars,
+                BasisMode::Lagrange,
+            )
+            .expect("debug opening point");
+            let (y_rings, w_folded_by_poly): (Vec<_>, Vec<_>) = batch_polys
+                .iter()
+                .map(|poly| {
+                    poly.evaluate_and_fold(
+                        &ring_opening_point.b,
+                        &ring_opening_point.a,
+                        batch_layout.block_len,
+                    )
+                })
+                .unzip();
+
+            let mut transcript = Blake2bTranscript::<OneHotF>::new(b"debug/relation-claim/batched");
+            batch_commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+            for pt in &padded_point {
+                transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+            }
+            for y_ring in &y_rings {
+                transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
+            }
+
+            let debug_batch_hint = batch_hint.clone();
+            let debug_w_folded_by_poly = w_folded_by_poly.clone();
+            let mut quad_eq = Box::new(
+                QuadraticEquation::<OneHotF, { ONEHOT_D }, OneHotCfg>::new_batched_prover(
+                    &batch_setup.ntt_shared,
+                    ring_opening_point.clone(),
+                    &batch_polys,
+                    w_folded_by_poly,
+                    batch_root_params.clone(),
+                    batch_hint,
+                    &mut transcript,
+                    &batch_commitment,
+                    &y_rings,
+                    batched_root_layout,
+                )
+                .expect("debug batched quadratic equation"),
+            );
+            let w = ring_switch_build_w::<OneHotF, { ONEHOT_D }, OneHotCfg>(
+                &mut quad_eq,
+                &batch_setup.expanded,
+                &batch_setup.ntt_shared,
+                &batch_root_params,
+                batched_root_layout,
+            )
+            .expect("debug batched w");
+            let commit_params = OneHotCfg::level_params(HachiScheduleInputs {
+                max_num_vars: BATCH_NUM_VARS,
+                level: 1,
+                current_w_len: w.len(),
+            });
+            let mut commit_ntt_cache = MultiDNttCaches::default();
+            let (w_commitment_flat, w_hint_cache) = dispatch_commit::<OneHotF, OneHotCfg>(
+                commit_params,
+                &mut commit_ntt_cache,
+                &batch_setup.expanded,
+                &w,
+            )
+            .expect("debug batched w commit");
+            let w_commitment_proof = w_commitment_flat.to_proof_ring_vec();
+            let rs = ring_switch_finalize_with_num_claims::<OneHotF, _, { ONEHOT_D }, OneHotCfg>(
+                &quad_eq,
+                &batch_setup.expanded,
+                &mut transcript,
+                w,
+                w_commitment_flat,
+                &w_commitment_proof,
+                w_hint_cache,
+                &batch_root_params,
+                batched_root_layout,
+                BATCH_SIZE,
+            )
+            .expect("debug batched ring switch");
+
+            let relation_claim = relation_claim_from_rows::<OneHotF, ONEHOT_D>(
+                &rs.tau1,
+                rs.alpha,
+                &quad_eq.v,
+                &batch_commitment.u,
+                &y_rings,
+            );
+            let relation_sum = debug_relation_sum_from_tables(
+                &rs.w_evals_compact,
+                rs.live_x_cols,
+                &rs.alpha_evals_y,
+                &rs.m_evals_x,
+                0,
+                rs.live_x_cols,
+            );
+            let w_alpha_evals: Vec<OneHotF> = (0..rs.live_x_cols)
+                .map(|x| {
+                    rs.alpha_evals_y.iter().enumerate().fold(
+                        OneHotF::zero(),
+                        |acc, (y, alpha_eval)| {
+                            acc + *alpha_eval
+                                * OneHotF::from_i64(
+                                    rs.w_evals_compact[y * rs.live_x_cols + x] as i64,
+                                )
+                        },
+                    )
+                })
+                .collect();
+            let w_hat_len =
+                batched_root_layout.num_digits_open * batched_root_layout.num_blocks * BATCH_SIZE;
+            let t_hat_len = batched_root_layout.num_digits_open
+                * batch_root_params.n_a
+                * batched_root_layout.num_blocks
+                * BATCH_SIZE;
+            let z_pre_len = batched_root_layout.inner_width * batched_root_layout.num_digits_fold;
+            let r_tail_len = batch_root_params.m_row_count_with_public_outputs(BATCH_SIZE)
+                * crate::protocol::ring_switch::r_decomp_levels::<OneHotF>(
+                    batched_root_layout.log_basis,
+                );
+            let w_hat_relation_sum = debug_relation_sum_from_tables(
+                &rs.w_evals_compact,
+                rs.live_x_cols,
+                &rs.alpha_evals_y,
+                &rs.m_evals_x,
+                0,
+                w_hat_len,
+            );
+            let t_hat_relation_sum = debug_relation_sum_from_tables(
+                &rs.w_evals_compact,
+                rs.live_x_cols,
+                &rs.alpha_evals_y,
+                &rs.m_evals_x,
+                w_hat_len,
+                w_hat_len + t_hat_len,
+            );
+            let z_pre_relation_sum = debug_relation_sum_from_tables(
+                &rs.w_evals_compact,
+                rs.live_x_cols,
+                &rs.alpha_evals_y,
+                &rs.m_evals_x,
+                w_hat_len + t_hat_len,
+                w_hat_len + t_hat_len + z_pre_len,
+            );
+            let r_tail_relation_sum = debug_relation_sum_from_tables(
+                &rs.w_evals_compact,
+                rs.live_x_cols,
+                &rs.alpha_evals_y,
+                &rs.m_evals_x,
+                w_hat_len + t_hat_len + z_pre_len,
+                w_hat_len + t_hat_len + z_pre_len + r_tail_len,
+            );
+            let eq_tau1 = crate::algebra::eq_poly::EqPolynomial::evals(&rs.tau1);
+            let row3_start = batch_root_params.n_d + batch_root_params.n_b;
+            let row4_idx = row3_start + BATCH_SIZE;
+            let a_row_start = row4_idx + 1;
+            let row3_weights = &eq_tau1[row3_start..row4_idx];
+            let row4_weight = eq_tau1[row4_idx];
+            let a_weights = &eq_tau1
+                [a_row_start..batch_root_params.m_row_count_with_public_outputs(BATCH_SIZE)];
+            let alpha_pows = &rs.alpha_evals_y;
+            let eval_sparse_alpha = |challenge: &crate::algebra::SparseChallenge| -> OneHotF {
+                challenge
+                    .positions
+                    .iter()
+                    .zip(challenge.coeffs.iter())
+                    .fold(OneHotF::zero(), |acc, (&pos, &coeff)| {
+                        acc + OneHotF::from_i64(coeff as i64) * alpha_pows[pos as usize]
+                    })
+            };
+            let eval_ring_at_pows_local =
+                |ring: &CyclotomicRing<OneHotF, ONEHOT_D>, pows: &[OneHotF]| -> OneHotF {
+                    ring.coefficients()
+                        .iter()
+                        .zip(pows.iter())
+                        .fold(OneHotF::zero(), |acc, (coeff, alpha_pow)| {
+                            acc + *coeff * *alpha_pow
+                        })
+                };
+            let c_alphas: Vec<OneHotF> = quad_eq.challenges.iter().map(eval_sparse_alpha).collect();
+            let gadget_scalars = |levels: usize| -> Vec<OneHotF> {
+                let base =
+                    OneHotF::from_canonical_u128_reduced(1u128 << batched_root_layout.log_basis);
+                let mut out = Vec::with_capacity(levels);
+                let mut power = OneHotF::one();
+                for _ in 0..levels {
+                    out.push(power);
+                    power *= base;
+                }
+                out
+            };
+            let g1_open = gadget_scalars(batched_root_layout.num_digits_open);
+            let g1_commit = gadget_scalars(batched_root_layout.num_digits_commit);
+            let fold_gadget = gadget_scalars(batched_root_layout.num_digits_fold);
+            let r_gadget =
+                gadget_scalars(crate::protocol::ring_switch::r_decomp_levels::<OneHotF>(
+                    batched_root_layout.log_basis,
+                ));
+            let shared_view = batch_setup.expanded.shared_matrix.view::<ONEHOT_D>();
+            let denom = alpha_pows[ONEHOT_D - 1] * rs.alpha + OneHotF::one();
+            let expected_d_sum = quad_eq
+                .v
+                .iter()
+                .enumerate()
+                .take(batch_root_params.n_d)
+                .fold(OneHotF::zero(), |acc, (row_idx, row)| {
+                    acc + eq_tau1[row_idx]
+                        * crate::protocol::ring_switch::eval_ring_at(row, &rs.alpha)
+                });
+            let expected_b_sum = batch_commitment
+                .u
+                .iter()
+                .enumerate()
+                .take(batch_root_params.n_b)
+                .fold(OneHotF::zero(), |acc, (row_idx, row)| {
+                    acc + eq_tau1[batch_root_params.n_d + row_idx]
+                        * crate::protocol::ring_switch::eval_ring_at(row, &rs.alpha)
+                });
+            let expected_public_sum =
+                y_rings
+                    .iter()
+                    .enumerate()
+                    .fold(OneHotF::zero(), |acc, (claim_idx, y_ring)| {
+                        acc + row3_weights[claim_idx]
+                            * crate::protocol::ring_switch::eval_ring_at(y_ring, &rs.alpha)
+                    });
+            let stored_t_by_poly = debug_batch_hint
+                .t()
+                .expect("debug batched stored t rows")
+                .to_vec();
+            let mut debug_hint_flat = debug_batch_hint.into_flattened();
+            debug_hint_flat
+                .ensure_t_recomposed(
+                    batched_root_layout.num_digits_open,
+                    batched_root_layout.log_basis,
+                )
+                .expect("debug batched t recomposition");
+            let debug_t_hat = debug_hint_flat.inner_opening_digits.clone();
+            let _debug_t_hat_flat = flatten_i8_blocks(&debug_t_hat);
+            let debug_t = debug_hint_flat.t().expect("debug batched t rows");
+            let debug_w_folded_flat: Vec<_> = debug_w_folded_by_poly
+                .clone()
+                .into_iter()
+                .flatten()
+                .collect();
+            let debug_w_hat: Vec<Vec<[i8; ONEHOT_D]>> = debug_w_folded_by_poly
+                .iter()
+                .flat_map(|folded_rows| {
+                    folded_rows.iter().map(|w_i| {
+                        w_i.balanced_decompose_pow2_i8(
+                            batched_root_layout.num_digits_open,
+                            batched_root_layout.log_basis,
+                        )
+                    })
+                })
+                .collect();
+            let debug_w_hat_flat = flatten_i8_blocks(&debug_w_hat);
+            let mut debug_z_witnesses = batch_polys
+                .iter()
+                .zip(quad_eq.challenges.chunks(batched_root_layout.num_blocks))
+                .map(|(poly, poly_challenges)| {
+                    poly.decompose_fold(
+                        poly_challenges,
+                        batched_root_layout.block_len,
+                        batched_root_layout.num_digits_commit,
+                        batched_root_layout.log_basis,
+                    )
+                });
+            let mut debug_z = debug_z_witnesses.next().expect("debug batched z witness");
+            for witness in debug_z_witnesses {
+                for (dst, src) in debug_z.z_pre.iter_mut().zip(witness.z_pre.iter()) {
+                    *dst += *src;
+                }
+                for (dst, src) in debug_z
+                    .centered_coeffs
+                    .iter_mut()
+                    .zip(witness.centered_coeffs.iter())
+                {
+                    for k in 0..ONEHOT_D {
+                        dst[k] += src[k];
+                    }
+                }
+            }
+            debug_z.centered_inf_norm = debug_z
+                .centered_coeffs
+                .iter()
+                .flat_map(|coeffs| coeffs.iter())
+                .map(|coeff| coeff.unsigned_abs())
+                .max()
+                .unwrap_or(0);
+            let (first_block_t_matches, sampled_first_poly_z_matches) = match &batch_polys[0].blocks
+            {
+                crate::protocol::hachi_poly_ops::OneHotBlocks::Regular(regular_blocks) => {
+                    let first_block_ref_t = regular_blocks[0].iter().fold(
+                        CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
+                        |mut acc, entry| {
+                            shared_view.row(0)[entry.pos_in_block()]
+                                .shift_accumulate_into(&mut acc, entry.coeff_idx());
+                            acc
+                        },
+                    );
+                    let first_poly_challenges =
+                        &quad_eq.challenges[..batched_root_layout.num_blocks];
+                    let first_poly_z = batch_polys[0].decompose_fold(
+                        first_poly_challenges,
+                        batched_root_layout.block_len,
+                        batched_root_layout.num_digits_commit,
+                        batched_root_layout.log_basis,
+                    );
+                    let sample_positions = [
+                        0usize,
+                        1,
+                        2,
+                        17,
+                        123,
+                        1024,
+                        batched_root_layout.block_len / 2,
+                        batched_root_layout.block_len - 1,
+                    ];
+                    let sampled_z_matches = sample_positions.into_iter().all(|pos| {
+                        let ref_z = regular_blocks
+                            .iter()
+                            .zip(first_poly_challenges.iter())
+                            .fold(
+                                CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
+                                |mut acc, (block_entries, challenge)| {
+                                    let entry = block_entries[pos];
+                                    debug_assert_eq!(entry.pos_in_block(), pos);
+                                    let mut mono = CyclotomicRing::<OneHotF, ONEHOT_D>::zero();
+                                    mono.coefficients_mut()[entry.coeff_idx()] = OneHotF::one();
+                                    mono.mul_by_sparse_into(challenge, &mut acc);
+                                    acc
+                                },
+                            );
+                        first_poly_z.z_pre[pos] == ref_z
+                    });
+                    (
+                        stored_t_by_poly[0][0][0] == first_block_ref_t,
+                        sampled_z_matches,
+                    )
+                }
+                crate::protocol::hachi_poly_ops::OneHotBlocks::General(_) => (false, false),
+            };
+            let debug_y = crate::protocol::quadratic_equation::generate_y::<OneHotF, ONEHOT_D>(
+                &quad_eq.v,
+                &batch_commitment.u,
+                &y_rings,
+                batch_root_params.n_d,
+                batch_root_params.n_b,
+                batch_root_params.n_a,
+            )
+            .expect("debug batched y");
+            let debug_r =
+                crate::protocol::quadratic_equation::compute_r_split_eq::<OneHotF, ONEHOT_D>(
+                    &batch_root_params,
+                    &batch_setup.expanded,
+                    &quad_eq.challenges,
+                    &debug_w_hat_flat,
+                    &debug_t_hat,
+                    debug_t,
+                    &debug_w_folded_flat,
+                    &debug_z.centered_coeffs,
+                    debug_z.centered_inf_norm,
+                    &debug_y,
+                    &batch_setup.ntt_shared,
+                )
+                .expect("debug batched r");
+            let stored_t_flat: Vec<_> = stored_t_by_poly.iter().flatten().cloned().collect();
+            let stored_a_t = quad_eq.challenges.iter().zip(stored_t_flat.iter()).fold(
+                CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
+                |mut acc, (challenge, block_rows)| {
+                    block_rows[0].mul_by_sparse_into(challenge, &mut acc);
+                    acc
+                },
+            );
+            let reduced_a_t = quad_eq.challenges.iter().zip(debug_t.iter()).fold(
+                CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
+                |mut acc, (challenge, block_rows)| {
+                    block_rows[0].mul_by_sparse_into(challenge, &mut acc);
+                    acc
+                },
+            );
+            let reduced_a_z = debug_z.z_pre.iter().enumerate().fold(
+                CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
+                |mut acc, (k, z_ring)| {
+                    shared_view.row(0)[k].mul_accumulate_into(z_ring, &mut acc);
+                    acc
+                },
+            );
+            let reduced_a_diff = reduced_a_t - reduced_a_z;
+            let direct_raw_a_t = c_alphas.iter().zip(debug_t.iter()).fold(
+                OneHotF::zero(),
+                |acc, (c_alpha, block_rows)| {
+                    acc + *c_alpha
+                        * crate::protocol::ring_switch::eval_ring_at(&block_rows[0], &rs.alpha)
+                },
+            );
+            let direct_raw_a_z =
+                debug_z
+                    .z_pre
+                    .iter()
+                    .enumerate()
+                    .fold(OneHotF::zero(), |acc, (k, z_ring)| {
+                        acc - eval_ring_at_pows_local(&shared_view.row(0)[k], alpha_pows)
+                            * crate::protocol::ring_switch::eval_ring_at(z_ring, &rs.alpha)
+                    });
+            let direct_raw_a_r = -(denom
+                * crate::protocol::ring_switch::eval_ring_at(&debug_r[a_row_start], &rs.alpha));
+            let direct_raw_a_total = direct_raw_a_t + direct_raw_a_z + direct_raw_a_r;
+            let d_group_w = (0..w_hat_len).fold(OneHotF::zero(), |acc, x| {
+                let coeff = (0..batch_root_params.n_d).fold(OneHotF::zero(), |inner, row_idx| {
+                    inner
+                        + eq_tau1[row_idx]
+                            * eval_ring_at_pows_local(&shared_view.row(row_idx)[x], alpha_pows)
+                });
+                acc + w_alpha_evals[x] * coeff
+            });
+            let d_group_r = (0..batch_root_params.n_d).fold(OneHotF::zero(), |acc, row_idx| {
+                let row_start = w_hat_len + t_hat_len + z_pre_len + row_idx * r_gadget.len();
+                acc + (0..r_gadget.len()).fold(OneHotF::zero(), |inner, level_idx| {
+                    inner
+                        + w_alpha_evals[row_start + level_idx]
+                            * (-(eq_tau1[row_idx] * denom * r_gadget[level_idx]))
+                })
+            });
+            let b_group_t = (0..t_hat_len).fold(OneHotF::zero(), |acc, x| {
+                let coeff = (0..batch_root_params.n_b).fold(OneHotF::zero(), |inner, row_idx| {
+                    inner
+                        + eq_tau1[batch_root_params.n_d + row_idx]
+                            * eval_ring_at_pows_local(&shared_view.row(row_idx)[x], alpha_pows)
+                });
+                acc + w_alpha_evals[w_hat_len + x] * coeff
+            });
+            let b_group_r = (0..batch_root_params.n_b).fold(OneHotF::zero(), |acc, row_offset| {
+                let row_idx = batch_root_params.n_d + row_offset;
+                let row_start = w_hat_len + t_hat_len + z_pre_len + row_idx * r_gadget.len();
+                acc + (0..r_gadget.len()).fold(OneHotF::zero(), |inner, level_idx| {
+                    inner
+                        + w_alpha_evals[row_start + level_idx]
+                            * (-(eq_tau1[row_idx] * denom * r_gadget[level_idx]))
+                })
+            });
+            let public_group_w = (0..w_hat_len).fold(OneHotF::zero(), |acc, x| {
+                let blocks_per_claim =
+                    batched_root_layout.num_blocks * batched_root_layout.num_digits_open;
+                let claim_idx = x / blocks_per_claim;
+                let claim_offset = x % blocks_per_claim;
+                let block_idx = claim_offset / batched_root_layout.num_digits_open;
+                let digit_idx = claim_offset % batched_root_layout.num_digits_open;
+                acc + w_alpha_evals[x]
+                    * row3_weights[claim_idx]
+                    * ring_opening_point.b[block_idx]
+                    * g1_open[digit_idx]
+            });
+            let public_group_r = (0..BATCH_SIZE).fold(OneHotF::zero(), |acc, claim_idx| {
+                let row_idx = row3_start + claim_idx;
+                let row_start = w_hat_len + t_hat_len + z_pre_len + row_idx * r_gadget.len();
+                acc + (0..r_gadget.len()).fold(OneHotF::zero(), |inner, level_idx| {
+                    inner
+                        + w_alpha_evals[row_start + level_idx]
+                            * (-(eq_tau1[row_idx] * denom * r_gadget[level_idx]))
+                })
+            });
+            let row4_group_w = (0..w_hat_len).fold(OneHotF::zero(), |acc, x| {
+                let blocks_per_claim =
+                    batched_root_layout.num_blocks * batched_root_layout.num_digits_open;
+                let claim_idx = x / blocks_per_claim;
+                let claim_offset = x % blocks_per_claim;
+                let block_idx = claim_offset / batched_root_layout.num_digits_open;
+                let digit_idx = claim_offset % batched_root_layout.num_digits_open;
+                let global_block_idx = claim_idx * batched_root_layout.num_blocks + block_idx;
+                acc + w_alpha_evals[x]
+                    * row4_weight
+                    * c_alphas[global_block_idx]
+                    * g1_open[digit_idx]
+            });
+            let row4_group_z = (0..z_pre_len).fold(OneHotF::zero(), |acc, idx| {
+                let k = idx / batched_root_layout.num_digits_fold;
+                let fold_idx = idx % batched_root_layout.num_digits_fold;
+                let block_idx = k / batched_root_layout.num_digits_commit;
+                let digit_idx = k % batched_root_layout.num_digits_commit;
+                acc + w_alpha_evals[w_hat_len + t_hat_len + idx]
+                    * (-(row4_weight
+                        * ring_opening_point.a[block_idx]
+                        * g1_commit[digit_idx]
+                        * fold_gadget[fold_idx]))
+            });
+            let row4_group_r = {
+                let row_start = w_hat_len + t_hat_len + z_pre_len + row4_idx * r_gadget.len();
+                (0..r_gadget.len()).fold(OneHotF::zero(), |acc, level_idx| {
+                    acc + w_alpha_evals[row_start + level_idx]
+                        * (-(row4_weight * denom * r_gadget[level_idx]))
+                })
+            };
+            let a_group_t = (0..t_hat_len).fold(OneHotF::zero(), |acc, x| {
+                let blocks_per_claim = batch_root_params.n_a
+                    * batched_root_layout.num_digits_open
+                    * batched_root_layout.num_blocks;
+                let claim_idx = x / blocks_per_claim;
+                let claim_offset = x % blocks_per_claim;
+                let block_idx =
+                    claim_offset / (batch_root_params.n_a * batched_root_layout.num_digits_open);
+                let rem =
+                    claim_offset % (batch_root_params.n_a * batched_root_layout.num_digits_open);
+                let a_idx = rem / batched_root_layout.num_digits_open;
+                let digit_idx = rem % batched_root_layout.num_digits_open;
+                let global_block_idx = claim_idx * batched_root_layout.num_blocks + block_idx;
+                acc + w_alpha_evals[w_hat_len + x]
+                    * a_weights[a_idx]
+                    * c_alphas[global_block_idx]
+                    * g1_open[digit_idx]
+            });
+            let a_group_z = (0..z_pre_len).fold(OneHotF::zero(), |acc, idx| {
+                let k = idx / batched_root_layout.num_digits_fold;
+                let fold_idx = idx % batched_root_layout.num_digits_fold;
+                let block_idx = k / batched_root_layout.num_digits_commit;
+                let coeff =
+                    a_weights
+                        .iter()
+                        .enumerate()
+                        .fold(OneHotF::zero(), |inner, (a_idx, eq_i)| {
+                            inner
+                                + *eq_i
+                                    * eval_ring_at_pows_local(
+                                        &shared_view.row(a_idx)[k],
+                                        alpha_pows,
+                                    )
+                        });
+                let _ = block_idx;
+                acc + w_alpha_evals[w_hat_len + t_hat_len + idx]
+                    * (-(coeff * fold_gadget[fold_idx]))
+            });
+            let a_group_r =
+                a_weights
+                    .iter()
+                    .enumerate()
+                    .fold(OneHotF::zero(), |acc, (row_offset, eq_i)| {
+                        let row_idx = a_row_start + row_offset;
+                        let row_start =
+                            w_hat_len + t_hat_len + z_pre_len + row_idx * r_gadget.len();
+                        acc + (0..r_gadget.len()).fold(OneHotF::zero(), |inner, level_idx| {
+                            inner
+                                + w_alpha_evals[row_start + level_idx]
+                                    * (-(*eq_i * denom * r_gadget[level_idx]))
+                        })
+                    });
+
+            tracing::info!(
+                relation_claim_u128 = relation_claim.to_canonical_u128(),
+                relation_sum_u128 = relation_sum.to_canonical_u128(),
+                w_hat_relation_sum_u128 = w_hat_relation_sum.to_canonical_u128(),
+                t_hat_relation_sum_u128 = t_hat_relation_sum.to_canonical_u128(),
+                z_pre_relation_sum_u128 = z_pre_relation_sum.to_canonical_u128(),
+                r_tail_relation_sum_u128 = r_tail_relation_sum.to_canonical_u128(),
+                d_group_u128 = (d_group_w + d_group_r).to_canonical_u128(),
+                expected_d_u128 = expected_d_sum.to_canonical_u128(),
+                b_group_u128 = (b_group_t + b_group_r).to_canonical_u128(),
+                expected_b_u128 = expected_b_sum.to_canonical_u128(),
+                public_group_u128 = (public_group_w + public_group_r).to_canonical_u128(),
+                expected_public_u128 = expected_public_sum.to_canonical_u128(),
+                row4_group_u128 = (row4_group_w + row4_group_z + row4_group_r).to_canonical_u128(),
+                a_group_t_u128 = a_group_t.to_canonical_u128(),
+                a_group_z_u128 = a_group_z.to_canonical_u128(),
+                a_group_r_u128 = a_group_r.to_canonical_u128(),
+                a_group_u128 = (a_group_t + a_group_z + a_group_r).to_canonical_u128(),
+                first_block_t_matches,
+                sampled_first_poly_z_matches,
+                stored_a_ring_matches = stored_a_t == reduced_a_z,
+                stored_vs_recomposed_t = stored_t_flat == debug_t,
+                reduced_a_ring_matches = reduced_a_t == reduced_a_z,
+                reduced_a_diff_alpha_u128 =
+                    crate::protocol::ring_switch::eval_ring_at(&reduced_a_diff, &rs.alpha)
+                        .to_canonical_u128(),
+                direct_raw_a_t_u128 = direct_raw_a_t.to_canonical_u128(),
+                direct_raw_a_z_u128 = direct_raw_a_z.to_canonical_u128(),
+                direct_raw_a_r_u128 = direct_raw_a_r.to_canonical_u128(),
+                direct_raw_a_total_u128 = direct_raw_a_total.to_canonical_u128(),
+                live_x_cols = rs.live_x_cols,
+                num_u = rs.num_u,
+                num_l = rs.num_l,
+                "batched relation claim consistency"
+            );
+            tracing::info!(
+                matches = relation_sum == relation_claim,
+                "batched relation claim comparison complete"
+            );
+        });
+    }
+
+    #[test]
+    #[ignore = "manual tracing-only benchmark breakdown"]
+    fn debug_onehot_batched_profile_compare() {
+        init_debug_tracing();
+        init_debug_rayon_pool();
+        run_debug_on_large_stack(|| {
+            const SINGLE_NUM_VARS: usize = 34;
+            const BATCH_NUM_VARS: usize = 29;
+            const BATCH_SIZE: usize = 1 << 5;
+
+            let single_layout =
+                OneHotCfg::commitment_layout(SINGLE_NUM_VARS).expect("single debug layout");
+            let batch_layout = crate::protocol::commitment::hachi_batched_root_layout::<
+                OneHotCfg,
+                ONEHOT_D,
+            >(BATCH_NUM_VARS, BATCH_SIZE)
+            .expect("batch debug layout");
+            let batched_root_layout = crate::protocol::commitment::root_batched_layout::<
+                OneHotCfg,
+                ONEHOT_D,
+            >(BATCH_NUM_VARS, batch_layout, BATCH_SIZE)
+            .expect("batched debug root layout");
+
+            let single_root_params = OneHotCfg::level_params(HachiScheduleInputs {
+                max_num_vars: SINGLE_NUM_VARS,
+                level: 0,
+                current_w_len: root_current_w_len::<ONEHOT_D>(single_layout),
+            });
+            let batch_root_params = OneHotCfg::level_params(HachiScheduleInputs {
+                max_num_vars: BATCH_NUM_VARS,
+                level: 0,
+                current_w_len: root_current_w_len::<ONEHOT_D>(batch_layout),
+            });
+
+            let single_root_w_ring =
+                w_ring_element_count::<OneHotF>(&single_root_params, single_layout);
+            let batched_root_w_ring = w_ring_element_count_with_num_claims::<OneHotF>(
+                &batch_root_params,
+                batched_root_layout,
+                BATCH_SIZE,
+            );
+
+            tracing::info!(
+                ?single_layout,
+                ?batch_layout,
+                ?batched_root_layout,
+                single_root_w_ring,
+                batched_root_w_ring,
+                single_root_w_coeffs = single_root_w_ring * ONEHOT_D,
+                batched_root_w_coeffs = batched_root_w_ring * ONEHOT_D,
+                total_field_single = 1usize << SINGLE_NUM_VARS,
+                total_field_batched = BATCH_SIZE * (1usize << BATCH_NUM_VARS),
+                "onehot root comparison"
+            );
+
+            let single_poly = debug_make_onehot_poly(&single_layout, 0x0bee_fcaf_e000_0034);
+            let batch_polys: Vec<OneHotPoly<OneHotF, ONEHOT_D, u8>> = (0..BATCH_SIZE)
+                .map(|idx| {
+                    debug_make_onehot_poly(&batch_layout, 0x0bee_fcaf_e000_2900 + idx as u64)
+                })
+                .collect();
+
+            let single_point = debug_random_point(SINGLE_NUM_VARS);
+            let batch_point = debug_random_point(BATCH_NUM_VARS);
+            let single_opening =
+                debug_opening_from_poly(&single_poly, &single_point, &single_layout);
+            let batch_openings: Vec<OneHotF> = batch_polys
+                .iter()
+                .map(|poly| debug_opening_from_poly(poly, &batch_point, &batch_layout))
+                .collect();
+
+            let single_setup = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(
+                SINGLE_NUM_VARS,
+                1,
+            );
+            let single_verifier_setup =
+                <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(
+                    &single_setup,
+                );
+            let (single_commitment, single_hint) = <OneHotScheme as CommitmentScheme<
+                OneHotF,
+                ONEHOT_D,
+            >>::commit(
+                &single_poly, &single_setup, &single_layout
+            )
+            .expect("single debug commit");
+
+            let _single_prove_span = tracing::info_span!("debug_single_prove").entered();
+            let mut single_prover_transcript =
+                Blake2bTranscript::<OneHotF>::new(b"debug/onehot/single");
+            let single_proof = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::prove(
+                &single_setup,
+                &single_poly,
+                &single_point,
+                single_hint,
+                &mut single_prover_transcript,
+                &single_commitment,
+                BasisMode::Lagrange,
+                &single_layout,
+            )
+            .expect("single debug prove");
+            drop(_single_prove_span);
+
+            let _single_verify_span = tracing::info_span!("debug_single_verify").entered();
+            <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::verify(
+                &single_proof,
+                &single_verifier_setup,
+                &mut Blake2bTranscript::<OneHotF>::new(b"debug/onehot/single"),
+                &single_point,
+                &single_opening,
+                &single_commitment,
+                BasisMode::Lagrange,
+                &single_layout,
+            )
+            .expect("single debug verify");
+            drop(_single_verify_span);
+
+            let batch_setup = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(
+                BATCH_NUM_VARS,
+                BATCH_SIZE,
+            );
+            let batch_verifier_setup =
+                <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(&batch_setup);
+            let (batch_commitment, batch_hint) = <OneHotScheme as CommitmentScheme<
+                OneHotF,
+                ONEHOT_D,
+            >>::batched_commit(
+                &batch_polys, &batch_setup, &batch_layout
+            )
+            .expect("batched debug commit");
+
+            let _batched_prove_span = tracing::info_span!("debug_batched_prove").entered();
+            let mut batch_prover_transcript =
+                Blake2bTranscript::<OneHotF>::new(b"debug/onehot/batched");
+            let batch_proof = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_prove(
+                &batch_setup,
+                &batch_polys,
+                &batch_point,
+                batch_hint,
+                &mut batch_prover_transcript,
+                &batch_commitment,
+                BasisMode::Lagrange,
+                &batch_layout,
+            )
+            .expect("batched debug prove");
+            drop(_batched_prove_span);
+
+            let _batched_verify_span = tracing::info_span!("debug_batched_verify").entered();
+            <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_verify(
+                &batch_proof,
+                &batch_verifier_setup,
+                &mut Blake2bTranscript::<OneHotF>::new(b"debug/onehot/batched"),
+                &batch_point,
+                &batch_openings,
+                &batch_commitment,
+                BasisMode::Lagrange,
+                &batch_layout,
+            )
+            .expect("batched debug verify");
+            drop(_batched_verify_span);
+        });
     }
 
     #[test]

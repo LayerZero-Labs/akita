@@ -23,7 +23,8 @@ use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::linear::decompose_rows_i8;
 use crate::protocol::hachi_poly_ops::helpers::{
-    build_decompose_fold_witness, regular_onehot_accumulate, sparse_onehot_accumulate,
+    build_decompose_fold_witness, regular_onehot_accumulate, regular_onehot_accumulate_slices,
+    sparse_onehot_accumulate, sparse_onehot_accumulate_slices,
 };
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
 use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
@@ -193,6 +194,96 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         let _span = tracing::info_span!("onehot_sparse_convert").entered();
         build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
     }
+
+    fn decompose_fold_batched_regular_onehot(
+        polys: &[Self],
+        challenges: &[SparseChallenge],
+        block_len: usize,
+        num_digits: usize,
+    ) -> Option<DecomposeFoldWitness<F, D>>
+    where
+        F: CanonicalField,
+    {
+        let total_blocks = challenges.len();
+        let mut flat_blocks = Vec::with_capacity(total_blocks);
+        for poly in polys {
+            let OneHotBlocks::Regular(blocks) = &poly.blocks else {
+                return None;
+            };
+            flat_blocks.extend(blocks.iter().map(Vec::as_slice));
+        }
+        if flat_blocks.is_empty() {
+            return None;
+        }
+        let active_blocks = flat_blocks.len().min(total_blocks);
+        let modulus = (-F::one()).to_canonical_u128() + 1;
+
+        let coeff_accum_digit0 = {
+            let _span = tracing::info_span!("onehot_regular_accumulate_batched").entered();
+            regular_onehot_accumulate_slices::<D>(
+                &flat_blocks,
+                challenges,
+                active_blocks,
+                block_len,
+            )
+        };
+
+        let coeff_accum = if num_digits == 1 {
+            coeff_accum_digit0
+        } else {
+            let _span = tracing::info_span!("onehot_regular_expand_batched").entered();
+            let mut expanded = Vec::with_capacity(block_len * num_digits);
+            for coeffs in coeff_accum_digit0 {
+                expanded.push(coeffs);
+                for _ in 1..num_digits {
+                    expanded.push([0i32; D]);
+                }
+            }
+            expanded
+        };
+
+        let _span = tracing::info_span!("onehot_regular_convert_batched").entered();
+        Some(build_decompose_fold_witness::<F, D>(coeff_accum, modulus))
+    }
+
+    fn decompose_fold_batched_sparse_onehot(
+        polys: &[Self],
+        challenges: &[SparseChallenge],
+        block_len: usize,
+        num_digits: usize,
+    ) -> Option<DecomposeFoldWitness<F, D>>
+    where
+        F: CanonicalField,
+    {
+        let total_blocks = challenges.len();
+        let mut flat_blocks = Vec::with_capacity(total_blocks);
+        for poly in polys {
+            let OneHotBlocks::General(blocks) = &poly.blocks else {
+                return None;
+            };
+            flat_blocks.extend(blocks.iter().map(Vec::as_slice));
+        }
+        if flat_blocks.is_empty() {
+            return None;
+        }
+        let active_blocks = flat_blocks.len().min(total_blocks);
+        let modulus = (-F::one()).to_canonical_u128() + 1;
+        let inner_width = block_len * num_digits;
+
+        let coeff_accum = {
+            let _span = tracing::info_span!("onehot_sparse_accumulate_batched").entered();
+            sparse_onehot_accumulate_slices::<D>(
+                &flat_blocks,
+                challenges,
+                active_blocks,
+                inner_width,
+                num_digits,
+            )
+        };
+
+        let _span = tracing::info_span!("onehot_sparse_convert_batched").entered();
+        Some(build_decompose_fold_witness::<F, D>(coeff_accum, modulus))
+    }
 }
 
 impl<F, const D: usize, I: OneHotIndex> HachiPolyOps<F, D> for OneHotPoly<F, D, I>
@@ -289,6 +380,24 @@ where
             }
             OneHotBlocks::General(blocks) => {
                 self.decompose_fold_sparse_onehot(blocks, challenges, block_len, num_digits)
+            }
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_batched")]
+    fn decompose_fold_batched(
+        polys: &[Self],
+        challenges: &[SparseChallenge],
+        block_len: usize,
+        num_digits: usize,
+        _log_basis: u32,
+    ) -> Option<DecomposeFoldWitness<F, D>> {
+        match &polys.first()?.blocks {
+            OneHotBlocks::Regular(_) => Self::decompose_fold_batched_regular_onehot(
+                polys, challenges, block_len, num_digits,
+            ),
+            OneHotBlocks::General(_) => {
+                Self::decompose_fold_batched_sparse_onehot(polys, challenges, block_len, num_digits)
             }
         }
     }
@@ -427,6 +536,51 @@ where
     t_wide.into_iter().map(|w| w.reduce()).collect()
 }
 
+#[allow(dead_code)]
+fn inner_ajtai_regular_onehot_reduced<F, const D: usize>(
+    a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
+    regular_entries: &[RegularOneHotEntry],
+    num_digits: usize,
+) -> Vec<CyclotomicRing<F, D>>
+where
+    F: FieldCore,
+{
+    let n_a = a_view.num_rows();
+    let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
+
+    for entry in regular_entries {
+        let col = entry.pos_in_block() * num_digits;
+        let coeff_idx = entry.coeff_idx();
+        for (a_idx, t_row) in t.iter_mut().enumerate() {
+            a_view.row(a_idx)[col].shift_accumulate_into(t_row, coeff_idx);
+        }
+    }
+
+    t
+}
+
+fn inner_ajtai_regular_onehot_chunked<F, const D: usize>(
+    a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
+    regular_entries: &[RegularOneHotEntry],
+    num_digits: usize,
+) -> Vec<CyclotomicRing<F, D>>
+where
+    F: FieldCore + CanonicalField + HasWide,
+    F::Wide: crate::AdditiveGroup + From<F> + crate::algebra::fields::wide::ReduceTo<F>,
+{
+    let n_a = a_view.num_rows();
+    let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
+
+    for chunk in regular_entries.chunks(MAX_WIDE_SHIFT_ACCUMULATIONS) {
+        let partial = inner_ajtai_regular_onehot_wide(a_view, chunk, num_digits);
+        for (dst, src) in t.iter_mut().zip(partial.iter()) {
+            *dst += *src;
+        }
+    }
+
+    t
+}
+
 /// L2 cache budget (in bytes) for the tile of wide accumulators in the
 /// column-sweep commit.  Each tile's `accums` allocation is capped to this
 /// size so the scatter loop stays L2-resident.
@@ -439,6 +593,10 @@ where
 // (512 KB, 1 MB, 2 MB, 4 MB) at production configs to determine
 // whether a smaller or arch-specific budget helps on x86.
 const L2_TILE_BUDGET: usize = 1 << 21;
+
+/// Wide accumulators use 16-bit chunks in `i32` limbs, so they can safely
+/// absorb at most 32,768 unit-scale additions before overflow.
+const MAX_WIDE_SHIFT_ACCUMULATIONS: usize = 1 << 15;
 
 /// Minimum blocks-per-thread required before enabling the column-sweep kernel.
 const SWEEP_THRESHOLD: usize = 32;
@@ -469,6 +627,16 @@ where
         active_a_cols <= a_view.num_cols(),
         "active A width exceeds setup envelope"
     );
+    if regular_blocks
+        .iter()
+        .any(|block_entries| block_entries.len() > MAX_WIDE_SHIFT_ACCUMULATIONS)
+    {
+        return cfg_iter!(regular_blocks)
+            .map(|block_entries| {
+                inner_ajtai_regular_onehot_chunked(a_view, block_entries, num_digits_commit)
+            })
+            .collect();
+    }
     let num_cols = active_a_cols;
 
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
@@ -681,4 +849,127 @@ where
         out.extend(thread_blocks);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::algebra::fields::Pow2Offset24Field;
+    use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
+
+    fn aggregate_witnesses<F: FieldCore, const D: usize>(
+        witnesses: &[DecomposeFoldWitness<F, D>],
+    ) -> DecomposeFoldWitness<F, D> {
+        let mut acc = witnesses[0].clone();
+        for witness in &witnesses[1..] {
+            for (dst, src) in acc.z_pre.iter_mut().zip(witness.z_pre.iter()) {
+                *dst += *src;
+            }
+            for (dst, src) in acc
+                .centered_coeffs
+                .iter_mut()
+                .zip(witness.centered_coeffs.iter())
+            {
+                for k in 0..D {
+                    dst[k] += src[k];
+                }
+            }
+        }
+        acc.centered_inf_norm = acc
+            .centered_coeffs
+            .iter()
+            .flat_map(|coeffs| coeffs.iter())
+            .map(|coeff| coeff.unsigned_abs())
+            .max()
+            .unwrap_or(0);
+        acc
+    }
+
+    #[test]
+    fn regular_onehot_large_block_uses_safe_accumulator_path() {
+        type F = Pow2Offset24Field;
+        const D: usize = 64;
+
+        let block_len = MAX_WIDE_SHIFT_ACCUMULATIONS + 1;
+        let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
+        let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
+        let a_matrix = vec![vec![dense_ring; block_len]];
+        let regular_blocks = vec![{
+            let mut entries = Vec::with_capacity(block_len);
+            for pos in 0..block_len {
+                entries.push(RegularOneHotEntry::new(pos, pos % D).unwrap());
+            }
+            entries
+        }];
+
+        let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
+        let a_view = a_flat.view::<D>();
+
+        let got =
+            onehot_column_sweep_ajtai_regular::<F, D>(&a_view, &regular_blocks, 1, block_len, 1);
+        let expected = inner_ajtai_regular_onehot_reduced::<F, D>(&a_view, &regular_blocks[0], 1);
+
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0], expected);
+    }
+
+    #[test]
+    fn batched_regular_onehot_decompose_fold_matches_individual_aggregation() {
+        type F = Pow2Offset24Field;
+        const D: usize = 64;
+
+        let block_len = 64;
+        let mut indices0 = vec![None; 128];
+        indices0[0] = Some(1usize);
+        indices0[17] = Some(5usize);
+        indices0[64] = Some(9usize);
+        indices0[91] = Some(33usize);
+        let mut indices1 = vec![None; 128];
+        indices1[3] = Some(7usize);
+        indices1[29] = Some(11usize);
+        indices1[64] = Some(19usize);
+        indices1[100] = Some(21usize);
+        let polys = vec![
+            OneHotPoly::<F, D>::new(block_len, indices0, 1, 6).unwrap(),
+            OneHotPoly::<F, D>::new(block_len, indices1, 1, 6).unwrap(),
+        ];
+        let challenges = vec![
+            SparseChallenge {
+                positions: vec![0, 5],
+                coeffs: vec![1, -1],
+            },
+            SparseChallenge {
+                positions: vec![2, 7],
+                coeffs: vec![1, 1],
+            },
+            SparseChallenge {
+                positions: vec![4, 11],
+                coeffs: vec![-1, 2],
+            },
+            SparseChallenge {
+                positions: vec![8, 13],
+                coeffs: vec![1, -2],
+            },
+        ];
+
+        let expected = aggregate_witnesses(
+            &polys
+                .iter()
+                .zip(challenges.chunks(2))
+                .map(|(poly, poly_challenges)| {
+                    poly.decompose_fold(poly_challenges, block_len, 1, 0)
+                })
+                .collect::<Vec<_>>(),
+        );
+        let got = <OneHotPoly<F, D> as HachiPolyOps<F, D>>::decompose_fold_batched(
+            &polys,
+            &challenges,
+            block_len,
+            1,
+            0,
+        )
+        .expect("onehot batched path should apply");
+
+        assert_eq!(got, expected);
+    }
 }

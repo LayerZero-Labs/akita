@@ -321,19 +321,29 @@ where
 
         let z_pre = {
             let _span = tracing::info_span!("compute_batched_z_pre").entered();
-            let witnesses: Vec<DecomposeFoldWitness<F, D>> = polys
-                .iter()
-                .zip(challenges.chunks(layout.num_blocks))
-                .map(|(poly, poly_challenges)| {
-                    poly.decompose_fold(
-                        poly_challenges,
-                        layout.block_len,
-                        layout.num_digits_commit,
-                        layout.log_basis,
-                    )
-                })
-                .collect();
-            let z = aggregate_decompose_fold_witnesses(witnesses)?;
+            let z = if let Some(z) = P::decompose_fold_batched(
+                polys,
+                &challenges,
+                layout.block_len,
+                layout.num_digits_commit,
+                layout.log_basis,
+            ) {
+                z
+            } else {
+                let witnesses: Vec<DecomposeFoldWitness<F, D>> = polys
+                    .iter()
+                    .zip(challenges.chunks(layout.num_blocks))
+                    .map(|(poly, poly_challenges)| {
+                        poly.decompose_fold(
+                            poly_challenges,
+                            layout.block_len,
+                            layout.num_digits_commit,
+                            layout.log_basis,
+                        )
+                    })
+                    .collect();
+                aggregate_decompose_fold_witnesses(witnesses)?
+            };
             validate_decompose_fold_with_num_claims(z, &level_params, layout, num_claims)?
         };
 

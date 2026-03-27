@@ -2,9 +2,9 @@
 
 use hachi_pcs::algebra::Fp128;
 use hachi_pcs::protocol::commitment::{
-    hachi_recursive_level_layout_from_params, Fp128BoundedCommitmentConfig,
-    Fp128FullCommitmentConfig, Fp128OneHotCommitmentConfig, HachiCommitmentLayout,
-    HachiScheduleInputs,
+    hachi_batched_root_layout, hachi_recursive_level_layout_from_params,
+    Fp128BoundedCommitmentConfig, Fp128FullCommitmentConfig, Fp128OneHotCommitmentConfig,
+    HachiCommitmentLayout, HachiScheduleInputs,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
@@ -470,7 +470,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = Cfg::commitment_layout(nv).expect("layout");
+        let layout = hachi_batched_root_layout::<Cfg, D>(nv, 2).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -561,7 +561,7 @@ fn batched_onehot_same_point_round_trip() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = Cfg::commitment_layout(nv).expect("layout");
+        let layout = hachi_batched_root_layout::<Cfg, D>(nv, 2).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
