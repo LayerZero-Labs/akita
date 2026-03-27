@@ -507,9 +507,9 @@ where
 ///
 /// This returns the batch-aware `(m_vars, r_vars)` split that batched callers
 /// should use when constructing root polynomials. The returned layout keeps the
-/// per-polynomial `B`/`D` widths, while [`root_batched_layout`] reapplies the
-/// same split and then widens those matrices by `num_claims` for setup/proof
-/// internals.
+/// per-polynomial `B`/`D` widths, while the internal `root_batched_layout`
+/// reapplies the same split and then widens those matrices by `num_claims`
+/// for setup/proof internals.
 ///
 /// # Errors
 ///

@@ -470,7 +470,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = hachi_batched_root_layout::<Cfg, D>(nv, 2).expect("layout");
+        let layout = Cfg::commitment_layout(nv).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
