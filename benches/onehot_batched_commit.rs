@@ -97,7 +97,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
     group.measurement_time(Duration::from_millis(200));
     group.throughput(Throughput::Elements(TOTAL_FIELD_ELEMS));
 
-    group.bench_function("single_full_commit_nv30", |b| {
+    group.bench_function("single_full_commit_nv34", |b| {
         b.iter(|| {
             black_box(
                 <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
@@ -110,7 +110,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         })
     });
 
-    group.bench_function("single_inner_witness_nv30", |b| {
+    group.bench_function("single_inner_witness_nv34", |b| {
         b.iter(|| {
             black_box(
                 single_poly
@@ -127,7 +127,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         })
     });
 
-    group.bench_function("single_decompose_only_nv30", |b| {
+    group.bench_function("single_decompose_only_nv34", |b| {
         b.iter(|| {
             black_box(
                 single_inner
@@ -145,7 +145,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         })
     });
 
-    group.bench_function("single_outer_only_nv30", |b| {
+    group.bench_function("single_outer_only_nv34", |b| {
         b.iter(|| {
             let flat = flatten_i8_blocks(&single_inner.t_hat);
             black_box(mat_vec_mul_ntt_single_i8::<F, D>(
@@ -156,7 +156,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         })
     });
 
-    group.bench_function("batched_full_commit_32xnv25", |b| {
+    group.bench_function("batched_full_commit_32xnv29", |b| {
         b.iter(|| {
             black_box(
                 <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(
@@ -169,7 +169,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         })
     });
 
-    group.bench_function("batched_inner_witness_32xnv25", |b| {
+    group.bench_function("batched_inner_witness_32xnv29", |b| {
         b.iter(|| {
             black_box(
                 batched_polys
@@ -190,7 +190,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         })
     });
 
-    group.bench_function("batched_decompose_only_32xnv25", |b| {
+    group.bench_function("batched_decompose_only_32xnv29", |b| {
         b.iter(|| {
             black_box(
                 batched_inner
@@ -213,7 +213,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         })
     });
 
-    group.bench_function("batched_outer_only_32xnv25", |b| {
+    group.bench_function("batched_outer_only_32xnv29", |b| {
         b.iter(|| {
             let mut flat = Vec::with_capacity(BATCH_SIZE * batch_layout.outer_width);
             for inner in &batched_inner {
