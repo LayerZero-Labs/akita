@@ -321,8 +321,9 @@ where
 
         let z_pre = {
             let _span = tracing::info_span!("compute_batched_z_pre").entered();
+            let poly_refs: Vec<&P> = polys.iter().collect();
             let z = if let Some(z) = P::decompose_fold_batched(
-                polys,
+                &poly_refs,
                 &challenges,
                 layout.block_len,
                 layout.num_digits_commit,

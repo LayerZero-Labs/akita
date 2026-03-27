@@ -87,6 +87,31 @@ pub struct HachiVerifierSetup<F: FieldCore> {
     pub expanded: Arc<HachiExpandedSetup<F>>,
 }
 
+fn layout_fit_error(
+    setup_layout: &HachiCommitmentLayout,
+    requested_layout: &HachiCommitmentLayout,
+) -> Option<String> {
+    if requested_layout.inner_width > setup_layout.inner_width {
+        return Some(format!(
+            "A matrix too narrow: need {} but setup has {}",
+            requested_layout.inner_width, setup_layout.inner_width
+        ));
+    }
+    if requested_layout.outer_width > setup_layout.outer_width {
+        return Some(format!(
+            "B matrix too narrow: need {} but setup has {}",
+            requested_layout.outer_width, setup_layout.outer_width
+        ));
+    }
+    if requested_layout.d_matrix_width > setup_layout.d_matrix_width {
+        return Some(format!(
+            "D matrix too narrow: need {} but setup has {}",
+            requested_layout.d_matrix_width, setup_layout.d_matrix_width
+        ));
+    }
+    None
+}
+
 impl<F: FieldCore> HachiExpandedSetup<F> {
     /// Runtime layout envelope carried by this setup.
     pub fn layout(&self) -> HachiCommitmentLayout {
@@ -98,31 +123,26 @@ impl<F: FieldCore> HachiExpandedSetup<F> {
         self.seed.max_num_batched_polys
     }
 
+    /// Return an error if `layout` exceeds the setup's matrix-width envelope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HachiError::InvalidSetup`] if any matrix width in `layout`
+    /// exceeds the setup envelope.
+    pub fn ensure_layout_fits(&self, layout: &HachiCommitmentLayout) -> Result<(), HachiError> {
+        layout_fit_error(&self.seed.layout, layout)
+            .map(HachiError::InvalidSetup)
+            .map_or(Ok(()), Err)
+    }
+
     /// Panic if `layout` exceeds the matrix-width envelope carried by this setup.
     ///
     /// # Panics
     ///
     /// Panics if any of `layout`'s matrix widths exceed the setup envelope.
     pub fn assert_layout_fits(&self, layout: &HachiCommitmentLayout) {
-        let max = &self.seed.layout;
-        assert!(
-            layout.inner_width <= max.inner_width,
-            "A matrix too narrow: need {} but setup has {}",
-            layout.inner_width,
-            max.inner_width
-        );
-        assert!(
-            layout.outer_width <= max.outer_width,
-            "B matrix too narrow: need {} but setup has {}",
-            layout.outer_width,
-            max.outer_width
-        );
-        assert!(
-            layout.d_matrix_width <= max.d_matrix_width,
-            "D matrix too narrow: need {} but setup has {}",
-            layout.d_matrix_width,
-            max.d_matrix_width
-        );
+        self.ensure_layout_fits(layout)
+            .unwrap_or_else(|err| panic!("{err}"));
     }
 }
 
@@ -135,6 +155,16 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
     /// Maximum batched root-polynomial capacity carried by this setup.
     pub fn max_num_batched_polys(&self) -> usize {
         self.expanded.max_num_batched_polys()
+    }
+
+    /// Return an error if `layout` exceeds this setup's matrix-width envelope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HachiError::InvalidSetup`] if any matrix width in `layout`
+    /// exceeds the setup envelope.
+    pub fn ensure_layout_fits(&self, layout: &HachiCommitmentLayout) -> Result<(), HachiError> {
+        self.expanded.ensure_layout_fits(layout)
     }
 
     /// Panic if `layout`'s matrix dimensions exceed this setup's maximums.
@@ -527,31 +557,23 @@ where
         return Ok(root_layout);
     }
 
-    let optimized_root_layout = if num_claims > 1 {
-        let root_inputs = HachiScheduleInputs {
-            max_num_vars,
-            level: 0,
-            current_w_len: root_current_w_len::<D>(root_layout),
-        };
-        let root_params = Cfg::level_params_with_log_basis(root_inputs, root_layout.log_basis);
-        let (m_vars, r_vars, num_digits_fold) = optimal_root_batch_split::<Cfg, D>(
-            max_num_vars,
-            &root_params,
-            root_layout,
-            num_claims,
-        )?;
-        HachiCommitmentLayout::new_with_decomp(
-            m_vars,
-            r_vars,
-            root_params.n_a,
-            root_layout.num_digits_commit,
-            root_layout.num_digits_open,
-            num_digits_fold,
-            root_layout.log_basis,
-        )?
-    } else {
-        root_layout
+    let root_inputs = HachiScheduleInputs {
+        max_num_vars,
+        level: 0,
+        current_w_len: root_current_w_len::<D>(root_layout),
     };
+    let root_params = Cfg::level_params_with_log_basis(root_inputs, root_layout.log_basis);
+    let (m_vars, r_vars, num_digits_fold) =
+        optimal_root_batch_split::<Cfg, D>(max_num_vars, &root_params, root_layout, num_claims)?;
+    let optimized_root_layout = HachiCommitmentLayout::new_with_decomp(
+        m_vars,
+        r_vars,
+        root_params.n_a,
+        root_layout.num_digits_commit,
+        root_layout.num_digits_open,
+        num_digits_fold,
+        root_layout.log_basis,
+    )?;
 
     let mut batched_layout =
         scale_batched_root_layout::<Cfg, D>(max_num_vars, optimized_root_layout, num_claims)?;

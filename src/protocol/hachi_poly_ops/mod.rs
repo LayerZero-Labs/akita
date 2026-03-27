@@ -174,15 +174,12 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// admit a faster shared accumulation path. The default falls back to
     /// per-polynomial processing in the caller.
     fn decompose_fold_batched(
-        _polys: &[Self],
+        _polys: &[&Self],
         _challenges: &[SparseChallenge],
         _block_len: usize,
         _num_digits: usize,
         _log_basis: u32,
-    ) -> Option<DecomposeFoldWitness<F, D>>
-    where
-        Self: Sized,
-    {
+    ) -> Option<DecomposeFoldWitness<F, D>> {
         None
     }
 
@@ -285,6 +282,17 @@ where
         <P as HachiPolyOps<F, D>>::decompose_fold(
             *self, challenges, block_len, num_digits, log_basis,
         )
+    }
+
+    fn decompose_fold_batched(
+        polys: &[&Self],
+        challenges: &[SparseChallenge],
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Option<DecomposeFoldWitness<F, D>> {
+        let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
+        P::decompose_fold_batched(&inner_refs, challenges, block_len, num_digits, log_basis)
     }
 
     fn commit_inner(

@@ -196,7 +196,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     }
 
     fn decompose_fold_batched_regular_onehot(
-        polys: &[Self],
+        polys: &[&Self],
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
@@ -247,7 +247,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     }
 
     fn decompose_fold_batched_sparse_onehot(
-        polys: &[Self],
+        polys: &[&Self],
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
@@ -386,7 +386,7 @@ where
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_batched")]
     fn decompose_fold_batched(
-        polys: &[Self],
+        polys: &[&Self],
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
@@ -961,8 +961,9 @@ mod tests {
                 })
                 .collect::<Vec<_>>(),
         );
+        let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
         let got = <OneHotPoly<F, D> as HachiPolyOps<F, D>>::decompose_fold_batched(
-            &polys,
+            &poly_refs,
             &challenges,
             block_len,
             1,

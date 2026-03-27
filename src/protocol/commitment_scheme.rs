@@ -985,7 +985,7 @@ where
         setup: &Self::ProverSetup,
         layout: &HachiCommitmentLayout,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError> {
-        setup.assert_layout_fits(layout);
+        setup.ensure_layout_fits(layout)?;
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,
@@ -1038,7 +1038,7 @@ where
             *layout,
             polys.len(),
         )?;
-        setup.assert_layout_fits(&batched_layout);
+        setup.ensure_layout_fits(&batched_layout)?;
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,
@@ -1241,7 +1241,7 @@ where
         let root_w_len = root_current_w_len::<D>(*layout);
         let batched_layout =
             scale_batched_root_layout::<Cfg, D>(max_num_vars, *layout, polys.len())?;
-        setup.assert_layout_fits(&batched_layout);
+        setup.ensure_layout_fits(&batched_layout)?;
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars,
             level: 0,
@@ -1491,12 +1491,15 @@ where
         if num_claims == 0 || openings.len() != num_claims {
             return Err(HachiError::InvalidProof);
         }
+        if num_claims > setup.expanded.max_num_batched_polys() {
+            return Err(HachiError::InvalidProof);
+        }
 
         let t_verify_hachi = Instant::now();
         let max_num_vars = setup.expanded.seed.max_num_vars;
         let batched_layout =
             scale_batched_root_layout::<Cfg, D>(max_num_vars, *layout, num_claims)?;
-        setup.expanded.assert_layout_fits(&batched_layout);
+        setup.expanded.ensure_layout_fits(&batched_layout)?;
 
         let final_w = Some(proof.final_w());
         let root_params = Cfg::level_params(HachiScheduleInputs {
@@ -3125,6 +3128,67 @@ mod tests {
             &mut verifier_transcript,
             &opening_point,
             &openings,
+            &commitment,
+            BasisMode::Lagrange,
+            &layout,
+        );
+
+        assert!(matches!(result, Err(HachiError::InvalidProof)));
+    }
+
+    #[test]
+    fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
+        let alpha = D.trailing_zeros() as usize;
+        let layout = Cfg::commitment_layout(16).unwrap();
+        let num_vars = layout.m_vars + layout.r_vars + alpha;
+        let len = 1usize << num_vars;
+        let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 17) as u64)).collect();
+        let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 3 + 19) as u64)).collect();
+        let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
+        let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2);
+        let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        let (commitment, hint) = <Scheme as CommitmentScheme<F, D>>::batched_commit(
+            &[&poly_a, &poly_b],
+            &setup,
+            &layout,
+        )
+        .unwrap();
+
+        let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 6) as u64)).collect();
+        let openings = vec![
+            dense_opening(&evals_a, &opening_point),
+            dense_opening(&evals_b, &opening_point),
+        ];
+
+        let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/oversized");
+        let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
+            &setup,
+            &[&poly_a, &poly_b],
+            &opening_point,
+            hint,
+            &mut prover_transcript,
+            &commitment,
+            BasisMode::Lagrange,
+            &layout,
+        )
+        .unwrap();
+
+        let mut oversized_proof = proof.clone();
+        let mut oversized_y_coeffs = oversized_proof.root.y_rings().coeffs().to_vec();
+        oversized_y_coeffs.extend(vec![F::zero(); D]);
+        oversized_proof.root.y_rings = ProofRingVec::from_coeffs(oversized_y_coeffs);
+
+        let mut oversized_openings = openings;
+        oversized_openings.push(F::zero());
+
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/oversized");
+        let result = <Scheme as CommitmentScheme<F, D>>::batched_verify(
+            &oversized_proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &oversized_openings,
             &commitment,
             BasisMode::Lagrange,
             &layout,
