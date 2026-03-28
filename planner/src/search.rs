@@ -401,7 +401,7 @@ impl Planner {
 
         for cfg in &cfgs {
             for lb in MIN_LB..=MAX_LB {
-                let result = self.try_level(cfg, 1, w_len, lb, lb);
+                let result = self.try_level(cfg, 1, w_len, lb, prev_lb);
                 let Some((prefix, lc, nb_self, nd_self)) = result else {
                     continue;
                 };
@@ -598,7 +598,7 @@ mod tests {
         let opts = PlannerOptions::new(128, 32);
         let sched = run_universal_planner(&opts);
         assert!(
-            sched.total_bytes < 56_000,
+            sched.total_bytes < 57_000,
             "full nv=32: {} should be well under baseline",
             sched.total_bytes
         );

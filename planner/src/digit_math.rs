@@ -26,7 +26,7 @@ fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
 /// Minimum number of balanced base-`2^log_basis` digits needed to represent
 /// any value in `[-V, V]` where `V < 2^log_bound`.
 ///
-/// **Balanced digits:** each digit `d_i ∈ [-(b/2-1), b/2-1]` with `b = 2^log_basis`.
+/// **Balanced digits:** each digit `d_i ∈ [-b/2, b/2-1]` with `b = 2^log_basis`.
 /// A number is represented as `Σ d_i · b^i` for `i = 0..n-1`.
 ///
 /// **Algorithm:**
