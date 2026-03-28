@@ -19,7 +19,7 @@ const _: () = assert!(MAX_RANK == 4, "SIS width table only covers ranks 1..=4");
 ///   (coefficients are 0 or 1, balanced-digit bound is 2). For dense
 ///   polynomials the root uses 2^lb - 1 like any other level. At all
 ///   recursive levels, witness entries are balanced base-2^lb digits with
-///   range [-(2^lb/2 - 1), 2^lb/2 - 1], giving collision_inf = 2^lb - 1
+///   range [-2^lb/2, 2^lb/2 - 1], giving collision_inf = 2^lb - 1
 ///   (e.g. lb=2 -> 3, lb=3 -> 7, ..., lb=7 -> 127).
 fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; MAX_RANK as usize]> {
     match (d, collision_inf) {

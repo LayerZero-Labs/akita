@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 
-use crate::digit_math::{
-    compute_num_digits, compute_num_digits_fold, optimal_m_r_split, r_decomp_levels,
-};
+use crate::digit_math::{compute_num_digits, compute_num_digits_fold, optimal_m_r_split};
 use crate::proof_size::{
     elem_bytes, packed_digits_bytes, ring_vec_bytes, stage1_bytes_optimized, sumcheck_bytes,
     sumcheck_rounds,
@@ -81,8 +79,6 @@ pub const ALL_RING_CONFIGS: &[RingConfig] = &[
 const MIN_LB: u32 = 2;
 const MAX_LB: u32 = 7;
 
-const HALF_FIELD_BOUND_P275: u128 = (u128::MAX - 274) / 2; // (2^128 - 275) / 2
-
 // ── Witness computation ────────────────────────────────────────────────────
 
 struct LevelComputation {
@@ -101,7 +97,6 @@ struct LevelWitnessArgs {
     current_w_len: usize,
     max_num_vars: usize,
     log_basis: u32,
-    half_field_bound: u128,
     nb: u32,
     nd: u32,
     log_commit_bound: u32,
@@ -113,7 +108,6 @@ fn compute_level_witness(cfg: &RingConfig, a: &LevelWitnessArgs) -> LevelComputa
     let current_w_len = a.current_w_len;
     let max_num_vars = a.max_num_vars;
     let log_basis = a.log_basis;
-    let half_field_bound = a.half_field_bound;
     let nb = a.nb;
     let nd = a.nd;
     let log_commit_bound = a.log_commit_bound;
@@ -158,7 +152,7 @@ fn compute_level_witness(cfg: &RingConfig, a: &LevelWitnessArgs) -> LevelComputa
     let t_hat = num_blocks * cfg.n_a as usize * delta_open;
     let z_pre = inner_width * delta_fold;
     let m_row = nd as usize + nb as usize + 2 + cfg.n_a as usize;
-    let r_ct = m_row * r_decomp_levels(128, half_field_bound, log_basis);
+    let r_ct = m_row * compute_num_digits(128, log_basis);
     let w_ring_elems = w_hat + t_hat + z_pre + r_ct;
     let next_w_len = w_ring_elems * d as usize;
     let rounds = sumcheck_rounds(d, next_w_len);
@@ -213,7 +207,6 @@ pub struct PlannerOptions {
     pub log_commit_bound: u32,
     pub max_num_vars: usize,
     pub ring_configs: &'static [RingConfig],
-    pub half_field_bound: u128,
     pub opt_sumcheck: bool,
     pub monotone_d: bool,
     pub tight_zpre: bool,
@@ -225,7 +218,6 @@ impl PlannerOptions {
             log_commit_bound,
             max_num_vars,
             ring_configs: ALL_RING_CONFIGS,
-            half_field_bound: HALF_FIELD_BOUND_P275,
             opt_sumcheck: true,
             monotone_d: true,
             tight_zpre: true,
@@ -307,7 +299,6 @@ impl Planner {
             current_w_len: w_len,
             max_num_vars: self.opts.max_num_vars,
             log_basis: lb,
-            half_field_bound: self.opts.half_field_bound,
             nb: 1,
             nd: 1,
             log_commit_bound: log_cb,
@@ -445,7 +436,6 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
         log_commit_bound: opts.log_commit_bound,
         max_num_vars: opts.max_num_vars,
         ring_configs: opts.ring_configs,
-        half_field_bound: opts.half_field_bound,
         opt_sumcheck: opts.opt_sumcheck,
         monotone_d: opts.monotone_d,
         tight_zpre: opts.tight_zpre,

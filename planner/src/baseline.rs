@@ -1,14 +1,10 @@
 use std::collections::HashMap;
 
-use crate::digit_math::{
-    compute_num_digits, compute_num_digits_fold, optimal_m_r_split, r_decomp_levels,
-};
+use crate::digit_math::{compute_num_digits, compute_num_digits_fold, optimal_m_r_split};
 use crate::proof_size::{
     baseline_packed_digits_bytes, baseline_ring_vec_bytes, baseline_sumcheck_bytes, elem_bytes,
     sumcheck_rounds,
 };
-
-const HALF_FIELD_BOUND_P5823: u128 = (u128::MAX - 5822) / 2; // (2^128 - 5823) / 2
 
 /// Baseline planner result.
 #[derive(Debug, Clone)]
@@ -40,7 +36,6 @@ fn compute_level(
     lb: u32,
 ) -> (usize, usize, usize, usize, usize, usize, usize, usize) {
     let alpha = bp.d.trailing_zeros() as usize;
-    let half_q = HALF_FIELD_BOUND_P5823;
 
     let (reduced, log_cb) = if level == 0 {
         (bp.max_num_vars - alpha, bp.log_commit_bound)
@@ -60,8 +55,8 @@ fn compute_level(
     let w_hat = (1usize << r) * d_open;
     let t_hat = (1usize << r) * bp.n_a as usize * d_open;
     let z_pre = iw * d_fold;
-    let r_ct = (bp.n_d as usize + bp.n_b as usize + 2 + bp.n_a as usize)
-        * r_decomp_levels(128, half_q, lb);
+    let r_ct =
+        (bp.n_d as usize + bp.n_b as usize + 2 + bp.n_a as usize) * compute_num_digits(128, lb);
     let w_ring = w_hat + t_hat + z_pre + r_ct;
     let nw = w_ring * bp.d as usize;
     let rnds = sumcheck_rounds(bp.d, nw);

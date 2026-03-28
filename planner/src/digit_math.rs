@@ -1,7 +1,7 @@
 /// Maximum positive value representable by `num_digits` balanced base-`b` digits,
 /// where `b = 2^log_basis`.
 ///
-/// Each balanced digit lies in `[-(b/2 - 1), b/2 - 1]`. The positional weights
+/// Each balanced digit lies in `[-b/2, b/2 - 1]`. The positional weights
 /// are `1, b, b^2, …, b^(n-1)`, so the maximum positive value is:
 ///
 ///   max_pos = (b/2 - 1) · (b^n - 1) / (b - 1)       (geometric series)
@@ -47,6 +47,10 @@ fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
 /// ```
 pub fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
     assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
+    assert!(
+        log_bound <= 128,
+        "log_bound={log_bound} exceeds 128-bit field"
+    );
 
     if log_bound == 0 {
         return 1;
@@ -58,11 +62,7 @@ pub fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
     // smaller than the unsigned range. Verify explicitly.
     let total_bits = (num_digits as u32).saturating_mul(log_basis);
     if total_bits <= log_bound {
-        let required_positive = if log_bound > 128 {
-            u128::MAX / 2
-        } else {
-            (1u128 << (log_bound - 1)).saturating_sub(1) // 2^(log_bound-1) - 1
-        };
+        let required_positive = (1u128 << (log_bound - 1)).saturating_sub(1);
 
         if balanced_digit_max(log_basis, num_digits) < required_positive {
             num_digits += 1;
@@ -82,40 +82,16 @@ pub fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
 ///
 /// We compute `⌈log2(β)⌉` and then delegate to [`compute_num_digits`].
 pub fn compute_num_digits_fold(r_vars: usize, challenge_l1_mass: usize, log_basis: u32) -> usize {
+    assert!(challenge_l1_mass > 0, "challenge_l1_mass must be positive");
     let shift = r_vars + (log_basis as usize) - 1;
+    assert!(
+        shift < 127,
+        "shift overflow: r_vars={r_vars} + log_basis={log_basis} - 1 >= 127"
+    );
 
-    if shift >= 127 || challenge_l1_mass == 0 {
-        return compute_num_digits(128, log_basis);
-    }
-
-    let beta = (challenge_l1_mass as u128).saturating_mul(1u128 << shift);
-    if beta == 0 {
-        return 1;
-    }
-
+    let beta = (challenge_l1_mass as u128) * (1u128 << shift);
     let log_beta = 128 - beta.leading_zeros(); // ⌈log2(β+1)⌉
     compute_num_digits(log_beta, log_basis)
-}
-
-/// Number of balanced-digit levels for decomposing quotient-row elements.
-///
-/// Quotient-row entries live in `Zq` and can be as large as `(q-1)/2` in
-/// absolute value (`half_field_bound`). This function first uses
-/// [`compute_num_digits`] with the bit-width of the field, then — as a
-/// defensive check — verifies the balanced range covers `half_field_bound`
-/// exactly (which matters when `q` is slightly smaller than `2^field_bits`).
-pub fn r_decomp_levels(field_bits: u32, half_field_bound: u128, log_basis: u32) -> usize {
-    let mut levels = compute_num_digits(field_bits, log_basis).max(1);
-
-    // Defensive: if the initial estimate was borderline, re-check against the
-    // actual (q-1)/2 bound rather than the generic 2^(field_bits-1) - 1.
-    let total_bits = levels * (log_basis as usize);
-    if total_bits <= field_bits as usize && balanced_digit_max(log_basis, levels) < half_field_bound
-    {
-        levels += 1;
-    }
-
-    levels
 }
 
 /// Find the `(m, r)` split of `reduced_vars` that minimizes next-level witness size.
@@ -130,7 +106,7 @@ pub fn r_decomp_levels(field_bits: u32, half_field_bound: u128, log_basis: u32) 
 /// quotient term `|r|` which doesn't depend on the split):
 ///
 /// ```text
-///   cost(r) = |t̂| + |ŵ|           +  |ẑ|
+///   witness_size = |t̂| + |ŵ|           +  |ẑ|
 ///           = (n_A+1)·2^r · δ     +  (τ+1)·2^m · δ
 /// ```
 ///
@@ -138,7 +114,7 @@ pub fn r_decomp_levels(field_bits: u32, half_field_bound: u128, log_basis: u32) 
 /// since they have different magnitude bounds in practice:
 ///
 /// ```text
-///   cost(r) = (1 + n_A) · δ_open · 2^r  +  δ_commit · δ_fold · m_eff
+///   witness_size = (1 + n_A) · δ_open · 2^r  +  δ_commit · δ_fold · m_eff
 ///              ─────────────────────────     ────────────────────────
 ///              |t̂| + |ŵ|  (opening)         |ẑ|  (folded witness)
 /// ```
@@ -255,15 +231,5 @@ mod tests {
         assert!(got_2 > 0);
         assert!(got_3 > 0);
         assert!(got_2 >= got_3);
-    }
-
-    #[test]
-    fn r_decomp_p275() {
-        let half_q: u128 = (u128::MAX - 274) / 2; // (2^128 - 275) / 2
-        let r2 = r_decomp_levels(128, half_q, 2);
-        let r3 = r_decomp_levels(128, half_q, 3);
-        assert!(r2 > 0);
-        assert!(r3 > 0);
-        assert!(r2 >= r3);
     }
 }
