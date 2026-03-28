@@ -71,9 +71,9 @@ fn cmd_validate() -> bool {
     println!("{}", "=".repeat(70));
 
     let cases: &[(&str, u32, u32, usize, usize)] = &[
-        ("onehot", 64, 1, 32, 97_277),
-        ("full128", 128, 128, 25, 164_053),
-        ("full128", 128, 128, 32, 170_637),
+        ("onehot", 64, 1, 32, 99_805),
+        ("full128", 128, 128, 25, 166_613),
+        ("full128", 128, 128, 32, 173_197),
     ];
 
     let mut all_ok = true;

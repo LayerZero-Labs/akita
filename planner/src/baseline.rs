@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::digit_math::{compute_num_digits, compute_num_digits_fold, optimal_m_r_split};
+use crate::digit_math::{baseline_optimal_m_r_split, compute_num_digits, compute_num_digits_fold};
 use crate::proof_size::{
     baseline_packed_digits_bytes, baseline_ring_vec_bytes, baseline_sumcheck_bytes, elem_bytes,
     sumcheck_rounds,
@@ -45,7 +45,7 @@ fn compute_level(
         (rp2.trailing_zeros() as usize, lb)
     };
 
-    let (m, r) = optimal_m_r_split(bp.n_a, bp.challenge_l1_mass, log_cb, lb, reduced, 0);
+    let (m, r) = baseline_optimal_m_r_split(bp.n_a, bp.challenge_l1_mass, log_cb, lb, reduced);
     let op = if log_cb < 128 { 128 } else { log_cb };
     let d_open = compute_num_digits(op, lb);
     let d_commit = compute_num_digits(log_cb, lb);
@@ -140,7 +140,7 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
     let (total_no_wrapper, levels, tail_lb) = overall?;
     let total = total_no_wrapper + 4;
     let term_w = levels.last()?.2;
-    let tail_bytes = crate::proof_size::packed_digits_bytes(term_w, tail_lb);
+    let tail_bytes = baseline_packed_digits_bytes(term_w, tail_lb);
 
     Some(BaselineResult {
         total,
@@ -186,19 +186,19 @@ mod tests {
     #[test]
     fn baseline_onehot_32() {
         let r = run_baseline_planner(&onehot_params(32)).unwrap();
-        assert_eq!(r.total, 97_277);
+        assert_eq!(r.total, 99_805);
     }
 
     #[test]
     fn baseline_full128_25() {
         let r = run_baseline_planner(&full128_params(25)).unwrap();
-        assert_eq!(r.total, 164_053);
+        assert_eq!(r.total, 166_613);
     }
 
     #[test]
     fn baseline_full128_32() {
         let r = run_baseline_planner(&full128_params(32)).unwrap();
-        assert_eq!(r.total, 170_637);
+        assert_eq!(r.total, 173_197);
     }
 
     #[test]
@@ -219,7 +219,7 @@ mod tests {
                 };
                 assert_eq!(
                     r.tail_bytes,
-                    crate::proof_size::packed_digits_bytes(r.final_w_len, r.final_lb),
+                    baseline_packed_digits_bytes(r.final_w_len, r.final_lb),
                     "tail_bytes inconsistent at nv={nv}"
                 );
             }
