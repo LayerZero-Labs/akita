@@ -11,6 +11,7 @@ use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
     flatten_i8_blocks, fused_split_eq_quotients, mat_vec_mul_ntt_single_i8,
+    mat_vec_mul_ntt_single_i8_cyclic,
 };
 use crate::protocol::commitment::{
     CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, RingCommitment,
@@ -145,6 +146,8 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize, Cfg: CommitmentConfig
     w_folded: Option<Vec<CyclotomicRing<F, D>>>,
     /// Commitment hint (prover only).
     hint: Option<HachiCommitmentHint<F, D>>,
+    /// Number of flattened public claims per commitment group.
+    claim_group_sizes: Vec<usize>,
 
     _marker: PhantomData<Cfg>,
 }
@@ -242,6 +245,7 @@ where
             w_hat_flat: Some(w_hat_flat),
             w_folded: Some(pre_folded),
             hint: Some(hint),
+            claim_group_sizes: vec![1],
             _marker: PhantomData,
         })
     }
@@ -261,29 +265,50 @@ where
     pub fn new_batched_prover<T: Transcript<F>, P: HachiPolyOps<F, D>>(
         ntt_d: &NttSlotCache<D>,
         ring_opening_point: RingOpeningPoint<F>,
-        polys: &[P],
+        polys: &[&P],
         pre_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
+        claim_group_sizes: &[usize],
         level_params: HachiLevelParams,
-        hint: HachiBatchedCommitmentHint<F, D>,
+        hints: Vec<HachiBatchedCommitmentHint<F, D>>,
         transcript: &mut T,
-        commitment: &RingCommitment<F, D>,
+        commitments: &[RingCommitment<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
         layout: HachiCommitmentLayout,
     ) -> Result<Self, HachiError> {
-        if polys.is_empty() {
+        if polys.is_empty() || claim_group_sizes.is_empty() {
             return Err(HachiError::InvalidInput(
                 "batched prover requires at least one polynomial".to_string(),
             ));
         }
+        if claim_group_sizes.iter().any(|&group_size| group_size == 0) {
+            return Err(HachiError::InvalidInput(
+                "batched prover requires nonempty commitment groups".to_string(),
+            ));
+        }
+        let num_claims = claim_group_sizes
+            .iter()
+            .try_fold(0usize, |acc, &group_size| {
+                acc.checked_add(group_size).ok_or_else(|| {
+                    HachiError::InvalidInput("batched prover claim count overflow".to_string())
+                })
+            })?;
         if polys.len() != pre_folded_by_poly.len()
-            || polys.len() != hint.inner_opening_digits.len()
-            || polys.len() != y_rings.len()
+            || polys.len() != num_claims
+            || y_rings.len() != num_claims
+            || hints.len() != claim_group_sizes.len()
+            || commitments.len() != claim_group_sizes.len()
         {
             return Err(HachiError::InvalidInput(
                 "batched prover input lengths do not match".to_string(),
             ));
         }
-        let num_claims = polys.len();
+        for commitment in commitments {
+            if commitment.u.len() != level_params.n_b {
+                return Err(HachiError::InvalidInput(
+                    "batched prover received a commitment with the wrong length".to_string(),
+                ));
+            }
+        }
 
         let (w_hat, w_hat_flat) = {
             let _span = tracing::info_span!("decompose_batched_w_hat").entered();
@@ -298,8 +323,29 @@ where
             let w_hat_flat = flatten_i8_blocks(&w_hat);
             (w_hat, w_hat_flat)
         };
-        let mut flattened_hint = hint.into_flattened();
-        flattened_hint.ensure_t_recomposed(layout.num_digits_open, layout.log_basis)?;
+        let flattened_hint = {
+            let mut inner_opening_digits = Vec::new();
+            let mut t_rows = Vec::new();
+            for (hint, &group_size) in hints.into_iter().zip(claim_group_sizes.iter()) {
+                if hint.inner_opening_digits.len() != group_size {
+                    return Err(HachiError::InvalidInput(
+                        "batched prover hint group sizes do not match polynomial groups"
+                            .to_string(),
+                    ));
+                }
+                let mut hint = hint.into_flattened();
+                hint.ensure_t_recomposed(layout.num_digits_open, layout.log_basis)?;
+                let (digits, rows) = hint.into_parts();
+                inner_opening_digits.extend(digits);
+                let rows = rows.ok_or_else(|| {
+                    HachiError::InvalidInput(
+                        "missing recomposed t rows in batched prover hint".to_string(),
+                    )
+                })?;
+                t_rows.extend(rows);
+            }
+            HachiCommitmentHint::with_t(inner_opening_digits, t_rows)
+        };
 
         let v = {
             let _span = tracing::info_span!("compute_batched_v", w_hat_flat_len = w_hat_flat.len())
@@ -321,9 +367,8 @@ where
 
         let z_pre = {
             let _span = tracing::info_span!("compute_batched_z_pre").entered();
-            let poly_refs: Vec<&P> = polys.iter().collect();
             let z = if let Some(z) = P::decompose_fold_batched(
-                &poly_refs,
+                polys,
                 &challenges,
                 layout.block_len,
                 layout.num_digits_commit,
@@ -348,9 +393,13 @@ where
             validate_decompose_fold_with_num_claims(z, &level_params, layout, num_claims)?
         };
 
+        let commitment_rows: Vec<CyclotomicRing<F, D>> = commitments
+            .iter()
+            .flat_map(|commitment| commitment.u.iter().copied())
+            .collect();
         let y = generate_y::<F, D>(
             &v,
-            &commitment.u,
+            &commitment_rows,
             y_rings,
             level_params.n_d,
             level_params.n_b,
@@ -368,6 +417,7 @@ where
             w_hat_flat: Some(w_hat_flat),
             w_folded: Some(w_folded),
             hint: Some(flattened_hint),
+            claim_group_sizes: claim_group_sizes.to_vec(),
             _marker: PhantomData,
         })
     }
@@ -458,6 +508,7 @@ where
             w_hat_flat: Some(w_hat_flat),
             w_folded: Some(pre_folded),
             hint: Some(hint),
+            claim_group_sizes: vec![1],
             _marker: PhantomData,
         })
     }
@@ -475,6 +526,11 @@ where
     /// Get the opening point (a, b) Lagrange weights.
     pub fn opening_point(&self) -> &RingOpeningPoint<F> {
         &self.opening_point
+    }
+
+    /// Number of flattened public claims carried by each commitment group.
+    pub fn claim_group_sizes(&self) -> &[usize] {
+        &self.claim_group_sizes
     }
 
     /// Get the pre-decomposition folded witness `z_pre` (prover only).
@@ -614,6 +670,53 @@ fn quotient_from_cyclic_and_reduced<F: FieldCore, const D: usize>(
     CyclotomicRing::from_coefficients(quotient)
 }
 
+fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
+    ntt_shared: &NttSlotCache<D>,
+    n_b: usize,
+    t_hat: &[Vec<[i8; D]>],
+    claim_group_sizes: &[usize],
+    blocks_per_claim: usize,
+) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
+    if claim_group_sizes.is_empty() || blocks_per_claim == 0 {
+        return Err(HachiError::InvalidProof);
+    }
+    let num_claims = claim_group_sizes
+        .iter()
+        .try_fold(0usize, |acc, &group_size| {
+            if group_size == 0 {
+                return Err(HachiError::InvalidProof);
+            }
+            acc.checked_add(group_size).ok_or(HachiError::InvalidProof)
+        })?;
+    if t_hat.len() != num_claims * blocks_per_claim {
+        return Err(HachiError::InvalidProof);
+    }
+    let mut rows = Vec::with_capacity(claim_group_sizes.len() * n_b);
+    let mut offset = 0usize;
+    for &group_size in claim_group_sizes {
+        let group_block_count = group_size
+            .checked_mul(blocks_per_claim)
+            .ok_or(HachiError::InvalidProof)?;
+        let next_offset = offset
+            .checked_add(group_block_count)
+            .ok_or(HachiError::InvalidProof)?;
+        let group = t_hat
+            .get(offset..next_offset)
+            .ok_or(HachiError::InvalidProof)?;
+        let group_digits = flatten_i8_blocks(group);
+        rows.extend(mat_vec_mul_ntt_single_i8_cyclic(
+            ntt_shared,
+            n_b,
+            &group_digits,
+        ));
+        offset = next_offset;
+    }
+    if offset != t_hat.len() {
+        return Err(HachiError::InvalidProof);
+    }
+    Ok(rows)
+}
+
 /// Split-eq replacement for `generate_m` + `compute_r_via_poly_division`.
 ///
 /// Computes `r` such that `M·z = y + (X^D+1)·r` without materializing M or z.
@@ -631,23 +734,35 @@ pub(crate) fn compute_r_split_eq<F, const D: usize>(
     z_pre_centered: &[[i32; D]],
     z_pre_centered_inf_norm: u32,
     y: &[CyclotomicRing<F, D>],
+    claim_group_sizes: &[usize],
+    blocks_per_claim: usize,
     ntt_shared: &NttSlotCache<D>,
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
 where
     F: FieldCore + CanonicalField,
 {
-    let num_public_outputs = y
-        .len()
-        .checked_sub(level_params.n_d + level_params.n_b + 1 + level_params.n_a)
-        .ok_or(HachiError::InvalidProof)?;
+    if claim_group_sizes.is_empty() || claim_group_sizes.iter().any(|&group_size| group_size == 0) {
+        return Err(HachiError::InvalidProof);
+    }
+    let num_public_outputs = claim_group_sizes
+        .iter()
+        .try_fold(0usize, |acc, &group_size| {
+            acc.checked_add(group_size).ok_or(HachiError::InvalidProof)
+        })?;
     if num_public_outputs == 0 {
         return Err(HachiError::InvalidProof);
     }
-    let num_rows = level_params.m_row_count_with_public_outputs(num_public_outputs);
+    let num_commitment_groups = claim_group_sizes.len();
+    let commitment_row_count = level_params
+        .n_b
+        .checked_mul(num_commitment_groups)
+        .ok_or(HachiError::InvalidProof)?;
+    let num_rows = level_params
+        .m_row_count_with_commitments_and_public_outputs(num_commitment_groups, num_public_outputs);
     if y.len() != num_rows {
         return Err(HachiError::InvalidProof);
     }
-    let row3_start = level_params.n_d + level_params.n_b;
+    let row3_start = level_params.n_d + commitment_row_count;
     let row4_idx = row3_start + num_public_outputs;
     let a_row_start = row4_idx + 1;
 
@@ -663,6 +778,21 @@ where
         z_pre_centered,
         z_pre_centered_inf_norm,
     );
+    let commitment_cyclic_rows =
+        if commitment_row_count == level_params.n_b && num_commitment_groups == 1 {
+            b_cyclic
+        } else {
+            repeated_b_commitment_rows(
+                ntt_shared,
+                level_params.n_b,
+                t_hat,
+                claim_group_sizes,
+                blocks_per_claim,
+            )?
+        };
+    if commitment_cyclic_rows.len() != commitment_row_count {
+        return Err(HachiError::InvalidProof);
+    }
 
     let mut result = Vec::with_capacity(num_rows);
     let mut other_time = 0.0f64;
@@ -673,9 +803,9 @@ where
                 &d_cyclic[row_idx],
                 &y[row_idx],
             ));
-        } else if row_idx < level_params.n_d + level_params.n_b {
+        } else if row_idx < level_params.n_d + commitment_row_count {
             result.push(quotient_from_cyclic_and_reduced(
-                &b_cyclic[row_idx - level_params.n_d],
+                &commitment_cyclic_rows[row_idx - level_params.n_d],
                 &y[row_idx],
             ));
         } else if row_idx >= a_row_start {
@@ -733,7 +863,7 @@ where
 
 pub(crate) fn generate_y<F, const D: usize>(
     v: &[CyclotomicRing<F, D>],
-    u: &[CyclotomicRing<F, D>],
+    commitment_rows: &[CyclotomicRing<F, D>],
     public_outputs: &[CyclotomicRing<F, D>],
     n_d: usize,
     n_b: usize,
@@ -748,10 +878,10 @@ where
             actual: v.len(),
         });
     }
-    if u.len() != n_b {
+    if commitment_rows.is_empty() || commitment_rows.len() % n_b != 0 {
         return Err(HachiError::InvalidSize {
             expected: n_b,
-            actual: u.len(),
+            actual: commitment_rows.len(),
         });
     }
     if public_outputs.is_empty() {
@@ -759,9 +889,9 @@ where
             "generate_y requires at least one public output".to_string(),
         ));
     }
-    let mut out = Vec::with_capacity(n_d + n_b + public_outputs.len() + 1 + n_a);
+    let mut out = Vec::with_capacity(n_d + commitment_rows.len() + public_outputs.len() + 1 + n_a);
     out.extend_from_slice(v);
-    out.extend_from_slice(u);
+    out.extend_from_slice(commitment_rows);
     out.extend_from_slice(public_outputs);
     out.push(CyclotomicRing::<F, D>::zero());
     out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), n_a));

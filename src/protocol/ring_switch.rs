@@ -150,6 +150,8 @@ where
         &z_pre.centered_coeffs,
         z_pre.centered_inf_norm,
         quad_eq.y(),
+        quad_eq.claim_group_sizes(),
+        layout.num_blocks,
         ntt_shared,
     )?;
     let w = {
@@ -230,18 +232,56 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
+    let claim_group_sizes = vec![1usize; num_claims];
+    ring_switch_finalize_with_claim_groups::<F, T, D, Cfg>(
+        quad_eq,
+        setup,
+        transcript,
+        w,
+        w_commitment,
+        w_commitment_proof,
+        w_hint,
+        level_params,
+        layout,
+        &claim_group_sizes,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub(crate) fn ring_switch_finalize_with_claim_groups<F, T, const D: usize, Cfg>(
+    quad_eq: &QuadraticEquation<F, D, Cfg>,
+    setup: &HachiExpandedSetup<F>,
+    transcript: &mut T,
+    w: RecursiveWitnessFlat,
+    w_commitment: FlatRingVec<F>,
+    w_commitment_proof: &ProofRingVec<F>,
+    w_hint: RecursiveCommitmentHintCache<F>,
+    level_params: &HachiLevelParams,
+    layout: HachiCommitmentLayout,
+    claim_group_sizes: &[usize],
+) -> Result<RingSwitchOutput<F>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig,
+{
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment_proof);
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
+
+    let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
+    let num_commitment_groups = claim_group_sizes.len();
 
     let num_l = D.trailing_zeros() as usize;
     let num_ring_elems = w.len() / D;
     let live_x_cols = num_ring_elems;
     let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    let m_rows = if num_claims == 1 {
+    let m_rows = if num_claims == 1 && num_commitment_groups == 1 {
         m_row_count(level_params)
     } else {
-        level_params.m_row_count_with_public_outputs(num_claims)
+        level_params
+            .m_row_count_with_commitments_and_public_outputs(num_commitment_groups, num_claims)
     };
     let num_sc_vars = num_u + num_l;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
@@ -256,7 +296,7 @@ where
     #[cfg(feature = "parallel")]
     let (m_evals_x_result, w_result) = rayon::join(
         || {
-            if num_claims == 1 {
+            if num_claims == 1 && num_commitment_groups == 1 {
                 compute_m_evals_x::<F, D>(
                     setup,
                     opening_point,
@@ -268,7 +308,7 @@ where
                     &tau1,
                 )
             } else {
-                compute_m_evals_x_with_num_claims::<F, D>(
+                compute_m_evals_x_with_claim_groups::<F, D>(
                     setup,
                     opening_point,
                     challenges,
@@ -277,7 +317,7 @@ where
                     level_params,
                     layout,
                     &tau1,
-                    num_claims,
+                    claim_group_sizes,
                 )
             }
         },
@@ -285,7 +325,7 @@ where
     );
     #[cfg(not(feature = "parallel"))]
     let (m_evals_x_result, w_result) = {
-        let m_evals_x = if num_claims == 1 {
+        let m_evals_x = if num_claims == 1 && num_commitment_groups == 1 {
             compute_m_evals_x::<F, D>(
                 setup,
                 opening_point,
@@ -297,7 +337,7 @@ where
                 &tau1,
             )?
         } else {
-            compute_m_evals_x_with_num_claims::<F, D>(
+            compute_m_evals_x_with_claim_groups::<F, D>(
                 setup,
                 opening_point,
                 challenges,
@@ -306,7 +346,7 @@ where
                 level_params,
                 layout,
                 &tau1,
-                num_claims,
+                claim_group_sizes,
             )?
         };
         let w_compact = build_w_evals_compact(w.as_i8_digits(), D);
@@ -395,17 +435,53 @@ where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
 {
+    let claim_group_sizes = vec![1usize; num_claims];
+    ring_switch_verifier_with_claim_groups::<F, T, D>(
+        opening_point,
+        challenges,
+        setup,
+        w_len,
+        w_commitment,
+        transcript,
+        level_params,
+        layout,
+        &claim_group_sizes,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "ring_switch_verifier_with_claim_groups")]
+#[inline(never)]
+pub(crate) fn ring_switch_verifier_with_claim_groups<F, T, const D: usize>(
+    opening_point: &RingOpeningPoint<F>,
+    challenges: &[SparseChallenge],
+    setup: &HachiExpandedSetup<F>,
+    w_len: usize,
+    w_commitment: &ProofRingVec<F>,
+    transcript: &mut T,
+    level_params: &HachiLevelParams,
+    layout: HachiCommitmentLayout,
+    claim_group_sizes: &[usize],
+) -> Result<RingSwitchVerifyOutput<F>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling,
+    T: Transcript<F>,
+{
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
 
+    let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
+    let num_commitment_groups = claim_group_sizes.len();
+
     let num_ring_elems = w_len / D;
     let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
     let num_l = D.trailing_zeros() as usize;
-    let m_rows = if num_claims == 1 {
+    let m_rows = if num_claims == 1 && num_commitment_groups == 1 {
         m_row_count(level_params)
     } else {
-        level_params.m_row_count_with_public_outputs(num_claims)
+        level_params
+            .m_row_count_with_commitments_and_public_outputs(num_commitment_groups, num_claims)
     };
     let num_sc_vars = num_u + num_l;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
@@ -413,7 +489,7 @@ where
     let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
     let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
-    let m_evals_x = if num_claims == 1 {
+    let m_evals_x = if num_claims == 1 && num_commitment_groups == 1 {
         compute_m_evals_x::<F, D>(
             setup,
             opening_point,
@@ -425,7 +501,7 @@ where
             &tau1,
         )?
     } else {
-        compute_m_evals_x_with_num_claims::<F, D>(
+        compute_m_evals_x_with_claim_groups::<F, D>(
             setup,
             opening_point,
             challenges,
@@ -434,7 +510,7 @@ where
             level_params,
             layout,
             &tau1,
-            num_claims,
+            claim_group_sizes,
         )?
     };
 
@@ -593,17 +669,59 @@ pub(crate) fn w_ring_element_count<F: CanonicalField>(
     w_ring_element_count_with_num_claims::<F>(level_params, layout, 1)
 }
 
+fn checked_num_claims_from_group_sizes(claim_group_sizes: &[usize]) -> Result<usize, HachiError> {
+    if claim_group_sizes.is_empty() {
+        return Err(HachiError::InvalidSetup(
+            "claim groups must be nonempty".to_string(),
+        ));
+    }
+    claim_group_sizes
+        .iter()
+        .try_fold(0usize, |acc, &group_size| {
+            if group_size == 0 {
+                return Err(HachiError::InvalidSetup(
+                    "claim groups must be nonempty".to_string(),
+                ));
+            }
+            acc.checked_add(group_size)
+                .ok_or_else(|| HachiError::InvalidSetup("claim group count overflow".to_string()))
+        })
+}
+
+fn w_ring_element_count_with_counts<F: CanonicalField>(
+    level_params: &HachiLevelParams,
+    layout: HachiCommitmentLayout,
+    num_claims: usize,
+    num_commitment_groups: usize,
+) -> usize {
+    let w_hat_count = num_claims * layout.num_blocks * layout.num_digits_open;
+    let t_hat_count = num_claims * layout.num_blocks * level_params.n_a * layout.num_digits_open;
+    let z_pre_count = layout.inner_width * layout.num_digits_fold;
+    let r_rows = if num_claims == 1 && num_commitment_groups == 1 {
+        level_params.m_row_count()
+    } else {
+        level_params
+            .m_row_count_with_commitments_and_public_outputs(num_commitment_groups, num_claims)
+    };
+    let r_count = r_rows * r_decomp_levels::<F>(layout.log_basis);
+    w_hat_count + t_hat_count + z_pre_count + r_count
+}
+
 pub(crate) fn w_ring_element_count_with_num_claims<F: CanonicalField>(
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
     num_claims: usize,
 ) -> usize {
-    let w_hat_count = num_claims * layout.num_blocks * layout.num_digits_open;
-    let t_hat_count = num_claims * layout.num_blocks * level_params.n_a * layout.num_digits_open;
-    let z_pre_count = layout.inner_width * layout.num_digits_fold;
-    let r_count = level_params.m_row_count_with_public_outputs(num_claims)
-        * r_decomp_levels::<F>(layout.log_basis);
-    w_hat_count + t_hat_count + z_pre_count + r_count
+    w_ring_element_count_with_counts::<F>(level_params, layout, num_claims, num_claims)
+}
+
+pub(crate) fn w_ring_element_count_with_claim_groups<F: CanonicalField>(
+    level_params: &HachiLevelParams,
+    layout: HachiCommitmentLayout,
+    claim_group_sizes: &[usize],
+) -> usize {
+    let num_claims = claim_group_sizes.iter().sum();
+    w_ring_element_count_with_counts::<F>(level_params, layout, num_claims, claim_group_sizes.len())
 }
 
 /// Compute the w-commitment layout from the main layout.
@@ -891,17 +1009,41 @@ pub(crate) fn compute_m_evals_x_with_num_claims<F: FieldCore + CanonicalField, c
     tau1: &[F],
     num_claims: usize,
 ) -> Result<Vec<F>, HachiError> {
+    let claim_group_sizes = vec![1usize; num_claims];
+    compute_m_evals_x_with_claim_groups::<F, D>(
+        setup,
+        opening_point,
+        challenges,
+        alpha,
+        alpha_pows,
+        level_params,
+        layout,
+        tau1,
+        &claim_group_sizes,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "compute_m_evals_x_with_claim_groups")]
+pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField, const D: usize>(
+    setup: &HachiExpandedSetup<F>,
+    opening_point: &RingOpeningPoint<F>,
+    challenges: &[SparseChallenge],
+    alpha: F,
+    alpha_pows: &[F],
+    level_params: &HachiLevelParams,
+    layout: HachiCommitmentLayout,
+    tau1: &[F],
+    claim_group_sizes: &[usize],
+) -> Result<Vec<F>, HachiError> {
     if alpha_pows.len() != D {
         return Err(HachiError::InvalidSize {
             expected: D,
             actual: alpha_pows.len(),
         });
     }
-    if num_claims == 0 {
-        return Err(HachiError::InvalidSetup(
-            "compute_m_evals_x requires at least one claim".to_string(),
-        ));
-    }
+    let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
+    let num_commitment_groups = claim_group_sizes.len();
 
     let depth_commit = layout.num_digits_commit;
     let depth_open = layout.num_digits_open;
@@ -922,7 +1064,12 @@ pub(crate) fn compute_m_evals_x_with_num_claims<F: FieldCore + CanonicalField, c
     let t_len = depth_open * level_params.n_a * total_blocks;
     let inner_width = block_len * depth_commit;
     let z_len = depth_fold * inner_width;
-    let rows = level_params.m_row_count_with_public_outputs(num_claims);
+    let rows = if num_claims == 1 && num_commitment_groups == 1 {
+        level_params.m_row_count()
+    } else {
+        level_params
+            .m_row_count_with_commitments_and_public_outputs(num_commitment_groups, num_claims)
+    };
     let levels = r_decomp_levels::<F>(log_basis);
     let total_cols = w_len
         .checked_add(t_len)
@@ -952,10 +1099,18 @@ pub(crate) fn compute_m_evals_x_with_num_claims<F: FieldCore + CanonicalField, c
 
     let shared_view = setup.shared_matrix.view::<D>();
 
-    let row3_weights = &eq_tau1
-        [(level_params.n_d + level_params.n_b)..(level_params.n_d + level_params.n_b + num_claims)];
-    let row4_weight = eq_tau1[level_params.n_d + level_params.n_b + num_claims];
-    let a_weights = &eq_tau1[(level_params.n_d + level_params.n_b + num_claims + 1)..rows];
+    let commitment_row_count = level_params.n_b * num_commitment_groups;
+    let public_row_start = level_params.n_d + commitment_row_count;
+    let row3_weights = &eq_tau1[public_row_start..(public_row_start + num_claims)];
+    let row4_weight = eq_tau1[public_row_start + num_claims];
+    let a_weights = &eq_tau1[(public_row_start + num_claims + 1)..rows];
+    let claim_to_group: Vec<(usize, usize)> = claim_group_sizes
+        .iter()
+        .enumerate()
+        .flat_map(|(group_idx, &group_size)| {
+            (0..group_size).map(move |within_group| (group_idx, within_group))
+        })
+        .collect();
 
     let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
         .map(|x| {
@@ -980,21 +1135,23 @@ pub(crate) fn compute_m_evals_x_with_num_claims<F: FieldCore + CanonicalField, c
 
     let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
         .map(|x| {
-            let blocks_per_claim = level_params.n_a * depth_open * num_blocks;
-            let claim_idx = x / blocks_per_claim;
-            let claim_offset = x % blocks_per_claim;
+            let t_cols_per_claim = level_params.n_a * depth_open * num_blocks;
+            let claim_idx = x / t_cols_per_claim;
+            let claim_offset = x % t_cols_per_claim;
             let block_idx = claim_offset / (level_params.n_a * depth_open);
             let rem = claim_offset % (level_params.n_a * depth_open);
             let a_idx = rem / depth_open;
             let digit_idx = rem % depth_open;
             let global_block_idx = claim_idx * num_blocks + block_idx;
+            let (group_idx, claim_idx_within_group) = claim_to_group[claim_idx];
+            let local_col = claim_idx_within_group * t_cols_per_claim + claim_offset;
+            let commitment_weights = &eq_tau1[(level_params.n_d + group_idx * level_params.n_b)
+                ..(level_params.n_d + (group_idx + 1) * level_params.n_b)];
             let mut acc = a_weights[a_idx] * c_alphas[global_block_idx] * g1_open[digit_idx];
-            for (row_idx, eq_i) in eq_tau1[level_params.n_d..(level_params.n_d + level_params.n_b)]
-                .iter()
-                .enumerate()
-            {
+            for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&shared_view.row(row_idx)[x], alpha_pows);
+                    acc +=
+                        *eq_i * eval_ring_at_pows(&shared_view.row(row_idx)[local_col], alpha_pows);
                 }
             }
             acc

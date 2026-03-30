@@ -734,6 +734,12 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
         self.t.as_deref()
     }
 
+    /// Consume the hint and return its decomposed digits plus the optional
+    /// recomposed `t_i` rows.
+    pub fn into_parts(self) -> (Vec<Vec<[i8; D]>>, Option<Vec<Vec<CyclotomicRing<F, D>>>>) {
+        (self.inner_opening_digits, self.t)
+    }
+
     /// Populate the recomposed `t_i` rows from the inner-opening digits when
     /// they are absent.
     ///
@@ -787,10 +793,11 @@ impl<F: FieldCore, const D: usize> PartialEq for HachiCommitmentHint<F, D> {
 
 impl<F: FieldCore, const D: usize> Eq for HachiCommitmentHint<F, D> {}
 
-/// Prover-side hint produced by batched root commitment.
+/// Prover-side hint for one same-point commitment group.
 ///
 /// Stores per-polynomial `t_hat` blocks and, when available, the corresponding
-/// undecomposed `t_i` rows needed by later batched opening work.
+/// undecomposed `t_i` rows for all claims that were aggregated into the same
+/// commitment.
 #[derive(Debug, Clone)]
 pub struct HachiBatchedCommitmentHint<F: FieldCore, const D: usize> {
     /// Per-polynomial decomposed inner-opening digit blocks.
@@ -836,6 +843,27 @@ impl<F: FieldCore, const D: usize> HachiBatchedCommitmentHint<F, D> {
         match t {
             Some(t) => HachiCommitmentHint::with_t(inner_opening_digits, t),
             None => HachiCommitmentHint::new(inner_opening_digits),
+        }
+    }
+
+    /// Construct a batched hint by grouping standard per-polynomial hints.
+    pub fn from_commit_hints(hints: Vec<HachiCommitmentHint<F, D>>) -> Self {
+        let mut inner_opening_digits = Vec::with_capacity(hints.len());
+        let mut t = Vec::with_capacity(hints.len());
+        let mut has_t = true;
+        for hint in hints {
+            let (digits, rows) = hint.into_parts();
+            inner_opening_digits.push(digits);
+            match rows {
+                Some(rows) if has_t => t.push(rows),
+                Some(_) => {}
+                None => has_t = false,
+            }
+        }
+        if has_t {
+            Self::with_t(inner_opening_digits, t)
+        } else {
+            Self::new(inner_opening_digits)
         }
     }
 }

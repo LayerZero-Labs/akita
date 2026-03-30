@@ -26,9 +26,9 @@ use crate::protocol::proof::{
 use crate::protocol::quadratic_equation::{derive_stage1_challenges, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
 use crate::protocol::ring_switch::{
-    commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_num_claims,
-    ring_switch_verifier, ring_switch_verifier_with_num_claims, w_ring_element_count,
-    w_ring_element_count_with_num_claims, RingSwitchOutput, WCommitmentConfig,
+    commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
+    ring_switch_verifier, ring_switch_verifier_with_claim_groups, w_ring_element_count,
+    w_ring_element_count_with_claim_groups, RingSwitchOutput, WCommitmentConfig,
 };
 use crate::protocol::sumcheck::hachi_stage1::{HachiStage1Prover, HachiStage1Verifier};
 use crate::protocol::sumcheck::hachi_stage2::{
@@ -47,6 +47,8 @@ use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 use std::marker::PhantomData;
 use std::time::Instant;
 
+#[cfg(test)]
+use crate::protocol::ring_switch::w_ring_element_count_with_num_claims;
 #[cfg(test)]
 use crate::protocol::SmallTestCommitmentConfig;
 #[cfg(test)]
@@ -100,6 +102,66 @@ struct ProveLevelOutput<F: FieldCore> {
 struct BatchedProveLevelOutput<F: FieldCore> {
     root_proof: HachiBatchedRootProof<F>,
     next_state: RecursiveProverState<F>,
+}
+
+fn flatten_batched_commitment_rows<F: FieldCore, const D: usize>(
+    commitments: &[RingCommitment<F, D>],
+) -> Vec<CyclotomicRing<F, D>> {
+    commitments
+        .iter()
+        .flat_map(|commitment| commitment.u.iter().copied())
+        .collect()
+}
+
+fn append_batched_commitments_to_transcript<F, T, const D: usize>(
+    commitments: &[RingCommitment<F, D>],
+    transcript: &mut T,
+) where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    for commitment in commitments {
+        commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+    }
+}
+
+fn validate_nonempty_group_sizes<T>(
+    groups: &[&[T]],
+    label: &str,
+) -> Result<Vec<usize>, HachiError> {
+    if groups.is_empty() {
+        return Err(HachiError::InvalidInput(format!(
+            "{label} requires at least one group"
+        )));
+    }
+    let mut out = Vec::with_capacity(groups.len());
+    for (group_idx, group) in groups.iter().enumerate() {
+        if group.is_empty() {
+            return Err(HachiError::InvalidInput(format!(
+                "{label} group {group_idx} must be nonempty"
+            )));
+        }
+        out.push(group.len());
+    }
+    Ok(out)
+}
+
+fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize, HachiError> {
+    group_sizes.iter().try_fold(0usize, |acc, &group_size| {
+        acc.checked_add(group_size)
+            .ok_or_else(|| HachiError::InvalidInput(format!("{label} total claim count overflow")))
+    })
+}
+
+fn flatten_poly_groups<'a, P>(poly_groups: &[&'a [P]]) -> Vec<&'a P> {
+    poly_groups.iter().flat_map(|group| group.iter()).collect()
+}
+
+fn flatten_value_groups<T: Clone>(groups: &[&[T]]) -> Vec<T> {
+    groups
+        .iter()
+        .flat_map(|group| group.iter().cloned())
+        .collect()
 }
 
 /// Prove one fold level: quad_eq -> ring_switch -> sumcheck.
@@ -364,12 +426,13 @@ fn prove_batched_root_level<F, T, const D: usize, Cfg, P>(
     expanded: &HachiExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     commit_w_fn: CommitFn<'_, F>,
-    polys: &[P],
+    polys: &[&P],
+    claim_group_sizes: &[usize],
     max_num_vars: usize,
     opening_point: &[F],
-    hint: HachiBatchedCommitmentHint<F, D>,
+    hints: Vec<HachiBatchedCommitmentHint<F, D>>,
     transcript: &mut T,
-    commitment: &RingCommitment<F, D>,
+    commitments: &[RingCommitment<F, D>],
     basis: BasisMode,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
@@ -418,7 +481,7 @@ where
         (y_rings, w_folded_by_poly)
     };
 
-    commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+    append_batched_commitments_to_transcript(commitments, transcript);
     for pt in &padded_point {
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
     }
@@ -431,10 +494,11 @@ where
         ring_opening_point,
         polys,
         w_folded_by_poly,
+        claim_group_sizes,
         level_params.clone(),
-        hint,
+        hints,
         transcript,
-        commitment,
+        commitments,
         &y_rings,
         batched_layout,
     )?);
@@ -445,10 +509,10 @@ where
         commit_w_fn,
         max_num_vars,
         transcript,
-        &commitment.u,
+        commitments,
         level_params,
         batched_layout,
-        polys.len(),
+        claim_group_sizes,
         quad_eq,
         y_rings,
     )
@@ -462,10 +526,10 @@ fn finish_batched_root_level<F, T, const D: usize, Cfg>(
     commit_w_fn: CommitFn<'_, F>,
     max_num_vars: usize,
     transcript: &mut T,
-    commitment_u: &[CyclotomicRing<F, D>],
+    commitments: &[RingCommitment<F, D>],
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
-    num_claims: usize,
+    claim_group_sizes: &[usize],
     mut quad_eq: Box<QuadraticEquation<F, { D }, Cfg>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
 ) -> Result<BatchedProveLevelOutput<F>, HachiError>
@@ -474,6 +538,7 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
+    let commitment_rows = flatten_batched_commitment_rows(commitments);
     let w = ring_switch_build_w::<F, { D }, Cfg>(
         &mut quad_eq,
         expanded,
@@ -493,7 +558,7 @@ where
     };
     let w_commitment_proof = w_commitment_flat.to_proof_ring_vec();
 
-    let rs = ring_switch_finalize_with_num_claims::<F, T, { D }, Cfg>(
+    let rs = ring_switch_finalize_with_claim_groups::<F, T, { D }, Cfg>(
         &quad_eq,
         expanded,
         transcript,
@@ -503,11 +568,16 @@ where
         w_hint_cache,
         level_params,
         layout,
-        num_claims,
+        claim_group_sizes,
     )?;
 
-    let relation_claim =
-        relation_claim_from_rows::<F, D>(&rs.tau1, rs.alpha, &quad_eq.v, commitment_u, &y_rings);
+    let relation_claim = relation_claim_from_rows::<F, D>(
+        &rs.tau1,
+        rs.alpha,
+        &quad_eq.v,
+        &commitment_rows,
+        &y_rings,
+    );
     let RingSwitchOutput {
         w,
         w_commitment,
@@ -967,7 +1037,7 @@ where
     type Proof = HachiProof<F>;
     type BatchedProof = HachiBatchedProof<F>;
     type CommitHint = HachiCommitmentHint<F, D>;
-    type BatchedCommitHint = HachiBatchedCommitmentHint<F, D>;
+    type BatchedCommitHint = Vec<HachiBatchedCommitmentHint<F, D>>;
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::setup_prover")]
     fn setup_prover(max_num_vars: usize, max_num_batched_polys: usize) -> Self::ProverSetup {
@@ -1023,26 +1093,22 @@ where
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_commit")]
     fn batched_commit<P: HachiPolyOps<F, D>>(
-        polys: &[P],
+        poly_groups: &[&[P]],
         setup: &Self::ProverSetup,
         layout: &HachiCommitmentLayout,
-    ) -> Result<(Self::Commitment, Self::BatchedCommitHint), HachiError> {
-        if polys.is_empty() {
-            return Err(HachiError::InvalidInput(
-                "batched_commit requires at least one polynomial".to_string(),
-            ));
-        }
-        if polys.len() > setup.expanded.seed.max_num_batched_polys {
+    ) -> Result<(Vec<Self::Commitment>, Self::BatchedCommitHint), HachiError> {
+        let claim_group_sizes = validate_nonempty_group_sizes(poly_groups, "batched_commit")?;
+        let total_claims = checked_total_claims(&claim_group_sizes, "batched_commit")?;
+        if total_claims > setup.expanded.seed.max_num_batched_polys {
             return Err(HachiError::InvalidInput(format!(
-                "batched_commit received {} polynomials but setup supports at most {}",
-                polys.len(),
+                "batched_commit received {total_claims} polynomials but setup supports at most {}",
                 setup.expanded.seed.max_num_batched_polys
             )));
         }
         let batched_layout = scale_batched_root_layout::<Cfg, D>(
             setup.expanded.seed.max_num_vars,
             *layout,
-            polys.len(),
+            total_claims,
         )?;
         setup.ensure_layout_fits(&batched_layout)?;
         let root_params = Cfg::level_params(HachiScheduleInputs {
@@ -1051,56 +1117,58 @@ where
             current_w_len: root_current_w_len::<D>(*layout),
         });
 
-        let mut t_by_poly = Vec::with_capacity(polys.len());
-        let mut t_hat_by_poly = Vec::with_capacity(polys.len());
-        let mut inner_opening_digits_flat = Vec::with_capacity(polys.len() * layout.outer_width);
-        let poly_refs: Vec<&P> = polys.iter().collect();
-        let inner_witnesses = if let Some(witnesses) = P::commit_inner_witness_batched(
-            &poly_refs,
-            &setup.expanded.shared_matrix,
-            &setup.ntt_shared,
-            layout.block_len,
-            layout.num_digits_commit,
-            layout.num_digits_open,
-            layout.log_basis,
-        )? {
-            witnesses
-        } else {
-            polys
-                .iter()
-                .map(|poly| {
-                    poly.commit_inner_witness(
-                        &setup.expanded.shared_matrix,
-                        &setup.ntt_shared,
-                        layout.block_len,
-                        layout.num_digits_commit,
-                        layout.num_digits_open,
-                        layout.log_basis,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?
-        };
-        for mut inner in inner_witnesses {
-            for t_i in &mut inner.t {
-                t_i.truncate(root_params.n_a);
+        let mut commitments = Vec::with_capacity(poly_groups.len());
+        let mut hints = Vec::with_capacity(poly_groups.len());
+        for poly_group in poly_groups {
+            let poly_refs: Vec<&P> = poly_group.iter().collect();
+            let inner_witnesses = if let Some(witnesses) = P::commit_inner_witness_batched(
+                &poly_refs,
+                &setup.expanded.shared_matrix,
+                &setup.ntt_shared,
+                layout.block_len,
+                layout.num_digits_commit,
+                layout.num_digits_open,
+                layout.log_basis,
+            )? {
+                witnesses
+            } else {
+                poly_group
+                    .iter()
+                    .map(|poly| {
+                        poly.commit_inner_witness(
+                            &setup.expanded.shared_matrix,
+                            &setup.ntt_shared,
+                            layout.block_len,
+                            layout.num_digits_commit,
+                            layout.num_digits_open,
+                            layout.log_basis,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            let mut inner_opening_digits_flat = Vec::new();
+            let mut group_t_hat = Vec::with_capacity(poly_group.len());
+            let mut group_t = Vec::with_capacity(poly_group.len());
+            for mut inner in inner_witnesses {
+                for t_i in &mut inner.t {
+                    t_i.truncate(root_params.n_a);
+                }
+                for t_hat_i in &mut inner.t_hat {
+                    t_hat_i.truncate(root_params.n_a * layout.num_digits_open);
+                }
+                inner_opening_digits_flat.extend(flatten_i8_blocks(&inner.t_hat));
+                group_t_hat.push(inner.t_hat);
+                group_t.push(inner.t);
             }
-            for t_hat_i in &mut inner.t_hat {
-                t_hat_i.truncate(root_params.n_a * layout.num_digits_open);
-            }
-            inner_opening_digits_flat.extend(flatten_i8_blocks(&inner.t_hat));
-            t_by_poly.push(inner.t);
-            t_hat_by_poly.push(inner.t_hat);
+            let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
+                &setup.ntt_shared,
+                root_params.n_b,
+                &inner_opening_digits_flat,
+            );
+            commitments.push(RingCommitment { u });
+            hints.push(HachiBatchedCommitmentHint::with_t(group_t_hat, group_t));
         }
-
-        // The widened root setup packs logical B_ell slices consecutively, so a
-        // single mat-vec over the concatenated digits computes Σ_ell B_ell * t_hat_ell.
-        let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
-            &setup.ntt_shared,
-            root_params.n_b,
-            &inner_opening_digits_flat,
-        );
-        let hint = HachiBatchedCommitmentHint::with_t(t_hat_by_poly, t_by_poly);
-        Ok((RingCommitment { u }, hint))
+        Ok((commitments, hints))
     }
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::prove")]
@@ -1235,25 +1303,34 @@ where
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_prove")]
     fn batched_prove<T: Transcript<F>, P: HachiPolyOps<F, D>>(
         setup: &Self::ProverSetup,
-        polys: &[P],
+        poly_groups: &[&[P]],
         opening_point: &[F],
-        hint: Self::BatchedCommitHint,
+        hints: Self::BatchedCommitHint,
         transcript: &mut T,
-        commitment: &Self::Commitment,
+        commitments: &[Self::Commitment],
         basis: BasisMode,
         layout: &HachiCommitmentLayout,
     ) -> Result<Self::BatchedProof, HachiError> {
-        if polys.is_empty() {
-            return Err(HachiError::InvalidInput(
-                "batched_prove requires at least one polynomial".to_string(),
-            ));
-        }
-        if polys.len() > setup.expanded.seed.max_num_batched_polys {
+        let claim_group_sizes = validate_nonempty_group_sizes(poly_groups, "batched_prove")?;
+        let total_claims = checked_total_claims(&claim_group_sizes, "batched_prove")?;
+        if total_claims > setup.expanded.seed.max_num_batched_polys {
             return Err(HachiError::InvalidInput(format!(
-                "batched_prove received {} polynomials but setup supports at most {}",
-                polys.len(),
+                "batched_prove received {total_claims} polynomials but setup supports at most {}",
                 setup.expanded.seed.max_num_batched_polys
             )));
+        }
+        let hint_group_sizes: Vec<usize> = hints
+            .iter()
+            .map(|hint| hint.inner_opening_digits.len())
+            .collect();
+        if commitments.len() != poly_groups.len()
+            || hints.len() != poly_groups.len()
+            || hint_group_sizes != claim_group_sizes
+        {
+            return Err(HachiError::InvalidInput(
+                "batched_prove commitments, hints, and polynomial groups must have matching lengths"
+                    .to_string(),
+            ));
         }
 
         let t_prove_total = Instant::now();
@@ -1264,13 +1341,22 @@ where
         let max_num_vars = setup.expanded.seed.max_num_vars;
         let root_w_len = root_current_w_len::<D>(*layout);
         let batched_layout =
-            scale_batched_root_layout::<Cfg, D>(max_num_vars, *layout, polys.len())?;
+            scale_batched_root_layout::<Cfg, D>(max_num_vars, *layout, total_claims)?;
         setup.ensure_layout_fits(&batched_layout)?;
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars,
             level: 0,
             current_w_len: root_w_len,
         });
+        if commitments
+            .iter()
+            .any(|commitment| commitment.u.len() != root_params.n_b)
+        {
+            return Err(HachiError::InvalidInput(
+                "batched_prove received a commitment with the wrong length".to_string(),
+            ));
+        }
+        let flat_polys = flatten_poly_groups(poly_groups);
 
         let commit_fn_0: CommitFn<'_, F> = Box::new(
             |w: &RecursiveWitnessFlat,
@@ -1300,12 +1386,13 @@ where
             &setup.expanded,
             &setup.ntt_shared,
             commit_fn_0,
-            polys,
+            &flat_polys,
+            &claim_group_sizes,
             max_num_vars,
             opening_point,
-            hint,
+            hints,
             transcript,
-            commitment,
+            commitments,
             basis,
             &root_params,
             *layout,
@@ -1501,8 +1588,8 @@ where
         setup: &Self::VerifierSetup,
         transcript: &mut T,
         opening_point: &[F],
-        openings: &[F],
-        commitment: &Self::Commitment,
+        opening_groups: &[&[F]],
+        commitments: &[Self::Commitment],
         basis: BasisMode,
         layout: &HachiCommitmentLayout,
     ) -> Result<(), HachiError> {
@@ -1510,8 +1597,18 @@ where
         if y_coeff_len % D != 0 {
             return Err(HachiError::InvalidProof);
         }
-        let num_claims = y_coeff_len / D;
-        if num_claims == 0 || openings.len() != num_claims {
+        let claim_group_sizes = validate_nonempty_group_sizes(opening_groups, "batched_verify")
+            .map_err(|_| HachiError::InvalidProof)?;
+        let num_claims = checked_total_claims(&claim_group_sizes, "batched_verify")
+            .map_err(|_| HachiError::InvalidProof)?;
+        let openings = flatten_value_groups(opening_groups);
+        if num_claims == 0
+            || openings.len() != num_claims
+            || commitments.len() != opening_groups.len()
+        {
+            return Err(HachiError::InvalidProof);
+        }
+        if y_coeff_len / D != num_claims {
             return Err(HachiError::InvalidProof);
         }
         if num_claims > setup.expanded.max_num_batched_polys() {
@@ -1536,8 +1633,9 @@ where
             setup,
             transcript,
             opening_point,
-            openings,
-            commitment,
+            &openings,
+            commitments,
+            &claim_group_sizes,
             basis,
             &root_params,
             *layout,
@@ -1550,9 +1648,11 @@ where
             let alpha_bits = root_params.d.trailing_zeros() as usize;
             let num_l = alpha_bits;
             let num_u = root_challenges.len() - num_l;
-            let root_w_len =
-                w_ring_element_count_with_num_claims::<F>(&root_params, batched_layout, num_claims)
-                    * D;
+            let root_w_len = w_ring_element_count_with_claim_groups::<F>(
+                &root_params,
+                batched_layout,
+                &claim_group_sizes,
+            ) * D;
 
             let first_level_d = Cfg::level_params(HachiScheduleInputs {
                 max_num_vars,
@@ -1670,7 +1770,8 @@ fn verify_batched_root_level<F, T, const D: usize>(
     transcript: &mut T,
     opening_point: &[F],
     openings: &[F],
-    commitment: &RingCommitment<F, D>,
+    commitments: &[RingCommitment<F, D>],
+    claim_group_sizes: &[usize],
     basis: BasisMode,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
@@ -1684,9 +1785,21 @@ where
 {
     let y_rings = root_proof.y_rings().as_ring_slice::<D>()?;
     let v_typed = root_proof.v().as_ring_slice::<D>()?;
-    if y_rings.len() != openings.len() {
+    let num_claims = checked_total_claims(claim_group_sizes, "batched_verify")
+        .map_err(|_| HachiError::InvalidProof)?;
+    if y_rings.len() != openings.len()
+        || y_rings.len() != num_claims
+        || commitments.len() != claim_group_sizes.len()
+    {
         return Err(HachiError::InvalidProof);
     }
+    if commitments
+        .iter()
+        .any(|commitment| commitment.u.len() != level_params.n_b)
+    {
+        return Err(HachiError::InvalidProof);
+    }
+    let commitment_rows = flatten_batched_commitment_rows(commitments);
 
     let alpha_bits = level_params.d.trailing_zeros() as usize;
     if opening_point.len() < alpha_bits {
@@ -1700,7 +1813,7 @@ where
     let inner_point = &padded_point[..alpha_bits];
     let reduced_opening_point = &padded_point[alpha_bits..];
 
-    commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+    append_batched_commitments_to_transcript(commitments, transcript);
     for pt in &padded_point {
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
     }
@@ -1734,10 +1847,11 @@ where
     let w_len = if is_last {
         final_w.map_or(0, |fw| fw.num_elems)
     } else {
-        w_ring_element_count_with_num_claims::<F>(level_params, batched_layout, y_rings.len()) * D
+        w_ring_element_count_with_claim_groups::<F>(level_params, batched_layout, claim_group_sizes)
+            * D
     };
 
-    let rs = ring_switch_verifier_with_num_claims::<F, T, { D }>(
+    let rs = ring_switch_verifier_with_claim_groups::<F, T, { D }>(
         &ring_opening_point,
         &stage1_challenges,
         &setup.expanded,
@@ -1746,10 +1860,10 @@ where
         transcript,
         level_params,
         batched_layout,
-        y_rings.len(),
+        claim_group_sizes,
     )?;
     let relation_claim =
-        relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, &commitment.u, y_rings);
+        relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, &commitment_rows, y_rings);
     let stage1 = &root_proof.stage1;
     let stage2 = &root_proof.stage2;
     let stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), stage1.s_claim, rs.b);
@@ -1773,7 +1887,7 @@ where
             rs.m_evals_x,
             &rs.tau1,
             v_typed,
-            &commitment.u,
+            &commitment_rows,
             y_rings,
             rs.alpha,
             rs.num_u,
@@ -1788,7 +1902,7 @@ where
             rs.m_evals_x,
             &rs.tau1,
             v_typed,
-            &commitment.u,
+            &commitment_rows,
             y_rings,
             rs.alpha,
             rs.num_u,
@@ -2193,19 +2307,18 @@ mod tests {
 
         let (single_commitment, single_hint) =
             <Scheme as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout).unwrap();
-        let (batched_commitment, batched_hint) =
-            <Scheme as CommitmentScheme<F, D>>::batched_commit(&[&poly], &setup, &layout).unwrap();
+        let poly_groups = [std::slice::from_ref(&poly)];
+        let (batched_commitments, batched_hints) =
+            <Scheme as CommitmentScheme<F, D>>::batched_commit(&poly_groups, &setup, &layout)
+                .unwrap();
 
-        assert_eq!(batched_commitment, single_commitment);
-        assert_eq!(batched_hint.inner_opening_digits.len(), 1);
+        assert_eq!(batched_commitments, vec![single_commitment]);
+        assert_eq!(batched_hints.len(), 1);
         assert_eq!(
-            batched_hint.inner_opening_digits[0].as_slice(),
+            batched_hints[0].inner_opening_digits[0].as_slice(),
             single_hint.inner_opening_digits.as_slice()
         );
-        assert_eq!(
-            batched_hint.t().unwrap()[0].as_slice(),
-            single_hint.t().unwrap()
-        );
+        assert_eq!(batched_hints[0].t().unwrap()[0], single_hint.t().unwrap());
     }
 
     #[test]
@@ -2242,13 +2355,17 @@ mod tests {
                 BATCH_NUM_VARS,
                 BATCH_SIZE,
             );
-            let (batch_commitment, batch_hint) = <OneHotScheme as CommitmentScheme<
-                OneHotF,
-                ONEHOT_D,
-            >>::batched_commit(
-                &batch_polys, &batch_setup, &batch_layout
-            )
-            .expect("batched debug commit");
+            let batch_poly_refs: Vec<&OneHotPoly<OneHotF, ONEHOT_D, u8>> =
+                batch_polys.iter().collect();
+            let batch_poly_groups = [&batch_poly_refs[..]];
+            let (batch_commitments, batch_hints) =
+                <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_commit(
+                    &batch_poly_groups,
+                    &batch_setup,
+                    &batch_layout,
+                )
+                .expect("batched debug commit");
+            let batch_commitment_rows = flatten_batched_commitment_rows(&batch_commitments);
 
             let batch_point = debug_random_point(BATCH_NUM_VARS);
             let alpha = batch_root_params.d.trailing_zeros() as usize;
@@ -2275,7 +2392,7 @@ mod tests {
                 .unzip();
 
             let mut transcript = Blake2bTranscript::<OneHotF>::new(b"debug/relation-claim/batched");
-            batch_commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+            append_batched_commitments_to_transcript(&batch_commitments, &mut transcript);
             for pt in &padded_point {
                 transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
             }
@@ -2283,18 +2400,19 @@ mod tests {
                 transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
             }
 
-            let debug_batch_hint = batch_hint.clone();
+            let debug_batch_hint = batch_hints[0].clone();
             let debug_w_folded_by_poly = w_folded_by_poly.clone();
             let mut quad_eq = Box::new(
                 QuadraticEquation::<OneHotF, { ONEHOT_D }, OneHotCfg>::new_batched_prover(
                     &batch_setup.ntt_shared,
                     ring_opening_point.clone(),
-                    &batch_polys,
+                    &batch_poly_refs,
                     w_folded_by_poly,
+                    &[BATCH_SIZE],
                     batch_root_params.clone(),
-                    batch_hint,
+                    batch_hints,
                     &mut transcript,
-                    &batch_commitment,
+                    &batch_commitments,
                     &y_rings,
                     batched_root_layout,
                 )
@@ -2322,7 +2440,7 @@ mod tests {
             )
             .expect("debug batched w commit");
             let w_commitment_proof = w_commitment_flat.to_proof_ring_vec();
-            let rs = ring_switch_finalize_with_num_claims::<OneHotF, _, { ONEHOT_D }, OneHotCfg>(
+            let rs = ring_switch_finalize_with_claim_groups::<OneHotF, _, { ONEHOT_D }, OneHotCfg>(
                 &quad_eq,
                 &batch_setup.expanded,
                 &mut transcript,
@@ -2332,7 +2450,7 @@ mod tests {
                 w_hint_cache,
                 &batch_root_params,
                 batched_root_layout,
-                BATCH_SIZE,
+                &[BATCH_SIZE],
             )
             .expect("debug batched ring switch");
 
@@ -2340,7 +2458,7 @@ mod tests {
                 &rs.tau1,
                 rs.alpha,
                 &quad_eq.v,
-                &batch_commitment.u,
+                &batch_commitment_rows,
                 &y_rings,
             );
             let relation_sum = debug_relation_sum_from_tables(
@@ -2371,7 +2489,7 @@ mod tests {
                 * batched_root_layout.num_blocks
                 * BATCH_SIZE;
             let z_pre_len = batched_root_layout.inner_width * batched_root_layout.num_digits_fold;
-            let r_tail_len = batch_root_params.m_row_count_with_public_outputs(BATCH_SIZE)
+            let r_tail_len = batch_root_params.batched_root_m_row_count(BATCH_SIZE)
                 * crate::protocol::ring_switch::r_decomp_levels::<OneHotF>(
                     batched_root_layout.log_basis,
                 );
@@ -2408,13 +2526,13 @@ mod tests {
                 w_hat_len + t_hat_len + z_pre_len + r_tail_len,
             );
             let eq_tau1 = crate::algebra::eq_poly::EqPolynomial::evals(&rs.tau1);
-            let row3_start = batch_root_params.n_d + batch_root_params.n_b;
+            let row3_start = batch_root_params.n_d + batch_root_params.n_b * BATCH_SIZE;
             let row4_idx = row3_start + BATCH_SIZE;
             let a_row_start = row4_idx + 1;
             let row3_weights = &eq_tau1[row3_start..row4_idx];
             let row4_weight = eq_tau1[row4_idx];
-            let a_weights = &eq_tau1
-                [a_row_start..batch_root_params.m_row_count_with_public_outputs(BATCH_SIZE)];
+            let a_weights =
+                &eq_tau1[a_row_start..batch_root_params.batched_root_m_row_count(BATCH_SIZE)];
             let alpha_pows = &rs.alpha_evals_y;
             let eval_sparse_alpha = |challenge: &crate::algebra::SparseChallenge| -> OneHotF {
                 challenge
@@ -2464,15 +2582,13 @@ mod tests {
                     acc + eq_tau1[row_idx]
                         * crate::protocol::ring_switch::eval_ring_at(row, &rs.alpha)
                 });
-            let expected_b_sum = batch_commitment
-                .u
-                .iter()
-                .enumerate()
-                .take(batch_root_params.n_b)
-                .fold(OneHotF::zero(), |acc, (row_idx, row)| {
+            let expected_b_sum = batch_commitment_rows.iter().enumerate().fold(
+                OneHotF::zero(),
+                |acc, (row_idx, row)| {
                     acc + eq_tau1[batch_root_params.n_d + row_idx]
                         * crate::protocol::ring_switch::eval_ring_at(row, &rs.alpha)
-                });
+                },
+            );
             let expected_public_sum =
                 y_rings
                     .iter()
@@ -2600,7 +2716,7 @@ mod tests {
             };
             let debug_y = crate::protocol::quadratic_equation::generate_y::<OneHotF, ONEHOT_D>(
                 &quad_eq.v,
-                &batch_commitment.u,
+                &batch_commitment_rows,
                 &y_rings,
                 batch_root_params.n_d,
                 batch_root_params.n_b,
@@ -2619,6 +2735,8 @@ mod tests {
                     &debug_z.centered_coeffs,
                     debug_z.centered_inf_norm,
                     &debug_y,
+                    &[BATCH_SIZE],
+                    batched_root_layout.num_blocks,
                     &batch_setup.ntt_shared,
                 )
                 .expect("debug batched r");
@@ -2967,24 +3085,25 @@ mod tests {
             );
             let batch_verifier_setup =
                 <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(&batch_setup);
-            let (batch_commitment, batch_hint) = <OneHotScheme as CommitmentScheme<
-                OneHotF,
-                ONEHOT_D,
-            >>::batched_commit(
-                &batch_polys, &batch_setup, &batch_layout
-            )
-            .expect("batched debug commit");
+            let batch_poly_groups = [&batch_polys[..]];
+            let (batch_commitments, batch_hints) =
+                <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_commit(
+                    &batch_poly_groups,
+                    &batch_setup,
+                    &batch_layout,
+                )
+                .expect("batched debug commit");
 
             let _batched_prove_span = tracing::info_span!("debug_batched_prove").entered();
             let mut batch_prover_transcript =
                 Blake2bTranscript::<OneHotF>::new(b"debug/onehot/batched");
             let batch_proof = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_prove(
                 &batch_setup,
-                &batch_polys,
+                &batch_poly_groups,
                 &batch_point,
-                batch_hint,
+                batch_hints,
                 &mut batch_prover_transcript,
-                &batch_commitment,
+                &batch_commitments,
                 BasisMode::Lagrange,
                 &batch_layout,
             )
@@ -2992,13 +3111,14 @@ mod tests {
             drop(_batched_prove_span);
 
             let _batched_verify_span = tracing::info_span!("debug_batched_verify").entered();
+            let batch_opening_groups = [&batch_openings[..]];
             <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_verify(
                 &batch_proof,
                 &batch_verifier_setup,
                 &mut Blake2bTranscript::<OneHotF>::new(b"debug/onehot/batched"),
                 &batch_point,
-                &batch_openings,
-                &batch_commitment,
+                &batch_opening_groups,
+                &batch_commitments,
                 BasisMode::Lagrange,
                 &batch_layout,
             )
@@ -3008,7 +3128,7 @@ mod tests {
     }
 
     #[test]
-    fn batched_commit_uses_distinct_b_slices() {
+    fn batched_commit_matches_individual_commits() {
         let alpha = D.trailing_zeros() as usize;
         let layout = Cfg::commitment_layout(16).unwrap();
         let num_vars = layout.m_vars + layout.r_vars + alpha;
@@ -3018,34 +3138,24 @@ mod tests {
         let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
         let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
         let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2);
+        let poly_groups = [std::slice::from_ref(&poly_a), std::slice::from_ref(&poly_b)];
 
-        let (batched_commitment, batched_hint) =
-            <Scheme as CommitmentScheme<F, D>>::batched_commit(
-                &[&poly_a, &poly_b],
-                &setup,
-                &layout,
-            )
-            .unwrap();
+        let (batched_commitments, batched_hints) =
+            <Scheme as CommitmentScheme<F, D>>::batched_commit(&poly_groups, &setup, &layout)
+                .unwrap();
+        let (commitment_a, hint_a) =
+            <Scheme as CommitmentScheme<F, D>>::commit(&poly_a, &setup, &layout).unwrap();
+        let (commitment_b, hint_b) =
+            <Scheme as CommitmentScheme<F, D>>::commit(&poly_b, &setup, &layout).unwrap();
 
-        let root_params = Cfg::level_params(HachiScheduleInputs {
-            max_num_vars: setup.expanded.seed.max_num_vars,
-            level: 0,
-            current_w_len: root_current_w_len::<D>(layout),
-        });
-        let mut expected_u = vec![CyclotomicRing::<F, D>::zero(); root_params.n_b];
-        for (poly_idx, poly_digits) in batched_hint.inner_opening_digits.iter().enumerate() {
-            let mut padded_digits = vec![[0i8; D]; poly_idx * layout.outer_width];
-            padded_digits.extend(flatten_i8_blocks(poly_digits));
-            let contrib =
-                mat_vec_mul_ntt_single_i8(&setup.ntt_shared, root_params.n_b, &padded_digits);
-            for (expected, term) in expected_u.iter_mut().zip(contrib) {
-                *expected += term;
-            }
-        }
-
-        assert_eq!(batched_hint.inner_opening_digits.len(), 2);
-        assert_eq!(batched_hint.t().unwrap().len(), 2);
-        assert_eq!(batched_commitment.u, expected_u);
+        assert_eq!(batched_commitments, vec![commitment_a, commitment_b]);
+        assert_eq!(
+            batched_hints,
+            vec![
+                HachiBatchedCommitmentHint::from_commit_hints(vec![hint_a]),
+                HachiBatchedCommitmentHint::from_commit_hints(vec![hint_b]),
+            ]
+        );
     }
 
     #[test]
@@ -3060,12 +3170,11 @@ mod tests {
         let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
         let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
-        let (commitment, hint) = <Scheme as CommitmentScheme<F, D>>::batched_commit(
-            &[&poly_a, &poly_b],
-            &setup,
-            &layout,
-        )
-        .unwrap();
+        let poly_group = [&poly_a, &poly_b];
+        let poly_groups = [&poly_group[..]];
+        let (commitments, hints) =
+            <Scheme as CommitmentScheme<F, D>>::batched_commit(&poly_groups, &setup, &layout)
+                .unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 9) as u64)).collect();
         let openings = vec![
@@ -3076,11 +3185,11 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_a, &poly_b],
+            &poly_groups,
             &opening_point,
-            hint,
+            hints,
             &mut prover_transcript,
-            &commitment,
+            &commitments,
             BasisMode::Lagrange,
             &layout,
         )
@@ -3091,13 +3200,14 @@ mod tests {
         let proof = HachiBatchedProof::<F>::deserialize_uncompressed(&*bytes).unwrap();
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove");
+        let opening_groups = [&openings[..]];
         let result = <Scheme as CommitmentScheme<F, D>>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
             &opening_point,
-            &openings,
-            &commitment,
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
             &layout,
         );
@@ -3117,12 +3227,11 @@ mod tests {
         let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
         let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
-        let (commitment, hint) = <Scheme as CommitmentScheme<F, D>>::batched_commit(
-            &[&poly_a, &poly_b],
-            &setup,
-            &layout,
-        )
-        .unwrap();
+        let poly_group = [&poly_a, &poly_b];
+        let poly_groups = [&poly_group[..]];
+        let (commitments, hints) =
+            <Scheme as CommitmentScheme<F, D>>::batched_commit(&poly_groups, &setup, &layout)
+                .unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 4) as u64)).collect();
         let mut openings = vec![
@@ -3134,24 +3243,25 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/bad");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_a, &poly_b],
+            &poly_groups,
             &opening_point,
-            hint,
+            hints,
             &mut prover_transcript,
-            &commitment,
+            &commitments,
             BasisMode::Lagrange,
             &layout,
         )
         .unwrap();
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/bad");
+        let opening_groups = [&openings[..]];
         let result = <Scheme as CommitmentScheme<F, D>>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
             &opening_point,
-            &openings,
-            &commitment,
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
             &layout,
         );
@@ -3171,12 +3281,11 @@ mod tests {
         let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
         let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
-        let (commitment, hint) = <Scheme as CommitmentScheme<F, D>>::batched_commit(
-            &[&poly_a, &poly_b],
-            &setup,
-            &layout,
-        )
-        .unwrap();
+        let poly_group = [&poly_a, &poly_b];
+        let poly_groups = [&poly_group[..]];
+        let (commitments, hints) =
+            <Scheme as CommitmentScheme<F, D>>::batched_commit(&poly_groups, &setup, &layout)
+                .unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 6) as u64)).collect();
         let openings = vec![
@@ -3187,11 +3296,11 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/oversized");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_a, &poly_b],
+            &poly_groups,
             &opening_point,
-            hint,
+            hints,
             &mut prover_transcript,
-            &commitment,
+            &commitments,
             BasisMode::Lagrange,
             &layout,
         )
@@ -3204,6 +3313,7 @@ mod tests {
 
         let mut oversized_openings = openings;
         oversized_openings.push(F::zero());
+        let oversized_opening_groups = [&oversized_openings[..]];
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/oversized");
         let result = <Scheme as CommitmentScheme<F, D>>::batched_verify(
@@ -3211,8 +3321,8 @@ mod tests {
             &verifier_setup,
             &mut verifier_transcript,
             &opening_point,
-            &oversized_openings,
-            &commitment,
+            &oversized_opening_groups,
+            &commitments,
             BasisMode::Lagrange,
             &layout,
         );

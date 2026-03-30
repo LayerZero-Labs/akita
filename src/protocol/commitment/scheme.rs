@@ -87,17 +87,18 @@ where
     /// Commit to multiple polynomials sharing one opening point.
     ///
     /// The setup must be provisioned with `max_num_batched_polys` at least as
-    /// large as `polys.len()`. This only aggregates the root commitment layer;
-    /// proving and verification for batched openings are handled separately.
+    /// large as the total number of polynomials across all groups. Each inner
+    /// slice is one commitment group: its polynomials are aggregated into a
+    /// single commitment, while different groups keep separate commitments.
     ///
     /// # Errors
     ///
     /// Returns an error when setup/parameter constraints are not satisfied.
     fn batched_commit<P: HachiPolyOps<F, D>>(
-        polys: &[P],
+        poly_groups: &[&[P]],
         setup: &Self::ProverSetup,
         layout: &HachiCommitmentLayout,
-    ) -> Result<(Self::Commitment, Self::BatchedCommitHint), HachiError>;
+    ) -> Result<(Vec<Self::Commitment>, Self::BatchedCommitHint), HachiError>;
 
     /// Produce an opening proof at `opening_point` with a caller-specified layout.
     ///
@@ -124,8 +125,9 @@ where
 
     /// Produce a same-point batched opening proof for multiple polynomials.
     ///
-    /// The layout must match the one used during batched commitment. All
-    /// polynomials share the same `opening_point`.
+    /// The layout must match the one used during commitment for each
+    /// polynomial. All polynomials share the same `opening_point`, and
+    /// `commitments` must be provided in the same order as `poly_groups`.
     ///
     /// # Errors
     ///
@@ -133,11 +135,11 @@ where
     #[allow(clippy::too_many_arguments)]
     fn batched_prove<T: Transcript<F>, P: HachiPolyOps<F, D>>(
         setup: &Self::ProverSetup,
-        polys: &[P],
+        poly_groups: &[&[P]],
         opening_point: &[F],
         hint: Self::BatchedCommitHint,
         transcript: &mut T,
-        commitment: &Self::Commitment,
+        commitments: &[Self::Commitment],
         basis: BasisMode,
         layout: &HachiCommitmentLayout,
     ) -> Result<Self::BatchedProof, HachiError>;
@@ -168,7 +170,8 @@ where
     /// Verify a same-point batched opening proof.
     ///
     /// The verifier reconstructs the root layout deterministically and replays
-    /// the transcript against all claimed `openings` in slice order.
+    /// the transcript against all claimed `opening_groups` and `commitments` in
+    /// outer-slice order, then inner-slice order.
     ///
     /// # Errors
     ///
@@ -179,8 +182,8 @@ where
         setup: &Self::VerifierSetup,
         transcript: &mut T,
         opening_point: &[F],
-        openings: &[F],
-        commitment: &Self::Commitment,
+        opening_groups: &[&[F]],
+        commitments: &[Self::Commitment],
         basis: BasisMode,
         layout: &HachiCommitmentLayout,
     ) -> Result<(), HachiError>;

@@ -592,9 +592,11 @@ fn batched_onehot_same_point_round_trip() {
         let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 2);
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
-        let (commitment, hint) =
+        let poly_group = [&poly_a, &poly_b];
+        let poly_groups = [&poly_group[..]];
+        let (commitments, hints) =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(
-                &[&poly_a, &poly_b],
+                &poly_groups,
                 &setup,
                 &layout,
             )
@@ -603,11 +605,11 @@ fn batched_onehot_same_point_round_trip() {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot");
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_a, &poly_b],
+            &poly_groups,
             &pt,
-            hint,
+            hints,
             &mut prover_transcript,
-            &commitment,
+            &commitments,
             BasisMode::Lagrange,
             &layout,
         )
@@ -622,13 +624,14 @@ fn batched_onehot_same_point_round_trip() {
             .expect("deserialize batched onehot proof");
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot");
+        let opening_groups = [&openings[..]];
         let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
             &pt,
-            &openings,
-            &commitment,
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
             &layout,
         );
@@ -680,20 +683,23 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, BATCH_SIZE);
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
-        let (commitment, hint) =
+        let poly_groups = [&poly_refs[..]];
+        let (commitments, hints) =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(
-                &poly_refs, &setup, &layout,
+                &poly_groups,
+                &setup,
+                &layout,
             )
             .unwrap();
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-4x30");
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &poly_refs,
+            &poly_groups,
             &pt,
-            hint,
+            hints,
             &mut prover_transcript,
-            &commitment,
+            &commitments,
             BasisMode::Lagrange,
             &layout,
         )
@@ -714,13 +720,14 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         );
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-4x30");
+        let opening_groups = [&openings[..]];
         let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
             &pt,
-            &openings,
-            &commitment,
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
             &layout,
         );

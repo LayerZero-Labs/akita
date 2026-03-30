@@ -448,7 +448,7 @@ where
         Cfg::planner_half_field_bound(),
         root_layout.log_basis,
     );
-    let row_count = root_params.m_row_count_with_public_outputs(num_claims);
+    let row_count = root_params.batched_root_m_row_count(num_claims);
 
     let mut best = None;
     for r_vars in 1..reduced_vars {

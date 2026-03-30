@@ -182,9 +182,13 @@ fn bench_batched_case(c: &mut Criterion) {
     );
     let verifier_setup =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
-    let (commitment, hint) =
+    let poly_groups = [&polys[..]];
+    let opening_groups = [&openings[..]];
+    let (commitments, hints) =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(
-            &polys, &setup, &layout,
+            &poly_groups,
+            &setup,
+            &layout,
         )
         .expect("batched commit");
 
@@ -195,17 +199,17 @@ fn bench_batched_case(c: &mut Criterion) {
         b.iter_custom(|iters| {
             let mut total = Duration::ZERO;
             for _ in 0..iters {
-                let prove_hint = hint.clone();
+                let prove_hint = hints.clone();
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
                 let start = Instant::now();
                 let proof =
                     <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
                         &setup,
-                        &polys,
+                        &poly_groups,
                         &point,
                         prove_hint,
                         &mut transcript,
-                        &commitment,
+                        &commitments,
                         BasisMode::Lagrange,
                         &layout,
                     )
@@ -220,11 +224,11 @@ fn bench_batched_case(c: &mut Criterion) {
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &polys,
+        &poly_groups,
         &point,
-        hint,
+        hints,
         &mut prover_transcript,
-        &commitment,
+        &commitments,
         BasisMode::Lagrange,
         &layout,
     )
@@ -241,8 +245,8 @@ fn bench_batched_case(c: &mut Criterion) {
                     &verifier_setup,
                     &mut transcript,
                     &point,
-                    &openings,
-                    &commitment,
+                    &opening_groups,
+                    &commitments,
                     BasisMode::Lagrange,
                     &layout,
                 )

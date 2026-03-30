@@ -98,7 +98,7 @@ impl CommitmentScheme<F, 1> for DummyScheme {
     type Proof = DummyProof;
     type BatchedProof = DummyProof;
     type CommitHint = HachiCommitment;
-    type BatchedCommitHint = HachiCommitment;
+    type BatchedCommitHint = Vec<HachiCommitment>;
 
     fn setup_prover(max_num_vars: usize, _max_num_batched_polys: usize) -> Self::ProverSetup {
         DummySetup {
@@ -120,12 +120,12 @@ impl CommitmentScheme<F, 1> for DummyScheme {
     }
 
     fn batched_commit<P: HachiPolyOps<F, 1>>(
-        _polys: &[P],
+        poly_groups: &[&[P]],
         _setup: &Self::ProverSetup,
         _layout: &HachiCommitmentLayout,
-    ) -> Result<(Self::Commitment, Self::BatchedCommitHint), HachiError> {
+    ) -> Result<(Vec<Self::Commitment>, Self::BatchedCommitHint), HachiError> {
         let c = HachiCommitment(0);
-        Ok((c, c))
+        Ok((vec![c; poly_groups.len()], vec![c; poly_groups.len()]))
     }
 
     fn prove<T: Transcript<F>, P: HachiPolyOps<F, 1>>(
@@ -145,15 +145,17 @@ impl CommitmentScheme<F, 1> for DummyScheme {
 
     fn batched_prove<T: Transcript<F>, P: HachiPolyOps<F, 1>>(
         _setup: &Self::ProverSetup,
-        _polys: &[P],
+        _poly_groups: &[&[P]],
         _opening_point: &[F],
         _hint: Self::BatchedCommitHint,
         transcript: &mut T,
-        commitment: &Self::Commitment,
+        commitments: &[Self::Commitment],
         _basis: BasisMode,
         _layout: &HachiCommitmentLayout,
     ) -> Result<Self::BatchedProof, HachiError> {
-        commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
+        for commitment in commitments {
+            commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
+        }
         let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
         Ok(DummyProof(q.to_canonical_u128()))
     }
@@ -182,12 +184,14 @@ impl CommitmentScheme<F, 1> for DummyScheme {
         _setup: &Self::VerifierSetup,
         transcript: &mut T,
         _opening_point: &[F],
-        _openings: &[F],
-        commitment: &Self::Commitment,
+        _opening_groups: &[&[F]],
+        commitments: &[Self::Commitment],
         _basis: BasisMode,
         _layout: &HachiCommitmentLayout,
     ) -> Result<(), HachiError> {
-        commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
+        for commitment in commitments {
+            commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
+        }
         let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
         if proof.0 == q.to_canonical_u128() {
             Ok(())

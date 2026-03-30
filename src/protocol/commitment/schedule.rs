@@ -48,6 +48,23 @@ impl HachiLevelParams {
     pub fn m_row_count_with_public_outputs(&self, num_public_outputs: usize) -> usize {
         self.n_d + self.n_b + num_public_outputs + 1 + self.n_a
     }
+
+    /// Total number of quotient / relation rows when the root carries
+    /// `num_commitments` explicit commitment vectors and `num_public_outputs`
+    /// public `y` rows.
+    pub fn m_row_count_with_commitments_and_public_outputs(
+        &self,
+        num_commitments: usize,
+        num_public_outputs: usize,
+    ) -> usize {
+        self.n_d + self.n_b * num_commitments + num_public_outputs + 1 + self.n_a
+    }
+
+    /// Total number of root-batched quotient / relation rows when each claim
+    /// keeps its own commitment vector.
+    pub fn batched_root_m_row_count(&self, num_claims: usize) -> usize {
+        self.m_row_count_with_commitments_and_public_outputs(num_claims, num_claims)
+    }
 }
 
 fn with_log_basis(mut decomp: DecompositionParams, log_basis: u32) -> DecompositionParams {

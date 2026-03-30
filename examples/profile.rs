@@ -410,6 +410,8 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig>(
         .map(|poly| opening_from_poly(poly, &pt, layout, BasisMode::Lagrange))
         .collect();
     let poly_refs: Vec<&OneHotPoly<F, D, u8>> = polys.iter().collect();
+    let poly_groups = [&poly_refs[..]];
+    let opening_groups = [&openings[..]];
 
     let t0 = Instant::now();
     let setup = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, num_polys);
@@ -420,8 +422,8 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig>(
     );
 
     let t0 = Instant::now();
-    let (commitment, hint) =
-        <Scheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(&poly_refs, &setup, layout)
+    let (commitments, hints) =
+        <Scheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(&poly_groups, &setup, layout)
             .unwrap();
     tracing::info!(
         label = "onehot",
@@ -433,11 +435,11 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig>(
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
     let proof = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &poly_refs,
+        &poly_groups,
         &pt,
-        hint,
+        hints,
         &mut prover_transcript,
-        &commitment,
+        &commitments,
         BasisMode::Lagrange,
         layout,
     )
@@ -457,8 +459,8 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig>(
         &verifier_setup,
         &mut verifier_transcript,
         &pt,
-        &openings,
-        &commitment,
+        &opening_groups,
+        &commitments,
         BasisMode::Lagrange,
         layout,
     ) {
