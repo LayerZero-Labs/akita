@@ -63,3 +63,5 @@ jobs:
         uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # nextest
       - name: Run tests
         run: cargo nextest run --all-features
+      - name: Planner validation
+        run: cargo run -p hachi-planner -- --validate
