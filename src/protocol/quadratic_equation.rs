@@ -130,7 +130,7 @@ where
             mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, &w_hat_flat)
         };
 
-        transcript.append_serde(ABSORB_PROVER_V, &v);
+        transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
 
         let challenges = sample_sparse_challenges::<F, T, D>(
             transcript,
@@ -220,7 +220,7 @@ where
             mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, &w_hat_flat)
         };
 
-        transcript.append_serde(ABSORB_PROVER_V, &v);
+        transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
 
         let challenges = sample_sparse_challenges::<F, T, D>(
             transcript,
@@ -573,7 +573,7 @@ mod tests {
 
     fn replay_challenges(v: &Vec<CyclotomicRing<F, D>>) -> Vec<CyclotomicRing<F, D>> {
         let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_SEED);
-        transcript.append_serde(ABSORB_PROVER_V, v);
+        transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(v));
 
         let challenge_cfg = TinyConfig::stage1_challenge_config(D);
         let sparse = sample_sparse_challenges::<F, Blake2bTranscript<F>, D>(

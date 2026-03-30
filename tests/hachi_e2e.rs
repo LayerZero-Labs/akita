@@ -427,7 +427,7 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
             .serialize_compressed(&mut proof_bytes)
             .expect("serialize adaptive proof");
         let mut cursor = std::io::Cursor::new(proof_bytes);
-        let decoded = HachiProof::<F>::deserialize_compressed(&mut cursor)
+        let decoded = HachiProof::<F>::deserialize_compressed(&mut cursor, &plan.to_proof_shape())
             .expect("deserialize adaptive proof");
         assert_eq!(decoded, proof);
 
@@ -520,7 +520,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             .serialize_compressed(&mut serialized)
             .expect("serialize adaptive onehot proof");
         let mut cursor = std::io::Cursor::new(serialized);
-        let decoded = HachiProof::<F>::deserialize_compressed(&mut cursor)
+        let decoded = HachiProof::<F>::deserialize_compressed(&mut cursor, &plan.to_proof_shape())
             .expect("deserialize adaptive onehot proof");
         assert_eq!(
             decoded.tail.direct.bits_per_elem,

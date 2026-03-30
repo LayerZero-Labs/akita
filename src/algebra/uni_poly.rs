@@ -148,12 +148,15 @@ impl<E: FieldCore> HachiSerialize for UniPoly<E> {
 }
 
 impl<E: FieldCore + Valid> HachiDeserialize for UniPoly<E> {
+    type Context = ();
+
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let coeffs = Vec::<E>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let coeffs = Vec::<E>::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self { coeffs };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -248,25 +251,40 @@ impl<E: FieldCore> HachiSerialize for CompressedUniPoly<E> {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.coeffs_except_linear_term
-            .serialize_with_mode(&mut writer, compress)
+        for c in &self.coeffs_except_linear_term {
+            c.serialize_with_mode(&mut writer, compress)?;
+        }
+        Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.coeffs_except_linear_term.serialized_size(compress)
+        self.coeffs_except_linear_term
+            .iter()
+            .map(|c| c.serialized_size(compress))
+            .sum()
     }
 }
 
 impl<E: FieldCore + Valid> HachiDeserialize for CompressedUniPoly<E> {
+    /// Degree of the polynomial (= number of coefficients to read).
+    type Context = usize;
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
+        degree: &usize,
     ) -> Result<Self, SerializationError> {
-        let coeffs_except_linear_term =
-            Vec::<E>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let mut coeffs = Vec::with_capacity(*degree);
+        for _ in 0..*degree {
+            coeffs.push(E::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?);
+        }
         let out = Self {
-            coeffs_except_linear_term,
+            coeffs_except_linear_term: coeffs,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;

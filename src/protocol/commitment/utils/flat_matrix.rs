@@ -210,18 +210,25 @@ impl<F: FieldCore> HachiSerialize for FlatMatrix<F> {
 }
 
 impl<F: FieldCore + Valid> HachiDeserialize for FlatMatrix<F> {
+    type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let num_rows = usize::deserialize_with_mode(&mut reader, compress, validate)?;
-        let cols_ring = usize::deserialize_with_mode(&mut reader, compress, validate)?;
-        let gen_ring_dim = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let num_rows = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let cols_ring = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let gen_ring_dim = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let total = num_rows * cols_ring * gen_ring_dim;
         let mut data = Vec::with_capacity(total);
         for _ in 0..total {
-            data.push(F::deserialize_with_mode(&mut reader, compress, validate)?);
+            data.push(F::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?);
         }
         let out = Self {
             data,

@@ -29,7 +29,7 @@ pub trait FieldCore:
     AdditiveGroup
     + PartialEq
     + HachiSerialize
-    + HachiDeserialize
+    + HachiDeserialize<Context = ()>
     + std::ops::Mul<Output = Self>
     + for<'a> std::ops::Add<&'a Self, Output = Self>
     + for<'a> std::ops::Sub<&'a Self, Output = Self>

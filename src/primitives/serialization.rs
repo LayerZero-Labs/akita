@@ -95,46 +95,54 @@ pub trait HachiSerialize {
 }
 
 /// Deserializer in little endian format.
-pub trait HachiDeserialize {
-    /// Deserialize with customization flags.
+///
+/// The [`Context`](Self::Context) associated type carries any shape information
+/// that the deserializer cannot recover from the byte stream itself. Fixed-size
+/// types (primitives, field elements, rings) use `Context = ()`. Proof types
+/// whose headers have been stripped use a schedule-derived shape descriptor.
+pub trait HachiDeserialize: Sized {
+    /// External shape context needed for deserialization. `()` for
+    /// self-describing types.
+    type Context;
+
+    /// Deserialize with customization flags and external context.
     fn deserialize_with_mode<R: Read>(
         reader: R,
         compress: Compress,
         validate: Validate,
-    ) -> Result<Self, SerializationError>
-    where
-        Self: Sized;
+        ctx: &Self::Context,
+    ) -> Result<Self, SerializationError>;
 
     /// Deserialize from compressed form with validation.
-    fn deserialize_compressed<R: Read>(reader: R) -> Result<Self, SerializationError>
-    where
-        Self: Sized,
-    {
-        Self::deserialize_with_mode(reader, Compress::Yes, Validate::Yes)
+    fn deserialize_compressed<R: Read>(
+        reader: R,
+        ctx: &Self::Context,
+    ) -> Result<Self, SerializationError> {
+        Self::deserialize_with_mode(reader, Compress::Yes, Validate::Yes, ctx)
     }
 
     /// Deserialize from compressed form without validation.
-    fn deserialize_compressed_unchecked<R: Read>(reader: R) -> Result<Self, SerializationError>
-    where
-        Self: Sized,
-    {
-        Self::deserialize_with_mode(reader, Compress::Yes, Validate::No)
+    fn deserialize_compressed_unchecked<R: Read>(
+        reader: R,
+        ctx: &Self::Context,
+    ) -> Result<Self, SerializationError> {
+        Self::deserialize_with_mode(reader, Compress::Yes, Validate::No, ctx)
     }
 
     /// Deserialize from uncompressed form with validation.
-    fn deserialize_uncompressed<R: Read>(reader: R) -> Result<Self, SerializationError>
-    where
-        Self: Sized,
-    {
-        Self::deserialize_with_mode(reader, Compress::No, Validate::Yes)
+    fn deserialize_uncompressed<R: Read>(
+        reader: R,
+        ctx: &Self::Context,
+    ) -> Result<Self, SerializationError> {
+        Self::deserialize_with_mode(reader, Compress::No, Validate::Yes, ctx)
     }
 
     /// Deserialize from uncompressed form without validation.
-    fn deserialize_uncompressed_unchecked<R: Read>(reader: R) -> Result<Self, SerializationError>
-    where
-        Self: Sized,
-    {
-        Self::deserialize_with_mode(reader, Compress::No, Validate::No)
+    fn deserialize_uncompressed_unchecked<R: Read>(
+        reader: R,
+        ctx: &Self::Context,
+    ) -> Result<Self, SerializationError> {
+        Self::deserialize_with_mode(reader, Compress::No, Validate::No, ctx)
     }
 }
 
@@ -165,10 +173,12 @@ mod primitive_impls {
             }
 
             impl HachiDeserialize for $t {
+                type Context = ();
                 fn deserialize_with_mode<R: Read>(
                     mut reader: R,
                     _compress: Compress,
                     _validate: Validate,
+                    _ctx: &(),
                 ) -> Result<Self, SerializationError> {
                     let mut bytes = [0u8; $size];
                     reader.read_exact(&mut bytes)?;
@@ -210,12 +220,14 @@ mod primitive_impls {
     }
 
     impl HachiDeserialize for usize {
+        type Context = ();
         fn deserialize_with_mode<R: Read>(
             reader: R,
             compress: Compress,
             validate: Validate,
+            _ctx: &(),
         ) -> Result<Self, SerializationError> {
-            let val = u64::deserialize_with_mode(reader, compress, validate)?;
+            let val = u64::deserialize_with_mode(reader, compress, validate, &())?;
             Ok(val as usize)
         }
     }
@@ -242,10 +254,12 @@ mod primitive_impls {
     }
 
     impl HachiDeserialize for bool {
+        type Context = ();
         fn deserialize_with_mode<R: Read>(
             mut reader: R,
             _compress: Compress,
             _validate: Validate,
+            _ctx: &(),
         ) -> Result<Self, SerializationError> {
             let mut byte = [0u8; 1];
             reader.read_exact(&mut byte)?;
@@ -288,16 +302,23 @@ mod primitive_impls {
         }
     }
 
-    impl<T: HachiDeserialize> HachiDeserialize for Vec<T> {
+    impl<T: HachiDeserialize<Context = ()>> HachiDeserialize for Vec<T> {
+        type Context = ();
         fn deserialize_with_mode<R: Read>(
             mut reader: R,
             compress: Compress,
             validate: Validate,
+            _ctx: &(),
         ) -> Result<Self, SerializationError> {
-            let len = u64::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+            let len = u64::deserialize_with_mode(&mut reader, compress, validate, &())? as usize;
             let mut vec = Vec::with_capacity(len);
             for _ in 0..len {
-                vec.push(T::deserialize_with_mode(&mut reader, compress, validate)?);
+                vec.push(T::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    &(),
+                )?);
             }
             Ok(vec)
         }
