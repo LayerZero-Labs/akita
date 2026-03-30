@@ -1064,7 +1064,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
     }
 }
 
-/// Root proof payload for same-point batched openings.
+/// Root proof payload for fused batched openings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiBatchedRootProof<F: FieldCore> {
     /// Root public outputs `y_ell` stored as a ring vector.
@@ -1150,7 +1150,7 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
     }
 }
 
-/// Hachi PCS proof for same-point batched openings.
+/// Hachi PCS proof for fused batched openings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiBatchedProof<F: FieldCore> {
     /// Batched root proof over all original-polynomial claims.

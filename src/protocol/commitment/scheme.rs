@@ -100,6 +100,24 @@ where
         layout: &HachiCommitmentLayout,
     ) -> Result<(Vec<Self::Commitment>, Self::BatchedCommitHint), HachiError>;
 
+    /// Commit to grouped polynomial batches at multiple opening points.
+    ///
+    /// The outer slice indexes opening points. Each point carries the same
+    /// grouped batching structure as [`Self::batched_commit`]: each inner slice
+    /// is one commitment group and is aggregated into one commitment.
+    ///
+    /// The setup must be provisioned with `max_num_batched_polys` at least as
+    /// large as the total number of polynomials across **all** points.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when setup/parameter constraints are not satisfied.
+    fn multipoint_batched_commit<P: HachiPolyOps<F, D>>(
+        poly_groups_by_point: &[&[&[P]]],
+        setup: &Self::ProverSetup,
+        layout: &HachiCommitmentLayout,
+    ) -> Result<(Vec<Vec<Self::Commitment>>, Vec<Self::BatchedCommitHint>), HachiError>;
+
     /// Produce an opening proof at `opening_point` with a caller-specified layout.
     ///
     /// The layout must match the one used during commitment. Recursive w-opening
@@ -144,6 +162,32 @@ where
         layout: &HachiCommitmentLayout,
     ) -> Result<Self::BatchedProof, HachiError>;
 
+    /// Produce a fused batched opening proof for multiple opening points.
+    ///
+    /// The outer slice indexes opening points. For each point, the prover
+    /// receives the same grouped batching structure as [`Self::batched_prove`]:
+    /// `poly_groups_by_point[j][g]` is one commitment group at point `j`.
+    ///
+    /// The layout must match the one used during commitment for each
+    /// polynomial. `commitments_by_point[j]` must be provided in the same order
+    /// as `poly_groups_by_point[j]`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any opening point is invalid or proof generation
+    /// fails.
+    #[allow(clippy::too_many_arguments)]
+    fn multipoint_batched_prove<T: Transcript<F>, P: HachiPolyOps<F, D>>(
+        setup: &Self::ProverSetup,
+        poly_groups_by_point: &[&[&[P]]],
+        opening_points: &[&[F]],
+        hints_by_point: Vec<Self::BatchedCommitHint>,
+        transcript: &mut T,
+        commitments_by_point: &[&[Self::Commitment]],
+        basis: BasisMode,
+        layout: &HachiCommitmentLayout,
+    ) -> Result<Self::BatchedProof, HachiError>;
+
     /// Verify an opening proof with a caller-specified layout.
     ///
     /// The layout must be reconstructed deterministically by the verifier —
@@ -184,6 +228,27 @@ where
         opening_point: &[F],
         opening_groups: &[&[F]],
         commitments: &[Self::Commitment],
+        basis: BasisMode,
+        layout: &HachiCommitmentLayout,
+    ) -> Result<(), HachiError>;
+
+    /// Verify a fused batched opening proof over multiple opening points.
+    ///
+    /// The verifier reconstructs the root layout deterministically and replays
+    /// the transcript against all `opening_points`, `opening_groups_by_point`,
+    /// and `commitments_by_point` in point-major, then group-major order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when verification fails.
+    #[allow(clippy::too_many_arguments)]
+    fn multipoint_batched_verify<T: Transcript<F>>(
+        proof: &Self::BatchedProof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut T,
+        opening_points: &[&[F]],
+        opening_groups_by_point: &[&[&[F]]],
+        commitments_by_point: &[&[Self::Commitment]],
         basis: BasisMode,
         layout: &HachiCommitmentLayout,
     ) -> Result<(), HachiError>;

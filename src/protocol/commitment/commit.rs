@@ -32,7 +32,9 @@ use crate::protocol::commitment_scheme::should_stop_folding;
 use crate::protocol::hachi_poly_ops::OneHotIndex;
 #[cfg(test)]
 use crate::protocol::ring_switch::w_commitment_layout;
-use crate::protocol::ring_switch::{w_ring_element_count, w_ring_element_count_with_num_claims};
+use crate::protocol::ring_switch::{
+    w_ring_element_count, w_ring_element_count_with_num_claims_and_points,
+};
 use crate::{cfg_into_iter, cfg_iter, CanonicalField, FieldCore, FieldSampling};
 #[cfg(feature = "disk-persistence")]
 use std::fs;
@@ -46,7 +48,7 @@ use std::sync::Arc;
 pub struct HachiSetupSeed {
     /// Maximum supported variable count.
     pub max_num_vars: usize,
-    /// Maximum number of same-point batched polynomials supported by setup.
+    /// Maximum number of batched polynomials supported by setup.
     pub max_num_batched_polys: usize,
     /// Runtime commitment layout envelope.
     pub layout: HachiCommitmentLayout,
@@ -486,8 +488,9 @@ where
         let t_hat_count = w_hat_count
             .checked_mul(root_params.n_a)
             .ok_or_else(|| HachiError::InvalidSetup("t_hat count overflow".to_string()))?;
-        let z_pre_count = block_len
-            .checked_mul(root_layout.num_digits_commit)
+        let z_pre_count = num_claims
+            .checked_mul(block_len)
+            .and_then(|count| count.checked_mul(root_layout.num_digits_commit))
             .and_then(|count| count.checked_mul(num_digits_fold))
             .ok_or_else(|| HachiError::InvalidSetup("z_pre count overflow".to_string()))?;
         let r_count = row_count
@@ -582,13 +585,15 @@ where
     scale_batched_root_layout::<Cfg, D>(max_num_vars, optimized_root_layout, max_num_batched_polys)
 }
 
-/// Derive the per-polynomial root layout for a same-point batched opening.
+/// Derive the per-polynomial root layout for a batched opening.
 ///
 /// This returns the batch-aware `(m_vars, r_vars)` split that batched callers
 /// should use when constructing root polynomials. The returned layout keeps the
 /// per-polynomial `B`/`D` widths, while the internal `root_batched_layout`
 /// reapplies the same split and then widens those matrices by `num_claims`
-/// for setup/proof internals.
+/// for setup/proof internals. The same helper is also used for fused
+/// multipoint batching, where `num_claims` is the total number of claims
+/// across all opening points.
 ///
 /// # Errors
 ///
@@ -667,9 +672,10 @@ where
         .checked_mul(max_num_batched_polys)
         .unwrap_or(usize::MAX);
     let mut level = 1usize;
-    let mut current_w_len = w_ring_element_count_with_num_claims::<F>(
+    let mut current_w_len = w_ring_element_count_with_num_claims_and_points::<F>(
         &root_params,
         batched_root_layout,
+        max_num_batched_polys,
         max_num_batched_polys,
     ) * root_params.d;
     let mut current_params = Cfg::level_params(HachiScheduleInputs {
