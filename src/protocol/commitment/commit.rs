@@ -478,7 +478,7 @@ fn load_expanded_setup<F: FieldCore + Valid, Cfg: CommitmentConfig>(
         .map_err(|e| HachiError::InvalidSetup(format!("Failed to open setup file: {e}")))?;
     let mut reader = std::io::BufReader::new(file);
 
-    let setup = HachiExpandedSetup::deserialize_compressed(&mut reader)
+    let setup = HachiExpandedSetup::deserialize_compressed(&mut reader, &())
         .map_err(|e| HachiError::InvalidSetup(format!("Failed to deserialize setup: {e}")))?;
 
     tracing::info!("Loaded setup for max_num_vars={max_num_vars}");
