@@ -83,14 +83,17 @@ impl<F: FieldCore, const D: usize> HachiSerialize for Poly<F, D> {
 }
 
 impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for Poly<F, D> {
+    type Context = ();
+
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
         let mut arr = [F::zero(); D];
         for coeff in &mut arr {
-            *coeff = F::deserialize_with_mode(&mut reader, compress, validate)?;
+            *coeff = F::deserialize_with_mode(&mut reader, compress, validate, &())?;
         }
         let out = Self(arr);
         if matches!(validate, Validate::Yes) {
