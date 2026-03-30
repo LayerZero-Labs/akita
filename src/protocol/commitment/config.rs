@@ -152,7 +152,7 @@ pub(super) fn optimal_m_r_split_with_params(
     let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
     let delta_open = compute_num_digits(open_bound, decomp.log_basis) as u64;
     let delta_commit = compute_num_digits(decomp.log_commit_bound, decomp.log_basis) as u64;
-    let c1 = delta_open + params.n_a as u64 * delta_commit;
+    let c1 = delta_open + params.n_a as u64 * delta_open;
 
     let mut best_r = reduced_vars / 2;
     let mut best_cost = u64::MAX;

@@ -186,19 +186,19 @@ mod tests {
     #[test]
     fn baseline_onehot_32() {
         let r = run_baseline_planner(&onehot_params(32)).unwrap();
-        assert_eq!(r.total, 99_805);
+        assert_eq!(r.total, 97_277);
     }
 
     #[test]
     fn baseline_full128_25() {
         let r = run_baseline_planner(&full128_params(25)).unwrap();
-        assert_eq!(r.total, 166_613);
+        assert_eq!(r.total, 164_053);
     }
 
     #[test]
     fn baseline_full128_32() {
         let r = run_baseline_planner(&full128_params(32)).unwrap();
-        assert_eq!(r.total, 173_197);
+        assert_eq!(r.total, 170_637);
     }
 
     #[test]

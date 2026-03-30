@@ -200,12 +200,8 @@ pub fn optimal_m_r_split(
     (reduced_vars - best_r, best_r)
 }
 
-/// Baseline (m, r) split matching the formula in `hachi-pcs` `config.rs`.
-///
-/// The existing Rust codebase uses `c1 = δ_open + n_a · δ_commit` for the
-/// per-block cost, which differs from the witness construction where both
-/// `ŵ` and `t̂` use `δ_open`. We preserve this here so the baseline planner
-/// exactly reproduces the current Rust planner's proof sizes.
+/// Baseline variant of [`optimal_m_r_split`] with `num_ring = 0` (standard
+/// power-of-two upper bound for `m_eff`).
 pub fn baseline_optimal_m_r_split(
     n_a: u32,
     challenge_l1_mass: usize,
@@ -213,29 +209,14 @@ pub fn baseline_optimal_m_r_split(
     log_basis: u32,
     reduced_vars: usize,
 ) -> (usize, usize) {
-    if reduced_vars <= 2 || reduced_vars >= 53 {
-        let r = reduced_vars / 2;
-        return (reduced_vars - r, r);
-    }
-
-    let open_bound = log_commit_bound.max(128);
-    let delta_open = compute_num_digits(open_bound, log_basis) as u64;
-    let delta_commit = compute_num_digits(log_commit_bound, log_basis) as u64;
-    let c1 = delta_open + n_a as u64 * delta_commit;
-
-    let mut best = (u64::MAX, reduced_vars / 2);
-
-    for r in 1..reduced_vars {
-        let m = reduced_vars - r;
-        let delta_fold = compute_num_digits_fold(r, challenge_l1_mass, log_basis) as u64;
-        let cost = c1 * (1u64 << r) + delta_commit * delta_fold * (1u64 << m);
-        if cost < best.0 {
-            best = (cost, r);
-        }
-    }
-
-    let best_r = best.1;
-    (reduced_vars - best_r, best_r)
+    optimal_m_r_split(
+        n_a,
+        challenge_l1_mass,
+        log_commit_bound,
+        log_basis,
+        reduced_vars,
+        0,
+    )
 }
 
 #[cfg(test)]
