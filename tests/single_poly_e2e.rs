@@ -120,10 +120,11 @@ fn run_single_onehot(nv: usize) {
             F,
             ONEHOT_D,
         >>::setup_verifier(&setup);
+        let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
             F,
             ONEHOT_D,
-        >>::commit(&poly, &setup, &layout)
+        >>::commit(commit_input, &setup, &layout)
         .expect("commit");
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot");
@@ -198,10 +199,11 @@ fn run_single_dense(nv: usize) {
             F,
             DENSE_D,
         >>::setup_verifier(&setup);
+        let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
             F,
             DENSE_D,
-        >>::commit(&poly, &setup, &layout)
+        >>::commit(commit_input, &setup, &layout)
         .expect("commit");
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/dense");

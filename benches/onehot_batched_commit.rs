@@ -61,8 +61,6 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         BATCH_NUM_VARS,
         BATCH_SIZE,
     );
-    let batched_poly_groups = [&batched_polys[..]];
-
     let single_inner = single_poly
         .commit_inner_witness(
             &single_setup.expanded.shared_matrix,
@@ -102,7 +100,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-                    black_box(&single_poly),
+                    black_box(std::slice::from_ref(&single_poly)),
                     black_box(&single_setup),
                     black_box(&single_layout),
                 )
@@ -160,12 +158,12 @@ fn bench_commit_breakdown(c: &mut Criterion) {
     group.bench_function("batched_full_commit_32xnv29", |b| {
         b.iter(|| {
             black_box(
-                <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(
-                    black_box(&batched_poly_groups),
+                <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+                    black_box(&batched_polys),
                     black_box(&batched_setup),
                     black_box(&batch_layout),
                 )
-                .expect("batched commit"),
+                .expect("grouped commit"),
             )
         })
     });

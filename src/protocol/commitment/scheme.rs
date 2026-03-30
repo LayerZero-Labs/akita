@@ -54,9 +54,9 @@ where
     type Proof: Clone + Send + Sync;
     /// Batched same-point evaluation/opening proof object.
     type BatchedProof: Clone + Send + Sync;
-    /// Prover-side hint produced at commitment time.
+    /// Prover-side hint produced for one commitment group.
     type CommitHint: Clone + Send + Sync;
-    /// Prover-side hint produced by batched root commitment.
+    /// Prover-side hint collection for same-point grouped openings.
     type BatchedCommitHint: Clone + Send + Sync;
 
     /// Build prover setup for maximum polynomial dimension and batch capacity.
@@ -69,54 +69,24 @@ where
     /// Derive verifier setup from prover setup.
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;
 
-    /// Commit to one polynomial with a caller-specified layout.
+    /// Commit to polynomials with a caller-specified layout.
     ///
     /// The layout's matrix dimensions must not exceed the setup's max dimensions.
     /// Callers control `num_digits_commit` via the layout to reduce decomposition
     /// depth for polynomials with bounded coefficients (e.g. delta=1 for {0,1}).
     ///
+    /// All polynomials in `polys` are aggregated into one commitment. Callers
+    /// that need multiple commitments should call this method repeatedly, once
+    /// per commitment group.
+    ///
     /// # Errors
     ///
     /// Returns an error when setup/parameter constraints are not satisfied.
     fn commit<P: HachiPolyOps<F, D>>(
-        poly: &P,
+        polys: &[P],
         setup: &Self::ProverSetup,
         layout: &HachiCommitmentLayout,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError>;
-
-    /// Commit to multiple polynomials sharing one opening point.
-    ///
-    /// The setup must be provisioned with `max_num_batched_polys` at least as
-    /// large as the total number of polynomials across all groups. Each inner
-    /// slice is one commitment group: its polynomials are aggregated into a
-    /// single commitment, while different groups keep separate commitments.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when setup/parameter constraints are not satisfied.
-    fn batched_commit<P: HachiPolyOps<F, D>>(
-        poly_groups: &[&[P]],
-        setup: &Self::ProverSetup,
-        layout: &HachiCommitmentLayout,
-    ) -> Result<(Vec<Self::Commitment>, Self::BatchedCommitHint), HachiError>;
-
-    /// Commit to grouped polynomial batches at multiple opening points.
-    ///
-    /// The outer slice indexes opening points. Each point carries the same
-    /// grouped batching structure as [`Self::batched_commit`]: each inner slice
-    /// is one commitment group and is aggregated into one commitment.
-    ///
-    /// The setup must be provisioned with `max_num_batched_polys` at least as
-    /// large as the total number of polynomials across **all** points.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when setup/parameter constraints are not satisfied.
-    fn multipoint_batched_commit<P: HachiPolyOps<F, D>>(
-        poly_groups_by_point: &[&[&[P]]],
-        setup: &Self::ProverSetup,
-        layout: &HachiCommitmentLayout,
-    ) -> Result<(Vec<Vec<Self::Commitment>>, Vec<Self::BatchedCommitHint>), HachiError>;
 
     /// Produce an opening proof at `opening_point` with a caller-specified layout.
     ///

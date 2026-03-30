@@ -146,13 +146,13 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
         >>::setup_verifier(&setup);
 
         let poly_groups: [&[OneHotPoly<F, ONEHOT_D, u8>]; 1] = [&polys];
-        let (commitments, hints) =
-            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::batched_commit(
-                &poly_groups,
-                &setup,
-                &layout,
-            )
-            .expect("batched commit");
+        let (commitment, hint) = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+            F,
+            ONEHOT_D,
+        >>::commit(&polys, &setup, &layout)
+        .expect("grouped commit");
+        let commitments = vec![commitment];
+        let hints = vec![hint];
 
         assert_eq!(
             commitments.len(),
@@ -238,8 +238,9 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
         let (commitments, hints) = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
             F,
             DENSE_D,
-        >>::batched_commit(&poly_groups, &setup, &layout)
-        .expect("batched commit");
+        >>::commit(&polys, &setup, &layout)
+        .map(|(commitment, hint)| (vec![commitment], vec![hint]))
+        .expect("grouped commit");
 
         assert_eq!(
             commitments.len(),

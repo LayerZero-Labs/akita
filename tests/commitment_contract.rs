@@ -111,39 +111,12 @@ impl CommitmentScheme<F, 1> for DummyScheme {
     }
 
     fn commit<P: HachiPolyOps<F, 1>>(
-        _poly: &P,
+        _polys: &[P],
         _setup: &Self::ProverSetup,
         _layout: &HachiCommitmentLayout,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError> {
         let c = HachiCommitment(0);
         Ok((c, c))
-    }
-
-    fn batched_commit<P: HachiPolyOps<F, 1>>(
-        poly_groups: &[&[P]],
-        _setup: &Self::ProverSetup,
-        _layout: &HachiCommitmentLayout,
-    ) -> Result<(Vec<Self::Commitment>, Self::BatchedCommitHint), HachiError> {
-        let c = HachiCommitment(0);
-        Ok((vec![c; poly_groups.len()], vec![c; poly_groups.len()]))
-    }
-
-    fn multipoint_batched_commit<P: HachiPolyOps<F, 1>>(
-        poly_groups_by_point: &[&[&[P]]],
-        _setup: &Self::ProverSetup,
-        _layout: &HachiCommitmentLayout,
-    ) -> Result<(Vec<Vec<Self::Commitment>>, Vec<Self::BatchedCommitHint>), HachiError> {
-        let c = HachiCommitment(0);
-        Ok((
-            poly_groups_by_point
-                .iter()
-                .map(|groups| vec![c; groups.len()])
-                .collect(),
-            poly_groups_by_point
-                .iter()
-                .map(|groups| vec![c; groups.len()])
-                .collect(),
-        ))
     }
 
     fn prove<T: Transcript<F>, P: HachiPolyOps<F, 1>>(
@@ -288,7 +261,8 @@ fn commitment_scheme_round_trip() {
         d_matrix_width: 1,
         log_basis: 1,
     };
-    let (commitment, hint) = DummyScheme::commit(&poly, &psetup, &layout).unwrap();
+    let (commitment, hint) =
+        DummyScheme::commit(std::slice::from_ref(&poly), &psetup, &layout).unwrap();
     let opening = poly.evaluate(&opening_point);
 
     let mut prover_t = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);

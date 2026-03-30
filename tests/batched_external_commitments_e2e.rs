@@ -7,7 +7,7 @@ use hachi_pcs::protocol::hachi_poly_ops::{HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
 };
-use hachi_pcs::protocol::proof::{HachiBatchedCommitmentHint, HachiBatchedProof};
+use hachi_pcs::protocol::proof::HachiBatchedProof;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
@@ -122,7 +122,9 @@ fn batched_onehot_round_trip_with_individual_commitments() {
         for poly in &polys {
             let (commitment, hint) =
                 <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-                    poly, &setup, &layout,
+                    std::slice::from_ref(poly),
+                    &setup,
+                    &layout,
                 )
                 .expect("individual commit");
             commitments.push(commitment);
@@ -131,21 +133,8 @@ fn batched_onehot_round_trip_with_individual_commitments() {
         let poly_groups: Vec<&[OneHotPoly<F, D>]> =
             polys.iter().map(std::slice::from_ref).collect();
         let opening_groups: Vec<&[F]> = openings.iter().map(std::slice::from_ref).collect();
-        let grouped_hints: Vec<HachiBatchedCommitmentHint<F, D>> = hints
-            .iter()
-            .cloned()
-            .map(|hint| HachiBatchedCommitmentHint::from_commit_hints(vec![hint]))
-            .collect();
-
-        let (batched_commitments, batched_hints) =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(
-                &poly_groups,
-                &setup,
-                &layout,
-            )
-            .expect("batched commit");
-        assert_eq!(batched_commitments, commitments);
-        assert_eq!(batched_hints, grouped_hints);
+        assert_eq!(commitments.len(), BATCH_SIZE);
+        assert_eq!(hints.len(), BATCH_SIZE);
 
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"hachi_e2e/batched-individual-commitments");
@@ -153,7 +142,7 @@ fn batched_onehot_round_trip_with_individual_commitments() {
             &setup,
             &poly_groups,
             &pt,
-            grouped_hints,
+            hints,
             &mut prover_transcript,
             &commitments,
             BasisMode::Lagrange,
@@ -230,33 +219,22 @@ fn batched_onehot_round_trip_with_mixed_commitment_groups() {
         let poly_groups = [&polys[..2], &polys[2..]];
         let opening_groups = [&openings[..2], &openings[2..]];
 
-        let (group0_commitments, group0_hints) =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(
-                &[poly_groups[0]],
+        let (group0_commitment, group0_hint) =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+                poly_groups[0],
                 &setup,
                 &layout,
             )
             .expect("group 0 commit");
-        let (group1_commitments, group1_hints) =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(
-                &[poly_groups[1]],
+        let (group1_commitment, group1_hint) =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+                poly_groups[1],
                 &setup,
                 &layout,
             )
             .expect("group 1 commit");
-        let expected_commitments =
-            vec![group0_commitments[0].clone(), group1_commitments[0].clone()];
-        let expected_hints = vec![group0_hints[0].clone(), group1_hints[0].clone()];
-
-        let (commitments, hints) =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(
-                &poly_groups,
-                &setup,
-                &layout,
-            )
-            .expect("mixed grouped commit");
-        assert_eq!(commitments, expected_commitments);
-        assert_eq!(hints, expected_hints);
+        let commitments = vec![group0_commitment, group1_commitment];
+        let hints = vec![group0_hint, group1_hint];
 
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"hachi_e2e/batched-mixed-commitment-groups");

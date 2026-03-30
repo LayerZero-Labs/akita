@@ -179,13 +179,19 @@ fn run_grouped_onehot(nv: usize, batch_size: usize) {
         }
         assert_eq!(offset, batch_size);
 
-        let (commitments, hints) =
-            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::batched_commit(
-                &poly_groups,
-                &setup,
-                &layout,
-            )
-            .expect("batched commit");
+        let (commitments, hints): (Vec<_>, Vec<_>) = poly_groups
+            .iter()
+            .map(|group| {
+                <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::commit(
+                    *group,
+                    &setup,
+                    &layout,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .expect("grouped commit")
+            .into_iter()
+            .unzip();
 
         assert_eq!(
             commitments.len(),
@@ -195,16 +201,15 @@ fn run_grouped_onehot(nv: usize, batch_size: usize) {
 
         for (group_idx, &gs) in group_sizes.iter().enumerate() {
             let start = group_sizes[..group_idx].iter().sum::<usize>();
-            let single_group: [&[OneHotPoly<F, ONEHOT_D, u8>]; 1] = [&polys[start..start + gs]];
-            let (individual_commits, _) =
-                <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::batched_commit(
-                    &single_group,
+            let (individual_commit, _) =
+                <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::commit(
+                    &polys[start..start + gs],
                     &setup,
                     &layout,
                 )
                 .expect("individual group commit");
             assert_eq!(
-                individual_commits[0], commitments[group_idx],
+                individual_commit, commitments[group_idx],
                 "group {group_idx} commitment mismatch between individual and multi-group commit"
             );
         }
@@ -295,11 +300,17 @@ fn run_grouped_dense(nv: usize, batch_size: usize) {
         }
         assert_eq!(offset, batch_size);
 
-        let (commitments, hints) = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
-            F,
-            DENSE_D,
-        >>::batched_commit(&poly_groups, &setup, &layout)
-        .expect("batched commit");
+        let (commitments, hints): (Vec<_>, Vec<_>) = poly_groups
+            .iter()
+            .map(|group| {
+                <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::commit(
+                    *group, &setup, &layout,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .expect("grouped commit")
+            .into_iter()
+            .unzip();
 
         assert_eq!(
             commitments.len(),
@@ -309,16 +320,15 @@ fn run_grouped_dense(nv: usize, batch_size: usize) {
 
         for (group_idx, &gs) in group_sizes.iter().enumerate() {
             let start = group_sizes[..group_idx].iter().sum::<usize>();
-            let single_group: [&[DensePoly<F, DENSE_D>]; 1] = [&polys[start..start + gs]];
-            let (individual_commits, _) =
-                <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_commit(
-                    &single_group,
+            let (individual_commit, _) =
+                <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::commit(
+                    &polys[start..start + gs],
                     &setup,
                     &layout,
                 )
                 .expect("individual group commit");
             assert_eq!(
-                individual_commits[0], commitments[group_idx],
+                individual_commit, commitments[group_idx],
                 "group {group_idx} commitment mismatch between individual and multi-group commit"
             );
         }

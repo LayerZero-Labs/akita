@@ -244,6 +244,19 @@ fn flatten_batched_hints_by_point<F: FieldCore, const D: usize>(
     hints_by_point.into_iter().flatten().collect()
 }
 
+fn single_prove_hint_from_group_hint<F: FieldCore, const D: usize>(
+    hint: HachiBatchedCommitmentHint<F, D>,
+) -> Result<HachiCommitmentHint<F, D>, HachiError> {
+    if hint.inner_opening_digits.len() != 1
+        || hint.t().is_some_and(|rows_by_poly| rows_by_poly.len() != 1)
+    {
+        return Err(HachiError::InvalidInput(
+            "prove requires a commitment hint for exactly one polynomial".to_string(),
+        ));
+    }
+    Ok(hint.into_flattened())
+}
+
 fn append_batch_shape_to_transcript<F, T>(
     point_group_sizes: &[usize],
     claim_group_sizes: &[usize],
@@ -1269,7 +1282,7 @@ where
     type Commitment = RingCommitment<F, D>;
     type Proof = HachiProof<F>;
     type BatchedProof = HachiBatchedProof<F>;
-    type CommitHint = HachiCommitmentHint<F, D>;
+    type CommitHint = HachiBatchedCommitmentHint<F, D>;
     type BatchedCommitHint = Vec<HachiBatchedCommitmentHint<F, D>>;
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::setup_prover")]
@@ -1290,153 +1303,84 @@ where
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::commit")]
     fn commit<P: HachiPolyOps<F, D>>(
-        poly: &P,
+        polys: &[P],
         setup: &Self::ProverSetup,
         layout: &HachiCommitmentLayout,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError> {
-        setup.ensure_layout_fits(layout)?;
+        if polys.is_empty() {
+            return Err(HachiError::InvalidInput(
+                "commit requires at least one polynomial".to_string(),
+            ));
+        }
+        if polys.len() > setup.expanded.seed.max_num_batched_polys {
+            return Err(HachiError::InvalidInput(format!(
+                "commit received {} polynomials but setup supports at most {}",
+                polys.len(),
+                setup.expanded.seed.max_num_batched_polys
+            )));
+        }
+        let batched_layout = scale_batched_root_layout::<Cfg, D>(
+            setup.expanded.seed.max_num_vars,
+            *layout,
+            polys.len(),
+        )?;
+        setup.ensure_layout_fits(&batched_layout)?;
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,
             current_w_len: root_current_w_len::<D>(*layout),
         });
-        let mut inner = poly.commit_inner_witness(
+
+        let poly_refs: Vec<&P> = polys.iter().collect();
+        let inner_witnesses = if let Some(witnesses) = P::commit_inner_witness_batched(
+            &poly_refs,
             &setup.expanded.shared_matrix,
             &setup.ntt_shared,
             layout.block_len,
             layout.num_digits_commit,
             layout.num_digits_open,
             layout.log_basis,
-        )?;
-        for t_i in &mut inner.t {
-            t_i.truncate(root_params.n_a);
+        )? {
+            witnesses
+        } else {
+            polys
+                .iter()
+                .map(|poly| {
+                    poly.commit_inner_witness(
+                        &setup.expanded.shared_matrix,
+                        &setup.ntt_shared,
+                        layout.block_len,
+                        layout.num_digits_commit,
+                        layout.num_digits_open,
+                        layout.log_basis,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
+        let mut inner_opening_digits_flat = Vec::new();
+        let mut group_t_hat = Vec::with_capacity(polys.len());
+        let mut group_t = Vec::with_capacity(polys.len());
+        for mut inner in inner_witnesses {
+            for t_i in &mut inner.t {
+                t_i.truncate(root_params.n_a);
+            }
+            for t_hat_i in &mut inner.t_hat {
+                t_hat_i.truncate(root_params.n_a * layout.num_digits_open);
+            }
+            inner_opening_digits_flat.extend(flatten_i8_blocks(&inner.t_hat));
+            group_t_hat.push(inner.t_hat);
+            group_t.push(inner.t);
         }
-        for t_hat_i in &mut inner.t_hat {
-            t_hat_i.truncate(root_params.n_a * layout.num_digits_open);
-        }
-        let inner_opening_digits_flat = flatten_i8_blocks(&inner.t_hat);
         let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
             &setup.ntt_shared,
             root_params.n_b,
             &inner_opening_digits_flat,
         );
-        let hint = HachiCommitmentHint::with_t(inner.t_hat, inner.t);
-        Ok((RingCommitment { u }, hint))
-    }
-
-    #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_commit")]
-    fn batched_commit<P: HachiPolyOps<F, D>>(
-        poly_groups: &[&[P]],
-        setup: &Self::ProverSetup,
-        layout: &HachiCommitmentLayout,
-    ) -> Result<(Vec<Self::Commitment>, Self::BatchedCommitHint), HachiError> {
-        let claim_group_sizes = validate_nonempty_group_sizes(poly_groups, "batched_commit")?;
-        let total_claims = checked_total_claims(&claim_group_sizes, "batched_commit")?;
-        if total_claims > setup.expanded.seed.max_num_batched_polys {
-            return Err(HachiError::InvalidInput(format!(
-                "batched_commit received {total_claims} polynomials but setup supports at most {}",
-                setup.expanded.seed.max_num_batched_polys
-            )));
-        }
-        let batched_layout = scale_batched_root_layout::<Cfg, D>(
-            setup.expanded.seed.max_num_vars,
-            *layout,
-            total_claims,
-        )?;
-        setup.ensure_layout_fits(&batched_layout)?;
-        let root_params = Cfg::level_params(HachiScheduleInputs {
-            max_num_vars: setup.expanded.seed.max_num_vars,
-            level: 0,
-            current_w_len: root_current_w_len::<D>(*layout),
-        });
-
-        let mut commitments = Vec::with_capacity(poly_groups.len());
-        let mut hints = Vec::with_capacity(poly_groups.len());
-        for poly_group in poly_groups {
-            let poly_refs: Vec<&P> = poly_group.iter().collect();
-            let inner_witnesses = if let Some(witnesses) = P::commit_inner_witness_batched(
-                &poly_refs,
-                &setup.expanded.shared_matrix,
-                &setup.ntt_shared,
-                layout.block_len,
-                layout.num_digits_commit,
-                layout.num_digits_open,
-                layout.log_basis,
-            )? {
-                witnesses
-            } else {
-                poly_group
-                    .iter()
-                    .map(|poly| {
-                        poly.commit_inner_witness(
-                            &setup.expanded.shared_matrix,
-                            &setup.ntt_shared,
-                            layout.block_len,
-                            layout.num_digits_commit,
-                            layout.num_digits_open,
-                            layout.log_basis,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-            };
-            let mut inner_opening_digits_flat = Vec::new();
-            let mut group_t_hat = Vec::with_capacity(poly_group.len());
-            let mut group_t = Vec::with_capacity(poly_group.len());
-            for mut inner in inner_witnesses {
-                for t_i in &mut inner.t {
-                    t_i.truncate(root_params.n_a);
-                }
-                for t_hat_i in &mut inner.t_hat {
-                    t_hat_i.truncate(root_params.n_a * layout.num_digits_open);
-                }
-                inner_opening_digits_flat.extend(flatten_i8_blocks(&inner.t_hat));
-                group_t_hat.push(inner.t_hat);
-                group_t.push(inner.t);
-            }
-            let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
-                &setup.ntt_shared,
-                root_params.n_b,
-                &inner_opening_digits_flat,
-            );
-            commitments.push(RingCommitment { u });
-            hints.push(HachiBatchedCommitmentHint::with_t(group_t_hat, group_t));
-        }
-        Ok((commitments, hints))
-    }
-
-    #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::multipoint_batched_commit")]
-    fn multipoint_batched_commit<P: HachiPolyOps<F, D>>(
-        poly_groups_by_point: &[&[&[P]]],
-        setup: &Self::ProverSetup,
-        layout: &HachiCommitmentLayout,
-    ) -> Result<(Vec<Vec<Self::Commitment>>, Vec<Self::BatchedCommitHint>), HachiError> {
-        let batch_shape = validate_nonempty_group_sizes_by_point(
-            poly_groups_by_point,
-            "multipoint_batched_commit",
-        )?;
-        let total_claims =
-            checked_total_claims(&batch_shape.claim_group_sizes, "multipoint_batched_commit")?;
-        if total_claims > setup.expanded.seed.max_num_batched_polys {
-            return Err(HachiError::InvalidInput(format!(
-                "multipoint_batched_commit received {total_claims} polynomials but setup supports at most {}",
-                setup.expanded.seed.max_num_batched_polys
-            )));
-        }
-        let batched_layout = scale_batched_root_layout::<Cfg, D>(
-            setup.expanded.seed.max_num_vars,
-            *layout,
-            total_claims,
-        )?;
-        setup.ensure_layout_fits(&batched_layout)?;
-
-        let mut commitments_by_point = Vec::with_capacity(poly_groups_by_point.len());
-        let mut hints_by_point = Vec::with_capacity(poly_groups_by_point.len());
-        for point_groups in poly_groups_by_point {
-            let (commitments, hints) = Self::batched_commit(point_groups, setup, layout)?;
-            commitments_by_point.push(commitments);
-            hints_by_point.push(hints);
-        }
-        Ok((commitments_by_point, hints_by_point))
+        Ok((
+            RingCommitment { u },
+            HachiBatchedCommitmentHint::with_t(group_t_hat, group_t),
+        ))
     }
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::prove")]
@@ -1452,6 +1396,7 @@ where
     ) -> Result<Self::Proof, HachiError> {
         let t_prove_total = Instant::now();
         let mut levels = Vec::new();
+        let hint = single_prove_hint_from_group_hint(hint)?;
 
         let mut ntt_cache = MultiDNttCaches::new();
         let mut commit_ntt_cache = MultiDNttCaches::new();
@@ -2966,8 +2911,12 @@ mod tests {
         let (poly, evals) = make_dense_poly(full_num_vars);
         let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(full_num_vars, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
-        let (commitment, hint) =
-            <Scheme as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout).unwrap();
+        let (commitment, hint) = <Scheme as CommitmentScheme<F, D>>::commit(
+            std::slice::from_ref(&poly),
+            &setup,
+            &layout,
+        )
+        .unwrap();
 
         let opening_point: Vec<F> = (0..full_num_vars)
             .map(|i| F::from_u64((i + 2) as u64))
@@ -3133,27 +3082,22 @@ mod tests {
     }
 
     #[test]
-    fn batched_commit_singleton_matches_single_commit() {
+    fn commit_singleton_group_returns_single_claim_hint() {
         let alpha = D.trailing_zeros() as usize;
         let layout = Cfg::commitment_layout(16).unwrap();
         let num_vars = layout.m_vars + layout.r_vars + alpha;
         let (poly, _) = make_dense_poly(num_vars);
         let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1);
 
-        let (single_commitment, single_hint) =
-            <Scheme as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout).unwrap();
-        let poly_groups = [std::slice::from_ref(&poly)];
-        let (batched_commitments, batched_hints) =
-            <Scheme as CommitmentScheme<F, D>>::batched_commit(&poly_groups, &setup, &layout)
-                .unwrap();
+        let (_, hint) = <Scheme as CommitmentScheme<F, D>>::commit(
+            std::slice::from_ref(&poly),
+            &setup,
+            &layout,
+        )
+        .unwrap();
 
-        assert_eq!(batched_commitments, vec![single_commitment]);
-        assert_eq!(batched_hints.len(), 1);
-        assert_eq!(
-            batched_hints[0].inner_opening_digits[0].as_slice(),
-            single_hint.inner_opening_digits.as_slice()
-        );
-        assert_eq!(batched_hints[0].t().unwrap()[0], single_hint.t().unwrap());
+        assert_eq!(hint.inner_opening_digits.len(), 1);
+        assert_eq!(hint.t().unwrap().len(), 1);
     }
 
     #[test]
@@ -3192,14 +3136,15 @@ mod tests {
             );
             let batch_poly_refs: Vec<&OneHotPoly<OneHotF, ONEHOT_D, u8>> =
                 batch_polys.iter().collect();
-            let batch_poly_groups = [&batch_poly_refs[..]];
-            let (batch_commitments, batch_hints) =
-                <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_commit(
-                    &batch_poly_groups,
-                    &batch_setup,
-                    &batch_layout,
-                )
-                .expect("batched debug commit");
+            let (batch_commitment, batch_hint) = <OneHotScheme as CommitmentScheme<
+                OneHotF,
+                ONEHOT_D,
+            >>::commit(
+                &batch_poly_refs, &batch_setup, &batch_layout
+            )
+            .expect("batched debug commit");
+            let batch_commitments = vec![batch_commitment];
+            let batch_hints = vec![batch_hint];
             let batch_commitment_rows = flatten_batched_commitment_rows(&batch_commitments);
 
             let batch_point = debug_random_point(BATCH_NUM_VARS);
@@ -3877,13 +3822,13 @@ mod tests {
                 <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(
                     &single_setup,
                 );
-            let (single_commitment, single_hint) = <OneHotScheme as CommitmentScheme<
-                OneHotF,
-                ONEHOT_D,
-            >>::commit(
-                &single_poly, &single_setup, &single_layout
-            )
-            .expect("single debug commit");
+            let (single_commitment, single_hint) =
+                <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::commit(
+                    std::slice::from_ref(&single_poly),
+                    &single_setup,
+                    &single_layout,
+                )
+                .expect("single debug commit");
 
             let _single_prove_span = tracing::info_span!("debug_single_prove").entered();
             let mut single_prover_transcript =
@@ -3922,13 +3867,15 @@ mod tests {
             let batch_verifier_setup =
                 <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(&batch_setup);
             let batch_poly_groups = [&batch_polys[..]];
-            let (batch_commitments, batch_hints) =
-                <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_commit(
-                    &batch_poly_groups,
-                    &batch_setup,
-                    &batch_layout,
-                )
-                .expect("batched debug commit");
+            let (batch_commitment, batch_hint) = <OneHotScheme as CommitmentScheme<
+                OneHotF,
+                ONEHOT_D,
+            >>::commit(
+                &batch_polys, &batch_setup, &batch_layout
+            )
+            .expect("batched debug commit");
+            let batch_commitments = vec![batch_commitment];
+            let batch_hints = vec![batch_hint];
 
             let _batched_prove_span = tracing::info_span!("debug_batched_prove").entered();
             let mut batch_prover_transcript =
@@ -3976,22 +3923,28 @@ mod tests {
         let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2);
         let poly_groups = [std::slice::from_ref(&poly_a), std::slice::from_ref(&poly_b)];
 
-        let (batched_commitments, batched_hints) =
-            <Scheme as CommitmentScheme<F, D>>::batched_commit(&poly_groups, &setup, &layout)
-                .unwrap();
-        let (commitment_a, hint_a) =
-            <Scheme as CommitmentScheme<F, D>>::commit(&poly_a, &setup, &layout).unwrap();
-        let (commitment_b, hint_b) =
-            <Scheme as CommitmentScheme<F, D>>::commit(&poly_b, &setup, &layout).unwrap();
+        let (batched_commitments, batched_hints): (Vec<_>, Vec<_>) = poly_groups
+            .iter()
+            .map(|group| <Scheme as CommitmentScheme<F, D>>::commit(*group, &setup, &layout))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .into_iter()
+            .unzip();
+        let (commitment_a, hint_a) = <Scheme as CommitmentScheme<F, D>>::commit(
+            std::slice::from_ref(&poly_a),
+            &setup,
+            &layout,
+        )
+        .unwrap();
+        let (commitment_b, hint_b) = <Scheme as CommitmentScheme<F, D>>::commit(
+            std::slice::from_ref(&poly_b),
+            &setup,
+            &layout,
+        )
+        .unwrap();
 
         assert_eq!(batched_commitments, vec![commitment_a, commitment_b]);
-        assert_eq!(
-            batched_hints,
-            vec![
-                HachiBatchedCommitmentHint::from_commit_hints(vec![hint_a]),
-                HachiBatchedCommitmentHint::from_commit_hints(vec![hint_b]),
-            ]
-        );
+        assert_eq!(batched_hints, vec![hint_a, hint_b]);
     }
 
     #[test]
@@ -4008,9 +3961,10 @@ mod tests {
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
         let poly_groups = [&poly_group[..]];
-        let (commitments, hints) =
-            <Scheme as CommitmentScheme<F, D>>::batched_commit(&poly_groups, &setup, &layout)
-                .unwrap();
+        let (commitment, hint) =
+            <Scheme as CommitmentScheme<F, D>>::commit(&poly_group, &setup, &layout).unwrap();
+        let commitments = vec![commitment];
+        let hints = vec![hint];
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 9) as u64)).collect();
         let openings = vec![
@@ -4066,9 +4020,10 @@ mod tests {
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
         let poly_groups = [&poly_group[..]];
-        let (commitments, hints) =
-            <Scheme as CommitmentScheme<F, D>>::batched_commit(&poly_groups, &setup, &layout)
-                .unwrap();
+        let (commitment, hint) =
+            <Scheme as CommitmentScheme<F, D>>::commit(&poly_group, &setup, &layout).unwrap();
+        let commitments = vec![commitment];
+        let hints = vec![hint];
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 4) as u64)).collect();
         let mut openings = vec![
@@ -4120,9 +4075,10 @@ mod tests {
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
         let poly_groups = [&poly_group[..]];
-        let (commitments, hints) =
-            <Scheme as CommitmentScheme<F, D>>::batched_commit(&poly_groups, &setup, &layout)
-                .unwrap();
+        let (commitment, hint) =
+            <Scheme as CommitmentScheme<F, D>>::commit(&poly_group, &setup, &layout).unwrap();
+        let commitments = vec![commitment];
+        let hints = vec![hint];
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 6) as u64)).collect();
         let openings = vec![
@@ -4178,8 +4134,12 @@ mod tests {
         let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
-        let (commitment, hint) =
-            <Scheme as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout).unwrap();
+        let (commitment, hint) = <Scheme as CommitmentScheme<F, D>>::commit(
+            std::slice::from_ref(&poly),
+            &setup,
+            &layout,
+        )
+        .unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
         let lw = lagrange_weights(&opening_point);
@@ -4227,8 +4187,12 @@ mod tests {
         let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
-        let (commitment, hint) =
-            <Scheme as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout).unwrap();
+        let (commitment, hint) = <Scheme as CommitmentScheme<F, D>>::commit(
+            std::slice::from_ref(&poly),
+            &setup,
+            &layout,
+        )
+        .unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
         let lw = lagrange_weights(&opening_point);
@@ -4307,8 +4271,12 @@ mod tests {
         let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
-        let (commitment, hint) =
-            <Scheme as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout).unwrap();
+        let (commitment, hint) = <Scheme as CommitmentScheme<F, D>>::commit(
+            std::slice::from_ref(&poly),
+            &setup,
+            &layout,
+        )
+        .unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
 

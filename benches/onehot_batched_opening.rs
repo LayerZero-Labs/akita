@@ -93,9 +93,12 @@ fn bench_single_case(c: &mut Criterion) {
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(SINGLE_NUM_VARS, 1);
     let verifier_setup =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
-    let (commitment, hint) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout)
-            .expect("single commit");
+    let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+        std::slice::from_ref(&poly),
+        &setup,
+        &layout,
+    )
+    .expect("single commit");
 
     let mut group = c.benchmark_group("hachi/onehot_opening/single_1xnv34");
     configure_group(&mut group);
@@ -184,13 +187,11 @@ fn bench_batched_case(c: &mut Criterion) {
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
     let poly_groups = [&polys[..]];
     let opening_groups = [&openings[..]];
-    let (commitments, hints) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(
-            &poly_groups,
-            &setup,
-            &layout,
-        )
-        .expect("batched commit");
+    let (commitment, hint) =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&polys, &setup, &layout)
+            .expect("grouped commit");
+    let commitments = vec![commitment];
+    let hints = vec![hint];
 
     let mut group = c.benchmark_group("hachi/onehot_opening/batched_32xnv29");
     configure_group(&mut group);

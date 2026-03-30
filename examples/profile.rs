@@ -84,8 +84,12 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
     type Scheme<const D: usize, Cfg> = HachiCommitmentScheme<D, Cfg>;
 
     let t0 = Instant::now();
-    let (commitment, hint) =
-        <Scheme<D, Cfg> as CommitmentScheme<F, D>>::commit(poly, setup, layout).unwrap();
+    let (commitment, hint) = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+        std::slice::from_ref(poly),
+        setup,
+        layout,
+    )
+    .unwrap();
     tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "commit");
 
     let t0 = Instant::now();
@@ -420,9 +424,10 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig>(
     );
 
     let t0 = Instant::now();
-    let (commitments, hints) =
-        <Scheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(&poly_groups, &setup, layout)
-            .unwrap();
+    let (commitment, hint) =
+        <Scheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly_refs, &setup, layout).unwrap();
+    let commitments = vec![commitment];
+    let hints = vec![hint];
     tracing::info!(
         label = "onehot",
         elapsed_s = t0.elapsed().as_secs_f64(),

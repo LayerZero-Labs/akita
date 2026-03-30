@@ -79,7 +79,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig>(
         b.iter(|| {
             black_box(
                 <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-                    black_box(&poly),
+                    black_box(std::slice::from_ref(&poly)),
                     black_box(&setup),
                     black_box(&layout),
                 )
@@ -88,9 +88,12 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig>(
         })
     });
 
-    let (commitment, hint) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout)
-            .unwrap();
+    let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+        std::slice::from_ref(&poly),
+        &setup,
+        &layout,
+    )
+    .unwrap();
 
     group.bench_function("prove", |b| {
         b.iter_batched(
@@ -150,7 +153,9 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig>(
     group.bench_function("e2e", |b| {
         b.iter(|| {
             let (cm, h) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-                &poly, &setup, &layout,
+                std::slice::from_ref(&poly),
+                &setup,
+                &layout,
             )
             .unwrap();
             let mut pt_tr = Blake2bTranscript::<F>::new(b"bench");
@@ -222,7 +227,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
         b.iter(|| {
             black_box(
                 <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-                    black_box(&onehot_poly),
+                    black_box(std::slice::from_ref(&onehot_poly)),
                     black_box(&setup),
                     black_box(&layout),
                 )
@@ -232,7 +237,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
     });
 
     let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-        &onehot_poly,
+        std::slice::from_ref(&onehot_poly),
         &setup,
         &layout,
     )
@@ -296,7 +301,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
     group.bench_function("e2e", |b| {
         b.iter(|| {
             let (cm, h) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-                &onehot_poly,
+                std::slice::from_ref(&onehot_poly),
                 &setup,
                 &layout,
             )
