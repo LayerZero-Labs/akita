@@ -280,7 +280,7 @@ where
                 "batched prover requires at least one polynomial".to_string(),
             ));
         }
-        if claim_group_sizes.iter().any(|&group_size| group_size == 0) {
+        if claim_group_sizes.contains(&0) {
             return Err(HachiError::InvalidInput(
                 "batched prover requires nonempty commitment groups".to_string(),
             ));
@@ -741,7 +741,7 @@ pub(crate) fn compute_r_split_eq<F, const D: usize>(
 where
     F: FieldCore + CanonicalField,
 {
-    if claim_group_sizes.is_empty() || claim_group_sizes.iter().any(|&group_size| group_size == 0) {
+    if claim_group_sizes.is_empty() || claim_group_sizes.contains(&0) {
         return Err(HachiError::InvalidProof);
     }
     let num_public_outputs = claim_group_sizes

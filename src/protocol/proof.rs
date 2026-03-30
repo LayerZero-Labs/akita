@@ -736,6 +736,7 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
 
     /// Consume the hint and return its decomposed digits plus the optional
     /// recomposed `t_i` rows.
+    #[allow(clippy::type_complexity)]
     pub fn into_parts(self) -> (Vec<Vec<[i8; D]>>, Option<Vec<Vec<CyclotomicRing<F, D>>>>) {
         (self.inner_opening_digits, self.t)
     }
