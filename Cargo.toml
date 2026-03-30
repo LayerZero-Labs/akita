@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "derive"]
+members = [".", "derive", "planner"]
 resolver = "2"
 
 [package]
