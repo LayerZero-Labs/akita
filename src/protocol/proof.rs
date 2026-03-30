@@ -1284,6 +1284,14 @@ impl<F: FieldCore> HachiProof<F> {
     pub fn final_w(&self) -> &PackedDigits {
         &self.tail.direct
     }
+
+    /// Derive the [`HachiProofShape`] for this proof.
+    pub fn shape(&self) -> HachiProofShape {
+        HachiProofShape {
+            level_shapes: self.levels.iter().map(|l| l.shape()).collect(),
+            tail_shape: (self.tail.direct.num_elems, self.tail.direct.bits_per_elem),
+        }
+    }
 }
 
 impl<F: FieldCore + HachiSerialize> HachiProof<F> {

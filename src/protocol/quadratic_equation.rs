@@ -353,7 +353,7 @@ where
             mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, &w_hat_flat)
         };
 
-        transcript.append_serde(ABSORB_PROVER_V, &v);
+        transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
 
         let total_blocks = layout.num_blocks.checked_mul(num_claims).ok_or_else(|| {
             HachiError::InvalidSetup("batched challenge count overflow".to_string())

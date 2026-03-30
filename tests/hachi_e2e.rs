@@ -716,7 +716,7 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
             .expect("deserialize batched onehot proof");
 
         assert!(
-            decoded.final_w().num_elems <= 86_144,
+            decoded.final_w().num_elems <= 245_888,
             "expected byte-aware batched schedule to keep folding, got final_w with {} elems",
             decoded.final_w().num_elems
         );

@@ -141,12 +141,15 @@ fn run_single_onehot(nv: usize) {
             .expect("prove");
 
         let mut serialized = Vec::new();
+        let proof_shape = proof.shape();
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize");
-        let decoded =
-            HachiProof::<F>::deserialize_compressed(&mut std::io::Cursor::new(serialized))
-                .expect("deserialize");
+        let decoded = HachiProof::<F>::deserialize_compressed(
+            &mut std::io::Cursor::new(serialized),
+            &proof_shape,
+        )
+        .expect("deserialize");
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot");
         let result =
@@ -216,12 +219,15 @@ fn run_single_dense(nv: usize) {
             .expect("prove");
 
         let mut serialized = Vec::new();
+        let proof_shape = proof.shape();
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize");
-        let decoded =
-            HachiProof::<F>::deserialize_compressed(&mut std::io::Cursor::new(serialized))
-                .expect("deserialize");
+        let decoded = HachiProof::<F>::deserialize_compressed(
+            &mut std::io::Cursor::new(serialized),
+            &proof_shape,
+        )
+        .expect("deserialize");
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/dense");
         let result =
