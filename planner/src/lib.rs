@@ -17,5 +17,7 @@ pub mod proof_size;
 pub mod search;
 pub mod sis_security;
 
-pub use baseline::{run_baseline_planner, BaselineParams, BaselineResult};
+pub use baseline::{
+    baseline_params_for, run_baseline_planner, BaselineParams, BaselineResult, BASELINE_CASES,
+};
 pub use search::{run_universal_planner, PlannedLevel, PlannerOptions, Schedule};
