@@ -211,14 +211,18 @@ impl HachiSerialize for HachiSetupSeed {
 }
 
 impl HachiDeserialize for HachiSetupSeed {
+    type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let max_num_vars = usize::deserialize_with_mode(&mut reader, compress, validate)?;
-        let max_num_batched_polys = usize::deserialize_with_mode(&mut reader, compress, validate)?;
-        let layout = HachiCommitmentLayout::deserialize_with_mode(&mut reader, compress, validate)?;
+        let max_num_vars = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let max_num_batched_polys =
+            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let layout =
+            HachiCommitmentLayout::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let mut public_matrix_seed = [0u8; 32];
         reader.read_exact(&mut public_matrix_seed)?;
         let out = Self {
@@ -260,14 +264,16 @@ impl<F: FieldCore> HachiSerialize for HachiExpandedSetup<F> {
 }
 
 impl<F: FieldCore + Valid> HachiDeserialize for HachiExpandedSetup<F> {
+    type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
         let out = Self {
-            seed: HachiSetupSeed::deserialize_with_mode(&mut reader, compress, validate)?,
-            shared_matrix: FlatMatrix::deserialize_with_mode(&mut reader, compress, validate)?,
+            seed: HachiSetupSeed::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            shared_matrix: FlatMatrix::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -319,14 +325,19 @@ impl<F: FieldCore> HachiSerialize for HachiVerifierSetup<F> {
 }
 
 impl<F: FieldCore + Valid> HachiDeserialize for HachiVerifierSetup<F> {
+    type Context = ();
     fn deserialize_with_mode<R: Read>(
         reader: R,
         compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
         Ok(Self {
             expanded: Arc::new(HachiExpandedSetup::deserialize_with_mode(
-                reader, compress, validate,
+                reader,
+                compress,
+                validate,
+                &(),
             )?),
         })
     }
@@ -805,7 +816,7 @@ fn load_expanded_setup<F: FieldCore + Valid, Cfg: CommitmentConfig>(
         .map_err(|e| HachiError::InvalidSetup(format!("Failed to open setup file: {e}")))?;
     let mut reader = std::io::BufReader::new(file);
 
-    let setup = HachiExpandedSetup::deserialize_compressed(&mut reader)
+    let setup = HachiExpandedSetup::deserialize_compressed(&mut reader, &())
         .map_err(|e| HachiError::InvalidSetup(format!("Failed to deserialize setup: {e}")))?;
 
     tracing::info!(
@@ -1383,7 +1394,7 @@ mod tests {
             .expanded
             .serialize_compressed(&mut bytes)
             .unwrap();
-        let decoded = HachiExpandedSetup::<TestF>::deserialize_compressed(&bytes[..]).unwrap();
+        let decoded = HachiExpandedSetup::<TestF>::deserialize_compressed(&bytes[..], &()).unwrap();
 
         assert_eq!(decoded, prover_setup.expanded.as_ref().clone());
         assert_eq!(decoded.seed.max_num_batched_polys, 3);

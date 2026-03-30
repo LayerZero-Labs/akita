@@ -151,70 +151,56 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
     })
 }
 
+/// Known-good baseline results. Single source of truth for tests and CLI validation.
+/// Update these when the cost model intentionally changes, then re-run `cargo test -p hachi-planner`.
+pub const BASELINE_CASES: &[(&str, u32, u32, usize, usize)] = &[
+    //  (name,   d,  lcb, nv,  expected_total)
+    ("onehot", 64, 1, 32, 97_277),
+    ("full128", 128, 128, 25, 164_053),
+    ("full128", 128, 128, 32, 170_637),
+];
+
+/// Build [`BaselineParams`] from a `BASELINE_CASES` entry.
+pub fn baseline_params_for(d: u32, lcb: u32, nv: usize) -> BaselineParams {
+    let l1 = if d == 64 { 54 } else { 31 };
+    BaselineParams {
+        d,
+        n_a: 1,
+        n_b: 1,
+        n_d: 1,
+        challenge_l1_mass: l1,
+        log_commit_bound: lcb,
+        max_num_vars: nv,
+        min_lb: 2,
+        max_lb: 5,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn onehot_params(nv: usize) -> BaselineParams {
-        BaselineParams {
-            d: 64,
-            n_a: 1,
-            n_b: 1,
-            n_d: 1,
-            challenge_l1_mass: 54,
-            log_commit_bound: 1,
-            max_num_vars: nv,
-            min_lb: 2,
-            max_lb: 5,
+    #[test]
+    fn baseline_matches_expected() {
+        for &(name, d, lcb, nv, expected) in BASELINE_CASES {
+            let bp = baseline_params_for(d, lcb, nv);
+            let r = run_baseline_planner(&bp).unwrap();
+            assert_eq!(
+                r.total, expected,
+                "{name} nv={nv}: got {}, expected {expected}",
+                r.total
+            );
         }
-    }
-
-    fn full128_params(nv: usize) -> BaselineParams {
-        BaselineParams {
-            d: 128,
-            n_a: 1,
-            n_b: 1,
-            n_d: 1,
-            challenge_l1_mass: 31,
-            log_commit_bound: 128,
-            max_num_vars: nv,
-            min_lb: 2,
-            max_lb: 5,
-        }
-    }
-
-    #[test]
-    fn baseline_onehot_32() {
-        let r = run_baseline_planner(&onehot_params(32)).unwrap();
-        assert_eq!(r.total, 97_277);
-    }
-
-    #[test]
-    fn baseline_full128_25() {
-        let r = run_baseline_planner(&full128_params(25)).unwrap();
-        assert_eq!(r.total, 164_053);
-    }
-
-    #[test]
-    fn baseline_full128_32() {
-        let r = run_baseline_planner(&full128_params(32)).unwrap();
-        assert_eq!(r.total, 170_637);
     }
 
     #[test]
     fn tail_lb_matches_terminal_packing() {
-        for &(builder, nvs) in &[
-            (
-                onehot_params as fn(usize) -> BaselineParams,
-                &[20, 25, 30, 32][..],
-            ),
-            (
-                full128_params as fn(usize) -> BaselineParams,
-                &[20, 25, 32][..],
-            ),
-        ] {
+        let configs: &[(u32, u32, &[usize])] =
+            &[(64, 1, &[20, 25, 30, 32]), (128, 128, &[20, 25, 32])];
+        for &(d, lcb, nvs) in configs {
             for &nv in nvs {
-                let Some(r) = run_baseline_planner(&builder(nv)) else {
+                let bp = baseline_params_for(d, lcb, nv);
+                let Some(r) = run_baseline_planner(&bp) else {
                     continue;
                 };
                 assert_eq!(

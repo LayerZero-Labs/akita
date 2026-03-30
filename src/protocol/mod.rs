@@ -30,13 +30,13 @@ pub use commitment_scheme::HachiCommitmentScheme;
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly};
 pub use opening_point::{BasisMode, RingOpeningPoint};
 pub use proof::{
-    FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiLevelProof, HachiProof,
-    HachiProofTail, PackedDigits, ProofRingVec,
+    FlatRingVec, HachiBatchedProof, HachiBatchedProofShape, HachiBatchedRootProof, HachiLevelProof,
+    HachiProof, HachiProofShape, HachiProofTail, LevelProofShape, PackedDigits, ProofRingVec,
 };
 pub use quadratic_equation::QuadraticEquation;
 pub use sumcheck::batched_sumcheck::{prove_batched_sumcheck, verify_batched_sumcheck};
 pub use sumcheck::{
     prove_sumcheck, verify_sumcheck, CompressedUniPoly, SumcheckInstanceProver,
-    SumcheckInstanceVerifier, SumcheckProof, UniPoly,
+    SumcheckInstanceVerifier, SumcheckProof, SumcheckProofShape, UniPoly,
 };
 pub use transcript::{sample_ext_challenge, Blake2bTranscript, KeccakTranscript, Transcript};

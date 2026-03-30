@@ -211,13 +211,16 @@ impl<F: FieldCore, C: Fp2Config<F>> HachiSerialize for Fp2<F, C> {
 }
 
 impl<F: FieldCore + Valid, C: Fp2Config<F>> HachiDeserialize for Fp2<F, C> {
+    type Context = ();
+
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let c0 = F::deserialize_with_mode(&mut reader, compress, validate)?;
-        let c1 = F::deserialize_with_mode(&mut reader, compress, validate)?;
+        let c0 = F::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let c1 = F::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self::new(c0, c1);
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -493,13 +496,16 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> HachiSerialize for Fp
 impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> HachiDeserialize
     for Fp4<F, C2, C4>
 {
+    type Context = ();
+
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let c0 = Fp2::<F, C2>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let c1 = Fp2::<F, C2>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let c0 = Fp2::<F, C2>::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let c1 = Fp2::<F, C2>::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self::new(c0, c1);
         if matches!(validate, Validate::Yes) {
             out.check()?;

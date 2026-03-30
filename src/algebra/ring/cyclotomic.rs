@@ -813,14 +813,17 @@ impl<F: FieldCore, const D: usize> HachiSerialize for CyclotomicRing<F, D> {
 }
 
 impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for CyclotomicRing<F, D> {
+    type Context = ();
+
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
         let mut coeffs = [F::zero(); D];
         for c in &mut coeffs {
-            *c = F::deserialize_with_mode(&mut reader, compress, validate)?;
+            *c = F::deserialize_with_mode(&mut reader, compress, validate, &())?;
         }
         let out = Self { coeffs };
         if matches!(validate, Validate::Yes) {

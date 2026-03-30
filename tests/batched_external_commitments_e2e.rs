@@ -162,11 +162,12 @@ fn batched_onehot_round_trip_with_individual_commitments() {
         .expect("batched prove with individual commitments");
 
         let mut serialized = Vec::new();
+        let proof_shape = proof.shape();
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize batched proof");
         let mut cursor = std::io::Cursor::new(serialized);
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor)
+        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof_shape)
             .expect("deserialize batched proof");
 
         let mut verifier_transcript =
@@ -272,11 +273,12 @@ fn batched_onehot_round_trip_with_mixed_commitment_groups() {
         .expect("batched prove with mixed commitment groups");
 
         let mut serialized = Vec::new();
+        let proof_shape = proof.shape();
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize mixed batched proof");
         let mut cursor = std::io::Cursor::new(serialized);
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor)
+        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof_shape)
             .expect("deserialize mixed batched proof");
 
         let mut verifier_transcript =

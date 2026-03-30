@@ -257,7 +257,6 @@ fn print_batched_root_breakdown<const D: usize>(
 }
 
 fn print_batched_proof_summary<const D: usize>(label: &str, proof: &HachiBatchedProof<F>) {
-    let top_levels_len_size = std::mem::size_of::<u32>();
     let root_total = proof.root.serialized_size(Compress::No);
     let recursive_levels_total: usize = proof
         .levels
@@ -266,7 +265,7 @@ fn print_batched_proof_summary<const D: usize>(label: &str, proof: &HachiBatched
         .sum();
     let hachi_levels_total = root_total + recursive_levels_total;
     let tail_total = proof.tail.direct.serialized_size(Compress::No);
-    let accounted_total = top_levels_len_size + hachi_levels_total + tail_total;
+    let accounted_total = hachi_levels_total + tail_total;
 
     tracing::info!(
         label,
@@ -278,7 +277,6 @@ fn print_batched_proof_summary<const D: usize>(label: &str, proof: &HachiBatched
         "proof summary"
     );
     debug_assert_eq!(accounted_total, proof.size());
-    eprintln!("[{label}]   proof framing: levels_len={top_levels_len_size} bytes");
     print_batched_root_breakdown::<D>(label, &proof.root);
     for (i, lp) in proof.levels.iter().enumerate() {
         print_hachi_level_breakdown(label, i + 1, lp);

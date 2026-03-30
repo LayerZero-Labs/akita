@@ -32,7 +32,7 @@ pub use crate::algebra::poly::{
     fold_evals_in_place, multilinear_eval, multilinear_eval_small, range_check_eval,
 };
 pub use crate::algebra::uni_poly::{CompressedUniPoly, UniPoly};
-pub use types::SumcheckProof;
+pub use types::{SumcheckProof, SumcheckProofShape};
 
 /// Precomputed lookup table for folding pairs of small integer values at a
 /// fixed challenge `r`.

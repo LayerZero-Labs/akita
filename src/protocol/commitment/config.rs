@@ -419,23 +419,25 @@ impl HachiSerialize for HachiCommitmentLayout {
 }
 
 impl HachiDeserialize for HachiCommitmentLayout {
+    type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
         let out = Self {
-            m_vars: usize::deserialize_with_mode(&mut reader, compress, validate)?,
-            r_vars: usize::deserialize_with_mode(&mut reader, compress, validate)?,
-            num_blocks: usize::deserialize_with_mode(&mut reader, compress, validate)?,
-            block_len: usize::deserialize_with_mode(&mut reader, compress, validate)?,
-            inner_width: usize::deserialize_with_mode(&mut reader, compress, validate)?,
-            outer_width: usize::deserialize_with_mode(&mut reader, compress, validate)?,
-            d_matrix_width: usize::deserialize_with_mode(&mut reader, compress, validate)?,
-            num_digits_commit: usize::deserialize_with_mode(&mut reader, compress, validate)?,
-            num_digits_open: usize::deserialize_with_mode(&mut reader, compress, validate)?,
-            num_digits_fold: usize::deserialize_with_mode(&mut reader, compress, validate)?,
-            log_basis: usize::deserialize_with_mode(&mut reader, compress, validate)? as u32,
+            m_vars: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            r_vars: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            num_blocks: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            block_len: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            inner_width: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            outer_width: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            d_matrix_width: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            num_digits_commit: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            num_digits_open: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            num_digits_fold: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            log_basis: usize::deserialize_with_mode(&mut reader, compress, validate, &())? as u32,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;

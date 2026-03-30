@@ -3196,8 +3196,9 @@ mod tests {
         .unwrap();
 
         let mut bytes = Vec::new();
+        let shape = proof.shape();
         proof.serialize_uncompressed(&mut bytes).unwrap();
-        let proof = HachiBatchedProof::<F>::deserialize_uncompressed(&*bytes).unwrap();
+        let proof = HachiBatchedProof::<F>::deserialize_uncompressed(&*bytes, &shape).unwrap();
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove");
         let opening_groups = [&openings[..]];

@@ -433,7 +433,7 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
             .serialize_compressed(&mut proof_bytes)
             .expect("serialize adaptive proof");
         let mut cursor = std::io::Cursor::new(proof_bytes);
-        let decoded = HachiProof::<F>::deserialize_compressed(&mut cursor)
+        let decoded = HachiProof::<F>::deserialize_compressed(&mut cursor, &plan.to_proof_shape())
             .expect("deserialize adaptive proof");
         assert_eq!(decoded, proof);
 
@@ -526,7 +526,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             .serialize_compressed(&mut serialized)
             .expect("serialize adaptive onehot proof");
         let mut cursor = std::io::Cursor::new(serialized);
-        let decoded = HachiProof::<F>::deserialize_compressed(&mut cursor)
+        let decoded = HachiProof::<F>::deserialize_compressed(&mut cursor, &plan.to_proof_shape())
             .expect("deserialize adaptive onehot proof");
         assert_eq!(
             decoded.tail.direct.bits_per_elem,
@@ -616,11 +616,12 @@ fn batched_onehot_same_point_round_trip() {
         .unwrap();
 
         let mut serialized = Vec::new();
+        let proof_shape = proof.shape();
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize batched onehot proof");
         let mut cursor = std::io::Cursor::new(serialized);
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor)
+        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof_shape)
             .expect("deserialize batched onehot proof");
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot");
@@ -706,11 +707,12 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         .unwrap();
 
         let mut serialized = Vec::new();
+        let proof_shape = proof.shape();
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize batched onehot proof");
         let mut cursor = std::io::Cursor::new(serialized);
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor)
+        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof_shape)
             .expect("deserialize batched onehot proof");
 
         assert!(

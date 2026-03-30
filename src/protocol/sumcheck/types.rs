@@ -23,28 +23,48 @@ impl<E: Valid + FieldCore> Valid for SumcheckProof<E> {
     }
 }
 
+/// Shape context for deserializing a [`SumcheckProof`]: `(num_rounds, degree)`.
+pub type SumcheckProofShape = (usize, usize);
+
 impl<E: FieldCore> HachiSerialize for SumcheckProof<E> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.round_polys.serialize_with_mode(&mut writer, compress)
+        for poly in &self.round_polys {
+            poly.serialize_with_mode(&mut writer, compress)?;
+        }
+        Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.round_polys.serialized_size(compress)
+        self.round_polys
+            .iter()
+            .map(|p| p.serialized_size(compress))
+            .sum()
     }
 }
 
 impl<E: FieldCore + Valid> HachiDeserialize for SumcheckProof<E> {
+    /// `(num_rounds, degree)` — number of round polynomials and their degree.
+    type Context = SumcheckProofShape;
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
+        ctx: &SumcheckProofShape,
     ) -> Result<Self, SerializationError> {
-        let round_polys =
-            Vec::<CompressedUniPoly<E>>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let (num_rounds, degree) = *ctx;
+        let mut round_polys = Vec::with_capacity(num_rounds);
+        for _ in 0..num_rounds {
+            round_polys.push(CompressedUniPoly::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &degree,
+            )?);
+        }
         let out = Self { round_polys };
         if matches!(validate, Validate::Yes) {
             out.check()?;
