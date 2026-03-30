@@ -767,12 +767,15 @@ impl<const P: u128> HachiSerialize for Fp128<P> {
 }
 
 impl<const P: u128> HachiDeserialize for Fp128<P> {
+    type Context = ();
+
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         _compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let x = u128::deserialize_with_mode(&mut reader, Compress::No, validate)?;
+        let x = u128::deserialize_with_mode(&mut reader, Compress::No, validate, &())?;
         if matches!(validate, Validate::Yes) && x >= P {
             return Err(SerializationError::InvalidData(
                 "Fp128 out of range".to_string(),

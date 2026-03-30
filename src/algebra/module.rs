@@ -95,14 +95,17 @@ impl<F: FieldCore, const N: usize> HachiSerialize for VectorModule<F, N> {
 }
 
 impl<F: FieldCore + Valid, const N: usize> HachiDeserialize for VectorModule<F, N> {
+    type Context = ();
+
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
         let mut arr = [F::zero(); N];
         for coeff in &mut arr {
-            *coeff = F::deserialize_with_mode(&mut reader, compress, validate)?;
+            *coeff = F::deserialize_with_mode(&mut reader, compress, validate, &())?;
         }
         let out = Self(arr);
         if matches!(validate, Validate::Yes) {

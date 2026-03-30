@@ -5,6 +5,7 @@ use crate::algebra::ring::CyclotomicRing;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
+use crate::protocol::proof::RingSliceSerializer;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
 use std::io::{Read, Write};
@@ -54,12 +55,14 @@ impl HachiSerialize for HachiCommitment {
 }
 
 impl HachiDeserialize for HachiCommitment {
+    type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         _compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let value = u128::deserialize_with_mode(&mut reader, Compress::No, validate)?;
+        let value = u128::deserialize_with_mode(&mut reader, Compress::No, validate, &())?;
         Ok(Self(value))
     }
 }
@@ -85,12 +88,14 @@ impl HachiSerialize for DummyProof {
 }
 
 impl HachiDeserialize for DummyProof {
+    type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         _compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let value = u128::deserialize_with_mode(&mut reader, Compress::No, validate)?;
+        let value = u128::deserialize_with_mode(&mut reader, Compress::No, validate, &())?;
         Ok(Self(value))
     }
 }
@@ -132,13 +137,19 @@ impl<F: FieldCore, const D: usize> HachiSerialize for RingCommitment<F, D> {
 }
 
 impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for RingCommitment<F, D> {
+    type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let u =
-            Vec::<CyclotomicRing<F, D>>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let u = Vec::<CyclotomicRing<F, D>>::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &(),
+        )?;
         let out = Self { u };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -152,6 +163,6 @@ where
     F: FieldCore + CanonicalField,
 {
     fn append_to_transcript<T: Transcript<F>>(&self, label: &[u8], transcript: &mut T) {
-        transcript.append_serde(label, self);
+        transcript.append_serde(label, &RingSliceSerializer(&self.u));
     }
 }

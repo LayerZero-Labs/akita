@@ -394,12 +394,15 @@ impl<const P: u64> HachiSerialize for Fp64<P> {
 }
 
 impl<const P: u64> HachiDeserialize for Fp64<P> {
+    type Context = ();
+
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         _compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let x = u64::deserialize_with_mode(&mut reader, Compress::No, validate)?;
+        let x = u64::deserialize_with_mode(&mut reader, Compress::No, validate, &())?;
         if matches!(validate, Validate::Yes) && x >= P {
             return Err(SerializationError::InvalidData(
                 "Fp64 out of range".to_string(),

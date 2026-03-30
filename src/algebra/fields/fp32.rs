@@ -290,12 +290,15 @@ impl<const P: u32> HachiSerialize for Fp32<P> {
 }
 
 impl<const P: u32> HachiDeserialize for Fp32<P> {
+    type Context = ();
+
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         _compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let x = u32::deserialize_with_mode(&mut reader, Compress::No, validate)?;
+        let x = u32::deserialize_with_mode(&mut reader, Compress::No, validate, &())?;
         if matches!(validate, Validate::Yes) && x >= P {
             return Err(SerializationError::InvalidData(
                 "Fp32 out of range".to_string(),

@@ -5,6 +5,7 @@ use crate::error::HachiError;
 use crate::primitives::serialization::{Compress, SerializationError};
 use crate::primitives::serialization::{Valid, Validate};
 use crate::protocol::commitment::RingCommitment;
+use crate::protocol::sumcheck::types::SumcheckProofShape;
 use crate::protocol::sumcheck::SumcheckProof;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FromSmallInt, HachiDeserialize, HachiSerialize};
@@ -175,16 +176,14 @@ impl HachiSerialize for PackedDigits {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
-        compress: Compress,
+        _compress: Compress,
     ) -> Result<(), SerializationError> {
-        (self.num_elems as u64).serialize_with_mode(&mut writer, compress)?;
-        (self.bits_per_elem as u8).serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.data)?;
         Ok(())
     }
 
     fn serialized_size(&self, _compress: Compress) -> usize {
-        8 + 1 + self.data.len()
+        self.data.len()
     }
 }
 
@@ -206,13 +205,15 @@ impl Valid for PackedDigits {
 }
 
 impl HachiDeserialize for PackedDigits {
+    /// `(num_elems, bits_per_elem)` — shape of the packed digit vector.
+    type Context = (usize, u32);
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
-        compress: Compress,
-        validate: Validate,
+        _compress: Compress,
+        _validate: Validate,
+        ctx: &(usize, u32),
     ) -> Result<Self, SerializationError> {
-        let num_elems = u64::deserialize_with_mode(&mut reader, compress, validate)? as usize;
-        let bits_per_elem = u8::deserialize_with_mode(&mut reader, compress, validate)? as u32;
+        let (num_elems, bits_per_elem) = *ctx;
         let num_bytes = (num_elems * bits_per_elem as usize).div_ceil(8);
         let mut data = vec![0u8; num_bytes];
         reader.read_exact(&mut data)?;
@@ -221,9 +222,7 @@ impl HachiDeserialize for PackedDigits {
             bits_per_elem,
             data,
         };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
+        out.check()?;
         Ok(out)
     }
 }
@@ -250,7 +249,6 @@ impl<F: FieldCore, const D: usize> HachiSerialize for RingSliceSerializer<'_, F,
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        (self.0.len() as u64).serialize_with_mode(&mut writer, compress)?;
         for ring in self.0 {
             ring.serialize_with_mode(&mut writer, compress)?;
         }
@@ -258,12 +256,10 @@ impl<F: FieldCore, const D: usize> HachiSerialize for RingSliceSerializer<'_, F,
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        (self.0.len() as u64).serialized_size(compress)
-            + self
-                .0
-                .iter()
-                .map(|ring| ring.serialized_size(compress))
-                .sum::<usize>()
+        self.0
+            .iter()
+            .map(|ring| ring.serialized_size(compress))
+            .sum()
     }
 }
 
@@ -473,13 +469,15 @@ impl<F: FieldCore> Valid for FlatRingVec<F> {
 }
 
 impl<F: FieldCore + Valid> HachiDeserialize for FlatRingVec<F> {
+    type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let ring_dim = u32::deserialize_with_mode(&mut reader, compress, validate)? as usize;
-        let coeffs = Vec::<F>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let ring_dim = u32::deserialize_with_mode(&mut reader, compress, validate, &())? as usize;
+        let coeffs = Vec::<F>::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self { coeffs, ring_dim };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -663,11 +661,17 @@ impl<F: FieldCore> HachiSerialize for ProofRingVec<F> {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.coeffs.serialize_with_mode(&mut writer, compress)
+        for c in &self.coeffs {
+            c.serialize_with_mode(&mut writer, compress)?;
+        }
+        Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.coeffs.serialized_size(compress)
+        self.coeffs
+            .iter()
+            .map(|c| c.serialized_size(compress))
+            .sum()
     }
 }
 
@@ -678,12 +682,23 @@ impl<F: FieldCore + Valid> Valid for ProofRingVec<F> {
 }
 
 impl<F: FieldCore + Valid> HachiDeserialize for ProofRingVec<F> {
+    /// Number of field-element coefficients to read.
+    type Context = usize;
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
+        num_coeffs: &usize,
     ) -> Result<Self, SerializationError> {
-        let coeffs = Vec::<F>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let mut coeffs = Vec::with_capacity(*num_coeffs);
+        for _ in 0..*num_coeffs {
+            coeffs.push(F::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?);
+        }
         let out = Self { coeffs };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -972,6 +987,31 @@ impl<F: FieldCore> HachiProofTail<F> {
     }
 }
 
+/// Shape descriptor for deserializing a [`HachiLevelProof`] without headers.
+#[derive(Debug, Clone, Copy)]
+pub struct LevelProofShape {
+    /// Number of field coefficients in `y_ring`.
+    pub y_ring_coeffs: usize,
+    /// Number of field coefficients in `v`.
+    pub v_coeffs: usize,
+    /// Stage-1 sumcheck shape: `(num_rounds, degree)`.
+    pub stage1_sumcheck: SumcheckProofShape,
+    /// Stage-2 sumcheck shape: `(num_rounds, degree)`.
+    pub stage2_sumcheck: SumcheckProofShape,
+    /// Number of field coefficients in `next_w_commitment`.
+    pub next_commit_coeffs: usize,
+}
+
+/// Shape descriptor for deserializing an entire [`HachiProof`] without
+/// headers.
+#[derive(Debug, Clone)]
+pub struct HachiProofShape {
+    /// Per-level shapes in execution order.
+    pub level_shapes: Vec<LevelProofShape>,
+    /// Tail packed-digit shape: `(num_elems, bits_per_elem)`.
+    pub tail_shape: (usize, u32),
+}
+
 /// Hachi PCS proof with multi-level folding.
 ///
 /// Each level runs the full protocol (quadratic equation, ring switch,
@@ -1036,15 +1076,18 @@ impl<F: FieldCore + Valid, const D: usize> Valid for HachiCommitmentHint<F, D> {
 }
 
 impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiCommitmentHint<F, D> {
+    type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
+        _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let num_blocks = u64::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+        let num_blocks = u64::deserialize_with_mode(&mut reader, compress, validate, &())? as usize;
         let mut inner_opening_digits = Vec::with_capacity(num_blocks);
         for _ in 0..num_blocks {
-            let block_len = u64::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+            let block_len =
+                u64::deserialize_with_mode(&mut reader, compress, validate, &())? as usize;
             let mut block = Vec::with_capacity(block_len);
             for _ in 0..block_len {
                 let mut plane = [0i8; D];
@@ -1111,25 +1154,44 @@ impl<F: FieldCore + Valid> Valid for HachiLevelProof<F> {
 }
 
 impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
+    type Context = LevelProofShape;
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
+        ctx: &LevelProofShape,
     ) -> Result<Self, SerializationError> {
-        let y_ring = ProofRingVec::deserialize_with_mode(&mut reader, compress, validate)?;
-        let v = ProofRingVec::deserialize_with_mode(&mut reader, compress, validate)?;
+        let y_ring = ProofRingVec::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &ctx.y_ring_coeffs,
+        )?;
+        let v =
+            ProofRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
         let stage1 = HachiStage1Proof {
-            sumcheck: SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?,
-            s_claim: F::deserialize_with_mode(&mut reader, compress, validate)?,
+            sumcheck: SumcheckProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &ctx.stage1_sumcheck,
+            )?,
+            s_claim: F::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         let stage2 = HachiStage2Proof {
-            sumcheck: SumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?,
+            sumcheck: SumcheckProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &ctx.stage2_sumcheck,
+            )?,
             next_w_commitment: ProofRingVec::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
+                &ctx.next_commit_coeffs,
             )?,
-            next_w_eval: F::deserialize_with_mode(&mut reader, compress, validate)?,
+            next_w_eval: F::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         let out = Self {
             y_ring,
@@ -1150,15 +1212,13 @@ impl<F: FieldCore> HachiSerialize for HachiProof<F> {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        (self.levels.len() as u32).serialize_with_mode(&mut writer, compress)?;
         for level in &self.levels {
             level.serialize_with_mode(&mut writer, compress)?;
         }
         self.tail.direct.serialize_with_mode(&mut writer, compress)
     }
     fn serialized_size(&self, compress: Compress) -> usize {
-        4 + self
-            .levels
+        self.levels
             .iter()
             .map(|l| l.serialized_size(compress))
             .sum::<usize>()
@@ -1186,21 +1246,24 @@ impl<F: FieldCore + Valid> Valid for HachiProof<F> {
 }
 
 impl<F: FieldCore + Valid> HachiDeserialize for HachiProof<F> {
+    type Context = HachiProofShape;
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
+        ctx: &HachiProofShape,
     ) -> Result<Self, SerializationError> {
-        let num_levels = u32::deserialize_with_mode(&mut reader, compress, validate)? as usize;
-        let mut levels = Vec::with_capacity(num_levels);
-        for _ in 0..num_levels {
+        let mut levels = Vec::with_capacity(ctx.level_shapes.len());
+        for shape in &ctx.level_shapes {
             levels.push(HachiLevelProof::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
+                shape,
             )?);
         }
-        let pw = PackedDigits::deserialize_with_mode(&mut reader, compress, validate)?;
+        let pw =
+            PackedDigits::deserialize_with_mode(&mut reader, compress, validate, &ctx.tail_shape)?;
         let tail = HachiProofTail::new(pw);
         let out = Self { levels, tail };
         if matches!(validate, Validate::Yes) {

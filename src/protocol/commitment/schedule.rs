@@ -4,6 +4,7 @@ use super::config::{
 };
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
+use crate::protocol::proof::{HachiProofShape, LevelProofShape};
 use std::collections::HashMap;
 use std::fmt::Write;
 
@@ -117,6 +118,8 @@ pub struct HachiPlannedLevel {
     pub layout: HachiCommitmentLayout,
     pub next_inputs: HachiScheduleInputs,
     pub next_level_log_basis: u32,
+    /// `n_b * d` of the next level, used for next_w_commitment shape.
+    pub next_commit_coeffs: usize,
     pub level_bytes: usize,
 }
 
@@ -152,6 +155,36 @@ impl HachiSchedulePlan {
             .last()
             .expect("planned schedule always contains at least one state")
     }
+
+    /// Derive the [`HachiProofShape`] needed for deserializing a proof
+    /// produced under this schedule.
+    pub fn to_proof_shape(&self) -> HachiProofShape {
+        let level_shapes = self
+            .levels
+            .iter()
+            .map(|level| {
+                let p = &level.params;
+                let next_w_len = level.next_inputs.current_w_len;
+                let rounds = sumcheck_rounds(p.d, next_w_len);
+                let b = 1usize << level.layout.log_basis;
+                let stage1_degree = b / 2 + 1;
+
+                LevelProofShape {
+                    y_ring_coeffs: p.d,
+                    v_coeffs: p.n_d * p.d,
+                    stage1_sumcheck: (rounds, stage1_degree),
+                    stage2_sumcheck: (rounds, 3),
+                    next_commit_coeffs: level.next_commit_coeffs,
+                }
+            })
+            .collect();
+
+        let terminal = self.terminal_state();
+        HachiProofShape {
+            level_shapes,
+            tail_shape: (terminal.current_w_len, terminal.log_basis),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,19 +213,19 @@ fn field_bytes(field_bits: u32) -> usize {
 }
 
 fn proof_ring_vec_bytes(ring_len: usize, ring_dim: usize, elem_bytes: usize) -> usize {
-    8 + ring_len * ring_dim * elem_bytes
+    ring_len * ring_dim * elem_bytes
 }
 
 fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
-    8 + 1 + (num_elems * bits_per_elem as usize).div_ceil(8)
+    (num_elems * bits_per_elem as usize).div_ceil(8)
 }
 
 fn compressed_unipoly_bytes(degree: usize, elem_bytes: usize) -> usize {
-    8 + degree * elem_bytes
+    degree * elem_bytes
 }
 
 fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
-    8 + rounds * compressed_unipoly_bytes(degree, elem_bytes)
+    rounds * compressed_unipoly_bytes(degree, elem_bytes)
 }
 
 pub(crate) fn recursive_r_decomp_levels_for_bound(
@@ -365,6 +398,7 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
                         layout,
                         next_inputs,
                         next_level_log_basis: next_log_basis,
+                        next_commit_coeffs: next_level_params.n_b * next_level_params.d,
                         level_bytes,
                     });
                     levels.extend(suffix.levels);
@@ -439,6 +473,7 @@ pub(crate) fn planned_schedule<Cfg: CommitmentConfig>(
                 layout: root_layout,
                 next_inputs,
                 next_level_log_basis: next_log_basis,
+                next_commit_coeffs: next_level_params.n_b * next_level_params.d,
                 level_bytes,
             });
             let candidate_bytes = if next_w_len < root_inputs.current_w_len {
@@ -495,7 +530,7 @@ pub(crate) fn planned_schedule<Cfg: CommitmentConfig>(
         states,
         levels: best.levels,
         no_wrapper_bytes: best.no_wrapper_bytes,
-        exact_proof_bytes: best.no_wrapper_bytes + 4,
+        exact_proof_bytes: best.no_wrapper_bytes,
     })
 }
 
