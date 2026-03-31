@@ -118,6 +118,14 @@ pub fn compute_num_digits_fold(r_vars: usize, challenge_l1_mass: usize, log_basi
     compute_num_digits(log_beta, log_basis)
 }
 
+fn recursive_tight_z_pre_rows(num_ring: usize, r_vars: usize) -> u64 {
+    debug_assert!(
+        r_vars < 53,
+        "recursive_tight_z_pre_rows expects r_vars < 53, got {r_vars}"
+    );
+    (num_ring as u64).div_ceil(1u64 << r_vars)
+}
+
 /// Find the `(m_vars, r_vars)` split that minimizes the level-0
 /// witness-to-polynomial ratio for a given config.
 ///
@@ -168,7 +176,7 @@ pub(super) fn optimal_m_r_split_with_params(
         let delta_fold =
             compute_num_digits_fold(r, params.challenge_l1_mass, decomp.log_basis) as u64;
         let m_eff = if num_ring > 0 {
-            num_ring.div_ceil(1usize << r) as u64
+            recursive_tight_z_pre_rows(num_ring, r)
         } else {
             1u64 << m
         };
@@ -1042,5 +1050,47 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
             2,
             5,
         )?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::algebra::SparseChallengeConfig;
+    use crate::protocol::commitment::HachiLevelParams;
+
+    fn test_level_params() -> HachiLevelParams {
+        let stage1_config = SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        HachiLevelParams {
+            d: 64,
+            log_basis: 2,
+            n_a: 2,
+            n_b: 2,
+            n_d: 2,
+            challenge_l1_mass: stage1_config.l1_mass(),
+            stage1_config,
+        }
+    }
+
+    #[test]
+    fn recursive_tight_rows_use_u64_block_counts() {
+        assert_eq!(recursive_tight_z_pre_rows(1, 40), 1);
+        assert_eq!(recursive_tight_z_pre_rows((1usize << 20) + 1, 20), 2);
+    }
+
+    #[test]
+    fn recursive_split_handles_large_r_with_nonzero_num_ring() {
+        let params = test_level_params();
+        let decomp = DecompositionParams {
+            log_basis: 2,
+            log_commit_bound: 128,
+            log_open_bound: Some(128),
+        };
+
+        let (m_vars, r_vars) = optimal_m_r_split_with_params(&params, decomp, 40, 1);
+        assert_eq!(m_vars + r_vars, 40);
     }
 }
