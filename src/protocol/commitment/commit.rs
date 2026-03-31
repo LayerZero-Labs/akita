@@ -27,8 +27,6 @@ use crate::primitives::serialization::{
 };
 use crate::protocol::commitment_scheme::should_stop_folding;
 use crate::protocol::hachi_poly_ops::OneHotIndex;
-#[cfg(test)]
-use crate::protocol::ring_switch::w_commitment_layout;
 use crate::protocol::ring_switch::w_ring_element_count;
 use crate::{cfg_into_iter, cfg_iter, CanonicalField, FieldCore, FieldSampling};
 #[cfg(feature = "disk-persistence")]
@@ -1088,6 +1086,7 @@ impl HachiCommitmentCore {
 mod tests {
     use super::*;
     use crate::primitives::{HachiDeserialize, HachiSerialize};
+    use crate::protocol::commitment::hachi_recursive_level_layout_from_params;
     use crate::test_utils::{TinyConfig, F as TestF};
 
     #[test]
@@ -1130,10 +1129,12 @@ mod tests {
             level: 0,
             current_w_len: 1usize << layout_b.required_num_vars::<TEST_D>().unwrap(),
         });
+        let w_len_a = w_ring_element_count::<TestF>(&params_a, layout_a) * TEST_D;
+        let w_len_b = w_ring_element_count::<TestF>(&params_b, layout_b) * TEST_D;
         let w_layout_a =
-            w_commitment_layout::<TestF, TEST_D, TinyConfig>(&params_a, layout_a).unwrap();
+            hachi_recursive_level_layout_from_params::<TinyConfig>(&params_a, w_len_a).unwrap();
         let w_layout_b =
-            w_commitment_layout::<TestF, TEST_D, TinyConfig>(&params_b, layout_b).unwrap();
+            hachi_recursive_level_layout_from_params::<TinyConfig>(&params_b, w_len_b).unwrap();
 
         let expected_inner = [
             layout_a.inner_width,

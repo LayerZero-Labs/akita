@@ -12,9 +12,8 @@ use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
-use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::linear::{
-    decompose_rows_i8, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
+    decompose_rows_i8, mat_vec_mul_ntt_digits_i8_strided, mat_vec_mul_ntt_i8_strided,
 };
 use crate::protocol::hachi_poly_ops::helpers::{
     balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
@@ -82,13 +81,13 @@ impl<'a, F: FieldCore, const D: usize> RecursiveWitnessView<'a, F, D> {
     }
 
     #[inline]
-    fn block_slice(&self, block_idx: usize, block_len: usize) -> &'a [[i8; D]] {
-        let start = block_idx * block_len;
-        if start >= self.coeffs.len() {
-            &[]
-        } else {
-            &self.coeffs[start..(start + block_len).min(self.coeffs.len())]
-        }
+    fn block_elem(
+        &self,
+        block_idx: usize,
+        col_idx: usize,
+        num_blocks: usize,
+    ) -> Option<&'a [i8; D]> {
+        self.coeffs.get(block_idx + col_idx * num_blocks)
     }
 
     pub(crate) fn num_ring_elems(&self) -> usize {
@@ -125,16 +124,19 @@ where
         CyclotomicRing::from_coefficients(total)
     }
 
-    pub(crate) fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
-        let num_blocks = self.num_ring_elems().div_ceil(block_len);
+    pub(crate) fn fold_blocks(
+        &self,
+        scalars: &[F],
+        block_len: usize,
+        num_blocks: usize,
+    ) -> Vec<CyclotomicRing<F, D>> {
         cfg_into_iter!(0..num_blocks)
             .map(|block_idx| {
                 let mut acc = [F::zero(); D];
-                for (ring, &scalar) in self
-                    .block_slice(block_idx, block_len)
-                    .iter()
-                    .zip(scalars.iter())
-                {
+                for (col_idx, &scalar) in scalars.iter().take(block_len).enumerate() {
+                    let Some(ring) = self.block_elem(block_idx, col_idx, num_blocks) else {
+                        break;
+                    };
                     for (coeff, &d) in acc.iter_mut().zip(ring.iter()) {
                         if d != 0 {
                             *coeff += scalar * F::from_i8(d);
@@ -151,8 +153,9 @@ where
         eval_outer_scalars: &[F],
         fold_scalars: &[F],
         block_len: usize,
+        num_blocks: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        let folded = self.fold_blocks(fold_scalars, block_len);
+        let folded = self.fold_blocks(fold_scalars, block_len, num_blocks);
         let eval = folded
             .iter()
             .zip(eval_outer_scalars.iter())
@@ -167,11 +170,11 @@ where
         &self,
         challenges: &[SparseChallenge],
         block_len: usize,
+        num_blocks: usize,
         num_digits: usize,
         _log_basis: u32,
     ) -> DecomposeFoldWitness<F, D> {
         let inner_width = block_len * num_digits;
-        let num_blocks = self.num_ring_elems().div_ceil(block_len);
         let active_blocks = challenges.len().min(num_blocks);
 
         let q = (-F::one()).to_canonical_u128() + 1;
@@ -181,6 +184,7 @@ where
             challenges,
             active_blocks,
             block_len,
+            num_blocks,
             num_digits,
             inner_width,
         );
@@ -188,24 +192,19 @@ where
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn commit_inner(
         &self,
-        _a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_rows: usize,
         block_len: usize,
+        num_blocks: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
     ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
-        let num_blocks = self.num_ring_elems().div_ceil(block_len);
-        let coeff_len = self.coeffs.len();
-
-        let n_rows = ntt_a.num_rows();
         let t_all = if num_digits_commit == 1 {
-            let block_slices: Vec<&[[i8; D]]> = (0..num_blocks)
-                .map(|block_idx| self.block_slice(block_idx, block_len))
-                .collect();
-            mat_vec_mul_ntt_digits_i8(ntt_a, n_rows, &block_slices)
+            mat_vec_mul_ntt_digits_i8_strided(ntt_a, n_rows, self.coeffs, num_blocks, block_len)
         } else {
             let ring_elems: Vec<CyclotomicRing<F, D>> = self
                 .coeffs
@@ -215,17 +214,15 @@ where
                     CyclotomicRing::from_coefficients(coeffs)
                 })
                 .collect();
-            let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
-                .map(|block_idx| {
-                    let start = block_idx * block_len;
-                    if start >= coeff_len {
-                        &[] as &[CyclotomicRing<F, D>]
-                    } else {
-                        &ring_elems[start..(start + block_len).min(coeff_len)]
-                    }
-                })
-                .collect();
-            mat_vec_mul_ntt_i8(ntt_a, n_rows, &block_slices, num_digits_commit, log_basis)
+            mat_vec_mul_ntt_i8_strided(
+                ntt_a,
+                n_rows,
+                &ring_elems,
+                num_blocks,
+                block_len,
+                num_digits_commit,
+                log_basis,
+            )
         };
 
         let results = cfg_into_iter!(t_all)
@@ -235,24 +232,19 @@ where
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn commit_inner_witness(
         &self,
-        _a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_rows: usize,
         block_len: usize,
+        num_blocks: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
     ) -> Result<CommitInnerWitness<F, D>, HachiError> {
-        let num_blocks = self.num_ring_elems().div_ceil(block_len);
-        let coeff_len = self.coeffs.len();
-        let n_rows = ntt_a.num_rows();
-
         let t = if num_digits_commit == 1 {
-            let block_slices: Vec<&[[i8; D]]> = (0..num_blocks)
-                .map(|block_idx| self.block_slice(block_idx, block_len))
-                .collect();
-            mat_vec_mul_ntt_digits_i8(ntt_a, n_rows, &block_slices)
+            mat_vec_mul_ntt_digits_i8_strided(ntt_a, n_rows, self.coeffs, num_blocks, block_len)
         } else {
             let ring_elems: Vec<CyclotomicRing<F, D>> = self
                 .coeffs
@@ -262,22 +254,45 @@ where
                     CyclotomicRing::from_coefficients(coeffs)
                 })
                 .collect();
-            let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
-                .map(|block_idx| {
-                    let start = block_idx * block_len;
-                    if start >= coeff_len {
-                        &[] as &[CyclotomicRing<F, D>]
-                    } else {
-                        &ring_elems[start..(start + block_len).min(coeff_len)]
-                    }
-                })
-                .collect();
-            mat_vec_mul_ntt_i8(ntt_a, n_rows, &block_slices, num_digits_commit, log_basis)
+            mat_vec_mul_ntt_i8_strided(
+                ntt_a,
+                n_rows,
+                &ring_elems,
+                num_blocks,
+                block_len,
+                num_digits_commit,
+                log_basis,
+            )
         };
 
         let t_hat = cfg_iter!(t)
             .map(|t_i| decompose_rows_i8(t_i, num_digits_open, log_basis))
             .collect();
         Ok(CommitInnerWitness { t, t_hat })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn logical_rows_use_strided_column_major_indices() {
+        let digits: Vec<i8> = (0..20).collect();
+        let w = RecursiveWitnessFlat::from_i8_digits(digits);
+        let view = w.view::<crate::test_utils::F, 2>().expect("view");
+        let num_blocks = 4;
+        let block_len = (w.len() / 2).div_ceil(num_blocks);
+
+        let row = |block_idx: usize| -> Vec<[i8; 2]> {
+            (0..block_len)
+                .filter_map(|col_idx| view.block_elem(block_idx, col_idx, num_blocks).copied())
+                .collect()
+        };
+
+        assert_eq!(row(0), vec![[0, 1], [8, 9], [16, 17]]);
+        assert_eq!(row(1), vec![[2, 3], [10, 11], [18, 19]]);
+        assert_eq!(row(2), vec![[4, 5], [12, 13]]);
+        assert_eq!(row(3), vec![[6, 7], [14, 15]]);
     }
 }

@@ -16,7 +16,7 @@ use crate::protocol::commitment::{
 };
 use crate::protocol::hachi_poly_ops::{HachiPolyOps, RecursiveWitnessFlat, RecursiveWitnessView};
 use crate::protocol::opening_point::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
 };
 use crate::protocol::proof::{
     FlatRingVec, HachiCommitmentHint, HachiLevelProof, HachiProof, HachiProofTail, PackedDigits,
@@ -32,8 +32,6 @@ use crate::protocol::sumcheck::hachi_stage1::{HachiStage1Prover, HachiStage1Veri
 use crate::protocol::sumcheck::hachi_stage2::{
     relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier,
 };
-#[cfg(debug_assertions)]
-use crate::protocol::sumcheck::multilinear_eval;
 use crate::protocol::sumcheck::{prove_sumcheck, verify_sumcheck, SumcheckInstanceVerifier};
 use crate::protocol::transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH,
@@ -71,8 +69,6 @@ struct RecursiveProverState<F: FieldCore> {
     w: RecursiveWitnessFlat,
     commitment: FlatRingVec<F>,
     hint: RecursiveCommitmentHintCache<F>,
-    #[cfg(debug_assertions)]
-    w_eval: F,
     sumcheck_challenges: Vec<F>,
     num_u: usize,
     num_l: usize,
@@ -151,7 +147,13 @@ where
 
     let ring_opening_point = {
         let _span = tracing::info_span!("ring_opening_point", level).entered();
-        ring_opening_point_from_field::<F>(outer_point, layout.r_vars, layout.m_vars, basis)?
+        ring_opening_point_from_field::<F>(
+            outer_point,
+            layout.r_vars,
+            layout.m_vars,
+            basis,
+            BlockOrder::RowMajor,
+        )?
     };
 
     let fold_scalars = &ring_opening_point.a;
@@ -336,8 +338,6 @@ where
             w,
             commitment: w_commitment,
             hint: w_hint.expect("prover ring switch must preserve recursive hint cache"),
-            #[cfg(debug_assertions)]
-            w_eval,
             sumcheck_challenges,
             num_u,
             num_l,
@@ -393,6 +393,7 @@ where
             layout.r_vars,
             layout.m_vars,
             BasisMode::Lagrange,
+            BlockOrder::ColumnMajor,
         )?
     };
 
@@ -405,7 +406,12 @@ where
             num_ring_elems = witness.num_ring_elems()
         )
         .entered();
-        witness.evaluate_and_fold(eval_outer_scalars, fold_scalars, layout.block_len)
+        witness.evaluate_and_fold(
+            eval_outer_scalars,
+            fold_scalars,
+            layout.block_len,
+            layout.num_blocks,
+        )
     };
 
     commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
@@ -578,6 +584,7 @@ fn dispatch_verify_level<F, T>(
     final_w: Option<&PackedDigits>,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
+    block_order: BlockOrder,
 ) -> Result<Vec<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -593,6 +600,7 @@ where
             final_w,
             level_params,
             layout,
+            block_order,
         )
     })
 }
@@ -619,36 +627,14 @@ where
     let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
 
     let current_w = &current_state.w;
-    let w_view = current_w.view::<F, { D_LEVEL }>()?;
     let opening_point = next_level_opening_point(
         &current_state.sumcheck_challenges,
         current_state.num_u,
         current_state.num_l,
     );
 
-    #[cfg(debug_assertions)]
-    {
-        let mut field_evals: Vec<F> = current_w
-            .as_i8_digits()
-            .iter()
-            .map(|&d| F::from_i8(d))
-            .collect();
-        field_evals.resize(w_view.num_ring_elems() * D_LEVEL, F::zero());
-        let direct_eval = multilinear_eval(&field_evals, &opening_point).unwrap();
-        if current_state.w_eval != direct_eval {
-            tracing::error!(
-                level,
-                ring_elems = w_view.num_ring_elems(),
-                field_len = field_evals.len(),
-                point_len = opening_point.len(),
-                "BUG: w_eval mismatch! prev_level w_eval != w_poly eval at opening_point"
-            );
-        } else {
-            tracing::debug!(level, "w_eval consistency OK");
-        }
-    }
-
     let w_layout = hachi_recursive_level_layout_from_params::<Cfg>(level_params, current_w.len())?;
+    let w_view = current_w.view::<F, { D_LEVEL }>()?;
     let typed_hint: HachiCommitmentHint<F, { D_LEVEL }> =
         current_state.hint.to_typed::<{ D_LEVEL }>()?;
     drop(_setup_span);
@@ -944,6 +930,11 @@ where
                 "verify level"
             );
 
+            let block_order = if i == 0 {
+                BlockOrder::RowMajor
+            } else {
+                BlockOrder::ColumnMajor
+            };
             let challenges = if level_d == D {
                 verify_one_level::<F, T, D>(
                     level_proof,
@@ -954,6 +945,7 @@ where
                     if is_last { final_w } else { None },
                     &level_params,
                     current_layout,
+                    block_order,
                 )?
             } else {
                 dispatch_verify_level::<F, T>(
@@ -966,6 +958,7 @@ where
                     if is_last { final_w } else { None },
                     &level_params,
                     current_layout,
+                    block_order,
                 )?
             };
 
@@ -1028,6 +1021,7 @@ fn verify_one_level<F, T, const D: usize>(
     final_w: Option<&PackedDigits>,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
+    block_order: BlockOrder,
 ) -> Result<Vec<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -1070,6 +1064,7 @@ where
         layout.r_vars,
         layout.m_vars,
         current_state.basis,
+        block_order,
     )?;
     let stage1_challenges =
         derive_stage1_challenges::<F, T, D>(transcript, v_typed, layout.num_blocks, level_params)?;

@@ -248,11 +248,15 @@ pub(super) fn sparse_onehot_accumulate<const D: usize>(
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
 
-    let pos_chunk = inner_width.div_ceil(num_threads);
+    let actual_threads = num_threads.min(inner_width.max(1));
+    let pos_chunk = inner_width.div_ceil(actual_threads);
 
-    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..num_threads)
+    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
+            if pos_start >= inner_width {
+                return Vec::new();
+            }
             let pos_end = (pos_start + pos_chunk).min(inner_width);
             let len = pos_end - pos_start;
             let mut acc = vec![[0i32; D]; len];
@@ -358,6 +362,7 @@ pub(super) fn balanced_digit_decompose_fold_partitioned<const D: usize>(
     challenges: &[SparseChallenge],
     active_blocks: usize,
     block_len: usize,
+    num_blocks: usize,
     num_digits: usize,
     inner_width: usize,
 ) -> Vec<[i32; D]> {
@@ -376,6 +381,9 @@ pub(super) fn balanced_digit_decompose_fold_partitioned<const D: usize>(
     let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
+            if pos_start >= inner_width {
+                return Vec::new();
+            }
             let pos_end = (pos_start + pos_chunk).min(inner_width);
             let len = pos_end - pos_start;
             let mut acc = vec![[0i32; D]; len];
@@ -383,22 +391,24 @@ pub(super) fn balanced_digit_decompose_fold_partitioned<const D: usize>(
             let elem_start = pos_start / num_digits;
             let elem_end = pos_end.div_ceil(num_digits);
 
-            for (challenge, block_idx) in challenges[..active_blocks].iter().zip(0..) {
-                let block_start: usize = block_idx * block_len;
-                let block_end = (block_start + block_len).min(coeffs.len());
+            let lo = elem_start.min(block_len);
+            let hi = elem_end.min(block_len);
+            for col in lo..hi {
+                let out_pos = col * num_digits;
+                if out_pos < pos_start || out_pos >= pos_end {
+                    continue;
+                }
 
-                let lo = elem_start.min(block_end.saturating_sub(block_start));
-                let hi = elem_end.min(block_end.saturating_sub(block_start));
-
-                for elem_idx in lo..hi {
-                    let out_pos = elem_idx * num_digits;
-                    if out_pos >= pos_start && out_pos < pos_end {
-                        sparse_mul_acc::<D>(
-                            &coeffs[block_start + elem_idx],
-                            challenge,
-                            &mut acc[out_pos - pos_start],
-                        );
-                    }
+                let seq_start = col * num_blocks;
+                if seq_start >= coeffs.len() {
+                    break;
+                }
+                let available_blocks = active_blocks.min(coeffs.len() - seq_start);
+                for (challenge, coeff) in challenges[..available_blocks]
+                    .iter()
+                    .zip(coeffs[seq_start..seq_start + available_blocks].iter())
+                {
+                    sparse_mul_acc::<D>(coeff, challenge, &mut acc[out_pos - pos_start]);
                 }
             }
             acc

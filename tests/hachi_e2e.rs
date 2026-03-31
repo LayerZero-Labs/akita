@@ -3,8 +3,8 @@
 use hachi_pcs::algebra::Fp128;
 use hachi_pcs::protocol::commitment::{
     hachi_recursive_level_layout_from_params, Fp128BoundedCommitmentConfig,
-    Fp128FullCommitmentConfig, Fp128OneHotCommitmentConfig, HachiCommitmentLayout,
-    HachiScheduleInputs,
+    Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig,
+    HachiCommitmentLayout, HachiScheduleInputs,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
@@ -15,7 +15,8 @@ use hachi_pcs::protocol::proof::HachiProof;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::{CommitmentConfig, RingCommitment};
 use hachi_pcs::{
-    BasisMode, CanonicalField, CommitmentScheme, HachiDeserialize, HachiSerialize, Transcript,
+    BasisMode, BlockOrder, CanonicalField, CommitmentScheme, HachiDeserialize, HachiSerialize,
+    Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -229,6 +230,7 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
         layout.r_vars,
         layout.m_vars,
         BasisMode::Lagrange,
+        BlockOrder::RowMajor,
     )
     .expect("opening point shape should match layout");
 
@@ -587,7 +589,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
 
 #[test]
 fn adaptive_schedule_key_changes_when_schedule_changes() {
-    type Cfg = Fp128FullCommitmentConfig;
+    type Cfg = Fp128LogBasisCommitmentConfig;
 
     let mut distinct = std::collections::BTreeMap::new();
     for nv in 10..=18 {

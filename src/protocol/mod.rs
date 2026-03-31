@@ -28,7 +28,7 @@ pub use commitment::{
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly};
-pub use opening_point::{BasisMode, RingOpeningPoint};
+pub use opening_point::{BasisMode, BlockOrder, RingOpeningPoint};
 pub use proof::{
     FlatRingVec, HachiLevelProof, HachiProof, HachiProofShape, HachiProofTail, LevelProofShape,
     PackedDigits, ProofRingVec,
