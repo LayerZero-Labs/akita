@@ -1,10 +1,10 @@
 #![allow(missing_docs)]
 
-use hachi_pcs::algebra::Fp128;
+use hachi_pcs::algebra::{Prime128Offset275, Prime128Offset5823};
 use hachi_pcs::protocol::commitment::{
     hachi_recursive_level_layout_from_params, Fp128BoundedCommitmentConfig,
-    Fp128FullCommitmentConfig, Fp128OneHotCommitmentConfig, HachiCommitmentLayout,
-    HachiScheduleInputs,
+    Fp128D16FullCommitmentConfig, Fp128D32FullCommitmentConfig, Fp128FullCommitmentConfig,
+    Fp128OneHotCommitmentConfig, HachiCommitmentLayout, HachiScheduleInputs,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
@@ -13,7 +13,7 @@ use hachi_pcs::protocol::opening_point::{
 };
 use hachi_pcs::protocol::proof::HachiProof;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
-use hachi_pcs::protocol::{CommitmentConfig, RingCommitment};
+use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
     BasisMode, CanonicalField, CommitmentScheme, HachiDeserialize, HachiSerialize, Transcript,
 };
@@ -24,11 +24,14 @@ use std::path::PathBuf;
 use std::sync::{Mutex, Once};
 use std::time::Instant;
 
-type F = Fp128<0xffffffffffffffffffffffffffffe941>;
+type F = Prime128Offset5823;
+type FSmall = Prime128Offset275;
 const ONEHOT_K: usize = 256;
 const FULL_TEST_NV: usize = 14;
 const ONEHOT_TEST_NV: usize = 15;
 const BASIS2_TEST_NV: usize = 12;
+const D32_TEST_NV: usize = 12;
+const D16_TEST_NV: usize = 10;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
 static INIT_RAYON: Once = Once::new();
@@ -44,10 +47,10 @@ fn init_rayon_pool() {
     });
 }
 
-fn random_point(nv: usize) -> Vec<F> {
+fn random_point<FField: CanonicalField>(nv: usize) -> Vec<FField> {
     let mut rng = StdRng::seed_from_u64(0xcafe_babe);
     (0..nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .map(|_| FField::from_canonical_u128_reduced(rng.gen::<u128>()))
         .collect()
 }
 
@@ -60,53 +63,68 @@ fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
-type DenseBasis2Fixture = (
+type DenseBasis2Fixture<FField> = (
     <HachiCommitmentScheme<128, Fp128BoundedCommitmentConfig<128, 2, 2>> as CommitmentScheme<
-        F,
+        FField,
         128,
     >>::VerifierSetup,
-    RingCommitment<F, 128>,
-    HachiProof<F>,
-    Vec<F>,
-    F,
+    <HachiCommitmentScheme<128, Fp128BoundedCommitmentConfig<128, 2, 2>> as CommitmentScheme<
+        FField,
+        128,
+    >>::Commitment,
+    <HachiCommitmentScheme<128, Fp128BoundedCommitmentConfig<128, 2, 2>> as CommitmentScheme<
+        FField,
+        128,
+    >>::Proof,
+    Vec<FField>,
+    FField,
     HachiCommitmentLayout,
 );
 
-type DenseFixture<const D: usize, Cfg> = (
-    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::VerifierSetup,
-    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::Commitment,
-    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::Proof,
-    Vec<F>,
-    F,
+type DenseFixture<FField, const D: usize, Cfg> = (
+    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::VerifierSetup,
+    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::Commitment,
+    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::Proof,
+    Vec<FField>,
+    FField,
     HachiCommitmentLayout,
 );
 
-fn make_dense_basis2_fixture(nv: usize, transcript_label: &'static [u8]) -> DenseBasis2Fixture {
+fn make_dense_basis2_fixture<FField: CanonicalField + 'static>(
+    nv: usize,
+    transcript_label: &'static [u8],
+) -> DenseBasis2Fixture<FField>
+where
+    HachiCommitmentScheme<128, Fp128BoundedCommitmentConfig<128, 2, 2>>:
+        CommitmentScheme<FField, 128>,
+{
     type Cfg = Fp128BoundedCommitmentConfig<128, 2, 2>;
     const D: usize = Cfg::D;
     let layout = Cfg::commitment_layout(nv).expect("layout");
 
     let mut rng = StdRng::seed_from_u64(0x1234_5678);
-    let evals: Vec<F> = (0..1usize << nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+    let evals: Vec<FField> = (0..1usize << nv)
+        .map(|_| FField::from_canonical_u128_reduced(rng.gen::<u128>()))
         .collect();
 
-    let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
-    let pt = random_point(nv);
+    let poly = DensePoly::<FField, D>::from_field_evals(nv, &evals).unwrap();
+    let pt = random_point::<FField>(nv);
     let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
     #[cfg(feature = "disk-persistence")]
     purge_setup_cache(nv);
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::setup_prover(nv);
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::setup_verifier(&setup);
     let (commitment, hint) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout)
-            .unwrap();
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::commit(
+            &poly, &setup, &layout,
+        )
+        .unwrap();
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_label);
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
+    let mut prover_transcript = Blake2bTranscript::<FField>::new(transcript_label);
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::prove(
         &setup,
         &poly,
         &pt,
@@ -128,36 +146,38 @@ fn make_dense_basis2_fixture(nv: usize, transcript_label: &'static [u8]) -> Dens
     )
 }
 
-fn make_dense_fixture<const D: usize, Cfg: CommitmentConfig>(
+fn make_dense_fixture<FField: CanonicalField + 'static, const D: usize, Cfg: CommitmentConfig>(
     nv: usize,
     transcript_label: &'static [u8],
-) -> DenseFixture<D, Cfg>
+) -> DenseFixture<FField, D, Cfg>
 where
-    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<F, D>,
+    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<FField, D>,
 {
     let layout = Cfg::commitment_layout(nv).expect("layout");
 
     let mut rng = StdRng::seed_from_u64(0x0ddc_0ffe_e123_4567);
-    let evals: Vec<F> = (0..1usize << nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+    let evals: Vec<FField> = (0..1usize << nv)
+        .map(|_| FField::from_canonical_u128_reduced(rng.gen::<u128>()))
         .collect();
 
-    let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
-    let pt = random_point(nv);
+    let poly = DensePoly::<FField, D>::from_field_evals(nv, &evals).unwrap();
+    let pt = random_point::<FField>(nv);
     let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
     #[cfg(feature = "disk-persistence")]
     purge_setup_cache(nv);
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::setup_prover(nv);
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::setup_verifier(&setup);
     let (commitment, hint) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout)
-            .unwrap();
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::commit(
+            &poly, &setup, &layout,
+        )
+        .unwrap();
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_label);
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
+    let mut prover_transcript = Blake2bTranscript::<FField>::new(transcript_label);
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::prove(
         &setup,
         &poly,
         &pt,
@@ -214,11 +234,11 @@ fn purge_setup_cache(max_num_vars: usize) {
     }
 }
 
-fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
+fn opening_from_poly<FField: CanonicalField, const D: usize, P: HachiPolyOps<FField, D>>(
     poly: &P,
-    point: &[F],
+    point: &[FField],
     layout: &HachiCommitmentLayout,
-) -> F {
+) -> FField {
     let alpha_bits = D.trailing_zeros() as usize;
     assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
 
@@ -237,7 +257,7 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
         &ring_opening_point.a,
         layout.block_len,
     );
-    let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, BasisMode::Lagrange)
+    let v = reduce_inner_opening_to_ring_element::<FField, D>(inner_point, BasisMode::Lagrange)
         .expect("inner opening point should match ring dimension");
     (y_ring * v.sigma_m1()).coefficients()[0]
 }
@@ -258,7 +278,7 @@ fn full_d128_prove_verify() {
             .collect();
 
         let poly = DensePoly::<F, D>::from_field_evals(FULL_TEST_NV, &evals).unwrap();
-        let pt = random_point(FULL_TEST_NV);
+        let pt = random_point::<F>(FULL_TEST_NV);
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
         #[cfg(feature = "disk-persistence")]
@@ -339,7 +359,7 @@ fn full_d128_basis2_prove_verify() {
         const D: usize = Cfg::D;
 
         let (verifier_setup, commitment, proof, opening_point, opening, layout) =
-            make_dense_basis2_fixture(BASIS2_TEST_NV, b"hachi_e2e/basis2");
+            make_dense_basis2_fixture::<F>(BASIS2_TEST_NV, b"hachi_e2e/basis2");
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/basis2");
         let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
@@ -362,6 +382,78 @@ fn full_d128_basis2_prove_verify() {
 }
 
 #[test]
+fn full_d32_prove_verify() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = Fp128D32FullCommitmentConfig;
+        const D: usize = Cfg::D;
+
+        let plan = Cfg::schedule_plan(D32_TEST_NV)
+            .expect("schedule plan")
+            .expect("adaptive D32 config should expose a schedule plan");
+        let (verifier_setup, commitment, proof, opening_point, opening, layout) =
+            make_dense_fixture::<FSmall, D, Cfg>(D32_TEST_NV, b"hachi_e2e/full-d32");
+
+        assert_eq!(proof.levels.len(), plan.levels.len());
+
+        let mut verifier_transcript = Blake2bTranscript::<FSmall>::new(b"hachi_e2e/full-d32");
+        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FSmall, D>>::verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+            &layout,
+        );
+
+        assert!(
+            result.is_ok(),
+            "D32 verification must pass: {:?}",
+            result.err()
+        );
+    });
+}
+
+#[test]
+fn full_d16_prove_verify() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = Fp128D16FullCommitmentConfig;
+        const D: usize = Cfg::D;
+
+        let plan = Cfg::schedule_plan(D16_TEST_NV)
+            .expect("schedule plan")
+            .expect("adaptive D16 config should expose a schedule plan");
+        let (verifier_setup, commitment, proof, opening_point, opening, layout) =
+            make_dense_fixture::<FSmall, D, Cfg>(D16_TEST_NV, b"hachi_e2e/full-d16");
+
+        assert_eq!(proof.levels.len(), plan.levels.len());
+
+        let mut verifier_transcript = Blake2bTranscript::<FSmall>::new(b"hachi_e2e/full-d16");
+        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FSmall, D>>::verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+            &layout,
+        );
+
+        assert!(
+            result.is_ok(),
+            "D16 verification must pass: {:?}",
+            result.err()
+        );
+    });
+}
+
+#[test]
 fn full_d128_basis2_rejects_tampered_stage1_sumcheck() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
@@ -370,7 +462,7 @@ fn full_d128_basis2_rejects_tampered_stage1_sumcheck() {
         const D: usize = Cfg::D;
 
         let (verifier_setup, commitment, proof, opening_point, opening, layout) =
-            make_dense_basis2_fixture(BASIS2_TEST_NV, b"hachi_e2e/basis2-tamper");
+            make_dense_basis2_fixture::<F>(BASIS2_TEST_NV, b"hachi_e2e/basis2-tamper");
         let mut malformed = proof.clone();
         let stage1_sumcheck = &mut malformed
             .levels
@@ -418,7 +510,7 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
             .expect("schedule plan")
             .expect("adaptive full config should expose a schedule plan");
         let (verifier_setup, commitment, proof, opening_point, opening, layout) =
-            make_dense_fixture::<D, Cfg>(nv, b"hachi_e2e/adaptive-full-mixed");
+            make_dense_fixture::<F, D, Cfg>(nv, b"hachi_e2e/adaptive-full-mixed");
 
         assert_eq!(proof.levels.len(), plan.levels.len());
 
@@ -477,7 +569,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             .collect();
         let onehot_poly =
             OneHotPoly::<F, D>::new(ONEHOT_K, indices, layout.r_vars, layout.m_vars).unwrap();
-        let pt = random_point(nv);
+        let pt = random_point::<F>(nv);
         let expected_opening = opening_from_poly(&onehot_poly, &pt, &layout);
         let plan = Cfg::schedule_plan(nv)
             .expect("schedule plan")

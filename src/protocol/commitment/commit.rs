@@ -16,6 +16,8 @@ use super::utils::linear::{
 use super::utils::matrix::{
     derive_public_matrix_flat, sample_public_matrix_seed, PublicMatrixSeed,
 };
+#[cfg(feature = "disk-persistence")]
+use super::utils::norm::detect_field_modulus;
 use super::CommitmentConfig;
 use crate::algebra::fields::wide::HasWide;
 use crate::algebra::CyclotomicRing;
@@ -380,7 +382,7 @@ where
 }
 
 #[cfg(feature = "disk-persistence")]
-fn cache_file_name<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
+fn cache_file_name<F: CanonicalField, Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
     let envelope = Cfg::envelope(max_num_vars);
     let family = Cfg::family_key()
         .chars()
@@ -390,8 +392,9 @@ fn cache_file_name<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
+    let modulus = detect_field_modulus::<F>();
     format!(
-        "hachi_{family}_sched_{schedule}_d{}_na{}_nb{}_nd{}_nv{max_num_vars}.setup",
+        "hachi_q{modulus:032x}_{family}_sched_{schedule}_d{}_na{}_nb{}_nd{}_nv{max_num_vars}.setup",
         Cfg::D,
         envelope.max_n_a,
         envelope.max_n_b,
@@ -400,7 +403,9 @@ fn cache_file_name<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
 }
 
 #[cfg(feature = "disk-persistence")]
-fn get_storage_path<Cfg: CommitmentConfig>(max_num_vars: usize) -> Option<PathBuf> {
+fn get_storage_path<F: CanonicalField, Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+) -> Option<PathBuf> {
     let cache_directory = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
         Some(PathBuf::from(local_app_data))
     } else if let Ok(home) = std::env::var("HOME") {
@@ -424,17 +429,17 @@ fn get_storage_path<Cfg: CommitmentConfig>(max_num_vars: usize) -> Option<PathBu
 
     cache_directory.map(|mut path| {
         path.push("hachi");
-        path.push(cache_file_name::<Cfg>(max_num_vars));
+        path.push(cache_file_name::<F, Cfg>(max_num_vars));
         path
     })
 }
 
 #[cfg(feature = "disk-persistence")]
-fn save_expanded_setup<F: FieldCore, Cfg: CommitmentConfig>(
+fn save_expanded_setup<F: FieldCore + CanonicalField, Cfg: CommitmentConfig>(
     setup: &HachiExpandedSetup<F>,
     max_num_vars: usize,
 ) {
-    let Some(storage_path) = get_storage_path::<Cfg>(max_num_vars) else {
+    let Some(storage_path) = get_storage_path::<F, Cfg>(max_num_vars) else {
         tracing::warn!("Could not determine storage directory; skipping setup save");
         return;
     };
@@ -511,10 +516,10 @@ where
 }
 
 #[cfg(feature = "disk-persistence")]
-fn load_expanded_setup<F: FieldCore + Valid, Cfg: CommitmentConfig>(
+fn load_expanded_setup<F: FieldCore + Valid + CanonicalField, Cfg: CommitmentConfig>(
     max_num_vars: usize,
 ) -> Result<HachiExpandedSetup<F>, HachiError> {
-    let storage_path = get_storage_path::<Cfg>(max_num_vars).ok_or_else(|| {
+    let storage_path = get_storage_path::<F, Cfg>(max_num_vars).ok_or_else(|| {
         HachiError::InvalidSetup("Failed to determine storage directory".to_string())
     })?;
 
@@ -582,7 +587,7 @@ where
                         max_num_vars,
                         layout,
                     ) {
-                        if let Some(storage_path) = get_storage_path::<Cfg>(max_num_vars) {
+                        if let Some(storage_path) = get_storage_path::<F, Cfg>(max_num_vars) {
                             let _ = fs::remove_file(&storage_path);
                             tracing::warn!(
                                 "Rejected cached setup from {}: {e}; regenerating",
@@ -597,7 +602,7 @@ where
                     }
                 }
                 Err(e) => {
-                    if let Some(storage_path) = get_storage_path::<Cfg>(max_num_vars) {
+                    if let Some(storage_path) = get_storage_path::<F, Cfg>(max_num_vars) {
                         let _ = fs::remove_file(&storage_path);
                         tracing::warn!(
                             "Failed to load cached setup from {}: {e}; regenerating",
@@ -1195,7 +1200,7 @@ mod tests {
         static DISK_TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
         fn cleanup_setup_file(max_num_vars: usize) {
-            if let Some(path) = get_storage_path::<TinyConfig>(max_num_vars) {
+            if let Some(path) = get_storage_path::<TestF, TinyConfig>(max_num_vars) {
                 let _ = fs::remove_file(path);
             }
         }

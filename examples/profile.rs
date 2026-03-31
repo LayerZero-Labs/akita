@@ -1,10 +1,12 @@
 #![allow(missing_docs)]
 
-use hachi_pcs::algebra::Fp128;
+use hachi_pcs::algebra::Prime128Offset275;
 use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
-    Fp128BoundedCommitmentConfig, Fp128D64BoundedCommitmentConfig, Fp128FullCommitmentConfig,
-    Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig, HachiCommitmentLayout,
+    Fp128BoundedCommitmentConfig, Fp128D16FullCommitmentConfig, Fp128D16OneHotCommitmentConfig,
+    Fp128D32FullCommitmentConfig, Fp128D32OneHotCommitmentConfig, Fp128D64BoundedCommitmentConfig,
+    Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig,
+    HachiCommitmentLayout,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
@@ -28,7 +30,7 @@ use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
-type F = Fp128<0xffffffffffffffffffffffffffffe941>;
+type F = Prime128Offset275;
 const ONEHOT_K: usize = 256;
 
 fn env_flag(name: &str, default: bool) -> bool {
@@ -115,14 +117,13 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
 }
 
 fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
-    let top_levels_len_size = std::mem::size_of::<u32>();
     let hachi_levels_total: usize = proof
         .levels
         .iter()
         .map(|level| level.serialized_size(Compress::No))
         .sum();
     let tail_total = proof.tail.direct.serialized_size(Compress::No);
-    let accounted_total = top_levels_len_size + hachi_levels_total + tail_total;
+    let accounted_total = hachi_levels_total + tail_total;
 
     tracing::info!(
         label,
@@ -134,7 +135,7 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
         "proof summary"
     );
     debug_assert_eq!(accounted_total, proof.size());
-    eprintln!("[{label}]   proof framing: levels_len={top_levels_len_size} bytes");
+    eprintln!("[{label}]   proof framing: levels_len=0 bytes");
 
     for (i, lp) in proof.levels.iter().enumerate() {
         print_hachi_level_breakdown(label, i, lp);
@@ -362,21 +363,49 @@ fn main() {
         "full" => {
             type Cfg = Fp128FullCommitmentConfig;
             run_dense_mode::<{ Fp128FullCommitmentConfig::D }, Cfg>(
-                "=== full (D=128 dense, log_commit_bound=128) ===",
+                "=== full (q=2^128-275, D=128 dense, log_commit_bound=128) ===",
                 nv,
             );
         }
         "onehot" => {
             type Cfg = Fp128OneHotCommitmentConfig;
             run_onehot_mode::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(
-                "=== onehot (D=64, 1-of-256, log_commit_bound=1) ===",
+                "=== onehot (q=2^128-275, D=64, 1-of-256, log_commit_bound=1) ===",
+                nv,
+            );
+        }
+        "full_d32" => {
+            type Cfg = Fp128D32FullCommitmentConfig;
+            run_dense_mode::<{ Cfg::D }, Cfg>(
+                "=== full_d32 (q=2^128-275, D=32 dense, log_commit_bound=128) ===",
+                nv,
+            );
+        }
+        "onehot_d32" => {
+            type Cfg = Fp128D32OneHotCommitmentConfig;
+            run_onehot_mode::<{ Cfg::D }, Cfg>(
+                "=== onehot_d32 (q=2^128-275, D=32, 1-of-256, log_commit_bound=1) ===",
+                nv,
+            );
+        }
+        "full_d16" => {
+            type Cfg = Fp128D16FullCommitmentConfig;
+            run_dense_mode::<{ Cfg::D }, Cfg>(
+                "=== full_d16 (q=2^128-275, D=16 dense, log_commit_bound=128) ===",
+                nv,
+            );
+        }
+        "onehot_d16" => {
+            type Cfg = Fp128D16OneHotCommitmentConfig;
+            run_onehot_mode::<{ Cfg::D }, Cfg>(
+                "=== onehot_d16 (q=2^128-275, D=16, 1-of-256, log_commit_bound=1) ===",
                 nv,
             );
         }
         "logbasis" => {
             type Cfg = Fp128LogBasisCommitmentConfig;
             run_dense_mode::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(
-                "=== logbasis (D=128 dense, log_commit_bound=3) ===",
+                "=== logbasis (q=2^128-275, D=128 dense, log_commit_bound=3) ===",
                 nv,
             );
         }
@@ -384,21 +413,49 @@ fn main() {
             {
                 type Cfg = Fp128FullCommitmentConfig;
                 run_dense_mode::<{ Fp128FullCommitmentConfig::D }, Cfg>(
-                    "=== full (D=128 dense, log_commit_bound=128) ===",
+                    "=== full (q=2^128-275, D=128 dense, log_commit_bound=128) ===",
                     nv,
                 );
             }
             {
                 type Cfg = Fp128OneHotCommitmentConfig;
                 run_onehot_mode::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(
-                    "=== onehot (D=64, 1-of-256, log_commit_bound=1) ===",
+                    "=== onehot (q=2^128-275, D=64, 1-of-256, log_commit_bound=1) ===",
+                    nv,
+                );
+            }
+            {
+                type Cfg = Fp128D32FullCommitmentConfig;
+                run_dense_mode::<{ Cfg::D }, Cfg>(
+                    "=== full_d32 (q=2^128-275, D=32 dense, log_commit_bound=128) ===",
+                    nv,
+                );
+            }
+            {
+                type Cfg = Fp128D32OneHotCommitmentConfig;
+                run_onehot_mode::<{ Cfg::D }, Cfg>(
+                    "=== onehot_d32 (q=2^128-275, D=32, 1-of-256, log_commit_bound=1) ===",
+                    nv,
+                );
+            }
+            {
+                type Cfg = Fp128D16FullCommitmentConfig;
+                run_dense_mode::<{ Cfg::D }, Cfg>(
+                    "=== full_d16 (q=2^128-275, D=16 dense, log_commit_bound=128) ===",
+                    nv,
+                );
+            }
+            {
+                type Cfg = Fp128D16OneHotCommitmentConfig;
+                run_onehot_mode::<{ Cfg::D }, Cfg>(
+                    "=== onehot_d16 (q=2^128-275, D=16, 1-of-256, log_commit_bound=1) ===",
                     nv,
                 );
             }
             {
                 type Cfg = Fp128LogBasisCommitmentConfig;
                 run_dense_mode::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(
-                    "=== logbasis (D=128 dense, log_commit_bound=3) ===",
+                    "=== logbasis (q=2^128-275, D=128 dense, log_commit_bound=3) ===",
                     nv,
                 );
             }
@@ -496,7 +553,7 @@ fn main() {
         other => {
             tracing::error!(
                 mode = other,
-                "Unknown HACHI_MODE. Use: full, onehot, logbasis, all, compare_onehot, compare_logbasis, compare_basis"
+                "Unknown HACHI_MODE. Use: full, onehot, full_d32, onehot_d32, full_d16, onehot_d16, logbasis, all, compare_onehot, compare_logbasis, compare_basis"
             );
             std::process::exit(1);
         }
