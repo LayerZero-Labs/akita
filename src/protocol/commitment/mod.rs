@@ -25,7 +25,8 @@ pub use config::{
     Fp128D32BoundedCommitmentConfig, Fp128D32FullCommitmentConfig,
     Fp128D32LogBasisCommitmentConfig, Fp128D32OneHotCommitmentConfig,
     Fp128D64BoundedCommitmentConfig, Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig,
-    Fp128OneHotCommitmentConfig, Fp128Prime275FullCommitmentConfig,
+    Fp128OneHotCommitmentConfig, Fp128Prime275BoundedCommitmentConfig,
+    Fp128Prime275D64BoundedCommitmentConfig, Fp128Prime275FullCommitmentConfig,
     Fp128Prime275LogBasisCommitmentConfig, Fp128Prime275OneHotCommitmentConfig,
     HachiCommitmentLayout, SmallTestCommitmentConfig,
 };

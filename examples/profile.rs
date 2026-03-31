@@ -3,10 +3,11 @@
 use hachi_pcs::algebra::Prime128Offset275;
 use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
-    Fp128BoundedCommitmentConfig, Fp128D16FullCommitmentConfig, Fp128D16OneHotCommitmentConfig,
-    Fp128D32FullCommitmentConfig, Fp128D32OneHotCommitmentConfig, Fp128D64BoundedCommitmentConfig,
-    Fp128Prime275FullCommitmentConfig, Fp128Prime275LogBasisCommitmentConfig,
-    Fp128Prime275OneHotCommitmentConfig, HachiCommitmentLayout,
+    Fp128D16FullCommitmentConfig, Fp128D16OneHotCommitmentConfig, Fp128D32FullCommitmentConfig,
+    Fp128D32OneHotCommitmentConfig, Fp128Prime275BoundedCommitmentConfig,
+    Fp128Prime275D64BoundedCommitmentConfig, Fp128Prime275FullCommitmentConfig,
+    Fp128Prime275LogBasisCommitmentConfig, Fp128Prime275OneHotCommitmentConfig,
+    HachiCommitmentLayout,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
@@ -462,28 +463,28 @@ fn main() {
         }
         "compare_onehot" => {
             {
-                type Cfg = Fp128D64BoundedCommitmentConfig<1, 3, 3>;
+                type Cfg = Fp128Prime275D64BoundedCommitmentConfig<1, 3, 3>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
                     "=== [A] onehot (D=64, 1-of-256), basis=3 everywhere ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128D64BoundedCommitmentConfig<1, 2, 2>;
+                type Cfg = Fp128Prime275D64BoundedCommitmentConfig<1, 2, 2>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
                     "=== [B] onehot (D=64, 1-of-256), basis=2 everywhere ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128D64BoundedCommitmentConfig<1, 2, 3>;
+                type Cfg = Fp128Prime275D64BoundedCommitmentConfig<1, 2, 3>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
                     "=== [C] onehot (D=64, 1-of-256), L0 basis=2, w-levels basis=3 ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128D64BoundedCommitmentConfig<1, 2, 4>;
+                type Cfg = Fp128Prime275D64BoundedCommitmentConfig<1, 2, 4>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
                     "=== [D] onehot (D=64, 1-of-256), L0 basis=2, w-levels basis=4 ===",
                     nv,
@@ -492,28 +493,28 @@ fn main() {
         }
         "compare_logbasis" => {
             {
-                type Cfg = Fp128BoundedCommitmentConfig<3, 3, 3>;
+                type Cfg = Fp128Prime275BoundedCommitmentConfig<3, 3, 3>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== [A] logbasis coeffs (D=128), basis=3 everywhere ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128BoundedCommitmentConfig<3, 2, 2>;
+                type Cfg = Fp128Prime275BoundedCommitmentConfig<3, 2, 2>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== [B] logbasis coeffs (D=128), basis=2 everywhere ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128BoundedCommitmentConfig<3, 2, 3>;
+                type Cfg = Fp128Prime275BoundedCommitmentConfig<3, 2, 3>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== [C] logbasis coeffs (D=128), L0 basis=2, w-levels basis=3 ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128BoundedCommitmentConfig<3, 2, 4>;
+                type Cfg = Fp128Prime275BoundedCommitmentConfig<3, 2, 4>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== [D] logbasis coeffs (D=128), L0 basis=2, w-levels basis=4 ===",
                     nv,
@@ -522,28 +523,28 @@ fn main() {
         }
         "compare_basis" => {
             {
-                type Cfg = Fp128BoundedCommitmentConfig<128, 3, 3>;
+                type Cfg = Fp128Prime275BoundedCommitmentConfig<128, 3, 3>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== [A] baseline (D=128): log_basis=3 everywhere ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128BoundedCommitmentConfig<128, 2, 2>;
+                type Cfg = Fp128Prime275BoundedCommitmentConfig<128, 2, 2>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== [B] baseline (D=128): log_basis=2 everywhere ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128BoundedCommitmentConfig<128, 2, 3>;
+                type Cfg = Fp128Prime275BoundedCommitmentConfig<128, 2, 3>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== [C] baseline (D=128): L0 basis=2, w-levels basis=3 ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128BoundedCommitmentConfig<128, 2, 4>;
+                type Cfg = Fp128Prime275BoundedCommitmentConfig<128, 2, 4>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== [D] baseline (D=128): L0 basis=2, w-levels basis=4 ===",
                     nv,
