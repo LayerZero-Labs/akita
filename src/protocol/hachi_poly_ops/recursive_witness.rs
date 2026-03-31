@@ -196,13 +196,13 @@ where
     pub(crate) fn commit_inner(
         &self,
         ntt_a: &NttSlotCache<D>,
+        n_rows: usize,
         block_len: usize,
         num_blocks: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
     ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
-        let n_rows = ntt_a.num_rows();
         let t_all = if num_digits_commit == 1 {
             mat_vec_mul_ntt_digits_i8_strided(ntt_a, n_rows, self.coeffs, num_blocks, block_len)
         } else {
@@ -236,14 +236,13 @@ where
     pub(crate) fn commit_inner_witness(
         &self,
         ntt_a: &NttSlotCache<D>,
+        n_rows: usize,
         block_len: usize,
         num_blocks: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
     ) -> Result<CommitInnerWitness<F, D>, HachiError> {
-        let n_rows = ntt_a.num_rows();
-
         let t = if num_digits_commit == 1 {
             mat_vec_mul_ntt_digits_i8_strided(ntt_a, n_rows, self.coeffs, num_blocks, block_len)
         } else {

@@ -459,6 +459,7 @@ mod tests {
         let digit_commit = digit_view
             .commit_inner(
                 &setup.ntt_shared,
+                level_params.n_a,
                 block_len,
                 num_blocks,
                 w_layout.num_digits_commit,
@@ -482,6 +483,7 @@ mod tests {
         let digit_witness = digit_view
             .commit_inner_witness(
                 &setup.ntt_shared,
+                level_params.n_a,
                 block_len,
                 num_blocks,
                 w_layout.num_digits_commit,

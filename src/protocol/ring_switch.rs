@@ -546,6 +546,7 @@ where
     let w_view = w.view::<F, D>()?;
     let inner = w_view.commit_inner_witness(
         ntt_shared,
+        level_params.n_a,
         block_len,
         num_blocks,
         depth_commit,
@@ -950,21 +951,24 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_alpha_evals_y, build_w_evals_compact, compute_m_evals_x, compute_r_via_poly_division,
-        m_row_count, ring_switch_build_w,
+        build_alpha_evals_y, build_w_evals_compact, commit_w, compute_m_evals_x,
+        compute_r_via_poly_division, m_row_count, ring_switch_build_w, WCommitmentConfig,
     };
     use crate::algebra::{CyclotomicRing, Fp128, Prime128Offset5823};
     use crate::protocol::commitment::AppendToTranscript;
-    use crate::protocol::commitment::Fp128FullCommitmentConfig;
-    use crate::protocol::commitment::HachiScheduleInputs;
+    use crate::protocol::commitment::{
+        hachi_recursive_level_layout_from_params, Fp128FullCommitmentConfig, HachiCommitmentCore,
+        HachiScheduleInputs, RingCommitmentScheme, SmallTestCommitmentConfig,
+    };
     use crate::protocol::commitment_scheme::HachiCommitmentScheme;
-    use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
+    use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, RecursiveWitnessFlat};
     use crate::protocol::opening_point::{ring_opening_point_from_field, BasisMode};
     use crate::protocol::quadratic_equation::QuadraticEquation;
     use crate::protocol::sumcheck::hachi_stage2::relation_claim_from_rows;
     use crate::protocol::transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::protocol::CommitmentConfig;
+    use crate::test_utils::F as TestF;
     use crate::{CanonicalField, CommitmentScheme, Transcript};
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
@@ -1209,5 +1213,50 @@ mod tests {
                 "centered i32 decomposition mismatch for num_digits={num_digits} log_basis={log_basis}"
             );
         }
+    }
+
+    #[test]
+    fn commit_w_uses_active_level_row_count() {
+        type Cfg = SmallTestCommitmentConfig;
+        type WCfg = WCommitmentConfig<16, Cfg>;
+        const D: usize = 16;
+
+        let (setup, _) =
+            <HachiCommitmentCore as RingCommitmentScheme<TestF, D, Cfg>>::setup(12).expect("setup");
+        assert!(
+            setup.ntt_shared.num_rows() > 3,
+            "test needs a shared cache envelope"
+        );
+
+        let w = RecursiveWitnessFlat::from_i8_digits(
+            (0..(19 * D)).map(|i| ((i % 7) as i8) - 3).collect(),
+        );
+        let mut level_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars: 12,
+            level: 1,
+            current_w_len: w.len(),
+        });
+        level_params.n_a = 3;
+
+        let expected_layout =
+            hachi_recursive_level_layout_from_params::<WCfg>(&level_params, w.len())
+                .expect("layout");
+        let (_commitment, hint) =
+            commit_w::<TestF, D, WCfg>(&w, &setup.ntt_shared, &level_params).expect("commit w");
+        let t = hint
+            .t()
+            .expect("commit_w should preserve recomposed t rows");
+
+        assert_eq!(t.len(), expected_layout.num_blocks);
+        assert!(
+            t.iter().all(|block| block.len() == level_params.n_a),
+            "every block should use the active n_a rows"
+        );
+        assert!(
+            hint.inner_opening_digits
+                .iter()
+                .all(|block| block.len() == level_params.n_a * expected_layout.num_digits_open),
+            "t_hat should also use the active n_a rows"
+        );
     }
 }
