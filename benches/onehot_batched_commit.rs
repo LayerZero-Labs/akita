@@ -5,10 +5,12 @@ use hachi_pcs::algebra::Fp128;
 use hachi_pcs::protocol::commitment::utils::linear::{
     decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_single_i8,
 };
-use hachi_pcs::protocol::commitment::{Fp128OneHotCommitmentConfig, HachiScheduleInputs};
+use hachi_pcs::protocol::commitment::{
+    hachi_batched_root_layout, Fp128OneHotCommitmentConfig, HachiScheduleInputs,
+};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{HachiPolyOps, OneHotPoly};
-use hachi_pcs::protocol::{CommitmentConfig, CommitmentScheme};
+use hachi_pcs::protocol::{CommitmentConfig, CommitmentScheme, HachiCommitmentLayout};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;
@@ -23,9 +25,9 @@ const BATCH_SIZE: usize = 1 << 5;
 const ONEHOT_K: usize = D;
 const TOTAL_FIELD_ELEMS: u64 = 1u64 << SINGLE_NUM_VARS;
 
-fn make_onehot_poly(num_vars: usize, seed: u64) -> OneHotPoly<F, D, u8> {
-    let layout = Cfg::commitment_layout(num_vars).expect("benchmark layout");
+fn make_onehot_poly(layout: &HachiCommitmentLayout, seed: u64) -> OneHotPoly<F, D, u8> {
     let total_ring = layout.num_blocks * layout.block_len;
+    let num_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
     assert_eq!(total_ring * ONEHOT_K, 1usize << num_vars);
 
     let mut rng = StdRng::seed_from_u64(seed);
@@ -48,11 +50,12 @@ fn root_n_b(num_vars: usize, layout: hachi_pcs::protocol::HachiCommitmentLayout)
 
 fn bench_commit_breakdown(c: &mut Criterion) {
     let single_layout = Cfg::commitment_layout(SINGLE_NUM_VARS).expect("single layout");
-    let batch_layout = Cfg::commitment_layout(BATCH_NUM_VARS).expect("batch layout");
+    let batch_layout =
+        hachi_batched_root_layout::<Cfg, D>(BATCH_NUM_VARS, BATCH_SIZE).expect("batch layout");
 
-    let single_poly = make_onehot_poly(SINGLE_NUM_VARS, 0x0bee_fcaf_e000_0030);
+    let single_poly = make_onehot_poly(&single_layout, 0x0bee_fcaf_e000_0030);
     let batched_polys: Vec<OneHotPoly<F, D, u8>> = (0..BATCH_SIZE)
-        .map(|idx| make_onehot_poly(BATCH_NUM_VARS, 0x0bee_fcaf_e000_2500 + idx as u64))
+        .map(|idx| make_onehot_poly(&batch_layout, 0x0bee_fcaf_e000_2500 + idx as u64))
         .collect();
 
     let single_setup =
