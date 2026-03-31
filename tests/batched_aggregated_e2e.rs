@@ -149,7 +149,7 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
         let (commitment, hint) = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
             F,
             ONEHOT_D,
-        >>::commit(&polys, &setup, &layout)
+        >>::commit(&polys, &setup)
         .expect("grouped commit");
         let commitments = [commitment];
         let hints = vec![hint];
@@ -170,7 +170,6 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
                 &mut prover_transcript,
                 &[&commitments[..]],
                 BasisMode::Lagrange,
-                &layout,
             )
             .expect("batched prove");
 
@@ -198,7 +197,6 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
             &[&opening_groups[..]],
             &[&commitments[..]],
             BasisMode::Lagrange,
-            &layout,
         );
         assert!(
             result.is_ok(),
@@ -238,7 +236,7 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
         let (commitments, hints) = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
             F,
             DENSE_D,
-        >>::commit(&polys, &setup, &layout)
+        >>::commit(&polys, &setup)
         .map(|(commitment, hint)| (vec![commitment], vec![hint]))
         .expect("grouped commit");
 
@@ -258,7 +256,6 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
                 &mut prover_transcript,
                 &[&commitments[..]],
                 BasisMode::Lagrange,
-                &layout,
             )
             .expect("batched prove");
 
@@ -284,7 +281,6 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
                 &[&opening_groups[..]],
                 &[&commitments[..]],
                 BasisMode::Lagrange,
-                &layout,
             );
         assert!(
             result.is_ok(),

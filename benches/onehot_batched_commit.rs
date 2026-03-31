@@ -105,7 +105,6 @@ fn bench_commit_breakdown(c: &mut Criterion) {
                 <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
                     black_box(std::slice::from_ref(&single_poly)),
                     black_box(&single_setup),
-                    black_box(&single_layout),
                 )
                 .expect("single commit"),
             )
@@ -164,7 +163,6 @@ fn bench_commit_breakdown(c: &mut Criterion) {
                 <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
                     black_box(&batched_polys),
                     black_box(&batched_setup),
-                    black_box(&batch_layout),
                 )
                 .expect("grouped commit"),
             )

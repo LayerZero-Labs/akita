@@ -124,7 +124,7 @@ fn run_single_onehot(nv: usize) {
         let (commitment, hint) = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
             F,
             ONEHOT_D,
-        >>::commit(commit_input, &setup, &layout)
+        >>::commit(commit_input, &setup)
         .expect("commit");
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot");
@@ -137,7 +137,6 @@ fn run_single_onehot(nv: usize) {
                 &mut prover_transcript,
                 &commitment,
                 BasisMode::Lagrange,
-                &layout,
             )
             .expect("prove");
 
@@ -162,7 +161,6 @@ fn run_single_onehot(nv: usize) {
                 &expected_opening,
                 &commitment,
                 BasisMode::Lagrange,
-                &layout,
             );
         assert!(
             result.is_ok(),
@@ -203,7 +201,7 @@ fn run_single_dense(nv: usize) {
         let (commitment, hint) = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
             F,
             DENSE_D,
-        >>::commit(commit_input, &setup, &layout)
+        >>::commit(commit_input, &setup)
         .expect("commit");
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/dense");
@@ -216,7 +214,6 @@ fn run_single_dense(nv: usize) {
                 &mut prover_transcript,
                 &commitment,
                 BasisMode::Lagrange,
-                &layout,
             )
             .expect("prove");
 
@@ -241,7 +238,6 @@ fn run_single_dense(nv: usize) {
                 &expected_opening,
                 &commitment,
                 BasisMode::Lagrange,
-                &layout,
             );
         assert!(
             result.is_ok(),

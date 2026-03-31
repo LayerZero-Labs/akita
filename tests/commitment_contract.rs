@@ -9,8 +9,7 @@ use hachi_pcs::protocol::commitment::{DummyProof, HachiCommitment};
 use hachi_pcs::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps};
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
-    AppendToTranscript, BasisMode, Blake2bTranscript, CommitmentScheme, HachiCommitmentLayout,
-    Transcript,
+    AppendToTranscript, BasisMode, Blake2bTranscript, CommitmentScheme, Transcript,
 };
 use hachi_pcs::{CanonicalField, FieldCore, FromSmallInt, HachiError};
 
@@ -113,7 +112,6 @@ impl CommitmentScheme<F, 1> for DummyScheme {
     fn commit<P: HachiPolyOps<F, 1>>(
         _polys: &[P],
         _setup: &Self::ProverSetup,
-        _layout: &HachiCommitmentLayout,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError> {
         let c = HachiCommitment(0);
         Ok((c, c))
@@ -127,7 +125,6 @@ impl CommitmentScheme<F, 1> for DummyScheme {
         transcript: &mut T,
         commitment: &Self::Commitment,
         _basis: BasisMode,
-        _layout: &HachiCommitmentLayout,
     ) -> Result<Self::Proof, HachiError> {
         commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
         let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
@@ -142,7 +139,6 @@ impl CommitmentScheme<F, 1> for DummyScheme {
         transcript: &mut T,
         commitments_by_point: &[&[Self::Commitment]],
         _basis: BasisMode,
-        _layout: &HachiCommitmentLayout,
     ) -> Result<Self::BatchedProof, HachiError> {
         for commitments in commitments_by_point {
             for commitment in *commitments {
@@ -161,7 +157,6 @@ impl CommitmentScheme<F, 1> for DummyScheme {
         _opening: &F,
         commitment: &Self::Commitment,
         _basis: BasisMode,
-        _layout: &HachiCommitmentLayout,
     ) -> Result<(), HachiError> {
         commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
         let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
@@ -180,7 +175,6 @@ impl CommitmentScheme<F, 1> for DummyScheme {
         _opening_groups_by_point: &[&[&[F]]],
         commitments_by_point: &[&[Self::Commitment]],
         _basis: BasisMode,
-        _layout: &HachiCommitmentLayout,
     ) -> Result<(), HachiError> {
         for commitments in commitments_by_point {
             for commitment in *commitments {
@@ -210,21 +204,7 @@ fn commitment_scheme_round_trip() {
     let psetup = DummyScheme::setup_prover(poly.num_vars(), 1);
     let vsetup = DummyScheme::setup_verifier(&psetup);
 
-    let layout = HachiCommitmentLayout {
-        m_vars: 0,
-        r_vars: 0,
-        block_len: 1,
-        num_blocks: 1,
-        num_digits_commit: 1,
-        num_digits_open: 1,
-        num_digits_fold: 1,
-        inner_width: 1,
-        outer_width: 1,
-        d_matrix_width: 1,
-        log_basis: 1,
-    };
-    let (commitment, hint) =
-        DummyScheme::commit(std::slice::from_ref(&poly), &psetup, &layout).unwrap();
+    let (commitment, hint) = DummyScheme::commit(std::slice::from_ref(&poly), &psetup).unwrap();
     let opening = poly.evaluate(&opening_point);
 
     let mut prover_t = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
@@ -236,7 +216,6 @@ fn commitment_scheme_round_trip() {
         &mut prover_t,
         &commitment,
         BasisMode::Lagrange,
-        &layout,
     )
     .unwrap();
 
@@ -249,7 +228,6 @@ fn commitment_scheme_round_trip() {
         &opening,
         &commitment,
         BasisMode::Lagrange,
-        &layout,
     )
     .unwrap();
 }

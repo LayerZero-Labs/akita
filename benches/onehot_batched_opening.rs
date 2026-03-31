@@ -96,7 +96,6 @@ fn bench_single_case(c: &mut Criterion) {
     let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
         std::slice::from_ref(&poly),
         &setup,
-        &layout,
     )
     .expect("single commit");
 
@@ -118,7 +117,6 @@ fn bench_single_case(c: &mut Criterion) {
                     &mut transcript,
                     &commitment,
                     BasisMode::Lagrange,
-                    &layout,
                 )
                 .expect("single prove");
                 total += start.elapsed();
@@ -137,7 +135,6 @@ fn bench_single_case(c: &mut Criterion) {
         &mut prover_transcript,
         &commitment,
         BasisMode::Lagrange,
-        &layout,
     )
     .expect("single benchmark proof");
 
@@ -155,7 +152,6 @@ fn bench_single_case(c: &mut Criterion) {
                     &opening,
                     &commitment,
                     BasisMode::Lagrange,
-                    &layout,
                 )
                 .expect("single verify");
                 total += start.elapsed();
@@ -188,7 +184,7 @@ fn bench_batched_case(c: &mut Criterion) {
     let poly_groups = [&polys[..]];
     let opening_groups = [&openings[..]];
     let (commitment, hint) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&polys, &setup, &layout)
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&polys, &setup)
             .expect("grouped commit");
     let commitments = [commitment];
     let hints = vec![hint];
@@ -212,7 +208,6 @@ fn bench_batched_case(c: &mut Criterion) {
                         &mut transcript,
                         &[&commitments[..]],
                         BasisMode::Lagrange,
-                        &layout,
                     )
                     .expect("batched prove");
                 total += start.elapsed();
@@ -231,7 +226,6 @@ fn bench_batched_case(c: &mut Criterion) {
         &mut prover_transcript,
         &[&commitments[..]],
         BasisMode::Lagrange,
-        &layout,
     )
     .expect("batched benchmark proof");
 
@@ -249,7 +243,6 @@ fn bench_batched_case(c: &mut Criterion) {
                     &[&opening_groups[..]],
                     &[&commitments[..]],
                     BasisMode::Lagrange,
-                    &layout,
                 )
                 .expect("batched verify");
                 total += start.elapsed();

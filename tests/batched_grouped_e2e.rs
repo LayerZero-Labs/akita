@@ -185,7 +185,6 @@ fn run_grouped_onehot(nv: usize, batch_size: usize) {
                 <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::commit(
                     group,
                     &setup,
-                    &layout,
                 )
             })
             .collect::<Result<Vec<_>, _>>()
@@ -205,7 +204,6 @@ fn run_grouped_onehot(nv: usize, batch_size: usize) {
                 <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::commit(
                     &polys[start..start + gs],
                     &setup,
-                    &layout,
                 )
                 .expect("individual group commit");
             assert_eq!(
@@ -224,7 +222,6 @@ fn run_grouped_onehot(nv: usize, batch_size: usize) {
                 &mut prover_transcript,
                 &[&commitments[..]],
                 BasisMode::Lagrange,
-                &layout,
             )
             .expect("batched prove");
 
@@ -251,7 +248,6 @@ fn run_grouped_onehot(nv: usize, batch_size: usize) {
             &[&opening_groups[..]],
             &[&commitments[..]],
             BasisMode::Lagrange,
-            &layout,
         );
         assert!(
             result.is_ok(),
@@ -304,7 +300,7 @@ fn run_grouped_dense(nv: usize, batch_size: usize) {
             .iter()
             .map(|group| {
                 <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::commit(
-                    group, &setup, &layout,
+                    group, &setup,
                 )
             })
             .collect::<Result<Vec<_>, _>>()
@@ -324,7 +320,6 @@ fn run_grouped_dense(nv: usize, batch_size: usize) {
                 <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::commit(
                     &polys[start..start + gs],
                     &setup,
-                    &layout,
                 )
                 .expect("individual group commit");
             assert_eq!(
@@ -343,7 +338,6 @@ fn run_grouped_dense(nv: usize, batch_size: usize) {
                 &mut prover_transcript,
                 &[&commitments[..]],
                 BasisMode::Lagrange,
-                &layout,
             )
             .expect("batched prove");
 
@@ -368,7 +362,6 @@ fn run_grouped_dense(nv: usize, batch_size: usize) {
                 &[&opening_groups[..]],
                 &[&commitments[..]],
                 BasisMode::Lagrange,
-                &layout,
             );
         assert!(
             result.is_ok(),

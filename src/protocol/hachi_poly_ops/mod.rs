@@ -112,6 +112,21 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// Total number of ring elements in the polynomial.
     fn num_ring_elems(&self) -> usize;
 
+    /// Total number of variables (field-element dimension).
+    ///
+    /// Derived from `num_ring_elems() * D`, which equals `2^num_vars`.
+    fn num_vars(&self) -> usize {
+        let total = self
+            .num_ring_elems()
+            .checked_mul(D)
+            .expect("ring elems * D overflow");
+        debug_assert!(
+            total.is_power_of_two(),
+            "total field elements must be a power of 2"
+        );
+        total.trailing_zeros() as usize
+    }
+
     /// **Op 1 — prove: ring-space evaluation.**
     ///
     /// Computes the global weighted sum `y = Σᵢ scalars[i] · self[i]`.
@@ -431,7 +446,7 @@ mod tests {
         let (setup, _) =
             <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16, 1)
                 .unwrap();
-        let layout = setup.layout();
+        let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
         let num_ring = layout.num_blocks * layout.block_len;
         let evals: Vec<TestF> = (0..num_ring * TestD)
             .map(|i| TestF::from_u64(i as u64))
@@ -467,7 +482,7 @@ mod tests {
         let (setup, _) =
             <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16, 1)
                 .unwrap();
-        let layout = setup.layout();
+        let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
         let total_ring = layout.num_blocks * layout.block_len;
         let onehot_k = TestD;
         let num_chunks = total_ring;
@@ -500,7 +515,7 @@ mod tests {
         let (setup, _) =
             <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16, 1)
                 .unwrap();
-        let layout = setup.layout();
+        let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
         let total_ring = layout.num_blocks * layout.block_len;
         let onehot_k = TestD;
         let indices: Vec<Option<usize>> = (0..total_ring)
@@ -589,7 +604,7 @@ mod tests {
         let (setup, _) =
             <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16, 1)
                 .unwrap();
-        let layout = setup.layout();
+        let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
         let level_params = TinyConfig::level_params(HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,

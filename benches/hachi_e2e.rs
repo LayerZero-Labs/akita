@@ -53,7 +53,6 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig>(
     label: &str,
     nv: usize,
 ) {
-    let layout = Cfg::commitment_layout(nv).expect("benchmark layout");
     let evals = make_dense_evals::<Cfg>(nv);
     let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
     let pt = random_point(nv);
@@ -81,7 +80,6 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig>(
                 <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
                     black_box(std::slice::from_ref(&poly)),
                     black_box(&setup),
-                    black_box(&layout),
                 )
                 .unwrap(),
             )
@@ -91,7 +89,6 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig>(
     let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
         std::slice::from_ref(&poly),
         &setup,
-        &layout,
     )
     .unwrap();
 
@@ -109,7 +106,6 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig>(
                         &mut transcript,
                         &commitment,
                         BasisMode::Lagrange,
-                        &layout,
                     )
                     .unwrap(),
                 )
@@ -129,7 +125,6 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig>(
         &mut prover_transcript,
         &commitment,
         BasisMode::Lagrange,
-        &layout,
     )
     .unwrap();
 
@@ -144,7 +139,6 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig>(
                 black_box(&opening),
                 black_box(&commitment),
                 BasisMode::Lagrange,
-                black_box(&layout),
             )
             .unwrap();
         })
@@ -155,7 +149,6 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig>(
             let (cm, h) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
                 std::slice::from_ref(&poly),
                 &setup,
-                &layout,
             )
             .unwrap();
             let mut pt_tr = Blake2bTranscript::<F>::new(b"bench");
@@ -167,7 +160,6 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig>(
                 &mut pt_tr,
                 &cm,
                 BasisMode::Lagrange,
-                &layout,
             )
             .unwrap();
             let mut vt_tr = Blake2bTranscript::<F>::new(b"bench");
@@ -179,7 +171,6 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig>(
                 &opening,
                 &cm,
                 BasisMode::Lagrange,
-                &layout,
             )
             .unwrap();
             black_box(())
@@ -229,7 +220,6 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
                 <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
                     black_box(std::slice::from_ref(&onehot_poly)),
                     black_box(&setup),
-                    black_box(&layout),
                 )
                 .unwrap(),
             )
@@ -239,7 +229,6 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
     let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
         std::slice::from_ref(&onehot_poly),
         &setup,
-        &layout,
     )
     .unwrap();
 
@@ -257,7 +246,6 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
                         &mut transcript,
                         &commitment,
                         BasisMode::Lagrange,
-                        &layout,
                     )
                     .unwrap(),
                 )
@@ -277,7 +265,6 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
         &mut prover_transcript,
         &commitment,
         BasisMode::Lagrange,
-        &layout,
     )
     .unwrap();
 
@@ -292,7 +279,6 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
                 black_box(&opening),
                 black_box(&commitment),
                 BasisMode::Lagrange,
-                black_box(&layout),
             )
             .unwrap();
         })
@@ -303,7 +289,6 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
             let (cm, h) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
                 std::slice::from_ref(&onehot_poly),
                 &setup,
-                &layout,
             )
             .unwrap();
             let mut pt_tr = Blake2bTranscript::<F>::new(b"bench");
@@ -315,7 +300,6 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
                 &mut pt_tr,
                 &cm,
                 BasisMode::Lagrange,
-                &layout,
             )
             .unwrap();
             let mut vt_tr = Blake2bTranscript::<F>::new(b"bench");
@@ -327,7 +311,6 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
                 &opening,
                 &cm,
                 BasisMode::Lagrange,
-                &layout,
             )
             .unwrap();
             black_box(())

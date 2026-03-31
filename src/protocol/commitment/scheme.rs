@@ -69,12 +69,9 @@ where
     /// Derive verifier setup from prover setup.
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;
 
-    /// Commit to polynomials with a caller-specified layout.
+    /// Commit to polynomials.
     ///
-    /// The layout's matrix dimensions must not exceed the setup's max dimensions.
-    /// Callers control `num_digits_commit` via the layout to reduce decomposition
-    /// depth for polynomials with bounded coefficients (e.g. delta=1 for {0,1}).
-    ///
+    /// The root layout is derived automatically from the polynomial dimension.
     /// All polynomials in `polys` are aggregated into one commitment. Callers
     /// that need multiple commitments should call this method repeatedly, once
     /// per commitment group.
@@ -85,14 +82,12 @@ where
     fn commit<P: HachiPolyOps<F, D>>(
         polys: &[P],
         setup: &Self::ProverSetup,
-        layout: &HachiCommitmentLayout,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError>;
 
-    /// Produce an opening proof at `opening_point` with a caller-specified layout.
+    /// Produce an opening proof at `opening_point`.
     ///
-    /// The layout must match the one used during commitment. Recursive w-opening
-    /// levels derive their own layouts internally via `WCommitmentConfig` and
-    /// use the dedicated recursive witness runtime rather than `HachiPolyOps`.
+    /// The root layout is derived from `opening_point.len()`. Recursive
+    /// w-opening levels derive their own layouts internally.
     ///
     /// `basis` selects the polynomial representation (see [`BasisMode`]).
     ///
@@ -108,7 +103,6 @@ where
         transcript: &mut T,
         commitment: &Self::Commitment,
         basis: BasisMode,
-        layout: &HachiCommitmentLayout,
     ) -> Result<Self::Proof, HachiError>;
 
     /// Produce a fused batched opening proof for one or more opening points.
@@ -132,14 +126,11 @@ where
         transcript: &mut T,
         commitments_by_point: &[&[Self::Commitment]],
         basis: BasisMode,
-        layout: &HachiCommitmentLayout,
     ) -> Result<Self::BatchedProof, HachiError>;
 
-    /// Verify an opening proof with a caller-specified layout.
+    /// Verify an opening proof.
     ///
-    /// The layout must be reconstructed deterministically by the verifier —
-    /// never deserialized from the proof. It must match the layout used by the
-    /// prover for commitment and proving.
+    /// The root layout is derived deterministically from `opening_point.len()`.
     ///
     /// `basis` must match the mode used by the prover (see [`BasisMode`]).
     ///
@@ -155,14 +146,11 @@ where
         opening: &F,
         commitment: &Self::Commitment,
         basis: BasisMode,
-        layout: &HachiCommitmentLayout,
     ) -> Result<(), HachiError>;
 
     /// Verify a fused batched opening proof over one or more opening points.
     ///
-    /// The verifier reconstructs the root layout deterministically and replays
-    /// the transcript against all `opening_points`, `opening_groups_by_point`,
-    /// and `commitments_by_point` in point-major, then group-major order.
+    /// The root layout is derived deterministically from the opening points.
     ///
     /// Same-point batching is the special case `opening_points.len() == 1`.
     ///
@@ -178,7 +166,6 @@ where
         opening_groups_by_point: &[&[&[F]]],
         commitments_by_point: &[&[Self::Commitment]],
         basis: BasisMode,
-        layout: &HachiCommitmentLayout,
     ) -> Result<(), HachiError>;
 
     /// Protocol identifier.

@@ -124,7 +124,6 @@ fn batched_onehot_round_trip_with_individual_commitments() {
                 <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
                     std::slice::from_ref(poly),
                     &setup,
-                    &layout,
                 )
                 .expect("individual commit");
             commitments.push(commitment);
@@ -146,7 +145,6 @@ fn batched_onehot_round_trip_with_individual_commitments() {
             &mut prover_transcript,
             &[&commitments[..]],
             BasisMode::Lagrange,
-            &layout,
         )
         .expect("batched prove with individual commitments");
 
@@ -169,7 +167,6 @@ fn batched_onehot_round_trip_with_individual_commitments() {
             &[&opening_groups[..]],
             &[&commitments[..]],
             BasisMode::Lagrange,
-            &layout,
         );
         assert!(
             result.is_ok(),
@@ -223,14 +220,12 @@ fn batched_onehot_round_trip_with_mixed_commitment_groups() {
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
                 poly_groups[0],
                 &setup,
-                &layout,
             )
             .expect("group 0 commit");
         let (group1_commitment, group1_hint) =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
                 poly_groups[1],
                 &setup,
-                &layout,
             )
             .expect("group 1 commit");
         let commitments = [group0_commitment, group1_commitment];
@@ -246,7 +241,6 @@ fn batched_onehot_round_trip_with_mixed_commitment_groups() {
             &mut prover_transcript,
             &[&commitments[..]],
             BasisMode::Lagrange,
-            &layout,
         )
         .expect("batched prove with mixed commitment groups");
 
@@ -269,7 +263,6 @@ fn batched_onehot_round_trip_with_mixed_commitment_groups() {
             &[&opening_groups[..]],
             &[&commitments[..]],
             BasisMode::Lagrange,
-            &layout,
         );
         assert!(
             result.is_ok(),

@@ -5,9 +5,10 @@ use super::config::{
     HachiCommitmentLayout,
 };
 use super::onehot::{inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks};
+use super::schedule::HachiScheduleInputs;
 use super::schedule::{
     batched_root_level_proof_bytes, estimated_recursive_suffix_bytes,
-    recursive_r_decomp_levels_for_bound, HachiScheduleInputs,
+    recursive_r_decomp_levels_for_bound,
 };
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
@@ -50,8 +51,12 @@ pub struct HachiSetupSeed {
     pub max_num_vars: usize,
     /// Maximum number of batched polynomials supported by setup.
     pub max_num_batched_polys: usize,
-    /// Runtime commitment layout envelope.
-    pub layout: HachiCommitmentLayout,
+    /// Maximum inner (A-matrix) width across all recursion levels.
+    pub max_inner_width: usize,
+    /// Maximum outer (B-matrix) width across all recursion levels.
+    pub max_outer_width: usize,
+    /// Maximum D-matrix width across all recursion levels.
+    pub max_d_matrix_width: usize,
     /// Public seed used to derive commitment matrices.
     pub public_matrix_seed: PublicMatrixSeed,
 }
@@ -92,37 +97,7 @@ pub struct HachiVerifierSetup<F: FieldCore> {
     pub expanded: Arc<HachiExpandedSetup<F>>,
 }
 
-fn layout_fit_error(
-    setup_layout: &HachiCommitmentLayout,
-    requested_layout: &HachiCommitmentLayout,
-) -> Option<String> {
-    if requested_layout.inner_width > setup_layout.inner_width {
-        return Some(format!(
-            "A matrix too narrow: need {} but setup has {}",
-            requested_layout.inner_width, setup_layout.inner_width
-        ));
-    }
-    if requested_layout.outer_width > setup_layout.outer_width {
-        return Some(format!(
-            "B matrix too narrow: need {} but setup has {}",
-            requested_layout.outer_width, setup_layout.outer_width
-        ));
-    }
-    if requested_layout.d_matrix_width > setup_layout.d_matrix_width {
-        return Some(format!(
-            "D matrix too narrow: need {} but setup has {}",
-            requested_layout.d_matrix_width, setup_layout.d_matrix_width
-        ));
-    }
-    None
-}
-
 impl<F: FieldCore> HachiExpandedSetup<F> {
-    /// Runtime layout envelope carried by this setup.
-    pub fn layout(&self) -> HachiCommitmentLayout {
-        self.seed.layout
-    }
-
     /// Maximum batched root-polynomial capacity carried by this setup.
     pub fn max_num_batched_polys(&self) -> usize {
         self.seed.max_num_batched_polys
@@ -135,9 +110,26 @@ impl<F: FieldCore> HachiExpandedSetup<F> {
     /// Returns [`HachiError::InvalidSetup`] if any matrix width in `layout`
     /// exceeds the setup envelope.
     pub fn ensure_layout_fits(&self, layout: &HachiCommitmentLayout) -> Result<(), HachiError> {
-        layout_fit_error(&self.seed.layout, layout)
-            .map(HachiError::InvalidSetup)
-            .map_or(Ok(()), Err)
+        let seed = &self.seed;
+        if layout.inner_width > seed.max_inner_width {
+            return Err(HachiError::InvalidSetup(format!(
+                "A matrix too narrow: need {} but setup has {}",
+                layout.inner_width, seed.max_inner_width
+            )));
+        }
+        if layout.outer_width > seed.max_outer_width {
+            return Err(HachiError::InvalidSetup(format!(
+                "B matrix too narrow: need {} but setup has {}",
+                layout.outer_width, seed.max_outer_width
+            )));
+        }
+        if layout.d_matrix_width > seed.max_d_matrix_width {
+            return Err(HachiError::InvalidSetup(format!(
+                "D matrix too narrow: need {} but setup has {}",
+                layout.d_matrix_width, seed.max_d_matrix_width
+            )));
+        }
+        Ok(())
     }
 
     /// Panic if `layout` exceeds the matrix-width envelope carried by this setup.
@@ -152,11 +144,6 @@ impl<F: FieldCore> HachiExpandedSetup<F> {
 }
 
 impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
-    /// Runtime layout envelope carried by this setup.
-    pub fn layout(&self) -> HachiCommitmentLayout {
-        self.expanded.layout()
-    }
-
     /// Maximum batched root-polynomial capacity carried by this setup.
     pub fn max_num_batched_polys(&self) -> usize {
         self.expanded.max_num_batched_polys()
@@ -185,7 +172,12 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
 
 impl Valid for HachiSetupSeed {
     fn check(&self) -> Result<(), SerializationError> {
-        self.layout.check()
+        if self.max_inner_width == 0 || self.max_outer_width == 0 || self.max_d_matrix_width == 0 {
+            return Err(SerializationError::InvalidData(
+                "setup seed matrix widths must be non-zero".to_string(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -199,7 +191,12 @@ impl HachiSerialize for HachiSetupSeed {
             .serialize_with_mode(&mut writer, compress)?;
         self.max_num_batched_polys
             .serialize_with_mode(&mut writer, compress)?;
-        self.layout.serialize_with_mode(&mut writer, compress)?;
+        self.max_inner_width
+            .serialize_with_mode(&mut writer, compress)?;
+        self.max_outer_width
+            .serialize_with_mode(&mut writer, compress)?;
+        self.max_d_matrix_width
+            .serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.public_matrix_seed)?;
         Ok(())
     }
@@ -207,7 +204,9 @@ impl HachiSerialize for HachiSetupSeed {
     fn serialized_size(&self, compress: Compress) -> usize {
         self.max_num_vars.serialized_size(compress)
             + self.max_num_batched_polys.serialized_size(compress)
-            + self.layout.serialized_size(compress)
+            + self.max_inner_width.serialized_size(compress)
+            + self.max_outer_width.serialized_size(compress)
+            + self.max_d_matrix_width.serialized_size(compress)
             + 32
     }
 }
@@ -223,14 +222,18 @@ impl HachiDeserialize for HachiSetupSeed {
         let max_num_vars = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let max_num_batched_polys =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let layout =
-            HachiCommitmentLayout::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let max_inner_width = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let max_outer_width = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let max_d_matrix_width =
+            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let mut public_matrix_seed = [0u8; 32];
         reader.read_exact(&mut public_matrix_seed)?;
         let out = Self {
             max_num_vars,
             max_num_batched_polys,
-            layout,
+            max_inner_width,
+            max_outer_width,
+            max_d_matrix_width,
             public_matrix_seed,
         };
         if matches!(validate, Validate::Yes) {
@@ -609,21 +612,16 @@ where
     scale_batched_root_layout::<Cfg, D>(max_num_vars, optimized_root_layout, max_num_batched_polys)
 }
 
-/// Derive the per-polynomial root layout for a batched opening.
+/// Derive the per-polynomial commitment layout optimized for a batch of
+/// `num_claims` polynomials with `max_num_vars` variables.
 ///
-/// This returns the batch-aware `(m_vars, r_vars)` split that batched callers
-/// should use when constructing root polynomials. The returned layout keeps the
-/// per-polynomial `B`/`D` widths, while the internal `root_batched_layout`
-/// reapplies the same split and then widens those matrices by `num_claims`
-/// for setup/proof internals. Public batched callers reuse this per-claim
-/// layout even for multipoint openings; the setup/envelope scan separately
-/// accounts for worst-case multipoint `z_pre` growth when sizing recursive
-/// resources.
+/// When `num_claims <= 1` this returns the singleton layout from
+/// [`CommitmentConfig::commitment_layout`]. For larger batches the
+/// `m_vars`/`r_vars` split is optimized to minimize proof size.
 ///
 /// # Errors
 ///
-/// Returns an error if the commitment layout or batch-aware root split cannot
-/// be derived for the requested polynomial size and batch count.
+/// Returns an error if the layout parameters overflow or are invalid.
 pub fn hachi_batched_root_layout<Cfg, const D: usize>(
     max_num_vars: usize,
     num_claims: usize,
@@ -891,8 +889,6 @@ where
         max_num_batched_polys: usize,
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError> {
         let layout = validate_and_derive_layout::<Cfg, D>(max_num_vars)?;
-        let setup_layout =
-            root_batched_layout::<Cfg, D>(max_num_vars, layout, max_num_batched_polys)?;
         let envelope = Cfg::envelope(max_num_vars);
         ensure_supported_num_vars(max_num_vars, layout.required_num_vars::<D>()?)?;
 
@@ -940,7 +936,9 @@ where
             seed: HachiSetupSeed {
                 max_num_vars,
                 max_num_batched_polys,
-                layout: setup_layout,
+                max_inner_width: chain_stats.max_inner_width,
+                max_outer_width: chain_stats.max_outer_width,
+                max_d_matrix_width: chain_stats.max_d_matrix_width,
                 public_matrix_seed,
             },
             shared_matrix: shared_flat,
@@ -958,7 +956,7 @@ where
     }
 
     fn layout(setup: &Self::ProverSetup) -> Result<HachiCommitmentLayout, HachiError> {
-        Ok(setup.layout())
+        Cfg::commitment_layout(setup.expanded.seed.max_num_vars)
     }
 
     #[tracing::instrument(skip_all, name = "RingCommitmentScheme::commit_ring_blocks")]
@@ -966,7 +964,7 @@ where
         f_blocks: &[Vec<CyclotomicRing<F, D>>],
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
-        let layout = setup.layout();
+        let layout = Cfg::commitment_layout(setup.expanded.seed.max_num_vars)?;
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,
@@ -1005,7 +1003,7 @@ where
         f_coeffs: &[CyclotomicRing<F, D>],
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
-        let layout = setup.layout();
+        let layout = Cfg::commitment_layout(setup.expanded.seed.max_num_vars)?;
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,
@@ -1062,7 +1060,7 @@ where
         indices: &[Option<I>],
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
-        let layout = setup.layout();
+        let layout = Cfg::commitment_layout(setup.expanded.seed.max_num_vars)?;
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,
@@ -1226,7 +1224,6 @@ impl HachiCommitmentCore {
         tracing::debug!(?envelope_layout, max_num_vars, "setup envelope");
         let public_matrix_seed = sample_public_matrix_seed();
         Self::setup_with_matrix_widths_and_seed::<F, D, Cfg>(
-            envelope_layout,
             max_num_vars,
             1,
             public_matrix_seed,
@@ -1259,7 +1256,7 @@ impl HachiCommitmentCore {
         F: FieldCore + CanonicalField + FieldSampling,
         Cfg: CommitmentConfig,
     {
-        let old_layout = existing.seed.layout;
+        let old_layout = Cfg::commitment_layout(existing.seed.max_num_vars)?;
         let new_layout = HachiCommitmentLayout::new::<Cfg>(
             old_layout.m_vars,
             new_r_vars,
@@ -1308,11 +1305,9 @@ impl HachiCommitmentCore {
             seed: HachiSetupSeed {
                 max_num_vars,
                 max_num_batched_polys,
-                layout: root_batched_layout::<Cfg, D>(
-                    max_num_vars,
-                    new_layout,
-                    max_num_batched_polys,
-                )?,
+                max_inner_width: chain_stats.max_inner_width,
+                max_outer_width: chain_stats.max_outer_width,
+                max_d_matrix_width: chain_stats.max_d_matrix_width,
                 public_matrix_seed: seed,
             },
             shared_matrix: shared_flat,
@@ -1341,7 +1336,6 @@ impl HachiCommitmentCore {
         let d_cols = chain_stats.max_d_matrix_width;
 
         Self::setup_with_matrix_widths_and_seed::<F, D, Cfg>(
-            layout,
             max_num_vars,
             1,
             public_matrix_seed,
@@ -1352,7 +1346,6 @@ impl HachiCommitmentCore {
     }
 
     fn setup_with_matrix_widths_and_seed<F, const D: usize, Cfg>(
-        layout: HachiCommitmentLayout,
         max_num_vars: usize,
         max_num_batched_polys: usize,
         public_matrix_seed: PublicMatrixSeed,
@@ -1392,7 +1385,9 @@ impl HachiCommitmentCore {
             seed: HachiSetupSeed {
                 max_num_vars,
                 max_num_batched_polys,
-                layout,
+                max_inner_width: a_cols,
+                max_outer_width: b_cols,
+                max_d_matrix_width: d_cols,
                 public_matrix_seed,
             },
             shared_matrix: shared_flat,
@@ -1532,16 +1527,16 @@ mod tests {
                 MAX_BATCH,
             )
             .unwrap();
-        let envelope = setup.layout();
+        let seed = &setup.expanded.seed;
 
         assert_eq!(setup.max_num_batched_polys(), MAX_BATCH);
         assert!(batched_stats.max_outer_width >= single_stats.max_outer_width);
         assert!(batched_stats.max_d_matrix_width >= single_stats.max_d_matrix_width);
         assert!(batched_stats.max_outer_width >= scaled_root.outer_width);
         assert!(batched_stats.max_d_matrix_width >= scaled_root.d_matrix_width);
-        assert_eq!(envelope.inner_width, scaled_root.inner_width);
-        assert_eq!(envelope.outer_width, scaled_root.outer_width);
-        assert_eq!(envelope.d_matrix_width, scaled_root.d_matrix_width);
+        assert!(seed.max_inner_width >= scaled_root.inner_width);
+        assert!(seed.max_outer_width >= scaled_root.outer_width);
+        assert!(seed.max_d_matrix_width >= scaled_root.d_matrix_width);
         let shared_cols = setup.expanded.shared_matrix.first_row_len::<TEST_D>();
         assert!(shared_cols >= batched_stats.max_inner_width);
         assert!(shared_cols >= batched_stats.max_outer_width);
@@ -1570,8 +1565,8 @@ mod tests {
             helper_root.d_matrix_width * BATCH,
             setup_root.d_matrix_width
         );
-        assert_eq!(setup.layout().outer_width, setup_root.outer_width);
-        assert_eq!(setup.layout().d_matrix_width, setup_root.d_matrix_width);
+        assert!(setup.expanded.seed.max_outer_width >= setup_root.outer_width);
+        assert!(setup.expanded.seed.max_d_matrix_width >= setup_root.d_matrix_width);
     }
 
     #[test]
@@ -1694,12 +1689,12 @@ mod tests {
             layout_a, layout_b,
         ])
         .unwrap();
-        let envelope = setup.layout();
+        let seed = &setup.expanded.seed;
 
-        assert_eq!(setup.expanded.seed.max_num_vars, expected_max_num_vars);
-        assert_eq!(envelope.inner_width, expected_inner);
-        assert_eq!(envelope.outer_width, expected_outer);
-        assert_eq!(envelope.d_matrix_width, expected_d);
+        assert_eq!(seed.max_num_vars, expected_max_num_vars);
+        assert!(seed.max_inner_width >= expected_inner);
+        assert!(seed.max_outer_width >= expected_outer);
+        assert!(seed.max_d_matrix_width >= expected_d);
         let shared_cols = setup.expanded.shared_matrix.first_row_len::<TEST_D>();
         assert!(shared_cols >= expected_inner);
         assert!(shared_cols >= expected_outer);
@@ -1778,7 +1773,7 @@ mod tests {
             let loaded_expanded = load_expanded_setup::<TestF, TinyConfig>(MAX_VARS, 1).unwrap();
             let (disk_setup, _) = setup_from_expanded::<TestF, TEST_D>(loaded_expanded).unwrap();
 
-            let layout = fresh_setup.layout();
+            let layout = TinyConfig::commitment_layout(MAX_VARS).unwrap();
             let num_coeffs = layout.num_blocks * layout.block_len;
             let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
 

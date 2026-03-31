@@ -79,17 +79,13 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
     poly: &P,
     pt: &[F],
     opening: F,
-    layout: &HachiCommitmentLayout,
 ) {
     type Scheme<const D: usize, Cfg> = HachiCommitmentScheme<D, Cfg>;
 
     let t0 = Instant::now();
-    let (commitment, hint) = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-        std::slice::from_ref(poly),
-        setup,
-        layout,
-    )
-    .unwrap();
+    let (commitment, hint) =
+        <Scheme<D, Cfg> as CommitmentScheme<F, D>>::commit(std::slice::from_ref(poly), setup)
+            .unwrap();
     tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "commit");
 
     let t0 = Instant::now();
@@ -102,7 +98,6 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
         &mut prover_transcript,
         &commitment,
         BasisMode::Lagrange,
-        layout,
     )
     .unwrap();
     tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "prove");
@@ -119,7 +114,6 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
         &opening,
         &commitment,
         BasisMode::Lagrange,
-        layout,
     ) {
         Ok(()) => tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "verify OK"),
         Err(e) => {
@@ -339,7 +333,7 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCom
         "setup"
     );
 
-    run_prove::<D, Cfg, _>("dense", &setup, &poly, &pt, opening, layout);
+    run_prove::<D, Cfg, _>("dense", &setup, &poly, &pt, opening);
 }
 
 fn run_onehot<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCommitmentLayout) {
@@ -373,7 +367,7 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCo
         "setup"
     );
 
-    run_prove::<D, Cfg, _>("onehot", &setup, &onehot_poly, &pt, opening, layout);
+    run_prove::<D, Cfg, _>("onehot", &setup, &onehot_poly, &pt, opening);
 }
 
 fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig>(
@@ -425,7 +419,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig>(
 
     let t0 = Instant::now();
     let (commitment, hint) =
-        <Scheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly_refs, &setup, layout).unwrap();
+        <Scheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly_refs, &setup).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
     tracing::info!(
@@ -444,7 +438,6 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig>(
         &mut prover_transcript,
         &[&commitments[..]],
         BasisMode::Lagrange,
-        layout,
     )
     .unwrap();
     tracing::info!(
@@ -465,7 +458,6 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig>(
         &[&opening_groups[..]],
         &[&commitments[..]],
         BasisMode::Lagrange,
-        layout,
     ) {
         Ok(()) => tracing::info!(
             label = "onehot",
@@ -490,11 +482,7 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig>(
     nv: usize,
     num_polys: usize,
 ) {
-    let layout = if num_polys == 1 {
-        resolve_layout::<Cfg>(nv)
-    } else {
-        hachi_batched_root_layout::<Cfg, D>(nv, num_polys).expect("layout")
-    };
+    let layout = hachi_batched_root_layout::<Cfg, D>(nv, num_polys).expect("layout");
     tracing::info!("{}", title);
     print_layout(&layout);
     if num_polys == 1 {

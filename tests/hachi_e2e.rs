@@ -104,7 +104,6 @@ fn make_dense_basis2_fixture(nv: usize, transcript_label: &'static [u8]) -> Dens
     let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
         std::slice::from_ref(&poly),
         &setup,
-        &layout,
     )
     .unwrap();
 
@@ -117,7 +116,6 @@ fn make_dense_basis2_fixture(nv: usize, transcript_label: &'static [u8]) -> Dens
         &mut prover_transcript,
         &commitment,
         BasisMode::Lagrange,
-        &layout,
     )
     .unwrap();
 
@@ -158,7 +156,6 @@ where
     let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
         std::slice::from_ref(&poly),
         &setup,
-        &layout,
     )
     .unwrap();
 
@@ -171,7 +168,6 @@ where
         &mut prover_transcript,
         &commitment,
         BasisMode::Lagrange,
-        &layout,
     )
     .unwrap();
 
@@ -281,7 +277,6 @@ fn full_d128_prove_verify() {
         let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
             std::slice::from_ref(&poly),
             &setup,
-            &layout,
         )
         .unwrap();
 
@@ -295,7 +290,6 @@ fn full_d128_prove_verify() {
             &mut prover_transcript,
             &commitment,
             BasisMode::Lagrange,
-            &layout,
         )
         .unwrap();
         let prove_time = prove_start.elapsed();
@@ -323,7 +317,6 @@ fn full_d128_prove_verify() {
             &expected_opening,
             &commitment,
             BasisMode::Lagrange,
-            &layout,
         );
         let verify_time = verify_start.elapsed();
 
@@ -352,7 +345,7 @@ fn full_d128_basis2_prove_verify() {
         type Cfg = Fp128BoundedCommitmentConfig<128, 2, 2>;
         const D: usize = Cfg::D;
 
-        let (verifier_setup, commitment, proof, opening_point, opening, layout) =
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_basis2_fixture(BASIS2_TEST_NV, b"hachi_e2e/basis2");
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/basis2");
@@ -364,7 +357,6 @@ fn full_d128_basis2_prove_verify() {
             &opening,
             &commitment,
             BasisMode::Lagrange,
-            &layout,
         );
 
         assert!(
@@ -383,7 +375,7 @@ fn full_d128_basis2_rejects_tampered_stage1_sumcheck() {
         type Cfg = Fp128BoundedCommitmentConfig<128, 2, 2>;
         const D: usize = Cfg::D;
 
-        let (verifier_setup, commitment, proof, opening_point, opening, layout) =
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_basis2_fixture(BASIS2_TEST_NV, b"hachi_e2e/basis2-tamper");
         let mut malformed = proof.clone();
         let stage1_sumcheck = &mut malformed
@@ -412,7 +404,6 @@ fn full_d128_basis2_rejects_tampered_stage1_sumcheck() {
             &opening,
             &commitment,
             BasisMode::Lagrange,
-            &layout,
         );
 
         assert!(result.is_err(), "tampered stage1 sumcheck must be rejected");
@@ -431,7 +422,7 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
         let plan = Cfg::schedule_plan(nv)
             .expect("schedule plan")
             .expect("adaptive full config should expose a schedule plan");
-        let (verifier_setup, commitment, proof, opening_point, opening, layout) =
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<D, Cfg>(nv, b"hachi_e2e/adaptive-full-mixed");
 
         assert_eq!(proof.levels.len(), plan.levels.len());
@@ -459,7 +450,6 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
             &opening,
             &commitment,
             BasisMode::Lagrange,
-            &layout,
         );
         assert!(
             result.is_ok(),
@@ -506,7 +496,6 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
             std::slice::from_ref(&onehot_poly),
             &setup,
-            &layout,
         )
         .unwrap();
 
@@ -519,7 +508,6 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             &mut prover_transcript,
             &commitment,
             BasisMode::Lagrange,
-            &layout,
         )
         .unwrap();
 
@@ -550,7 +538,6 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             &expected_opening,
             &commitment,
             BasisMode::Lagrange,
-            &layout,
         );
         assert!(
             result.is_ok(),
@@ -602,12 +589,9 @@ fn batched_onehot_same_point_round_trip() {
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
         let poly_groups = [&poly_group[..]];
-        let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-            &poly_group,
-            &setup,
-            &layout,
-        )
-        .unwrap();
+        let (commitment, hint) =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly_group, &setup)
+                .unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 
@@ -620,7 +604,6 @@ fn batched_onehot_same_point_round_trip() {
             &mut prover_transcript,
             &[&commitments[..]],
             BasisMode::Lagrange,
-            &layout,
         )
         .unwrap();
 
@@ -643,7 +626,6 @@ fn batched_onehot_same_point_round_trip() {
             &[&opening_groups[..]],
             &[&commitments[..]],
             BasisMode::Lagrange,
-            &layout,
         );
         assert!(
             result.is_ok(),
@@ -694,10 +676,9 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_groups = [&poly_refs[..]];
-        let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-            &poly_refs, &setup, &layout,
-        )
-        .unwrap();
+        let (commitment, hint) =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly_refs, &setup)
+                .unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 
@@ -710,7 +691,6 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
             &mut prover_transcript,
             &[&commitments[..]],
             BasisMode::Lagrange,
-            &layout,
         )
         .unwrap();
 
@@ -739,7 +719,6 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
             &[&opening_groups[..]],
             &[&commitments[..]],
             BasisMode::Lagrange,
-            &layout,
         );
         assert!(
             result.is_ok(),
