@@ -7,7 +7,7 @@ use super::schedule::{
 use super::utils::math::checked_pow2;
 use super::utils::norm::detect_field_modulus;
 use crate::algebra::ring::CyclotomicRing;
-use crate::algebra::{Prime128Offset5823, SparseChallengeConfig};
+use crate::algebra::{Prime128Offset275, Prime128Offset5823, SparseChallengeConfig};
 use crate::error::HachiError;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
@@ -190,6 +190,25 @@ fn uniform_pm1_stage1_challenge(weight: usize) -> SparseChallengeConfig {
     }
 }
 
+fn uniform_range_stage1_challenge(weight: usize, max_abs_coeff: i16) -> SparseChallengeConfig {
+    SparseChallengeConfig::Uniform {
+        weight,
+        nonzero_coeffs: (-max_abs_coeff..=max_abs_coeff)
+            .filter(|&c| c != 0)
+            .collect(),
+    }
+}
+
+fn d16_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+    assert_eq!(d, 16, "d16_stage1_challenge_config requires d=16, got {d}");
+    uniform_range_stage1_challenge(16, 128)
+}
+
+fn d32_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+    assert_eq!(d, 32, "d32_stage1_challenge_config requires d=32, got {d}");
+    uniform_range_stage1_challenge(32, 8)
+}
+
 fn d64_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
     assert_eq!(d, 64, "d64_stage1_challenge_config requires d=64, got {d}");
     SparseChallengeConfig::SplitRing {
@@ -206,8 +225,40 @@ fn d128_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
     uniform_pm1_stage1_challenge(31)
 }
 
-fn fp128_half_field_bound() -> u128 {
+fn fp128_half_field_bound_default() -> u128 {
     detect_field_modulus::<Prime128Offset5823>() / 2
+}
+
+fn fp128_half_field_bound_prime275() -> u128 {
+    detect_field_modulus::<Prime128Offset275>() / 2
+}
+
+fn fp128_ranked_envelope(rank: usize) -> CommitmentEnvelope {
+    CommitmentEnvelope {
+        max_n_a: rank,
+        max_n_b: rank,
+        max_n_d: rank,
+    }
+}
+
+fn fp128_planned_log_basis<Cfg: CommitmentConfig>(inputs: HachiScheduleInputs) -> u32 {
+    planned_log_basis_at_level::<Cfg>(inputs, 2, 5)
+        .expect("adaptive schedule must be derivable from public inputs")
+}
+
+fn fp128_planned_schedule_key<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
+    planned_schedule_key::<Cfg>(max_num_vars, 2, 5)
+        .expect("adaptive schedule key must be derivable from public inputs")
+}
+
+fn fp128_planned_schedule<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+) -> Result<Option<HachiSchedulePlan>, HachiError> {
+    Ok(Some(super::schedule::planned_schedule::<Cfg>(
+        max_num_vars,
+        2,
+        5,
+    )?))
 }
 
 /// Runtime commitment layout authority for ring-native commitments.
@@ -808,7 +859,7 @@ impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> 
     }
 
     fn planner_half_field_bound() -> u128 {
-        fp128_half_field_bound()
+        fp128_half_field_bound_default()
     }
 
     fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
@@ -876,7 +927,101 @@ impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> 
     }
 
     fn planner_half_field_bound() -> u128 {
-        fp128_half_field_bound()
+        fp128_half_field_bound_default()
+    }
+}
+
+/// D=32 profile with a conservative rank-2 envelope.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Fp128D32BoundedCommitmentConfig<
+    const LOG_COMMIT_BOUND: u32,
+    const LOG_BASIS: u32,
+    const W_LOG_BASIS: u32 = LOG_BASIS,
+>;
+
+impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> CommitmentConfig
+    for Fp128D32BoundedCommitmentConfig<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>
+{
+    const D: usize = 32;
+
+    fn decomposition() -> DecompositionParams {
+        Fp128BoundedCommitmentConfig::<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>::decomposition()
+    }
+
+    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
+        fp128_ranked_envelope(2)
+    }
+
+    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        let (_, layout) = hachi_root_level_layout::<Self>(max_num_vars)?;
+        Ok(layout)
+    }
+
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        if inputs.level == 0 {
+            LOG_BASIS
+        } else {
+            W_LOG_BASIS
+        }
+    }
+
+    fn schedule_key(_max_num_vars: usize) -> String {
+        format!("static_v1_root{LOG_BASIS}_rec{W_LOG_BASIS}")
+    }
+
+    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        d32_stage1_challenge_config(d)
+    }
+
+    fn planner_half_field_bound() -> u128 {
+        fp128_half_field_bound_prime275()
+    }
+}
+
+/// D=16 profile with a conservative rank-4 envelope.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Fp128D16BoundedCommitmentConfig<
+    const LOG_COMMIT_BOUND: u32,
+    const LOG_BASIS: u32,
+    const W_LOG_BASIS: u32 = LOG_BASIS,
+>;
+
+impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> CommitmentConfig
+    for Fp128D16BoundedCommitmentConfig<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>
+{
+    const D: usize = 16;
+
+    fn decomposition() -> DecompositionParams {
+        Fp128BoundedCommitmentConfig::<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>::decomposition()
+    }
+
+    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
+        fp128_ranked_envelope(4)
+    }
+
+    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        let (_, layout) = hachi_root_level_layout::<Self>(max_num_vars)?;
+        Ok(layout)
+    }
+
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        if inputs.level == 0 {
+            LOG_BASIS
+        } else {
+            W_LOG_BASIS
+        }
+    }
+
+    fn schedule_key(_max_num_vars: usize) -> String {
+        format!("static_v1_root{LOG_BASIS}_rec{W_LOG_BASIS}")
+    }
+
+    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        d16_stage1_challenge_config(d)
+    }
+
+    fn planner_half_field_bound() -> u128 {
+        fp128_half_field_bound_prime275()
     }
 }
 
@@ -914,25 +1059,111 @@ impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
     }
 
     fn planner_half_field_bound() -> u128 {
-        fp128_half_field_bound()
+        fp128_half_field_bound_default()
     }
 
     fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
-        planned_log_basis_at_level::<Self>(inputs, 2, 5)
-            .expect("adaptive schedule must be derivable from public inputs")
+        fp128_planned_log_basis::<Self>(inputs)
     }
 
     fn schedule_key(max_num_vars: usize) -> String {
-        planned_schedule_key::<Self>(max_num_vars, 2, 5)
-            .expect("adaptive schedule key must be derivable from public inputs")
+        fp128_planned_schedule_key::<Self>(max_num_vars)
     }
 
     fn schedule_plan(max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
-        Ok(Some(super::schedule::planned_schedule::<Self>(
-            max_num_vars,
-            2,
-            5,
-        )?))
+        fp128_planned_schedule::<Self>(max_num_vars)
+    }
+}
+
+/// Adaptive `D=32`, rank-2 family that chooses the level basis by proof bytes.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Fp128AdaptiveD32BoundedCommitmentConfig<const LOG_COMMIT_BOUND: u32>;
+
+impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
+    for Fp128AdaptiveD32BoundedCommitmentConfig<LOG_COMMIT_BOUND>
+{
+    const D: usize = 32;
+
+    fn decomposition() -> DecompositionParams {
+        DecompositionParams {
+            log_basis: 3,
+            log_commit_bound: LOG_COMMIT_BOUND,
+            log_open_bound: if LOG_COMMIT_BOUND < 128 {
+                Some(128)
+            } else {
+                None
+            },
+        }
+    }
+
+    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
+        fp128_ranked_envelope(2)
+    }
+
+    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        d32_stage1_challenge_config(d)
+    }
+
+    fn planner_half_field_bound() -> u128 {
+        fp128_half_field_bound_prime275()
+    }
+
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        fp128_planned_log_basis::<Self>(inputs)
+    }
+
+    fn schedule_key(max_num_vars: usize) -> String {
+        fp128_planned_schedule_key::<Self>(max_num_vars)
+    }
+
+    fn schedule_plan(max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
+        fp128_planned_schedule::<Self>(max_num_vars)
+    }
+}
+
+/// Adaptive `D=16`, rank-4 family that chooses the level basis by proof bytes.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Fp128AdaptiveD16BoundedCommitmentConfig<const LOG_COMMIT_BOUND: u32>;
+
+impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
+    for Fp128AdaptiveD16BoundedCommitmentConfig<LOG_COMMIT_BOUND>
+{
+    const D: usize = 16;
+
+    fn decomposition() -> DecompositionParams {
+        DecompositionParams {
+            log_basis: 3,
+            log_commit_bound: LOG_COMMIT_BOUND,
+            log_open_bound: if LOG_COMMIT_BOUND < 128 {
+                Some(128)
+            } else {
+                None
+            },
+        }
+    }
+
+    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
+        fp128_ranked_envelope(4)
+    }
+
+    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        d16_stage1_challenge_config(d)
+    }
+
+    fn planner_half_field_bound() -> u128 {
+        fp128_half_field_bound_prime275()
+    }
+
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        fp128_planned_log_basis::<Self>(inputs)
+    }
+
+    fn schedule_key(max_num_vars: usize) -> String {
+        fp128_planned_schedule_key::<Self>(max_num_vars)
+    }
+
+    fn schedule_plan(max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
+        fp128_planned_schedule::<Self>(max_num_vars)
     }
 }
 
@@ -945,6 +1176,24 @@ pub type Fp128OneHotCommitmentConfig = Fp128AdaptiveOneHotCommitmentConfig;
 
 /// Log-bounded coefficient family with adaptive per-level basis.
 pub type Fp128LogBasisCommitmentConfig = Fp128AdaptiveBoundedCommitmentConfig<3>;
+
+/// Adaptive D=32 full-field family over `Prime128Offset275`.
+pub type Fp128D32FullCommitmentConfig = Fp128AdaptiveD32BoundedCommitmentConfig<128>;
+
+/// Adaptive D=32 log-bounded family over `Prime128Offset275`.
+pub type Fp128D32LogBasisCommitmentConfig = Fp128AdaptiveD32BoundedCommitmentConfig<3>;
+
+/// Adaptive D=32 onehot-oriented family over `Prime128Offset275`.
+pub type Fp128D32OneHotCommitmentConfig = Fp128AdaptiveD32BoundedCommitmentConfig<1>;
+
+/// Adaptive D=16 full-field family over `Prime128Offset275`.
+pub type Fp128D16FullCommitmentConfig = Fp128AdaptiveD16BoundedCommitmentConfig<128>;
+
+/// Adaptive D=16 log-bounded family over `Prime128Offset275`.
+pub type Fp128D16LogBasisCommitmentConfig = Fp128AdaptiveD16BoundedCommitmentConfig<3>;
+
+/// Adaptive D=16 onehot-oriented family over `Prime128Offset275`.
+pub type Fp128D16OneHotCommitmentConfig = Fp128AdaptiveD16BoundedCommitmentConfig<1>;
 
 /// Alias for [`Fp128FullCommitmentConfig`].
 pub type Fp128CommitmentConfig = Fp128FullCommitmentConfig;
@@ -1000,24 +1249,58 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
     }
 
     fn planner_half_field_bound() -> u128 {
-        fp128_half_field_bound()
+        fp128_half_field_bound_default()
     }
 
     fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
-        planned_log_basis_at_level::<Self>(inputs, 2, 5)
-            .expect("adaptive schedule must be derivable from public inputs")
+        fp128_planned_log_basis::<Self>(inputs)
     }
 
     fn schedule_key(max_num_vars: usize) -> String {
-        planned_schedule_key::<Self>(max_num_vars, 2, 5)
-            .expect("adaptive schedule key must be derivable from public inputs")
+        fp128_planned_schedule_key::<Self>(max_num_vars)
     }
 
     fn schedule_plan(max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
-        Ok(Some(super::schedule::planned_schedule::<Self>(
-            max_num_vars,
-            2,
-            5,
-        )?))
+        fp128_planned_schedule::<Self>(max_num_vars)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn small_d_stage1_challenge_families_match_study_parameters() {
+        let d32 = d32_stage1_challenge_config(32);
+        assert_eq!(d32.hamming_weight(), 32);
+        assert_eq!(d32.l1_mass(), 256);
+        match d32 {
+            SparseChallengeConfig::Uniform {
+                weight,
+                nonzero_coeffs,
+            } => {
+                assert_eq!(weight, 32);
+                assert_eq!(nonzero_coeffs.first().copied(), Some(-8));
+                assert_eq!(nonzero_coeffs.last().copied(), Some(8));
+                assert_eq!(nonzero_coeffs.len(), 16);
+            }
+            other => panic!("expected uniform D=32 family, got {other:?}"),
+        }
+
+        let d16 = d16_stage1_challenge_config(16);
+        assert_eq!(d16.hamming_weight(), 16);
+        assert_eq!(d16.l1_mass(), 2048);
+        match d16 {
+            SparseChallengeConfig::Uniform {
+                weight,
+                nonzero_coeffs,
+            } => {
+                assert_eq!(weight, 16);
+                assert_eq!(nonzero_coeffs.first().copied(), Some(-128));
+                assert_eq!(nonzero_coeffs.last().copied(), Some(128));
+                assert_eq!(nonzero_coeffs.len(), 256);
+            }
+            other => panic!("expected uniform D=16 family, got {other:?}"),
+        }
     }
 }

@@ -17,6 +17,10 @@ use crate::{CanonicalField, FieldCore};
 /// arrays, so storing them unboxed would make this struct ~155 KB.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultiDNttCaches {
+    /// Cache for D=16.
+    pub d16: Option<Box<NttSlotCache<16>>>,
+    /// Cache for D=32.
+    pub d32: Option<Box<NttSlotCache<32>>>,
     /// Cache for D=64.
     pub d64: Option<Box<NttSlotCache<64>>>,
     /// Cache for D=128.
@@ -52,6 +56,8 @@ impl MultiDNttCaches {
     /// Empty cache set.
     pub fn new() -> Self {
         Self {
+            d16: None,
+            d32: None,
             d64: None,
             d128: None,
             d256: None,
@@ -60,6 +66,8 @@ impl MultiDNttCaches {
         }
     }
 
+    impl_get_or_build!(get_or_build_16, d16, 16);
+    impl_get_or_build!(get_or_build_32, d32, 32);
     impl_get_or_build!(get_or_build_64, d64, 64);
     impl_get_or_build!(get_or_build_128, d128, 128);
     impl_get_or_build!(get_or_build_256, d256, 256);
@@ -69,6 +77,8 @@ impl MultiDNttCaches {
     /// Check if a cache for dimension `d` is already populated.
     pub fn has(&self, d: usize) -> bool {
         match d {
+            16 => self.d16.is_some(),
+            32 => self.d32.is_some(),
             64 => self.d64.is_some(),
             128 => self.d128.is_some(),
             256 => self.d256.is_some(),
