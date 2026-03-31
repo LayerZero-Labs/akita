@@ -945,12 +945,8 @@ mod tests {
     use crate::algebra::CyclotomicRing;
     use crate::protocol::commitment::AppendToTranscript;
     use crate::protocol::commitment::{
-        hachi_recursive_level_layout_from_params,
-        presets::fp128_5823,
-        HachiCommitmentCore,
-        HachiScheduleInputs,
-        RingCommitmentScheme,
-        SmallTestCommitmentConfig,
+        hachi_recursive_level_layout_from_params, presets::fp128_5823, HachiCommitmentCore,
+        HachiScheduleInputs, RingCommitmentScheme, SmallTestCommitmentConfig,
     };
     use crate::protocol::commitment_scheme::HachiCommitmentScheme;
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, RecursiveWitnessFlat};

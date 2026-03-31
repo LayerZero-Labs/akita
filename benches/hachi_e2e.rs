@@ -3,9 +3,7 @@
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BatchSize, BenchmarkGroup, Criterion};
 use hachi_pcs::algebra::poly::multilinear_eval;
-use hachi_pcs::protocol::commitment::{
-    presets::fp128_5823,
-};
+use hachi_pcs::protocol::commitment::presets::fp128_5823;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
@@ -331,69 +329,33 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
 }
 
 fn bench_full_nv15(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128_5823::Full::D }, fp128_5823::Full>(
-        c,
-        "full-d128",
-        15,
-    );
+    bench_dense_phases::<{ fp128_5823::Full::D }, fp128_5823::Full>(c, "full-d128", 15);
 }
 fn bench_full_nv20(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128_5823::Full::D }, fp128_5823::Full>(
-        c,
-        "full-d128",
-        20,
-    );
+    bench_dense_phases::<{ fp128_5823::Full::D }, fp128_5823::Full>(c, "full-d128", 20);
 }
 fn bench_full_nv25(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128_5823::Full::D }, fp128_5823::Full>(
-        c,
-        "full-d128",
-        25,
-    );
+    bench_dense_phases::<{ fp128_5823::Full::D }, fp128_5823::Full>(c, "full-d128", 25);
 }
 
 fn bench_onehot_nv15(c: &mut Criterion) {
-    bench_onehot_phases::<{ fp128_5823::OneHot::D }, fp128_5823::OneHot>(
-        c,
-        "onehot-d64",
-        15,
-    );
+    bench_onehot_phases::<{ fp128_5823::OneHot::D }, fp128_5823::OneHot>(c, "onehot-d64", 15);
 }
 fn bench_onehot_nv20(c: &mut Criterion) {
-    bench_onehot_phases::<{ fp128_5823::OneHot::D }, fp128_5823::OneHot>(
-        c,
-        "onehot-d64",
-        20,
-    );
+    bench_onehot_phases::<{ fp128_5823::OneHot::D }, fp128_5823::OneHot>(c, "onehot-d64", 20);
 }
 fn bench_onehot_nv25(c: &mut Criterion) {
-    bench_onehot_phases::<{ fp128_5823::OneHot::D }, fp128_5823::OneHot>(
-        c,
-        "onehot-d64",
-        25,
-    );
+    bench_onehot_phases::<{ fp128_5823::OneHot::D }, fp128_5823::OneHot>(c, "onehot-d64", 25);
 }
 
 fn bench_logbasis_nv15(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128_5823::LogBasis::D }, fp128_5823::LogBasis>(
-        c,
-        "logbasis-d128",
-        15,
-    );
+    bench_dense_phases::<{ fp128_5823::LogBasis::D }, fp128_5823::LogBasis>(c, "logbasis-d128", 15);
 }
 fn bench_logbasis_nv20(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128_5823::LogBasis::D }, fp128_5823::LogBasis>(
-        c,
-        "logbasis-d128",
-        20,
-    );
+    bench_dense_phases::<{ fp128_5823::LogBasis::D }, fp128_5823::LogBasis>(c, "logbasis-d128", 20);
 }
 fn bench_logbasis_nv25(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128_5823::LogBasis::D }, fp128_5823::LogBasis>(
-        c,
-        "logbasis-d128",
-        25,
-    );
+    bench_dense_phases::<{ fp128_5823::LogBasis::D }, fp128_5823::LogBasis>(c, "logbasis-d128", 25);
 }
 
 criterion_group!(

@@ -7,8 +7,8 @@
 //! ## Built-in primes
 //!
 //! Two primes are provided: `Prime128Offset275` (`p = 2^128 − 275`) and
-//! `Prime128Offset5823` (`p = 2^128 − 5823`).  The latter is the default
-//! for all protocol usage.
+//! `Prime128Offset5823` (`p = 2^128 − 5823`). Protocol presets default to
+//! the `275` field and expose `5823` explicitly through legacy preset bundles.
 
 use std::io::{Read, Write};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};

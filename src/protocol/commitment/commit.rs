@@ -380,7 +380,9 @@ where
 }
 
 #[cfg(feature = "disk-persistence")]
-fn cache_file_name<F: CanonicalField, Cfg: CommitmentConfig<Field = F>>(max_num_vars: usize) -> String {
+fn cache_file_name<F: CanonicalField, Cfg: CommitmentConfig<Field = F>>(
+    max_num_vars: usize,
+) -> String {
     let envelope = Cfg::envelope(max_num_vars);
     let family = Cfg::family_key()
         .chars()

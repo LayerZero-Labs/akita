@@ -715,6 +715,11 @@ pub trait CommitmentPolicy: Clone + Send + Sync + 'static {
     }
 
     /// Optional full schedule plan for policies with an explicit planner.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the policy's planner cannot derive a valid
+    /// schedule from the public inputs.
     fn schedule_plan<Cfg: CommitmentConfig>(
         _max_num_vars: usize,
     ) -> Result<Option<HachiSchedulePlan>, HachiError> {

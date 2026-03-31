@@ -82,10 +82,7 @@ type DenseFixture<FField, const D: usize, Cfg> = (
     HachiCommitmentLayout,
 );
 
-fn make_dense_basis2_fixture(
-    nv: usize,
-    transcript_label: &'static [u8],
-) -> DenseBasis2Fixture {
+fn make_dense_basis2_fixture(nv: usize, transcript_label: &'static [u8]) -> DenseBasis2Fixture {
     type Cfg = Basis2Cfg;
     const D: usize = Cfg::D;
     let layout = Cfg::commitment_layout(nv).expect("layout");
@@ -105,10 +102,9 @@ fn make_dense_basis2_fixture(
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
     let verifier_setup =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
-    let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-        &poly, &setup, &layout,
-    )
-    .unwrap();
+    let (commitment, hint) =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout)
+            .unwrap();
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_label);
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
@@ -133,7 +129,11 @@ fn make_dense_basis2_fixture(
     )
 }
 
-fn make_dense_fixture<FField: CanonicalField + 'static, const D: usize, Cfg: CommitmentConfig<Field = FField>>(
+fn make_dense_fixture<
+    FField: CanonicalField + 'static,
+    const D: usize,
+    Cfg: CommitmentConfig<Field = FField>,
+>(
     nv: usize,
     transcript_label: &'static [u8],
 ) -> DenseFixture<FField, D, Cfg>

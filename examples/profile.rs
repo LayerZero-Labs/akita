@@ -1,9 +1,7 @@
 #![allow(missing_docs)]
 
 use hachi_pcs::primitives::serialization::Compress;
-use hachi_pcs::protocol::commitment::{
-    presets::fp128, CommitmentConfig, HachiCommitmentLayout,
-};
+use hachi_pcs::protocol::commitment::{presets::fp128, CommitmentConfig, HachiCommitmentLayout};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
