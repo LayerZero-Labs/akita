@@ -32,7 +32,10 @@ pub use crate::algebra::poly::{
     fold_evals_in_place, multilinear_eval, multilinear_eval_small, range_check_eval,
 };
 pub use crate::algebra::uni_poly::{CompressedUniPoly, UniPoly};
-pub use types::{SumcheckProof, SumcheckProofShape};
+pub use types::{
+    EqCompressedSumcheckProof, EqCompressedSumcheckProofShape, EqCompressedUniPoly, SumcheckProof,
+    SumcheckProofShape,
+};
 
 /// Precomputed lookup table for folding pairs of small integer values at a
 /// fixed challenge `r`.
@@ -169,6 +172,185 @@ pub trait SumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
     /// May return an error if internal evaluations fail (e.g., malformed
     /// evaluation tables from untrusted proof data).
     fn expected_output_claim(&self, challenges: &[E]) -> Result<E, HachiError>;
+}
+
+/// Prover-side interface for eq-compressed sumchecks of the form `eq(τ, x) * q(x)`.
+pub trait EqCompressedSumcheckInstanceProver<E: FieldCore>: Send + Sync {
+    /// Number of rounds (i.e. number of variables bound by sumcheck).
+    fn num_rounds(&self) -> usize;
+
+    /// Maximum allowed degree of the inner polynomial `q(X)` in each round.
+    fn degree_bound(&self) -> usize;
+
+    /// The initial unscaled sum claim proved by the instance.
+    fn input_claim(&self) -> E;
+
+    /// Linear eq-factor evaluations `(l(0), l(1))` for the current round.
+    fn current_linear_factor_evals(&self) -> (E, E);
+
+    /// Compute the eq-compressed round message.
+    fn compute_round_eq_compressed(&mut self, round: usize) -> EqCompressedUniPoly<E>;
+
+    /// Ingest the verifier challenge `r_round` to fold/bind the current variable.
+    fn ingest_challenge(&mut self, round: usize, r_round: E);
+
+    /// Optional end-of-protocol hook after the last challenge has been ingested.
+    fn finalize(&mut self) {}
+}
+
+/// Verifier-side interface for eq-compressed sumchecks.
+pub trait EqCompressedSumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
+    /// Number of rounds (i.e. number of variables bound by sumcheck).
+    fn num_rounds(&self) -> usize;
+
+    /// Maximum allowed degree of the inner polynomial `q(X)` in each round.
+    fn degree_bound(&self) -> usize;
+
+    /// The initial unscaled sum claim proved by the instance.
+    fn input_claim(&self) -> E;
+
+    /// Linear eq-factor evaluations `(l(0), l(1))` for the current round.
+    fn current_linear_factor_evals(&self) -> (E, E);
+
+    /// Ingest the verifier challenge `r_round` to bind the current variable.
+    fn ingest_challenge(&mut self, round: usize, r_round: E);
+
+    /// Compute the expected final oracle evaluation `f(r_0, ..., r_{n-1})`.
+    fn expected_output_claim(&self, challenges: &[E]) -> Result<E, HachiError>;
+}
+
+#[inline]
+pub(crate) fn advance_eq_compressed_claim<E: FieldCore>(
+    scaled_claim: E,
+    claim_scale: E,
+    l_at_0: E,
+    l_at_1: E,
+    poly: &EqCompressedUniPoly<E>,
+    r_round: E,
+) -> (E, E) {
+    let q_0 = poly.constant_term();
+    let q_higher_sum = poly.higher_term_sum_at_one();
+    let q_known_at_r = poly.eval_known_terms(&r_round);
+    let current_scalar = l_at_0 + l_at_1;
+    let scaled_linear_term =
+        scaled_claim - claim_scale * current_scalar * q_0 - claim_scale * l_at_1 * q_higher_sum;
+    let l_at_r = l_at_0 + (l_at_1 - l_at_0) * r_round;
+    let next_claim_scale = claim_scale * l_at_1;
+    let next_scaled_claim =
+        next_claim_scale * l_at_r * q_known_at_r + l_at_r * r_round * scaled_linear_term;
+    (next_scaled_claim, next_claim_scale)
+}
+
+/// Produce an eq-compressed sumcheck proof.
+///
+/// The prover sends the inner polynomial `q(X)` with its linear coefficient
+/// omitted in every round, while the driver maintains the verifier-equivalent
+/// scaled claim update.
+#[tracing::instrument(skip_all, name = "prove_eq_compressed_sumcheck")]
+#[inline(never)]
+pub(crate) fn prove_eq_compressed_sumcheck<F, T, E, S, Inst>(
+    instance: &mut Inst,
+    transcript: &mut T,
+    mut sample_challenge: S,
+) -> Result<(EqCompressedSumcheckProof<E>, Vec<E>, E), HachiError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+    E: FieldCore,
+    S: FnMut(&mut T) -> E,
+    Inst: EqCompressedSumcheckInstanceProver<E>,
+{
+    let num_rounds = instance.num_rounds();
+    let degree_bound = instance.degree_bound();
+    let mut scaled_claim = instance.input_claim();
+    let mut claim_scale = E::one();
+    let mut round_polys = Vec::with_capacity(num_rounds);
+    let mut challenges = Vec::with_capacity(num_rounds);
+
+    transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &scaled_claim);
+
+    for round in 0..num_rounds {
+        let poly = instance.compute_round_eq_compressed(round);
+        if poly.degree() > degree_bound {
+            return Err(HachiError::InvalidInput(format!(
+                "eq-compressed sumcheck round poly degree {} exceeds bound {}",
+                poly.degree(),
+                degree_bound
+            )));
+        }
+
+        transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, &poly);
+        let r_i = sample_challenge(transcript);
+        let (l_at_0, l_at_1) = instance.current_linear_factor_evals();
+        (scaled_claim, claim_scale) =
+            advance_eq_compressed_claim(scaled_claim, claim_scale, l_at_0, l_at_1, &poly, r_i);
+        challenges.push(r_i);
+        instance.ingest_challenge(round, r_i);
+        round_polys.push(poly);
+    }
+
+    instance.finalize();
+    Ok((
+        EqCompressedSumcheckProof { round_polys },
+        challenges,
+        scaled_claim,
+    ))
+}
+
+/// Verify an eq-compressed sumcheck proof.
+#[tracing::instrument(skip_all, name = "verify_eq_compressed_sumcheck")]
+#[inline(never)]
+pub(crate) fn verify_eq_compressed_sumcheck<F, T, E, S, V>(
+    proof: &EqCompressedSumcheckProof<E>,
+    verifier: &mut V,
+    transcript: &mut T,
+    mut sample_challenge: S,
+) -> Result<Vec<E>, HachiError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+    E: FieldCore,
+    S: FnMut(&mut T) -> E,
+    V: EqCompressedSumcheckInstanceVerifier<E>,
+{
+    let num_rounds = verifier.num_rounds();
+    if proof.round_polys.len() != num_rounds {
+        return Err(HachiError::InvalidSize {
+            expected: num_rounds,
+            actual: proof.round_polys.len(),
+        });
+    }
+
+    let degree_bound = verifier.degree_bound();
+    let mut scaled_claim = verifier.input_claim();
+    let mut claim_scale = E::one();
+    let mut challenges = Vec::with_capacity(num_rounds);
+
+    transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &scaled_claim);
+
+    for (round, poly) in proof.round_polys.iter().enumerate() {
+        if poly.degree() > degree_bound {
+            return Err(HachiError::InvalidInput(format!(
+                "eq-compressed sumcheck round poly degree {} exceeds bound {}",
+                poly.degree(),
+                degree_bound
+            )));
+        }
+
+        transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
+        let r_i = sample_challenge(transcript);
+        let (l_at_0, l_at_1) = verifier.current_linear_factor_evals();
+        (scaled_claim, claim_scale) =
+            advance_eq_compressed_claim(scaled_claim, claim_scale, l_at_0, l_at_1, poly, r_i);
+        challenges.push(r_i);
+        verifier.ingest_challenge(round, r_i);
+    }
+
+    let expected = verifier.expected_output_claim(&challenges)?;
+    if scaled_claim != claim_scale * expected {
+        return Err(HachiError::InvalidProof);
+    }
+    Ok(challenges)
 }
 
 /// Produce a sumcheck proof while omitting the first `omitted_prefix_rounds`
@@ -453,6 +635,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algebra::split_eq::GruenSplitEq;
     use crate::algebra::Prime128Offset5823;
     use crate::protocol::transcript::labels as tr_labels;
     use crate::protocol::transcript::Blake2bTranscript;
@@ -606,5 +789,115 @@ mod tests {
             verifier.expected_output_claim(&challenges).unwrap(),
             full_final_claim
         );
+    }
+
+    struct ToyEqCompressedInstance {
+        split_eq: GruenSplitEq<F>,
+        q_coeffs: Vec<F>,
+    }
+
+    impl ToyEqCompressedInstance {
+        fn new(tau: F, q_coeffs: Vec<F>) -> Self {
+            Self {
+                split_eq: GruenSplitEq::new(&[tau]),
+                q_coeffs,
+            }
+        }
+
+        fn q_poly(&self) -> UniPoly<F> {
+            UniPoly::from_coeffs(self.q_coeffs.clone())
+        }
+    }
+
+    impl EqCompressedSumcheckInstanceProver<F> for ToyEqCompressedInstance {
+        fn num_rounds(&self) -> usize {
+            1
+        }
+
+        fn degree_bound(&self) -> usize {
+            self.q_coeffs.len().saturating_sub(1)
+        }
+
+        fn input_claim(&self) -> F {
+            let g = self.split_eq.gruen_mul(&self.q_poly());
+            g.evaluate(&F::zero()) + g.evaluate(&F::one())
+        }
+
+        fn current_linear_factor_evals(&self) -> (F, F) {
+            self.split_eq.current_linear_factor_evals()
+        }
+
+        fn compute_round_eq_compressed(&mut self, _round: usize) -> EqCompressedUniPoly<F> {
+            EqCompressedUniPoly::from_q_coeffs(self.q_coeffs.clone())
+        }
+
+        fn ingest_challenge(&mut self, _round: usize, r_round: F) {
+            self.split_eq.bind(r_round);
+        }
+    }
+
+    impl EqCompressedSumcheckInstanceVerifier<F> for ToyEqCompressedInstance {
+        fn num_rounds(&self) -> usize {
+            1
+        }
+
+        fn degree_bound(&self) -> usize {
+            self.q_coeffs.len().saturating_sub(1)
+        }
+
+        fn input_claim(&self) -> F {
+            let g = self.split_eq.gruen_mul(&self.q_poly());
+            g.evaluate(&F::zero()) + g.evaluate(&F::one())
+        }
+
+        fn current_linear_factor_evals(&self) -> (F, F) {
+            self.split_eq.current_linear_factor_evals()
+        }
+
+        fn ingest_challenge(&mut self, _round: usize, r_round: F) {
+            self.split_eq.bind(r_round);
+        }
+
+        fn expected_output_claim(&self, challenges: &[F]) -> Result<F, HachiError> {
+            Ok(self.split_eq.current_scalar() * self.q_poly().evaluate(&challenges[0]))
+        }
+    }
+
+    #[test]
+    fn eq_compressed_sumcheck_prove_verify_roundtrip() {
+        let tau = F::from_u64(17);
+        let q_coeffs = vec![
+            F::from_u64(3),
+            F::from_u64(5),
+            F::from_u64(7),
+            F::from_u64(11),
+            F::from_u64(13),
+        ];
+        let mut prover = ToyEqCompressedInstance::new(tau, q_coeffs.clone());
+        let mut prover_tr = new_transcript();
+        let (proof, prover_challenges, _) = prove_eq_compressed_sumcheck::<F, _, F, _, _>(
+            &mut prover,
+            &mut prover_tr,
+            sample_round,
+        )
+        .unwrap();
+
+        assert_eq!(proof.round_polys.len(), 1);
+        assert_eq!(
+            proof.round_polys[0],
+            EqCompressedUniPoly::from_q_coeffs(q_coeffs.clone())
+        );
+
+        let mut verifier = ToyEqCompressedInstance::new(tau, q_coeffs);
+        let mut verify_tr = new_transcript();
+        let verifier_challenges = verify_eq_compressed_sumcheck::<F, _, F, _, _>(
+            &proof,
+            &mut verifier,
+            &mut verify_tr,
+            sample_round,
+        )
+        .unwrap();
+
+        assert_eq!(verifier_challenges, prover_challenges);
     }
 }
