@@ -148,6 +148,11 @@ impl<E: FieldCore> GruenSplitEq<E> {
         (l_at_0, l_at_1)
     }
 
+    /// Linear eq-factor evaluations `(l(0), l(1))` for the current round.
+    pub fn current_linear_factor_evals(&self) -> (E, E) {
+        self.linear_factor_evals()
+    }
+
     /// Returns whether the current Gruen linear factor lets us recover the
     /// omitted linear coefficient of the inner polynomial from `s(0) + s(1)`.
     pub fn can_recover_linear_q_term_from_claim(&self) -> bool {

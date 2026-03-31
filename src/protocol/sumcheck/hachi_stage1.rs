@@ -34,10 +34,9 @@ use super::two_round_prefix::{
     stage1_b4_s_digit_from_compact_s, stage1_b8_s_digit_from_compact_s, Stage1BivariateSkipState,
 };
 use super::{
-    fold_evals_in_place, CompactPairFoldLut, SumcheckInstanceProver, SumcheckInstanceVerifier,
-    UniPoly,
+    fold_evals_in_place, CompactPairFoldLut, EqCompressedSumcheckInstanceProver,
+    EqCompressedSumcheckInstanceVerifier, EqCompressedUniPoly,
 };
-use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::split_eq::GruenSplitEq;
 use crate::error::HachiError;
@@ -292,22 +291,9 @@ fn accumulate_compact_coeffs<E: FieldCore + HasUnreducedOps>(
     neg_accum: &mut [E::MulU64Accum],
     e_in: E,
     coeffs: &[CompactCoeffEntry],
-    skip_linear_coeff: bool,
 ) {
     debug_assert_eq!(pos_accum.len(), neg_accum.len());
-    debug_assert!(
-        (!skip_linear_coeff && pos_accum.len() >= coeffs.len())
-            || (skip_linear_coeff && pos_accum.len() + 1 >= coeffs.len())
-    );
-    if skip_linear_coeff {
-        if let Some(coeff) = coeffs.first() {
-            accumulate_compact_coeff_slot(pos_accum, neg_accum, 0, e_in, coeff);
-        }
-        for (coeff_idx, coeff) in coeffs.iter().enumerate().skip(2) {
-            accumulate_compact_coeff_slot(pos_accum, neg_accum, coeff_idx - 1, e_in, coeff);
-        }
-        return;
-    }
+    debug_assert!(pos_accum.len() >= coeffs.len());
 
     for (idx, coeff) in coeffs.iter().enumerate().take(pos_accum.len()) {
         accumulate_compact_coeff_slot(pos_accum, neg_accum, idx, e_in, coeff);
@@ -327,39 +313,19 @@ fn accumulate_dense_entry_coeffs<E: FieldCore + HasUnreducedOps>(
     accum: &mut [E::ProductAccum],
     entry_coeffs: &[E],
     e_in: E,
-    skip_linear_coeff: bool,
 ) {
     if accum.is_empty() {
         return;
     }
 
-    accum[0] += e_in.mul_to_product_accum(entry_coeffs[0]);
-    if skip_linear_coeff {
-        for (acc, &entry) in accum.iter_mut().skip(1).zip(entry_coeffs.iter().skip(2)) {
-            *acc += e_in.mul_to_product_accum(entry);
-        }
-    } else {
-        for (acc, &entry) in accum.iter_mut().skip(1).zip(entry_coeffs.iter().skip(1)) {
-            *acc += e_in.mul_to_product_accum(entry);
-        }
+    for (acc, &entry) in accum.iter_mut().zip(entry_coeffs.iter()) {
+        *acc += e_in.mul_to_product_accum(entry);
     }
 }
 
 #[inline]
-fn finish_gruen_round_poly_from_q_coeffs<E: FieldCore>(
-    split_eq: &GruenSplitEq<E>,
-    q_coeffs: Vec<E>,
-    previous_claim: E,
-    skip_linear_coeff: bool,
-) -> UniPoly<E> {
-    if skip_linear_coeff {
-        split_eq
-            .try_gruen_poly_from_coeffs_except_linear(&q_coeffs, previous_claim)
-            .expect("split-eq linear-term recovery should succeed")
-    } else {
-        let q_poly = UniPoly::from_coeffs(q_coeffs);
-        split_eq.gruen_mul(&q_poly)
-    }
+fn compress_eq_round_poly_from_q_coeffs<E: FieldCore>(q_coeffs: Vec<E>) -> EqCompressedUniPoly<E> {
+    EqCompressedUniPoly::from_q_coeffs(q_coeffs)
 }
 
 #[inline]
@@ -418,18 +384,16 @@ fn compute_entry_coeffs_from_s_x4<E: FieldCore + HasUnreducedOps>(
     }
 }
 
-fn compute_norm_round_poly_from_s<E: FieldCore + FromSmallInt + HasUnreducedOps>(
+fn compute_norm_round_eq_poly_from_s<E: FieldCore + FromSmallInt + HasUnreducedOps>(
     split_eq: &GruenSplitEq<E>,
     range_precomp: &RangeAffineFromSPrecomp<E>,
-    previous_claim: E,
     s_pair: impl Fn(usize) -> (E, E) + Sync,
-) -> UniPoly<E> {
+) -> EqCompressedUniPoly<E> {
     let (e_first, e_second) = split_eq.remaining_eq_tables();
     let num_first = e_first.len();
     let rp = range_precomp;
     let full_num_coeffs_q = rp.degree_q + 1;
-    let skip_linear_coeff = split_eq.can_recover_linear_q_term_from_claim();
-    let num_coeffs_q = full_num_coeffs_q - usize::from(skip_linear_coeff);
+    let num_coeffs_q = full_num_coeffs_q;
 
     let q_coeffs = cfg_fold_reduce!(
         0..e_second.len(),
@@ -466,7 +430,6 @@ fn compute_norm_round_poly_from_s<E: FieldCore + FromSmallInt + HasUnreducedOps>
                         &mut inner_accum[..num_coeffs_q],
                         &bo[..full_num_coeffs_q],
                         e_in,
-                        skip_linear_coeff,
                     );
                 }
             }
@@ -481,7 +444,6 @@ fn compute_norm_round_poly_from_s<E: FieldCore + FromSmallInt + HasUnreducedOps>
                     &mut inner_accum[..num_coeffs_q],
                     &entry_buf[..full_num_coeffs_q],
                     e_in,
-                    skip_linear_coeff,
                 );
             }
 
@@ -503,24 +465,23 @@ fn compute_norm_round_poly_from_s<E: FieldCore + FromSmallInt + HasUnreducedOps>
     .map(E::reduce_product_accum)
     .collect::<Vec<_>>();
 
-    finish_gruen_round_poly_from_q_coeffs(split_eq, q_coeffs, previous_claim, skip_linear_coeff)
+    let _ = split_eq;
+    compress_eq_round_poly_from_q_coeffs(q_coeffs)
 }
 
-fn compute_norm_round_poly_from_s_compact<
+fn compute_norm_round_eq_poly_from_s_compact<
     E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps,
 >(
     split_eq: &GruenSplitEq<E>,
     s_compact: &[i16],
     range_precomp: &RangeAffineFromSPrecomp<E>,
-    previous_claim: E,
-) -> UniPoly<E> {
+) -> EqCompressedUniPoly<E> {
     let (e_first, e_second) = split_eq.remaining_eq_tables();
     let num_first = e_first.len();
 
     let rp = range_precomp;
     let full_num_coeffs_q = rp.degree_q + 1;
-    let skip_linear_coeff = split_eq.can_recover_linear_q_term_from_claim();
-    let num_coeffs_q = full_num_coeffs_q - usize::from(skip_linear_coeff);
+    let num_coeffs_q = full_num_coeffs_q;
 
     let q_coeffs = if rp.compact_coeffs_lut(0, 0).is_some() {
         cfg_fold_reduce!(
@@ -542,7 +503,6 @@ fn compute_norm_round_poly_from_s_compact<
                         &mut inner_neg[..num_coeffs_q],
                         e_in,
                         coeffs,
-                        skip_linear_coeff,
                     );
                 }
                 let e_out = e_second[j_high];
@@ -576,12 +536,7 @@ fn compute_norm_round_poly_from_s_compact<
                     let coeffs = rp
                         .field_coeffs_lut(s_0_int, s_1_int)
                         .expect("missing field coefficient LUT");
-                    accumulate_dense_entry_coeffs(
-                        &mut inner_accum[..num_coeffs_q],
-                        coeffs,
-                        e_in,
-                        skip_linear_coeff,
-                    );
+                    accumulate_dense_entry_coeffs(&mut inner_accum[..num_coeffs_q], coeffs, e_in);
                 }
                 let e_out = e_second[j_high];
                 for k in 0..num_coeffs_q {
@@ -615,15 +570,8 @@ fn compute_norm_round_poly_from_s_compact<
                     let mut a_pow = E::one();
                     for coeff_idx in 0..full_num_coeffs_q {
                         let h_i_s0 = rp.h_i_lut(s_0_int, coeff_idx);
-                        if !(skip_linear_coeff && coeff_idx == 1) {
-                            let out_idx = if skip_linear_coeff && coeff_idx > 1 {
-                                coeff_idx - 1
-                            } else {
-                                coeff_idx
-                            };
-                            let val = a_pow * h_i_s0;
-                            inner_accum[out_idx] += e_in.mul_to_product_accum(val);
-                        }
+                        let val = a_pow * h_i_s0;
+                        inner_accum[coeff_idx] += e_in.mul_to_product_accum(val);
                         a_pow = a_pow * a;
                     }
                 }
@@ -646,7 +594,8 @@ fn compute_norm_round_poly_from_s_compact<
         .collect::<Vec<_>>()
     };
 
-    finish_gruen_round_poly_from_q_coeffs(split_eq, q_coeffs, previous_claim, skip_linear_coeff)
+    let _ = split_eq;
+    compress_eq_round_poly_from_q_coeffs(q_coeffs)
 }
 
 enum STable<E: FieldCore> {
@@ -678,8 +627,7 @@ pub struct HachiStage1Prover<E: FieldCore> {
     b: usize,
     prefix_tau: Option<Vec<E>>,
     two_round_prefix: Option<Stage1TwoRoundPrefix<E>>,
-    cached_round_poly: Option<UniPoly<E>>,
-    pending_round_poly: Option<UniPoly<E>>,
+    cached_round_poly: Option<EqCompressedUniPoly<E>>,
     prefix_time_total: f64,
     dense_time_total: f64,
     fold_time_total: f64,
@@ -720,7 +668,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
             prefix_tau: can_use_stage1_two_round_prefix(num_u, b).then(|| tau0.to_vec()),
             two_round_prefix: None,
             cached_round_poly: None,
-            pending_round_poly: None,
             prefix_time_total: 0.0,
             dense_time_total: 0.0,
             fold_time_total: 0.0,
@@ -954,10 +901,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     fn fuse_compact_to_round2_and_compute_round(
         &self,
         s_compact: &[i16],
-        previous_claim: E,
         r0: E,
         r1: E,
-    ) -> (Vec<E>, UniPoly<E>) {
+    ) -> (Vec<E>, EqCompressedUniPoly<E>) {
         debug_assert!(self.num_u > 2);
         let old_live_x_cols = self.live_x_cols;
         let next_live_x_cols = old_live_x_cols.div_ceil(4);
@@ -979,8 +925,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
 
         let range_pc = &self.range_precomp;
         let full_num_coeffs_q = range_pc.degree_q + 1;
-        let skip_linear_coeff = self.split_eq.can_recover_linear_q_term_from_claim();
-        let num_coeffs_q = full_num_coeffs_q - usize::from(skip_linear_coeff);
+        let num_coeffs_q = full_num_coeffs_q;
         let mut out = vec![E::zero(); y_len * next_live_x_cols];
 
         #[cfg(feature = "parallel")]
@@ -1025,7 +970,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                             &mut inner_accum[..num_coeffs_q],
                             &entry_buf[..full_num_coeffs_q],
                             e_in,
-                            skip_linear_coeff,
                         );
                     }
 
@@ -1091,7 +1035,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                             &mut inner_accum[..num_coeffs_q],
                             &entry_buf[..full_num_coeffs_q],
                             e_in,
-                            skip_linear_coeff,
                         );
                     }
 
@@ -1109,12 +1052,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                 .collect::<Vec<_>>()
         };
 
-        let poly = finish_gruen_round_poly_from_q_coeffs(
-            &self.split_eq,
-            q_coeffs,
-            previous_claim,
-            skip_linear_coeff,
-        );
+        let poly = compress_eq_round_poly_from_q_coeffs(q_coeffs);
         (out, poly)
     }
 
@@ -1132,9 +1070,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     fn fuse_full_prefix_x_and_compute_round(
         &self,
         s_full: &[E],
-        previous_claim: E,
         r: E,
-    ) -> (Vec<E>, UniPoly<E>) {
+    ) -> (Vec<E>, EqCompressedUniPoly<E>) {
         debug_assert!(self.next_use_prefix_x_round_after_current());
         debug_assert!(self.current_x_width() >= 2);
 
@@ -1150,8 +1087,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
 
         let range_pc = &self.range_precomp;
         let full_num_coeffs_q = range_pc.degree_q + 1;
-        let skip_linear_coeff = self.split_eq.can_recover_linear_q_term_from_claim();
-        let num_coeffs_q = full_num_coeffs_q - usize::from(skip_linear_coeff);
+        let num_coeffs_q = full_num_coeffs_q;
         let mut out = vec![E::zero(); y_len * next_live_x_cols];
 
         #[cfg(feature = "parallel")]
@@ -1213,7 +1149,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                                 &mut inner_accum[..num_coeffs_q],
                                 &batch_out[slot][..full_num_coeffs_q],
                                 e_in,
-                                skip_linear_coeff,
                             );
                         }
                     }
@@ -1243,7 +1178,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                             &mut inner_accum[..num_coeffs_q],
                             &entry_buf[..full_num_coeffs_q],
                             e_in,
-                            skip_linear_coeff,
                         );
                     }
 
@@ -1327,7 +1261,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                                 &mut inner_accum[..num_coeffs_q],
                                 &batch_out[slot][..full_num_coeffs_q],
                                 e_in,
-                                skip_linear_coeff,
                             );
                         }
                     }
@@ -1357,7 +1290,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                             &mut inner_accum[..num_coeffs_q],
                             &entry_buf[..full_num_coeffs_q],
                             e_in,
-                            skip_linear_coeff,
                         );
                     }
 
@@ -1376,16 +1308,11 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                 .collect::<Vec<_>>()
         };
 
-        let poly = finish_gruen_round_poly_from_q_coeffs(
-            &self.split_eq,
-            q_coeffs,
-            previous_claim,
-            skip_linear_coeff,
-        );
+        let poly = compress_eq_round_poly_from_q_coeffs(q_coeffs);
         (out, poly)
     }
 
-    fn compute_current_round_poly_from_state(&mut self, previous_claim: E) -> UniPoly<E> {
+    fn compute_current_round_eq_poly_from_state(&mut self) -> EqCompressedUniPoly<E> {
         let use_two_round_prefix = self.using_two_round_prefix();
         let use_prefix_x_round = !use_two_round_prefix && self.use_prefix_x_round();
         let t_round = Instant::now();
@@ -1393,37 +1320,35 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         let poly = if use_two_round_prefix {
             let prefix = self.ensure_two_round_prefix();
             if rounds_completed == 0 {
-                prefix.skip_state.reconstruct_round0_poly()
+                prefix.skip_state.reconstruct_round0_eq_poly()
             } else {
                 let r0 = prefix
                     .first_challenge
                     .expect("round 1 prefix polynomial requested before ingesting round 0");
-                prefix.skip_state.reconstruct_round1_poly(r0)
+                prefix.skip_state.reconstruct_round1_eq_poly(r0)
             }
         } else if self.split_eq.current_scalar().is_zero() {
-            UniPoly::from_coeffs(vec![E::zero()])
+            EqCompressedUniPoly::from_q_coeffs(vec![E::zero()])
         } else {
             match &self.s_table {
                 STable::Compact(s_compact) => {
                     if use_prefix_x_round {
-                        self.compute_round_compact_prefix_x(s_compact, previous_claim)
+                        self.compute_round_compact_prefix_x(s_compact)
                     } else {
-                        compute_norm_round_poly_from_s_compact(
+                        compute_norm_round_eq_poly_from_s_compact(
                             &self.split_eq,
                             s_compact,
                             &self.range_precomp,
-                            previous_claim,
                         )
                     }
                 }
                 STable::Full(s_full) => {
                     if use_prefix_x_round {
-                        self.compute_round_full_prefix_x(s_full, previous_claim)
+                        self.compute_round_full_prefix_x(s_full)
                     } else {
-                        compute_norm_round_poly_from_s(
+                        compute_norm_round_eq_poly_from_s(
                             &self.split_eq,
                             &self.range_precomp,
-                            previous_claim,
                             |j| (s_full[2 * j], s_full[2 * j + 1]),
                         )
                     }
@@ -1441,7 +1366,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     }
 
     #[tracing::instrument(skip_all, name = "HachiStage1Prover::compute_round_compact_prefix_x")]
-    fn compute_round_compact_prefix_x(&self, s_compact: &[i16], previous_claim: E) -> UniPoly<E> {
+    fn compute_round_compact_prefix_x(&self, s_compact: &[i16]) -> EqCompressedUniPoly<E> {
         debug_assert!(self.rounds_completed < self.num_u);
         debug_assert_eq!(
             s_compact.len(),
@@ -1457,8 +1382,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
 
         let rp = &self.range_precomp;
         let full_num_coeffs_q = rp.degree_q + 1;
-        let skip_linear_coeff = self.split_eq.can_recover_linear_q_term_from_claim();
-        let num_coeffs_q = full_num_coeffs_q - usize::from(skip_linear_coeff);
+        let num_coeffs_q = full_num_coeffs_q;
         let q_coeffs = if rp.compact_coeffs_lut(0, 0).is_some() {
             cfg_fold_reduce!(
                 0..(1usize << (self.num_vars - self.num_u)),
@@ -1493,7 +1417,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                                 &mut inner_neg[..num_coeffs_q],
                                 e_in,
                                 coeffs,
-                                skip_linear_coeff,
                             );
                         }
 
@@ -1549,7 +1472,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                                 &mut inner_accum[..num_coeffs_q],
                                 coeffs,
                                 e_in,
-                                skip_linear_coeff,
                             );
                         }
 
@@ -1610,7 +1532,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                                 &mut inner_accum[..num_coeffs_q],
                                 &entry_buf[..full_num_coeffs_q],
                                 e_in,
-                                skip_linear_coeff,
                             );
                         }
 
@@ -1635,16 +1556,11 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
             .collect()
         };
 
-        finish_gruen_round_poly_from_q_coeffs(
-            &self.split_eq,
-            q_coeffs,
-            previous_claim,
-            skip_linear_coeff,
-        )
+        compress_eq_round_poly_from_q_coeffs(q_coeffs)
     }
 
     #[tracing::instrument(skip_all, name = "HachiStage1Prover::compute_round_full_prefix_x")]
-    fn compute_round_full_prefix_x(&self, s_full: &[E], previous_claim: E) -> UniPoly<E> {
+    fn compute_round_full_prefix_x(&self, s_full: &[E]) -> EqCompressedUniPoly<E> {
         debug_assert!(self.rounds_completed < self.num_u);
         let y_len = s_full.len() / self.live_x_cols;
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
@@ -1656,8 +1572,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
 
         let range_pc = &self.range_precomp;
         let full_num_coeffs_q = range_pc.degree_q + 1;
-        let skip_linear_coeff = self.split_eq.can_recover_linear_q_term_from_claim();
-        let num_coeffs_q = full_num_coeffs_q - usize::from(skip_linear_coeff);
+        let num_coeffs_q = full_num_coeffs_q;
         let q_coeffs = cfg_fold_reduce!(
             0..y_len,
             || vec![E::ProductAccum::ZERO; num_coeffs_q],
@@ -1712,7 +1627,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                                 &mut inner_accum[..num_coeffs_q],
                                 &batch_out[slot][..full_num_coeffs_q],
                                 e_in,
-                                skip_linear_coeff,
                             );
                         }
                     }
@@ -1738,7 +1652,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                             &mut inner_accum[..num_coeffs_q],
                             &entry_buf[..full_num_coeffs_q],
                             e_in,
-                            skip_linear_coeff,
                         );
                     }
 
@@ -1761,12 +1674,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         );
 
         let q_coeffs: Vec<E> = q_coeffs.into_iter().map(E::reduce_product_accum).collect();
-        finish_gruen_round_poly_from_q_coeffs(
-            &self.split_eq,
-            q_coeffs,
-            previous_claim,
-            skip_linear_coeff,
-        )
+        compress_eq_round_poly_from_q_coeffs(q_coeffs)
     }
 
     #[tracing::instrument(skip_all, name = "HachiStage1Prover::fold_s_compact_prefix_x")]
@@ -1864,39 +1772,36 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     }
 }
 
-impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckInstanceProver<E>
-    for HachiStage1Prover<E>
+impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps>
+    EqCompressedSumcheckInstanceProver<E> for HachiStage1Prover<E>
 {
     fn num_rounds(&self) -> usize {
         self.num_vars
     }
 
     fn degree_bound(&self) -> usize {
-        self.b / 2 + 1
+        self.b / 2
     }
 
     fn input_claim(&self) -> E {
         E::zero()
     }
 
-    fn compute_round_univariate(&mut self, _round: usize, previous_claim: E) -> UniPoly<E> {
-        let poly = if let Some(poly) = self.cached_round_poly.take() {
+    fn current_linear_factor_evals(&self) -> (E, E) {
+        self.split_eq.current_linear_factor_evals()
+    }
+
+    fn compute_round_eq_compressed(&mut self, _round: usize) -> EqCompressedUniPoly<E> {
+        if let Some(poly) = self.cached_round_poly.take() {
             poly
         } else {
-            self.compute_current_round_poly_from_state(previous_claim)
-        };
-        self.pending_round_poly = Some(poly.clone());
-        poly
+            self.compute_current_round_eq_poly_from_state()
+        }
     }
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {
         let t_fold = Instant::now();
         let _span = tracing::info_span!("HachiStage1Prover::fold_round").entered();
-        let next_claim = self
-            .pending_round_poly
-            .take()
-            .map(|poly| poly.evaluate(&r))
-            .expect("ingest_challenge called before computing the current round polynomial");
         if self.using_two_round_prefix() {
             let rounds_completed = self.rounds_completed;
             self.split_eq.bind(r);
@@ -1917,10 +1822,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
                 {
                     STable::Compact(s_compact) => {
                         if self.num_u > 2 {
-                            let (s_full, round_poly) = self
-                                .fuse_compact_to_round2_and_compute_round(
-                                    &s_compact, next_claim, r0, r,
-                                );
+                            let (s_full, round_poly) =
+                                self.fuse_compact_to_round2_and_compute_round(&s_compact, r0, r);
                             self.cached_round_poly = Some(round_poly);
                             STable::Full(s_full)
                         } else {
@@ -1941,8 +1844,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
             self.rounds_completed += 1;
             if self.rounds_completed < self.num_vars {
                 if self.cached_round_poly.is_none() {
-                    self.cached_round_poly =
-                        Some(self.compute_current_round_poly_from_state(next_claim));
+                    self.cached_round_poly = Some(self.compute_current_round_eq_poly_from_state());
                 }
             } else {
                 self.cached_round_poly = None;
@@ -1975,7 +1877,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
                 if use_prefix_x_round {
                     if fuse_next_full_prefix_x {
                         let (next_s_full, round_poly) =
-                            self.fuse_full_prefix_x_and_compute_round(&s_full, next_claim, r);
+                            self.fuse_full_prefix_x_and_compute_round(&s_full, r);
                         self.cached_round_poly = Some(round_poly);
                         STable::Full(next_s_full)
                     } else {
@@ -1997,8 +1899,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
         self.rounds_completed += 1;
         if self.rounds_completed < self.num_vars {
             if self.cached_round_poly.is_none() {
-                self.cached_round_poly =
-                    Some(self.compute_current_round_poly_from_state(next_claim));
+                self.cached_round_poly = Some(self.compute_current_round_eq_poly_from_state());
             }
         } else {
             self.cached_round_poly = None;
@@ -2020,7 +1921,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
 
 /// Verifier for the stage-1 norm sumcheck over the virtual table `S`.
 pub struct HachiStage1Verifier<F: FieldCore> {
-    tau0: Vec<F>,
+    num_rounds: usize,
+    split_eq: GruenSplitEq<F>,
     s_claim: F,
     b: usize,
 }
@@ -2028,26 +1930,41 @@ pub struct HachiStage1Verifier<F: FieldCore> {
 impl<F: FieldCore + FromSmallInt> HachiStage1Verifier<F> {
     /// Construct the stage-1 verifier from `tau0`, the carried `s_claim`, and `b`.
     pub fn new(tau0: Vec<F>, s_claim: F, b: usize) -> Self {
-        Self { tau0, s_claim, b }
+        let num_rounds = tau0.len();
+        Self {
+            num_rounds,
+            split_eq: GruenSplitEq::new(&tau0),
+            s_claim,
+            b,
+        }
     }
 }
 
-impl<F: FieldCore + FromSmallInt> SumcheckInstanceVerifier<F> for HachiStage1Verifier<F> {
+impl<F: FieldCore + FromSmallInt> EqCompressedSumcheckInstanceVerifier<F>
+    for HachiStage1Verifier<F>
+{
     fn num_rounds(&self) -> usize {
-        self.tau0.len()
+        self.num_rounds
     }
 
     fn degree_bound(&self) -> usize {
-        self.b / 2 + 1
+        self.b / 2
     }
 
     fn input_claim(&self) -> F {
         F::zero()
     }
 
-    fn expected_output_claim(&self, challenges: &[F]) -> Result<F, HachiError> {
-        let eq_val = EqPolynomial::mle(&self.tau0, challenges);
-        Ok(eq_val * range_check_eval_from_s(self.s_claim, self.b))
+    fn current_linear_factor_evals(&self) -> (F, F) {
+        self.split_eq.current_linear_factor_evals()
+    }
+
+    fn ingest_challenge(&mut self, _round: usize, r_round: F) {
+        self.split_eq.bind(r_round);
+    }
+
+    fn expected_output_claim(&self, _challenges: &[F]) -> Result<F, HachiError> {
+        Ok(self.split_eq.current_scalar() * range_check_eval_from_s(self.s_claim, self.b))
     }
 }
 
@@ -2055,7 +1972,7 @@ impl<F: FieldCore + FromSmallInt> SumcheckInstanceVerifier<F> for HachiStage1Ver
 mod tests {
     use super::*;
     use crate::algebra::Prime128Offset5823;
-    use crate::protocol::sumcheck::multilinear_eval;
+    use crate::protocol::sumcheck::{advance_eq_compressed_claim, multilinear_eval};
 
     type F = Prime128Offset5823;
 
@@ -2112,6 +2029,17 @@ mod tests {
             .collect()
     }
 
+    fn advance_stage1_claim(
+        prover: &HachiStage1Prover<F>,
+        scaled_claim: F,
+        claim_scale: F,
+        poly: &EqCompressedUniPoly<F>,
+        challenge: F,
+    ) -> (F, F) {
+        let (l_at_0, l_at_1) = prover.current_linear_factor_evals();
+        advance_eq_compressed_claim(scaled_claim, claim_scale, l_at_0, l_at_1, poly, challenge)
+    }
+
     #[test]
     fn stage1_compact_fold_lookup_matches_direct_formula() {
         let b = 8usize;
@@ -2147,7 +2075,7 @@ mod tests {
 
             let mut prover =
                 HachiStage1Prover::new(&w_compact, &tau0, b, 1usize << num_u, num_u, num_l);
-            let stage1_poly = prover.compute_round_univariate(0, F::zero());
+            let stage1_poly = prover.compute_round_eq_compressed(0);
             let s_compact: Vec<i16> = w_compact
                 .iter()
                 .map(|&w| {
@@ -2155,11 +2083,10 @@ mod tests {
                     (w * (w + 1)) as i16
                 })
                 .collect();
-            let reference = compute_norm_round_poly_from_s_compact(
+            let reference = compute_norm_round_eq_poly_from_s_compact(
                 &prover.split_eq,
                 &s_compact,
                 &prover.range_precomp,
-                F::zero(),
             );
 
             assert_eq!(stage1_poly, reference, "stage1 round0 mismatch for b={b}");
@@ -2215,11 +2142,13 @@ mod tests {
                     HachiStage1Prover::new(&w_padded, &tau0, b, 1usize << num_u, num_u, num_l);
                 let mut challenges = Vec::new();
                 let mut prefix_claim = F::zero();
+                let mut prefix_scale = F::one();
                 let mut padded_claim = F::zero();
+                let mut padded_scale = F::one();
 
                 for round in 0..(num_u + num_l) {
-                    let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
-                    let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
+                    let prefix_poly = prefix_prover.compute_round_eq_compressed(round);
+                    let padded_poly = padded_prover.compute_round_eq_compressed(round);
                     assert_eq!(
                         prefix_poly, padded_poly,
                         "round {round} polynomial mismatch live_x_cols={live_x_cols} b={b}"
@@ -2227,14 +2156,27 @@ mod tests {
 
                     let challenge = F::from_u64((round as u64) + 29);
                     challenges.push(challenge);
-                    prefix_claim = prefix_poly.evaluate(&challenge);
-                    padded_claim = padded_poly.evaluate(&challenge);
+                    (prefix_claim, prefix_scale) = advance_stage1_claim(
+                        &prefix_prover,
+                        prefix_claim,
+                        prefix_scale,
+                        &prefix_poly,
+                        challenge,
+                    );
+                    (padded_claim, padded_scale) = advance_stage1_claim(
+                        &padded_prover,
+                        padded_claim,
+                        padded_scale,
+                        &padded_poly,
+                        challenge,
+                    );
                     prefix_prover.ingest_challenge(round, challenge);
                     padded_prover.ingest_challenge(round, challenge);
                 }
 
                 assert_eq!(prefix_prover.final_s_claim(), padded_prover.final_s_claim());
                 assert_eq!(prefix_claim, padded_claim);
+                assert_eq!(prefix_scale, padded_scale);
                 let s_padded: Vec<F> = w_padded
                     .iter()
                     .map(|&w| {
@@ -2274,13 +2216,13 @@ mod tests {
                 .collect();
 
             let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
-            let round0 = prover.compute_round_univariate(0, F::zero());
+            let round0 = prover.compute_round_eq_compressed(0);
             let r0 = F::from_u64(61);
-            let claim1 = round0.evaluate(&r0);
+            let (claim1, scale1) = advance_stage1_claim(&prover, F::zero(), F::one(), &round0, r0);
             prover.ingest_challenge(0, r0);
-            let round1 = prover.compute_round_univariate(1, claim1);
+            let round1 = prover.compute_round_eq_compressed(1);
             let r1 = F::from_u64(67);
-            let claim2 = round1.evaluate(&r1);
+            let (_claim2, _scale2) = advance_stage1_claim(&prover, claim1, scale1, &round1, r1);
 
             let expected_s_full = HachiStage1Prover::<F>::fold_s_compact_to_round2(
                 &s_compact,
@@ -2295,7 +2237,7 @@ mod tests {
             expected.split_eq.bind(r1);
             expected.live_x_cols = live_x_cols.div_ceil(4);
             expected.rounds_completed = 2;
-            let expected_round2 = expected.compute_round_full_prefix_x(&expected_s_full, claim2);
+            let expected_round2 = expected.compute_round_full_prefix_x(&expected_s_full);
 
             prover.ingest_challenge(1, r1);
 
@@ -2325,29 +2267,29 @@ mod tests {
                 .collect();
 
             let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
-            let round0 = prover.compute_round_univariate(0, F::zero());
+            let round0 = prover.compute_round_eq_compressed(0);
             let r0 = F::from_u64(107);
-            let claim1 = round0.evaluate(&r0);
+            let (claim1, scale1) = advance_stage1_claim(&prover, F::zero(), F::one(), &round0, r0);
             prover.ingest_challenge(0, r0);
 
-            let round1 = prover.compute_round_univariate(1, claim1);
+            let round1 = prover.compute_round_eq_compressed(1);
             let r1 = F::from_u64(109);
-            let claim2 = round1.evaluate(&r1);
+            let (claim2, scale2) = advance_stage1_claim(&prover, claim1, scale1, &round1, r1);
             prover.ingest_challenge(1, r1);
 
-            let round2 = prover.compute_round_univariate(2, claim2);
+            let round2 = prover.compute_round_eq_compressed(2);
             let r2 = F::from_u64(113);
-            let claim3 = round2.evaluate(&r2);
+            let (claim3, _scale3) = advance_stage1_claim(&prover, claim2, scale2, &round2, r2);
 
             let mut expected =
                 HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
-            let expected_round0 = expected.compute_round_univariate(0, F::zero());
+            let expected_round0 = expected.compute_round_eq_compressed(0);
             assert_eq!(expected_round0, round0);
             expected.ingest_challenge(0, r0);
-            let expected_round1 = expected.compute_round_univariate(1, claim1);
+            let expected_round1 = expected.compute_round_eq_compressed(1);
             assert_eq!(expected_round1, round1);
             expected.ingest_challenge(1, r1);
-            let expected_round2 = expected.compute_round_univariate(2, claim2);
+            let expected_round2 = expected.compute_round_eq_compressed(2);
             assert_eq!(expected_round2, round2);
 
             let current_s_full = match &expected.s_table {
@@ -2363,8 +2305,8 @@ mod tests {
             expected.split_eq.bind(r2);
             expected.live_x_cols = expected.live_x_cols.div_ceil(2);
             expected.rounds_completed += 1;
-            let expected_round3 =
-                expected.compute_round_full_prefix_x(&expected_next_s_full, claim3);
+            let _ = claim3;
+            let expected_round3 = expected.compute_round_full_prefix_x(&expected_next_s_full);
 
             prover.ingest_challenge(2, r2);
 

@@ -32,7 +32,10 @@ use crate::protocol::sumcheck::hachi_stage1::{HachiStage1Prover, HachiStage1Veri
 use crate::protocol::sumcheck::hachi_stage2::{
     relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier,
 };
-use crate::protocol::sumcheck::{prove_sumcheck, verify_sumcheck, SumcheckInstanceVerifier};
+use crate::protocol::sumcheck::{
+    prove_eq_compressed_sumcheck, prove_sumcheck, verify_eq_compressed_sumcheck, verify_sumcheck,
+    SumcheckInstanceVerifier,
+};
 use crate::protocol::transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH,
     CHALLENGE_SUMCHECK_ROUND,
@@ -275,13 +278,11 @@ where
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         let mut stage1_prover =
             HachiStage1Prover::new(&w_evals_compact, &tau0, b, live_x_cols, num_u, num_l);
-        let (stage1_sumcheck, r_stage1, stage1_final_claim) =
-            prove_sumcheck::<F, _, F, _, _>(&mut stage1_prover, transcript, |tr| {
+        let (stage1_sumcheck, r_stage1, _stage1_final_claim) =
+            prove_eq_compressed_sumcheck::<F, _, F, _, _>(&mut stage1_prover, transcript, |tr| {
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
             })?;
         let s_claim = stage1_prover.final_s_claim();
-        let _ = stage1_final_claim;
-
         (stage1_sumcheck, r_stage1, s_claim)
     };
 
@@ -1090,12 +1091,15 @@ where
         relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, commitment_u, y_ring);
     let stage1 = &level_proof.stage1;
     let stage2 = &level_proof.stage2;
-    let stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), stage1.s_claim, rs.b);
+    let mut stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), stage1.s_claim, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        verify_sumcheck::<F, _, F, _, _>(&stage1.sumcheck, &stage1_verifier, transcript, |tr| {
-            tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
-        })?
+        verify_eq_compressed_sumcheck::<F, _, F, _, _>(
+            &stage1.sumcheck,
+            &mut stage1_verifier,
+            transcript,
+            |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+        )?
     };
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);

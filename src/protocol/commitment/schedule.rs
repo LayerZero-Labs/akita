@@ -169,7 +169,7 @@ impl HachiSchedulePlan {
                 let next_w_len = level.next_inputs.current_w_len;
                 let rounds = sumcheck_rounds(p.d, next_w_len);
                 let b = 1usize << level.layout.log_basis;
-                let stage1_degree = b / 2 + 1;
+                let stage1_degree = b / 2;
 
                 LevelProofShape {
                     y_ring_coeffs: p.d,
@@ -306,7 +306,7 @@ fn hachi_level_proof_bytes(
     let next_eval_bytes = elem_bytes;
     let rounds = sumcheck_rounds(level_params.d, next_w_len);
     let b = 1usize << layout.log_basis;
-    let stage1_degree = b / 2 + 1;
+    let stage1_degree = b / 2;
 
     // Every level now uses the same two-stage norm-check body, even for b = 4.
     y_bytes
@@ -638,7 +638,9 @@ mod tests {
     };
     use crate::protocol::proof::{FlatRingVec, HachiLevelProof};
     use crate::protocol::ring_switch::w_ring_element_count;
-    use crate::protocol::sumcheck::{CompressedUniPoly, SumcheckProof};
+    use crate::protocol::sumcheck::{
+        CompressedUniPoly, EqCompressedSumcheckProof, EqCompressedUniPoly, SumcheckProof,
+    };
     use crate::FieldCore;
 
     type F = Prime128Offset5823;
@@ -648,6 +650,19 @@ mod tests {
             round_polys: (0..rounds)
                 .map(|_| CompressedUniPoly {
                     coeffs_except_linear_term: vec![F::zero(); degree],
+                })
+                .collect(),
+        }
+    }
+
+    fn dummy_eq_sumcheck(rounds: usize, degree: usize) -> EqCompressedSumcheckProof<F> {
+        EqCompressedSumcheckProof {
+            round_polys: (0..rounds)
+                .map(|_| EqCompressedUniPoly {
+                    coeffs_except_linear_term: vec![
+                        F::zero();
+                        EqCompressedUniPoly::<F>::stored_coeff_count_for_degree(degree)
+                    ],
                 })
                 .collect(),
         }
@@ -729,7 +744,7 @@ mod tests {
                 log_basis,
             };
             let rounds = sumcheck_rounds(D, next_w_len);
-            let stage1_degree = (1usize << log_basis) / 2 + 1;
+            let stage1_degree = (1usize << log_basis) / 2;
             let next_commitment = FlatRingVec::from_ring_elems(&vec![
                 CyclotomicRing::<F, D>::zero();
                 next_level_params.n_b
@@ -738,7 +753,7 @@ mod tests {
             let level_proof = HachiLevelProof::new_two_stage::<D>(
                 CyclotomicRing::<F, D>::zero(),
                 vec![CyclotomicRing::<F, D>::zero(); level_params.n_d],
-                dummy_sumcheck(rounds, stage1_degree),
+                dummy_eq_sumcheck(rounds, stage1_degree),
                 F::zero(),
                 dummy_sumcheck(rounds, 3),
                 next_commitment,

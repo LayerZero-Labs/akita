@@ -5,8 +5,8 @@ use crate::error::HachiError;
 use crate::primitives::serialization::{Compress, SerializationError};
 use crate::primitives::serialization::{Valid, Validate};
 use crate::protocol::commitment::RingCommitment;
-use crate::protocol::sumcheck::types::SumcheckProofShape;
-use crate::protocol::sumcheck::SumcheckProof;
+use crate::protocol::sumcheck::types::{EqCompressedSumcheckProofShape, SumcheckProofShape};
+use crate::protocol::sumcheck::{EqCompressedSumcheckProof, SumcheckProof};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FromSmallInt, HachiDeserialize, HachiSerialize};
 use std::io::{Read, Write};
@@ -783,7 +783,7 @@ impl<F: FieldCore, const D: usize> Eq for HachiCommitmentHint<F, D> {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiStage1Proof<F: FieldCore> {
     /// Stage-1 sumcheck proof over the virtual `S = w(w+1)` table.
-    pub sumcheck: SumcheckProof<F>,
+    pub sumcheck: EqCompressedSumcheckProof<F>,
     /// Claimed evaluation of `S` at the stage-1 output point.
     pub s_claim: F,
 }
@@ -841,7 +841,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
     pub(crate) fn new_two_stage<const D: usize>(
         y_ring: CyclotomicRing<F, D>,
         v: Vec<CyclotomicRing<F, D>>,
-        stage1_sumcheck: SumcheckProof<F>,
+        stage1_sumcheck: EqCompressedSumcheckProof<F>,
         stage1_s_claim: F,
         stage2_sumcheck: SumcheckProof<F>,
         next_w_commitment: ProofRingVec<F>,
@@ -971,8 +971,8 @@ pub struct LevelProofShape {
     pub y_ring_coeffs: usize,
     /// Number of field coefficients in `v`.
     pub v_coeffs: usize,
-    /// Stage-1 sumcheck shape: `(num_rounds, degree)`.
-    pub stage1_sumcheck: SumcheckProofShape,
+    /// Stage-1 eq-compressed sumcheck shape: `(num_rounds, q_degree)`.
+    pub stage1_sumcheck: EqCompressedSumcheckProofShape,
     /// Stage-2 sumcheck shape: `(num_rounds, degree)`.
     pub stage2_sumcheck: SumcheckProofShape,
     /// Number of field coefficients in `next_w_commitment`.
@@ -1147,7 +1147,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
         let v =
             ProofRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
         let stage1 = HachiStage1Proof {
-            sumcheck: SumcheckProof::deserialize_with_mode(
+            sumcheck: EqCompressedSumcheckProof::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
