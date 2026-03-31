@@ -229,9 +229,10 @@ mod tests {
     use crate::algebra::ntt::neon;
     use crate::protocol::commitment::onehot::map_onehot_to_regular_blocks;
     use crate::protocol::commitment::{
-        CommitmentConfig, HachiCommitmentCore, HachiScheduleInputs, RingCommitmentScheme,
+        hachi_recursive_level_layout_from_params, CommitmentConfig, HachiCommitmentCore,
+        HachiScheduleInputs, RingCommitmentScheme,
     };
-    use crate::protocol::ring_switch::w_commitment_layout;
+    use crate::protocol::ring_switch::w_ring_element_count;
     use crate::test_utils::{TinyConfig, D as TestD, F as TestF};
     use crate::FromSmallInt;
     use onehot::OneHotBlocks;
@@ -454,8 +455,9 @@ mod tests {
             level: 0,
             current_w_len: layout.num_blocks * layout.block_len * TestD,
         });
+        let w_len = w_ring_element_count::<TestF>(&level_params, layout) * TestD;
         let w_layout =
-            w_commitment_layout::<TestF, TestD, TinyConfig>(&level_params, layout).unwrap();
+            hachi_recursive_level_layout_from_params::<TinyConfig>(&level_params, w_len).unwrap();
         let digit_commit = digit_view
             .commit_inner(
                 &setup.ntt_shared,

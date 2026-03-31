@@ -753,7 +753,6 @@ fn mat_vec_mul_digits_i8_block_parallel<
         .collect()
 }
 
-#[allow(dead_code)]
 fn mat_vec_mul_digits_i8_strided_block_parallel<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
