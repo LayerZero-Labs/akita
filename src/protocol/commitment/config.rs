@@ -941,35 +941,20 @@ impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
     }
 
     fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
-        let (min_basis, max_basis) = if LOG_COMMIT_BOUND == 128 {
-            (2, 2)
-        } else {
-            (2, 5)
-        };
-        planned_log_basis_at_level::<Self>(inputs, min_basis, max_basis)
+        planned_log_basis_at_level::<Self>(inputs, 2, 5)
             .expect("adaptive schedule must be derivable from public inputs")
     }
 
     fn schedule_key(max_num_vars: usize) -> String {
-        let (min_basis, max_basis) = if LOG_COMMIT_BOUND == 128 {
-            (2, 2)
-        } else {
-            (2, 5)
-        };
-        planned_schedule_key::<Self>(max_num_vars, min_basis, max_basis)
+        planned_schedule_key::<Self>(max_num_vars, 2, 5)
             .expect("adaptive schedule key must be derivable from public inputs")
     }
 
     fn schedule_plan(max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
-        let (min_basis, max_basis) = if LOG_COMMIT_BOUND == 128 {
-            (2, 2)
-        } else {
-            (2, 5)
-        };
         Ok(Some(super::schedule::planned_schedule::<Self>(
             max_num_vars,
-            min_basis,
-            max_basis,
+            2,
+            5,
         )?))
     }
 }

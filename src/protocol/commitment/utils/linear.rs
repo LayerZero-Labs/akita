@@ -653,6 +653,16 @@ fn mat_vec_mul_digits_i8_strided_with_params<
         return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
     }
 
+    if n_a <= 2 && num_blocks >= 16 {
+        return mat_vec_mul_digits_i8_strided_block_parallel(
+            ntt_mat,
+            coeffs,
+            num_blocks,
+            inner_width,
+            params,
+        );
+    }
+
     let lut = DigitMontLut::new(params);
     let tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
     let num_tiles = inner_width.div_ceil(tw);
