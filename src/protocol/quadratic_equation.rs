@@ -558,6 +558,11 @@ where
 
     /// Batched prover constructor for multiple claims across multiple opening
     /// points.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the batched witness decomposition, challenge
+    /// sampling, transcript absorption, or matrix generation fails.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "QuadraticEquation::new_multipoint_batched_prover")]
     #[inline(never)]
@@ -694,6 +699,11 @@ where
     }
 
     /// Get the first opening point `(a, b)` used by this relation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the quadratic equation was constructed without any opening
+    /// points.
     pub fn opening_point(&self) -> &RingOpeningPoint<F> {
         self.opening_points
             .first()

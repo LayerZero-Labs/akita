@@ -30,6 +30,11 @@ const ONEHOT_K: usize = ONEHOT_D;
 type DenseCfg = Fp128FullCommitmentConfig;
 const DENSE_D: usize = DenseCfg::D;
 
+type PointCommitments<const D: usize, Cfg> =
+    Vec<Vec<<HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::Commitment>>;
+type PointHints<const D: usize, Cfg> =
+    Vec<Vec<<HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::CommitHint>>;
+
 static INIT_RAYON: Once = Once::new();
 static E2E_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -120,13 +125,7 @@ fn commit_groups_by_point<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps
     poly_groups_by_point: &[&[&[P]]],
     setup: &<HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::ProverSetup,
     layout: &HachiCommitmentLayout,
-) -> Result<
-    (
-        Vec<Vec<<HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::Commitment>>,
-        Vec<Vec<<HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::CommitHint>>,
-    ),
-    HachiError,
->
+) -> Result<(PointCommitments<D, Cfg>, PointHints<D, Cfg>), HachiError>
 where
     HachiCommitmentScheme<D, Cfg>: CommitmentScheme<F, D>,
 {
@@ -137,7 +136,7 @@ where
             .iter()
             .map(|group| {
                 <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-                    *group, setup, layout,
+                    group, setup, layout,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?
@@ -155,7 +154,7 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         const NV: usize = 10;
-        let point_group_sizes = vec![vec![2], vec![1, 1], vec![2, 1]];
+        let point_group_sizes = [vec![2], vec![1, 1], vec![2, 1]];
         let total_claims: usize = point_group_sizes.iter().flatten().sum();
         let layout = hachi_batched_root_layout::<DenseCfg, DENSE_D>(NV, total_claims).unwrap();
 
@@ -221,7 +220,7 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
                 .iter()
                 .map(|group| {
                     <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::commit(
-                        *group,
+                        group,
                         &setup,
                         &layout,
                     )
@@ -283,7 +282,7 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         const NV: usize = 15;
-        let point_group_sizes = vec![vec![2], vec![1, 1], vec![2, 1]];
+        let point_group_sizes = [vec![2], vec![1, 1], vec![2, 1]];
         let total_claims: usize = point_group_sizes.iter().flatten().sum();
         let layout = hachi_batched_root_layout::<OneHotCfg, ONEHOT_D>(NV, total_claims).unwrap();
 
@@ -355,7 +354,7 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
                     <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
                             F,
                             ONEHOT_D,
-                        >>::commit(*group, &setup, &layout)
+                        >>::commit(group, &setup, &layout)
                         .map(|(commitment, _)| commitment)
                 })
                 .collect::<Result<_, _>>()
@@ -417,7 +416,7 @@ fn multipoint_dense_verify_rejects_swapped_points() {
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         const NV: usize = 10;
-        let point_group_sizes = vec![vec![2], vec![2]];
+        let point_group_sizes = [vec![2], vec![2]];
         let total_claims = 4usize;
         let layout = hachi_batched_root_layout::<DenseCfg, DENSE_D>(NV, total_claims).unwrap();
 
@@ -517,7 +516,7 @@ fn multipoint_onehot_verify_rejects_wrong_group_nesting() {
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         const NV: usize = 15;
-        let point_group_sizes = vec![vec![1, 2], vec![1, 1]];
+        let point_group_sizes = [vec![1, 2], vec![1, 1]];
         let total_claims: usize = point_group_sizes.iter().flatten().sum();
         let layout = hachi_batched_root_layout::<OneHotCfg, ONEHOT_D>(NV, total_claims).unwrap();
 
@@ -598,7 +597,7 @@ fn multipoint_onehot_verify_rejects_wrong_group_nesting() {
             )
             .expect("multipoint batched prove");
 
-        let wrong_group_sizes = vec![vec![2, 1], vec![1, 1]];
+        let wrong_group_sizes = [vec![2, 1], vec![1, 1]];
         let wrong_opening_group_storage: Vec<Vec<&[F]>> = openings_by_point
             .iter()
             .zip(wrong_group_sizes.iter())
@@ -637,7 +636,7 @@ fn multipoint_batched_prove_rejects_capacity_overflow() {
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         const NV: usize = 10;
-        let point_group_sizes = vec![vec![4], vec![1]];
+        let point_group_sizes = [vec![4], vec![1]];
         let total_claims: usize = point_group_sizes.iter().flatten().sum();
         let layout = hachi_batched_root_layout::<DenseCfg, DENSE_D>(NV, total_claims).unwrap();
 

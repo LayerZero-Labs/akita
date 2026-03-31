@@ -190,7 +190,7 @@ fn bench_batched_case(c: &mut Criterion) {
     let (commitment, hint) =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&polys, &setup, &layout)
             .expect("grouped commit");
-    let commitments = vec![commitment];
+    let commitments = [commitment];
     let hints = vec![hint];
 
     let mut group = c.benchmark_group("hachi/onehot_opening/batched_32xnv29");

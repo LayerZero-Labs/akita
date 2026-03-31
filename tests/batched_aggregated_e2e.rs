@@ -151,7 +151,7 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
             ONEHOT_D,
         >>::commit(&polys, &setup, &layout)
         .expect("grouped commit");
-        let commitments = vec![commitment];
+        let commitments = [commitment];
         let hints = vec![hint];
 
         assert_eq!(

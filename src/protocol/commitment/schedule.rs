@@ -498,6 +498,74 @@ pub(crate) fn planned_recursive_suffix_bytes<Cfg: CommitmentConfig>(
     Ok(suffix.no_wrapper_bytes)
 }
 
+pub(crate) fn planned_recursive_suffix_bytes_with_log_basis<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    level: usize,
+    current_w_len: usize,
+    current_log_basis: u32,
+) -> Result<usize, HachiError> {
+    let inputs = HachiScheduleInputs {
+        max_num_vars,
+        level,
+        current_w_len,
+    };
+    let (min_log_basis, max_log_basis) = Cfg::log_basis_search_range(inputs);
+    let cfg = PlannerConfig {
+        max_num_vars,
+        min_log_basis,
+        max_log_basis,
+        field_bits: field_bits(Cfg::decomposition()),
+        half_field_bound: Cfg::planner_half_field_bound(),
+    };
+    let mut memo = HashMap::new();
+    let suffix = best_recursive_suffix::<Cfg>(
+        cfg,
+        &mut memo,
+        PlannerState {
+            level,
+            current_w_len,
+            log_basis: current_log_basis,
+        },
+    )?;
+    Ok(suffix.no_wrapper_bytes)
+}
+
+pub(crate) fn planned_next_log_basis_with_current_basis<Cfg: CommitmentConfig>(
+    next_inputs: HachiScheduleInputs,
+    current_log_basis: u32,
+) -> Result<u32, HachiError> {
+    let (min_log_basis, max_log_basis) = Cfg::log_basis_search_range(next_inputs);
+    let lower_bound = current_log_basis.max(min_log_basis);
+    let cfg = PlannerConfig {
+        max_num_vars: next_inputs.max_num_vars,
+        min_log_basis,
+        max_log_basis,
+        field_bits: field_bits(Cfg::decomposition()),
+        half_field_bound: Cfg::planner_half_field_bound(),
+    };
+    let mut memo = HashMap::new();
+    let mut best: Option<(u32, usize)> = None;
+    for log_basis in lower_bound..=max_log_basis {
+        let suffix = best_recursive_suffix::<Cfg>(
+            cfg,
+            &mut memo,
+            PlannerState {
+                level: next_inputs.level,
+                current_w_len: next_inputs.current_w_len,
+                log_basis,
+            },
+        )?;
+        if best
+            .as_ref()
+            .is_none_or(|(_, best_bytes)| suffix.no_wrapper_bytes < *best_bytes)
+        {
+            best = Some((log_basis, suffix.no_wrapper_bytes));
+        }
+    }
+    best.map(|(log_basis, _)| log_basis)
+        .ok_or_else(|| HachiError::InvalidSetup("no valid next-level log basis found".to_string()))
+}
+
 pub(crate) fn estimated_recursive_suffix_bytes<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     level: usize,
@@ -830,6 +898,66 @@ mod tests {
                 max_num_vars,
             );
         }
+    }
+
+    #[test]
+    fn adaptive_onehot_explicit_recursive_basis_beats_colliding_stateless_state() {
+        type Cfg = Fp128AdaptiveOneHotCommitmentConfig;
+
+        let current_inputs = HachiScheduleInputs {
+            max_num_vars: 30,
+            level: 4,
+            current_w_len: 245_888,
+        };
+        let next_log_basis =
+            planned_next_log_basis_with_current_basis::<Cfg>(current_inputs, 5).unwrap();
+        let suffix_bytes = planned_recursive_suffix_bytes_with_log_basis::<Cfg>(
+            current_inputs.max_num_vars,
+            current_inputs.level,
+            current_inputs.current_w_len,
+            5,
+        )
+        .unwrap();
+
+        assert_eq!(next_log_basis, 5);
+        assert!(suffix_bytes < packed_digits_bytes(current_inputs.current_w_len, 5));
+    }
+
+    #[test]
+    fn recursive_onehot_split_matches_open_digit_witness_count() {
+        type Cfg = Fp128AdaptiveOneHotCommitmentConfig;
+
+        let inputs = HachiScheduleInputs {
+            max_num_vars: 30,
+            level: 1,
+            current_w_len: 25_974_272,
+        };
+        let params = Cfg::level_params(inputs);
+        let decomp =
+            recursive_level_decomposition_from_root(Cfg::decomposition(), params.log_basis);
+        let layout_12_7 = layout_from_params(12, 7, &params, decomp).unwrap();
+        let layout_11_8 = layout_from_params(11, 8, &params, decomp).unwrap();
+        let w_12_7 = planned_w_ring_element_count(
+            field_bits(Cfg::decomposition()),
+            Cfg::planner_half_field_bound(),
+            &params,
+            layout_12_7,
+        );
+        let w_11_8 = planned_w_ring_element_count(
+            field_bits(Cfg::decomposition()),
+            Cfg::planner_half_field_bound(),
+            &params,
+            layout_11_8,
+        );
+        let reduced_vars = (inputs.current_w_len / params.d)
+            .next_power_of_two()
+            .trailing_zeros() as usize;
+
+        assert!(w_12_7 < w_11_8);
+        assert_eq!(
+            optimal_m_r_split_with_params(&params, decomp, reduced_vars),
+            (12, 7)
+        );
     }
 
     #[test]

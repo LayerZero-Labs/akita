@@ -183,7 +183,7 @@ fn run_grouped_onehot(nv: usize, batch_size: usize) {
             .iter()
             .map(|group| {
                 <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::commit(
-                    *group,
+                    group,
                     &setup,
                     &layout,
                 )
@@ -304,7 +304,7 @@ fn run_grouped_dense(nv: usize, batch_size: usize) {
             .iter()
             .map(|group| {
                 <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::commit(
-                    *group, &setup, &layout,
+                    group, &setup, &layout,
                 )
             })
             .collect::<Result<Vec<_>, _>>()

@@ -426,7 +426,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig>(
     let t0 = Instant::now();
     let (commitment, hint) =
         <Scheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly_refs, &setup, layout).unwrap();
-    let commitments = vec![commitment];
+    let commitments = [commitment];
     let hints = vec![hint];
     tracing::info!(
         label = "onehot",

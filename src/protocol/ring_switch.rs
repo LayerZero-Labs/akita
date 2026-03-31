@@ -754,6 +754,10 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::log_basis_at_level(inputs)
     }
 
+    fn log_basis_search_range(inputs: HachiScheduleInputs) -> (u32, u32) {
+        Cfg::log_basis_search_range(inputs)
+    }
+
     fn schedule_key(max_num_vars: usize) -> String {
         Cfg::schedule_key(max_num_vars)
     }
@@ -1381,6 +1385,7 @@ fn validate_opening_points_for_claims<F: FieldCore>(
     skip_all,
     name = "compute_m_evals_x_with_opening_points_and_claim_groups"
 )]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
     F: FieldCore + CanonicalField,
     const D: usize,

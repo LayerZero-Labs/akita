@@ -589,7 +589,7 @@ fn batched_onehot_same_point_round_trip() {
         let poly_b =
             OneHotPoly::<F, D>::new(ONEHOT_K, indices_b, layout.r_vars, layout.m_vars).unwrap();
         let pt = random_point(nv);
-        let openings = vec![
+        let openings = [
             opening_from_poly(&poly_a, &pt, &layout),
             opening_from_poly(&poly_b, &pt, &layout),
         ];
@@ -608,7 +608,7 @@ fn batched_onehot_same_point_round_trip() {
             &layout,
         )
         .unwrap();
-        let commitments = vec![commitment];
+        let commitments = [commitment];
         let hints = vec![hint];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot");
@@ -698,7 +698,7 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
             &poly_refs, &setup, &layout,
         )
         .unwrap();
-        let commitments = vec![commitment];
+        let commitments = [commitment];
         let hints = vec![hint];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-4x30");

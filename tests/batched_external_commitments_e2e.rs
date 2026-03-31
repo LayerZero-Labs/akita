@@ -233,7 +233,7 @@ fn batched_onehot_round_trip_with_mixed_commitment_groups() {
                 &layout,
             )
             .expect("group 1 commit");
-        let commitments = vec![group0_commitment, group1_commitment];
+        let commitments = [group0_commitment, group1_commitment];
         let hints = vec![group0_hint, group1_hint];
 
         let mut prover_transcript =

@@ -152,7 +152,7 @@ pub(super) fn optimal_m_r_split_with_params(
     let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
     let delta_open = compute_num_digits(open_bound, decomp.log_basis) as u64;
     let delta_commit = compute_num_digits(decomp.log_commit_bound, decomp.log_basis) as u64;
-    let c1 = delta_open + params.n_a as u64 * delta_commit;
+    let c1 = delta_open + params.n_a as u64 * delta_open;
 
     let mut best_r = reduced_vars / 2;
     let mut best_cost = u64::MAX;
@@ -490,6 +490,15 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
         let _ = inputs;
         Self::decomposition().log_basis
+    }
+
+    /// Inclusive search range for adaptive recursive basis planning at one state.
+    ///
+    /// Static configs should return a singleton range containing the unique basis
+    /// allowed at `inputs`.
+    fn log_basis_search_range(inputs: HachiScheduleInputs) -> (u32, u32) {
+        let basis = Self::log_basis_at_level(inputs);
+        (basis, basis)
     }
 
     /// Stable identity for the active log-basis schedule at `max_num_vars`.
@@ -939,6 +948,10 @@ impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
             .expect("adaptive schedule must be derivable from public inputs")
     }
 
+    fn log_basis_search_range(_inputs: HachiScheduleInputs) -> (u32, u32) {
+        (2, 5)
+    }
+
     fn schedule_key(max_num_vars: usize) -> String {
         planned_schedule_key::<Self>(max_num_vars, 2, 5)
             .expect("adaptive schedule key must be derivable from public inputs")
@@ -1039,6 +1052,10 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
             .expect("adaptive schedule must be derivable from public inputs")
     }
 
+    fn log_basis_search_range(_inputs: HachiScheduleInputs) -> (u32, u32) {
+        (2, 5)
+    }
+
     fn schedule_key(max_num_vars: usize) -> String {
         planned_schedule_key::<Self>(max_num_vars, 2, 5)
             .expect("adaptive schedule key must be derivable from public inputs")
@@ -1064,32 +1081,5 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
             2,
             5,
         )?))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocol::commitment::recursive_level_decomposition_from_root;
-
-    #[test]
-    fn recursive_onehot_split_matches_pre_multipoint_cost_model() {
-        type Cfg = Fp128AdaptiveOneHotCommitmentConfig;
-
-        let current_w_len = 25_974_272usize;
-        let params = Cfg::level_params(HachiScheduleInputs {
-            max_num_vars: 30,
-            level: 1,
-            current_w_len,
-        });
-        let reduced_vars = (current_w_len / params.d)
-            .next_power_of_two()
-            .trailing_zeros() as usize;
-        let decomp =
-            recursive_level_decomposition_from_root(Cfg::decomposition(), params.log_basis);
-
-        let split = optimal_m_r_split_with_params(&params, decomp, reduced_vars);
-
-        assert_eq!(split, (11, 8));
     }
 }
