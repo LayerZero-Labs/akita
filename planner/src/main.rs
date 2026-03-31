@@ -1,27 +1,17 @@
 use std::env;
 
-use hachi_planner::baseline::{run_baseline_planner, BaselineParams};
+use hachi_planner::baseline::{baseline_params_for, run_baseline_planner, BASELINE_CASES};
 use hachi_planner::search::{run_universal_planner, PlannerOptions, Schedule};
 
 fn get_baseline(lcb: u32, nv: usize) -> Option<usize> {
-    let (d, l1) = if lcb == 1 {
-        (64, 54)
+    let d = if lcb == 1 {
+        64
     } else if lcb >= 128 {
-        (128, 31)
+        128
     } else {
         return None;
     };
-    let bp = BaselineParams {
-        d,
-        n_a: 1,
-        n_b: 1,
-        n_d: 1,
-        challenge_l1_mass: l1,
-        log_commit_bound: lcb,
-        max_num_vars: nv,
-        min_lb: 2,
-        max_lb: 5,
-    };
+    let bp = baseline_params_for(d, lcb, nv);
     run_baseline_planner(&bp).map(|r| r.total)
 }
 
@@ -70,26 +60,9 @@ fn cmd_validate() -> bool {
     println!("  Baseline Validation (vs Rust planner)");
     println!("{}", "=".repeat(70));
 
-    let cases: &[(&str, u32, u32, usize, usize)] = &[
-        ("onehot", 64, 1, 32, 99_805),
-        ("full128", 128, 128, 25, 166_613),
-        ("full128", 128, 128, 32, 173_197),
-    ];
-
     let mut all_ok = true;
-    for &(name, d, lcb, nv, expected) in cases {
-        let l1 = if d == 64 { 54 } else { 31 };
-        let bp = BaselineParams {
-            d,
-            n_a: 1,
-            n_b: 1,
-            n_d: 1,
-            challenge_l1_mass: l1,
-            log_commit_bound: lcb,
-            max_num_vars: nv,
-            min_lb: 2,
-            max_lb: 5,
-        };
+    for &(name, d, lcb, nv, expected) in BASELINE_CASES {
+        let bp = baseline_params_for(d, lcb, nv);
         let result = run_baseline_planner(&bp);
         let got = result.map_or(0, |r| r.total);
         let ok = got == expected;
