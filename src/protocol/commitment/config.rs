@@ -924,6 +924,61 @@ impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> 
     }
 }
 
+/// Production-oriented `D=128` static-basis profile over `Prime128Offset275`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Fp128Prime275BoundedCommitmentConfig<
+    const LOG_COMMIT_BOUND: u32,
+    const LOG_BASIS: u32,
+    const W_LOG_BASIS: u32 = LOG_BASIS,
+>;
+
+impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> CommitmentConfig
+    for Fp128Prime275BoundedCommitmentConfig<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>
+{
+    const D: usize = 128;
+
+    fn decomposition() -> DecompositionParams {
+        Fp128BoundedCommitmentConfig::<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>::decomposition()
+    }
+
+    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
+        CommitmentEnvelope {
+            max_n_a: 1,
+            max_n_b: 1,
+            max_n_d: 1,
+        }
+    }
+
+    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        d128_stage1_challenge_config(d)
+    }
+
+    fn expected_field_modulus() -> Option<u128> {
+        Some(fp128_expected_modulus_prime275())
+    }
+
+    fn planner_half_field_bound() -> u128 {
+        fp128_half_field_bound_prime275()
+    }
+
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        if inputs.level == 0 {
+            LOG_BASIS
+        } else {
+            W_LOG_BASIS
+        }
+    }
+
+    fn schedule_key(_max_num_vars: usize) -> String {
+        format!("static_v1_root{LOG_BASIS}_rec{W_LOG_BASIS}")
+    }
+
+    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        let (_, layout) = hachi_root_level_layout::<Self>(max_num_vars)?;
+        Ok(layout)
+    }
+}
+
 /// D=64, rank-1 everywhere.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Fp128D64BoundedCommitmentConfig<
@@ -976,6 +1031,65 @@ impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> 
 
     fn planner_half_field_bound() -> u128 {
         fp128_half_field_bound_default()
+    }
+}
+
+/// D=64, rank-1 everywhere, over `Prime128Offset275`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Fp128Prime275D64BoundedCommitmentConfig<
+    const LOG_COMMIT_BOUND: u32,
+    const LOG_BASIS: u32,
+    const W_LOG_BASIS: u32 = LOG_BASIS,
+>;
+
+impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> CommitmentConfig
+    for Fp128Prime275D64BoundedCommitmentConfig<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>
+{
+    const D: usize = 64;
+
+    fn decomposition() -> DecompositionParams {
+        Fp128Prime275BoundedCommitmentConfig::<
+            LOG_COMMIT_BOUND,
+            LOG_BASIS,
+            W_LOG_BASIS,
+        >::decomposition()
+    }
+
+    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
+        CommitmentEnvelope {
+            max_n_a: 1,
+            max_n_b: 1,
+            max_n_d: 1,
+        }
+    }
+
+    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        let (_, layout) = hachi_root_level_layout::<Self>(max_num_vars)?;
+        Ok(layout)
+    }
+
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        if inputs.level == 0 {
+            LOG_BASIS
+        } else {
+            W_LOG_BASIS
+        }
+    }
+
+    fn schedule_key(_max_num_vars: usize) -> String {
+        format!("static_v1_root{LOG_BASIS}_rec{W_LOG_BASIS}")
+    }
+
+    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        d64_stage1_challenge_config(d)
+    }
+
+    fn expected_field_modulus() -> Option<u128> {
+        Some(fp128_expected_modulus_prime275())
+    }
+
+    fn planner_half_field_bound() -> u128 {
+        fp128_half_field_bound_prime275()
     }
 }
 

@@ -25,11 +25,13 @@ pub use commitment::{
     Fp128D16LogBasisCommitmentConfig, Fp128D16OneHotCommitmentConfig,
     Fp128D32BoundedCommitmentConfig, Fp128D32FullCommitmentConfig,
     Fp128D32LogBasisCommitmentConfig, Fp128D32OneHotCommitmentConfig, Fp128FullCommitmentConfig,
-    Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig, Fp128Prime275FullCommitmentConfig,
-    Fp128Prime275LogBasisCommitmentConfig, Fp128Prime275OneHotCommitmentConfig, HachiCommitment,
-    HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup, HachiOpeningClaim,
-    HachiOpeningPoint, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup, RingCommitment,
-    RingCommitmentScheme, SmallTestCommitmentConfig,
+    Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig,
+    Fp128Prime275BoundedCommitmentConfig, Fp128Prime275D64BoundedCommitmentConfig,
+    Fp128Prime275FullCommitmentConfig, Fp128Prime275LogBasisCommitmentConfig,
+    Fp128Prime275OneHotCommitmentConfig, HachiCommitment, HachiCommitmentCore,
+    HachiCommitmentLayout, HachiExpandedSetup, HachiOpeningClaim, HachiOpeningPoint,
+    HachiProverSetup, HachiSetupSeed, HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
+    SmallTestCommitmentConfig,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly};
