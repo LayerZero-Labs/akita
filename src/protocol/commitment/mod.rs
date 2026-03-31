@@ -19,12 +19,15 @@ pub use config::{
     CommitmentEnvelope, DecompositionParams, DynamicSmallTestCommitmentConfig,
     Fp128AdaptiveBoundedCommitmentConfig, Fp128AdaptiveD16BoundedCommitmentConfig,
     Fp128AdaptiveD32BoundedCommitmentConfig, Fp128AdaptiveOneHotCommitmentConfig,
+    Fp128AdaptivePrime275BoundedCommitmentConfig, Fp128AdaptivePrime275OneHotCommitmentConfig,
     Fp128BoundedCommitmentConfig, Fp128CommitmentConfig, Fp128D16BoundedCommitmentConfig,
     Fp128D16FullCommitmentConfig, Fp128D16LogBasisCommitmentConfig, Fp128D16OneHotCommitmentConfig,
     Fp128D32BoundedCommitmentConfig, Fp128D32FullCommitmentConfig,
     Fp128D32LogBasisCommitmentConfig, Fp128D32OneHotCommitmentConfig,
     Fp128D64BoundedCommitmentConfig, Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig,
-    Fp128OneHotCommitmentConfig, HachiCommitmentLayout, SmallTestCommitmentConfig,
+    Fp128OneHotCommitmentConfig, Fp128Prime275FullCommitmentConfig,
+    Fp128Prime275LogBasisCommitmentConfig, Fp128Prime275OneHotCommitmentConfig,
+    HachiCommitmentLayout, SmallTestCommitmentConfig,
 };
 pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
 pub use schedule::{

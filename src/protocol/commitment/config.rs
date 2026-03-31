@@ -12,7 +12,7 @@ use crate::error::HachiError;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::FieldCore;
+use crate::{CanonicalField, FieldCore};
 use std::io::{Read, Write};
 
 /// Parameters controlling the gadget decomposition depth (called δ in the paper).
@@ -231,6 +231,14 @@ fn fp128_half_field_bound_default() -> u128 {
 
 fn fp128_half_field_bound_prime275() -> u128 {
     detect_field_modulus::<Prime128Offset275>() / 2
+}
+
+fn fp128_expected_modulus_default() -> u128 {
+    detect_field_modulus::<Prime128Offset5823>()
+}
+
+fn fp128_expected_modulus_prime275() -> u128 {
+    detect_field_modulus::<Prime128Offset275>()
 }
 
 fn fp128_ranked_envelope(rank: usize) -> CommitmentEnvelope {
@@ -519,6 +527,33 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         std::any::type_name::<Self>()
     }
 
+    /// Exact field modulus this config's planner/sizing assumptions target.
+    ///
+    /// Return `None` for configs that are intentionally modulus-agnostic.
+    fn expected_field_modulus() -> Option<u128> {
+        None
+    }
+
+    /// Ensure the runtime field matches this config's modulus assumptions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the runtime field modulus does not match
+    /// [`Self::expected_field_modulus`].
+    fn validate_field_modulus<F: CanonicalField>() -> Result<(), HachiError> {
+        let Some(expected) = Self::expected_field_modulus() else {
+            return Ok(());
+        };
+        let actual = detect_field_modulus::<F>();
+        if actual != expected {
+            return Err(HachiError::InvalidSetup(format!(
+                "config {} expects field modulus {expected}, got {actual}",
+                Self::family_key()
+            )));
+        }
+        Ok(())
+    }
+
     /// Build one level's active params from public inputs and an explicit basis.
     fn level_params_with_log_basis(
         inputs: HachiScheduleInputs,
@@ -671,7 +706,11 @@ pub fn beta_linf_fold_bound(
 /// # Errors
 ///
 /// Returns an error when config constants are inconsistent or overflow.
-pub(super) fn validate_and_derive_layout<Cfg: CommitmentConfig, const D: usize>(
+pub(super) fn validate_and_derive_layout<
+    F: CanonicalField,
+    Cfg: CommitmentConfig,
+    const D: usize,
+>(
     max_num_vars: usize,
 ) -> Result<HachiCommitmentLayout, HachiError> {
     if D != Cfg::D {
@@ -680,6 +719,7 @@ pub(super) fn validate_and_derive_layout<Cfg: CommitmentConfig, const D: usize>(
             Cfg::D
         )));
     }
+    Cfg::validate_field_modulus::<F>()?;
     Cfg::commitment_layout(max_num_vars)
 }
 
@@ -858,6 +898,10 @@ impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> 
         d128_stage1_challenge_config(d)
     }
 
+    fn expected_field_modulus() -> Option<u128> {
+        Some(fp128_expected_modulus_default())
+    }
+
     fn planner_half_field_bound() -> u128 {
         fp128_half_field_bound_default()
     }
@@ -926,6 +970,10 @@ impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> 
         d64_stage1_challenge_config(d)
     }
 
+    fn expected_field_modulus() -> Option<u128> {
+        Some(fp128_expected_modulus_default())
+    }
+
     fn planner_half_field_bound() -> u128 {
         fp128_half_field_bound_default()
     }
@@ -971,6 +1019,10 @@ impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> 
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
         d32_stage1_challenge_config(d)
+    }
+
+    fn expected_field_modulus() -> Option<u128> {
+        Some(fp128_expected_modulus_prime275())
     }
 
     fn planner_half_field_bound() -> u128 {
@@ -1020,6 +1072,10 @@ impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> 
         d16_stage1_challenge_config(d)
     }
 
+    fn expected_field_modulus() -> Option<u128> {
+        Some(fp128_expected_modulus_prime275())
+    }
+
     fn planner_half_field_bound() -> u128 {
         fp128_half_field_bound_prime275()
     }
@@ -1056,6 +1112,10 @@ impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
         d128_stage1_challenge_config(d)
+    }
+
+    fn expected_field_modulus() -> Option<u128> {
+        Some(fp128_expected_modulus_default())
     }
 
     fn planner_half_field_bound() -> u128 {
@@ -1104,6 +1164,10 @@ impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
         d32_stage1_challenge_config(d)
     }
 
+    fn expected_field_modulus() -> Option<u128> {
+        Some(fp128_expected_modulus_prime275())
+    }
+
     fn planner_half_field_bound() -> u128 {
         fp128_half_field_bound_prime275()
     }
@@ -1150,6 +1214,56 @@ impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
         d16_stage1_challenge_config(d)
     }
 
+    fn expected_field_modulus() -> Option<u128> {
+        Some(fp128_expected_modulus_prime275())
+    }
+
+    fn planner_half_field_bound() -> u128 {
+        fp128_half_field_bound_prime275()
+    }
+
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        fp128_planned_log_basis::<Self>(inputs)
+    }
+
+    fn schedule_key(max_num_vars: usize) -> String {
+        fp128_planned_schedule_key::<Self>(max_num_vars)
+    }
+
+    fn schedule_plan(max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
+        fp128_planned_schedule::<Self>(max_num_vars)
+    }
+}
+
+/// Adaptive `D=128`, rank-1 family over `Prime128Offset275`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Fp128AdaptivePrime275BoundedCommitmentConfig<const LOG_COMMIT_BOUND: u32>;
+
+impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
+    for Fp128AdaptivePrime275BoundedCommitmentConfig<LOG_COMMIT_BOUND>
+{
+    const D: usize = 128;
+
+    fn decomposition() -> DecompositionParams {
+        Fp128AdaptiveBoundedCommitmentConfig::<LOG_COMMIT_BOUND>::decomposition()
+    }
+
+    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
+        CommitmentEnvelope {
+            max_n_a: 1,
+            max_n_b: 1,
+            max_n_d: 1,
+        }
+    }
+
+    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        d128_stage1_challenge_config(d)
+    }
+
+    fn expected_field_modulus() -> Option<u128> {
+        Some(fp128_expected_modulus_prime275())
+    }
+
     fn planner_half_field_bound() -> u128 {
         fp128_half_field_bound_prime275()
     }
@@ -1170,12 +1284,18 @@ impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
 /// Full-field (128-bit) coefficient family with adaptive per-level basis.
 pub type Fp128FullCommitmentConfig = Fp128AdaptiveBoundedCommitmentConfig<128>;
 
+/// Full-field (128-bit) coefficient family over `Prime128Offset275`.
+pub type Fp128Prime275FullCommitmentConfig = Fp128AdaptivePrime275BoundedCommitmentConfig<128>;
+
 /// Binary (1-bit) D=64 onehot preset with the coarse adaptive outer-rank
 /// schedule.
 pub type Fp128OneHotCommitmentConfig = Fp128AdaptiveOneHotCommitmentConfig;
 
 /// Log-bounded coefficient family with adaptive per-level basis.
 pub type Fp128LogBasisCommitmentConfig = Fp128AdaptiveBoundedCommitmentConfig<3>;
+
+/// Log-bounded coefficient family over `Prime128Offset275`.
+pub type Fp128Prime275LogBasisCommitmentConfig = Fp128AdaptivePrime275BoundedCommitmentConfig<3>;
 
 /// Adaptive D=32 full-field family over `Prime128Offset275`.
 pub type Fp128D32FullCommitmentConfig = Fp128AdaptiveD32BoundedCommitmentConfig<128>;
@@ -1248,6 +1368,10 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
         d64_stage1_challenge_config(d)
     }
 
+    fn expected_field_modulus() -> Option<u128> {
+        Some(fp128_expected_modulus_default())
+    }
+
     fn planner_half_field_bound() -> u128 {
         fp128_half_field_bound_default()
     }
@@ -1264,6 +1388,62 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
         fp128_planned_schedule::<Self>(max_num_vars)
     }
 }
+
+/// D=64 onehot preset over `Prime128Offset275`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Fp128AdaptivePrime275OneHotCommitmentConfig;
+
+impl CommitmentConfig for Fp128AdaptivePrime275OneHotCommitmentConfig {
+    const D: usize = 64;
+
+    fn decomposition() -> DecompositionParams {
+        Fp128AdaptiveOneHotCommitmentConfig::decomposition()
+    }
+
+    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
+        Fp128AdaptiveOneHotCommitmentConfig::envelope(max_num_vars)
+    }
+
+    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        let (_, layout) = hachi_root_level_layout::<Self>(max_num_vars)?;
+        Ok(layout)
+    }
+
+    fn n_b_at_level(level: usize, max_num_vars: usize, current_w_len: usize) -> usize {
+        Fp128AdaptiveOneHotCommitmentConfig::n_b_at_level(level, max_num_vars, current_w_len)
+    }
+
+    fn n_d_at_level(level: usize, max_num_vars: usize, current_w_len: usize) -> usize {
+        Fp128AdaptiveOneHotCommitmentConfig::n_d_at_level(level, max_num_vars, current_w_len)
+    }
+
+    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        d64_stage1_challenge_config(d)
+    }
+
+    fn expected_field_modulus() -> Option<u128> {
+        Some(fp128_expected_modulus_prime275())
+    }
+
+    fn planner_half_field_bound() -> u128 {
+        fp128_half_field_bound_prime275()
+    }
+
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        fp128_planned_log_basis::<Self>(inputs)
+    }
+
+    fn schedule_key(max_num_vars: usize) -> String {
+        fp128_planned_schedule_key::<Self>(max_num_vars)
+    }
+
+    fn schedule_plan(max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
+        fp128_planned_schedule::<Self>(max_num_vars)
+    }
+}
+
+/// Binary (1-bit) D=64 onehot preset over `Prime128Offset275`.
+pub type Fp128Prime275OneHotCommitmentConfig = Fp128AdaptivePrime275OneHotCommitmentConfig;
 
 #[cfg(test)]
 mod tests {

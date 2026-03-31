@@ -322,6 +322,7 @@ where
     F: FieldCore + CanonicalField,
     Cfg: CommitmentConfig,
 {
+    Cfg::validate_field_modulus::<F>()?;
     let mut stats = LayoutChainStats::default();
     stats.include(root_layout);
 
@@ -574,7 +575,7 @@ where
 
     #[tracing::instrument(skip_all, name = "RingCommitmentScheme::setup")]
     fn setup(max_num_vars: usize) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError> {
-        let layout = validate_and_derive_layout::<Cfg, D>(max_num_vars)?;
+        let layout = validate_and_derive_layout::<F, Cfg, D>(max_num_vars)?;
         let envelope = Cfg::envelope(max_num_vars);
         ensure_supported_num_vars(max_num_vars, layout.required_num_vars::<D>()?)?;
 
@@ -1092,7 +1093,11 @@ impl HachiCommitmentCore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algebra::{Prime128Offset275, Prime128Offset5823};
     use crate::primitives::{HachiDeserialize, HachiSerialize};
+    use crate::protocol::commitment::{
+        Fp128D32FullCommitmentConfig, Fp128FullCommitmentConfig, Fp128Prime275FullCommitmentConfig,
+    };
     use crate::test_utils::{TinyConfig, F as TestF};
 
     #[test]
@@ -1189,6 +1194,38 @@ mod tests {
         assert!(shared_cols >= expected_inner);
         assert!(shared_cols >= expected_outer);
         assert!(shared_cols >= expected_d);
+    }
+
+    #[test]
+    fn setup_rejects_mismatched_field_and_config_pairings() {
+        let err = <HachiCommitmentCore as RingCommitmentScheme<
+            Prime128Offset5823,
+            32,
+            Fp128D32FullCommitmentConfig,
+        >>::setup(12)
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            HachiError::InvalidSetup(message) if message.contains("expects field modulus")
+        ));
+
+        let err = <HachiCommitmentCore as RingCommitmentScheme<
+            Prime128Offset275,
+            128,
+            Fp128FullCommitmentConfig,
+        >>::setup(12)
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            HachiError::InvalidSetup(message) if message.contains("expects field modulus")
+        ));
+
+        <HachiCommitmentCore as RingCommitmentScheme<
+            Prime128Offset275,
+            128,
+            Fp128Prime275FullCommitmentConfig,
+        >>::setup(12)
+        .expect("prime-275 profile config should accept Prime128Offset275");
     }
 
     #[cfg(feature = "disk-persistence")]

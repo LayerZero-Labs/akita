@@ -5,8 +5,8 @@ use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
     Fp128BoundedCommitmentConfig, Fp128D16FullCommitmentConfig, Fp128D16OneHotCommitmentConfig,
     Fp128D32FullCommitmentConfig, Fp128D32OneHotCommitmentConfig, Fp128D64BoundedCommitmentConfig,
-    Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig,
-    HachiCommitmentLayout,
+    Fp128Prime275FullCommitmentConfig, Fp128Prime275LogBasisCommitmentConfig,
+    Fp128Prime275OneHotCommitmentConfig, HachiCommitmentLayout,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
@@ -361,15 +361,15 @@ fn main() {
 
     match mode.as_str() {
         "full" => {
-            type Cfg = Fp128FullCommitmentConfig;
-            run_dense_mode::<{ Fp128FullCommitmentConfig::D }, Cfg>(
+            type Cfg = Fp128Prime275FullCommitmentConfig;
+            run_dense_mode::<{ Cfg::D }, Cfg>(
                 "=== full (q=2^128-275, D=128 dense, log_commit_bound=128) ===",
                 nv,
             );
         }
         "onehot" => {
-            type Cfg = Fp128OneHotCommitmentConfig;
-            run_onehot_mode::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(
+            type Cfg = Fp128Prime275OneHotCommitmentConfig;
+            run_onehot_mode::<{ Cfg::D }, Cfg>(
                 "=== onehot (q=2^128-275, D=64, 1-of-256, log_commit_bound=1) ===",
                 nv,
             );
@@ -403,23 +403,23 @@ fn main() {
             );
         }
         "logbasis" => {
-            type Cfg = Fp128LogBasisCommitmentConfig;
-            run_dense_mode::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(
+            type Cfg = Fp128Prime275LogBasisCommitmentConfig;
+            run_dense_mode::<{ Cfg::D }, Cfg>(
                 "=== logbasis (q=2^128-275, D=128 dense, log_commit_bound=3) ===",
                 nv,
             );
         }
         "all" => {
             {
-                type Cfg = Fp128FullCommitmentConfig;
-                run_dense_mode::<{ Fp128FullCommitmentConfig::D }, Cfg>(
+                type Cfg = Fp128Prime275FullCommitmentConfig;
+                run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== full (q=2^128-275, D=128 dense, log_commit_bound=128) ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128OneHotCommitmentConfig;
-                run_onehot_mode::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(
+                type Cfg = Fp128Prime275OneHotCommitmentConfig;
+                run_onehot_mode::<{ Cfg::D }, Cfg>(
                     "=== onehot (q=2^128-275, D=64, 1-of-256, log_commit_bound=1) ===",
                     nv,
                 );
@@ -453,8 +453,8 @@ fn main() {
                 );
             }
             {
-                type Cfg = Fp128LogBasisCommitmentConfig;
-                run_dense_mode::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(
+                type Cfg = Fp128Prime275LogBasisCommitmentConfig;
+                run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== logbasis (q=2^128-275, D=128 dense, log_commit_bound=3) ===",
                     nv,
                 );
