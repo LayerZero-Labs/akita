@@ -29,8 +29,6 @@ use crate::primitives::serialization::{
 };
 use crate::protocol::commitment_scheme::should_stop_folding;
 use crate::protocol::hachi_poly_ops::OneHotIndex;
-#[cfg(test)]
-use crate::protocol::ring_switch::w_commitment_layout;
 use crate::protocol::ring_switch::w_ring_element_count;
 use crate::{cfg_into_iter, cfg_iter, CanonicalField, FieldCore, FieldSampling};
 #[cfg(feature = "disk-persistence")]
@@ -320,9 +318,8 @@ fn scan_layout_chain<F, const D: usize, Cfg>(
 ) -> Result<LayoutChainStats, HachiError>
 where
     F: FieldCore + CanonicalField,
-    Cfg: CommitmentConfig,
+    Cfg: CommitmentConfig<Field = F>,
 {
-    Cfg::validate_field_modulus::<F>()?;
     let mut stats = LayoutChainStats::default();
     stats.include(root_layout);
 
@@ -383,7 +380,7 @@ where
 }
 
 #[cfg(feature = "disk-persistence")]
-fn cache_file_name<F: CanonicalField, Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
+fn cache_file_name<F: CanonicalField, Cfg: CommitmentConfig<Field = F>>(max_num_vars: usize) -> String {
     let envelope = Cfg::envelope(max_num_vars);
     let family = Cfg::family_key()
         .chars()
@@ -404,7 +401,7 @@ fn cache_file_name<F: CanonicalField, Cfg: CommitmentConfig>(max_num_vars: usize
 }
 
 #[cfg(feature = "disk-persistence")]
-fn get_storage_path<F: CanonicalField, Cfg: CommitmentConfig>(
+fn get_storage_path<F: CanonicalField, Cfg: CommitmentConfig<Field = F>>(
     max_num_vars: usize,
 ) -> Option<PathBuf> {
     let cache_directory = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
@@ -436,7 +433,7 @@ fn get_storage_path<F: CanonicalField, Cfg: CommitmentConfig>(
 }
 
 #[cfg(feature = "disk-persistence")]
-fn save_expanded_setup<F: FieldCore + CanonicalField, Cfg: CommitmentConfig>(
+fn save_expanded_setup<F: FieldCore + CanonicalField, Cfg: CommitmentConfig<Field = F>>(
     setup: &HachiExpandedSetup<F>,
     max_num_vars: usize,
 ) {
@@ -482,7 +479,7 @@ fn save_expanded_setup<F: FieldCore + CanonicalField, Cfg: CommitmentConfig>(
 }
 
 #[cfg(feature = "disk-persistence")]
-fn validate_cached_setup_dimensions<F, const D: usize, Cfg: CommitmentConfig>(
+fn validate_cached_setup_dimensions<F, const D: usize, Cfg: CommitmentConfig<Field = F>>(
     expanded: &HachiExpandedSetup<F>,
     max_num_vars: usize,
     layout: HachiCommitmentLayout,
@@ -517,7 +514,7 @@ where
 }
 
 #[cfg(feature = "disk-persistence")]
-fn load_expanded_setup<F: FieldCore + Valid + CanonicalField, Cfg: CommitmentConfig>(
+fn load_expanded_setup<F: FieldCore + Valid + CanonicalField, Cfg: CommitmentConfig<Field = F>>(
     max_num_vars: usize,
 ) -> Result<HachiExpandedSetup<F>, HachiError> {
     let storage_path = get_storage_path::<F, Cfg>(max_num_vars).ok_or_else(|| {
@@ -567,7 +564,7 @@ pub struct HachiCommitmentCore;
 impl<F, const D: usize, Cfg> RingCommitmentScheme<F, D, Cfg> for HachiCommitmentCore
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + Valid,
-    Cfg: CommitmentConfig,
+    Cfg: CommitmentConfig<Field = F>,
 {
     type ProverSetup = HachiProverSetup<F, D>;
     type VerifierSetup = HachiVerifierSetup<F>;
@@ -855,7 +852,7 @@ impl HachiCommitmentCore {
     ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError>
     where
         F: FieldCore + CanonicalField + FieldSampling,
-        Cfg: CommitmentConfig,
+        Cfg: CommitmentConfig<Field = F>,
     {
         let max_num_vars = layout.required_num_vars::<D>()?;
         let public_matrix_seed = sample_public_matrix_seed();
@@ -877,7 +874,7 @@ impl HachiCommitmentCore {
     ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError>
     where
         F: FieldCore + CanonicalField + FieldSampling,
-        Cfg: CommitmentConfig,
+        Cfg: CommitmentConfig<Field = F>,
     {
         let Some((&first_layout, _)) = layouts.split_first() else {
             return Err(HachiError::InvalidSetup(
@@ -951,7 +948,7 @@ impl HachiCommitmentCore {
     ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError>
     where
         F: FieldCore + CanonicalField + FieldSampling,
-        Cfg: CommitmentConfig,
+        Cfg: CommitmentConfig<Field = F>,
     {
         let old_layout = existing.seed.layout;
         let new_layout = HachiCommitmentLayout::new::<Cfg>(
@@ -1019,7 +1016,7 @@ impl HachiCommitmentCore {
     ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError>
     where
         F: FieldCore + CanonicalField + FieldSampling,
-        Cfg: CommitmentConfig,
+        Cfg: CommitmentConfig<Field = F>,
     {
         let layout_num_vars = layout.required_num_vars::<D>()?;
         let chain_stats = scan_layout_chain::<F, D, Cfg>(layout_num_vars, layout)?;
@@ -1047,7 +1044,7 @@ impl HachiCommitmentCore {
     ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError>
     where
         F: FieldCore + CanonicalField + FieldSampling,
-        Cfg: CommitmentConfig,
+        Cfg: CommitmentConfig<Field = F>,
     {
         let envelope = Cfg::envelope(max_num_vars);
         let max_rows = [envelope.max_n_a, envelope.max_n_b, envelope.max_n_d]
@@ -1093,10 +1090,10 @@ impl HachiCommitmentCore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::{Prime128Offset275, Prime128Offset5823};
     use crate::primitives::{HachiDeserialize, HachiSerialize};
     use crate::protocol::commitment::{
-        Fp128D32FullCommitmentConfig, Fp128FullCommitmentConfig, Fp128Prime275FullCommitmentConfig,
+        hachi_recursive_level_layout_from_params,
+        presets::{fp128, fp128_5823},
     };
     use crate::test_utils::{TinyConfig, F as TestF};
 
@@ -1140,10 +1137,12 @@ mod tests {
             level: 0,
             current_w_len: 1usize << layout_b.required_num_vars::<TEST_D>().unwrap(),
         });
+        let w_len_a = w_ring_element_count::<TestF>(&params_a, layout_a) * TEST_D;
+        let w_len_b = w_ring_element_count::<TestF>(&params_b, layout_b) * TEST_D;
         let w_layout_a =
-            w_commitment_layout::<TestF, TEST_D, TinyConfig>(&params_a, layout_a).unwrap();
+            hachi_recursive_level_layout_from_params::<TinyConfig>(&params_a, w_len_a).unwrap();
         let w_layout_b =
-            w_commitment_layout::<TestF, TEST_D, TinyConfig>(&params_b, layout_b).unwrap();
+            hachi_recursive_level_layout_from_params::<TinyConfig>(&params_b, w_len_b).unwrap();
 
         let expected_inner = [
             layout_a.inner_width,
@@ -1197,35 +1196,17 @@ mod tests {
     }
 
     #[test]
-    fn setup_rejects_mismatched_field_and_config_pairings() {
-        let err = <HachiCommitmentCore as RingCommitmentScheme<
-            Prime128Offset5823,
-            32,
-            Fp128D32FullCommitmentConfig,
-        >>::setup(12)
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            HachiError::InvalidSetup(message) if message.contains("expects field modulus")
-        ));
+    fn setup_accepts_field_coupled_presets() {
+        <HachiCommitmentCore as RingCommitmentScheme<fp128_5823::Field, 128, fp128_5823::Full>>::setup(
+            12,
+        )
+        .expect("legacy fp128 preset should accept the legacy field");
 
-        let err = <HachiCommitmentCore as RingCommitmentScheme<
-            Prime128Offset275,
-            128,
-            Fp128FullCommitmentConfig,
-        >>::setup(12)
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            HachiError::InvalidSetup(message) if message.contains("expects field modulus")
-        ));
+        <HachiCommitmentCore as RingCommitmentScheme<fp128::Field, 128, fp128::Full>>::setup(12)
+            .expect("default fp128 preset should accept the default field");
 
-        <HachiCommitmentCore as RingCommitmentScheme<
-            Prime128Offset275,
-            128,
-            Fp128Prime275FullCommitmentConfig,
-        >>::setup(12)
-        .expect("prime-275 profile config should accept Prime128Offset275");
+        <HachiCommitmentCore as RingCommitmentScheme<fp128::Field, 32, fp128::D32Full>>::setup(12)
+            .expect("small-D fp128 preset should accept the default field");
     }
 
     #[cfg(feature = "disk-persistence")]

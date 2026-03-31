@@ -88,6 +88,7 @@ fn layout_from_params(
     r_vars: usize,
     params: &HachiLevelParams,
     decomp: DecompositionParams,
+    num_ring: usize,
 ) -> Result<HachiCommitmentLayout, HachiError> {
     let depth_commit = compute_num_digits(decomp.log_commit_bound, decomp.log_basis);
     let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
@@ -101,6 +102,7 @@ fn layout_from_params(
         depth_open,
         depth_fold,
         decomp.log_basis,
+        num_ring,
     )
 }
 
@@ -332,8 +334,8 @@ fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
             ));
         }
         let decomp = main_level_decomposition_from_root(Cfg::decomposition(), log_basis);
-        let (m_vars, r_vars) = optimal_m_r_split_with_params(&params, decomp, reduced_vars);
-        layout_from_params(m_vars, r_vars, &params, decomp)?
+        let (m_vars, r_vars) = optimal_m_r_split_with_params(&params, decomp, reduced_vars, 0);
+        layout_from_params(m_vars, r_vars, &params, decomp, 0)?
     } else {
         hachi_recursive_level_layout_from_params::<Cfg>(&params, inputs.current_w_len)?
     };
@@ -591,8 +593,8 @@ pub fn hachi_root_level_layout<Cfg: CommitmentConfig>(
         ));
     }
     let decomp = main_level_decomposition::<Cfg>(&params);
-    let (m_vars, r_vars) = optimal_m_r_split_with_params(&params, decomp, reduced_vars);
-    let layout = layout_from_params(m_vars, r_vars, &params, decomp)?;
+    let (m_vars, r_vars) = optimal_m_r_split_with_params(&params, decomp, reduced_vars, 0);
+    let layout = layout_from_params(m_vars, r_vars, &params, decomp, 0)?;
     Ok((params, layout))
 }
 
@@ -618,8 +620,9 @@ pub fn hachi_recursive_level_layout_from_params<Cfg: CommitmentConfig>(
     let reduced_vars = total.trailing_zeros() as usize;
     let max_num_vars = reduced_vars + alpha;
     let decomp = recursive_level_decomposition::<Cfg>(params);
-    let (m_vars, r_vars) = optimal_m_r_split_with_params(params, decomp, reduced_vars);
-    let layout = layout_from_params(m_vars, r_vars, params, decomp)?;
+    let (m_vars, r_vars) =
+        optimal_m_r_split_with_params(params, decomp, reduced_vars, num_ring_elems);
+    let layout = layout_from_params(m_vars, r_vars, params, decomp, num_ring_elems)?;
     debug_assert_eq!(layout.m_vars + layout.r_vars + alpha, max_num_vars);
     Ok(layout)
 }
@@ -627,18 +630,15 @@ pub fn hachi_recursive_level_layout_from_params<Cfg: CommitmentConfig>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128Offset5823;
     use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
     use crate::primitives::serialization::{Compress, HachiSerialize};
-    use crate::protocol::commitment::{
-        Fp128AdaptiveBoundedCommitmentConfig, Fp128AdaptiveOneHotCommitmentConfig,
-    };
+    use crate::protocol::commitment::presets::fp128_5823;
     use crate::protocol::proof::{FlatRingVec, HachiLevelProof};
     use crate::protocol::ring_switch::w_ring_element_count;
     use crate::protocol::sumcheck::{CompressedUniPoly, SumcheckProof};
     use crate::FieldCore;
 
-    type F = Prime128Offset5823;
+    type F = fp128_5823::Field;
 
     fn dummy_sumcheck(rounds: usize, degree: usize) -> SumcheckProof<F> {
         SumcheckProof {
@@ -656,8 +656,7 @@ mod tests {
             .expect("config should provide a planner");
         for level in &plan.levels {
             let runtime_next_w_len =
-                w_ring_element_count::<Prime128Offset5823>(&level.params, level.layout)
-                    * level.params.d;
+                w_ring_element_count::<Cfg::Field>(&level.params, level.layout) * level.params.d;
             assert_eq!(
                 runtime_next_w_len, level.next_inputs.current_w_len,
                 "planner/runtime next_w_len mismatch at level {} for max_num_vars={max_num_vars}",
@@ -669,18 +668,14 @@ mod tests {
     #[test]
     fn adaptive_bounded_plan_matches_runtime_next_w_len() {
         for max_num_vars in [14, 20, 30] {
-            assert_plan_matches_runtime_w_sizes::<Fp128AdaptiveBoundedCommitmentConfig<128>>(
-                max_num_vars,
-            );
+            assert_plan_matches_runtime_w_sizes::<fp128_5823::Full>(max_num_vars);
         }
     }
 
     #[test]
     fn adaptive_onehot_plan_matches_runtime_next_w_len() {
         for max_num_vars in [15, 30, 44] {
-            assert_plan_matches_runtime_w_sizes::<Fp128AdaptiveOneHotCommitmentConfig>(
-                max_num_vars,
-            );
+            assert_plan_matches_runtime_w_sizes::<fp128_5823::OneHot>(max_num_vars);
         }
     }
 
@@ -747,6 +742,35 @@ mod tests {
                 level_proof.serialized_size(Compress::No),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
+        }
+    }
+
+    #[test]
+    fn tight_block_len_is_no_larger_than_pow2() {
+        for max_num_vars in [14, 20, 30] {
+            let plan = fp128_5823::Full::schedule_plan(max_num_vars)
+                .expect("planner should succeed")
+                .expect("config should provide a planner");
+            for level in &plan.levels {
+                let pow2_block = 1usize << level.layout.m_vars;
+                assert!(
+                    level.layout.block_len <= pow2_block,
+                    "block_len {} should be <= 2^m_vars {} at level {} (num_vars={})",
+                    level.layout.block_len,
+                    pow2_block,
+                    level.inputs.level,
+                    max_num_vars
+                );
+                if level.inputs.level > 0 {
+                    let num_ring = level.inputs.current_w_len / level.params.d;
+                    let expected_tight = num_ring.div_ceil(level.layout.num_blocks);
+                    assert_eq!(
+                        level.layout.block_len, expected_tight,
+                        "recursive level {} should use tight block_len = ceil({num_ring} / {})",
+                        level.inputs.level, level.layout.num_blocks
+                    );
+                }
+            }
         }
     }
 }

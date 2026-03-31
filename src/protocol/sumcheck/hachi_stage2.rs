@@ -2979,4 +2979,146 @@ mod tests {
         assert_eq!(prefix_claim, padded_claim);
         assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
     }
+
+    #[test]
+    fn stage2_large_odd_dense_two_round_prefix_matches_direct_path() {
+        let num_u = 16usize;
+        let num_l = 6usize;
+        let live_x_cols = 34_519usize;
+        let b = 8usize;
+        let half = (b / 2) as i8;
+        let y_len = 1usize << num_l;
+        let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+            .map(|i| ((i * 29 + 17) % b) as i8 - half)
+            .collect();
+        let r_stage1: Vec<F> = (0..(num_u + num_l))
+            .map(|i| F::from_u64((17 * i as u64) + 241))
+            .collect();
+        let alpha_evals_y: Vec<F> = (0..y_len)
+            .map(|i| F::from_u64((19 * i as u64) + 251))
+            .collect();
+        let m_evals_x: Vec<F> = (0..(1usize << num_u))
+            .map(|i| F::from_u64((23 * i as u64) + 257))
+            .collect();
+        let params = Stage2Params {
+            r_stage1: &r_stage1,
+            b,
+            live_x_cols,
+            num_u,
+            num_l,
+        };
+
+        let mut prover = new_stage2_test_prover(
+            F::from_u64(263),
+            w_prefix.clone(),
+            alpha_evals_y.clone(),
+            m_evals_x.clone(),
+            params,
+        );
+        let mut direct =
+            new_stage2_test_prover(F::from_u64(263), w_prefix, alpha_evals_y, m_evals_x, params);
+        direct.prefix_r_stage1 = None;
+
+        let mut prover_claim = prover.input_claim();
+        let mut direct_claim = direct.input_claim();
+
+        for round in 0..(num_u + num_l) {
+            let prover_poly = prover.compute_round_univariate(round, prover_claim);
+            let direct_poly = direct.compute_round_univariate(round, direct_claim);
+            assert_eq!(
+                prover_poly.evaluate(&F::zero()) + prover_poly.evaluate(&F::one()),
+                prover_claim,
+                "prefix path sumcheck invariant mismatch at round {round}"
+            );
+            assert_eq!(
+                direct_poly.evaluate(&F::zero()) + direct_poly.evaluate(&F::one()),
+                direct_claim,
+                "direct path sumcheck invariant mismatch at round {round}"
+            );
+            assert_eq!(
+                prover_poly, direct_poly,
+                "round {round} polynomial mismatch for large odd dense witness"
+            );
+
+            let challenge = F::from_u64((29 * round as u64) + 269);
+            prover_claim = prover_poly.evaluate(&challenge);
+            direct_claim = direct_poly.evaluate(&challenge);
+            prover.ingest_challenge(round, challenge);
+            direct.ingest_challenge(round, challenge);
+        }
+
+        assert_eq!(prover_claim, direct_claim);
+        assert_eq!(prover.final_w_eval(), direct.final_w_eval());
+    }
+
+    #[test]
+    fn stage2_large_odd_dense_prefix_matches_padded_reference() {
+        let num_u = 16usize;
+        let num_l = 6usize;
+        let live_x_cols = 34_519usize;
+        let b = 8usize;
+        let half = (b / 2) as i8;
+        let y_len = 1usize << num_l;
+        let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+            .map(|i| ((i * 31 + 11) % b) as i8 - half)
+            .collect();
+        let w_padded = pad_compact_rows(&w_prefix, live_x_cols, num_u, num_l);
+        let r_stage1: Vec<F> = (0..(num_u + num_l))
+            .map(|i| F::from_u64((31 * i as u64) + 271))
+            .collect();
+        let alpha_evals_y: Vec<F> = (0..y_len)
+            .map(|i| F::from_u64((37 * i as u64) + 277))
+            .collect();
+        let m_evals_x: Vec<F> = (0..(1usize << num_u))
+            .map(|i| F::from_u64((41 * i as u64) + 281))
+            .collect();
+
+        let mut prefix_prover = new_stage2_test_prover(
+            F::from_u64(283),
+            w_prefix,
+            alpha_evals_y.clone(),
+            m_evals_x.clone(),
+            Stage2Params {
+                r_stage1: &r_stage1,
+                b,
+                live_x_cols,
+                num_u,
+                num_l,
+            },
+        );
+        let mut padded_prover = new_stage2_test_prover(
+            F::from_u64(283),
+            w_padded,
+            alpha_evals_y,
+            m_evals_x,
+            Stage2Params {
+                r_stage1: &r_stage1,
+                b,
+                live_x_cols: 1usize << num_u,
+                num_u,
+                num_l,
+            },
+        );
+
+        let mut prefix_claim = prefix_prover.input_claim();
+        let mut padded_claim = padded_prover.input_claim();
+
+        for round in 0..(num_u + num_l) {
+            let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
+            let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
+            assert_eq!(
+                prefix_poly, padded_poly,
+                "round {round} polynomial mismatch for padded large odd dense witness"
+            );
+
+            let challenge = F::from_u64((43 * round as u64) + 293);
+            prefix_claim = prefix_poly.evaluate(&challenge);
+            padded_claim = padded_poly.evaluate(&challenge);
+            prefix_prover.ingest_challenge(round, challenge);
+            padded_prover.ingest_challenge(round, challenge);
+        }
+
+        assert_eq!(prefix_claim, padded_claim);
+        assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
+    }
 }

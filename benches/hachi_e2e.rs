@@ -3,9 +3,8 @@
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BatchSize, BenchmarkGroup, Criterion};
 use hachi_pcs::algebra::poly::multilinear_eval;
-use hachi_pcs::algebra::Fp128;
 use hachi_pcs::protocol::commitment::{
-    Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig,
+    presets::fp128_5823,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
@@ -16,9 +15,9 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;
 
-type F = Fp128<0xffffffffffffffffffffffffffffe941>;
+type F = fp128_5823::Field;
 
-fn make_dense_evals<Cfg: CommitmentConfig>(nv: usize) -> Vec<F> {
+fn make_dense_evals<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(0xdead_beef);
     let len = 1usize << nv;
     let decomp = Cfg::decomposition();
@@ -48,7 +47,7 @@ fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>, nv: usize) {
     }
 }
 
-fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig>(
+fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     c: &mut Criterion,
     label: &str,
     nv: usize,
@@ -183,7 +182,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig>(
     group.finish();
 }
 
-fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
+fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     c: &mut Criterion,
     label: &str,
     nv: usize,
@@ -332,21 +331,21 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig>(
 }
 
 fn bench_full_nv15(c: &mut Criterion) {
-    bench_dense_phases::<{ Fp128FullCommitmentConfig::D }, Fp128FullCommitmentConfig>(
+    bench_dense_phases::<{ fp128_5823::Full::D }, fp128_5823::Full>(
         c,
         "full-d128",
         15,
     );
 }
 fn bench_full_nv20(c: &mut Criterion) {
-    bench_dense_phases::<{ Fp128FullCommitmentConfig::D }, Fp128FullCommitmentConfig>(
+    bench_dense_phases::<{ fp128_5823::Full::D }, fp128_5823::Full>(
         c,
         "full-d128",
         20,
     );
 }
 fn bench_full_nv25(c: &mut Criterion) {
-    bench_dense_phases::<{ Fp128FullCommitmentConfig::D }, Fp128FullCommitmentConfig>(
+    bench_dense_phases::<{ fp128_5823::Full::D }, fp128_5823::Full>(
         c,
         "full-d128",
         25,
@@ -354,21 +353,21 @@ fn bench_full_nv25(c: &mut Criterion) {
 }
 
 fn bench_onehot_nv15(c: &mut Criterion) {
-    bench_onehot_phases::<{ Fp128OneHotCommitmentConfig::D }, Fp128OneHotCommitmentConfig>(
+    bench_onehot_phases::<{ fp128_5823::OneHot::D }, fp128_5823::OneHot>(
         c,
         "onehot-d64",
         15,
     );
 }
 fn bench_onehot_nv20(c: &mut Criterion) {
-    bench_onehot_phases::<{ Fp128OneHotCommitmentConfig::D }, Fp128OneHotCommitmentConfig>(
+    bench_onehot_phases::<{ fp128_5823::OneHot::D }, fp128_5823::OneHot>(
         c,
         "onehot-d64",
         20,
     );
 }
 fn bench_onehot_nv25(c: &mut Criterion) {
-    bench_onehot_phases::<{ Fp128OneHotCommitmentConfig::D }, Fp128OneHotCommitmentConfig>(
+    bench_onehot_phases::<{ fp128_5823::OneHot::D }, fp128_5823::OneHot>(
         c,
         "onehot-d64",
         25,
@@ -376,21 +375,21 @@ fn bench_onehot_nv25(c: &mut Criterion) {
 }
 
 fn bench_logbasis_nv15(c: &mut Criterion) {
-    bench_dense_phases::<{ Fp128LogBasisCommitmentConfig::D }, Fp128LogBasisCommitmentConfig>(
+    bench_dense_phases::<{ fp128_5823::LogBasis::D }, fp128_5823::LogBasis>(
         c,
         "logbasis-d128",
         15,
     );
 }
 fn bench_logbasis_nv20(c: &mut Criterion) {
-    bench_dense_phases::<{ Fp128LogBasisCommitmentConfig::D }, Fp128LogBasisCommitmentConfig>(
+    bench_dense_phases::<{ fp128_5823::LogBasis::D }, fp128_5823::LogBasis>(
         c,
         "logbasis-d128",
         20,
     );
 }
 fn bench_logbasis_nv25(c: &mut Criterion) {
-    bench_dense_phases::<{ Fp128LogBasisCommitmentConfig::D }, Fp128LogBasisCommitmentConfig>(
+    bench_dense_phases::<{ fp128_5823::LogBasis::D }, fp128_5823::LogBasis>(
         c,
         "logbasis-d128",
         25,

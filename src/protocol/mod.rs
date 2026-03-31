@@ -19,23 +19,16 @@ pub mod sumcheck;
 pub mod transcript;
 
 pub use commitment::{
-    optimal_m_r_split, AppendToTranscript, CommitmentConfig, CommitmentScheme, DummyProof,
-    DynamicSmallTestCommitmentConfig, Fp128BoundedCommitmentConfig, Fp128CommitmentConfig,
-    Fp128D16BoundedCommitmentConfig, Fp128D16FullCommitmentConfig,
-    Fp128D16LogBasisCommitmentConfig, Fp128D16OneHotCommitmentConfig,
-    Fp128D32BoundedCommitmentConfig, Fp128D32FullCommitmentConfig,
-    Fp128D32LogBasisCommitmentConfig, Fp128D32OneHotCommitmentConfig, Fp128FullCommitmentConfig,
-    Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig,
-    Fp128Prime275BoundedCommitmentConfig, Fp128Prime275D64BoundedCommitmentConfig,
-    Fp128Prime275FullCommitmentConfig, Fp128Prime275LogBasisCommitmentConfig,
-    Fp128Prime275OneHotCommitmentConfig, HachiCommitment, HachiCommitmentCore,
-    HachiCommitmentLayout, HachiExpandedSetup, HachiOpeningClaim, HachiOpeningPoint,
-    HachiProverSetup, HachiSetupSeed, HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
-    SmallTestCommitmentConfig,
+    optimal_m_r_split, presets, AppendToTranscript, CommitmentConfig, CommitmentPolicy,
+    CommitmentPreset, CommitmentScheme, DummyProof, DynamicSmallTestCommitmentConfig,
+    Fp128AdaptiveBoundedPolicy, Fp128AdaptiveOneHotD64Policy, Fp128StaticBoundedPolicy,
+    HachiCommitment, HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup,
+    HachiOpeningClaim, HachiOpeningPoint, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup,
+    RingCommitment, RingCommitmentScheme, SmallTestCommitmentConfig,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly};
-pub use opening_point::{BasisMode, RingOpeningPoint};
+pub use opening_point::{BasisMode, BlockOrder, RingOpeningPoint};
 pub use proof::{
     FlatRingVec, HachiLevelProof, HachiProof, HachiProofShape, HachiProofTail, LevelProofShape,
     PackedDigits, ProofRingVec,

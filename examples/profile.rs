@@ -1,13 +1,8 @@
 #![allow(missing_docs)]
 
-use hachi_pcs::algebra::Prime128Offset275;
 use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
-    Fp128D16FullCommitmentConfig, Fp128D16OneHotCommitmentConfig, Fp128D32FullCommitmentConfig,
-    Fp128D32OneHotCommitmentConfig, Fp128Prime275BoundedCommitmentConfig,
-    Fp128Prime275D64BoundedCommitmentConfig, Fp128Prime275FullCommitmentConfig,
-    Fp128Prime275LogBasisCommitmentConfig, Fp128Prime275OneHotCommitmentConfig,
-    HachiCommitmentLayout,
+    presets::fp128, CommitmentConfig, HachiCommitmentLayout,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
@@ -16,10 +11,9 @@ use hachi_pcs::protocol::opening_point::{
 };
 use hachi_pcs::protocol::proof::{HachiLevelProof, HachiProof};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
-use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
-    BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, HachiPolyOps, HachiSerialize,
-    Transcript,
+    BasisMode, BlockOrder, CanonicalField, CommitmentScheme, FromSmallInt, HachiPolyOps,
+    HachiSerialize, Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -31,7 +25,7 @@ use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
-type F = Prime128Offset275;
+type F = fp128::Field;
 const ONEHOT_K: usize = 256;
 
 fn env_flag(name: &str, default: bool) -> bool {
@@ -52,9 +46,14 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
 
     let inner_point = &point[..alpha_bits];
     let reduced_point = &point[alpha_bits..];
-    let ring_opening_point =
-        ring_opening_point_from_field(reduced_point, layout.r_vars, layout.m_vars, basis)
-            .expect("opening point shape should match layout");
+    let ring_opening_point = ring_opening_point_from_field(
+        reduced_point,
+        layout.r_vars,
+        layout.m_vars,
+        basis,
+        BlockOrder::RowMajor,
+    )
+    .expect("opening point shape should match layout");
 
     let (y_ring, _) = poly.evaluate_and_fold(
         &ring_opening_point.b,
@@ -66,7 +65,7 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
     (y_ring * v.sigma_m1()).coefficients()[0]
 }
 
-fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
+fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F, D>>(
     label: &str,
     setup: &<HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::ProverSetup,
     poly: &P,
@@ -213,7 +212,10 @@ fn print_layout(layout: &HachiCommitmentLayout) {
     );
 }
 
-fn run_dense<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCommitmentLayout) {
+fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F>>(
+    nv: usize,
+    layout: &HachiCommitmentLayout,
+) {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let pt: Vec<F> = (0..nv)
         .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
@@ -247,7 +249,10 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCom
     run_prove::<D, Cfg, _>("dense", &setup, &poly, &pt, opening, layout);
 }
 
-fn run_onehot<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCommitmentLayout) {
+fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
+    nv: usize,
+    layout: &HachiCommitmentLayout,
+) {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let total_field = (layout.num_blocks * layout.block_len)
         .checked_mul(D)
@@ -281,14 +286,14 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCo
     run_prove::<D, Cfg, _>("onehot", &setup, &onehot_poly, &pt, opening, layout);
 }
 
-fn run_dense_mode<const D: usize, Cfg: CommitmentConfig>(title: &str, nv: usize) {
+fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(title: &str, nv: usize) {
     let layout = resolve_layout::<Cfg>(nv);
     tracing::info!("{}", title);
     print_layout(&layout);
     run_dense::<D, Cfg>(nv, &layout);
 }
 
-fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig>(title: &str, nv: usize) {
+fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(title: &str, nv: usize) {
     let layout = resolve_layout::<Cfg>(nv);
     tracing::info!("{}", title);
     print_layout(&layout);
@@ -362,49 +367,49 @@ fn main() {
 
     match mode.as_str() {
         "full" => {
-            type Cfg = Fp128Prime275FullCommitmentConfig;
+            type Cfg = fp128::Full;
             run_dense_mode::<{ Cfg::D }, Cfg>(
                 "=== full (q=2^128-275, D=128 dense, log_commit_bound=128) ===",
                 nv,
             );
         }
         "onehot" => {
-            type Cfg = Fp128Prime275OneHotCommitmentConfig;
+            type Cfg = fp128::OneHot;
             run_onehot_mode::<{ Cfg::D }, Cfg>(
                 "=== onehot (q=2^128-275, D=64, 1-of-256, log_commit_bound=1) ===",
                 nv,
             );
         }
         "full_d32" => {
-            type Cfg = Fp128D32FullCommitmentConfig;
+            type Cfg = fp128::D32Full;
             run_dense_mode::<{ Cfg::D }, Cfg>(
                 "=== full_d32 (q=2^128-275, D=32 dense, log_commit_bound=128) ===",
                 nv,
             );
         }
         "onehot_d32" => {
-            type Cfg = Fp128D32OneHotCommitmentConfig;
+            type Cfg = fp128::D32OneHot;
             run_onehot_mode::<{ Cfg::D }, Cfg>(
                 "=== onehot_d32 (q=2^128-275, D=32, 1-of-256, log_commit_bound=1) ===",
                 nv,
             );
         }
         "full_d16" => {
-            type Cfg = Fp128D16FullCommitmentConfig;
+            type Cfg = fp128::D16Full;
             run_dense_mode::<{ Cfg::D }, Cfg>(
                 "=== full_d16 (q=2^128-275, D=16 dense, log_commit_bound=128) ===",
                 nv,
             );
         }
         "onehot_d16" => {
-            type Cfg = Fp128D16OneHotCommitmentConfig;
+            type Cfg = fp128::D16OneHot;
             run_onehot_mode::<{ Cfg::D }, Cfg>(
                 "=== onehot_d16 (q=2^128-275, D=16, 1-of-256, log_commit_bound=1) ===",
                 nv,
             );
         }
         "logbasis" => {
-            type Cfg = Fp128Prime275LogBasisCommitmentConfig;
+            type Cfg = fp128::LogBasis;
             run_dense_mode::<{ Cfg::D }, Cfg>(
                 "=== logbasis (q=2^128-275, D=128 dense, log_commit_bound=3) ===",
                 nv,
@@ -412,49 +417,49 @@ fn main() {
         }
         "all" => {
             {
-                type Cfg = Fp128Prime275FullCommitmentConfig;
+                type Cfg = fp128::Full;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== full (q=2^128-275, D=128 dense, log_commit_bound=128) ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128Prime275OneHotCommitmentConfig;
+                type Cfg = fp128::OneHot;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
                     "=== onehot (q=2^128-275, D=64, 1-of-256, log_commit_bound=1) ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128D32FullCommitmentConfig;
+                type Cfg = fp128::D32Full;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== full_d32 (q=2^128-275, D=32 dense, log_commit_bound=128) ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128D32OneHotCommitmentConfig;
+                type Cfg = fp128::D32OneHot;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
                     "=== onehot_d32 (q=2^128-275, D=32, 1-of-256, log_commit_bound=1) ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128D16FullCommitmentConfig;
+                type Cfg = fp128::D16Full;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== full_d16 (q=2^128-275, D=16 dense, log_commit_bound=128) ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128D16OneHotCommitmentConfig;
+                type Cfg = fp128::D16OneHot;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
                     "=== onehot_d16 (q=2^128-275, D=16, 1-of-256, log_commit_bound=1) ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128Prime275LogBasisCommitmentConfig;
+                type Cfg = fp128::LogBasis;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== logbasis (q=2^128-275, D=128 dense, log_commit_bound=3) ===",
                     nv,
@@ -463,28 +468,28 @@ fn main() {
         }
         "compare_onehot" => {
             {
-                type Cfg = Fp128Prime275D64BoundedCommitmentConfig<1, 3, 3>;
+                type Cfg = fp128::D64StaticBounded<1, 3, 3>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
                     "=== [A] onehot (D=64, 1-of-256), basis=3 everywhere ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128Prime275D64BoundedCommitmentConfig<1, 2, 2>;
+                type Cfg = fp128::D64StaticBounded<1, 2, 2>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
                     "=== [B] onehot (D=64, 1-of-256), basis=2 everywhere ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128Prime275D64BoundedCommitmentConfig<1, 2, 3>;
+                type Cfg = fp128::D64StaticBounded<1, 2, 3>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
                     "=== [C] onehot (D=64, 1-of-256), L0 basis=2, w-levels basis=3 ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128Prime275D64BoundedCommitmentConfig<1, 2, 4>;
+                type Cfg = fp128::D64StaticBounded<1, 2, 4>;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
                     "=== [D] onehot (D=64, 1-of-256), L0 basis=2, w-levels basis=4 ===",
                     nv,
@@ -493,28 +498,28 @@ fn main() {
         }
         "compare_logbasis" => {
             {
-                type Cfg = Fp128Prime275BoundedCommitmentConfig<3, 3, 3>;
+                type Cfg = fp128::StaticBounded<3, 3, 3>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== [A] logbasis coeffs (D=128), basis=3 everywhere ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128Prime275BoundedCommitmentConfig<3, 2, 2>;
+                type Cfg = fp128::StaticBounded<3, 2, 2>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== [B] logbasis coeffs (D=128), basis=2 everywhere ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128Prime275BoundedCommitmentConfig<3, 2, 3>;
+                type Cfg = fp128::StaticBounded<3, 2, 3>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== [C] logbasis coeffs (D=128), L0 basis=2, w-levels basis=3 ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128Prime275BoundedCommitmentConfig<3, 2, 4>;
+                type Cfg = fp128::StaticBounded<3, 2, 4>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== [D] logbasis coeffs (D=128), L0 basis=2, w-levels basis=4 ===",
                     nv,
@@ -523,28 +528,28 @@ fn main() {
         }
         "compare_basis" => {
             {
-                type Cfg = Fp128Prime275BoundedCommitmentConfig<128, 3, 3>;
+                type Cfg = fp128::StaticBounded<128, 3, 3>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== [A] baseline (D=128): log_basis=3 everywhere ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128Prime275BoundedCommitmentConfig<128, 2, 2>;
+                type Cfg = fp128::StaticBounded<128, 2, 2>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== [B] baseline (D=128): log_basis=2 everywhere ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128Prime275BoundedCommitmentConfig<128, 2, 3>;
+                type Cfg = fp128::StaticBounded<128, 2, 3>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== [C] baseline (D=128): L0 basis=2, w-levels basis=3 ===",
                     nv,
                 );
             }
             {
-                type Cfg = Fp128Prime275BoundedCommitmentConfig<128, 2, 4>;
+                type Cfg = fp128::StaticBounded<128, 2, 4>;
                 run_dense_mode::<{ Cfg::D }, Cfg>(
                     "=== [D] baseline (D=128): L0 basis=2, w-levels basis=4 ===",
                     nv,
@@ -567,6 +572,6 @@ fn main() {
     }
 }
 
-fn resolve_layout<Cfg: CommitmentConfig>(nv: usize) -> HachiCommitmentLayout {
+fn resolve_layout<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> HachiCommitmentLayout {
     Cfg::commitment_layout(nv).expect("layout")
 }

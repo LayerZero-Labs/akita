@@ -3,6 +3,7 @@
 mod commit;
 mod config;
 pub mod onehot;
+pub mod presets;
 mod schedule;
 mod scheme;
 pub(crate) mod transcript_append;
@@ -16,21 +17,12 @@ pub use commit::{
 pub use config::optimal_m_r_split;
 pub use config::{
     beta_linf_fold_bound, compute_num_digits, compute_num_digits_fold, CommitmentConfig,
-    CommitmentEnvelope, DecompositionParams, DynamicSmallTestCommitmentConfig,
-    Fp128AdaptiveBoundedCommitmentConfig, Fp128AdaptiveD16BoundedCommitmentConfig,
-    Fp128AdaptiveD32BoundedCommitmentConfig, Fp128AdaptiveOneHotCommitmentConfig,
-    Fp128AdaptivePrime275BoundedCommitmentConfig, Fp128AdaptivePrime275OneHotCommitmentConfig,
-    Fp128BoundedCommitmentConfig, Fp128CommitmentConfig, Fp128D16BoundedCommitmentConfig,
-    Fp128D16FullCommitmentConfig, Fp128D16LogBasisCommitmentConfig, Fp128D16OneHotCommitmentConfig,
-    Fp128D32BoundedCommitmentConfig, Fp128D32FullCommitmentConfig,
-    Fp128D32LogBasisCommitmentConfig, Fp128D32OneHotCommitmentConfig,
-    Fp128D64BoundedCommitmentConfig, Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig,
-    Fp128OneHotCommitmentConfig, Fp128Prime275BoundedCommitmentConfig,
-    Fp128Prime275D64BoundedCommitmentConfig, Fp128Prime275FullCommitmentConfig,
-    Fp128Prime275LogBasisCommitmentConfig, Fp128Prime275OneHotCommitmentConfig,
-    HachiCommitmentLayout, SmallTestCommitmentConfig,
+    CommitmentEnvelope, CommitmentPolicy, CommitmentPreset, DecompositionParams,
+    DynamicSmallTestCommitmentConfig, Fp128AdaptiveBoundedPolicy, Fp128AdaptiveOneHotD64Policy,
+    Fp128StaticBoundedPolicy, HachiCommitmentLayout, SmallTestCommitmentConfig,
 };
 pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
+pub use presets::*;
 pub use schedule::{
     hachi_recursive_level_layout_from_params, hachi_root_level_layout, HachiLevelParams,
     HachiScheduleInputs, HachiSchedulePlan,

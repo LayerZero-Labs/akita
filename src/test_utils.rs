@@ -25,6 +25,7 @@ pub const D: usize = 64;
 pub struct TinyConfig;
 
 impl CommitmentConfig for TinyConfig {
+    type Field = F;
     const D: usize = 64;
 
     fn decomposition() -> DecompositionParams {

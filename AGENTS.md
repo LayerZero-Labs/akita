@@ -26,6 +26,7 @@ Two workspace members: `hachi-pcs` (root) and `derive` (proc macros).
 - `src/protocol/proof.rs` — proof object layout and flattened proof/witness encodings
 - `src/protocol/opening_point.rs` — field-to-ring opening reduction
 - `src/protocol/ring_switch.rs` — ring-switch proof logic
+- `docs/block-order.md` — root-vs-recursive block-order contract
 - `src/protocol/quadratic_equation.rs` — quadratic equation handling
 - `src/protocol/recursive_runtime.rs` — recursive level scheduling
 - `src/protocol/hachi_poly_ops/` — dense and one-hot polynomial operations
@@ -43,6 +44,7 @@ Two workspace members: `hachi-pcs` (root) and `derive` (proc macros).
 - `HachiCommitmentScheme` — top-level PCS `commit` / `prove` / `verify`
 - `CommitmentConfig` + `HachiCommitmentLayout` — recursion schedule and layout knobs
 - `DensePoly`, `OneHotPoly`, `HachiPolyOps` — polynomial backends consumed by the scheme
+- `BlockOrder` — explicit root-vs-recursive opening split convention
 - `HachiProof`, `HachiLevelProof`, `HachiProofTail` — serialized proof structure
 - `Blake2bTranscript`, `Transcript` — Fiat-Shamir layer
 

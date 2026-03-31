@@ -52,7 +52,7 @@ fn validate_decompose_fold<F: FieldCore + CanonicalField, const D: usize>(
 /// M and z are never materialized on the hot path — split-eq factoring computes
 /// their products on-the-fly via `compute_r_split_eq`, while debug/test code
 /// can reconstruct reference `M_a` rows when needed.
-pub struct QuadraticEquation<F: FieldCore, const D: usize, Cfg: CommitmentConfig> {
+pub struct QuadraticEquation<F: FieldCore, const D: usize, Cfg: CommitmentConfig<Field = F>> {
     /// Stage-1 proof vector `v = D · ŵ`.
     pub v: Vec<CyclotomicRing<F, D>>,
     /// Stage-1 folding challenges (sparse representation).
@@ -79,7 +79,7 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize, Cfg: CommitmentConfig
 impl<F, const D: usize, Cfg> QuadraticEquation<F, D, Cfg>
 where
     F: FieldCore + CanonicalField,
-    Cfg: CommitmentConfig,
+    Cfg: CommitmentConfig<Field = F>,
 {
     /// Prover constructor: runs §4.2 stage 1 and builds all equation components.
     ///
@@ -234,6 +234,7 @@ where
             let z = witness.decompose_fold(
                 &challenges,
                 layout.block_len,
+                layout.num_blocks,
                 layout.num_digits_commit,
                 layout.log_basis,
             );

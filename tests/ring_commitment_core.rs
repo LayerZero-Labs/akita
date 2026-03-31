@@ -13,6 +13,7 @@ use std::array::from_fn;
 struct BadDegreeConfig;
 
 impl CommitmentConfig for BadDegreeConfig {
+    type Field = F;
     const D: usize = 32;
 
     fn decomposition() -> DecompositionParams {

@@ -134,7 +134,7 @@ where
 pub trait RingCommitmentScheme<F, const D: usize, Cfg>: Clone + Send + Sync + 'static
 where
     F: FieldCore + CanonicalField,
-    Cfg: CommitmentConfig,
+    Cfg: CommitmentConfig<Field = F>,
 {
     /// Prover setup parameters.
     type ProverSetup: Clone + Send + Sync;
