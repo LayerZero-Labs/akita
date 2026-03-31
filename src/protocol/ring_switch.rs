@@ -950,7 +950,7 @@ mod tests {
     };
     use crate::protocol::commitment_scheme::HachiCommitmentScheme;
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, RecursiveWitnessFlat};
-    use crate::protocol::opening_point::{ring_opening_point_from_field, BasisMode};
+    use crate::protocol::opening_point::{ring_opening_point_from_field, BasisMode, BlockOrder};
     use crate::protocol::quadratic_equation::QuadraticEquation;
     use crate::protocol::sumcheck::hachi_stage2::relation_claim_from_rows;
     use crate::protocol::transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
@@ -1106,7 +1106,7 @@ mod tests {
             layout.r_vars,
             layout.m_vars,
             BasisMode::Lagrange,
-            false,
+            BlockOrder::RowMajor,
         )
         .expect("ring opening point");
         let (y_ring, w_folded) = poly.evaluate_and_fold(

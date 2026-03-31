@@ -16,7 +16,7 @@ use crate::protocol::commitment::{
 };
 use crate::protocol::hachi_poly_ops::{HachiPolyOps, RecursiveWitnessFlat, RecursiveWitnessView};
 use crate::protocol::opening_point::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
 };
 use crate::protocol::proof::{
     FlatRingVec, HachiCommitmentHint, HachiLevelProof, HachiProof, HachiProofTail, PackedDigits,
@@ -147,7 +147,13 @@ where
 
     let ring_opening_point = {
         let _span = tracing::info_span!("ring_opening_point", level).entered();
-        ring_opening_point_from_field::<F>(outer_point, layout.r_vars, layout.m_vars, basis, false)?
+        ring_opening_point_from_field::<F>(
+            outer_point,
+            layout.r_vars,
+            layout.m_vars,
+            basis,
+            BlockOrder::RowMajor,
+        )?
     };
 
     let fold_scalars = &ring_opening_point.a;
@@ -387,7 +393,7 @@ where
             layout.r_vars,
             layout.m_vars,
             BasisMode::Lagrange,
-            true,
+            BlockOrder::ColumnMajor,
         )?
     };
 
@@ -578,7 +584,7 @@ fn dispatch_verify_level<F, T>(
     final_w: Option<&PackedDigits>,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
-    column_major: bool,
+    block_order: BlockOrder,
 ) -> Result<Vec<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -594,7 +600,7 @@ where
             final_w,
             level_params,
             layout,
-            column_major,
+            block_order,
         )
     })
 }
@@ -924,7 +930,11 @@ where
                 "verify level"
             );
 
-            let column_major = i > 0;
+            let block_order = if i == 0 {
+                BlockOrder::RowMajor
+            } else {
+                BlockOrder::ColumnMajor
+            };
             let challenges = if level_d == D {
                 verify_one_level::<F, T, D>(
                     level_proof,
@@ -935,7 +945,7 @@ where
                     if is_last { final_w } else { None },
                     &level_params,
                     current_layout,
-                    column_major,
+                    block_order,
                 )?
             } else {
                 dispatch_verify_level::<F, T>(
@@ -948,7 +958,7 @@ where
                     if is_last { final_w } else { None },
                     &level_params,
                     current_layout,
-                    column_major,
+                    block_order,
                 )?
             };
 
@@ -1011,7 +1021,7 @@ fn verify_one_level<F, T, const D: usize>(
     final_w: Option<&PackedDigits>,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
-    column_major: bool,
+    block_order: BlockOrder,
 ) -> Result<Vec<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -1054,7 +1064,7 @@ where
         layout.r_vars,
         layout.m_vars,
         current_state.basis,
-        column_major,
+        block_order,
     )?;
     let stage1_challenges =
         derive_stage1_challenges::<F, T, D>(transcript, v_typed, layout.num_blocks, level_params)?;

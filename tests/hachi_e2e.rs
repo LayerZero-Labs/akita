@@ -15,7 +15,8 @@ use hachi_pcs::protocol::proof::HachiProof;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::{CommitmentConfig, RingCommitment};
 use hachi_pcs::{
-    BasisMode, CanonicalField, CommitmentScheme, HachiDeserialize, HachiSerialize, Transcript,
+    BasisMode, BlockOrder, CanonicalField, CommitmentScheme, HachiDeserialize, HachiSerialize,
+    Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -229,7 +230,7 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
         layout.r_vars,
         layout.m_vars,
         BasisMode::Lagrange,
-        false,
+        BlockOrder::RowMajor,
     )
     .expect("opening point shape should match layout");
 
