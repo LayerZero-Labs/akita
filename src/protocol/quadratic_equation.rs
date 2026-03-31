@@ -234,6 +234,7 @@ where
             let z = witness.decompose_fold(
                 &challenges,
                 layout.block_len,
+                layout.num_blocks,
                 layout.num_digits_commit,
                 layout.log_basis,
             );

@@ -137,10 +137,16 @@ pub fn compute_num_digits_fold(r_vars: usize, challenge_l1_mass: usize, log_basi
 /// For the full-field config (`δ_commit = 43`), z_pre dominates and the
 /// result is near-balanced (`m ≈ r`). For narrow configs (`δ_commit = 1`),
 /// the w_hat/t_hat term matters more and the result skews to `m ≈ r + 4`.
+/// Find the cheapest `(m, r)` split for a given `reduced_vars`.
+///
+/// When `num_ring > 0` (recursive levels), the z_pre cost uses the tight
+/// block length `ceil(num_ring / 2^r)` instead of `2^m`.  Pass `0` for
+/// root-level splits where the polynomial fills the full `2^(m+r)` domain.
 pub(super) fn optimal_m_r_split_with_params(
     params: &HachiLevelParams,
     decomp: DecompositionParams,
     reduced_vars: usize,
+    num_ring: usize,
 ) -> (usize, usize) {
     // Guard: for S >= 53, shifts could overflow u64. Fall back to balanced
     // split (this threshold is far beyond any practical polynomial size).
@@ -161,7 +167,12 @@ pub(super) fn optimal_m_r_split_with_params(
         let m = reduced_vars - r;
         let delta_fold =
             compute_num_digits_fold(r, params.challenge_l1_mass, decomp.log_basis) as u64;
-        let cost = c1 * (1u64 << r) + delta_commit * delta_fold * (1u64 << m);
+        let m_eff = if num_ring > 0 {
+            num_ring.div_ceil(1usize << r) as u64
+        } else {
+            1u64 << m
+        };
+        let cost = c1 * (1u64 << r) + delta_commit * delta_fold * m_eff;
         if cost < best_cost {
             best_cost = cost;
             best_r = r;
@@ -180,7 +191,7 @@ pub fn optimal_m_r_split<Cfg: CommitmentConfig>(reduced_vars: usize) -> (usize, 
             .checked_shl((reduced_vars + Cfg::D.trailing_zeros() as usize) as u32)
             .unwrap_or(0),
     });
-    optimal_m_r_split_with_params(&params, Cfg::decomposition(), reduced_vars)
+    optimal_m_r_split_with_params(&params, Cfg::decomposition(), reduced_vars, 0)
 }
 
 fn uniform_pm1_stage1_challenge(weight: usize) -> SparseChallengeConfig {
@@ -284,14 +295,21 @@ impl HachiCommitmentLayout {
             depth_open,
             depth_fold,
             decomp.log_basis,
+            0,
         )
     }
 
     /// Build a layout from explicit decomposition parameters (no config trait needed).
     ///
+    /// When `num_ring > 0` (recursive levels), `block_len` is set to
+    /// `ceil(num_ring / num_blocks)` instead of `2^m_vars`, giving tight
+    /// z_pre sizing.  Pass `0` for root-level layouts where the polynomial
+    /// fills the full `2^(m+r)` domain.
+    ///
     /// # Errors
     ///
     /// Returns an error when parameters are invalid or derived widths overflow.
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_decomp(
         m_vars: usize,
         r_vars: usize,
@@ -300,12 +318,17 @@ impl HachiCommitmentLayout {
         num_digits_open: usize,
         num_digits_fold: usize,
         log_basis: u32,
+        num_ring: usize,
     ) -> Result<Self, HachiError> {
         if log_basis == 0 || log_basis >= 128 {
             return Err(HachiError::InvalidSetup("invalid log_basis".to_string()));
         }
         let num_blocks = checked_pow2(r_vars)?;
-        let block_len = checked_pow2(m_vars)?;
+        let block_len = if num_ring > 0 {
+            num_ring.div_ceil(num_blocks)
+        } else {
+            checked_pow2(m_vars)?
+        };
         let inner_width = block_len
             .checked_mul(num_digits_commit)
             .ok_or_else(|| HachiError::InvalidSetup("inner width overflow".to_string()))?;
@@ -918,20 +941,35 @@ impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
     }
 
     fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
-        planned_log_basis_at_level::<Self>(inputs, 2, 5)
+        let (min_basis, max_basis) = if LOG_COMMIT_BOUND == 128 {
+            (2, 2)
+        } else {
+            (2, 5)
+        };
+        planned_log_basis_at_level::<Self>(inputs, min_basis, max_basis)
             .expect("adaptive schedule must be derivable from public inputs")
     }
 
     fn schedule_key(max_num_vars: usize) -> String {
-        planned_schedule_key::<Self>(max_num_vars, 2, 5)
+        let (min_basis, max_basis) = if LOG_COMMIT_BOUND == 128 {
+            (2, 2)
+        } else {
+            (2, 5)
+        };
+        planned_schedule_key::<Self>(max_num_vars, min_basis, max_basis)
             .expect("adaptive schedule key must be derivable from public inputs")
     }
 
     fn schedule_plan(max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
+        let (min_basis, max_basis) = if LOG_COMMIT_BOUND == 128 {
+            (2, 2)
+        } else {
+            (2, 5)
+        };
         Ok(Some(super::schedule::planned_schedule::<Self>(
             max_num_vars,
-            2,
-            5,
+            min_basis,
+            max_basis,
         )?))
     }
 }

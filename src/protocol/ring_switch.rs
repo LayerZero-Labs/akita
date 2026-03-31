@@ -6,14 +6,12 @@
 
 use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::{CyclotomicRing, SparseChallenge};
+use crate::cfg_into_iter;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
-use crate::protocol::commitment::utils::linear::{
-    decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
-    mat_vec_mul_ntt_single_i8,
-};
+use crate::protocol::commitment::utils::linear::{flatten_i8_blocks, mat_vec_mul_ntt_single_i8};
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
     hachi_recursive_level_layout_from_params, recursive_level_decomposition_from_root,
@@ -23,14 +21,13 @@ use crate::protocol::commitment::{
 };
 use crate::protocol::hachi_poly_ops::RecursiveWitnessFlat;
 use crate::protocol::opening_point::RingOpeningPoint;
-use crate::protocol::proof::{DigitLut, FlatRingVec, HachiCommitmentHint, ProofRingVec};
+use crate::protocol::proof::{FlatRingVec, HachiCommitmentHint, ProofRingVec};
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
 use crate::protocol::transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
 use crate::protocol::transcript::Transcript;
-use crate::{cfg_into_iter, cfg_iter};
 use crate::{CanonicalField, FieldCore, FieldSampling};
 #[cfg(test)]
 use std::array::from_fn;
@@ -518,8 +515,7 @@ where
     F: FieldCore + CanonicalField + FieldSampling,
     Cfg: CommitmentConfig,
 {
-    let (w_digits, remainder) = w.as_i8_digits().as_chunks::<D>();
-    if !remainder.is_empty() {
+    if w.len() % D != 0 {
         return Err(HachiError::InvalidSize {
             expected: D,
             actual: w.len(),
@@ -533,58 +529,34 @@ where
     let depth_commit = w_layout.num_digits_commit;
     let depth_open = w_layout.num_digits_open;
     let log_basis = w_layout.log_basis;
-    let coeff_len = w_digits.len();
+    let num_ring_elems = w.len() / D;
+    tracing::debug!(
+        num_ring_elems,
+        num_blocks,
+        block_len,
+        depth_commit,
+        depth_open,
+        m_vars = w_layout.m_vars,
+        r_vars = w_layout.r_vars,
+        inner_width = w_layout.inner_width,
+        pow2_block = 1usize << w_layout.m_vars,
+        "commit_w layout"
+    );
 
-    let t_all = if depth_commit == 1 {
-        // `build_w_coeffs` already emits balanced base-`2^log_basis` digits, so
-        // the recursive w-commitment can skip the field conversion and feed those
-        // planes directly into the tiled NTT mat-vec.
-        let block_slices: Vec<&[[i8; D]]> = (0..num_blocks)
-            .map(|i| {
-                let start = i * block_len;
-                if start >= coeff_len {
-                    &[] as &[[i8; D]]
-                } else {
-                    &w_digits[start..(start + block_len).min(coeff_len)]
-                }
-            })
-            .collect();
-        mat_vec_mul_ntt_digits_i8(ntt_shared, level_params.n_a, &block_slices)
-    } else {
-        let lut = DigitLut::<F>::new(log_basis);
-        let ring_elems: Vec<CyclotomicRing<F, D>> = w_digits
-            .iter()
-            .map(|digit| {
-                let coeffs = std::array::from_fn(|k| lut.get(digit[k]));
-                CyclotomicRing::from_coefficients(coeffs)
-            })
-            .collect();
-        let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
-            .map(|i| {
-                let start = i * block_len;
-                if start >= coeff_len {
-                    &[] as &[CyclotomicRing<F, D>]
-                } else {
-                    &ring_elems[start..(start + block_len).min(coeff_len)]
-                }
-            })
-            .collect();
-        mat_vec_mul_ntt_i8(
-            ntt_shared,
-            level_params.n_a,
-            &block_slices,
-            depth_commit,
-            log_basis,
-        )
-    };
-    let t_hat_per_block: Vec<Vec<[i8; D]>> = cfg_iter!(t_all)
-        .map(|t_i| decompose_rows_i8(t_i, depth_open, log_basis))
-        .collect();
+    let w_view = w.view::<F, D>()?;
+    let inner = w_view.commit_inner_witness(
+        ntt_shared,
+        block_len,
+        num_blocks,
+        depth_commit,
+        depth_open,
+        log_basis,
+    )?;
 
-    let t_hat_flat = flatten_i8_blocks(&t_hat_per_block);
+    let t_hat_flat = flatten_i8_blocks(&inner.t_hat);
     let u: Vec<CyclotomicRing<F, D>> =
         mat_vec_mul_ntt_single_i8(ntt_shared, level_params.n_b, &t_hat_flat);
-    let hint = HachiCommitmentHint::with_t(t_hat_per_block, t_all);
+    let hint = HachiCommitmentHint::with_t(inner.t_hat, inner.t);
     Ok((RingCommitment { u }, hint))
 }
 
@@ -977,8 +949,25 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
 
 #[cfg(test)]
 mod tests {
-    use super::compute_r_via_poly_division;
-    use crate::algebra::{CyclotomicRing, Prime128Offset5823};
+    use super::{
+        build_alpha_evals_y, build_w_evals_compact, compute_m_evals_x, compute_r_via_poly_division,
+        m_row_count, ring_switch_build_w,
+    };
+    use crate::algebra::{CyclotomicRing, Fp128, Prime128Offset5823};
+    use crate::protocol::commitment::AppendToTranscript;
+    use crate::protocol::commitment::Fp128FullCommitmentConfig;
+    use crate::protocol::commitment::HachiScheduleInputs;
+    use crate::protocol::commitment_scheme::HachiCommitmentScheme;
+    use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
+    use crate::protocol::opening_point::{ring_opening_point_from_field, BasisMode};
+    use crate::protocol::quadratic_equation::QuadraticEquation;
+    use crate::protocol::sumcheck::hachi_stage2::relation_claim_from_rows;
+    use crate::protocol::transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
+    use crate::protocol::transcript::Blake2bTranscript;
+    use crate::protocol::CommitmentConfig;
+    use crate::{CanonicalField, CommitmentScheme, Transcript};
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
     use std::array::from_fn;
 
     use crate::{FieldCore, FromSmallInt};
@@ -1069,5 +1058,156 @@ mod tests {
         let got = compute_r_via_poly_division::<F, D>(&m, &z, &y)
             .expect("ring-switch CRT+NTT path should dispatch for D=64");
         assert_eq!(got, expected);
+    }
+
+    fn direct_relation_claim<F: FieldCore + FromSmallInt>(
+        w_compact: &[i8],
+        alpha_evals_y: &[F],
+        m_evals_x: &[F],
+        live_x_cols: usize,
+    ) -> F {
+        alpha_evals_y
+            .iter()
+            .enumerate()
+            .fold(F::zero(), |acc_y, (y, &alpha)| {
+                let row = &w_compact[y * live_x_cols..(y + 1) * live_x_cols];
+                acc_y
+                    + row.iter().enumerate().fold(F::zero(), |acc_x, (x, &w)| {
+                        acc_x + F::from_i64(w as i64) * alpha * m_evals_x[x]
+                    })
+            })
+    }
+
+    #[test]
+    fn full_root_rows_match_direct_relation_claim() {
+        type F = Fp128<0xffffffffffffffffffffffffffffe941>;
+        type Cfg = Fp128FullCommitmentConfig;
+        const D: usize = Cfg::D;
+        const NV: usize = 12;
+
+        let layout = Cfg::commitment_layout(NV).expect("layout");
+        let level_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars: NV,
+            level: 0,
+            current_w_len: 1usize << NV,
+        });
+
+        let mut rng = StdRng::seed_from_u64(0x5eed_cafe);
+        let evals: Vec<F> = (0..(1usize << NV))
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+        let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
+        let point: Vec<F> = (0..NV)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+
+        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV);
+        let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+            &poly, &setup, &layout,
+        )
+        .expect("commitment");
+
+        let alpha_bits = D.trailing_zeros() as usize;
+        let outer_point = &point[alpha_bits..];
+        let ring_opening_point = ring_opening_point_from_field(
+            outer_point,
+            layout.r_vars,
+            layout.m_vars,
+            BasisMode::Lagrange,
+            false,
+        )
+        .expect("ring opening point");
+        let (y_ring, w_folded) = poly.evaluate_and_fold(
+            &ring_opening_point.b,
+            &ring_opening_point.a,
+            layout.block_len,
+        );
+
+        let mut transcript = Blake2bTranscript::<F>::new(b"ring-switch-row-regression");
+        commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+        for pt in &point {
+            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+        }
+        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+
+        let mut quad_eq = QuadraticEquation::<F, D, Cfg>::new_prover(
+            &setup.ntt_shared,
+            ring_opening_point,
+            &poly,
+            w_folded,
+            level_params.clone(),
+            hint,
+            &mut transcript,
+            &commitment,
+            &y_ring,
+            layout,
+        )
+        .expect("quadratic equation");
+
+        let w = ring_switch_build_w::<F, D, Cfg>(
+            &mut quad_eq,
+            &setup.expanded,
+            &setup.ntt_shared,
+            &level_params,
+            layout,
+        )
+        .expect("ring-switch witness");
+        let (w_compact, _num_u, num_l) =
+            build_w_evals_compact(w.as_i8_digits(), D).expect("compact witness");
+        let live_x_cols = w_compact.len() >> num_l;
+
+        let alpha = F::from_u64(17);
+        let alpha_evals_y = build_alpha_evals_y(alpha, D);
+        let rows = m_row_count(&level_params);
+        let num_i = rows.next_power_of_two().trailing_zeros() as usize;
+
+        for row in 0..rows {
+            let tau1: Vec<F> = (0..num_i)
+                .map(|bit| {
+                    if (row >> bit) & 1 == 1 {
+                        F::one()
+                    } else {
+                        F::zero()
+                    }
+                })
+                .collect();
+            let m_evals_x = compute_m_evals_x::<F, D>(
+                &setup.expanded,
+                quad_eq.opening_point(),
+                &quad_eq.challenges,
+                alpha,
+                &alpha_evals_y,
+                &level_params,
+                layout,
+                &tau1,
+            )
+            .expect("m evals");
+            let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
+            let expected =
+                relation_claim_from_rows::<F, D>(&tau1, alpha, &quad_eq.v, &commitment.u, &y_ring);
+            assert_eq!(got, expected, "row {row} mismatch");
+        }
+    }
+
+    #[test]
+    fn centered_i32_decompose_matches_ring_decompose() {
+        type F = Prime128Offset5823;
+        const D: usize = 128;
+
+        let centered = from_fn(|i| ((37 * i as i32 + 11) % 95) - 47);
+        let ring =
+            CyclotomicRing::<F, D>::from_coefficients(from_fn(|i| F::from_i64(centered[i] as i64)));
+
+        for (num_digits, log_basis) in [(7usize, 3u32), (10usize, 2u32), (5usize, 5u32)] {
+            let mut got = vec![[0i8; D]; num_digits];
+            super::balanced_decompose_centered_i32_i8_into(&centered, &mut got, log_basis);
+
+            let mut expected = vec![[0i8; D]; num_digits];
+            ring.balanced_decompose_pow2_i8_into(&mut expected, log_basis);
+            assert_eq!(
+                got, expected,
+                "centered i32 decomposition mismatch for num_digits={num_digits} log_basis={log_basis}"
+            );
+        }
     }
 }

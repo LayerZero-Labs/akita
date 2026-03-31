@@ -400,24 +400,47 @@ mod tests {
             dense.evaluate_ring(&eval_scalars)
         );
 
+        let num_blocks = 2;
         let block_len = 2;
+        let num_ring = digits.len() / TestD;
+        let mut cm_digits = vec![0i8; num_blocks * block_len * TestD];
+        for block_idx in 0..num_blocks {
+            for col_idx in 0..block_len {
+                let seq = block_idx + col_idx * num_blocks;
+                if seq >= num_ring {
+                    continue;
+                }
+                let dst = block_idx * block_len + col_idx;
+                cm_digits[dst * TestD..(dst + 1) * TestD]
+                    .copy_from_slice(&digits[seq * TestD..(seq + 1) * TestD]);
+            }
+        }
+        let cm_field_evals: Vec<TestF> = cm_digits
+            .iter()
+            .map(|&d| TestF::from_i64(d as i64))
+            .collect();
+        let dense_cm = DensePoly::<TestF, TestD>::from_field_evals(
+            (num_blocks * block_len * TestD).trailing_zeros() as usize,
+            &cm_field_evals,
+        )
+        .unwrap();
+
         let fold_scalars: Vec<TestF> = (0..block_len)
             .map(|i| TestF::from_u64((i + 5) as u64))
             .collect();
         assert_eq!(
-            digit_view.fold_blocks(&fold_scalars, block_len),
-            dense.fold_blocks(&fold_scalars, block_len)
+            digit_view.fold_blocks(&fold_scalars, block_len, num_blocks),
+            dense_cm.fold_blocks(&fold_scalars, block_len)
         );
 
-        let num_blocks = digit_view.num_ring_elems().div_ceil(block_len);
         let challenges: Vec<SparseChallenge> = (0..num_blocks)
             .map(|i| SparseChallenge {
                 positions: vec![0u32, ((i + 3) % TestD) as u32],
                 coeffs: vec![1, -1],
             })
             .collect();
-        let got = digit_view.decompose_fold(&challenges, block_len, 1, log_basis);
-        let expected = dense.decompose_fold(&challenges, block_len, 1, log_basis);
+        let got = digit_view.decompose_fold(&challenges, block_len, num_blocks, 1, log_basis);
+        let expected = dense_cm.decompose_fold(&challenges, block_len, 1, log_basis);
         assert_eq!(got.z_pre, expected.z_pre);
         assert_eq!(got.centered_coeffs, expected.centered_coeffs);
         assert_eq!(got.centered_inf_norm, expected.centered_inf_norm);
@@ -435,19 +458,19 @@ mod tests {
             w_commitment_layout::<TestF, TestD, TinyConfig>(&level_params, layout).unwrap();
         let digit_commit = digit_view
             .commit_inner(
-                &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
-                w_layout.block_len,
+                block_len,
+                num_blocks,
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
                 w_layout.log_basis,
             )
             .unwrap();
-        let dense_commit = dense
+        let dense_commit = dense_cm
             .commit_inner(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
-                w_layout.block_len,
+                block_len,
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
                 w_layout.log_basis,
@@ -458,19 +481,19 @@ mod tests {
 
         let digit_witness = digit_view
             .commit_inner_witness(
-                &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
-                w_layout.block_len,
+                block_len,
+                num_blocks,
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
                 w_layout.log_basis,
             )
             .unwrap();
-        let dense_witness = dense
+        let dense_witness = dense_cm
             .commit_inner_witness(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
-                w_layout.block_len,
+                block_len,
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
                 w_layout.log_basis,
@@ -491,7 +514,7 @@ mod tests {
             coeffs: vec![2, -1, -2],
         };
 
-        let got = poly.decompose_fold(std::slice::from_ref(&challenge), 1, 1, 3);
+        let got = poly.decompose_fold(std::slice::from_ref(&challenge), 1, 1, 1, 3);
 
         let ring = CyclotomicRing::<TestF, TestD>::from_coefficients(from_fn(|idx| {
             TestF::from_i64(digits[idx] as i64)

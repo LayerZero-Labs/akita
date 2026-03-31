@@ -77,8 +77,15 @@ pub fn basis_weights<F: FieldCore>(point: &[F], basis: BasisMode) -> Vec<F> {
 
 /// Convert the outer portion of a field opening point into ring-native vectors.
 ///
-/// The first `m_vars` coordinates select the position within each block; the
-/// remaining `r_vars` coordinates select which block is opened.
+/// **Row-major (level 0):** the first `m_vars` coordinates select the
+/// position within each block (`a`), the remaining `r_vars` select the
+/// block (`b`).
+///
+/// **Column-major (recursive levels):** the first `r_vars` coordinates
+/// select the block (`b`), the remaining `m_vars` select the position (`a`).
+/// This corresponds to the column-major block interpretation where the
+/// sequential polynomial index decomposes as
+/// `i = position * 2^r + block`.
 ///
 /// # Errors
 ///
@@ -89,6 +96,7 @@ pub fn ring_opening_point_from_field<F: FieldCore>(
     r_vars: usize,
     m_vars: usize,
     basis: BasisMode,
+    column_major: bool,
 ) -> Result<RingOpeningPoint<F>, HachiError> {
     let expected_len = r_vars
         .checked_add(m_vars)
@@ -100,8 +108,15 @@ pub fn ring_opening_point_from_field<F: FieldCore>(
         });
     }
 
-    let a = basis_weights(&opening_point[..m_vars], basis);
-    let b = basis_weights(&opening_point[m_vars..], basis);
+    let (a, b) = if column_major {
+        let b = basis_weights(&opening_point[..r_vars], basis);
+        let a = basis_weights(&opening_point[r_vars..], basis);
+        (a, b)
+    } else {
+        let a = basis_weights(&opening_point[..m_vars], basis);
+        let b = basis_weights(&opening_point[m_vars..], basis);
+        (a, b)
+    };
     Ok(RingOpeningPoint { a, b })
 }
 

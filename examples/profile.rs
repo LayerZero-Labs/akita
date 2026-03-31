@@ -50,7 +50,7 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
     let inner_point = &point[..alpha_bits];
     let reduced_point = &point[alpha_bits..];
     let ring_opening_point =
-        ring_opening_point_from_field(reduced_point, layout.r_vars, layout.m_vars, basis)
+        ring_opening_point_from_field(reduced_point, layout.r_vars, layout.m_vars, basis, false)
             .expect("opening point shape should match layout");
 
     let (y_ring, _) = poly.evaluate_and_fold(
