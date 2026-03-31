@@ -614,11 +614,11 @@ fn batched_onehot_same_point_round_trip() {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot");
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &poly_groups,
-            &pt,
-            hints,
+            &[&poly_groups[..]],
+            &[&pt[..]],
+            vec![hints],
             &mut prover_transcript,
-            &commitments,
+            &[&commitments[..]],
             BasisMode::Lagrange,
             &layout,
         )
@@ -639,9 +639,9 @@ fn batched_onehot_same_point_round_trip() {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            &pt,
-            &opening_groups,
-            &commitments,
+            &[&pt[..]],
+            &[&opening_groups[..]],
+            &[&commitments[..]],
             BasisMode::Lagrange,
             &layout,
         );
@@ -704,11 +704,11 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-4x30");
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &poly_groups,
-            &pt,
-            hints,
+            &[&poly_groups[..]],
+            &[&pt[..]],
+            vec![hints],
             &mut prover_transcript,
-            &commitments,
+            &[&commitments[..]],
             BasisMode::Lagrange,
             &layout,
         )
@@ -735,9 +735,9 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            &pt,
-            &opening_groups,
-            &commitments,
+            &[&pt[..]],
+            &[&opening_groups[..]],
+            &[&commitments[..]],
             BasisMode::Lagrange,
             &layout,
         );

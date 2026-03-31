@@ -444,6 +444,30 @@ fn optimal_root_batch_split<Cfg, const D: usize>(
 where
     Cfg: CommitmentConfig,
 {
+    optimal_root_batch_split_with_num_point_sets::<Cfg, D>(
+        max_num_vars,
+        root_params,
+        root_layout,
+        num_claims,
+        1,
+    )
+}
+
+fn optimal_root_batch_split_with_num_point_sets<Cfg, const D: usize>(
+    max_num_vars: usize,
+    root_params: &super::schedule::HachiLevelParams,
+    root_layout: HachiCommitmentLayout,
+    num_claims: usize,
+    num_point_sets: usize,
+) -> Result<(usize, usize, usize), HachiError>
+where
+    Cfg: CommitmentConfig,
+{
+    if num_point_sets == 0 {
+        return Err(HachiError::InvalidSetup(
+            "batched root requires at least one point set".to_string(),
+        ));
+    }
     let alpha = D.trailing_zeros() as usize;
     let reduced_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
         HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
@@ -488,7 +512,7 @@ where
         let t_hat_count = w_hat_count
             .checked_mul(root_params.n_a)
             .ok_or_else(|| HachiError::InvalidSetup("t_hat count overflow".to_string()))?;
-        let z_pre_count = num_claims
+        let z_pre_count = num_point_sets
             .checked_mul(block_len)
             .and_then(|count| count.checked_mul(root_layout.num_digits_commit))
             .and_then(|count| count.checked_mul(num_digits_fold))
@@ -591,9 +615,10 @@ where
 /// should use when constructing root polynomials. The returned layout keeps the
 /// per-polynomial `B`/`D` widths, while the internal `root_batched_layout`
 /// reapplies the same split and then widens those matrices by `num_claims`
-/// for setup/proof internals. The same helper is also used for fused
-/// multipoint batching, where `num_claims` is the total number of claims
-/// across all opening points.
+/// for setup/proof internals. Public batched callers reuse this per-claim
+/// layout even for multipoint openings; the setup/envelope scan separately
+/// accounts for worst-case multipoint `z_pre` growth when sizing recursive
+/// resources.
 ///
 /// # Errors
 ///
@@ -1384,9 +1409,83 @@ impl HachiCommitmentCore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algebra::fields::fp128::Fp128;
     use crate::primitives::{HachiDeserialize, HachiSerialize};
     use crate::protocol::commitment::Fp128OneHotCommitmentConfig;
     use crate::test_utils::{TinyConfig, F as TestF};
+
+    fn recursive_chain_len<F, const D: usize, Cfg>(
+        max_num_vars: usize,
+        root_layout: HachiCommitmentLayout,
+        num_claims: usize,
+        num_point_sets: usize,
+    ) -> usize
+    where
+        F: FieldCore + CanonicalField,
+        Cfg: CommitmentConfig,
+    {
+        let root_inputs = HachiScheduleInputs {
+            max_num_vars,
+            level: 0,
+            current_w_len: root_current_w_len::<D>(root_layout),
+        };
+        let root_params = Cfg::level_params_with_log_basis(root_inputs, root_layout.log_basis);
+        let batched_root_layout =
+            scale_batched_root_layout::<Cfg, D>(max_num_vars, root_layout, num_claims).unwrap();
+        let mut prev_w_len = root_inputs
+            .current_w_len
+            .checked_mul(num_claims)
+            .unwrap_or(usize::MAX);
+        let mut level_count = 2usize;
+        let mut level = 1usize;
+        let mut current_w_len = w_ring_element_count_with_num_claims_and_points::<F>(
+            &root_params,
+            batched_root_layout,
+            num_claims,
+            num_point_sets,
+        ) * root_params.d;
+        let mut current_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars,
+            level,
+            current_w_len,
+        });
+        let mut current_layout =
+            crate::protocol::commitment::hachi_recursive_level_layout_from_params::<Cfg>(
+                &current_params,
+                current_w_len,
+            )
+            .unwrap();
+
+        loop {
+            if should_stop_folding(current_w_len, prev_w_len) {
+                break;
+            }
+
+            let next_w_len =
+                w_ring_element_count::<F>(&current_params, current_layout) * current_params.d;
+            let next_level = level + 1;
+            let next_params = Cfg::level_params(HachiScheduleInputs {
+                max_num_vars,
+                level: next_level,
+                current_w_len: next_w_len,
+            });
+            let next_layout =
+                crate::protocol::commitment::hachi_recursive_level_layout_from_params::<Cfg>(
+                    &next_params,
+                    next_w_len,
+                )
+                .unwrap();
+
+            prev_w_len = current_w_len;
+            current_w_len = next_w_len;
+            current_params = next_params;
+            current_layout = next_layout;
+            level = next_level;
+            level_count += 1;
+        }
+
+        level_count
+    }
 
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
@@ -1473,6 +1572,64 @@ mod tests {
         );
         assert_eq!(setup.layout().outer_width, setup_root.outer_width);
         assert_eq!(setup.layout().d_matrix_width, setup_root.d_matrix_width);
+    }
+
+    #[test]
+    fn onehot_same_point_batch_planner_avoids_multipoint_z_pre_penalty() {
+        type OneHotF = Fp128<0xffffffffffffffffffffffffffffe941>;
+        type Cfg = Fp128OneHotCommitmentConfig;
+        const TEST_D: usize = Cfg::D;
+        const NV: usize = 29;
+        const BATCH: usize = 1 << 5;
+
+        let root_layout = Cfg::commitment_layout(NV).unwrap();
+        let root_inputs = HachiScheduleInputs {
+            max_num_vars: NV,
+            level: 0,
+            current_w_len: root_current_w_len::<TEST_D>(root_layout),
+        };
+        let root_params = Cfg::level_params_with_log_basis(root_inputs, root_layout.log_basis);
+
+        let same_point =
+            optimal_root_batch_split::<Cfg, TEST_D>(NV, &root_params, root_layout, BATCH).unwrap();
+        let multipoint = optimal_root_batch_split_with_num_point_sets::<Cfg, TEST_D>(
+            NV,
+            &root_params,
+            root_layout,
+            BATCH,
+            BATCH,
+        )
+        .unwrap();
+
+        assert_ne!(same_point, multipoint);
+
+        let same_point_layout = HachiCommitmentLayout::new_with_decomp(
+            same_point.0,
+            same_point.1,
+            root_params.n_a,
+            root_layout.num_digits_commit,
+            root_layout.num_digits_open,
+            same_point.2,
+            root_layout.log_basis,
+        )
+        .unwrap();
+        let multipoint_layout = HachiCommitmentLayout::new_with_decomp(
+            multipoint.0,
+            multipoint.1,
+            root_params.n_a,
+            root_layout.num_digits_commit,
+            root_layout.num_digits_open,
+            multipoint.2,
+            root_layout.log_basis,
+        )
+        .unwrap();
+
+        let same_point_levels =
+            recursive_chain_len::<OneHotF, TEST_D, Cfg>(NV, same_point_layout, BATCH, 1);
+        let multipoint_levels =
+            recursive_chain_len::<OneHotF, TEST_D, Cfg>(NV, multipoint_layout, BATCH, BATCH);
+
+        assert!(same_point_levels <= multipoint_levels);
     }
 
     #[test]

@@ -152,7 +152,7 @@ pub(super) fn optimal_m_r_split_with_params(
     let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
     let delta_open = compute_num_digits(open_bound, decomp.log_basis) as u64;
     let delta_commit = compute_num_digits(decomp.log_commit_bound, decomp.log_basis) as u64;
-    let c1 = delta_open + params.n_a as u64 * delta_open;
+    let c1 = delta_open + params.n_a as u64 * delta_commit;
 
     let mut best_r = reduced_vars / 2;
     let mut best_cost = u64::MAX;
@@ -1064,5 +1064,32 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
             2,
             5,
         )?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::commitment::recursive_level_decomposition_from_root;
+
+    #[test]
+    fn recursive_onehot_split_matches_pre_multipoint_cost_model() {
+        type Cfg = Fp128AdaptiveOneHotCommitmentConfig;
+
+        let current_w_len = 25_974_272usize;
+        let params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars: 30,
+            level: 1,
+            current_w_len,
+        });
+        let reduced_vars = (current_w_len / params.d)
+            .next_power_of_two()
+            .trailing_zeros() as usize;
+        let decomp =
+            recursive_level_decomposition_from_root(Cfg::decomposition(), params.log_basis);
+
+        let split = optimal_m_r_split_with_params(&params, decomp, reduced_vars);
+
+        assert_eq!(split, (11, 8));
     }
 }

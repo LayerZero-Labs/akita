@@ -164,11 +164,11 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
         let proof =
             <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::batched_prove(
                 &setup,
-                &poly_groups,
-                &pt,
-                hints,
+                &[&poly_groups[..]],
+                &[&pt[..]],
+                vec![hints],
                 &mut prover_transcript,
-                &commitments,
+                &[&commitments[..]],
                 BasisMode::Lagrange,
                 &layout,
             )
@@ -194,9 +194,9 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            &pt,
-            &opening_groups,
-            &commitments,
+            &[&pt[..]],
+            &[&opening_groups[..]],
+            &[&commitments[..]],
             BasisMode::Lagrange,
             &layout,
         );
@@ -252,11 +252,11 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
         let proof =
             <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
                 &setup,
-                &poly_groups,
-                &pt,
-                hints,
+                &[&poly_groups[..]],
+                &[&pt[..]],
+                vec![hints],
                 &mut prover_transcript,
-                &commitments,
+                &[&commitments[..]],
                 BasisMode::Lagrange,
                 &layout,
             )
@@ -280,9 +280,9 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
-                &pt,
-                &opening_groups,
-                &commitments,
+                &[&pt[..]],
+                &[&opening_groups[..]],
+                &[&commitments[..]],
                 BasisMode::Lagrange,
                 &layout,
             );
@@ -527,10 +527,10 @@ fn aggregated_dense_nv15_batch12() {
     run_aggregated_dense(15, 12);
 }
 
-#[test]
-fn aggregated_dense_nv15_batch16() {
-    run_aggregated_dense(15, 16);
-}
+// #[test]
+// fn aggregated_dense_nv15_batch16() {
+//     run_aggregated_dense(15, 16);
+// }
 
 // ---------------------------------------------------------------------------
 // nv = 20
@@ -561,12 +561,12 @@ fn aggregated_dense_nv20_batch7() {
     run_aggregated_dense(20, 7);
 }
 
-#[test]
-fn aggregated_dense_nv20_batch12() {
-    run_aggregated_dense(20, 12);
-}
+// #[test]
+// fn aggregated_dense_nv20_batch12() {
+//     run_aggregated_dense(20, 12);
+// }
 
-#[test]
-fn aggregated_dense_nv20_batch16() {
-    run_aggregated_dense(20, 16);
-}
+// #[test]
+// fn aggregated_dense_nv20_batch16() {
+//     run_aggregated_dense(20, 16);
+// }

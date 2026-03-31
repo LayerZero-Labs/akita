@@ -566,118 +566,22 @@ where
 
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn prove_batched_root_level<F, T, const D: usize, Cfg, P>(
+fn prove_batched_root_level_with_points<F, T, const D: usize, Cfg, P>(
     expanded: &HachiExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     commit_w_fn: CommitFn<'_, F>,
     polys: &[&P],
-    claim_group_sizes: &[usize],
-    max_num_vars: usize,
-    opening_point: &[F],
-    hints: Vec<HachiBatchedCommitmentHint<F, D>>,
-    transcript: &mut T,
-    commitments: &[RingCommitment<F, D>],
-    basis: BasisMode,
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
-    batched_layout: HachiCommitmentLayout,
-) -> Result<BatchedProveLevelOutput<F>, HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
-    T: Transcript<F>,
-    Cfg: CommitmentConfig,
-    P: HachiPolyOps<F, D>,
-{
-    let alpha = level_params.d.trailing_zeros() as usize;
-    if opening_point.len() < alpha {
-        return Err(HachiError::InvalidPointDimension {
-            expected: alpha,
-            actual: opening_point.len(),
-        });
-    }
-    let target_num_vars = layout.m_vars + layout.r_vars + alpha;
-    let mut padded_point = opening_point.to_vec();
-    padded_point.resize(target_num_vars, F::zero());
-    let outer_point = &padded_point[alpha..];
-
-    let ring_opening_point = {
-        let _span = tracing::info_span!("ring_opening_point", level = 0usize).entered();
-        ring_opening_point_from_field::<F>(outer_point, layout.r_vars, layout.m_vars, basis)?
-    };
-
-    let fold_scalars = &ring_opening_point.a;
-    let eval_outer_scalars = &ring_opening_point.b;
-    let (y_rings, w_folded_by_poly) = {
-        let _span = tracing::info_span!(
-            "evaluate_and_fold_batched",
-            level = 0usize,
-            num_polys = polys.len()
-        )
-        .entered();
-        let mut y_rings = Vec::with_capacity(polys.len());
-        let mut w_folded_by_poly = Vec::with_capacity(polys.len());
-        for poly in polys {
-            let (y_ring, w_folded) =
-                poly.evaluate_and_fold(eval_outer_scalars, fold_scalars, layout.block_len);
-            y_rings.push(y_ring);
-            w_folded_by_poly.push(w_folded);
-        }
-        (y_rings, w_folded_by_poly)
-    };
-
-    append_batched_commitments_to_transcript(commitments, transcript);
-    for pt in &padded_point {
-        transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
-    }
-    for y_ring in &y_rings {
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-    }
-
-    let quad_eq = Box::new(QuadraticEquation::<F, { D }, Cfg>::new_batched_prover(
-        ntt_shared,
-        ring_opening_point,
-        polys,
-        w_folded_by_poly,
-        claim_group_sizes,
-        level_params.clone(),
-        hints,
-        transcript,
-        commitments,
-        &y_rings,
-        batched_layout,
-    )?);
-
-    finish_batched_root_level::<F, T, D, Cfg>(
-        expanded,
-        ntt_shared,
-        commit_w_fn,
-        max_num_vars,
-        transcript,
-        commitments,
-        level_params,
-        batched_layout,
-        claim_group_sizes,
-        quad_eq,
-        y_rings,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-fn prove_multipoint_batched_root_level<F, T, const D: usize, Cfg, P>(
-    expanded: &HachiExpandedSetup<F>,
-    ntt_shared: &NttSlotCache<D>,
-    commit_w_fn: CommitFn<'_, F>,
-    polys: &[&P],
-    batch_shape: &MultiPointBatchShape,
     prepared_points: &[PreparedRootOpeningPoint<F, D>],
+    claim_to_point: &[usize],
+    claim_group_sizes: &[usize],
+    point_group_sizes: Option<&[usize]>,
     max_num_vars: usize,
     hints: Vec<HachiBatchedCommitmentHint<F, D>>,
     transcript: &mut T,
     commitments: &[RingCommitment<F, D>],
     level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
     batched_layout: HachiCommitmentLayout,
+    layout: HachiCommitmentLayout,
 ) -> Result<BatchedProveLevelOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
@@ -685,14 +589,22 @@ where
     Cfg: CommitmentConfig,
     P: HachiPolyOps<F, D>,
 {
-    if prepared_points.is_empty() || batch_shape.claim_to_point.len() != polys.len() {
+    if prepared_points.is_empty() || claim_to_point.len() != polys.len() {
         return Err(HachiError::InvalidInput(
-            "invalid multipoint batched root inputs".to_string(),
+            "invalid batched root inputs".to_string(),
+        ));
+    }
+    if claim_to_point
+        .iter()
+        .any(|&point_idx| point_idx >= prepared_points.len())
+    {
+        return Err(HachiError::InvalidInput(
+            "batched root claim-to-point index out of range".to_string(),
         ));
     }
     let (y_rings, w_folded_by_poly) = {
         let _span = tracing::info_span!(
-            "evaluate_and_fold_multipoint_batched",
+            "evaluate_and_fold_batched_with_points",
             level = 0usize,
             num_polys = polys.len(),
             num_points = prepared_points.len()
@@ -700,24 +612,35 @@ where
         .entered();
         let mut y_rings = Vec::with_capacity(polys.len());
         let mut w_folded_by_poly = Vec::with_capacity(polys.len());
-        for (poly, &point_idx) in polys.iter().zip(batch_shape.claim_to_point.iter()) {
-            let prepared_point = &prepared_points[point_idx];
-            let (y_ring, w_folded) = poly.evaluate_and_fold(
-                &prepared_point.ring_opening_point.b,
-                &prepared_point.ring_opening_point.a,
-                layout.block_len,
-            );
-            y_rings.push(y_ring);
-            w_folded_by_poly.push(w_folded);
+        if prepared_points.len() == 1 {
+            let prepared_point = &prepared_points[0];
+            for poly in polys {
+                let (y_ring, w_folded) = poly.evaluate_and_fold(
+                    &prepared_point.ring_opening_point.b,
+                    &prepared_point.ring_opening_point.a,
+                    layout.block_len,
+                );
+                y_rings.push(y_ring);
+                w_folded_by_poly.push(w_folded);
+            }
+        } else {
+            for (poly, &point_idx) in polys.iter().zip(claim_to_point.iter()) {
+                let prepared_point = &prepared_points[point_idx];
+                let (y_ring, w_folded) = poly.evaluate_and_fold(
+                    &prepared_point.ring_opening_point.b,
+                    &prepared_point.ring_opening_point.a,
+                    layout.block_len,
+                );
+                y_rings.push(y_ring);
+                w_folded_by_poly.push(w_folded);
+            }
         }
         (y_rings, w_folded_by_poly)
     };
 
-    append_batch_shape_to_transcript::<F, T>(
-        &batch_shape.point_group_sizes,
-        &batch_shape.claim_group_sizes,
-        transcript,
-    );
+    if let Some(point_group_sizes) = point_group_sizes {
+        append_batch_shape_to_transcript::<F, T>(point_group_sizes, claim_group_sizes, transcript);
+    }
     append_batched_commitments_to_transcript(commitments, transcript);
     for prepared_point in prepared_points {
         for pt in &prepared_point.padded_point {
@@ -736,10 +659,10 @@ where
         QuadraticEquation::<F, { D }, Cfg>::new_multipoint_batched_prover(
             ntt_shared,
             ring_opening_points,
-            batch_shape.claim_to_point.clone(),
+            claim_to_point.to_vec(),
             polys,
             w_folded_by_poly,
-            &batch_shape.claim_group_sizes,
+            claim_group_sizes,
             level_params.clone(),
             hints,
             transcript,
@@ -758,9 +681,98 @@ where
         commitments,
         level_params,
         batched_layout,
-        &batch_shape.claim_group_sizes,
+        claim_group_sizes,
         quad_eq,
         y_rings,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn prove_batched_root_level<F, T, const D: usize, Cfg, P>(
+    expanded: &HachiExpandedSetup<F>,
+    ntt_shared: &NttSlotCache<D>,
+    commit_w_fn: CommitFn<'_, F>,
+    polys: &[&P],
+    claim_group_sizes: &[usize],
+    max_num_vars: usize,
+    opening_point: &[F],
+    hints: Vec<HachiBatchedCommitmentHint<F, D>>,
+    transcript: &mut T,
+    commitments: &[RingCommitment<F, D>],
+    basis: BasisMode,
+    level_params: &HachiLevelParams,
+    batched_layout: HachiCommitmentLayout,
+    layout: HachiCommitmentLayout,
+) -> Result<BatchedProveLevelOutput<F>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig,
+    P: HachiPolyOps<F, D>,
+{
+    let alpha_bits = level_params.d.trailing_zeros() as usize;
+    let prepared_point =
+        prepare_root_opening_point::<F, D>(opening_point, basis, layout, alpha_bits)?;
+    let claim_to_point = vec![0usize; polys.len()];
+    prove_batched_root_level_with_points::<F, T, D, Cfg, P>(
+        expanded,
+        ntt_shared,
+        commit_w_fn,
+        polys,
+        std::slice::from_ref(&prepared_point),
+        &claim_to_point,
+        claim_group_sizes,
+        None,
+        max_num_vars,
+        hints,
+        transcript,
+        commitments,
+        level_params,
+        batched_layout,
+        layout,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn prove_multipoint_batched_root_level<F, T, const D: usize, Cfg, P>(
+    expanded: &HachiExpandedSetup<F>,
+    ntt_shared: &NttSlotCache<D>,
+    commit_w_fn: CommitFn<'_, F>,
+    polys: &[&P],
+    batch_shape: &MultiPointBatchShape,
+    prepared_points: &[PreparedRootOpeningPoint<F, D>],
+    max_num_vars: usize,
+    hints: Vec<HachiBatchedCommitmentHint<F, D>>,
+    transcript: &mut T,
+    commitments: &[RingCommitment<F, D>],
+    level_params: &HachiLevelParams,
+    batched_layout: HachiCommitmentLayout,
+    layout: HachiCommitmentLayout,
+) -> Result<BatchedProveLevelOutput<F>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig,
+    P: HachiPolyOps<F, D>,
+{
+    prove_batched_root_level_with_points::<F, T, D, Cfg, P>(
+        expanded,
+        ntt_shared,
+        commit_w_fn,
+        polys,
+        prepared_points,
+        &batch_shape.claim_to_point,
+        &batch_shape.claim_group_sizes,
+        Some(&batch_shape.point_group_sizes),
+        max_num_vars,
+        hints,
+        transcript,
+        commitments,
+        level_params,
+        batched_layout,
+        layout,
     )
 }
 
@@ -1272,6 +1284,336 @@ where
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+fn prove_same_point_batched<F, T, const D: usize, Cfg, P>(
+    setup: &HachiProverSetup<F, D>,
+    poly_groups: &[&[P]],
+    opening_point: &[F],
+    hints: Vec<HachiBatchedCommitmentHint<F, D>>,
+    transcript: &mut T,
+    commitments: &[RingCommitment<F, D>],
+    basis: BasisMode,
+    layout: &HachiCommitmentLayout,
+) -> Result<HachiBatchedProof<F>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig,
+    P: HachiPolyOps<F, D>,
+{
+    let claim_group_sizes = validate_nonempty_group_sizes(poly_groups, "batched_prove")?;
+    let total_claims = checked_total_claims(&claim_group_sizes, "batched_prove")?;
+    if total_claims > setup.expanded.seed.max_num_batched_polys {
+        return Err(HachiError::InvalidInput(format!(
+            "batched_prove received {total_claims} polynomials but setup supports at most {}",
+            setup.expanded.seed.max_num_batched_polys
+        )));
+    }
+    let hint_group_sizes: Vec<usize> = hints
+        .iter()
+        .map(|hint| hint.inner_opening_digits.len())
+        .collect();
+    if commitments.len() != poly_groups.len()
+        || hints.len() != poly_groups.len()
+        || hint_group_sizes != claim_group_sizes
+    {
+        return Err(HachiError::InvalidInput(
+            "batched_prove commitments, hints, and polynomial groups must have matching lengths"
+                .to_string(),
+        ));
+    }
+
+    let t_prove_total = Instant::now();
+    let mut levels = Vec::new();
+
+    let mut ntt_cache = MultiDNttCaches::new();
+    let mut commit_ntt_cache = MultiDNttCaches::new();
+    let max_num_vars = setup.expanded.seed.max_num_vars;
+    let root_w_len = root_current_w_len::<D>(*layout);
+    let batched_layout = scale_batched_root_layout::<Cfg, D>(max_num_vars, *layout, total_claims)?;
+    setup.ensure_layout_fits(&batched_layout)?;
+    let root_params = Cfg::level_params(HachiScheduleInputs {
+        max_num_vars,
+        level: 0,
+        current_w_len: root_w_len,
+    });
+    if commitments
+        .iter()
+        .any(|commitment| commitment.u.len() != root_params.n_b)
+    {
+        return Err(HachiError::InvalidInput(
+            "batched_prove received a commitment with the wrong length".to_string(),
+        ));
+    }
+    let flat_polys = flatten_poly_groups(poly_groups);
+
+    let commit_fn_0: CommitFn<'_, F> = Box::new(
+        |w: &RecursiveWitnessFlat,
+         next_inputs: HachiScheduleInputs|
+         -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError> {
+            let next_params = Cfg::level_params(next_inputs);
+            if next_params.d == D {
+                let (wc, wh) = commit_w::<F, D, Cfg>(w, &setup.ntt_shared, &next_params)?;
+                Ok((
+                    FlatRingVec::from_commitment(&wc),
+                    RecursiveCommitmentHintCache::from_typed(wh)?,
+                ))
+            } else {
+                dispatch_commit::<F, Cfg>(next_params, &mut commit_ntt_cache, &setup.expanded, w)
+            }
+        },
+    );
+    let BatchedProveLevelOutput {
+        root_proof,
+        next_state,
+    } = prove_batched_root_level::<F, T, D, Cfg, P>(
+        &setup.expanded,
+        &setup.ntt_shared,
+        commit_fn_0,
+        &flat_polys,
+        &claim_group_sizes,
+        max_num_vars,
+        opening_point,
+        hints,
+        transcript,
+        commitments,
+        basis,
+        &root_params,
+        batched_layout,
+        *layout,
+    )?;
+
+    let mut current_state = next_state;
+    let mut level = 1usize;
+
+    loop {
+        if !should_continue_folding_by_bytes::<Cfg>(max_num_vars, level, current_state.w.len())? {
+            break;
+        }
+        let level_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars,
+            level,
+            current_w_len: current_state.w.len(),
+        });
+        let level_d = level_params.d;
+
+        let out = dispatch_prove_level::<F, T, D, Cfg>(
+            level_d,
+            &mut ntt_cache,
+            &setup.expanded,
+            &setup.ntt_shared,
+            &mut commit_ntt_cache,
+            max_num_vars,
+            &current_state,
+            transcript,
+            level,
+            &level_params,
+        )?;
+
+        levels.push(out.level_proof);
+        current_state = out.next_state;
+        level += 1;
+    }
+
+    tracing::info!(
+        levels = level,
+        elapsed_s = t_prove_total.elapsed().as_secs_f64(),
+        "hachi batched prove complete"
+    );
+
+    let final_params = Cfg::level_params(HachiScheduleInputs {
+        max_num_vars,
+        level,
+        current_w_len: current_state.w.len(),
+    });
+    let final_w = PackedDigits::from_i8_digits_with_min_bits(
+        current_state.w.as_i8_digits(),
+        final_params.log_basis,
+    );
+    let tail = HachiProofTail::new(final_w);
+
+    Ok(HachiBatchedProof {
+        root: root_proof,
+        levels,
+        tail,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_same_point_batched<F, T, const D: usize, Cfg>(
+    proof: &HachiBatchedProof<F>,
+    setup: &HachiVerifierSetup<F>,
+    transcript: &mut T,
+    opening_point: &[F],
+    opening_groups: &[&[F]],
+    commitments: &[RingCommitment<F, D>],
+    basis: BasisMode,
+    layout: &HachiCommitmentLayout,
+) -> Result<(), HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig,
+{
+    let y_coeff_len = proof.root.y_rings().coeff_len();
+    if y_coeff_len % D != 0 {
+        return Err(HachiError::InvalidProof);
+    }
+    let claim_group_sizes = validate_nonempty_group_sizes(opening_groups, "batched_verify")
+        .map_err(|_| HachiError::InvalidProof)?;
+    let num_claims = checked_total_claims(&claim_group_sizes, "batched_verify")
+        .map_err(|_| HachiError::InvalidProof)?;
+    let openings = flatten_value_groups(opening_groups);
+    if num_claims == 0 || openings.len() != num_claims || commitments.len() != opening_groups.len()
+    {
+        return Err(HachiError::InvalidProof);
+    }
+    if y_coeff_len / D != num_claims {
+        return Err(HachiError::InvalidProof);
+    }
+    if num_claims > setup.expanded.max_num_batched_polys() {
+        return Err(HachiError::InvalidProof);
+    }
+
+    let t_verify_hachi = Instant::now();
+    let max_num_vars = setup.expanded.seed.max_num_vars;
+    let batched_layout = scale_batched_root_layout::<Cfg, D>(max_num_vars, *layout, num_claims)?;
+    setup.expanded.ensure_layout_fits(&batched_layout)?;
+
+    let final_w = Some(proof.final_w());
+    let root_params = Cfg::level_params(HachiScheduleInputs {
+        max_num_vars,
+        level: 0,
+        current_w_len: root_current_w_len::<D>(*layout),
+    });
+    let has_recursive_levels = !proof.levels.is_empty();
+    let root_challenges = verify_batched_root_level::<F, T, D>(
+        &proof.root,
+        setup,
+        transcript,
+        opening_point,
+        &openings,
+        commitments,
+        &claim_group_sizes,
+        basis,
+        &root_params,
+        *layout,
+        batched_layout,
+        !has_recursive_levels,
+        if has_recursive_levels { None } else { final_w },
+    )?;
+
+    if has_recursive_levels {
+        let alpha_bits = root_params.d.trailing_zeros() as usize;
+        let num_l = alpha_bits;
+        let num_u = root_challenges.len() - num_l;
+        let root_w_len = w_ring_element_count_with_claim_groups::<F>(
+            &root_params,
+            batched_layout,
+            &claim_group_sizes,
+        ) * D;
+
+        let first_level_d = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars,
+            level: 1,
+            current_w_len: root_w_len,
+        })
+        .d;
+        if !proof.root.next_w_commitment().can_decode_vec(first_level_d) {
+            return Err(HachiError::InvalidProof);
+        }
+
+        let mut current_state = RecursiveVerifierState {
+            opening_point: next_level_opening_point(&root_challenges, num_u, num_l),
+            opening: proof.root.next_w_eval(),
+            commitment: proof.root.next_w_commitment(),
+            basis: BasisMode::Lagrange,
+            w_len: root_w_len,
+        };
+
+        let num_levels = proof.levels.len();
+        for (offset, level_proof) in proof.levels.iter().enumerate() {
+            let level_index = offset + 1;
+            let is_last = offset == num_levels - 1;
+            let level_params = Cfg::level_params(HachiScheduleInputs {
+                max_num_vars,
+                level: level_index,
+                current_w_len: current_state.w_len,
+            });
+            let level_d = level_params.d;
+            let current_layout = hachi_recursive_level_layout_from_params::<Cfg>(
+                &level_params,
+                current_state.w_len,
+            )?;
+            if !current_state.commitment.can_decode_vec(level_d)
+                || !level_proof.y_ring.can_decode_single(level_d)
+                || !level_proof.v.can_decode_vec(level_d)
+            {
+                return Err(HachiError::InvalidProof);
+            }
+
+            let challenges = if level_d == D {
+                verify_one_level::<F, T, D>(
+                    level_proof,
+                    setup,
+                    transcript,
+                    &current_state,
+                    is_last,
+                    if is_last { final_w } else { None },
+                    &level_params,
+                    current_layout,
+                )?
+            } else {
+                dispatch_verify_level::<F, T>(
+                    level_d,
+                    level_proof,
+                    setup,
+                    transcript,
+                    &current_state,
+                    is_last,
+                    if is_last { final_w } else { None },
+                    &level_params,
+                    current_layout,
+                )?
+            };
+
+            if !is_last {
+                let alpha_bits = level_d.trailing_zeros() as usize;
+                let num_l = alpha_bits;
+                let num_u = challenges.len() - num_l;
+                let next_w_len = w_ring_element_count::<F>(&level_params, current_layout) * level_d;
+
+                if offset + 1 < num_levels {
+                    let next_level_d = Cfg::level_params(HachiScheduleInputs {
+                        max_num_vars,
+                        level: level_index + 1,
+                        current_w_len: next_w_len,
+                    })
+                    .d;
+                    if !level_proof.next_w_commitment().can_decode_vec(next_level_d) {
+                        return Err(HachiError::InvalidProof);
+                    }
+                }
+                current_state = RecursiveVerifierState {
+                    opening_point: next_level_opening_point(&challenges, num_u, num_l),
+                    opening: level_proof.next_w_eval(),
+                    commitment: level_proof.next_w_commitment(),
+                    basis: BasisMode::Lagrange,
+                    w_len: next_w_len,
+                };
+            }
+        }
+    }
+
+    tracing::info!(
+        levels = proof.levels.len() + 1,
+        elapsed_s = t_verify_hachi.elapsed().as_secs_f64(),
+        "hachi batched verify complete"
+    );
+
+    Ok(())
+}
+
 impl<F, const D: usize, Cfg> CommitmentScheme<F, D> for HachiCommitmentScheme<D, Cfg>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
@@ -1516,163 +1858,6 @@ where
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_prove")]
     fn batched_prove<T: Transcript<F>, P: HachiPolyOps<F, D>>(
         setup: &Self::ProverSetup,
-        poly_groups: &[&[P]],
-        opening_point: &[F],
-        hints: Self::BatchedCommitHint,
-        transcript: &mut T,
-        commitments: &[Self::Commitment],
-        basis: BasisMode,
-        layout: &HachiCommitmentLayout,
-    ) -> Result<Self::BatchedProof, HachiError> {
-        let claim_group_sizes = validate_nonempty_group_sizes(poly_groups, "batched_prove")?;
-        let total_claims = checked_total_claims(&claim_group_sizes, "batched_prove")?;
-        if total_claims > setup.expanded.seed.max_num_batched_polys {
-            return Err(HachiError::InvalidInput(format!(
-                "batched_prove received {total_claims} polynomials but setup supports at most {}",
-                setup.expanded.seed.max_num_batched_polys
-            )));
-        }
-        let hint_group_sizes: Vec<usize> = hints
-            .iter()
-            .map(|hint| hint.inner_opening_digits.len())
-            .collect();
-        if commitments.len() != poly_groups.len()
-            || hints.len() != poly_groups.len()
-            || hint_group_sizes != claim_group_sizes
-        {
-            return Err(HachiError::InvalidInput(
-                "batched_prove commitments, hints, and polynomial groups must have matching lengths"
-                    .to_string(),
-            ));
-        }
-
-        let t_prove_total = Instant::now();
-        let mut levels = Vec::new();
-
-        let mut ntt_cache = MultiDNttCaches::new();
-        let mut commit_ntt_cache = MultiDNttCaches::new();
-        let max_num_vars = setup.expanded.seed.max_num_vars;
-        let root_w_len = root_current_w_len::<D>(*layout);
-        let batched_layout =
-            scale_batched_root_layout::<Cfg, D>(max_num_vars, *layout, total_claims)?;
-        setup.ensure_layout_fits(&batched_layout)?;
-        let root_params = Cfg::level_params(HachiScheduleInputs {
-            max_num_vars,
-            level: 0,
-            current_w_len: root_w_len,
-        });
-        if commitments
-            .iter()
-            .any(|commitment| commitment.u.len() != root_params.n_b)
-        {
-            return Err(HachiError::InvalidInput(
-                "batched_prove received a commitment with the wrong length".to_string(),
-            ));
-        }
-        let flat_polys = flatten_poly_groups(poly_groups);
-
-        let commit_fn_0: CommitFn<'_, F> = Box::new(
-            |w: &RecursiveWitnessFlat,
-             next_inputs: HachiScheduleInputs|
-             -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError> {
-                let next_params = Cfg::level_params(next_inputs);
-                if next_params.d == D {
-                    let (wc, wh) = commit_w::<F, D, Cfg>(w, &setup.ntt_shared, &next_params)?;
-                    Ok((
-                        FlatRingVec::from_commitment(&wc),
-                        RecursiveCommitmentHintCache::from_typed(wh)?,
-                    ))
-                } else {
-                    dispatch_commit::<F, Cfg>(
-                        next_params,
-                        &mut commit_ntt_cache,
-                        &setup.expanded,
-                        w,
-                    )
-                }
-            },
-        );
-        let BatchedProveLevelOutput {
-            root_proof,
-            next_state,
-        } = prove_batched_root_level::<F, T, D, Cfg, P>(
-            &setup.expanded,
-            &setup.ntt_shared,
-            commit_fn_0,
-            &flat_polys,
-            &claim_group_sizes,
-            max_num_vars,
-            opening_point,
-            hints,
-            transcript,
-            commitments,
-            basis,
-            &root_params,
-            *layout,
-            batched_layout,
-        )?;
-
-        let mut current_state = next_state;
-        let mut level = 1usize;
-
-        loop {
-            if !should_continue_folding_by_bytes::<Cfg>(max_num_vars, level, current_state.w.len())?
-            {
-                break;
-            }
-            let level_params = Cfg::level_params(HachiScheduleInputs {
-                max_num_vars,
-                level,
-                current_w_len: current_state.w.len(),
-            });
-            let level_d = level_params.d;
-
-            let out = dispatch_prove_level::<F, T, D, Cfg>(
-                level_d,
-                &mut ntt_cache,
-                &setup.expanded,
-                &setup.ntt_shared,
-                &mut commit_ntt_cache,
-                max_num_vars,
-                &current_state,
-                transcript,
-                level,
-                &level_params,
-            )?;
-
-            levels.push(out.level_proof);
-
-            current_state = out.next_state;
-            level += 1;
-        }
-
-        tracing::info!(
-            levels = level,
-            elapsed_s = t_prove_total.elapsed().as_secs_f64(),
-            "hachi batched prove complete"
-        );
-
-        let final_params = Cfg::level_params(HachiScheduleInputs {
-            max_num_vars,
-            level,
-            current_w_len: current_state.w.len(),
-        });
-        let final_w = PackedDigits::from_i8_digits_with_min_bits(
-            current_state.w.as_i8_digits(),
-            final_params.log_basis,
-        );
-        let tail = HachiProofTail::new(final_w);
-
-        Ok(HachiBatchedProof {
-            root: root_proof,
-            levels,
-            tail,
-        })
-    }
-
-    #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::multipoint_batched_prove")]
-    fn multipoint_batched_prove<T: Transcript<F>, P: HachiPolyOps<F, D>>(
-        setup: &Self::ProverSetup,
         poly_groups_by_point: &[&[&[P]]],
         opening_points: &[&[F]],
         hints_by_point: Vec<Self::BatchedCommitHint>,
@@ -1681,16 +1866,14 @@ where
         basis: BasisMode,
         layout: &HachiCommitmentLayout,
     ) -> Result<Self::BatchedProof, HachiError> {
-        let batch_shape = validate_nonempty_group_sizes_by_point(
-            poly_groups_by_point,
-            "multipoint_batched_prove",
-        )?;
+        let batch_shape =
+            validate_nonempty_group_sizes_by_point(poly_groups_by_point, "batched_prove")?;
         if opening_points.len() != batch_shape.point_group_sizes.len()
             || commitments_by_point.len() != batch_shape.point_group_sizes.len()
             || hints_by_point.len() != batch_shape.point_group_sizes.len()
         {
             return Err(HachiError::InvalidInput(
-                "multipoint_batched_prove points, commitments, hints, and polynomial groups must have matching outer lengths"
+                "batched_prove points, commitments, hints, and polynomial groups must have matching outer lengths"
                     .to_string(),
             ));
         }
@@ -1704,13 +1887,12 @@ where
                 .any(|(hints, &group_count)| hints.len() != group_count)
         {
             return Err(HachiError::InvalidInput(
-                "multipoint_batched_prove per-point group counts must match commitments and hints"
-                    .to_string(),
+                "batched_prove per-point group counts must match commitments and hints".to_string(),
             ));
         }
         if opening_points.len() == 1 {
             let mut hints_iter = hints_by_point.into_iter();
-            return Self::batched_prove(
+            return prove_same_point_batched::<F, T, D, Cfg, P>(
                 setup,
                 poly_groups_by_point[0],
                 opening_points[0],
@@ -1724,11 +1906,10 @@ where
             );
         }
 
-        let total_claims =
-            checked_total_claims(&batch_shape.claim_group_sizes, "multipoint_batched_prove")?;
+        let total_claims = checked_total_claims(&batch_shape.claim_group_sizes, "batched_prove")?;
         if total_claims > setup.expanded.seed.max_num_batched_polys {
             return Err(HachiError::InvalidInput(format!(
-                "multipoint_batched_prove received {total_claims} polynomials but setup supports at most {}",
+                "batched_prove received {total_claims} polynomials but setup supports at most {}",
                 setup.expanded.seed.max_num_batched_polys
             )));
         }
@@ -1762,7 +1943,7 @@ where
             .any(|commitment| commitment.u.len() != root_params.n_b)
         {
             return Err(HachiError::InvalidInput(
-                "multipoint_batched_prove received a commitment with the wrong length".to_string(),
+                "batched_prove received a commitment with the wrong length".to_string(),
             ));
         }
         let flat_polys = flatten_poly_groups_by_point(poly_groups_by_point);
@@ -1845,7 +2026,7 @@ where
         tracing::info!(
             levels = level,
             elapsed_s = t_prove_total.elapsed().as_secs_f64(),
-            "hachi multipoint batched prove complete"
+            "hachi batched prove complete"
         );
 
         let final_params = Cfg::level_params(HachiScheduleInputs {
@@ -1996,180 +2177,6 @@ where
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,
-        opening_point: &[F],
-        opening_groups: &[&[F]],
-        commitments: &[Self::Commitment],
-        basis: BasisMode,
-        layout: &HachiCommitmentLayout,
-    ) -> Result<(), HachiError> {
-        let y_coeff_len = proof.root.y_rings().coeff_len();
-        if y_coeff_len % D != 0 {
-            return Err(HachiError::InvalidProof);
-        }
-        let claim_group_sizes = validate_nonempty_group_sizes(opening_groups, "batched_verify")
-            .map_err(|_| HachiError::InvalidProof)?;
-        let num_claims = checked_total_claims(&claim_group_sizes, "batched_verify")
-            .map_err(|_| HachiError::InvalidProof)?;
-        let openings = flatten_value_groups(opening_groups);
-        if num_claims == 0
-            || openings.len() != num_claims
-            || commitments.len() != opening_groups.len()
-        {
-            return Err(HachiError::InvalidProof);
-        }
-        if y_coeff_len / D != num_claims {
-            return Err(HachiError::InvalidProof);
-        }
-        if num_claims > setup.expanded.max_num_batched_polys() {
-            return Err(HachiError::InvalidProof);
-        }
-
-        let t_verify_hachi = Instant::now();
-        let max_num_vars = setup.expanded.seed.max_num_vars;
-        let batched_layout =
-            scale_batched_root_layout::<Cfg, D>(max_num_vars, *layout, num_claims)?;
-        setup.expanded.ensure_layout_fits(&batched_layout)?;
-
-        let final_w = Some(proof.final_w());
-        let root_params = Cfg::level_params(HachiScheduleInputs {
-            max_num_vars,
-            level: 0,
-            current_w_len: root_current_w_len::<D>(*layout),
-        });
-        let has_recursive_levels = !proof.levels.is_empty();
-        let root_challenges = verify_batched_root_level::<F, T, D>(
-            &proof.root,
-            setup,
-            transcript,
-            opening_point,
-            &openings,
-            commitments,
-            &claim_group_sizes,
-            basis,
-            &root_params,
-            *layout,
-            batched_layout,
-            !has_recursive_levels,
-            if has_recursive_levels { None } else { final_w },
-        )?;
-
-        if has_recursive_levels {
-            let alpha_bits = root_params.d.trailing_zeros() as usize;
-            let num_l = alpha_bits;
-            let num_u = root_challenges.len() - num_l;
-            let root_w_len = w_ring_element_count_with_claim_groups::<F>(
-                &root_params,
-                batched_layout,
-                &claim_group_sizes,
-            ) * D;
-
-            let first_level_d = Cfg::level_params(HachiScheduleInputs {
-                max_num_vars,
-                level: 1,
-                current_w_len: root_w_len,
-            })
-            .d;
-            if !proof.root.next_w_commitment().can_decode_vec(first_level_d) {
-                return Err(HachiError::InvalidProof);
-            }
-
-            let mut current_state = RecursiveVerifierState {
-                opening_point: next_level_opening_point(&root_challenges, num_u, num_l),
-                opening: proof.root.next_w_eval(),
-                commitment: proof.root.next_w_commitment(),
-                basis: BasisMode::Lagrange,
-                w_len: root_w_len,
-            };
-
-            let num_levels = proof.levels.len();
-            for (offset, level_proof) in proof.levels.iter().enumerate() {
-                let level_index = offset + 1;
-                let is_last = offset == num_levels - 1;
-                let level_params = Cfg::level_params(HachiScheduleInputs {
-                    max_num_vars,
-                    level: level_index,
-                    current_w_len: current_state.w_len,
-                });
-                let level_d = level_params.d;
-                let current_layout = hachi_recursive_level_layout_from_params::<Cfg>(
-                    &level_params,
-                    current_state.w_len,
-                )?;
-                if !current_state.commitment.can_decode_vec(level_d)
-                    || !level_proof.y_ring.can_decode_single(level_d)
-                    || !level_proof.v.can_decode_vec(level_d)
-                {
-                    return Err(HachiError::InvalidProof);
-                }
-
-                let challenges = if level_d == D {
-                    verify_one_level::<F, T, D>(
-                        level_proof,
-                        setup,
-                        transcript,
-                        &current_state,
-                        is_last,
-                        if is_last { final_w } else { None },
-                        &level_params,
-                        current_layout,
-                    )?
-                } else {
-                    dispatch_verify_level::<F, T>(
-                        level_d,
-                        level_proof,
-                        setup,
-                        transcript,
-                        &current_state,
-                        is_last,
-                        if is_last { final_w } else { None },
-                        &level_params,
-                        current_layout,
-                    )?
-                };
-
-                if !is_last {
-                    let alpha_bits = level_d.trailing_zeros() as usize;
-                    let num_l = alpha_bits;
-                    let num_u = challenges.len() - num_l;
-                    let next_w_len =
-                        w_ring_element_count::<F>(&level_params, current_layout) * level_d;
-
-                    if offset + 1 < num_levels {
-                        let next_level_d = Cfg::level_params(HachiScheduleInputs {
-                            max_num_vars,
-                            level: level_index + 1,
-                            current_w_len: next_w_len,
-                        })
-                        .d;
-                        if !level_proof.next_w_commitment().can_decode_vec(next_level_d) {
-                            return Err(HachiError::InvalidProof);
-                        }
-                    }
-                    current_state = RecursiveVerifierState {
-                        opening_point: next_level_opening_point(&challenges, num_u, num_l),
-                        opening: level_proof.next_w_eval(),
-                        commitment: level_proof.next_w_commitment(),
-                        basis: BasisMode::Lagrange,
-                        w_len: next_w_len,
-                    };
-                }
-            }
-        }
-
-        tracing::info!(
-            levels = proof.levels.len() + 1,
-            elapsed_s = t_verify_hachi.elapsed().as_secs_f64(),
-            "hachi batched verify complete"
-        );
-
-        Ok(())
-    }
-
-    #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::multipoint_batched_verify")]
-    fn multipoint_batched_verify<T: Transcript<F>>(
-        proof: &Self::BatchedProof,
-        setup: &Self::VerifierSetup,
-        transcript: &mut T,
         opening_points: &[&[F]],
         opening_groups_by_point: &[&[&[F]]],
         commitments_by_point: &[&[Self::Commitment]],
@@ -2180,14 +2187,11 @@ where
         if y_coeff_len % D != 0 {
             return Err(HachiError::InvalidProof);
         }
-        let batch_shape = validate_nonempty_group_sizes_by_point(
-            opening_groups_by_point,
-            "multipoint_batched_verify",
-        )
-        .map_err(|_| HachiError::InvalidProof)?;
-        let num_claims =
-            checked_total_claims(&batch_shape.claim_group_sizes, "multipoint_batched_verify")
+        let batch_shape =
+            validate_nonempty_group_sizes_by_point(opening_groups_by_point, "batched_verify")
                 .map_err(|_| HachiError::InvalidProof)?;
+        let num_claims = checked_total_claims(&batch_shape.claim_group_sizes, "batched_verify")
+            .map_err(|_| HachiError::InvalidProof)?;
         let openings = flatten_value_groups_by_point(opening_groups_by_point);
         if opening_points.len() != batch_shape.point_group_sizes.len()
             || commitments_by_point.len() != batch_shape.point_group_sizes.len()
@@ -2207,7 +2211,7 @@ where
             return Err(HachiError::InvalidProof);
         }
         if opening_points.len() == 1 {
-            return Self::batched_verify(
+            return verify_same_point_batched::<F, T, D, Cfg>(
                 proof,
                 setup,
                 transcript,
@@ -2365,7 +2369,7 @@ where
         tracing::info!(
             levels = proof.levels.len() + 1,
             elapsed_s = t_verify_hachi.elapsed().as_secs_f64(),
-            "hachi multipoint batched verify complete"
+            "hachi batched verify complete"
         );
 
         Ok(())
@@ -3882,11 +3886,11 @@ mod tests {
                 Blake2bTranscript::<OneHotF>::new(b"debug/onehot/batched");
             let batch_proof = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_prove(
                 &batch_setup,
-                &batch_poly_groups,
-                &batch_point,
-                batch_hints,
+                &[&batch_poly_groups[..]],
+                &[&batch_point[..]],
+                vec![batch_hints],
                 &mut batch_prover_transcript,
-                &batch_commitments,
+                &[&batch_commitments[..]],
                 BasisMode::Lagrange,
                 &batch_layout,
             )
@@ -3899,9 +3903,9 @@ mod tests {
                 &batch_proof,
                 &batch_verifier_setup,
                 &mut Blake2bTranscript::<OneHotF>::new(b"debug/onehot/batched"),
-                &batch_point,
-                &batch_opening_groups,
-                &batch_commitments,
+                &[&batch_point[..]],
+                &[&batch_opening_groups[..]],
+                &[&batch_commitments[..]],
                 BasisMode::Lagrange,
                 &batch_layout,
             )
@@ -3975,11 +3979,11 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &poly_groups,
-            &opening_point,
-            hints,
+            &[&poly_groups[..]],
+            &[&opening_point[..]],
+            vec![hints],
             &mut prover_transcript,
-            &commitments,
+            &[&commitments[..]],
             BasisMode::Lagrange,
             &layout,
         )
@@ -3996,9 +4000,9 @@ mod tests {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            &opening_point,
-            &opening_groups,
-            &commitments,
+            &[&opening_point[..]],
+            &[&opening_groups[..]],
+            &[&commitments[..]],
             BasisMode::Lagrange,
             &layout,
         );
@@ -4035,11 +4039,11 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/bad");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &poly_groups,
-            &opening_point,
-            hints,
+            &[&poly_groups[..]],
+            &[&opening_point[..]],
+            vec![hints],
             &mut prover_transcript,
-            &commitments,
+            &[&commitments[..]],
             BasisMode::Lagrange,
             &layout,
         )
@@ -4051,9 +4055,9 @@ mod tests {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            &opening_point,
-            &opening_groups,
-            &commitments,
+            &[&opening_point[..]],
+            &[&opening_groups[..]],
+            &[&commitments[..]],
             BasisMode::Lagrange,
             &layout,
         );
@@ -4089,11 +4093,11 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/oversized");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &poly_groups,
-            &opening_point,
-            hints,
+            &[&poly_groups[..]],
+            &[&opening_point[..]],
+            vec![hints],
             &mut prover_transcript,
-            &commitments,
+            &[&commitments[..]],
             BasisMode::Lagrange,
             &layout,
         )
@@ -4113,9 +4117,9 @@ mod tests {
             &oversized_proof,
             &verifier_setup,
             &mut verifier_transcript,
-            &opening_point,
-            &oversized_opening_groups,
-            &commitments,
+            &[&opening_point[..]],
+            &[&oversized_opening_groups[..]],
+            &[&commitments[..]],
             BasisMode::Lagrange,
             &layout,
         );

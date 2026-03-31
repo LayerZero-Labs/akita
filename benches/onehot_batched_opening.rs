@@ -206,11 +206,11 @@ fn bench_batched_case(c: &mut Criterion) {
                 let proof =
                     <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
                         &setup,
-                        &poly_groups,
-                        &point,
-                        prove_hint,
+                        &[&poly_groups[..]],
+                        &[&point[..]],
+                        vec![prove_hint],
                         &mut transcript,
-                        &commitments,
+                        &[&commitments[..]],
                         BasisMode::Lagrange,
                         &layout,
                     )
@@ -225,11 +225,11 @@ fn bench_batched_case(c: &mut Criterion) {
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &poly_groups,
-        &point,
-        hints,
+        &[&poly_groups[..]],
+        &[&point[..]],
+        vec![hints],
         &mut prover_transcript,
-        &commitments,
+        &[&commitments[..]],
         BasisMode::Lagrange,
         &layout,
     )
@@ -245,9 +245,9 @@ fn bench_batched_case(c: &mut Criterion) {
                     &proof,
                     &verifier_setup,
                     &mut transcript,
-                    &point,
-                    &opening_groups,
-                    &commitments,
+                    &[&point[..]],
+                    &[&opening_groups[..]],
+                    &[&commitments[..]],
                     BasisMode::Lagrange,
                     &layout,
                 )

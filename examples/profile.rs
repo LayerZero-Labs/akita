@@ -438,11 +438,11 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig>(
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
     let proof = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &poly_groups,
-        &pt,
-        hints,
+        &[&poly_groups[..]],
+        &[&pt[..]],
+        vec![hints],
         &mut prover_transcript,
-        &commitments,
+        &[&commitments[..]],
         BasisMode::Lagrange,
         layout,
     )
@@ -461,9 +461,9 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig>(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        &pt,
-        &opening_groups,
-        &commitments,
+        &[&pt[..]],
+        &[&opening_groups[..]],
+        &[&commitments[..]],
         BasisMode::Lagrange,
         layout,
     ) {

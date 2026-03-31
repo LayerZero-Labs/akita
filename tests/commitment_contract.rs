@@ -136,23 +136,6 @@ impl CommitmentScheme<F, 1> for DummyScheme {
 
     fn batched_prove<T: Transcript<F>, P: HachiPolyOps<F, 1>>(
         _setup: &Self::ProverSetup,
-        _poly_groups: &[&[P]],
-        _opening_point: &[F],
-        _hint: Self::BatchedCommitHint,
-        transcript: &mut T,
-        commitments: &[Self::Commitment],
-        _basis: BasisMode,
-        _layout: &HachiCommitmentLayout,
-    ) -> Result<Self::BatchedProof, HachiError> {
-        for commitment in commitments {
-            commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
-        }
-        let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
-        Ok(DummyProof(q.to_canonical_u128()))
-    }
-
-    fn multipoint_batched_prove<T: Transcript<F>, P: HachiPolyOps<F, 1>>(
-        _setup: &Self::ProverSetup,
         _poly_groups_by_point: &[&[&[P]]],
         _opening_points: &[&[F]],
         _hints_by_point: Vec<Self::BatchedCommitHint>,
@@ -190,27 +173,6 @@ impl CommitmentScheme<F, 1> for DummyScheme {
     }
 
     fn batched_verify<T: Transcript<F>>(
-        proof: &Self::BatchedProof,
-        _setup: &Self::VerifierSetup,
-        transcript: &mut T,
-        _opening_point: &[F],
-        _opening_groups: &[&[F]],
-        commitments: &[Self::Commitment],
-        _basis: BasisMode,
-        _layout: &HachiCommitmentLayout,
-    ) -> Result<(), HachiError> {
-        for commitment in commitments {
-            commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
-        }
-        let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
-        if proof.0 == q.to_canonical_u128() {
-            Ok(())
-        } else {
-            Err(HachiError::InvalidProof)
-        }
-    }
-
-    fn multipoint_batched_verify<T: Transcript<F>>(
         proof: &Self::BatchedProof,
         _setup: &Self::VerifierSetup,
         transcript: &mut T,

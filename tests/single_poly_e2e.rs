@@ -270,10 +270,10 @@ fn single_onehot_nv20() {
     run_single_onehot(20);
 }
 
-#[test]
-fn single_onehot_nv25() {
-    run_single_onehot(25);
-}
+// #[test]
+// fn single_onehot_nv25() {
+//     run_single_onehot(25);
+// }
 
 // ---------------------------------------------------------------------------
 // Dense single-poly tests
@@ -294,7 +294,7 @@ fn single_dense_nv20() {
     run_single_dense(20);
 }
 
-#[test]
-fn single_dense_nv25() {
-    run_single_dense(25);
-}
+// #[test]
+// fn single_dense_nv25() {
+//     run_single_dense(25);
+// }

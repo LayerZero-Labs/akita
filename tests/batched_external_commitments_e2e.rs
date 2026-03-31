@@ -140,11 +140,11 @@ fn batched_onehot_round_trip_with_individual_commitments() {
             Blake2bTranscript::<F>::new(b"hachi_e2e/batched-individual-commitments");
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &poly_groups,
-            &pt,
-            hints,
+            &[&poly_groups[..]],
+            &[&pt[..]],
+            vec![hints],
             &mut prover_transcript,
-            &commitments,
+            &[&commitments[..]],
             BasisMode::Lagrange,
             &layout,
         )
@@ -165,9 +165,9 @@ fn batched_onehot_round_trip_with_individual_commitments() {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            &pt,
-            &opening_groups,
-            &commitments,
+            &[&pt[..]],
+            &[&opening_groups[..]],
+            &[&commitments[..]],
             BasisMode::Lagrange,
             &layout,
         );
@@ -240,11 +240,11 @@ fn batched_onehot_round_trip_with_mixed_commitment_groups() {
             Blake2bTranscript::<F>::new(b"hachi_e2e/batched-mixed-commitment-groups");
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &poly_groups,
-            &pt,
-            hints,
+            &[&poly_groups[..]],
+            &[&pt[..]],
+            vec![hints],
             &mut prover_transcript,
-            &commitments,
+            &[&commitments[..]],
             BasisMode::Lagrange,
             &layout,
         )
@@ -265,9 +265,9 @@ fn batched_onehot_round_trip_with_mixed_commitment_groups() {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            &pt,
-            &opening_groups,
-            &commitments,
+            &[&pt[..]],
+            &[&opening_groups[..]],
+            &[&commitments[..]],
             BasisMode::Lagrange,
             &layout,
         );
