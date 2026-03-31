@@ -851,8 +851,7 @@ where
     F: FieldCore + CanonicalField,
 {
     let envelope = Cfg::envelope(max_num_vars);
-    let chain_stats =
-        scan_layout_chain::<F, D, Cfg>(max_num_vars, layout, max_num_batched_polys)?;
+    let chain_stats = scan_layout_chain::<F, D, Cfg>(max_num_vars, layout, max_num_batched_polys)?;
     let required_rows = [envelope.max_n_a, envelope.max_n_b, envelope.max_n_d]
         .into_iter()
         .max()
