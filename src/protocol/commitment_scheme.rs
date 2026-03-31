@@ -297,6 +297,12 @@ where
         .checked_add(layout.r_vars)
         .and_then(|n| n.checked_add(alpha_bits))
         .ok_or_else(|| HachiError::InvalidSetup("opening point length overflow".to_string()))?;
+    if opening_point.len() > target_num_vars {
+        return Err(HachiError::InvalidPointDimension {
+            expected: target_num_vars,
+            actual: opening_point.len(),
+        });
+    }
     let mut padded_point = opening_point.to_vec();
     padded_point.resize(target_num_vars, F::zero());
     let inner_point = &padded_point[..alpha_bits];
@@ -1933,6 +1939,11 @@ where
             ));
         }
         let num_vars = opening_points[0].len();
+        if opening_points.iter().any(|pt| pt.len() != num_vars) {
+            return Err(HachiError::InvalidInput(
+                "batched_prove requires all opening points to have the same length".to_string(),
+            ));
+        }
         let batch_shape =
             validate_nonempty_group_sizes_by_point(poly_groups_by_point, "batched_prove")?;
         if opening_points.len() != batch_shape.point_group_sizes.len()
@@ -2283,6 +2294,9 @@ where
             return Err(HachiError::InvalidProof);
         }
         let num_vars = opening_points[0].len();
+        if opening_points.iter().any(|pt| pt.len() != num_vars) {
+            return Err(HachiError::InvalidProof);
+        }
         let y_coeff_len = proof.root.y_rings().coeff_len();
         if y_coeff_len % D != 0 {
             return Err(HachiError::InvalidProof);
