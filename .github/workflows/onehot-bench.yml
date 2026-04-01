@@ -10,8 +10,6 @@ on:
 permissions:
   actions: read
   contents: read
-  issues: write
-  pull-requests: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -70,16 +68,6 @@ jobs:
             --output-dir "$HACHI_BENCH_ARTIFACT_DIR" \
             --mode "$HACHI_BENCH_MODE" \
             --num-vars "$HACHI_BENCH_NUM_VARS"
-
-      - name: Upload benchmark artifact
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ${{ env.HACHI_BENCH_ARTIFACT_NAME }}
-          path: ${{ env.HACHI_BENCH_ARTIFACT_DIR }}
-          if-no-files-found: warn
-          retention-days: 30
 
       - name: Determine comparison baseline artifacts
         if: always() && github.event_name == 'pull_request'
@@ -210,6 +198,7 @@ jobs:
           HACHI_BENCH_PREVIOUS_BASELINE_LABEL: ${{ steps.bench-baselines.outputs.previous-label }}
           HACHI_BENCH_PREVIOUS_BASELINE_SHA: ${{ steps.bench-baselines.outputs.previous-sha }}
         run: |
+          mkdir -p "$HACHI_BENCH_ARTIFACT_DIR"
           if [ ! -f "$HACHI_BENCH_ARTIFACT_DIR/summary.json" ]; then
             echo "Benchmark summary not found; benchmark step likely failed." > "$HACHI_BENCH_REPORT"
           else
@@ -227,51 +216,14 @@ jobs:
             echo
             echo '> Posted by Cursor assistant (model: GPT-5.4) on behalf of the user (Quang Dao) with approval.'
           } > "$HACHI_BENCH_COMMENT"
+          cp "$HACHI_BENCH_COMMENT" "$HACHI_BENCH_ARTIFACT_DIR/comment.md"
 
-      - name: Upsert benchmark PR comment
-        if: >-
-          always() &&
-          github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository
+      - name: Upload benchmark artifact
+        if: always()
         continue-on-error: true
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          script: |
-            const fs = require('fs');
-            const commentPath = process.env.HACHI_BENCH_COMMENT;
-            if (!fs.existsSync(commentPath)) {
-              core.info('No benchmark comment body found.');
-              return;
-            }
-
-            const marker = '<!-- hachi-onehot-bench-report -->';
-            const body = fs.readFileSync(commentPath, 'utf8');
-            const { owner, repo } = context.repo;
-            const issue_number = context.issue.number;
-            try {
-              const comments = await github.paginate(
-                github.rest.issues.listComments,
-                { owner, repo, issue_number, per_page: 100 }
-              );
-              const existing = comments.find(comment =>
-                comment.user?.login === 'github-actions[bot]' && comment.body?.includes(marker)
-              );
-
-              if (existing) {
-                await github.rest.issues.updateComment({
-                  owner,
-                  repo,
-                  comment_id: existing.id,
-                  body,
-                });
-              } else {
-                await github.rest.issues.createComment({
-                  owner,
-                  repo,
-                  issue_number,
-                  body,
-                });
-              }
-            } catch (error) {
-              core.warning(`Skipping benchmark PR comment upsert: ${error.message}`);
-            }
+          name: ${{ env.HACHI_BENCH_ARTIFACT_NAME }}
+          path: ${{ env.HACHI_BENCH_ARTIFACT_DIR }}
+          if-no-files-found: warn
+          retention-days: 30
