@@ -870,18 +870,6 @@ pub(crate) fn w_ring_element_count_with_point_claim_groups<F: CanonicalField>(
     )
 }
 
-/// Compute the w-commitment layout from the main layout.
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn w_commitment_layout<F: CanonicalField, const D: usize, Cfg: CommitmentConfig>(
-    level_params: &HachiLevelParams,
-    main_layout: HachiCommitmentLayout,
-) -> Result<HachiCommitmentLayout, HachiError> {
-    let current_w_len = w_ring_element_count::<F>(level_params, main_layout)
-        .checked_mul(D)
-        .ok_or_else(|| HachiError::InvalidSetup("w witness length overflow".to_string()))?;
-    hachi_recursive_level_layout_from_params::<Cfg>(level_params, current_w_len)
-}
-
 /// Commit the witness vector `w` (D-agnostic `Vec<i8>`) into `D`-sized ring
 /// elements and compute the ring commitment.
 ///
