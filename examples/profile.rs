@@ -5,6 +5,7 @@ use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
     Fp128BoundedCommitmentConfig, Fp128D64BoundedCommitmentConfig, Fp128FullCommitmentConfig,
     Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig, HachiCommitmentLayout,
+    HachiSchedulePlan,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
@@ -75,6 +76,7 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
     pt: &[F],
     opening: F,
     layout: &HachiCommitmentLayout,
+    plan: Option<&HachiSchedulePlan>,
 ) {
     type Scheme<const D: usize, Cfg> = HachiCommitmentScheme<D, Cfg>;
 
@@ -97,7 +99,7 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
     )
     .unwrap();
     tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "prove");
-    print_proof_summary(label, &proof);
+    print_proof_summary(label, &proof, plan);
 
     let t0 = Instant::now();
     let verifier_setup = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(setup);
@@ -119,7 +121,51 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
     }
 }
 
-fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
+fn emit_planned_schedule_summary(label: &str, plan: &HachiSchedulePlan) {
+    tracing::info!(
+        label,
+        levels = plan.levels.len(),
+        exact_proof_bytes = plan.exact_proof_bytes,
+        no_wrapper_bytes = plan.no_wrapper_bytes,
+        "planned schedule"
+    );
+
+    for level in &plan.levels {
+        let next_w_len = level.next_inputs.current_w_len;
+        tracing::info!(
+            label,
+            level = level.inputs.level,
+            d = level.params.d,
+            n_a = level.params.n_a,
+            n_b = level.params.n_b,
+            n_d = level.params.n_d,
+            challenge_l1_mass = level.params.challenge_l1_mass,
+            log_basis = level.params.log_basis,
+            m_vars = level.layout.m_vars,
+            r_vars = level.layout.r_vars,
+            num_blocks = level.layout.num_blocks,
+            block_len = level.layout.block_len,
+            delta_commit = level.layout.num_digits_commit,
+            delta_open = level.layout.num_digits_open,
+            delta_fold = level.layout.num_digits_fold,
+            current_w_len = level.inputs.current_w_len,
+            next_w_ring = next_w_len / level.params.d,
+            next_w_len,
+            level_bytes = level.level_bytes,
+            "planned fold level"
+        );
+    }
+
+    let terminal = plan.terminal_state();
+    tracing::info!(
+        label,
+        final_w_len = terminal.current_w_len,
+        final_log_basis = terminal.log_basis,
+        "planned terminal state"
+    );
+}
+
+fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSchedulePlan>) {
     let top_levels_len_size = std::mem::size_of::<u32>();
     let hachi_levels_total: usize = proof
         .levels
@@ -141,10 +187,21 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>) {
     debug_assert_eq!(accounted_total, proof.size());
     eprintln!("[{label}]   proof framing: levels_len={top_levels_len_size} bytes");
 
+    if let Some(plan) = plan {
+        emit_planned_schedule_summary(label, plan);
+    }
+
     for (i, lp) in proof.levels.iter().enumerate() {
         print_hachi_level_breakdown(label, i, lp);
     }
     let final_w = &proof.tail.direct;
+    tracing::info!(
+        label,
+        tail_bytes = final_w.serialized_size(Compress::No),
+        final_w_num_elems = final_w.num_elems,
+        final_w_bits_per_elem = final_w.bits_per_elem,
+        "proof tail summary"
+    );
     eprintln!(
         "[{label}]   final_w: total={} bytes, elems={}, bits/elem={}",
         final_w.serialized_size(Compress::No),
@@ -191,6 +248,21 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
     let stage2_sumcheck_size = stage2.sumcheck.serialized_size(Compress::No);
     let next_w_commitment_size = stage2.next_w_commitment.serialized_size(Compress::No);
     let next_w_eval_size = stage2.next_w_eval.serialized_size(Compress::No);
+    tracing::info!(
+        label,
+        level = level_idx,
+        d = level_d,
+        total_bytes = total,
+        y_ring_bytes = y_ring_size,
+        v_bytes = v_size,
+        stage1_sumcheck_bytes = stage1_sumcheck_size,
+        stage1_interstage_claims_bytes = stage1_interstage_claims_size,
+        stage1_s_claim_bytes = stage1_s_claim_size,
+        stage2_sumcheck_bytes = stage2_sumcheck_size,
+        next_w_commitment_bytes = next_w_commitment_size,
+        next_w_eval_bytes = next_w_eval_size,
+        "proof fold level"
+    );
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
     eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
@@ -228,7 +300,11 @@ fn print_layout(layout: &HachiCommitmentLayout) {
     );
 }
 
-fn run_dense<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCommitmentLayout) {
+fn run_dense<const D: usize, Cfg: CommitmentConfig>(
+    nv: usize,
+    layout: &HachiCommitmentLayout,
+    plan: Option<&HachiSchedulePlan>,
+) {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let pt: Vec<F> = (0..nv)
         .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
@@ -259,10 +335,14 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCom
         "setup"
     );
 
-    run_prove::<D, Cfg, _>("dense", &setup, &poly, &pt, opening, layout);
+    run_prove::<D, Cfg, _>("dense", &setup, &poly, &pt, opening, layout, plan);
 }
 
-fn run_onehot<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCommitmentLayout) {
+fn run_onehot<const D: usize, Cfg: CommitmentConfig>(
+    nv: usize,
+    layout: &HachiCommitmentLayout,
+    plan: Option<&HachiSchedulePlan>,
+) {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let total_field = (layout.num_blocks * layout.block_len)
         .checked_mul(D)
@@ -293,21 +373,23 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig>(nv: usize, layout: &HachiCo
         "setup"
     );
 
-    run_prove::<D, Cfg, _>("onehot", &setup, &onehot_poly, &pt, opening, layout);
+    run_prove::<D, Cfg, _>("onehot", &setup, &onehot_poly, &pt, opening, layout, plan);
 }
 
 fn run_dense_mode<const D: usize, Cfg: CommitmentConfig>(title: &str, nv: usize) {
     let layout = resolve_layout::<Cfg>(nv);
+    let plan = Cfg::schedule_plan(nv).expect("schedule plan");
     tracing::info!("{}", title);
     print_layout(&layout);
-    run_dense::<D, Cfg>(nv, &layout);
+    run_dense::<D, Cfg>(nv, &layout, plan.as_ref());
 }
 
 fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig>(title: &str, nv: usize) {
     let layout = resolve_layout::<Cfg>(nv);
+    let plan = Cfg::schedule_plan(nv).expect("schedule plan");
     tracing::info!("{}", title);
     print_layout(&layout);
-    run_onehot::<D, Cfg>(nv, &layout);
+    run_onehot::<D, Cfg>(nv, &layout, plan.as_ref());
 }
 
 fn main() {

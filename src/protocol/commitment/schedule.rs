@@ -115,21 +115,32 @@ struct PlannerState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Fully planned public data for one Hachi fold level.
 pub struct HachiPlannedLevel {
+    /// Public inputs that selected this level.
     pub inputs: HachiScheduleInputs,
+    /// Active Hachi parameters chosen for this level.
     pub params: HachiLevelParams,
+    /// Runtime commitment layout used at this level.
     pub layout: HachiCommitmentLayout,
+    /// Public inputs for the next level after folding.
     pub next_inputs: HachiScheduleInputs,
+    /// Planned log-basis of the next level.
     pub next_level_log_basis: u32,
     /// `n_b * d` of the next level, used for next_w_commitment shape.
     pub next_commit_coeffs: usize,
+    /// Exact bytes contributed by this level to the proof.
     pub level_bytes: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Public state after a planned prefix of Hachi fold levels.
 pub struct HachiPlannedState {
+    /// Next level index reached by the plan.
     pub level: usize,
+    /// Witness length in field elements at this state.
     pub current_w_len: usize,
+    /// Active log-basis for the witness at this state.
     pub log_basis: u32,
 }
 
