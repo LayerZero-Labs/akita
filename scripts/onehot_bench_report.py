@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-KV_RE = re.compile(r'([A-Za-z_]+)=(".*?"|\S+)')
+KV_RE = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)=(".*?"|\S+)')
 RSS_PATTERNS = [
     re.compile(r"Maximum resident set size \(kbytes\):\s+(\d+)"),
     re.compile(r"^\s*(\d+)\s+maximum resident set size$", re.MULTILINE),
@@ -160,7 +160,7 @@ def configured_cases(args: argparse.Namespace) -> list[BenchmarkCaseSpec]:
 
 def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> dict[str, object]:
     summary: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "benchmark": benchmark_name(mode, num_vars, num_polys),
         "mode": mode,
         "num_vars": num_vars,
@@ -168,6 +168,8 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
         "case_id": case_id(mode, num_vars, num_polys),
         "collected_at": datetime.now(timezone.utc).isoformat(),
     }
+    planned_levels: dict[int, dict[str, int]] = {}
+    proof_levels: dict[int, dict[str, int]] = {}
 
     for line in log_text.splitlines():
         line = ANSI_RE.sub("", line)
@@ -192,6 +194,49 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
             summary["tail_bytes"] = int(kvs["tail_bytes"])
             if "levels" in kvs and "hachi_levels" not in summary:
                 summary["hachi_levels"] = int(kvs["levels"])
+        elif "planned fold level" in line and kvs.get("label") == mode:
+            level = int(kvs["level"])
+            planned_levels[level] = {
+                "level": level,
+                "d": int(kvs["d"]),
+                "n_a": int(kvs["n_a"]),
+                "n_b": int(kvs["n_b"]),
+                "n_d": int(kvs["n_d"]),
+                "challenge_l1_mass": int(kvs["challenge_l1_mass"]),
+                "log_basis": int(kvs["log_basis"]),
+                "m_vars": int(kvs["m_vars"]),
+                "r_vars": int(kvs["r_vars"]),
+                "num_blocks": int(kvs["num_blocks"]),
+                "block_len": int(kvs["block_len"]),
+                "delta_commit": int(kvs["delta_commit"]),
+                "delta_open": int(kvs["delta_open"]),
+                "delta_fold": int(kvs["delta_fold"]),
+                "current_w_len": int(kvs["current_w_len"]),
+                "next_w_ring": int(kvs["next_w_ring"]),
+                "next_w_len": int(kvs["next_w_len"]),
+                "level_bytes": int(kvs["level_bytes"]),
+            }
+        elif "planned terminal state" in line and kvs.get("label") == mode:
+            summary["terminal_w_len"] = int(kvs["final_w_len"])
+            summary["terminal_log_basis"] = int(kvs["final_log_basis"])
+        elif "proof fold level" in line and kvs.get("label") == mode:
+            level = int(kvs["level"])
+            proof_levels[level] = {
+                "level": level,
+                "d": int(kvs["d"]),
+                "total_bytes": int(kvs["total_bytes"]),
+                "y_ring_bytes": int(kvs["y_ring_bytes"]),
+                "v_bytes": int(kvs["v_bytes"]),
+                "stage1_sumcheck_bytes": int(kvs["stage1_sumcheck_bytes"]),
+                "stage1_interstage_claims_bytes": int(kvs["stage1_interstage_claims_bytes"]),
+                "stage1_s_claim_bytes": int(kvs["stage1_s_claim_bytes"]),
+                "stage2_sumcheck_bytes": int(kvs["stage2_sumcheck_bytes"]),
+                "next_w_commitment_bytes": int(kvs["next_w_commitment_bytes"]),
+                "next_w_eval_bytes": int(kvs["next_w_eval_bytes"]),
+            }
+        elif "proof tail summary" in line and kvs.get("label") == mode:
+            summary["tail_num_elems"] = int(kvs["final_w_num_elems"])
+            summary["tail_bits_per_elem"] = int(kvs["final_w_bits_per_elem"])
     for index, pattern in enumerate(RSS_PATTERNS):
         rss_match = pattern.search(log_text)
         if rss_match:
@@ -200,6 +245,11 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
                 rss_value //= 1024
             summary["max_rss_kib"] = rss_value
             break
+
+    if planned_levels:
+        summary["planned_levels"] = [planned_levels[level] for level in sorted(planned_levels)]
+    if proof_levels:
+        summary["proof_levels"] = [proof_levels[level] for level in sorted(proof_levels)]
 
     return summary
 
@@ -376,6 +426,52 @@ def render_metric_row(
     return f"| {metric.name} | " + " | ".join(columns) + f" | {metric.unit} |"
 
 
+def render_planned_levels(levels: list[dict[str, object]]) -> None:
+    print("<details>")
+    print("<summary>Per-level parameters</summary>")
+    print()
+    print(
+        "| L | Config | D | nA | nB | nD | lb | l1 | m | r | "
+        "δcommit | δopen | δfold | next w (ring) | next w (field) | planned bytes |"
+    )
+    print("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    for level in levels:
+        print(
+            f"| L{level['level']} | `D{level['d']}-na{level['n_a']}` | "
+            f"{level['d']} | {level['n_a']} | {level['n_b']} | {level['n_d']} | "
+            f"{level['log_basis']} | {level['challenge_l1_mass']} | {level['m_vars']} | {level['r_vars']} | "
+            f"{level['delta_commit']} | {level['delta_open']} | {level['delta_fold']} | "
+            f"{fmt_bytes(float(level['next_w_ring']))} | {fmt_bytes(float(level['next_w_len']))} | "
+            f"{fmt_bytes(float(level['level_bytes']))} B |"
+        )
+    print()
+    print("</details>")
+
+
+def render_proof_levels(levels: list[dict[str, object]]) -> None:
+    print("<details>")
+    print("<summary>Per-level proof-size breakdown</summary>")
+    print()
+    print(
+        "| L | total | y_ring | v | stage1 sc | interstage | s_claim | "
+        "stage2 sc | next_w_commit | next_w_eval |"
+    )
+    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    for level in levels:
+        print(
+            f"| L{level['level']} | {fmt_bytes(float(level['total_bytes']))} B | "
+            f"{fmt_bytes(float(level['y_ring_bytes']))} | {fmt_bytes(float(level['v_bytes']))} | "
+            f"{fmt_bytes(float(level['stage1_sumcheck_bytes']))} | "
+            f"{fmt_bytes(float(level['stage1_interstage_claims_bytes']))} | "
+            f"{fmt_bytes(float(level['stage1_s_claim_bytes']))} | "
+            f"{fmt_bytes(float(level['stage2_sumcheck_bytes']))} | "
+            f"{fmt_bytes(float(level['next_w_commitment_bytes']))} | "
+            f"{fmt_bytes(float(level['next_w_eval_bytes']))} |"
+        )
+    print()
+    print("</details>")
+
+
 def render_report(args: argparse.Namespace) -> int:
     summary_path = pathlib.Path(args.summary)
     current_cases = load_case_summaries(summary_path)
@@ -394,7 +490,13 @@ def render_report(args: argparse.Namespace) -> int:
     previous_baseline_sha = os.environ.get("HACHI_BENCH_PREVIOUS_BASELINE_SHA")
     previous_baseline_label = os.environ.get("HACHI_BENCH_PREVIOUS_BASELINE_LABEL")
 
-    print("## One-hot Benchmark Report")
+    if len(current_cases) == 1:
+        only_case = current_cases[0]
+        print(
+            f"## {benchmark_name(only_case['mode'], int(only_case['num_vars']), int(only_case.get('num_polys', 1)))} Benchmark Report"
+        )
+    else:
+        print("## Benchmark Report")
     print()
     ref = commit_ref(source_sha)
     if ref:
@@ -468,8 +570,41 @@ def render_report(args: argparse.Namespace) -> int:
         print()
         if current.get("proof_size_bytes") is not None:
             print(f"- Proof size: `{fmt_bytes(float(current['proof_size_bytes']))} B`")
+        if current.get("hachi_fold_bytes") is not None:
+            print(f"- Hachi fold bytes: `{fmt_bytes(float(current['hachi_fold_bytes']))} B`")
+        if current.get("tail_bytes") is not None:
+            print(f"- Tail bytes: `{fmt_bytes(float(current['tail_bytes']))} B`")
+        if (
+            current.get("proof_size_bytes") is not None
+            and current.get("hachi_fold_bytes") is not None
+            and current.get("tail_bytes") is not None
+        ):
+            framing_bytes = int(current["proof_size_bytes"]) - int(current["hachi_fold_bytes"]) - int(
+                current["tail_bytes"]
+            )
+            print(f"- Proof framing bytes: `{fmt_bytes(float(framing_bytes))} B`")
         if current.get("hachi_levels") is not None:
             print(f"- Hachi levels: `{current['hachi_levels']}`")
+        if current.get("tail_num_elems") is not None and current.get("tail_bits_per_elem") is not None:
+            print(
+                f"- Tail shape: `{fmt_bytes(float(current['tail_num_elems']))}` elems at "
+                f"`{current['tail_bits_per_elem']}` bits/elem"
+            )
+        if current.get("terminal_w_len") is not None and current.get("terminal_log_basis") is not None:
+            print(
+                f"- Terminal state: `w_len={fmt_bytes(float(current['terminal_w_len']))}` "
+                f"with `log_basis={current['terminal_log_basis']}`"
+            )
+
+        planned_levels = current.get("planned_levels")
+        if isinstance(planned_levels, list) and planned_levels:
+            print()
+            render_planned_levels(planned_levels)
+
+        proof_levels = current.get("proof_levels")
+        if isinstance(proof_levels, list) and proof_levels:
+            print()
+            render_proof_levels(proof_levels)
         if index + 1 < len(current_cases):
             print()
 
