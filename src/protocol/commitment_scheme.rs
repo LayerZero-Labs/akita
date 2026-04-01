@@ -372,6 +372,8 @@ where
 
 /// Prove one fold level: quad_eq -> ring_switch -> sumcheck.
 ///
+type RecursiveSuffixResult<F> = (Vec<HachiLevelProof<F>>, usize, RecursiveProverState<F>);
+
 /// Generic over the commitment config so it works for both the original
 /// polynomial (using `Cfg`) and recursive w-openings (using `WCommitmentConfig`).
 type CommitFn<'a, F> = Box<
@@ -1359,7 +1361,7 @@ fn prove_batched_recursive_suffix<F, T, const D: usize, Cfg>(
     max_num_vars: usize,
     transcript: &mut T,
     next_state: RecursiveProverState<F>,
-) -> Result<(Vec<HachiLevelProof<F>>, usize, RecursiveProverState<F>), HachiError>
+) -> Result<RecursiveSuffixResult<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
     T: Transcript<F>,
@@ -1517,7 +1519,7 @@ where
                 current_state.log_basis,
             )?;
 
-            if level_index + 1 <= num_levels {
+            if level_index < num_levels {
                 let next_level_d = next_level_params.d;
                 if !level_proof.next_w_commitment().can_decode_vec(next_level_d) {
                     return Err(HachiError::InvalidProof);
