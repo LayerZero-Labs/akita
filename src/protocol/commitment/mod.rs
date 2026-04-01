@@ -9,7 +9,8 @@ pub(crate) mod transcript_append;
 mod types;
 pub mod utils;
 
-pub(crate) use commit::root_current_w_len;
+pub use commit::hachi_batched_root_layout;
+pub(crate) use commit::{root_current_w_len, scale_batched_root_layout};
 pub use commit::{
     HachiCommitmentCore, HachiExpandedSetup, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup,
 };
@@ -28,7 +29,9 @@ pub use schedule::{
     HachiScheduleInputs, HachiSchedulePlan,
 };
 pub(crate) use schedule::{
-    recursive_level_decomposition_from_root, recursive_r_decomp_levels_for_bound,
+    packed_digits_bytes, planned_next_log_basis_with_current_basis,
+    planned_recursive_suffix_bytes_with_log_basis, recursive_level_decomposition_from_root,
+    recursive_r_decomp_levels_for_bound,
 };
 pub use scheme::{CommitWitness, CommitmentScheme, RingCommitmentScheme};
 pub use transcript_append::AppendToTranscript;

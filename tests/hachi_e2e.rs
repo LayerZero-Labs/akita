@@ -2,16 +2,16 @@
 
 use hachi_pcs::algebra::Fp128;
 use hachi_pcs::protocol::commitment::{
-    hachi_recursive_level_layout_from_params, Fp128BoundedCommitmentConfig,
-    Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig,
-    HachiCommitmentLayout, HachiScheduleInputs,
+    hachi_batched_root_layout, hachi_recursive_level_layout_from_params,
+    Fp128BoundedCommitmentConfig, Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig,
+    Fp128OneHotCommitmentConfig, HachiCommitmentLayout, HachiScheduleInputs,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
 };
-use hachi_pcs::protocol::proof::HachiProof;
+use hachi_pcs::protocol::proof::{HachiBatchedProof, HachiProof};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::{CommitmentConfig, RingCommitment};
 use hachi_pcs::{
@@ -99,12 +99,14 @@ fn make_dense_basis2_fixture(nv: usize, transcript_label: &'static [u8]) -> Dens
     #[cfg(feature = "disk-persistence")]
     purge_setup_cache(nv);
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
     let verifier_setup =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
-    let (commitment, hint) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout)
-            .unwrap();
+    let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+        std::slice::from_ref(&poly),
+        &setup,
+    )
+    .unwrap();
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_label);
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
@@ -115,7 +117,6 @@ fn make_dense_basis2_fixture(nv: usize, transcript_label: &'static [u8]) -> Dens
         &mut prover_transcript,
         &commitment,
         BasisMode::Lagrange,
-        &layout,
     )
     .unwrap();
 
@@ -150,12 +151,14 @@ where
     #[cfg(feature = "disk-persistence")]
     purge_setup_cache(nv);
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
     let verifier_setup =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
-    let (commitment, hint) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly, &setup, &layout)
-            .unwrap();
+    let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+        std::slice::from_ref(&poly),
+        &setup,
+    )
+    .unwrap();
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_label);
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
@@ -166,7 +169,6 @@ where
         &mut prover_transcript,
         &commitment,
         BasisMode::Lagrange,
-        &layout,
     )
     .unwrap();
 
@@ -201,12 +203,16 @@ fn purge_setup_cache(max_num_vars: usize) {
         path.push("hachi");
         if let Ok(entries) = std::fs::read_dir(&path) {
             let needle = format!("_nv{max_num_vars}.setup");
+            let batch_needle = format!("_nv{max_num_vars}_batch");
             for entry in entries.flatten() {
                 let entry_path = entry.path();
                 if entry_path
                     .file_name()
                     .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.starts_with("hachi_") && name.ends_with(&needle))
+                    .is_some_and(|name| {
+                        name.starts_with("hachi_")
+                            && (name.ends_with(&needle) || name.contains(&batch_needle))
+                    })
                 {
                     let _ = std::fs::remove_file(entry_path);
                 }
@@ -266,10 +272,13 @@ fn full_d128_prove_verify() {
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(FULL_TEST_NV);
 
-        let setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(FULL_TEST_NV);
+        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+            FULL_TEST_NV,
+            1,
+        );
         let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-            &poly, &setup, &layout,
+            std::slice::from_ref(&poly),
+            &setup,
         )
         .unwrap();
 
@@ -283,7 +292,6 @@ fn full_d128_prove_verify() {
             &mut prover_transcript,
             &commitment,
             BasisMode::Lagrange,
-            &layout,
         )
         .unwrap();
         let prove_time = prove_start.elapsed();
@@ -311,7 +319,6 @@ fn full_d128_prove_verify() {
             &expected_opening,
             &commitment,
             BasisMode::Lagrange,
-            &layout,
         );
         let verify_time = verify_start.elapsed();
 
@@ -340,7 +347,7 @@ fn full_d128_basis2_prove_verify() {
         type Cfg = Fp128BoundedCommitmentConfig<128, 2, 2>;
         const D: usize = Cfg::D;
 
-        let (verifier_setup, commitment, proof, opening_point, opening, layout) =
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_basis2_fixture(BASIS2_TEST_NV, b"hachi_e2e/basis2");
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/basis2");
@@ -352,7 +359,6 @@ fn full_d128_basis2_prove_verify() {
             &opening,
             &commitment,
             BasisMode::Lagrange,
-            &layout,
         );
 
         assert!(
@@ -371,7 +377,7 @@ fn full_d128_basis2_rejects_tampered_stage1_sumcheck() {
         type Cfg = Fp128BoundedCommitmentConfig<128, 2, 2>;
         const D: usize = Cfg::D;
 
-        let (verifier_setup, commitment, proof, opening_point, opening, layout) =
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_basis2_fixture(BASIS2_TEST_NV, b"hachi_e2e/basis2-tamper");
         let mut malformed = proof.clone();
         let stage1_sumcheck = &mut malformed
@@ -400,7 +406,6 @@ fn full_d128_basis2_rejects_tampered_stage1_sumcheck() {
             &opening,
             &commitment,
             BasisMode::Lagrange,
-            &layout,
         );
 
         assert!(result.is_err(), "tampered stage1 sumcheck must be rejected");
@@ -419,7 +424,7 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
         let plan = Cfg::schedule_plan(nv)
             .expect("schedule plan")
             .expect("adaptive full config should expose a schedule plan");
-        let (verifier_setup, commitment, proof, opening_point, opening, layout) =
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<D, Cfg>(nv, b"hachi_e2e/adaptive-full-mixed");
 
         assert_eq!(proof.levels.len(), plan.levels.len());
@@ -447,7 +452,6 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
             &opening,
             &commitment,
             BasisMode::Lagrange,
-            &layout,
         );
         assert!(
             result.is_ok(),
@@ -488,13 +492,12 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(nv);
 
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-            &onehot_poly,
+            std::slice::from_ref(&onehot_poly),
             &setup,
-            &layout,
         )
         .unwrap();
 
@@ -507,7 +510,6 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             &mut prover_transcript,
             &commitment,
             BasisMode::Lagrange,
-            &layout,
         )
         .unwrap();
 
@@ -538,11 +540,191 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             &expected_opening,
             &commitment,
             BasisMode::Lagrange,
-            &layout,
         );
         assert!(
             result.is_ok(),
             "adaptive onehot direct-tail verification must pass: {:?}",
+            result.err()
+        );
+    });
+}
+
+#[test]
+fn batched_onehot_same_point_round_trip() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = Fp128OneHotCommitmentConfig;
+        const D: usize = Cfg::D;
+
+        let nv = ONEHOT_TEST_NV;
+        let layout = hachi_batched_root_layout::<Cfg, D>(nv, 2).expect("layout");
+        let total_field = (layout.num_blocks * layout.block_len)
+            .checked_mul(D)
+            .expect("total field size overflow");
+        let total_chunks = total_field / ONEHOT_K;
+        assert_eq!(total_chunks * ONEHOT_K, total_field);
+
+        let mut rng_a = StdRng::seed_from_u64(0x1234_5678);
+        let mut rng_b = StdRng::seed_from_u64(0x8765_4321);
+        let indices_a: Vec<Option<usize>> = (0..total_chunks)
+            .map(|_| Some(rng_a.gen_range(0..ONEHOT_K)))
+            .collect();
+        let indices_b: Vec<Option<usize>> = (0..total_chunks)
+            .map(|_| Some(rng_b.gen_range(0..ONEHOT_K)))
+            .collect();
+        let poly_a =
+            OneHotPoly::<F, D>::new(ONEHOT_K, indices_a, layout.r_vars, layout.m_vars).unwrap();
+        let poly_b =
+            OneHotPoly::<F, D>::new(ONEHOT_K, indices_b, layout.r_vars, layout.m_vars).unwrap();
+        let pt = random_point(nv);
+        let openings = [
+            opening_from_poly(&poly_a, &pt, &layout),
+            opening_from_poly(&poly_b, &pt, &layout),
+        ];
+
+        #[cfg(feature = "disk-persistence")]
+        purge_setup_cache(nv);
+
+        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 2);
+        let verifier_setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        let poly_group = [&poly_a, &poly_b];
+        let poly_groups = [&poly_group[..]];
+        let (commitment, hint) =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly_group, &setup)
+                .unwrap();
+        let commitments = [commitment];
+        let hints = vec![hint];
+
+        let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot");
+        let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+            &setup,
+            &[&poly_groups[..]],
+            &[&pt[..]],
+            vec![hints],
+            &mut prover_transcript,
+            &[&commitments[..]],
+            BasisMode::Lagrange,
+        )
+        .unwrap();
+
+        let mut serialized = Vec::new();
+        let proof_shape = proof.shape();
+        proof
+            .serialize_compressed(&mut serialized)
+            .expect("serialize batched onehot proof");
+        let mut cursor = std::io::Cursor::new(serialized);
+        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof_shape)
+            .expect("deserialize batched onehot proof");
+
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot");
+        let opening_groups = [&openings[..]];
+        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &[&pt[..]],
+            &[&opening_groups[..]],
+            &[&commitments[..]],
+            BasisMode::Lagrange,
+        );
+        assert!(
+            result.is_ok(),
+            "batched onehot verification must pass: {:?}",
+            result.err()
+        );
+    });
+}
+
+#[test]
+fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = Fp128OneHotCommitmentConfig;
+        const D: usize = Cfg::D;
+        const NV: usize = 30;
+        const BATCH_SIZE: usize = 4;
+
+        let layout = hachi_batched_root_layout::<Cfg, D>(NV, BATCH_SIZE).expect("layout");
+        let total_field = (layout.num_blocks * layout.block_len)
+            .checked_mul(D)
+            .expect("total field size overflow");
+        let total_chunks = total_field / ONEHOT_K;
+        assert_eq!(total_chunks * ONEHOT_K, total_field);
+
+        let polys: Vec<OneHotPoly<F, D>> = (0..BATCH_SIZE)
+            .map(|poly_idx| {
+                let mut rng = StdRng::seed_from_u64(0x600d_f00d_1234_0000 + poly_idx as u64);
+                let indices: Vec<Option<usize>> = (0..total_chunks)
+                    .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
+                    .collect();
+                OneHotPoly::<F, D>::new(ONEHOT_K, indices, layout.r_vars, layout.m_vars).unwrap()
+            })
+            .collect();
+        let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
+        let pt = random_point(NV);
+        let openings: Vec<F> = polys
+            .iter()
+            .map(|poly| opening_from_poly(poly, &pt, &layout))
+            .collect();
+
+        #[cfg(feature = "disk-persistence")]
+        purge_setup_cache(NV);
+
+        let setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, BATCH_SIZE);
+        let verifier_setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        let poly_groups = [&poly_refs[..]];
+        let (commitment, hint) =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly_refs, &setup)
+                .unwrap();
+        let commitments = [commitment];
+        let hints = vec![hint];
+
+        let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-4x30");
+        let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+            &setup,
+            &[&poly_groups[..]],
+            &[&pt[..]],
+            vec![hints],
+            &mut prover_transcript,
+            &[&commitments[..]],
+            BasisMode::Lagrange,
+        )
+        .unwrap();
+
+        let mut serialized = Vec::new();
+        let proof_shape = proof.shape();
+        proof
+            .serialize_compressed(&mut serialized)
+            .expect("serialize batched onehot proof");
+        let mut cursor = std::io::Cursor::new(serialized);
+        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof_shape)
+            .expect("deserialize batched onehot proof");
+
+        assert!(
+            decoded.final_w().num_elems <= 245_888,
+            "expected byte-aware batched schedule to keep folding, got final_w with {} elems",
+            decoded.final_w().num_elems
+        );
+
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-4x30");
+        let opening_groups = [&openings[..]];
+        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &[&pt[..]],
+            &[&opening_groups[..]],
+            &[&commitments[..]],
+            BasisMode::Lagrange,
+        );
+        assert!(
+            result.is_ok(),
+            "batched onehot 4x30 verification must pass: {:?}",
             result.err()
         );
     });
@@ -558,7 +740,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
 
         let nv = FULL_TEST_NV;
         let layout = Cfg::commitment_layout(nv).expect("layout");
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv);
+        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
         let plan = Cfg::schedule_plan(nv)
             .expect("schedule plan")
             .expect("adaptive full config should expose a schedule plan");

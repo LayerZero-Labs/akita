@@ -11,6 +11,8 @@ pub const DOMAIN_HACHI_PROTOCOL: &[u8] = b"hachi/protocol";
 pub const ABSORB_COMMITMENT: &[u8] = b"hachi/absorb/commitment";
 /// Absorb claimed openings/evaluations before relation reduction (paper §4.2).
 pub const ABSORB_EVALUATION_CLAIMS: &[u8] = b"hachi/absorb/evaluation-claims";
+/// Absorb the public batch nesting shape for grouped/multipoint batching.
+pub const ABSORB_BATCH_SHAPE: &[u8] = b"hachi/absorb/batch-shape";
 /// Challenge for the evaluation-to-linear-relation reduction (paper §4.2).
 pub const CHALLENGE_LINEAR_RELATION: &[u8] = b"hachi/challenge/linear-relation";
 /// Absorb ring-switch relation messages (paper §4.3).
@@ -54,6 +56,7 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         DOMAIN_HACHI_PROTOCOL,
         ABSORB_COMMITMENT,
         ABSORB_EVALUATION_CLAIMS,
+        ABSORB_BATCH_SHAPE,
         CHALLENGE_LINEAR_RELATION,
         ABSORB_RING_SWITCH_MESSAGE,
         CHALLENGE_RING_SWITCH,
