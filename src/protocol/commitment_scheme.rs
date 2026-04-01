@@ -1091,12 +1091,12 @@ where
         relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, commitment_u, y_ring);
     let stage1 = &level_proof.stage1;
     let stage2 = &level_proof.stage2;
-    let mut stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), stage1.s_claim, rs.b);
+    let stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), stage1.s_claim, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         verify_eq_factored_sumcheck::<F, _, F, _, _>(
             &stage1.sumcheck,
-            &mut stage1_verifier,
+            &stage1_verifier,
             transcript,
             |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
         )?

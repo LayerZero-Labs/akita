@@ -1929,8 +1929,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps>
 
 /// Verifier for the stage-1 norm sumcheck over the virtual table `S`.
 pub struct HachiStage1Verifier<F: FieldCore> {
-    num_rounds: usize,
-    split_eq: GruenSplitEq<F>,
+    tau0: Vec<F>,
     s_claim: F,
     b: usize,
 }
@@ -1938,19 +1937,15 @@ pub struct HachiStage1Verifier<F: FieldCore> {
 impl<F: FieldCore + FromSmallInt> HachiStage1Verifier<F> {
     /// Construct the stage-1 verifier from `tau0`, the carried `s_claim`, and `b`.
     pub fn new(tau0: Vec<F>, s_claim: F, b: usize) -> Self {
-        let num_rounds = tau0.len();
-        Self {
-            num_rounds,
-            split_eq: GruenSplitEq::new(&tau0),
-            s_claim,
-            b,
-        }
+        Self { tau0, s_claim, b }
     }
 }
 
 impl<F: FieldCore + FromSmallInt> EqFactoredSumcheckInstanceVerifier<F> for HachiStage1Verifier<F> {
+    type RoundState = GruenSplitEq<F>;
+
     fn num_rounds(&self) -> usize {
-        self.num_rounds
+        self.tau0.len()
     }
 
     fn degree_bound(&self) -> usize {
@@ -1961,16 +1956,16 @@ impl<F: FieldCore + FromSmallInt> EqFactoredSumcheckInstanceVerifier<F> for Hach
         F::zero()
     }
 
-    fn current_linear_factor_evals(&self) -> (F, F) {
-        self.split_eq.linear_factor_evals()
+    fn start_round_state(&self) -> Self::RoundState {
+        GruenSplitEq::new(&self.tau0)
     }
 
-    fn ingest_challenge(&mut self, _round: usize, r_round: F) {
-        self.split_eq.bind(r_round);
-    }
-
-    fn expected_output_claim(&self, _challenges: &[F]) -> Result<F, HachiError> {
-        Ok(self.split_eq.current_scalar() * range_check_eval_from_s(self.s_claim, self.b))
+    fn expected_output_claim(
+        &self,
+        round_state: &Self::RoundState,
+        _challenges: &[F],
+    ) -> Result<F, HachiError> {
+        Ok(round_state.current_scalar() * range_check_eval_from_s(self.s_claim, self.b))
     }
 }
 
