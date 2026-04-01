@@ -639,7 +639,7 @@ mod tests {
     use crate::protocol::proof::{FlatRingVec, HachiLevelProof};
     use crate::protocol::ring_switch::w_ring_element_count;
     use crate::protocol::sumcheck::{
-        CompressedUniPoly, EqCompressedSumcheckProof, EqCompressedUniPoly, SumcheckProof,
+        CompressedUniPoly, EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof,
     };
     use crate::FieldCore;
 
@@ -655,13 +655,13 @@ mod tests {
         }
     }
 
-    fn dummy_eq_sumcheck(rounds: usize, degree: usize) -> EqCompressedSumcheckProof<F> {
-        EqCompressedSumcheckProof {
+    fn dummy_eq_factored_sumcheck(rounds: usize, degree: usize) -> EqFactoredSumcheckProof<F> {
+        EqFactoredSumcheckProof {
             round_polys: (0..rounds)
-                .map(|_| EqCompressedUniPoly {
+                .map(|_| EqFactoredUniPoly {
                     coeffs_except_linear_term: vec![
                         F::zero();
-                        EqCompressedUniPoly::<F>::stored_coeff_count_for_degree(degree)
+                        EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(degree)
                     ],
                 })
                 .collect(),
@@ -753,7 +753,7 @@ mod tests {
             let level_proof = HachiLevelProof::new_two_stage::<D>(
                 CyclotomicRing::<F, D>::zero(),
                 vec![CyclotomicRing::<F, D>::zero(); level_params.n_d],
-                dummy_eq_sumcheck(rounds, stage1_degree),
+                dummy_eq_factored_sumcheck(rounds, stage1_degree),
                 F::zero(),
                 dummy_sumcheck(rounds, 3),
                 next_commitment,

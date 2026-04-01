@@ -10,17 +10,18 @@ use crate::protocol::transcript::Transcript;
 use crate::FieldCore;
 use std::io::{Read, Write};
 
-/// Eq-compressed round message storing `q(X)` without its linear coefficient.
+/// Eq-factored round message storing `q(X)` without its linear coefficient.
 ///
-/// We store `[q_0, q_2, q_3, ..., q_d]` for an inner polynomial
+/// The wire encoding is headerless, just like [`CompressedUniPoly`]. We store
+/// `[q_0, q_2, q_3, ..., q_d]` for an inner polynomial
 /// `q(X) = q_0 + q_1 X + ... + q_d X^d`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EqCompressedUniPoly<E: FieldCore> {
+pub struct EqFactoredUniPoly<E: FieldCore> {
     /// Coefficients excluding the linear term: `[q_0, q_2, q_3, ..., q_d]`.
     pub coeffs_except_linear_term: Vec<E>,
 }
 
-impl<E: FieldCore> EqCompressedUniPoly<E> {
+impl<E: FieldCore> EqFactoredUniPoly<E> {
     /// Construct from the full coefficient list of `q(X)`.
     pub fn from_q_coeffs(q_coeffs: Vec<E>) -> Self {
         if q_coeffs.is_empty() {
@@ -90,13 +91,13 @@ impl<E: FieldCore> EqCompressedUniPoly<E> {
     }
 }
 
-impl<E: Valid + FieldCore> Valid for EqCompressedUniPoly<E> {
+impl<E: Valid + FieldCore> Valid for EqFactoredUniPoly<E> {
     fn check(&self) -> Result<(), SerializationError> {
         self.coeffs_except_linear_term.check()
     }
 }
 
-impl<E: FieldCore> HachiSerialize for EqCompressedUniPoly<E> {
+impl<E: FieldCore> HachiSerialize for EqFactoredUniPoly<E> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -116,7 +117,7 @@ impl<E: FieldCore> HachiSerialize for EqCompressedUniPoly<E> {
     }
 }
 
-impl<E: FieldCore + Valid> HachiDeserialize for EqCompressedUniPoly<E> {
+impl<E: FieldCore + Valid> HachiDeserialize for EqFactoredUniPoly<E> {
     /// Degree of the inner polynomial `q(X)`.
     type Context = usize;
     fn deserialize_with_mode<R: Read>(
@@ -264,24 +265,24 @@ impl<E: FieldCore> SumcheckProof<E> {
     }
 }
 
-/// Eq-compressed sumcheck proof containing one compressed inner polynomial per round.
+/// Eq-factored sumcheck proof containing one compressed inner polynomial per round.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EqCompressedSumcheckProof<E: FieldCore> {
-    /// One eq-compressed inner polynomial per sumcheck round.
-    pub round_polys: Vec<EqCompressedUniPoly<E>>,
+pub struct EqFactoredSumcheckProof<E: FieldCore> {
+    /// One eq-factored inner polynomial per sumcheck round.
+    pub round_polys: Vec<EqFactoredUniPoly<E>>,
 }
 
-impl<E: Valid + FieldCore> Valid for EqCompressedSumcheckProof<E> {
+impl<E: Valid + FieldCore> Valid for EqFactoredSumcheckProof<E> {
     fn check(&self) -> Result<(), SerializationError> {
         self.round_polys.check()
     }
 }
 
-/// Shape context for deserializing an [`EqCompressedSumcheckProof`]:
+/// Shape context for deserializing an [`EqFactoredSumcheckProof`]:
 /// `(num_rounds, q_degree)`.
-pub type EqCompressedSumcheckProofShape = (usize, usize);
+pub type EqFactoredSumcheckProofShape = (usize, usize);
 
-impl<E: FieldCore> HachiSerialize for EqCompressedSumcheckProof<E> {
+impl<E: FieldCore> HachiSerialize for EqFactoredSumcheckProof<E> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -301,19 +302,19 @@ impl<E: FieldCore> HachiSerialize for EqCompressedSumcheckProof<E> {
     }
 }
 
-impl<E: FieldCore + Valid> HachiDeserialize for EqCompressedSumcheckProof<E> {
+impl<E: FieldCore + Valid> HachiDeserialize for EqFactoredSumcheckProof<E> {
     /// `(num_rounds, q_degree)` — number of round polynomials and the degree of `q`.
-    type Context = EqCompressedSumcheckProofShape;
+    type Context = EqFactoredSumcheckProofShape;
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
-        ctx: &EqCompressedSumcheckProofShape,
+        ctx: &EqFactoredSumcheckProofShape,
     ) -> Result<Self, SerializationError> {
         let (num_rounds, degree) = *ctx;
         let mut round_polys = Vec::with_capacity(num_rounds);
         for _ in 0..num_rounds {
-            round_polys.push(EqCompressedUniPoly::deserialize_with_mode(
+            round_polys.push(EqFactoredUniPoly::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,

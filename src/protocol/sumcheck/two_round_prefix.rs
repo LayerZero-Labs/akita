@@ -25,7 +25,7 @@
 #[cfg(test)]
 use super::hachi_stage1::range_check_eval_from_s;
 use super::hachi_stage2::reduce_signed_accum;
-use super::{EqCompressedUniPoly, UniPoly};
+use super::{EqFactoredUniPoly, UniPoly};
 use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::fields::HasUnreducedOps;
 #[cfg(feature = "parallel")]
@@ -994,14 +994,14 @@ impl<E: FieldCore + FromSmallInt> Stage1BivariateSkipState<E> {
         }
     }
 
-    pub(crate) fn reconstruct_round0_eq_poly(&self) -> EqCompressedUniPoly<E> {
+    pub(crate) fn reconstruct_round0_eq_poly(&self) -> EqFactoredUniPoly<E> {
         match self {
             Self::B4(state) => state.reconstruct_round0_eq_poly(),
             Self::B8(state) => state.reconstruct_round0_eq_poly(),
         }
     }
 
-    pub(crate) fn reconstruct_round1_eq_poly(&self, r0: E) -> EqCompressedUniPoly<E> {
+    pub(crate) fn reconstruct_round1_eq_poly(&self, r0: E) -> EqFactoredUniPoly<E> {
         match self {
             Self::B4(state) => state.reconstruct_round1_eq_poly(r0),
             Self::B8(state) => state.reconstruct_round1_eq_poly(r0),
@@ -1029,19 +1029,19 @@ impl<E: FieldCore + FromSmallInt> Stage1B4BivariateSkipState<E> {
         coeff_array_to_poly(coeffs)
     }
 
-    fn reconstruct_round0_eq_poly(&self) -> EqCompressedUniPoly<E> {
+    fn reconstruct_round0_eq_poly(&self) -> EqFactoredUniPoly<E> {
         let q_x = add_quadratic_coeffs(
             scale_quadratic_coeffs(self.x_row_coeffs[0], E::one() - self.tau1),
             scale_quadratic_coeffs(self.x_row_coeffs[1], self.tau1),
         );
-        EqCompressedUniPoly::from_q_coeffs(q_x.into())
+        EqFactoredUniPoly::from_q_coeffs(q_x.into())
     }
 
-    fn reconstruct_round1_eq_poly(&self, r0: E) -> EqCompressedUniPoly<E> {
+    fn reconstruct_round1_eq_poly(&self, r0: E) -> EqFactoredUniPoly<E> {
         let y_values: [E; 3] =
             std::array::from_fn(|y_idx| eval_quadratic_from_coeffs(self.x_row_coeffs[y_idx], r0));
         let q_y = quadratic_coeffs_from_01_inf(y_values[0], y_values[1], y_values[2]);
-        EqCompressedUniPoly::from_q_coeffs(q_y.into())
+        EqFactoredUniPoly::from_q_coeffs(q_y.into())
     }
 }
 
@@ -1075,7 +1075,7 @@ impl<E: FieldCore + FromSmallInt> Stage1B8BivariateSkipState<E> {
         UniPoly::from_evals(&evals)
     }
 
-    fn reconstruct_round0_eq_poly(&self) -> EqCompressedUniPoly<E> {
+    fn reconstruct_round0_eq_poly(&self) -> EqFactoredUniPoly<E> {
         let l1_at_0 = E::one() - self.tau1;
         let l1_at_1 = self.tau1;
         let evals: Vec<E> = (0..=4u64)
@@ -1086,17 +1086,17 @@ impl<E: FieldCore + FromSmallInt> Stage1B8BivariateSkipState<E> {
                 l1_at_0 * q_x0 + l1_at_1 * q_x1
             })
             .collect();
-        EqCompressedUniPoly::from_q_coeffs(UniPoly::from_evals(&evals).coeffs)
+        EqFactoredUniPoly::from_q_coeffs(UniPoly::from_evals(&evals).coeffs)
     }
 
-    fn reconstruct_round1_eq_poly(&self, r0: E) -> EqCompressedUniPoly<E> {
+    fn reconstruct_round1_eq_poly(&self, r0: E) -> EqFactoredUniPoly<E> {
         let evals: Vec<E> = (0..=4u64)
             .map(|y_raw| {
                 let y = E::from_u64(y_raw);
                 eval_stage1_biquartic_from_full_grid(self.full_grid, r0, y)
             })
             .collect();
-        EqCompressedUniPoly::from_q_coeffs(UniPoly::from_evals(&evals).coeffs)
+        EqFactoredUniPoly::from_q_coeffs(UniPoly::from_evals(&evals).coeffs)
     }
 }
 
@@ -1781,9 +1781,7 @@ mod tests {
     use super::*;
     use crate::algebra::Prime128Offset5823;
     use crate::protocol::sumcheck::hachi_stage1::HachiStage1Prover;
-    use crate::protocol::sumcheck::{
-        advance_eq_compressed_claim, EqCompressedSumcheckInstanceProver,
-    };
+    use crate::protocol::sumcheck::{advance_eq_factored_claim, EqFactoredSumcheckInstanceProver};
     use std::collections::HashMap;
 
     type F = Prime128Offset5823;
@@ -1792,11 +1790,11 @@ mod tests {
         prover: &HachiStage1Prover<F>,
         scaled_claim: F,
         claim_scale: F,
-        poly: &EqCompressedUniPoly<F>,
+        poly: &EqFactoredUniPoly<F>,
         challenge: F,
     ) -> (F, F) {
         let (l_at_0, l_at_1) = prover.current_linear_factor_evals();
-        advance_eq_compressed_claim(scaled_claim, claim_scale, l_at_0, l_at_1, poly, challenge)
+        advance_eq_factored_claim(scaled_claim, claim_scale, l_at_0, l_at_1, poly, challenge)
     }
 
     fn gaussian_rank(mut rows: Vec<Vec<F>>) -> usize {
@@ -2518,14 +2516,14 @@ mod tests {
 
         let mut prover =
             HachiStage1Prover::<F>::new(&w_compact, &tau0, b, live_x_cols, num_u, num_l);
-        let round0 = prover.compute_round_eq_compressed(0);
+        let round0 = prover.compute_round_eq_factored(0);
         assert_eq!(skip_state.reconstruct_round0_eq_poly(), round0);
 
         let r0 = F::from_u64(9);
         let _ = advance_stage1_claim(&prover, F::zero(), F::one(), &round0, r0);
         prover.ingest_challenge(0, r0);
 
-        let round1 = prover.compute_round_eq_compressed(1);
+        let round1 = prover.compute_round_eq_factored(1);
         assert_eq!(skip_state.reconstruct_round1_eq_poly(r0), round1);
     }
 
