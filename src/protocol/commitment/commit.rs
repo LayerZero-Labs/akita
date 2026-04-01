@@ -1,8 +1,8 @@
 //! Ring-native §4.1 commitment core implementation.
 
 use super::config::{
-    compute_num_digits, ensure_block_layout, ensure_supported_num_vars, validate_and_derive_layout,
-    HachiCommitmentLayout,
+    compute_num_digits, compute_num_digits_fold, ensure_block_layout, ensure_supported_num_vars,
+    validate_and_derive_layout, HachiCommitmentLayout,
 };
 use super::onehot::{inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks};
 use super::schedule::HachiScheduleInputs;
@@ -638,24 +638,23 @@ where
         current_w_len: root_current_w_len::<D>(root_layout),
     };
     let root_params = Cfg::level_params_with_log_basis(root_inputs, root_layout.log_basis);
-    let (m_vars, r_vars, num_digits_fold) =
+    let (m_vars, r_vars, _num_digits_fold_batched) =
         optimal_root_batch_split::<Cfg, D>(max_num_vars, &root_params, root_layout, num_claims)?;
-    let optimized_root_layout = HachiCommitmentLayout::new_with_decomp(
+    let per_poly_num_digits_fold = root_layout.num_digits_fold.max(compute_num_digits_fold(
+        r_vars,
+        root_params.challenge_l1_mass,
+        root_layout.log_basis,
+    ));
+    HachiCommitmentLayout::new_with_decomp(
         m_vars,
         r_vars,
         root_params.n_a,
         root_layout.num_digits_commit,
         root_layout.num_digits_open,
-        num_digits_fold,
+        per_poly_num_digits_fold,
         root_layout.log_basis,
         0,
-    )?;
-
-    let mut batched_layout =
-        scale_batched_root_layout::<Cfg, D>(max_num_vars, optimized_root_layout, num_claims)?;
-    batched_layout.outer_width /= num_claims;
-    batched_layout.d_matrix_width /= num_claims;
-    Ok(batched_layout)
+    )
 }
 
 fn scan_layout_chain<F, const D: usize, Cfg>(
@@ -1550,6 +1549,12 @@ mod tests {
         assert_eq!(
             helper_root.d_matrix_width * BATCH,
             setup_root.d_matrix_width
+        );
+        assert!(
+            helper_root.num_digits_fold <= setup_root.num_digits_fold,
+            "per-poly num_digits_fold ({}) must not exceed batched value ({})",
+            helper_root.num_digits_fold,
+            setup_root.num_digits_fold,
         );
         assert!(setup.expanded.seed.max_outer_width >= setup_root.outer_width);
         assert!(setup.expanded.seed.max_d_matrix_width >= setup_root.d_matrix_width);
