@@ -1075,7 +1075,7 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
     pub(crate) fn new_two_stage<const D: usize>(
         y_rings: Vec<CyclotomicRing<F, D>>,
         v: Vec<CyclotomicRing<F, D>>,
-        stage1_sumcheck: SumcheckProof<F>,
+        stage1_sumcheck: EqFactoredSumcheckProof<F>,
         stage1_s_claim: F,
         stage2_sumcheck: SumcheckProof<F>,
         next_w_commitment: ProofRingVec<F>,
@@ -1224,6 +1224,16 @@ fn sumcheck_shape<F: FieldCore>(sc: &SumcheckProof<F>) -> SumcheckProofShape {
     (sc.round_polys.len(), degree)
 }
 
+fn eq_factored_sumcheck_shape<F: FieldCore>(
+    sc: &EqFactoredSumcheckProof<F>,
+) -> EqFactoredSumcheckProofShape {
+    let degree = sc
+        .round_polys
+        .first()
+        .map_or(0, |p| p.coeffs_except_linear_term.len());
+    (sc.round_polys.len(), degree)
+}
+
 fn level_proof_shape<F: FieldCore>(
     y_coeffs: usize,
     v: &ProofRingVec<F>,
@@ -1233,7 +1243,7 @@ fn level_proof_shape<F: FieldCore>(
     LevelProofShape {
         y_ring_coeffs: y_coeffs,
         v_coeffs: v.coeff_len(),
-        stage1_sumcheck: sumcheck_shape(&stage1.sumcheck),
+        stage1_sumcheck: eq_factored_sumcheck_shape(&stage1.sumcheck),
         stage2_sumcheck: sumcheck_shape(&stage2.sumcheck),
         next_commit_coeffs: stage2.next_w_commitment.coeff_len(),
     }
@@ -1506,7 +1516,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedRootProof<F> {
         let v =
             ProofRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
         let stage1 = HachiStage1Proof {
-            sumcheck: SumcheckProof::deserialize_with_mode(
+            sumcheck: EqFactoredSumcheckProof::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
