@@ -20,7 +20,7 @@ const _: () = assert!(MAX_RANK == 4, "SIS width table only covers ranks 1..=4");
 ///   polynomials the root uses 2^lb - 1 like any other level. At all
 ///   recursive levels, witness entries are balanced base-2^lb digits with
 ///   range [-2^lb/2, 2^lb/2 - 1], giving collision_inf = 2^lb - 1
-///   (e.g. lb=2 -> 3, lb=3 -> 7, ..., lb=7 -> 127).
+///   (e.g. lb=2 -> 3, lb=3 -> 7, ..., lb=6 -> 63).
 fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; MAX_RANK as usize]> {
     match (d, collision_inf) {
         // D=16
@@ -30,7 +30,6 @@ fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; MAX_RANK as usiz
         (16, 15) => Some([21, 418, 10_423, 155_015]),
         (16, 31) => Some([18, 97, 2_440, 36_294]),
         (16, 63) => Some([15, 38, 590, 8_787]),
-        (16, 127) => Some([14, 30, 145, 2_162]),
         // D=32
         (32, 2) => Some([11_757, 4_359_823, 5_000_000, 5_000_000]),
         (32, 3) => Some([5_225, 1_937_699, 5_000_000, 5_000_000]),
@@ -38,7 +37,6 @@ fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; MAX_RANK as usiz
         (32, 15) => Some([209, 77_507, 7_357_796, 5_000_000]),
         (32, 31) => Some([48, 18_147, 1_722_689, 5_000_000]),
         (32, 63) => Some([19, 4_393, 417_108, 5_000_000]),
-        (32, 127) => Some([15, 1_081, 102_641, 4_824_061]),
         // D=64
         (64, 2) => Some([2_179_911, 20_000_000, 20_000_000, 20_000_000]),
         (64, 3) => Some([968_849, 20_000_000, 20_000_000, 20_000_000]),
@@ -46,7 +44,6 @@ fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; MAX_RANK as usiz
         (64, 15) => Some([38_753, 20_000_000, 20_000_000, 20_000_000]),
         (64, 31) => Some([9_073, 20_000_000, 20_000_000, 20_000_000]),
         (64, 63) => Some([2_196, 9_801_875, 20_000_000, 20_000_000]),
-        (64, 127) => Some([540, 2_412_030, 20_000_000, 20_000_000]),
         _ => None,
     }
 }
@@ -82,7 +79,7 @@ mod tests {
 
     #[test]
     fn exceeds_max_rank() {
-        assert_eq!(min_rank_for_secure_width(16, 127, 3_000), None);
+        assert_eq!(min_rank_for_secure_width(16, 63, 9_000), None);
     }
 
     #[test]
