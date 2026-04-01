@@ -81,7 +81,9 @@ pub fn min_rank_for_secure_width(d: u32, collision_inf: u32, width: usize) -> Op
 
 /// Round a requested collision bound up to the next supported SIS bucket.
 pub fn ceil_supported_collision(d: u32, collision_inf: u32) -> Option<u32> {
-    const D16: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383];
+    const D16: &[u32] = &[
+        2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383,
+    ];
     const D32: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047];
     const D64: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511];
     let buckets = match d {
@@ -90,7 +92,10 @@ pub fn ceil_supported_collision(d: u32, collision_inf: u32) -> Option<u32> {
         64 => D64,
         _ => return None,
     };
-    buckets.iter().copied().find(|&bucket| collision_inf <= bucket)
+    buckets
+        .iter()
+        .copied()
+        .find(|&bucket| collision_inf <= bucket)
 }
 
 #[cfg(test)]

@@ -277,7 +277,13 @@ impl Planner {
             + elem_bytes()
     }
 
-    fn a_role_collision(&self, cfg: &RingConfig, level: usize, log_cb: u32, lb: u32) -> Option<u32> {
+    fn a_role_collision(
+        &self,
+        cfg: &RingConfig,
+        level: usize,
+        log_cb: u32,
+        lb: u32,
+    ) -> Option<u32> {
         let raw_collision = if level == 0 && log_cb == 1 {
             2
         } else {
