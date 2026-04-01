@@ -8,6 +8,8 @@
 //! - [`DensePoly`] — standard dense algorithms (decompose + NTT matvec).
 //! - [`OneHotPoly`] — sparse monomial tricks, avoids all inner ring
 //!   multiplications.
+//! - [`MultilinearPolynomail`] — borrowed wrapper that lets one batch mix dense
+//!   and one-hot multilinear polynomials under one shared scheme config/layout.
 //!
 //! Recursive levels do not use [`HachiPolyOps`]. They operate on
 //! `RecursiveWitnessFlat` / `RecursiveWitnessView`, which model the
@@ -16,6 +18,8 @@
 //! # Module layout
 //!
 //! - `dense` — [`DensePoly`] and its [`HachiPolyOps`] impl.
+//! - `multilinear_polynomail` — [`MultilinearPolynomail`], the canonical
+//!   representation-erasing wrapper for mixed root batches.
 //! - `onehot` — [`OneHotPoly`], [`OneHotIndex`], and column-sweep Ajtai
 //!   commit helpers.
 //! - `recursive_witness` — recursive `w` owner/view types and digit-native
@@ -36,10 +40,12 @@
 mod decompose_fold_neon;
 mod dense;
 mod helpers;
+mod multilinear_polynomail;
 mod onehot;
 mod recursive_witness;
 
 pub use dense::DensePoly;
+pub use multilinear_polynomail::MultilinearPolynomail;
 #[cfg(test)]
 pub(crate) use onehot::OneHotBlocks;
 pub use onehot::{OneHotIndex, OneHotPoly};
@@ -102,7 +108,9 @@ fn recompose_commit_inner_blocks<F: CanonicalField, const D: usize>(
 ///
 /// Each method corresponds to a place in commit/prove that consumes polynomial
 /// data.  Implementations decide *how* to carry out each operation (dense
-/// decompose + NTT, sparse monomial tricks, digit-plane bypass, etc.).
+/// decompose + NTT, sparse monomial tricks, digit-plane bypass, etc.). Most
+/// heterogeneous callers should use [`MultilinearPolynomail`] and let it
+/// implement this trait on their behalf.
 pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// Per-polynomial cache type for the A-matrix commit path.
     ///

@@ -21,7 +21,9 @@ use hachi_pcs::protocol::commitment::{
     hachi_batched_root_layout, Fp128FullCommitmentConfig, Fp128OneHotCommitmentConfig,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
-use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
+use hachi_pcs::protocol::hachi_poly_ops::{
+    DensePoly, HachiPolyOps, MultilinearPolynomail, OneHotPoly,
+};
 use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BlockOrder,
 };
@@ -44,6 +46,7 @@ const ONEHOT_K: usize = ONEHOT_D;
 
 type DenseCfg = Fp128FullCommitmentConfig;
 const DENSE_D: usize = DenseCfg::D;
+const DENSE_ONEHOT_K: usize = DENSE_D;
 
 static INIT_RAYON: Once = Once::new();
 
@@ -118,6 +121,19 @@ fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F, DENSE_D> {
         .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
         .collect();
     DensePoly::<F, DENSE_D>::from_field_evals(nv, &evals).expect("dense poly")
+}
+
+fn make_dense_cfg_onehot_poly(
+    layout: &HachiCommitmentLayout,
+    seed: u64,
+) -> OneHotPoly<F, DENSE_D, u8> {
+    let total_ring = layout.num_blocks * layout.block_len;
+    let mut rng = StdRng::seed_from_u64(seed);
+    let indices: Vec<Option<u8>> = (0..total_ring)
+        .map(|_| Some(rng.gen_range(0..DENSE_ONEHOT_K) as u8))
+        .collect();
+    OneHotPoly::<F, DENSE_D, u8>::new(DENSE_ONEHOT_K, indices, layout.r_vars, layout.m_vars)
+        .expect("onehot poly under dense config")
 }
 
 /// All one-hot polynomials are aggregated into a single commitment group.
@@ -286,6 +302,97 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
         assert!(
             result.is_ok(),
             "aggregated dense nv={nv} batch={batch_size} verification failed: {:?}",
+            result.err()
+        );
+    });
+}
+
+#[test]
+fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        const NV: usize = 20;
+        const BATCH_SIZE: usize = 4;
+
+        let layout =
+            hachi_batched_root_layout::<DenseCfg, DENSE_D>(NV, BATCH_SIZE).expect("layout");
+        let dense_a = make_dense_poly(NV, 0x4d10_0001);
+        let dense_b = make_dense_poly(NV, 0x4d10_0002);
+        let onehot_a = make_dense_cfg_onehot_poly(&layout, 0x4d10_1001);
+        let onehot_b = make_dense_cfg_onehot_poly(&layout, 0x4d10_1002);
+
+        let polys = [
+            MultilinearPolynomail::dense(&dense_a),
+            MultilinearPolynomail::onehot(&onehot_a),
+            MultilinearPolynomail::dense(&dense_b),
+            MultilinearPolynomail::onehot(&onehot_b),
+        ];
+        let pt = random_point(NV, 0x4d10_ffff);
+        let openings: Vec<F> = polys
+            .iter()
+            .map(|poly| opening_from_poly(poly, &pt, &layout))
+            .collect();
+
+        let setup =
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::setup_prover(
+                NV,
+                BATCH_SIZE,
+            );
+        let verifier_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
+            F,
+            DENSE_D,
+        >>::setup_verifier(&setup);
+
+        let poly_groups: [&[MultilinearPolynomail<'_, F, DENSE_D, u8>]; 1] = [&polys];
+        let (commitment, hint) = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
+            F,
+            DENSE_D,
+        >>::commit(&polys, &setup)
+        .expect("mixed aggregated commit");
+        let commitments = [commitment];
+        let hints = vec![hint];
+
+        let mut prover_transcript =
+            Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
+        let proof =
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
+                &setup,
+                &[&poly_groups[..]],
+                &[&pt[..]],
+                vec![hints],
+                &mut prover_transcript,
+                &[&commitments[..]],
+                BasisMode::Lagrange,
+            )
+            .expect("mixed batched prove");
+
+        let mut serialized = Vec::new();
+        let proof_shape = proof.shape();
+        proof
+            .serialize_compressed(&mut serialized)
+            .expect("serialize mixed batched proof");
+        let decoded = HachiBatchedProof::<F>::deserialize_compressed(
+            &mut std::io::Cursor::new(serialized),
+            &proof_shape,
+        )
+        .expect("deserialize mixed batched proof");
+
+        let opening_groups: [&[F]; 1] = [&openings];
+        let mut verifier_transcript =
+            Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
+        let result =
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_verify(
+                &decoded,
+                &verifier_setup,
+                &mut verifier_transcript,
+                &[&pt[..]],
+                &[&opening_groups[..]],
+                &[&commitments[..]],
+                BasisMode::Lagrange,
+            );
+        assert!(
+            result.is_ok(),
+            "aggregated mixed dense/onehot verification failed: {:?}",
             result.err()
         );
     });

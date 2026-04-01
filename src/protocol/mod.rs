@@ -27,7 +27,7 @@ pub use commitment::{
     RingCommitment, RingCommitmentScheme, SmallTestCommitmentConfig,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
-pub use hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly};
+pub use hachi_poly_ops::{DensePoly, HachiPolyOps, MultilinearPolynomail, OneHotIndex, OneHotPoly};
 pub use opening_point::{BasisMode, BlockOrder, RingOpeningPoint};
 pub use proof::{
     FlatRingVec, HachiBatchedProof, HachiBatchedProofShape, HachiBatchedRootProof, HachiLevelProof,
