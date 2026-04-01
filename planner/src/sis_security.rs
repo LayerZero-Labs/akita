@@ -113,7 +113,7 @@ mod tests {
 
     #[test]
     fn exceeds_max_rank() {
-        assert_eq!(min_rank_for_secure_width(16, 127, 3_000), None);
+        assert_eq!(min_rank_for_secure_width(16, 63, 9_000), None);
     }
 
     #[test]
