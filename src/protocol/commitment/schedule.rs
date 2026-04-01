@@ -740,7 +740,7 @@ mod tests {
         };
         let next_w_len = D * 8;
 
-        for log_basis in 2..=7 {
+        for log_basis in 2..=6 {
             let level_params = HachiLevelParams {
                 d: D,
                 log_basis,

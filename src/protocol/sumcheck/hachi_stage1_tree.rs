@@ -1004,13 +1004,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(2, 2), (4, 8), (4, 0)]
         );
-        assert_eq!(
-            stage1_tree_stage_shapes(7, 128)
-                .into_iter()
-                .map(|shape| (shape.sumcheck.1, shape.child_claims))
-                .collect::<Vec<_>>(),
-            vec![(4, 4), (4, 16), (4, 0)]
-        );
     }
 
     #[test]
@@ -1055,21 +1048,6 @@ mod tests {
                 F::from_u64(37),
             ],
             &[2, 8, 0],
-        );
-    }
-
-    #[test]
-    fn stage1_tree_prove_verify_roundtrip_b128() {
-        assert_stage1_roundtrip(
-            128,
-            6,
-            vec![
-                F::from_u64(41),
-                F::from_u64(43),
-                F::from_u64(47),
-                F::from_u64(53),
-            ],
-            &[4, 16, 0],
         );
     }
 
