@@ -34,9 +34,9 @@ fn compact_s_from_w(w: i8) -> i64 {
 }
 
 fn validate_stage1_tree_basis(b: usize) -> Result<(), HachiError> {
-    if !matches!(b, 4 | 8 | 16 | 32) {
+    if b < 4 || !b.is_power_of_two() {
         return Err(HachiError::InvalidInput(format!(
-            "stage1 tree currently supports b in {{4, 8, 16, 32}}, got {b}"
+            "stage1 tree requires a power-of-two basis >= 4, got {b}"
         )));
     }
     Ok(())
@@ -138,6 +138,33 @@ fn stage1_leaf_coeffs<E: FieldCore + FromSmallInt>(b: usize) -> Vec<Vec<E>> {
         .collect()
 }
 
+fn stage1_tree_binary_levels(b: usize) -> usize {
+    debug_assert!(b >= 4 && b.is_power_of_two());
+    b.trailing_zeros() as usize - 1
+}
+
+fn stage1_tree_stage_arities(b: usize) -> Vec<usize> {
+    debug_assert!(b > 8 && b.is_power_of_two());
+    let binary_levels = stage1_tree_binary_levels(b);
+    let mut out = Vec::with_capacity(binary_levels.div_ceil(2));
+    if binary_levels % 2 == 1 {
+        out.push(2);
+    }
+    out.extend(std::iter::repeat_n(4, binary_levels / 2));
+    out
+}
+
+fn stage1_tree_product_stage_arities(b: usize) -> Vec<usize> {
+    let mut out = stage1_tree_stage_arities(b);
+    out.pop();
+    out
+}
+
+fn stage1_leaf_factor_count(b: usize) -> usize {
+    debug_assert!(b >= 8 && b.is_power_of_two());
+    b / 8
+}
+
 fn build_leaf_tables<E: FieldCore>(leaf_coeffs: &[Vec<E>], s_table: &[E]) -> Vec<Vec<E>> {
     cfg_iter!(leaf_coeffs)
         .map(|coeffs| {
@@ -150,26 +177,94 @@ fn build_leaf_tables<E: FieldCore>(leaf_coeffs: &[Vec<E>], s_table: &[E]) -> Vec
         .collect()
 }
 
+fn pointwise_product<E: FieldCore>(tables: &[Vec<E>]) -> Vec<E> {
+    debug_assert!(!tables.is_empty());
+    let len = tables[0].len();
+    let mut out = vec![E::one(); len];
+    for table in tables {
+        debug_assert_eq!(table.len(), len);
+        for (acc, value) in out.iter_mut().zip(table.iter()) {
+            *acc = *acc * *value;
+        }
+    }
+    out
+}
+
+struct ProductStageLayer<E: FieldCore> {
+    child_tables_by_parent: Vec<Vec<Vec<E>>>,
+}
+
+fn build_product_stage_layers<E: FieldCore>(
+    leaf_tables: Vec<Vec<E>>,
+    product_stage_arities: &[usize],
+) -> Vec<ProductStageLayer<E>> {
+    let mut current_nodes = leaf_tables;
+    let mut bottom_up_layers = Vec::with_capacity(product_stage_arities.len());
+
+    for (rev_idx, &arity) in product_stage_arities.iter().rev().enumerate() {
+        debug_assert!(matches!(arity, 2 | 4));
+        debug_assert_eq!(current_nodes.len() % arity, 0);
+        let needs_parent_nodes = rev_idx + 1 != product_stage_arities.len();
+
+        let mut next_nodes =
+            needs_parent_nodes.then(|| Vec::with_capacity(current_nodes.len() / arity));
+        let mut child_tables_by_parent = Vec::with_capacity(current_nodes.len() / arity);
+        let mut current_iter = current_nodes.into_iter();
+
+        loop {
+            let Some(first_child) = current_iter.next() else {
+                break;
+            };
+            let mut child_tables = Vec::with_capacity(arity);
+            child_tables.push(first_child);
+            for _ in 1..arity {
+                child_tables.push(
+                    current_iter
+                        .next()
+                        .expect("product stage nodes should group evenly"),
+                );
+            }
+            if let Some(next_nodes) = &mut next_nodes {
+                next_nodes.push(pointwise_product(&child_tables));
+            }
+            child_tables_by_parent.push(child_tables);
+        }
+
+        current_nodes = next_nodes.unwrap_or_default();
+        bottom_up_layers.push(ProductStageLayer {
+            child_tables_by_parent,
+        });
+    }
+
+    bottom_up_layers.reverse();
+    bottom_up_layers
+}
+
 fn stage1_tree_stage_shape_from_b(rounds: usize, b: usize) -> Vec<HachiStage1StageShape> {
-    debug_assert!(matches!(b, 4 | 8 | 16 | 32));
-    let leaf_groups = b.div_ceil(8);
-    if leaf_groups <= 1 {
+    debug_assert!(b >= 4 && b.is_power_of_two());
+    if b <= 8 {
         return vec![HachiStage1StageShape {
             sumcheck: (rounds, b / 2),
             child_claims: 0,
         }];
     }
 
-    vec![
-        HachiStage1StageShape {
-            sumcheck: (rounds, leaf_groups),
-            child_claims: leaf_groups,
-        },
-        HachiStage1StageShape {
-            sumcheck: (rounds, 4),
-            child_claims: 0,
-        },
-    ]
+    let mut parent_count = 1usize;
+    let mut out = Vec::new();
+    for arity in stage1_tree_product_stage_arities(b) {
+        let child_claims = parent_count * arity;
+        out.push(HachiStage1StageShape {
+            sumcheck: (rounds, arity),
+            child_claims,
+        });
+        parent_count = child_claims;
+    }
+    debug_assert_eq!(parent_count, stage1_leaf_factor_count(b));
+    out.push(HachiStage1StageShape {
+        sumcheck: (rounds, 4),
+        child_claims: 0,
+    });
+    out
 }
 
 pub(crate) fn stage1_tree_stage_shapes(rounds: usize, b: usize) -> Vec<HachiStage1StageShape> {
@@ -177,11 +272,7 @@ pub(crate) fn stage1_tree_stage_shapes(rounds: usize, b: usize) -> Vec<HachiStag
 }
 
 fn stage1_stage_count(b: usize) -> usize {
-    if b <= 8 {
-        1
-    } else {
-        2
-    }
+    stage1_tree_stage_shape_from_b(0, b).len()
 }
 
 fn stage1_interstage_batch_weights<E: FieldCore>(gamma: E, count: usize) -> Vec<E> {
@@ -224,26 +315,40 @@ fn absorb_interstage_claims<F: FieldCore + CanonicalField, T: Transcript<F>>(
 }
 
 struct ProductStageProver<E: FieldCore> {
-    tables: Vec<Vec<E>>,
+    child_tables_by_parent: Vec<Vec<Vec<E>>>,
+    batch_weights: Vec<E>,
     split_eq: GruenSplitEq<E>,
     input_claim: E,
     num_rounds: usize,
 }
 
 impl<E: FieldCore> ProductStageProver<E> {
-    fn new(tables: Vec<Vec<E>>, tau: &[E], input_claim: E) -> Self {
-        debug_assert!(!tables.is_empty());
+    fn new(
+        child_tables_by_parent: Vec<Vec<Vec<E>>>,
+        batch_weights: Vec<E>,
+        tau: &[E],
+        input_claim: E,
+    ) -> Self {
+        debug_assert!(!child_tables_by_parent.is_empty());
+        debug_assert_eq!(child_tables_by_parent.len(), batch_weights.len());
+        let arity = child_tables_by_parent[0].len();
+        debug_assert!(matches!(arity, 2 | 4));
+        for child_tables in &child_tables_by_parent {
+            debug_assert_eq!(child_tables.len(), arity);
+        }
         Self {
-            tables,
+            child_tables_by_parent,
+            batch_weights,
             split_eq: GruenSplitEq::new(tau),
             input_claim,
             num_rounds: tau.len(),
         }
     }
 
-    fn final_table_claims(&self) -> Vec<E> {
-        self.tables
+    fn final_child_claims(&self) -> Vec<E> {
+        self.child_tables_by_parent
             .iter()
+            .flat_map(|child_tables| child_tables.iter())
             .map(|table| {
                 debug_assert_eq!(table.len(), 1);
                 table[0]
@@ -258,7 +363,7 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceProver<E> for ProductStageProver<E>
     }
 
     fn degree_bound(&self) -> usize {
-        self.tables.len()
+        self.child_tables_by_parent[0].len()
     }
 
     fn input_claim(&self) -> E {
@@ -276,7 +381,7 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceProver<E> for ProductStageProver<E>
         let degree = self.degree_bound();
         let expected_pairs = num_first * e_second.len();
         debug_assert_eq!(
-            self.tables[0].len(),
+            self.child_tables_by_parent[0][0].len(),
             expected_pairs * 2,
             "product stage table length should match split-eq shape",
         );
@@ -290,18 +395,26 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceProver<E> for ProductStageProver<E>
                 let mut inner = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
                 for (j_low, &e_in) in e_first.iter().enumerate() {
                     let j = base + j_low;
-                    let mut poly = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
-                    poly[0] = E::one();
-                    for (current_degree, table) in self.tables.iter().enumerate() {
-                        let left = table[2 * j];
-                        let slope = table[2 * j + 1] - left;
-                        for k in (0..=current_degree).rev() {
-                            poly[k + 1] += poly[k] * slope;
-                            poly[k] = poly[k] * left;
+                    let mut batched_poly = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
+                    for (parent_idx, child_tables) in self.child_tables_by_parent.iter().enumerate()
+                    {
+                        let mut poly = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
+                        poly[0] = E::one();
+                        for (current_degree, table) in child_tables.iter().enumerate() {
+                            let left = table[2 * j];
+                            let slope = table[2 * j + 1] - left;
+                            for k in (0..=current_degree).rev() {
+                                poly[k + 1] += poly[k] * slope;
+                                poly[k] = poly[k] * left;
+                            }
+                        }
+                        let weight = self.batch_weights[parent_idx];
+                        for k in 0..=degree {
+                            batched_poly[k] += weight * poly[k];
                         }
                     }
                     for k in 0..=degree {
-                        inner[k] += e_in * poly[k];
+                        inner[k] += e_in * batched_poly[k];
                     }
                 }
                 for k in 0..=degree {
@@ -322,8 +435,10 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceProver<E> for ProductStageProver<E>
 
     fn ingest_challenge(&mut self, _round: usize, r_round: E) {
         self.split_eq.bind(r_round);
-        for table in &mut self.tables {
-            fold_evals_in_place(table, r_round);
+        for child_tables in &mut self.child_tables_by_parent {
+            for table in child_tables {
+                fold_evals_in_place(table, r_round);
+            }
         }
     }
 }
@@ -332,14 +447,26 @@ struct ProductStageVerifier<E: FieldCore> {
     tau: Vec<E>,
     input_claim: E,
     child_claims: Vec<E>,
+    batch_weights: Vec<E>,
+    arity: usize,
 }
 
 impl<E: FieldCore> ProductStageVerifier<E> {
-    fn new(tau: Vec<E>, input_claim: E, child_claims: Vec<E>) -> Self {
+    fn new(
+        tau: Vec<E>,
+        input_claim: E,
+        child_claims: Vec<E>,
+        batch_weights: Vec<E>,
+        arity: usize,
+    ) -> Self {
+        debug_assert!(matches!(arity, 2 | 4));
+        debug_assert_eq!(child_claims.len(), batch_weights.len() * arity);
         Self {
             tau,
             input_claim,
             child_claims,
+            batch_weights,
+            arity,
         }
     }
 }
@@ -352,7 +479,7 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for ProductStageVerifie
     }
 
     fn degree_bound(&self) -> usize {
-        self.child_claims.len()
+        self.arity
     }
 
     fn input_claim(&self) -> E {
@@ -368,12 +495,18 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for ProductStageVerifie
         round_state: &Self::RoundState,
         _challenges: &[E],
     ) -> Result<E, HachiError> {
-        Ok(round_state.current_scalar()
-            * self
-                .child_claims
-                .iter()
-                .copied()
-                .fold(E::one(), |acc, claim| acc * claim))
+        let batched_output = self
+            .batch_weights
+            .iter()
+            .zip(self.child_claims.chunks_exact(self.arity))
+            .fold(E::zero(), |acc, (&weight, child_claims)| {
+                let product = child_claims
+                    .iter()
+                    .copied()
+                    .fold(E::one(), |prod, claim| prod * claim);
+                acc + weight * product
+            });
+        Ok(round_state.current_scalar() * batched_output)
     }
 }
 
@@ -614,39 +747,55 @@ impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1
         };
 
         let leaf_coeffs = stage1_leaf_coeffs::<E>(b);
-        let leaf_tables = build_leaf_tables(&leaf_coeffs, &s_table);
-        let mut root_stage = ProductStageProver::new(leaf_tables, &tau0, E::zero());
-        let (root_sumcheck, r_root, _root_final_claim) =
-            prove_eq_factored_sumcheck::<E, _, E, _, _>(&mut root_stage, transcript, |tr| {
-                tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
-            })?;
-        let child_claims = root_stage.final_table_claims();
+        let product_layers = build_product_stage_layers(
+            build_leaf_tables(&leaf_coeffs, &s_table),
+            &stage1_tree_product_stage_arities(b),
+        );
+        let mut stage_proofs = Vec::with_capacity(product_layers.len() + 1);
+        let mut current_tau = tau0;
+        let mut current_claim = E::zero();
+        let mut current_weights = vec![E::one()];
 
-        absorb_interstage_claims(&child_claims, transcript);
-        let gamma = transcript.challenge_scalar(labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH);
-        let weights = stage1_interstage_batch_weights(gamma, child_claims.len());
-        let batched_claim = linear_combination(&weights, &child_claims);
-        let batched_leaf_coeffs = combine_polys(&weights, &leaf_coeffs);
+        for layer in product_layers {
+            let mut product_stage = ProductStageProver::new(
+                layer.child_tables_by_parent,
+                current_weights,
+                &current_tau,
+                current_claim,
+            );
+            let (sumcheck, next_tau, _final_claim) = prove_eq_factored_sumcheck::<E, _, E, _, _>(
+                &mut product_stage,
+                transcript,
+                |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
+            )?;
+            let child_claims = product_stage.final_child_claims();
+            stage_proofs.push(HachiStage1StageProof {
+                sumcheck,
+                child_claims: child_claims.clone(),
+            });
 
+            absorb_interstage_claims(&child_claims, transcript);
+            let gamma = transcript.challenge_scalar(labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH);
+            current_weights = stage1_interstage_batch_weights(gamma, child_claims.len());
+            current_claim = linear_combination(&current_weights, &child_claims);
+            current_tau = next_tau;
+        }
+
+        let batched_leaf_coeffs = combine_polys(&current_weights, &leaf_coeffs);
         let mut leaf_stage =
-            PolynomialStageProver::new(s_table, &r_root, batched_claim, batched_leaf_coeffs);
+            PolynomialStageProver::new(s_table, &current_tau, current_claim, batched_leaf_coeffs);
         let (leaf_sumcheck, r_stage1, _leaf_final_claim) =
             prove_eq_factored_sumcheck::<E, _, E, _, _>(&mut leaf_stage, transcript, |tr| {
                 tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
             })?;
+        stage_proofs.push(HachiStage1StageProof {
+            sumcheck: leaf_sumcheck,
+            child_claims: Vec::new(),
+        });
 
         Ok((
             HachiStage1Proof {
-                stages: vec![
-                    HachiStage1StageProof {
-                        sumcheck: root_sumcheck,
-                        child_claims,
-                    },
-                    HachiStage1StageProof {
-                        sumcheck: leaf_sumcheck,
-                        child_claims: Vec::new(),
-                    },
-                ],
+                stages: stage_proofs,
                 s_claim: leaf_stage.final_s_claim(),
             },
             r_stage1,
@@ -706,39 +855,60 @@ impl<E: FieldCore + CanonicalField + FromSmallInt> HachiStage1Verifier<E> {
             );
         }
 
-        let root_stage = &proof.stages[0];
-        if root_stage.child_claims.len() != leaf_coeffs.len() {
-            return Err(HachiError::InvalidSize {
-                expected: leaf_coeffs.len(),
-                actual: root_stage.child_claims.len(),
-            });
-        }
-        if !proof.stages[1].child_claims.is_empty() {
+        let product_stage_arities = stage1_tree_product_stage_arities(self.b);
+        let Some((leaf_stage_proof, product_stage_proofs)) = proof.stages.split_last() else {
+            return Err(HachiError::InvalidProof);
+        };
+        if !leaf_stage_proof.child_claims.is_empty() {
             return Err(HachiError::InvalidProof);
         }
 
-        let root_verifier = ProductStageVerifier::new(
-            self.tau0.clone(),
-            E::zero(),
-            root_stage.child_claims.clone(),
+        let mut current_tau = self.tau0.clone();
+        let mut current_claim = E::zero();
+        let mut current_weights = vec![E::one()];
+
+        for (&arity, stage_proof) in product_stage_arities
+            .iter()
+            .zip(product_stage_proofs.iter())
+        {
+            let expected_child_claims = current_weights.len() * arity;
+            if stage_proof.child_claims.len() != expected_child_claims {
+                return Err(HachiError::InvalidSize {
+                    expected: expected_child_claims,
+                    actual: stage_proof.child_claims.len(),
+                });
+            }
+
+            let product_verifier = ProductStageVerifier::new(
+                current_tau,
+                current_claim,
+                stage_proof.child_claims.clone(),
+                current_weights,
+                arity,
+            );
+            current_tau = verify_eq_factored_sumcheck::<E, _, E, _, _>(
+                &stage_proof.sumcheck,
+                &product_verifier,
+                transcript,
+                |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
+            )?;
+
+            absorb_interstage_claims(&stage_proof.child_claims, transcript);
+            let gamma = transcript.challenge_scalar(labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH);
+            current_weights =
+                stage1_interstage_batch_weights(gamma, stage_proof.child_claims.len());
+            current_claim = linear_combination(&current_weights, &stage_proof.child_claims);
+        }
+
+        let batched_leaf_coeffs = combine_polys(&current_weights, &leaf_coeffs);
+        let leaf_verifier = PolynomialStageVerifier::new(
+            current_tau,
+            current_claim,
+            batched_leaf_coeffs,
+            proof.s_claim,
         );
-        let r_root = verify_eq_factored_sumcheck::<E, _, E, _, _>(
-            &root_stage.sumcheck,
-            &root_verifier,
-            transcript,
-            |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
-        )?;
-
-        absorb_interstage_claims(&root_stage.child_claims, transcript);
-        let gamma = transcript.challenge_scalar(labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH);
-        let weights = stage1_interstage_batch_weights(gamma, root_stage.child_claims.len());
-        let batched_claim = linear_combination(&weights, &root_stage.child_claims);
-        let batched_leaf_coeffs = combine_polys(&weights, &leaf_coeffs);
-
-        let leaf_verifier =
-            PolynomialStageVerifier::new(r_root, batched_claim, batched_leaf_coeffs, proof.s_claim);
         verify_eq_factored_sumcheck::<E, _, E, _, _>(
-            &proof.stages[1].sumcheck,
+            &leaf_stage_proof.sumcheck,
             &leaf_verifier,
             transcript,
             |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
@@ -755,146 +925,181 @@ mod tests {
     type F = Prime128Offset5823;
 
     fn sample_stage1_witness(b: usize, live_x_cols: usize, num_l: usize) -> Vec<i8> {
-        let half = (b / 2) as i8;
+        let half = (b / 2) as i16;
         let y_len = 1usize << num_l;
         (0..live_x_cols * y_len)
-            .map(|idx| (idx as i8 % half).max(0))
+            .map(|idx| {
+                (idx as i16 % half)
+                    .try_into()
+                    .expect("test digit should fit in i8")
+            })
             .collect()
     }
 
+    fn assert_stage1_roundtrip(
+        b: usize,
+        live_x_cols: usize,
+        tau0: Vec<F>,
+        expected_child_claim_counts: &[usize],
+    ) {
+        let num_u = 3;
+        let num_l = 1;
+        let witness = sample_stage1_witness(b, live_x_cols, num_l);
+
+        let prover = HachiStage1Prover::new(&witness, &tau0, b, live_x_cols, num_u, num_l)
+            .expect("stage1 prover should build");
+        let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+        let (proof, r_stage1) = prover
+            .prove(&mut prover_transcript)
+            .expect("stage1 proof should succeed");
+
+        let verifier = HachiStage1Verifier::new(tau0, b);
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+        let verified_r = verifier
+            .verify(&proof, &mut verifier_transcript)
+            .expect("stage1 verification should succeed");
+
+        assert_eq!(r_stage1, verified_r);
+        assert_eq!(proof.stages.len(), expected_child_claim_counts.len());
+        for (stage, &expected_child_claims) in proof.stages.iter().zip(expected_child_claim_counts)
+        {
+            assert_eq!(stage.child_claims.len(), expected_child_claims);
+        }
+    }
+
     #[test]
-    fn stage1_tree_shapes_match_supported_bases() {
-        assert_eq!(stage1_tree_stage_shapes(7, 4).len(), 1);
-        assert_eq!(stage1_tree_stage_shapes(7, 8).len(), 1);
-        assert_eq!(stage1_tree_stage_shapes(7, 16).len(), 2);
-        assert_eq!(stage1_tree_stage_shapes(7, 32).len(), 2);
+    fn stage1_tree_shapes_match_generic_quartic_chain() {
+        assert_eq!(
+            stage1_tree_stage_shapes(7, 4)
+                .into_iter()
+                .map(|shape| (shape.sumcheck.1, shape.child_claims))
+                .collect::<Vec<_>>(),
+            vec![(2, 0)]
+        );
+        assert_eq!(
+            stage1_tree_stage_shapes(7, 8)
+                .into_iter()
+                .map(|shape| (shape.sumcheck.1, shape.child_claims))
+                .collect::<Vec<_>>(),
+            vec![(4, 0)]
+        );
+        assert_eq!(
+            stage1_tree_stage_shapes(7, 16)
+                .into_iter()
+                .map(|shape| (shape.sumcheck.1, shape.child_claims))
+                .collect::<Vec<_>>(),
+            vec![(2, 2), (4, 0)]
+        );
+        assert_eq!(
+            stage1_tree_stage_shapes(7, 32)
+                .into_iter()
+                .map(|shape| (shape.sumcheck.1, shape.child_claims))
+                .collect::<Vec<_>>(),
+            vec![(4, 4), (4, 0)]
+        );
+        assert_eq!(
+            stage1_tree_stage_shapes(7, 64)
+                .into_iter()
+                .map(|shape| (shape.sumcheck.1, shape.child_claims))
+                .collect::<Vec<_>>(),
+            vec![(2, 2), (4, 8), (4, 0)]
+        );
+        assert_eq!(
+            stage1_tree_stage_shapes(7, 128)
+                .into_iter()
+                .map(|shape| (shape.sumcheck.1, shape.child_claims))
+                .collect::<Vec<_>>(),
+            vec![(4, 4), (4, 16), (4, 0)]
+        );
     }
 
     #[test]
     fn stage1_tree_prove_verify_roundtrip_b16() {
-        let b = 16;
-        let num_u = 3;
-        let num_l = 1;
-        let live_x_cols = 6;
-        let tau0 = vec![
-            F::from_u64(3),
-            F::from_u64(5),
-            F::from_u64(7),
-            F::from_u64(9),
-        ];
-        let witness = sample_stage1_witness(b, live_x_cols, num_l);
-
-        let prover = HachiStage1Prover::new(&witness, &tau0, b, live_x_cols, num_u, num_l)
-            .expect("stage1 prover should build");
-        let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        let (proof, r_stage1) = prover
-            .prove(&mut prover_transcript)
-            .expect("stage1 proof should succeed");
-
-        let verifier = HachiStage1Verifier::new(tau0, b);
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        let verified_r = verifier
-            .verify(&proof, &mut verifier_transcript)
-            .expect("stage1 verification should succeed");
-
-        assert_eq!(r_stage1, verified_r);
-        assert_eq!(proof.stages.len(), 2);
-        assert_eq!(proof.stages[0].child_claims.len(), 2);
+        assert_stage1_roundtrip(
+            16,
+            6,
+            vec![
+                F::from_u64(3),
+                F::from_u64(5),
+                F::from_u64(7),
+                F::from_u64(9),
+            ],
+            &[2, 0],
+        );
     }
 
     #[test]
     fn stage1_tree_prove_verify_roundtrip_b32() {
-        let b = 32;
-        let num_u = 3;
-        let num_l = 1;
-        let live_x_cols = 5;
-        let tau0 = vec![
-            F::from_u64(11),
-            F::from_u64(13),
-            F::from_u64(17),
-            F::from_u64(19),
-        ];
-        let witness = sample_stage1_witness(b, live_x_cols, num_l);
+        assert_stage1_roundtrip(
+            32,
+            5,
+            vec![
+                F::from_u64(11),
+                F::from_u64(13),
+                F::from_u64(17),
+                F::from_u64(19),
+            ],
+            &[4, 0],
+        );
+    }
 
-        let prover = HachiStage1Prover::new(&witness, &tau0, b, live_x_cols, num_u, num_l)
-            .expect("stage1 prover should build");
-        let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        let (proof, r_stage1) = prover
-            .prove(&mut prover_transcript)
-            .expect("stage1 proof should succeed");
+    #[test]
+    fn stage1_tree_prove_verify_roundtrip_b64() {
+        assert_stage1_roundtrip(
+            64,
+            5,
+            vec![
+                F::from_u64(23),
+                F::from_u64(29),
+                F::from_u64(31),
+                F::from_u64(37),
+            ],
+            &[2, 8, 0],
+        );
+    }
 
-        let verifier = HachiStage1Verifier::new(tau0, b);
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        let verified_r = verifier
-            .verify(&proof, &mut verifier_transcript)
-            .expect("stage1 verification should succeed");
-
-        assert_eq!(r_stage1, verified_r);
-        assert_eq!(proof.stages.len(), 2);
-        assert_eq!(proof.stages[0].child_claims.len(), 4);
+    #[test]
+    fn stage1_tree_prove_verify_roundtrip_b128() {
+        assert_stage1_roundtrip(
+            128,
+            6,
+            vec![
+                F::from_u64(41),
+                F::from_u64(43),
+                F::from_u64(47),
+                F::from_u64(53),
+            ],
+            &[4, 16, 0],
+        );
     }
 
     #[test]
     fn stage1_tree_prove_verify_roundtrip_b4() {
-        let b = 4;
-        let num_u = 3;
-        let num_l = 1;
-        let live_x_cols = 5;
-        let tau0 = vec![
-            F::from_u64(3),
-            F::from_u64(5),
-            F::from_u64(7),
-            F::from_u64(9),
-        ];
-        let witness = sample_stage1_witness(b, live_x_cols, num_l);
-
-        let prover = HachiStage1Prover::new(&witness, &tau0, b, live_x_cols, num_u, num_l)
-            .expect("stage1 prover should build");
-        let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        let (proof, r_stage1) = prover
-            .prove(&mut prover_transcript)
-            .expect("stage1 proof should succeed");
-
-        let verifier = HachiStage1Verifier::new(tau0, b);
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        let verified_r = verifier
-            .verify(&proof, &mut verifier_transcript)
-            .expect("stage1 verification should succeed");
-
-        assert_eq!(r_stage1, verified_r);
-        assert_eq!(proof.stages.len(), 1);
-        assert!(proof.stages[0].child_claims.is_empty());
+        assert_stage1_roundtrip(
+            4,
+            5,
+            vec![
+                F::from_u64(3),
+                F::from_u64(5),
+                F::from_u64(7),
+                F::from_u64(9),
+            ],
+            &[0],
+        );
     }
 
     #[test]
     fn stage1_tree_prove_verify_roundtrip_b8() {
-        let b = 8;
-        let num_u = 3;
-        let num_l = 1;
-        let live_x_cols = 5;
-        let tau0 = vec![
-            F::from_u64(11),
-            F::from_u64(13),
-            F::from_u64(17),
-            F::from_u64(19),
-        ];
-        let witness = sample_stage1_witness(b, live_x_cols, num_l);
-
-        let prover = HachiStage1Prover::new(&witness, &tau0, b, live_x_cols, num_u, num_l)
-            .expect("stage1 prover should build");
-        let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        let (proof, r_stage1) = prover
-            .prove(&mut prover_transcript)
-            .expect("stage1 proof should succeed");
-
-        let verifier = HachiStage1Verifier::new(tau0, b);
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-        let verified_r = verifier
-            .verify(&proof, &mut verifier_transcript)
-            .expect("stage1 verification should succeed");
-
-        assert_eq!(r_stage1, verified_r);
-        assert_eq!(proof.stages.len(), 1);
-        assert!(proof.stages[0].child_claims.is_empty());
+        assert_stage1_roundtrip(
+            8,
+            5,
+            vec![
+                F::from_u64(11),
+                F::from_u64(13),
+                F::from_u64(17),
+                F::from_u64(19),
+            ],
+            &[0],
+        );
     }
 }
