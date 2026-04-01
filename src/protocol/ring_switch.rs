@@ -830,6 +830,7 @@ pub(crate) fn w_ring_element_count_with_num_claims<F: CanonicalField>(
     w_ring_element_count_with_counts::<F>(level_params, layout, num_claims, num_claims, 1)
 }
 
+#[cfg(test)]
 pub(crate) fn w_ring_element_count_with_num_claims_and_points<F: CanonicalField>(
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,

@@ -31,9 +31,7 @@ use crate::primitives::serialization::{
 };
 use crate::protocol::commitment_scheme::should_stop_folding;
 use crate::protocol::hachi_poly_ops::OneHotIndex;
-use crate::protocol::ring_switch::{
-    w_ring_element_count, w_ring_element_count_with_num_claims_and_points,
-};
+use crate::protocol::ring_switch::{w_ring_element_count, w_ring_element_count_with_num_claims};
 use crate::{cfg_into_iter, cfg_iter, CanonicalField, FieldCore, FieldSampling};
 #[cfg(feature = "disk-persistence")]
 use std::fs;
@@ -696,10 +694,9 @@ where
         .checked_mul(max_num_batched_polys)
         .unwrap_or(usize::MAX);
     let mut level = 1usize;
-    let mut current_w_len = w_ring_element_count_with_num_claims_and_points::<F>(
+    let mut current_w_len = w_ring_element_count_with_num_claims::<F>(
         &root_params,
         batched_root_layout,
-        max_num_batched_polys,
         max_num_batched_polys,
     ) * root_params.d;
     let mut current_params = Cfg::level_params(HachiScheduleInputs {
@@ -1395,6 +1392,7 @@ mod tests {
     use crate::primitives::{HachiDeserialize, HachiSerialize};
     use crate::protocol::commitment::hachi_recursive_level_layout_from_params;
     use crate::protocol::commitment::Fp128OneHotCommitmentConfig;
+    use crate::protocol::ring_switch::w_ring_element_count_with_num_claims_and_points;
     use crate::test_utils::{TinyConfig, F as TestF};
 
     fn recursive_chain_len<F, const D: usize, Cfg>(
