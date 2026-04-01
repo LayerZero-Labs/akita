@@ -18,6 +18,7 @@
 
 pub mod batched_sumcheck;
 pub mod hachi_stage1;
+pub mod hachi_stage1_tree;
 pub mod hachi_stage2;
 pub mod two_round_prefix;
 pub mod types;

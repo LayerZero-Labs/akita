@@ -5,6 +5,7 @@ use super::config::{
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
 use crate::protocol::proof::{HachiProofShape, LevelProofShape};
+use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
 use std::collections::HashMap;
 use std::fmt::Write;
 
@@ -169,12 +170,11 @@ impl HachiSchedulePlan {
                 let next_w_len = level.next_inputs.current_w_len;
                 let rounds = sumcheck_rounds(p.d, next_w_len);
                 let b = 1usize << level.layout.log_basis;
-                let stage1_degree = b / 2;
 
                 LevelProofShape {
                     y_ring_coeffs: p.d,
                     v_coeffs: p.n_d * p.d,
-                    stage1_sumcheck: (rounds, stage1_degree),
+                    stage1_stages: stage1_tree_stage_shapes(rounds, b),
                     stage2_sumcheck: (rounds, 3),
                     next_commit_coeffs: level.next_commit_coeffs,
                 }
@@ -306,13 +306,17 @@ fn hachi_level_proof_bytes(
     let next_eval_bytes = elem_bytes;
     let rounds = sumcheck_rounds(level_params.d, next_w_len);
     let b = 1usize << layout.log_basis;
-    let stage1_degree = b / 2;
+    let stage1_bytes = stage1_tree_stage_shapes(rounds, b)
+        .into_iter()
+        .map(|stage| {
+            sumcheck_bytes(rounds, stage.sumcheck.1, elem_bytes) + stage.child_claims * elem_bytes
+        })
+        .sum::<usize>()
+        + elem_bytes;
 
-    // Every level now uses the same two-stage norm-check body, even for b = 4.
     y_bytes
         + v_bytes
-        + sumcheck_bytes(rounds, stage1_degree, elem_bytes)
-        + elem_bytes
+        + stage1_bytes
         + sumcheck_bytes(rounds, 3, elem_bytes)
         + next_commit_bytes
         + next_eval_bytes
@@ -636,8 +640,11 @@ mod tests {
     use crate::protocol::commitment::{
         Fp128AdaptiveBoundedCommitmentConfig, Fp128AdaptiveOneHotCommitmentConfig,
     };
-    use crate::protocol::proof::{FlatRingVec, HachiLevelProof};
+    use crate::protocol::proof::{
+        FlatRingVec, HachiLevelProof, HachiStage1Proof, HachiStage1StageProof,
+    };
     use crate::protocol::ring_switch::w_ring_element_count;
+    use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
     use crate::protocol::sumcheck::{
         CompressedUniPoly, EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof,
     };
@@ -665,6 +672,19 @@ mod tests {
                     ],
                 })
                 .collect(),
+        }
+    }
+
+    fn dummy_stage1_proof(rounds: usize, b: usize) -> HachiStage1Proof<F> {
+        HachiStage1Proof {
+            stages: stage1_tree_stage_shapes(rounds, b)
+                .into_iter()
+                .map(|shape| HachiStage1StageProof {
+                    sumcheck: dummy_eq_factored_sumcheck(rounds, shape.sumcheck.1),
+                    child_claims: vec![F::zero(); shape.child_claims],
+                })
+                .collect(),
+            s_claim: F::zero(),
         }
     }
 
@@ -744,7 +764,7 @@ mod tests {
                 log_basis,
             };
             let rounds = sumcheck_rounds(D, next_w_len);
-            let stage1_degree = (1usize << log_basis) / 2;
+            let b = 1usize << log_basis;
             let next_commitment = FlatRingVec::from_ring_elems(&vec![
                 CyclotomicRing::<F, D>::zero();
                 next_level_params.n_b
@@ -753,8 +773,7 @@ mod tests {
             let level_proof = HachiLevelProof::new_two_stage::<D>(
                 CyclotomicRing::<F, D>::zero(),
                 vec![CyclotomicRing::<F, D>::zero(); level_params.n_d],
-                dummy_eq_factored_sumcheck(rounds, stage1_degree),
-                F::zero(),
+                dummy_stage1_proof(rounds, b),
                 dummy_sumcheck(rounds, 3),
                 next_commitment,
                 F::zero(),
