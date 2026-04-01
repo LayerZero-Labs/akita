@@ -13,10 +13,12 @@
 //! without widening the recursive witness encoding beyond the existing runtime
 //! bound.
 
+use super::hachi_stage1 as single_stage_backend;
 use super::{
     fold_evals_in_place, prove_eq_factored_sumcheck, verify_eq_factored_sumcheck,
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier, EqFactoredUniPoly,
 };
+use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::split_eq::GruenSplitEq;
 use crate::error::HachiError;
 use crate::protocol::proof::{HachiStage1Proof, HachiStage1StageProof, HachiStage1StageShape};
@@ -481,8 +483,12 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for PolynomialStageVeri
 /// Stage-1 range-check prover, including the root/leaf tree choreography.
 pub struct HachiStage1Prover<E: FieldCore> {
     s_table: Vec<E>,
+    w_evals_compact: Vec<i8>,
     tau0: Vec<E>,
     b: usize,
+    live_x_cols: usize,
+    num_u: usize,
+    num_l: usize,
 }
 
 impl<E: FieldCore + FromSmallInt> HachiStage1Prover<E> {
@@ -503,13 +509,17 @@ impl<E: FieldCore + FromSmallInt> HachiStage1Prover<E> {
         validate_stage1_tree_basis(b)?;
         Ok(Self {
             s_table: padded_s_table(w_evals_compact, live_x_cols, num_u, num_l)?,
+            w_evals_compact: w_evals_compact.to_vec(),
             tau0: tau0.to_vec(),
             b,
+            live_x_cols,
+            num_u,
+            num_l,
         })
     }
 }
 
-impl<E: FieldCore + CanonicalField + FromSmallInt> HachiStage1Prover<E> {
+impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1Prover<E> {
     /// Produce the full stage-1 tree proof and return the final `r_stage1`.
     ///
     /// # Errors
@@ -523,11 +533,15 @@ impl<E: FieldCore + CanonicalField + FromSmallInt> HachiStage1Prover<E> {
         validate_stage1_tree_basis(self.b)?;
         let leaf_coeffs = stage1_leaf_coeffs::<E>(self.b);
         if leaf_coeffs.len() == 1 {
-            let mut leaf_stage = PolynomialStageProver::new(
-                self.s_table.clone(),
+            // Keep the tree wire shape, but reuse the old compact/prefix-aware
+            // stage-1 backend for the single-stage `b <= 8` path.
+            let mut leaf_stage = single_stage_backend::HachiStage1Prover::new(
+                &self.w_evals_compact,
                 &self.tau0,
-                E::zero(),
-                leaf_coeffs[0].clone(),
+                self.b,
+                self.live_x_cols,
+                self.num_u,
+                self.num_l,
             );
             let (sumcheck, r_stage1, _final_claim) =
                 prove_eq_factored_sumcheck::<E, _, E, _, _>(&mut leaf_stage, transcript, |tr| {
@@ -635,11 +649,10 @@ impl<E: FieldCore + CanonicalField + FromSmallInt> HachiStage1Verifier<E> {
             if !proof.stages[0].child_claims.is_empty() {
                 return Err(HachiError::InvalidProof);
             }
-            let leaf_verifier = PolynomialStageVerifier::new(
+            let leaf_verifier = single_stage_backend::HachiStage1Verifier::new(
                 self.tau0.clone(),
-                E::zero(),
-                leaf_coeffs[0].clone(),
                 proof.s_claim,
+                self.b,
             );
             return verify_eq_factored_sumcheck::<E, _, E, _, _>(
                 &proof.stages[0].sumcheck,
@@ -775,5 +788,69 @@ mod tests {
         assert_eq!(r_stage1, verified_r);
         assert_eq!(proof.stages.len(), 2);
         assert_eq!(proof.stages[0].child_claims.len(), 4);
+    }
+
+    #[test]
+    fn stage1_tree_prove_verify_roundtrip_b4() {
+        let b = 4;
+        let num_u = 3;
+        let num_l = 1;
+        let live_x_cols = 5;
+        let tau0 = vec![
+            F::from_u64(3),
+            F::from_u64(5),
+            F::from_u64(7),
+            F::from_u64(9),
+        ];
+        let witness = sample_stage1_witness(b, live_x_cols, num_l);
+
+        let prover = HachiStage1Prover::new(&witness, &tau0, b, live_x_cols, num_u, num_l)
+            .expect("stage1 prover should build");
+        let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+        let (proof, r_stage1) = prover
+            .prove(&mut prover_transcript)
+            .expect("stage1 proof should succeed");
+
+        let verifier = HachiStage1Verifier::new(tau0, b);
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+        let verified_r = verifier
+            .verify(&proof, &mut verifier_transcript)
+            .expect("stage1 verification should succeed");
+
+        assert_eq!(r_stage1, verified_r);
+        assert_eq!(proof.stages.len(), 1);
+        assert!(proof.stages[0].child_claims.is_empty());
+    }
+
+    #[test]
+    fn stage1_tree_prove_verify_roundtrip_b8() {
+        let b = 8;
+        let num_u = 3;
+        let num_l = 1;
+        let live_x_cols = 5;
+        let tau0 = vec![
+            F::from_u64(11),
+            F::from_u64(13),
+            F::from_u64(17),
+            F::from_u64(19),
+        ];
+        let witness = sample_stage1_witness(b, live_x_cols, num_l);
+
+        let prover = HachiStage1Prover::new(&witness, &tau0, b, live_x_cols, num_u, num_l)
+            .expect("stage1 prover should build");
+        let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+        let (proof, r_stage1) = prover
+            .prove(&mut prover_transcript)
+            .expect("stage1 proof should succeed");
+
+        let verifier = HachiStage1Verifier::new(tau0, b);
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+        let verified_r = verifier
+            .verify(&proof, &mut verifier_transcript)
+            .expect("stage1 verification should succeed");
+
+        assert_eq!(r_stage1, verified_r);
+        assert_eq!(proof.stages.len(), 1);
+        assert!(proof.stages[0].child_claims.is_empty());
     }
 }
