@@ -184,12 +184,23 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
     );
     let stage1 = &level.stage1;
     let stage2 = &level.stage2;
-    let stage1_sumcheck_size = stage1.sumcheck.serialized_size(Compress::No);
+    let stage1_sumcheck_size = stage1
+        .stages
+        .iter()
+        .map(|stage| stage.sumcheck.serialized_size(Compress::No))
+        .sum::<usize>();
+    let stage1_interstage_claims_size = stage1
+        .stages
+        .iter()
+        .flat_map(|stage| stage.child_claims.iter())
+        .map(|claim| claim.serialized_size(Compress::No))
+        .sum::<usize>();
     let stage1_s_claim_size = stage1.s_claim.serialized_size(Compress::No);
     let stage2_sumcheck_size = stage2.sumcheck.serialized_size(Compress::No);
     let next_w_commitment_size = stage2.next_w_commitment.serialized_size(Compress::No);
     let next_w_eval_size = stage2.next_w_eval.serialized_size(Compress::No);
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
+    eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
     eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!(
@@ -202,6 +213,7 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
         y_ring_size
             + v_size
             + stage1_sumcheck_size
+            + stage1_interstage_claims_size
             + stage1_s_claim_size
             + stage2_sumcheck_size
             + next_w_commitment_size

@@ -868,13 +868,32 @@ impl<F: FieldCore, const D: usize> PartialEq for HachiBatchedCommitmentHint<F, D
 }
 
 impl<F: FieldCore, const D: usize> Eq for HachiBatchedCommitmentHint<F, D> {}
+/// One stage in the stage-1 range-check tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HachiStage1StageProof<F: FieldCore> {
+    /// Eq-factored sumcheck proof for this stage.
+    pub sumcheck: EqFactoredSumcheckProof<F>,
+    /// Claimed child-node evaluations at this stage's output point.
+    ///
+    /// Non-leaf stages populate these so the verifier can seed the next stage;
+    /// the leaf stage leaves this empty and instead carries `s_claim` below.
+    pub child_claims: Vec<F>,
+}
 
+/// Headerless shape context for one stage in the stage-1 range-check tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HachiStage1StageShape {
+    /// Eq-factored sumcheck shape `(num_rounds, q_degree)`.
+    pub sumcheck: EqFactoredSumcheckProofShape,
+    /// Number of child claims serialized after the stage proof.
+    pub child_claims: usize,
+}
 /// Proof payload for stage 1 of a single Hachi level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiStage1Proof<F: FieldCore> {
-    /// Stage-1 sumcheck proof over the virtual `S = w(w+1)` table.
-    pub sumcheck: EqFactoredSumcheckProof<F>,
-    /// Claimed evaluation of `S` at the stage-1 output point.
+    /// Root-to-leaf range-check stages.
+    pub stages: Vec<HachiStage1StageProof<F>>,
+    /// Claimed evaluation of `S` at the final stage-1 output point.
     pub s_claim: F,
 }
 
@@ -931,8 +950,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
     pub(crate) fn new_two_stage<const D: usize>(
         y_ring: CyclotomicRing<F, D>,
         v: Vec<CyclotomicRing<F, D>>,
-        stage1_sumcheck: EqFactoredSumcheckProof<F>,
-        stage1_s_claim: F,
+        stage1: HachiStage1Proof<F>,
         stage2_sumcheck: SumcheckProof<F>,
         next_w_commitment: ProofRingVec<F>,
         next_w_eval: F,
@@ -940,10 +958,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
         Self::new::<D>(
             y_ring,
             v,
-            HachiStage1Proof {
-                sumcheck: stage1_sumcheck,
-                s_claim: stage1_s_claim,
-            },
+            stage1,
             HachiStage2Proof {
                 sumcheck: stage2_sumcheck,
                 next_w_commitment,
@@ -1180,14 +1195,14 @@ impl<F: FieldCore> HachiProofTail<F> {
 }
 
 /// Shape descriptor for deserializing a [`HachiLevelProof`] without headers.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct LevelProofShape {
     /// Number of field coefficients in `y_ring`.
     pub y_ring_coeffs: usize,
     /// Number of field coefficients in `v`.
     pub v_coeffs: usize,
-    /// Stage-1 eq-factored sumcheck shape: `(num_rounds, q_degree)`.
-    pub stage1_sumcheck: EqFactoredSumcheckProofShape,
+    /// Stage-1 tree stage shapes in root-to-leaf order.
+    pub stage1_stages: Vec<HachiStage1StageShape>,
     /// Stage-2 sumcheck shape: `(num_rounds, degree)`.
     pub stage2_sumcheck: SumcheckProofShape,
     /// Number of field coefficients in `next_w_commitment`.
@@ -1355,9 +1370,12 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
     ) -> Result<(), SerializationError> {
         self.y_ring.serialize_with_mode(&mut writer, compress)?;
         self.v.serialize_with_mode(&mut writer, compress)?;
-        self.stage1
-            .sumcheck
-            .serialize_with_mode(&mut writer, compress)?;
+        for stage in &self.stage1.stages {
+            stage.sumcheck.serialize_with_mode(&mut writer, compress)?;
+            for claim in &stage.child_claims {
+                claim.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
         self.stage1
             .s_claim
             .serialize_with_mode(&mut writer, compress)?;
@@ -1373,7 +1391,19 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
     }
     fn serialized_size(&self, compress: Compress) -> usize {
         let base = self.y_ring.serialized_size(compress) + self.v.serialized_size(compress);
-        base + self.stage1.sumcheck.serialized_size(compress)
+        base + self
+            .stage1
+            .stages
+            .iter()
+            .map(|stage| {
+                stage.sumcheck.serialized_size(compress)
+                    + stage
+                        .child_claims
+                        .iter()
+                        .map(|claim| claim.serialized_size(compress))
+                        .sum::<usize>()
+            })
+            .sum::<usize>()
             + self.stage1.s_claim.serialized_size(compress)
             + self.stage2.sumcheck.serialized_size(compress)
             + self.stage2.next_w_commitment.serialized_size(compress)
@@ -1390,7 +1420,10 @@ impl<F: FieldCore + Valid> Valid for HachiLevelProof<F> {
             ));
         }
         self.v.check()?;
-        self.stage1.sumcheck.check()?;
+        for stage in &self.stage1.stages {
+            stage.sumcheck.check()?;
+            stage.child_claims.check()?;
+        }
         self.stage1.s_claim.check()?;
         self.stage2.sumcheck.check()?;
         self.stage2.next_w_commitment.check()?;
@@ -1414,13 +1447,30 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
         )?;
         let v =
             ProofRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
-        let stage1 = HachiStage1Proof {
-            sumcheck: EqFactoredSumcheckProof::deserialize_with_mode(
+        let mut stage1_stages = Vec::with_capacity(ctx.stage1_stages.len());
+        for stage_shape in &ctx.stage1_stages {
+            let sumcheck = EqFactoredSumcheckProof::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
-                &ctx.stage1_sumcheck,
-            )?,
+                &stage_shape.sumcheck,
+            )?;
+            let mut child_claims = Vec::with_capacity(stage_shape.child_claims);
+            for _ in 0..stage_shape.child_claims {
+                child_claims.push(F::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    &(),
+                )?);
+            }
+            stage1_stages.push(HachiStage1StageProof {
+                sumcheck,
+                child_claims,
+            });
+        }
+        let stage1 = HachiStage1Proof {
+            stages: stage1_stages,
             s_claim: F::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         let stage2 = HachiStage2Proof {

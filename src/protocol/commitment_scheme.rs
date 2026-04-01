@@ -34,14 +34,11 @@ use crate::protocol::ring_switch::{
     w_ring_element_count_with_claim_groups, w_ring_element_count_with_point_claim_groups,
     RingSwitchOutput, WCommitmentConfig,
 };
-use crate::protocol::sumcheck::hachi_stage1::{HachiStage1Prover, HachiStage1Verifier};
+use crate::protocol::sumcheck::hachi_stage1_tree::{HachiStage1Prover, HachiStage1Verifier};
 use crate::protocol::sumcheck::hachi_stage2::{
     relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier,
 };
-use crate::protocol::sumcheck::{
-    prove_eq_factored_sumcheck, prove_sumcheck, verify_eq_factored_sumcheck, verify_sumcheck,
-    SumcheckInstanceVerifier,
-};
+use crate::protocol::sumcheck::{prove_sumcheck, verify_sumcheck, SumcheckInstanceVerifier};
 use crate::protocol::transcript::labels::{
     ABSORB_BATCH_SHAPE, ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM,
     CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
@@ -564,16 +561,13 @@ where
         alpha: _,
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
-    let (stage1_sumcheck, r_stage1, s_claim) = {
+    let (stage1_proof, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        let mut stage1_prover =
-            HachiStage1Prover::new(&w_evals_compact, &tau0, b, live_x_cols, num_u, num_l);
-        let (stage1_sumcheck, r_stage1, _stage1_final_claim) =
-            prove_eq_factored_sumcheck::<F, _, F, _, _>(&mut stage1_prover, transcript, |tr| {
-                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
-            })?;
-        let s_claim = stage1_prover.final_s_claim();
-        (stage1_sumcheck, r_stage1, s_claim)
+        let stage1_prover =
+            HachiStage1Prover::new(&w_evals_compact, &tau0, b, live_x_cols, num_u, num_l)?;
+        let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
+        let s_claim = stage1_proof.s_claim;
+        (stage1_proof, r_stage1, s_claim)
     };
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
@@ -614,8 +608,7 @@ where
         HachiLevelProof::new_two_stage::<D>(
             y_ring,
             quad_eq.v,
-            stage1_sumcheck,
-            s_claim,
+            stage1_proof,
             stage2_sumcheck,
             w_commitment_proof,
             w_eval,
@@ -2925,15 +2918,10 @@ where
     );
     let stage1 = &level_proof.stage1;
     let stage2 = &level_proof.stage2;
-    let stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), stage1.s_claim, rs.b);
+    let stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        verify_eq_factored_sumcheck::<F, _, F, _, _>(
-            &stage1.sumcheck,
-            &stage1_verifier,
-            transcript,
-            |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-        )?
+        stage1_verifier.verify(stage1, transcript)?
     };
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
