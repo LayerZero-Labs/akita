@@ -337,6 +337,11 @@ where
 
 /// Verify an eq-factored sumcheck proof.
 ///
+/// The verifier absorbs each round message, samples the corresponding
+/// challenge, updates the scaled running claim from the current eq-factor
+/// evaluations and the transmitted `q(X)` data, and finally checks the
+/// expected folded oracle value at the full challenge point.
+///
 /// This creates and owns the mutable eq-factored round state locally, while
 /// keeping `verifier` itself immutable.
 #[tracing::instrument(skip_all, name = "verify_eq_factored_sumcheck")]
