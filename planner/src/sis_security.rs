@@ -15,12 +15,11 @@ const _: () = assert!(MAX_RANK == 4, "SIS width table only covers ranks 1..=4");
 /// - `d`: ring dimension of ZqX/(X^D + 1). One of {16, 32, 64}.
 /// - `collision_inf`: worst-case L-infinity norm of the difference between
 ///   two valid witness vectors that collide under the SIS commitment.
-///   For onehot polynomials, the root level A-role uses collision_inf = 2
-///   (coefficients are 0 or 1, balanced-digit bound is 2). For dense
-///   polynomials the root uses 2^lb - 1 like any other level. At all
-///   recursive levels, witness entries are balanced base-2^lb digits with
-///   range [-2^lb/2, 2^lb/2 - 1], giving collision_inf = 2^lb - 1
-///   (e.g. lb=2 -> 3, lb=3 -> 7, ..., lb=7 -> 127).
+///   For the B/D roles this is the balanced-digit bound `2^lb - 1`.
+///   For the A role, the planner uses a challenge-aware proxy:
+///   the raw digit collision is scaled by the maximum absolute coefficient
+///   in the stage-1 challenge family and rounded up to the next supported
+///   SIS bucket.
 fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; MAX_RANK as usize]> {
     match (d, collision_inf) {
         // D=16
@@ -31,6 +30,13 @@ fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; MAX_RANK as usiz
         (16, 31) => Some([18, 97, 2_440, 36_294]),
         (16, 63) => Some([15, 38, 590, 8_787]),
         (16, 127) => Some([14, 30, 145, 2_162]),
+        (16, 255) => Some([12, 26, 50, 536]),
+        (16, 511) => Some([11, 23, 40, 133]),
+        (16, 1023) => Some([10, 21, 34, 55]),
+        (16, 2047) => Some([9, 19, 31, 46]),
+        (16, 4095) => Some([9, 18, 28, 41]),
+        (16, 8191) => Some([8, 17, 26, 37]),
+        (16, 16383) => Some([7, 15, 24, 33]),
         // D=32
         (32, 2) => Some([11_757, 4_359_823, 5_000_000, 5_000_000]),
         (32, 3) => Some([5_225, 1_937_699, 5_000_000, 5_000_000]),
@@ -39,6 +45,10 @@ fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; MAX_RANK as usiz
         (32, 31) => Some([48, 18_147, 1_722_689, 5_000_000]),
         (32, 63) => Some([19, 4_393, 417_108, 5_000_000]),
         (32, 127) => Some([15, 1_081, 102_641, 4_824_061]),
+        (32, 255) => Some([13, 268, 25_459, 1_196_574]),
+        (32, 511) => Some([11, 66, 6_339, 297_974]),
+        (32, 1023) => Some([10, 27, 1_581, 74_347]),
+        (32, 2047) => Some([9, 23, 395, 18_568]),
         // D=64
         (64, 2) => Some([2_179_911, 20_000_000, 20_000_000, 20_000_000]),
         (64, 3) => Some([968_849, 20_000_000, 20_000_000, 20_000_000]),
@@ -47,6 +57,8 @@ fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; MAX_RANK as usiz
         (64, 31) => Some([9_073, 20_000_000, 20_000_000, 20_000_000]),
         (64, 63) => Some([2_196, 9_801_875, 20_000_000, 20_000_000]),
         (64, 127) => Some([540, 2_412_030, 20_000_000, 20_000_000]),
+        (64, 255) => Some([134, 598_287, 20_000_000, 20_000_000]),
+        (64, 511) => Some([33, 148_987, 20_000_000, 20_000_000]),
         _ => None,
     }
 }
@@ -65,6 +77,20 @@ pub fn min_rank_for_secure_width(d: u32, collision_inf: u32, width: usize) -> Op
         }
     }
     None
+}
+
+/// Round a requested collision bound up to the next supported SIS bucket.
+pub fn ceil_supported_collision(d: u32, collision_inf: u32) -> Option<u32> {
+    const D16: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383];
+    const D32: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047];
+    const D64: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511];
+    let buckets = match d {
+        16 => D16,
+        32 => D32,
+        64 => D64,
+        _ => return None,
+    };
+    buckets.iter().copied().find(|&bucket| collision_inf <= bucket)
 }
 
 #[cfg(test)]
@@ -88,5 +114,12 @@ mod tests {
     #[test]
     fn missing_entry() {
         assert_eq!(min_rank_for_secure_width(8, 7, 10), None);
+    }
+
+    #[test]
+    fn ceil_collision_bucket() {
+        assert_eq!(ceil_supported_collision(16, 3968), Some(4095));
+        assert_eq!(ceil_supported_collision(32, 248), Some(255));
+        assert_eq!(ceil_supported_collision(64, 62), Some(63));
     }
 }

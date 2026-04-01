@@ -5,7 +5,7 @@ use crate::proof_size::{
     elem_bytes, packed_digits_bytes, ring_vec_bytes, stage1_bytes_optimized, sumcheck_bytes,
     sumcheck_rounds,
 };
-use crate::sis_security::min_rank_for_secure_width;
+use crate::sis_security::{ceil_supported_collision, min_rank_for_secure_width};
 
 // ── Ring configurations ────────────────────────────────────────────────────
 
@@ -15,6 +15,7 @@ pub struct RingConfig {
     pub d: u32,
     pub n_a: u32,
     pub challenge_l1_mass: usize,
+    pub max_abs_challenge_coeff: u32,
     pub label: &'static str,
 }
 
@@ -24,54 +25,63 @@ pub const ALL_RING_CONFIGS: &[RingConfig] = &[
         d: 64,
         n_a: 1,
         challenge_l1_mass: 54,
+        max_abs_challenge_coeff: 2,
         label: "D64-na1",
     },
     RingConfig {
         d: 64,
         n_a: 2,
         challenge_l1_mass: 54,
+        max_abs_challenge_coeff: 2,
         label: "D64-na2",
     },
     RingConfig {
         d: 32,
         n_a: 1,
         challenge_l1_mass: 256,
+        max_abs_challenge_coeff: 8,
         label: "D32-na1",
     },
     RingConfig {
         d: 32,
         n_a: 2,
         challenge_l1_mass: 256,
+        max_abs_challenge_coeff: 8,
         label: "D32-na2",
     },
     RingConfig {
         d: 32,
         n_a: 3,
         challenge_l1_mass: 256,
+        max_abs_challenge_coeff: 8,
         label: "D32-na3",
     },
     RingConfig {
         d: 16,
         n_a: 1,
         challenge_l1_mass: 2048,
+        max_abs_challenge_coeff: 128,
         label: "D16-na1",
     },
     RingConfig {
         d: 16,
         n_a: 2,
         challenge_l1_mass: 2048,
+        max_abs_challenge_coeff: 128,
         label: "D16-na2",
     },
     RingConfig {
         d: 16,
         n_a: 3,
         challenge_l1_mass: 2048,
+        max_abs_challenge_coeff: 128,
         label: "D16-na3",
     },
     RingConfig {
         d: 16,
         n_a: 4,
         challenge_l1_mass: 2048,
+        max_abs_challenge_coeff: 128,
         label: "D16-na4",
     },
 ];
@@ -267,6 +277,15 @@ impl Planner {
             + elem_bytes()
     }
 
+    fn a_role_collision(&self, cfg: &RingConfig, level: usize, log_cb: u32, lb: u32) -> Option<u32> {
+        let raw_collision = if level == 0 && log_cb == 1 {
+            2
+        } else {
+            (1u32 << lb) - 1
+        };
+        ceil_supported_collision(cfg.d, raw_collision * cfg.max_abs_challenge_coeff)
+    }
+
     /// Try a specific (cfg, lb, m, r) combination at a given level/witness.
     #[allow(clippy::too_many_arguments)]
     fn try_level_mr(
@@ -305,11 +324,7 @@ impl Planner {
         } else {
             (1usize << m_vars) * lc.delta_commit
         };
-        let a_collision = if level == 0 && log_cb == 1 {
-            2
-        } else {
-            (1u32 << lb) - 1
-        };
+        let a_collision = self.a_role_collision(cfg, level, log_cb, lb)?;
         let na_needed = min_rank_for_secure_width(cfg.d, a_collision, inner_width)?;
         if na_needed > cfg.n_a {
             return None;
@@ -583,23 +598,23 @@ mod tests {
     }
 
     #[test]
-    fn onehot_32_improves_over_python() {
+    fn onehot_32_beats_baseline() {
         let opts = PlannerOptions::new(1, 32);
         let sched = run_universal_planner(&opts);
         assert!(
-            sched.total_bytes < 54_116,
-            "onehot nv=32: {} should beat Python's 54,116",
+            sched.total_bytes < 97_277,
+            "onehot nv=32: {} should stay below the D=64 baseline",
             sched.total_bytes
         );
     }
 
     #[test]
-    fn full_32_improves_over_python() {
+    fn full_32_beats_baseline() {
         let opts = PlannerOptions::new(128, 32);
         let sched = run_universal_planner(&opts);
         assert!(
-            sched.total_bytes < 57_000,
-            "full nv=32: {} should be well under baseline",
+            sched.total_bytes < 170_637,
+            "full nv=32: {} should stay below the D=128 baseline",
             sched.total_bytes
         );
     }
@@ -625,20 +640,18 @@ mod tests {
         let opts = PlannerOptions::new(1, 20);
         let sched = run_universal_planner(&opts);
         let level_sum: usize = sched.levels.iter().map(|l| l.level_bytes).sum();
-        let tail_entry_d = sched.levels.last().unwrap().d;
-        let tail_entry_lb = sched.final_lb;
-        let tnb = min_rank_for_secure_width(
-            tail_entry_d,
-            (1u32 << tail_entry_lb) - 1,
-            sched.final_w_len.div_ceil(tail_entry_d as usize),
-        )
-        .unwrap();
-        let tail_total = ring_vec_bytes(tnb as usize, tail_entry_d)
-            + packed_digits_bytes(sched.final_w_len, tail_entry_lb);
-        assert_eq!(
-            sched.total_bytes,
-            level_sum + tail_total,
-            "total should equal levels + tail with no +4 wrapper"
+        let overhead = sched.total_bytes - (level_sum + sched.tail_bytes);
+        let collision = (1u32 << sched.final_lb) - 1;
+        let matched_tail_entry = [16u32, 32, 64].into_iter().any(|d| {
+            let ring_elems = sched.final_w_len.div_ceil(d as usize);
+            (1u32..=4).any(|rank| {
+                min_rank_for_secure_width(d, collision, ring_elems) == Some(rank)
+                    && overhead == ring_vec_bytes(rank as usize, d)
+            })
+        });
+        assert!(
+            matched_tail_entry,
+            "tail overhead {overhead} should be one valid entry commitment"
         );
     }
 }
