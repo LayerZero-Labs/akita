@@ -26,7 +26,7 @@ use crate::parallel::*;
 use crate::protocol::proof::{HachiStage1Proof, HachiStage1StageProof, HachiStage1StageShape};
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
-use crate::{cfg_fold_reduce, CanonicalField, FieldCore, FromSmallInt};
+use crate::{cfg_fold_reduce, cfg_iter, CanonicalField, FieldCore, FromSmallInt};
 
 fn compact_s_from_w(w: i8) -> i64 {
     let w = i64::from(w);
@@ -135,6 +135,12 @@ fn stage1_leaf_coeffs<E: FieldCore + FromSmallInt>(b: usize) -> Vec<Vec<E>> {
     stage1_leaf_groups::<E>(b)
         .into_iter()
         .map(|roots| poly_coeffs_from_roots(&roots))
+        .collect()
+}
+
+fn build_leaf_tables<E: FieldCore>(leaf_coeffs: &[Vec<E>], s_table: &[E]) -> Vec<Vec<E>> {
+    cfg_iter!(leaf_coeffs)
+        .map(|coeffs| s_table.iter().copied().map(|s| eval_poly(coeffs, s)).collect())
         .collect()
 }
 
@@ -505,10 +511,15 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for PolynomialStageVeri
     }
 }
 
+/// Backend-specific Stage 1 witness representation.
+enum Stage1Witness<E: FieldCore> {
+    Compact(Vec<i8>),
+    PaddedS(Vec<E>),
+}
+
 /// Stage-1 range-check prover, including the root/leaf tree choreography.
 pub struct HachiStage1Prover<E: FieldCore> {
-    s_table: Vec<E>,
-    w_evals_compact: Vec<i8>,
+    witness: Stage1Witness<E>,
     tau0: Vec<E>,
     b: usize,
     live_x_cols: usize,
@@ -533,8 +544,16 @@ impl<E: FieldCore + FromSmallInt> HachiStage1Prover<E> {
     ) -> Result<Self, HachiError> {
         validate_stage1_tree_basis(b)?;
         Ok(Self {
-            s_table: padded_s_table(w_evals_compact, live_x_cols, num_u, num_l)?,
-            w_evals_compact: w_evals_compact.to_vec(),
+            witness: if b <= 8 {
+                Stage1Witness::Compact(w_evals_compact.to_vec())
+            } else {
+                Stage1Witness::PaddedS(padded_s_table(
+                    w_evals_compact,
+                    live_x_cols,
+                    num_u,
+                    num_l,
+                )?)
+            },
             tau0: tau0.to_vec(),
             b,
             live_x_cols,
@@ -556,8 +575,7 @@ impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1
         transcript: &mut T,
     ) -> Result<(HachiStage1Proof<E>, Vec<E>), HachiError> {
         let Self {
-            s_table,
-            w_evals_compact,
+            witness,
             tau0,
             b,
             live_x_cols,
@@ -565,38 +583,36 @@ impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1
             num_l,
         } = self;
         validate_stage1_tree_basis(b)?;
-        let leaf_coeffs = stage1_leaf_coeffs::<E>(b);
-        if leaf_coeffs.len() == 1 {
-            // Keep the tree wire shape, but reuse the old compact/prefix-aware
-            // stage-1 backend for the single-stage `b <= 8` path.
-            let mut leaf_stage = single_stage_backend::HachiStage1Prover::new(
-                &w_evals_compact,
-                &tau0,
-                b,
-                live_x_cols,
-                num_u,
-                num_l,
-            );
-            let (sumcheck, r_stage1, _final_claim) =
-                prove_eq_factored_sumcheck::<E, _, E, _, _>(&mut leaf_stage, transcript, |tr| {
-                    tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
-                })?;
-            let proof = HachiStage1Proof {
-                stages: vec![HachiStage1StageProof {
-                    sumcheck,
-                    child_claims: Vec::new(),
-                }],
-                s_claim: leaf_stage.final_s_claim(),
-            };
-            return Ok((proof, r_stage1));
-        }
-
-        let mut leaf_tables = vec![vec![E::zero(); s_table.len()]; leaf_coeffs.len()];
-        for (idx, &s) in s_table.iter().enumerate() {
-            for (table, coeffs) in leaf_tables.iter_mut().zip(leaf_coeffs.iter()) {
-                table[idx] = eval_poly(coeffs, s);
+        let s_table = match witness {
+            Stage1Witness::Compact(w_evals_compact) => {
+                // Keep the tree wire shape, but reuse the old compact/prefix-aware
+                // stage-1 backend for the single-stage `b <= 8` path.
+                let mut leaf_stage = single_stage_backend::HachiStage1Prover::new(
+                    &w_evals_compact,
+                    &tau0,
+                    b,
+                    live_x_cols,
+                    num_u,
+                    num_l,
+                );
+                let (sumcheck, r_stage1, _final_claim) =
+                    prove_eq_factored_sumcheck::<E, _, E, _, _>(&mut leaf_stage, transcript, |tr| {
+                        tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+                    })?;
+                let proof = HachiStage1Proof {
+                    stages: vec![HachiStage1StageProof {
+                        sumcheck,
+                        child_claims: Vec::new(),
+                    }],
+                    s_claim: leaf_stage.final_s_claim(),
+                };
+                return Ok((proof, r_stage1));
             }
-        }
+            Stage1Witness::PaddedS(s_table) => s_table,
+        };
+
+        let leaf_coeffs = stage1_leaf_coeffs::<E>(b);
+        let leaf_tables = build_leaf_tables(&leaf_coeffs, &s_table);
         let mut root_stage = ProductStageProver::new(leaf_tables, &tau0, E::zero());
         let (root_sumcheck, r_root, _root_final_claim) =
             prove_eq_factored_sumcheck::<E, _, E, _, _>(&mut root_stage, transcript, |tr| {
