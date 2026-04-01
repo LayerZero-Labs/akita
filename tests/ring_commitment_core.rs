@@ -120,6 +120,30 @@ fn commit_ring_coeffs_matches_block_commitment() {
 }
 
 #[test]
+fn commit_ring_coeffs_rejects_short_input() {
+    let (psetup, _) =
+        <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::setup(16, 1).unwrap();
+    let blocks = sample_blocks();
+
+    let mut f_coeffs: Vec<_> = blocks
+        .iter()
+        .flat_map(|block| block.iter().copied())
+        .collect();
+    let _ = f_coeffs.pop();
+
+    match <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::commit_coeffs(
+        &f_coeffs, &psetup,
+    ) {
+        Err(HachiError::InvalidSize {
+            expected: _,
+            actual,
+        }) => assert_eq!(actual, f_coeffs.len()),
+        Err(other) => panic!("unexpected error: {other:?}"),
+        Ok(_) => panic!("expected short coefficient table to be rejected"),
+    }
+}
+
+#[test]
 fn opening_satisfies_inner_and_outer_equations() {
     let (psetup, _) =
         <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::setup(16, 1).unwrap();

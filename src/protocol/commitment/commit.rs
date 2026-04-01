@@ -1007,7 +1007,10 @@ where
     }
 
     fn layout(setup: &Self::ProverSetup) -> Result<HachiCommitmentLayout, HachiError> {
-        Cfg::commitment_layout(setup.expanded.seed.max_num_vars)
+        hachi_batched_root_layout::<Cfg, D>(
+            setup.expanded.seed.max_num_vars,
+            setup.expanded.seed.max_num_batched_polys,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "RingCommitmentScheme::commit_ring_blocks")]
@@ -1015,7 +1018,7 @@ where
         f_blocks: &[Vec<CyclotomicRing<F, D>>],
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
-        let layout = Cfg::commitment_layout(setup.expanded.seed.max_num_vars)?;
+        let layout = <Self as RingCommitmentScheme<F, D, Cfg>>::layout(setup)?;
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,
@@ -1032,62 +1035,6 @@ where
         let log_basis = layout.log_basis;
         let block_slices: Vec<&[CyclotomicRing<F, D>]> =
             f_blocks.iter().map(|b| b.as_slice()).collect();
-        let t_all = mat_vec_mul_ntt_i8(
-            &setup.ntt_shared,
-            root_params.n_a,
-            &block_slices,
-            depth_commit,
-            log_basis,
-        );
-        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
-            .map(|t_i| decompose_rows_i8(&t_i, depth_open, log_basis))
-            .collect();
-
-        let t_hat_flat = flatten_i8_blocks(&t_hat_all);
-        let u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, root_params.n_b, &t_hat_flat);
-        Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
-    }
-
-    #[tracing::instrument(skip_all, name = "RingCommitmentScheme::commit_coeffs")]
-    fn commit_coeffs(
-        f_coeffs: &[CyclotomicRing<F, D>],
-        setup: &Self::ProverSetup,
-    ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
-        let layout = Cfg::commitment_layout(setup.expanded.seed.max_num_vars)?;
-        let root_params = Cfg::level_params(HachiScheduleInputs {
-            max_num_vars: setup.expanded.seed.max_num_vars,
-            level: 0,
-            current_w_len: root_current_w_len::<D>(layout),
-        });
-        let num_blocks = layout.num_blocks;
-        let block_len = layout.block_len;
-        let max_len = num_blocks
-            .checked_mul(block_len)
-            .ok_or_else(|| HachiError::InvalidSetup("coefficient length overflow".to_string()))?;
-        if f_coeffs.len() > max_len {
-            return Err(HachiError::InvalidSize {
-                expected: max_len,
-                actual: f_coeffs.len(),
-            });
-        }
-
-        let depth_commit = layout.num_digits_commit;
-        let depth_open = layout.num_digits_open;
-        let log_basis = layout.log_basis;
-        let coeff_len = f_coeffs.len();
-
-        let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
-            .map(|i| {
-                let start = i * block_len;
-                if start >= coeff_len {
-                    &[] as &[CyclotomicRing<F, D>]
-                } else {
-                    &f_coeffs[start..(start + block_len).min(coeff_len)]
-                }
-            })
-            .collect();
-
         let t_all = mat_vec_mul_ntt_i8(
             &setup.ntt_shared,
             root_params.n_a,
@@ -1478,9 +1425,13 @@ mod tests {
         let (setup, _) =
             <HachiCommitmentCore as RingCommitmentScheme<TestF, TEST_D, Cfg>>::setup(NV, BATCH)
                 .unwrap();
+        let runtime_layout =
+            <HachiCommitmentCore as RingCommitmentScheme<TestF, TEST_D, Cfg>>::layout(&setup)
+                .unwrap();
 
         assert_eq!(helper_root.m_vars, setup_root.m_vars);
         assert_eq!(helper_root.r_vars, setup_root.r_vars);
+        assert_eq!(runtime_layout, helper_root);
         assert_eq!(helper_root.outer_width * BATCH, setup_root.outer_width);
         assert_eq!(
             helper_root.d_matrix_width * BATCH,
