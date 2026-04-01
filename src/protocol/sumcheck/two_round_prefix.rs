@@ -72,6 +72,7 @@ const STAGE1_B4_NONBOOLEAN_GRID_INDICES: [usize; STAGE1_B4_PREFIX_EVAL_COUNT] = 
 /// Number of stored evaluations in the stage-1 `b = 8` 2-round bivariate-skip
 /// proof after omitting the four Boolean corners from `{0,1,-1,2,Infinity}^2`.
 pub(crate) const STAGE1_PREFIX_EVAL_COUNT: usize = 21;
+const STAGE1_B8_Q_POLY_DEGREE: usize = 4;
 
 /// Serializable stage-1 first-two-round bivariate-skip proof.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1086,7 +1087,7 @@ impl<E: FieldCore + FromSmallInt> Stage1B8BivariateSkipState<E> {
                 l1_at_0 * q_x0 + l1_at_1 * q_x1
             })
             .collect();
-        EqFactoredUniPoly::from_q_coeffs(UniPoly::from_evals(&evals).coeffs)
+        interpolate_eq_factored_q_poly(&evals, STAGE1_B8_Q_POLY_DEGREE)
     }
 
     fn reconstruct_round1_eq_poly(&self, r0: E) -> EqFactoredUniPoly<E> {
@@ -1096,8 +1097,17 @@ impl<E: FieldCore + FromSmallInt> Stage1B8BivariateSkipState<E> {
                 eval_stage1_biquartic_from_full_grid(self.full_grid, r0, y)
             })
             .collect();
-        EqFactoredUniPoly::from_q_coeffs(UniPoly::from_evals(&evals).coeffs)
+        interpolate_eq_factored_q_poly(&evals, STAGE1_B8_Q_POLY_DEGREE)
     }
+}
+
+fn interpolate_eq_factored_q_poly<E: FieldCore + FromSmallInt>(
+    evals: &[E],
+    degree: usize,
+) -> EqFactoredUniPoly<E> {
+    let mut q_coeffs = UniPoly::from_evals(evals).coeffs;
+    q_coeffs.resize(degree + 1, E::zero());
+    EqFactoredUniPoly::from_q_coeffs(q_coeffs)
 }
 
 /// Proposed reduced stage-2 domain `{1, Infinity}`.
@@ -1780,6 +1790,7 @@ impl<E: FieldCore + FromSmallInt> Stage2BivariateSkipState<E> {
 mod tests {
     use super::*;
     use crate::algebra::Prime128Offset5823;
+    use crate::primitives::{HachiDeserialize, HachiSerialize};
     use crate::protocol::sumcheck::hachi_stage1::HachiStage1Prover;
     use crate::protocol::sumcheck::{advance_eq_factored_claim, EqFactoredSumcheckInstanceProver};
     use std::collections::HashMap;
@@ -2525,6 +2536,42 @@ mod tests {
 
         let round1 = prover.compute_round_eq_factored(1);
         assert_eq!(skip_state.reconstruct_round1_eq_poly(r0), round1);
+    }
+
+    #[test]
+    fn stage1_b8_reconstructed_eq_polys_keep_degree4_storage_width() {
+        let state = Stage1B8BivariateSkipState {
+            full_grid: [F::zero(); 25],
+            tau0: F::from_u64(3),
+            tau1: F::from_u64(5),
+        };
+
+        for poly in [
+            state.reconstruct_round0_eq_poly(),
+            state.reconstruct_round1_eq_poly(F::from_u64(7)),
+        ] {
+            assert_eq!(
+                poly.coeffs_except_linear_term.len(),
+                EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(STAGE1_B8_Q_POLY_DEGREE)
+            );
+            assert_eq!(
+                poly.coeffs_except_linear_term,
+                vec![
+                    F::zero();
+                    EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(STAGE1_B8_Q_POLY_DEGREE)
+                ]
+            );
+
+            let mut bytes = Vec::new();
+            poly.serialize_uncompressed(&mut bytes)
+                .expect("eq-factored poly should serialize");
+            let decoded = EqFactoredUniPoly::<F>::deserialize_uncompressed(
+                &bytes[..],
+                &STAGE1_B8_Q_POLY_DEGREE,
+            )
+            .expect("eq-factored poly should deserialize at degree 4");
+            assert_eq!(decoded, poly);
+        }
     }
 
     #[test]
