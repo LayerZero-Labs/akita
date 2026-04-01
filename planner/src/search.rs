@@ -277,7 +277,14 @@ impl Planner {
             + elem_bytes()
     }
 
-    fn a_role_collision(
+    /// Return the supported SIS collision bucket used to size the `A` role.
+    ///
+    /// For the root onehot level the raw digit difference is bounded by `2`;
+    /// otherwise the raw collision bound is the balanced-digit width
+    /// `2^lb - 1`. The `A` reduction pays one extra challenge factor, so we
+    /// scale by the maximum absolute coefficient in the level's stage-1
+    /// challenge family before rounding up to the next precomputed SIS bucket.
+    fn a_role_sis_collision_bucket(
         &self,
         cfg: &RingConfig,
         level: usize,
@@ -330,8 +337,8 @@ impl Planner {
         } else {
             (1usize << m_vars) * lc.delta_commit
         };
-        let a_collision = self.a_role_collision(cfg, level, log_cb, lb)?;
-        let na_needed = min_rank_for_secure_width(cfg.d, a_collision, inner_width)?;
+        let a_sis_collision = self.a_role_sis_collision_bucket(cfg, level, log_cb, lb)?;
+        let na_needed = min_rank_for_secure_width(cfg.d, a_sis_collision, inner_width)?;
         if na_needed > cfg.n_a {
             return None;
         }
