@@ -9,7 +9,7 @@
 //! - a leaf stage proves a random linear combination of the quartic factors
 //!   directly from `S`.
 //!
-//! This matches the proof-size study's current tree cutover for `log_basis <= 5`
+//! This matches the proof-size study's current tree cutover for `log_basis <= 6`
 //! without widening the recursive witness encoding beyond the existing runtime
 //! bound.
 

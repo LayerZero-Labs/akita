@@ -30,6 +30,7 @@ const ONEHOT_K: usize = 256;
 const FULL_TEST_NV: usize = 14;
 const ONEHOT_TEST_NV: usize = 15;
 const BASIS2_TEST_NV: usize = 12;
+const BASIS6_TEST_NV: usize = 12;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
 static INIT_RAYON: Once = Once::new();
@@ -412,6 +413,39 @@ fn full_d128_basis2_rejects_tampered_stage1_sumcheck() {
         );
 
         assert!(result.is_err(), "tampered stage1 sumcheck must be rejected");
+    });
+}
+
+#[test]
+fn full_d128_basis6_prove_verify() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = Fp128BoundedCommitmentConfig<128, 6, 6>;
+        const D: usize = Cfg::D;
+
+        let (verifier_setup, commitment, proof, opening_point, opening, layout) =
+            make_dense_fixture::<D, Cfg>(BASIS6_TEST_NV, b"hachi_e2e/basis6");
+
+        assert_eq!(proof.tail.direct.bits_per_elem, 6);
+
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/basis6");
+        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+            &layout,
+        );
+
+        assert!(
+            result.is_ok(),
+            "basis-6 verification must pass: {:?}",
+            result.err()
+        );
     });
 }
 

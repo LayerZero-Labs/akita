@@ -554,19 +554,19 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     /// but stores each digit as `i8` instead of a field element, avoiding
     /// the cost of `F::from_canonical_u128_reduced`.
     ///
-    /// Requires `log_basis <= 7` so digits fit in `[-64, 63]` (i8 range).
+    /// Requires `log_basis <= 6` so digits fit in `[-32, 31]` (i8 range).
     ///
     /// # Panics
     ///
-    /// Panics if `log_basis` is 0 or > 7, or if `levels * log_basis > 128 + log_basis`.
+    /// Panics if `log_basis` is 0 or > 6, or if `levels * log_basis > 128 + log_basis`.
     pub fn balanced_decompose_pow2_i8_into(&self, out: &mut [[i8; D]], log_basis: u32)
     where
         F: CanonicalField,
     {
         let levels = out.len();
         assert!(
-            log_basis > 0 && log_basis <= 5,
-            "log_basis must be in 1..=5 for i8 output"
+            log_basis > 0 && log_basis <= 6,
+            "log_basis must be in 1..=6 for i8 output"
         );
         assert!(
             (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,

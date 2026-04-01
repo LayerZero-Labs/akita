@@ -975,7 +975,7 @@ impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
     }
 
     fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
-        planned_log_basis_at_level::<Self>(inputs, 2, 5)
+        planned_log_basis_at_level::<Self>(inputs, 2, 6)
             .expect("adaptive schedule must be derivable from public inputs")
     }
 
@@ -984,7 +984,7 @@ impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
     }
 
     fn schedule_key(max_num_vars: usize) -> String {
-        planned_schedule_key::<Self>(max_num_vars, 2, 5)
+        planned_schedule_key::<Self>(max_num_vars, 2, 6)
             .expect("adaptive schedule key must be derivable from public inputs")
     }
 
@@ -992,7 +992,7 @@ impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
         Ok(Some(super::schedule::planned_schedule::<Self>(
             max_num_vars,
             2,
-            5,
+            6,
         )?))
     }
 
@@ -1079,7 +1079,7 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
     }
 
     fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
-        planned_log_basis_at_level::<Self>(inputs, 2, 5)
+        planned_log_basis_at_level::<Self>(inputs, 2, 6)
             .expect("adaptive schedule must be derivable from public inputs")
     }
 
@@ -1088,7 +1088,7 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
     }
 
     fn schedule_key(max_num_vars: usize) -> String {
-        planned_schedule_key::<Self>(max_num_vars, 2, 5)
+        planned_schedule_key::<Self>(max_num_vars, 2, 6)
             .expect("adaptive schedule key must be derivable from public inputs")
     }
 
@@ -1096,7 +1096,7 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
         Ok(Some(super::schedule::planned_schedule::<Self>(
             max_num_vars,
             2,
-            5,
+            6,
         )?))
     }
 
