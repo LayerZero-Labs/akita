@@ -56,7 +56,7 @@ impl PackedDigits {
     ///
     /// Panics (in debug) if any element does not fit in `log_basis` bits.
     pub fn from_i8_digits(w: &[i8], log_basis: u32) -> Self {
-        assert!(log_basis > 0 && log_basis <= 5, "log_basis out of range");
+        assert!(log_basis > 0 && log_basis <= 6, "log_basis out of range");
         let half_b = 1i8 << (log_basis - 1);
 
         let bits = log_basis as usize;
@@ -166,7 +166,7 @@ impl HachiSerialize for PackedDigits {
 
 impl Valid for PackedDigits {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.bits_per_elem == 0 || self.bits_per_elem > 7 {
+        if self.bits_per_elem == 0 || self.bits_per_elem > 6 {
             return Err(SerializationError::InvalidData(
                 "bits_per_elem out of range".to_string(),
             ));
@@ -1299,5 +1299,45 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiProof<F> {
             out.check()?;
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::algebra::Prime128Offset5823;
+    use crate::primitives::serialization::Valid;
+    use crate::FromSmallInt;
+
+    #[test]
+    fn packed_digits_roundtrip_basis6() {
+        let digits = vec![-32, -17, -1, 0, 1, 31];
+        let packed = PackedDigits::from_i8_digits(&digits, 6);
+
+        assert_eq!(packed.bits_per_elem, 6);
+        let recovered: Vec<i8> = (0..digits.len())
+            .map(|idx| packed.digit_at(idx).expect("packed index in bounds"))
+            .collect();
+        assert_eq!(recovered, digits);
+
+        let expected_field: Vec<Prime128Offset5823> = digits
+            .iter()
+            .map(|&digit| Prime128Offset5823::from_i64(digit as i64))
+            .collect();
+        assert_eq!(
+            packed.to_field_elems::<Prime128Offset5823>(),
+            expected_field
+        );
+    }
+
+    #[test]
+    fn packed_digits_reject_bits_above_six() {
+        let packed = PackedDigits {
+            num_elems: 1,
+            bits_per_elem: 7,
+            data: vec![0],
+        };
+
+        assert!(packed.check().is_err());
     }
 }

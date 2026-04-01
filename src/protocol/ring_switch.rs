@@ -854,8 +854,8 @@ fn balanced_decompose_centered_i32_i8_into<const D: usize>(
 ) {
     let levels = out.len();
     assert!(
-        log_basis > 0 && log_basis <= 5,
-        "log_basis must be in 1..=5 for i8 output"
+        log_basis > 0 && log_basis <= 6,
+        "log_basis must be in 1..=6 for i8 output"
     );
     assert!(
         (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
@@ -1190,7 +1190,12 @@ mod tests {
         let ring =
             CyclotomicRing::<F, D>::from_coefficients(from_fn(|i| F::from_i64(centered[i] as i64)));
 
-        for (num_digits, log_basis) in [(7usize, 3u32), (10usize, 2u32), (5usize, 5u32)] {
+        for (num_digits, log_basis) in [
+            (7usize, 3u32),
+            (10usize, 2u32),
+            (5usize, 5u32),
+            (4usize, 6u32),
+        ] {
             let mut got = vec![[0i8; D]; num_digits];
             super::balanced_decompose_centered_i32_i8_into(&centered, &mut got, log_basis);
 
