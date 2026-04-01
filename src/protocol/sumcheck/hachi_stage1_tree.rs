@@ -21,10 +21,12 @@ use super::{
 use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::split_eq::GruenSplitEq;
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::protocol::proof::{HachiStage1Proof, HachiStage1StageProof, HachiStage1StageShape};
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
-use crate::{CanonicalField, FieldCore, FromSmallInt};
+use crate::{cfg_fold_reduce, CanonicalField, FieldCore, FromSmallInt};
 
 fn compact_s_from_w(w: i8) -> i64 {
     let w = i64::from(w);
@@ -260,7 +262,6 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceProver<E> for ProductStageProver<E>
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let degree = self.degree_bound();
-        let mut q_coeffs = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
         let expected_pairs = num_first * e_second.len();
         debug_assert_eq!(
             self.tables[0].len(),
@@ -268,31 +269,41 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceProver<E> for ProductStageProver<E>
             "product stage table length should match split-eq shape",
         );
 
-        for (j_high, &e_out) in e_second.iter().enumerate() {
-            let base = j_high * num_first;
-            let mut inner = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
-            for (j_low, &e_in) in e_first.iter().enumerate() {
-                let j = base + j_low;
-                let mut poly = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
-                poly[0] = E::one();
-                let mut current_degree = 0usize;
-                for table in &self.tables {
-                    let left = table[2 * j];
-                    let slope = table[2 * j + 1] - left;
-                    for k in (0..=current_degree).rev() {
-                        poly[k + 1] += poly[k] * slope;
-                        poly[k] = poly[k] * left;
+        let q_coeffs = cfg_fold_reduce!(
+            0..e_second.len(),
+            || [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1],
+            |mut outer, j_high| {
+                let e_out = e_second[j_high];
+                let base = j_high * num_first;
+                let mut inner = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
+                for (j_low, &e_in) in e_first.iter().enumerate() {
+                    let j = base + j_low;
+                    let mut poly = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
+                    poly[0] = E::one();
+                    for (current_degree, table) in self.tables.iter().enumerate() {
+                        let left = table[2 * j];
+                        let slope = table[2 * j + 1] - left;
+                        for k in (0..=current_degree).rev() {
+                            poly[k + 1] += poly[k] * slope;
+                            poly[k] = poly[k] * left;
+                        }
                     }
-                    current_degree += 1;
+                    for k in 0..=degree {
+                        inner[k] += e_in * poly[k];
+                    }
                 }
                 for k in 0..=degree {
-                    inner[k] += e_in * poly[k];
+                    outer[k] += e_out * inner[k];
                 }
+                outer
+            },
+            |mut a, b| {
+                for k in 0..=degree {
+                    a[k] += b[k];
+                }
+                a
             }
-            for k in 0..=degree {
-                q_coeffs[k] += e_out * inner[k];
-            }
-        }
+        );
 
         EqFactoredUniPoly::from_q_coeffs(q_coeffs[..=degree].to_vec())
     }
@@ -401,7 +412,6 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceProver<E> for PolynomialStageProver
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let degree = self.degree_bound();
-        let mut q_coeffs = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
         let expected_pairs = num_first * e_second.len();
         debug_assert_eq!(
             self.s_table.len(),
@@ -409,24 +419,36 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceProver<E> for PolynomialStageProver
             "polynomial stage table length should match split-eq shape",
         );
 
-        for (j_high, &e_out) in e_second.iter().enumerate() {
-            let base = j_high * num_first;
-            let mut inner = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
-            for (j_low, &e_in) in e_first.iter().enumerate() {
-                let j = base + j_low;
-                let coeffs = compose_small_poly_with_affine(
-                    &self.poly_coeffs,
-                    self.s_table[2 * j],
-                    self.s_table[2 * j + 1] - self.s_table[2 * j],
-                );
-                for k in 0..=degree {
-                    inner[k] += e_in * coeffs[k];
+        let q_coeffs = cfg_fold_reduce!(
+            0..e_second.len(),
+            || [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1],
+            |mut outer, j_high| {
+                let e_out = e_second[j_high];
+                let base = j_high * num_first;
+                let mut inner = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
+                for (j_low, &e_in) in e_first.iter().enumerate() {
+                    let j = base + j_low;
+                    let coeffs = compose_small_poly_with_affine(
+                        &self.poly_coeffs,
+                        self.s_table[2 * j],
+                        self.s_table[2 * j + 1] - self.s_table[2 * j],
+                    );
+                    for k in 0..=degree {
+                        inner[k] += e_in * coeffs[k];
+                    }
                 }
+                for k in 0..=degree {
+                    outer[k] += e_out * inner[k];
+                }
+                outer
+            },
+            |mut a, b| {
+                for k in 0..=degree {
+                    a[k] += b[k];
+                }
+                a
             }
-            for k in 0..=degree {
-                q_coeffs[k] += e_out * inner[k];
-            }
-        }
+        );
 
         EqFactoredUniPoly::from_q_coeffs(q_coeffs[..=degree].to_vec())
     }
