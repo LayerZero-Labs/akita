@@ -39,7 +39,7 @@ use crate::protocol::sumcheck::hachi_stage2::{
     relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier,
 };
 use crate::protocol::sumcheck::{
-    prove_eq_compressed_sumcheck, prove_sumcheck, verify_eq_compressed_sumcheck, verify_sumcheck,
+    prove_eq_factored_sumcheck, prove_sumcheck, verify_eq_factored_sumcheck, verify_sumcheck,
     SumcheckInstanceVerifier,
 };
 use crate::protocol::transcript::labels::{
@@ -569,7 +569,7 @@ where
         let mut stage1_prover =
             HachiStage1Prover::new(&w_evals_compact, &tau0, b, live_x_cols, num_u, num_l);
         let (stage1_sumcheck, r_stage1, _stage1_final_claim) =
-            prove_eq_compressed_sumcheck::<F, _, F, _, _>(&mut stage1_prover, transcript, |tr| {
+            prove_eq_factored_sumcheck::<F, _, F, _, _>(&mut stage1_prover, transcript, |tr| {
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
             })?;
         let s_claim = stage1_prover.final_s_claim();
@@ -2923,7 +2923,7 @@ where
     let mut stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), stage1.s_claim, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        verify_eq_compressed_sumcheck::<F, _, F, _, _>(
+        verify_eq_factored_sumcheck::<F, _, F, _, _>(
             &stage1.sumcheck,
             &mut stage1_verifier,
             transcript,

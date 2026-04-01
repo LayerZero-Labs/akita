@@ -33,7 +33,7 @@ pub use crate::algebra::poly::{
 };
 pub use crate::algebra::uni_poly::{CompressedUniPoly, UniPoly};
 pub use types::{
-    EqCompressedSumcheckProof, EqCompressedSumcheckProofShape, EqCompressedUniPoly, SumcheckProof,
+    EqFactoredSumcheckProof, EqFactoredSumcheckProofShape, EqFactoredUniPoly, SumcheckProof,
     SumcheckProofShape,
 };
 
@@ -174,8 +174,13 @@ pub trait SumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
     fn expected_output_claim(&self, challenges: &[E]) -> Result<E, HachiError>;
 }
 
-/// Prover-side interface for eq-compressed sumchecks of the form `eq(τ, x) * q(x)`.
-pub trait EqCompressedSumcheckInstanceProver<E: FieldCore>: Send + Sync {
+/// Prover-side interface for eq-factored sumchecks of the form `s(X) = l(X) * q(X)`.
+///
+/// Here `l(X)` is the current linear eq factor for the active round. The
+/// prover sends the inner polynomial `q(X)` with its linear term omitted, and
+/// the verifier advances a scaled claim directly from `l(0)`, `l(1)`, `q(0)`,
+/// the higher-degree contribution of `q(1)`, and the sampled challenge.
+pub trait EqFactoredSumcheckInstanceProver<E: FieldCore>: Send + Sync {
     /// Number of rounds (i.e. number of variables bound by sumcheck).
     fn num_rounds(&self) -> usize;
 
@@ -188,8 +193,8 @@ pub trait EqCompressedSumcheckInstanceProver<E: FieldCore>: Send + Sync {
     /// Linear eq-factor evaluations `(l(0), l(1))` for the current round.
     fn current_linear_factor_evals(&self) -> (E, E);
 
-    /// Compute the eq-compressed round message.
-    fn compute_round_eq_compressed(&mut self, round: usize) -> EqCompressedUniPoly<E>;
+    /// Compute the eq-factored round message.
+    fn compute_round_eq_factored(&mut self, round: usize) -> EqFactoredUniPoly<E>;
 
     /// Ingest the verifier challenge `r_round` to fold/bind the current variable.
     fn ingest_challenge(&mut self, round: usize, r_round: E);
@@ -198,8 +203,8 @@ pub trait EqCompressedSumcheckInstanceProver<E: FieldCore>: Send + Sync {
     fn finalize(&mut self) {}
 }
 
-/// Verifier-side interface for eq-compressed sumchecks.
-pub trait EqCompressedSumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
+/// Verifier-side interface for eq-factored sumchecks.
+pub trait EqFactoredSumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
     /// Number of rounds (i.e. number of variables bound by sumcheck).
     fn num_rounds(&self) -> usize;
 
@@ -216,16 +221,21 @@ pub trait EqCompressedSumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
     fn ingest_challenge(&mut self, round: usize, r_round: E);
 
     /// Compute the expected final oracle evaluation `f(r_0, ..., r_{n-1})`.
+    ///
+    /// # Errors
+    ///
+    /// May return an error if the verifier cannot evaluate the final folded
+    /// instance at the sampled challenge point.
     fn expected_output_claim(&self, challenges: &[E]) -> Result<E, HachiError>;
 }
 
 #[inline]
-pub(crate) fn advance_eq_compressed_claim<E: FieldCore>(
+pub(crate) fn advance_eq_factored_claim<E: FieldCore>(
     scaled_claim: E,
     claim_scale: E,
     l_at_0: E,
     l_at_1: E,
-    poly: &EqCompressedUniPoly<E>,
+    poly: &EqFactoredUniPoly<E>,
     r_round: E,
 ) -> (E, E) {
     let q_0 = poly.constant_term();
@@ -241,24 +251,24 @@ pub(crate) fn advance_eq_compressed_claim<E: FieldCore>(
     (next_scaled_claim, next_claim_scale)
 }
 
-/// Produce an eq-compressed sumcheck proof.
+/// Produce an eq-factored sumcheck proof.
 ///
 /// The prover sends the inner polynomial `q(X)` with its linear coefficient
 /// omitted in every round, while the driver maintains the verifier-equivalent
 /// scaled claim update.
-#[tracing::instrument(skip_all, name = "prove_eq_compressed_sumcheck")]
+#[tracing::instrument(skip_all, name = "prove_eq_factored_sumcheck")]
 #[inline(never)]
-pub(crate) fn prove_eq_compressed_sumcheck<F, T, E, S, Inst>(
+pub(crate) fn prove_eq_factored_sumcheck<F, T, E, S, Inst>(
     instance: &mut Inst,
     transcript: &mut T,
     mut sample_challenge: S,
-) -> Result<(EqCompressedSumcheckProof<E>, Vec<E>, E), HachiError>
+) -> Result<(EqFactoredSumcheckProof<E>, Vec<E>, E), HachiError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
     E: FieldCore,
     S: FnMut(&mut T) -> E,
-    Inst: EqCompressedSumcheckInstanceProver<E>,
+    Inst: EqFactoredSumcheckInstanceProver<E>,
 {
     let num_rounds = instance.num_rounds();
     let degree_bound = instance.degree_bound();
@@ -270,10 +280,10 @@ where
     transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &scaled_claim);
 
     for round in 0..num_rounds {
-        let poly = instance.compute_round_eq_compressed(round);
+        let poly = instance.compute_round_eq_factored(round);
         if poly.degree() > degree_bound {
             return Err(HachiError::InvalidInput(format!(
-                "eq-compressed sumcheck round poly degree {} exceeds bound {}",
+                "eq-factored sumcheck round poly degree {} exceeds bound {}",
                 poly.degree(),
                 degree_bound
             )));
@@ -283,7 +293,7 @@ where
         let r_i = sample_challenge(transcript);
         let (l_at_0, l_at_1) = instance.current_linear_factor_evals();
         (scaled_claim, claim_scale) =
-            advance_eq_compressed_claim(scaled_claim, claim_scale, l_at_0, l_at_1, &poly, r_i);
+            advance_eq_factored_claim(scaled_claim, claim_scale, l_at_0, l_at_1, &poly, r_i);
         challenges.push(r_i);
         instance.ingest_challenge(round, r_i);
         round_polys.push(poly);
@@ -291,17 +301,17 @@ where
 
     instance.finalize();
     Ok((
-        EqCompressedSumcheckProof { round_polys },
+        EqFactoredSumcheckProof { round_polys },
         challenges,
         scaled_claim,
     ))
 }
 
-/// Verify an eq-compressed sumcheck proof.
-#[tracing::instrument(skip_all, name = "verify_eq_compressed_sumcheck")]
+/// Verify an eq-factored sumcheck proof.
+#[tracing::instrument(skip_all, name = "verify_eq_factored_sumcheck")]
 #[inline(never)]
-pub(crate) fn verify_eq_compressed_sumcheck<F, T, E, S, V>(
-    proof: &EqCompressedSumcheckProof<E>,
+pub(crate) fn verify_eq_factored_sumcheck<F, T, E, S, V>(
+    proof: &EqFactoredSumcheckProof<E>,
     verifier: &mut V,
     transcript: &mut T,
     mut sample_challenge: S,
@@ -311,7 +321,7 @@ where
     T: Transcript<F>,
     E: FieldCore,
     S: FnMut(&mut T) -> E,
-    V: EqCompressedSumcheckInstanceVerifier<E>,
+    V: EqFactoredSumcheckInstanceVerifier<E>,
 {
     let num_rounds = verifier.num_rounds();
     if proof.round_polys.len() != num_rounds {
@@ -331,7 +341,7 @@ where
     for (round, poly) in proof.round_polys.iter().enumerate() {
         if poly.degree() > degree_bound {
             return Err(HachiError::InvalidInput(format!(
-                "eq-compressed sumcheck round poly degree {} exceeds bound {}",
+                "eq-factored sumcheck round poly degree {} exceeds bound {}",
                 poly.degree(),
                 degree_bound
             )));
@@ -341,7 +351,7 @@ where
         let r_i = sample_challenge(transcript);
         let (l_at_0, l_at_1) = verifier.current_linear_factor_evals();
         (scaled_claim, claim_scale) =
-            advance_eq_compressed_claim(scaled_claim, claim_scale, l_at_0, l_at_1, poly, r_i);
+            advance_eq_factored_claim(scaled_claim, claim_scale, l_at_0, l_at_1, poly, r_i);
         challenges.push(r_i);
         verifier.ingest_challenge(round, r_i);
     }
@@ -791,12 +801,12 @@ mod tests {
         );
     }
 
-    struct ToyEqCompressedInstance {
+    struct ToyEqFactoredInstance {
         split_eq: GruenSplitEq<F>,
         q_coeffs: Vec<F>,
     }
 
-    impl ToyEqCompressedInstance {
+    impl ToyEqFactoredInstance {
         fn new(tau: F, q_coeffs: Vec<F>) -> Self {
             Self {
                 split_eq: GruenSplitEq::new(&[tau]),
@@ -809,7 +819,7 @@ mod tests {
         }
     }
 
-    impl EqCompressedSumcheckInstanceProver<F> for ToyEqCompressedInstance {
+    impl EqFactoredSumcheckInstanceProver<F> for ToyEqFactoredInstance {
         fn num_rounds(&self) -> usize {
             1
         }
@@ -824,11 +834,11 @@ mod tests {
         }
 
         fn current_linear_factor_evals(&self) -> (F, F) {
-            self.split_eq.current_linear_factor_evals()
+            self.split_eq.linear_factor_evals()
         }
 
-        fn compute_round_eq_compressed(&mut self, _round: usize) -> EqCompressedUniPoly<F> {
-            EqCompressedUniPoly::from_q_coeffs(self.q_coeffs.clone())
+        fn compute_round_eq_factored(&mut self, _round: usize) -> EqFactoredUniPoly<F> {
+            EqFactoredUniPoly::from_q_coeffs(self.q_coeffs.clone())
         }
 
         fn ingest_challenge(&mut self, _round: usize, r_round: F) {
@@ -836,7 +846,7 @@ mod tests {
         }
     }
 
-    impl EqCompressedSumcheckInstanceVerifier<F> for ToyEqCompressedInstance {
+    impl EqFactoredSumcheckInstanceVerifier<F> for ToyEqFactoredInstance {
         fn num_rounds(&self) -> usize {
             1
         }
@@ -851,7 +861,7 @@ mod tests {
         }
 
         fn current_linear_factor_evals(&self) -> (F, F) {
-            self.split_eq.current_linear_factor_evals()
+            self.split_eq.linear_factor_evals()
         }
 
         fn ingest_challenge(&mut self, _round: usize, r_round: F) {
@@ -864,7 +874,7 @@ mod tests {
     }
 
     #[test]
-    fn eq_compressed_sumcheck_prove_verify_roundtrip() {
+    fn eq_factored_sumcheck_prove_verify_roundtrip() {
         let tau = F::from_u64(17);
         let q_coeffs = vec![
             F::from_u64(3),
@@ -873,24 +883,21 @@ mod tests {
             F::from_u64(11),
             F::from_u64(13),
         ];
-        let mut prover = ToyEqCompressedInstance::new(tau, q_coeffs.clone());
+        let mut prover = ToyEqFactoredInstance::new(tau, q_coeffs.clone());
         let mut prover_tr = new_transcript();
-        let (proof, prover_challenges, _) = prove_eq_compressed_sumcheck::<F, _, F, _, _>(
-            &mut prover,
-            &mut prover_tr,
-            sample_round,
-        )
-        .unwrap();
+        let (proof, prover_challenges, _) =
+            prove_eq_factored_sumcheck::<F, _, F, _, _>(&mut prover, &mut prover_tr, sample_round)
+                .unwrap();
 
         assert_eq!(proof.round_polys.len(), 1);
         assert_eq!(
             proof.round_polys[0],
-            EqCompressedUniPoly::from_q_coeffs(q_coeffs.clone())
+            EqFactoredUniPoly::from_q_coeffs(q_coeffs.clone())
         );
 
-        let mut verifier = ToyEqCompressedInstance::new(tau, q_coeffs);
+        let mut verifier = ToyEqFactoredInstance::new(tau, q_coeffs);
         let mut verify_tr = new_transcript();
-        let verifier_challenges = verify_eq_compressed_sumcheck::<F, _, F, _, _>(
+        let verifier_challenges = verify_eq_factored_sumcheck::<F, _, F, _, _>(
             &proof,
             &mut verifier,
             &mut verify_tr,
