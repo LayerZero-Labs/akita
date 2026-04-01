@@ -31,8 +31,6 @@ use crate::primitives::serialization::{
 };
 use crate::protocol::commitment_scheme::should_stop_folding;
 use crate::protocol::hachi_poly_ops::OneHotIndex;
-#[cfg(test)]
-use crate::protocol::ring_switch::w_commitment_layout;
 use crate::protocol::ring_switch::{
     w_ring_element_count, w_ring_element_count_with_num_claims_and_points,
 };
@@ -540,6 +538,7 @@ where
             root_layout.num_digits_open,
             num_digits_fold,
             root_layout.log_basis,
+            0,
         )?;
         let next_inputs = HachiScheduleInputs {
             max_num_vars,
@@ -605,6 +604,7 @@ where
             root_layout.num_digits_open,
             num_digits_fold,
             root_layout.log_basis,
+            0,
         )?
     } else {
         root_layout
@@ -650,6 +650,7 @@ where
         root_layout.num_digits_open,
         num_digits_fold,
         root_layout.log_basis,
+        0,
     )?;
 
     let mut batched_layout =
@@ -1392,6 +1393,7 @@ mod tests {
     use super::*;
     use crate::algebra::fields::fp128::Fp128;
     use crate::primitives::{HachiDeserialize, HachiSerialize};
+    use crate::protocol::commitment::hachi_recursive_level_layout_from_params;
     use crate::protocol::commitment::Fp128OneHotCommitmentConfig;
     use crate::test_utils::{TinyConfig, F as TestF};
 
@@ -1592,6 +1594,7 @@ mod tests {
             root_layout.num_digits_open,
             same_point.2,
             root_layout.log_basis,
+            0,
         )
         .unwrap();
         let multipoint_layout = HachiCommitmentLayout::new_with_decomp(
@@ -1602,6 +1605,7 @@ mod tests {
             root_layout.num_digits_open,
             multipoint.2,
             root_layout.log_basis,
+            0,
         )
         .unwrap();
 
@@ -1631,10 +1635,12 @@ mod tests {
             level: 0,
             current_w_len: 1usize << layout_b.required_num_vars::<TEST_D>().unwrap(),
         });
+        let w_len_a = w_ring_element_count::<TestF>(&params_a, layout_a) * TEST_D;
+        let w_len_b = w_ring_element_count::<TestF>(&params_b, layout_b) * TEST_D;
         let w_layout_a =
-            w_commitment_layout::<TestF, TEST_D, TinyConfig>(&params_a, layout_a).unwrap();
+            hachi_recursive_level_layout_from_params::<TinyConfig>(&params_a, w_len_a).unwrap();
         let w_layout_b =
-            w_commitment_layout::<TestF, TEST_D, TinyConfig>(&params_b, layout_b).unwrap();
+            hachi_recursive_level_layout_from_params::<TinyConfig>(&params_b, w_len_b).unwrap();
 
         let expected_inner = [
             layout_a.inner_width,

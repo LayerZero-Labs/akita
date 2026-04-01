@@ -118,6 +118,14 @@ pub fn compute_num_digits_fold(r_vars: usize, challenge_l1_mass: usize, log_basi
     compute_num_digits(log_beta, log_basis)
 }
 
+fn recursive_tight_z_pre_rows(num_ring: usize, r_vars: usize) -> u64 {
+    debug_assert!(
+        r_vars < 53,
+        "recursive_tight_z_pre_rows expects r_vars < 53, got {r_vars}"
+    );
+    (num_ring as u64).div_ceil(1u64 << r_vars)
+}
+
 /// Find the `(m_vars, r_vars)` split that minimizes the level-0
 /// witness-to-polynomial ratio for a given config.
 ///
@@ -137,10 +145,16 @@ pub fn compute_num_digits_fold(r_vars: usize, challenge_l1_mass: usize, log_basi
 /// For the full-field config (`δ_commit = 43`), z_pre dominates and the
 /// result is near-balanced (`m ≈ r`). For narrow configs (`δ_commit = 1`),
 /// the w_hat/t_hat term matters more and the result skews to `m ≈ r + 4`.
+/// Find the cheapest `(m, r)` split for a given `reduced_vars`.
+///
+/// When `num_ring > 0` (recursive levels), the z_pre cost uses the tight
+/// block length `ceil(num_ring / 2^r)` instead of `2^m`.  Pass `0` for
+/// root-level splits where the polynomial fills the full `2^(m+r)` domain.
 pub(super) fn optimal_m_r_split_with_params(
     params: &HachiLevelParams,
     decomp: DecompositionParams,
     reduced_vars: usize,
+    num_ring: usize,
 ) -> (usize, usize) {
     // Guard: for S >= 53, shifts could overflow u64. Fall back to balanced
     // split (this threshold is far beyond any practical polynomial size).
@@ -161,7 +175,12 @@ pub(super) fn optimal_m_r_split_with_params(
         let m = reduced_vars - r;
         let delta_fold =
             compute_num_digits_fold(r, params.challenge_l1_mass, decomp.log_basis) as u64;
-        let cost = c1 * (1u64 << r) + delta_commit * delta_fold * (1u64 << m);
+        let m_eff = if num_ring > 0 {
+            recursive_tight_z_pre_rows(num_ring, r)
+        } else {
+            1u64 << m
+        };
+        let cost = c1 * (1u64 << r) + delta_commit * delta_fold * m_eff;
         if cost < best_cost {
             best_cost = cost;
             best_r = r;
@@ -180,7 +199,7 @@ pub fn optimal_m_r_split<Cfg: CommitmentConfig>(reduced_vars: usize) -> (usize, 
             .checked_shl((reduced_vars + Cfg::D.trailing_zeros() as usize) as u32)
             .unwrap_or(0),
     });
-    optimal_m_r_split_with_params(&params, Cfg::decomposition(), reduced_vars)
+    optimal_m_r_split_with_params(&params, Cfg::decomposition(), reduced_vars, 0)
 }
 
 fn uniform_pm1_stage1_challenge(weight: usize) -> SparseChallengeConfig {
@@ -284,14 +303,21 @@ impl HachiCommitmentLayout {
             depth_open,
             depth_fold,
             decomp.log_basis,
+            0,
         )
     }
 
     /// Build a layout from explicit decomposition parameters (no config trait needed).
     ///
+    /// When `num_ring > 0` (recursive levels), `block_len` is set to
+    /// `ceil(num_ring / num_blocks)` instead of `2^m_vars`, giving tight
+    /// z_pre sizing.  Pass `0` for root-level layouts where the polynomial
+    /// fills the full `2^(m+r)` domain.
+    ///
     /// # Errors
     ///
     /// Returns an error when parameters are invalid or derived widths overflow.
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_decomp(
         m_vars: usize,
         r_vars: usize,
@@ -300,12 +326,17 @@ impl HachiCommitmentLayout {
         num_digits_open: usize,
         num_digits_fold: usize,
         log_basis: u32,
+        num_ring: usize,
     ) -> Result<Self, HachiError> {
         if log_basis == 0 || log_basis >= 128 {
             return Err(HachiError::InvalidSetup("invalid log_basis".to_string()));
         }
         let num_blocks = checked_pow2(r_vars)?;
-        let block_len = checked_pow2(m_vars)?;
+        let block_len = if num_ring > 0 {
+            num_ring.div_ceil(num_blocks)
+        } else {
+            checked_pow2(m_vars)?
+        };
         let inner_width = block_len
             .checked_mul(num_digits_commit)
             .ok_or_else(|| HachiError::InvalidSetup("inner width overflow".to_string()))?;
@@ -1081,5 +1112,47 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
             2,
             5,
         )?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::algebra::SparseChallengeConfig;
+    use crate::protocol::commitment::HachiLevelParams;
+
+    fn test_level_params() -> HachiLevelParams {
+        let stage1_config = SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        HachiLevelParams {
+            d: 64,
+            log_basis: 2,
+            n_a: 2,
+            n_b: 2,
+            n_d: 2,
+            challenge_l1_mass: stage1_config.l1_mass(),
+            stage1_config,
+        }
+    }
+
+    #[test]
+    fn recursive_tight_rows_use_u64_block_counts() {
+        assert_eq!(recursive_tight_z_pre_rows(1, 40), 1);
+        assert_eq!(recursive_tight_z_pre_rows((1usize << 20) + 1, 20), 2);
+    }
+
+    #[test]
+    fn recursive_split_handles_large_r_with_nonzero_num_ring() {
+        let params = test_level_params();
+        let decomp = DecompositionParams {
+            log_basis: 2,
+            log_commit_bound: 128,
+            log_open_bound: Some(128),
+        };
+
+        let (m_vars, r_vars) = optimal_m_r_split_with_params(&params, decomp, 40, 1);
+        assert_eq!(m_vars + r_vars, 40);
     }
 }

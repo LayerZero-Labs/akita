@@ -29,7 +29,7 @@ use hachi_pcs::protocol::commitment::{
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BlockOrder,
 };
 use hachi_pcs::protocol::proof::HachiBatchedProof;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
@@ -94,6 +94,7 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
         layout.r_vars,
         layout.m_vars,
         BasisMode::Lagrange,
+        BlockOrder::RowMajor,
     )
     .expect("opening point shape should match layout");
 

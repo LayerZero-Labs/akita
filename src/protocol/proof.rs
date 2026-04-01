@@ -27,29 +27,6 @@ pub struct PackedDigits {
     pub data: Vec<u8>,
 }
 
-/// Signed-digit lookup table used by proof tails and recursive commitments.
-pub(crate) struct DigitLut<F> {
-    table: Vec<F>,
-    half_b: i8,
-}
-
-impl<F: FieldCore + FromSmallInt> DigitLut<F> {
-    #[inline]
-    pub(crate) fn new(log_basis: u32) -> Self {
-        assert!(log_basis > 0 && log_basis <= 5, "log_basis out of range");
-        let half_b = 1i8 << (log_basis - 1);
-        let table = (-(half_b as i16)..(half_b as i16))
-            .map(|digit| F::from_i64(digit as i64))
-            .collect();
-        Self { table, half_b }
-    }
-
-    #[inline(always)]
-    pub(crate) fn get(&self, d: i8) -> F {
-        self.table[(d + self.half_b) as usize]
-    }
-}
-
 impl PackedDigits {
     /// Smallest `bits_per_elem` that can encode every signed digit in `w`.
     pub fn required_bits_per_elem(w: &[i8]) -> u32 {
