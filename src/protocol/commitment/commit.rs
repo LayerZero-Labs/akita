@@ -1058,7 +1058,7 @@ where
         indices: &[Option<I>],
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
-        let layout = Cfg::commitment_layout(setup.expanded.seed.max_num_vars)?;
+        let layout = <Self as RingCommitmentScheme<F, D, Cfg>>::layout(setup)?;
         let root_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,
