@@ -40,6 +40,8 @@ fn validate_stage1_tree_basis(b: usize) -> Result<(), HachiError> {
     Ok(())
 }
 
+const MAX_TREE_STAGE_Q_DEGREE: usize = 4;
+
 fn padded_s_table<E: FieldCore + FromSmallInt>(
     w_evals_compact: &[i8],
     live_x_cols: usize,
@@ -98,32 +100,25 @@ fn eval_poly<E: FieldCore>(coeffs: &[E], x: E) -> E {
         .fold(E::zero(), |acc, coeff| acc * x + coeff)
 }
 
-fn mul_poly<E: FieldCore>(lhs: &[E], rhs: &[E]) -> Vec<E> {
-    let mut out = vec![E::zero(); lhs.len() + rhs.len() - 1];
-    for (i, &a) in lhs.iter().enumerate() {
-        for (j, &b) in rhs.iter().enumerate() {
-            out[i + j] += a * b;
-        }
-    }
-    out
-}
+fn compose_small_poly_with_affine<E: FieldCore>(coeffs: &[E], offset: E, slope: E) -> [E; 5] {
+    debug_assert!(coeffs.len() <= MAX_TREE_STAGE_Q_DEGREE + 1);
 
-fn affine_poly_from_pair<E: FieldCore>(left: E, right: E) -> [E; 2] {
-    [left, right - left]
-}
+    let mut out = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
+    let mut power = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
+    power[0] = E::one();
 
-fn compose_poly_with_affine<E: FieldCore>(coeffs: &[E], offset: E, slope: E) -> Vec<E> {
-    let affine = [offset, slope];
-    let mut out = vec![E::zero(); coeffs.len()];
-    let mut power = vec![E::one()];
     for (idx, &coeff) in coeffs.iter().enumerate() {
         if idx > 0 {
-            power = mul_poly(&power, &affine);
+            for k in (0..idx).rev() {
+                power[k + 1] += power[k] * slope;
+                power[k] = power[k] * offset;
+            }
         }
-        for (dst, &src) in out.iter_mut().zip(power.iter()) {
-            *dst += coeff * src;
+        for k in 0..=idx {
+            out[k] += coeff * power[k];
         }
     }
+
     out
 }
 
@@ -261,9 +256,11 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceProver<E> for ProductStageProver<E>
     }
 
     fn compute_round_eq_factored(&mut self, _round: usize) -> EqFactoredUniPoly<E> {
+        debug_assert!(self.degree_bound() <= MAX_TREE_STAGE_Q_DEGREE);
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
-        let mut q_coeffs = vec![E::zero(); self.degree_bound() + 1];
+        let degree = self.degree_bound();
+        let mut q_coeffs = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
         let expected_pairs = num_first * e_second.len();
         debug_assert_eq!(
             self.tables[0].len(),
@@ -273,26 +270,31 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceProver<E> for ProductStageProver<E>
 
         for (j_high, &e_out) in e_second.iter().enumerate() {
             let base = j_high * num_first;
-            let mut inner = vec![E::zero(); self.degree_bound() + 1];
+            let mut inner = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
             for (j_low, &e_in) in e_first.iter().enumerate() {
                 let j = base + j_low;
-                let mut poly = vec![E::one()];
+                let mut poly = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
+                poly[0] = E::one();
+                let mut current_degree = 0usize;
                 for table in &self.tables {
-                    poly = mul_poly(
-                        &poly,
-                        &affine_poly_from_pair(table[2 * j], table[2 * j + 1]),
-                    );
+                    let left = table[2 * j];
+                    let slope = table[2 * j + 1] - left;
+                    for k in (0..=current_degree).rev() {
+                        poly[k + 1] += poly[k] * slope;
+                        poly[k] = poly[k] * left;
+                    }
+                    current_degree += 1;
                 }
-                for (dst, coeff) in inner.iter_mut().zip(poly.iter()) {
-                    *dst += e_in * *coeff;
+                for k in 0..=degree {
+                    inner[k] += e_in * poly[k];
                 }
             }
-            for (dst, coeff) in q_coeffs.iter_mut().zip(inner.iter()) {
-                *dst += e_out * *coeff;
+            for k in 0..=degree {
+                q_coeffs[k] += e_out * inner[k];
             }
         }
 
-        EqFactoredUniPoly::from_q_coeffs(q_coeffs)
+        EqFactoredUniPoly::from_q_coeffs(q_coeffs[..=degree].to_vec())
     }
 
     fn ingest_challenge(&mut self, _round: usize, r_round: E) {
@@ -395,10 +397,11 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceProver<E> for PolynomialStageProver
     }
 
     fn compute_round_eq_factored(&mut self, _round: usize) -> EqFactoredUniPoly<E> {
+        debug_assert!(self.degree_bound() <= MAX_TREE_STAGE_Q_DEGREE);
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let degree = self.degree_bound();
-        let mut q_coeffs = vec![E::zero(); degree + 1];
+        let mut q_coeffs = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
         let expected_pairs = num_first * e_second.len();
         debug_assert_eq!(
             self.s_table.len(),
@@ -408,24 +411,24 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceProver<E> for PolynomialStageProver
 
         for (j_high, &e_out) in e_second.iter().enumerate() {
             let base = j_high * num_first;
-            let mut inner = vec![E::zero(); degree + 1];
+            let mut inner = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
             for (j_low, &e_in) in e_first.iter().enumerate() {
                 let j = base + j_low;
-                let coeffs = compose_poly_with_affine(
+                let coeffs = compose_small_poly_with_affine(
                     &self.poly_coeffs,
                     self.s_table[2 * j],
                     self.s_table[2 * j + 1] - self.s_table[2 * j],
                 );
-                for (dst, coeff) in inner.iter_mut().zip(coeffs.iter()) {
-                    *dst += e_in * *coeff;
+                for k in 0..=degree {
+                    inner[k] += e_in * coeffs[k];
                 }
             }
-            for (dst, coeff) in q_coeffs.iter_mut().zip(inner.iter()) {
-                *dst += e_out * *coeff;
+            for k in 0..=degree {
+                q_coeffs[k] += e_out * inner[k];
             }
         }
 
-        EqFactoredUniPoly::from_q_coeffs(q_coeffs)
+        EqFactoredUniPoly::from_q_coeffs(q_coeffs[..=degree].to_vec())
     }
 
     fn ingest_challenge(&mut self, _round: usize, r_round: E) {
@@ -527,21 +530,30 @@ impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1
     /// Propagates any transcript or sumcheck failure from the internal root
     /// and leaf-stage proofs.
     pub fn prove<T: Transcript<E>>(
-        &self,
+        self,
         transcript: &mut T,
     ) -> Result<(HachiStage1Proof<E>, Vec<E>), HachiError> {
-        validate_stage1_tree_basis(self.b)?;
-        let leaf_coeffs = stage1_leaf_coeffs::<E>(self.b);
+        let Self {
+            s_table,
+            w_evals_compact,
+            tau0,
+            b,
+            live_x_cols,
+            num_u,
+            num_l,
+        } = self;
+        validate_stage1_tree_basis(b)?;
+        let leaf_coeffs = stage1_leaf_coeffs::<E>(b);
         if leaf_coeffs.len() == 1 {
             // Keep the tree wire shape, but reuse the old compact/prefix-aware
             // stage-1 backend for the single-stage `b <= 8` path.
             let mut leaf_stage = single_stage_backend::HachiStage1Prover::new(
-                &self.w_evals_compact,
-                &self.tau0,
-                self.b,
-                self.live_x_cols,
-                self.num_u,
-                self.num_l,
+                &w_evals_compact,
+                &tau0,
+                b,
+                live_x_cols,
+                num_u,
+                num_l,
             );
             let (sumcheck, r_stage1, _final_claim) =
                 prove_eq_factored_sumcheck::<E, _, E, _, _>(&mut leaf_stage, transcript, |tr| {
@@ -557,17 +569,13 @@ impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1
             return Ok((proof, r_stage1));
         }
 
-        let leaf_tables: Vec<Vec<E>> = leaf_coeffs
-            .iter()
-            .map(|coeffs| {
-                self.s_table
-                    .iter()
-                    .copied()
-                    .map(|s| eval_poly(coeffs, s))
-                    .collect()
-            })
-            .collect();
-        let mut root_stage = ProductStageProver::new(leaf_tables, &self.tau0, E::zero());
+        let mut leaf_tables = vec![vec![E::zero(); s_table.len()]; leaf_coeffs.len()];
+        for (idx, &s) in s_table.iter().enumerate() {
+            for (table, coeffs) in leaf_tables.iter_mut().zip(leaf_coeffs.iter()) {
+                table[idx] = eval_poly(coeffs, s);
+            }
+        }
+        let mut root_stage = ProductStageProver::new(leaf_tables, &tau0, E::zero());
         let (root_sumcheck, r_root, _root_final_claim) =
             prove_eq_factored_sumcheck::<E, _, E, _, _>(&mut root_stage, transcript, |tr| {
                 tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
@@ -580,12 +588,8 @@ impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1
         let batched_claim = linear_combination(&weights, &child_claims);
         let batched_leaf_coeffs = combine_polys(&weights, &leaf_coeffs);
 
-        let mut leaf_stage = PolynomialStageProver::new(
-            self.s_table.clone(),
-            &r_root,
-            batched_claim,
-            batched_leaf_coeffs,
-        );
+        let mut leaf_stage =
+            PolynomialStageProver::new(s_table, &r_root, batched_claim, batched_leaf_coeffs);
         let (leaf_sumcheck, r_stage1, _leaf_final_claim) =
             prove_eq_factored_sumcheck::<E, _, E, _, _>(&mut leaf_stage, transcript, |tr| {
                 tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
