@@ -699,7 +699,6 @@ where
         commitments,
         level_params,
         batched_layout,
-        claim_group_sizes,
         quad_eq,
         y_rings,
     )
@@ -805,7 +804,6 @@ fn finish_batched_root_level<F, T, const D: usize, Cfg>(
     commitments: &[RingCommitment<F, D>],
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
-    claim_group_sizes: &[usize],
     mut quad_eq: Box<QuadraticEquation<F, { D }, Cfg>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
 ) -> Result<BatchedProveLevelOutput<F>, HachiError>
@@ -846,7 +844,6 @@ where
         w_hint_cache,
         level_params,
         layout,
-        claim_group_sizes,
     )?;
 
     let relation_claim = relation_claim_from_rows::<F, D>(
@@ -3358,7 +3355,6 @@ mod tests {
                 w_hint_cache,
                 &batch_root_params,
                 batched_root_layout,
-                &[BATCH_SIZE],
             )
             .expect("debug batched ring switch");
 

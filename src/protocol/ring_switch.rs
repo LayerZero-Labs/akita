@@ -197,40 +197,6 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig,
 {
-    ring_switch_finalize_with_num_claims::<F, T, D, Cfg>(
-        quad_eq,
-        setup,
-        transcript,
-        w,
-        w_commitment,
-        w_commitment_proof,
-        w_hint,
-        level_params,
-        layout,
-        1,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-pub(crate) fn ring_switch_finalize_with_num_claims<F, T, const D: usize, Cfg>(
-    quad_eq: &QuadraticEquation<F, D, Cfg>,
-    setup: &HachiExpandedSetup<F>,
-    transcript: &mut T,
-    w: RecursiveWitnessFlat,
-    w_commitment: FlatRingVec<F>,
-    w_commitment_proof: &ProofRingVec<F>,
-    w_hint: RecursiveCommitmentHintCache<F>,
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
-    num_claims: usize,
-) -> Result<RingSwitchOutput<F>, HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling,
-    T: Transcript<F>,
-    Cfg: CommitmentConfig,
-{
-    let claim_group_sizes = vec![1usize; num_claims];
     ring_switch_finalize_with_claim_groups::<F, T, D, Cfg>(
         quad_eq,
         setup,
@@ -241,7 +207,6 @@ where
         w_hint,
         level_params,
         layout,
-        &claim_group_sizes,
     )
 }
 
@@ -257,7 +222,6 @@ pub(crate) fn ring_switch_finalize_with_claim_groups<F, T, const D: usize, Cfg>(
     w_hint: RecursiveCommitmentHintCache<F>,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
-    claim_group_sizes: &[usize],
 ) -> Result<RingSwitchOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -268,6 +232,7 @@ where
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
 
+    let claim_group_sizes = quad_eq.claim_group_sizes();
     let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
     let num_commitment_groups = claim_group_sizes.len();
 
@@ -830,7 +795,6 @@ pub(crate) fn w_ring_element_count_with_num_claims<F: CanonicalField>(
     w_ring_element_count_with_counts::<F>(level_params, layout, num_claims, num_claims, 1)
 }
 
-#[cfg(test)]
 pub(crate) fn w_ring_element_count_with_num_claims_and_points<F: CanonicalField>(
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,

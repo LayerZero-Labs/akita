@@ -187,8 +187,9 @@ where
 
     /// Construct commitment setup for at most `max_num_vars` variables.
     ///
-    /// `max_num_batched_polys` sizes the widened root `B` and `D` matrices used
-    /// by batched same-point openings.
+    /// `max_num_batched_polys` sizes the widened root `B` and `D` matrices and
+    /// the recursive-chain envelope for batched openings, including the
+    /// worst-case multipoint split where each claim opens at a distinct point.
     ///
     /// # Errors
     ///
