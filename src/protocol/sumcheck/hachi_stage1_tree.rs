@@ -140,7 +140,13 @@ fn stage1_leaf_coeffs<E: FieldCore + FromSmallInt>(b: usize) -> Vec<Vec<E>> {
 
 fn build_leaf_tables<E: FieldCore>(leaf_coeffs: &[Vec<E>], s_table: &[E]) -> Vec<Vec<E>> {
     cfg_iter!(leaf_coeffs)
-        .map(|coeffs| s_table.iter().copied().map(|s| eval_poly(coeffs, s)).collect())
+        .map(|coeffs| {
+            s_table
+                .iter()
+                .copied()
+                .map(|s| eval_poly(coeffs, s))
+                .collect()
+        })
         .collect()
 }
 
@@ -547,12 +553,7 @@ impl<E: FieldCore + FromSmallInt> HachiStage1Prover<E> {
             witness: if b <= 8 {
                 Stage1Witness::Compact(w_evals_compact.to_vec())
             } else {
-                Stage1Witness::PaddedS(padded_s_table(
-                    w_evals_compact,
-                    live_x_cols,
-                    num_u,
-                    num_l,
-                )?)
+                Stage1Witness::PaddedS(padded_s_table(w_evals_compact, live_x_cols, num_u, num_l)?)
             },
             tau0: tau0.to_vec(),
             b,
@@ -595,10 +596,11 @@ impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1
                     num_u,
                     num_l,
                 );
-                let (sumcheck, r_stage1, _final_claim) =
-                    prove_eq_factored_sumcheck::<E, _, E, _, _>(&mut leaf_stage, transcript, |tr| {
-                        tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
-                    })?;
+                let (sumcheck, r_stage1, _final_claim) = prove_eq_factored_sumcheck::<E, _, E, _, _>(
+                    &mut leaf_stage,
+                    transcript,
+                    |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
+                )?;
                 let proof = HachiStage1Proof {
                     stages: vec![HachiStage1StageProof {
                         sumcheck,
