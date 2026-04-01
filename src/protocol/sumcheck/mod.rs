@@ -23,6 +23,7 @@ pub mod two_round_prefix;
 pub mod types;
 
 use crate::algebra::fields::HasUnreducedOps;
+use crate::algebra::split_eq::GruenSplitEq;
 use crate::error::HachiError;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
@@ -203,8 +204,34 @@ pub trait EqFactoredSumcheckInstanceProver<E: FieldCore>: Send + Sync {
     fn finalize(&mut self) {}
 }
 
+/// Mutable verifier round state for an eq-factored sumcheck proof.
+pub trait EqFactoredSumcheckRoundState<E: FieldCore>: Send {
+    /// Linear eq-factor evaluations `(l(0), l(1))` for the current round.
+    fn current_linear_factor_evals(&self) -> (E, E);
+
+    /// Ingest the verifier challenge `r_round` to bind the current variable.
+    fn ingest_challenge(&mut self, round: usize, r_round: E);
+}
+
+impl<E: FieldCore> EqFactoredSumcheckRoundState<E> for GruenSplitEq<E> {
+    fn current_linear_factor_evals(&self) -> (E, E) {
+        self.linear_factor_evals()
+    }
+
+    fn ingest_challenge(&mut self, _round: usize, r_round: E) {
+        self.bind(r_round);
+    }
+}
+
 /// Verifier-side interface for eq-factored sumchecks.
+///
+/// The verifier itself is immutable. Any per-round mutable state needed to
+/// track the evolving eq factor lives in [`Self::RoundState`], which is created
+/// fresh for each proof verification.
 pub trait EqFactoredSumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
+    /// Mutable per-proof round state used by the verifier driver.
+    type RoundState: EqFactoredSumcheckRoundState<E>;
+
     /// Number of rounds (i.e. number of variables bound by sumcheck).
     fn num_rounds(&self) -> usize;
 
@@ -214,11 +241,8 @@ pub trait EqFactoredSumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
     /// The initial unscaled sum claim proved by the instance.
     fn input_claim(&self) -> E;
 
-    /// Linear eq-factor evaluations `(l(0), l(1))` for the current round.
-    fn current_linear_factor_evals(&self) -> (E, E);
-
-    /// Ingest the verifier challenge `r_round` to bind the current variable.
-    fn ingest_challenge(&mut self, round: usize, r_round: E);
+    /// Construct the fresh mutable round state used by the verifier driver.
+    fn start_round_state(&self) -> Self::RoundState;
 
     /// Compute the expected final oracle evaluation `f(r_0, ..., r_{n-1})`.
     ///
@@ -226,7 +250,11 @@ pub trait EqFactoredSumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
     ///
     /// May return an error if the verifier cannot evaluate the final folded
     /// instance at the sampled challenge point.
-    fn expected_output_claim(&self, challenges: &[E]) -> Result<E, HachiError>;
+    fn expected_output_claim(
+        &self,
+        round_state: &Self::RoundState,
+        challenges: &[E],
+    ) -> Result<E, HachiError>;
 }
 
 #[inline]
@@ -308,11 +336,14 @@ where
 }
 
 /// Verify an eq-factored sumcheck proof.
+///
+/// This creates and owns the mutable eq-factored round state locally, while
+/// keeping `verifier` itself immutable.
 #[tracing::instrument(skip_all, name = "verify_eq_factored_sumcheck")]
 #[inline(never)]
 pub(crate) fn verify_eq_factored_sumcheck<F, T, E, S, V>(
     proof: &EqFactoredSumcheckProof<E>,
-    verifier: &mut V,
+    verifier: &V,
     transcript: &mut T,
     mut sample_challenge: S,
 ) -> Result<Vec<E>, HachiError>
@@ -335,6 +366,7 @@ where
     let mut scaled_claim = verifier.input_claim();
     let mut claim_scale = E::one();
     let mut challenges = Vec::with_capacity(num_rounds);
+    let mut round_state = verifier.start_round_state();
 
     transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &scaled_claim);
 
@@ -349,14 +381,14 @@ where
 
         transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
         let r_i = sample_challenge(transcript);
-        let (l_at_0, l_at_1) = verifier.current_linear_factor_evals();
+        let (l_at_0, l_at_1) = round_state.current_linear_factor_evals();
         (scaled_claim, claim_scale) =
             advance_eq_factored_claim(scaled_claim, claim_scale, l_at_0, l_at_1, poly, r_i);
         challenges.push(r_i);
-        verifier.ingest_challenge(round, r_i);
+        round_state.ingest_challenge(round, r_i);
     }
 
-    let expected = verifier.expected_output_claim(&challenges)?;
+    let expected = verifier.expected_output_claim(&round_state, &challenges)?;
     if scaled_claim != claim_scale * expected {
         return Err(HachiError::InvalidProof);
     }
@@ -802,6 +834,7 @@ mod tests {
     }
 
     struct ToyEqFactoredInstance {
+        tau: F,
         split_eq: GruenSplitEq<F>,
         q_coeffs: Vec<F>,
     }
@@ -809,6 +842,7 @@ mod tests {
     impl ToyEqFactoredInstance {
         fn new(tau: F, q_coeffs: Vec<F>) -> Self {
             Self {
+                tau,
                 split_eq: GruenSplitEq::new(&[tau]),
                 q_coeffs,
             }
@@ -816,6 +850,11 @@ mod tests {
 
         fn q_poly(&self) -> UniPoly<F> {
             UniPoly::from_coeffs(self.q_coeffs.clone())
+        }
+
+        fn input_claim_from_tau(&self) -> F {
+            let g = GruenSplitEq::new(&[self.tau]).gruen_mul(&self.q_poly());
+            g.evaluate(&F::zero()) + g.evaluate(&F::one())
         }
     }
 
@@ -829,8 +868,7 @@ mod tests {
         }
 
         fn input_claim(&self) -> F {
-            let g = self.split_eq.gruen_mul(&self.q_poly());
-            g.evaluate(&F::zero()) + g.evaluate(&F::one())
+            self.input_claim_from_tau()
         }
 
         fn current_linear_factor_evals(&self) -> (F, F) {
@@ -847,6 +885,8 @@ mod tests {
     }
 
     impl EqFactoredSumcheckInstanceVerifier<F> for ToyEqFactoredInstance {
+        type RoundState = GruenSplitEq<F>;
+
         fn num_rounds(&self) -> usize {
             1
         }
@@ -856,20 +896,19 @@ mod tests {
         }
 
         fn input_claim(&self) -> F {
-            let g = self.split_eq.gruen_mul(&self.q_poly());
-            g.evaluate(&F::zero()) + g.evaluate(&F::one())
+            self.input_claim_from_tau()
         }
 
-        fn current_linear_factor_evals(&self) -> (F, F) {
-            self.split_eq.linear_factor_evals()
+        fn start_round_state(&self) -> Self::RoundState {
+            GruenSplitEq::new(&[self.tau])
         }
 
-        fn ingest_challenge(&mut self, _round: usize, r_round: F) {
-            self.split_eq.bind(r_round);
-        }
-
-        fn expected_output_claim(&self, challenges: &[F]) -> Result<F, HachiError> {
-            Ok(self.split_eq.current_scalar() * self.q_poly().evaluate(&challenges[0]))
+        fn expected_output_claim(
+            &self,
+            round_state: &Self::RoundState,
+            challenges: &[F],
+        ) -> Result<F, HachiError> {
+            Ok(round_state.current_scalar() * self.q_poly().evaluate(&challenges[0]))
         }
     }
 
@@ -895,11 +934,11 @@ mod tests {
             EqFactoredUniPoly::from_q_coeffs(q_coeffs.clone())
         );
 
-        let mut verifier = ToyEqFactoredInstance::new(tau, q_coeffs);
+        let verifier = ToyEqFactoredInstance::new(tau, q_coeffs);
         let mut verify_tr = new_transcript();
         let verifier_challenges = verify_eq_factored_sumcheck::<F, _, F, _, _>(
             &proof,
-            &mut verifier,
+            &verifier,
             &mut verify_tr,
             sample_round,
         )
