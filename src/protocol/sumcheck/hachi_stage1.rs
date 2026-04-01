@@ -328,13 +328,6 @@ fn accumulate_dense_entry_coeffs<E: FieldCore + HasUnreducedOps>(
 }
 
 #[inline]
-fn build_eq_factored_round_poly_from_q_coeffs<E: FieldCore>(
-    q_coeffs: Vec<E>,
-) -> EqFactoredUniPoly<E> {
-    EqFactoredUniPoly::from_q_coeffs(q_coeffs)
-}
-
-#[inline]
 fn compute_entry_coeffs_from_s<E: FieldCore + HasUnreducedOps>(
     out: &mut [E],
     _s_pows: &mut [E],
@@ -472,7 +465,7 @@ fn compute_norm_round_eq_poly_from_s<E: FieldCore + FromSmallInt + HasUnreducedO
     .collect::<Vec<_>>();
 
     let _ = split_eq;
-    build_eq_factored_round_poly_from_q_coeffs(q_coeffs)
+    EqFactoredUniPoly::from_q_coeffs(q_coeffs)
 }
 
 fn compute_norm_round_eq_poly_from_s_compact<
@@ -603,7 +596,7 @@ fn compute_norm_round_eq_poly_from_s_compact<
     };
 
     let _ = split_eq;
-    build_eq_factored_round_poly_from_q_coeffs(q_coeffs)
+    EqFactoredUniPoly::from_q_coeffs(q_coeffs)
 }
 
 enum STable<E: FieldCore> {
@@ -1060,7 +1053,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                 .collect::<Vec<_>>()
         };
 
-        let poly = build_eq_factored_round_poly_from_q_coeffs(q_coeffs);
+        let poly = EqFactoredUniPoly::from_q_coeffs(q_coeffs);
         (out, poly)
     }
 
@@ -1316,7 +1309,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                 .collect::<Vec<_>>()
         };
 
-        let poly = build_eq_factored_round_poly_from_q_coeffs(q_coeffs);
+        let poly = EqFactoredUniPoly::from_q_coeffs(q_coeffs);
         (out, poly)
     }
 
@@ -1564,7 +1557,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
             .collect()
         };
 
-        build_eq_factored_round_poly_from_q_coeffs(q_coeffs)
+        EqFactoredUniPoly::from_q_coeffs(q_coeffs)
     }
 
     #[tracing::instrument(skip_all, name = "HachiStage1Prover::compute_round_full_prefix_x")]
@@ -1682,7 +1675,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         );
 
         let q_coeffs: Vec<E> = q_coeffs.into_iter().map(E::reduce_product_accum).collect();
-        build_eq_factored_round_poly_from_q_coeffs(q_coeffs)
+        EqFactoredUniPoly::from_q_coeffs(q_coeffs)
     }
 
     #[tracing::instrument(skip_all, name = "HachiStage1Prover::fold_s_compact_prefix_x")]
