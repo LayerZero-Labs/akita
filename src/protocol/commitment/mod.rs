@@ -33,7 +33,7 @@ pub(crate) use schedule::{
     planned_recursive_suffix_bytes_with_log_basis, recursive_level_decomposition_from_root,
     recursive_r_decomp_levels_for_bound,
 };
-pub use scheme::{CommitWitness, CommitmentScheme, RingCommitmentScheme};
+pub use scheme::{CommitWitness, CommitmentScheme, DynamicCommitmentScheme, RingCommitmentScheme};
 pub use transcript_append::AppendToTranscript;
 pub use types::{
     DummyProof, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint, RingCommitment,
