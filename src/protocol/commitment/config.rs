@@ -980,7 +980,7 @@ impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
     }
 
     fn log_basis_search_range(_inputs: HachiScheduleInputs) -> (u32, u32) {
-        (2, 5)
+        (2, 6)
     }
 
     fn schedule_key(max_num_vars: usize) -> String {
@@ -1006,7 +1006,7 @@ impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
             level,
             current_w_len,
             2,
-            5,
+            6,
         )?))
     }
 }
@@ -1084,7 +1084,7 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
     }
 
     fn log_basis_search_range(_inputs: HachiScheduleInputs) -> (u32, u32) {
-        (2, 5)
+        (2, 6)
     }
 
     fn schedule_key(max_num_vars: usize) -> String {
@@ -1110,7 +1110,7 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
             level,
             current_w_len,
             2,
-            5,
+            6,
         )?))
     }
 }
@@ -1154,5 +1154,60 @@ mod tests {
 
         let (m_vars, r_vars) = optimal_m_r_split_with_params(&params, decomp, 40, 1);
         assert_eq!(m_vars + r_vars, 40);
+    }
+
+    #[test]
+    fn adaptive_runtime_search_bounds_match_basis6_schedule_bounds() {
+        let inputs = HachiScheduleInputs {
+            max_num_vars: 30,
+            level: 4,
+            current_w_len: 245_888,
+        };
+
+        assert_eq!(
+            Fp128AdaptiveBoundedCommitmentConfig::<128>::log_basis_search_range(inputs),
+            (2, 6)
+        );
+        assert_eq!(
+            Fp128AdaptiveOneHotCommitmentConfig::log_basis_search_range(inputs),
+            (2, 6)
+        );
+
+        assert_eq!(
+            Fp128AdaptiveBoundedCommitmentConfig::<128>::recursive_suffix_bytes(
+                inputs.max_num_vars,
+                inputs.level,
+                inputs.current_w_len
+            )
+            .unwrap(),
+            Some(
+                planned_recursive_suffix_bytes::<Fp128AdaptiveBoundedCommitmentConfig<128>>(
+                    inputs.max_num_vars,
+                    inputs.level,
+                    inputs.current_w_len,
+                    2,
+                    6,
+                )
+                .unwrap()
+            )
+        );
+        assert_eq!(
+            Fp128AdaptiveOneHotCommitmentConfig::recursive_suffix_bytes(
+                inputs.max_num_vars,
+                inputs.level,
+                inputs.current_w_len
+            )
+            .unwrap(),
+            Some(
+                planned_recursive_suffix_bytes::<Fp128AdaptiveOneHotCommitmentConfig>(
+                    inputs.max_num_vars,
+                    inputs.level,
+                    inputs.current_w_len,
+                    2,
+                    6,
+                )
+                .unwrap()
+            )
+        );
     }
 }
