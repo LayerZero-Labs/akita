@@ -449,6 +449,50 @@ fn full_d128_basis6_prove_verify() {
 }
 
 #[test]
+fn full_d128_basis6_rejects_tampered_stage1_child_claims() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = Fp128BoundedCommitmentConfig<128, 6, 6>;
+        const D: usize = Cfg::D;
+
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
+            make_dense_fixture::<D, Cfg>(BASIS6_TEST_NV, b"hachi_e2e/basis6-child-claim-tamper");
+        let mut malformed = proof.clone();
+        let child_claim = malformed
+            .levels
+            .iter_mut()
+            .next()
+            .expect("basis-6 proof should contain at least one level")
+            .stage1
+            .stages
+            .first_mut()
+            .expect("stage1 proof should contain at least one stage")
+            .child_claims
+            .first_mut()
+            .expect("basis-6 tree stage should expose child claims");
+        *child_claim += F::from_canonical_u128_reduced(1);
+
+        let mut verifier_transcript =
+            Blake2bTranscript::<F>::new(b"hachi_e2e/basis6-child-claim-tamper");
+        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
+            &malformed,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+        );
+
+        assert!(
+            result.is_err(),
+            "tampered stage1 child claims must be rejected"
+        );
+    });
+}
+
+#[test]
 fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
@@ -586,6 +630,22 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
 }
 
 #[test]
+fn adaptive_onehot_schedule_stays_below_basis6_in_current_range() {
+    type Cfg = Fp128OneHotCommitmentConfig;
+
+    for nv in 10..=120 {
+        let plan = match Cfg::schedule_plan(nv) {
+            Ok(Some(plan)) => plan,
+            _ => continue,
+        };
+        assert!(
+            plan.states.iter().all(|state| state.log_basis < 6),
+            "adaptive onehot schedule unexpectedly selected basis 6 at nv={nv}: {plan:?}"
+        );
+    }
+}
+
+#[test]
 fn batched_onehot_same_point_round_trip() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
@@ -669,6 +729,89 @@ fn batched_onehot_same_point_round_trip() {
             result.is_ok(),
             "batched onehot verification must pass: {:?}",
             result.err()
+        );
+    });
+}
+
+#[test]
+fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = Fp128OneHotCommitmentConfig;
+        const D: usize = Cfg::D;
+
+        let nv = ONEHOT_TEST_NV;
+        let layout = hachi_batched_root_layout::<Cfg, D>(nv, 2).expect("layout");
+        let total_field = (layout.num_blocks * layout.block_len)
+            .checked_mul(D)
+            .expect("total field size overflow");
+        let total_chunks = total_field / ONEHOT_K;
+        assert_eq!(total_chunks * ONEHOT_K, total_field);
+
+        let mut rng_a = StdRng::seed_from_u64(0x1234_5678);
+        let mut rng_b = StdRng::seed_from_u64(0x8765_4321);
+        let indices_a: Vec<Option<usize>> = (0..total_chunks)
+            .map(|_| Some(rng_a.gen_range(0..ONEHOT_K)))
+            .collect();
+        let indices_b: Vec<Option<usize>> = (0..total_chunks)
+            .map(|_| Some(rng_b.gen_range(0..ONEHOT_K)))
+            .collect();
+        let poly_a =
+            OneHotPoly::<F, D>::new(ONEHOT_K, indices_a, layout.r_vars, layout.m_vars).unwrap();
+        let poly_b =
+            OneHotPoly::<F, D>::new(ONEHOT_K, indices_b, layout.r_vars, layout.m_vars).unwrap();
+        let pt = random_point(nv);
+        let openings = [
+            opening_from_poly(&poly_a, &pt, &layout),
+            opening_from_poly(&poly_b, &pt, &layout),
+        ];
+
+        #[cfg(feature = "disk-persistence")]
+        purge_setup_cache(nv);
+
+        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 2);
+        let verifier_setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        let poly_group = [&poly_a, &poly_b];
+        let poly_groups = [&poly_group[..]];
+        let (commitment, hint) =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly_group, &setup)
+                .unwrap();
+        let commitments = [commitment];
+        let hints = vec![hint];
+
+        let mut prover_transcript =
+            Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-s-claim-tamper");
+        let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+            &setup,
+            &[&poly_groups[..]],
+            &[&pt[..]],
+            vec![hints],
+            &mut prover_transcript,
+            &[&commitments[..]],
+            BasisMode::Lagrange,
+        )
+        .unwrap();
+
+        let mut malformed = proof.clone();
+        malformed.root.stage1.s_claim += F::from_canonical_u128_reduced(1);
+
+        let mut verifier_transcript =
+            Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-s-claim-tamper");
+        let opening_groups = [&openings[..]];
+        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+            &malformed,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &[&pt[..]],
+            &[&opening_groups[..]],
+            &[&commitments[..]],
+            BasisMode::Lagrange,
+        );
+        assert!(
+            result.is_err(),
+            "tampered batched root stage1 s_claim must be rejected"
         );
     });
 }

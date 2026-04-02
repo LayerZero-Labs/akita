@@ -173,14 +173,13 @@ fn emit_planned_schedule_summary(label: &str, plan: &HachiSchedulePlan) {
 }
 
 fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSchedulePlan>) {
-    let top_levels_len_size = std::mem::size_of::<u32>();
     let hachi_levels_total: usize = proof
         .levels
         .iter()
         .map(|level| level.serialized_size(Compress::No))
         .sum();
     let tail_total = proof.tail.direct.serialized_size(Compress::No);
-    let accounted_total = top_levels_len_size + hachi_levels_total + tail_total;
+    let accounted_total = hachi_levels_total + tail_total;
 
     tracing::info!(
         label,
@@ -192,9 +191,13 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSc
         "proof summary"
     );
     debug_assert_eq!(accounted_total, proof.size());
-    eprintln!("[{label}]   proof framing: levels_len={top_levels_len_size} bytes");
 
     if let Some(plan) = plan {
+        debug_assert_eq!(
+            proof.size(),
+            plan.exact_proof_bytes,
+            "runtime proof bytes should match the planned proof size"
+        );
         emit_planned_schedule_summary(label, plan);
     }
 

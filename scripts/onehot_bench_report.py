@@ -160,7 +160,7 @@ def configured_cases(args: argparse.Namespace) -> list[BenchmarkCaseSpec]:
 
 def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> dict[str, object]:
     summary: dict[str, object] = {
-        "schema_version": 2,
+        "schema_version": 3,
         "benchmark": benchmark_name(mode, num_vars, num_polys),
         "mode": mode,
         "num_vars": num_vars,
@@ -190,6 +190,7 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
             summary["verify_total_s"] = float(kvs["elapsed_s"])
         elif "proof summary" in line and kvs.get("label") == mode:
             summary["proof_size_bytes"] = int(kvs["proof_size_bytes"])
+            summary["accounted_bytes"] = int(kvs["accounted_bytes"])
             summary["hachi_fold_bytes"] = int(kvs["hachi_fold_bytes"])
             summary["tail_bytes"] = int(kvs["tail_bytes"])
             if "levels" in kvs and "hachi_levels" not in summary:
@@ -379,6 +380,10 @@ def fmt_bytes(value: float) -> str:
     return f"{int(round(value)):,}"
 
 
+def fmt_count(value: float) -> str:
+    return f"{int(round(value)):,}"
+
+
 def section_title(summary: dict[str, object]) -> str:
     num_polys = int(summary.get("num_polys", 1))
     num_vars = int(summary["num_vars"])
@@ -441,7 +446,7 @@ def render_planned_levels(levels: list[dict[str, object]]) -> None:
             f"{level['d']} | {level['n_a']} | {level['n_b']} | {level['n_d']} | "
             f"{level['log_basis']} | {level['challenge_l1_mass']} | {level['m_vars']} | {level['r_vars']} | "
             f"{level['delta_commit']} | {level['delta_open']} | {level['delta_fold']} | "
-            f"{fmt_bytes(float(level['next_w_ring']))} | {fmt_bytes(float(level['next_w_len']))} | "
+            f"{fmt_count(float(level['next_w_ring']))} | {fmt_count(float(level['next_w_len']))} | "
             f"{fmt_bytes(float(level['level_bytes']))} B |"
         )
     print()
@@ -470,6 +475,49 @@ def render_proof_levels(levels: list[dict[str, object]]) -> None:
         )
     print()
     print("</details>")
+
+
+def validate_case_consistency(summary: dict[str, object]) -> None:
+    proof_size = summary.get("proof_size_bytes")
+    accounted = summary.get("accounted_bytes")
+    if proof_size is not None and accounted is not None and int(proof_size) != int(accounted):
+        raise ValueError(
+            "proof accounting mismatch: "
+            f"proof_size_bytes={proof_size}, accounted_bytes={accounted}"
+        )
+
+    planned_levels = summary.get("planned_levels")
+    proof_levels = summary.get("proof_levels")
+    if not isinstance(planned_levels, list) or not isinstance(proof_levels, list):
+        return
+    if len(planned_levels) != len(proof_levels):
+        raise ValueError(
+            "planned/proof level count mismatch: "
+            f"planned={len(planned_levels)}, proof={len(proof_levels)}"
+        )
+
+    for planned, proof in zip(planned_levels, proof_levels):
+        planned_level = int(planned["level"])
+        proof_level = int(proof["level"])
+        if planned_level != proof_level:
+            raise ValueError(
+                "planned/proof level index mismatch: "
+                f"planned={planned_level}, proof={proof_level}"
+            )
+        planned_d = int(planned["d"])
+        proof_d = int(proof["d"])
+        if planned_d != proof_d:
+            raise ValueError(
+                f"planned/proof D mismatch at L{planned_level}: "
+                f"planned={planned_d}, proof={proof_d}"
+            )
+        planned_bytes = int(planned["level_bytes"])
+        proof_bytes = int(proof["total_bytes"])
+        if planned_bytes != proof_bytes:
+            raise ValueError(
+                f"planned/proof byte mismatch at L{planned_level}: "
+                f"planned={planned_bytes}, proof={proof_bytes}"
+            )
 
 
 def render_report(args: argparse.Namespace) -> int:
@@ -528,6 +576,7 @@ def render_report(args: argparse.Namespace) -> int:
     print()
 
     for index, current in enumerate(current_cases):
+        validate_case_consistency(current)
         if len(current_cases) > 1:
             print(f"### {section_title(current)}")
             print()
@@ -587,12 +636,12 @@ def render_report(args: argparse.Namespace) -> int:
             print(f"- Hachi levels: `{current['hachi_levels']}`")
         if current.get("tail_num_elems") is not None and current.get("tail_bits_per_elem") is not None:
             print(
-                f"- Tail shape: `{fmt_bytes(float(current['tail_num_elems']))}` elems at "
+                f"- Tail shape: `{fmt_count(float(current['tail_num_elems']))}` elems at "
                 f"`{current['tail_bits_per_elem']}` bits/elem"
             )
         if current.get("terminal_w_len") is not None and current.get("terminal_log_basis") is not None:
             print(
-                f"- Terminal state: `w_len={fmt_bytes(float(current['terminal_w_len']))}` "
+                f"- Terminal state: `w_len={fmt_count(float(current['terminal_w_len']))}` "
                 f"with `log_basis={current['terminal_log_basis']}`"
             )
 

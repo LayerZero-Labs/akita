@@ -2977,6 +2977,8 @@ mod tests {
         lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
         ring_opening_point_from_field,
     };
+    use crate::protocol::proof::{HachiBatchedProofShape, LevelProofShape};
+    use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::test_utils::F;
     use crate::{CommitmentScheme, FromSmallInt, HachiDeserialize};
@@ -2994,6 +2996,100 @@ mod tests {
     const ONEHOT_D: usize = OneHotCfg::D;
     const BENCH_ONEHOT_K: usize = ONEHOT_D;
     type OneHotScheme = HachiCommitmentScheme<ONEHOT_D, OneHotCfg>;
+
+    fn batched_shape_rounds(level_d: usize, next_w_len: usize) -> usize {
+        let num_ring_elems = next_w_len / level_d;
+        num_ring_elems.next_power_of_two().trailing_zeros() as usize
+            + level_d.trailing_zeros() as usize
+    }
+
+    fn expected_same_point_batched_shape(
+        max_num_vars: usize,
+        num_claims: usize,
+        proof: &HachiBatchedProof<OneHotF>,
+    ) -> HachiBatchedProofShape {
+        let claim_group_sizes = vec![num_claims];
+        let BatchedRootLayoutContext {
+            layout: _,
+            batched_layout,
+            root_params,
+        } = derive_batched_root_layout_context::<OneHotCfg, ONEHOT_D>(
+            max_num_vars,
+            num_claims,
+            max_num_vars,
+            num_claims,
+        )
+        .expect("batched root layout context");
+        let root_w_len = w_ring_element_count_with_claim_groups::<OneHotF>(
+            &root_params,
+            batched_layout,
+            &claim_group_sizes,
+        ) * ONEHOT_D;
+        let first_level_params = next_level_params_from_current_basis::<OneHotCfg>(
+            HachiScheduleInputs {
+                max_num_vars,
+                level: 1,
+                current_w_len: root_w_len,
+            },
+            root_params.log_basis,
+        )
+        .expect("first recursive params");
+        let root_rounds = batched_shape_rounds(root_params.d, root_w_len);
+        let root_shape = LevelProofShape {
+            y_ring_coeffs: num_claims * ONEHOT_D,
+            v_coeffs: root_params.n_d * root_params.d,
+            stage1_stages: stage1_tree_stage_shapes(
+                root_rounds,
+                1usize << batched_layout.log_basis,
+            ),
+            stage2_sumcheck: (root_rounds, 3),
+            next_commit_coeffs: first_level_params.n_b * first_level_params.d,
+        };
+
+        let mut level_shapes = Vec::with_capacity(proof.levels.len());
+        let mut current_w_len = root_w_len;
+        let mut current_log_basis = first_level_params.log_basis;
+        let mut current_level = 1usize;
+        for _ in &proof.levels {
+            let inputs = HachiScheduleInputs {
+                max_num_vars,
+                level: current_level,
+                current_w_len,
+            };
+            let level_params = OneHotCfg::level_params_with_log_basis(inputs, current_log_basis);
+            let current_layout =
+                hachi_recursive_level_layout_from_params::<OneHotCfg>(&level_params, current_w_len)
+                    .expect("recursive layout");
+            let next_w_len =
+                w_ring_element_count::<OneHotF>(&level_params, current_layout) * level_params.d;
+            let next_level_params = next_level_params_from_current_basis::<OneHotCfg>(
+                HachiScheduleInputs {
+                    max_num_vars,
+                    level: current_level + 1,
+                    current_w_len: next_w_len,
+                },
+                current_log_basis,
+            )
+            .expect("next recursive params");
+            let rounds = batched_shape_rounds(level_params.d, next_w_len);
+            level_shapes.push(LevelProofShape {
+                y_ring_coeffs: level_params.d,
+                v_coeffs: level_params.n_d * level_params.d,
+                stage1_stages: stage1_tree_stage_shapes(rounds, 1usize << current_layout.log_basis),
+                stage2_sumcheck: (rounds, 3),
+                next_commit_coeffs: next_level_params.n_b * next_level_params.d,
+            });
+            current_w_len = next_w_len;
+            current_log_basis = next_level_params.log_basis;
+            current_level += 1;
+        }
+
+        HachiBatchedProofShape {
+            root_shape,
+            level_shapes,
+            tail_shape: (current_w_len, current_log_basis),
+        }
+    }
 
     fn make_dense_poly(num_vars: usize) -> (DensePoly<F, D>, Vec<F>) {
         let len = 1usize << num_vars;
@@ -4088,6 +4184,103 @@ mod tests {
         );
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn batched_onehot_roundtrip_matches_public_shape_context() {
+        const NV: usize = 15;
+        const BATCH_SIZE: usize = 2;
+
+        let layout =
+            hachi_batched_root_layout::<OneHotCfg, ONEHOT_D>(NV, BATCH_SIZE).expect("layout");
+        let total_field = (layout.num_blocks * layout.block_len)
+            .checked_mul(ONEHOT_D)
+            .expect("total field size overflow");
+        let total_chunks = total_field / BENCH_ONEHOT_K;
+        assert_eq!(total_chunks * BENCH_ONEHOT_K, total_field);
+
+        let polys: Vec<OneHotPoly<OneHotF, ONEHOT_D, u8>> = (0..BATCH_SIZE)
+            .map(|poly_idx| {
+                debug_make_onehot_poly(&layout, 0x0bee_fcaf_e000_1500 + poly_idx as u64)
+            })
+            .collect();
+        let poly_refs: Vec<&OneHotPoly<OneHotF, ONEHOT_D, u8>> = polys.iter().collect();
+        let point = debug_random_point(NV);
+        let openings: Vec<OneHotF> = polys
+            .iter()
+            .map(|poly| debug_opening_from_poly(poly, &point, &layout))
+            .collect();
+
+        let setup =
+            <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(NV, BATCH_SIZE);
+        let verifier_setup =
+            <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(&setup);
+        let poly_groups = [&poly_refs[..]];
+        let (commitment, hint) =
+            <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::commit(&poly_refs, &setup)
+                .expect("batched onehot commit");
+        let commitments = [commitment];
+        let hints = vec![hint];
+
+        let mut prover_transcript = Blake2bTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
+        let proof = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_prove(
+            &setup,
+            &[&poly_groups[..]],
+            &[&point[..]],
+            vec![hints],
+            &mut prover_transcript,
+            &[&commitments[..]],
+            BasisMode::Lagrange,
+        )
+        .expect("batched onehot prove");
+
+        let expected_shape = expected_same_point_batched_shape(NV, BATCH_SIZE, &proof);
+        let actual_shape = proof.shape();
+        assert_eq!(
+            expected_shape.root_shape.y_ring_coeffs,
+            actual_shape.root_shape.y_ring_coeffs
+        );
+        assert_eq!(
+            expected_shape.root_shape.v_coeffs,
+            actual_shape.root_shape.v_coeffs
+        );
+        assert_eq!(
+            expected_shape.root_shape.stage1_stages,
+            actual_shape.root_shape.stage1_stages
+        );
+        assert_eq!(
+            expected_shape.root_shape.stage2_sumcheck,
+            actual_shape.root_shape.stage2_sumcheck
+        );
+        assert_eq!(
+            expected_shape.root_shape.next_commit_coeffs,
+            actual_shape.root_shape.next_commit_coeffs
+        );
+        assert_eq!(
+            expected_shape.level_shapes.len(),
+            actual_shape.level_shapes.len()
+        );
+        assert_eq!(expected_shape.tail_shape, actual_shape.tail_shape);
+        let mut bytes = Vec::new();
+        proof.serialize_uncompressed(&mut bytes).unwrap();
+        let decoded =
+            HachiBatchedProof::<OneHotF>::deserialize_uncompressed(&*bytes, &expected_shape)
+                .expect("deserialize batched proof with derived shape");
+        assert_eq!(decoded, proof);
+
+        let opening_groups = [&openings[..]];
+        let mut verifier_transcript =
+            Blake2bTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
+        <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &[&point[..]],
+            &[&opening_groups[..]],
+            &[&commitments[..]],
+            BasisMode::Lagrange,
+        )
+        .expect("batched onehot verify");
     }
 
     #[test]

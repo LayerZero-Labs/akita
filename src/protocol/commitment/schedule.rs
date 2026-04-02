@@ -176,7 +176,10 @@ pub struct HachiSchedulePlan {
     pub levels: Vec<HachiPlannedLevel>,
     /// Total proof bytes excluding the outer proof wrapper.
     pub no_wrapper_bytes: usize,
-    /// Total proof bytes including the wrapper used by `HachiProof`.
+    /// Total proof bytes in the serialized `HachiProof` wire format.
+    ///
+    /// `HachiProof` is currently headerless, so this equals
+    /// [`Self::no_wrapper_bytes`].
     pub exact_proof_bytes: usize,
 }
 
