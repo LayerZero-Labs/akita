@@ -5,8 +5,8 @@
 //!
 //! Two polynomial representations are covered:
 //!
-//! * **One-hot** — `Fp128OneHotCommitmentConfig` (D = 64, K = D).
-//! * **Dense**   — `Fp128FullCommitmentConfig`   (D = 128, full-field coefficients).
+//! * **One-hot** — `fp128_5823::OneHot` (D = 64, K = D).
+//! * **Dense**   — `fp128_5823::Full`   (D = 128, full-field coefficients).
 //!
 //! Variable counts: 10, 15, 20, 25 for each representation (8 tests total).
 

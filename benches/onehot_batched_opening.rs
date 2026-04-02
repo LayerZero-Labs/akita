@@ -3,7 +3,7 @@
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode, Throughput};
 use hachi_pcs::algebra::Fp128;
-use hachi_pcs::protocol::commitment::{hachi_batched_root_layout, Fp128OneHotCommitmentConfig};
+use hachi_pcs::protocol::commitment::{hachi_batched_root_layout, presets::fp128_5823};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
@@ -17,7 +17,7 @@ use rand::{Rng, SeedableRng};
 use std::time::{Duration, Instant};
 
 type F = Fp128<0xffffffffffffffffffffffffffffe941>;
-type Cfg = Fp128OneHotCommitmentConfig;
+type Cfg = fp128_5823::OneHot;
 const D: usize = Cfg::D;
 
 const SINGLE_NUM_VARS: usize = 34;

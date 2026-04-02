@@ -141,8 +141,9 @@ impl<E: FieldCore> GruenSplitEq<E> {
         }
     }
 
+    /// Linear eq-factor evaluations `(l(0), l(1))` for the current round.
     #[inline]
-    fn linear_factor_evals(&self) -> (E, E) {
+    pub fn linear_factor_evals(&self) -> (E, E) {
         let l_at_1 = self.current_scalar * self.current_tau();
         let l_at_0 = self.current_scalar - l_at_1;
         (l_at_0, l_at_1)

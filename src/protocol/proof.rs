@@ -5,8 +5,8 @@ use crate::error::HachiError;
 use crate::primitives::serialization::{Compress, SerializationError};
 use crate::primitives::serialization::{Valid, Validate};
 use crate::protocol::commitment::RingCommitment;
-use crate::protocol::sumcheck::types::SumcheckProofShape;
-use crate::protocol::sumcheck::SumcheckProof;
+use crate::protocol::sumcheck::types::{EqFactoredSumcheckProofShape, SumcheckProofShape};
+use crate::protocol::sumcheck::{EqFactoredSumcheckProof, SumcheckProof};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FromSmallInt, HachiDeserialize, HachiSerialize};
 use std::io::{Read, Write};
@@ -56,7 +56,7 @@ impl PackedDigits {
     ///
     /// Panics (in debug) if any element does not fit in `log_basis` bits.
     pub fn from_i8_digits(w: &[i8], log_basis: u32) -> Self {
-        assert!(log_basis > 0 && log_basis <= 5, "log_basis out of range");
+        assert!(log_basis > 0 && log_basis <= 6, "log_basis out of range");
         let half_b = 1i8 << (log_basis - 1);
 
         let bits = log_basis as usize;
@@ -166,7 +166,7 @@ impl HachiSerialize for PackedDigits {
 
 impl Valid for PackedDigits {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.bits_per_elem == 0 || self.bits_per_elem > 7 {
+        if self.bits_per_elem == 0 || self.bits_per_elem > 6 {
             return Err(SerializationError::InvalidData(
                 "bits_per_elem out of range".to_string(),
             ));
@@ -868,13 +868,32 @@ impl<F: FieldCore, const D: usize> PartialEq for HachiBatchedCommitmentHint<F, D
 }
 
 impl<F: FieldCore, const D: usize> Eq for HachiBatchedCommitmentHint<F, D> {}
+/// One stage in the stage-1 range-check tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HachiStage1StageProof<F: FieldCore> {
+    /// Eq-factored sumcheck proof for this stage.
+    pub sumcheck: EqFactoredSumcheckProof<F>,
+    /// Claimed child-node evaluations at this stage's output point.
+    ///
+    /// Non-leaf stages populate these so the verifier can seed the next stage;
+    /// the leaf stage leaves this empty and instead carries `s_claim` below.
+    pub child_claims: Vec<F>,
+}
 
+/// Headerless shape context for one stage in the stage-1 range-check tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HachiStage1StageShape {
+    /// Eq-factored sumcheck shape `(num_rounds, q_degree)`.
+    pub sumcheck: EqFactoredSumcheckProofShape,
+    /// Number of child claims serialized after the stage proof.
+    pub child_claims: usize,
+}
 /// Proof payload for stage 1 of a single Hachi level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiStage1Proof<F: FieldCore> {
-    /// Stage-1 sumcheck proof over the virtual `S = w(w+1)` table.
-    pub sumcheck: SumcheckProof<F>,
-    /// Claimed evaluation of `S` at the stage-1 output point.
+    /// Root-to-leaf range-check stages.
+    pub stages: Vec<HachiStage1StageProof<F>>,
+    /// Claimed evaluation of `S` at the final stage-1 output point.
     pub s_claim: F,
 }
 
@@ -931,8 +950,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
     pub(crate) fn new_two_stage<const D: usize>(
         y_ring: CyclotomicRing<F, D>,
         v: Vec<CyclotomicRing<F, D>>,
-        stage1_sumcheck: SumcheckProof<F>,
-        stage1_s_claim: F,
+        stage1: HachiStage1Proof<F>,
         stage2_sumcheck: SumcheckProof<F>,
         next_w_commitment: ProofRingVec<F>,
         next_w_eval: F,
@@ -940,10 +958,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
         Self::new::<D>(
             y_ring,
             v,
-            HachiStage1Proof {
-                sumcheck: stage1_sumcheck,
-                s_claim: stage1_s_claim,
-            },
+            stage1,
             HachiStage2Proof {
                 sumcheck: stage2_sumcheck,
                 next_w_commitment,
@@ -1075,8 +1090,7 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
     pub(crate) fn new_two_stage<const D: usize>(
         y_rings: Vec<CyclotomicRing<F, D>>,
         v: Vec<CyclotomicRing<F, D>>,
-        stage1_sumcheck: SumcheckProof<F>,
-        stage1_s_claim: F,
+        stage1: HachiStage1Proof<F>,
         stage2_sumcheck: SumcheckProof<F>,
         next_w_commitment: ProofRingVec<F>,
         next_w_eval: F,
@@ -1084,10 +1098,7 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
         Self::new::<D>(
             y_rings,
             v,
-            HachiStage1Proof {
-                sumcheck: stage1_sumcheck,
-                s_claim: stage1_s_claim,
-            },
+            stage1,
             HachiStage2Proof {
                 sumcheck: stage2_sumcheck,
                 next_w_commitment,
@@ -1180,14 +1191,14 @@ impl<F: FieldCore> HachiProofTail<F> {
 }
 
 /// Shape descriptor for deserializing a [`HachiLevelProof`] without headers.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct LevelProofShape {
     /// Number of field coefficients in `y_ring`.
     pub y_ring_coeffs: usize,
     /// Number of field coefficients in `v`.
     pub v_coeffs: usize,
-    /// Stage-1 sumcheck shape: `(num_rounds, degree)`.
-    pub stage1_sumcheck: SumcheckProofShape,
+    /// Stage-1 tree stage shapes in root-to-leaf order.
+    pub stage1_stages: Vec<HachiStage1StageShape>,
     /// Stage-2 sumcheck shape: `(num_rounds, degree)`.
     pub stage2_sumcheck: SumcheckProofShape,
     /// Number of field coefficients in `next_w_commitment`.
@@ -1224,6 +1235,16 @@ fn sumcheck_shape<F: FieldCore>(sc: &SumcheckProof<F>) -> SumcheckProofShape {
     (sc.round_polys.len(), degree)
 }
 
+fn eq_factored_sumcheck_shape<F: FieldCore>(
+    sc: &EqFactoredSumcheckProof<F>,
+) -> EqFactoredSumcheckProofShape {
+    let degree = sc
+        .round_polys
+        .first()
+        .map_or(0, |p| p.coeffs_except_linear_term.len());
+    (sc.round_polys.len(), degree)
+}
+
 fn level_proof_shape<F: FieldCore>(
     y_coeffs: usize,
     v: &ProofRingVec<F>,
@@ -1233,7 +1254,14 @@ fn level_proof_shape<F: FieldCore>(
     LevelProofShape {
         y_ring_coeffs: y_coeffs,
         v_coeffs: v.coeff_len(),
-        stage1_sumcheck: sumcheck_shape(&stage1.sumcheck),
+        stage1_stages: stage1
+            .stages
+            .iter()
+            .map(|stage| HachiStage1StageShape {
+                sumcheck: eq_factored_sumcheck_shape(&stage.sumcheck),
+                child_claims: stage.child_claims.len(),
+            })
+            .collect(),
         stage2_sumcheck: sumcheck_shape(&stage2.sumcheck),
         next_commit_coeffs: stage2.next_w_commitment.coeff_len(),
     }
@@ -1345,9 +1373,12 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
     ) -> Result<(), SerializationError> {
         self.y_ring.serialize_with_mode(&mut writer, compress)?;
         self.v.serialize_with_mode(&mut writer, compress)?;
-        self.stage1
-            .sumcheck
-            .serialize_with_mode(&mut writer, compress)?;
+        for stage in &self.stage1.stages {
+            stage.sumcheck.serialize_with_mode(&mut writer, compress)?;
+            for claim in &stage.child_claims {
+                claim.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
         self.stage1
             .s_claim
             .serialize_with_mode(&mut writer, compress)?;
@@ -1363,7 +1394,19 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
     }
     fn serialized_size(&self, compress: Compress) -> usize {
         let base = self.y_ring.serialized_size(compress) + self.v.serialized_size(compress);
-        base + self.stage1.sumcheck.serialized_size(compress)
+        base + self
+            .stage1
+            .stages
+            .iter()
+            .map(|stage| {
+                stage.sumcheck.serialized_size(compress)
+                    + stage
+                        .child_claims
+                        .iter()
+                        .map(|claim| claim.serialized_size(compress))
+                        .sum::<usize>()
+            })
+            .sum::<usize>()
             + self.stage1.s_claim.serialized_size(compress)
             + self.stage2.sumcheck.serialized_size(compress)
             + self.stage2.next_w_commitment.serialized_size(compress)
@@ -1380,7 +1423,10 @@ impl<F: FieldCore + Valid> Valid for HachiLevelProof<F> {
             ));
         }
         self.v.check()?;
-        self.stage1.sumcheck.check()?;
+        for stage in &self.stage1.stages {
+            stage.sumcheck.check()?;
+            stage.child_claims.check()?;
+        }
         self.stage1.s_claim.check()?;
         self.stage2.sumcheck.check()?;
         self.stage2.next_w_commitment.check()?;
@@ -1404,13 +1450,30 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
         )?;
         let v =
             ProofRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
-        let stage1 = HachiStage1Proof {
-            sumcheck: SumcheckProof::deserialize_with_mode(
+        let mut stage1_stages = Vec::with_capacity(ctx.stage1_stages.len());
+        for stage_shape in &ctx.stage1_stages {
+            let sumcheck = EqFactoredSumcheckProof::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
-                &ctx.stage1_sumcheck,
-            )?,
+                &stage_shape.sumcheck,
+            )?;
+            let mut child_claims = Vec::with_capacity(stage_shape.child_claims);
+            for _ in 0..stage_shape.child_claims {
+                child_claims.push(F::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    &(),
+                )?);
+            }
+            stage1_stages.push(HachiStage1StageProof {
+                sumcheck,
+                child_claims,
+            });
+        }
+        let stage1 = HachiStage1Proof {
+            stages: stage1_stages,
             s_claim: F::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         let stage2 = HachiStage2Proof {
@@ -1449,9 +1512,12 @@ impl<F: FieldCore> HachiSerialize for HachiBatchedRootProof<F> {
     ) -> Result<(), SerializationError> {
         self.y_rings.serialize_with_mode(&mut writer, compress)?;
         self.v.serialize_with_mode(&mut writer, compress)?;
-        self.stage1
-            .sumcheck
-            .serialize_with_mode(&mut writer, compress)?;
+        for stage in &self.stage1.stages {
+            stage.sumcheck.serialize_with_mode(&mut writer, compress)?;
+            for claim in &stage.child_claims {
+                claim.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
         self.stage1
             .s_claim
             .serialize_with_mode(&mut writer, compress)?;
@@ -1469,7 +1535,19 @@ impl<F: FieldCore> HachiSerialize for HachiBatchedRootProof<F> {
     fn serialized_size(&self, compress: Compress) -> usize {
         self.y_rings.serialized_size(compress)
             + self.v.serialized_size(compress)
-            + self.stage1.sumcheck.serialized_size(compress)
+            + self
+                .stage1
+                .stages
+                .iter()
+                .map(|stage| {
+                    stage.sumcheck.serialized_size(compress)
+                        + stage
+                            .child_claims
+                            .iter()
+                            .map(|claim| claim.serialized_size(compress))
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
             + self.stage1.s_claim.serialized_size(compress)
             + self.stage2.sumcheck.serialized_size(compress)
             + self.stage2.next_w_commitment.serialized_size(compress)
@@ -1481,7 +1559,10 @@ impl<F: FieldCore + Valid> Valid for HachiBatchedRootProof<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.y_rings.check()?;
         self.v.check()?;
-        self.stage1.sumcheck.check()?;
+        for stage in &self.stage1.stages {
+            stage.sumcheck.check()?;
+            stage.child_claims.check()?;
+        }
         self.stage1.s_claim.check()?;
         self.stage2.sumcheck.check()?;
         self.stage2.next_w_commitment.check()?;
@@ -1505,13 +1586,30 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedRootProof<F> {
         )?;
         let v =
             ProofRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
-        let stage1 = HachiStage1Proof {
-            sumcheck: SumcheckProof::deserialize_with_mode(
+        let mut stage1_stages = Vec::with_capacity(ctx.stage1_stages.len());
+        for stage_shape in &ctx.stage1_stages {
+            let sumcheck = EqFactoredSumcheckProof::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
-                &ctx.stage1_sumcheck,
-            )?,
+                &stage_shape.sumcheck,
+            )?;
+            let mut child_claims = Vec::with_capacity(stage_shape.child_claims);
+            for _ in 0..stage_shape.child_claims {
+                child_claims.push(F::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    &(),
+                )?);
+            }
+            stage1_stages.push(HachiStage1StageProof {
+                sumcheck,
+                child_claims,
+            });
+        }
+        let stage1 = HachiStage1Proof {
+            stages: stage1_stages,
             s_claim: F::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         let stage2 = HachiStage2Proof {
@@ -1695,5 +1793,45 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiProof<F> {
             out.check()?;
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::algebra::Prime128Offset5823;
+    use crate::primitives::serialization::Valid;
+    use crate::FromSmallInt;
+
+    #[test]
+    fn packed_digits_roundtrip_basis6() {
+        let digits = vec![-32, -17, -1, 0, 1, 31];
+        let packed = PackedDigits::from_i8_digits(&digits, 6);
+
+        assert_eq!(packed.bits_per_elem, 6);
+        let recovered: Vec<i8> = (0..digits.len())
+            .map(|idx| packed.digit_at(idx).expect("packed index in bounds"))
+            .collect();
+        assert_eq!(recovered, digits);
+
+        let expected_field: Vec<Prime128Offset5823> = digits
+            .iter()
+            .map(|&digit| Prime128Offset5823::from_i64(digit as i64))
+            .collect();
+        assert_eq!(
+            packed.to_field_elems::<Prime128Offset5823>(),
+            expected_field
+        );
+    }
+
+    #[test]
+    fn packed_digits_reject_bits_above_six() {
+        let packed = PackedDigits {
+            num_elems: 1,
+            bits_per_elem: 7,
+            data: vec![0],
+        };
+
+        assert!(packed.check().is_err());
     }
 }

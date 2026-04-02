@@ -74,16 +74,6 @@ jobs:
             --case "$HACHI_BENCH_NUM_VARS:1" \
             --case "$HACHI_BENCH_BATCHED_NUM_VARS:$HACHI_BENCH_BATCHED_NUM_POLYS"
 
-      - name: Upload benchmark artifact
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ${{ env.HACHI_BENCH_ARTIFACT_NAME }}
-          path: ${{ env.HACHI_BENCH_ARTIFACT_DIR }}
-          if-no-files-found: warn
-          retention-days: 30
-
       - name: Determine comparison baseline artifacts
         if: always() && github.event_name == 'pull_request'
         continue-on-error: true
@@ -213,6 +203,7 @@ jobs:
           HACHI_BENCH_PREVIOUS_BASELINE_LABEL: ${{ steps.bench-baselines.outputs.previous-label }}
           HACHI_BENCH_PREVIOUS_BASELINE_SHA: ${{ steps.bench-baselines.outputs.previous-sha }}
         run: |
+          mkdir -p "$HACHI_BENCH_ARTIFACT_DIR"
           if [ ! -f "$HACHI_BENCH_ARTIFACT_DIR/summary.json" ]; then
             echo "Benchmark summary not found; benchmark step likely failed." > "$HACHI_BENCH_REPORT"
           else
@@ -230,6 +221,7 @@ jobs:
             echo
             echo '> Posted by Cursor assistant (model: GPT-5.4) on behalf of the user (Quang Dao) with approval.'
           } > "$HACHI_BENCH_COMMENT"
+          cp "$HACHI_BENCH_COMMENT" "$HACHI_BENCH_ARTIFACT_DIR/comment.md"
 
       - name: Upsert benchmark PR comment
         if: >-
@@ -276,5 +268,15 @@ jobs:
                 });
               }
             } catch (error) {
-              core.warning(`Skipping benchmark PR comment upsert: ${error.message}`);
+              core.warning(`Failed to upsert benchmark PR comment: ${error.message}`);
             }
+
+      - name: Upload benchmark artifact
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ env.HACHI_BENCH_ARTIFACT_NAME }}
+          path: ${{ env.HACHI_BENCH_ARTIFACT_DIR }}
+          if-no-files-found: warn
+          retention-days: 30

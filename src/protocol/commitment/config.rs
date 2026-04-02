@@ -262,12 +262,12 @@ fn fp128_decomposition(log_commit_bound: u32, log_basis: u32) -> DecompositionPa
 }
 
 fn fp128_planned_log_basis<Cfg: CommitmentConfig>(inputs: HachiScheduleInputs) -> u32 {
-    planned_log_basis_at_level::<Cfg>(inputs, 2, 5)
+    planned_log_basis_at_level::<Cfg>(inputs, 2, 6)
         .expect("adaptive schedule must be derivable from public inputs")
 }
 
 fn fp128_planned_schedule_key<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
-    planned_schedule_key::<Cfg>(max_num_vars, 2, 5)
+    planned_schedule_key::<Cfg>(max_num_vars, 2, 6)
         .expect("adaptive schedule key must be derivable from public inputs")
 }
 
@@ -277,7 +277,7 @@ fn fp128_planned_schedule<Cfg: CommitmentConfig>(
     Ok(Some(super::schedule::planned_schedule::<Cfg>(
         max_num_vars,
         2,
-        5,
+        6,
     )?))
 }
 
@@ -1142,7 +1142,7 @@ impl<
 
     fn log_basis_search_range<Cfg: CommitmentConfig>(_inputs: HachiScheduleInputs) -> (u32, u32) {
         let _ = PhantomData::<Cfg>;
-        (2, 5)
+        (2, 6)
     }
 
     fn schedule_key<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
@@ -1165,7 +1165,7 @@ impl<
             level,
             current_w_len,
             2,
-            5,
+            6,
         )?))
     }
 
@@ -1230,7 +1230,7 @@ impl CommitmentPolicy for Fp128AdaptiveOneHotD64Policy {
 
     fn log_basis_search_range<Cfg: CommitmentConfig>(_inputs: HachiScheduleInputs) -> (u32, u32) {
         let _ = PhantomData::<Cfg>;
-        (2, 5)
+        (2, 6)
     }
 
     fn recursive_suffix_bytes<Cfg: CommitmentConfig>(
@@ -1243,7 +1243,7 @@ impl CommitmentPolicy for Fp128AdaptiveOneHotD64Policy {
             level,
             current_w_len,
             2,
-            5,
+            6,
         )?))
     }
 }
@@ -1311,5 +1311,57 @@ mod split_tests {
 
         let (m_vars, r_vars) = optimal_m_r_split_with_params(&params, decomp, 40, 1);
         assert_eq!(m_vars + r_vars, 40);
+    }
+
+    #[test]
+    fn adaptive_runtime_search_bounds_match_basis6_schedule_bounds() {
+        type FullCfg = crate::protocol::commitment::presets::fp128::Full;
+        type OneHotCfg = crate::protocol::commitment::presets::fp128::OneHot;
+
+        let inputs = HachiScheduleInputs {
+            max_num_vars: 30,
+            level: 4,
+            current_w_len: 245_888,
+        };
+
+        assert_eq!(FullCfg::log_basis_search_range(inputs), (2, 6));
+        assert_eq!(OneHotCfg::log_basis_search_range(inputs), (2, 6));
+
+        assert_eq!(
+            FullCfg::recursive_suffix_bytes(
+                inputs.max_num_vars,
+                inputs.level,
+                inputs.current_w_len
+            )
+            .unwrap(),
+            Some(
+                planned_recursive_suffix_bytes::<FullCfg>(
+                    inputs.max_num_vars,
+                    inputs.level,
+                    inputs.current_w_len,
+                    2,
+                    6,
+                )
+                .unwrap()
+            )
+        );
+        assert_eq!(
+            OneHotCfg::recursive_suffix_bytes(
+                inputs.max_num_vars,
+                inputs.level,
+                inputs.current_w_len
+            )
+            .unwrap(),
+            Some(
+                planned_recursive_suffix_bytes::<OneHotCfg>(
+                    inputs.max_num_vars,
+                    inputs.level,
+                    inputs.current_w_len,
+                    2,
+                    6,
+                )
+                .unwrap()
+            )
+        );
     }
 }

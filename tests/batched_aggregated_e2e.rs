@@ -7,9 +7,9 @@
 //!
 //! Two polynomial representations are covered:
 //!
-//! * **One-hot** — `Fp128OneHotCommitmentConfig` (D = 64, K = D).
+//! * **One-hot** — `fp128_5823::OneHot` (D = 64, K = D).
 //!   Variable counts: 10, 15, 20, 25 (28 tests).
-//! * **Dense** — `Fp128FullCommitmentConfig` (D = 128, full-field coefficients).
+//! * **Dense** — `fp128_5823::Full` (D = 128, full-field coefficients).
 //!   Variable counts: 10, 15, 20 (21 tests — nv 25 is omitted for speed).
 //!
 //! Batch sizes per variable count: 1, 2, 3, 4, 7, 12, 16 (49 tests total).
