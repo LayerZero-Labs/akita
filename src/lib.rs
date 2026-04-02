@@ -64,5 +64,6 @@ pub use protocol::{
     BasisMode, BlockOrder, CommitmentScheme, DenseMultilinear, DensePoly, DynamicCommitHint,
     DynamicCommitmentScheme, DynamicHachiCommitmentScheme, DynamicHachiProverSetup,
     DynamicHachiVerifierSetup, DynamicRingCommitment, DynamicRootConfigFamily, HachiPolyOps,
-    MultilinearPolynomial, OneHotIndex, OneHotMultilinear, OneHotPoly, Transcript,
+    HachiRootBatchSummary, MultilinearPolynomial, OneHotIndex, OneHotMultilinear, OneHotPoly,
+    Transcript,
 };

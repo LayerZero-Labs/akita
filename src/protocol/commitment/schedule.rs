@@ -20,6 +20,109 @@ pub struct HachiScheduleInputs {
     pub current_w_len: usize,
 }
 
+/// Aggregate root-batching context relevant to runtime schedule selection.
+///
+/// The current batched root path depends on aggregate counts rather than the
+/// exact partition:
+/// - `num_claims`: total flattened root claims/proofs `y_ell`
+/// - `num_commitment_groups`: number of committed root groups
+/// - `num_points`: number of distinct opening points
+///
+/// Future schedule-table lookup should key on this summary unless later tests
+/// demonstrate that additional batch-shape detail affects runtime behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HachiRootBatchSummary {
+    /// Total number of flattened root claims.
+    pub num_claims: usize,
+    /// Number of committed root groups.
+    pub num_commitment_groups: usize,
+    /// Number of distinct opening points.
+    pub num_points: usize,
+}
+
+impl HachiRootBatchSummary {
+    /// Singleton root-opening context.
+    pub const fn singleton() -> Self {
+        Self {
+            num_claims: 1,
+            num_commitment_groups: 1,
+            num_points: 1,
+        }
+    }
+
+    /// Build a validated batch summary from aggregate counts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any count is zero or if groups/points exceed the
+    /// total claim count.
+    pub fn new(
+        num_claims: usize,
+        num_commitment_groups: usize,
+        num_points: usize,
+    ) -> Result<Self, HachiError> {
+        if num_claims == 0 {
+            return Err(HachiError::InvalidInput(
+                "root batching requires at least one claim".to_string(),
+            ));
+        }
+        if num_commitment_groups == 0 {
+            return Err(HachiError::InvalidInput(
+                "root batching requires at least one commitment group".to_string(),
+            ));
+        }
+        if num_points == 0 {
+            return Err(HachiError::InvalidInput(
+                "root batching requires at least one opening point".to_string(),
+            ));
+        }
+        if num_commitment_groups > num_claims {
+            return Err(HachiError::InvalidInput(format!(
+                "root batching has {num_commitment_groups} commitment groups but only {num_claims} claims"
+            )));
+        }
+        if num_points > num_claims {
+            return Err(HachiError::InvalidInput(format!(
+                "root batching has {num_points} opening points but only {num_claims} claims"
+            )));
+        }
+        Ok(Self {
+            num_claims,
+            num_commitment_groups,
+            num_points,
+        })
+    }
+
+    /// Derive a batch summary from claim-group sizes and opening-point count.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the claim-group list is empty, contains an empty
+    /// group, overflows the total claim count, or does not admit the requested
+    /// number of opening points.
+    pub fn from_claim_group_sizes(
+        claim_group_sizes: &[usize],
+        num_points: usize,
+    ) -> Result<Self, HachiError> {
+        if claim_group_sizes.is_empty() {
+            return Err(HachiError::InvalidInput(
+                "root batching requires at least one commitment group".to_string(),
+            ));
+        }
+        if let Some(group_idx) = claim_group_sizes.iter().position(|&size| size == 0) {
+            return Err(HachiError::InvalidInput(format!(
+                "root batching group {group_idx} must be nonempty"
+            )));
+        }
+        let num_claims = claim_group_sizes.iter().try_fold(0usize, |acc, &size| {
+            acc.checked_add(size).ok_or_else(|| {
+                HachiError::InvalidInput("root batching total claim count overflow".to_string())
+            })
+        })?;
+        Self::new(num_claims, claim_group_sizes.len(), num_points)
+    }
+}
+
 /// Runtime source of truth for one Hachi level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiLevelParams {
@@ -387,6 +490,25 @@ pub(crate) fn batched_root_level_proof_bytes(
         + sumcheck_bytes(rounds, 3, elem_bytes)
         + next_commit_bytes
         + next_eval_bytes
+}
+
+#[cfg(test)]
+pub(crate) fn batched_root_level_proof_shape(
+    level_params: &HachiLevelParams,
+    layout: HachiCommitmentLayout,
+    next_level_params: &HachiLevelParams,
+    next_w_len: usize,
+    batch: HachiRootBatchSummary,
+) -> LevelProofShape {
+    let rounds = sumcheck_rounds(level_params.d, next_w_len);
+    let b = 1usize << layout.log_basis;
+    LevelProofShape {
+        y_ring_coeffs: batch.num_claims * level_params.d,
+        v_coeffs: level_params.n_d * level_params.d,
+        stage1_stages: stage1_tree_stage_shapes(rounds, b),
+        stage2_sumcheck: (rounds, 3),
+        next_commit_coeffs: next_level_params.n_b * next_level_params.d,
+    }
 }
 
 fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
@@ -869,12 +991,17 @@ mod tests {
     use super::*;
     use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
     use crate::primitives::serialization::{Compress, HachiSerialize};
-    use crate::protocol::commitment::presets::fp128_5823;
+    use crate::protocol::commitment::{
+        hachi_batched_root_layout, presets::fp128_5823, root_current_w_len,
+    };
     use crate::protocol::proof::{
         FlatRingVec, HachiBatchedRootProof, HachiLevelProof, HachiStage1Proof,
         HachiStage1StageProof,
     };
-    use crate::protocol::ring_switch::w_ring_element_count;
+    use crate::protocol::ring_switch::{
+        w_ring_element_count, w_ring_element_count_with_batch_summary,
+        w_ring_element_count_with_point_claim_groups,
+    };
     use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
     use crate::protocol::sumcheck::{
         CompressedUniPoly, EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof,
@@ -917,6 +1044,41 @@ mod tests {
                 .collect(),
             s_claim: F::zero(),
         }
+    }
+
+    fn batched_root_runtime_context<Cfg: CommitmentConfig, const D: usize>(
+        max_num_vars: usize,
+        batch: HachiRootBatchSummary,
+    ) -> (
+        HachiCommitmentLayout,
+        HachiLevelParams,
+        usize,
+        HachiLevelParams,
+        LevelProofShape,
+    ) {
+        let layout = hachi_batched_root_layout::<Cfg, D>(max_num_vars, batch.num_claims).unwrap();
+        let root_inputs = HachiScheduleInputs {
+            max_num_vars,
+            level: 0,
+            current_w_len: root_current_w_len::<D>(layout),
+        };
+        let root_params = Cfg::level_params_with_log_basis(root_inputs, layout.log_basis);
+        let next_w_ring =
+            w_ring_element_count_with_batch_summary::<Cfg::Field>(&root_params, layout, batch);
+        let next_w_len = next_w_ring * root_params.d;
+        let next_level_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars,
+            level: 1,
+            current_w_len: next_w_len,
+        });
+        let shape = batched_root_level_proof_shape(
+            &root_params,
+            layout,
+            &next_level_params,
+            next_w_len,
+            batch,
+        );
+        (layout, root_params, next_w_len, next_level_params, shape)
     }
 
     fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(max_num_vars: usize) {
@@ -1174,5 +1336,83 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn root_batch_summary_tracks_only_aggregate_counts() {
+        let a = HachiRootBatchSummary::from_claim_group_sizes(&[1, 1, 4], 2).unwrap();
+        let b = HachiRootBatchSummary::from_claim_group_sizes(&[2, 2, 2], 2).unwrap();
+        let c = HachiRootBatchSummary::from_claim_group_sizes(&[3, 3], 2).unwrap();
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_eq!(HachiRootBatchSummary::singleton().num_claims, 1);
+    }
+
+    #[test]
+    fn batched_root_layout_is_invariant_under_equivalent_partitions() {
+        type Cfg = fp128_5823::OneHot;
+
+        let batch_a = HachiRootBatchSummary::from_claim_group_sizes(&[1, 1, 4], 2).unwrap();
+        let batch_b = HachiRootBatchSummary::from_claim_group_sizes(&[2, 2, 2], 2).unwrap();
+
+        let (layout_a, root_params_a, _, _, _) =
+            batched_root_runtime_context::<Cfg, { Cfg::D }>(30, batch_a);
+        let (layout_b, root_params_b, _, _, _) =
+            batched_root_runtime_context::<Cfg, { Cfg::D }>(30, batch_b);
+
+        assert_eq!(layout_a, layout_b);
+        assert_eq!(root_params_a, root_params_b);
+    }
+
+    #[test]
+    fn batched_root_next_w_len_and_shape_are_invariant_under_equivalent_partitions() {
+        type Cfg = fp128_5823::OneHot;
+        const MAX_NUM_VARS: usize = 30;
+
+        let claim_groups_a = [1usize, 1, 4];
+        let claim_groups_b = [2usize, 2, 2];
+        let batch_a = HachiRootBatchSummary::from_claim_group_sizes(&claim_groups_a, 2).unwrap();
+        let batch_b = HachiRootBatchSummary::from_claim_group_sizes(&claim_groups_b, 2).unwrap();
+
+        let (_, root_params_a, next_w_len_a, _, shape_a) =
+            batched_root_runtime_context::<Cfg, { Cfg::D }>(MAX_NUM_VARS, batch_a);
+        let (_, root_params_b, next_w_len_b, _, shape_b) =
+            batched_root_runtime_context::<Cfg, { Cfg::D }>(MAX_NUM_VARS, batch_b);
+
+        let layout =
+            hachi_batched_root_layout::<Cfg, { Cfg::D }>(MAX_NUM_VARS, batch_a.num_claims).unwrap();
+        let next_w_ring_a = w_ring_element_count_with_point_claim_groups::<
+            <Cfg as CommitmentConfig>::Field,
+        >(&root_params_a, layout, &claim_groups_a, batch_a.num_points);
+        let next_w_ring_b = w_ring_element_count_with_point_claim_groups::<
+            <Cfg as CommitmentConfig>::Field,
+        >(&root_params_b, layout, &claim_groups_b, batch_b.num_points);
+
+        assert_eq!(next_w_ring_a, next_w_ring_b);
+        assert_eq!(next_w_len_a, next_w_len_b);
+        assert_eq!(shape_a, shape_b);
+    }
+
+    #[test]
+    fn batched_root_next_w_len_requires_group_and_point_counts() {
+        type Cfg = fp128_5823::OneHot;
+        const MAX_NUM_VARS: usize = 30;
+
+        let singleton_groups = HachiRootBatchSummary::new(6, 6, 1).unwrap();
+        let grouped_same_point = HachiRootBatchSummary::new(6, 3, 1).unwrap();
+        let grouped_two_points = HachiRootBatchSummary::new(6, 3, 2).unwrap();
+
+        let (singleton_layout, _, singleton_next_w_len, _, _) =
+            batched_root_runtime_context::<Cfg, { Cfg::D }>(MAX_NUM_VARS, singleton_groups);
+        let (grouped_layout, _, grouped_next_w_len, _, _) =
+            batched_root_runtime_context::<Cfg, { Cfg::D }>(MAX_NUM_VARS, grouped_same_point);
+        let (multipoint_layout, _, multipoint_next_w_len, _, _) =
+            batched_root_runtime_context::<Cfg, { Cfg::D }>(MAX_NUM_VARS, grouped_two_points);
+
+        assert_eq!(singleton_layout, grouped_layout);
+        assert_eq!(grouped_layout, multipoint_layout);
+        assert_ne!(singleton_next_w_len, grouped_next_w_len);
+        assert_ne!(grouped_next_w_len, multipoint_next_w_len);
     }
 }

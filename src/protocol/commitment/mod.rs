@@ -26,7 +26,8 @@ pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
 pub use presets::*;
 pub use schedule::{
     hachi_recursive_level_layout_from_params, hachi_root_level_layout, HachiLevelParams,
-    HachiPlannedLevel, HachiPlannedState, HachiScheduleInputs, HachiSchedulePlan,
+    HachiPlannedLevel, HachiPlannedState, HachiRootBatchSummary, HachiScheduleInputs,
+    HachiSchedulePlan,
 };
 pub(crate) use schedule::{
     packed_digits_bytes, planned_next_log_basis_with_current_basis,

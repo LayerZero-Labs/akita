@@ -1191,7 +1191,7 @@ impl<F: FieldCore> HachiProofTail<F> {
 }
 
 /// Shape descriptor for deserializing a [`HachiLevelProof`] without headers.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LevelProofShape {
     /// Number of field coefficients in `y_ring`.
     pub y_ring_coeffs: usize,
@@ -1207,7 +1207,7 @@ pub struct LevelProofShape {
 
 /// Shape descriptor for deserializing an entire [`HachiProof`] without
 /// headers.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiProofShape {
     /// Per-level shapes in execution order.
     pub level_shapes: Vec<LevelProofShape>,
@@ -1217,7 +1217,7 @@ pub struct HachiProofShape {
 
 /// Shape descriptor for deserializing an [`HachiBatchedProof`] without
 /// headers.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiBatchedProofShape {
     /// Root-level shape (same field layout as a regular level).
     pub root_shape: LevelProofShape,

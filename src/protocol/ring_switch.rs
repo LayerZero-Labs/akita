@@ -13,6 +13,8 @@ use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{flatten_i8_blocks, mat_vec_mul_ntt_single_i8};
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
+#[cfg(test)]
+use crate::protocol::commitment::HachiRootBatchSummary;
 use crate::protocol::commitment::{
     hachi_recursive_level_layout_from_params, recursive_level_decomposition_from_root,
     recursive_r_decomp_levels_for_bound, CommitmentConfig, CommitmentEnvelope, DecompositionParams,
@@ -802,6 +804,21 @@ pub(crate) fn w_ring_element_count_with_num_claims_and_points<F: CanonicalField>
     num_points: usize,
 ) -> usize {
     w_ring_element_count_with_counts::<F>(level_params, layout, num_claims, num_claims, num_points)
+}
+
+#[cfg(test)]
+pub(crate) fn w_ring_element_count_with_batch_summary<F: CanonicalField>(
+    level_params: &HachiLevelParams,
+    layout: HachiCommitmentLayout,
+    batch: HachiRootBatchSummary,
+) -> usize {
+    w_ring_element_count_with_counts::<F>(
+        level_params,
+        layout,
+        batch.num_claims,
+        batch.num_commitment_groups,
+        batch.num_points,
+    )
 }
 
 pub(crate) fn w_ring_element_count_with_claim_groups<F: CanonicalField>(
