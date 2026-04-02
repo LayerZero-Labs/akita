@@ -264,6 +264,16 @@ fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
     rounds * compressed_unipoly_bytes(degree, elem_bytes)
 }
 
+fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
+    stage1_tree_stage_shapes(rounds, b)
+        .into_iter()
+        .map(|stage| {
+            sumcheck_bytes(rounds, stage.sumcheck.1, elem_bytes) + stage.child_claims * elem_bytes
+        })
+        .sum::<usize>()
+        + elem_bytes
+}
+
 pub(crate) fn recursive_r_decomp_levels_for_bound(
     field_bits: u32,
     half_field_bound: u128,
@@ -340,13 +350,7 @@ pub(crate) fn hachi_level_proof_bytes(
     let next_eval_bytes = elem_bytes;
     let rounds = sumcheck_rounds(level_params.d, next_w_len);
     let b = 1usize << layout.log_basis;
-    let stage1_bytes = stage1_tree_stage_shapes(rounds, b)
-        .into_iter()
-        .map(|stage| {
-            sumcheck_bytes(rounds, stage.sumcheck.1, elem_bytes) + stage.child_claims * elem_bytes
-        })
-        .sum::<usize>()
-        + elem_bytes;
+    let stage1_bytes = stage1_proof_bytes(rounds, b, elem_bytes);
 
     y_bytes
         + v_bytes
@@ -372,12 +376,11 @@ pub(crate) fn batched_root_level_proof_bytes(
     let next_eval_bytes = elem_bytes;
     let rounds = sumcheck_rounds(level_params.d, next_w_len);
     let b = 1usize << layout.log_basis;
-    let stage1_degree = b / 2 + 1;
+    let stage1_bytes = stage1_proof_bytes(rounds, b, elem_bytes);
 
     y_bytes
         + v_bytes
-        + sumcheck_bytes(rounds, stage1_degree, elem_bytes)
-        + elem_bytes
+        + stage1_bytes
         + sumcheck_bytes(rounds, 3, elem_bytes)
         + next_commit_bytes
         + next_eval_bytes
@@ -869,7 +872,8 @@ mod tests {
         Fp128AdaptiveBoundedCommitmentConfig, Fp128AdaptiveOneHotCommitmentConfig,
     };
     use crate::protocol::proof::{
-        FlatRingVec, HachiLevelProof, HachiStage1Proof, HachiStage1StageProof,
+        FlatRingVec, HachiBatchedRootProof, HachiLevelProof, HachiStage1Proof,
+        HachiStage1StageProof,
     };
     use crate::protocol::ring_switch::w_ring_element_count;
     use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
@@ -1072,6 +1076,79 @@ mod tests {
                 hachi_level_proof_bytes(128, &level_params, layout, &next_level_params, next_w_len),
                 level_proof.serialized_size(Compress::No),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
+            );
+        }
+    }
+
+    #[test]
+    fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
+        const D: usize = 64;
+        let stage1_config = SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        let next_level_params = HachiLevelParams {
+            d: D,
+            log_basis: 2,
+            n_a: 2,
+            n_b: 3,
+            n_d: 2,
+            challenge_l1_mass: stage1_config.l1_mass(),
+            stage1_config: stage1_config.clone(),
+        };
+        let next_w_len = D * 8;
+        let num_claims = 5;
+
+        for log_basis in 2..=6 {
+            let level_params = HachiLevelParams {
+                d: D,
+                log_basis,
+                n_a: 2,
+                n_b: 2,
+                n_d: 2,
+                challenge_l1_mass: stage1_config.l1_mass(),
+                stage1_config: stage1_config.clone(),
+            };
+            let layout = HachiCommitmentLayout {
+                m_vars: 0,
+                r_vars: 0,
+                num_blocks: 1,
+                block_len: 1,
+                inner_width: 1,
+                outer_width: 1,
+                d_matrix_width: 1,
+                num_digits_commit: 1,
+                num_digits_open: 1,
+                num_digits_fold: 1,
+                log_basis,
+            };
+            let rounds = sumcheck_rounds(D, next_w_len);
+            let b = 1usize << log_basis;
+            let next_commitment = FlatRingVec::from_ring_elems(&vec![
+                CyclotomicRing::<F, D>::zero();
+                next_level_params.n_b
+            ])
+            .to_proof_ring_vec();
+            let root_proof = HachiBatchedRootProof::new_two_stage::<D>(
+                vec![CyclotomicRing::<F, D>::zero(); num_claims],
+                vec![CyclotomicRing::<F, D>::zero(); level_params.n_d],
+                dummy_stage1_proof(rounds, b),
+                dummy_sumcheck(rounds, 3),
+                next_commitment,
+                F::zero(),
+            );
+
+            assert_eq!(
+                batched_root_level_proof_bytes(
+                    128,
+                    &level_params,
+                    layout,
+                    &next_level_params,
+                    next_w_len,
+                    num_claims,
+                ),
+                root_proof.serialized_size(Compress::No),
+                "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
         }
     }
