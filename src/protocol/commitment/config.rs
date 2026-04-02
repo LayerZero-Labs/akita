@@ -1,8 +1,8 @@
 //! Configuration presets for ring-native commitment construction.
 
 use super::schedule::{
-    hachi_root_level_layout, planned_log_basis_at_level, planned_schedule_key, HachiLevelParams,
-    HachiScheduleInputs, HachiSchedulePlan,
+    hachi_root_level_layout, planned_log_basis_at_level, planned_recursive_suffix_bytes,
+    planned_schedule_key, HachiLevelParams, HachiScheduleInputs, HachiSchedulePlan,
 };
 use super::utils::math::checked_pow2;
 use super::utils::norm::detect_field_modulus;
@@ -589,6 +589,15 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         Self::decomposition().log_basis
     }
 
+    /// Inclusive search range for adaptive recursive basis planning at one state.
+    ///
+    /// Static configs should return a singleton range containing the unique basis
+    /// allowed at `inputs`.
+    fn log_basis_search_range(inputs: HachiScheduleInputs) -> (u32, u32) {
+        let basis = Self::log_basis_at_level(inputs);
+        (basis, basis)
+    }
+
     /// Stable identity for the active log-basis schedule at `max_num_vars`.
     fn schedule_key(_max_num_vars: usize) -> String {
         format!("static_v1_b{}", Self::decomposition().log_basis)
@@ -603,6 +612,23 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Returns an error when the config's planner cannot derive a valid
     /// schedule from the public inputs.
     fn schedule_plan(_max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
+        Ok(None)
+    }
+
+    /// Optional proof-size planner for recursive suffixes that start from an
+    /// arbitrary witness state.
+    ///
+    /// `None` means callers should fall back to a local byte comparison.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the config's planner cannot derive a valid
+    /// suffix from the public inputs.
+    fn recursive_suffix_bytes(
+        _max_num_vars: usize,
+        _level: usize,
+        _current_w_len: usize,
+    ) -> Result<Option<usize>, HachiError> {
         Ok(None)
     }
 
@@ -709,6 +735,12 @@ pub trait CommitmentPolicy: Clone + Send + Sync + 'static {
         Self::decomposition().log_basis
     }
 
+    /// Inclusive search range for adaptive recursive basis planning at one state.
+    fn log_basis_search_range<Cfg: CommitmentConfig>(inputs: HachiScheduleInputs) -> (u32, u32) {
+        let basis = Self::log_basis_at_level::<Cfg>(inputs);
+        (basis, basis)
+    }
+
     /// Stable identity for the active log-basis schedule at `max_num_vars`.
     fn schedule_key<Cfg: CommitmentConfig>(_max_num_vars: usize) -> String {
         format!("static_v1_b{}", Self::decomposition().log_basis)
@@ -723,6 +755,16 @@ pub trait CommitmentPolicy: Clone + Send + Sync + 'static {
     fn schedule_plan<Cfg: CommitmentConfig>(
         _max_num_vars: usize,
     ) -> Result<Option<HachiSchedulePlan>, HachiError> {
+        Ok(None)
+    }
+
+    /// Optional proof-size planner for recursive suffixes that start from an
+    /// arbitrary witness state.
+    fn recursive_suffix_bytes<Cfg: CommitmentConfig>(
+        _max_num_vars: usize,
+        _level: usize,
+        _current_w_len: usize,
+    ) -> Result<Option<usize>, HachiError> {
         Ok(None)
     }
 
@@ -792,12 +834,24 @@ where
         Policy::log_basis_at_level::<Self>(inputs)
     }
 
+    fn log_basis_search_range(inputs: HachiScheduleInputs) -> (u32, u32) {
+        Policy::log_basis_search_range::<Self>(inputs)
+    }
+
     fn schedule_key(max_num_vars: usize) -> String {
         Policy::schedule_key::<Self>(max_num_vars)
     }
 
     fn schedule_plan(max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
         Policy::schedule_plan::<Self>(max_num_vars)
+    }
+
+    fn recursive_suffix_bytes(
+        max_num_vars: usize,
+        level: usize,
+        current_w_len: usize,
+    ) -> Result<Option<usize>, HachiError> {
+        Policy::recursive_suffix_bytes::<Self>(max_num_vars, level, current_w_len)
     }
 
     fn planner_half_field_bound() -> u128 {
@@ -1092,6 +1146,11 @@ impl<
         fp128_planned_log_basis::<Cfg>(inputs)
     }
 
+    fn log_basis_search_range<Cfg: CommitmentConfig>(_inputs: HachiScheduleInputs) -> (u32, u32) {
+        let _ = PhantomData::<Cfg>;
+        (2, 5)
+    }
+
     fn schedule_key<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
         fp128_planned_schedule_key::<Cfg>(max_num_vars)
     }
@@ -1100,6 +1159,20 @@ impl<
         max_num_vars: usize,
     ) -> Result<Option<HachiSchedulePlan>, HachiError> {
         fp128_planned_schedule::<Cfg>(max_num_vars)
+    }
+
+    fn recursive_suffix_bytes<Cfg: CommitmentConfig>(
+        max_num_vars: usize,
+        level: usize,
+        current_w_len: usize,
+    ) -> Result<Option<usize>, HachiError> {
+        Ok(Some(planned_recursive_suffix_bytes::<Cfg>(
+            max_num_vars,
+            level,
+            current_w_len,
+            2,
+            5,
+        )?))
     }
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
@@ -1159,6 +1232,25 @@ impl CommitmentPolicy for Fp128AdaptiveOneHotD64Policy {
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
         d64_stage1_challenge_config(d)
+    }
+
+    fn log_basis_search_range<Cfg: CommitmentConfig>(_inputs: HachiScheduleInputs) -> (u32, u32) {
+        let _ = PhantomData::<Cfg>;
+        (2, 5)
+    }
+
+    fn recursive_suffix_bytes<Cfg: CommitmentConfig>(
+        max_num_vars: usize,
+        level: usize,
+        current_w_len: usize,
+    ) -> Result<Option<usize>, HachiError> {
+        Ok(Some(planned_recursive_suffix_bytes::<Cfg>(
+            max_num_vars,
+            level,
+            current_w_len,
+            2,
+            5,
+        )?))
     }
 }
 

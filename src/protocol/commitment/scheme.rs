@@ -52,39 +52,42 @@ where
     type Commitment: Clone + PartialEq + Send + Sync + AppendToTranscript<F>;
     /// Evaluation/opening proof object.
     type Proof: Clone + Send + Sync;
-    /// Prover-side hint produced at commitment time.
+    /// Batched same-point evaluation/opening proof object.
+    type BatchedProof: Clone + Send + Sync;
+    /// Prover-side hint produced for one commitment group.
     type CommitHint: Clone + Send + Sync;
+    /// Prover-side hint collection for same-point grouped openings.
+    type BatchedCommitHint: Clone + Send + Sync;
 
-    /// Build prover setup for maximum polynomial dimension.
+    /// Build prover setup for maximum polynomial dimension and batch capacity.
     ///
     /// # Panics
     ///
     /// Panics if internal setup fails (programming error, not adversarial input).
-    fn setup_prover(max_num_vars: usize) -> Self::ProverSetup;
+    fn setup_prover(max_num_vars: usize, max_num_batched_polys: usize) -> Self::ProverSetup;
 
     /// Derive verifier setup from prover setup.
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;
 
-    /// Commit to one polynomial with a caller-specified layout.
+    /// Commit to polynomials.
     ///
-    /// The layout's matrix dimensions must not exceed the setup's max dimensions.
-    /// Callers control `num_digits_commit` via the layout to reduce decomposition
-    /// depth for polynomials with bounded coefficients (e.g. delta=1 for {0,1}).
+    /// The root layout is derived automatically from the polynomial dimension.
+    /// All polynomials in `polys` are aggregated into one commitment. Callers
+    /// that need multiple commitments should call this method repeatedly, once
+    /// per commitment group.
     ///
     /// # Errors
     ///
     /// Returns an error when setup/parameter constraints are not satisfied.
     fn commit<P: HachiPolyOps<F, D>>(
-        poly: &P,
+        polys: &[P],
         setup: &Self::ProverSetup,
-        layout: &HachiCommitmentLayout,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError>;
 
-    /// Produce an opening proof at `opening_point` with a caller-specified layout.
+    /// Produce an opening proof at `opening_point`.
     ///
-    /// The layout must match the one used during commitment. Recursive w-opening
-    /// levels derive their own layouts internally via `WCommitmentConfig` and
-    /// use the dedicated recursive witness runtime rather than `HachiPolyOps`.
+    /// The root layout is derived from `opening_point.len()`. Recursive
+    /// w-opening levels derive their own layouts internally.
     ///
     /// `basis` selects the polynomial representation (see [`BasisMode`]).
     ///
@@ -100,14 +103,34 @@ where
         transcript: &mut T,
         commitment: &Self::Commitment,
         basis: BasisMode,
-        layout: &HachiCommitmentLayout,
     ) -> Result<Self::Proof, HachiError>;
 
-    /// Verify an opening proof with a caller-specified layout.
+    /// Produce a fused batched opening proof for one or more opening points.
     ///
-    /// The layout must be reconstructed deterministically by the verifier —
-    /// never deserialized from the proof. It must match the layout used by the
-    /// prover for commitment and proving.
+    /// The outer slice indexes opening points. For each point, the prover
+    /// receives grouped batches: `poly_groups_by_point[j][g]` is one commitment
+    /// group at point `j`.
+    ///
+    /// Same-point batching is the special case `opening_points.len() == 1`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any opening point is invalid or proof generation
+    /// fails.
+    #[allow(clippy::too_many_arguments)]
+    fn batched_prove<T: Transcript<F>, P: HachiPolyOps<F, D>>(
+        setup: &Self::ProverSetup,
+        poly_groups_by_point: &[&[&[P]]],
+        opening_points: &[&[F]],
+        hints_by_point: Vec<Self::BatchedCommitHint>,
+        transcript: &mut T,
+        commitments_by_point: &[&[Self::Commitment]],
+        basis: BasisMode,
+    ) -> Result<Self::BatchedProof, HachiError>;
+
+    /// Verify an opening proof.
+    ///
+    /// The root layout is derived deterministically from `opening_point.len()`.
     ///
     /// `basis` must match the mode used by the prover (see [`BasisMode`]).
     ///
@@ -123,7 +146,26 @@ where
         opening: &F,
         commitment: &Self::Commitment,
         basis: BasisMode,
-        layout: &HachiCommitmentLayout,
+    ) -> Result<(), HachiError>;
+
+    /// Verify a fused batched opening proof over one or more opening points.
+    ///
+    /// The root layout is derived deterministically from the opening points.
+    ///
+    /// Same-point batching is the special case `opening_points.len() == 1`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when verification fails.
+    #[allow(clippy::too_many_arguments)]
+    fn batched_verify<T: Transcript<F>>(
+        proof: &Self::BatchedProof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut T,
+        opening_points: &[&[F]],
+        opening_groups_by_point: &[&[&[F]]],
+        commitments_by_point: &[&[Self::Commitment]],
+        basis: BasisMode,
     ) -> Result<(), HachiError>;
 
     /// Protocol identifier.
@@ -145,10 +187,17 @@ where
 
     /// Construct commitment setup for at most `max_num_vars` variables.
     ///
+    /// `max_num_batched_polys` sizes the widened root `B` and `D` matrices and
+    /// the recursive-chain envelope for batched openings, including the
+    /// worst-case multipoint split where each claim opens at a distinct point.
+    ///
     /// # Errors
     ///
     /// Returns an error if dimensions are inconsistent with `Cfg`.
-    fn setup(max_num_vars: usize) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError>;
+    fn setup(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError>;
 
     /// Read the runtime layout carried by `setup`.
     ///

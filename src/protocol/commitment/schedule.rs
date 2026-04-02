@@ -41,7 +41,30 @@ pub struct HachiLevelParams {
 impl HachiLevelParams {
     /// Total number of quotient / relation rows in `M`.
     pub fn m_row_count(&self) -> usize {
-        self.n_d + self.n_b + 2 + self.n_a
+        self.m_row_count_with_public_outputs(1)
+    }
+
+    /// Total number of quotient / relation rows when the root carries
+    /// `num_public_outputs` public `y` rows.
+    pub fn m_row_count_with_public_outputs(&self, num_public_outputs: usize) -> usize {
+        self.n_d + self.n_b + num_public_outputs + 1 + self.n_a
+    }
+
+    /// Total number of quotient / relation rows when the root carries
+    /// `num_commitments` explicit commitment vectors and `num_public_outputs`
+    /// public `y` rows.
+    pub fn m_row_count_with_commitments_and_public_outputs(
+        &self,
+        num_commitments: usize,
+        num_public_outputs: usize,
+    ) -> usize {
+        self.n_d + self.n_b * num_commitments + num_public_outputs + 1 + self.n_a
+    }
+
+    /// Total number of root-batched quotient / relation rows when each claim
+    /// keeps its own commitment vector.
+    pub fn batched_root_m_row_count(&self, num_claims: usize) -> usize {
+        self.m_row_count_with_commitments_and_public_outputs(num_claims, num_claims)
     }
 }
 
@@ -218,7 +241,7 @@ fn proof_ring_vec_bytes(ring_len: usize, ring_dim: usize, elem_bytes: usize) -> 
     ring_len * ring_dim * elem_bytes
 }
 
-fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
+pub(crate) fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
     (num_elems * bits_per_elem as usize).div_ceil(8)
 }
 
@@ -291,7 +314,7 @@ fn sumcheck_rounds(level_d: usize, next_w_len: usize) -> usize {
     num_u + num_l
 }
 
-fn hachi_level_proof_bytes(
+pub(crate) fn hachi_level_proof_bytes(
     field_bits: u32,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
@@ -309,6 +332,33 @@ fn hachi_level_proof_bytes(
     let stage1_degree = b / 2 + 1;
 
     // Every level now uses the same two-stage norm-check body, even for b = 4.
+    y_bytes
+        + v_bytes
+        + sumcheck_bytes(rounds, stage1_degree, elem_bytes)
+        + elem_bytes
+        + sumcheck_bytes(rounds, 3, elem_bytes)
+        + next_commit_bytes
+        + next_eval_bytes
+}
+
+pub(crate) fn batched_root_level_proof_bytes(
+    field_bits: u32,
+    level_params: &HachiLevelParams,
+    layout: HachiCommitmentLayout,
+    next_level_params: &HachiLevelParams,
+    next_w_len: usize,
+    num_claims: usize,
+) -> usize {
+    let elem_bytes = field_bytes(field_bits);
+    let y_bytes = proof_ring_vec_bytes(num_claims, level_params.d, elem_bytes);
+    let v_bytes = proof_ring_vec_bytes(level_params.n_d, level_params.d, elem_bytes);
+    let next_commit_bytes =
+        proof_ring_vec_bytes(next_level_params.n_b, next_level_params.d, elem_bytes);
+    let next_eval_bytes = elem_bytes;
+    let rounds = sumcheck_rounds(level_params.d, next_w_len);
+    let b = 1usize << layout.log_basis;
+    let stage1_degree = b / 2 + 1;
+
     y_bytes
         + v_bytes
         + sumcheck_bytes(rounds, stage1_degree, elem_bytes)
@@ -415,6 +465,144 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
 
     memo.insert(state, best.clone());
     Ok(best)
+}
+
+pub(crate) fn planned_recursive_suffix_bytes<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    level: usize,
+    current_w_len: usize,
+    min_log_basis: u32,
+    max_log_basis: u32,
+) -> Result<usize, HachiError> {
+    let inputs = HachiScheduleInputs {
+        max_num_vars,
+        level,
+        current_w_len,
+    };
+    let current_log_basis = Cfg::log_basis_at_level(inputs);
+    let cfg = PlannerConfig {
+        max_num_vars,
+        min_log_basis,
+        max_log_basis,
+        field_bits: field_bits(Cfg::decomposition()),
+        half_field_bound: Cfg::planner_half_field_bound(),
+    };
+    let mut memo = HashMap::new();
+    let suffix = best_recursive_suffix::<Cfg>(
+        cfg,
+        &mut memo,
+        PlannerState {
+            level,
+            current_w_len,
+            log_basis: current_log_basis,
+        },
+    )?;
+    Ok(suffix.no_wrapper_bytes)
+}
+
+pub(crate) fn planned_recursive_suffix_bytes_with_log_basis<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    level: usize,
+    current_w_len: usize,
+    current_log_basis: u32,
+) -> Result<usize, HachiError> {
+    let inputs = HachiScheduleInputs {
+        max_num_vars,
+        level,
+        current_w_len,
+    };
+    let (min_log_basis, max_log_basis) = Cfg::log_basis_search_range(inputs);
+    let cfg = PlannerConfig {
+        max_num_vars,
+        min_log_basis,
+        max_log_basis,
+        field_bits: field_bits(Cfg::decomposition()),
+        half_field_bound: Cfg::planner_half_field_bound(),
+    };
+    let mut memo = HashMap::new();
+    let suffix = best_recursive_suffix::<Cfg>(
+        cfg,
+        &mut memo,
+        PlannerState {
+            level,
+            current_w_len,
+            log_basis: current_log_basis,
+        },
+    )?;
+    Ok(suffix.no_wrapper_bytes)
+}
+
+pub(crate) fn planned_next_log_basis_with_current_basis<Cfg: CommitmentConfig>(
+    next_inputs: HachiScheduleInputs,
+    current_log_basis: u32,
+) -> Result<u32, HachiError> {
+    let (min_log_basis, max_log_basis) = Cfg::log_basis_search_range(next_inputs);
+    let lower_bound = current_log_basis.max(min_log_basis);
+    let cfg = PlannerConfig {
+        max_num_vars: next_inputs.max_num_vars,
+        min_log_basis,
+        max_log_basis,
+        field_bits: field_bits(Cfg::decomposition()),
+        half_field_bound: Cfg::planner_half_field_bound(),
+    };
+    let mut memo = HashMap::new();
+    let mut best: Option<(u32, usize)> = None;
+    for log_basis in lower_bound..=max_log_basis {
+        let suffix = best_recursive_suffix::<Cfg>(
+            cfg,
+            &mut memo,
+            PlannerState {
+                level: next_inputs.level,
+                current_w_len: next_inputs.current_w_len,
+                log_basis,
+            },
+        )?;
+        if best
+            .as_ref()
+            .is_none_or(|(_, best_bytes)| suffix.no_wrapper_bytes < *best_bytes)
+        {
+            best = Some((log_basis, suffix.no_wrapper_bytes));
+        }
+    }
+    best.map(|(log_basis, _)| log_basis)
+        .ok_or_else(|| HachiError::InvalidSetup("no valid next-level log basis found".to_string()))
+}
+
+pub(crate) fn estimated_recursive_suffix_bytes<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    level: usize,
+    current_w_len: usize,
+) -> Result<usize, HachiError> {
+    let inputs = HachiScheduleInputs {
+        max_num_vars,
+        level,
+        current_w_len,
+    };
+    let current_log_basis = Cfg::log_basis_at_level(inputs);
+    let direct_bytes = packed_digits_bytes(current_w_len, current_log_basis);
+
+    if let Some(planned_bytes) = Cfg::recursive_suffix_bytes(max_num_vars, level, current_w_len)? {
+        return Ok(planned_bytes.min(direct_bytes));
+    }
+
+    let (params, layout) = current_level_layout_with_log_basis::<Cfg>(inputs, current_log_basis)?;
+    let field_bits = field_bits(Cfg::decomposition());
+    let next_w_len =
+        planned_next_w_len(field_bits, Cfg::planner_half_field_bound(), &params, layout);
+    if next_w_len >= current_w_len {
+        return Ok(direct_bytes);
+    }
+
+    let next_inputs = HachiScheduleInputs {
+        max_num_vars,
+        level: level + 1,
+        current_w_len: next_w_len,
+    };
+    let next_level_params = Cfg::level_params(next_inputs);
+    let continue_bytes =
+        hachi_level_proof_bytes(field_bits, &params, layout, &next_level_params, next_w_len)
+            + packed_digits_bytes(next_w_len, next_level_params.log_basis);
+    Ok(direct_bytes.min(continue_bytes))
 }
 
 pub(crate) fn planned_schedule<Cfg: CommitmentConfig>(
@@ -551,8 +739,36 @@ pub(crate) fn planned_log_basis_at_level<Cfg: CommitmentConfig>(
         state.level,
         inputs.level.min(schedule.terminal_state().level)
     );
-    if inputs.level > 0 {
-        debug_assert_eq!(state.current_w_len, inputs.current_w_len);
+    if inputs.level > 0 && state.current_w_len != inputs.current_w_len {
+        let cfg = PlannerConfig {
+            max_num_vars: inputs.max_num_vars,
+            min_log_basis,
+            max_log_basis,
+            field_bits: field_bits(Cfg::decomposition()),
+            half_field_bound: Cfg::planner_half_field_bound(),
+        };
+        let mut memo = HashMap::new();
+        let mut best: Option<(u32, usize)> = None;
+        for log_basis in min_log_basis..=max_log_basis {
+            let suffix = best_recursive_suffix::<Cfg>(
+                cfg,
+                &mut memo,
+                PlannerState {
+                    level: inputs.level,
+                    current_w_len: inputs.current_w_len,
+                    log_basis,
+                },
+            )?;
+            if best
+                .as_ref()
+                .is_none_or(|(_, best_bytes)| suffix.no_wrapper_bytes < *best_bytes)
+            {
+                best = Some((log_basis, suffix.no_wrapper_bytes));
+            }
+        }
+        return best.map(|(log_basis, _)| log_basis).ok_or_else(|| {
+            HachiError::InvalidSetup("no valid adaptive log basis found".to_string())
+        });
     }
     Ok(state.log_basis)
 }
@@ -677,6 +893,67 @@ mod tests {
         for max_num_vars in [15, 30, 44] {
             assert_plan_matches_runtime_w_sizes::<fp128_5823::OneHot>(max_num_vars);
         }
+    }
+
+    #[test]
+    fn adaptive_onehot_explicit_recursive_basis_beats_colliding_stateless_state() {
+        type Cfg = fp128_5823::OneHot;
+
+        let current_inputs = HachiScheduleInputs {
+            max_num_vars: 30,
+            level: 4,
+            current_w_len: 245_888,
+        };
+        let next_log_basis =
+            planned_next_log_basis_with_current_basis::<Cfg>(current_inputs, 5).unwrap();
+        let suffix_bytes = planned_recursive_suffix_bytes_with_log_basis::<Cfg>(
+            current_inputs.max_num_vars,
+            current_inputs.level,
+            current_inputs.current_w_len,
+            5,
+        )
+        .unwrap();
+
+        assert_eq!(next_log_basis, 5);
+        assert!(suffix_bytes < packed_digits_bytes(current_inputs.current_w_len, 5));
+    }
+
+    #[test]
+    fn recursive_onehot_split_matches_open_digit_witness_count() {
+        type Cfg = fp128_5823::OneHot;
+
+        let inputs = HachiScheduleInputs {
+            max_num_vars: 30,
+            level: 1,
+            current_w_len: 25_974_272,
+        };
+        let params = Cfg::level_params(inputs);
+        let decomp =
+            recursive_level_decomposition_from_root(Cfg::decomposition(), params.log_basis);
+        let num_ring = inputs.current_w_len / params.d;
+        let layout_12_7 = layout_from_params(12, 7, &params, decomp, num_ring).unwrap();
+        let layout_11_8 = layout_from_params(11, 8, &params, decomp, num_ring).unwrap();
+        let w_12_7 = planned_w_ring_element_count(
+            field_bits(Cfg::decomposition()),
+            Cfg::planner_half_field_bound(),
+            &params,
+            layout_12_7,
+        );
+        let w_11_8 = planned_w_ring_element_count(
+            field_bits(Cfg::decomposition()),
+            Cfg::planner_half_field_bound(),
+            &params,
+            layout_11_8,
+        );
+        let reduced_vars = (inputs.current_w_len / params.d)
+            .next_power_of_two()
+            .trailing_zeros() as usize;
+
+        assert!(w_12_7 < w_11_8);
+        assert_eq!(
+            optimal_m_r_split_with_params(&params, decomp, reduced_vars, num_ring),
+            (12, 7)
+        );
     }
 
     #[test]

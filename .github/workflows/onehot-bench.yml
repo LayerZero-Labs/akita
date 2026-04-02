@@ -18,6 +18,8 @@ env:
   HACHI_BENCH_ARTIFACT_NAME: onehot-bench-32-variables-data
   HACHI_BENCH_MODE: onehot
   HACHI_BENCH_NUM_VARS: 32
+  HACHI_BENCH_BATCHED_NUM_VARS: 30
+  HACHI_BENCH_BATCHED_NUM_POLYS: 4
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -63,13 +65,14 @@ jobs:
       - name: Build profile example
         run: cargo build --release --quiet --example profile
 
-      - name: Run onehot 32 variables benchmark (1-of-256)
+      - name: Run onehot benchmark cases
         run: |
           python3 scripts/onehot_bench_report.py run \
             --binary ./target/release/examples/profile \
             --output-dir "$HACHI_BENCH_ARTIFACT_DIR" \
             --mode "$HACHI_BENCH_MODE" \
-            --num-vars "$HACHI_BENCH_NUM_VARS"
+            --case "$HACHI_BENCH_NUM_VARS:1" \
+            --case "$HACHI_BENCH_BATCHED_NUM_VARS:$HACHI_BENCH_BATCHED_NUM_POLYS"
 
       - name: Upload benchmark artifact
         if: always()
