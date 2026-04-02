@@ -192,26 +192,29 @@ mod tests {
     use super::*;
     use crate::algebra::{Prime128Offset275, Prime128Offset5823};
 
+    const SMALL_PROTOCOL_RING_DIMS: &[usize] = &[32, 64, 128];
+
+    fn assert_selects_q128_params<F: CanonicalField, const D: usize>() {
+        assert!(matches!(
+            select_crt_ntt_params::<F, D>(),
+            Ok(ProtocolCrtNttParams::Q128(_))
+        ));
+    }
+
     #[test]
-    fn selects_q128_params_for_prime275_across_small_d() {
-        for d in [16usize, 32, 64, 128] {
+    fn selects_q128_params_for_prime275_across_small_protocol_ring_dims() {
+        for &d in SMALL_PROTOCOL_RING_DIMS {
             crate::dispatch_ring_dim!(d, |D| {
-                assert!(matches!(
-                    select_crt_ntt_params::<Prime128Offset275, { D }>(),
-                    Ok(ProtocolCrtNttParams::Q128(_))
-                ));
+                assert_selects_q128_params::<Prime128Offset275, D>();
             });
         }
     }
 
     #[test]
-    fn legacy_prime5823_still_selects_q128_params() {
-        for d in [16usize, 32, 64, 128] {
+    fn legacy_prime5823_still_selects_q128_params_across_small_protocol_ring_dims() {
+        for &d in SMALL_PROTOCOL_RING_DIMS {
             crate::dispatch_ring_dim!(d, |D| {
-                assert!(matches!(
-                    select_crt_ntt_params::<Prime128Offset5823, { D }>(),
-                    Ok(ProtocolCrtNttParams::Q128(_))
-                ));
+                assert_selects_q128_params::<Prime128Offset5823, D>();
             });
         }
     }
