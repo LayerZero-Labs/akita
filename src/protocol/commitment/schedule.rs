@@ -549,10 +549,9 @@ pub(crate) fn planned_recursive_suffix_bytes_with_log_basis<Cfg: CommitmentConfi
 
 pub(crate) fn planned_next_log_basis_with_current_basis<Cfg: CommitmentConfig>(
     next_inputs: HachiScheduleInputs,
-    current_log_basis: u32,
+    _current_log_basis: u32,
 ) -> Result<u32, HachiError> {
     let (min_log_basis, max_log_basis) = Cfg::log_basis_search_range(next_inputs);
-    let lower_bound = current_log_basis.max(min_log_basis);
     let cfg = PlannerConfig {
         max_num_vars: next_inputs.max_num_vars,
         min_log_basis,
@@ -562,7 +561,9 @@ pub(crate) fn planned_next_log_basis_with_current_basis<Cfg: CommitmentConfig>(
     };
     let mut memo = HashMap::new();
     let mut best: Option<(u32, usize)> = None;
-    for log_basis in lower_bound..=max_log_basis {
+    // Recursive planning may legitimately shrink the active basis relative to
+    // the current level, so search the full supported range for the next state.
+    for log_basis in min_log_basis..=max_log_basis {
         let suffix = best_recursive_suffix::<Cfg>(
             cfg,
             &mut memo,

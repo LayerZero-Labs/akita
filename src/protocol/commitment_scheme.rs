@@ -917,17 +917,13 @@ where
         alpha: _,
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
-    let (stage1_sumcheck, r_stage1, s_claim) = {
+    let (stage1_proof, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        let mut stage1_prover =
-            HachiStage1Prover::new(&w_evals_compact, &tau0, b, live_x_cols, num_u, num_l);
-        let (stage1_sumcheck, r_stage1, _stage1_final_claim) =
-            prove_eq_factored_sumcheck::<F, _, F, _, _>(&mut stage1_prover, transcript, |tr| {
-                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
-            })?;
-        let s_claim = stage1_prover.final_s_claim();
-
-        (stage1_sumcheck, r_stage1, s_claim)
+        let stage1_prover =
+            HachiStage1Prover::new(&w_evals_compact, &tau0, b, live_x_cols, num_u, num_l)?;
+        let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
+        let s_claim = stage1_proof.s_claim;
+        (stage1_proof, r_stage1, s_claim)
     };
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
@@ -967,8 +963,7 @@ where
     let root_proof = HachiBatchedRootProof::new_two_stage::<D>(
         y_rings,
         quad_eq.v,
-        stage1_sumcheck,
-        s_claim,
+        stage1_proof,
         stage2_sumcheck,
         w_commitment_proof,
         w_eval,
@@ -2598,15 +2593,10 @@ where
         relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, &commitment_rows, y_rings);
     let stage1 = &root_proof.stage1;
     let stage2 = &root_proof.stage2;
-    let stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), stage1.s_claim, rs.b);
+    let stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        verify_eq_factored_sumcheck::<F, _, F, _, _>(
-            &stage1.sumcheck,
-            &stage1_verifier,
-            transcript,
-            |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-        )?
+        stage1_verifier.verify(stage1, transcript)?
     };
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
@@ -2766,15 +2756,10 @@ where
         relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, &commitment_rows, y_rings);
     let stage1 = &root_proof.stage1;
     let stage2 = &root_proof.stage2;
-    let stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), stage1.s_claim, rs.b);
+    let stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        verify_eq_factored_sumcheck::<F, _, F, _, _>(
-            &stage1.sumcheck,
-            &stage1_verifier,
-            transcript,
-            |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-        )?
+        stage1_verifier.verify(stage1, transcript)?
     };
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);

@@ -424,7 +424,7 @@ fn full_d128_basis6_prove_verify() {
         type Cfg = Fp128BoundedCommitmentConfig<128, 6, 6>;
         const D: usize = Cfg::D;
 
-        let (verifier_setup, commitment, proof, opening_point, opening, layout) =
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<D, Cfg>(BASIS6_TEST_NV, b"hachi_e2e/basis6");
 
         assert_eq!(proof.tail.direct.bits_per_elem, 6);
@@ -438,7 +438,6 @@ fn full_d128_basis6_prove_verify() {
             &opening,
             &commitment,
             BasisMode::Lagrange,
-            &layout,
         );
 
         assert!(

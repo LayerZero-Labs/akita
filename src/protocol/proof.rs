@@ -1090,8 +1090,7 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
     pub(crate) fn new_two_stage<const D: usize>(
         y_rings: Vec<CyclotomicRing<F, D>>,
         v: Vec<CyclotomicRing<F, D>>,
-        stage1_sumcheck: EqFactoredSumcheckProof<F>,
-        stage1_s_claim: F,
+        stage1: HachiStage1Proof<F>,
         stage2_sumcheck: SumcheckProof<F>,
         next_w_commitment: ProofRingVec<F>,
         next_w_eval: F,
@@ -1099,10 +1098,7 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
         Self::new::<D>(
             y_rings,
             v,
-            HachiStage1Proof {
-                sumcheck: stage1_sumcheck,
-                s_claim: stage1_s_claim,
-            },
+            stage1,
             HachiStage2Proof {
                 sumcheck: stage2_sumcheck,
                 next_w_commitment,
@@ -1258,7 +1254,14 @@ fn level_proof_shape<F: FieldCore>(
     LevelProofShape {
         y_ring_coeffs: y_coeffs,
         v_coeffs: v.coeff_len(),
-        stage1_sumcheck: eq_factored_sumcheck_shape(&stage1.sumcheck),
+        stage1_stages: stage1
+            .stages
+            .iter()
+            .map(|stage| HachiStage1StageShape {
+                sumcheck: eq_factored_sumcheck_shape(&stage.sumcheck),
+                child_claims: stage.child_claims.len(),
+            })
+            .collect(),
         stage2_sumcheck: sumcheck_shape(&stage2.sumcheck),
         next_commit_coeffs: stage2.next_w_commitment.coeff_len(),
     }
@@ -1509,9 +1512,12 @@ impl<F: FieldCore> HachiSerialize for HachiBatchedRootProof<F> {
     ) -> Result<(), SerializationError> {
         self.y_rings.serialize_with_mode(&mut writer, compress)?;
         self.v.serialize_with_mode(&mut writer, compress)?;
-        self.stage1
-            .sumcheck
-            .serialize_with_mode(&mut writer, compress)?;
+        for stage in &self.stage1.stages {
+            stage.sumcheck.serialize_with_mode(&mut writer, compress)?;
+            for claim in &stage.child_claims {
+                claim.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
         self.stage1
             .s_claim
             .serialize_with_mode(&mut writer, compress)?;
@@ -1529,7 +1535,19 @@ impl<F: FieldCore> HachiSerialize for HachiBatchedRootProof<F> {
     fn serialized_size(&self, compress: Compress) -> usize {
         self.y_rings.serialized_size(compress)
             + self.v.serialized_size(compress)
-            + self.stage1.sumcheck.serialized_size(compress)
+            + self
+                .stage1
+                .stages
+                .iter()
+                .map(|stage| {
+                    stage.sumcheck.serialized_size(compress)
+                        + stage
+                            .child_claims
+                            .iter()
+                            .map(|claim| claim.serialized_size(compress))
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
             + self.stage1.s_claim.serialized_size(compress)
             + self.stage2.sumcheck.serialized_size(compress)
             + self.stage2.next_w_commitment.serialized_size(compress)
@@ -1541,7 +1559,10 @@ impl<F: FieldCore + Valid> Valid for HachiBatchedRootProof<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.y_rings.check()?;
         self.v.check()?;
-        self.stage1.sumcheck.check()?;
+        for stage in &self.stage1.stages {
+            stage.sumcheck.check()?;
+            stage.child_claims.check()?;
+        }
         self.stage1.s_claim.check()?;
         self.stage2.sumcheck.check()?;
         self.stage2.next_w_commitment.check()?;
@@ -1565,13 +1586,30 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedRootProof<F> {
         )?;
         let v =
             ProofRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
-        let stage1 = HachiStage1Proof {
-            sumcheck: EqFactoredSumcheckProof::deserialize_with_mode(
+        let mut stage1_stages = Vec::with_capacity(ctx.stage1_stages.len());
+        for stage_shape in &ctx.stage1_stages {
+            let sumcheck = EqFactoredSumcheckProof::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
-                &ctx.stage1_sumcheck,
-            )?,
+                &stage_shape.sumcheck,
+            )?;
+            let mut child_claims = Vec::with_capacity(stage_shape.child_claims);
+            for _ in 0..stage_shape.child_claims {
+                child_claims.push(F::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    &(),
+                )?);
+            }
+            stage1_stages.push(HachiStage1StageProof {
+                sumcheck,
+                child_claims,
+            });
+        }
+        let stage1 = HachiStage1Proof {
+            stages: stage1_stages,
             s_claim: F::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         let stage2 = HachiStage2Proof {
