@@ -2971,7 +2971,8 @@ mod tests {
     use super::*;
     use crate::algebra::Fp128;
     use crate::protocol::commitment::presets::fp128_5823;
-    use crate::protocol::commitment::CommitmentConfig;
+    use crate::protocol::commitment::schedule::hachi_root_runtime_plan_with_batch;
+    use crate::protocol::commitment::{CommitmentConfig, HachiRootBatchSummary};
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
     use crate::protocol::opening_point::{
         lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
@@ -3008,43 +3009,16 @@ mod tests {
         num_claims: usize,
         proof: &HachiBatchedProof<OneHotF>,
     ) -> HachiBatchedProofShape {
-        let claim_group_sizes = vec![num_claims];
-        let BatchedRootLayoutContext {
-            layout: _,
-            batched_layout,
-            root_params,
-        } = derive_batched_root_layout_context::<OneHotCfg, ONEHOT_D>(
+        let root_plan = hachi_root_runtime_plan_with_batch::<OneHotCfg, ONEHOT_D>(
+            max_num_vars,
             max_num_vars,
             num_claims,
-            max_num_vars,
-            num_claims,
+            HachiRootBatchSummary::new(num_claims, 1, 1).expect("same-point batch summary"),
         )
-        .expect("batched root layout context");
-        let root_w_len = w_ring_element_count_with_claim_groups::<OneHotF>(
-            &root_params,
-            batched_layout,
-            &claim_group_sizes,
-        ) * ONEHOT_D;
-        let first_level_params = next_level_params_from_current_basis::<OneHotCfg>(
-            HachiScheduleInputs {
-                max_num_vars,
-                level: 1,
-                current_w_len: root_w_len,
-            },
-            root_params.log_basis,
-        )
-        .expect("first recursive params");
-        let root_rounds = batched_shape_rounds(root_params.d, root_w_len);
-        let root_shape = LevelProofShape {
-            y_ring_coeffs: num_claims * ONEHOT_D,
-            v_coeffs: root_params.n_d * root_params.d,
-            stage1_stages: stage1_tree_stage_shapes(
-                root_rounds,
-                1usize << batched_layout.log_basis,
-            ),
-            stage2_sumcheck: (root_rounds, 3),
-            next_commit_coeffs: first_level_params.n_b * first_level_params.d,
-        };
+        .expect("batched root runtime plan");
+        let root_w_len = root_plan.next_w_len();
+        let root_shape = root_plan.level_proof_shape();
+        let first_level_params = root_plan.next_level_params.clone();
 
         let mut level_shapes = Vec::with_capacity(proof.levels.len());
         let mut current_w_len = root_w_len;
