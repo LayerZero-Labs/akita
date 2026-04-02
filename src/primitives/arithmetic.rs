@@ -139,13 +139,13 @@ pub trait FromSmallInt: FieldCore {
 
     /// Lookup table mapping balanced digit index → field element.
     ///
-    /// For `log_basis` in `1..=5`, returns a 32-entry table where
+    /// For `log_basis` in `1..=6`, returns a 64-entry table where
     /// `table[i]` = `from_i64(i - b/2)` for `i < b = 2^log_basis`,
     /// and zero for `i >= b`.
     ///
     /// Index a digit `d ∈ [-b/2, b/2)` as `table[(d + b/2) as usize]`.
-    fn digit_lut(log_basis: u32) -> [Self; 32] {
-        debug_assert!(log_basis > 0 && log_basis <= 5);
+    fn digit_lut(log_basis: u32) -> [Self; 64] {
+        debug_assert!(log_basis > 0 && log_basis <= 6);
         let b = 1usize << log_basis;
         let half_b = (b >> 1) as i64;
         std::array::from_fn(|i| {

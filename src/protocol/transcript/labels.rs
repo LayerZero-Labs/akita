@@ -31,8 +31,12 @@ pub const ABSORB_SUMCHECK_ROUND: &[u8] = b"hachi/absorb/sumcheck-round";
 pub const CHALLENGE_SUMCHECK_ROUND: &[u8] = b"hachi/challenge/sumcheck-round";
 /// Absorb the stage-1 final `s_claim` before the batching challenge.
 pub const ABSORB_SUMCHECK_S_CLAIM: &[u8] = b"hachi/absorb/sumcheck-s-claim";
+/// Absorb stage-1 inter-stage claims before batching them into the next stage.
+pub const ABSORB_SUMCHECK_INTERSTAGE_CLAIM: &[u8] = b"hachi/absorb/sumcheck-interstage-claim";
 /// Challenge for batched sumcheck coefficient sampling.
 pub const CHALLENGE_SUMCHECK_BATCH: &[u8] = b"hachi/challenge/sumcheck-batch";
+/// Challenge for batching stage-1 inter-stage claims into the next tree stage.
+pub const CHALLENGE_SUMCHECK_INTERSTAGE_BATCH: &[u8] = b"hachi/challenge/sumcheck-interstage-batch";
 /// Absorb recursion/stop-condition message payloads (paper §4.5).
 pub const ABSORB_STOP_CONDITION: &[u8] = b"hachi/absorb/stop-condition";
 /// Challenge sampled for recursion stop-condition checks (paper §4.5).
@@ -66,7 +70,9 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         ABSORB_SUMCHECK_ROUND,
         CHALLENGE_SUMCHECK_ROUND,
         ABSORB_SUMCHECK_S_CLAIM,
+        ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
         CHALLENGE_SUMCHECK_BATCH,
+        CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
         ABSORB_STOP_CONDITION,
         CHALLENGE_STOP_CONDITION,
         ABSORB_PROVER_V,
