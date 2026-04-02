@@ -19,7 +19,7 @@ pub struct RingConfig {
     pub label: &'static str,
 }
 
-/// All 9 ring configurations available to the planner.
+/// All 5 ring configurations available to the planner.
 pub const ALL_RING_CONFIGS: &[RingConfig] = &[
     RingConfig {
         d: 64,
@@ -55,34 +55,6 @@ pub const ALL_RING_CONFIGS: &[RingConfig] = &[
         challenge_l1_mass: 256,
         max_abs_challenge_coeff: 8,
         label: "D32-na3",
-    },
-    RingConfig {
-        d: 16,
-        n_a: 1,
-        challenge_l1_mass: 2048,
-        max_abs_challenge_coeff: 128,
-        label: "D16-na1",
-    },
-    RingConfig {
-        d: 16,
-        n_a: 2,
-        challenge_l1_mass: 2048,
-        max_abs_challenge_coeff: 128,
-        label: "D16-na2",
-    },
-    RingConfig {
-        d: 16,
-        n_a: 3,
-        challenge_l1_mass: 2048,
-        max_abs_challenge_coeff: 128,
-        label: "D16-na3",
-    },
-    RingConfig {
-        d: 16,
-        n_a: 4,
-        challenge_l1_mass: 2048,
-        max_abs_challenge_coeff: 128,
-        label: "D16-na4",
     },
 ];
 

@@ -609,24 +609,6 @@ fn main() {
             };
             run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
         }
-        "full_d16" => {
-            type Cfg = fp128::D16Full;
-            run_dense_mode::<{ Cfg::D }, Cfg>(
-                "=== full_d16 (q=2^128-275, D=16 dense, log_commit_bound=128) ===",
-                nv,
-            );
-        }
-        "onehot_d16" => {
-            type Cfg = fp128::D16OneHot;
-            let title = if num_polys == 1 {
-                "=== onehot_d16 (q=2^128-275, D=16, 1-of-256, log_commit_bound=1) ===".to_string()
-            } else {
-                format!(
-                    "=== onehot_d16 batched (q=2^128-275, D=16, 1-of-256, log_commit_bound=1, same-point batch={num_polys}) ==="
-                )
-            };
-            run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
-        }
         "logbasis" => {
             type Cfg = fp128::LogBasis;
             run_dense_mode::<{ Cfg::D }, Cfg>(
@@ -668,25 +650,6 @@ fn main() {
                 } else {
                     format!(
                         "=== onehot_d32 batched (q=2^128-275, D=32, 1-of-256, log_commit_bound=1, same-point batch={num_polys}) ==="
-                    )
-                };
-                run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
-            }
-            {
-                type Cfg = fp128::D16Full;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== full_d16 (q=2^128-275, D=16 dense, log_commit_bound=128) ===",
-                    nv,
-                );
-            }
-            {
-                type Cfg = fp128::D16OneHot;
-                let title = if num_polys == 1 {
-                    "=== onehot_d16 (q=2^128-275, D=16, 1-of-256, log_commit_bound=1) ==="
-                        .to_string()
-                } else {
-                    format!(
-                        "=== onehot_d16 batched (q=2^128-275, D=16, 1-of-256, log_commit_bound=1, same-point batch={num_polys}) ==="
                     )
                 };
                 run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
@@ -796,7 +759,7 @@ fn main() {
         other => {
             tracing::error!(
                 mode = other,
-                "Unknown HACHI_MODE. Use: full, onehot, full_d32, onehot_d32, full_d16, onehot_d16, logbasis, all, compare_onehot, compare_logbasis, compare_basis"
+                "Unknown HACHI_MODE. Use: full, onehot, full_d32, onehot_d32, logbasis, all, compare_onehot, compare_logbasis, compare_basis"
             );
             std::process::exit(1);
         }

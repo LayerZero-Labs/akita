@@ -1883,8 +1883,8 @@ mod tests {
     #[test]
     fn commit_w_uses_active_level_row_count() {
         type Cfg = SmallTestCommitmentConfig;
-        type WCfg = WCommitmentConfig<16, Cfg>;
-        const D: usize = 16;
+        type WCfg = WCommitmentConfig<32, Cfg>;
+        const D: usize = 32;
 
         let (setup, _) = <HachiCommitmentCore as RingCommitmentScheme<TestF, D, Cfg>>::setup(12, 1)
             .expect("setup");

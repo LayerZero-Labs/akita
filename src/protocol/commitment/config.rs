@@ -219,11 +219,6 @@ fn uniform_range_stage1_challenge(weight: usize, max_abs_coeff: i16) -> SparseCh
     }
 }
 
-fn d16_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
-    assert_eq!(d, 16, "d16_stage1_challenge_config requires d=16, got {d}");
-    uniform_range_stage1_challenge(16, 128)
-}
-
 fn d32_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
     assert_eq!(d, 32, "d32_stage1_challenge_config requires d=32, got {d}");
     uniform_range_stage1_challenge(32, 8)
@@ -247,7 +242,6 @@ fn d128_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
 
 fn fp128_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
     match d {
-        16 => d16_stage1_challenge_config(d),
         32 => d32_stage1_challenge_config(d),
         64 => d64_stage1_challenge_config(d),
         128 => d128_stage1_challenge_config(d),
@@ -987,7 +981,7 @@ pub struct SmallTestCommitmentConfig;
 
 impl CommitmentConfig for SmallTestCommitmentConfig {
     type Field = crate::test_utils::F;
-    const D: usize = 16;
+    const D: usize = 32;
 
     fn decomposition() -> DecompositionParams {
         DecompositionParams {
@@ -1015,9 +1009,9 @@ impl CommitmentConfig for SmallTestCommitmentConfig {
     }
 }
 
-/// D=16 config with dynamic layout that adapts to polynomial size.
+/// Small-D config with dynamic layout that adapts to polynomial size.
 ///
-/// Uses the same D=16 ring dimension as [`SmallTestCommitmentConfig`] but
+/// Uses the same ring dimension as [`SmallTestCommitmentConfig`] but
 /// derives `m_vars`/`r_vars` from `max_num_vars`, so it can commit
 /// polynomials with an arbitrary number of variables.
 #[derive(Clone, Copy, Debug, Default)]
@@ -1025,7 +1019,7 @@ pub struct DynamicSmallTestCommitmentConfig;
 
 impl CommitmentConfig for DynamicSmallTestCommitmentConfig {
     type Field = crate::test_utils::F;
-    const D: usize = 16;
+    const D: usize = 32;
 
     fn decomposition() -> DecompositionParams {
         DecompositionParams {
@@ -1274,22 +1268,6 @@ mod fp128_policy_tests {
                 assert_eq!(nonzero_coeffs.len(), 16);
             }
             other => panic!("expected uniform D=32 family, got {other:?}"),
-        }
-
-        let d16 = d16_stage1_challenge_config(16);
-        assert_eq!(d16.hamming_weight(), 16);
-        assert_eq!(d16.l1_mass(), 2048);
-        match d16 {
-            SparseChallengeConfig::Uniform {
-                weight,
-                nonzero_coeffs,
-            } => {
-                assert_eq!(weight, 16);
-                assert_eq!(nonzero_coeffs.first().copied(), Some(-128));
-                assert_eq!(nonzero_coeffs.last().copied(), Some(128));
-                assert_eq!(nonzero_coeffs.len(), 256);
-            }
-            other => panic!("expected uniform D=16 family, got {other:?}"),
         }
     }
 }

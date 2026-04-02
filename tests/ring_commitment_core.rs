@@ -184,7 +184,7 @@ fn opening_satisfies_inner_and_outer_equations() {
 
 #[test]
 fn small_test_config_has_expected_shape() {
-    assert_eq!(SmallTestCommitmentConfig::D, 16);
+    assert_eq!(SmallTestCommitmentConfig::D, 32);
     let layout = SmallTestCommitmentConfig::commitment_layout(8).unwrap();
     assert_eq!(layout.block_len, 16);
     assert_eq!(layout.num_blocks, 4);

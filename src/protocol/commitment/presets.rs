@@ -41,10 +41,6 @@ pub mod fp128 {
     pub type D32AdaptiveBounded<const LOG_COMMIT_BOUND: u32> =
         CommitmentPreset<Field, Fp128AdaptiveBoundedPolicy<32, LOG_COMMIT_BOUND, 2, 2, 2>>;
 
-    /// Adaptive `D=16`, rank-4 family with planner-selected bases.
-    pub type D16AdaptiveBounded<const LOG_COMMIT_BOUND: u32> =
-        CommitmentPreset<Field, Fp128AdaptiveBoundedPolicy<16, LOG_COMMIT_BOUND, 4, 4, 4>>;
-
     /// Full-field adaptive preset.
     pub type Full = AdaptiveBounded<128>;
     /// Log-bounded adaptive preset.
@@ -58,13 +54,6 @@ pub mod fp128 {
     pub type D32LogBasis = D32AdaptiveBounded<3>;
     /// Onehot adaptive `D=32` preset.
     pub type D32OneHot = D32AdaptiveBounded<1>;
-
-    /// Full-field adaptive `D=16` preset.
-    pub type D16Full = D16AdaptiveBounded<128>;
-    /// Log-bounded adaptive `D=16` preset.
-    pub type D16LogBasis = D16AdaptiveBounded<3>;
-    /// Onehot adaptive `D=16` preset.
-    pub type D16OneHot = D16AdaptiveBounded<1>;
 }
 
 /// Explicit legacy fp128 protocol presets on `p = 2^128 - 5823`.

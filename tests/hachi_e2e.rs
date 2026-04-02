@@ -32,7 +32,6 @@ const FULL_TEST_NV: usize = 14;
 const ONEHOT_TEST_NV: usize = 15;
 const BASIS2_TEST_NV: usize = 12;
 const D32_TEST_NV: usize = 12;
-const D16_TEST_NV: usize = 10;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
 static INIT_RAYON: Once = Once::new();
@@ -404,41 +403,6 @@ fn full_d32_prove_verify() {
         assert!(
             result.is_ok(),
             "D32 verification must pass: {:?}",
-            result.err()
-        );
-    });
-}
-
-#[test]
-fn full_d16_prove_verify() {
-    init_rayon_pool();
-    let _guard = E2E_TEST_LOCK.lock().unwrap();
-    run_on_large_stack(|| {
-        type Cfg = fp128::D16Full;
-        const D: usize = Cfg::D;
-
-        let plan = Cfg::schedule_plan(D16_TEST_NV)
-            .expect("schedule plan")
-            .expect("adaptive D16 config should expose a schedule plan");
-        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
-            make_dense_fixture::<FSmall, D, Cfg>(D16_TEST_NV, b"hachi_e2e/full-d16");
-
-        assert_eq!(proof.levels.len(), plan.levels.len());
-
-        let mut verifier_transcript = Blake2bTranscript::<FSmall>::new(b"hachi_e2e/full-d16");
-        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FSmall, D>>::verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            &opening_point,
-            &opening,
-            &commitment,
-            BasisMode::Lagrange,
-        );
-
-        assert!(
-            result.is_ok(),
-            "D16 verification must pass: {:?}",
             result.err()
         );
     });

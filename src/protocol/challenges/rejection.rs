@@ -268,10 +268,6 @@ fn opnorm_table<const D: usize>() -> &'static OpNormTable {
             static TABLE: OnceLock<OpNormTable> = OnceLock::new();
             TABLE.get_or_init(|| build_opnorm_table(8))
         }
-        16 => {
-            static TABLE: OnceLock<OpNormTable> = OnceLock::new();
-            TABLE.get_or_init(|| build_opnorm_table(16))
-        }
         32 => {
             static TABLE: OnceLock<OpNormTable> = OnceLock::new();
             TABLE.get_or_init(|| build_opnorm_table(32))
