@@ -754,6 +754,11 @@ pub trait CommitmentPolicy: Clone + Send + Sync + 'static {
 
     /// Optional proof-size planner for recursive suffixes that start from an
     /// arbitrary witness state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the policy cannot estimate the recursive suffix
+    /// bytes for the provided public witness state.
     fn recursive_suffix_bytes<Cfg: CommitmentConfig>(
         _max_num_vars: usize,
         _level: usize,
