@@ -15,7 +15,8 @@ use super::types::RingCommitment;
 use super::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use super::utils::flat_matrix::FlatMatrix;
 use super::utils::linear::{
-    decompose_rows_i8_into, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_single_i8,
+    decompose_rows_i8_into, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
+    mat_vec_mul_ntt_single_i8,
 };
 use super::utils::matrix::{
     derive_public_matrix_flat, sample_public_matrix_seed, PublicMatrixSeed,
@@ -989,25 +990,51 @@ where
         let log_basis = layout.log_basis;
         let block_slices: Vec<&[CyclotomicRing<F, D>]> =
             f_blocks.iter().map(|b| b.as_slice()).collect();
-        let t_all = mat_vec_mul_ntt_i8_dense(
-            &setup.ntt_shared,
-            root_params.n_a,
-            &block_slices,
-            depth_commit,
-            log_basis,
-        );
-        let block_sizes: Vec<usize> = t_all.iter().map(|t_i| t_i.len() * depth_open).collect();
-        let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
-        let dst_blocks = t_hat.split_blocks_mut();
-        #[cfg(feature = "parallel")]
-        cfg_into_iter!(dst_blocks)
-            .zip(cfg_iter!(t_all))
-            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, depth_open, log_basis));
-        #[cfg(not(feature = "parallel"))]
-        dst_blocks
-            .into_iter()
-            .zip(t_all.iter())
-            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, depth_open, log_basis));
+        let t_hat = if root_params.n_a == 1 {
+            let t_single = mat_vec_mul_ntt_i8_dense_single_row(
+                &setup.ntt_shared,
+                &block_slices,
+                depth_commit,
+                log_basis,
+            );
+            let mut t_hat = FlatDigitBlocks::zeroed(vec![depth_open; t_single.len()])?;
+            let dst_blocks = t_hat.split_blocks_mut();
+            #[cfg(feature = "parallel")]
+            cfg_into_iter!(dst_blocks)
+                .zip(cfg_iter!(t_single))
+                .for_each(|(dst, t_i)| {
+                    decompose_rows_i8_into(std::slice::from_ref(t_i), dst, depth_open, log_basis)
+                });
+            #[cfg(not(feature = "parallel"))]
+            dst_blocks
+                .into_iter()
+                .zip(t_single.iter())
+                .for_each(|(dst, t_i)| {
+                    decompose_rows_i8_into(std::slice::from_ref(t_i), dst, depth_open, log_basis)
+                });
+            t_hat
+        } else {
+            let t_all = mat_vec_mul_ntt_i8_dense(
+                &setup.ntt_shared,
+                root_params.n_a,
+                &block_slices,
+                depth_commit,
+                log_basis,
+            );
+            let block_sizes: Vec<usize> = t_all.iter().map(|t_i| t_i.len() * depth_open).collect();
+            let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
+            let dst_blocks = t_hat.split_blocks_mut();
+            #[cfg(feature = "parallel")]
+            cfg_into_iter!(dst_blocks)
+                .zip(cfg_iter!(t_all))
+                .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, depth_open, log_basis));
+            #[cfg(not(feature = "parallel"))]
+            dst_blocks
+                .into_iter()
+                .zip(t_all.iter())
+                .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, depth_open, log_basis));
+            t_hat
+        };
 
         let u: Vec<CyclotomicRing<F, D>> =
             mat_vec_mul_ntt_single_i8(&setup.ntt_shared, root_params.n_b, t_hat.flat_digits());

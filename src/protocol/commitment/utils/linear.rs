@@ -551,6 +551,24 @@ pub fn mat_vec_mul_ntt_i8_dense<F: FieldCore + CanonicalField, const D: usize>(
     )
 }
 
+/// Single-row dense variant of [`mat_vec_mul_ntt_i8_dense`].
+#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8_dense_single_row")]
+pub fn mat_vec_mul_ntt_i8_dense_single_row<F: FieldCore + CanonicalField, const D: usize>(
+    slot: &NttSlotCache<D>,
+    blocks: &[&[CyclotomicRing<F, D>]],
+    num_digits: usize,
+    log_basis: u32,
+) -> Vec<CyclotomicRing<F, D>> {
+    dispatch_slot!(
+        slot,
+        1usize,
+        mat_vec_mul_i8_dense_single_row_with_params,
+        blocks,
+        num_digits,
+        log_basis
+    )
+}
+
 /// Strided variant of [`mat_vec_mul_ntt_i8`] for recursive witnesses.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8_strided")]
 pub fn mat_vec_mul_ntt_i8_strided<F: FieldCore + CanonicalField, const D: usize>(
@@ -932,43 +950,63 @@ fn mat_vec_mul_i8_dense_block_parallel_with_params<
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     if ntt_mat.len() == 1 {
-        let lut = DigitMontLut::new(params);
-        let mat_row = &ntt_mat[0];
-        let q = (-F::one()).to_canonical_u128() + 1;
-        let half_q = q / 2;
-        let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q, half_q);
-        return cfg_into_iter!(blocks)
-            .map(|block| {
-                let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
-                let mut digit_buf = vec![[0i8; D]; num_digits];
-                let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
-                let mut col = 0usize;
-
-                for coeff_vec in block.iter() {
-                    coeff_vec.balanced_decompose_pow2_i8_into_with_params(
-                        &mut digit_buf,
-                        &decompose_params,
-                    );
-                    for digit in &digit_buf {
-                        acc.add_assign_pointwise_mul_i8_with_lut_scratch(
-                            &mat_row[col],
-                            digit,
-                            params,
-                            &lut,
-                            &mut rhs_scratch,
-                        );
-                        col += 1;
-                    }
-                }
-
-                vec![acc.to_ring_with_params(params)]
-            })
-            .collect();
+        return mat_vec_mul_i8_dense_single_row_with_params(
+            ntt_mat, blocks, num_digits, log_basis, params,
+        )
+        .into_iter()
+        .map(|ring| vec![ring])
+        .collect();
     }
 
     mat_vec_mul_i8_block_parallel_with_params_impl::<F, W, K, D, false>(
         ntt_mat, blocks, num_digits, log_basis, params,
     )
+}
+
+fn mat_vec_mul_i8_dense_single_row_with_params<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    blocks: &[&[CyclotomicRing<F, D>]],
+    num_digits: usize,
+    log_basis: u32,
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<CyclotomicRing<F, D>> {
+    debug_assert_eq!(ntt_mat.len(), 1);
+    let lut = DigitMontLut::new(params);
+    let mat_row = &ntt_mat[0];
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let half_q = q / 2;
+    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q, half_q);
+
+    cfg_into_iter!(blocks)
+        .map(|block| {
+            let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
+            let mut digit_buf = vec![[0i8; D]; num_digits];
+            let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
+            let mut col = 0usize;
+
+            for coeff_vec in block.iter() {
+                coeff_vec
+                    .balanced_decompose_pow2_i8_into_with_params(&mut digit_buf, &decompose_params);
+                for digit in &digit_buf {
+                    acc.add_assign_pointwise_mul_i8_with_lut_scratch(
+                        &mat_row[col],
+                        digit,
+                        params,
+                        &lut,
+                        &mut rhs_scratch,
+                    );
+                    col += 1;
+                }
+            }
+
+            acc.to_ring_with_params(params)
+        })
+        .collect()
 }
 
 fn mat_vec_mul_i8_strided_block_parallel_with_params<
@@ -2303,6 +2341,69 @@ mod tests {
                     &params,
                 );
                 assert_eq!(dense, generic);
+            }
+            _ => panic!("unexpected parameter family"),
+        }
+    }
+
+    #[test]
+    fn mat_vec_mul_i8_dense_single_row_matches_generic_on_block_parallel_path() {
+        type F = Fp64<4294967197>;
+        const D: usize = 64;
+        let log_basis = 3;
+        let num_digits = 3;
+
+        let mat: Vec<Vec<CyclotomicRing<F, D>>> = vec![(0..6)
+            .map(|j| {
+                let coeffs = std::array::from_fn(|k| {
+                    let raw = ((7 * j as i64 + k as i64) % 9) - 4;
+                    F::from_i64(raw)
+                });
+                CyclotomicRing::from_coefficients(coeffs)
+            })
+            .collect()];
+
+        let ring_blocks: Vec<Vec<CyclotomicRing<F, D>>> = (0..16)
+            .map(|block_idx| {
+                (0..2)
+                    .map(|ring_idx| {
+                        let coeffs = std::array::from_fn(|k| {
+                            let d0 = ((block_idx as i64 + 2 * ring_idx as i64 + k as i64) % 7) - 3;
+                            let d1 =
+                                ((2 * block_idx as i64 + ring_idx as i64 + 3 * k as i64) % 7) - 3;
+                            let d2 =
+                                ((3 * block_idx as i64 + ring_idx as i64 + 5 * k as i64) % 7) - 3;
+                            F::from_i64(d0 + (d1 << log_basis) + (d2 << (2 * log_basis)))
+                        });
+                        CyclotomicRing::from_coefficients(coeffs)
+                    })
+                    .collect()
+            })
+            .collect();
+
+        let ring_block_slices: Vec<&[CyclotomicRing<F, D>]> =
+            ring_blocks.iter().map(Vec::as_slice).collect();
+
+        match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
+            ProtocolCrtNttParams::Q32(params) => {
+                let ntt_mat = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let generic = mat_vec_mul_i8_dense_with_params(
+                    &ntt_mat,
+                    &ring_block_slices,
+                    num_digits,
+                    log_basis,
+                    &params,
+                );
+                let single = super::mat_vec_mul_i8_dense_single_row_with_params(
+                    &ntt_mat,
+                    &ring_block_slices,
+                    num_digits,
+                    log_basis,
+                    &params,
+                );
+                let generic_single: Vec<CyclotomicRing<F, D>> =
+                    generic.into_iter().map(|row| row[0]).collect();
+                assert_eq!(single, generic_single);
             }
             _ => panic!("unexpected parameter family"),
         }

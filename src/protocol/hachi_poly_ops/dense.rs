@@ -12,7 +12,8 @@ use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::linear::{
-    decompose_rows_i8_into, mat_vec_mul_ntt_i8_dense, try_centered_i8,
+    decompose_rows_i8_into, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
+    try_centered_i8,
 };
 use crate::protocol::hachi_poly_ops::helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
@@ -264,6 +265,33 @@ where
             })
             .collect();
 
+        if ntt_a.num_rows() == 1 {
+            let t = mat_vec_mul_ntt_i8_dense_single_row(
+                ntt_a,
+                &block_slices,
+                num_digits_commit,
+                log_basis,
+            );
+            let mut t_hat = FlatDigitBlocks::zeroed(vec![num_digits_open; t.len()])?;
+            let dst_blocks = t_hat.split_blocks_mut();
+            #[cfg(feature = "parallel")]
+            cfg_into_iter!(dst_blocks)
+                .zip(cfg_iter!(t))
+                .for_each(|(dst, t_i)| {
+                    decompose_rows_i8_into(
+                        std::slice::from_ref(t_i),
+                        dst,
+                        num_digits_open,
+                        log_basis,
+                    )
+                });
+            #[cfg(not(feature = "parallel"))]
+            dst_blocks.into_iter().zip(t.iter()).for_each(|(dst, t_i)| {
+                decompose_rows_i8_into(std::slice::from_ref(t_i), dst, num_digits_open, log_basis)
+            });
+            return Ok(t_hat);
+        }
+
         let t_all = mat_vec_mul_ntt_i8_dense(
             ntt_a,
             ntt_a.num_rows(),
@@ -313,6 +341,42 @@ where
                 }
             })
             .collect();
+
+        if ntt_a.num_rows() == 1 {
+            let t_single = mat_vec_mul_ntt_i8_dense_single_row(
+                ntt_a,
+                &block_slices,
+                num_digits_commit,
+                log_basis,
+            );
+            let mut t_hat = FlatDigitBlocks::zeroed(vec![num_digits_open; t_single.len()])?;
+            let dst_blocks = t_hat.split_blocks_mut();
+            #[cfg(feature = "parallel")]
+            cfg_into_iter!(dst_blocks)
+                .zip(cfg_iter!(t_single))
+                .for_each(|(dst, t_i)| {
+                    decompose_rows_i8_into(
+                        std::slice::from_ref(t_i),
+                        dst,
+                        num_digits_open,
+                        log_basis,
+                    )
+                });
+            #[cfg(not(feature = "parallel"))]
+            dst_blocks
+                .into_iter()
+                .zip(t_single.iter())
+                .for_each(|(dst, t_i)| {
+                    decompose_rows_i8_into(
+                        std::slice::from_ref(t_i),
+                        dst,
+                        num_digits_open,
+                        log_basis,
+                    )
+                });
+            let t = t_single.into_iter().map(|ring| vec![ring]).collect();
+            return Ok(CommitInnerWitness { t, t_hat });
+        }
 
         let t = mat_vec_mul_ntt_i8_dense(
             ntt_a,
