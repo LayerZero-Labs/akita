@@ -12,7 +12,7 @@ use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::linear::{
-    decompose_rows_i8_into, mat_vec_mul_ntt_i8, try_centered_i8,
+    decompose_rows_i8_into, mat_vec_mul_ntt_i8_dense, try_centered_i8,
 };
 use crate::protocol::hachi_poly_ops::helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
@@ -264,7 +264,7 @@ where
             })
             .collect();
 
-        let t_all = mat_vec_mul_ntt_i8(
+        let t_all = mat_vec_mul_ntt_i8_dense(
             ntt_a,
             ntt_a.num_rows(),
             &block_slices,
@@ -314,7 +314,7 @@ where
             })
             .collect();
 
-        let t = mat_vec_mul_ntt_i8(
+        let t = mat_vec_mul_ntt_i8_dense(
             ntt_a,
             ntt_a.num_rows(),
             &block_slices,
