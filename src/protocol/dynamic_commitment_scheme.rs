@@ -9,14 +9,13 @@ use crate::algebra::fields::wide::HasWide;
 use crate::algebra::fields::HasUnreducedOps;
 use crate::error::HachiError;
 use crate::primitives::serialization::Valid;
-use crate::protocol::commitment::schedule::{
-    estimated_recursive_suffix_bytes, hachi_root_runtime_plan_from_root_layout,
+use crate::protocol::commitment::profile::{
+    CommitmentFieldProfile, CommitmentFieldProfileDynamic, DynamicScheduleFamily,
 };
 use crate::protocol::commitment::{
-    hachi_batched_root_layout, presets::fp128, AppendToTranscript, CommitmentConfig,
-    CommitmentPreset, CommitmentScheme, DynamicCommitmentScheme, Fp128AdaptiveBoundedPolicy,
-    HachiProverSetup, HachiRootBatchSummary, HachiScheduleLookupKey, HachiVerifierSetup,
-    RingCommitment,
+    hachi_batched_root_layout, AppendToTranscript, CommitmentConfig, CommitmentScheme,
+    DynamicCommitmentScheme, HachiProverSetup, HachiRootBatchSummary, HachiScheduleLookupKey,
+    HachiVerifierSetup, RingCommitment,
 };
 use crate::protocol::commitment_scheme::HachiCommitmentScheme;
 use crate::protocol::opening_point::BasisMode;
@@ -49,69 +48,9 @@ where
     ///
     /// # Errors
     ///
-    /// Returns an error if the family cannot choose a supported root ring from
-    /// the provided public runtime parameters.
-    fn select_root_ring_dim(key: HachiScheduleLookupKey) -> Result<usize, HachiError> {
-        select_smallest_estimated_proof_root_ring_dim::<Self::Cfg32, Self::Cfg64, Self::Cfg128>(key)
-    }
-}
-
-fn estimated_total_proof_bytes<Cfg, const D: usize>(
-    key: HachiScheduleLookupKey,
-) -> Result<usize, HachiError>
-where
-    Cfg: CommitmentConfig,
-{
-    let root_layout = hachi_batched_root_layout::<Cfg, D>(key.num_vars, key.layout_num_claims)?;
-    let root_plan = hachi_root_runtime_plan_from_root_layout::<Cfg, D>(key, root_layout)?;
-    let suffix_bytes = estimated_recursive_suffix_bytes::<Cfg>(
-        key.max_num_vars,
-        root_plan.next_inputs.level,
-        root_plan.next_w_len(),
-    )?;
-    Ok(root_plan.level_proof_bytes::<Cfg>() + suffix_bytes)
-}
-
-fn select_smallest_estimated_proof_root_ring_dim<Cfg32, Cfg64, Cfg128>(
-    key: HachiScheduleLookupKey,
-) -> Result<usize, HachiError>
-where
-    Cfg32: CommitmentConfig,
-    Cfg64: CommitmentConfig,
-    Cfg128: CommitmentConfig,
-{
-    let mut best: Option<(usize, usize)> = None;
-    for (root_d, proof_bytes) in [
-        (32usize, estimated_total_proof_bytes::<Cfg32, 32>(key)),
-        (64usize, estimated_total_proof_bytes::<Cfg64, 64>(key)),
-        (128usize, estimated_total_proof_bytes::<Cfg128, 128>(key)),
-    ] {
-        let Ok(proof_bytes) = proof_bytes else {
-            continue;
-        };
-        if best.as_ref().is_none_or(|(best_d, best_bytes)| {
-            proof_bytes < *best_bytes || (proof_bytes == *best_bytes && root_d < *best_d)
-        }) {
-            best = Some((root_d, proof_bytes));
-        }
-    }
-
-    best.map(|(root_d, _)| root_d).ok_or_else(|| {
-        HachiError::InvalidInput(format!(
-            "dynamic root selection found no supported root D for num_vars={}, layout_num_claims={}, batch_claims={}",
-            key.num_vars, key.layout_num_claims, key.batch.num_claims
-        ))
-    })
-}
-
-fn has_exact_fit_singleton_root_context(key: HachiScheduleLookupKey) -> bool {
-    key.max_num_vars == key.num_vars
-        && key.layout_num_claims == 1
-        && key.batch == HachiRootBatchSummary::singleton()
-}
-
-fn fp128_exact_fit_singleton_prefers_d32(key: HachiScheduleLookupKey) -> bool {
-    has_exact_fit_singleton_root_context(key) && (6..=63).contains(&key.num_vars)
+    /// Returns an error if the family cannot choose a supported root ring
+    /// from the provided public runtime parameters.
+    fn select_root_ring_dim(key: HachiScheduleLookupKey) -> Result<usize, HachiError>;
 }
 
 #[derive(Debug, Clone)]
@@ -1133,66 +1072,64 @@ where
     }
 }
 
-type Fp128AdaptiveBoundedD64<const LOG_COMMIT_BOUND: u32> =
-    CommitmentPreset<fp128::Field, Fp128AdaptiveBoundedPolicy<64, LOG_COMMIT_BOUND, 1, 1, 1>>;
-type Fp128AdaptiveBoundedD128<const LOG_COMMIT_BOUND: u32> =
-    CommitmentPreset<fp128::Field, Fp128AdaptiveBoundedPolicy<128, LOG_COMMIT_BOUND, 1, 1, 1>>;
-
-/// Dynamic fp128 dense family that chooses the root ring by estimated proof
-/// bytes across `D=32/64/128`.
+/// Dynamic full-field family that chooses the root ring from the active prime profile.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct DynamicFp128FullFamily;
+pub struct DynamicFullFamily<Profile>(PhantomData<Profile>);
 
-impl DynamicRootConfigFamily<fp128::Field> for DynamicFp128FullFamily {
-    type Cfg32 = fp128::D32Full;
-    type Cfg64 = Fp128AdaptiveBoundedD64<128>;
-    type Cfg128 = fp128::D128Full;
+impl<Profile> DynamicRootConfigFamily<<Profile as CommitmentFieldProfile>::Field>
+    for DynamicFullFamily<Profile>
+where
+    Profile: CommitmentFieldProfileDynamic,
+{
+    type Cfg32 = Profile::FullCfg32;
+    type Cfg64 = Profile::FullCfg64;
+    type Cfg128 = Profile::FullCfg128;
 
     fn select_root_ring_dim(key: HachiScheduleLookupKey) -> Result<usize, HachiError> {
-        if fp128_exact_fit_singleton_prefers_d32(key) {
-            return Ok(32);
-        }
-        select_smallest_estimated_proof_root_ring_dim::<Self::Cfg32, Self::Cfg64, Self::Cfg128>(key)
+        Profile::select_dynamic_root_ring_dim(DynamicScheduleFamily::Full, key)
     }
 }
 
-/// Dynamic fp128 dense scheme that chooses the root ring at commit time.
-pub type DynamicFp128FullScheme = DynamicHachiCommitmentScheme<DynamicFp128FullFamily>;
+/// Dynamic full-field scheme that chooses the root ring at commit time.
+pub type DynamicFullScheme<Profile> = DynamicHachiCommitmentScheme<DynamicFullFamily<Profile>>;
 
-/// Dynamic fp128 onehot family that chooses the root ring by estimated proof
-/// bytes across `D=32/64/128`.
+/// Dynamic onehot family that chooses the root ring from the active prime profile.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct DynamicFp128OneHotFamily;
+pub struct DynamicOneHotFamily<Profile>(PhantomData<Profile>);
 
-impl DynamicRootConfigFamily<fp128::Field> for DynamicFp128OneHotFamily {
-    type Cfg32 = fp128::D32OneHot;
-    type Cfg64 = fp128::D64OneHot;
-    type Cfg128 = Fp128AdaptiveBoundedD128<1>;
+impl<Profile> DynamicRootConfigFamily<<Profile as CommitmentFieldProfile>::Field>
+    for DynamicOneHotFamily<Profile>
+where
+    Profile: CommitmentFieldProfileDynamic,
+{
+    type Cfg32 = Profile::OneHotCfg32;
+    type Cfg64 = Profile::OneHotCfg64;
+    type Cfg128 = Profile::OneHotCfg128;
 
     fn select_root_ring_dim(key: HachiScheduleLookupKey) -> Result<usize, HachiError> {
-        if fp128_exact_fit_singleton_prefers_d32(key) {
-            return Ok(32);
-        }
-        select_smallest_estimated_proof_root_ring_dim::<Self::Cfg32, Self::Cfg64, Self::Cfg128>(key)
+        Profile::select_dynamic_root_ring_dim(DynamicScheduleFamily::OneHot, key)
     }
 }
 
-/// Dynamic fp128 onehot scheme that chooses the root ring at commit time.
-pub type DynamicFp128OneHotScheme = DynamicHachiCommitmentScheme<DynamicFp128OneHotFamily>;
+/// Dynamic onehot scheme that chooses the root ring at commit time.
+pub type DynamicOneHotScheme<Profile> = DynamicHachiCommitmentScheme<DynamicOneHotFamily<Profile>>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::algebra::eq_poly::EqPolynomial;
+    use crate::protocol::commitment::profile::Fp128PrimeProfile;
     use crate::protocol::commitment::{
-        CommitmentPreset, DynamicSmallTestCommitmentConfig, Fp128StaticBoundedPolicy,
+        CommitmentPreset, DynamicSmallTestCommitmentConfig, StaticBoundedPolicy,
     };
     use crate::protocol::root_poly::DenseMultilinear;
     use crate::protocol::Blake2bTranscript;
     use crate::test_utils::F;
 
-    type SmallTest64 = CommitmentPreset<F, Fp128StaticBoundedPolicy<64, 32, 3, 3, 8, 4, 4>>;
-    type SmallTest128 = CommitmentPreset<F, Fp128StaticBoundedPolicy<128, 32, 3, 3, 8, 4, 4>>;
+    type SmallTest64 =
+        CommitmentPreset<F, StaticBoundedPolicy<Fp128PrimeProfile, 64, 32, 3, 3, 8, 4, 4>>;
+    type SmallTest128 =
+        CommitmentPreset<F, StaticBoundedPolicy<Fp128PrimeProfile, 128, 32, 3, 3, 8, 4, 4>>;
 
     #[derive(Clone, Copy, Debug, Default)]
     struct SmallTestDynamicFamily;
@@ -1335,7 +1272,7 @@ mod tests {
         for num_vars in 6..=63 {
             let key = HachiScheduleLookupKey::singleton(num_vars, num_vars, 1);
             assert_eq!(
-                DynamicFp128FullFamily::select_root_ring_dim(key).unwrap(),
+                DynamicFullFamily::<Fp128PrimeProfile>::select_root_ring_dim(key).unwrap(),
                 32
             );
         }
@@ -1346,7 +1283,7 @@ mod tests {
         for num_vars in 6..=63 {
             let key = HachiScheduleLookupKey::singleton(num_vars, num_vars, 1);
             assert_eq!(
-                DynamicFp128OneHotFamily::select_root_ring_dim(key).unwrap(),
+                DynamicOneHotFamily::<Fp128PrimeProfile>::select_root_ring_dim(key).unwrap(),
                 32
             );
         }

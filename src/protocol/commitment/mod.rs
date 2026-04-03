@@ -4,6 +4,7 @@ mod commit;
 mod config;
 pub mod onehot;
 pub mod presets;
+pub(crate) mod profile;
 pub(crate) mod schedule;
 mod schedule_tables;
 mod scheme;
@@ -19,13 +20,14 @@ pub use commit::{
 };
 pub use config::optimal_m_r_split;
 pub use config::{
-    beta_linf_fold_bound, compute_num_digits, compute_num_digits_fold, CommitmentConfig,
-    CommitmentEnvelope, CommitmentPolicy, CommitmentPreset, DecompositionParams,
-    DynamicSmallTestCommitmentConfig, Fp128AdaptiveBoundedPolicy, Fp128AdaptiveOneHotD64Policy,
-    Fp128StaticBoundedPolicy, HachiCommitmentLayout, SmallTestCommitmentConfig,
+    beta_linf_fold_bound, compute_num_digits, compute_num_digits_fold, AdaptiveBoundedPolicy,
+    AdaptiveOneHotD64Policy, CommitmentConfig, CommitmentEnvelope, CommitmentPolicy,
+    CommitmentPreset, DecompositionParams, DynamicSmallTestCommitmentConfig, HachiCommitmentLayout,
+    SmallTestCommitmentConfig, StaticBoundedPolicy,
 };
 pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
 pub use presets::*;
+pub use profile::{CommitmentFieldProfile, Fp128PrimeProfile};
 pub use schedule::{
     hachi_recursive_level_layout_from_params, hachi_root_level_layout, HachiLevelParams,
     HachiPlannedLevel, HachiPlannedState, HachiRootBatchSummary, HachiScheduleInputs,
@@ -36,6 +38,8 @@ pub(crate) use schedule::{
     planned_next_log_basis_with_current_basis, planned_recursive_suffix_bytes_with_log_basis,
     recursive_level_decomposition_from_root, recursive_r_decomp_levels_for_bound,
 };
+#[doc(hidden)]
+pub use schedule_tables::GeneratedScheduleTableEntry;
 pub use scheme::{CommitWitness, CommitmentScheme, DynamicCommitmentScheme, RingCommitmentScheme};
 pub use transcript_append::AppendToTranscript;
 pub use types::{

@@ -237,6 +237,48 @@ impl HachiRootRuntimePlan {
     }
 }
 
+/// Canonical root schedule artifact used by dynamic root selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HachiRootScheduleArtifact<const D: usize> {
+    /// Public lookup key for this root schedule.
+    pub key: HachiScheduleLookupKey,
+    /// Canonical root runtime plan.
+    pub root_plan: HachiRootRuntimePlan,
+    /// Recursive suffix bytes from the chosen next-level state.
+    pub recursive_suffix_bytes: usize,
+    /// Total estimated proof bytes for this root schedule.
+    pub total_proof_bytes: usize,
+}
+
+/// Derive the canonical root schedule artifact for one root config.
+///
+/// # Errors
+///
+/// Returns an error if the root layout, next-level basis selection, or
+/// recursive suffix sizing fails for the provided public root context.
+pub(crate) fn hachi_root_schedule_artifact<Cfg, const D: usize>(
+    key: HachiScheduleLookupKey,
+) -> Result<HachiRootScheduleArtifact<D>, HachiError>
+where
+    Cfg: CommitmentConfig,
+{
+    let root_layout = hachi_batched_root_layout::<Cfg, D>(key.num_vars, key.layout_num_claims)?;
+    let root_plan = hachi_root_runtime_plan_from_root_layout::<Cfg, D>(key, root_layout)?;
+    let recursive_suffix_bytes = planned_recursive_suffix_bytes_with_log_basis::<Cfg>(
+        key.max_num_vars,
+        root_plan.next_inputs.level,
+        root_plan.next_inputs.current_w_len,
+        root_plan.next_level_params.log_basis,
+    )?;
+    let total_proof_bytes = root_plan.level_proof_bytes::<Cfg>() + recursive_suffix_bytes;
+    Ok(HachiRootScheduleArtifact {
+        key,
+        root_plan,
+        recursive_suffix_bytes,
+        total_proof_bytes,
+    })
+}
+
 /// Runtime source of truth for one Hachi level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiLevelParams {

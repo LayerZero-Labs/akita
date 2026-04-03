@@ -2,7 +2,8 @@
 use super::schedule::HachiPlannedState;
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct GeneratedScheduleTableEntry {
+#[doc(hidden)]
+pub struct GeneratedScheduleTableEntry {
     pub max_num_vars: usize,
     pub states: &'static [HachiPlannedState],
 }

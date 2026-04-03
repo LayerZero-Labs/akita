@@ -21,19 +21,18 @@ pub mod sumcheck;
 pub mod transcript;
 
 pub use commitment::{
-    optimal_m_r_split, presets, AppendToTranscript, CommitmentConfig, CommitmentPolicy,
-    CommitmentPreset, CommitmentScheme, DummyProof, DynamicCommitmentScheme,
-    DynamicSmallTestCommitmentConfig, Fp128AdaptiveBoundedPolicy, Fp128AdaptiveOneHotD64Policy,
-    Fp128StaticBoundedPolicy, HachiCommitment, HachiCommitmentCore, HachiCommitmentLayout,
-    HachiExpandedSetup, HachiOpeningClaim, HachiOpeningPoint, HachiProverSetup,
-    HachiRootBatchSummary, HachiSetupSeed, HachiVerifierSetup, RingCommitment,
-    RingCommitmentScheme, SmallTestCommitmentConfig,
+    optimal_m_r_split, presets, AdaptiveBoundedPolicy, AdaptiveOneHotD64Policy, AppendToTranscript,
+    CommitmentConfig, CommitmentPolicy, CommitmentPreset, CommitmentScheme, DummyProof,
+    DynamicCommitmentScheme, DynamicSmallTestCommitmentConfig, HachiCommitment,
+    HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup, HachiOpeningClaim,
+    HachiOpeningPoint, HachiProverSetup, HachiRootBatchSummary, HachiSetupSeed, HachiVerifierSetup,
+    RingCommitment, RingCommitmentScheme, SmallTestCommitmentConfig, StaticBoundedPolicy,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use dynamic_commitment_scheme::{
-    DynamicCommitHint, DynamicFp128FullFamily, DynamicFp128FullScheme, DynamicFp128OneHotFamily,
-    DynamicFp128OneHotScheme, DynamicHachiCommitmentScheme, DynamicHachiProverSetup,
-    DynamicHachiVerifierSetup, DynamicRingCommitment, DynamicRootConfigFamily,
+    DynamicCommitHint, DynamicFullFamily, DynamicFullScheme, DynamicHachiCommitmentScheme,
+    DynamicHachiProverSetup, DynamicHachiVerifierSetup, DynamicOneHotFamily, DynamicOneHotScheme,
+    DynamicRingCommitment, DynamicRootConfigFamily,
 };
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, MultilinearPolynomail, OneHotIndex, OneHotPoly};
 pub use opening_point::{BasisMode, BlockOrder, RingOpeningPoint};
