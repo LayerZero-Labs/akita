@@ -757,8 +757,6 @@ where
             })
             .collect();
     }
-    let num_cols = active_a_cols;
-
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
     let block_tile = if accum_bytes > 0 {
         (L2_TILE_BUDGET / accum_bytes).max(1)
@@ -794,21 +792,23 @@ where
             let mut result: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(my_count);
             result.resize_with(my_count, Vec::new);
 
-            // Reuse across tiles so that Vec capacities from earlier tiles
-            // carry over, avoiding repeated heap growth.
-            let mut col_entries: Vec<Vec<(u32, u16)>> = vec![Vec::new(); num_cols];
+            // Reuse across tiles so earlier capacity carries over, but only
+            // allocate buckets for columns that are actually touched.
+            let mut col_entries: Vec<(usize, u32, u16)> = Vec::new();
 
             for tile_start in (0..my_count).step_by(block_tile) {
                 let tile_end = (tile_start + block_tile).min(my_count);
                 let tile_blocks = &my_blocks[tile_start..tile_end];
                 let tile_len = tile_blocks.len();
 
+                col_entries.clear();
                 for (local_b, block_entries) in tile_blocks.iter().enumerate() {
                     for entry in block_entries.as_ref() {
                         let col = entry.pos_in_block() * num_digits_commit;
-                        col_entries[col].push((local_b as u32, entry.coeff_idx() as u16));
+                        col_entries.push((col, local_b as u32, entry.coeff_idx() as u16));
                     }
                 }
+                col_entries.sort_unstable_by_key(|&(col, _, _)| col);
 
                 let mut accums: Vec<Vec<WideCyclotomicRing<F::Wide, D>>> = (0..tile_len)
                     .map(|_| vec![WideCyclotomicRing::zero(); n_a])
@@ -816,17 +816,17 @@ where
 
                 for a_idx in 0..n_a {
                     let a_row = a_view.row(a_idx);
-                    let mut accum_col = accums
-                        .iter_mut()
-                        .map(|row| &mut row[a_idx])
-                        .collect::<Vec<_>>();
-                    for (col, entries) in col_entries.iter().enumerate() {
-                        if entries.is_empty() {
-                            continue;
-                        }
+                    let mut idx = 0usize;
+                    while idx < col_entries.len() {
+                        let col = col_entries[idx].0;
                         let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
-                        for &(lb, ci) in entries {
-                            a_wide.shift_accumulate_into(accum_col[lb as usize], ci as usize);
+                        while idx < col_entries.len() && col_entries[idx].0 == col {
+                            let (_, lb, ci) = col_entries[idx];
+                            a_wide.shift_accumulate_into(
+                                &mut accums[lb as usize][a_idx],
+                                ci as usize,
+                            );
+                            idx += 1;
                         }
                     }
                 }
@@ -834,10 +834,6 @@ where
                 for (local_b, row_accums) in accums.into_iter().enumerate() {
                     result[tile_start + local_b] =
                         row_accums.into_iter().map(|w| w.reduce()).collect();
-                }
-
-                for bucket in &mut col_entries {
-                    bucket.clear();
                 }
             }
 
@@ -879,8 +875,6 @@ where
         active_a_cols <= a_view.num_cols(),
         "active A width exceeds setup envelope"
     );
-    let num_cols = active_a_cols;
-
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
     let block_tile = if accum_bytes > 0 {
         (L2_TILE_BUDGET / accum_bytes).max(1)
@@ -916,21 +910,23 @@ where
             let mut result: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(my_count);
             result.resize_with(my_count, Vec::new);
 
-            let mut col_entries: Vec<Vec<(u32, u8)>> = vec![Vec::new(); num_cols];
+            let mut col_entries: Vec<(usize, u32, u8)> = Vec::new();
 
             for tile_start in (0..my_count).step_by(block_tile) {
                 let tile_end = (tile_start + block_tile).min(my_count);
                 let tile_blocks = &my_blocks[tile_start..tile_end];
                 let tile_len = tile_blocks.len();
 
+                col_entries.clear();
                 for (local_b, block_entries) in tile_blocks.iter().enumerate() {
                     for entry in block_entries.as_ref() {
                         let col = entry.pos_in_block * num_digits_commit;
                         for &ci in &entry.nonzero_coeffs {
-                            col_entries[col].push((local_b as u32, ci as u8));
+                            col_entries.push((col, local_b as u32, ci as u8));
                         }
                     }
                 }
+                col_entries.sort_unstable_by_key(|&(col, _, _)| col);
 
                 let mut accums: Vec<Vec<WideCyclotomicRing<F::Wide, D>>> = (0..tile_len)
                     .map(|_| vec![WideCyclotomicRing::zero(); n_a])
@@ -938,17 +934,17 @@ where
 
                 for a_idx in 0..n_a {
                     let a_row = a_view.row(a_idx);
-                    let mut accum_col = accums
-                        .iter_mut()
-                        .map(|row| &mut row[a_idx])
-                        .collect::<Vec<_>>();
-                    for (col, entries) in col_entries.iter().enumerate() {
-                        if entries.is_empty() {
-                            continue;
-                        }
+                    let mut idx = 0usize;
+                    while idx < col_entries.len() {
+                        let col = col_entries[idx].0;
                         let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
-                        for &(lb, ci) in entries {
-                            a_wide.shift_accumulate_into(accum_col[lb as usize], ci as usize);
+                        while idx < col_entries.len() && col_entries[idx].0 == col {
+                            let (_, lb, ci) = col_entries[idx];
+                            a_wide.shift_accumulate_into(
+                                &mut accums[lb as usize][a_idx],
+                                ci as usize,
+                            );
+                            idx += 1;
                         }
                     }
                 }
@@ -956,10 +952,6 @@ where
                 for (local_b, row_accums) in accums.into_iter().enumerate() {
                     result[tile_start + local_b] =
                         row_accums.into_iter().map(|w| w.reduce()).collect();
-                }
-
-                for bucket in &mut col_entries {
-                    bucket.clear();
                 }
             }
 
