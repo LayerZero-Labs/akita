@@ -176,10 +176,9 @@ where
 /// Public PCS interface with root ring selection chosen from runtime context.
 ///
 /// Callers provide D-independent root polynomials via
-/// [`MultilinearPolynomial`]. The implementation builds support for every root
-/// ring in the selected family during setup, then lets each commitment group
-/// choose the concrete root ring degree from its public runtime inputs before
-/// dispatching into the corresponding typed kernel.
+/// [`MultilinearPolynomial`]. The implementation builds one preferred root-ring
+/// setup eagerly and materializes the other supported root rings lazily as
+/// commitment groups actually select them from public runtime inputs.
 pub trait DynamicCommitmentScheme<F>: Clone + Send + Sync + 'static
 where
     F: FieldCore + CanonicalField,
