@@ -303,13 +303,13 @@ fn full_d128_prove_verify() {
         let proof_bytes = proof.size();
         assert!(proof_bytes > 0, "proof must be non-empty");
         assert!(
-            !proof.levels.is_empty(),
+            proof.num_fold_levels() > 0,
             "proof must have at least one level"
         );
         let plan = Cfg::schedule_plan(FULL_TEST_NV)
             .expect("schedule plan")
             .expect("adaptive full config should expose a schedule plan");
-        assert_eq!(proof.levels.len(), plan.num_fold_levels());
+        assert_eq!(proof.num_fold_levels(), plan.num_fold_levels());
 
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
@@ -337,7 +337,7 @@ fn full_d128_prove_verify() {
             verify_s = verify_time.as_secs_f64(),
             proof_bytes,
             proof_kib = proof_bytes as f64 / 1024.0,
-            levels = proof.levels.len(),
+            levels = proof.num_fold_levels(),
             "full-d128/nv{FULL_TEST_NV} e2e"
         );
     });
@@ -387,7 +387,7 @@ fn full_d32_prove_verify() {
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<FSmall, D, Cfg>(D32_TEST_NV, b"hachi_e2e/full-d32");
 
-        assert_eq!(proof.levels.len(), plan.num_fold_levels());
+        assert_eq!(proof.num_fold_levels(), plan.num_fold_levels());
 
         let mut verifier_transcript = Blake2bTranscript::<FSmall>::new(b"hachi_e2e/full-d32");
         let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FSmall, D>>::verify(
@@ -420,8 +420,7 @@ fn full_d128_basis2_rejects_tampered_stage1_sumcheck() {
             make_dense_basis2_fixture(BASIS2_TEST_NV, b"hachi_e2e/basis2-tamper");
         let mut malformed = proof.clone();
         let stage1_sumcheck = &mut malformed
-            .levels
-            .iter_mut()
+            .fold_levels_mut()
             .next()
             .expect("basis-2 proof should contain at least one level")
             .stage1
@@ -465,7 +464,7 @@ fn full_d128_basis6_prove_verify() {
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(BASIS6_TEST_NV, b"hachi_e2e/basis6");
 
-        assert_eq!(proof.tail.direct.bits_per_elem, 6);
+        assert_eq!(proof.final_w().bits_per_elem, 6);
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/basis6");
         let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
@@ -498,8 +497,7 @@ fn full_d128_basis6_rejects_tampered_stage1_child_claims() {
             make_dense_fixture::<F, D, Cfg>(BASIS6_TEST_NV, b"hachi_e2e/basis6-child-claim-tamper");
         let mut malformed = proof.clone();
         let child_claim = malformed
-            .levels
-            .iter_mut()
+            .fold_levels_mut()
             .next()
             .expect("basis-6 proof should contain at least one level")
             .stage1
@@ -545,7 +543,7 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(nv, b"hachi_e2e/adaptive-full-mixed");
 
-        assert_eq!(proof.levels.len(), plan.num_fold_levels());
+        assert_eq!(proof.num_fold_levels(), plan.num_fold_levels());
 
         let mut proof_bytes = Vec::new();
         proof
@@ -557,7 +555,7 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
         assert_eq!(decoded, proof);
 
         assert_eq!(
-            decoded.tail.direct.bits_per_elem,
+            decoded.final_w().bits_per_elem,
             plan.terminal_state().log_basis
         );
 
@@ -631,7 +629,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         )
         .unwrap();
 
-        assert_eq!(proof.levels.len(), plan.num_fold_levels());
+        assert_eq!(proof.num_fold_levels(), plan.num_fold_levels());
         assert_eq!(
             proof.size(),
             plan.exact_proof_bytes,
@@ -645,7 +643,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let decoded = HachiProof::<F>::deserialize_compressed(&mut cursor, &plan.to_proof_shape())
             .expect("deserialize adaptive onehot proof");
         assert_eq!(
-            decoded.tail.direct.bits_per_elem,
+            decoded.final_w().bits_per_elem,
             plan.terminal_state().log_basis
         );
 

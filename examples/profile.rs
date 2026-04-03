@@ -172,16 +172,15 @@ fn emit_planned_schedule_summary(label: &str, plan: &HachiSchedulePlan) {
 
 fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSchedulePlan>) {
     let hachi_levels_total: usize = proof
-        .levels
-        .iter()
+        .fold_levels()
         .map(|level| level.serialized_size(Compress::No))
         .sum();
-    let tail_total = proof.tail.direct.serialized_size(Compress::No);
+    let tail_total = proof.final_w().serialized_size(Compress::No);
     let accounted_total = hachi_levels_total + tail_total;
 
     tracing::info!(
         label,
-        levels = proof.levels.len(),
+        levels = proof.num_fold_levels(),
         proof_size_bytes = proof.size(),
         accounted_bytes = accounted_total,
         hachi_fold_bytes = hachi_levels_total,
@@ -199,10 +198,10 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSc
         emit_planned_schedule_summary(label, plan);
     }
 
-    for (i, lp) in proof.levels.iter().enumerate() {
+    for (i, lp) in proof.fold_levels().enumerate() {
         print_hachi_level_breakdown(label, i, lp);
     }
-    let final_w = &proof.tail.direct;
+    let final_w = proof.final_w();
     tracing::info!(
         label,
         tail_bytes = final_w.serialized_size(Compress::No),
@@ -358,17 +357,16 @@ fn print_batched_root_breakdown<const D: usize>(
 fn print_batched_proof_summary<const D: usize>(label: &str, proof: &HachiBatchedProof<F>) {
     let root_total = proof.root.serialized_size(Compress::No);
     let recursive_levels_total: usize = proof
-        .levels
-        .iter()
+        .fold_levels()
         .map(|level| level.serialized_size(Compress::No))
         .sum();
     let hachi_levels_total = root_total + recursive_levels_total;
-    let tail_total = proof.tail.direct.serialized_size(Compress::No);
+    let tail_total = proof.final_w().serialized_size(Compress::No);
     let accounted_total = hachi_levels_total + tail_total;
 
     tracing::info!(
         label,
-        levels = proof.levels.len() + 1,
+        levels = proof.num_fold_levels() + 1,
         proof_size_bytes = proof.size(),
         accounted_bytes = accounted_total,
         hachi_fold_bytes = hachi_levels_total,
@@ -377,10 +375,10 @@ fn print_batched_proof_summary<const D: usize>(label: &str, proof: &HachiBatched
     );
     debug_assert_eq!(accounted_total, proof.size());
     print_batched_root_breakdown::<D>(label, &proof.root);
-    for (i, lp) in proof.levels.iter().enumerate() {
+    for (i, lp) in proof.fold_levels().enumerate() {
         print_hachi_level_breakdown(label, i + 1, lp);
     }
-    let final_w = &proof.tail.direct;
+    let final_w = proof.final_w();
     eprintln!(
         "[{label}]   final_w: total={} bytes, elems={}, bits/elem={}",
         final_w.serialized_size(Compress::No),

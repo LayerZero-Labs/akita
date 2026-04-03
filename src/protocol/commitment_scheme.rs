@@ -28,7 +28,7 @@ use crate::protocol::opening_point::{
 };
 use crate::protocol::proof::{
     FlatRingVec, HachiBatchedCommitmentHint, HachiBatchedProof, HachiBatchedRootProof,
-    HachiCommitmentHint, HachiLevelProof, HachiProof, HachiProofTail, PackedDigits, ProofRingVec,
+    HachiCommitmentHint, HachiLevelProof, HachiProof, HachiProofStep, PackedDigits, ProofRingVec,
 };
 use crate::protocol::quadratic_equation::{derive_stage1_challenges, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
@@ -1375,12 +1375,15 @@ where
         current_state.w.as_i8_digits(),
         final_params.log_basis,
     );
-    let tail = HachiProofTail::new(final_w);
+    let mut steps = levels
+        .into_iter()
+        .map(HachiProofStep::Fold)
+        .collect::<Vec<_>>();
+    steps.push(HachiProofStep::Direct(final_w));
 
     HachiBatchedProof {
         root: root_proof,
-        levels,
-        tail,
+        steps,
     }
 }
 
@@ -1397,8 +1400,8 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
 {
-    let num_levels = proof.levels.len();
-    for (offset, level_proof) in proof.levels.iter().enumerate() {
+    let num_levels = proof.num_fold_levels();
+    for (offset, level_proof) in proof.fold_levels().enumerate() {
         let level_index = offset + 1;
         let is_last = offset == num_levels - 1;
         let level_params = Cfg::level_params_with_log_basis(
@@ -1654,7 +1657,7 @@ where
     setup.expanded.ensure_layout_fits(&batched_layout)?;
 
     let final_w = Some(proof.final_w());
-    let has_recursive_levels = !proof.levels.is_empty();
+    let has_recursive_levels = proof.num_fold_levels() > 0;
     let root_challenges = verify_batched_root_level::<F, T, D>(
         &proof.root,
         setup,
@@ -1700,7 +1703,7 @@ where
     }
 
     tracing::info!(
-        levels = proof.levels.len() + 1,
+        levels = proof.num_fold_levels() + 1,
         elapsed_s = t_verify_hachi.elapsed().as_secs_f64(),
         "hachi batched verify complete"
     );
@@ -1951,9 +1954,13 @@ where
             current_state.w.as_i8_digits(),
             final_params.log_basis,
         );
-        let tail = HachiProofTail::new(final_w);
+        let mut steps = levels
+            .into_iter()
+            .map(HachiProofStep::Fold)
+            .collect::<Vec<_>>();
+        steps.push(HachiProofStep::Direct(final_w));
 
-        Ok(HachiProof { levels, tail })
+        Ok(HachiProof { steps })
     }
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_prove")]
@@ -2144,12 +2151,12 @@ where
         .map_err(|_| HachiError::InvalidProof)?;
         let layout = root_plan.root_layout;
         let root_params = root_plan.params.clone();
-        if proof.levels.is_empty() {
+        if proof.num_fold_levels() == 0 {
             return Err(HachiError::InvalidProof);
         }
         let t_verify_hachi = Instant::now();
 
-        let num_levels = proof.levels.len();
+        let num_levels = proof.num_fold_levels();
 
         let final_w = Some(proof.final_w());
 
@@ -2170,7 +2177,7 @@ where
             }
         }
 
-        for (i, level_proof) in proof.levels.iter().enumerate() {
+        for (i, level_proof) in proof.fold_levels().enumerate() {
             let is_last = i == num_levels - 1;
             let level_params = Cfg::level_params_with_log_basis(
                 HachiScheduleInputs {
@@ -2357,7 +2364,7 @@ where
             .map_err(|_| HachiError::InvalidProof)?;
         let flat_commitments = flatten_commitments_by_point(commitments_by_point);
 
-        let has_recursive_levels = !proof.levels.is_empty();
+        let has_recursive_levels = proof.num_fold_levels() > 0;
         let root_challenges = verify_multipoint_batched_root_level::<F, T, D>(
             &proof.root,
             setup,
@@ -2402,7 +2409,7 @@ where
         }
 
         tracing::info!(
-            levels = proof.levels.len() + 1,
+            levels = proof.num_fold_levels() + 1,
             elapsed_s = t_verify_hachi.elapsed().as_secs_f64(),
             "hachi batched verify complete"
         );
@@ -2906,7 +2913,7 @@ mod tests {
         lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
         ring_opening_point_from_field,
     };
-    use crate::protocol::proof::{HachiBatchedProofShape, LevelProofShape};
+    use crate::protocol::proof::{HachiBatchedProofShape, HachiProofStepShape, LevelProofShape};
     use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::test_utils::F;
@@ -2948,11 +2955,11 @@ mod tests {
         let root_shape = root_plan.level_proof_shape();
         let first_level_params = root_plan.next_level_params.clone();
 
-        let mut level_shapes = Vec::with_capacity(proof.levels.len());
+        let mut step_shapes = Vec::with_capacity(proof.num_fold_levels() + 1);
         let mut current_w_len = root_w_len;
         let mut current_log_basis = first_level_params.log_basis;
         let mut current_level = 1usize;
-        for _ in &proof.levels {
+        for _ in proof.fold_levels() {
             let inputs = HachiScheduleInputs {
                 max_num_vars,
                 level: current_level,
@@ -2974,22 +2981,25 @@ mod tests {
             )
             .expect("next recursive params");
             let rounds = batched_shape_rounds(level_params.d, next_w_len);
-            level_shapes.push(LevelProofShape {
+            step_shapes.push(HachiProofStepShape::Fold(LevelProofShape {
                 y_ring_coeffs: level_params.d,
                 v_coeffs: level_params.n_d * level_params.d,
                 stage1_stages: stage1_tree_stage_shapes(rounds, 1usize << current_layout.log_basis),
                 stage2_sumcheck: (rounds, 3),
                 next_commit_coeffs: next_level_params.n_b * next_level_params.d,
-            });
+            }));
             current_w_len = next_w_len;
             current_log_basis = next_level_params.log_basis;
             current_level += 1;
         }
+        step_shapes.push(HachiProofStepShape::Direct((
+            current_w_len,
+            current_log_basis,
+        )));
 
         HachiBatchedProofShape {
             root_shape,
-            level_shapes,
-            tail_shape: (current_w_len, current_log_basis),
+            step_shapes,
         }
     }
 
@@ -4162,11 +4172,7 @@ mod tests {
             expected_shape.root_shape.next_commit_coeffs,
             actual_shape.root_shape.next_commit_coeffs
         );
-        assert_eq!(
-            expected_shape.level_shapes.len(),
-            actual_shape.level_shapes.len()
-        );
-        assert_eq!(expected_shape.tail_shape, actual_shape.tail_shape);
+        assert_eq!(expected_shape.step_shapes, actual_shape.step_shapes);
         let mut bytes = Vec::new();
         proof.serialize_uncompressed(&mut bytes).unwrap();
         let decoded =
@@ -4406,9 +4412,13 @@ mod tests {
     fn verify_rejects_malformed_y_ring_dimension_without_panicking() {
         let (verifier_setup, commitment, mut proof, opening_point, opening, _layout) =
             make_verify_fixture(16);
-        let mut coeffs = proof.levels[0].y_ring.coeffs().to_vec();
+        let first_level = proof
+            .fold_levels_mut()
+            .next()
+            .expect("expected at least one fold level");
+        let mut coeffs = first_level.y_ring.coeffs().to_vec();
         let _ = coeffs.pop().expect("expected non-empty y_ring");
-        proof.levels[0].y_ring = ProofRingVec::from_coeffs(coeffs);
+        first_level.y_ring = ProofRingVec::from_coeffs(coeffs);
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");

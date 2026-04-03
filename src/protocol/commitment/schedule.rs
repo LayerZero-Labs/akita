@@ -6,7 +6,7 @@ use super::config::{
 use super::schedule_tables::{table_entry_states, GeneratedScheduleTableEntry};
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
-use crate::protocol::proof::{HachiProofShape, LevelProofShape};
+use crate::protocol::proof::{HachiProofShape, HachiProofStepShape, LevelProofShape};
 use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
 use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
 use std::collections::HashMap;
@@ -661,7 +661,7 @@ impl HachiSchedulePlan {
     /// Derive the [`HachiProofShape`] needed for deserializing a proof
     /// produced under this schedule.
     pub fn to_proof_shape(&self) -> HachiProofShape {
-        let level_shapes = self
+        let mut step_shapes: Vec<HachiProofStepShape> = self
             .fold_levels()
             .map(|level| {
                 let p = &level.params;
@@ -669,21 +669,22 @@ impl HachiSchedulePlan {
                 let rounds = sumcheck_rounds(p.d, next_w_len);
                 let b = 1usize << level.layout.log_basis;
 
-                LevelProofShape {
+                HachiProofStepShape::Fold(LevelProofShape {
                     y_ring_coeffs: p.d,
                     v_coeffs: p.n_d * p.d,
                     stage1_stages: stage1_tree_stage_shapes(rounds, b),
                     stage2_sumcheck: (rounds, 3),
                     next_commit_coeffs: level.next_commit_coeffs,
-                }
+                })
             })
             .collect();
 
         let terminal = self.direct_step();
-        HachiProofShape {
-            level_shapes,
-            tail_shape: (terminal.state.current_w_len, terminal.state.log_basis),
-        }
+        step_shapes.push(HachiProofStepShape::Direct((
+            terminal.state.current_w_len,
+            terminal.state.log_basis,
+        )));
+        HachiProofShape { step_shapes }
     }
 }
 
