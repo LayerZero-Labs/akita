@@ -258,15 +258,17 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         lut: &DigitMontLut<W, K>,
         scratch: &mut [[MontCoeff<W>; D]; K],
     ) {
-        for (k, (scratch_limb, tw)) in scratch.iter_mut().zip(params.twiddles.iter()).enumerate() {
-            for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
-                *dst = lut.get(k, digit);
-            }
-            forward_ntt(scratch_limb, params.primes[k], tw);
-        }
-
         #[cfg(target_arch = "aarch64")]
         if neon::use_neon_ntt() {
+            for (k, (scratch_limb, tw)) in
+                scratch.iter_mut().zip(params.twiddles.iter()).enumerate()
+            {
+                for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
+                    *dst = lut.get(k, digit);
+                }
+                forward_ntt(scratch_limb, params.primes[k], tw);
+            }
+
             for (k, rhs_limb) in scratch.iter().enumerate() {
                 let prime = params.primes[k];
                 unsafe {
@@ -294,14 +296,19 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             return;
         }
 
-        for (k, rhs_limb) in scratch.iter().enumerate() {
+        for (k, (scratch_limb, tw)) in scratch.iter_mut().zip(params.twiddles.iter()).enumerate() {
+            for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
+                *dst = lut.get(k, digit);
+            }
+            forward_ntt(scratch_limb, params.primes[k], tw);
+
             let prime = params.primes[k];
             let acc_limb = &mut self.limbs[k];
             let lhs_limb = &lhs.limbs[k];
             for ((acc_coeff, lhs_coeff), rhs_coeff) in acc_limb
                 .iter_mut()
                 .zip(lhs_limb.iter())
-                .zip(rhs_limb.iter())
+                .zip(scratch_limb.iter())
             {
                 let prod = prime.mul(*lhs_coeff, *rhs_coeff);
                 let sum = MontCoeff::from_raw(acc_coeff.raw().wrapping_add(prod.raw()));
