@@ -540,16 +540,18 @@ pub(super) fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const 
 
     let actual_threads = num_threads.min(block_len.max(1)).max(1);
     let elem_chunk = block_len.div_ceil(actual_threads);
+    let mut out = vec![[0i32; D]; block_len * num_digits];
 
-    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
-        .map(|tid| {
+    #[cfg(feature = "parallel")]
+    out.par_chunks_mut(elem_chunk * num_digits)
+        .enumerate()
+        .for_each(|(tid, acc)| {
             let elem_start = tid * elem_chunk;
             if elem_start >= block_len {
-                return Vec::new();
+                return;
             }
-            let elem_end = (elem_start + elem_chunk).min(block_len);
-            let len = (elem_end - elem_start) * num_digits;
-            let mut acc = vec![[0i32; D]; len];
+            let elems_in_chunk = acc.len() / num_digits;
+            let elem_end = elem_start + elems_in_chunk;
             let mut digit_buf = vec![[0i8; D]; num_digits];
 
             for (block_idx, challenge) in challenges.iter().enumerate() {
@@ -570,12 +572,41 @@ pub(super) fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const 
                     }
                 }
             }
+        });
 
-            acc
-        })
-        .collect();
+    #[cfg(not(feature = "parallel"))]
+    out.chunks_mut(elem_chunk * num_digits)
+        .enumerate()
+        .for_each(|(tid, acc)| {
+            let elem_start = tid * elem_chunk;
+            if elem_start >= block_len {
+                return;
+            }
+            let elems_in_chunk = acc.len() / num_digits;
+            let elem_end = elem_start + elems_in_chunk;
+            let mut digit_buf = vec![[0i8; D]; num_digits];
 
-    chunks.into_iter().flatten().collect()
+            for (block_idx, challenge) in challenges.iter().enumerate() {
+                let block_start = block_idx * block_len;
+                if block_start >= coeffs.len() {
+                    break;
+                }
+                let coeff_start = block_start + elem_start;
+                if coeff_start >= coeffs.len() {
+                    continue;
+                }
+                let coeff_end = (block_start + elem_end).min(coeffs.len());
+                for (local_elem_idx, ring) in coeffs[coeff_start..coeff_end].iter().enumerate() {
+                    decompose_ring_interleaved::<F, D>(ring, &mut digit_buf, num_digits, p);
+                    let base = local_elem_idx * num_digits;
+                    for digit in 0..num_digits {
+                        sparse_mul_acc::<D>(&digit_buf[digit], challenge, &mut acc[base + digit]);
+                    }
+                }
+            }
+        });
+
+    out
 }
 
 pub(super) fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
