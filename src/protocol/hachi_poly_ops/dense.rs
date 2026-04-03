@@ -230,21 +230,24 @@ where
 
         let centered_coeffs = {
             let _span = tracing::info_span!("dense_multi_digit_accumulate").entered();
-            let mut centered_coeffs = vec![[0i32; D]; block_len * num_digits];
+            let (centered_coeffs, _) = cfg_fold_reduce!(
+                0..challenges.len(),
+                || {
+                    (
+                        vec![[0i32; D]; block_len * num_digits],
+                        vec![[0i8; D]; num_digits],
+                    )
+                },
+                |(mut acc, mut digit_buf), block_idx| {
+                    let global_start = block_idx * block_len;
+                    if global_start >= n {
+                        return (acc, digit_buf);
+                    }
 
-            #[cfg(feature = "parallel")]
-            centered_coeffs
-                .par_chunks_mut(num_digits)
-                .enumerate()
-                .for_each(|(elem_idx, z_local)| {
-                    let mut digit_buf: Vec<[i8; D]> = vec![[0i8; D]; num_digits];
+                    let coeff_chunk = &coeffs[global_start..(global_start + block_len).min(n)];
+                    let challenge = &challenges[block_idx];
 
-                    for (block_idx, c_i) in challenges.iter().enumerate() {
-                        let global_idx = block_idx * block_len + elem_idx;
-                        if global_idx >= n {
-                            continue;
-                        }
-                        let ring = &coeffs[global_idx];
+                    for (elem_idx, ring) in coeff_chunk.iter().enumerate() {
                         decompose_ring_interleaved::<F, D>(
                             ring,
                             &mut digit_buf,
@@ -252,37 +255,27 @@ where
                             &params,
                         );
 
+                        let base = elem_idx * num_digits;
                         for digit in 0..num_digits {
-                            sparse_mul_acc::<D>(&digit_buf[digit], c_i, &mut z_local[digit]);
+                            sparse_mul_acc::<D>(
+                                &digit_buf[digit],
+                                challenge,
+                                &mut acc[base + digit],
+                            );
                         }
                     }
-                });
 
-            #[cfg(not(feature = "parallel"))]
-            centered_coeffs
-                .chunks_mut(num_digits)
-                .enumerate()
-                .for_each(|(elem_idx, z_local)| {
-                    let mut digit_buf: Vec<[i8; D]> = vec![[0i8; D]; num_digits];
-
-                    for (block_idx, c_i) in challenges.iter().enumerate() {
-                        let global_idx = block_idx * block_len + elem_idx;
-                        if global_idx >= n {
-                            continue;
-                        }
-                        let ring = &coeffs[global_idx];
-                        decompose_ring_interleaved::<F, D>(
-                            ring,
-                            &mut digit_buf,
-                            num_digits,
-                            &params,
-                        );
-
-                        for digit in 0..num_digits {
-                            sparse_mul_acc::<D>(&digit_buf[digit], c_i, &mut z_local[digit]);
+                    (acc, digit_buf)
+                },
+                |(mut left_acc, left_buf), (right_acc, _)| {
+                    for (dst_row, src_row) in left_acc.iter_mut().zip(right_acc.iter()) {
+                        for k in 0..D {
+                            dst_row[k] += src_row[k];
                         }
                     }
-                });
+                    (left_acc, left_buf)
+                }
+            );
 
             centered_coeffs
         };
@@ -328,17 +321,16 @@ where
             .map(|t_i| t_i.len() * num_digits_open)
             .collect();
         let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
-        let mut offset = 0usize;
-        for t_i in &t_all {
-            let block_len = t_i.len() * num_digits_open;
-            decompose_rows_i8_into(
-                t_i,
-                &mut t_hat.flat_digits_mut()[offset..offset + block_len],
-                num_digits_open,
-                log_basis,
-            );
-            offset += block_len;
-        }
+        let dst_blocks = t_hat.split_blocks_mut();
+        #[cfg(feature = "parallel")]
+        cfg_into_iter!(dst_blocks)
+            .zip(cfg_iter!(t_all))
+            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
+        #[cfg(not(feature = "parallel"))]
+        dst_blocks
+            .into_iter()
+            .zip(t_all.iter())
+            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
 
         Ok(t_hat)
     }
@@ -375,17 +367,16 @@ where
         );
         let block_sizes: Vec<usize> = t.iter().map(|t_i| t_i.len() * num_digits_open).collect();
         let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
-        let mut offset = 0usize;
-        for t_i in &t {
-            let block_len = t_i.len() * num_digits_open;
-            decompose_rows_i8_into(
-                t_i,
-                &mut t_hat.flat_digits_mut()[offset..offset + block_len],
-                num_digits_open,
-                log_basis,
-            );
-            offset += block_len;
-        }
+        let dst_blocks = t_hat.split_blocks_mut();
+        #[cfg(feature = "parallel")]
+        cfg_into_iter!(dst_blocks)
+            .zip(cfg_iter!(t))
+            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
+        #[cfg(not(feature = "parallel"))]
+        dst_blocks
+            .into_iter()
+            .zip(t.iter())
+            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
         Ok(CommitInnerWitness { t, t_hat })
     }
 }

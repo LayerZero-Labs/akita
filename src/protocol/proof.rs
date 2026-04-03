@@ -783,6 +783,18 @@ impl<const D: usize> FlatDigitBlocks<D> {
         &mut self.flat_digits
     }
 
+    /// Split the flat digit stream into disjoint mutable block slices.
+    pub fn split_blocks_mut(&mut self) -> Vec<&mut [[i8; D]]> {
+        let mut blocks = Vec::with_capacity(self.block_sizes.len());
+        let mut tail = self.flat_digits.as_mut_slice();
+        for &block_size in &self.block_sizes {
+            let (head, rest) = tail.split_at_mut(block_size);
+            blocks.push(head);
+            tail = rest;
+        }
+        blocks
+    }
+
     /// Iterate over blocks as slices into the flat digit stream.
     pub fn iter_blocks(&self) -> FlatDigitBlockIter<'_, D> {
         FlatDigitBlockIter {

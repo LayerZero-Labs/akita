@@ -22,6 +22,8 @@ use super::CommitmentConfig;
 use crate::algebra::fields::wide::HasWide;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
@@ -994,17 +996,16 @@ where
         );
         let block_sizes: Vec<usize> = t_all.iter().map(|t_i| t_i.len() * depth_open).collect();
         let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
-        let mut offset = 0usize;
-        for t_i in &t_all {
-            let block_len = t_i.len() * depth_open;
-            decompose_rows_i8_into(
-                t_i,
-                &mut t_hat.flat_digits_mut()[offset..offset + block_len],
-                depth_open,
-                log_basis,
-            );
-            offset += block_len;
-        }
+        let dst_blocks = t_hat.split_blocks_mut();
+        #[cfg(feature = "parallel")]
+        cfg_into_iter!(dst_blocks)
+            .zip(cfg_iter!(t_all))
+            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, depth_open, log_basis));
+        #[cfg(not(feature = "parallel"))]
+        dst_blocks
+            .into_iter()
+            .zip(t_all.iter())
+            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, depth_open, log_basis));
 
         let u: Vec<CyclotomicRing<F, D>> =
             mat_vec_mul_ntt_single_i8(&setup.ntt_shared, root_params.n_b, t_hat.flat_digits());
@@ -1040,21 +1041,30 @@ where
 
         let block_sizes = vec![zero_block_len; sparse_blocks.len()];
         let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
-        let mut offset = 0usize;
-        for block_entries in &sparse_blocks {
-            if !block_entries.is_empty() {
-                let mut t_i =
-                    inner_ajtai_onehot_wide(&a_view, block_entries, block_len, depth_commit);
-                t_i.truncate(root_params.n_a);
-                decompose_rows_i8_into(
-                    &t_i,
-                    &mut t_hat.flat_digits_mut()[offset..offset + zero_block_len],
-                    depth_open,
-                    log_basis,
-                );
-            }
-            offset += zero_block_len;
-        }
+        let dst_blocks = t_hat.split_blocks_mut();
+        #[cfg(feature = "parallel")]
+        cfg_into_iter!(dst_blocks)
+            .zip(cfg_iter!(sparse_blocks))
+            .for_each(|(dst, block_entries)| {
+                if !block_entries.is_empty() {
+                    let mut t_i =
+                        inner_ajtai_onehot_wide(&a_view, block_entries, block_len, depth_commit);
+                    t_i.truncate(root_params.n_a);
+                    decompose_rows_i8_into(&t_i, dst, depth_open, log_basis);
+                }
+            });
+        #[cfg(not(feature = "parallel"))]
+        dst_blocks
+            .into_iter()
+            .zip(sparse_blocks.iter())
+            .for_each(|(dst, block_entries)| {
+                if !block_entries.is_empty() {
+                    let mut t_i =
+                        inner_ajtai_onehot_wide(&a_view, block_entries, block_len, depth_commit);
+                    t_i.truncate(root_params.n_a);
+                    decompose_rows_i8_into(&t_i, dst, depth_open, log_basis);
+                }
+            });
 
         let u: Vec<CyclotomicRing<F, D>> =
             mat_vec_mul_ntt_single_i8(&setup.ntt_shared, root_params.n_b, t_hat.flat_digits());

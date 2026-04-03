@@ -578,8 +578,48 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         let mask = b - 1;
         let q = (-F::one()).to_canonical_u128() + 1;
         let half_q = q / 2;
+        let bulk_end = D - (D % 3);
 
-        for i in 0..D {
+        for base in (0..bulk_end).step_by(3) {
+            let canonical0 = self.coeffs[base].to_canonical_u128();
+            let canonical1 = self.coeffs[base + 1].to_canonical_u128();
+            let canonical2 = self.coeffs[base + 2].to_canonical_u128();
+
+            let mut c0: i128 = if canonical0 > half_q {
+                -((q - canonical0) as i128)
+            } else {
+                canonical0 as i128
+            };
+            let mut c1: i128 = if canonical1 > half_q {
+                -((q - canonical1) as i128)
+            } else {
+                canonical1 as i128
+            };
+            let mut c2: i128 = if canonical2 > half_q {
+                -((q - canonical2) as i128)
+            } else {
+                canonical2 as i128
+            };
+
+            for plane in out.iter_mut() {
+                let d0 = c0 & mask;
+                let balanced0 = if d0 >= half_b { d0 - b } else { d0 };
+                c0 = (c0 - balanced0) >> log_basis;
+                plane[base] = balanced0 as i8;
+
+                let d1 = c1 & mask;
+                let balanced1 = if d1 >= half_b { d1 - b } else { d1 };
+                c1 = (c1 - balanced1) >> log_basis;
+                plane[base + 1] = balanced1 as i8;
+
+                let d2 = c2 & mask;
+                let balanced2 = if d2 >= half_b { d2 - b } else { d2 };
+                c2 = (c2 - balanced2) >> log_basis;
+                plane[base + 2] = balanced2 as i8;
+            }
+        }
+
+        for i in bulk_end..D {
             let canonical = self.coeffs[i].to_canonical_u128();
             let mut c: i128 = if canonical > half_q {
                 -((q - canonical) as i128)

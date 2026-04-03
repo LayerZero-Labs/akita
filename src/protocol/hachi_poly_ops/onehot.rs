@@ -443,18 +443,24 @@ where
         };
 
         let mut t_hat = FlatDigitBlocks::zeroed(vec![zero_block_len; num_blocks])?;
-        let mut offset = 0usize;
-        for t_i in &t_all {
-            if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                decompose_rows_i8_into(
-                    t_i,
-                    &mut t_hat.flat_digits_mut()[offset..offset + zero_block_len],
-                    num_digits_open,
-                    log_basis,
-                );
-            }
-            offset += zero_block_len;
-        }
+        let dst_blocks = t_hat.split_blocks_mut();
+        #[cfg(feature = "parallel")]
+        cfg_into_iter!(dst_blocks)
+            .zip(cfg_iter!(t_all))
+            .for_each(|(dst, t_i)| {
+                if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
+                    decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
+                }
+            });
+        #[cfg(not(feature = "parallel"))]
+        dst_blocks
+            .into_iter()
+            .zip(t_all.iter())
+            .for_each(|(dst, t_i)| {
+                if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
+                    decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
+                }
+            });
 
         Ok(t_hat)
     }
@@ -498,18 +504,21 @@ where
         };
 
         let mut t_hat = FlatDigitBlocks::zeroed(vec![zero_block_len; t.len()])?;
-        let mut offset = 0usize;
-        for t_i in &t {
+        let dst_blocks = t_hat.split_blocks_mut();
+        #[cfg(feature = "parallel")]
+        cfg_into_iter!(dst_blocks)
+            .zip(cfg_iter!(t))
+            .for_each(|(dst, t_i)| {
+                if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
+                    decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
+                }
+            });
+        #[cfg(not(feature = "parallel"))]
+        dst_blocks.into_iter().zip(t.iter()).for_each(|(dst, t_i)| {
             if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                decompose_rows_i8_into(
-                    t_i,
-                    &mut t_hat.flat_digits_mut()[offset..offset + zero_block_len],
-                    num_digits_open,
-                    log_basis,
-                );
+                decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
             }
-            offset += zero_block_len;
-        }
+        });
 
         Ok(CommitInnerWitness { t, t_hat })
     }
@@ -589,18 +598,21 @@ where
                 let t = poly_t.to_vec();
                 let mut t_hat =
                     FlatDigitBlocks::zeroed(vec![zero_block_len; t.len()]).expect("sizes fit");
-                let mut offset = 0usize;
-                for t_i in &t {
+                let dst_blocks = t_hat.split_blocks_mut();
+                #[cfg(feature = "parallel")]
+                cfg_into_iter!(dst_blocks)
+                    .zip(cfg_iter!(t))
+                    .for_each(|(dst, t_i)| {
+                        if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
+                            decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
+                        }
+                    });
+                #[cfg(not(feature = "parallel"))]
+                dst_blocks.into_iter().zip(t.iter()).for_each(|(dst, t_i)| {
                     if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                        decompose_rows_i8_into(
-                            t_i,
-                            &mut t_hat.flat_digits_mut()[offset..offset + zero_block_len],
-                            num_digits_open,
-                            log_basis,
-                        );
+                        decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
                     }
-                    offset += zero_block_len;
-                }
+                });
                 CommitInnerWitness { t, t_hat }
             })
             .collect();
