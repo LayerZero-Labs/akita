@@ -5,14 +5,19 @@
 //! polynomial.  The test exercises `batched_commit` → `batched_prove` →
 //! serialize/deserialize → `batched_verify`.
 //!
-//! Two polynomial representations are covered:
+//! This file intentionally keeps a much smaller matrix than the grouped and
+//! multipoint suites, because those tests already cover most batching-shape
+//! permutations. The aggregated suite now focuses on the unique
+//! single-commitment path with a few representative cases:
 //!
-//! * **One-hot** — `fp128_5823::OneHot` (D = 64, K = D).
-//!   Variable counts: 10, 15, 20, 25 (28 tests).
-//! * **Dense** — `fp128_5823::Full` (D = 128, full-field coefficients).
-//!   Variable counts: 10, 15, 20 (21 tests — nv 25 is omitted for speed).
+//! * **One-hot** — singleton baseline, irregular larger batch, and a
+//!   max-`nv` schedule.
+//! * **Dense** — singleton baseline and irregular larger batch.
+//! * **Mixed dense + one-hot under the dense config** — heterogeneous
+//!   aggregated commitment/proof/verify.
 //!
-//! Batch sizes per variable count: 1, 2, 3, 4, 7, 12, 16 (49 tests total).
+//! This keeps good coverage of the aggregated path while avoiding the old
+//! near-cartesian-product runtime blowup.
 
 #![allow(missing_docs)]
 
@@ -396,279 +401,27 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
     });
 }
 
-// ---------------------------------------------------------------------------
-// nv = 10
-// ---------------------------------------------------------------------------
-
-#[test]
-fn aggregated_onehot_nv10_batch1() {
-    run_aggregated_onehot(10, 1);
+macro_rules! aggregated_onehot_case {
+    ($name:ident, $nv:expr, $batch:expr) => {
+        #[test]
+        fn $name() {
+            run_aggregated_onehot($nv, $batch);
+        }
+    };
 }
 
-#[test]
-fn aggregated_onehot_nv10_batch2() {
-    run_aggregated_onehot(10, 2);
+macro_rules! aggregated_dense_case {
+    ($name:ident, $nv:expr, $batch:expr) => {
+        #[test]
+        fn $name() {
+            run_aggregated_dense($nv, $batch);
+        }
+    };
 }
 
-#[test]
-fn aggregated_onehot_nv10_batch3() {
-    run_aggregated_onehot(10, 3);
-}
+aggregated_onehot_case!(aggregated_onehot_nv10_batch1, 10, 1);
+aggregated_onehot_case!(aggregated_onehot_nv20_batch7, 20, 7);
+aggregated_onehot_case!(aggregated_onehot_nv25_batch4, 25, 4);
 
-#[test]
-fn aggregated_onehot_nv10_batch4() {
-    run_aggregated_onehot(10, 4);
-}
-
-#[test]
-fn aggregated_onehot_nv10_batch7() {
-    run_aggregated_onehot(10, 7);
-}
-
-#[test]
-fn aggregated_onehot_nv10_batch12() {
-    run_aggregated_onehot(10, 12);
-}
-
-#[test]
-fn aggregated_onehot_nv10_batch16() {
-    run_aggregated_onehot(10, 16);
-}
-
-// ---------------------------------------------------------------------------
-// nv = 15
-// ---------------------------------------------------------------------------
-
-#[test]
-fn aggregated_onehot_nv15_batch1() {
-    run_aggregated_onehot(15, 1);
-}
-
-#[test]
-fn aggregated_onehot_nv15_batch2() {
-    run_aggregated_onehot(15, 2);
-}
-
-#[test]
-fn aggregated_onehot_nv15_batch3() {
-    run_aggregated_onehot(15, 3);
-}
-
-#[test]
-fn aggregated_onehot_nv15_batch4() {
-    run_aggregated_onehot(15, 4);
-}
-
-#[test]
-fn aggregated_onehot_nv15_batch7() {
-    run_aggregated_onehot(15, 7);
-}
-
-#[test]
-fn aggregated_onehot_nv15_batch12() {
-    run_aggregated_onehot(15, 12);
-}
-
-#[test]
-fn aggregated_onehot_nv15_batch16() {
-    run_aggregated_onehot(15, 16);
-}
-
-// ---------------------------------------------------------------------------
-// nv = 20
-// ---------------------------------------------------------------------------
-
-#[test]
-fn aggregated_onehot_nv20_batch1() {
-    run_aggregated_onehot(20, 1);
-}
-
-#[test]
-fn aggregated_onehot_nv20_batch2() {
-    run_aggregated_onehot(20, 2);
-}
-
-#[test]
-fn aggregated_onehot_nv20_batch3() {
-    run_aggregated_onehot(20, 3);
-}
-
-#[test]
-fn aggregated_onehot_nv20_batch4() {
-    run_aggregated_onehot(20, 4);
-}
-
-#[test]
-fn aggregated_onehot_nv20_batch7() {
-    run_aggregated_onehot(20, 7);
-}
-
-#[test]
-fn aggregated_onehot_nv20_batch12() {
-    run_aggregated_onehot(20, 12);
-}
-
-#[test]
-fn aggregated_onehot_nv20_batch16() {
-    run_aggregated_onehot(20, 16);
-}
-
-// ---------------------------------------------------------------------------
-// nv = 25
-// ---------------------------------------------------------------------------
-
-#[test]
-fn aggregated_onehot_nv25_batch1() {
-    run_aggregated_onehot(25, 1);
-}
-
-#[test]
-fn aggregated_onehot_nv25_batch2() {
-    run_aggregated_onehot(25, 2);
-}
-
-#[test]
-fn aggregated_onehot_nv25_batch3() {
-    run_aggregated_onehot(25, 3);
-}
-
-#[test]
-fn aggregated_onehot_nv25_batch4() {
-    run_aggregated_onehot(25, 4);
-}
-
-#[test]
-fn aggregated_onehot_nv25_batch7() {
-    run_aggregated_onehot(25, 7);
-}
-
-#[test]
-fn aggregated_onehot_nv25_batch12() {
-    run_aggregated_onehot(25, 12);
-}
-
-#[test]
-fn aggregated_onehot_nv25_batch16() {
-    run_aggregated_onehot(25, 16);
-}
-
-// ===========================================================================
-// Dense batched-aggregated tests (D = 128)
-// ===========================================================================
-
-// ---------------------------------------------------------------------------
-// nv = 10
-// ---------------------------------------------------------------------------
-
-#[test]
-fn aggregated_dense_nv10_batch1() {
-    run_aggregated_dense(10, 1);
-}
-
-#[test]
-fn aggregated_dense_nv10_batch2() {
-    run_aggregated_dense(10, 2);
-}
-
-#[test]
-fn aggregated_dense_nv10_batch3() {
-    run_aggregated_dense(10, 3);
-}
-
-#[test]
-fn aggregated_dense_nv10_batch4() {
-    run_aggregated_dense(10, 4);
-}
-
-#[test]
-fn aggregated_dense_nv10_batch7() {
-    run_aggregated_dense(10, 7);
-}
-
-#[test]
-fn aggregated_dense_nv10_batch12() {
-    run_aggregated_dense(10, 12);
-}
-
-#[test]
-fn aggregated_dense_nv10_batch16() {
-    run_aggregated_dense(10, 16);
-}
-
-// ---------------------------------------------------------------------------
-// nv = 15
-// ---------------------------------------------------------------------------
-
-#[test]
-fn aggregated_dense_nv15_batch1() {
-    run_aggregated_dense(15, 1);
-}
-
-#[test]
-fn aggregated_dense_nv15_batch2() {
-    run_aggregated_dense(15, 2);
-}
-
-#[test]
-fn aggregated_dense_nv15_batch3() {
-    run_aggregated_dense(15, 3);
-}
-
-#[test]
-fn aggregated_dense_nv15_batch4() {
-    run_aggregated_dense(15, 4);
-}
-
-#[test]
-fn aggregated_dense_nv15_batch7() {
-    run_aggregated_dense(15, 7);
-}
-
-#[test]
-fn aggregated_dense_nv15_batch12() {
-    run_aggregated_dense(15, 12);
-}
-
-// #[test]
-// fn aggregated_dense_nv15_batch16() {
-//     run_aggregated_dense(15, 16);
-// }
-
-// ---------------------------------------------------------------------------
-// nv = 20
-// ---------------------------------------------------------------------------
-
-#[test]
-fn aggregated_dense_nv20_batch1() {
-    run_aggregated_dense(20, 1);
-}
-
-#[test]
-fn aggregated_dense_nv20_batch2() {
-    run_aggregated_dense(20, 2);
-}
-
-#[test]
-fn aggregated_dense_nv20_batch3() {
-    run_aggregated_dense(20, 3);
-}
-
-#[test]
-fn aggregated_dense_nv20_batch4() {
-    run_aggregated_dense(20, 4);
-}
-
-#[test]
-fn aggregated_dense_nv20_batch7() {
-    run_aggregated_dense(20, 7);
-}
-
-// #[test]
-// fn aggregated_dense_nv20_batch12() {
-//     run_aggregated_dense(20, 12);
-// }
-
-// #[test]
-// fn aggregated_dense_nv20_batch16() {
-//     run_aggregated_dense(20, 16);
-// }
+aggregated_dense_case!(aggregated_dense_nv10_batch1, 10, 1);
+aggregated_dense_case!(aggregated_dense_nv20_batch7, 20, 7);
