@@ -712,17 +712,6 @@ pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
         .transpose()
 }
 
-fn configured_schedule_plan<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    min_log_basis: u32,
-    max_log_basis: u32,
-) -> Result<HachiSchedulePlan, HachiError> {
-    if let Some(plan) = Cfg::schedule_plan(max_num_vars)? {
-        return Ok(plan);
-    }
-    planned_schedule::<Cfg>(max_num_vars, min_log_basis, max_log_basis)
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlannedSuffix {
     levels: Vec<HachiPlannedLevel>,
@@ -985,6 +974,7 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
     Ok(best)
 }
 
+#[cfg(test)]
 pub(crate) fn planned_recursive_suffix_bytes<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     level: usize,
@@ -998,9 +988,14 @@ pub(crate) fn planned_recursive_suffix_bytes<Cfg: CommitmentConfig>(
         current_w_len,
     };
     if let Some(schedule) = Cfg::schedule_plan(max_num_vars)? {
-        if let Some(state_index) = exact_planned_state_index(&schedule, inputs, None) {
-            return Ok(scheduled_suffix_bytes_from_index(&schedule, state_index));
-        }
+        return planned_recursive_suffix_bytes_from_schedule::<Cfg>(
+            &schedule,
+            max_num_vars,
+            level,
+            current_w_len,
+            min_log_basis,
+            max_log_basis,
+        );
     }
     let current_log_basis = Cfg::log_basis_at_level(inputs);
     let cfg = PlannerConfig {
@@ -1030,17 +1025,21 @@ pub(crate) fn planned_recursive_suffix_bytes_with_log_basis<Cfg: CommitmentConfi
     current_log_basis: u32,
 ) -> Result<usize, HachiError> {
     if let Some(schedule) = Cfg::schedule_plan(max_num_vars)? {
-        if let Some(state_index) = exact_planned_state_index(
+        let inputs = HachiScheduleInputs {
+            max_num_vars,
+            level,
+            current_w_len,
+        };
+        let (min_log_basis, max_log_basis) = Cfg::log_basis_search_range(inputs);
+        return planned_recursive_suffix_bytes_with_log_basis_from_schedule::<Cfg>(
             &schedule,
-            HachiScheduleInputs {
-                max_num_vars,
-                level,
-                current_w_len,
-            },
-            Some(current_log_basis),
-        ) {
-            return Ok(scheduled_suffix_bytes_from_index(&schedule, state_index));
-        }
+            max_num_vars,
+            level,
+            current_w_len,
+            current_log_basis,
+            min_log_basis,
+            max_log_basis,
+        );
     }
     let inputs = HachiScheduleInputs {
         max_num_vars,
@@ -1272,14 +1271,13 @@ pub(crate) fn planned_schedule<Cfg: CommitmentConfig>(
     })
 }
 
-pub(crate) fn planned_log_basis_at_level<Cfg: CommitmentConfig>(
+pub(crate) fn planned_log_basis_at_level_from_schedule<Cfg: CommitmentConfig>(
+    schedule: &HachiSchedulePlan,
     inputs: HachiScheduleInputs,
     min_log_basis: u32,
     max_log_basis: u32,
 ) -> Result<u32, HachiError> {
-    let schedule =
-        configured_schedule_plan::<Cfg>(inputs.max_num_vars, min_log_basis, max_log_basis)?;
-    if let Some(state_index) = exact_planned_state_index(&schedule, inputs, None) {
+    if let Some(state_index) = exact_planned_state_index(schedule, inputs, None) {
         return Ok(schedule.states[state_index].log_basis);
     }
     let state = schedule
@@ -1325,17 +1323,94 @@ pub(crate) fn planned_log_basis_at_level<Cfg: CommitmentConfig>(
     Ok(state.log_basis)
 }
 
-pub(crate) fn planned_schedule_key<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    min_log_basis: u32,
-    max_log_basis: u32,
-) -> Result<String, HachiError> {
-    let schedule = configured_schedule_plan::<Cfg>(max_num_vars, min_log_basis, max_log_basis)?;
+pub(crate) fn planned_schedule_key_from_schedule(schedule: &HachiSchedulePlan) -> String {
     let mut key = String::from("planner_v2");
-    for state in schedule.states {
+    for state in &schedule.states {
         let _ = write!(key, "_l{}b{}", state.level, state.log_basis);
     }
-    Ok(key)
+    key
+}
+
+pub(crate) fn planned_recursive_suffix_bytes_from_schedule<Cfg: CommitmentConfig>(
+    schedule: &HachiSchedulePlan,
+    max_num_vars: usize,
+    level: usize,
+    current_w_len: usize,
+    min_log_basis: u32,
+    max_log_basis: u32,
+) -> Result<usize, HachiError> {
+    let inputs = HachiScheduleInputs {
+        max_num_vars,
+        level,
+        current_w_len,
+    };
+    if let Some(state_index) = exact_planned_state_index(schedule, inputs, None) {
+        return Ok(scheduled_suffix_bytes_from_index(schedule, state_index));
+    }
+    let current_log_basis = planned_log_basis_at_level_from_schedule::<Cfg>(
+        schedule,
+        inputs,
+        min_log_basis,
+        max_log_basis,
+    )?;
+    let cfg = PlannerConfig {
+        max_num_vars,
+        min_log_basis,
+        max_log_basis,
+        field_bits: field_bits(Cfg::decomposition()),
+        half_field_bound: Cfg::planner_half_field_bound(),
+    };
+    let mut memo = HashMap::new();
+    let suffix = best_recursive_suffix::<Cfg>(
+        cfg,
+        &mut memo,
+        PlannerState {
+            level,
+            current_w_len,
+            log_basis: current_log_basis,
+        },
+    )?;
+    Ok(suffix.no_wrapper_bytes)
+}
+
+pub(crate) fn planned_recursive_suffix_bytes_with_log_basis_from_schedule<Cfg: CommitmentConfig>(
+    schedule: &HachiSchedulePlan,
+    max_num_vars: usize,
+    level: usize,
+    current_w_len: usize,
+    current_log_basis: u32,
+    min_log_basis: u32,
+    max_log_basis: u32,
+) -> Result<usize, HachiError> {
+    if let Some(state_index) = exact_planned_state_index(
+        schedule,
+        HachiScheduleInputs {
+            max_num_vars,
+            level,
+            current_w_len,
+        },
+        Some(current_log_basis),
+    ) {
+        return Ok(scheduled_suffix_bytes_from_index(schedule, state_index));
+    }
+    let cfg = PlannerConfig {
+        max_num_vars,
+        min_log_basis,
+        max_log_basis,
+        field_bits: field_bits(Cfg::decomposition()),
+        half_field_bound: Cfg::planner_half_field_bound(),
+    };
+    let mut memo = HashMap::new();
+    let suffix = best_recursive_suffix::<Cfg>(
+        cfg,
+        &mut memo,
+        PlannerState {
+            level,
+            current_w_len,
+            log_basis: current_log_basis,
+        },
+    )?;
+    Ok(suffix.no_wrapper_bytes)
 }
 
 /// Derive the root level's active params and layout.

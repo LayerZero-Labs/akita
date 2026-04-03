@@ -1,6 +1,6 @@
 //! Configuration presets for ring-native commitment construction.
 
-use super::profile::CommitmentFieldProfile;
+use super::profile::{CommitmentFieldProfile, CommitmentFieldProfileSchedule};
 use super::schedule::{
     hachi_root_level_layout, HachiLevelParams, HachiScheduleInputs, HachiSchedulePlan,
 };
@@ -1006,7 +1006,7 @@ impl<
     > CommitmentPolicy
     for StaticBoundedPolicy<Profile, D, LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS, N_A, N_B, N_D>
 where
-    Profile: CommitmentFieldProfile,
+    Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
 {
     const D: usize = D;
 
@@ -1094,7 +1094,7 @@ impl<
         const N_D: usize,
     > CommitmentPolicy for AdaptiveBoundedPolicy<Profile, D, LOG_COMMIT_BOUND, N_A, N_B, N_D>
 where
-    Profile: CommitmentFieldProfile,
+    Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
 {
     const D: usize = D;
 
@@ -1114,7 +1114,11 @@ where
     }
 
     fn log_basis_at_level<Cfg: CommitmentConfig>(inputs: HachiScheduleInputs) -> u32 {
-        Profile::adaptive_planned_log_basis::<Cfg>(inputs)
+        Profile::adaptive_bounded_schedule_source::<Cfg, D, LOG_COMMIT_BOUND, N_A, N_B, N_D>(
+            inputs.max_num_vars,
+        )
+        .and_then(|source| source.log_basis_at_level::<Cfg>(inputs))
+        .expect("adaptive schedule must be derivable from public inputs")
     }
 
     fn log_basis_search_range<Cfg: CommitmentConfig>(_inputs: HachiScheduleInputs) -> (u32, u32) {
@@ -1123,15 +1127,22 @@ where
     }
 
     fn schedule_key<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
-        Profile::adaptive_schedule_key::<Cfg>(max_num_vars)
+        Profile::adaptive_bounded_schedule_source::<Cfg, D, LOG_COMMIT_BOUND, N_A, N_B, N_D>(
+            max_num_vars,
+        )
+        .map(|source| source.schedule_key())
+        .expect("adaptive schedule key must be derivable from public inputs")
     }
 
     fn schedule_plan<Cfg: CommitmentConfig>(
         max_num_vars: usize,
     ) -> Result<Option<HachiSchedulePlan>, HachiError> {
-        Profile::adaptive_bounded_schedule_plan::<Cfg, D, LOG_COMMIT_BOUND, N_A, N_B, N_D>(
-            max_num_vars,
-        )
+        Ok(Some(
+            Profile::adaptive_bounded_schedule_source::<Cfg, D, LOG_COMMIT_BOUND, N_A, N_B, N_D>(
+                max_num_vars,
+            )?
+            .schedule_plan(),
+        ))
     }
 
     fn recursive_suffix_bytes<Cfg: CommitmentConfig>(
@@ -1139,7 +1150,12 @@ where
         level: usize,
         current_w_len: usize,
     ) -> Result<Option<usize>, HachiError> {
-        Profile::adaptive_recursive_suffix_bytes::<Cfg>(max_num_vars, level, current_w_len)
+        Ok(Some(
+            Profile::adaptive_bounded_schedule_source::<Cfg, D, LOG_COMMIT_BOUND, N_A, N_B, N_D>(
+                max_num_vars,
+            )?
+            .recursive_suffix_bytes::<Cfg>(max_num_vars, level, current_w_len)?,
+        ))
     }
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
@@ -1183,7 +1199,7 @@ pub struct AdaptiveOneHotD64Policy<Profile>(PhantomData<Profile>);
 
 impl<Profile> CommitmentPolicy for AdaptiveOneHotD64Policy<Profile>
 where
-    Profile: CommitmentFieldProfile,
+    Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
 {
     const D: usize = 64;
 
@@ -1209,17 +1225,23 @@ where
     }
 
     fn log_basis_at_level<Cfg: CommitmentConfig>(inputs: HachiScheduleInputs) -> u32 {
-        Profile::adaptive_planned_log_basis::<Cfg>(inputs)
+        Profile::onehot_d64_schedule_source::<Cfg>(inputs.max_num_vars)
+            .and_then(|source| source.log_basis_at_level::<Cfg>(inputs))
+            .expect("adaptive schedule must be derivable from public inputs")
     }
 
     fn schedule_key<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
-        Profile::adaptive_schedule_key::<Cfg>(max_num_vars)
+        Profile::onehot_d64_schedule_source::<Cfg>(max_num_vars)
+            .map(|source| source.schedule_key())
+            .expect("adaptive schedule key must be derivable from public inputs")
     }
 
     fn schedule_plan<Cfg: CommitmentConfig>(
         max_num_vars: usize,
     ) -> Result<Option<HachiSchedulePlan>, HachiError> {
-        Profile::onehot_d64_schedule_plan::<Cfg>(max_num_vars)
+        Ok(Some(
+            Profile::onehot_d64_schedule_source::<Cfg>(max_num_vars)?.schedule_plan(),
+        ))
     }
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
@@ -1236,7 +1258,10 @@ where
         level: usize,
         current_w_len: usize,
     ) -> Result<Option<usize>, HachiError> {
-        Profile::adaptive_recursive_suffix_bytes::<Cfg>(max_num_vars, level, current_w_len)
+        Ok(Some(
+            Profile::onehot_d64_schedule_source::<Cfg>(max_num_vars)?
+                .recursive_suffix_bytes::<Cfg>(max_num_vars, level, current_w_len)?,
+        ))
     }
 }
 

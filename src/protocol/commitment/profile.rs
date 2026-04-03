@@ -2,8 +2,9 @@
 
 use super::config::{CommitmentConfig, CommitmentPreset, DecompositionParams};
 use super::schedule::{
-    generated_schedule_plan_from_table, hachi_root_schedule_artifact, planned_log_basis_at_level,
-    planned_recursive_suffix_bytes, planned_schedule, planned_schedule_key, HachiRootBatchSummary,
+    generated_schedule_plan_from_table, hachi_root_schedule_artifact,
+    planned_log_basis_at_level_from_schedule, planned_recursive_suffix_bytes_from_schedule,
+    planned_schedule, planned_schedule_key_from_schedule, HachiRootBatchSummary,
     HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use super::schedule_tables::{
@@ -37,15 +38,11 @@ fn generated_or_planned_schedule<Cfg: CommitmentConfig>(
     table: &'static [GeneratedScheduleTableEntry],
     min_log_basis: u32,
     max_log_basis: u32,
-) -> Result<Option<HachiSchedulePlan>, HachiError> {
+) -> Result<HachiSchedulePlan, HachiError> {
     if let Some(plan) = generated_schedule_plan_from_table::<Cfg>(max_num_vars, table)? {
-        return Ok(Some(plan));
+        return Ok(plan);
     }
-    Ok(Some(planned_schedule::<Cfg>(
-        max_num_vars,
-        min_log_basis,
-        max_log_basis,
-    )?))
+    planned_schedule::<Cfg>(max_num_vars, min_log_basis, max_log_basis)
 }
 
 fn select_root_schedule_for_cfg<Cfg: CommitmentConfig, const D: usize>(
@@ -164,45 +161,70 @@ pub trait CommitmentFieldProfile: Clone + Copy + Default + Send + Sync + 'static
         let _ = (level, max_num_vars);
         1
     }
+}
 
-    /// Deterministically choose the adaptive log basis from public inputs.
-    fn adaptive_planned_log_basis<Cfg: CommitmentConfig>(inputs: HachiScheduleInputs) -> u32 {
-        let (min_log_basis, max_log_basis) = Self::adaptive_log_basis_search_range();
-        planned_log_basis_at_level::<Cfg>(inputs, min_log_basis, max_log_basis)
-            .expect("adaptive schedule must be derivable from public inputs")
-    }
+#[derive(Debug, Clone)]
+pub(crate) struct ProfileScheduleSource {
+    exact_plan: HachiSchedulePlan,
+    min_log_basis: u32,
+    max_log_basis: u32,
+}
 
-    /// Stable identity for the adaptive schedule at `max_num_vars`.
-    fn adaptive_schedule_key<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
-        let (min_log_basis, max_log_basis) = Self::adaptive_log_basis_search_range();
-        planned_schedule_key::<Cfg>(max_num_vars, min_log_basis, max_log_basis)
-            .expect("adaptive schedule key must be derivable from public inputs")
-    }
-
-    /// Planner-backed adaptive schedule for one config.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if neither a generated schedule nor a planner-derived
-    /// schedule can be produced for the requested runtime size.
-    fn adaptive_schedule_plan<Cfg: CommitmentConfig>(
-        max_num_vars: usize,
-    ) -> Result<Option<HachiSchedulePlan>, HachiError> {
-        let (min_log_basis, max_log_basis) = Self::adaptive_log_basis_search_range();
-        Ok(Some(planned_schedule::<Cfg>(
-            max_num_vars,
+impl ProfileScheduleSource {
+    fn new(exact_plan: HachiSchedulePlan, min_log_basis: u32, max_log_basis: u32) -> Self {
+        Self {
+            exact_plan,
             min_log_basis,
             max_log_basis,
-        )?))
+        }
     }
 
-    /// Generated-or-planned adaptive bounded schedule.
+    pub(crate) fn log_basis_at_level<Cfg: CommitmentConfig>(
+        &self,
+        inputs: HachiScheduleInputs,
+    ) -> Result<u32, HachiError> {
+        planned_log_basis_at_level_from_schedule::<Cfg>(
+            &self.exact_plan,
+            inputs,
+            self.min_log_basis,
+            self.max_log_basis,
+        )
+    }
+
+    pub(crate) fn schedule_key(&self) -> String {
+        planned_schedule_key_from_schedule(&self.exact_plan)
+    }
+
+    pub(crate) fn schedule_plan(&self) -> HachiSchedulePlan {
+        self.exact_plan.clone()
+    }
+
+    pub(crate) fn recursive_suffix_bytes<Cfg: CommitmentConfig>(
+        &self,
+        max_num_vars: usize,
+        level: usize,
+        current_w_len: usize,
+    ) -> Result<usize, HachiError> {
+        planned_recursive_suffix_bytes_from_schedule::<Cfg>(
+            &self.exact_plan,
+            max_num_vars,
+            level,
+            current_w_len,
+            self.min_log_basis,
+            self.max_log_basis,
+        )
+    }
+}
+
+/// Internal schedule authority for profile-backed planner families.
+pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
+    /// Exact schedule source for one adaptive bounded family.
     ///
     /// # Errors
     ///
-    /// Returns an error if the profile cannot derive a valid schedule artifact
-    /// for the requested bounded family at `max_num_vars`.
-    fn adaptive_bounded_schedule_plan<
+    /// Returns an error if the bounded family cannot derive a valid exact
+    /// schedule source at `max_num_vars`.
+    fn adaptive_bounded_schedule_source<
         Cfg: CommitmentConfig,
         const D: usize,
         const LOG_COMMIT_BOUND: u32,
@@ -211,66 +233,49 @@ pub trait CommitmentFieldProfile: Clone + Copy + Default + Send + Sync + 'static
         const N_D: usize,
     >(
         max_num_vars: usize,
-    ) -> Result<Option<HachiSchedulePlan>, HachiError> {
+    ) -> Result<ProfileScheduleSource, HachiError> {
         let (min_log_basis, max_log_basis) = Self::adaptive_log_basis_search_range();
-        if let Some(table) =
+        let exact_plan = if let Some(table) =
             Self::generated_adaptive_bounded_table::<D, LOG_COMMIT_BOUND, N_A, N_B, N_D>()
         {
-            return generated_or_planned_schedule::<Cfg>(
-                max_num_vars,
-                table,
-                min_log_basis,
-                max_log_basis,
-            );
-        }
-        Self::adaptive_schedule_plan::<Cfg>(max_num_vars)
-    }
-
-    /// Planner-backed recursive suffix bytes for adaptive configs.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the recursive suffix bytes cannot be derived from
-    /// the generated schedule or planner for the requested public state.
-    fn adaptive_recursive_suffix_bytes<Cfg: CommitmentConfig>(
-        max_num_vars: usize,
-        level: usize,
-        current_w_len: usize,
-    ) -> Result<Option<usize>, HachiError> {
-        let (min_log_basis, max_log_basis) = Self::adaptive_log_basis_search_range();
-        Ok(Some(planned_recursive_suffix_bytes::<Cfg>(
-            max_num_vars,
-            level,
-            current_w_len,
+            generated_or_planned_schedule::<Cfg>(max_num_vars, table, min_log_basis, max_log_basis)?
+        } else {
+            planned_schedule::<Cfg>(max_num_vars, min_log_basis, max_log_basis)?
+        };
+        Ok(ProfileScheduleSource::new(
+            exact_plan,
             min_log_basis,
             max_log_basis,
-        )?))
+        ))
     }
 
-    /// Generated-or-planned schedule for the coarse `D=64` onehot family.
+    /// Exact schedule source for the coarse `D=64` onehot family.
     ///
     /// # Errors
     ///
-    /// Returns an error if the profile cannot derive a valid schedule artifact
-    /// for the coarse `D=64` onehot family at `max_num_vars`.
-    fn onehot_d64_schedule_plan<Cfg: CommitmentConfig>(
+    /// Returns an error if the onehot `D=64` family cannot derive a valid
+    /// exact schedule source at `max_num_vars`.
+    fn onehot_d64_schedule_source<Cfg: CommitmentConfig>(
         max_num_vars: usize,
-    ) -> Result<Option<HachiSchedulePlan>, HachiError> {
+    ) -> Result<ProfileScheduleSource, HachiError> {
         let (min_log_basis, max_log_basis) = Self::adaptive_log_basis_search_range();
-        if let Some(table) = Self::generated_onehot_d64_table() {
-            return generated_or_planned_schedule::<Cfg>(
-                max_num_vars,
-                table,
-                min_log_basis,
-                max_log_basis,
-            );
-        }
-        Self::adaptive_schedule_plan::<Cfg>(max_num_vars)
+        let exact_plan = if let Some(table) = Self::generated_onehot_d64_table() {
+            generated_or_planned_schedule::<Cfg>(max_num_vars, table, min_log_basis, max_log_basis)?
+        } else {
+            planned_schedule::<Cfg>(max_num_vars, min_log_basis, max_log_basis)?
+        };
+        Ok(ProfileScheduleSource::new(
+            exact_plan,
+            min_log_basis,
+            max_log_basis,
+        ))
     }
 }
 
 /// Internal dynamic-root selection hooks layered on top of a public profile.
-pub(crate) trait CommitmentFieldProfileDynamic: CommitmentFieldProfile {
+pub(crate) trait CommitmentFieldProfileDynamic:
+    CommitmentFieldProfile + CommitmentFieldProfileSchedule
+{
     /// Optional profile-level override for dynamic root selection.
     fn preferred_dynamic_root_d(
         family: DynamicScheduleFamily,
@@ -475,11 +480,95 @@ impl CommitmentFieldProfile for Fp128PrimeProfile {
     }
 }
 
+impl CommitmentFieldProfileSchedule for Fp128PrimeProfile {}
+
 impl CommitmentFieldProfileDynamic for Fp128PrimeProfile {
     fn preferred_dynamic_root_d(
         _family: DynamicScheduleFamily,
         key: HachiScheduleLookupKey,
     ) -> Option<usize> {
         fp128_exact_fit_singleton_prefers_d32(key).then_some(32)
+    }
+}
+
+#[cfg(test)]
+mod schedule_source_tests {
+    use super::*;
+    use crate::protocol::commitment::presets::fp128;
+
+    #[test]
+    fn bounded_schedule_source_matches_cfg_hooks() {
+        type Cfg = fp128::D128Full;
+
+        let max_num_vars = 30usize;
+        let inputs = HachiScheduleInputs {
+            max_num_vars,
+            level: 4,
+            current_w_len: 245_888,
+        };
+
+        let source = <Fp128PrimeProfile as CommitmentFieldProfileSchedule>::adaptive_bounded_schedule_source::<
+            Cfg,
+            128,
+            128,
+            1,
+            1,
+            1,
+        >(max_num_vars)
+        .unwrap();
+
+        assert_eq!(source.schedule_key(), Cfg::schedule_key(max_num_vars));
+        assert_eq!(
+            source.schedule_plan(),
+            Cfg::schedule_plan(max_num_vars).unwrap().unwrap()
+        );
+        assert_eq!(
+            source.log_basis_at_level::<Cfg>(inputs).unwrap(),
+            Cfg::log_basis_at_level(inputs)
+        );
+        assert_eq!(
+            source
+                .recursive_suffix_bytes::<Cfg>(max_num_vars, inputs.level, inputs.current_w_len)
+                .unwrap(),
+            Cfg::recursive_suffix_bytes(max_num_vars, inputs.level, inputs.current_w_len)
+                .unwrap()
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn onehot_d64_schedule_source_matches_cfg_hooks() {
+        type Cfg = fp128::D64OneHot;
+
+        let max_num_vars = 30usize;
+        let inputs = HachiScheduleInputs {
+            max_num_vars,
+            level: 4,
+            current_w_len: 245_888,
+        };
+
+        let source =
+            <Fp128PrimeProfile as CommitmentFieldProfileSchedule>::onehot_d64_schedule_source::<
+                Cfg,
+            >(max_num_vars)
+            .unwrap();
+
+        assert_eq!(source.schedule_key(), Cfg::schedule_key(max_num_vars));
+        assert_eq!(
+            source.schedule_plan(),
+            Cfg::schedule_plan(max_num_vars).unwrap().unwrap()
+        );
+        assert_eq!(
+            source.log_basis_at_level::<Cfg>(inputs).unwrap(),
+            Cfg::log_basis_at_level(inputs)
+        );
+        assert_eq!(
+            source
+                .recursive_suffix_bytes::<Cfg>(max_num_vars, inputs.level, inputs.current_w_len)
+                .unwrap(),
+            Cfg::recursive_suffix_bytes(max_num_vars, inputs.level, inputs.current_w_len)
+                .unwrap()
+                .unwrap()
+        );
     }
 }
