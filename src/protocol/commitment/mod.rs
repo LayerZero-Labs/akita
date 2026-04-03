@@ -26,7 +26,6 @@ pub use config::{
     SmallTestCommitmentConfig, StaticBoundedPolicy,
 };
 pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
-pub use presets::*;
 pub use profile::{CommitmentFieldProfile, Fp128PrimeProfile};
 pub use schedule::{
     hachi_recursive_level_layout_from_params, hachi_root_level_layout, HachiLevelParams,

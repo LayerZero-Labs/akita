@@ -916,6 +916,244 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     }
 }
 
+type ProfileModeRunner = fn(usize, usize);
+
+struct ProfileMode {
+    name: &'static str,
+    run: ProfileModeRunner,
+}
+
+const PROFILE_MODES: &[ProfileMode] = &[
+    ProfileMode {
+        name: "full",
+        run: run_profile_full,
+    },
+    ProfileMode {
+        name: "onehot",
+        run: run_profile_onehot,
+    },
+    ProfileMode {
+        name: "full_d128",
+        run: run_profile_full_d128,
+    },
+    ProfileMode {
+        name: "onehot_d64",
+        run: run_profile_onehot_d64,
+    },
+    ProfileMode {
+        name: "full_d32",
+        run: run_profile_full_d32,
+    },
+    ProfileMode {
+        name: "onehot_d32",
+        run: run_profile_onehot_d32,
+    },
+    ProfileMode {
+        name: "logbasis",
+        run: run_profile_logbasis,
+    },
+    ProfileMode {
+        name: "compare_onehot",
+        run: run_profile_compare_onehot,
+    },
+    ProfileMode {
+        name: "compare_logbasis",
+        run: run_profile_compare_logbasis,
+    },
+    ProfileMode {
+        name: "compare_basis",
+        run: run_profile_compare_basis,
+    },
+];
+
+const ALL_PROFILE_MODE_NAMES: &[&str] = &[
+    "full",
+    "onehot",
+    "full_d128",
+    "onehot_d64",
+    "full_d32",
+    "onehot_d32",
+    "logbasis",
+];
+
+fn assert_singleton_mode(mode: &str, num_polys: usize) {
+    assert_eq!(
+        num_polys, 1,
+        "{mode} currently profiles only singleton commitments"
+    );
+}
+
+fn fixed_onehot_title(d: usize, num_polys: usize) -> String {
+    if num_polys == 1 {
+        format!("=== onehot_d{d} (q=2^128-275, D={d}, 1-of-256, log_commit_bound=1) ===")
+    } else {
+        format!(
+            "=== onehot_d{d} batched (q=2^128-275, D={d}, 1-of-256, log_commit_bound=1, same-point batch={num_polys}) ==="
+        )
+    }
+}
+
+fn run_profile_full(nv: usize, num_polys: usize) {
+    assert_singleton_mode("full", num_polys);
+    run_dynamic_dense_mode::<fp128::FullFamily>(
+        "dense",
+        "=== full (q=2^128-275, runtime-selected root D, dense) ===",
+        nv,
+    );
+}
+
+fn run_profile_onehot(nv: usize, num_polys: usize) {
+    let title = if num_polys == 1 {
+        "=== onehot (q=2^128-275, runtime-selected root D, 1-of-256) ===".to_string()
+    } else {
+        format!(
+            "=== onehot batched (q=2^128-275, runtime-selected root D, 1-of-256, same-point batch={num_polys}) ==="
+        )
+    };
+    run_dynamic_onehot_mode::<fp128::OneHotFamily>("onehot", &title, nv, num_polys);
+}
+
+fn run_profile_full_d128(nv: usize, num_polys: usize) {
+    type Cfg = fp128::D128Full;
+    assert_singleton_mode("full_d128", num_polys);
+    run_dense_mode::<{ Cfg::D }, Cfg>(
+        "=== full_d128 (q=2^128-275, D=128 dense, log_commit_bound=128) ===",
+        nv,
+    );
+}
+
+fn run_profile_onehot_d64(nv: usize, num_polys: usize) {
+    type Cfg = fp128::D64OneHot;
+    let title = fixed_onehot_title(64, num_polys);
+    run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
+}
+
+fn run_profile_full_d32(nv: usize, num_polys: usize) {
+    type Cfg = fp128::D32Full;
+    assert_singleton_mode("full_d32", num_polys);
+    run_dense_mode::<{ Cfg::D }, Cfg>(
+        "=== full_d32 (q=2^128-275, D=32 dense, log_commit_bound=128) ===",
+        nv,
+    );
+}
+
+fn run_profile_onehot_d32(nv: usize, num_polys: usize) {
+    type Cfg = fp128::D32OneHot;
+    let title = fixed_onehot_title(32, num_polys);
+    run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
+}
+
+fn run_profile_logbasis(nv: usize, num_polys: usize) {
+    type Cfg = fp128::LogBasis;
+    assert_singleton_mode("logbasis", num_polys);
+    run_dense_mode::<{ Cfg::D }, Cfg>(
+        "=== logbasis (q=2^128-275, D=128 dense, log_commit_bound=3) ===",
+        nv,
+    );
+}
+
+fn run_profile_compare_onehot(nv: usize, num_polys: usize) {
+    assert_singleton_mode("compare_onehot", num_polys);
+
+    type A = fp128::D64StaticBounded<1, 3, 3>;
+    type B = fp128::D64StaticBounded<1, 2, 2>;
+    type C = fp128::D64StaticBounded<1, 2, 3>;
+    type D = fp128::D64StaticBounded<1, 2, 4>;
+
+    run_onehot_mode::<{ A::D }, A>(
+        "=== [A] onehot (D=64, 1-of-256), basis=3 everywhere ===",
+        nv,
+        1,
+    );
+    run_onehot_mode::<{ B::D }, B>(
+        "=== [B] onehot (D=64, 1-of-256), basis=2 everywhere ===",
+        nv,
+        1,
+    );
+    run_onehot_mode::<{ C::D }, C>(
+        "=== [C] onehot (D=64, 1-of-256), L0 basis=2, w-levels basis=3 ===",
+        nv,
+        1,
+    );
+    run_onehot_mode::<{ D::D }, D>(
+        "=== [D] onehot (D=64, 1-of-256), L0 basis=2, w-levels basis=4 ===",
+        nv,
+        1,
+    );
+}
+
+fn run_profile_compare_logbasis(nv: usize, num_polys: usize) {
+    assert_singleton_mode("compare_logbasis", num_polys);
+
+    type A = fp128::StaticBounded<3, 3, 3>;
+    type B = fp128::StaticBounded<3, 2, 2>;
+    type C = fp128::StaticBounded<3, 2, 3>;
+    type D = fp128::StaticBounded<3, 2, 4>;
+
+    run_dense_mode::<{ A::D }, A>(
+        "=== [A] logbasis coeffs (D=128), basis=3 everywhere ===",
+        nv,
+    );
+    run_dense_mode::<{ B::D }, B>(
+        "=== [B] logbasis coeffs (D=128), basis=2 everywhere ===",
+        nv,
+    );
+    run_dense_mode::<{ C::D }, C>(
+        "=== [C] logbasis coeffs (D=128), L0 basis=2, w-levels basis=3 ===",
+        nv,
+    );
+    run_dense_mode::<{ D::D }, D>(
+        "=== [D] logbasis coeffs (D=128), L0 basis=2, w-levels basis=4 ===",
+        nv,
+    );
+}
+
+fn run_profile_compare_basis(nv: usize, num_polys: usize) {
+    assert_singleton_mode("compare_basis", num_polys);
+
+    type A = fp128::StaticBounded<128, 3, 3>;
+    type B = fp128::StaticBounded<128, 2, 2>;
+    type C = fp128::StaticBounded<128, 2, 3>;
+    type D = fp128::StaticBounded<128, 2, 4>;
+
+    run_dense_mode::<{ A::D }, A>("=== [A] baseline (D=128): log_basis=3 everywhere ===", nv);
+    run_dense_mode::<{ B::D }, B>("=== [B] baseline (D=128): log_basis=2 everywhere ===", nv);
+    run_dense_mode::<{ C::D }, C>(
+        "=== [C] baseline (D=128): L0 basis=2, w-levels basis=3 ===",
+        nv,
+    );
+    run_dense_mode::<{ D::D }, D>(
+        "=== [D] baseline (D=128): L0 basis=2, w-levels basis=4 ===",
+        nv,
+    );
+}
+
+fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {
+    let profile_mode = PROFILE_MODES
+        .iter()
+        .find(|entry| entry.name == mode)
+        .unwrap_or_else(|| {
+            let mut known_modes = PROFILE_MODES
+                .iter()
+                .map(|entry| entry.name)
+                .collect::<Vec<_>>();
+            known_modes.push("all");
+            tracing::error!(
+                mode,
+                known_modes = %known_modes.join(", "),
+                "Unknown HACHI_MODE"
+            );
+            std::process::exit(1);
+        });
+    (profile_mode.run)(nv, num_polys);
+}
+
+fn run_all_profile_modes(nv: usize) {
+    for mode in ALL_PROFILE_MODE_NAMES {
+        run_profile_mode(mode, nv, 1);
+    }
+}
+
 fn main() {
     #[cfg(feature = "parallel")]
     rayon::ThreadPoolBuilder::new()
@@ -986,225 +1224,10 @@ fn main() {
     };
     tracing::info!(num_vars = nv, num_polys, mode = %mode, "profile config");
 
-    match mode.as_str() {
-        "full" => {
-            if num_polys != 1 {
-                panic!("full currently profiles only singleton commitments");
-            }
-            run_dynamic_dense_mode::<fp128::FullFamily>(
-                "dense",
-                "=== full (q=2^128-275, runtime-selected root D, dense) ===",
-                nv,
-            );
-        }
-        "onehot" => {
-            let title = if num_polys == 1 {
-                "=== onehot (q=2^128-275, runtime-selected root D, 1-of-256) ===".to_string()
-            } else {
-                format!(
-                    "=== onehot batched (q=2^128-275, runtime-selected root D, 1-of-256, same-point batch={num_polys}) ==="
-                )
-            };
-            run_dynamic_onehot_mode::<fp128::OneHotFamily>("onehot", &title, nv, num_polys);
-        }
-        "full_d128" => {
-            type Cfg = fp128::D128Full;
-            run_dense_mode::<{ Cfg::D }, Cfg>(
-                "=== full_d128 (q=2^128-275, D=128 dense, log_commit_bound=128) ===",
-                nv,
-            );
-        }
-        "onehot_d64" => {
-            type Cfg = fp128::D64OneHot;
-            let title = if num_polys == 1 {
-                "=== onehot_d64 (q=2^128-275, D=64, 1-of-256, log_commit_bound=1) ===".to_string()
-            } else {
-                format!(
-                    "=== onehot_d64 batched (q=2^128-275, D=64, 1-of-256, log_commit_bound=1, same-point batch={num_polys}) ==="
-                )
-            };
-            run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
-        }
-        "full_d32" => {
-            type Cfg = fp128::D32Full;
-            run_dense_mode::<{ Cfg::D }, Cfg>(
-                "=== full_d32 (q=2^128-275, D=32 dense, log_commit_bound=128) ===",
-                nv,
-            );
-        }
-        "onehot_d32" => {
-            type Cfg = fp128::D32OneHot;
-            let title = if num_polys == 1 {
-                "=== onehot_d32 (q=2^128-275, D=32, 1-of-256, log_commit_bound=1) ===".to_string()
-            } else {
-                format!(
-                    "=== onehot_d32 batched (q=2^128-275, D=32, 1-of-256, log_commit_bound=1, same-point batch={num_polys}) ==="
-                )
-            };
-            run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
-        }
-        "logbasis" => {
-            type Cfg = fp128::LogBasis;
-            run_dense_mode::<{ Cfg::D }, Cfg>(
-                "=== logbasis (q=2^128-275, D=128 dense, log_commit_bound=3) ===",
-                nv,
-            );
-        }
-        "all" => {
-            {
-                run_dynamic_dense_mode::<fp128::FullFamily>(
-                    "dense",
-                    "=== full (q=2^128-275, runtime-selected root D, dense) ===",
-                    nv,
-                );
-            }
-            {
-                run_dynamic_onehot_mode::<fp128::OneHotFamily>(
-                    "onehot",
-                    "=== onehot (q=2^128-275, runtime-selected root D, 1-of-256) ===",
-                    nv,
-                    1,
-                );
-            }
-            {
-                type Cfg = fp128::D128Full;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== full_d128 (q=2^128-275, D=128 dense, log_commit_bound=128) ===",
-                    nv,
-                );
-            }
-            {
-                type Cfg = fp128::D64OneHot;
-                run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== onehot_d64 (q=2^128-275, D=64, 1-of-256, log_commit_bound=1) ===",
-                    nv,
-                    1,
-                );
-            }
-            {
-                type Cfg = fp128::D32Full;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== full_d32 (q=2^128-275, D=32 dense, log_commit_bound=128) ===",
-                    nv,
-                );
-            }
-            {
-                type Cfg = fp128::D32OneHot;
-                run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== onehot_d32 (q=2^128-275, D=32, 1-of-256, log_commit_bound=1) ===",
-                    nv,
-                    1,
-                );
-            }
-            {
-                type Cfg = fp128::LogBasis;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== logbasis (q=2^128-275, D=128 dense, log_commit_bound=3) ===",
-                    nv,
-                );
-            }
-        }
-        "compare_onehot" => {
-            {
-                type Cfg = fp128::D64StaticBounded<1, 3, 3>;
-                run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== [A] onehot (D=64, 1-of-256), basis=3 everywhere ===",
-                    nv,
-                    1,
-                );
-            }
-            {
-                type Cfg = fp128::D64StaticBounded<1, 2, 2>;
-                run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== [B] onehot (D=64, 1-of-256), basis=2 everywhere ===",
-                    nv,
-                    1,
-                );
-            }
-            {
-                type Cfg = fp128::D64StaticBounded<1, 2, 3>;
-                run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== [C] onehot (D=64, 1-of-256), L0 basis=2, w-levels basis=3 ===",
-                    nv,
-                    1,
-                );
-            }
-            {
-                type Cfg = fp128::D64StaticBounded<1, 2, 4>;
-                run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== [D] onehot (D=64, 1-of-256), L0 basis=2, w-levels basis=4 ===",
-                    nv,
-                    1,
-                );
-            }
-        }
-        "compare_logbasis" => {
-            {
-                type Cfg = fp128::StaticBounded<3, 3, 3>;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [A] logbasis coeffs (D=128), basis=3 everywhere ===",
-                    nv,
-                );
-            }
-            {
-                type Cfg = fp128::StaticBounded<3, 2, 2>;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [B] logbasis coeffs (D=128), basis=2 everywhere ===",
-                    nv,
-                );
-            }
-            {
-                type Cfg = fp128::StaticBounded<3, 2, 3>;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [C] logbasis coeffs (D=128), L0 basis=2, w-levels basis=3 ===",
-                    nv,
-                );
-            }
-            {
-                type Cfg = fp128::StaticBounded<3, 2, 4>;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [D] logbasis coeffs (D=128), L0 basis=2, w-levels basis=4 ===",
-                    nv,
-                );
-            }
-        }
-        "compare_basis" => {
-            {
-                type Cfg = fp128::StaticBounded<128, 3, 3>;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [A] baseline (D=128): log_basis=3 everywhere ===",
-                    nv,
-                );
-            }
-            {
-                type Cfg = fp128::StaticBounded<128, 2, 2>;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [B] baseline (D=128): log_basis=2 everywhere ===",
-                    nv,
-                );
-            }
-            {
-                type Cfg = fp128::StaticBounded<128, 2, 3>;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [C] baseline (D=128): L0 basis=2, w-levels basis=3 ===",
-                    nv,
-                );
-            }
-            {
-                type Cfg = fp128::StaticBounded<128, 2, 4>;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [D] baseline (D=128): L0 basis=2, w-levels basis=4 ===",
-                    nv,
-                );
-            }
-        }
-        other => {
-            tracing::error!(
-                mode = other,
-                "Unknown HACHI_MODE. Use: full, onehot, full_d128, onehot_d64, full_d32, onehot_d32, logbasis, all, compare_onehot, compare_logbasis, compare_basis"
-            );
-            std::process::exit(1);
-        }
+    if mode == "all" {
+        run_all_profile_modes(nv);
+    } else {
+        run_profile_mode(&mode, nv, num_polys);
     }
 
     if enable_trace {

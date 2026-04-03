@@ -30,9 +30,8 @@ pub use commitment::{
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use dynamic_commitment_scheme::{
-    DynamicCommitHint, DynamicFullFamily, DynamicFullScheme, DynamicHachiCommitmentScheme,
-    DynamicHachiProverSetup, DynamicHachiVerifierSetup, DynamicOneHotFamily, DynamicOneHotScheme,
-    DynamicRingCommitment, DynamicRootConfigFamily,
+    DynamicCommitHint, DynamicHachiCommitmentScheme, DynamicHachiProverSetup,
+    DynamicHachiVerifierSetup, DynamicRingCommitment, DynamicRootConfigFamily,
 };
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, MultilinearPolynomail, OneHotIndex, OneHotPoly};
 pub use opening_point::{BasisMode, BlockOrder, RingOpeningPoint};

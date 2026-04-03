@@ -62,8 +62,8 @@ pub use primitives::arithmetic::{
 pub use primitives::serialization::{HachiDeserialize, HachiSerialize};
 pub use protocol::{
     BasisMode, BlockOrder, CommitmentScheme, DenseMultilinear, DensePoly, DynamicCommitHint,
-    DynamicCommitmentScheme, DynamicFullFamily, DynamicFullScheme, DynamicHachiCommitmentScheme,
-    DynamicHachiProverSetup, DynamicHachiVerifierSetup, DynamicOneHotFamily, DynamicOneHotScheme,
-    DynamicRingCommitment, DynamicRootConfigFamily, HachiPolyOps, HachiRootBatchSummary,
-    MultilinearPolynomial, OneHotIndex, OneHotMultilinear, OneHotPoly, Transcript,
+    DynamicCommitmentScheme, DynamicHachiCommitmentScheme, DynamicHachiProverSetup,
+    DynamicHachiVerifierSetup, DynamicRingCommitment, DynamicRootConfigFamily, HachiPolyOps,
+    HachiRootBatchSummary, MultilinearPolynomial, OneHotIndex, OneHotMultilinear, OneHotPoly,
+    Transcript,
 };
