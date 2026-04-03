@@ -1198,7 +1198,7 @@ mod tests {
         let poly_refs: Vec<&[MultilinearPolynomial<F>]> = vec![polys.as_slice()];
         let point_refs: Vec<&[&[MultilinearPolynomial<F>]]> = vec![poly_refs.as_slice()];
         let hint_groups = vec![hints];
-        let commitment_groups = vec![commitments];
+        let commitment_groups = [commitments];
         let commitment_refs: Vec<&[DynamicRingCommitment<F>]> =
             commitment_groups.iter().map(Vec::as_slice).collect();
         let mut transcript = Blake2bTranscript::<F>::new(
