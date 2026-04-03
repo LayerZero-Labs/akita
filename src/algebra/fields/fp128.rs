@@ -6,9 +6,10 @@
 //!
 //! ## Built-in primes
 //!
-//! Two primes are provided: `Prime128Offset275` (`p = 2^128 − 275`) and
-//! `Prime128Offset5823` (`p = 2^128 − 5823`). Protocol presets default to
-//! the `275` field and expose `5823` explicitly through legacy preset bundles.
+//! The built-in protocol prime is `Prime128Offset275` (`p = 2^128 − 275`).
+//! A secondary split-NTT-only prime `Prime128Offset159`
+//! (`p = 2^128 − 159`, `p ≡ 33 mod 64`) is kept for the algebra benchmark/test
+//! path that only needs 32-way roots of unity.
 
 use std::io::{Read, Write};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
@@ -898,8 +899,8 @@ impl<const P: u128> PseudoMersenneField for Fp128<P> {
 
 /// `p = 2^128 − 275`  (C = 275).
 pub type Prime128Offset275 = Fp128<0xfffffffffffffffffffffffffffffeed>;
-/// `p = 2^128 − 5823`  (C = 5823).  Default for all protocol usage.
-pub type Prime128Offset5823 = Fp128<0xffffffffffffffffffffffffffffe941>;
+/// `p = 2^128 − 159`  (C = 159). Split-NTT-only helper prime.
+pub type Prime128Offset159 = Fp128<0xffffffffffffffffffffffffffffff61>;
 
 #[cfg(test)]
 mod tests {
@@ -909,7 +910,7 @@ mod tests {
     use rand::SeedableRng;
     use rand_core::RngCore;
 
-    type F = Prime128Offset5823;
+    type F = Prime128Offset275;
 
     #[test]
     fn to_limbs_roundtrip() {
