@@ -502,6 +502,7 @@ dependencies = [
  "criterion",
  "ctr",
  "hachi-derive",
+ "hachi-planner",
  "num-bigint",
  "rand",
  "rand_core",

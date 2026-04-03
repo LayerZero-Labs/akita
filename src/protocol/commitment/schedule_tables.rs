@@ -8,6 +8,7 @@ pub(crate) struct GeneratedScheduleTableEntry {
 }
 
 // fp128::D128Full
+#[allow(dead_code)]
 #[rustfmt::skip]
 pub(crate) static FP128_FULL_TABLE: &[GeneratedScheduleTableEntry] = &[
     GeneratedScheduleTableEntry { max_num_vars: 8, states: &[HachiPlannedState { level: 0, current_w_len: 256, log_basis: 5 },HachiPlannedState { level: 1, current_w_len: 36608, log_basis: 5 },] },
@@ -69,6 +70,7 @@ pub(crate) static FP128_FULL_TABLE: &[GeneratedScheduleTableEntry] = &[
 ];
 
 // fp128::LogBasis
+#[allow(dead_code)]
 #[rustfmt::skip]
 pub(crate) static FP128_LOGBASIS_TABLE: &[GeneratedScheduleTableEntry] = &[
     GeneratedScheduleTableEntry { max_num_vars: 8, states: &[HachiPlannedState { level: 0, current_w_len: 256, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 60288, log_basis: 2 },] },
@@ -398,8 +400,6 @@ pub(crate) fn fp128_adaptive_bounded_table<
     const N_D: usize,
 >() -> Option<&'static [GeneratedScheduleTableEntry]> {
     match (D, LOG_COMMIT_BOUND, N_A, N_B, N_D) {
-        (128, 128, 1, 1, 1) => Some(FP128_FULL_TABLE),
-        (128, 3, 1, 1, 1) => Some(FP128_LOGBASIS_TABLE),
         (32, 128, 2, 2, 2) => Some(FP128_D32_FULL_TABLE),
         (32, 3, 2, 2, 2) => Some(FP128_D32_LOGBASIS_TABLE),
         (32, 1, 2, 2, 2) => Some(FP128_D32_ONEHOT_TABLE),

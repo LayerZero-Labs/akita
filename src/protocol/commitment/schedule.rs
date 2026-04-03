@@ -1447,12 +1447,6 @@ mod tests {
 
     #[test]
     fn generated_fp128_schedule_tables_match_runtime_planner() {
-        assert_generated_table_matches_runtime_planner::<fp128::D128Full>(
-            fp128_adaptive_bounded_table::<128, 128, 1, 1, 1>().unwrap(),
-        );
-        assert_generated_table_matches_runtime_planner::<fp128::LogBasis>(
-            fp128_adaptive_bounded_table::<128, 3, 1, 1, 1>().unwrap(),
-        );
         assert_generated_table_matches_runtime_planner::<fp128::D64OneHot>(
             fp128_adaptive_onehot_d64_table(),
         );
@@ -1469,15 +1463,15 @@ mod tests {
 
     #[test]
     fn shared_legacy_fp128_schedule_tables_match_runtime_planner() {
-        assert_generated_table_matches_runtime_planner::<fp128_5823::Full>(
-            fp128_adaptive_bounded_table::<128, 128, 1, 1, 1>().unwrap(),
-        );
-        assert_generated_table_matches_runtime_planner::<fp128_5823::LogBasis>(
-            fp128_adaptive_bounded_table::<128, 3, 1, 1, 1>().unwrap(),
-        );
         assert_generated_table_matches_runtime_planner::<fp128_5823::OneHot>(
             fp128_adaptive_onehot_d64_table(),
         );
+    }
+
+    #[test]
+    fn d128_bounded_families_fall_back_to_runtime_planner() {
+        assert!(fp128_adaptive_bounded_table::<128, 128, 1, 1, 1>().is_none());
+        assert!(fp128_adaptive_bounded_table::<128, 3, 1, 1, 1>().is_none());
     }
 
     #[test]

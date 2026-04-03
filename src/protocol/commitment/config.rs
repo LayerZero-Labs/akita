@@ -293,6 +293,37 @@ fn fp128_generated_schedule<Cfg: CommitmentConfig>(
     fp128_planned_schedule::<Cfg>(max_num_vars)
 }
 
+/// Root outer-rank escalation needed to keep the `D=128` bounded families
+/// above the audited 128-bit SIS floor.
+///
+/// The explicit D=128 width audit shows that the rank-1 root `B`/`D` rows
+/// cross the bucket-3 floor at `max_num_vars >= 54`, while rank 2 remains
+/// comfortably above the floor throughout the live preset surface.
+const FP128_D128_AUDITED_ROOT_RANK2_FROM_NV: usize = 54;
+const FP128_D128_AUDITED_ROOT_A_RANK2_FROM_NV: usize = 59;
+
+fn fp128_d128_audited_root_outer_rank(level: usize, max_num_vars: usize) -> usize {
+    if level == 0 && max_num_vars >= FP128_D128_AUDITED_ROOT_RANK2_FROM_NV {
+        2
+    } else {
+        1
+    }
+}
+
+fn fp128_d128_audited_root_a_rank<const LOG_COMMIT_BOUND: u32>(
+    level: usize,
+    max_num_vars: usize,
+) -> usize {
+    if LOG_COMMIT_BOUND != 1
+        && level == 0
+        && max_num_vars >= FP128_D128_AUDITED_ROOT_A_RANK2_FROM_NV
+    {
+        2
+    } else {
+        1
+    }
+}
+
 /// Runtime commitment layout authority for ring-native commitments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HachiCommitmentLayout {
@@ -1094,11 +1125,21 @@ impl<
         fp128_decomposition(LOG_COMMIT_BOUND, LOG_BASIS)
     }
 
-    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
+    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
+        let audited_root_rank = if D == 128 {
+            fp128_d128_audited_root_outer_rank(0, max_num_vars)
+        } else {
+            1
+        };
+        let audited_root_a_rank = if D == 128 {
+            fp128_d128_audited_root_a_rank::<LOG_COMMIT_BOUND>(0, max_num_vars)
+        } else {
+            1
+        };
         CommitmentEnvelope {
-            max_n_a: N_A,
-            max_n_b: N_B,
-            max_n_d: N_D,
+            max_n_a: N_A.max(audited_root_a_rank),
+            max_n_b: N_B.max(audited_root_rank),
+            max_n_d: N_D.max(audited_root_rank),
         }
     }
 
@@ -1192,6 +1233,47 @@ impl<
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
         fp128_stage1_challenge_config(d)
     }
+
+    fn n_b_at_level(level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {
+        if D == 128 {
+            N_B.max(fp128_d128_audited_root_outer_rank(level, max_num_vars))
+        } else {
+            N_B
+        }
+    }
+
+    fn n_d_at_level(level: usize, max_num_vars: usize, current_w_len: usize) -> usize {
+        let _ = current_w_len;
+        if D == 128 {
+            N_D.max(fp128_d128_audited_root_outer_rank(level, max_num_vars))
+        } else {
+            N_D
+        }
+    }
+
+    fn level_params_with_log_basis<Cfg: CommitmentConfig>(
+        inputs: HachiScheduleInputs,
+        log_basis: u32,
+    ) -> HachiLevelParams {
+        let d = Self::d_at_level(inputs.level, inputs.current_w_len);
+        let stage1_config = Self::stage1_challenge_config(d);
+        HachiLevelParams {
+            d,
+            log_basis,
+            n_a: if D == 128 {
+                N_A.max(fp128_d128_audited_root_a_rank::<LOG_COMMIT_BOUND>(
+                    inputs.level,
+                    inputs.max_num_vars,
+                ))
+            } else {
+                N_A
+            },
+            n_b: Self::n_b_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
+            n_d: Self::n_d_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
+            challenge_l1_mass: stage1_config.l1_mass(),
+            stage1_config,
+        }
+    }
 }
 
 /// Adaptive fp128 onehot policy with the coarse D=64 outer-rank schedule.
@@ -1271,6 +1353,7 @@ impl CommitmentPolicy for Fp128AdaptiveOneHotD64Policy {
 #[cfg(test)]
 mod fp128_policy_tests {
     use super::*;
+    use hachi_planner::sis_security::min_rank_for_secure_width;
 
     #[test]
     fn small_d_stage1_challenge_families_match_study_parameters() {
@@ -1289,6 +1372,116 @@ mod fp128_policy_tests {
             }
             other => panic!("expected uniform D=32 family, got {other:?}"),
         }
+    }
+
+    type D128OneHotCandidate = CommitmentPreset<
+        crate::algebra::Prime128Offset275,
+        Fp128AdaptiveBoundedPolicy<128, 1, 1, 1, 1>,
+    >;
+
+    fn assert_d128_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
+        min_num_vars: usize,
+        max_num_vars: usize,
+    ) {
+        assert_eq!(Cfg::D, 128, "helper only audits D=128 configs");
+
+        let root_onehot = Cfg::decomposition().log_commit_bound == 1;
+        for num_vars in min_num_vars..=max_num_vars {
+            let plan = Cfg::schedule_plan(num_vars)
+                .unwrap()
+                .expect("audited D=128 config should have a schedule");
+
+            for level in &plan.levels {
+                let raw_collision = if root_onehot && level.inputs.level == 0 {
+                    2
+                } else {
+                    (1u32 << level.params.log_basis) - 1
+                };
+
+                let a_rank = min_rank_for_secure_width(128, raw_collision, level.layout.inner_width)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "missing audited A-row SIS width for num_vars={}, level={}, lb={}, width={}",
+                            num_vars,
+                            level.inputs.level,
+                            level.params.log_basis,
+                            level.layout.inner_width
+                        )
+                    });
+                assert!(
+                    a_rank <= level.params.n_a as u32,
+                    "A-row SIS audit failed for num_vars={}, level={}, lb={}, width={}, required_rank={}, actual_rank={}",
+                    num_vars,
+                    level.inputs.level,
+                    level.params.log_basis,
+                    level.layout.inner_width,
+                    a_rank,
+                    level.params.n_a,
+                );
+
+                let bd_collision = (1u32 << level.params.log_basis) - 1;
+                let b_rank =
+                    min_rank_for_secure_width(128, bd_collision, level.layout.outer_width)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "missing audited B-row SIS width for num_vars={}, level={}, lb={}, width={}",
+                                num_vars,
+                                level.inputs.level,
+                                level.params.log_basis,
+                                level.layout.outer_width
+                            )
+                        });
+                assert!(
+                    b_rank <= level.params.n_b as u32,
+                    "B-row SIS audit failed for num_vars={}, level={}, lb={}, width={}, required_rank={}, actual_rank={}",
+                    num_vars,
+                    level.inputs.level,
+                    level.params.log_basis,
+                    level.layout.outer_width,
+                    b_rank,
+                    level.params.n_b,
+                );
+
+                let d_rank =
+                    min_rank_for_secure_width(128, bd_collision, level.layout.d_matrix_width)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "missing audited D-row SIS width for num_vars={}, level={}, lb={}, width={}",
+                                num_vars,
+                                level.inputs.level,
+                                level.params.log_basis,
+                                level.layout.d_matrix_width
+                            )
+                        });
+                assert!(
+                    d_rank <= level.params.n_d as u32,
+                    "D-row SIS audit failed for num_vars={}, level={}, lb={}, width={}, required_rank={}, actual_rank={}",
+                    num_vars,
+                    level.inputs.level,
+                    level.params.log_basis,
+                    level.layout.d_matrix_width,
+                    d_rank,
+                    level.params.n_d,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn current_d128_full_schedule_stays_within_audited_sis_widths() {
+        type Cfg = crate::protocol::commitment::presets::fp128::D128Full;
+        assert_d128_schedule_stays_within_audited_sis_widths::<Cfg>(8, 63);
+    }
+
+    #[test]
+    fn current_d128_logbasis_schedule_stays_within_audited_sis_widths() {
+        type Cfg = crate::protocol::commitment::presets::fp128::LogBasis;
+        assert_d128_schedule_stays_within_audited_sis_widths::<Cfg>(8, 63);
+    }
+
+    #[test]
+    fn current_d128_onehot_candidate_schedule_stays_within_audited_sis_widths() {
+        assert_d128_schedule_stays_within_audited_sis_widths::<D128OneHotCandidate>(8, 63);
     }
 }
 

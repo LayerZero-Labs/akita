@@ -12,7 +12,7 @@ const _: () = assert!(MAX_RANK == 4, "SIS width table only covers ranks 1..=4");
 /// Verified with lattice-estimator (BDGL16 + lgsa, q = 2^128 - 275).
 ///
 /// Parameters:
-/// - `d`: ring dimension of ZqX/(X^D + 1). One of {32, 64}.
+/// - `d`: ring dimension of ZqX/(X^D + 1). One of {32, 64, 128}.
 /// - `collision_inf`: worst-case L-infinity norm of the difference between
 ///   two valid witness vectors that collide under the SIS commitment.
 ///   For the B/D roles this is the balanced-digit bound `2^lb - 1`.
@@ -20,6 +20,11 @@ const _: () = assert!(MAX_RANK == 4, "SIS width table only covers ranks 1..=4");
 ///   the raw digit collision is scaled by the maximum absolute coefficient
 ///   in the stage-1 challenge family and rounded up to the next supported
 ///   SIS bucket.
+///
+/// The D=128 rows were computed with the same estimator/model and capped
+/// binary searches. Many of those entries remain above the 128-bit floor at
+/// the search cap, so the large capped values should be read as "at least this
+/// large", not as tight cutoffs.
 fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; MAX_RANK as usize]> {
     match (d, collision_inf) {
         // D=32
@@ -44,6 +49,18 @@ fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; MAX_RANK as usiz
         (64, 127) => Some([540, 2_412_030, 20_000_000, 20_000_000]),
         (64, 255) => Some([134, 598_287, 20_000_000, 20_000_000]),
         (64, 511) => Some([33, 148_987, 20_000_000, 20_000_000]),
+        // D=128
+        (128, 2) => Some([500_000_000, 50_000_000_000, 50_000_000_000, 50_000_000_000]),
+        (128, 3) => Some([
+            2_161_313_561,
+            50_000_000_000,
+            50_000_000_000,
+            50_000_000_000,
+        ]),
+        (128, 7) => Some([396_975_960, 50_000_000_000, 50_000_000_000, 50_000_000_000]),
+        (128, 15) => Some([86_452_542, 50_000_000_000, 50_000_000_000, 50_000_000_000]),
+        (128, 31) => Some([20_241_230, 50_000_000_000, 50_000_000_000, 50_000_000_000]),
+        (128, 63) => Some([4_900_937, 50_000_000_000, 50_000_000_000, 50_000_000_000]),
         _ => None,
     }
 }
@@ -68,9 +85,11 @@ pub fn min_rank_for_secure_width(d: u32, collision_inf: u32, width: usize) -> Op
 pub fn ceil_supported_collision(d: u32, collision_inf: u32) -> Option<u32> {
     const D32: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047];
     const D64: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511];
+    const D128: &[u32] = &[2, 3, 7, 15, 31, 63];
     let buckets = match d {
         32 => D32,
         64 => D64,
+        128 => D128,
         _ => return None,
     };
     buckets
@@ -104,5 +123,14 @@ mod tests {
     fn ceil_collision_bucket() {
         assert_eq!(ceil_supported_collision(32, 248), Some(255));
         assert_eq!(ceil_supported_collision(64, 62), Some(63));
+        assert_eq!(ceil_supported_collision(128, 62), Some(63));
+    }
+
+    #[test]
+    fn d128_rank_lookup() {
+        assert_eq!(min_rank_for_secure_width(128, 63, 4_900_937), Some(1));
+        assert_eq!(min_rank_for_secure_width(128, 63, 4_900_938), Some(2));
+        assert_eq!(min_rank_for_secure_width(128, 31, 20_241_230), Some(1));
+        assert_eq!(min_rank_for_secure_width(128, 31, 20_241_231), Some(2));
     }
 }

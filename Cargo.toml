@@ -57,6 +57,7 @@ ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/tw
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 tracing-chrome = "0.7"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
+hachi-planner = { path = "planner" }
 
 [[example]]
 name = "profile"
