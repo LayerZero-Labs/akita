@@ -31,7 +31,8 @@ pub use commitment::{
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use dynamic_commitment_scheme::{
-    DynamicCommitHint, DynamicHachiCommitmentScheme, DynamicHachiProverSetup,
+    DynamicCommitHint, DynamicFp128FullFamily, DynamicFp128FullScheme, DynamicFp128OneHotFamily,
+    DynamicFp128OneHotScheme, DynamicHachiCommitmentScheme, DynamicHachiProverSetup,
     DynamicHachiVerifierSetup, DynamicRingCommitment, DynamicRootConfigFamily,
 };
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, MultilinearPolynomail, OneHotIndex, OneHotPoly};

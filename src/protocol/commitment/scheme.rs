@@ -173,12 +173,13 @@ where
     fn protocol_name() -> &'static [u8];
 }
 
-/// Public PCS interface with root ring selection fixed at setup time.
+/// Public PCS interface with root ring selection chosen from runtime context.
 ///
 /// Callers provide D-independent root polynomials via
-/// [`MultilinearPolynomial`]. The implementation chooses the root ring degree
-/// from public inputs during setup, then dispatches the rest of the protocol to
-/// the corresponding typed kernel.
+/// [`MultilinearPolynomial`]. The implementation builds support for every root
+/// ring in the selected family during setup, then lets each commitment group
+/// choose the concrete root ring degree from its public runtime inputs before
+/// dispatching into the corresponding typed kernel.
 pub trait DynamicCommitmentScheme<F>: Clone + Send + Sync + 'static
 where
     F: FieldCore + CanonicalField,

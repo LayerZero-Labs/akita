@@ -15,8 +15,10 @@ use hachi_pcs::protocol::proof::{
 };
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::{
-    BasisMode, BlockOrder, CanonicalField, CommitmentScheme, FromSmallInt, HachiPolyOps,
-    HachiSerialize, Transcript,
+    BasisMode, BlockOrder, CanonicalField, CommitmentScheme, DenseMultilinear,
+    DynamicCommitmentScheme, DynamicFp128FullFamily, DynamicFp128OneHotFamily,
+    DynamicHachiCommitmentScheme, DynamicRootConfigFamily, FromSmallInt, HachiPolyOps,
+    HachiSerialize, MultilinearPolynomial, OneHotMultilinear, Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -578,6 +580,239 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     }
 }
 
+fn dynamic_singleton_plan<Family: DynamicRootConfigFamily<F>>(
+    nv: usize,
+    root_d: usize,
+) -> Option<HachiSchedulePlan> {
+    match root_d {
+        32 => Family::Cfg32::schedule_plan(nv).expect("dynamic singleton schedule plan"),
+        64 => Family::Cfg64::schedule_plan(nv).expect("dynamic singleton schedule plan"),
+        128 => Family::Cfg128::schedule_plan(nv).expect("dynamic singleton schedule plan"),
+        _ => unreachable!("dynamic schemes only select D in 32/64/128"),
+    }
+}
+
+fn run_dynamic_dense_mode<Family>(title: &str, nv: usize)
+where
+    Family: DynamicRootConfigFamily<F>,
+{
+    type Scheme<Family> = DynamicHachiCommitmentScheme<Family>;
+
+    tracing::info!("{}", title);
+
+    let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
+    let pt: Vec<F> = (0..nv)
+        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .collect();
+    let decomp = Family::Cfg128::decomposition();
+    let half_bound = 1i64 << (decomp.log_commit_bound.min(62) - 1);
+    let evals: Vec<F> = if decomp.log_commit_bound >= 128 {
+        (0..(1usize << nv))
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect()
+    } else {
+        (0..(1usize << nv))
+            .map(|_| F::from_i64(rng.gen_range(-half_bound..half_bound)))
+            .collect()
+    };
+    let dense = DenseMultilinear::from_field_evals(nv, &evals).unwrap();
+    let poly: MultilinearPolynomial<F> = dense.clone().into();
+
+    let t0 = Instant::now();
+    let setup = <Scheme<Family> as DynamicCommitmentScheme<F>>::setup_prover(nv, 1);
+    tracing::info!(
+        label = "dense_dynamic",
+        elapsed_s = t0.elapsed().as_secs_f64(),
+        "setup"
+    );
+
+    let t0 = Instant::now();
+    let (commitment, hint) =
+        <Scheme<Family> as DynamicCommitmentScheme<F>>::commit(std::slice::from_ref(&poly), &setup)
+            .unwrap();
+    let root_d = commitment.root_ring_dim();
+    tracing::info!(
+        label = "dense_dynamic",
+        root_d,
+        elapsed_s = t0.elapsed().as_secs_f64(),
+        "commit"
+    );
+
+    let opening = match root_d {
+        32 => {
+            let layout = hachi_batched_root_layout::<Family::Cfg32, 32>(nv, 1).unwrap();
+            let typed = dense.to_typed::<32>().unwrap();
+            opening_from_poly(&typed, &pt, &layout, BasisMode::Lagrange)
+        }
+        64 => {
+            let layout = hachi_batched_root_layout::<Family::Cfg64, 64>(nv, 1).unwrap();
+            let typed = dense.to_typed::<64>().unwrap();
+            opening_from_poly(&typed, &pt, &layout, BasisMode::Lagrange)
+        }
+        128 => {
+            let layout = hachi_batched_root_layout::<Family::Cfg128, 128>(nv, 1).unwrap();
+            let typed = dense.to_typed::<128>().unwrap();
+            opening_from_poly(&typed, &pt, &layout, BasisMode::Lagrange)
+        }
+        _ => unreachable!("dynamic schemes only select D in 32/64/128"),
+    };
+    let plan = dynamic_singleton_plan::<Family>(nv, root_d);
+
+    let t0 = Instant::now();
+    let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
+    let proof = <Scheme<Family> as DynamicCommitmentScheme<F>>::prove(
+        &setup,
+        &poly,
+        &pt,
+        hint,
+        &mut prover_transcript,
+        &commitment,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
+    tracing::info!(
+        label = "dense_dynamic",
+        root_d,
+        elapsed_s = t0.elapsed().as_secs_f64(),
+        "prove"
+    );
+    print_proof_summary("dense_dynamic", &proof, plan.as_ref());
+
+    let t0 = Instant::now();
+    let verifier_setup = <Scheme<Family> as DynamicCommitmentScheme<F>>::setup_verifier(&setup);
+    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
+    match <Scheme<Family> as DynamicCommitmentScheme<F>>::verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        &pt,
+        &opening,
+        &commitment,
+        BasisMode::Lagrange,
+    ) {
+        Ok(()) => tracing::info!(
+            label = "dense_dynamic",
+            root_d,
+            elapsed_s = t0.elapsed().as_secs_f64(),
+            "verify OK"
+        ),
+        Err(e) => tracing::error!(
+            label = "dense_dynamic",
+            root_d,
+            elapsed_s = t0.elapsed().as_secs_f64(),
+            error = %e,
+            "verify FAILED"
+        ),
+    }
+}
+
+fn run_dynamic_onehot_mode<Family>(title: &str, nv: usize)
+where
+    Family: DynamicRootConfigFamily<F>,
+{
+    type Scheme<Family> = DynamicHachiCommitmentScheme<Family>;
+
+    tracing::info!("{}", title);
+
+    let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
+    let total_chunks = (1usize << nv) / ONEHOT_K;
+    let indices: Vec<Option<usize>> = (0..total_chunks)
+        .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
+        .collect();
+    let onehot = OneHotMultilinear::new(nv, ONEHOT_K, indices).unwrap();
+    let poly: MultilinearPolynomial<F> = onehot.clone().into();
+    let pt: Vec<F> = (0..nv)
+        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .collect();
+
+    let t0 = Instant::now();
+    let setup = <Scheme<Family> as DynamicCommitmentScheme<F>>::setup_prover(nv, 1);
+    tracing::info!(
+        label = "onehot_dynamic",
+        elapsed_s = t0.elapsed().as_secs_f64(),
+        "setup"
+    );
+
+    let t0 = Instant::now();
+    let (commitment, hint) =
+        <Scheme<Family> as DynamicCommitmentScheme<F>>::commit(std::slice::from_ref(&poly), &setup)
+            .unwrap();
+    let root_d = commitment.root_ring_dim();
+    tracing::info!(
+        label = "onehot_dynamic",
+        root_d,
+        elapsed_s = t0.elapsed().as_secs_f64(),
+        "commit"
+    );
+
+    let opening = match root_d {
+        32 => {
+            let layout = hachi_batched_root_layout::<Family::Cfg32, 32>(nv, 1).unwrap();
+            let typed = onehot.to_typed::<F, 32>(layout).unwrap();
+            opening_from_poly(&typed, &pt, &layout, BasisMode::Lagrange)
+        }
+        64 => {
+            let layout = hachi_batched_root_layout::<Family::Cfg64, 64>(nv, 1).unwrap();
+            let typed = onehot.to_typed::<F, 64>(layout).unwrap();
+            opening_from_poly(&typed, &pt, &layout, BasisMode::Lagrange)
+        }
+        128 => {
+            let layout = hachi_batched_root_layout::<Family::Cfg128, 128>(nv, 1).unwrap();
+            let typed = onehot.to_typed::<F, 128>(layout).unwrap();
+            opening_from_poly(&typed, &pt, &layout, BasisMode::Lagrange)
+        }
+        _ => unreachable!("dynamic schemes only select D in 32/64/128"),
+    };
+    let plan = dynamic_singleton_plan::<Family>(nv, root_d);
+
+    let t0 = Instant::now();
+    let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
+    let proof = <Scheme<Family> as DynamicCommitmentScheme<F>>::prove(
+        &setup,
+        &poly,
+        &pt,
+        hint,
+        &mut prover_transcript,
+        &commitment,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
+    tracing::info!(
+        label = "onehot_dynamic",
+        root_d,
+        elapsed_s = t0.elapsed().as_secs_f64(),
+        "prove"
+    );
+    print_proof_summary("onehot_dynamic", &proof, plan.as_ref());
+
+    let t0 = Instant::now();
+    let verifier_setup = <Scheme<Family> as DynamicCommitmentScheme<F>>::setup_verifier(&setup);
+    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
+    match <Scheme<Family> as DynamicCommitmentScheme<F>>::verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        &pt,
+        &opening,
+        &commitment,
+        BasisMode::Lagrange,
+    ) {
+        Ok(()) => tracing::info!(
+            label = "onehot_dynamic",
+            root_d,
+            elapsed_s = t0.elapsed().as_secs_f64(),
+            "verify OK"
+        ),
+        Err(e) => tracing::error!(
+            label = "onehot_dynamic",
+            root_d,
+            elapsed_s = t0.elapsed().as_secs_f64(),
+            error = %e,
+            "verify FAILED"
+        ),
+    }
+}
+
 fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(title: &str, nv: usize) {
     let layout = resolve_layout::<Cfg>(nv);
     let plan = Cfg::schedule_plan(nv).expect("schedule plan");
@@ -710,6 +945,24 @@ fn main() {
                 )
             };
             run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
+        }
+        "full_dynamic" => {
+            if num_polys != 1 {
+                panic!("full_dynamic currently profiles only singleton commitments");
+            }
+            run_dynamic_dense_mode::<DynamicFp128FullFamily>(
+                "=== full_dynamic (q=2^128-275, runtime-selected root D, dense) ===",
+                nv,
+            );
+        }
+        "onehot_dynamic" => {
+            if num_polys != 1 {
+                panic!("onehot_dynamic currently profiles only singleton commitments");
+            }
+            run_dynamic_onehot_mode::<DynamicFp128OneHotFamily>(
+                "=== onehot_dynamic (q=2^128-275, runtime-selected root D, 1-of-256) ===",
+                nv,
+            );
         }
         "logbasis" => {
             type Cfg = fp128::LogBasis;

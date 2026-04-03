@@ -2,16 +2,21 @@
 //!
 //! The low-level Hachi kernels remain const-generic over the root ring degree
 //! `D`. This module lifts the public API one level up so callers can provide
-//! ring-agnostic root polynomials and let setup choose the root ring from
-//! public inputs.
+//! ring-agnostic root polynomials and let each commitment group choose the
+//! root ring from its actual public runtime context.
 
 use crate::algebra::fields::wide::HasWide;
 use crate::algebra::fields::HasUnreducedOps;
 use crate::error::HachiError;
 use crate::primitives::serialization::Valid;
+use crate::protocol::commitment::schedule::{
+    estimated_recursive_suffix_bytes, hachi_root_runtime_plan_from_root_layout,
+};
 use crate::protocol::commitment::{
-    hachi_batched_root_layout, AppendToTranscript, CommitmentConfig, CommitmentScheme,
-    DynamicCommitmentScheme, HachiProverSetup, HachiVerifierSetup, RingCommitment,
+    hachi_batched_root_layout, presets::fp128, AppendToTranscript, CommitmentConfig,
+    CommitmentPreset, CommitmentScheme, DynamicCommitmentScheme, Fp128AdaptiveBoundedPolicy,
+    HachiProverSetup, HachiRootBatchSummary, HachiScheduleLookupKey, HachiVerifierSetup,
+    RingCommitment,
 };
 use crate::protocol::commitment_scheme::HachiCommitmentScheme;
 use crate::protocol::opening_point::BasisMode;
@@ -24,9 +29,9 @@ use std::marker::PhantomData;
 /// Family-level selector for dynamic root-ring Hachi schemes.
 ///
 /// Each associated config fixes one concrete root ring degree. The family
-/// chooses which root degree to use at setup time from public inputs. After
-/// that choice, the protocol runs through the existing typed kernel for that
-/// fixed-D config.
+/// chooses which root degree to use for each commitment group from its actual
+/// public runtime context. After that choice, the protocol runs through the
+/// existing typed kernel for that fixed-D config.
 pub trait DynamicRootConfigFamily<F>: Clone + Send + Sync + 'static
 where
     F: FieldCore + CanonicalField,
@@ -38,69 +43,102 @@ where
     /// Typed config to use when the chosen root ring is `D=128`.
     type Cfg128: CommitmentConfig<Field = F>;
 
-    /// Choose the root ring degree for a setup.
+    /// Choose the root ring degree for one root commitment/proof context.
     ///
     /// # Errors
     ///
     /// Returns an error if the family cannot choose a supported root ring from
-    /// the provided public setup parameters.
-    fn select_root_ring_dim(
-        max_num_vars: usize,
-        max_num_batched_polys: usize,
-    ) -> Result<usize, HachiError>;
+    /// the provided public runtime parameters.
+    fn select_root_ring_dim(key: HachiScheduleLookupKey) -> Result<usize, HachiError> {
+        select_smallest_estimated_proof_root_ring_dim::<Self::Cfg32, Self::Cfg64, Self::Cfg128>(key)
+    }
+}
+
+fn estimated_total_proof_bytes<Cfg, const D: usize>(
+    key: HachiScheduleLookupKey,
+) -> Result<usize, HachiError>
+where
+    Cfg: CommitmentConfig,
+{
+    let root_layout = hachi_batched_root_layout::<Cfg, D>(key.num_vars, key.layout_num_claims)?;
+    let root_plan = hachi_root_runtime_plan_from_root_layout::<Cfg, D>(key, root_layout)?;
+    let suffix_bytes = estimated_recursive_suffix_bytes::<Cfg>(
+        key.max_num_vars,
+        root_plan.next_inputs.level,
+        root_plan.next_w_len(),
+    )?;
+    Ok(root_plan.level_proof_bytes::<Cfg>() + suffix_bytes)
+}
+
+fn select_smallest_estimated_proof_root_ring_dim<Cfg32, Cfg64, Cfg128>(
+    key: HachiScheduleLookupKey,
+) -> Result<usize, HachiError>
+where
+    Cfg32: CommitmentConfig,
+    Cfg64: CommitmentConfig,
+    Cfg128: CommitmentConfig,
+{
+    let mut best: Option<(usize, usize)> = None;
+
+    for (root_d, proof_bytes) in [
+        (32usize, estimated_total_proof_bytes::<Cfg32, 32>(key)),
+        (64usize, estimated_total_proof_bytes::<Cfg64, 64>(key)),
+        (128usize, estimated_total_proof_bytes::<Cfg128, 128>(key)),
+    ] {
+        let Ok(proof_bytes) = proof_bytes else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(best_d, best_bytes)| {
+            proof_bytes < *best_bytes || (proof_bytes == *best_bytes && root_d < *best_d)
+        }) {
+            best = Some((root_d, proof_bytes));
+        }
+    }
+
+    best.map(|(root_d, _)| root_d).ok_or_else(|| {
+        HachiError::InvalidInput(format!(
+            "dynamic root selection found no supported root D for num_vars={}, layout_num_claims={}, batch_claims={}",
+            key.num_vars, key.layout_num_claims, key.batch.num_claims
+        ))
+    })
 }
 
 /// D-erased prover setup for the public dynamic Hachi API.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DynamicHachiProverSetup<F: FieldCore> {
+pub struct DynamicHachiProverSetup<F: FieldCore> {
+    /// Maximum root polynomial variable count supported by this setup family.
+    pub max_num_vars: usize,
+    /// Maximum number of batched root polynomials supported by this setup family.
+    pub max_num_batched_polys: usize,
     /// Root ring `D=32`.
-    D32(Box<HachiProverSetup<F, 32>>),
+    pub d32: Option<Box<HachiProverSetup<F, 32>>>,
     /// Root ring `D=64`.
-    D64(Box<HachiProverSetup<F, 64>>),
+    pub d64: Option<Box<HachiProverSetup<F, 64>>>,
     /// Root ring `D=128`.
-    D128(Box<HachiProverSetup<F, 128>>),
+    pub d128: Option<Box<HachiProverSetup<F, 128>>>,
 }
 
 impl<F: FieldCore> DynamicHachiProverSetup<F> {
-    /// Root ring degree selected for this setup.
-    pub fn root_ring_dim(&self) -> usize {
-        match self {
-            Self::D32(_) => 32,
-            Self::D64(_) => 64,
-            Self::D128(_) => 128,
-        }
+    /// Maximum root polynomial variable count supported by this setup.
+    pub fn max_num_vars(&self) -> usize {
+        self.max_num_vars
     }
 
     /// Maximum batch capacity carried by this setup.
     pub fn max_num_batched_polys(&self) -> usize {
-        match self {
-            Self::D32(setup) => setup.max_num_batched_polys(),
-            Self::D64(setup) => setup.max_num_batched_polys(),
-            Self::D128(setup) => setup.max_num_batched_polys(),
-        }
+        self.max_num_batched_polys
     }
 }
 
 /// D-erased verifier setup for the public dynamic Hachi API.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DynamicHachiVerifierSetup<F: FieldCore> {
+pub struct DynamicHachiVerifierSetup<F: FieldCore> {
     /// Root ring `D=32`.
-    D32(HachiVerifierSetup<F>),
+    pub d32: Option<HachiVerifierSetup<F>>,
     /// Root ring `D=64`.
-    D64(HachiVerifierSetup<F>),
+    pub d64: Option<HachiVerifierSetup<F>>,
     /// Root ring `D=128`.
-    D128(HachiVerifierSetup<F>),
-}
-
-impl<F: FieldCore> DynamicHachiVerifierSetup<F> {
-    /// Root ring degree selected for this setup.
-    pub fn root_ring_dim(&self) -> usize {
-        match self {
-            Self::D32(_) => 32,
-            Self::D64(_) => 64,
-            Self::D128(_) => 128,
-        }
-    }
+    pub d128: Option<HachiVerifierSetup<F>>,
 }
 
 /// D-erased root commitment object for the public dynamic Hachi API.
@@ -184,6 +222,57 @@ fn ensure_nonempty_uniform_num_vars<F: FieldCore>(
     Ok(num_vars)
 }
 
+fn commit_selection_key<F: FieldCore>(
+    polys: &[MultilinearPolynomial<F>],
+    setup: &DynamicHachiProverSetup<F>,
+    label: &str,
+) -> Result<HachiScheduleLookupKey, HachiError> {
+    let num_vars = ensure_nonempty_uniform_num_vars(polys, label)?;
+    if num_vars > setup.max_num_vars() {
+        return Err(HachiError::InvalidInput(format!(
+            "{label} polynomial uses {num_vars} variables but setup supports at most {}",
+            setup.max_num_vars()
+        )));
+    }
+    let num_polys = polys.len();
+    if num_polys > setup.max_num_batched_polys() {
+        return Err(HachiError::InvalidInput(format!(
+            "{label} received {num_polys} polynomials but setup supports at most {}",
+            setup.max_num_batched_polys()
+        )));
+    }
+    let batch = HachiRootBatchSummary::new(num_polys, 1, 1)?;
+    Ok(HachiScheduleLookupKey::with_batch(
+        setup.max_num_vars(),
+        num_vars,
+        num_polys,
+        batch,
+    ))
+}
+
+fn require_typed_prover_setup<'a, F: FieldCore, const D: usize>(
+    setup: &'a Option<Box<HachiProverSetup<F, D>>>,
+    label: &str,
+) -> Result<&'a HachiProverSetup<F, D>, HachiError> {
+    setup.as_deref().ok_or_else(|| {
+        HachiError::InvalidInput(format!(
+            "{label} requires root D={D}, but this dynamic setup does not support it"
+        ))
+    })
+}
+
+fn require_typed_verifier_setup<'a, F: FieldCore>(
+    setup: &'a Option<HachiVerifierSetup<F>>,
+    root_d: usize,
+    label: &str,
+) -> Result<&'a HachiVerifierSetup<F>, HachiError> {
+    setup.as_ref().ok_or_else(|| {
+        HachiError::InvalidInput(format!(
+            "{label} requires root D={root_d}, but this dynamic verifier setup does not support it"
+        ))
+    })
+}
+
 fn materialize_typed_root_group<F, const D: usize, Cfg>(
     polys: &[MultilinearPolynomial<F>],
     max_num_batched_polys: usize,
@@ -229,6 +318,50 @@ where
         .collect()
 }
 
+fn uniform_root_ring_dim<'a, F: FieldCore + 'a>(
+    hints_by_point: impl IntoIterator<Item = &'a [DynamicCommitHint<F>]>,
+    commitments_by_point: impl IntoIterator<Item = &'a [DynamicRingCommitment<F>]>,
+    label: &str,
+) -> Result<usize, HachiError> {
+    let mut expected: Option<usize> = None;
+
+    for (point_idx, hints) in hints_by_point.into_iter().enumerate() {
+        for (group_idx, hint) in hints.iter().enumerate() {
+            let root_d = hint.root_ring_dim();
+            if let Some(expected_d) = expected {
+                if root_d != expected_d {
+                    return Err(HachiError::InvalidInput(format!(
+                        "{label} requires one root D across the fused batch; point {point_idx} group {group_idx} used D={root_d} after earlier D={expected_d}"
+                    )));
+                }
+            } else {
+                expected = Some(root_d);
+            }
+        }
+    }
+
+    for (point_idx, commitments) in commitments_by_point.into_iter().enumerate() {
+        for (group_idx, commitment) in commitments.iter().enumerate() {
+            let root_d = commitment.root_ring_dim();
+            if let Some(expected_d) = expected {
+                if root_d != expected_d {
+                    return Err(HachiError::InvalidInput(format!(
+                        "{label} requires one root D across the fused batch; point {point_idx} group {group_idx} commitment used D={root_d} after earlier D={expected_d}"
+                    )));
+                }
+            } else {
+                expected = Some(root_d);
+            }
+        }
+    }
+
+    expected.ok_or_else(|| {
+        HachiError::InvalidInput(format!(
+            "{label} requires at least one hint or commitment group"
+        ))
+    })
+}
+
 macro_rules! clone_typed_commitment {
     ($commitment:expr, $variant:ident, $expected_d:literal, $label:expr) => {
         match $commitment {
@@ -271,48 +404,62 @@ where
     type BatchedCommitHint = Vec<DynamicCommitHint<F>>;
 
     fn setup_prover(max_num_vars: usize, max_num_batched_polys: usize) -> Self::ProverSetup {
-        match Family::select_root_ring_dim(max_num_vars, max_num_batched_polys)
-            .expect("dynamic root selection failed")
-        {
-            32 => DynamicHachiProverSetup::D32(Box::new(
-                <HachiCommitmentScheme<32, Family::Cfg32> as CommitmentScheme<F, 32>>::setup_prover(
-                    max_num_vars,
-                    max_num_batched_polys,
-                ),
-            )),
-            64 => DynamicHachiProverSetup::D64(Box::new(
-                <HachiCommitmentScheme<64, Family::Cfg64> as CommitmentScheme<F, 64>>::setup_prover(
-                    max_num_vars,
-                    max_num_batched_polys,
-                ),
-            )),
-            128 => DynamicHachiProverSetup::D128(Box::new(<HachiCommitmentScheme<
-                128,
-                Family::Cfg128,
-            > as CommitmentScheme<F, 128>>::setup_prover(
-                max_num_vars, max_num_batched_polys
-            ))),
-            root_d => panic!("unsupported dynamic root ring dimension: {root_d}"),
+        let d32 = std::panic::catch_unwind(|| {
+            <HachiCommitmentScheme<32, Family::Cfg32> as CommitmentScheme<F, 32>>::setup_prover(
+                max_num_vars,
+                max_num_batched_polys,
+            )
+        })
+        .ok()
+        .map(Box::new);
+        let d64 = std::panic::catch_unwind(|| {
+            <HachiCommitmentScheme<64, Family::Cfg64> as CommitmentScheme<F, 64>>::setup_prover(
+                max_num_vars,
+                max_num_batched_polys,
+            )
+        })
+        .ok()
+        .map(Box::new);
+        let d128 = std::panic::catch_unwind(|| {
+            <HachiCommitmentScheme<128, Family::Cfg128> as CommitmentScheme<F, 128>>::setup_prover(
+                max_num_vars,
+                max_num_batched_polys,
+            )
+        })
+        .ok()
+        .map(Box::new);
+
+        assert!(
+            d32.is_some() || d64.is_some() || d128.is_some(),
+            "dynamic setup found no supported root D for max_num_vars={max_num_vars}, max_num_batched_polys={max_num_batched_polys}"
+        );
+
+        DynamicHachiProverSetup {
+            max_num_vars,
+            max_num_batched_polys,
+            d32,
+            d64,
+            d128,
         }
     }
 
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
-        match setup {
-            DynamicHachiProverSetup::D32(setup) => DynamicHachiVerifierSetup::D32(
+        DynamicHachiVerifierSetup {
+            d32: setup.d32.as_ref().map(|typed_setup| {
                 <HachiCommitmentScheme<32, Family::Cfg32> as CommitmentScheme<F, 32>>::setup_verifier(
-                    setup,
-                ),
-            ),
-            DynamicHachiProverSetup::D64(setup) => DynamicHachiVerifierSetup::D64(
+                    typed_setup,
+                )
+            }),
+            d64: setup.d64.as_ref().map(|typed_setup| {
                 <HachiCommitmentScheme<64, Family::Cfg64> as CommitmentScheme<F, 64>>::setup_verifier(
-                    setup,
-                ),
-            ),
-            DynamicHachiProverSetup::D128(setup) => DynamicHachiVerifierSetup::D128(
+                    typed_setup,
+                )
+            }),
+            d128: setup.d128.as_ref().map(|typed_setup| {
                 <HachiCommitmentScheme<128, Family::Cfg128> as CommitmentScheme<F, 128>>::setup_verifier(
-                    setup,
-                ),
-            ),
+                    typed_setup,
+                )
+            }),
         }
     }
 
@@ -320,54 +467,61 @@ where
         polys: &[MultilinearPolynomial<F>],
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError> {
-        match setup {
-            DynamicHachiProverSetup::D32(setup) => {
+        let key = commit_selection_key(polys, setup, "dynamic commit")?;
+        match Family::select_root_ring_dim(key)? {
+            32 => {
+                let typed_setup = require_typed_prover_setup(&setup.d32, "dynamic commit")?;
                 let typed_polys = materialize_typed_root_group::<F, 32, Family::Cfg32>(
                     polys,
-                    setup.max_num_batched_polys(),
+                    typed_setup.max_num_batched_polys(),
                     "dynamic commit",
                 )?;
                 let (commitment, hint) =
                     <HachiCommitmentScheme<32, Family::Cfg32> as CommitmentScheme<F, 32>>::commit(
                         &typed_polys,
-                        setup,
+                        typed_setup,
                     )?;
                 Ok((
                     DynamicRingCommitment::D32(commitment),
                     DynamicCommitHint::D32(hint),
                 ))
             }
-            DynamicHachiProverSetup::D64(setup) => {
+            64 => {
+                let typed_setup = require_typed_prover_setup(&setup.d64, "dynamic commit")?;
                 let typed_polys = materialize_typed_root_group::<F, 64, Family::Cfg64>(
                     polys,
-                    setup.max_num_batched_polys(),
+                    typed_setup.max_num_batched_polys(),
                     "dynamic commit",
                 )?;
                 let (commitment, hint) =
                     <HachiCommitmentScheme<64, Family::Cfg64> as CommitmentScheme<F, 64>>::commit(
                         &typed_polys,
-                        setup,
+                        typed_setup,
                     )?;
                 Ok((
                     DynamicRingCommitment::D64(commitment),
                     DynamicCommitHint::D64(hint),
                 ))
             }
-            DynamicHachiProverSetup::D128(setup) => {
+            128 => {
+                let typed_setup = require_typed_prover_setup(&setup.d128, "dynamic commit")?;
                 let typed_polys = materialize_typed_root_group::<F, 128, Family::Cfg128>(
                     polys,
-                    setup.max_num_batched_polys(),
+                    typed_setup.max_num_batched_polys(),
                     "dynamic commit",
                 )?;
                 let (commitment, hint) = <HachiCommitmentScheme<128, Family::Cfg128> as CommitmentScheme<
                     F,
                     128,
-                >>::commit(&typed_polys, setup)?;
+                >>::commit(&typed_polys, typed_setup)?;
                 Ok((
                     DynamicRingCommitment::D128(commitment),
                     DynamicCommitHint::D128(hint),
                 ))
             }
+            root_d => Err(HachiError::InvalidInput(format!(
+                "dynamic commit selected unsupported root D={root_d}"
+            ))),
         }
     }
 
@@ -380,18 +534,19 @@ where
         commitment: &Self::Commitment,
         basis: BasisMode,
     ) -> Result<Self::Proof, HachiError> {
-        match setup {
-            DynamicHachiProverSetup::D32(setup) => {
+        match hint.root_ring_dim() {
+            32 => {
+                let typed_setup = require_typed_prover_setup(&setup.d32, "dynamic prove")?;
                 let typed_poly = materialize_typed_root_group::<F, 32, Family::Cfg32>(
                     std::slice::from_ref(poly),
-                    setup.max_num_batched_polys(),
+                    typed_setup.max_num_batched_polys(),
                     "dynamic prove",
                 )?;
                 let typed_hint = clone_typed_hint!(hint, D32, 32, "dynamic prove")?;
                 let typed_commitment =
                     clone_typed_commitment!(commitment, D32, 32, "dynamic prove")?;
                 <HachiCommitmentScheme<32, Family::Cfg32> as CommitmentScheme<F, 32>>::prove(
-                    setup,
+                    typed_setup,
                     &typed_poly[0],
                     opening_point,
                     typed_hint,
@@ -400,17 +555,18 @@ where
                     basis,
                 )
             }
-            DynamicHachiProverSetup::D64(setup) => {
+            64 => {
+                let typed_setup = require_typed_prover_setup(&setup.d64, "dynamic prove")?;
                 let typed_poly = materialize_typed_root_group::<F, 64, Family::Cfg64>(
                     std::slice::from_ref(poly),
-                    setup.max_num_batched_polys(),
+                    typed_setup.max_num_batched_polys(),
                     "dynamic prove",
                 )?;
                 let typed_hint = clone_typed_hint!(hint, D64, 64, "dynamic prove")?;
                 let typed_commitment =
                     clone_typed_commitment!(commitment, D64, 64, "dynamic prove")?;
                 <HachiCommitmentScheme<64, Family::Cfg64> as CommitmentScheme<F, 64>>::prove(
-                    setup,
+                    typed_setup,
                     &typed_poly[0],
                     opening_point,
                     typed_hint,
@@ -419,17 +575,18 @@ where
                     basis,
                 )
             }
-            DynamicHachiProverSetup::D128(setup) => {
+            128 => {
+                let typed_setup = require_typed_prover_setup(&setup.d128, "dynamic prove")?;
                 let typed_poly = materialize_typed_root_group::<F, 128, Family::Cfg128>(
                     std::slice::from_ref(poly),
-                    setup.max_num_batched_polys(),
+                    typed_setup.max_num_batched_polys(),
                     "dynamic prove",
                 )?;
                 let typed_hint = clone_typed_hint!(hint, D128, 128, "dynamic prove")?;
                 let typed_commitment =
                     clone_typed_commitment!(commitment, D128, 128, "dynamic prove")?;
                 <HachiCommitmentScheme<128, Family::Cfg128> as CommitmentScheme<F, 128>>::prove(
-                    setup,
+                    typed_setup,
                     &typed_poly[0],
                     opening_point,
                     typed_hint,
@@ -438,6 +595,9 @@ where
                     basis,
                 )
             }
+            root_d => Err(HachiError::InvalidInput(format!(
+                "dynamic prove received unsupported root D={root_d}"
+            ))),
         }
     }
 
@@ -450,11 +610,17 @@ where
         commitments_by_point: &[&[Self::Commitment]],
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, HachiError> {
-        match setup {
-            DynamicHachiProverSetup::D32(setup) => {
+        let root_d = uniform_root_ring_dim(
+            hints_by_point.iter().map(Vec::as_slice),
+            commitments_by_point.iter().copied(),
+            "dynamic batched_prove",
+        )?;
+        match root_d {
+            32 => {
+                let typed_setup = require_typed_prover_setup(&setup.d32, "dynamic batched_prove")?;
                 let typed_polys = materialize_typed_root_groups_by_point::<F, 32, Family::Cfg32>(
                     poly_groups_by_point,
-                    setup.max_num_batched_polys(),
+                    typed_setup.max_num_batched_polys(),
                     "dynamic batched_prove",
                 )?;
                 let typed_group_refs: Vec<Vec<&[TypedRootPolynomial<F, 32>]>> = typed_polys
@@ -506,7 +672,7 @@ where
                 let typed_commitment_refs: Vec<&[RingCommitment<F, 32>]> =
                     typed_commitments.iter().map(Vec::as_slice).collect();
                 <HachiCommitmentScheme<32, Family::Cfg32> as CommitmentScheme<F, 32>>::batched_prove(
-                    setup,
+                    typed_setup,
                     &typed_point_refs,
                     opening_points,
                     typed_hints,
@@ -515,10 +681,11 @@ where
                     basis,
                 )
             }
-            DynamicHachiProverSetup::D64(setup) => {
+            64 => {
+                let typed_setup = require_typed_prover_setup(&setup.d64, "dynamic batched_prove")?;
                 let typed_polys = materialize_typed_root_groups_by_point::<F, 64, Family::Cfg64>(
                     poly_groups_by_point,
-                    setup.max_num_batched_polys(),
+                    typed_setup.max_num_batched_polys(),
                     "dynamic batched_prove",
                 )?;
                 let typed_group_refs: Vec<Vec<&[TypedRootPolynomial<F, 64>]>> = typed_polys
@@ -570,7 +737,7 @@ where
                 let typed_commitment_refs: Vec<&[RingCommitment<F, 64>]> =
                     typed_commitments.iter().map(Vec::as_slice).collect();
                 <HachiCommitmentScheme<64, Family::Cfg64> as CommitmentScheme<F, 64>>::batched_prove(
-                    setup,
+                    typed_setup,
                     &typed_point_refs,
                     opening_points,
                     typed_hints,
@@ -579,10 +746,11 @@ where
                     basis,
                 )
             }
-            DynamicHachiProverSetup::D128(setup) => {
+            128 => {
+                let typed_setup = require_typed_prover_setup(&setup.d128, "dynamic batched_prove")?;
                 let typed_polys = materialize_typed_root_groups_by_point::<F, 128, Family::Cfg128>(
                     poly_groups_by_point,
-                    setup.max_num_batched_polys(),
+                    typed_setup.max_num_batched_polys(),
                     "dynamic batched_prove",
                 )?;
                 let typed_group_refs: Vec<Vec<&[TypedRootPolynomial<F, 128>]>> = typed_polys
@@ -634,7 +802,7 @@ where
                 let typed_commitment_refs: Vec<&[RingCommitment<F, 128>]> =
                     typed_commitments.iter().map(Vec::as_slice).collect();
                 <HachiCommitmentScheme<128, Family::Cfg128> as CommitmentScheme<F, 128>>::batched_prove(
-                    setup,
+                    typed_setup,
                     &typed_point_refs,
                     opening_points,
                     typed_hints,
@@ -643,6 +811,7 @@ where
                     basis,
                 )
             }
+            _ => unreachable!("uniform_root_ring_dim only returns supported root Ds"),
         }
     }
 
@@ -655,13 +824,14 @@ where
         commitment: &Self::Commitment,
         basis: BasisMode,
     ) -> Result<(), HachiError> {
-        match setup {
-            DynamicHachiVerifierSetup::D32(setup) => {
+        match commitment.root_ring_dim() {
+            32 => {
+                let typed_setup = require_typed_verifier_setup(&setup.d32, 32, "dynamic verify")?;
                 let typed_commitment =
                     clone_typed_commitment!(commitment, D32, 32, "dynamic verify")?;
                 <HachiCommitmentScheme<32, Family::Cfg32> as CommitmentScheme<F, 32>>::verify(
                     proof,
-                    setup,
+                    typed_setup,
                     transcript,
                     opening_point,
                     opening,
@@ -669,12 +839,13 @@ where
                     basis,
                 )
             }
-            DynamicHachiVerifierSetup::D64(setup) => {
+            64 => {
+                let typed_setup = require_typed_verifier_setup(&setup.d64, 64, "dynamic verify")?;
                 let typed_commitment =
                     clone_typed_commitment!(commitment, D64, 64, "dynamic verify")?;
                 <HachiCommitmentScheme<64, Family::Cfg64> as CommitmentScheme<F, 64>>::verify(
                     proof,
-                    setup,
+                    typed_setup,
                     transcript,
                     opening_point,
                     opening,
@@ -682,12 +853,13 @@ where
                     basis,
                 )
             }
-            DynamicHachiVerifierSetup::D128(setup) => {
+            128 => {
+                let typed_setup = require_typed_verifier_setup(&setup.d128, 128, "dynamic verify")?;
                 let typed_commitment =
                     clone_typed_commitment!(commitment, D128, 128, "dynamic verify")?;
                 <HachiCommitmentScheme<128, Family::Cfg128> as CommitmentScheme<F, 128>>::verify(
                     proof,
-                    setup,
+                    typed_setup,
                     transcript,
                     opening_point,
                     opening,
@@ -695,6 +867,9 @@ where
                     basis,
                 )
             }
+            root_d => Err(HachiError::InvalidInput(format!(
+                "dynamic verify received unsupported root D={root_d}"
+            ))),
         }
     }
 
@@ -707,8 +882,15 @@ where
         commitments_by_point: &[&[Self::Commitment]],
         basis: BasisMode,
     ) -> Result<(), HachiError> {
-        match setup {
-            DynamicHachiVerifierSetup::D32(setup) => {
+        let root_d = uniform_root_ring_dim(
+            std::iter::empty::<&[DynamicCommitHint<F>]>(),
+            commitments_by_point.iter().copied(),
+            "dynamic batched_verify",
+        )?;
+        match root_d {
+            32 => {
+                let typed_setup =
+                    require_typed_verifier_setup(&setup.d32, 32, "dynamic batched_verify")?;
                 let typed_commitments: Vec<Vec<RingCommitment<F, 32>>> = commitments_by_point
                     .iter()
                     .enumerate()
@@ -733,7 +915,7 @@ where
                     typed_commitments.iter().map(Vec::as_slice).collect();
                 <HachiCommitmentScheme<32, Family::Cfg32> as CommitmentScheme<F, 32>>::batched_verify(
                     proof,
-                    setup,
+                    typed_setup,
                     transcript,
                     opening_points,
                     opening_groups_by_point,
@@ -741,7 +923,9 @@ where
                     basis,
                 )
             }
-            DynamicHachiVerifierSetup::D64(setup) => {
+            64 => {
+                let typed_setup =
+                    require_typed_verifier_setup(&setup.d64, 64, "dynamic batched_verify")?;
                 let typed_commitments: Vec<Vec<RingCommitment<F, 64>>> = commitments_by_point
                     .iter()
                     .enumerate()
@@ -766,7 +950,7 @@ where
                     typed_commitments.iter().map(Vec::as_slice).collect();
                 <HachiCommitmentScheme<64, Family::Cfg64> as CommitmentScheme<F, 64>>::batched_verify(
                     proof,
-                    setup,
+                    typed_setup,
                     transcript,
                     opening_points,
                     opening_groups_by_point,
@@ -774,7 +958,9 @@ where
                     basis,
                 )
             }
-            DynamicHachiVerifierSetup::D128(setup) => {
+            128 => {
+                let typed_setup =
+                    require_typed_verifier_setup(&setup.d128, 128, "dynamic batched_verify")?;
                 let typed_commitments: Vec<Vec<RingCommitment<F, 128>>> = commitments_by_point
                     .iter()
                     .enumerate()
@@ -799,7 +985,7 @@ where
                     typed_commitments.iter().map(Vec::as_slice).collect();
                 <HachiCommitmentScheme<128, Family::Cfg128> as CommitmentScheme<F, 128>>::batched_verify(
                     proof,
-                    setup,
+                    typed_setup,
                     transcript,
                     opening_points,
                     opening_groups_by_point,
@@ -807,6 +993,7 @@ where
                     basis,
                 )
             }
+            _ => unreachable!("uniform_root_ring_dim only returns supported root Ds"),
         }
     }
 
@@ -814,6 +1001,39 @@ where
         b"hachi/dynamic-root"
     }
 }
+
+type Fp128AdaptiveBoundedD64<const LOG_COMMIT_BOUND: u32> =
+    CommitmentPreset<fp128::Field, Fp128AdaptiveBoundedPolicy<64, LOG_COMMIT_BOUND, 1, 1, 1>>;
+type Fp128AdaptiveBoundedD128<const LOG_COMMIT_BOUND: u32> =
+    CommitmentPreset<fp128::Field, Fp128AdaptiveBoundedPolicy<128, LOG_COMMIT_BOUND, 1, 1, 1>>;
+
+/// Dynamic fp128 dense family that chooses the root ring by estimated proof
+/// bytes across `D=32/64/128`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DynamicFp128FullFamily;
+
+impl DynamicRootConfigFamily<fp128::Field> for DynamicFp128FullFamily {
+    type Cfg32 = fp128::D32Full;
+    type Cfg64 = Fp128AdaptiveBoundedD64<128>;
+    type Cfg128 = fp128::Full;
+}
+
+/// Dynamic fp128 dense scheme that chooses the root ring at commit time.
+pub type DynamicFp128FullScheme = DynamicHachiCommitmentScheme<DynamicFp128FullFamily>;
+
+/// Dynamic fp128 onehot family that chooses the root ring by estimated proof
+/// bytes across `D=32/64/128`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DynamicFp128OneHotFamily;
+
+impl DynamicRootConfigFamily<fp128::Field> for DynamicFp128OneHotFamily {
+    type Cfg32 = fp128::D32OneHot;
+    type Cfg64 = fp128::OneHot;
+    type Cfg128 = Fp128AdaptiveBoundedD128<1>;
+}
+
+/// Dynamic fp128 onehot scheme that chooses the root ring at commit time.
+pub type DynamicFp128OneHotScheme = DynamicHachiCommitmentScheme<DynamicFp128OneHotFamily>;
 
 #[cfg(test)]
 mod tests {
@@ -837,10 +1057,7 @@ mod tests {
         type Cfg64 = SmallTest64;
         type Cfg128 = SmallTest128;
 
-        fn select_root_ring_dim(
-            _max_num_vars: usize,
-            _max_num_batched_polys: usize,
-        ) -> Result<usize, HachiError> {
+        fn select_root_ring_dim(_key: HachiScheduleLookupKey) -> Result<usize, HachiError> {
             Ok(32)
         }
     }
@@ -856,7 +1073,6 @@ mod tests {
             .into();
         let setup =
             <DynamicSmallTestScheme as DynamicCommitmentScheme<F>>::setup_prover(num_vars, 1);
-        assert_eq!(setup.root_ring_dim(), 32);
         let verifier =
             <DynamicSmallTestScheme as DynamicCommitmentScheme<F>>::setup_verifier(&setup);
         let (commitment, hint) = <DynamicSmallTestScheme as DynamicCommitmentScheme<F>>::commit(
@@ -879,6 +1095,7 @@ mod tests {
             BasisMode::Lagrange,
         )
         .unwrap();
+        assert_eq!(commitment.root_ring_dim(), 32);
         let mut verify_transcript = Blake2bTranscript::<F>::new(
             <DynamicSmallTestScheme as DynamicCommitmentScheme<F>>::protocol_name(),
         );
@@ -892,5 +1109,79 @@ mod tests {
             BasisMode::Lagrange,
         )
         .unwrap();
+    }
+
+    #[derive(Clone, Copy, Debug, Default)]
+    struct DynamicBatchSizeFamily;
+
+    impl DynamicRootConfigFamily<F> for DynamicBatchSizeFamily {
+        type Cfg32 = DynamicSmallTestCommitmentConfig;
+        type Cfg64 = SmallTest64;
+        type Cfg128 = SmallTest128;
+
+        fn select_root_ring_dim(key: HachiScheduleLookupKey) -> Result<usize, HachiError> {
+            Ok(if key.layout_num_claims == 1 { 32 } else { 64 })
+        }
+    }
+
+    type DynamicBatchSizeScheme = DynamicHachiCommitmentScheme<DynamicBatchSizeFamily>;
+
+    #[test]
+    fn dynamic_batched_prove_rejects_mixed_root_dims() {
+        let num_vars = 12usize;
+        let evals = EqPolynomial::<F>::evals(&vec![F::zero(); num_vars]);
+        let poly = DenseMultilinear::from_field_evals(num_vars, &evals)
+            .unwrap()
+            .into();
+        let setup =
+            <DynamicBatchSizeScheme as DynamicCommitmentScheme<F>>::setup_prover(num_vars, 2);
+
+        let (commitment_a, hint_a) =
+            <DynamicBatchSizeScheme as DynamicCommitmentScheme<F>>::commit(
+                std::slice::from_ref(&poly),
+                &setup,
+            )
+            .unwrap();
+        let (commitment_b, hint_b) =
+            <DynamicBatchSizeScheme as DynamicCommitmentScheme<F>>::commit(
+                &[poly.clone(), poly],
+                &setup,
+            )
+            .unwrap();
+
+        assert_eq!(commitment_a.root_ring_dim(), 32);
+        assert_eq!(commitment_b.root_ring_dim(), 64);
+
+        let opening_point = vec![F::zero(); num_vars];
+        let commitments = vec![commitment_a, commitment_b];
+        let hints = vec![hint_a, hint_b];
+        let polys = vec![DenseMultilinear::from_field_evals(num_vars, &evals)
+            .unwrap()
+            .into()];
+        let poly_refs: Vec<&[MultilinearPolynomial<F>]> = vec![polys.as_slice()];
+        let point_refs: Vec<&[&[MultilinearPolynomial<F>]]> = vec![poly_refs.as_slice()];
+        let hint_groups = vec![hints];
+        let commitment_groups = vec![commitments];
+        let commitment_refs: Vec<&[DynamicRingCommitment<F>]> =
+            commitment_groups.iter().map(Vec::as_slice).collect();
+        let mut transcript = Blake2bTranscript::<F>::new(
+            <DynamicBatchSizeScheme as DynamicCommitmentScheme<F>>::protocol_name(),
+        );
+        let err = <DynamicBatchSizeScheme as DynamicCommitmentScheme<F>>::batched_prove(
+            &setup,
+            &point_refs,
+            &[&opening_point],
+            hint_groups,
+            &mut transcript,
+            &commitment_refs,
+            BasisMode::Lagrange,
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("requires one root D across the fused batch"),
+            "unexpected error: {err}"
+        );
     }
 }

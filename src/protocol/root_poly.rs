@@ -4,7 +4,7 @@
 //! `D`, but callers should not have to pick `D` themselves when the schedule
 //! chooses it from public inputs. These types preserve the source polynomial in
 //! a ring-agnostic form and materialize the typed root polynomial only after
-//! setup has fixed the active root ring.
+//! the concrete commitment/proof context has selected the active root ring.
 
 use crate::algebra::fields::wide::HasWide;
 use crate::error::HachiError;
@@ -192,7 +192,7 @@ impl<F: FieldCore> From<OneHotMultilinear> for MultilinearPolynomial<F> {
     }
 }
 
-/// Typed root polynomial materialized after the setup has fixed the root ring.
+/// Typed root polynomial materialized after the active root ring is known.
 #[derive(Clone)]
 pub(crate) enum TypedRootPolynomial<F: FieldCore, const D: usize> {
     Dense(DensePoly<F, D>),
