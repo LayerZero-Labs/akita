@@ -86,6 +86,10 @@ harness = false
 name = "onehot_batched_opening"
 harness = false
 
+[[bench]]
+name = "root_kernels"
+harness = false
+
 [lints.rust]
 missing_docs = "warn"
 unreachable_pub = "warn"

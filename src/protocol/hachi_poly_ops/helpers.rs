@@ -209,19 +209,19 @@ pub(super) fn sparse_mul_acc<const D: usize>(
 
 /// Precompute dense rotation table for a sparse challenge.
 ///
-/// `table[c]` holds the i32 coefficients of `challenge * X^c` in the ring
+/// `table[c]` holds the small signed coefficients of `challenge * X^c` in the ring
 /// `Z[X]/(X^D + 1)`.  Because D is a power of two, `X^D = -1`, so
 /// positions that wrap past D get negated.
 ///
-/// The table is 16 KB for D=64, fitting entirely in L1 cache.
+/// The table is 8 KB for D=64, fitting comfortably in L1 cache.
 #[inline(always)]
-fn fill_rotated_challenge<const D: usize>(table: &mut [[i32; D]], challenge: &SparseChallenge) {
+fn fill_rotated_challenge<const D: usize>(table: &mut [[i16; D]], challenge: &SparseChallenge) {
     debug_assert!(D.is_power_of_two());
     debug_assert!(table.len() >= D);
 
-    let mut dense = [0i32; D];
+    let mut dense = [0i16; D];
     for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        dense[pos as usize] = coeff as i32;
+        dense[pos as usize] = coeff;
     }
 
     for (ci, row) in table.iter_mut().enumerate().take(D) {
@@ -234,39 +234,52 @@ fn fill_rotated_challenge<const D: usize>(table: &mut [[i32; D]], challenge: &Sp
 }
 
 #[inline(always)]
-fn add_scaled_rotated_row<const D: usize>(acc: &mut [i32; D], row: &[i32; D], scale: i32) {
+fn add_scaled_rotated_row<const D: usize>(acc: &mut [i32; D], row: &[i16; D], scale: i32) {
     match scale {
         1 => {
             for k in 0..D {
-                acc[k] += row[k];
+                acc[k] += row[k] as i32;
             }
         }
         -1 => {
             for k in 0..D {
-                acc[k] -= row[k];
+                acc[k] -= row[k] as i32;
             }
         }
         2 => {
             for k in 0..D {
-                acc[k] += row[k] << 1;
+                acc[k] += (row[k] as i32) << 1;
             }
         }
         -2 => {
             for k in 0..D {
-                acc[k] -= row[k] << 1;
+                acc[k] -= (row[k] as i32) << 1;
             }
         }
         _ => {
             for k in 0..D {
-                acc[k] += scale * row[k];
+                acc[k] += scale * row[k] as i32;
             }
         }
     }
 }
 
+#[inline(always)]
+fn add_scaled_rotated_rows_triplet<const D: usize>(
+    acc: &mut [i32; D],
+    rows: [&[i16; D]; 3],
+    scales: [i32; 3],
+) {
+    for (k, acc_coeff) in acc.iter_mut().enumerate() {
+        *acc_coeff += scales[0] * rows[0][k] as i32
+            + scales[1] * rows[1][k] as i32
+            + scales[2] * rows[2][k] as i32;
+    }
+}
+
 fn decompose_ring_full_challenge_accumulate<F: CanonicalField, const D: usize>(
     ring: &CyclotomicRing<F, D>,
-    rotated: &[[i32; D]],
+    rotated: &[[i16; D]],
     acc: &mut [[i32; D]],
     p: &DecomposeParams,
 ) {
@@ -282,18 +295,14 @@ fn decompose_ring_full_challenge_accumulate<F: CanonicalField, const D: usize>(
 
         for plane in acc.iter_mut() {
             let d0 = extract_balanced_digit(&mut c0, p);
-            if d0 != 0 {
-                add_scaled_rotated_row(plane, rot0, d0);
-            }
-
             let d1 = extract_balanced_digit(&mut c1, p);
-            if d1 != 0 {
-                add_scaled_rotated_row(plane, rot1, d1);
-            }
-
             let d2 = extract_balanced_digit(&mut c2, p);
-            if d2 != 0 {
-                add_scaled_rotated_row(plane, rot2, d2);
+            match (d0 != 0, d1 != 0, d2 != 0) {
+                (false, false, false) => {}
+                (true, false, false) => add_scaled_rotated_row(plane, rot0, d0),
+                (false, true, false) => add_scaled_rotated_row(plane, rot1, d1),
+                (false, false, true) => add_scaled_rotated_row(plane, rot2, d2),
+                _ => add_scaled_rotated_rows_triplet(plane, [rot0, rot1, rot2], [d0, d1, d2]),
             }
         }
     }
@@ -336,7 +345,7 @@ pub(super) fn sparse_onehot_accumulate<const D: usize>(
             let pos_end = (pos_start + pos_chunk).min(inner_width);
             let len = pos_end - pos_start;
             let mut acc = vec![[0i32; D]; len];
-            let mut rotated = vec![[0i32; D]; D];
+            let mut rotated = vec![[0i16; D]; D];
 
             for block_idx in 0..num_blocks {
                 let entries = &sparse_blocks[block_idx];
@@ -354,7 +363,7 @@ pub(super) fn sparse_onehot_accumulate<const D: usize>(
                         let rot = &rotated[ci];
                         let dst = &mut acc[local_pos];
                         for k in 0..D {
-                            dst[k] += rot[k];
+                            dst[k] += rot[k] as i32;
                         }
                     }
                 }
@@ -389,7 +398,7 @@ pub(super) fn sparse_onehot_accumulate_slices<const D: usize>(
             let pos_end = (pos_start + pos_chunk).min(inner_width);
             let len = pos_end - pos_start;
             let mut acc = vec![[0i32; D]; len];
-            let mut rotated = vec![[0i32; D]; D];
+            let mut rotated = vec![[0i16; D]; D];
 
             for block_idx in 0..num_blocks {
                 let entries = sparse_blocks[block_idx];
@@ -407,7 +416,7 @@ pub(super) fn sparse_onehot_accumulate_slices<const D: usize>(
                         let rot = &rotated[ci];
                         let dst = &mut acc[local_pos];
                         for k in 0..D {
-                            dst[k] += rot[k];
+                            dst[k] += rot[k] as i32;
                         }
                     }
                 }
@@ -442,7 +451,7 @@ pub(super) fn regular_onehot_accumulate<const D: usize>(
             let pos_end = (pos_start + pos_chunk).min(block_len);
             let len = pos_end - pos_start;
             let mut acc = vec![[0i32; D]; len];
-            let mut rotated = vec![[0i32; D]; D];
+            let mut rotated = vec![[0i16; D]; D];
 
             for block_idx in 0..num_blocks {
                 let entries = &regular_blocks[block_idx];
@@ -457,7 +466,7 @@ pub(super) fn regular_onehot_accumulate<const D: usize>(
                     let dst = &mut acc[entry.pos_in_block() - pos_start];
                     let rot = &rotated[entry.coeff_idx()];
                     for k in 0..D {
-                        dst[k] += rot[k];
+                        dst[k] += rot[k] as i32;
                     }
                 }
             }
@@ -491,7 +500,7 @@ pub(super) fn regular_onehot_accumulate_slices<const D: usize>(
             let pos_end = (pos_start + pos_chunk).min(block_len);
             let len = pos_end - pos_start;
             let mut acc = vec![[0i32; D]; len];
-            let mut rotated = vec![[0i32; D]; D];
+            let mut rotated = vec![[0i16; D]; D];
 
             for block_idx in 0..num_blocks {
                 let entries = regular_blocks[block_idx];
@@ -506,7 +515,7 @@ pub(super) fn regular_onehot_accumulate_slices<const D: usize>(
                     let dst = &mut acc[entry.pos_in_block() - pos_start];
                     let rot = &rotated[entry.coeff_idx()];
                     for k in 0..D {
-                        dst[k] += rot[k];
+                        dst[k] += rot[k] as i32;
                     }
                 }
             }
@@ -625,7 +634,7 @@ pub(super) fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const 
         challenges
             .iter()
             .map(|challenge| {
-                let mut rotated = [[0i32; D]; D];
+                let mut rotated = [[0i16; D]; D];
                 fill_rotated_challenge::<D>(&mut rotated, challenge);
                 rotated
             })
@@ -808,7 +817,7 @@ mod tests {
             sparse_mul_acc::<D>(&generic_digits[digit], &challenge, &mut generic_acc[digit]);
         }
 
-        let mut rotated = vec![[0i32; D]; D];
+        let mut rotated = vec![[0i16; D]; D];
         fill_rotated_challenge::<D>(&mut rotated, &challenge);
         let mut fused_acc = vec![[0i32; D]; num_digits];
         decompose_ring_full_challenge_accumulate::<F, D>(&ring, &rotated, &mut fused_acc, &params);

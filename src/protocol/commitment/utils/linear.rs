@@ -2,7 +2,6 @@
 
 #[cfg(all(target_arch = "aarch64", feature = "parallel"))]
 use crate::algebra::ntt::neon;
-#[cfg(feature = "parallel")]
 use crate::algebra::ntt::MontCoeff;
 use crate::algebra::ntt::PrimeWidth;
 use crate::algebra::{
@@ -920,6 +919,35 @@ fn mat_vec_mul_i8_dense_block_parallel_with_params<
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    if ntt_mat.len() == 1 {
+        let lut = DigitMontLut::new(params);
+        let mat_row = &ntt_mat[0];
+        return cfg_into_iter!(blocks)
+            .map(|block| {
+                let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
+                let mut digit_buf = vec![[0i8; D]; num_digits];
+                let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
+                let mut col = 0usize;
+
+                for coeff_vec in block.iter() {
+                    coeff_vec.balanced_decompose_pow2_i8_into(&mut digit_buf, log_basis);
+                    for digit in &digit_buf {
+                        acc.add_assign_pointwise_mul_i8_with_lut_scratch(
+                            &mat_row[col],
+                            digit,
+                            params,
+                            &lut,
+                            &mut rhs_scratch,
+                        );
+                        col += 1;
+                    }
+                }
+
+                vec![acc.to_ring_with_params(params)]
+            })
+            .collect();
+    }
+
     mat_vec_mul_i8_block_parallel_with_params_impl::<F, W, K, D, false>(
         ntt_mat, blocks, num_digits, log_basis, params,
     )
