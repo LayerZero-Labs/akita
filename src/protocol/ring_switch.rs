@@ -5,6 +5,7 @@
 //! vectors and setting up the evaluation tables.
 
 use crate::algebra::eq_poly::EqPolynomial;
+use crate::algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use crate::algebra::{CyclotomicRing, SparseChallenge};
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
@@ -1603,9 +1604,12 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
         }
     }
     let mut r_planes = vec![[0i8; D]; levels];
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let half_q = q / 2;
+    let decompose_params = BalancedDecomposePow2I8Params::new(levels, log_basis, q, half_q);
     for ri in r {
         r_planes.fill([0i8; D]);
-        ri.balanced_decompose_pow2_i8_into(&mut r_planes, log_basis);
+        ri.balanced_decompose_pow2_i8_into_with_params(&mut r_planes, &decompose_params);
         for plane in &r_planes {
             out.extend_from_slice(plane);
         }

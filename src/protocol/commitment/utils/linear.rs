@@ -4,6 +4,7 @@
 use crate::algebra::ntt::neon;
 use crate::algebra::ntt::MontCoeff;
 use crate::algebra::ntt::PrimeWidth;
+use crate::algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use crate::algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
 };
@@ -419,16 +420,23 @@ pub fn decompose_rows_i8_into<F: FieldCore + CanonicalField, const D: usize>(
     if num_digits == 0 {
         return;
     }
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let half_q = q / 2;
+    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q, half_q);
 
     #[cfg(feature = "parallel")]
     out.par_chunks_mut(num_digits)
         .zip(rows.par_iter())
-        .for_each(|(dst_chunk, row)| row.balanced_decompose_pow2_i8_into(dst_chunk, log_basis));
+        .for_each(|(dst_chunk, row)| {
+            row.balanced_decompose_pow2_i8_into_with_params(dst_chunk, &decompose_params)
+        });
 
     #[cfg(not(feature = "parallel"))]
     out.chunks_mut(num_digits)
         .zip(rows.iter())
-        .for_each(|(dst_chunk, row)| row.balanced_decompose_pow2_i8_into(dst_chunk, log_basis));
+        .for_each(|(dst_chunk, row)| {
+            row.balanced_decompose_pow2_i8_into_with_params(dst_chunk, &decompose_params)
+        });
 }
 
 #[inline]
@@ -860,6 +868,9 @@ fn mat_vec_mul_i8_block_parallel_with_params_impl<
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     let n_a = ntt_mat.len();
     let lut = DigitMontLut::new(params);
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let half_q = q / 2;
+    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q, half_q);
 
     cfg_into_iter!(blocks)
         .map(|block| {
@@ -869,7 +880,8 @@ fn mat_vec_mul_i8_block_parallel_with_params_impl<
             let mut col = 0usize;
 
             for coeff_vec in block.iter() {
-                coeff_vec.balanced_decompose_pow2_i8_into(&mut digit_buf, log_basis);
+                coeff_vec
+                    .balanced_decompose_pow2_i8_into_with_params(&mut digit_buf, &decompose_params);
                 for digit in &digit_buf {
                     if CHECK_ZERO && is_zero_plane(digit) {
                         col += 1;
@@ -922,6 +934,9 @@ fn mat_vec_mul_i8_dense_block_parallel_with_params<
     if ntt_mat.len() == 1 {
         let lut = DigitMontLut::new(params);
         let mat_row = &ntt_mat[0];
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let half_q = q / 2;
+        let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q, half_q);
         return cfg_into_iter!(blocks)
             .map(|block| {
                 let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
@@ -930,7 +945,10 @@ fn mat_vec_mul_i8_dense_block_parallel_with_params<
                 let mut col = 0usize;
 
                 for coeff_vec in block.iter() {
-                    coeff_vec.balanced_decompose_pow2_i8_into(&mut digit_buf, log_basis);
+                    coeff_vec.balanced_decompose_pow2_i8_into_with_params(
+                        &mut digit_buf,
+                        &decompose_params,
+                    );
                     for digit in &digit_buf {
                         acc.add_assign_pointwise_mul_i8_with_lut_scratch(
                             &mat_row[col],
@@ -969,6 +987,9 @@ fn mat_vec_mul_i8_strided_block_parallel_with_params<
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     let n_a = ntt_mat.len();
     let lut = DigitMontLut::new(params);
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let half_q = q / 2;
+    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q, half_q);
 
     cfg_into_iter!(0..num_blocks)
         .map(|block_idx| {
@@ -982,7 +1003,8 @@ fn mat_vec_mul_i8_strided_block_parallel_with_params<
                 let Some(coeff) = coeffs.get(seq) else {
                     break;
                 };
-                coeff.balanced_decompose_pow2_i8_into(&mut digit_buf, log_basis);
+                coeff
+                    .balanced_decompose_pow2_i8_into_with_params(&mut digit_buf, &decompose_params);
                 for digit in &digit_buf {
                     if !is_zero_plane(digit) {
                         let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);

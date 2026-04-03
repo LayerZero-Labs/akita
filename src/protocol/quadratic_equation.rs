@@ -3,6 +3,7 @@
 //! This module encapsulates the stage-1 prover logic and the generation of
 //! the quadratic equation components M, y, z, and v.
 
+use crate::algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use crate::algebra::{CyclotomicRing, SparseChallenge};
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
@@ -234,6 +235,10 @@ where
             let _span = tracing::info_span!("decompose_batched_w_hat").entered();
             let depth_open = layout.num_digits_open;
             let log_basis = layout.log_basis;
+            let q = (-F::one()).to_canonical_u128() + 1;
+            let half_q = q / 2;
+            let decompose_params =
+                BalancedDecomposePow2I8Params::new(depth_open, log_basis, q, half_q);
             let total_rows: usize = pre_folded_by_poly.iter().map(Vec::len).sum();
             let block_sizes = vec![depth_open; total_rows];
             let mut w_hat = FlatDigitBlocks::zeroed(block_sizes)
@@ -241,9 +246,9 @@ where
             let mut offset = 0usize;
             for folded_rows in &pre_folded_by_poly {
                 for w_i in folded_rows {
-                    w_i.balanced_decompose_pow2_i8_into(
+                    w_i.balanced_decompose_pow2_i8_into_with_params(
                         &mut w_hat.flat_digits_mut()[offset..offset + depth_open],
-                        log_basis,
+                        &decompose_params,
                     );
                     offset += depth_open;
                 }
@@ -468,12 +473,16 @@ where
             let _span = tracing::info_span!("decompose_w_hat").entered();
             let depth_open = layout.num_digits_open;
             let log_basis = layout.log_basis;
+            let q = (-F::one()).to_canonical_u128() + 1;
+            let half_q = q / 2;
+            let decompose_params =
+                BalancedDecomposePow2I8Params::new(depth_open, log_basis, q, half_q);
             let mut w_hat = FlatDigitBlocks::zeroed(vec![depth_open; pre_folded.len()])?;
             for (idx, w_i) in pre_folded.iter().enumerate() {
                 let start = idx * depth_open;
-                w_i.balanced_decompose_pow2_i8_into(
+                w_i.balanced_decompose_pow2_i8_into_with_params(
                     &mut w_hat.flat_digits_mut()[start..start + depth_open],
-                    log_basis,
+                    &decompose_params,
                 );
             }
             w_hat
@@ -651,12 +660,16 @@ where
             let _span = tracing::info_span!("decompose_w_hat").entered();
             let depth_open = layout.num_digits_open;
             let log_basis = layout.log_basis;
+            let q = (-F::one()).to_canonical_u128() + 1;
+            let half_q = q / 2;
+            let decompose_params =
+                BalancedDecomposePow2I8Params::new(depth_open, log_basis, q, half_q);
             let mut w_hat = FlatDigitBlocks::zeroed(vec![depth_open; pre_folded.len()])?;
             for (idx, w_i) in pre_folded.iter().enumerate() {
                 let start = idx * depth_open;
-                w_i.balanced_decompose_pow2_i8_into(
+                w_i.balanced_decompose_pow2_i8_into_with_params(
                     &mut w_hat.flat_digits_mut()[start..start + depth_open],
-                    log_basis,
+                    &decompose_params,
                 );
             }
             w_hat
