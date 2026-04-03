@@ -1369,7 +1369,7 @@ mod tests {
 
     #[test]
     fn onehot_batched_helper_matches_setup_root_layout() {
-        type Cfg = fp128::OneHot;
+        type Cfg = fp128::D64OneHot;
         const TEST_D: usize = Cfg::D;
         const NV: usize = 15;
         const BATCH: usize = 2;
@@ -1491,8 +1491,10 @@ mod tests {
         )
         .expect("legacy fp128 preset should accept the legacy field");
 
-        <HachiCommitmentCore as RingCommitmentScheme<fp128::Field, 128, fp128::Full>>::setup(12, 1)
-            .expect("default fp128 preset should accept the default field");
+        <HachiCommitmentCore as RingCommitmentScheme<fp128::Field, 128, fp128::D128Full>>::setup(
+            12, 1,
+        )
+        .expect("default fp128 fixed-D preset should accept the default field");
 
         <HachiCommitmentCore as RingCommitmentScheme<fp128::Field, 32, fp128::D32Full>>::setup(
             12, 1,

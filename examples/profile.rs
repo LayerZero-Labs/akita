@@ -16,9 +16,8 @@ use hachi_pcs::protocol::proof::{
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::{
     BasisMode, BlockOrder, CanonicalField, CommitmentScheme, DenseMultilinear,
-    DynamicCommitmentScheme, DynamicFp128FullFamily, DynamicFp128OneHotFamily,
-    DynamicHachiCommitmentScheme, DynamicRootConfigFamily, FromSmallInt, HachiPolyOps,
-    HachiSerialize, MultilinearPolynomial, OneHotMultilinear, Transcript,
+    DynamicCommitmentScheme, DynamicHachiCommitmentScheme, DynamicRootConfigFamily, FromSmallInt,
+    HachiPolyOps, HachiSerialize, MultilinearPolynomial, OneHotMultilinear, Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -592,7 +591,7 @@ fn dynamic_singleton_plan<Family: DynamicRootConfigFamily<F>>(
     }
 }
 
-fn run_dynamic_dense_mode<Family>(title: &str, nv: usize)
+fn run_dynamic_dense_mode<Family>(label: &str, title: &str, nv: usize)
 where
     Family: DynamicRootConfigFamily<F>,
 {
@@ -620,11 +619,7 @@ where
 
     let t0 = Instant::now();
     let setup = <Scheme<Family> as DynamicCommitmentScheme<F>>::setup_prover(nv, 1);
-    tracing::info!(
-        label = "dense_dynamic",
-        elapsed_s = t0.elapsed().as_secs_f64(),
-        "setup"
-    );
+    tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "setup");
 
     let t0 = Instant::now();
     let (commitment, hint) =
@@ -632,7 +627,7 @@ where
             .unwrap();
     let root_d = commitment.root_ring_dim();
     tracing::info!(
-        label = "dense_dynamic",
+        label,
         root_d,
         elapsed_s = t0.elapsed().as_secs_f64(),
         "commit"
@@ -671,12 +666,12 @@ where
     )
     .unwrap();
     tracing::info!(
-        label = "dense_dynamic",
+        label,
         root_d,
         elapsed_s = t0.elapsed().as_secs_f64(),
         "prove"
     );
-    print_proof_summary("dense_dynamic", &proof, plan.as_ref());
+    print_proof_summary(label, &proof, plan.as_ref());
 
     let t0 = Instant::now();
     let verifier_setup = <Scheme<Family> as DynamicCommitmentScheme<F>>::setup_verifier(&setup);
@@ -691,13 +686,13 @@ where
         BasisMode::Lagrange,
     ) {
         Ok(()) => tracing::info!(
-            label = "dense_dynamic",
+            label,
             root_d,
             elapsed_s = t0.elapsed().as_secs_f64(),
             "verify OK"
         ),
         Err(e) => tracing::error!(
-            label = "dense_dynamic",
+            label,
             root_d,
             elapsed_s = t0.elapsed().as_secs_f64(),
             error = %e,
@@ -706,7 +701,7 @@ where
     }
 }
 
-fn run_dynamic_onehot_mode<Family>(title: &str, nv: usize)
+fn run_dynamic_onehot_mode<Family>(label: &str, title: &str, nv: usize, num_polys: usize)
 where
     Family: DynamicRootConfigFamily<F>,
 {
@@ -714,102 +709,184 @@ where
 
     tracing::info!("{}", title);
 
-    let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
-    let total_chunks = (1usize << nv) / ONEHOT_K;
-    let indices: Vec<Option<usize>> = (0..total_chunks)
-        .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
+    let onehots: Vec<OneHotMultilinear> = (0..num_polys)
+        .map(|poly_idx| {
+            let mut rng = StdRng::seed_from_u64(0xbeef_cafe ^ ((poly_idx as u64 + 1) << 32));
+            let total_chunks = (1usize << nv) / ONEHOT_K;
+            let indices: Vec<Option<usize>> = (0..total_chunks)
+                .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
+                .collect();
+            OneHotMultilinear::new(nv, ONEHOT_K, indices).unwrap()
+        })
         .collect();
-    let onehot = OneHotMultilinear::new(nv, ONEHOT_K, indices).unwrap();
-    let poly: MultilinearPolynomial<F> = onehot.clone().into();
+    let polys: Vec<MultilinearPolynomial<F>> = onehots
+        .iter()
+        .cloned()
+        .map(MultilinearPolynomial::from)
+        .collect();
+    let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
     let pt: Vec<F> = (0..nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .map(|_| F::from_canonical_u128_reduced(point_rng.gen::<u128>()))
         .collect();
 
     let t0 = Instant::now();
-    let setup = <Scheme<Family> as DynamicCommitmentScheme<F>>::setup_prover(nv, 1);
-    tracing::info!(
-        label = "onehot_dynamic",
-        elapsed_s = t0.elapsed().as_secs_f64(),
-        "setup"
-    );
+    let setup = <Scheme<Family> as DynamicCommitmentScheme<F>>::setup_prover(nv, num_polys);
+    tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "setup");
 
     let t0 = Instant::now();
     let (commitment, hint) =
-        <Scheme<Family> as DynamicCommitmentScheme<F>>::commit(std::slice::from_ref(&poly), &setup)
-            .unwrap();
+        <Scheme<Family> as DynamicCommitmentScheme<F>>::commit(&polys, &setup).unwrap();
     let root_d = commitment.root_ring_dim();
     tracing::info!(
-        label = "onehot_dynamic",
+        label,
         root_d,
         elapsed_s = t0.elapsed().as_secs_f64(),
         "commit"
     );
 
-    let opening = match root_d {
+    let openings: Vec<F> = match root_d {
         32 => {
-            let layout = hachi_batched_root_layout::<Family::Cfg32, 32>(nv, 1).unwrap();
-            let typed = onehot.to_typed::<F, 32>(layout).unwrap();
-            opening_from_poly(&typed, &pt, &layout, BasisMode::Lagrange)
+            let layout = hachi_batched_root_layout::<Family::Cfg32, 32>(nv, num_polys).unwrap();
+            onehots
+                .iter()
+                .map(|onehot| {
+                    let typed = onehot.to_typed::<F, 32>(layout).unwrap();
+                    opening_from_poly(&typed, &pt, &layout, BasisMode::Lagrange)
+                })
+                .collect()
         }
         64 => {
-            let layout = hachi_batched_root_layout::<Family::Cfg64, 64>(nv, 1).unwrap();
-            let typed = onehot.to_typed::<F, 64>(layout).unwrap();
-            opening_from_poly(&typed, &pt, &layout, BasisMode::Lagrange)
+            let layout = hachi_batched_root_layout::<Family::Cfg64, 64>(nv, num_polys).unwrap();
+            onehots
+                .iter()
+                .map(|onehot| {
+                    let typed = onehot.to_typed::<F, 64>(layout).unwrap();
+                    opening_from_poly(&typed, &pt, &layout, BasisMode::Lagrange)
+                })
+                .collect()
         }
         128 => {
-            let layout = hachi_batched_root_layout::<Family::Cfg128, 128>(nv, 1).unwrap();
-            let typed = onehot.to_typed::<F, 128>(layout).unwrap();
-            opening_from_poly(&typed, &pt, &layout, BasisMode::Lagrange)
+            let layout = hachi_batched_root_layout::<Family::Cfg128, 128>(nv, num_polys).unwrap();
+            onehots
+                .iter()
+                .map(|onehot| {
+                    let typed = onehot.to_typed::<F, 128>(layout).unwrap();
+                    opening_from_poly(&typed, &pt, &layout, BasisMode::Lagrange)
+                })
+                .collect()
         }
         _ => unreachable!("dynamic schemes only select D in 32/64/128"),
     };
-    let plan = dynamic_singleton_plan::<Family>(nv, root_d);
 
-    let t0 = Instant::now();
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
-    let proof = <Scheme<Family> as DynamicCommitmentScheme<F>>::prove(
-        &setup,
-        &poly,
-        &pt,
-        hint,
-        &mut prover_transcript,
-        &commitment,
-        BasisMode::Lagrange,
-    )
-    .unwrap();
-    tracing::info!(
-        label = "onehot_dynamic",
-        root_d,
-        elapsed_s = t0.elapsed().as_secs_f64(),
-        "prove"
-    );
-    print_proof_summary("onehot_dynamic", &proof, plan.as_ref());
-
-    let t0 = Instant::now();
     let verifier_setup = <Scheme<Family> as DynamicCommitmentScheme<F>>::setup_verifier(&setup);
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
-    match <Scheme<Family> as DynamicCommitmentScheme<F>>::verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        &pt,
-        &opening,
-        &commitment,
-        BasisMode::Lagrange,
-    ) {
-        Ok(()) => tracing::info!(
-            label = "onehot_dynamic",
+    if num_polys == 1 {
+        let plan = dynamic_singleton_plan::<Family>(nv, root_d);
+        let poly = &polys[0];
+        let opening = openings[0];
+
+        let t0 = Instant::now();
+        let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
+        let proof = <Scheme<Family> as DynamicCommitmentScheme<F>>::prove(
+            &setup,
+            poly,
+            &pt,
+            hint,
+            &mut prover_transcript,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .unwrap();
+        tracing::info!(
+            label,
             root_d,
             elapsed_s = t0.elapsed().as_secs_f64(),
-            "verify OK"
-        ),
-        Err(e) => tracing::error!(
-            label = "onehot_dynamic",
+            "prove"
+        );
+        print_proof_summary(label, &proof, plan.as_ref());
+
+        let t0 = Instant::now();
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
+        match <Scheme<Family> as DynamicCommitmentScheme<F>>::verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &pt,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+        ) {
+            Ok(()) => tracing::info!(
+                label,
+                root_d,
+                elapsed_s = t0.elapsed().as_secs_f64(),
+                "verify OK"
+            ),
+            Err(e) => tracing::error!(
+                label,
+                root_d,
+                elapsed_s = t0.elapsed().as_secs_f64(),
+                error = %e,
+                "verify FAILED"
+            ),
+        }
+    } else {
+        let poly_refs: Vec<&[MultilinearPolynomial<F>]> = vec![polys.as_slice()];
+        let point_refs: Vec<&[&[MultilinearPolynomial<F>]]> = vec![poly_refs.as_slice()];
+        let commitments = [commitment];
+        let commitment_refs: Vec<&[<Scheme<Family> as DynamicCommitmentScheme<F>>::Commitment]> =
+            vec![commitments.as_slice()];
+        let opening_groups = [&openings[..]];
+
+        let t0 = Instant::now();
+        let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
+        let proof = <Scheme<Family> as DynamicCommitmentScheme<F>>::batched_prove(
+            &setup,
+            &point_refs,
+            &[&pt[..]],
+            vec![vec![hint]],
+            &mut prover_transcript,
+            &commitment_refs,
+            BasisMode::Lagrange,
+        )
+        .unwrap();
+        tracing::info!(
+            label,
             root_d,
             elapsed_s = t0.elapsed().as_secs_f64(),
-            error = %e,
-            "verify FAILED"
-        ),
+            "prove"
+        );
+        match root_d {
+            32 => print_batched_proof_summary::<32>(label, &proof),
+            64 => print_batched_proof_summary::<64>(label, &proof),
+            128 => print_batched_proof_summary::<128>(label, &proof),
+            _ => unreachable!("dynamic schemes only select D in 32/64/128"),
+        }
+
+        let t0 = Instant::now();
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
+        match <Scheme<Family> as DynamicCommitmentScheme<F>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &[&pt[..]],
+            &[&opening_groups[..]],
+            &commitment_refs,
+            BasisMode::Lagrange,
+        ) {
+            Ok(()) => tracing::info!(
+                label,
+                root_d,
+                elapsed_s = t0.elapsed().as_secs_f64(),
+                "verify OK"
+            ),
+            Err(e) => tracing::error!(
+                label,
+                root_d,
+                elapsed_s = t0.elapsed().as_secs_f64(),
+                error = %e,
+                "verify FAILED"
+            ),
+        }
     }
 }
 
@@ -911,19 +988,39 @@ fn main() {
 
     match mode.as_str() {
         "full" => {
-            type Cfg = fp128::Full;
-            run_dense_mode::<{ Cfg::D }, Cfg>(
-                "=== full (q=2^128-275, D=128 dense, log_commit_bound=128) ===",
+            if num_polys != 1 {
+                panic!("full currently profiles only singleton commitments");
+            }
+            run_dynamic_dense_mode::<fp128::FullFamily>(
+                "dense",
+                "=== full (q=2^128-275, runtime-selected root D, dense) ===",
                 nv,
             );
         }
         "onehot" => {
-            type Cfg = fp128::OneHot;
             let title = if num_polys == 1 {
-                "=== onehot (q=2^128-275, D=64, 1-of-256, log_commit_bound=1) ===".to_string()
+                "=== onehot (q=2^128-275, runtime-selected root D, 1-of-256) ===".to_string()
             } else {
                 format!(
-                    "=== onehot batched (q=2^128-275, D=64, 1-of-256, log_commit_bound=1, same-point batch={num_polys}) ==="
+                    "=== onehot batched (q=2^128-275, runtime-selected root D, 1-of-256, same-point batch={num_polys}) ==="
+                )
+            };
+            run_dynamic_onehot_mode::<fp128::OneHotFamily>("onehot", &title, nv, num_polys);
+        }
+        "full_d128" => {
+            type Cfg = fp128::D128Full;
+            run_dense_mode::<{ Cfg::D }, Cfg>(
+                "=== full_d128 (q=2^128-275, D=128 dense, log_commit_bound=128) ===",
+                nv,
+            );
+        }
+        "onehot_d64" => {
+            type Cfg = fp128::D64OneHot;
+            let title = if num_polys == 1 {
+                "=== onehot_d64 (q=2^128-275, D=64, 1-of-256, log_commit_bound=1) ===".to_string()
+            } else {
+                format!(
+                    "=== onehot_d64 batched (q=2^128-275, D=64, 1-of-256, log_commit_bound=1, same-point batch={num_polys}) ==="
                 )
             };
             run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
@@ -946,24 +1043,6 @@ fn main() {
             };
             run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
         }
-        "full_dynamic" => {
-            if num_polys != 1 {
-                panic!("full_dynamic currently profiles only singleton commitments");
-            }
-            run_dynamic_dense_mode::<DynamicFp128FullFamily>(
-                "=== full_dynamic (q=2^128-275, runtime-selected root D, dense) ===",
-                nv,
-            );
-        }
-        "onehot_dynamic" => {
-            if num_polys != 1 {
-                panic!("onehot_dynamic currently profiles only singleton commitments");
-            }
-            run_dynamic_onehot_mode::<DynamicFp128OneHotFamily>(
-                "=== onehot_dynamic (q=2^128-275, runtime-selected root D, 1-of-256) ===",
-                nv,
-            );
-        }
         "logbasis" => {
             type Cfg = fp128::LogBasis;
             run_dense_mode::<{ Cfg::D }, Cfg>(
@@ -973,16 +1052,31 @@ fn main() {
         }
         "all" => {
             {
-                type Cfg = fp128::Full;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== full (q=2^128-275, D=128 dense, log_commit_bound=128) ===",
+                run_dynamic_dense_mode::<fp128::FullFamily>(
+                    "dense",
+                    "=== full (q=2^128-275, runtime-selected root D, dense) ===",
                     nv,
                 );
             }
             {
-                type Cfg = fp128::OneHot;
+                run_dynamic_onehot_mode::<fp128::OneHotFamily>(
+                    "onehot",
+                    "=== onehot (q=2^128-275, runtime-selected root D, 1-of-256) ===",
+                    nv,
+                    1,
+                );
+            }
+            {
+                type Cfg = fp128::D128Full;
+                run_dense_mode::<{ Cfg::D }, Cfg>(
+                    "=== full_d128 (q=2^128-275, D=128 dense, log_commit_bound=128) ===",
+                    nv,
+                );
+            }
+            {
+                type Cfg = fp128::D64OneHot;
                 run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== onehot (q=2^128-275, D=64, 1-of-256, log_commit_bound=1) ===",
+                    "=== onehot_d64 (q=2^128-275, D=64, 1-of-256, log_commit_bound=1) ===",
                     nv,
                     1,
                 );
@@ -1107,7 +1201,7 @@ fn main() {
         other => {
             tracing::error!(
                 mode = other,
-                "Unknown HACHI_MODE. Use: full, onehot, full_d32, onehot_d32, logbasis, all, compare_onehot, compare_logbasis, compare_basis"
+                "Unknown HACHI_MODE. Use: full, onehot, full_d128, onehot_d64, full_d32, onehot_d32, logbasis, all, compare_onehot, compare_logbasis, compare_basis"
             );
             std::process::exit(1);
         }

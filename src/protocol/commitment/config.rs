@@ -1335,8 +1335,8 @@ mod split_tests {
 
     #[test]
     fn adaptive_runtime_search_bounds_match_basis6_schedule_bounds() {
-        type FullCfg = crate::protocol::commitment::presets::fp128::Full;
-        type OneHotCfg = crate::protocol::commitment::presets::fp128::OneHot;
+        type FullCfg = crate::protocol::commitment::presets::fp128::D128Full;
+        type OneHotCfg = crate::protocol::commitment::presets::fp128::D64OneHot;
 
         let inputs = HachiScheduleInputs {
             max_num_vars: 30,

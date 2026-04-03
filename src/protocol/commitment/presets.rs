@@ -1,10 +1,14 @@
-//! Public preset bundles for commitment field/config pairings.
+//! Public preset bundles for commitment field/config pairings and default schemes.
 
 use super::config::{
     CommitmentPreset, Fp128AdaptiveBoundedPolicy, Fp128AdaptiveOneHotD64Policy,
     Fp128StaticBoundedPolicy,
 };
 use crate::algebra::{Prime128Offset275, Prime128Offset5823};
+use crate::protocol::dynamic_commitment_scheme::{
+    DynamicFp128FullFamily, DynamicFp128FullScheme, DynamicFp128OneHotFamily,
+    DynamicFp128OneHotScheme,
+};
 
 /// Default fp128 protocol presets on `p = 2^128 - 275`.
 pub mod fp128 {
@@ -41,12 +45,12 @@ pub mod fp128 {
     pub type D32AdaptiveBounded<const LOG_COMMIT_BOUND: u32> =
         CommitmentPreset<Field, Fp128AdaptiveBoundedPolicy<32, LOG_COMMIT_BOUND, 2, 2, 2>>;
 
-    /// Full-field adaptive preset.
-    pub type Full = AdaptiveBounded<128>;
+    /// Full-field adaptive `D=128` preset.
+    pub type D128Full = AdaptiveBounded<128>;
     /// Log-bounded adaptive preset.
     pub type LogBasis = AdaptiveBounded<3>;
-    /// Binary onehot adaptive preset.
-    pub type OneHot = CommitmentPreset<Field, Fp128AdaptiveOneHotD64Policy>;
+    /// Binary onehot adaptive `D=64` preset.
+    pub type D64OneHot = CommitmentPreset<Field, Fp128AdaptiveOneHotD64Policy>;
 
     /// Full-field adaptive `D=32` preset.
     pub type D32Full = D32AdaptiveBounded<128>;
@@ -54,6 +58,15 @@ pub mod fp128 {
     pub type D32LogBasis = D32AdaptiveBounded<3>;
     /// Onehot adaptive `D=32` preset.
     pub type D32OneHot = D32AdaptiveBounded<1>;
+
+    /// Family selector for the default dynamic full-field preset.
+    pub type FullFamily = DynamicFp128FullFamily;
+    /// Default full-field preset with runtime-selected root `D`.
+    pub type Full = DynamicFp128FullScheme;
+    /// Family selector for the default dynamic onehot preset.
+    pub type OneHotFamily = DynamicFp128OneHotFamily;
+    /// Default onehot preset with runtime-selected root `D`.
+    pub type OneHot = DynamicFp128OneHotScheme;
 }
 
 /// Explicit legacy fp128 protocol presets on `p = 2^128 - 5823`.

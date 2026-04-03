@@ -1447,13 +1447,13 @@ mod tests {
 
     #[test]
     fn generated_fp128_schedule_tables_match_runtime_planner() {
-        assert_generated_table_matches_runtime_planner::<fp128::Full>(
+        assert_generated_table_matches_runtime_planner::<fp128::D128Full>(
             fp128_adaptive_bounded_table::<128, 128, 1, 1, 1>().unwrap(),
         );
         assert_generated_table_matches_runtime_planner::<fp128::LogBasis>(
             fp128_adaptive_bounded_table::<128, 3, 1, 1, 1>().unwrap(),
         );
-        assert_generated_table_matches_runtime_planner::<fp128::OneHot>(
+        assert_generated_table_matches_runtime_planner::<fp128::D64OneHot>(
             fp128_adaptive_onehot_d64_table(),
         );
         assert_generated_table_matches_runtime_planner::<fp128::D32Full>(

@@ -7,7 +7,7 @@ pub(crate) struct GeneratedScheduleTableEntry {
     pub states: &'static [HachiPlannedState],
 }
 
-// fp128::Full
+// fp128::D128Full
 #[rustfmt::skip]
 pub(crate) static FP128_FULL_TABLE: &[GeneratedScheduleTableEntry] = &[
     GeneratedScheduleTableEntry { max_num_vars: 8, states: &[HachiPlannedState { level: 0, current_w_len: 256, log_basis: 5 },HachiPlannedState { level: 1, current_w_len: 36608, log_basis: 5 },] },
@@ -129,7 +129,7 @@ pub(crate) static FP128_LOGBASIS_TABLE: &[GeneratedScheduleTableEntry] = &[
     GeneratedScheduleTableEntry { max_num_vars: 63, states: &[HachiPlannedState { level: 0, current_w_len: 9223372036854775808, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 5703716610688, log_basis: 2 },HachiPlannedState { level: 2, current_w_len: 2134943872, log_basis: 2 },HachiPlannedState { level: 3, current_w_len: 35845888, log_basis: 4 },HachiPlannedState { level: 4, current_w_len: 2222720, log_basis: 5 },HachiPlannedState { level: 5, current_w_len: 438144, log_basis: 5 },HachiPlannedState { level: 6, current_w_len: 205312, log_basis: 5 },HachiPlannedState { level: 7, current_w_len: 147072, log_basis: 5 },HachiPlannedState { level: 8, current_w_len: 125184, log_basis: 5 },] },
 ];
 
-// fp128::OneHot
+// fp128::D64OneHot
 #[rustfmt::skip]
 pub(crate) static FP128_ONEHOT_D64_TABLE: &[GeneratedScheduleTableEntry] = &[
     GeneratedScheduleTableEntry { max_num_vars: 7, states: &[HachiPlannedState { level: 0, current_w_len: 128, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 29632, log_basis: 2 },] },

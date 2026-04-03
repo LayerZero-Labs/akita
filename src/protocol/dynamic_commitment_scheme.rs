@@ -1038,7 +1038,7 @@ pub struct DynamicFp128FullFamily;
 impl DynamicRootConfigFamily<fp128::Field> for DynamicFp128FullFamily {
     type Cfg32 = fp128::D32Full;
     type Cfg64 = Fp128AdaptiveBoundedD64<128>;
-    type Cfg128 = fp128::Full;
+    type Cfg128 = fp128::D128Full;
 
     fn select_root_ring_dim(key: HachiScheduleLookupKey) -> Result<usize, HachiError> {
         if fp128_exact_fit_singleton_prefers_d32(key) {
@@ -1058,7 +1058,7 @@ pub struct DynamicFp128OneHotFamily;
 
 impl DynamicRootConfigFamily<fp128::Field> for DynamicFp128OneHotFamily {
     type Cfg32 = fp128::D32OneHot;
-    type Cfg64 = fp128::OneHot;
+    type Cfg64 = fp128::D64OneHot;
     type Cfg128 = Fp128AdaptiveBoundedD128<1>;
 
     fn select_root_ring_dim(key: HachiScheduleLookupKey) -> Result<usize, HachiError> {
