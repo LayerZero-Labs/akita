@@ -34,7 +34,7 @@ use crate::protocol::hachi_poly_ops::OneHotIndex;
 use crate::protocol::ring_switch::{
     w_ring_element_count, w_ring_element_count_with_num_claims_and_points,
 };
-use crate::{cfg_into_iter, cfg_iter, CanonicalField, FieldCore, FieldSampling};
+use crate::{CanonicalField, FieldCore, FieldSampling};
 #[cfg(feature = "disk-persistence")]
 use std::fs;
 use std::io::{Read, Write};
@@ -670,8 +670,7 @@ where
     let root_params = Cfg::level_params_with_log_basis(root_inputs, root_layout.log_basis);
     let mut prev_w_len = root_inputs
         .current_w_len
-        .checked_mul(max_num_batched_polys)
-        .unwrap_or(usize::MAX);
+        .saturating_mul(max_num_batched_polys);
     let mut level = 1usize;
     let mut current_w_len = w_ring_element_count_with_num_claims_and_points::<F>(
         &root_params,

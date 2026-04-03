@@ -6,7 +6,6 @@
 
 use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::{CyclotomicRing, SparseChallenge};
-use crate::cfg_into_iter;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
@@ -875,7 +874,7 @@ where
     F: FieldCore + CanonicalField + FieldSampling,
     Cfg: CommitmentConfig<Field = F>,
 {
-    if w.len() % D != 0 {
+    if !w.len().is_multiple_of(D) {
         return Err(HachiError::InvalidSize {
             expected: D,
             actual: w.len(),
@@ -995,7 +994,7 @@ pub(crate) fn build_w_evals<F: FieldCore>(
     w: &[F],
     d: usize,
 ) -> Result<(Vec<F>, usize, usize), HachiError> {
-    if d == 0 || w.len() % d != 0 {
+    if !w.len().is_multiple_of(d) {
         return Err(HachiError::InvalidSize {
             expected: d,
             actual: w.len(),
@@ -1028,7 +1027,7 @@ pub(crate) fn build_w_evals_compact(
     w: &[i8],
     d: usize,
 ) -> Result<(Vec<i8>, usize, usize), HachiError> {
-    if d == 0 || w.len() % d != 0 {
+    if !w.len().is_multiple_of(d) {
         return Err(HachiError::InvalidSize {
             expected: d,
             actual: w.len(),

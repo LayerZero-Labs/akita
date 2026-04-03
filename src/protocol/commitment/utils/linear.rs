@@ -10,7 +10,6 @@ use crate::algebra::{
 };
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter};
 use crate::{CanonicalField, FieldCore};
 use std::array::from_fn;
 use std::mem::size_of;

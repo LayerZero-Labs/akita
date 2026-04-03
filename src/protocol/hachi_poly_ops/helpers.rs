@@ -11,7 +11,7 @@ use crate::parallel::*;
 use crate::protocol::commitment::onehot::{RegularOneHotEntry, SparseBlockEntry};
 use crate::protocol::commitment::utils::linear::try_centered_i8;
 use crate::protocol::hachi_poly_ops::DecomposeFoldWitness;
-use crate::{cfg_into_iter, cfg_iter, CanonicalField};
+use crate::CanonicalField;
 use std::array::from_fn;
 
 #[cfg(target_arch = "aarch64")]

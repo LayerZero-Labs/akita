@@ -10,7 +10,7 @@ use crate::algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::{cfg_into_iter, cfg_join, CanonicalField, FieldCore};
+use crate::{CanonicalField, FieldCore};
 
 use super::flat_matrix::RingMatrixView;
 use super::norm::detect_field_modulus;

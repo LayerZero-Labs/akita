@@ -1,7 +1,6 @@
 //! Matrix sampling helpers for setup.
 
 use crate::algebra::ring::CyclotomicRing;
-use crate::cfg_into_iter;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::{FieldCore, FieldSampling};

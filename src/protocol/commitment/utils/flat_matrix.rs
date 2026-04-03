@@ -108,7 +108,7 @@ impl<F: FieldCore> FlatMatrix<F> {
     pub fn view<const D: usize>(&self) -> RingMatrixView<'_, F, D> {
         assert!(D > 0, "ring dimension must be positive");
         assert!(
-            self.gen_ring_dim % D == 0,
+            self.gen_ring_dim.is_multiple_of(D),
             "D={D} does not divide gen_ring_dim={}",
             self.gen_ring_dim
         );
@@ -130,7 +130,7 @@ impl<F: FieldCore> FlatMatrix<F> {
     /// Number of ring-element columns when viewed at dimension D.
     #[inline]
     pub fn num_cols_at<const D: usize>(&self) -> usize {
-        debug_assert!(D > 0 && self.gen_ring_dim % D == 0);
+        debug_assert!(D > 0 && self.gen_ring_dim.is_multiple_of(D));
         self.cols_ring * (self.gen_ring_dim / D)
     }
 
@@ -141,7 +141,7 @@ impl<F: FieldCore> FlatMatrix<F> {
     /// Panics if `row >= num_rows` or D does not divide `gen_ring_dim`.
     #[inline]
     pub fn row<const D: usize>(&self, row: usize) -> &[CyclotomicRing<F, D>] {
-        assert!(D > 0 && self.gen_ring_dim % D == 0);
+        assert!(D > 0 && self.gen_ring_dim.is_multiple_of(D));
         assert!(row < self.num_rows, "row {row} out of bounds");
         let row_field_len = self.cols_ring * self.gen_ring_dim;
         let start = row * row_field_len;

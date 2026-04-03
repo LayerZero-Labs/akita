@@ -1666,7 +1666,7 @@ where
     Cfg: CommitmentConfig<Field = F>,
 {
     let y_coeff_len = proof.root.y_rings().coeff_len();
-    if y_coeff_len % D != 0 {
+    if !y_coeff_len.is_multiple_of(D) {
         return Err(HachiError::InvalidProof);
     }
     let claim_group_sizes = validate_nonempty_group_sizes(opening_groups, "batched_verify")
@@ -2351,7 +2351,7 @@ where
             return Err(HachiError::InvalidProof);
         }
         let y_coeff_len = proof.root.y_rings().coeff_len();
-        if y_coeff_len % D != 0 {
+        if !y_coeff_len.is_multiple_of(D) {
             return Err(HachiError::InvalidProof);
         }
         let batch_shape =

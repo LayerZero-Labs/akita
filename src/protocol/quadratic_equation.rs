@@ -960,7 +960,7 @@ where
     let row4_idx = row3_start + num_public_outputs;
     let a_row_start = row4_idx + 1;
 
-    if inner_width == 0 || z_pre_centered.len() % inner_width != 0 {
+    if inner_width == 0 || !z_pre_centered.len().is_multiple_of(inner_width) {
         return Err(HachiError::InvalidProof);
     }
 
@@ -1093,7 +1093,7 @@ where
             actual: v.len(),
         });
     }
-    if commitment_rows.is_empty() || commitment_rows.len() % n_b != 0 {
+    if commitment_rows.is_empty() || !commitment_rows.len().is_multiple_of(n_b) {
         return Err(HachiError::InvalidSize {
             expected: n_b,
             actual: commitment_rows.len(),

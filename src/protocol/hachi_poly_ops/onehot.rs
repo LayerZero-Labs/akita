@@ -27,7 +27,7 @@ use crate::protocol::hachi_poly_ops::helpers::{
     sparse_onehot_accumulate, sparse_onehot_accumulate_slices,
 };
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
-use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
+use crate::{CanonicalField, FieldCore};
 use std::marker::PhantomData;
 
 /// Types usable as one-hot position indices.
@@ -102,7 +102,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         r_vars: usize,
         m_vars: usize,
     ) -> Result<Self, HachiError> {
-        let use_regular_blocks = onehot_k >= D && onehot_k % D == 0;
+        let use_regular_blocks = onehot_k >= D && onehot_k.is_multiple_of(D);
         let blocks = if use_regular_blocks {
             OneHotBlocks::Regular(map_onehot_to_regular_blocks(
                 onehot_k, &indices, r_vars, m_vars, D,
@@ -790,16 +790,17 @@ where
 
                 for a_idx in 0..n_a {
                     let a_row = a_view.row(a_idx);
+                    let mut accum_col = accums
+                        .iter_mut()
+                        .map(|row| &mut row[a_idx])
+                        .collect::<Vec<_>>();
                     for (col, entries) in col_entries.iter().enumerate() {
                         if entries.is_empty() {
                             continue;
                         }
                         let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
                         for &(lb, ci) in entries {
-                            a_wide.shift_accumulate_into(
-                                &mut accums[lb as usize][a_idx],
-                                ci as usize,
-                            );
+                            a_wide.shift_accumulate_into(accum_col[lb as usize], ci as usize);
                         }
                     }
                 }
@@ -911,16 +912,17 @@ where
 
                 for a_idx in 0..n_a {
                     let a_row = a_view.row(a_idx);
+                    let mut accum_col = accums
+                        .iter_mut()
+                        .map(|row| &mut row[a_idx])
+                        .collect::<Vec<_>>();
                     for (col, entries) in col_entries.iter().enumerate() {
                         if entries.is_empty() {
                             continue;
                         }
                         let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
                         for &(lb, ci) in entries {
-                            a_wide.shift_accumulate_into(
-                                &mut accums[lb as usize][a_idx],
-                                ci as usize,
-                            );
+                            a_wide.shift_accumulate_into(accum_col[lb as usize], ci as usize);
                         }
                     }
                 }

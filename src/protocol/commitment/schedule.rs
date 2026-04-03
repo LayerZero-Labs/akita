@@ -1091,7 +1091,7 @@ pub fn hachi_recursive_level_layout_from_params<Cfg: CommitmentConfig>(
     params: &HachiLevelParams,
     current_w_len: usize,
 ) -> Result<HachiCommitmentLayout, HachiError> {
-    if current_w_len % params.d != 0 {
+    if !current_w_len.is_multiple_of(params.d) {
         return Err(HachiError::InvalidInput(format!(
             "witness length {current_w_len} is not divisible by D={}",
             params.d

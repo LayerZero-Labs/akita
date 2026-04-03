@@ -268,7 +268,7 @@ impl<F: CanonicalField> PartialSplitNtt32<F> {
     pub fn compute() -> Self {
         let q = modulus::<F>();
         assert!(
-            (q - 1) % (2 * CLASS_D as u128) == 0,
+            (q - 1).is_multiple_of(2 * CLASS_D as u128),
             "64 must divide q - 1 for the k=32 split transform"
         );
 

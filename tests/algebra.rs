@@ -869,8 +869,8 @@ mod tests {
     #[test]
     fn negacyclic_ntt_mul_matches_schoolbook_all_q32_primes_d64() {
         const D: usize = 64;
-        let a_canon: [i16; D] = std::array::from_fn(|i| (i as i16 * 7 + 3));
-        let b_canon: [i16; D] = std::array::from_fn(|i| (i as i16 * 5 + 11));
+        let a_canon: [i16; D] = std::array::from_fn(|i| i as i16 * 7 + 3);
+        let b_canon: [i16; D] = std::array::from_fn(|i| i as i16 * 5 + 11);
 
         for (pi, &prime) in Q32_PRIMES.iter().enumerate() {
             let tw = NttTwiddles::<i16, D>::compute(prime);

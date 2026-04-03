@@ -19,7 +19,7 @@ use crate::protocol::hachi_poly_ops::helpers::{
     sparse_mul_acc, try_small_i8_cache_from_ring_coeffs, DecomposeParams,
 };
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
-use crate::{cfg_into_iter, CanonicalField, FieldCore};
+use crate::{CanonicalField, FieldCore};
 
 /// Dense polynomial: all ring coefficients materialized in memory.
 #[derive(Debug, Clone, PartialEq, Eq)]

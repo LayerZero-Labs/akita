@@ -94,7 +94,7 @@ pub fn map_onehot_to_sparse_blocks<I: OneHotIndex>(
             "onehot_k and D must be nonzero".into(),
         ));
     }
-    if !(onehot_k % d == 0 || d % onehot_k == 0) {
+    if !(onehot_k.is_multiple_of(d) || d.is_multiple_of(onehot_k)) {
         return Err(HachiError::InvalidInput(format!(
             "K={onehot_k} and D={d} must be nicely matched (one divides the other)"
         )));
@@ -104,7 +104,7 @@ pub fn map_onehot_to_sparse_blocks<I: OneHotIndex>(
     let total_field_elems = num_chunks
         .checked_mul(onehot_k)
         .ok_or_else(|| HachiError::InvalidInput("T*K overflow".into()))?;
-    if total_field_elems % d != 0 {
+    if !total_field_elems.is_multiple_of(d) {
         return Err(HachiError::InvalidInput(format!(
             "T*K={total_field_elems} is not divisible by D={d}"
         )));
@@ -178,7 +178,7 @@ pub fn map_onehot_to_regular_blocks<I: OneHotIndex>(
             "onehot_k and D must be nonzero".into(),
         ));
     }
-    if onehot_k < d || onehot_k % d != 0 {
+    if onehot_k < d || !onehot_k.is_multiple_of(d) {
         return Err(HachiError::InvalidInput(format!(
             "regular one-hot layout requires K >= D with K divisible by D, got K={onehot_k}, D={d}"
         )));
@@ -188,7 +188,7 @@ pub fn map_onehot_to_regular_blocks<I: OneHotIndex>(
     let total_field_elems = num_chunks
         .checked_mul(onehot_k)
         .ok_or_else(|| HachiError::InvalidInput("T*K overflow".into()))?;
-    if total_field_elems % d != 0 {
+    if !total_field_elems.is_multiple_of(d) {
         return Err(HachiError::InvalidInput(format!(
             "T*K={total_field_elems} is not divisible by D={d}"
         )));

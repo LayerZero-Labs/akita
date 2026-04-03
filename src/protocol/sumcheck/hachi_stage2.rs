@@ -61,7 +61,6 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::protocol::proof::PackedDigits;
 use crate::protocol::ring_switch::eval_ring_at;
-use crate::{cfg_fold_reduce, cfg_into_iter};
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
 use std::marker::PhantomData;
 use std::mem;
@@ -245,7 +244,7 @@ fn packed_witness_eval<F: FieldCore + FromSmallInt>(
     }
 
     let d = 1usize << num_l;
-    if packed_witness.num_elems % d != 0 {
+    if !packed_witness.num_elems.is_multiple_of(d) {
         return Err(HachiError::InvalidProof);
     }
 

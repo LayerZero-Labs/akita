@@ -329,7 +329,7 @@ impl<F: FieldCore> FlatRingVec<F> {
     /// Returns [`HachiError::InvalidProof`] if the stored ring dimension does
     /// not match `D` or the coefficient buffer is not an exact multiple of `D`.
     pub fn try_to_vec<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-        if self.ring_dim != D || self.coeffs.len() % D != 0 {
+        if self.ring_dim != D || !self.coeffs.len().is_multiple_of(D) {
             return Err(HachiError::InvalidProof);
         }
         Ok(self
@@ -348,7 +348,7 @@ impl<F: FieldCore> FlatRingVec<F> {
     pub(crate) fn as_ring_slice<const D: usize>(
         &self,
     ) -> Result<&[CyclotomicRing<F, D>], HachiError> {
-        if self.ring_dim != D || self.coeffs.len() % D != 0 {
+        if self.ring_dim != D || !self.coeffs.len().is_multiple_of(D) {
             return Err(HachiError::InvalidProof);
         }
         let ring_count = self.coeffs.len() / D;
@@ -436,7 +436,7 @@ impl<F: FieldCore> Valid for FlatRingVec<F> {
                 "ring_dim must be > 0".to_string(),
             ));
         }
-        if self.coeffs.len() % self.ring_dim != 0 {
+        if !self.coeffs.len().is_multiple_of(self.ring_dim) {
             return Err(SerializationError::InvalidData(
                 "coeffs length not a multiple of ring_dim".to_string(),
             ));
@@ -514,7 +514,7 @@ impl<F: FieldCore> ProofRingVec<F> {
     /// Whether these coefficients can be decoded as a vector of ring elements
     /// of dimension `d`.
     pub fn can_decode_vec(&self, d: usize) -> bool {
-        d != 0 && self.coeffs.len() % d == 0
+        self.coeffs.len().is_multiple_of(d)
     }
 
     /// Borrow the stored coefficients as a slice of typed ring elements.
@@ -524,7 +524,7 @@ impl<F: FieldCore> ProofRingVec<F> {
     /// Returns [`HachiError::InvalidProof`] if the stored coefficient count is
     /// not divisible by `D`.
     pub fn as_ring_slice<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], HachiError> {
-        if self.coeffs.len() % D != 0 {
+        if !self.coeffs.len().is_multiple_of(D) {
             return Err(HachiError::InvalidProof);
         }
         let ring_count = self.coeffs.len() / D;
@@ -621,7 +621,7 @@ impl<F: FieldCore> ProofRingVec<F> {
     /// Returns [`HachiError::InvalidProof`] if the stored coefficient count is
     /// not divisible by `D`.
     pub fn try_to_vec<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-        if self.coeffs.len() % D != 0 {
+        if !self.coeffs.len().is_multiple_of(D) {
             return Err(HachiError::InvalidProof);
         }
         Ok(self

@@ -183,7 +183,7 @@ impl SparseChallengeConfig {
                 half_weight,
                 max_mag2_per_half,
             } => {
-                if D == 0 || D % 2 != 0 {
+                if D == 0 || !D.is_multiple_of(2) {
                     return Err("split-ring family requires an even ring degree");
                 }
                 if *half_weight > D / 2 {

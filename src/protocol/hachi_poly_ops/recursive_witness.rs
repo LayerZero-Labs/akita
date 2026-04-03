@@ -19,7 +19,7 @@ use crate::protocol::hachi_poly_ops::helpers::{
     balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
 };
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness};
-use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
+use crate::{CanonicalField, FieldCore};
 use std::array::from_fn;
 use std::marker::PhantomData;
 
