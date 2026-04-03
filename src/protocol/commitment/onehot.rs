@@ -291,7 +291,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::fields::{Fp64, Prime128Offset5823};
+    use crate::algebra::fields::{Fp64, Prime128Offset275};
     use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn wide_matches_reference_fp128() {
-        type F = Prime128Offset5823;
+        type F = Prime128Offset275;
         const D: usize = 64;
 
         let mut rng = StdRng::seed_from_u64(0xcafe_1234);

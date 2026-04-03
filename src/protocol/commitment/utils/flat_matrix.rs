@@ -366,11 +366,11 @@ impl<'a, F: FieldCore, const D: usize> SubMatrixView<'a, F, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::fields::Prime128Offset5823;
+    use crate::algebra::fields::Prime128Offset275;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
-    type F = Prime128Offset5823;
+    type F = Prime128Offset275;
 
     #[test]
     fn roundtrip_from_ring_matrix_and_view() {

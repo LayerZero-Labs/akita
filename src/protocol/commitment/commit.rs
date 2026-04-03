@@ -1269,10 +1269,7 @@ impl HachiCommitmentCore {
 mod tests {
     use super::*;
     use crate::primitives::{HachiDeserialize, HachiSerialize};
-    use crate::protocol::commitment::{
-        hachi_recursive_level_layout_from_params,
-        presets::{fp128, fp128_5823},
-    };
+    use crate::protocol::commitment::{hachi_recursive_level_layout_from_params, presets::fp128};
     use crate::protocol::ring_switch::w_ring_element_count_with_num_claims_and_points;
     use crate::test_utils::{TinyConfig, F as TestF};
 
@@ -1485,9 +1482,8 @@ mod tests {
 
     #[test]
     fn setup_accepts_field_coupled_presets() {
-        <HachiCommitmentCore as RingCommitmentScheme<fp128_5823::Field, 128, fp128_5823::Full>>::setup(
-            12,
-            1,
+        <HachiCommitmentCore as RingCommitmentScheme<fp128::Field, 128, fp128::D128Full>>::setup(
+            12, 1,
         )
         .expect("legacy fp128 preset should accept the legacy field");
 

@@ -19,8 +19,22 @@ pub struct RingConfig {
     pub label: &'static str,
 }
 
-/// All 5 ring configurations available to the planner.
+/// All 7 ring configurations available to the planner.
 pub const ALL_RING_CONFIGS: &[RingConfig] = &[
+    RingConfig {
+        d: 128,
+        n_a: 1,
+        challenge_l1_mass: 31,
+        max_abs_challenge_coeff: 1,
+        label: "D128-na1",
+    },
+    RingConfig {
+        d: 128,
+        n_a: 2,
+        challenge_l1_mass: 31,
+        max_abs_challenge_coeff: 1,
+        label: "D128-na2",
+    },
     RingConfig {
         d: 64,
         n_a: 1,
@@ -610,6 +624,22 @@ mod tests {
         let sched = run_universal_planner(&opts);
         assert!(!sched.levels.is_empty());
         assert!(sched.total_bytes < 166_613);
+    }
+
+    #[test]
+    fn d128_only_configs_produce_schedule() {
+        let mut opts = PlannerOptions::new(128, 25);
+        let d128_cfgs = ALL_RING_CONFIGS
+            .iter()
+            .filter(|cfg| cfg.d == 128)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(!d128_cfgs.is_empty());
+        let d128_cfgs = Box::leak(d128_cfgs.into_boxed_slice());
+        opts.ring_configs = d128_cfgs;
+        let sched = run_universal_planner(&opts);
+        assert!(!sched.levels.is_empty());
+        assert!(sched.levels.iter().all(|level| level.d == 128));
     }
 
     #[test]

@@ -1799,7 +1799,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiProof<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128Offset5823;
+    use crate::algebra::Prime128Offset275;
     use crate::primitives::serialization::Valid;
     use crate::FromSmallInt;
 
@@ -1814,14 +1814,11 @@ mod tests {
             .collect();
         assert_eq!(recovered, digits);
 
-        let expected_field: Vec<Prime128Offset5823> = digits
+        let expected_field: Vec<Prime128Offset275> = digits
             .iter()
-            .map(|&digit| Prime128Offset5823::from_i64(digit as i64))
+            .map(|&digit| Prime128Offset275::from_i64(digit as i64))
             .collect();
-        assert_eq!(
-            packed.to_field_elems::<Prime128Offset5823>(),
-            expected_field
-        );
+        assert_eq!(packed.to_field_elems::<Prime128Offset275>(), expected_field);
     }
 
     #[test]

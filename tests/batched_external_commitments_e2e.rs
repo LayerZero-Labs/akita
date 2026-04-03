@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use hachi_pcs::algebra::Fp128;
-use hachi_pcs::protocol::commitment::{hachi_batched_root_layout, presets::fp128_5823};
+use hachi_pcs::protocol::commitment::{hachi_batched_root_layout, presets::fp128};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
@@ -17,7 +17,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::sync::{Mutex, Once};
 
-type F = Fp128<0xffffffffffffffffffffffffffffe941>;
+type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
 const ONEHOT_K: usize = 256;
 const TEST_NV: usize = 15;
 const BATCH_SIZE: usize = 3;
@@ -86,7 +86,7 @@ fn batched_onehot_round_trip_with_individual_commitments() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128_5823::OneHot;
+        type Cfg = fp128::D64OneHot;
         const D: usize = Cfg::D;
 
         let layout = hachi_batched_root_layout::<Cfg, D>(TEST_NV, BATCH_SIZE).expect("layout");
@@ -182,7 +182,7 @@ fn batched_onehot_round_trip_with_mixed_commitment_groups() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128_5823::OneHot;
+        type Cfg = fp128::D64OneHot;
         const D: usize = Cfg::D;
 
         let layout = hachi_batched_root_layout::<Cfg, D>(TEST_NV, BATCH_SIZE).expect("layout");

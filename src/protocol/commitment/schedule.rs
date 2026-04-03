@@ -1358,7 +1358,7 @@ mod tests {
     use super::*;
     use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
     use crate::primitives::serialization::{Compress, HachiSerialize};
-    use crate::protocol::commitment::presets::{fp128, fp128_5823};
+    use crate::protocol::commitment::presets::fp128;
     use crate::protocol::commitment::schedule_tables::{
         fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table, GeneratedScheduleTableEntry,
     };
@@ -1375,7 +1375,7 @@ mod tests {
     };
     use crate::FieldCore;
 
-    type F = fp128_5823::Field;
+    type F = fp128::Field;
 
     fn dummy_sumcheck(rounds: usize, degree: usize) -> SumcheckProof<F> {
         SumcheckProof {
@@ -1463,7 +1463,7 @@ mod tests {
 
     #[test]
     fn shared_legacy_fp128_schedule_tables_match_runtime_planner() {
-        assert_generated_table_matches_runtime_planner::<fp128_5823::OneHot>(
+        assert_generated_table_matches_runtime_planner::<fp128::D64OneHot>(
             fp128_adaptive_onehot_d64_table(),
         );
     }
@@ -1477,20 +1477,20 @@ mod tests {
     #[test]
     fn adaptive_bounded_plan_matches_runtime_next_w_len() {
         for max_num_vars in [14, 20, 30] {
-            assert_plan_matches_runtime_w_sizes::<fp128_5823::Full>(max_num_vars);
+            assert_plan_matches_runtime_w_sizes::<fp128::D128Full>(max_num_vars);
         }
     }
 
     #[test]
     fn adaptive_onehot_plan_matches_runtime_next_w_len() {
         for max_num_vars in [15, 30, 44] {
-            assert_plan_matches_runtime_w_sizes::<fp128_5823::OneHot>(max_num_vars);
+            assert_plan_matches_runtime_w_sizes::<fp128::D64OneHot>(max_num_vars);
         }
     }
 
     #[test]
     fn singleton_root_runtime_plan_matches_existing_root_layout() {
-        type Cfg = fp128_5823::OneHot;
+        type Cfg = fp128::D64OneHot;
 
         let runtime =
             hachi_root_runtime_plan::<Cfg, { Cfg::D }>(30, 30, 1).expect("singleton runtime plan");
@@ -1507,7 +1507,7 @@ mod tests {
 
     #[test]
     fn adaptive_onehot_explicit_recursive_basis_beats_colliding_stateless_state() {
-        type Cfg = fp128_5823::OneHot;
+        type Cfg = fp128::D64OneHot;
 
         let current_inputs = HachiScheduleInputs {
             max_num_vars: 30,
@@ -1530,7 +1530,7 @@ mod tests {
 
     #[test]
     fn recursive_onehot_split_matches_open_digit_witness_count() {
-        type Cfg = fp128_5823::OneHot;
+        type Cfg = fp128::D64OneHot;
 
         let inputs = HachiScheduleInputs {
             max_num_vars: 30,
@@ -1707,7 +1707,7 @@ mod tests {
     #[test]
     fn tight_block_len_is_no_larger_than_pow2() {
         for max_num_vars in [14, 20, 30] {
-            let plan = fp128_5823::Full::schedule_plan(max_num_vars)
+            let plan = fp128::D128Full::schedule_plan(max_num_vars)
                 .expect("planner should succeed")
                 .expect("config should provide a planner");
             for level in &plan.levels {
@@ -1746,7 +1746,7 @@ mod tests {
 
     #[test]
     fn batched_root_layout_is_invariant_under_equivalent_partitions() {
-        type Cfg = fp128_5823::OneHot;
+        type Cfg = fp128::D64OneHot;
 
         let batch_a = HachiRootBatchSummary::from_claim_group_sizes(&[1, 1, 4], 2).unwrap();
         let batch_b = HachiRootBatchSummary::from_claim_group_sizes(&[2, 2, 2], 2).unwrap();
@@ -1773,7 +1773,7 @@ mod tests {
 
     #[test]
     fn batched_root_next_w_len_and_shape_are_invariant_under_equivalent_partitions() {
-        type Cfg = fp128_5823::OneHot;
+        type Cfg = fp128::D64OneHot;
         const MAX_NUM_VARS: usize = 30;
 
         let claim_groups_a = [1usize, 1, 4];
@@ -1811,7 +1811,7 @@ mod tests {
 
     #[test]
     fn batched_root_next_w_len_requires_group_and_point_counts() {
-        type Cfg = fp128_5823::OneHot;
+        type Cfg = fp128::D64OneHot;
         const MAX_NUM_VARS: usize = 30;
 
         let singleton_groups = HachiRootBatchSummary::new(6, 6, 1).unwrap();

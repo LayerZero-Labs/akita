@@ -5,15 +5,15 @@
 //!
 //! Two polynomial representations are covered:
 //!
-//! * **One-hot** — `fp128_5823::OneHot` (D = 64, K = D).
-//! * **Dense**   — `fp128_5823::Full`   (D = 128, full-field coefficients).
+//! * **One-hot** — `fp128::D64OneHot` (D = 64, K = D).
+//! * **Dense**   — `fp128::D128Full`   (D = 128, full-field coefficients).
 //!
 //! Variable counts: 10, 15, 20, 25 for each representation (8 tests total).
 
 #![allow(missing_docs)]
 
 use hachi_pcs::algebra::Fp128;
-use hachi_pcs::protocol::commitment::presets::fp128_5823;
+use hachi_pcs::protocol::commitment::presets::fp128;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
@@ -29,7 +29,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::sync::Once;
 
-type F = Fp128<0xffffffffffffffffffffffffffffe941>;
+type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
 static INIT_RAYON: Once = Once::new();
@@ -93,7 +93,7 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
 // One-hot helpers (D = 64)
 // ---------------------------------------------------------------------------
 
-type OneHotCfg = fp128_5823::OneHot;
+type OneHotCfg = fp128::D64OneHot;
 const ONEHOT_D: usize = OneHotCfg::D;
 const ONEHOT_K: usize = ONEHOT_D;
 
@@ -175,7 +175,7 @@ fn run_single_onehot(nv: usize) {
 // Dense helpers (D = 128)
 // ---------------------------------------------------------------------------
 
-type DenseCfg = fp128_5823::Full;
+type DenseCfg = fp128::D128Full;
 const DENSE_D: usize = DenseCfg::D;
 
 fn run_single_dense(nv: usize) {

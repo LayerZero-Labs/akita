@@ -6,7 +6,7 @@ use hachi_pcs::protocol::commitment::utils::linear::{
     decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_single_i8,
 };
 use hachi_pcs::protocol::commitment::{
-    hachi_batched_root_layout, presets::fp128_5823, HachiScheduleInputs,
+    hachi_batched_root_layout, presets::fp128, HachiScheduleInputs,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{HachiPolyOps, OneHotPoly};
@@ -15,8 +15,8 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;
 
-type F = Fp128<0xffffffffffffffffffffffffffffe941>;
-type Cfg = fp128_5823::OneHot;
+type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
+type Cfg = fp128::D64OneHot;
 const D: usize = Cfg::D;
 
 const SINGLE_NUM_VARS: usize = 34;

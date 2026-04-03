@@ -684,11 +684,11 @@ where
 mod tests {
     use super::*;
     use crate::algebra::split_eq::GruenSplitEq;
-    use crate::algebra::Prime128Offset5823;
+    use crate::algebra::Prime128Offset275;
     use crate::protocol::transcript::labels as tr_labels;
     use crate::protocol::transcript::Blake2bTranscript;
 
-    type F = Prime128Offset5823;
+    type F = Prime128Offset275;
 
     #[derive(Clone)]
     struct ToyMlInstance {

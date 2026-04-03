@@ -2897,7 +2897,7 @@ fn trace<F: FieldCore + FromSmallInt, const D: usize>(u: &CyclotomicRing<F, D>) 
 mod tests {
     use super::*;
     use crate::algebra::Fp128;
-    use crate::protocol::commitment::presets::fp128_5823;
+    use crate::protocol::commitment::presets::fp128;
     use crate::protocol::commitment::schedule::hachi_root_runtime_plan_with_batch;
     use crate::protocol::commitment::{CommitmentConfig, HachiRootBatchSummary};
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
@@ -2919,8 +2919,8 @@ mod tests {
     type Cfg = SmallTestCommitmentConfig;
     const D: usize = Cfg::D;
     type Scheme = HachiCommitmentScheme<D, Cfg>;
-    type OneHotF = Fp128<0xffffffffffffffffffffffffffffe941>;
-    type OneHotCfg = fp128_5823::OneHot;
+    type OneHotF = Fp128<0xfffffffffffffffffffffffffffffeed>;
+    type OneHotCfg = fp128::D64OneHot;
     const ONEHOT_D: usize = OneHotCfg::D;
     const BENCH_ONEHOT_K: usize = ONEHOT_D;
     type OneHotScheme = HachiCommitmentScheme<ONEHOT_D, OneHotCfg>;
@@ -3279,7 +3279,8 @@ mod tests {
             }
 
             let debug_batch_hint = batch_hints[0].clone();
-            let debug_w_folded_by_poly = w_folded_by_poly.clone();
+            let debug_w_folded_by_poly: Vec<Vec<CyclotomicRing<OneHotF, ONEHOT_D>>> =
+                w_folded_by_poly.clone();
             let mut quad_eq = Box::new(
                 QuadraticEquation::<OneHotF, { ONEHOT_D }, OneHotCfg>::new_batched_prover(
                     &batch_setup.ntt_shared,

@@ -1971,10 +1971,10 @@ impl<F: FieldCore + FromSmallInt> EqFactoredSumcheckInstanceVerifier<F> for Hach
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128Offset5823;
+    use crate::algebra::Prime128Offset275;
     use crate::protocol::sumcheck::{advance_eq_factored_claim, multilinear_eval};
 
-    type F = Prime128Offset5823;
+    type F = Prime128Offset275;
 
     fn pad_compact_rows(
         w_prefix: &[i8],

@@ -1,8 +1,7 @@
 #![allow(missing_docs)]
 
 use hachi_pcs::protocol::commitment::{
-    hachi_batched_root_layout, hachi_recursive_level_layout_from_params,
-    presets::{fp128, fp128_5823},
+    hachi_batched_root_layout, hachi_recursive_level_layout_from_params, presets::fp128,
     HachiCommitmentLayout, HachiScheduleInputs,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
@@ -24,9 +23,9 @@ use std::path::PathBuf;
 use std::sync::{Mutex, Once};
 use std::time::Instant;
 
-type F = fp128_5823::Field;
+type F = fp128::Field;
 type FSmall = fp128::Field;
-type Basis2Cfg = fp128_5823::StaticBounded<128, 2, 2>;
+type Basis2Cfg = fp128::StaticBounded<128, 2, 2>;
 const ONEHOT_K: usize = 256;
 const FULL_TEST_NV: usize = 14;
 const ONEHOT_TEST_NV: usize = 15;
@@ -260,7 +259,7 @@ fn full_d128_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128_5823::Full;
+        type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
 
         let layout = Cfg::commitment_layout(FULL_TEST_NV).expect("layout");
@@ -460,7 +459,7 @@ fn full_d128_basis6_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128_5823::StaticBounded<128, 6, 6>;
+        type Cfg = fp128::StaticBounded<128, 6, 6>;
         const D: usize = Cfg::D;
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
@@ -492,7 +491,7 @@ fn full_d128_basis6_rejects_tampered_stage1_child_claims() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128_5823::StaticBounded<128, 6, 6>;
+        type Cfg = fp128::StaticBounded<128, 6, 6>;
         const D: usize = Cfg::D;
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
@@ -536,7 +535,7 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128_5823::Full;
+        type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
 
         let nv = FULL_TEST_NV;
@@ -585,7 +584,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128_5823::OneHot;
+        type Cfg = fp128::D64OneHot;
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
@@ -670,7 +669,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
 
 #[test]
 fn adaptive_onehot_schedule_stays_below_basis6_in_current_range() {
-    type Cfg = fp128_5823::OneHot;
+    type Cfg = fp128::D64OneHot;
 
     for nv in 10..=120 {
         let plan = match Cfg::schedule_plan(nv) {
@@ -689,7 +688,7 @@ fn batched_onehot_same_point_round_trip() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128_5823::OneHot;
+        type Cfg = fp128::D64OneHot;
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
@@ -777,7 +776,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128_5823::OneHot;
+        type Cfg = fp128::D64OneHot;
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
@@ -860,7 +859,7 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128_5823::OneHot;
+        type Cfg = fp128::D64OneHot;
         const D: usize = Cfg::D;
         const NV: usize = 30;
         const BATCH_SIZE: usize = 4;
@@ -953,7 +952,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128_5823::Full;
+        type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
 
         let nv = FULL_TEST_NV;
@@ -989,7 +988,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
 
 #[test]
 fn adaptive_schedule_key_changes_when_schedule_changes() {
-    type Cfg = fp128_5823::LogBasis;
+    type Cfg = fp128::LogBasis;
 
     let mut distinct = std::collections::BTreeMap::new();
     for nv in 10..=18 {

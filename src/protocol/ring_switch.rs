@@ -1630,7 +1630,7 @@ mod tests {
     use crate::algebra::CyclotomicRing;
     use crate::protocol::commitment::AppendToTranscript;
     use crate::protocol::commitment::{
-        hachi_recursive_level_layout_from_params, presets::fp128_5823, HachiCommitmentCore,
+        hachi_recursive_level_layout_from_params, presets::fp128, HachiCommitmentCore,
         HachiScheduleInputs, RingCommitmentScheme, SmallTestCommitmentConfig,
     };
     use crate::protocol::commitment_scheme::HachiCommitmentScheme;
@@ -1697,7 +1697,7 @@ mod tests {
 
     #[test]
     fn compute_r_matches_schoolbook_reference() {
-        type F = fp128_5823::Field;
+        type F = fp128::Field;
         const D: usize = 64;
 
         let m: Vec<Vec<CyclotomicRing<F, D>>> = (0..3)
@@ -1757,8 +1757,8 @@ mod tests {
 
     #[test]
     fn full_root_rows_match_direct_relation_claim() {
-        type F = fp128_5823::Field;
-        type Cfg = fp128_5823::Full;
+        type F = fp128::Field;
+        type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
@@ -1875,7 +1875,7 @@ mod tests {
 
     #[test]
     fn centered_i32_decompose_matches_ring_decompose() {
-        type F = fp128_5823::Field;
+        type F = fp128::Field;
         const D: usize = 128;
 
         let centered = from_fn(|i| ((37 * i as i32 + 11) % 95) - 47);

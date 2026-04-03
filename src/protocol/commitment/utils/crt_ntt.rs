@@ -2,9 +2,8 @@
 
 use crate::algebra::ntt::prime::PrimeWidth;
 use crate::algebra::ntt::tables::{
-    q128_primes, q64_primes, MAX_CRT_RING_DEGREE, Q128_MODULUS, Q128_NUM_PRIMES,
-    Q128_SMALL_D_MODULUS, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES,
-    RING_DEGREE,
+    q128_primes, q64_primes, MAX_CRT_RING_DEGREE, Q128_MODULUS, Q128_NUM_PRIMES, Q32_MODULUS,
+    Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES, RING_DEGREE,
 };
 use crate::algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
 use crate::error::HachiError;
@@ -29,7 +28,7 @@ pub(crate) enum ProtocolCrtNttParams<const D: usize> {
 /// Dispatch policy:
 /// - `q <= 2^32-99` and `D <= 64`: Q32 (`i16`)
 /// - `q <= 2^64-59` and `D <= 1024`: Q64 (`i32`, conservative K=5)
-/// - `q in {2^128-5823, 2^128-275}` and `D <= 1024`: Q128 (`i32`, K=5)
+/// - `q = 2^128-275` and `D <= 1024`: Q128 (`i32`, K=5)
 /// - otherwise: explicit setup error
 pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
 ) -> Result<ProtocolCrtNttParams<D>, HachiError> {
@@ -46,7 +45,7 @@ pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
 
     let modulus = detect_field_modulus::<F>();
 
-    if modulus == Q128_MODULUS || modulus == Q128_SMALL_D_MODULUS {
+    if modulus == Q128_MODULUS {
         return Ok(ProtocolCrtNttParams::Q128(CrtNttParamSet::new(
             q128_primes(),
         )));
@@ -64,7 +63,7 @@ pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
     }
 
     Err(HachiError::InvalidSetup(format!(
-        "no CRT+NTT parameter set for modulus {modulus} and D={D}; supported ranges: <= {Q64_MODULUS} (with Q32/Q64 dispatch) or 128-bit moduli {{{Q128_MODULUS}, {Q128_SMALL_D_MODULUS}}}"
+        "no CRT+NTT parameter set for modulus {modulus} and D={D}; supported ranges: <= {Q64_MODULUS} (with Q32/Q64 dispatch) or q = {Q128_MODULUS}"
     )))
 }
 
@@ -190,7 +189,7 @@ impl<const D: usize> NttSlotCache<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::{Prime128Offset275, Prime128Offset5823};
+    use crate::algebra::Prime128Offset275;
 
     const SMALL_PROTOCOL_RING_DIMS: &[usize] = &[32, 64, 128];
 
@@ -206,15 +205,6 @@ mod tests {
         for &d in SMALL_PROTOCOL_RING_DIMS {
             crate::dispatch_ring_dim!(d, |D| {
                 assert_selects_q128_params::<Prime128Offset275, D>();
-            });
-        }
-    }
-
-    #[test]
-    fn legacy_prime5823_still_selects_q128_params_across_small_protocol_ring_dims() {
-        for &d in SMALL_PROTOCOL_RING_DIMS {
-            crate::dispatch_ring_dim!(d, |D| {
-                assert_selects_q128_params::<Prime128Offset5823, D>();
             });
         }
     }

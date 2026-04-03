@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use hachi_pcs::algebra::Fp128;
-use hachi_pcs::protocol::commitment::{hachi_batched_root_layout, presets::fp128_5823};
+use hachi_pcs::protocol::commitment::{hachi_batched_root_layout, presets::fp128};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
@@ -18,14 +18,14 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::sync::{Mutex, Once};
 
-type F = Fp128<0xffffffffffffffffffffffffffffe941>;
+type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
-type OneHotCfg = fp128_5823::OneHot;
+type OneHotCfg = fp128::D64OneHot;
 const ONEHOT_D: usize = OneHotCfg::D;
 const ONEHOT_K: usize = ONEHOT_D;
 
-type DenseCfg = fp128_5823::Full;
+type DenseCfg = fp128::D128Full;
 const DENSE_D: usize = DenseCfg::D;
 
 type PointCommitments<const D: usize, Cfg> =

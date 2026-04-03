@@ -987,12 +987,12 @@ impl<W: AdditiveGroup, const D: usize> Default for WideCyclotomicRing<W, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::fields::{Fp128x8i32, Fp64, Fp64x4i32, Prime128Offset5823};
+    use crate::algebra::fields::{Fp128x8i32, Fp64, Fp64x4i32, Prime128Offset275};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
     type F64 = Fp64<4294967197>;
-    type F128 = Prime128Offset5823;
+    type F128 = Prime128Offset275;
     const D: usize = 64;
 
     #[test]

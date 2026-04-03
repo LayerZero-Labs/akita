@@ -919,10 +919,10 @@ impl<E: FieldCore + CanonicalField + FromSmallInt> HachiStage1Verifier<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128Offset5823;
+    use crate::algebra::Prime128Offset275;
     use crate::protocol::transcript::Blake2bTranscript;
 
-    type F = Prime128Offset5823;
+    type F = Prime128Offset275;
 
     fn sample_stage1_witness(b: usize, live_x_cols: usize, num_l: usize) -> Vec<i8> {
         let half = (b / 2) as i16;

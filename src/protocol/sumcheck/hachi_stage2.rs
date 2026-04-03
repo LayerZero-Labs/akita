@@ -2381,11 +2381,11 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckI
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128Offset5823;
+    use crate::algebra::Prime128Offset275;
     use crate::protocol::ring_switch::build_w_evals;
     use crate::protocol::sumcheck::multilinear_eval;
 
-    type F = Prime128Offset5823;
+    type F = Prime128Offset275;
 
     #[derive(Clone, Copy)]
     struct Stage2Params<'a> {
