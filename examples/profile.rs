@@ -175,7 +175,7 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSc
         .fold_levels()
         .map(|level| level.serialized_size(Compress::No))
         .sum();
-    let tail_total = proof.final_w().serialized_size(Compress::No);
+    let tail_total = proof.final_witness().serialized_size(Compress::No);
     let accounted_total = hachi_levels_total + tail_total;
 
     tracing::info!(
@@ -201,19 +201,21 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSc
     for (i, lp) in proof.fold_levels().enumerate() {
         print_hachi_level_breakdown(label, i, lp);
     }
-    let final_w = proof.final_w();
+    let final_w = proof.final_witness();
     tracing::info!(
         label,
         tail_bytes = final_w.serialized_size(Compress::No),
-        final_w_num_elems = final_w.num_elems,
-        final_w_bits_per_elem = final_w.bits_per_elem,
+        final_w_num_elems = final_w.num_elems(),
+        final_w_bits_per_elem = final_w.as_packed_digits().map(|w| w.bits_per_elem),
         "proof tail summary"
     );
     eprintln!(
         "[{label}]   final_w: total={} bytes, elems={}, bits/elem={}",
         final_w.serialized_size(Compress::No),
-        final_w.num_elems,
-        final_w.bits_per_elem,
+        final_w.num_elems(),
+        final_w
+            .as_packed_digits()
+            .map_or(String::from("field"), |w| w.bits_per_elem.to_string()),
     );
 }
 
@@ -361,7 +363,7 @@ fn print_batched_proof_summary<const D: usize>(label: &str, proof: &HachiBatched
         .map(|level| level.serialized_size(Compress::No))
         .sum();
     let hachi_levels_total = root_total + recursive_levels_total;
-    let tail_total = proof.final_w().serialized_size(Compress::No);
+    let tail_total = proof.final_witness().serialized_size(Compress::No);
     let accounted_total = hachi_levels_total + tail_total;
 
     tracing::info!(
@@ -378,12 +380,14 @@ fn print_batched_proof_summary<const D: usize>(label: &str, proof: &HachiBatched
     for (i, lp) in proof.fold_levels().enumerate() {
         print_hachi_level_breakdown(label, i + 1, lp);
     }
-    let final_w = proof.final_w();
+    let final_w = proof.final_witness();
     eprintln!(
         "[{label}]   final_w: total={} bytes, elems={}, bits/elem={}",
         final_w.serialized_size(Compress::No),
-        final_w.num_elems,
-        final_w.bits_per_elem,
+        final_w.num_elems(),
+        final_w
+            .as_packed_digits()
+            .map_or(String::from("field"), |w| w.bits_per_elem.to_string()),
     );
 }
 

@@ -36,9 +36,9 @@ pub use dynamic_commitment_scheme::{
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, MultilinearPolynomail, OneHotIndex, OneHotPoly};
 pub use opening_point::{BasisMode, BlockOrder, RingOpeningPoint};
 pub use proof::{
-    FlatRingVec, HachiBatchedProof, HachiBatchedProofShape, HachiBatchedRootProof, HachiLevelProof,
-    HachiProof, HachiProofShape, HachiProofStep, HachiProofStepShape, LevelProofShape,
-    PackedDigits, ProofRingVec,
+    DirectWitnessProof, DirectWitnessShape, FlatRingVec, HachiBatchedProof, HachiBatchedProofShape,
+    HachiBatchedRootProof, HachiLevelProof, HachiProof, HachiProofShape, HachiProofStep,
+    HachiProofStepShape, LevelProofShape, PackedDigits, ProofRingVec,
 };
 pub use quadratic_equation::QuadraticEquation;
 pub use root_poly::{DenseMultilinear, MultilinearPolynomial, OneHotMultilinear};

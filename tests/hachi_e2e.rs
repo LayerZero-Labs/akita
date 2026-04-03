@@ -464,7 +464,14 @@ fn full_d128_basis6_prove_verify() {
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(BASIS6_TEST_NV, b"hachi_e2e/basis6");
 
-        assert_eq!(proof.final_w().bits_per_elem, 6);
+        assert_eq!(
+            proof
+                .final_witness()
+                .as_packed_digits()
+                .expect("current terminal witness should be packed digits")
+                .bits_per_elem,
+            6
+        );
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/basis6");
         let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
@@ -555,7 +562,11 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
         assert_eq!(decoded, proof);
 
         assert_eq!(
-            decoded.final_w().bits_per_elem,
+            decoded
+                .final_witness()
+                .as_packed_digits()
+                .expect("current terminal witness should be packed digits")
+                .bits_per_elem,
             plan.terminal_state().log_basis
         );
 
@@ -643,7 +654,11 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let decoded = HachiProof::<F>::deserialize_compressed(&mut cursor, &plan.to_proof_shape())
             .expect("deserialize adaptive onehot proof");
         assert_eq!(
-            decoded.final_w().bits_per_elem,
+            decoded
+                .final_witness()
+                .as_packed_digits()
+                .expect("current terminal witness should be packed digits")
+                .bits_per_elem,
             plan.terminal_state().log_basis
         );
 
@@ -921,9 +936,9 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
             .expect("deserialize batched onehot proof");
 
         assert!(
-            decoded.final_w().num_elems <= 245_888,
+            decoded.final_witness().num_elems() <= 245_888,
             "expected byte-aware batched schedule to keep folding, got final_w with {} elems",
-            decoded.final_w().num_elems
+            decoded.final_witness().num_elems()
         );
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-4x30");

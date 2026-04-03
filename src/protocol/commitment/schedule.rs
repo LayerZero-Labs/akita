@@ -6,7 +6,9 @@ use super::config::{
 use super::schedule_tables::{table_entry_states, GeneratedScheduleTableEntry};
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
-use crate::protocol::proof::{HachiProofShape, HachiProofStepShape, LevelProofShape};
+use crate::protocol::proof::{
+    DirectWitnessShape, HachiProofShape, HachiProofStepShape, LevelProofShape,
+};
 use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
 use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
 use std::collections::HashMap;
@@ -680,10 +682,12 @@ impl HachiSchedulePlan {
             .collect();
 
         let terminal = self.direct_step();
-        step_shapes.push(HachiProofStepShape::Direct((
-            terminal.state.current_w_len,
-            terminal.state.log_basis,
-        )));
+        step_shapes.push(HachiProofStepShape::Direct(
+            DirectWitnessShape::PackedDigits((
+                terminal.state.current_w_len,
+                terminal.state.log_basis,
+            )),
+        ));
         HachiProofShape { step_shapes }
     }
 }

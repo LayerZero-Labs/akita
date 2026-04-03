@@ -27,6 +27,64 @@ pub struct PackedDigits {
     pub data: Vec<u8>,
 }
 
+/// Terminal direct witness payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DirectWitnessProof<F: FieldCore> {
+    /// Packed small signed digits, used by the current recursive terminal
+    /// witness.
+    PackedDigits(PackedDigits),
+    /// Raw field elements, for direct witnesses that are not naturally digit
+    /// bounded.
+    FieldElements(ProofRingVec<F>),
+}
+
+impl<F: FieldCore> DirectWitnessProof<F> {
+    /// Borrow the packed-digits payload, if present.
+    pub fn as_packed_digits(&self) -> Option<&PackedDigits> {
+        match self {
+            Self::PackedDigits(packed) => Some(packed),
+            Self::FieldElements(_) => None,
+        }
+    }
+
+    /// Borrow the raw field-element payload, if present.
+    pub fn as_field_elements(&self) -> Option<&ProofRingVec<F>> {
+        match self {
+            Self::PackedDigits(_) => None,
+            Self::FieldElements(field_elems) => Some(field_elems),
+        }
+    }
+
+    /// Shape descriptor for this direct witness payload.
+    pub fn shape(&self) -> DirectWitnessShape {
+        match self {
+            Self::PackedDigits(packed) => {
+                DirectWitnessShape::PackedDigits((packed.num_elems, packed.bits_per_elem))
+            }
+            Self::FieldElements(field_elems) => {
+                DirectWitnessShape::FieldElements(field_elems.coeff_len())
+            }
+        }
+    }
+
+    /// Number of logical field elements carried by this witness payload.
+    pub fn num_elems(&self) -> usize {
+        match self {
+            Self::PackedDigits(packed) => packed.num_elems,
+            Self::FieldElements(field_elems) => field_elems.coeff_len(),
+        }
+    }
+}
+
+/// Shape descriptor for deserializing a direct witness payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DirectWitnessShape {
+    /// Packed balanced digits.
+    PackedDigits((usize, u32)),
+    /// Raw field elements.
+    FieldElements(usize),
+}
+
 impl PackedDigits {
     /// Smallest `bits_per_elem` that can encode every signed digit in `w`.
     pub fn required_bits_per_elem(w: &[i8]) -> u32 {
@@ -1348,12 +1406,12 @@ pub struct HachiBatchedProof<F: FieldCore> {
 }
 
 impl<F: FieldCore> HachiBatchedProof<F> {
-    /// Access the final witness.
+    /// Access the terminal direct witness.
     ///
     /// # Panics
     ///
     /// Panics if the proof does not terminate with a direct witness step.
-    pub fn final_w(&self) -> &PackedDigits {
+    pub fn final_witness(&self) -> &DirectWitnessProof<F> {
         self.steps
             .last()
             .and_then(HachiProofStep::as_direct)
@@ -1393,7 +1451,7 @@ pub enum HachiProofStep<F: FieldCore> {
     /// One recursive Hachi fold.
     Fold(HachiLevelProof<F>),
     /// Terminal direct witness handoff.
-    Direct(PackedDigits),
+    Direct(DirectWitnessProof<F>),
 }
 
 impl<F: FieldCore> HachiProofStep<F> {
@@ -1414,10 +1472,10 @@ impl<F: FieldCore> HachiProofStep<F> {
     }
 
     /// Borrow the packed witness when this is a direct step.
-    pub fn as_direct(&self) -> Option<&PackedDigits> {
+    pub fn as_direct(&self) -> Option<&DirectWitnessProof<F>> {
         match self {
             Self::Fold(_) => None,
-            Self::Direct(packed) => Some(packed),
+            Self::Direct(direct) => Some(direct),
         }
     }
 
@@ -1425,9 +1483,7 @@ impl<F: FieldCore> HachiProofStep<F> {
     pub fn shape(&self) -> HachiProofStepShape {
         match self {
             Self::Fold(level) => HachiProofStepShape::Fold(level.shape()),
-            Self::Direct(packed) => {
-                HachiProofStepShape::Direct((packed.num_elems, packed.bits_per_elem))
-            }
+            Self::Direct(direct) => HachiProofStepShape::Direct(direct.shape()),
         }
     }
 }
@@ -1471,7 +1527,7 @@ pub enum HachiProofStepShape {
     /// Shape of a recursive fold level.
     Fold(LevelProofShape),
     /// Shape of a direct packed witness.
-    Direct((usize, u32)),
+    Direct(DirectWitnessShape),
 }
 
 fn sumcheck_shape<F: FieldCore>(sc: &SumcheckProof<F>) -> SumcheckProofShape {
@@ -1530,12 +1586,12 @@ pub struct HachiProof<F: FieldCore> {
 }
 
 impl<F: FieldCore> HachiProof<F> {
-    /// Access the final witness.
+    /// Access the terminal direct witness.
     ///
     /// # Panics
     ///
     /// Panics if the proof does not terminate with a direct witness step.
-    pub fn final_w(&self) -> &PackedDigits {
+    pub fn final_witness(&self) -> &DirectWitnessProof<F> {
         self.steps
             .last()
             .and_then(HachiProofStep::as_direct)
@@ -1778,6 +1834,61 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
     }
 }
 
+impl<F: FieldCore> HachiSerialize for DirectWitnessProof<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        match self {
+            Self::PackedDigits(packed) => packed.serialize_with_mode(&mut writer, compress),
+            Self::FieldElements(field_elems) => {
+                field_elems.serialize_with_mode(&mut writer, compress)
+            }
+        }
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        match self {
+            Self::PackedDigits(packed) => packed.serialized_size(compress),
+            Self::FieldElements(field_elems) => field_elems.serialized_size(compress),
+        }
+    }
+}
+
+impl<F: FieldCore + Valid> Valid for DirectWitnessProof<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        match self {
+            Self::PackedDigits(packed) => packed.check(),
+            Self::FieldElements(field_elems) => field_elems.check(),
+        }
+    }
+}
+
+impl<F: FieldCore + Valid> HachiDeserialize for DirectWitnessProof<F> {
+    type Context = DirectWitnessShape;
+
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        ctx: &DirectWitnessShape,
+    ) -> Result<Self, SerializationError> {
+        let out = match ctx {
+            DirectWitnessShape::PackedDigits(shape) => Self::PackedDigits(
+                PackedDigits::deserialize_with_mode(&mut reader, compress, validate, shape)?,
+            ),
+            DirectWitnessShape::FieldElements(num_coeffs) => Self::FieldElements(
+                ProofRingVec::deserialize_with_mode(&mut reader, compress, validate, num_coeffs)?,
+            ),
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
 impl<F: FieldCore> HachiSerialize for HachiProofStep<F> {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -1786,14 +1897,14 @@ impl<F: FieldCore> HachiSerialize for HachiProofStep<F> {
     ) -> Result<(), SerializationError> {
         match self {
             Self::Fold(level) => level.serialize_with_mode(&mut writer, compress),
-            Self::Direct(packed) => packed.serialize_with_mode(&mut writer, compress),
+            Self::Direct(direct) => direct.serialize_with_mode(&mut writer, compress),
         }
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
         match self {
             Self::Fold(level) => level.serialized_size(compress),
-            Self::Direct(packed) => packed.serialized_size(compress),
+            Self::Direct(direct) => direct.serialized_size(compress),
         }
     }
 }
@@ -1802,7 +1913,7 @@ impl<F: FieldCore + Valid> Valid for HachiProofStep<F> {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
             Self::Fold(level) => level.check(),
-            Self::Direct(packed) => packed.check(),
+            Self::Direct(direct) => direct.check(),
         }
     }
 }
@@ -1816,15 +1927,17 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiProofStep<F> {
         validate: Validate,
         ctx: &HachiProofStepShape,
     ) -> Result<Self, SerializationError> {
-        let out =
-            match ctx {
-                HachiProofStepShape::Fold(shape) => Self::Fold(
-                    HachiLevelProof::deserialize_with_mode(&mut reader, compress, validate, shape)?,
-                ),
-                HachiProofStepShape::Direct(shape) => Self::Direct(
-                    PackedDigits::deserialize_with_mode(&mut reader, compress, validate, shape)?,
-                ),
-            };
+        let out = match ctx {
+            HachiProofStepShape::Fold(shape) => Self::Fold(HachiLevelProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                shape,
+            )?),
+            HachiProofStepShape::Direct(shape) => Self::Direct(
+                DirectWitnessProof::deserialize_with_mode(&mut reader, compress, validate, shape)?,
+            ),
+        };
         if matches!(validate, Validate::Yes) {
             out.check()?;
         }

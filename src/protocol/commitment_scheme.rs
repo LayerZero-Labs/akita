@@ -27,8 +27,9 @@ use crate::protocol::opening_point::{
     RingOpeningPoint,
 };
 use crate::protocol::proof::{
-    FlatRingVec, HachiBatchedCommitmentHint, HachiBatchedProof, HachiBatchedRootProof,
-    HachiCommitmentHint, HachiLevelProof, HachiProof, HachiProofStep, PackedDigits, ProofRingVec,
+    DirectWitnessProof, FlatRingVec, HachiBatchedCommitmentHint, HachiBatchedProof,
+    HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProof, HachiProofStep,
+    PackedDigits, ProofRingVec,
 };
 use crate::protocol::quadratic_equation::{derive_stage1_challenges, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
@@ -1201,7 +1202,7 @@ fn dispatch_verify_level<F, T>(
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F>,
     is_last: bool,
-    final_w: Option<&PackedDigits>,
+    final_w: Option<&DirectWitnessProof<F>>,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
     block_order: BlockOrder,
@@ -1379,7 +1380,9 @@ where
         .into_iter()
         .map(HachiProofStep::Fold)
         .collect::<Vec<_>>();
-    steps.push(HachiProofStep::Direct(final_w));
+    steps.push(HachiProofStep::Direct(DirectWitnessProof::PackedDigits(
+        final_w,
+    )));
 
     HachiBatchedProof {
         root: root_proof,
@@ -1393,7 +1396,7 @@ fn verify_batched_recursive_suffix<'a, F, T, const D: usize, Cfg>(
     transcript: &mut T,
     max_num_vars: usize,
     mut current_state: RecursiveVerifierState<'a, F>,
-    final_w: Option<&PackedDigits>,
+    final_w: Option<&DirectWitnessProof<F>>,
 ) -> Result<(), HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
@@ -1656,7 +1659,7 @@ where
     let root_params = root_plan.params.clone();
     setup.expanded.ensure_layout_fits(&batched_layout)?;
 
-    let final_w = Some(proof.final_w());
+    let final_w = Some(proof.final_witness());
     let has_recursive_levels = proof.num_fold_levels() > 0;
     let root_challenges = verify_batched_root_level::<F, T, D>(
         &proof.root,
@@ -1958,7 +1961,9 @@ where
             .into_iter()
             .map(HachiProofStep::Fold)
             .collect::<Vec<_>>();
-        steps.push(HachiProofStep::Direct(final_w));
+        steps.push(HachiProofStep::Direct(DirectWitnessProof::PackedDigits(
+            final_w,
+        )));
 
         Ok(HachiProof { steps })
     }
@@ -2158,7 +2163,7 @@ where
 
         let num_levels = proof.num_fold_levels();
 
-        let final_w = Some(proof.final_w());
+        let final_w = Some(proof.final_witness());
 
         // State carried between levels.
         // Commitment is D-erased so the loop can handle varying D per level.
@@ -2353,7 +2358,7 @@ where
         let root_params = root_plan.params.clone();
         setup.expanded.ensure_layout_fits(&batched_layout)?;
 
-        let final_w = Some(proof.final_w());
+        let final_w = Some(proof.final_witness());
         let alpha_bits = root_params.d.trailing_zeros() as usize;
         let prepared_points = opening_points
             .iter()
@@ -2438,7 +2443,7 @@ fn verify_batched_root_level<F, T, const D: usize>(
     layout: HachiCommitmentLayout,
     batched_layout: HachiCommitmentLayout,
     is_last: bool,
-    final_w: Option<&PackedDigits>,
+    final_w: Option<&DirectWitnessProof<F>>,
 ) -> Result<Vec<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -2507,7 +2512,7 @@ where
         derive_stage1_challenges::<F, T, D>(transcript, v_typed, total_blocks, level_params)?;
 
     let w_len = if is_last {
-        final_w.map_or(0, |fw| fw.num_elems)
+        final_w.map_or(0, DirectWitnessProof::num_elems)
     } else {
         w_ring_element_count_with_claim_groups::<F>(level_params, batched_layout, claim_group_sizes)
             * D
@@ -2538,7 +2543,7 @@ where
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
-        HachiStage2Verifier::new_with_packed_witness_batched(
+        HachiStage2Verifier::new_with_direct_witness_batched(
             batching_coeff,
             stage1.s_claim,
             fw,
@@ -2597,7 +2602,7 @@ fn verify_multipoint_batched_root_level<F, T, const D: usize>(
     layout: HachiCommitmentLayout,
     batched_layout: HachiCommitmentLayout,
     is_last: bool,
-    final_w: Option<&PackedDigits>,
+    final_w: Option<&DirectWitnessProof<F>>,
 ) -> Result<Vec<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -2661,7 +2666,7 @@ where
         derive_stage1_challenges::<F, T, D>(transcript, v_typed, total_blocks, level_params)?;
 
     let w_len = if is_last {
-        final_w.map_or(0, |fw| fw.num_elems)
+        final_w.map_or(0, DirectWitnessProof::num_elems)
     } else {
         w_ring_element_count_with_point_claim_groups::<F>(
             level_params,
@@ -2701,7 +2706,7 @@ where
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
-        HachiStage2Verifier::new_with_packed_witness_batched(
+        HachiStage2Verifier::new_with_direct_witness_batched(
             batching_coeff,
             stage1.s_claim,
             fw,
@@ -2761,7 +2766,7 @@ fn verify_one_level<F, T, const D: usize>(
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F>,
     is_last: bool,
-    final_w: Option<&PackedDigits>,
+    final_w: Option<&DirectWitnessProof<F>>,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
     block_order: BlockOrder,
@@ -2813,7 +2818,7 @@ where
         derive_stage1_challenges::<F, T, D>(transcript, v_typed, layout.num_blocks, level_params)?;
 
     let w_len = if is_last {
-        final_w.map_or(0, |fw| fw.num_elems)
+        final_w.map_or(0, DirectWitnessProof::num_elems)
     } else {
         w_ring_element_count::<F>(level_params, layout) * D
     };
@@ -2850,7 +2855,7 @@ where
 
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
-        HachiStage2Verifier::new_with_packed_witness(
+        HachiStage2Verifier::new_with_direct_witness(
             batching_coeff,
             stage1.s_claim,
             fw,
@@ -2992,10 +2997,12 @@ mod tests {
             current_log_basis = next_level_params.log_basis;
             current_level += 1;
         }
-        step_shapes.push(HachiProofStepShape::Direct((
-            current_w_len,
-            current_log_basis,
-        )));
+        step_shapes.push(HachiProofStepShape::Direct(
+            crate::protocol::proof::DirectWitnessShape::PackedDigits((
+                current_w_len,
+                current_log_basis,
+            )),
+        ));
 
         HachiBatchedProofShape {
             root_shape,
