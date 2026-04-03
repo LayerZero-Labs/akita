@@ -25,6 +25,7 @@ use crate::protocol::root_poly::{MultilinearPolynomial, TypedRootPolynomial};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use std::marker::PhantomData;
+use std::thread;
 
 /// Family-level selector for dynamic root-ring Hachi schemes.
 ///
@@ -79,7 +80,6 @@ where
     Cfg128: CommitmentConfig,
 {
     let mut best: Option<(usize, usize)> = None;
-
     for (root_d, proof_bytes) in [
         (32usize, estimated_total_proof_bytes::<Cfg32, 32>(key)),
         (64usize, estimated_total_proof_bytes::<Cfg64, 64>(key)),
@@ -101,6 +101,16 @@ where
             key.num_vars, key.layout_num_claims, key.batch.num_claims
         ))
     })
+}
+
+fn has_exact_fit_singleton_root_context(key: HachiScheduleLookupKey) -> bool {
+    key.max_num_vars == key.num_vars
+        && key.layout_num_claims == 1
+        && key.batch == HachiRootBatchSummary::singleton()
+}
+
+fn fp128_exact_fit_singleton_prefers_d32(key: HachiScheduleLookupKey) -> bool {
+    has_exact_fit_singleton_root_context(key) && (6..=63).contains(&key.num_vars)
 }
 
 /// D-erased prover setup for the public dynamic Hachi API.
@@ -404,30 +414,43 @@ where
     type BatchedCommitHint = Vec<DynamicCommitHint<F>>;
 
     fn setup_prover(max_num_vars: usize, max_num_batched_polys: usize) -> Self::ProverSetup {
-        let d32 = std::panic::catch_unwind(|| {
-            <HachiCommitmentScheme<32, Family::Cfg32> as CommitmentScheme<F, 32>>::setup_prover(
-                max_num_vars,
-                max_num_batched_polys,
+        let (d32, d64, d128) = thread::scope(|scope| {
+            let d32 = scope.spawn(|| {
+                std::panic::catch_unwind(|| {
+                    <HachiCommitmentScheme<32, Family::Cfg32> as CommitmentScheme<F, 32>>::setup_prover(
+                        max_num_vars,
+                        max_num_batched_polys,
+                    )
+                })
+                .ok()
+                .map(Box::new)
+            });
+            let d64 = scope.spawn(|| {
+                std::panic::catch_unwind(|| {
+                    <HachiCommitmentScheme<64, Family::Cfg64> as CommitmentScheme<F, 64>>::setup_prover(
+                        max_num_vars,
+                        max_num_batched_polys,
+                    )
+                })
+                .ok()
+                .map(Box::new)
+            });
+            let d128 = scope.spawn(|| {
+                std::panic::catch_unwind(|| {
+                    <HachiCommitmentScheme<128, Family::Cfg128> as CommitmentScheme<F, 128>>::setup_prover(
+                        max_num_vars,
+                        max_num_batched_polys,
+                    )
+                })
+                .ok()
+                .map(Box::new)
+            });
+            (
+                d32.join().unwrap(),
+                d64.join().unwrap(),
+                d128.join().unwrap(),
             )
-        })
-        .ok()
-        .map(Box::new);
-        let d64 = std::panic::catch_unwind(|| {
-            <HachiCommitmentScheme<64, Family::Cfg64> as CommitmentScheme<F, 64>>::setup_prover(
-                max_num_vars,
-                max_num_batched_polys,
-            )
-        })
-        .ok()
-        .map(Box::new);
-        let d128 = std::panic::catch_unwind(|| {
-            <HachiCommitmentScheme<128, Family::Cfg128> as CommitmentScheme<F, 128>>::setup_prover(
-                max_num_vars,
-                max_num_batched_polys,
-            )
-        })
-        .ok()
-        .map(Box::new);
+        });
 
         assert!(
             d32.is_some() || d64.is_some() || d128.is_some(),
@@ -1016,6 +1039,13 @@ impl DynamicRootConfigFamily<fp128::Field> for DynamicFp128FullFamily {
     type Cfg32 = fp128::D32Full;
     type Cfg64 = Fp128AdaptiveBoundedD64<128>;
     type Cfg128 = fp128::Full;
+
+    fn select_root_ring_dim(key: HachiScheduleLookupKey) -> Result<usize, HachiError> {
+        if fp128_exact_fit_singleton_prefers_d32(key) {
+            return Ok(32);
+        }
+        select_smallest_estimated_proof_root_ring_dim::<Self::Cfg32, Self::Cfg64, Self::Cfg128>(key)
+    }
 }
 
 /// Dynamic fp128 dense scheme that chooses the root ring at commit time.
@@ -1030,6 +1060,13 @@ impl DynamicRootConfigFamily<fp128::Field> for DynamicFp128OneHotFamily {
     type Cfg32 = fp128::D32OneHot;
     type Cfg64 = fp128::OneHot;
     type Cfg128 = Fp128AdaptiveBoundedD128<1>;
+
+    fn select_root_ring_dim(key: HachiScheduleLookupKey) -> Result<usize, HachiError> {
+        if fp128_exact_fit_singleton_prefers_d32(key) {
+            return Ok(32);
+        }
+        select_smallest_estimated_proof_root_ring_dim::<Self::Cfg32, Self::Cfg64, Self::Cfg128>(key)
+    }
 }
 
 /// Dynamic fp128 onehot scheme that chooses the root ring at commit time.
@@ -1183,5 +1220,27 @@ mod tests {
                 .contains("requires one root D across the fused batch"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn dynamic_full_exact_fit_singletons_use_fast_d32_path() {
+        for num_vars in 6..=63 {
+            let key = HachiScheduleLookupKey::singleton(num_vars, num_vars, 1);
+            assert_eq!(
+                DynamicFp128FullFamily::select_root_ring_dim(key).unwrap(),
+                32
+            );
+        }
+    }
+
+    #[test]
+    fn dynamic_onehot_exact_fit_singletons_use_fast_d32_path() {
+        for num_vars in 6..=63 {
+            let key = HachiScheduleLookupKey::singleton(num_vars, num_vars, 1);
+            assert_eq!(
+                DynamicFp128OneHotFamily::select_root_ring_dim(key).unwrap(),
+                32
+            );
+        }
     }
 }
