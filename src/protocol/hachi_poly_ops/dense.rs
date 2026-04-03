@@ -15,8 +15,9 @@ use crate::protocol::commitment::utils::linear::{
     decompose_rows_i8_into, mat_vec_mul_ntt_i8, try_centered_i8,
 };
 use crate::protocol::hachi_poly_ops::helpers::{
-    build_decompose_fold_witness, decompose_ring_interleaved, decompose_ring_single_digit,
-    sparse_mul_acc, try_small_i8_cache_from_ring_coeffs, DecomposeParams,
+    balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
+    decompose_ring_single_digit, sparse_mul_acc, try_small_i8_cache_from_ring_coeffs,
+    DecomposeParams,
 };
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
 use crate::protocol::proof::FlatDigitBlocks;
@@ -230,54 +231,9 @@ where
 
         let centered_coeffs = {
             let _span = tracing::info_span!("dense_multi_digit_accumulate").entered();
-            let (centered_coeffs, _) = cfg_fold_reduce!(
-                0..challenges.len(),
-                || {
-                    (
-                        vec![[0i32; D]; block_len * num_digits],
-                        vec![[0i8; D]; num_digits],
-                    )
-                },
-                |(mut acc, mut digit_buf), block_idx| {
-                    let global_start = block_idx * block_len;
-                    if global_start >= n {
-                        return (acc, digit_buf);
-                    }
-
-                    let coeff_chunk = &coeffs[global_start..(global_start + block_len).min(n)];
-                    let challenge = &challenges[block_idx];
-
-                    for (elem_idx, ring) in coeff_chunk.iter().enumerate() {
-                        decompose_ring_interleaved::<F, D>(
-                            ring,
-                            &mut digit_buf,
-                            num_digits,
-                            &params,
-                        );
-
-                        let base = elem_idx * num_digits;
-                        for digit in 0..num_digits {
-                            sparse_mul_acc::<D>(
-                                &digit_buf[digit],
-                                challenge,
-                                &mut acc[base + digit],
-                            );
-                        }
-                    }
-
-                    (acc, digit_buf)
-                },
-                |(mut left_acc, left_buf), (right_acc, _)| {
-                    for (dst_row, src_row) in left_acc.iter_mut().zip(right_acc.iter()) {
-                        for k in 0..D {
-                            dst_row[k] += src_row[k];
-                        }
-                    }
-                    (left_acc, left_buf)
-                }
-            );
-
-            centered_coeffs
+            balanced_ring_decompose_fold_partitioned::<F, D>(
+                coeffs, challenges, block_len, num_digits, &params,
+            )
         };
 
         let _span = tracing::info_span!("dense_multi_digit_convert").entered();

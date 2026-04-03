@@ -520,6 +520,64 @@ pub(super) fn balanced_digit_decompose_fold_partitioned<const D: usize>(
     chunks.into_iter().flatten().collect()
 }
 
+/// Element-partitioned accumulation for multi-digit dense witnesses.
+///
+/// Each worker owns a disjoint element range within the block and accumulates
+/// all digit planes for that range across every active challenge block. This
+/// avoids the large whole-output reductions in the older block-partitioned
+/// path while still decomposing each owned ring element only once per block.
+pub(super) fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usize>(
+    coeffs: &[CyclotomicRing<F, D>],
+    challenges: &[SparseChallenge],
+    block_len: usize,
+    num_digits: usize,
+    p: &DecomposeParams,
+) -> Vec<[i32; D]> {
+    #[cfg(feature = "parallel")]
+    let num_threads = rayon::current_num_threads();
+    #[cfg(not(feature = "parallel"))]
+    let num_threads = 1;
+
+    let actual_threads = num_threads.min(block_len.max(1)).max(1);
+    let elem_chunk = block_len.div_ceil(actual_threads);
+
+    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
+        .map(|tid| {
+            let elem_start = tid * elem_chunk;
+            if elem_start >= block_len {
+                return Vec::new();
+            }
+            let elem_end = (elem_start + elem_chunk).min(block_len);
+            let len = (elem_end - elem_start) * num_digits;
+            let mut acc = vec![[0i32; D]; len];
+            let mut digit_buf = vec![[0i8; D]; num_digits];
+
+            for (block_idx, challenge) in challenges.iter().enumerate() {
+                let block_start = block_idx * block_len;
+                if block_start >= coeffs.len() {
+                    break;
+                }
+                let coeff_start = block_start + elem_start;
+                if coeff_start >= coeffs.len() {
+                    continue;
+                }
+                let coeff_end = (block_start + elem_end).min(coeffs.len());
+                for (local_elem_idx, ring) in coeffs[coeff_start..coeff_end].iter().enumerate() {
+                    decompose_ring_interleaved::<F, D>(ring, &mut digit_buf, num_digits, p);
+                    let base = local_elem_idx * num_digits;
+                    for digit in 0..num_digits {
+                        sparse_mul_acc::<D>(&digit_buf[digit], challenge, &mut acc[base + digit]);
+                    }
+                }
+            }
+
+            acc
+        })
+        .collect();
+
+    chunks.into_iter().flatten().collect()
+}
+
 pub(super) fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
     centered_coeffs: Vec<[i32; D]>,
     modulus: u128,
