@@ -14,9 +14,7 @@ use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
 use super::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use super::utils::flat_matrix::FlatMatrix;
-use super::utils::linear::{
-    decompose_rows_i8, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_single_i8_blocks,
-};
+use super::utils::linear::{decompose_rows_i8_into, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_single_i8};
 use super::utils::matrix::{
     derive_public_matrix_flat, sample_public_matrix_seed, PublicMatrixSeed,
 };
@@ -24,13 +22,12 @@ use super::CommitmentConfig;
 use crate::algebra::fields::wide::HasWide;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
-#[cfg(feature = "parallel")]
-use crate::parallel::*;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
 use crate::protocol::commitment_scheme::should_stop_folding;
 use crate::protocol::hachi_poly_ops::OneHotIndex;
+use crate::protocol::proof::FlatDigitBlocks;
 use crate::protocol::ring_switch::w_ring_element_count;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 #[cfg(feature = "disk-persistence")]
@@ -995,13 +992,23 @@ where
             depth_commit,
             log_basis,
         );
-        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
-            .map(|t_i| decompose_rows_i8(&t_i, depth_open, log_basis))
-            .collect();
+        let block_sizes: Vec<usize> = t_all.iter().map(|t_i| t_i.len() * depth_open).collect();
+        let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
+        let mut offset = 0usize;
+        for t_i in &t_all {
+            let block_len = t_i.len() * depth_open;
+            decompose_rows_i8_into(
+                t_i,
+                &mut t_hat.flat_digits_mut()[offset..offset + block_len],
+                depth_open,
+                log_basis,
+            );
+            offset += block_len;
+        }
 
         let u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_single_i8_blocks(&setup.ntt_shared, root_params.n_b, &t_hat_all);
-        Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
+            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, root_params.n_b, t_hat.flat_digits());
+        Ok(CommitWitness::new(RingCommitment { u }, t_hat))
     }
 
     #[tracing::instrument(skip_all, name = "RingCommitmentScheme::commit_onehot")]
@@ -1031,22 +1038,27 @@ where
         let a_view = setup.expanded.shared_matrix.view::<D>();
         let block_len = layout.block_len;
 
-        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(sparse_blocks)
-            .map(|block_entries| {
-                if block_entries.is_empty() {
-                    vec![[0i8; D]; zero_block_len]
-                } else {
-                    let mut t_i =
-                        inner_ajtai_onehot_wide(&a_view, block_entries, block_len, depth_commit);
-                    t_i.truncate(root_params.n_a);
-                    decompose_rows_i8(&t_i, depth_open, log_basis)
-                }
-            })
-            .collect();
+        let block_sizes = vec![zero_block_len; sparse_blocks.len()];
+        let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
+        let mut offset = 0usize;
+        for block_entries in &sparse_blocks {
+            if !block_entries.is_empty() {
+                let mut t_i =
+                    inner_ajtai_onehot_wide(&a_view, block_entries, block_len, depth_commit);
+                t_i.truncate(root_params.n_a);
+                decompose_rows_i8_into(
+                    &t_i,
+                    &mut t_hat.flat_digits_mut()[offset..offset + zero_block_len],
+                    depth_open,
+                    log_basis,
+                );
+            }
+            offset += zero_block_len;
+        }
 
         let u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_single_i8_blocks(&setup.ntt_shared, root_params.n_b, &t_hat_all);
-        Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
+            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, root_params.n_b, t_hat.flat_digits());
+        Ok(CommitWitness::new(RingCommitment { u }, t_hat))
     }
 }
 

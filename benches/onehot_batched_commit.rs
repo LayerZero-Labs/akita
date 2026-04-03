@@ -3,7 +3,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use hachi_pcs::algebra::Fp128;
 use hachi_pcs::protocol::commitment::utils::linear::{
-    decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_single_i8,
+    decompose_rows_i8, mat_vec_mul_ntt_single_i8,
 };
 use hachi_pcs::protocol::commitment::{
     hachi_batched_root_layout, presets::fp128, HachiScheduleInputs,
@@ -148,7 +148,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
 
     group.bench_function("single_outer_only_nv34", |b| {
         b.iter(|| {
-            let flat = flatten_i8_blocks(&single_inner.t_hat);
+            let flat = single_inner.t_hat.flat_digits().to_vec();
             black_box(mat_vec_mul_ntt_single_i8::<F, D>(
                 &single_setup.ntt_shared,
                 single_n_b,
@@ -217,7 +217,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         b.iter(|| {
             let mut flat = Vec::with_capacity(BATCH_SIZE * batch_layout.outer_width);
             for inner in &batched_inner {
-                flat.extend(flatten_i8_blocks(&inner.t_hat));
+                flat.extend_from_slice(inner.t_hat.flat_digits());
             }
             black_box(mat_vec_mul_ntt_single_i8::<F, D>(
                 &batched_setup.ntt_shared,

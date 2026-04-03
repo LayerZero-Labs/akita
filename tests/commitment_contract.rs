@@ -7,6 +7,7 @@ use hachi_pcs::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use hachi_pcs::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use hachi_pcs::protocol::commitment::{DummyProof, HachiCommitment};
 use hachi_pcs::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps};
+use hachi_pcs::protocol::proof::FlatDigitBlocks;
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
     AppendToTranscript, BasisMode, Blake2bTranscript, CommitmentScheme, Transcript,
@@ -77,8 +78,8 @@ impl HachiPolyOps<F, 1> for DummyPoly {
         _num_digits_commit: usize,
         _num_digits_open: usize,
         _log_basis: u32,
-    ) -> Result<Vec<Vec<[i8; 1]>>, HachiError> {
-        Ok(vec![])
+    ) -> Result<FlatDigitBlocks<1>, HachiError> {
+        Ok(FlatDigitBlocks::from_blocks(vec![]))
     }
 }
 

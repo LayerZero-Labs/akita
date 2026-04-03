@@ -21,12 +21,13 @@ use crate::protocol::commitment::onehot::{
 };
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
-use crate::protocol::commitment::utils::linear::decompose_rows_i8;
+use crate::protocol::commitment::utils::linear::decompose_rows_i8_into;
 use crate::protocol::hachi_poly_ops::helpers::{
     build_decompose_fold_witness, regular_onehot_accumulate, regular_onehot_accumulate_slices,
     sparse_onehot_accumulate, sparse_onehot_accumulate_slices,
 };
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
+use crate::protocol::proof::FlatDigitBlocks;
 use crate::{CanonicalField, FieldCore};
 use std::marker::PhantomData;
 
@@ -411,7 +412,7 @@ where
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-    ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
+    ) -> Result<FlatDigitBlocks<D>, HachiError> {
         let a_view = a_matrix.view::<D>();
         let n_a = a_view.num_rows();
         let num_blocks = self.num_blocks();
@@ -441,17 +442,21 @@ where
             ),
         };
 
-        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(0..num_blocks)
-            .map(|b| {
-                if t_all[b].iter().all(|r| *r == CyclotomicRing::zero()) {
-                    vec![[0i8; D]; zero_block_len]
-                } else {
-                    decompose_rows_i8(&t_all[b], num_digits_open, log_basis)
-                }
-            })
-            .collect();
+        let mut t_hat = FlatDigitBlocks::zeroed(vec![zero_block_len; num_blocks])?;
+        let mut offset = 0usize;
+        for t_i in &t_all {
+            if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
+                decompose_rows_i8_into(
+                    t_i,
+                    &mut t_hat.flat_digits_mut()[offset..offset + zero_block_len],
+                    num_digits_open,
+                    log_basis,
+                );
+            }
+            offset += zero_block_len;
+        }
 
-        Ok(t_hat_all)
+        Ok(t_hat)
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner_witness")]
@@ -492,15 +497,19 @@ where
             ),
         };
 
-        let t_hat: Vec<Vec<[i8; D]>> = cfg_iter!(t)
-            .map(|t_i| {
-                if t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                    vec![[0i8; D]; zero_block_len]
-                } else {
-                    decompose_rows_i8(t_i, num_digits_open, log_basis)
-                }
-            })
-            .collect();
+        let mut t_hat = FlatDigitBlocks::zeroed(vec![zero_block_len; t.len()])?;
+        let mut offset = 0usize;
+        for t_i in &t {
+            if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
+                decompose_rows_i8_into(
+                    t_i,
+                    &mut t_hat.flat_digits_mut()[offset..offset + zero_block_len],
+                    num_digits_open,
+                    log_basis,
+                );
+            }
+            offset += zero_block_len;
+        }
 
         Ok(CommitInnerWitness { t, t_hat })
     }
@@ -578,15 +587,20 @@ where
             .chunks(blocks_per_poly)
             .map(|poly_t| {
                 let t = poly_t.to_vec();
-                let t_hat: Vec<Vec<[i8; D]>> = cfg_iter!(t)
-                    .map(|t_i| {
-                        if t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                            vec![[0i8; D]; zero_block_len]
-                        } else {
-                            decompose_rows_i8(t_i, num_digits_open, log_basis)
-                        }
-                    })
-                    .collect();
+                let mut t_hat =
+                    FlatDigitBlocks::zeroed(vec![zero_block_len; t.len()]).expect("sizes fit");
+                let mut offset = 0usize;
+                for t_i in &t {
+                    if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
+                        decompose_rows_i8_into(
+                            t_i,
+                            &mut t_hat.flat_digits_mut()[offset..offset + zero_block_len],
+                            num_digits_open,
+                            log_basis,
+                        );
+                    }
+                    offset += zero_block_len;
+                }
                 CommitInnerWitness { t, t_hat }
             })
             .collect();

@@ -18,6 +18,7 @@ use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
+use crate::protocol::proof::FlatDigitBlocks;
 use crate::{CanonicalField, FieldCore};
 
 /// Borrowed multilinear-polynomial wrapper for dense and one-hot batches.
@@ -169,7 +170,7 @@ where
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-    ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
+    ) -> Result<FlatDigitBlocks<D>, HachiError> {
         match self {
             Self::Dense(poly) => poly.commit_inner(
                 a_matrix,

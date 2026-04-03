@@ -56,6 +56,7 @@ use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
+use crate::protocol::proof::FlatDigitBlocks;
 use crate::{CanonicalField, FieldCore};
 
 /// Prover-side output of the decompose + challenge-fold step.
@@ -73,12 +74,13 @@ pub struct DecomposeFoldWitness<F: FieldCore, const D: usize> {
 pub struct CommitInnerWitness<F: FieldCore, const D: usize> {
     /// Undecomposed `t_i = A * s_i` rows, grouped by block.
     pub t: Vec<Vec<CyclotomicRing<F, D>>>,
-    /// Decomposed `t_hat_i = G^{-1}(t_i)` rows, grouped by block.
-    pub t_hat: Vec<Vec<[i8; D]>>,
+    /// Decomposed `t_hat_i = G^{-1}(t_i)` rows in flat column-major order plus
+    /// explicit block boundaries.
+    pub t_hat: FlatDigitBlocks<D>,
 }
 
 fn recompose_commit_inner_blocks<F: CanonicalField, const D: usize>(
-    t_hat_blocks: &[Vec<[i8; D]>],
+    t_hat_blocks: &FlatDigitBlocks<D>,
     num_digits_open: usize,
     log_basis: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError> {
@@ -88,7 +90,7 @@ fn recompose_commit_inner_blocks<F: CanonicalField, const D: usize>(
         ));
     }
     t_hat_blocks
-        .iter()
+        .iter_blocks()
         .map(|block| {
             if block.len() % num_digits_open != 0 {
                 return Err(HachiError::InvalidSetup(format!(
@@ -227,7 +229,7 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-    ) -> Result<Vec<Vec<[i8; D]>>, HachiError>;
+    ) -> Result<FlatDigitBlocks<D>, HachiError>;
 
     /// Like [`commit_inner`](Self::commit_inner), but also preserves the
     /// undecomposed `t_i` rows for prover-side consumers that would otherwise
@@ -349,7 +351,7 @@ where
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-    ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
+    ) -> Result<FlatDigitBlocks<D>, HachiError> {
         <P as HachiPolyOps<F, D>>::commit_inner(
             *self,
             a_matrix,

@@ -6,6 +6,7 @@ use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::hachi_poly_ops::{HachiPolyOps, OneHotIndex};
 use crate::protocol::opening_point::BasisMode;
+use crate::protocol::proof::FlatDigitBlocks;
 use crate::protocol::root_poly::MultilinearPolynomial;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
@@ -19,14 +20,15 @@ use crate::{CanonicalField, FieldCore};
 pub struct CommitWitness<C, F: FieldCore, const D: usize> {
     /// The ring commitment (outer Ajtai output `u = B · t̂`).
     pub commitment: C,
-    /// Per-block basis-decomposed inner Ajtai output vectors as i8 digit planes.
-    pub t_hat: Vec<Vec<[i8; D]>>,
+    /// Basis-decomposed inner Ajtai output vectors in flat column-major order
+    /// plus block boundaries.
+    pub t_hat: FlatDigitBlocks<D>,
     _marker: std::marker::PhantomData<F>,
 }
 
 impl<C, F: FieldCore, const D: usize> CommitWitness<C, F, D> {
     /// Construct a new commit witness.
-    pub fn new(commitment: C, t_hat: Vec<Vec<[i8; D]>>) -> Self {
+    pub fn new(commitment: C, t_hat: FlatDigitBlocks<D>) -> Self {
         Self {
             commitment,
             t_hat,

@@ -11,6 +11,7 @@ use crate::error::HachiError;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::HachiCommitmentLayout;
 use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly};
+use crate::protocol::proof::FlatDigitBlocks;
 use crate::{CanonicalField, FieldCore};
 
 /// Dense multilinear polynomial stored as raw field evaluations.
@@ -287,7 +288,7 @@ where
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-    ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
+    ) -> Result<FlatDigitBlocks<D>, HachiError> {
         match self {
             Self::Dense(poly) => poly.commit_inner(
                 a_matrix,

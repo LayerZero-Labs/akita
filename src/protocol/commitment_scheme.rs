@@ -6,7 +6,7 @@ use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::primitives::serialization::Valid;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
-use crate::protocol::commitment::utils::linear::{flatten_i8_blocks, mat_vec_mul_ntt_single_i8};
+use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
 #[cfg(test)]
 use crate::protocol::commitment::{
@@ -1801,10 +1801,10 @@ where
             for t_i in &mut inner.t {
                 t_i.truncate(root_params.n_a);
             }
-            for t_hat_i in &mut inner.t_hat {
-                t_hat_i.truncate(root_params.n_a * layout.num_digits_open);
-            }
-            inner_opening_digits_flat.extend(flatten_i8_blocks(&inner.t_hat));
+            inner
+                .t_hat
+                .truncate_each_block(root_params.n_a * layout.num_digits_open);
+            inner_opening_digits_flat.extend_from_slice(inner.t_hat.flat_digits());
             group_t_hat.push(inner.t_hat);
             group_t.push(inner.t);
         }
@@ -3487,7 +3487,7 @@ mod tests {
                 )
                 .expect("debug batched t recomposition");
             let debug_t_hat = debug_hint_flat.inner_opening_digits.clone();
-            let _debug_t_hat_flat = flatten_i8_blocks(&debug_t_hat);
+            let _debug_t_hat_flat = debug_t_hat.flat_digits().to_vec();
             let debug_t = debug_hint_flat.t().expect("debug batched t rows");
             let debug_w_folded_flat: Vec<_> = debug_w_folded_by_poly
                 .clone()
@@ -3505,7 +3505,10 @@ mod tests {
                     })
                 })
                 .collect();
-            let debug_w_hat_flat = flatten_i8_blocks(&debug_w_hat);
+            let debug_w_hat_flat: Vec<_> = debug_w_hat
+                .iter()
+                .flat_map(|block| block.iter().copied())
+                .collect();
             let mut debug_z_witnesses = batch_polys
                 .iter()
                 .zip(quad_eq.challenges.chunks(batched_root_layout.num_blocks))

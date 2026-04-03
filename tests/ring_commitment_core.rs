@@ -159,11 +159,16 @@ fn opening_satisfies_inner_and_outer_equations() {
     for (i, block) in blocks.iter().enumerate() {
         let s_i = decompose_block(block, depth, log_basis);
         let lhs = mat_vec_mul(&psetup.expanded.shared_matrix, &s_i);
+        let t_hat_block = w
+            .t_hat
+            .iter()
+            .nth(i)
+            .expect("commit witness should retain every block");
         let rhs: Vec<CyclotomicRing<F, D>> = (0..TinyConfig::envelope(16).max_n_a)
             .map(|j| {
                 let start = j * depth;
                 let end = start + depth;
-                CyclotomicRing::gadget_recompose_pow2_i8(&w.t_hat[i][start..end], log_basis)
+                CyclotomicRing::gadget_recompose_pow2_i8(&t_hat_block[start..end], log_basis)
             })
             .collect();
         assert_eq!(lhs, rhs);
@@ -171,8 +176,8 @@ fn opening_satisfies_inner_and_outer_equations() {
 
     let t_hat_flat_ring: Vec<CyclotomicRing<F, D>> = w
         .t_hat
+        .flat_digits()
         .iter()
-        .flat_map(|x| x.iter())
         .map(|plane| {
             let coeffs: [F; D] = from_fn(|k| F::from_i64(plane[k] as i64));
             CyclotomicRing::from_coefficients(coeffs)

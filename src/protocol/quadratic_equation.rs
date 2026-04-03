@@ -10,8 +10,7 @@ use crate::parallel::*;
 use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
-    flatten_i8_blocks, fused_split_eq_quotients, mat_vec_mul_ntt_single_i8_blocks,
-    mat_vec_mul_ntt_single_i8_cyclic,
+    fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
 };
 use crate::protocol::commitment::{
     CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, RingCommitment,
@@ -19,7 +18,7 @@ use crate::protocol::commitment::{
 use crate::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps, RecursiveWitnessView};
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{
-    HachiBatchedCommitmentHint, HachiCommitmentHint, RingSliceSerializer,
+    FlatDigitBlocks, HachiBatchedCommitmentHint, HachiCommitmentHint, RingSliceSerializer,
 };
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use crate::protocol::transcript::Transcript;
@@ -140,10 +139,9 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize, Cfg: CommitmentConfig
     /// Pre-decomposition folded witness `z_pre = Σ c_i · s_i` (prover only).
     /// Replaces both `z_hat` and `z`: `z_hat = J^{-1}(z_pre)`.
     z_pre: Option<DecomposeFoldWitness<F, D>>,
-    /// Decomposed `ŵ_i = G_1^{-1}(w_i)` as i8 digit planes (prover only).
-    w_hat: Option<Vec<Vec<[i8; D]>>>,
-    /// Flattened `w_hat` as i8 digit planes (prover only, computed once and reused).
-    w_hat_flat: Option<Vec<[i8; D]>>,
+    /// Decomposed `ŵ_i = G_1^{-1}(w_i)` in flat column-major order plus block
+    /// boundaries (prover only).
+    w_hat: Option<FlatDigitBlocks<D>>,
     /// Pre-decomposition folded ring elements (prover only, avoids recompose roundtrip).
     w_folded: Option<Vec<CyclotomicRing<F, D>>>,
     /// Commitment hint (prover only).
@@ -232,18 +230,25 @@ where
             }
         }
 
-        let (w_hat, w_hat_flat) = {
+        let w_hat = {
             let _span = tracing::info_span!("decompose_batched_w_hat").entered();
             let depth_open = layout.num_digits_open;
             let log_basis = layout.log_basis;
-            let mut w_hat = Vec::new();
+            let total_rows: usize = pre_folded_by_poly.iter().map(Vec::len).sum();
+            let block_sizes = vec![depth_open; total_rows];
+            let mut w_hat = FlatDigitBlocks::zeroed(block_sizes)
+                .expect("batched w_hat decomposition preserves block sizes");
+            let mut offset = 0usize;
             for folded_rows in &pre_folded_by_poly {
                 for w_i in folded_rows {
-                    w_hat.push(w_i.balanced_decompose_pow2_i8(depth_open, log_basis));
+                    w_i.balanced_decompose_pow2_i8_into(
+                        &mut w_hat.flat_digits_mut()[offset..offset + depth_open],
+                        log_basis,
+                    );
+                    offset += depth_open;
                 }
             }
-            let w_hat_flat = flatten_i8_blocks(&w_hat);
-            (w_hat, w_hat_flat)
+            w_hat
         };
         let flattened_hint = {
             let mut inner_opening_digits = Vec::new();
@@ -258,7 +263,7 @@ where
                 let mut hint = hint.into_flattened();
                 hint.ensure_t_recomposed(layout.num_digits_open, layout.log_basis)?;
                 let (digits, rows) = hint.into_parts();
-                inner_opening_digits.extend(digits);
+                inner_opening_digits.push(digits);
                 let rows = rows.ok_or_else(|| {
                     HachiError::InvalidInput(
                         "missing recomposed t rows in batched prover hint".to_string(),
@@ -266,13 +271,28 @@ where
                 })?;
                 t_rows.extend(rows);
             }
+            let total_planes: usize = inner_opening_digits
+                .iter()
+                .map(|digits: &FlatDigitBlocks<D>| digits.flat_digits().len())
+                .sum();
+            let mut flat_digits = Vec::with_capacity(total_planes);
+            let mut block_sizes = Vec::new();
+            for digits in &inner_opening_digits {
+                block_sizes.extend_from_slice(digits.block_sizes());
+                digits.extend_flat_digits(&mut flat_digits);
+            }
+            let inner_opening_digits = FlatDigitBlocks::new(flat_digits, block_sizes)
+                .expect("flattened batched hints preserve block sizes");
             HachiCommitmentHint::with_t(inner_opening_digits, t_rows)
         };
 
         let v = {
-            let _span =
-                tracing::info_span!("compute_batched_v", w_hat_blocks = w_hat.len()).entered();
-            mat_vec_mul_ntt_single_i8_blocks(ntt_d, level_params.n_d, &w_hat)
+            let _span = tracing::info_span!(
+                "compute_batched_v",
+                w_hat_planes = w_hat.flat_digits().len()
+            )
+            .entered();
+            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, w_hat.flat_digits())
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
@@ -406,7 +426,6 @@ where
             claim_to_point,
             z_pre: Some(z_pre),
             w_hat: Some(w_hat),
-            w_hat_flat: Some(w_hat_flat),
             w_folded: Some(w_folded),
             hint: Some(flattened_hint),
             claim_group_sizes: claim_group_sizes.to_vec(),
@@ -445,21 +464,26 @@ where
                 "QuadraticEquation::new_prover"
             );
         }
-        let (w_hat, w_hat_flat) = {
+        let w_hat = {
             let _span = tracing::info_span!("decompose_w_hat").entered();
             let depth_open = layout.num_digits_open;
             let log_basis = layout.log_basis;
-            let w_hat = cfg_iter!(pre_folded)
-                .map(|w_i| w_i.balanced_decompose_pow2_i8(depth_open, log_basis))
-                .collect::<Vec<Vec<[i8; D]>>>();
-            let w_hat_flat = flatten_i8_blocks(&w_hat);
-            (w_hat, w_hat_flat)
+            let mut w_hat = FlatDigitBlocks::zeroed(vec![depth_open; pre_folded.len()])?;
+            for (idx, w_i) in pre_folded.iter().enumerate() {
+                let start = idx * depth_open;
+                w_i.balanced_decompose_pow2_i8_into(
+                    &mut w_hat.flat_digits_mut()[start..start + depth_open],
+                    log_basis,
+                );
+            }
+            w_hat
         };
         hint.ensure_t_recomposed(layout.num_digits_open, layout.log_basis)?;
 
         let v = {
-            let _span = tracing::info_span!("compute_v", w_hat_blocks = w_hat.len()).entered();
-            mat_vec_mul_ntt_single_i8_blocks(ntt_d, level_params.n_d, &w_hat)
+            let _span = tracing::info_span!("compute_v", w_hat_planes = w_hat.flat_digits().len())
+                .entered();
+            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, w_hat.flat_digits())
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
@@ -499,7 +523,6 @@ where
             claim_to_point: vec![0],
             z_pre: Some(z_pre),
             w_hat: Some(w_hat),
-            w_hat_flat: Some(w_hat_flat),
             w_folded: Some(pre_folded),
             hint: Some(hint),
             claim_group_sizes: vec![1],
@@ -624,21 +647,26 @@ where
                 "QuadraticEquation::new_recursive_prover"
             );
         }
-        let (w_hat, w_hat_flat) = {
+        let w_hat = {
             let _span = tracing::info_span!("decompose_w_hat").entered();
             let depth_open = layout.num_digits_open;
             let log_basis = layout.log_basis;
-            let w_hat = cfg_iter!(pre_folded)
-                .map(|w_i| w_i.balanced_decompose_pow2_i8(depth_open, log_basis))
-                .collect::<Vec<Vec<[i8; D]>>>();
-            let w_hat_flat = flatten_i8_blocks(&w_hat);
-            (w_hat, w_hat_flat)
+            let mut w_hat = FlatDigitBlocks::zeroed(vec![depth_open; pre_folded.len()])?;
+            for (idx, w_i) in pre_folded.iter().enumerate() {
+                let start = idx * depth_open;
+                w_i.balanced_decompose_pow2_i8_into(
+                    &mut w_hat.flat_digits_mut()[start..start + depth_open],
+                    log_basis,
+                );
+            }
+            w_hat
         };
         hint.ensure_t_recomposed(layout.num_digits_open, layout.log_basis)?;
 
         let v = {
-            let _span = tracing::info_span!("compute_v", w_hat_blocks = w_hat.len()).entered();
-            mat_vec_mul_ntt_single_i8_blocks(ntt_d, level_params.n_d, &w_hat)
+            let _span = tracing::info_span!("compute_v", w_hat_planes = w_hat.flat_digits().len())
+                .entered();
+            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, w_hat.flat_digits())
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
@@ -679,7 +707,6 @@ where
             claim_to_point: vec![0],
             z_pre: Some(z_pre),
             w_hat: Some(w_hat),
-            w_hat_flat: Some(w_hat_flat),
             w_folded: Some(pre_folded),
             hint: Some(hint),
             claim_group_sizes: vec![1],
@@ -747,23 +774,18 @@ where
     }
 
     /// Get the decomposed witness `ŵ` as i8 digit planes (prover only).
-    pub fn w_hat(&self) -> Option<&[Vec<[i8; D]>]> {
-        self.w_hat.as_deref()
+    pub fn w_hat(&self) -> Option<&FlatDigitBlocks<D>> {
+        self.w_hat.as_ref()
     }
 
-    /// Get the pre-flattened `w_hat` as i8 digit planes (prover only).
+    /// Get the flat `w_hat` digit planes (prover only).
     pub fn w_hat_flat(&self) -> Option<&[[i8; D]]> {
-        self.w_hat_flat.as_deref()
+        self.w_hat.as_ref().map(|digits| digits.flat_digits())
     }
 
     /// Take ownership of `w_hat`, leaving `None` in its place.
-    pub fn take_w_hat(&mut self) -> Option<Vec<Vec<[i8; D]>>> {
+    pub fn take_w_hat(&mut self) -> Option<FlatDigitBlocks<D>> {
         self.w_hat.take()
-    }
-
-    /// Take ownership of the flattened witness digits, leaving `None` in its place.
-    pub fn take_w_hat_flat(&mut self) -> Option<Vec<[i8; D]>> {
-        self.w_hat_flat.take()
     }
 
     /// Get the pre-decomposition folded ring elements (prover only).
@@ -864,7 +886,7 @@ fn quotient_from_cyclic_and_reduced<F: FieldCore, const D: usize>(
 fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
     ntt_shared: &NttSlotCache<D>,
     n_b: usize,
-    t_hat: &[Vec<[i8; D]>],
+    t_hat: &FlatDigitBlocks<D>,
     claim_group_sizes: &[usize],
     blocks_per_claim: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
@@ -879,30 +901,40 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
             }
             acc.checked_add(group_size).ok_or(HachiError::InvalidProof)
         })?;
-    if t_hat.len() != num_claims * blocks_per_claim {
+    if t_hat.block_count() != num_claims * blocks_per_claim {
         return Err(HachiError::InvalidProof);
     }
     let mut rows = Vec::with_capacity(claim_group_sizes.len() * n_b);
-    let mut offset = 0usize;
+    let mut block_offset = 0usize;
+    let mut plane_offset = 0usize;
     for &group_size in claim_group_sizes {
         let group_block_count = group_size
             .checked_mul(blocks_per_claim)
             .ok_or(HachiError::InvalidProof)?;
-        let next_offset = offset
+        let next_block_offset = block_offset
             .checked_add(group_block_count)
             .ok_or(HachiError::InvalidProof)?;
-        let group = t_hat
-            .get(offset..next_offset)
+        let group_block_sizes = t_hat
+            .block_sizes()
+            .get(block_offset..next_block_offset)
             .ok_or(HachiError::InvalidProof)?;
-        let group_digits = flatten_i8_blocks(group);
+        let group_planes: usize = group_block_sizes.iter().sum();
+        let next_plane_offset = plane_offset
+            .checked_add(group_planes)
+            .ok_or(HachiError::InvalidProof)?;
+        let group_digits = t_hat
+            .flat_digits()
+            .get(plane_offset..next_plane_offset)
+            .ok_or(HachiError::InvalidProof)?;
         rows.extend(mat_vec_mul_ntt_single_i8_cyclic(
             ntt_shared,
             n_b,
-            &group_digits,
+            group_digits,
         ));
-        offset = next_offset;
+        block_offset = next_block_offset;
+        plane_offset = next_plane_offset;
     }
-    if offset != t_hat.len() {
+    if block_offset != t_hat.block_count() || plane_offset != t_hat.flat_digits().len() {
         return Err(HachiError::InvalidProof);
     }
     Ok(rows)
@@ -919,7 +951,7 @@ pub(crate) fn compute_r_split_eq<F, const D: usize>(
     _setup: &HachiExpandedSetup<F>,
     challenges: &[SparseChallenge],
     w_hat_flat: &[[i8; D]],
-    t_hat: &[Vec<[i8; D]>],
+    t_hat: &FlatDigitBlocks<D>,
     t: &[Vec<CyclotomicRing<F, D>>],
     w_folded: &[CyclotomicRing<F, D>],
     z_pre_centered: &[[i32; D]],
@@ -962,7 +994,6 @@ where
         return Err(HachiError::InvalidProof);
     }
 
-    let t_hat_flat = flatten_i8_blocks(t_hat);
     let mut z_segments = z_pre_centered.chunks(inner_width);
     let first_z_segment = z_segments.next().ok_or(HachiError::InvalidProof)?;
 
@@ -972,7 +1003,7 @@ where
         level_params.n_b,
         level_params.n_a,
         w_hat_flat,
-        &t_hat_flat,
+        t_hat.flat_digits(),
         first_z_segment,
         z_pre_centered_inf_norm,
     );
@@ -1230,12 +1261,7 @@ mod tests {
         let f = build_fixture();
 
         let w_hat = f.quad_eq.w_hat().unwrap();
-        let w_hat_flat: Vec<CyclotomicRing<F, D>> = i8_to_ring(
-            &w_hat
-                .iter()
-                .flat_map(|v| v.iter().copied())
-                .collect::<Vec<_>>(),
-        );
+        let w_hat_flat: Vec<CyclotomicRing<F, D>> = i8_to_ring(w_hat.flat_digits());
         let lhs = mat_vec_mul(&f.setup.expanded.shared_matrix, &w_hat_flat);
 
         assert_eq!(lhs, f.quad_eq.v(), "Row 1 failed: D · ŵ ≠ v");
@@ -1249,8 +1275,8 @@ mod tests {
         let hint = f.quad_eq.hint().unwrap();
         let inner_opening_digits_flat_ring: Vec<CyclotomicRing<F, D>> = hint
             .inner_opening_digits
+            .flat_digits()
             .iter()
-            .flat_map(|v| v.iter())
             .map(|plane| {
                 let coeffs: [F; D] = from_fn(|k| F::from_i64(plane[k] as i64));
                 CyclotomicRing::from_coefficients(coeffs)

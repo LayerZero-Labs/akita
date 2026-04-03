@@ -12,13 +12,14 @@ use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::linear::{
-    decompose_rows_i8, mat_vec_mul_ntt_i8, try_centered_i8,
+    decompose_rows_i8_into, mat_vec_mul_ntt_i8, try_centered_i8,
 };
 use crate::protocol::hachi_poly_ops::helpers::{
     build_decompose_fold_witness, decompose_ring_interleaved, decompose_ring_single_digit,
     sparse_mul_acc, try_small_i8_cache_from_ring_coeffs, DecomposeParams,
 };
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
+use crate::protocol::proof::FlatDigitBlocks;
 use crate::{CanonicalField, FieldCore};
 
 /// Dense polynomial: all ring coefficients materialized in memory.
@@ -274,7 +275,7 @@ where
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-    ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
+    ) -> Result<FlatDigitBlocks<D>, HachiError> {
         let n = self.coeffs.len();
         let num_blocks = n.div_ceil(block_len);
 
@@ -297,11 +298,24 @@ where
             log_basis,
         );
 
-        let results: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
-            .map(|t_i| decompose_rows_i8(&t_i, num_digits_open, log_basis))
+        let block_sizes: Vec<usize> = t_all
+            .iter()
+            .map(|t_i| t_i.len() * num_digits_open)
             .collect();
+        let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
+        let mut offset = 0usize;
+        for t_i in &t_all {
+            let block_len = t_i.len() * num_digits_open;
+            decompose_rows_i8_into(
+                t_i,
+                &mut t_hat.flat_digits_mut()[offset..offset + block_len],
+                num_digits_open,
+                log_basis,
+            );
+            offset += block_len;
+        }
 
-        Ok(results)
+        Ok(t_hat)
     }
 
     fn commit_inner_witness(
@@ -334,9 +348,19 @@ where
             num_digits_commit,
             log_basis,
         );
-        let t_hat = cfg_iter!(t)
-            .map(|t_i| decompose_rows_i8(t_i, num_digits_open, log_basis))
-            .collect();
+        let block_sizes: Vec<usize> = t.iter().map(|t_i| t_i.len() * num_digits_open).collect();
+        let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
+        let mut offset = 0usize;
+        for t_i in &t {
+            let block_len = t_i.len() * num_digits_open;
+            decompose_rows_i8_into(
+                t_i,
+                &mut t_hat.flat_digits_mut()[offset..offset + block_len],
+                num_digits_open,
+                log_basis,
+            );
+            offset += block_len;
+        }
         Ok(CommitInnerWitness { t, t_hat })
     }
 }

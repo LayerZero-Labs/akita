@@ -684,6 +684,176 @@ impl<F: FieldCore + Valid> HachiDeserialize for ProofRingVec<F> {
     }
 }
 
+/// Flat digit-plane storage plus explicit block boundaries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatDigitBlocks<const D: usize> {
+    flat_digits: Vec<[i8; D]>,
+    block_sizes: Vec<usize>,
+}
+
+/// Iterator over logical blocks inside [`FlatDigitBlocks`].
+pub struct FlatDigitBlockIter<'a, const D: usize> {
+    flat_digits: &'a [[i8; D]],
+    block_sizes: &'a [usize],
+    offset: usize,
+}
+
+impl<const D: usize> FlatDigitBlocks<D> {
+    /// Construct zero-initialized flat digits for explicit block sizes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the block sizes overflow the total flat length.
+    pub fn zeroed(block_sizes: Vec<usize>) -> Result<Self, HachiError> {
+        let total_planes = block_sizes.iter().try_fold(0usize, |acc, &size| {
+            acc.checked_add(size).ok_or_else(|| {
+                HachiError::InvalidInput("flat digit block size overflow".to_string())
+            })
+        })?;
+        Ok(Self {
+            flat_digits: vec![[0i8; D]; total_planes],
+            block_sizes,
+        })
+    }
+
+    /// Construct from flat digits and explicit block sizes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the block sizes do not sum to the flat digit count.
+    pub fn new(flat_digits: Vec<[i8; D]>, block_sizes: Vec<usize>) -> Result<Self, HachiError> {
+        let expected = block_sizes.iter().try_fold(0usize, |acc, &size| {
+            acc.checked_add(size).ok_or_else(|| {
+                HachiError::InvalidInput("flat digit block size overflow".to_string())
+            })
+        })?;
+        if expected != flat_digits.len() {
+            return Err(HachiError::InvalidSize {
+                expected,
+                actual: flat_digits.len(),
+            });
+        }
+        Ok(Self {
+            flat_digits,
+            block_sizes,
+        })
+    }
+
+    /// Flatten a block-owned representation into canonical storage.
+    pub fn from_blocks(blocks: Vec<Vec<[i8; D]>>) -> Self {
+        let block_sizes: Vec<usize> = blocks.iter().map(Vec::len).collect();
+        let total_planes: usize = block_sizes.iter().sum();
+        let mut flat_digits = Vec::with_capacity(total_planes);
+        for block in blocks {
+            flat_digits.extend(block);
+        }
+        Self {
+            flat_digits,
+            block_sizes,
+        }
+    }
+
+    /// Number of logical blocks.
+    pub fn block_count(&self) -> usize {
+        self.block_sizes.len()
+    }
+
+    /// Number of logical blocks.
+    pub fn len(&self) -> usize {
+        self.block_count()
+    }
+
+    /// Whether there are no logical blocks.
+    pub fn is_empty(&self) -> bool {
+        self.block_sizes.is_empty()
+    }
+
+    /// Per-block digit-plane counts.
+    pub fn block_sizes(&self) -> &[usize] {
+        &self.block_sizes
+    }
+
+    /// Flat digit stream in column-major block order.
+    pub fn flat_digits(&self) -> &[[i8; D]] {
+        &self.flat_digits
+    }
+
+    /// Mutable flat digit stream in column-major block order.
+    pub fn flat_digits_mut(&mut self) -> &mut [[i8; D]] {
+        &mut self.flat_digits
+    }
+
+    /// Iterate over blocks as slices into the flat digit stream.
+    pub fn iter_blocks(&self) -> FlatDigitBlockIter<'_, D> {
+        FlatDigitBlockIter {
+            flat_digits: &self.flat_digits,
+            block_sizes: &self.block_sizes,
+            offset: 0,
+        }
+    }
+
+    /// Iterate over logical blocks.
+    pub fn iter(&self) -> FlatDigitBlockIter<'_, D> {
+        self.iter_blocks()
+    }
+
+    /// Append the flat digit stream to `dst`.
+    pub fn extend_flat_digits(&self, dst: &mut Vec<[i8; D]>) {
+        dst.extend_from_slice(&self.flat_digits);
+    }
+
+    /// Truncate every block to at most `block_len` digit planes.
+    pub fn truncate_each_block(&mut self, block_len: usize) {
+        if self.block_sizes.iter().all(|&size| size <= block_len) {
+            return;
+        }
+
+        let total_planes: usize = self
+            .block_sizes
+            .iter()
+            .map(|&size| size.min(block_len))
+            .sum();
+        let mut new_flat = Vec::with_capacity(total_planes);
+        let mut offset = 0usize;
+        for size in &mut self.block_sizes {
+            let keep = (*size).min(block_len);
+            new_flat.extend_from_slice(&self.flat_digits[offset..offset + keep]);
+            offset += *size;
+            *size = keep;
+        }
+        self.flat_digits = new_flat;
+    }
+
+    /// Consume the storage and rebuild owned blocks.
+    pub fn into_blocks(self) -> Vec<Vec<[i8; D]>> {
+        let mut blocks = Vec::with_capacity(self.block_sizes.len());
+        let mut offset = 0usize;
+        for size in self.block_sizes {
+            blocks.push(self.flat_digits[offset..offset + size].to_vec());
+            offset += size;
+        }
+        blocks
+    }
+
+    /// Consume into the flat digits and block sizes.
+    pub fn into_parts(self) -> (Vec<[i8; D]>, Vec<usize>) {
+        (self.flat_digits, self.block_sizes)
+    }
+}
+
+impl<'a, const D: usize> Iterator for FlatDigitBlockIter<'a, D> {
+    type Item = &'a [[i8; D]];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let size = *self.block_sizes.first()?;
+        let start = self.offset;
+        let end = start + size;
+        self.offset = end;
+        self.block_sizes = &self.block_sizes[1..];
+        Some(&self.flat_digits[start..end])
+    }
+}
+
 /// Prover-side hint produced at commitment time.
 ///
 /// Contains the decomposed inner-opening digits (formerly `t_hat`) needed by
@@ -691,17 +861,17 @@ impl<F: FieldCore + Valid> HachiDeserialize for ProofRingVec<F> {
 /// coefficients) is passed separately to `prove` via `HachiPolyOps`.
 #[derive(Debug, Clone)]
 pub struct HachiCommitmentHint<F: FieldCore, const D: usize> {
-    /// Decomposed inner-opening digit blocks from the commitment phase as i8
-    /// digit planes (formerly `t_hat`).
-    pub inner_opening_digits: Vec<Vec<[i8; D]>>,
+    /// Decomposed inner-opening digits in flat column-major order plus block
+    /// boundaries.
+    pub inner_opening_digits: FlatDigitBlocks<D>,
     /// Optional recomposed `t_i` rows cached for prover-side A-row work.
     t: Option<Vec<Vec<CyclotomicRing<F, D>>>>,
     _marker: PhantomData<F>,
 }
 
 impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
-    /// Construct a new hint from i8 digit plane blocks.
-    pub fn new(inner_opening_digits: Vec<Vec<[i8; D]>>) -> Self {
+    /// Construct a new hint from flat digit blocks.
+    pub fn new(inner_opening_digits: FlatDigitBlocks<D>) -> Self {
         Self {
             inner_opening_digits,
             t: None,
@@ -711,7 +881,7 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
 
     /// Construct a hint that also preserves the undecomposed `t_i` rows.
     pub fn with_t(
-        inner_opening_digits: Vec<Vec<[i8; D]>>,
+        inner_opening_digits: FlatDigitBlocks<D>,
         t: Vec<Vec<CyclotomicRing<F, D>>>,
     ) -> Self {
         Self {
@@ -729,7 +899,7 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
     /// Consume the hint and return its decomposed digits plus the optional
     /// recomposed `t_i` rows.
     #[allow(clippy::type_complexity)]
-    pub fn into_parts(self) -> (Vec<Vec<[i8; D]>>, Option<Vec<Vec<CyclotomicRing<F, D>>>>) {
+    pub fn into_parts(self) -> (FlatDigitBlocks<D>, Option<Vec<Vec<CyclotomicRing<F, D>>>>) {
         (self.inner_opening_digits, self.t)
     }
 
@@ -759,7 +929,7 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
 
         let t = self
             .inner_opening_digits
-            .iter()
+            .iter_blocks()
             .map(|block| {
                 if block.len() % num_digits_open != 0 {
                     return Err(HachiError::InvalidSetup(format!(
@@ -788,21 +958,21 @@ impl<F: FieldCore, const D: usize> Eq for HachiCommitmentHint<F, D> {}
 
 /// Prover-side hint for one same-point commitment group.
 ///
-/// Stores per-polynomial `t_hat` blocks and, when available, the corresponding
-/// undecomposed `t_i` rows for all claims that were aggregated into the same
-/// commitment.
+/// Stores per-polynomial `t_hat` digit streams and, when available, the
+/// corresponding undecomposed `t_i` rows for all claims that were aggregated
+/// into the same commitment.
 #[derive(Debug, Clone)]
 pub struct HachiBatchedCommitmentHint<F: FieldCore, const D: usize> {
-    /// Per-polynomial decomposed inner-opening digit blocks.
-    pub inner_opening_digits: Vec<Vec<Vec<[i8; D]>>>,
+    /// Per-polynomial decomposed inner-opening digits.
+    pub inner_opening_digits: Vec<FlatDigitBlocks<D>>,
     /// Optional recomposed `t_i` rows grouped by polynomial then block.
     t: Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
     _marker: PhantomData<F>,
 }
 
 impl<F: FieldCore, const D: usize> HachiBatchedCommitmentHint<F, D> {
-    /// Construct a new batched hint from per-polynomial i8 digit plane blocks.
-    pub fn new(inner_opening_digits: Vec<Vec<Vec<[i8; D]>>>) -> Self {
+    /// Construct a new batched hint from per-polynomial digit streams.
+    pub fn new(inner_opening_digits: Vec<FlatDigitBlocks<D>>) -> Self {
         Self {
             inner_opening_digits,
             t: None,
@@ -812,7 +982,7 @@ impl<F: FieldCore, const D: usize> HachiBatchedCommitmentHint<F, D> {
 
     /// Construct a batched hint that also preserves the undecomposed `t_i` rows.
     pub fn with_t(
-        inner_opening_digits: Vec<Vec<Vec<[i8; D]>>>,
+        inner_opening_digits: Vec<FlatDigitBlocks<D>>,
         t: Vec<Vec<Vec<CyclotomicRing<F, D>>>>,
     ) -> Self {
         Self {
@@ -828,8 +998,26 @@ impl<F: FieldCore, const D: usize> HachiBatchedCommitmentHint<F, D> {
     }
 
     /// Flatten the batched hint into one root-hint view over all claims.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the flattened digit planes do not match the concatenated
+    /// block-size metadata. This would indicate an internal bug, since the
+    /// flattened view is derived directly from well-formed component hints.
     pub fn into_flattened(self) -> HachiCommitmentHint<F, D> {
-        let inner_opening_digits = self.inner_opening_digits.into_iter().flatten().collect();
+        let mut block_sizes = Vec::new();
+        let total_planes: usize = self
+            .inner_opening_digits
+            .iter()
+            .map(|digits| digits.flat_digits().len())
+            .sum();
+        let mut flat_digits = Vec::with_capacity(total_planes);
+        for digits in &self.inner_opening_digits {
+            block_sizes.extend_from_slice(digits.block_sizes());
+            digits.extend_flat_digits(&mut flat_digits);
+        }
+        let inner_opening_digits = FlatDigitBlocks::new(flat_digits, block_sizes)
+            .expect("batched hint flattening preserves block metadata");
         let t = self
             .t
             .map(|rows_by_poly| rows_by_poly.into_iter().flatten().collect());
@@ -1312,22 +1500,26 @@ impl<F: FieldCore, const D: usize> HachiSerialize for HachiCommitmentHint<F, D> 
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        (self.inner_opening_digits.len() as u64).serialize_with_mode(&mut writer, compress)?;
-        for block in &self.inner_opening_digits {
-            (block.len() as u64).serialize_with_mode(&mut writer, compress)?;
-            for plane in block {
+        (self.inner_opening_digits.block_count() as u64)
+            .serialize_with_mode(&mut writer, compress)?;
+        let mut offset = 0usize;
+        for &block_len in self.inner_opening_digits.block_sizes() {
+            (block_len as u64).serialize_with_mode(&mut writer, compress)?;
+            for plane in &self.inner_opening_digits.flat_digits()[offset..offset + block_len] {
                 let bytes: &[u8] =
                     unsafe { std::slice::from_raw_parts(plane.as_ptr().cast::<u8>(), D) };
                 writer.write_all(bytes)?;
             }
+            offset += block_len;
         }
         Ok(())
     }
     fn serialized_size(&self, _compress: Compress) -> usize {
         8 + self
             .inner_opening_digits
+            .block_sizes()
             .iter()
-            .map(|block| 8 + block.len() * D)
+            .map(|&block_len| 8 + block_len * D)
             .sum::<usize>()
     }
 }
@@ -1347,20 +1539,22 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiCommitmentH
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
         let num_blocks = u64::deserialize_with_mode(&mut reader, compress, validate, &())? as usize;
-        let mut inner_opening_digits = Vec::with_capacity(num_blocks);
+        let mut block_sizes = Vec::with_capacity(num_blocks);
+        let mut flat_digits = Vec::new();
         for _ in 0..num_blocks {
             let block_len =
                 u64::deserialize_with_mode(&mut reader, compress, validate, &())? as usize;
-            let mut block = Vec::with_capacity(block_len);
+            block_sizes.push(block_len);
             for _ in 0..block_len {
                 let mut plane = [0i8; D];
                 let bytes: &mut [u8] =
                     unsafe { std::slice::from_raw_parts_mut(plane.as_mut_ptr().cast::<u8>(), D) };
                 reader.read_exact(bytes)?;
-                block.push(plane);
+                flat_digits.push(plane);
             }
-            inner_opening_digits.push(block);
         }
+        let inner_opening_digits = FlatDigitBlocks::new(flat_digits, block_sizes)
+            .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         Ok(Self::new(inner_opening_digits))
     }
 }

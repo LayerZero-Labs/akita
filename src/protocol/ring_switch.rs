@@ -10,7 +10,7 @@ use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
-use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8_blocks;
+use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::HachiRootBatchSummary;
 use crate::protocol::commitment::{
@@ -21,7 +21,7 @@ use crate::protocol::commitment::{
 };
 use crate::protocol::hachi_poly_ops::RecursiveWitnessFlat;
 use crate::protocol::opening_point::RingOpeningPoint;
-use crate::protocol::proof::{FlatRingVec, HachiCommitmentHint, ProofRingVec};
+use crate::protocol::proof::{FlatDigitBlocks, FlatRingVec, HachiCommitmentHint, ProofRingVec};
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
 use crate::protocol::transcript::labels::{
@@ -119,9 +119,6 @@ where
     let w_hat = quad_eq
         .take_w_hat()
         .ok_or_else(|| HachiError::InvalidInput("missing w_hat in prover".to_string()))?;
-    let w_hat_flat = quad_eq
-        .take_w_hat_flat()
-        .ok_or_else(|| HachiError::InvalidInput("missing w_hat_flat in prover".to_string()))?;
     let z_pre = quad_eq
         .take_z_pre()
         .ok_or_else(|| HachiError::InvalidInput("missing centered z_pre in prover".to_string()))?;
@@ -140,7 +137,7 @@ where
         level_params,
         setup,
         &quad_eq.challenges,
-        &w_hat_flat,
+        w_hat.flat_digits(),
         inner_opening_digits,
         t,
         &w_folded,
@@ -913,7 +910,7 @@ where
     )?;
 
     let u: Vec<CyclotomicRing<F, D>> =
-        mat_vec_mul_ntt_single_i8_blocks(ntt_shared, level_params.n_b, &inner.t_hat);
+        mat_vec_mul_ntt_single_i8(ntt_shared, level_params.n_b, inner.t_hat.flat_digits());
     let hint = HachiCommitmentHint::with_t(inner.t_hat, inner.t);
     Ok((RingCommitment { u }, hint))
 }
@@ -1562,8 +1559,8 @@ fn balanced_decompose_centered_i32_i8_into<const D: usize>(
 }
 
 pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
-    w_hat: &[Vec<[i8; D]>],
-    t_hat: &[Vec<[i8; D]>],
+    w_hat: &FlatDigitBlocks<D>,
+    t_hat: &FlatDigitBlocks<D>,
     z_pre_centered: &[[i32; D]],
     r: &[CyclotomicRing<F, D>],
     layout: HachiCommitmentLayout,
@@ -1572,8 +1569,8 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     let num_digits_fold = layout.num_digits_fold;
     let levels = r_decomp_levels::<F>(log_basis);
 
-    let w_hat_planes: usize = w_hat.iter().map(|v| v.len()).sum();
-    let t_hat_planes: usize = t_hat.iter().map(|v| v.len()).sum();
+    let w_hat_planes = w_hat.flat_digits().len();
+    let t_hat_planes = t_hat.flat_digits().len();
     let z_count = w_hat_planes + t_hat_planes + z_pre_centered.len() * num_digits_fold;
     let r_hat_count = r.len() * levels;
     tracing::debug!(
@@ -1591,15 +1588,11 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     let total_elems = total_planes * D;
 
     let mut out = Vec::with_capacity(total_elems);
-    for block in w_hat {
-        for digits in block {
-            out.extend_from_slice(digits);
-        }
+    for digits in w_hat.flat_digits() {
+        out.extend_from_slice(digits);
     }
-    for block in t_hat {
-        for digits in block {
-            out.extend_from_slice(digits);
-        }
+    for digits in t_hat.flat_digits() {
+        out.extend_from_slice(digits);
     }
     let mut z_planes = vec![[0i8; D]; num_digits_fold];
     for z_j in z_pre_centered {

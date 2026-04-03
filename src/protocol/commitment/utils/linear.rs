@@ -385,10 +385,8 @@ pub fn decompose_block_i8<F: FieldCore + CanonicalField, const D: usize>(
     num_digits: usize,
     log_basis: u32,
 ) -> Vec<[i8; D]> {
-    let mut out = Vec::with_capacity(block.len() * num_digits);
-    for coeff_vec in block {
-        out.extend(coeff_vec.balanced_decompose_pow2_i8(num_digits, log_basis));
-    }
+    let mut out = vec![[0i8; D]; block.len() * num_digits];
+    decompose_rows_i8_into(block, &mut out, num_digits, log_basis);
     out
 }
 
@@ -398,11 +396,40 @@ pub fn decompose_rows_i8<F: FieldCore + CanonicalField, const D: usize>(
     num_digits: usize,
     log_basis: u32,
 ) -> Vec<[i8; D]> {
-    let mut out = Vec::with_capacity(rows.len() * num_digits);
-    for row in rows {
-        out.extend(row.balanced_decompose_pow2_i8(num_digits, log_basis));
-    }
+    let mut out = vec![[0i8; D]; rows.len() * num_digits];
+    decompose_rows_i8_into(rows, &mut out, num_digits, log_basis);
     out
+}
+
+/// Decompose each ring element in `rows` into a preallocated flat digit buffer.
+///
+/// # Panics
+///
+/// Panics if `out.len() != rows.len() * num_digits`.
+pub fn decompose_rows_i8_into<F: FieldCore + CanonicalField, const D: usize>(
+    rows: &[CyclotomicRing<F, D>],
+    out: &mut [[i8; D]],
+    num_digits: usize,
+    log_basis: u32,
+) {
+    assert_eq!(
+        out.len(),
+        rows.len() * num_digits,
+        "flat digit output length must match rows * num_digits",
+    );
+    if num_digits == 0 {
+        return;
+    }
+
+    #[cfg(feature = "parallel")]
+    out.par_chunks_mut(num_digits)
+        .zip(rows.par_iter())
+        .for_each(|(dst_chunk, row)| row.balanced_decompose_pow2_i8_into(dst_chunk, log_basis));
+
+    #[cfg(not(feature = "parallel"))]
+    out.chunks_mut(num_digits)
+        .zip(rows.iter())
+        .for_each(|(dst_chunk, row)| row.balanced_decompose_pow2_i8_into(dst_chunk, log_basis));
 }
 
 #[inline]
