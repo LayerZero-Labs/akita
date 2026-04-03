@@ -792,8 +792,11 @@ fn schedule_plan_from_states<Cfg: CommitmentConfig>(
         .last()
         .copied()
         .expect("non-empty generated schedule states");
-    let witness_shape =
-        DirectWitnessShape::PackedDigits((terminal.current_w_len, terminal.log_basis));
+    let witness_shape = if steps.is_empty() && terminal.level == 0 {
+        DirectWitnessShape::FieldElements(terminal.current_w_len)
+    } else {
+        DirectWitnessShape::PackedDigits((terminal.current_w_len, terminal.log_basis))
+    };
     let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
     steps.push(HachiPlannedStep::Direct(HachiPlannedDirectStep {
         state: terminal,
@@ -849,11 +852,11 @@ fn field_bytes(field_bits: u32) -> usize {
 }
 
 fn proof_ring_vec_bytes(ring_len: usize, ring_dim: usize, elem_bytes: usize) -> usize {
-    ring_len * ring_dim * elem_bytes
+    ring_len.saturating_mul(ring_dim).saturating_mul(elem_bytes)
 }
 
 pub(crate) fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
-    (num_elems * bits_per_elem as usize).div_ceil(8)
+    num_elems.saturating_mul(bits_per_elem as usize).div_ceil(8)
 }
 
 fn direct_witness_bytes(field_bits: u32, shape: &DirectWitnessShape) -> usize {
@@ -861,7 +864,9 @@ fn direct_witness_bytes(field_bits: u32, shape: &DirectWitnessShape) -> usize {
         DirectWitnessShape::PackedDigits((num_elems, bits_per_elem)) => {
             packed_digits_bytes(*num_elems, *bits_per_elem)
         }
-        DirectWitnessShape::FieldElements(num_coeffs) => num_coeffs * field_bytes(field_bits),
+        DirectWitnessShape::FieldElements(num_coeffs) => {
+            num_coeffs.saturating_mul(field_bytes(field_bits))
+        }
     }
 }
 

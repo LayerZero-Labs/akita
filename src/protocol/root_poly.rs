@@ -134,6 +134,32 @@ impl OneHotMultilinear {
         &self.indices
     }
 
+    fn to_dense_multilinear<F: FieldCore>(&self) -> Result<DenseMultilinear<F>, HachiError> {
+        let total_evals = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
+            HachiError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
+        })?;
+        let mut evals = vec![F::zero(); total_evals];
+        for (chunk_idx, hot_pos) in self.indices.iter().enumerate() {
+            let Some(hot_pos) = hot_pos else {
+                continue;
+            };
+            let field_pos = chunk_idx
+                .checked_mul(self.onehot_k)
+                .and_then(|base| base.checked_add(*hot_pos))
+                .ok_or_else(|| {
+                    HachiError::InvalidInput("onehot dense expansion index overflow".to_string())
+                })?;
+            if field_pos >= evals.len() {
+                return Err(HachiError::InvalidInput(format!(
+                    "onehot dense expansion index {field_pos} out of range for {} evals",
+                    evals.len()
+                )));
+            }
+            evals[field_pos] = F::one();
+        }
+        DenseMultilinear::from_field_evals(self.num_vars, &evals)
+    }
+
     /// Materialize the typed one-hot root polynomial for ring degree `D`.
     ///
     /// `layout` must be the root layout selected for this polynomial.
@@ -211,7 +237,13 @@ impl<F: FieldCore, const D: usize> TypedRootPolynomial<F, D> {
         match poly {
             MultilinearPolynomial::Dense(poly) => Ok(Self::Dense(poly.to_typed::<D>()?)),
             MultilinearPolynomial::OneHot(poly) => {
-                Ok(Self::OneHot(poly.to_typed::<F, D>(root_layout)?))
+                if root_layout.required_num_vars::<D>()? > poly.num_vars() {
+                    Ok(Self::Dense(
+                        poly.to_dense_multilinear::<F>()?.to_typed::<D>()?,
+                    ))
+                } else {
+                    Ok(Self::OneHot(poly.to_typed::<F, D>(root_layout)?))
+                }
             }
         }
     }

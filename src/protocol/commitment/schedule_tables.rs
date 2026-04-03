@@ -135,9 +135,15 @@ pub(crate) static FP128_LOGBASIS_TABLE: &[GeneratedScheduleTableEntry] = &[
 // fp128::D64OneHot
 #[rustfmt::skip]
 pub(crate) static FP128_ONEHOT_D64_TABLE: &[GeneratedScheduleTableEntry] = &[
-    GeneratedScheduleTableEntry { max_num_vars: 7, states: &[HachiPlannedState { level: 0, current_w_len: 128, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 29632, log_basis: 2 },] },
-    GeneratedScheduleTableEntry { max_num_vars: 8, states: &[HachiPlannedState { level: 0, current_w_len: 256, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 38080, log_basis: 2 },] },
-    GeneratedScheduleTableEntry { max_num_vars: 9, states: &[HachiPlannedState { level: 0, current_w_len: 512, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 38720, log_basis: 2 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 1, states: &[HachiPlannedState { level: 0, current_w_len: 2, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 2, states: &[HachiPlannedState { level: 0, current_w_len: 4, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 3, states: &[HachiPlannedState { level: 0, current_w_len: 8, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 4, states: &[HachiPlannedState { level: 0, current_w_len: 16, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 5, states: &[HachiPlannedState { level: 0, current_w_len: 32, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 6, states: &[HachiPlannedState { level: 0, current_w_len: 64, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 7, states: &[HachiPlannedState { level: 0, current_w_len: 128, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 8, states: &[HachiPlannedState { level: 0, current_w_len: 256, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 9, states: &[HachiPlannedState { level: 0, current_w_len: 512, log_basis: 3 },] },
     GeneratedScheduleTableEntry { max_num_vars: 10, states: &[HachiPlannedState { level: 0, current_w_len: 1024, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 40000, log_basis: 2 },] },
     GeneratedScheduleTableEntry { max_num_vars: 11, states: &[HachiPlannedState { level: 0, current_w_len: 2048, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 42560, log_basis: 2 },] },
     GeneratedScheduleTableEntry { max_num_vars: 12, states: &[HachiPlannedState { level: 0, current_w_len: 4096, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 47680, log_basis: 2 },] },
@@ -197,12 +203,17 @@ pub(crate) static FP128_ONEHOT_D64_TABLE: &[GeneratedScheduleTableEntry] = &[
 // fp128::D32Full
 #[rustfmt::skip]
 pub(crate) static FP128_D32_FULL_TABLE: &[GeneratedScheduleTableEntry] = &[
-    GeneratedScheduleTableEntry { max_num_vars: 6, states: &[HachiPlannedState { level: 0, current_w_len: 64, log_basis: 5 },HachiPlannedState { level: 1, current_w_len: 14144, log_basis: 5 },] },
-    GeneratedScheduleTableEntry { max_num_vars: 7, states: &[HachiPlannedState { level: 0, current_w_len: 128, log_basis: 5 },HachiPlannedState { level: 1, current_w_len: 16640, log_basis: 5 },] },
-    GeneratedScheduleTableEntry { max_num_vars: 8, states: &[HachiPlannedState { level: 0, current_w_len: 256, log_basis: 5 },HachiPlannedState { level: 1, current_w_len: 21632, log_basis: 5 },] },
-    GeneratedScheduleTableEntry { max_num_vars: 9, states: &[HachiPlannedState { level: 0, current_w_len: 512, log_basis: 6 },HachiPlannedState { level: 1, current_w_len: 22528, log_basis: 6 },] },
-    GeneratedScheduleTableEntry { max_num_vars: 10, states: &[HachiPlannedState { level: 0, current_w_len: 1024, log_basis: 6 },HachiPlannedState { level: 1, current_w_len: 30976, log_basis: 6 },] },
-    GeneratedScheduleTableEntry { max_num_vars: 11, states: &[HachiPlannedState { level: 0, current_w_len: 2048, log_basis: 6 },HachiPlannedState { level: 1, current_w_len: 39424, log_basis: 6 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 1, states: &[HachiPlannedState { level: 0, current_w_len: 2, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 2, states: &[HachiPlannedState { level: 0, current_w_len: 4, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 3, states: &[HachiPlannedState { level: 0, current_w_len: 8, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 4, states: &[HachiPlannedState { level: 0, current_w_len: 16, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 5, states: &[HachiPlannedState { level: 0, current_w_len: 32, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 6, states: &[HachiPlannedState { level: 0, current_w_len: 64, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 7, states: &[HachiPlannedState { level: 0, current_w_len: 128, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 8, states: &[HachiPlannedState { level: 0, current_w_len: 256, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 9, states: &[HachiPlannedState { level: 0, current_w_len: 512, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 10, states: &[HachiPlannedState { level: 0, current_w_len: 1024, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 11, states: &[HachiPlannedState { level: 0, current_w_len: 2048, log_basis: 3 },] },
     GeneratedScheduleTableEntry { max_num_vars: 12, states: &[HachiPlannedState { level: 0, current_w_len: 4096, log_basis: 6 },HachiPlannedState { level: 1, current_w_len: 56320, log_basis: 6 },] },
     GeneratedScheduleTableEntry { max_num_vars: 13, states: &[HachiPlannedState { level: 0, current_w_len: 8192, log_basis: 5 },HachiPlannedState { level: 1, current_w_len: 99840, log_basis: 5 },] },
     GeneratedScheduleTableEntry { max_num_vars: 14, states: &[HachiPlannedState { level: 0, current_w_len: 16384, log_basis: 5 },HachiPlannedState { level: 1, current_w_len: 139776, log_basis: 5 },] },
@@ -260,10 +271,15 @@ pub(crate) static FP128_D32_FULL_TABLE: &[GeneratedScheduleTableEntry] = &[
 // fp128::D32LogBasis
 #[rustfmt::skip]
 pub(crate) static FP128_D32_LOGBASIS_TABLE: &[GeneratedScheduleTableEntry] = &[
-    GeneratedScheduleTableEntry { max_num_vars: 6, states: &[HachiPlannedState { level: 0, current_w_len: 64, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 23648, log_basis: 2 },] },
-    GeneratedScheduleTableEntry { max_num_vars: 7, states: &[HachiPlannedState { level: 0, current_w_len: 128, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 29888, log_basis: 2 },] },
-    GeneratedScheduleTableEntry { max_num_vars: 8, states: &[HachiPlannedState { level: 0, current_w_len: 256, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 30656, log_basis: 2 },] },
-    GeneratedScheduleTableEntry { max_num_vars: 9, states: &[HachiPlannedState { level: 0, current_w_len: 512, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 32192, log_basis: 2 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 1, states: &[HachiPlannedState { level: 0, current_w_len: 2, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 2, states: &[HachiPlannedState { level: 0, current_w_len: 4, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 3, states: &[HachiPlannedState { level: 0, current_w_len: 8, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 4, states: &[HachiPlannedState { level: 0, current_w_len: 16, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 5, states: &[HachiPlannedState { level: 0, current_w_len: 32, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 6, states: &[HachiPlannedState { level: 0, current_w_len: 64, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 7, states: &[HachiPlannedState { level: 0, current_w_len: 128, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 8, states: &[HachiPlannedState { level: 0, current_w_len: 256, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 9, states: &[HachiPlannedState { level: 0, current_w_len: 512, log_basis: 3 },] },
     GeneratedScheduleTableEntry { max_num_vars: 10, states: &[HachiPlannedState { level: 0, current_w_len: 1024, log_basis: 3 },HachiPlannedState { level: 1, current_w_len: 21824, log_basis: 3 },] },
     GeneratedScheduleTableEntry { max_num_vars: 11, states: &[HachiPlannedState { level: 0, current_w_len: 2048, log_basis: 3 },HachiPlannedState { level: 1, current_w_len: 24384, log_basis: 3 },] },
     GeneratedScheduleTableEntry { max_num_vars: 12, states: &[HachiPlannedState { level: 0, current_w_len: 4096, log_basis: 3 },HachiPlannedState { level: 1, current_w_len: 29504, log_basis: 3 },] },
@@ -323,10 +339,15 @@ pub(crate) static FP128_D32_LOGBASIS_TABLE: &[GeneratedScheduleTableEntry] = &[
 // fp128::D32OneHot
 #[rustfmt::skip]
 pub(crate) static FP128_D32_ONEHOT_TABLE: &[GeneratedScheduleTableEntry] = &[
-    GeneratedScheduleTableEntry { max_num_vars: 6, states: &[HachiPlannedState { level: 0, current_w_len: 64, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 23264, log_basis: 2 },] },
-    GeneratedScheduleTableEntry { max_num_vars: 7, states: &[HachiPlannedState { level: 0, current_w_len: 128, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 29504, log_basis: 2 },] },
-    GeneratedScheduleTableEntry { max_num_vars: 8, states: &[HachiPlannedState { level: 0, current_w_len: 256, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 29888, log_basis: 2 },] },
-    GeneratedScheduleTableEntry { max_num_vars: 9, states: &[HachiPlannedState { level: 0, current_w_len: 512, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 30656, log_basis: 2 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 1, states: &[HachiPlannedState { level: 0, current_w_len: 2, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 2, states: &[HachiPlannedState { level: 0, current_w_len: 4, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 3, states: &[HachiPlannedState { level: 0, current_w_len: 8, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 4, states: &[HachiPlannedState { level: 0, current_w_len: 16, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 5, states: &[HachiPlannedState { level: 0, current_w_len: 32, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 6, states: &[HachiPlannedState { level: 0, current_w_len: 64, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 7, states: &[HachiPlannedState { level: 0, current_w_len: 128, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 8, states: &[HachiPlannedState { level: 0, current_w_len: 256, log_basis: 3 },] },
+    GeneratedScheduleTableEntry { max_num_vars: 9, states: &[HachiPlannedState { level: 0, current_w_len: 512, log_basis: 3 },] },
     GeneratedScheduleTableEntry { max_num_vars: 10, states: &[HachiPlannedState { level: 0, current_w_len: 1024, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 32192, log_basis: 2 },] },
     GeneratedScheduleTableEntry { max_num_vars: 11, states: &[HachiPlannedState { level: 0, current_w_len: 2048, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 35264, log_basis: 2 },] },
     GeneratedScheduleTableEntry { max_num_vars: 12, states: &[HachiPlannedState { level: 0, current_w_len: 4096, log_basis: 2 },HachiPlannedState { level: 1, current_w_len: 41408, log_basis: 2 },] },

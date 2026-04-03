@@ -1123,7 +1123,7 @@ mod tests {
     use crate::protocol::commitment::{
         CommitmentPreset, DynamicSmallTestCommitmentConfig, StaticBoundedPolicy,
     };
-    use crate::protocol::root_poly::DenseMultilinear;
+    use crate::protocol::root_poly::{DenseMultilinear, MultilinearPolynomial, OneHotMultilinear};
     use crate::protocol::Blake2bTranscript;
     use crate::test_utils::F;
 
@@ -1270,7 +1270,7 @@ mod tests {
 
     #[test]
     fn dynamic_full_exact_fit_singletons_use_fast_d32_path() {
-        for num_vars in 6..=63 {
+        for num_vars in 1..=63 {
             let key = HachiScheduleLookupKey::singleton(num_vars, num_vars, 1);
             assert_eq!(
                 DynamicFullFamily::<Fp128PrimeProfile>::select_root_ring_dim(key).unwrap(),
@@ -1281,7 +1281,7 @@ mod tests {
 
     #[test]
     fn dynamic_onehot_exact_fit_singletons_use_fast_d32_path() {
-        for num_vars in 6..=63 {
+        for num_vars in 1..=63 {
             let key = HachiScheduleLookupKey::singleton(num_vars, num_vars, 1);
             assert_eq!(
                 DynamicOneHotFamily::<Fp128PrimeProfile>::select_root_ring_dim(key).unwrap(),
@@ -1339,6 +1339,65 @@ mod tests {
                 DynamicF,
             >>::protocol_name());
         <DynamicFull as DynamicCommitmentScheme<DynamicF>>::verify(
+            &proof,
+            &verifier,
+            &mut verify_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn dynamic_onehot_tiny_root_uses_direct_step() {
+        type DynamicOneHot = fp128::OneHot;
+        type DynamicF = fp128::Field;
+
+        let num_vars = 4usize;
+        let poly = MultilinearPolynomial::from(
+            OneHotMultilinear::new(num_vars, 1usize << num_vars, vec![Some(0usize)]).unwrap(),
+        );
+        let setup = <DynamicOneHot as DynamicCommitmentScheme<DynamicF>>::setup_prover(num_vars, 1);
+        let verifier = <DynamicOneHot as DynamicCommitmentScheme<DynamicF>>::setup_verifier(&setup);
+        let (commitment, hint) = <DynamicOneHot as DynamicCommitmentScheme<DynamicF>>::commit(
+            std::slice::from_ref(&poly),
+            &setup,
+        )
+        .unwrap();
+        let opening_point = vec![DynamicF::zero(); num_vars];
+        let opening = DynamicF::one();
+        let mut prove_transcript =
+            Blake2bTranscript::<DynamicF>::new(<DynamicOneHot as DynamicCommitmentScheme<
+                DynamicF,
+            >>::protocol_name());
+        let proof = <DynamicOneHot as DynamicCommitmentScheme<DynamicF>>::prove(
+            &setup,
+            &poly,
+            &opening_point,
+            hint,
+            &mut prove_transcript,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .unwrap();
+
+        assert_eq!(proof.num_fold_levels(), 0);
+        assert_eq!(
+            proof
+                .final_witness()
+                .as_field_elements()
+                .expect("tiny dynamic roots should carry field elements directly")
+                .coeff_len(),
+            1usize << num_vars
+        );
+
+        let mut verify_transcript =
+            Blake2bTranscript::<DynamicF>::new(<DynamicOneHot as DynamicCommitmentScheme<
+                DynamicF,
+            >>::protocol_name());
+        <DynamicOneHot as DynamicCommitmentScheme<DynamicF>>::verify(
             &proof,
             &verifier,
             &mut verify_transcript,

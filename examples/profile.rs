@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
 
+use hachi_pcs::algebra::eq_poly::EqPolynomial;
 use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
     hachi_batched_root_layout, presets::fp128, CommitmentConfig, HachiCommitmentLayout,
@@ -16,8 +17,9 @@ use hachi_pcs::protocol::proof::{
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::{
     BasisMode, BlockOrder, CanonicalField, CommitmentScheme, DenseMultilinear,
-    DynamicCommitmentScheme, DynamicHachiCommitmentScheme, DynamicRootConfigFamily, FromSmallInt,
-    HachiPolyOps, HachiSerialize, MultilinearPolynomial, OneHotMultilinear, Transcript,
+    DynamicCommitmentScheme, DynamicHachiCommitmentScheme, DynamicRootConfigFamily, FieldCore,
+    FromSmallInt, HachiPolyOps, HachiSerialize, MultilinearPolynomial, OneHotMultilinear,
+    Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -31,6 +33,15 @@ use tracing_subscriber::EnvFilter;
 
 type F = fp128::Field;
 const ONEHOT_K: usize = 256;
+
+fn onehot_k_for_num_vars(nv: usize) -> usize {
+    let max_supported_log_k = ONEHOT_K.trailing_zeros() as usize;
+    if nv >= max_supported_log_k {
+        ONEHOT_K
+    } else {
+        1usize << nv
+    }
+}
 
 fn env_flag(name: &str, default: bool) -> bool {
     env::var(name)
@@ -53,10 +64,18 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
     basis: BasisMode,
 ) -> F {
     let alpha_bits = D.trailing_zeros() as usize;
-    assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
+    let target_num_vars = alpha_bits + layout.m_vars + layout.r_vars;
+    assert!(
+        point.len() <= target_num_vars,
+        "opening point length {} exceeds target root arity {}",
+        point.len(),
+        target_num_vars
+    );
+    let mut padded_point = point.to_vec();
+    padded_point.resize(target_num_vars, F::zero());
 
-    let inner_point = &point[..alpha_bits];
-    let reduced_point = &point[alpha_bits..];
+    let inner_point = &padded_point[..alpha_bits];
+    let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
         layout.r_vars,
@@ -74,6 +93,31 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
     let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)
         .expect("inner opening point should match ring dimension");
     (y_ring * v.sigma_m1()).coefficients()[0]
+}
+
+fn opening_from_public_poly(poly: &MultilinearPolynomial<F>, point: &[F]) -> F {
+    assert_eq!(
+        poly.num_vars(),
+        point.len(),
+        "opening point must match polynomial arity"
+    );
+    let eq = EqPolynomial::evals(point);
+    match poly {
+        MultilinearPolynomial::Dense(poly) => poly
+            .evals()
+            .iter()
+            .zip(eq.iter())
+            .fold(F::zero(), |acc, (eval, weight)| acc + (*eval * *weight)),
+        MultilinearPolynomial::OneHot(poly) => {
+            poly.indices()
+                .iter()
+                .enumerate()
+                .fold(F::zero(), |acc, (chunk_idx, hot_pos)| match hot_pos {
+                    Some(hot_pos) => acc + eq[chunk_idx * poly.onehot_k() + hot_pos],
+                    None => acc,
+                })
+        }
+    }
 }
 
 fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F, D>>(
@@ -452,7 +496,7 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let total_field = (layout.num_blocks * layout.block_len)
         .checked_mul(D)
         .expect("total field size overflow");
-    let onehot_k = ONEHOT_K;
+    let onehot_k = onehot_k_for_num_vars(nv);
     let total_chunks = total_field / onehot_k;
     assert_eq!(
         total_chunks * onehot_k,
@@ -491,7 +535,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let total_field = (layout.num_blocks * layout.block_len)
         .checked_mul(D)
         .expect("total field size overflow");
-    let onehot_k = ONEHOT_K;
+    let onehot_k = onehot_k_for_num_vars(nv);
     let total_chunks = total_field / onehot_k;
     assert_eq!(
         total_chunks * onehot_k,
@@ -635,25 +679,8 @@ where
         "commit"
     );
 
-    let opening = match root_d {
-        32 => {
-            let layout = hachi_batched_root_layout::<Family::Cfg32, 32>(nv, 1).unwrap();
-            let typed = dense.to_typed::<32>().unwrap();
-            opening_from_poly(&typed, &pt, &layout, BasisMode::Lagrange)
-        }
-        64 => {
-            let layout = hachi_batched_root_layout::<Family::Cfg64, 64>(nv, 1).unwrap();
-            let typed = dense.to_typed::<64>().unwrap();
-            opening_from_poly(&typed, &pt, &layout, BasisMode::Lagrange)
-        }
-        128 => {
-            let layout = hachi_batched_root_layout::<Family::Cfg128, 128>(nv, 1).unwrap();
-            let typed = dense.to_typed::<128>().unwrap();
-            opening_from_poly(&typed, &pt, &layout, BasisMode::Lagrange)
-        }
-        _ => unreachable!("dynamic schemes only select D in 32/64/128"),
-    };
     let plan = dynamic_singleton_plan::<Family>(nv, root_d);
+    let opening = opening_from_public_poly(&poly, &pt);
 
     let t0 = Instant::now();
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
@@ -714,11 +741,12 @@ where
     let onehots: Vec<OneHotMultilinear> = (0..num_polys)
         .map(|poly_idx| {
             let mut rng = StdRng::seed_from_u64(0xbeef_cafe ^ ((poly_idx as u64 + 1) << 32));
-            let total_chunks = (1usize << nv) / ONEHOT_K;
+            let onehot_k = onehot_k_for_num_vars(nv);
+            let total_chunks = (1usize << nv) / onehot_k;
             let indices: Vec<Option<usize>> = (0..total_chunks)
-                .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
+                .map(|_| Some(rng.gen_range(0..onehot_k)))
                 .collect();
-            OneHotMultilinear::new(nv, ONEHOT_K, indices).unwrap()
+            OneHotMultilinear::new(nv, onehot_k, indices).unwrap()
         })
         .collect();
     let polys: Vec<MultilinearPolynomial<F>> = onehots
@@ -746,39 +774,10 @@ where
         "commit"
     );
 
-    let openings: Vec<F> = match root_d {
-        32 => {
-            let layout = hachi_batched_root_layout::<Family::Cfg32, 32>(nv, num_polys).unwrap();
-            onehots
-                .iter()
-                .map(|onehot| {
-                    let typed = onehot.to_typed::<F, 32>(layout).unwrap();
-                    opening_from_poly(&typed, &pt, &layout, BasisMode::Lagrange)
-                })
-                .collect()
-        }
-        64 => {
-            let layout = hachi_batched_root_layout::<Family::Cfg64, 64>(nv, num_polys).unwrap();
-            onehots
-                .iter()
-                .map(|onehot| {
-                    let typed = onehot.to_typed::<F, 64>(layout).unwrap();
-                    opening_from_poly(&typed, &pt, &layout, BasisMode::Lagrange)
-                })
-                .collect()
-        }
-        128 => {
-            let layout = hachi_batched_root_layout::<Family::Cfg128, 128>(nv, num_polys).unwrap();
-            onehots
-                .iter()
-                .map(|onehot| {
-                    let typed = onehot.to_typed::<F, 128>(layout).unwrap();
-                    opening_from_poly(&typed, &pt, &layout, BasisMode::Lagrange)
-                })
-                .collect()
-        }
-        _ => unreachable!("dynamic schemes only select D in 32/64/128"),
-    };
+    let openings: Vec<F> = polys
+        .iter()
+        .map(|poly| opening_from_public_poly(poly, &pt))
+        .collect();
 
     let verifier_setup = <Scheme<Family> as DynamicCommitmentScheme<F>>::setup_verifier(&setup);
     if num_polys == 1 {
@@ -908,11 +907,27 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     tracing::info!("{}", title);
     if num_polys == 1 {
         let layout = resolve_layout::<Cfg>(nv);
+        let required_vars = layout.required_num_vars::<D>().expect("layout arity");
+        if required_vars > nv {
+            tracing::info!(
+                required_vars,
+                "skipping fixed onehot mode because the typed root layout exceeds the public polynomial arity"
+            );
+            return;
+        }
         let plan = Cfg::schedule_plan(nv).expect("schedule plan");
         print_layout(&layout);
         run_onehot::<D, Cfg>(nv, &layout, plan.as_ref());
     } else {
         let layout = hachi_batched_root_layout::<Cfg, D>(nv, num_polys).expect("layout");
+        let required_vars = layout.required_num_vars::<D>().expect("layout arity");
+        if required_vars > nv {
+            tracing::info!(
+                required_vars,
+                "skipping fixed batched onehot mode because the typed root layout exceeds the public polynomial arity"
+            );
+            return;
+        }
         print_layout(&layout);
         run_batched_onehot::<D, Cfg>(nv, num_polys, &layout);
     }
@@ -985,12 +1000,13 @@ fn assert_singleton_mode(mode: &str, num_polys: usize) {
     );
 }
 
-fn fixed_onehot_title(d: usize, num_polys: usize) -> String {
+fn fixed_onehot_title(d: usize, nv: usize, num_polys: usize) -> String {
+    let onehot_k = onehot_k_for_num_vars(nv);
     if num_polys == 1 {
-        format!("=== onehot_d{d} (q=2^128-275, D={d}, 1-of-256, log_commit_bound=1) ===")
+        format!("=== onehot_d{d} (q=2^128-275, D={d}, 1-of-{onehot_k}, log_commit_bound=1) ===")
     } else {
         format!(
-            "=== onehot_d{d} batched (q=2^128-275, D={d}, 1-of-256, log_commit_bound=1, same-point batch={num_polys}) ==="
+            "=== onehot_d{d} batched (q=2^128-275, D={d}, 1-of-{onehot_k}, log_commit_bound=1, same-point batch={num_polys}) ==="
         )
     }
 }
@@ -1005,11 +1021,12 @@ fn run_profile_full(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_onehot(nv: usize, num_polys: usize) {
+    let onehot_k = onehot_k_for_num_vars(nv);
     let title = if num_polys == 1 {
-        "=== onehot (q=2^128-275, runtime-selected root D, 1-of-256) ===".to_string()
+        format!("=== onehot (q=2^128-275, runtime-selected root D, 1-of-{onehot_k}) ===")
     } else {
         format!(
-            "=== onehot batched (q=2^128-275, runtime-selected root D, 1-of-256, same-point batch={num_polys}) ==="
+            "=== onehot batched (q=2^128-275, runtime-selected root D, 1-of-{onehot_k}, same-point batch={num_polys}) ==="
         )
     };
     run_dynamic_onehot_mode::<fp128::OneHotFamily>("onehot", &title, nv, num_polys);
@@ -1026,7 +1043,7 @@ fn run_profile_full_d128(nv: usize, num_polys: usize) {
 
 fn run_profile_onehot_d64(nv: usize, num_polys: usize) {
     type Cfg = fp128::D64OneHot;
-    let title = fixed_onehot_title(64, num_polys);
+    let title = fixed_onehot_title(64, nv, num_polys);
     run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
 }
 
@@ -1041,7 +1058,7 @@ fn run_profile_full_d32(nv: usize, num_polys: usize) {
 
 fn run_profile_onehot_d32(nv: usize, num_polys: usize) {
     type Cfg = fp128::D32OneHot;
-    let title = fixed_onehot_title(32, num_polys);
+    let title = fixed_onehot_title(32, nv, num_polys);
     run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
 }
 
@@ -1056,6 +1073,7 @@ fn run_profile_logbasis(nv: usize, num_polys: usize) {
 
 fn run_profile_compare_onehot(nv: usize, num_polys: usize) {
     assert_singleton_mode("compare_onehot", num_polys);
+    let onehot_k = onehot_k_for_num_vars(nv);
 
     type A = fp128::D64StaticBounded<1, 3, 3>;
     type B = fp128::D64StaticBounded<1, 2, 2>;
@@ -1063,22 +1081,22 @@ fn run_profile_compare_onehot(nv: usize, num_polys: usize) {
     type D = fp128::D64StaticBounded<1, 2, 4>;
 
     run_onehot_mode::<{ A::D }, A>(
-        "=== [A] onehot (D=64, 1-of-256), basis=3 everywhere ===",
+        &format!("=== [A] onehot (D=64, 1-of-{onehot_k}), basis=3 everywhere ==="),
         nv,
         1,
     );
     run_onehot_mode::<{ B::D }, B>(
-        "=== [B] onehot (D=64, 1-of-256), basis=2 everywhere ===",
+        &format!("=== [B] onehot (D=64, 1-of-{onehot_k}), basis=2 everywhere ==="),
         nv,
         1,
     );
     run_onehot_mode::<{ C::D }, C>(
-        "=== [C] onehot (D=64, 1-of-256), L0 basis=2, w-levels basis=3 ===",
+        &format!("=== [C] onehot (D=64, 1-of-{onehot_k}), L0 basis=2, w-levels basis=3 ==="),
         nv,
         1,
     );
     run_onehot_mode::<{ D::D }, D>(
-        "=== [D] onehot (D=64, 1-of-256), L0 basis=2, w-levels basis=4 ===",
+        &format!("=== [D] onehot (D=64, 1-of-{onehot_k}), L0 basis=2, w-levels basis=4 ==="),
         nv,
         1,
     );
