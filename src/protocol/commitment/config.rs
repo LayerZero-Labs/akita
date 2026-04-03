@@ -1186,11 +1186,21 @@ impl<
         fp128_decomposition(LOG_COMMIT_BOUND, 3)
     }
 
-    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
+    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
+        let audited_root_rank = if D == 128 {
+            fp128_d128_audited_root_outer_rank(0, max_num_vars)
+        } else {
+            1
+        };
+        let audited_root_a_rank = if D == 128 {
+            fp128_d128_audited_root_a_rank::<LOG_COMMIT_BOUND>(0, max_num_vars)
+        } else {
+            1
+        };
         CommitmentEnvelope {
-            max_n_a: N_A,
-            max_n_b: N_B,
-            max_n_d: N_D,
+            max_n_a: N_A.max(audited_root_a_rank),
+            max_n_b: N_B.max(audited_root_rank),
+            max_n_d: N_D.max(audited_root_rank),
         }
     }
 
@@ -1482,6 +1492,22 @@ mod fp128_policy_tests {
     #[test]
     fn current_d128_onehot_candidate_schedule_stays_within_audited_sis_widths() {
         assert_d128_schedule_stays_within_audited_sis_widths::<D128OneHotCandidate>(8, 63);
+    }
+
+    #[test]
+    fn adaptive_d128_envelope_accounts_for_audited_root_rank_escalation() {
+        type FullCfg = crate::protocol::commitment::presets::fp128::D128Full;
+        type OneHotCfg = D128OneHotCandidate;
+
+        let full_envelope = FullCfg::envelope(59);
+        assert_eq!(full_envelope.max_n_a, 2);
+        assert_eq!(full_envelope.max_n_b, 2);
+        assert_eq!(full_envelope.max_n_d, 2);
+
+        let onehot_envelope = OneHotCfg::envelope(54);
+        assert_eq!(onehot_envelope.max_n_a, 1);
+        assert_eq!(onehot_envelope.max_n_b, 2);
+        assert_eq!(onehot_envelope.max_n_d, 2);
     }
 }
 

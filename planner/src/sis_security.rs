@@ -50,7 +50,12 @@ fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; MAX_RANK as usiz
         (64, 255) => Some([134, 598_287, 20_000_000, 20_000_000]),
         (64, 511) => Some([33, 148_987, 20_000_000, 20_000_000]),
         // D=128
-        (128, 2) => Some([500_000_000, 50_000_000_000, 50_000_000_000, 50_000_000_000]),
+        (128, 2) => Some([
+            4_862_955_514,
+            50_000_000_000,
+            50_000_000_000,
+            50_000_000_000,
+        ]),
         (128, 3) => Some([
             2_161_313_561,
             50_000_000_000,
@@ -128,9 +133,32 @@ mod tests {
 
     #[test]
     fn d128_rank_lookup() {
+        assert_eq!(min_rank_for_secure_width(128, 2, 4_862_955_514), Some(1));
+        assert_eq!(min_rank_for_secure_width(128, 2, 4_862_955_515), Some(2));
         assert_eq!(min_rank_for_secure_width(128, 63, 4_900_937), Some(1));
         assert_eq!(min_rank_for_secure_width(128, 63, 4_900_938), Some(2));
         assert_eq!(min_rank_for_secure_width(128, 31, 20_241_230), Some(1));
         assert_eq!(min_rank_for_secure_width(128, 31, 20_241_231), Some(2));
+    }
+
+    #[test]
+    fn rank1_widths_are_monotone_in_collision_bound() {
+        let d32 = [2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047]
+            .into_iter()
+            .map(|collision| sis_max_widths(32, collision).unwrap()[0])
+            .collect::<Vec<_>>();
+        assert!(d32.windows(2).all(|pair| pair[0] >= pair[1]));
+
+        let d64 = [2, 3, 7, 15, 31, 63, 127, 255, 511]
+            .into_iter()
+            .map(|collision| sis_max_widths(64, collision).unwrap()[0])
+            .collect::<Vec<_>>();
+        assert!(d64.windows(2).all(|pair| pair[0] >= pair[1]));
+
+        let d128 = [2, 3, 7, 15, 31, 63]
+            .into_iter()
+            .map(|collision| sis_max_widths(128, collision).unwrap()[0])
+            .collect::<Vec<_>>();
+        assert!(d128.windows(2).all(|pair| pair[0] >= pair[1]));
     }
 }
