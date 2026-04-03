@@ -322,6 +322,7 @@ pub(crate) unsafe fn pointwise_mul_acc_i32(
     let p_d = vdup_n_s32(p);
     let pinv_d = vdup_n_s32(pinv);
     let p_q = vdupq_n_s32(p);
+    let prime = NttPrime::compute(p);
     let mut i = 0;
     while i + 4 <= d {
         let a = vld1q_s32(acc.add(i));
@@ -332,6 +333,15 @@ pub(crate) unsafe fn pointwise_mul_acc_i32(
         vst1q_s32(acc.add(i), reduce_range_4x_i32(sum, p_q));
         i += 4;
     }
+    while i < d {
+        let prod = prime.mul(
+            MontCoeff::from_raw(*lhs.add(i)),
+            MontCoeff::from_raw(*rhs.add(i)),
+        );
+        let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(prod.raw()));
+        *acc.add(i) = prime.reduce_range(sum).raw();
+        i += 1;
+    }
 }
 
 /// 4-wide add-and-reduce for a single CRT limb (i32).
@@ -340,12 +350,18 @@ pub(crate) unsafe fn pointwise_mul_acc_i32(
 #[cfg(feature = "parallel")]
 pub(crate) unsafe fn add_reduce_i32(acc: *mut i32, other: *const i32, d: usize, p: i32) {
     let p_q = vdupq_n_s32(p);
+    let prime = NttPrime::compute(p);
     let mut i = 0;
     while i + 4 <= d {
         let a = vld1q_s32(acc.add(i));
         let b = vld1q_s32(other.add(i));
         vst1q_s32(acc.add(i), reduce_range_4x_i32(vaddq_s32(a, b), p_q));
         i += 4;
+    }
+    while i < d {
+        let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(*other.add(i)));
+        *acc.add(i) = prime.reduce_range(sum).raw();
+        i += 1;
     }
 }
 
@@ -877,6 +893,63 @@ mod tests {
             let s = prime.to_canonical(scalar_acc[i]);
             assert_eq!(n, s, "pointwise mul acc mismatch at {i}");
         }
+    }
+
+    #[test]
+    fn neon_pointwise_mul_acc_i32_handles_scalar_tail() {
+        let prime = NttPrime::compute(TEST_PRIME_I32);
+        const D: usize = 6;
+        let acc_init = random_mont_array_i32::<D>(prime, 0x4444);
+        let lhs = random_mont_array_i32::<D>(prime, 0x5555);
+        let rhs = random_mont_array_i32::<D>(prime, 0x6666);
+
+        let mut neon_acc = acc_init;
+        unsafe {
+            pointwise_mul_acc_i32(
+                neon_acc.as_mut_ptr() as *mut i32,
+                lhs.as_ptr() as *const i32,
+                rhs.as_ptr() as *const i32,
+                D,
+                prime.p,
+                prime.pinv,
+            );
+        }
+
+        let mut scalar_acc = acc_init;
+        for i in 0..D {
+            let prod = prime.mul(lhs[i], rhs[i]);
+            let sum = MontCoeff::from_raw(scalar_acc[i].raw().wrapping_add(prod.raw()));
+            scalar_acc[i] = prime.reduce_range(sum);
+        }
+
+        assert_eq!(neon_acc, scalar_acc);
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn neon_add_reduce_i32_handles_scalar_tail() {
+        let prime = NttPrime::compute(TEST_PRIME_I32);
+        const D: usize = 6;
+        let acc_init = random_mont_array_i32::<D>(prime, 0x7777);
+        let other = random_mont_array_i32::<D>(prime, 0x8888);
+
+        let mut neon_acc = acc_init;
+        unsafe {
+            add_reduce_i32(
+                neon_acc.as_mut_ptr() as *mut i32,
+                other.as_ptr() as *const i32,
+                D,
+                prime.p,
+            );
+        }
+
+        let mut scalar_acc = acc_init;
+        for i in 0..D {
+            let sum = MontCoeff::from_raw(scalar_acc[i].raw().wrapping_add(other[i].raw()));
+            scalar_acc[i] = prime.reduce_range(sum);
+        }
+
+        assert_eq!(neon_acc, scalar_acc);
     }
 
     #[test]

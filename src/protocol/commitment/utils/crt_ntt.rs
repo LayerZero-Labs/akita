@@ -6,10 +6,11 @@ use crate::algebra::ntt::tables::{
     Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES, RING_DEGREE,
 };
 use crate::algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
+use crate::algebra::Prime128Offset159;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::{CanonicalField, FieldCore};
+use crate::{CanonicalField, FieldCore, PseudoMersenneField};
 
 use super::flat_matrix::RingMatrixView;
 use super::norm::detect_field_modulus;
@@ -28,7 +29,7 @@ pub(crate) enum ProtocolCrtNttParams<const D: usize> {
 /// Dispatch policy:
 /// - `q <= 2^32-99` and `D <= 64`: Q32 (`i16`)
 /// - `q <= 2^64-59` and `D <= 1024`: Q64 (`i32`, conservative K=5)
-/// - `q = 2^128-275` and `D <= 1024`: Q128 (`i32`, K=5)
+/// - `q = 2^128-275` or `q = 2^128-159` and `D <= 1024`: Q128 (`i32`, K=5)
 /// - otherwise: explicit setup error
 pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
 ) -> Result<ProtocolCrtNttParams<D>, HachiError> {
@@ -44,8 +45,10 @@ pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
     }
 
     let modulus = detect_field_modulus::<F>();
+    let split_only_q128_modulus =
+        u128::MAX - (<Prime128Offset159 as PseudoMersenneField>::MODULUS_OFFSET - 1);
 
-    if modulus == Q128_MODULUS {
+    if modulus == Q128_MODULUS || modulus == split_only_q128_modulus {
         return Ok(ProtocolCrtNttParams::Q128(CrtNttParamSet::new(
             q128_primes(),
         )));
@@ -63,7 +66,7 @@ pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
     }
 
     Err(HachiError::InvalidSetup(format!(
-        "no CRT+NTT parameter set for modulus {modulus} and D={D}; supported ranges: <= {Q64_MODULUS} (with Q32/Q64 dispatch) or q = {Q128_MODULUS}"
+        "no CRT+NTT parameter set for modulus {modulus} and D={D}; supported ranges: <= {Q64_MODULUS} (with Q32/Q64 dispatch) or q in {{{Q128_MODULUS}, {split_only_q128_modulus}}}"
     )))
 }
 
@@ -189,7 +192,7 @@ impl<const D: usize> NttSlotCache<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128Offset275;
+    use crate::algebra::{Prime128Offset159, Prime128Offset275};
 
     const SMALL_PROTOCOL_RING_DIMS: &[usize] = &[32, 64, 128];
 
@@ -207,5 +210,10 @@ mod tests {
                 assert_selects_q128_params::<Prime128Offset275, D>();
             });
         }
+    }
+
+    #[test]
+    fn selects_q128_params_for_split_only_prime159() {
+        assert_selects_q128_params::<Prime128Offset159, 32>();
     }
 }
