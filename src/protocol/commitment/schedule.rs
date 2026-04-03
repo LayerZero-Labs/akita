@@ -3,7 +3,9 @@ use super::config::{
     compute_num_digits, compute_num_digits_fold, optimal_m_r_split_with_params, CommitmentConfig,
     DecompositionParams, HachiCommitmentLayout,
 };
-use super::schedule_tables::{table_entry_states, GeneratedScheduleTableEntry};
+use super::schedule_tables::{
+    table_entry_states, GeneratedLevelParamsSpec, GeneratedScheduleTable, GeneratedStage1Family,
+};
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
 use crate::protocol::proof::{
@@ -711,9 +713,65 @@ fn scheduled_suffix_bytes_from_index(schedule: &HachiSchedulePlan, state_index: 
         + schedule.direct_step().direct_bytes
 }
 
+fn generated_stage1_family(config: &SparseChallengeConfig) -> Option<GeneratedStage1Family> {
+    match config {
+        SparseChallengeConfig::Uniform {
+            weight,
+            nonzero_coeffs,
+        } if *weight == 32
+            && *nonzero_coeffs == (-8..=8).filter(|&c| c != 0).collect::<Vec<_>>() =>
+        {
+            Some(GeneratedStage1Family::D32)
+        }
+        SparseChallengeConfig::SplitRing {
+            half_weight,
+            max_mag2_per_half,
+        } if *half_weight == 21 && *max_mag2_per_half == 6 => Some(GeneratedStage1Family::D64),
+        SparseChallengeConfig::Uniform {
+            weight,
+            nonzero_coeffs,
+        } if *weight == 31 && *nonzero_coeffs == vec![-1, 1] => Some(GeneratedStage1Family::D128),
+        _ => None,
+    }
+}
+
+fn validate_generated_level_params(
+    expected: GeneratedLevelParamsSpec,
+    params: &HachiLevelParams,
+    context: &str,
+) -> Result<(), HachiError> {
+    let actual_stage1_family = generated_stage1_family(&params.stage1_config).ok_or_else(|| {
+        HachiError::InvalidSetup(format!(
+            "generated schedule {context} used an unpinned stage1 family: {:?}",
+            params.stage1_config
+        ))
+    })?;
+    let actual = GeneratedLevelParamsSpec {
+        d: params.d,
+        n_a: params.n_a,
+        n_b: params.n_b,
+        n_d: params.n_d,
+        stage1_family: actual_stage1_family,
+    };
+    if actual != expected {
+        return Err(HachiError::InvalidSetup(format!(
+            "generated schedule {context} params mismatch: expected {expected:?}, got {actual:?}"
+        )));
+    }
+    if params.challenge_l1_mass != params.stage1_config.l1_mass() {
+        return Err(HachiError::InvalidSetup(format!(
+            "generated schedule {context} challenge L1 mass mismatch: cached={}, runtime={}",
+            params.challenge_l1_mass,
+            params.stage1_config.l1_mass()
+        )));
+    }
+    Ok(())
+}
+
 fn schedule_plan_from_states<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     states: &[HachiPlannedState],
+    table: GeneratedScheduleTable,
 ) -> Result<HachiSchedulePlan, HachiError> {
     let Some(root_state) = states.first().copied() else {
         return Err(HachiError::InvalidSetup(
@@ -760,6 +818,13 @@ fn schedule_plan_from_states<Cfg: CommitmentConfig>(
         };
         let (params, layout) =
             current_level_layout_with_log_basis::<Cfg>(inputs, inputs_state.log_basis)?;
+        validate_generated_level_params(
+            table
+                .policy
+                .expected_level_params(max_num_vars, inputs.level),
+            &params,
+            &format!("level {}", inputs.level),
+        )?;
         let planned_next_w_len =
             planned_next_w_len(field_bits, Cfg::planner_half_field_bound(), &params, layout);
         if planned_next_w_len != next_state.current_w_len {
@@ -770,6 +835,13 @@ fn schedule_plan_from_states<Cfg: CommitmentConfig>(
         }
 
         let next_level_params = Cfg::level_params_with_log_basis(next_inputs, next_state.log_basis);
+        validate_generated_level_params(
+            table
+                .policy
+                .expected_level_params(max_num_vars, next_inputs.level),
+            &next_level_params,
+            &format!("next level {}", next_inputs.level),
+        )?;
         let level_bytes = hachi_level_proof_bytes(
             field_bits,
             &params,
@@ -819,10 +891,10 @@ fn schedule_plan_from_states<Cfg: CommitmentConfig>(
 
 pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
     max_num_vars: usize,
-    table: &'static [GeneratedScheduleTableEntry],
+    table: GeneratedScheduleTable,
 ) -> Result<Option<HachiSchedulePlan>, HachiError> {
     table_entry_states(table, max_num_vars)
-        .map(|states| schedule_plan_from_states::<Cfg>(max_num_vars, states))
+        .map(|states| schedule_plan_from_states::<Cfg>(max_num_vars, states, table))
         .transpose()
 }
 
@@ -1655,7 +1727,7 @@ mod tests {
     use crate::primitives::serialization::{Compress, HachiSerialize};
     use crate::protocol::commitment::presets::fp128;
     use crate::protocol::commitment::schedule_tables::{
-        fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table, GeneratedScheduleTableEntry,
+        fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table, GeneratedScheduleTable,
     };
     use crate::protocol::proof::{
         FlatRingVec, HachiBatchedRootProof, HachiLevelProof, HachiStage1Proof,
@@ -1724,9 +1796,9 @@ mod tests {
     }
 
     fn assert_generated_table_matches_runtime_planner<Cfg: CommitmentConfig>(
-        table: &'static [GeneratedScheduleTableEntry],
+        table: GeneratedScheduleTable,
     ) {
-        for entry in table {
+        for entry in table.entries {
             let generated = generated_schedule_plan_from_table::<Cfg>(entry.max_num_vars, table)
                 .expect("generated table should materialize")
                 .expect("entry should exist in generated table");

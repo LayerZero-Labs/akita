@@ -8,7 +8,7 @@ use super::schedule::{
     HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use super::schedule_tables::{
-    fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table, GeneratedScheduleTableEntry,
+    fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table, GeneratedScheduleTable,
 };
 use crate::algebra::Prime128Offset275;
 use crate::algebra::SparseChallengeConfig;
@@ -35,7 +35,7 @@ pub(crate) struct DynamicRootScheduleSelection {
 
 fn generated_or_planned_schedule<Cfg: CommitmentConfig>(
     max_num_vars: usize,
-    table: &'static [GeneratedScheduleTableEntry],
+    table: GeneratedScheduleTable,
     min_log_basis: u32,
     max_log_basis: u32,
 ) -> Result<HachiSchedulePlan, HachiError> {
@@ -134,23 +134,6 @@ pub trait CommitmentFieldProfile: Clone + Copy + Default + Send + Sync + 'static
         (2, 6)
     }
 
-    /// Generated table for one adaptive bounded family, if this profile ships one.
-    fn generated_adaptive_bounded_table<
-        const D: usize,
-        const LOG_COMMIT_BOUND: u32,
-        const N_A: usize,
-        const N_B: usize,
-        const N_D: usize,
-    >() -> Option<&'static [GeneratedScheduleTableEntry]> {
-        let _ = (D, LOG_COMMIT_BOUND, N_A, N_B, N_D);
-        None
-    }
-
-    /// Generated table for the coarse `D=64` onehot family, if shipped.
-    fn generated_onehot_d64_table() -> Option<&'static [GeneratedScheduleTableEntry]> {
-        None
-    }
-
     /// Minimum audited root rank for outer `B/D` rows at this level.
     fn audited_root_outer_rank(d: usize, level: usize, max_num_vars: usize) -> usize {
         let _ = (d, level, max_num_vars);
@@ -229,6 +212,23 @@ impl ProfileScheduleSource {
 
 /// Internal schedule authority for profile-backed planner families.
 pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
+    /// Generated table for one adaptive bounded family, if this profile ships one.
+    fn generated_adaptive_bounded_table<
+        const D: usize,
+        const LOG_COMMIT_BOUND: u32,
+        const N_A: usize,
+        const N_B: usize,
+        const N_D: usize,
+    >() -> Option<GeneratedScheduleTable> {
+        let _ = (D, LOG_COMMIT_BOUND, N_A, N_B, N_D);
+        None
+    }
+
+    /// Generated table for the coarse `D=64` onehot family, if shipped.
+    fn generated_onehot_d64_table() -> Option<GeneratedScheduleTable> {
+        None
+    }
+
     /// Exact schedule source for one adaptive bounded family.
     ///
     /// # Errors
@@ -448,20 +448,6 @@ impl CommitmentFieldProfile for Fp128PrimeProfile {
         }
     }
 
-    fn generated_adaptive_bounded_table<
-        const D: usize,
-        const LOG_COMMIT_BOUND: u32,
-        const N_A: usize,
-        const N_B: usize,
-        const N_D: usize,
-    >() -> Option<&'static [GeneratedScheduleTableEntry]> {
-        fp128_adaptive_bounded_table::<D, LOG_COMMIT_BOUND, N_A, N_B, N_D>()
-    }
-
-    fn generated_onehot_d64_table() -> Option<&'static [GeneratedScheduleTableEntry]> {
-        Some(fp128_adaptive_onehot_d64_table())
-    }
-
     fn audited_root_outer_rank(d: usize, level: usize, max_num_vars: usize) -> usize {
         if d == 128 && level == 0 && max_num_vars >= FP128_D128_AUDITED_ROOT_RANK2_FROM_NV {
             2
@@ -491,7 +477,21 @@ impl CommitmentFieldProfile for Fp128PrimeProfile {
     }
 }
 
-impl CommitmentFieldProfileSchedule for Fp128PrimeProfile {}
+impl CommitmentFieldProfileSchedule for Fp128PrimeProfile {
+    fn generated_adaptive_bounded_table<
+        const D: usize,
+        const LOG_COMMIT_BOUND: u32,
+        const N_A: usize,
+        const N_B: usize,
+        const N_D: usize,
+    >() -> Option<GeneratedScheduleTable> {
+        fp128_adaptive_bounded_table::<D, LOG_COMMIT_BOUND, N_A, N_B, N_D>()
+    }
+
+    fn generated_onehot_d64_table() -> Option<GeneratedScheduleTable> {
+        Some(fp128_adaptive_onehot_d64_table())
+    }
+}
 
 impl CommitmentFieldProfileDynamic for Fp128PrimeProfile {
     fn preferred_dynamic_root_d(

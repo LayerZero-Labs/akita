@@ -8,6 +8,100 @@ pub struct GeneratedScheduleTableEntry {
     pub states: &'static [HachiPlannedState],
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GeneratedStage1Family {
+    D32,
+    D64,
+    D128,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct GeneratedLevelParamsSpec {
+    pub d: usize,
+    pub n_a: usize,
+    pub n_b: usize,
+    pub n_d: usize,
+    pub stage1_family: GeneratedStage1Family,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GeneratedSchedulePolicySpec {
+    AdaptiveBounded {
+        d: usize,
+        base_n_a: usize,
+        base_n_b: usize,
+        base_n_d: usize,
+        root_outer_rank2_from_nv: Option<usize>,
+        root_a_rank2_from_nv: Option<usize>,
+        stage1_family: GeneratedStage1Family,
+    },
+    OneHotD64 {
+        root_rank2_from_nv: usize,
+    },
+}
+
+impl GeneratedSchedulePolicySpec {
+    pub(crate) fn expected_level_params(
+        self,
+        max_num_vars: usize,
+        level: usize,
+    ) -> GeneratedLevelParamsSpec {
+        match self {
+            Self::AdaptiveBounded {
+                d,
+                base_n_a,
+                base_n_b,
+                base_n_d,
+                root_outer_rank2_from_nv,
+                root_a_rank2_from_nv,
+                stage1_family,
+            } => {
+                let root_outer_rank = if level == 0
+                    && root_outer_rank2_from_nv.is_some_and(|threshold| max_num_vars >= threshold)
+                {
+                    2
+                } else {
+                    1
+                };
+                let root_a_rank = if level == 0
+                    && root_a_rank2_from_nv.is_some_and(|threshold| max_num_vars >= threshold)
+                {
+                    2
+                } else {
+                    1
+                };
+                GeneratedLevelParamsSpec {
+                    d,
+                    n_a: base_n_a.max(root_a_rank),
+                    n_b: base_n_b.max(root_outer_rank),
+                    n_d: base_n_d.max(root_outer_rank),
+                    stage1_family,
+                }
+            }
+            Self::OneHotD64 { root_rank2_from_nv } => {
+                let root_rank = if level == 0 && max_num_vars >= root_rank2_from_nv {
+                    2
+                } else {
+                    1
+                };
+                GeneratedLevelParamsSpec {
+                    d: 64,
+                    n_a: 1,
+                    n_b: root_rank,
+                    n_d: root_rank,
+                    stage1_family: GeneratedStage1Family::D64,
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GeneratedScheduleTable {
+    pub entries: &'static [GeneratedScheduleTableEntry],
+    pub policy: GeneratedSchedulePolicySpec,
+}
+
 // fp128::D128Full
 #[allow(dead_code)]
 #[rustfmt::skip]
@@ -405,14 +499,64 @@ pub(crate) static FP128_D32_ONEHOT_TABLE: &[GeneratedScheduleTableEntry] = &[
 ];
 
 pub(crate) fn table_entry_states(
-    table: &'static [GeneratedScheduleTableEntry],
+    table: GeneratedScheduleTable,
     max_num_vars: usize,
 ) -> Option<&'static [HachiPlannedState]> {
     table
+        .entries
         .iter()
         .find(|entry| entry.max_num_vars == max_num_vars)
         .map(|entry| entry.states)
 }
+
+const FP128_D128_FULL_POLICY: GeneratedSchedulePolicySpec =
+    GeneratedSchedulePolicySpec::AdaptiveBounded {
+        d: 128,
+        base_n_a: 1,
+        base_n_b: 1,
+        base_n_d: 1,
+        root_outer_rank2_from_nv: Some(54),
+        root_a_rank2_from_nv: Some(59),
+        stage1_family: GeneratedStage1Family::D128,
+    };
+
+const FP128_D32_FULL_POLICY: GeneratedSchedulePolicySpec =
+    GeneratedSchedulePolicySpec::AdaptiveBounded {
+        d: 32,
+        base_n_a: 2,
+        base_n_b: 2,
+        base_n_d: 2,
+        root_outer_rank2_from_nv: None,
+        root_a_rank2_from_nv: None,
+        stage1_family: GeneratedStage1Family::D32,
+    };
+
+const FP128_D32_LOGBASIS_POLICY: GeneratedSchedulePolicySpec =
+    GeneratedSchedulePolicySpec::AdaptiveBounded {
+        d: 32,
+        base_n_a: 2,
+        base_n_b: 2,
+        base_n_d: 2,
+        root_outer_rank2_from_nv: None,
+        root_a_rank2_from_nv: None,
+        stage1_family: GeneratedStage1Family::D32,
+    };
+
+const FP128_D32_ONEHOT_POLICY: GeneratedSchedulePolicySpec =
+    GeneratedSchedulePolicySpec::AdaptiveBounded {
+        d: 32,
+        base_n_a: 2,
+        base_n_b: 2,
+        base_n_d: 2,
+        root_outer_rank2_from_nv: None,
+        root_a_rank2_from_nv: None,
+        stage1_family: GeneratedStage1Family::D32,
+    };
+
+const FP128_D64_ONEHOT_POLICY: GeneratedSchedulePolicySpec =
+    GeneratedSchedulePolicySpec::OneHotD64 {
+        root_rank2_from_nv: 38,
+    };
 
 pub(crate) fn fp128_adaptive_bounded_table<
     const D: usize,
@@ -420,15 +564,35 @@ pub(crate) fn fp128_adaptive_bounded_table<
     const N_A: usize,
     const N_B: usize,
     const N_D: usize,
->() -> Option<&'static [GeneratedScheduleTableEntry]> {
+>() -> Option<GeneratedScheduleTable> {
     match (D, LOG_COMMIT_BOUND, N_A, N_B, N_D) {
-        (32, 128, 2, 2, 2) => Some(FP128_D32_FULL_TABLE),
-        (32, 3, 2, 2, 2) => Some(FP128_D32_LOGBASIS_TABLE),
-        (32, 1, 2, 2, 2) => Some(FP128_D32_ONEHOT_TABLE),
+        (32, 128, 2, 2, 2) => Some(GeneratedScheduleTable {
+            entries: FP128_D32_FULL_TABLE,
+            policy: FP128_D32_FULL_POLICY,
+        }),
+        (32, 3, 2, 2, 2) => Some(GeneratedScheduleTable {
+            entries: FP128_D32_LOGBASIS_TABLE,
+            policy: FP128_D32_LOGBASIS_POLICY,
+        }),
+        (32, 1, 2, 2, 2) => Some(GeneratedScheduleTable {
+            entries: FP128_D32_ONEHOT_TABLE,
+            policy: FP128_D32_ONEHOT_POLICY,
+        }),
         _ => None,
     }
 }
 
-pub(crate) fn fp128_adaptive_onehot_d64_table() -> &'static [GeneratedScheduleTableEntry] {
-    FP128_ONEHOT_D64_TABLE
+#[allow(dead_code)]
+pub(crate) fn fp128_d128_full_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: FP128_FULL_TABLE,
+        policy: FP128_D128_FULL_POLICY,
+    }
+}
+
+pub(crate) fn fp128_adaptive_onehot_d64_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: FP128_ONEHOT_D64_TABLE,
+        policy: FP128_D64_ONEHOT_POLICY,
+    }
 }
