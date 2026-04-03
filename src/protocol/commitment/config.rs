@@ -1157,6 +1157,47 @@ impl<
         format!("static_v1_root{LOG_BASIS}_rec{W_LOG_BASIS}")
     }
 
+    fn n_b_at_level(level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {
+        if D == 128 {
+            N_B.max(fp128_d128_audited_root_outer_rank(level, max_num_vars))
+        } else {
+            N_B
+        }
+    }
+
+    fn n_d_at_level(level: usize, max_num_vars: usize, current_w_len: usize) -> usize {
+        let _ = current_w_len;
+        if D == 128 {
+            N_D.max(fp128_d128_audited_root_outer_rank(level, max_num_vars))
+        } else {
+            N_D
+        }
+    }
+
+    fn level_params_with_log_basis<Cfg: CommitmentConfig>(
+        inputs: HachiScheduleInputs,
+        log_basis: u32,
+    ) -> HachiLevelParams {
+        let d = Self::d_at_level(inputs.level, inputs.current_w_len);
+        let stage1_config = Self::stage1_challenge_config(d);
+        HachiLevelParams {
+            d,
+            log_basis,
+            n_a: if D == 128 {
+                N_A.max(fp128_d128_audited_root_a_rank::<LOG_COMMIT_BOUND>(
+                    inputs.level,
+                    inputs.max_num_vars,
+                ))
+            } else {
+                N_A
+            },
+            n_b: Self::n_b_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
+            n_d: Self::n_d_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
+            challenge_l1_mass: stage1_config.l1_mass(),
+            stage1_config,
+        }
+    }
+
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
         fp128_stage1_challenge_config(d)
     }
@@ -1508,6 +1549,29 @@ mod fp128_policy_tests {
         assert_eq!(onehot_envelope.max_n_a, 1);
         assert_eq!(onehot_envelope.max_n_b, 2);
         assert_eq!(onehot_envelope.max_n_d, 2);
+    }
+
+    #[test]
+    fn static_d128_level_params_account_for_audited_root_rank_escalation() {
+        type Cfg = crate::protocol::commitment::presets::fp128::StaticBounded<128, 6, 6>;
+
+        let root_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars: 59,
+            level: 0,
+            current_w_len: 1,
+        });
+        assert_eq!(root_params.n_a, 2);
+        assert_eq!(root_params.n_b, 2);
+        assert_eq!(root_params.n_d, 2);
+
+        let recursive_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars: 59,
+            level: 1,
+            current_w_len: 1,
+        });
+        assert_eq!(recursive_params.n_a, 1);
+        assert_eq!(recursive_params.n_b, 1);
+        assert_eq!(recursive_params.n_d, 1);
     }
 }
 
