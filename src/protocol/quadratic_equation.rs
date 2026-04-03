@@ -10,7 +10,7 @@ use crate::parallel::*;
 use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
-    flatten_i8_blocks, fused_split_eq_quotients, mat_vec_mul_ntt_single_i8,
+    flatten_i8_blocks, fused_split_eq_quotients, mat_vec_mul_ntt_single_i8_blocks,
     mat_vec_mul_ntt_single_i8_cyclic,
 };
 use crate::protocol::commitment::{
@@ -270,9 +270,9 @@ where
         };
 
         let v = {
-            let _span = tracing::info_span!("compute_batched_v", w_hat_flat_len = w_hat_flat.len())
-                .entered();
-            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, &w_hat_flat)
+            let _span =
+                tracing::info_span!("compute_batched_v", w_hat_blocks = w_hat.len()).entered();
+            mat_vec_mul_ntt_single_i8_blocks(ntt_d, level_params.n_d, &w_hat)
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
@@ -449,18 +449,17 @@ where
             let _span = tracing::info_span!("decompose_w_hat").entered();
             let depth_open = layout.num_digits_open;
             let log_basis = layout.log_basis;
-            let w_hat: Vec<Vec<[i8; D]>> = cfg_iter!(pre_folded)
+            let w_hat = cfg_iter!(pre_folded)
                 .map(|w_i| w_i.balanced_decompose_pow2_i8(depth_open, log_basis))
-                .collect();
+                .collect::<Vec<Vec<[i8; D]>>>();
             let w_hat_flat = flatten_i8_blocks(&w_hat);
             (w_hat, w_hat_flat)
         };
         hint.ensure_t_recomposed(layout.num_digits_open, layout.log_basis)?;
 
         let v = {
-            let _span =
-                tracing::info_span!("compute_v", w_hat_flat_len = w_hat_flat.len()).entered();
-            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, &w_hat_flat)
+            let _span = tracing::info_span!("compute_v", w_hat_blocks = w_hat.len()).entered();
+            mat_vec_mul_ntt_single_i8_blocks(ntt_d, level_params.n_d, &w_hat)
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
@@ -629,18 +628,17 @@ where
             let _span = tracing::info_span!("decompose_w_hat").entered();
             let depth_open = layout.num_digits_open;
             let log_basis = layout.log_basis;
-            let w_hat: Vec<Vec<[i8; D]>> = cfg_iter!(pre_folded)
+            let w_hat = cfg_iter!(pre_folded)
                 .map(|w_i| w_i.balanced_decompose_pow2_i8(depth_open, log_basis))
-                .collect();
+                .collect::<Vec<Vec<[i8; D]>>>();
             let w_hat_flat = flatten_i8_blocks(&w_hat);
             (w_hat, w_hat_flat)
         };
         hint.ensure_t_recomposed(layout.num_digits_open, layout.log_basis)?;
 
         let v = {
-            let _span =
-                tracing::info_span!("compute_v", w_hat_flat_len = w_hat_flat.len()).entered();
-            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, &w_hat_flat)
+            let _span = tracing::info_span!("compute_v", w_hat_blocks = w_hat.len()).entered();
+            mat_vec_mul_ntt_single_i8_blocks(ntt_d, level_params.n_d, &w_hat)
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
