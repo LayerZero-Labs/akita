@@ -611,7 +611,7 @@ where
         Cfg::commitment_layout(max_num_vars).is_ok_and(|planned_root| planned_root == root_layout);
     if can_use_planned_root && max_num_batched_polys == 1 {
         if let Some(plan) = Cfg::schedule_plan(max_num_vars)? {
-            for level in plan.levels.iter().skip(1) {
+            for level in plan.fold_levels().skip(1) {
                 stats.include(level.layout);
             }
             return Ok(stats);

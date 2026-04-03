@@ -520,6 +520,26 @@ pub struct HachiPlannedLevel {
     pub level_bytes: usize,
 }
 
+impl HachiPlannedLevel {
+    /// Public state at the start of this fold level.
+    pub fn input_state(&self) -> HachiPlannedState {
+        HachiPlannedState {
+            level: self.inputs.level,
+            current_w_len: self.inputs.current_w_len,
+            log_basis: self.params.log_basis,
+        }
+    }
+
+    /// Public state reached after this fold level.
+    pub fn output_state(&self) -> HachiPlannedState {
+        HachiPlannedState {
+            level: self.next_inputs.level,
+            current_w_len: self.next_inputs.current_w_len,
+            log_basis: self.next_level_log_basis,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Public state after a planned prefix of Hachi fold levels.
 pub struct HachiPlannedState {
@@ -531,13 +551,31 @@ pub struct HachiPlannedState {
     pub log_basis: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Terminal direct packed-witness handoff in a planned opening proof.
+pub struct HachiPlannedDirectStep {
+    /// Public witness state carried by the direct handoff.
+    pub state: HachiPlannedState,
+    /// Exact bytes contributed by the packed direct witness.
+    pub direct_bytes: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// One step in a planned opening proof.
+pub enum HachiPlannedStep {
+    /// A Hachi fold level with an explicit next-state handoff.
+    Fold(Box<HachiPlannedLevel>),
+    /// The terminal packed-witness direct handoff.
+    Direct(HachiPlannedDirectStep),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Deterministic level-by-level schedule selected from public inputs.
 pub struct HachiSchedulePlan {
-    /// Planned witness states, including the terminal direct-tail/handoff state.
-    pub states: Vec<HachiPlannedState>,
-    /// Planned Hachi proof levels in execution order.
-    pub levels: Vec<HachiPlannedLevel>,
+    /// Planned opening-proof steps in execution order.
+    ///
+    /// The final step is always [`HachiPlannedStep::Direct`].
+    pub steps: Vec<HachiPlannedStep>,
     /// Total proof bytes excluding the outer proof wrapper.
     pub no_wrapper_bytes: usize,
     /// Total proof bytes in the serialized `HachiProof` wire format.
@@ -548,24 +586,83 @@ pub struct HachiSchedulePlan {
 }
 
 impl HachiSchedulePlan {
+    /// Iterate over all planned fold levels in execution order.
+    pub fn fold_levels(&self) -> impl Iterator<Item = &HachiPlannedLevel> + '_ {
+        self.steps.iter().filter_map(|step| match step {
+            HachiPlannedStep::Fold(level) => Some(level.as_ref()),
+            HachiPlannedStep::Direct(_) => None,
+        })
+    }
+
+    /// Number of planned fold levels before the terminal direct step.
+    pub fn num_fold_levels(&self) -> usize {
+        self.fold_levels().count()
+    }
+
+    /// Return the terminal direct packed-witness handoff.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the schedule was constructed without a trailing direct step.
+    pub fn direct_step(&self) -> &HachiPlannedDirectStep {
+        match self
+            .steps
+            .last()
+            .expect("planned schedule always contains at least one step")
+        {
+            HachiPlannedStep::Direct(step) => step,
+            HachiPlannedStep::Fold(_) => {
+                panic!("planned schedule must end in a direct packed-witness step")
+            }
+        }
+    }
+
+    /// Return the initial public witness state before any proof steps run.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the schedule was constructed without any steps.
+    pub fn initial_state(&self) -> HachiPlannedState {
+        match self
+            .steps
+            .first()
+            .expect("planned schedule always contains at least one step")
+        {
+            HachiPlannedStep::Fold(level) => level.input_state(),
+            HachiPlannedStep::Direct(step) => step.state,
+        }
+    }
+
+    /// Iterate over the planned witness states after each executed fold prefix.
+    pub fn states(&self) -> impl Iterator<Item = HachiPlannedState> + '_ {
+        std::iter::once(self.initial_state())
+            .chain(self.fold_levels().map(|level| level.output_state()))
+    }
+
+    /// Return the public witness state after `prefix_len` fold levels.
+    pub fn state_after_prefix(&self, prefix_len: usize) -> Option<HachiPlannedState> {
+        if prefix_len == 0 {
+            return Some(self.initial_state());
+        }
+        self.fold_levels()
+            .nth(prefix_len - 1)
+            .map(HachiPlannedLevel::output_state)
+    }
+
     /// Return the final witness state after all planned Hachi levels.
     ///
     /// # Panics
     ///
-    /// Panics if the schedule was constructed without any states.
+    /// Panics if the schedule was constructed without a trailing direct step.
     pub fn terminal_state(&self) -> HachiPlannedState {
-        *self
-            .states
-            .last()
-            .expect("planned schedule always contains at least one state")
+        self.direct_step().state
     }
 
     /// Derive the [`HachiProofShape`] needed for deserializing a proof
     /// produced under this schedule.
     pub fn to_proof_shape(&self) -> HachiProofShape {
         let level_shapes = self
-            .levels
-            .iter()
+            .fold_levels()
             .map(|level| {
                 let p = &level.params;
                 let next_w_len = level.next_inputs.current_w_len;
@@ -582,10 +679,10 @@ impl HachiSchedulePlan {
             })
             .collect();
 
-        let terminal = self.terminal_state();
+        let terminal = self.direct_step();
         HachiProofShape {
             level_shapes,
-            tail_shape: (terminal.current_w_len, terminal.log_basis),
+            tail_shape: (terminal.state.current_w_len, terminal.state.log_basis),
         }
     }
 }
@@ -595,7 +692,7 @@ fn exact_planned_state_index(
     inputs: HachiScheduleInputs,
     log_basis: Option<u32>,
 ) -> Option<usize> {
-    schedule.states.iter().position(|state| {
+    schedule.states().position(|state| {
         state.level == inputs.level
             && state.current_w_len == inputs.current_w_len
             && log_basis.is_none_or(|basis| state.log_basis == basis)
@@ -603,13 +700,13 @@ fn exact_planned_state_index(
 }
 
 fn scheduled_suffix_bytes_from_index(schedule: &HachiSchedulePlan, state_index: usize) -> usize {
-    debug_assert!(state_index <= schedule.levels.len());
-    let tail = schedule.terminal_state();
-    schedule.levels[state_index..]
-        .iter()
+    debug_assert!(state_index <= schedule.num_fold_levels());
+    schedule
+        .fold_levels()
+        .skip(state_index)
         .map(|level| level.level_bytes)
         .sum::<usize>()
-        + packed_digits_bytes(tail.current_w_len, tail.log_basis)
+        + schedule.direct_step().direct_bytes
 }
 
 fn schedule_plan_from_states<Cfg: CommitmentConfig>(
@@ -638,7 +735,7 @@ fn schedule_plan_from_states<Cfg: CommitmentConfig>(
     }
 
     let field_bits = field_bits(Cfg::decomposition());
-    let mut levels = Vec::with_capacity(states.len().saturating_sub(1));
+    let mut steps = Vec::with_capacity(states.len().max(1));
     for window in states.windows(2) {
         let inputs_state = window[0];
         let next_state = window[1];
@@ -678,7 +775,7 @@ fn schedule_plan_from_states<Cfg: CommitmentConfig>(
             &next_level_params,
             next_inputs.current_w_len,
         );
-        levels.push(HachiPlannedLevel {
+        steps.push(HachiPlannedStep::Fold(Box::new(HachiPlannedLevel {
             inputs,
             params,
             layout,
@@ -686,18 +783,27 @@ fn schedule_plan_from_states<Cfg: CommitmentConfig>(
             next_level_log_basis: next_state.log_basis,
             next_commit_coeffs: next_level_params.n_b * next_level_params.d,
             level_bytes,
-        });
+        })));
     }
 
     let terminal = states
         .last()
         .copied()
         .expect("non-empty generated schedule states");
-    let no_wrapper_bytes = levels.iter().map(|level| level.level_bytes).sum::<usize>()
-        + packed_digits_bytes(terminal.current_w_len, terminal.log_basis);
+    let direct_bytes = packed_digits_bytes(terminal.current_w_len, terminal.log_basis);
+    steps.push(HachiPlannedStep::Direct(HachiPlannedDirectStep {
+        state: terminal,
+        direct_bytes,
+    }));
+    let no_wrapper_bytes = steps
+        .iter()
+        .map(|step| match step {
+            HachiPlannedStep::Fold(level) => level.level_bytes,
+            HachiPlannedStep::Direct(step) => step.direct_bytes,
+        })
+        .sum();
     Ok(HachiSchedulePlan {
-        states: states.to_vec(),
-        levels,
+        steps,
         no_wrapper_bytes,
         exact_proof_bytes: no_wrapper_bytes,
     })
@@ -714,7 +820,7 @@ pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlannedSuffix {
-    levels: Vec<HachiPlannedLevel>,
+    steps: Vec<HachiPlannedStep>,
     no_wrapper_bytes: usize,
 }
 
@@ -908,9 +1014,18 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
         return Ok(existing.clone());
     }
 
+    let direct_state = HachiPlannedState {
+        level: state.level,
+        current_w_len: state.current_w_len,
+        log_basis: state.log_basis,
+    };
+    let direct_bytes = packed_digits_bytes(state.current_w_len, state.log_basis);
     let mut best = PlannedSuffix {
-        levels: Vec::new(),
-        no_wrapper_bytes: packed_digits_bytes(state.current_w_len, state.log_basis),
+        steps: vec![HachiPlannedStep::Direct(HachiPlannedDirectStep {
+            state: direct_state,
+            direct_bytes,
+        })],
+        no_wrapper_bytes: direct_bytes,
     };
 
     let inputs = HachiScheduleInputs {
@@ -950,8 +1065,8 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
                 )?;
                 let candidate_bytes = level_bytes + suffix.no_wrapper_bytes;
                 if candidate_bytes < best.no_wrapper_bytes {
-                    let mut levels = Vec::with_capacity(suffix.levels.len() + 1);
-                    levels.push(HachiPlannedLevel {
+                    let mut steps = Vec::with_capacity(suffix.steps.len() + 1);
+                    steps.push(HachiPlannedStep::Fold(Box::new(HachiPlannedLevel {
                         inputs,
                         params: params.clone(),
                         layout,
@@ -959,10 +1074,10 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
                         next_level_log_basis: next_log_basis,
                         next_commit_coeffs: next_level_params.n_b * next_level_params.d,
                         level_bytes,
-                    });
-                    levels.extend(suffix.levels);
+                    })));
+                    steps.extend(suffix.steps);
                     best = PlannedSuffix {
-                        levels,
+                        steps,
                         no_wrapper_bytes: candidate_bytes,
                     };
                 }
@@ -1075,10 +1190,13 @@ pub(crate) fn planned_next_log_basis_with_current_basis<Cfg: CommitmentConfig>(
         if let Some(next_state_index) = exact_planned_state_index(&schedule, next_inputs, None) {
             if let Some(prev_state) = next_state_index
                 .checked_sub(1)
-                .and_then(|idx| schedule.states.get(idx))
+                .and_then(|idx| schedule.state_after_prefix(idx))
             {
                 if prev_state.log_basis == current_log_basis {
-                    return Ok(schedule.states[next_state_index].log_basis);
+                    return Ok(schedule
+                        .state_after_prefix(next_state_index)
+                        .expect("exact planned next-state index must resolve to a state")
+                        .log_basis);
                 }
             }
         }
@@ -1203,8 +1321,13 @@ pub(crate) fn planned_schedule<Cfg: CommitmentConfig>(
                 &next_level_params,
                 next_w_len,
             );
-            let mut levels = Vec::new();
-            levels.push(HachiPlannedLevel {
+            let next_state = HachiPlannedState {
+                level: next_inputs.level,
+                current_w_len: next_inputs.current_w_len,
+                log_basis: next_log_basis,
+            };
+            let mut steps = Vec::new();
+            steps.push(HachiPlannedStep::Fold(Box::new(HachiPlannedLevel {
                 inputs: root_inputs,
                 params: root_params.clone(),
                 layout: root_layout,
@@ -1212,9 +1335,9 @@ pub(crate) fn planned_schedule<Cfg: CommitmentConfig>(
                 next_level_log_basis: next_log_basis,
                 next_commit_coeffs: next_level_params.n_b * next_level_params.d,
                 level_bytes,
-            });
-            let candidate_bytes = if next_w_len < root_inputs.current_w_len {
-                let suffix = best_recursive_suffix::<Cfg>(
+            })));
+            let suffix = if next_w_len < root_inputs.current_w_len {
+                best_recursive_suffix::<Cfg>(
                     cfg,
                     &mut memo,
                     PlannerState {
@@ -1222,19 +1345,25 @@ pub(crate) fn planned_schedule<Cfg: CommitmentConfig>(
                         current_w_len: next_w_len,
                         log_basis: next_log_basis,
                     },
-                )?;
-                let suffix_bytes = suffix.no_wrapper_bytes;
-                levels.extend(suffix.levels);
-                level_bytes + suffix_bytes
+                )?
             } else {
-                level_bytes + packed_digits_bytes(next_w_len, next_log_basis)
+                let direct_bytes = packed_digits_bytes(next_w_len, next_log_basis);
+                PlannedSuffix {
+                    steps: vec![HachiPlannedStep::Direct(HachiPlannedDirectStep {
+                        state: next_state,
+                        direct_bytes,
+                    })],
+                    no_wrapper_bytes: direct_bytes,
+                }
             };
+            let candidate_bytes = level_bytes + suffix.no_wrapper_bytes;
             if best
                 .as_ref()
                 .is_none_or(|existing| candidate_bytes < existing.no_wrapper_bytes)
             {
+                steps.extend(suffix.steps);
                 best = Some(PlannedSuffix {
-                    levels,
+                    steps,
                     no_wrapper_bytes: candidate_bytes,
                 });
             }
@@ -1245,27 +1374,8 @@ pub(crate) fn planned_schedule<Cfg: CommitmentConfig>(
         HachiError::InvalidSetup("adaptive schedule search found no valid root level".to_string())
     })?;
 
-    let mut states = Vec::with_capacity(best.levels.len() + 1);
-    let first = best
-        .levels
-        .first()
-        .expect("adaptive schedule always contains a root level");
-    states.push(HachiPlannedState {
-        level: first.inputs.level,
-        current_w_len: first.inputs.current_w_len,
-        log_basis: first.params.log_basis,
-    });
-    for level in &best.levels {
-        states.push(HachiPlannedState {
-            level: level.next_inputs.level,
-            current_w_len: level.next_inputs.current_w_len,
-            log_basis: level.next_level_log_basis,
-        });
-    }
-
     Ok(HachiSchedulePlan {
-        states,
-        levels: best.levels,
+        steps: best.steps,
         no_wrapper_bytes: best.no_wrapper_bytes,
         exact_proof_bytes: best.no_wrapper_bytes,
     })
@@ -1278,12 +1388,13 @@ pub(crate) fn planned_log_basis_at_level_from_schedule<Cfg: CommitmentConfig>(
     max_log_basis: u32,
 ) -> Result<u32, HachiError> {
     if let Some(state_index) = exact_planned_state_index(schedule, inputs, None) {
-        return Ok(schedule.states[state_index].log_basis);
+        return Ok(schedule
+            .state_after_prefix(state_index)
+            .expect("exact planned state index must resolve to a state")
+            .log_basis);
     }
     let state = schedule
-        .states
-        .get(inputs.level)
-        .copied()
+        .state_after_prefix(inputs.level)
         .unwrap_or_else(|| schedule.terminal_state());
     debug_assert_eq!(
         state.level,
@@ -1325,7 +1436,7 @@ pub(crate) fn planned_log_basis_at_level_from_schedule<Cfg: CommitmentConfig>(
 
 pub(crate) fn planned_schedule_key_from_schedule(schedule: &HachiSchedulePlan) -> String {
     let mut key = String::from("planner_v2");
-    for state in &schedule.states {
+    for state in schedule.states() {
         let _ = write!(key, "_l{}b{}", state.level, state.log_basis);
     }
     key
@@ -1534,7 +1645,7 @@ mod tests {
         let plan = Cfg::schedule_plan(max_num_vars)
             .expect("planner should succeed")
             .expect("config should provide a planner");
-        for level in &plan.levels {
+        for level in plan.fold_levels() {
             let runtime_next_w_len =
                 w_ring_element_count::<Cfg::Field>(&level.params, level.layout) * level.params.d;
             assert_eq!(
@@ -1827,7 +1938,7 @@ mod tests {
             let plan = fp128::D128Full::schedule_plan(max_num_vars)
                 .expect("planner should succeed")
                 .expect("config should provide a planner");
-            for level in &plan.levels {
+            for level in plan.fold_levels() {
                 let pow2_block = 1usize << level.layout.m_vars;
                 assert!(
                     level.layout.block_len <= pow2_block,

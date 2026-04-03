@@ -29,8 +29,8 @@ pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
 pub use profile::{CommitmentFieldProfile, Fp128PrimeProfile};
 pub use schedule::{
     hachi_recursive_level_layout_from_params, hachi_root_level_layout, HachiLevelParams,
-    HachiPlannedLevel, HachiPlannedState, HachiRootBatchSummary, HachiScheduleInputs,
-    HachiScheduleLookupKey, HachiSchedulePlan,
+    HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedState, HachiPlannedStep,
+    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 pub(crate) use schedule::{
     hachi_root_runtime_plan, hachi_root_runtime_plan_with_batch, packed_digits_bytes,

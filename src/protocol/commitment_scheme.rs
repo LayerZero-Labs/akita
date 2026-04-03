@@ -1888,7 +1888,8 @@ where
         let mut prev_poly_len = root_plan.inputs.current_w_len;
         let mut current_state = out.next_state;
         let mut level = 1usize;
-        let planned_num_levels = Cfg::schedule_plan(max_num_vars)?.map(|plan| plan.levels.len());
+        let planned_num_levels =
+            Cfg::schedule_plan(max_num_vars)?.map(|plan| plan.num_fold_levels());
 
         // Subsequent levels: recursive w-opening with WCommitmentConfig.
         // Each level dispatches to the ring dimension from Cfg::d_at_level.
@@ -2164,7 +2165,7 @@ where
             log_basis: root_params.log_basis,
         };
         if let Some(plan) = Cfg::schedule_plan(max_num_vars)? {
-            if num_levels != plan.levels.len() {
+            if num_levels != plan.num_fold_levels() {
                 return Err(HachiError::InvalidProof);
             }
         }

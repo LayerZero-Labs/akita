@@ -309,7 +309,7 @@ fn full_d128_prove_verify() {
         let plan = Cfg::schedule_plan(FULL_TEST_NV)
             .expect("schedule plan")
             .expect("adaptive full config should expose a schedule plan");
-        assert_eq!(proof.levels.len(), plan.levels.len());
+        assert_eq!(proof.levels.len(), plan.num_fold_levels());
 
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
@@ -387,7 +387,7 @@ fn full_d32_prove_verify() {
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<FSmall, D, Cfg>(D32_TEST_NV, b"hachi_e2e/full-d32");
 
-        assert_eq!(proof.levels.len(), plan.levels.len());
+        assert_eq!(proof.levels.len(), plan.num_fold_levels());
 
         let mut verifier_transcript = Blake2bTranscript::<FSmall>::new(b"hachi_e2e/full-d32");
         let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FSmall, D>>::verify(
@@ -545,7 +545,7 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(nv, b"hachi_e2e/adaptive-full-mixed");
 
-        assert_eq!(proof.levels.len(), plan.levels.len());
+        assert_eq!(proof.levels.len(), plan.num_fold_levels());
 
         let mut proof_bytes = Vec::new();
         proof
@@ -631,7 +631,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         )
         .unwrap();
 
-        assert_eq!(proof.levels.len(), plan.levels.len());
+        assert_eq!(proof.levels.len(), plan.num_fold_levels());
         assert_eq!(
             proof.size(),
             plan.exact_proof_bytes,
@@ -677,7 +677,7 @@ fn adaptive_onehot_schedule_stays_below_basis6_in_current_range() {
             _ => continue,
         };
         assert!(
-            plan.states.iter().all(|state| state.log_basis < 6),
+            plan.states().all(|state| state.log_basis < 6),
             "adaptive onehot schedule unexpectedly selected basis 6 at nv={nv}: {plan:?}"
         );
     }
@@ -966,7 +966,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
         let mut max_outer = layout.outer_width;
         let mut max_d_width = layout.d_matrix_width;
 
-        for state in plan.states.iter().skip(1) {
+        for state in plan.states().skip(1) {
             let params = Cfg::level_params(HachiScheduleInputs {
                 max_num_vars: nv,
                 level: state.level,

@@ -1307,7 +1307,7 @@ mod fp128_policy_tests {
                 .unwrap()
                 .expect("audited D=128 config should have a schedule");
 
-            for level in &plan.levels {
+            for level in plan.fold_levels() {
                 let raw_collision = if root_onehot && level.inputs.level == 0 {
                     2
                 } else {

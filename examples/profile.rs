@@ -129,13 +129,13 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
 fn emit_planned_schedule_summary(label: &str, plan: &HachiSchedulePlan) {
     tracing::info!(
         label,
-        levels = plan.levels.len(),
+        levels = plan.num_fold_levels(),
         exact_proof_bytes = plan.exact_proof_bytes,
         no_wrapper_bytes = plan.no_wrapper_bytes,
         "planned schedule"
     );
 
-    for level in &plan.levels {
+    for level in plan.fold_levels() {
         let next_w_len = level.next_inputs.current_w_len;
         tracing::info!(
             label,
