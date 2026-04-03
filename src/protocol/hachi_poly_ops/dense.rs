@@ -228,12 +228,16 @@ where
             return build_decompose_fold_witness::<F, D>(coeff_accum, params.q);
         }
 
-        let z_chunks: Vec<Vec<[i32; D]>> = {
+        let centered_coeffs = {
             let _span = tracing::info_span!("dense_multi_digit_accumulate").entered();
-            cfg_into_iter!(0..block_len)
-                .map(|elem_idx| {
-                    let mut z_local: Vec<[i32; D]> = vec![[0i32; D]; num_digits];
-                    let mut digit_buf: Vec<Vec<i8>> = vec![vec![0i8; D]; num_digits];
+            let mut centered_coeffs = vec![[0i32; D]; block_len * num_digits];
+
+            #[cfg(feature = "parallel")]
+            centered_coeffs
+                .par_chunks_mut(num_digits)
+                .enumerate()
+                .for_each(|(elem_idx, z_local)| {
+                    let mut digit_buf: Vec<[i8; D]> = vec![[0i8; D]; num_digits];
 
                     for (block_idx, c_i) in challenges.iter().enumerate() {
                         let global_idx = block_idx * block_len + elem_idx;
@@ -252,17 +256,38 @@ where
                             sparse_mul_acc::<D>(&digit_buf[digit], c_i, &mut z_local[digit]);
                         }
                     }
+                });
 
-                    z_local
-                })
-                .collect()
+            #[cfg(not(feature = "parallel"))]
+            centered_coeffs
+                .chunks_mut(num_digits)
+                .enumerate()
+                .for_each(|(elem_idx, z_local)| {
+                    let mut digit_buf: Vec<[i8; D]> = vec![[0i8; D]; num_digits];
+
+                    for (block_idx, c_i) in challenges.iter().enumerate() {
+                        let global_idx = block_idx * block_len + elem_idx;
+                        if global_idx >= n {
+                            continue;
+                        }
+                        let ring = &coeffs[global_idx];
+                        decompose_ring_interleaved::<F, D>(
+                            ring,
+                            &mut digit_buf,
+                            num_digits,
+                            &params,
+                        );
+
+                        for digit in 0..num_digits {
+                            sparse_mul_acc::<D>(&digit_buf[digit], c_i, &mut z_local[digit]);
+                        }
+                    }
+                });
+
+            centered_coeffs
         };
 
         let _span = tracing::info_span!("dense_multi_digit_convert").entered();
-        let mut centered_coeffs = Vec::with_capacity(block_len * num_digits);
-        for chunk in z_chunks {
-            centered_coeffs.extend(chunk);
-        }
         build_decompose_fold_witness::<F, D>(centered_coeffs, params.q)
     }
 

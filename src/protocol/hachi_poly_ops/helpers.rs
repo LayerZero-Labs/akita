@@ -39,7 +39,7 @@ pub(super) struct DecomposeParams {
 #[inline(never)]
 pub(super) fn decompose_ring_interleaved<F: CanonicalField, const D: usize>(
     ring: &CyclotomicRing<F, D>,
-    digit_buf: &mut [Vec<i8>],
+    digit_buf: &mut [[i8; D]],
     num_digits: usize,
     p: &DecomposeParams,
 ) {

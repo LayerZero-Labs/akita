@@ -449,6 +449,8 @@ const TARGET_L2_CACHE_BYTES: usize = 1024 * 1024;
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
 const TARGET_L2_CACHE_BYTES: usize = 1024 * 1024;
 const CENTERED_LUT_MAX_ABS: u32 = (1 << 16) - 1;
+const SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS: usize = 4;
+const SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS: usize = 16;
 
 #[cfg(feature = "parallel")]
 #[inline]
@@ -599,7 +601,8 @@ fn mat_vec_mul_digits_i8_with_params<
         return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
     }
 
-    if n_a <= 2 && num_blocks >= 16 {
+    if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS && num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
+    {
         return mat_vec_mul_digits_i8_block_parallel(ntt_mat, blocks, params);
     }
 
@@ -679,7 +682,8 @@ fn mat_vec_mul_digits_i8_strided_with_params<
         return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
     }
 
-    if n_a <= 2 && num_blocks >= 16 {
+    if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS && num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
+    {
         return mat_vec_mul_digits_i8_strided_block_parallel(
             ntt_mat,
             coeffs,
@@ -837,17 +841,21 @@ fn mat_vec_mul_i8_block_parallel_with_params<
 
     cfg_into_iter!(blocks)
         .map(|block| {
-            let digits = decompose_block_i8(block, num_digits, log_basis);
             let mut accs: Vec<CyclotomicCrtNtt<W, K, D>> =
                 vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
+            let mut digit_buf = vec![[0i8; D]; num_digits];
+            let mut col = 0usize;
 
-            for (j, digit) in digits.iter().enumerate() {
-                if is_zero_plane(digit) {
-                    continue;
-                }
-                let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
-                for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
-                    accumulate_pointwise_product_into(acc, &mat_row[j], &ntt_d, params);
+            for coeff_vec in block.iter() {
+                coeff_vec.balanced_decompose_pow2_i8_into(&mut digit_buf, log_basis);
+                for digit in &digit_buf {
+                    if !is_zero_plane(digit) {
+                        let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                        for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
+                            accumulate_pointwise_product_into(acc, &mat_row[col], &ntt_d, params);
+                        }
+                    }
+                    col += 1;
                 }
             }
 
@@ -877,26 +885,30 @@ fn mat_vec_mul_i8_strided_block_parallel_with_params<
 
     cfg_into_iter!(0..num_blocks)
         .map(|block_idx| {
-            let mut block_coeffs = Vec::with_capacity(block_len);
+            let mut accs: Vec<CyclotomicCrtNtt<W, K, D>> =
+                vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
+            let mut digit_buf = vec![[0i8; D]; num_digits];
+            let mut mat_col = 0usize;
+
             for col in 0..block_len {
                 let seq = block_idx + col * num_blocks;
                 let Some(coeff) = coeffs.get(seq) else {
                     break;
                 };
-                block_coeffs.push(*coeff);
-            }
-
-            let digits = decompose_block_i8(&block_coeffs, num_digits, log_basis);
-            let mut accs: Vec<CyclotomicCrtNtt<W, K, D>> =
-                vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
-
-            for (j, digit) in digits.iter().enumerate() {
-                if is_zero_plane(digit) {
-                    continue;
-                }
-                let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
-                for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
-                    accumulate_pointwise_product_into(acc, &mat_row[j], &ntt_d, params);
+                coeff.balanced_decompose_pow2_i8_into(&mut digit_buf, log_basis);
+                for digit in &digit_buf {
+                    if !is_zero_plane(digit) {
+                        let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                        for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
+                            accumulate_pointwise_product_into(
+                                acc,
+                                &mat_row[mat_col],
+                                &ntt_d,
+                                params,
+                            );
+                        }
+                    }
+                    mat_col += 1;
                 }
             }
 
@@ -935,7 +947,8 @@ fn mat_vec_mul_i8_with_params<
         return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
     }
 
-    if n_a <= 2 && num_blocks >= 16 {
+    if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS && num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
+    {
         return mat_vec_mul_i8_block_parallel_with_params(
             ntt_mat, blocks, num_digits, log_basis, params,
         );
@@ -1031,7 +1044,8 @@ fn mat_vec_mul_i8_strided_with_params<
         return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
     }
 
-    if n_a <= 2 && num_blocks >= 16 {
+    if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS && num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
+    {
         return mat_vec_mul_i8_strided_block_parallel_with_params(
             ntt_mat, coeffs, num_blocks, block_len, num_digits, log_basis, params,
         );
