@@ -7,18 +7,14 @@
 //! `batched_verify`, and additionally cross-checks that committing each group
 //! individually produces the same commitment as the multi-group call.
 //!
-//! Two polynomial representations are covered:
+//! This file intentionally keeps only a few representative grouped cases.
+//! The broader batch-size and variable-count matrix is already exercised by
+//! the aggregated, multipoint, and core batched E2E suites; the unique value
+//! here is checking that multi-group commitment partitioning matches the
+//! per-group individual commits.
 //!
-//! * **One-hot** — `fp128_5823::OneHot` (D = 64, K = D).
-//!   Variable counts: 10, 15, 20, 25 (28 tests).
-//! * **Dense** — `fp128_5823::Full` (D = 128, full-field coefficients).
-//!   Variable counts: 10, 15, 20 (21 tests — nv 25 is omitted for speed).
-//!
-//! Batch sizes per variable count: 1, 2, 3, 4, 7, 12, 16 (49 tests total).
-//!
-//! Group partitions by batch size:
-//!   1 → \[1\],  2 → \[1,1\],  3 → \[2,1\],  4 → \[2,2\],
-//!   7 → \[3,2,2\],  12 → \[4,4,4\],  16 → \[5,5,3,3\].
+//! Retained partitions:
+//!   2 → \[1,1\],  3 → \[2,1\],  7 → \[3,2,2\].
 
 #![allow(missing_docs)]
 
@@ -371,279 +367,27 @@ fn run_grouped_dense(nv: usize, batch_size: usize) {
     });
 }
 
-// ---------------------------------------------------------------------------
-// nv = 10
-// ---------------------------------------------------------------------------
-
-#[test]
-fn grouped_onehot_nv10_batch1() {
-    run_grouped_onehot(10, 1);
+macro_rules! grouped_onehot_case {
+    ($name:ident, $nv:expr, $batch_size:expr) => {
+        #[test]
+        fn $name() {
+            run_grouped_onehot($nv, $batch_size);
+        }
+    };
 }
 
-#[test]
-fn grouped_onehot_nv10_batch2() {
-    run_grouped_onehot(10, 2);
+macro_rules! grouped_dense_case {
+    ($name:ident, $nv:expr, $batch_size:expr) => {
+        #[test]
+        fn $name() {
+            run_grouped_dense($nv, $batch_size);
+        }
+    };
 }
 
-#[test]
-fn grouped_onehot_nv10_batch3() {
-    run_grouped_onehot(10, 3);
-}
+grouped_onehot_case!(grouped_onehot_nv10_batch2, 10, 2);
+grouped_onehot_case!(grouped_onehot_nv20_batch7, 20, 7);
+grouped_onehot_case!(grouped_onehot_nv25_batch3, 25, 3);
 
-#[test]
-fn grouped_onehot_nv10_batch4() {
-    run_grouped_onehot(10, 4);
-}
-
-#[test]
-fn grouped_onehot_nv10_batch7() {
-    run_grouped_onehot(10, 7);
-}
-
-#[test]
-fn grouped_onehot_nv10_batch12() {
-    run_grouped_onehot(10, 12);
-}
-
-#[test]
-fn grouped_onehot_nv10_batch16() {
-    run_grouped_onehot(10, 16);
-}
-
-// ---------------------------------------------------------------------------
-// nv = 15
-// ---------------------------------------------------------------------------
-
-#[test]
-fn grouped_onehot_nv15_batch1() {
-    run_grouped_onehot(15, 1);
-}
-
-#[test]
-fn grouped_onehot_nv15_batch2() {
-    run_grouped_onehot(15, 2);
-}
-
-#[test]
-fn grouped_onehot_nv15_batch3() {
-    run_grouped_onehot(15, 3);
-}
-
-#[test]
-fn grouped_onehot_nv15_batch4() {
-    run_grouped_onehot(15, 4);
-}
-
-#[test]
-fn grouped_onehot_nv15_batch7() {
-    run_grouped_onehot(15, 7);
-}
-
-#[test]
-fn grouped_onehot_nv15_batch12() {
-    run_grouped_onehot(15, 12);
-}
-
-#[test]
-fn grouped_onehot_nv15_batch16() {
-    run_grouped_onehot(15, 16);
-}
-
-// ---------------------------------------------------------------------------
-// nv = 20
-// ---------------------------------------------------------------------------
-
-#[test]
-fn grouped_onehot_nv20_batch1() {
-    run_grouped_onehot(20, 1);
-}
-
-#[test]
-fn grouped_onehot_nv20_batch2() {
-    run_grouped_onehot(20, 2);
-}
-
-#[test]
-fn grouped_onehot_nv20_batch3() {
-    run_grouped_onehot(20, 3);
-}
-
-#[test]
-fn grouped_onehot_nv20_batch4() {
-    run_grouped_onehot(20, 4);
-}
-
-#[test]
-fn grouped_onehot_nv20_batch7() {
-    run_grouped_onehot(20, 7);
-}
-
-#[test]
-fn grouped_onehot_nv20_batch12() {
-    run_grouped_onehot(20, 12);
-}
-
-// #[test]
-// fn grouped_onehot_nv20_batch16() {
-//     run_grouped_onehot(20, 16);
-// }
-
-// ---------------------------------------------------------------------------
-// nv = 25
-// ---------------------------------------------------------------------------
-
-#[test]
-fn grouped_onehot_nv25_batch1() {
-    run_grouped_onehot(25, 1);
-}
-
-#[test]
-fn grouped_onehot_nv25_batch2() {
-    run_grouped_onehot(25, 2);
-}
-
-#[test]
-fn grouped_onehot_nv25_batch3() {
-    run_grouped_onehot(25, 3);
-}
-
-#[test]
-fn grouped_onehot_nv25_batch4() {
-    run_grouped_onehot(25, 4);
-}
-
-#[test]
-fn grouped_onehot_nv25_batch7() {
-    run_grouped_onehot(25, 7);
-}
-
-// #[test]
-// fn grouped_onehot_nv25_batch12() {
-//     run_grouped_onehot(25, 12);
-// }
-
-// #[test]
-// fn grouped_onehot_nv25_batch16() {
-//     run_grouped_onehot(25, 16);
-// }
-
-// ===========================================================================
-// Dense batched-grouped tests (D = 128)
-// ===========================================================================
-
-// ---------------------------------------------------------------------------
-// nv = 10
-// ---------------------------------------------------------------------------
-
-#[test]
-fn grouped_dense_nv10_batch1() {
-    run_grouped_dense(10, 1);
-}
-
-#[test]
-fn grouped_dense_nv10_batch2() {
-    run_grouped_dense(10, 2);
-}
-
-#[test]
-fn grouped_dense_nv10_batch3() {
-    run_grouped_dense(10, 3);
-}
-
-#[test]
-fn grouped_dense_nv10_batch4() {
-    run_grouped_dense(10, 4);
-}
-
-#[test]
-fn grouped_dense_nv10_batch7() {
-    run_grouped_dense(10, 7);
-}
-
-#[test]
-fn grouped_dense_nv10_batch12() {
-    run_grouped_dense(10, 12);
-}
-
-#[test]
-fn grouped_dense_nv10_batch16() {
-    run_grouped_dense(10, 16);
-}
-
-// ---------------------------------------------------------------------------
-// nv = 15
-// ---------------------------------------------------------------------------
-
-#[test]
-fn grouped_dense_nv15_batch1() {
-    run_grouped_dense(15, 1);
-}
-
-#[test]
-fn grouped_dense_nv15_batch2() {
-    run_grouped_dense(15, 2);
-}
-
-#[test]
-fn grouped_dense_nv15_batch3() {
-    run_grouped_dense(15, 3);
-}
-
-#[test]
-fn grouped_dense_nv15_batch4() {
-    run_grouped_dense(15, 4);
-}
-
-#[test]
-fn grouped_dense_nv15_batch7() {
-    run_grouped_dense(15, 7);
-}
-
-#[test]
-fn grouped_dense_nv15_batch12() {
-    run_grouped_dense(15, 12);
-}
-
-// #[test]
-// fn grouped_dense_nv15_batch16() {
-//     run_grouped_dense(15, 16);
-// }
-
-// ---------------------------------------------------------------------------
-// nv = 20
-// ---------------------------------------------------------------------------
-
-#[test]
-fn grouped_dense_nv20_batch1() {
-    run_grouped_dense(20, 1);
-}
-
-#[test]
-fn grouped_dense_nv20_batch2() {
-    run_grouped_dense(20, 2);
-}
-
-#[test]
-fn grouped_dense_nv20_batch3() {
-    run_grouped_dense(20, 3);
-}
-
-#[test]
-fn grouped_dense_nv20_batch4() {
-    run_grouped_dense(20, 4);
-}
-
-#[test]
-fn grouped_dense_nv20_batch7() {
-    run_grouped_dense(20, 7);
-}
-
-// #[test]
-// fn grouped_dense_nv20_batch12() {
-//     run_grouped_dense(20, 12);
-// }
-
-// #[test]
-// fn grouped_dense_nv20_batch16() {
-//     run_grouped_dense(20, 16);
-// }
+grouped_dense_case!(grouped_dense_nv10_batch2, 10, 2);
+grouped_dense_case!(grouped_dense_nv15_batch3, 15, 3);
