@@ -981,14 +981,11 @@ fn main() {
             }
             {
                 type Cfg = fp128::OneHot;
-                let title = if num_polys == 1 {
-                    "=== onehot (q=2^128-275, D=64, 1-of-256, log_commit_bound=1) ===".to_string()
-                } else {
-                    format!(
-                        "=== onehot batched (q=2^128-275, D=64, 1-of-256, log_commit_bound=1, same-point batch={num_polys}) ==="
-                    )
-                };
-                run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
+                run_onehot_mode::<{ Cfg::D }, Cfg>(
+                    "=== onehot (q=2^128-275, D=64, 1-of-256, log_commit_bound=1) ===",
+                    nv,
+                    1,
+                );
             }
             {
                 type Cfg = fp128::D32Full;
@@ -999,15 +996,11 @@ fn main() {
             }
             {
                 type Cfg = fp128::D32OneHot;
-                let title = if num_polys == 1 {
-                    "=== onehot_d32 (q=2^128-275, D=32, 1-of-256, log_commit_bound=1) ==="
-                        .to_string()
-                } else {
-                    format!(
-                        "=== onehot_d32 batched (q=2^128-275, D=32, 1-of-256, log_commit_bound=1, same-point batch={num_polys}) ==="
-                    )
-                };
-                run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
+                run_onehot_mode::<{ Cfg::D }, Cfg>(
+                    "=== onehot_d32 (q=2^128-275, D=32, 1-of-256, log_commit_bound=1) ===",
+                    nv,
+                    1,
+                );
             }
             {
                 type Cfg = fp128::LogBasis;
