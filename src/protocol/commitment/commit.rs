@@ -16,7 +16,7 @@ use super::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use super::utils::flat_matrix::FlatMatrix;
 use super::utils::linear::{
     decompose_rows_i8_into, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
-    mat_vec_mul_ntt_single_i8,
+    mat_vec_mul_ntt_single_i8_blocks,
 };
 use super::utils::matrix::{
     derive_public_matrix_flat, sample_public_matrix_seed, PublicMatrixSeed,
@@ -1036,8 +1036,9 @@ where
             t_hat
         };
 
+        let t_hat_blocks: Vec<&[[i8; D]]> = t_hat.iter_blocks().collect();
         let u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, root_params.n_b, t_hat.flat_digits());
+            mat_vec_mul_ntt_single_i8_blocks(&setup.ntt_shared, root_params.n_b, &t_hat_blocks);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat))
     }
 
@@ -1095,8 +1096,9 @@ where
                 }
             });
 
+        let t_hat_blocks: Vec<&[[i8; D]]> = t_hat.iter_blocks().collect();
         let u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, root_params.n_b, t_hat.flat_digits());
+            mat_vec_mul_ntt_single_i8_blocks(&setup.ntt_shared, root_params.n_b, &t_hat_blocks);
         Ok(CommitWitness::new(RingCommitment { u }, t_hat))
     }
 }
