@@ -8,12 +8,17 @@ use crate::primitives::serialization::Valid;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{flatten_i8_blocks, mat_vec_mul_ntt_single_i8};
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
+#[cfg(test)]
 use crate::protocol::commitment::{
-    hachi_batched_root_layout, hachi_recursive_level_layout_from_params, packed_digits_bytes,
+    hachi_batched_root_layout, root_current_w_len, scale_batched_root_layout,
+};
+use crate::protocol::commitment::{
+    hachi_recursive_level_layout_from_params, hachi_root_runtime_plan,
+    hachi_root_runtime_plan_with_batch, packed_digits_bytes,
     planned_next_log_basis_with_current_basis, planned_recursive_suffix_bytes_with_log_basis,
-    root_current_w_len, scale_batched_root_layout, AppendToTranscript, CommitmentConfig,
-    CommitmentScheme, HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup,
-    HachiLevelParams, HachiProverSetup, HachiScheduleInputs, HachiVerifierSetup, RingCommitment,
+    AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore,
+    HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, HachiProverSetup,
+    HachiRootBatchSummary, HachiScheduleInputs, HachiVerifierSetup, RingCommitment,
     RingCommitmentScheme,
 };
 use crate::protocol::hachi_poly_ops::{HachiPolyOps, RecursiveWitnessFlat, RecursiveWitnessView};
@@ -118,17 +123,6 @@ struct PreparedRootOpeningPoint<F: FieldCore, const D: usize> {
     padded_point: Vec<F>,
     ring_opening_point: RingOpeningPoint<F>,
     inner_reduction: CyclotomicRing<F, D>,
-}
-
-struct RootLayoutContext {
-    layout: HachiCommitmentLayout,
-    root_params: HachiLevelParams,
-}
-
-struct BatchedRootLayoutContext {
-    layout: HachiCommitmentLayout,
-    batched_layout: HachiCommitmentLayout,
-    root_params: HachiLevelParams,
 }
 
 fn flatten_batched_commitment_rows<F: FieldCore, const D: usize>(
@@ -326,47 +320,6 @@ where
         padded_point,
         ring_opening_point,
         inner_reduction,
-    })
-}
-
-fn derive_root_layout_context<Cfg, const D: usize>(
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-    num_vars: usize,
-) -> Result<RootLayoutContext, HachiError>
-where
-    Cfg: CommitmentConfig,
-{
-    let layout = hachi_batched_root_layout::<Cfg, D>(num_vars, max_num_batched_polys)?;
-    let root_params = Cfg::level_params(HachiScheduleInputs {
-        max_num_vars,
-        level: 0,
-        current_w_len: root_current_w_len::<D>(layout),
-    });
-    Ok(RootLayoutContext {
-        layout,
-        root_params,
-    })
-}
-
-fn derive_batched_root_layout_context<Cfg, const D: usize>(
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-    num_vars: usize,
-    total_claims: usize,
-) -> Result<BatchedRootLayoutContext, HachiError>
-where
-    Cfg: CommitmentConfig,
-{
-    let RootLayoutContext {
-        layout,
-        root_params,
-    } = derive_root_layout_context::<Cfg, D>(max_num_vars, max_num_batched_polys, num_vars)?;
-    let batched_layout = scale_batched_root_layout::<Cfg, D>(max_num_vars, layout, total_claims)?;
-    Ok(BatchedRootLayoutContext {
-        layout,
-        batched_layout,
-        root_params,
     })
 }
 
@@ -1570,16 +1523,15 @@ where
     let mut commit_ntt_cache = MultiDNttCaches::new();
     let max_num_vars = setup.expanded.seed.max_num_vars;
     let num_vars = opening_point.len();
-    let BatchedRootLayoutContext {
-        layout,
-        batched_layout,
-        root_params,
-    } = derive_batched_root_layout_context::<Cfg, D>(
+    let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
         max_num_vars,
-        setup.expanded.seed.max_num_batched_polys,
         num_vars,
-        total_claims,
+        setup.expanded.seed.max_num_batched_polys,
+        HachiRootBatchSummary::from_claim_group_sizes(&claim_group_sizes, 1)?,
     )?;
+    let layout = root_plan.root_layout;
+    let batched_layout = root_plan.level_layout;
+    let root_params = root_plan.params.clone();
     setup.ensure_layout_fits(&batched_layout)?;
     if commitments
         .iter()
@@ -1688,17 +1640,17 @@ where
     let t_verify_hachi = Instant::now();
     let max_num_vars = setup.expanded.seed.max_num_vars;
     let num_vars = opening_point.len();
-    let BatchedRootLayoutContext {
-        layout,
-        batched_layout,
-        root_params,
-    } = derive_batched_root_layout_context::<Cfg, D>(
+    let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
         max_num_vars,
-        setup.expanded.seed.max_num_batched_polys,
         num_vars,
-        num_claims,
+        setup.expanded.seed.max_num_batched_polys,
+        HachiRootBatchSummary::from_claim_group_sizes(&claim_group_sizes, 1)
+            .map_err(|_| HachiError::InvalidProof)?,
     )
     .map_err(|_| HachiError::InvalidProof)?;
+    let layout = root_plan.root_layout;
+    let batched_layout = root_plan.level_layout;
+    let root_params = root_plan.params.clone();
     setup.expanded.ensure_layout_fits(&batched_layout)?;
 
     let final_w = Some(proof.final_w());
@@ -1723,21 +1675,8 @@ where
         let alpha_bits = root_params.d.trailing_zeros() as usize;
         let num_l = alpha_bits;
         let num_u = root_challenges.len() - num_l;
-        let root_w_len = w_ring_element_count_with_claim_groups::<F>(
-            &root_params,
-            batched_layout,
-            &claim_group_sizes,
-        ) * D;
-
-        let first_level_params = next_level_params_from_current_basis::<Cfg>(
-            HachiScheduleInputs {
-                max_num_vars,
-                level: 1,
-                current_w_len: root_w_len,
-            },
-            root_params.log_basis,
-        )?;
-        let first_level_d = first_level_params.d;
+        let root_w_len = root_plan.next_w_len();
+        let first_level_d = root_plan.next_level_params.d;
         if !proof.root.next_w_commitment().can_decode_vec(first_level_d) {
             return Err(HachiError::InvalidProof);
         }
@@ -1748,7 +1687,7 @@ where
             commitment: proof.root.next_w_commitment(),
             basis: BasisMode::Lagrange,
             w_len: root_w_len,
-            log_basis: first_level_params.log_basis,
+            log_basis: root_plan.next_level_params.log_basis,
         };
         verify_batched_recursive_suffix::<F, T, D, Cfg>(
             proof,
@@ -1817,16 +1756,15 @@ where
             )));
         }
         let max_num_vars = setup.expanded.seed.max_num_vars;
-        let BatchedRootLayoutContext {
-            layout,
-            batched_layout,
-            root_params,
-        } = derive_batched_root_layout_context::<Cfg, D>(
+        let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
             max_num_vars,
-            setup.expanded.seed.max_num_batched_polys,
             num_vars,
-            polys.len(),
+            setup.expanded.seed.max_num_batched_polys,
+            HachiRootBatchSummary::new(polys.len(), 1, 1)?,
         )?;
+        let layout = root_plan.root_layout;
+        let batched_layout = root_plan.level_layout;
+        let root_params = root_plan.params;
         setup.ensure_layout_fits(&batched_layout)?;
 
         let poly_refs: Vec<&P> = polys.iter().collect();
@@ -1899,14 +1837,13 @@ where
         let mut ntt_cache = MultiDNttCaches::new();
         let mut commit_ntt_cache = MultiDNttCaches::new();
         let max_num_vars = setup.expanded.seed.max_num_vars;
-        let RootLayoutContext {
-            layout,
-            root_params,
-        } = derive_root_layout_context::<Cfg, D>(
+        let root_plan = hachi_root_runtime_plan::<Cfg, D>(
             max_num_vars,
-            setup.expanded.seed.max_num_batched_polys,
             num_vars,
+            setup.expanded.seed.max_num_batched_polys,
         )?;
+        let layout = root_plan.root_layout;
+        let root_params = root_plan.params.clone();
 
         // Level 0: original polynomial with derived layout.
         // The w-commitment is produced at the next level's params, derived from
@@ -1948,7 +1885,7 @@ where
         )?;
         levels.push(out.level_proof);
 
-        let mut prev_poly_len = root_current_w_len::<D>(layout);
+        let mut prev_poly_len = root_plan.inputs.current_w_len;
         let mut current_state = out.next_state;
         let mut level = 1usize;
         let planned_num_levels = Cfg::schedule_plan(max_num_vars)?.map(|plan| plan.levels.len());
@@ -2090,16 +2027,18 @@ where
         let mut ntt_cache = MultiDNttCaches::new();
         let mut commit_ntt_cache = MultiDNttCaches::new();
         let max_num_vars = setup.expanded.seed.max_num_vars;
-        let BatchedRootLayoutContext {
-            layout,
-            batched_layout,
-            root_params,
-        } = derive_batched_root_layout_context::<Cfg, D>(
+        let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
             max_num_vars,
-            setup.expanded.seed.max_num_batched_polys,
             num_vars,
-            total_claims,
+            setup.expanded.seed.max_num_batched_polys,
+            HachiRootBatchSummary::from_claim_group_sizes(
+                &batch_shape.claim_group_sizes,
+                opening_points.len(),
+            )?,
         )?;
+        let layout = root_plan.root_layout;
+        let batched_layout = root_plan.level_layout;
+        let root_params = root_plan.params;
         setup.ensure_layout_fits(&batched_layout)?;
 
         let alpha_bits = root_params.d.trailing_zeros() as usize;
@@ -2196,15 +2135,14 @@ where
     ) -> Result<(), HachiError> {
         let num_vars = opening_point.len();
         let max_num_vars = setup.expanded.seed.max_num_vars;
-        let RootLayoutContext {
-            layout,
-            root_params,
-        } = derive_root_layout_context::<Cfg, D>(
+        let root_plan = hachi_root_runtime_plan::<Cfg, D>(
             max_num_vars,
-            setup.expanded.seed.max_num_batched_polys,
             num_vars,
+            setup.expanded.seed.max_num_batched_polys,
         )
         .map_err(|_| HachiError::InvalidProof)?;
+        let layout = root_plan.root_layout;
+        let root_params = root_plan.params.clone();
         if proof.levels.is_empty() {
             return Err(HachiError::InvalidProof);
         }
@@ -2222,7 +2160,7 @@ where
             opening: *opening,
             commitment: &root_commitment,
             basis,
-            w_len: root_current_w_len::<D>(layout),
+            w_len: root_plan.inputs.current_w_len,
             log_basis: root_params.log_basis,
         };
         if let Some(plan) = Cfg::schedule_plan(max_num_vars)? {
@@ -2391,17 +2329,20 @@ where
 
         let t_verify_hachi = Instant::now();
         let max_num_vars = setup.expanded.seed.max_num_vars;
-        let BatchedRootLayoutContext {
-            layout,
-            batched_layout,
-            root_params,
-        } = derive_batched_root_layout_context::<Cfg, D>(
+        let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
             max_num_vars,
-            setup.expanded.seed.max_num_batched_polys,
             num_vars,
-            num_claims,
+            setup.expanded.seed.max_num_batched_polys,
+            HachiRootBatchSummary::from_claim_group_sizes(
+                &batch_shape.claim_group_sizes,
+                opening_points.len(),
+            )
+            .map_err(|_| HachiError::InvalidProof)?,
         )
         .map_err(|_| HachiError::InvalidProof)?;
+        let layout = root_plan.root_layout;
+        let batched_layout = root_plan.level_layout;
+        let root_params = root_plan.params.clone();
         setup.expanded.ensure_layout_fits(&batched_layout)?;
 
         let final_w = Some(proof.final_w());
@@ -2435,22 +2376,8 @@ where
             let alpha_bits = root_params.d.trailing_zeros() as usize;
             let num_l = alpha_bits;
             let num_u = root_challenges.len() - num_l;
-            let root_w_len = w_ring_element_count_with_point_claim_groups::<F>(
-                &root_params,
-                batched_layout,
-                &batch_shape.claim_group_sizes,
-                prepared_points.len(),
-            ) * D;
-
-            let first_level_params = next_level_params_from_current_basis::<Cfg>(
-                HachiScheduleInputs {
-                    max_num_vars,
-                    level: 1,
-                    current_w_len: root_w_len,
-                },
-                root_params.log_basis,
-            )?;
-            let first_level_d = first_level_params.d;
+            let root_w_len = root_plan.next_w_len();
+            let first_level_d = root_plan.next_level_params.d;
             if !proof.root.next_w_commitment().can_decode_vec(first_level_d) {
                 return Err(HachiError::InvalidProof);
             }
@@ -2461,7 +2388,7 @@ where
                 commitment: proof.root.next_w_commitment(),
                 basis: BasisMode::Lagrange,
                 w_len: root_w_len,
-                log_basis: first_level_params.log_basis,
+                log_basis: root_plan.next_level_params.log_basis,
             };
             verify_batched_recursive_suffix::<F, T, D, Cfg>(
                 proof,

@@ -7,8 +7,8 @@ use super::config::{
 use super::onehot::{inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks};
 use super::schedule::HachiScheduleInputs;
 use super::schedule::{
-    batched_root_level_proof_bytes, estimated_recursive_suffix_bytes,
-    recursive_r_decomp_levels_for_bound,
+    estimated_recursive_suffix_bytes, hachi_root_runtime_plan_from_root_layout,
+    HachiRootBatchSummary, HachiScheduleLookupKey,
 };
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
@@ -31,9 +31,7 @@ use crate::primitives::serialization::{
 };
 use crate::protocol::commitment_scheme::should_stop_folding;
 use crate::protocol::hachi_poly_ops::OneHotIndex;
-use crate::protocol::ring_switch::{
-    w_ring_element_count, w_ring_element_count_with_num_claims_and_points,
-};
+use crate::protocol::ring_switch::w_ring_element_count;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 #[cfg(feature = "disk-persistence")]
 use std::fs;
@@ -458,24 +456,11 @@ where
         ));
     }
 
-    let decomp = Cfg::decomposition();
-    let field_bits = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
-    let r_decomp_levels = recursive_r_decomp_levels_for_bound(
-        field_bits,
-        Cfg::planner_half_field_bound(),
-        root_layout.log_basis,
-    );
-    let row_count = root_params.batched_root_m_row_count(num_claims);
+    let batch = HachiRootBatchSummary::new(num_claims, num_claims, 1)?;
 
     let mut best = None;
     for r_vars in 1..reduced_vars {
         let m_vars = reduced_vars - r_vars;
-        let num_blocks = 1usize
-            .checked_shl(r_vars as u32)
-            .ok_or_else(|| HachiError::InvalidSetup("num_blocks overflow".to_string()))?;
-        let block_len = 1usize
-            .checked_shl(m_vars as u32)
-            .ok_or_else(|| HachiError::InvalidSetup("block_len overflow".to_string()))?;
         let num_digits_fold = root_layout
             .num_digits_fold
             .max(compute_num_digits_fold_batched(
@@ -485,29 +470,6 @@ where
                 num_claims,
             ));
 
-        let w_hat_count = num_claims
-            .checked_mul(num_blocks)
-            .and_then(|count| count.checked_mul(root_layout.num_digits_open))
-            .ok_or_else(|| HachiError::InvalidSetup("w_hat count overflow".to_string()))?;
-        let t_hat_count = w_hat_count
-            .checked_mul(root_params.n_a)
-            .ok_or_else(|| HachiError::InvalidSetup("t_hat count overflow".to_string()))?;
-        let z_pre_count = block_len
-            .checked_mul(root_layout.num_digits_commit)
-            .and_then(|count| count.checked_mul(num_digits_fold))
-            .ok_or_else(|| HachiError::InvalidSetup("z_pre count overflow".to_string()))?;
-        let r_count = row_count
-            .checked_mul(r_decomp_levels)
-            .ok_or_else(|| HachiError::InvalidSetup("r count overflow".to_string()))?;
-        let witness_cost = w_hat_count
-            .checked_add(t_hat_count)
-            .and_then(|count| count.checked_add(z_pre_count))
-            .and_then(|count| count.checked_add(r_count))
-            .ok_or_else(|| HachiError::InvalidSetup("batched witness cost overflow".to_string()))?;
-
-        let next_w_len = witness_cost.checked_mul(root_params.d).ok_or_else(|| {
-            HachiError::InvalidSetup("batched next w length overflow".to_string())
-        })?;
         let candidate_layout = HachiCommitmentLayout::new_with_decomp(
             m_vars,
             r_vars,
@@ -518,26 +480,18 @@ where
             root_layout.log_basis,
             0,
         )?;
-        let next_inputs = HachiScheduleInputs {
-            max_num_vars,
-            level: 1,
-            current_w_len: next_w_len,
-        };
-        let next_level_params = Cfg::level_params(next_inputs);
-        let root_proof_cost = batched_root_level_proof_bytes(
-            field_bits,
-            root_params,
+        let candidate_plan = hachi_root_runtime_plan_from_root_layout::<Cfg, D>(
+            HachiScheduleLookupKey::with_batch(max_num_vars, max_num_vars, num_claims, batch),
             candidate_layout,
-            &next_level_params,
-            next_w_len,
-            num_claims,
-        );
+        )?;
+        let next_w_len = candidate_plan.next_w_len();
+        let root_proof_cost = candidate_plan.level_proof_bytes::<Cfg>();
         let suffix_cost = estimated_recursive_suffix_bytes::<Cfg>(max_num_vars, 1, next_w_len)?;
         let candidate = (
             root_proof_cost.checked_add(suffix_cost).ok_or_else(|| {
                 HachiError::InvalidSetup("batched proof cost overflow".to_string())
             })?,
-            witness_cost,
+            candidate_plan.next_w_len(),
             r_vars,
             m_vars,
             num_digits_fold,
@@ -662,27 +616,26 @@ where
         }
     }
 
-    let root_inputs = HachiScheduleInputs {
-        max_num_vars,
-        level: 0,
-        current_w_len: root_current_w_len::<D>(root_layout),
-    };
-    let root_params = Cfg::level_params_with_log_basis(root_inputs, root_layout.log_basis);
-    let mut prev_w_len = root_inputs
+    let root_plan = hachi_root_runtime_plan_from_root_layout::<Cfg, D>(
+        HachiScheduleLookupKey::with_batch(
+            max_num_vars,
+            max_num_vars,
+            max_num_batched_polys,
+            HachiRootBatchSummary::new(
+                max_num_batched_polys,
+                max_num_batched_polys,
+                max_num_batched_polys,
+            )?,
+        ),
+        root_layout,
+    )?;
+    let mut prev_w_len = root_plan
+        .inputs
         .current_w_len
-        .saturating_mul(max_num_batched_polys);
+        .saturating_mul(root_plan.batch.num_claims);
     let mut level = 1usize;
-    let mut current_w_len = w_ring_element_count_with_num_claims_and_points::<F>(
-        &root_params,
-        batched_root_layout,
-        max_num_batched_polys,
-        max_num_batched_polys,
-    ) * root_params.d;
-    let mut current_params = Cfg::level_params(HachiScheduleInputs {
-        max_num_vars,
-        level,
-        current_w_len,
-    });
+    let mut current_w_len = root_plan.next_w_len();
+    let mut current_params = root_plan.next_level_params.clone();
     let mut current_layout =
         super::hachi_recursive_level_layout_from_params::<Cfg>(&current_params, current_w_len)?;
     stats.include(current_layout);

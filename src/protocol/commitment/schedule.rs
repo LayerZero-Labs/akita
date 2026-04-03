@@ -1,4 +1,3 @@
-#[cfg(test)]
 use super::commit::{hachi_batched_root_layout, root_current_w_len, scale_batched_root_layout};
 use super::config::{
     compute_num_digits, compute_num_digits_fold, optimal_m_r_split_with_params, CommitmentConfig,
@@ -7,7 +6,6 @@ use super::config::{
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
 use crate::protocol::proof::{HachiProofShape, LevelProofShape};
-#[cfg(test)]
 use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
 use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
 use std::collections::HashMap;
@@ -127,6 +125,50 @@ impl HachiRootBatchSummary {
     }
 }
 
+/// Public runtime key that selects a concrete root schedule context.
+///
+/// This is intentionally narrower than a full schedule table entry: it records
+/// only the public inputs that pick a root plan, not the resulting plan data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HachiScheduleLookupKey {
+    /// Setup/public schedule bucket.
+    pub max_num_vars: usize,
+    /// Actual root polynomial arity.
+    pub num_vars: usize,
+    /// Number of claims the root commitment layout was sized for at commit
+    /// time. This can exceed `batch.num_claims`.
+    pub layout_num_claims: usize,
+    /// Aggregate opening-batch summary for the concrete invocation.
+    pub batch: HachiRootBatchSummary,
+}
+
+impl HachiScheduleLookupKey {
+    /// Singleton root-opening context.
+    pub const fn singleton(max_num_vars: usize, num_vars: usize, layout_num_claims: usize) -> Self {
+        Self {
+            max_num_vars,
+            num_vars,
+            layout_num_claims,
+            batch: HachiRootBatchSummary::singleton(),
+        }
+    }
+
+    /// General root-opening context.
+    pub const fn with_batch(
+        max_num_vars: usize,
+        num_vars: usize,
+        layout_num_claims: usize,
+        batch: HachiRootBatchSummary,
+    ) -> Self {
+        Self {
+            max_num_vars,
+            num_vars,
+            layout_num_claims,
+            batch,
+        }
+    }
+}
+
 /// Canonical runtime context for the root Hachi level.
 ///
 /// This captures the currently split root decisions in one place:
@@ -136,7 +178,6 @@ impl HachiRootBatchSummary {
 ///   the concrete opening batch represented by `batch`.
 /// - `next_inputs` / `next_level_params` reflect the real recursive handoff
 ///   taken by the runtime from the current root basis.
-#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HachiRootRuntimePlan {
     /// Setup/public schedule bucket that selects the root family policy.
@@ -162,7 +203,6 @@ pub(crate) struct HachiRootRuntimePlan {
     pub next_level_params: HachiLevelParams,
 }
 
-#[cfg(test)]
 impl HachiRootRuntimePlan {
     /// Recursive witness length after the root fold.
     pub(crate) fn next_w_len(&self) -> usize {
@@ -170,6 +210,7 @@ impl HachiRootRuntimePlan {
     }
 
     /// Shape of the serialized root proof body for this runtime context.
+    #[cfg(test)]
     pub(crate) fn level_proof_shape(&self) -> LevelProofShape {
         let rounds = sumcheck_rounds(self.params.d, self.next_w_len());
         let b = 1usize << self.level_layout.log_basis;
@@ -180,6 +221,18 @@ impl HachiRootRuntimePlan {
             stage2_sumcheck: (rounds, 3),
             next_commit_coeffs: self.next_level_params.n_b * self.next_level_params.d,
         }
+    }
+
+    /// Exact bytes of the serialized root proof body for this runtime context.
+    pub(crate) fn level_proof_bytes<Cfg: CommitmentConfig>(&self) -> usize {
+        batched_root_level_proof_bytes(
+            field_bits(Cfg::decomposition()),
+            &self.params,
+            self.level_layout,
+            &self.next_level_params,
+            self.next_w_len(),
+            self.batch.num_claims,
+        )
     }
 }
 
@@ -241,7 +294,6 @@ impl HachiLevelParams {
 ///
 /// Returns an error if the root layout, batched layout scaling, next witness
 /// sizing, or next-level basis selection fails.
-#[cfg(test)]
 pub(crate) fn hachi_root_runtime_plan<Cfg, const D: usize>(
     max_num_vars: usize,
     num_vars: usize,
@@ -268,7 +320,6 @@ where
 ///
 /// Returns an error if the root layout, batched layout scaling, next witness
 /// sizing, or next-level basis selection fails.
-#[cfg(test)]
 pub(crate) fn hachi_root_runtime_plan_with_batch<Cfg, const D: usize>(
     max_num_vars: usize,
     num_vars: usize,
@@ -279,21 +330,45 @@ where
     Cfg: CommitmentConfig,
 {
     let root_layout = hachi_batched_root_layout::<Cfg, D>(num_vars, layout_num_claims)?;
+    hachi_root_runtime_plan_from_root_layout::<Cfg, D>(
+        HachiScheduleLookupKey::with_batch(max_num_vars, num_vars, layout_num_claims, batch),
+        root_layout,
+    )
+}
+
+/// Derive the canonical runtime context for a root opening from a caller-
+/// supplied per-polynomial root layout.
+///
+/// This is the internal bridge that lets setup sizing, proof-shape logic, and
+/// runtime prove/verify all share the same root transition semantics even when
+/// a caller is exploring alternate root layouts.
+///
+/// # Errors
+///
+/// Returns an error if the batched layout scaling, next witness sizing, or
+/// next-level basis selection fails.
+pub(crate) fn hachi_root_runtime_plan_from_root_layout<Cfg, const D: usize>(
+    key: HachiScheduleLookupKey,
+    root_layout: HachiCommitmentLayout,
+) -> Result<HachiRootRuntimePlan, HachiError>
+where
+    Cfg: CommitmentConfig,
+{
     let level_layout =
-        scale_batched_root_layout::<Cfg, D>(max_num_vars, root_layout, batch.num_claims)?;
+        scale_batched_root_layout::<Cfg, D>(key.max_num_vars, root_layout, key.batch.num_claims)?;
     let inputs = HachiScheduleInputs {
-        max_num_vars,
+        max_num_vars: key.max_num_vars,
         level: 0,
         current_w_len: root_current_w_len::<D>(root_layout),
     };
     let params = Cfg::level_params_with_log_basis(inputs, root_layout.log_basis);
     let next_w_ring =
-        w_ring_element_count_with_batch_summary::<Cfg::Field>(&params, level_layout, batch);
+        w_ring_element_count_with_batch_summary::<Cfg::Field>(&params, level_layout, key.batch);
     let next_w_len = next_w_ring
         .checked_mul(params.d)
         .ok_or_else(|| HachiError::InvalidSetup("root next witness length overflow".to_string()))?;
     let next_inputs = HachiScheduleInputs {
-        max_num_vars,
+        max_num_vars: key.max_num_vars,
         level: 1,
         current_w_len: next_w_len,
     };
@@ -302,10 +377,10 @@ where
     let next_level_params = Cfg::level_params_with_log_basis(next_inputs, next_log_basis);
 
     Ok(HachiRootRuntimePlan {
-        max_num_vars,
-        num_vars,
-        layout_num_claims,
-        batch,
+        max_num_vars: key.max_num_vars,
+        num_vars: key.num_vars,
+        layout_num_claims: key.layout_num_claims,
+        batch: key.batch,
         inputs,
         root_layout,
         level_layout,
