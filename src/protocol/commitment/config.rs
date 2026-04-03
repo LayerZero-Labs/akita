@@ -1,9 +1,11 @@
 //! Configuration presets for ring-native commitment construction.
 
 use super::schedule::{
-    hachi_root_level_layout, planned_log_basis_at_level, planned_recursive_suffix_bytes,
-    planned_schedule_key, HachiLevelParams, HachiScheduleInputs, HachiSchedulePlan,
+    generated_schedule_plan_from_table, hachi_root_level_layout, planned_log_basis_at_level,
+    planned_recursive_suffix_bytes, planned_schedule_key, HachiLevelParams, HachiScheduleInputs,
+    HachiSchedulePlan,
 };
+use super::schedule_tables::{fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table};
 use super::utils::math::checked_pow2;
 use super::utils::norm::detect_field_modulus;
 use crate::algebra::ring::CyclotomicRing;
@@ -279,6 +281,16 @@ fn fp128_planned_schedule<Cfg: CommitmentConfig>(
         2,
         6,
     )?))
+}
+
+fn fp128_generated_schedule<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    table: &'static [super::schedule_tables::GeneratedScheduleTableEntry],
+) -> Result<Option<HachiSchedulePlan>, HachiError> {
+    if let Some(plan) = generated_schedule_plan_from_table::<Cfg>(max_num_vars, table)? {
+        return Ok(Some(plan));
+    }
+    fp128_planned_schedule::<Cfg>(max_num_vars)
 }
 
 /// Runtime commitment layout authority for ring-native commitments.
@@ -1157,6 +1169,9 @@ impl<
     fn schedule_plan<Cfg: CommitmentConfig>(
         max_num_vars: usize,
     ) -> Result<Option<HachiSchedulePlan>, HachiError> {
+        if let Some(table) = fp128_adaptive_bounded_table::<D, LOG_COMMIT_BOUND, N_A, N_B, N_D>() {
+            return fp128_generated_schedule::<Cfg>(max_num_vars, table);
+        }
         fp128_planned_schedule::<Cfg>(max_num_vars)
     }
 
@@ -1226,7 +1241,7 @@ impl CommitmentPolicy for Fp128AdaptiveOneHotD64Policy {
     fn schedule_plan<Cfg: CommitmentConfig>(
         max_num_vars: usize,
     ) -> Result<Option<HachiSchedulePlan>, HachiError> {
-        fp128_planned_schedule::<Cfg>(max_num_vars)
+        fp128_generated_schedule::<Cfg>(max_num_vars, fp128_adaptive_onehot_d64_table())
     }
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {

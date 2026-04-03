@@ -3,6 +3,7 @@ use super::config::{
     compute_num_digits, compute_num_digits_fold, optimal_m_r_split_with_params, CommitmentConfig,
     DecompositionParams, HachiCommitmentLayout,
 };
+use super::schedule_tables::{table_entry_states, GeneratedScheduleTableEntry};
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
 use crate::protocol::proof::{HachiProofShape, LevelProofShape};
@@ -547,6 +548,139 @@ impl HachiSchedulePlan {
     }
 }
 
+fn exact_planned_state_index(
+    schedule: &HachiSchedulePlan,
+    inputs: HachiScheduleInputs,
+    log_basis: Option<u32>,
+) -> Option<usize> {
+    schedule.states.iter().position(|state| {
+        state.level == inputs.level
+            && state.current_w_len == inputs.current_w_len
+            && log_basis.is_none_or(|basis| state.log_basis == basis)
+    })
+}
+
+fn scheduled_suffix_bytes_from_index(schedule: &HachiSchedulePlan, state_index: usize) -> usize {
+    debug_assert!(state_index <= schedule.levels.len());
+    let tail = schedule.terminal_state();
+    schedule.levels[state_index..]
+        .iter()
+        .map(|level| level.level_bytes)
+        .sum::<usize>()
+        + packed_digits_bytes(tail.current_w_len, tail.log_basis)
+}
+
+fn schedule_plan_from_states<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    states: &[HachiPlannedState],
+) -> Result<HachiSchedulePlan, HachiError> {
+    let Some(root_state) = states.first().copied() else {
+        return Err(HachiError::InvalidSetup(
+            "generated schedule table entry must contain at least one state".to_string(),
+        ));
+    };
+    if root_state.level != 0 {
+        return Err(HachiError::InvalidSetup(format!(
+            "generated schedule root level must be 0, got {}",
+            root_state.level
+        )));
+    }
+    let expected_root_w_len = 1usize
+        .checked_shl(max_num_vars as u32)
+        .ok_or_else(|| HachiError::InvalidSetup("root witness length overflow".to_string()))?;
+    if root_state.current_w_len != expected_root_w_len {
+        return Err(HachiError::InvalidSetup(format!(
+            "generated root witness length {} does not match max_num_vars={max_num_vars}",
+            root_state.current_w_len
+        )));
+    }
+
+    let field_bits = field_bits(Cfg::decomposition());
+    let mut levels = Vec::with_capacity(states.len().saturating_sub(1));
+    for window in states.windows(2) {
+        let inputs_state = window[0];
+        let next_state = window[1];
+        if next_state.level != inputs_state.level + 1 {
+            return Err(HachiError::InvalidSetup(format!(
+                "generated schedule skipped from level {} to {}",
+                inputs_state.level, next_state.level
+            )));
+        }
+
+        let inputs = HachiScheduleInputs {
+            max_num_vars,
+            level: inputs_state.level,
+            current_w_len: inputs_state.current_w_len,
+        };
+        let next_inputs = HachiScheduleInputs {
+            max_num_vars,
+            level: next_state.level,
+            current_w_len: next_state.current_w_len,
+        };
+        let (params, layout) =
+            current_level_layout_with_log_basis::<Cfg>(inputs, inputs_state.log_basis)?;
+        let planned_next_w_len =
+            planned_next_w_len(field_bits, Cfg::planner_half_field_bound(), &params, layout);
+        if planned_next_w_len != next_state.current_w_len {
+            return Err(HachiError::InvalidSetup(format!(
+                "generated next_w_len mismatch at level {}: table={}, runtime={planned_next_w_len}",
+                inputs.level, next_state.current_w_len
+            )));
+        }
+
+        let next_level_params = Cfg::level_params_with_log_basis(next_inputs, next_state.log_basis);
+        let level_bytes = hachi_level_proof_bytes(
+            field_bits,
+            &params,
+            layout,
+            &next_level_params,
+            next_inputs.current_w_len,
+        );
+        levels.push(HachiPlannedLevel {
+            inputs,
+            params,
+            layout,
+            next_inputs,
+            next_level_log_basis: next_state.log_basis,
+            next_commit_coeffs: next_level_params.n_b * next_level_params.d,
+            level_bytes,
+        });
+    }
+
+    let terminal = states
+        .last()
+        .copied()
+        .expect("non-empty generated schedule states");
+    let no_wrapper_bytes = levels.iter().map(|level| level.level_bytes).sum::<usize>()
+        + packed_digits_bytes(terminal.current_w_len, terminal.log_basis);
+    Ok(HachiSchedulePlan {
+        states: states.to_vec(),
+        levels,
+        no_wrapper_bytes,
+        exact_proof_bytes: no_wrapper_bytes,
+    })
+}
+
+pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    table: &'static [GeneratedScheduleTableEntry],
+) -> Result<Option<HachiSchedulePlan>, HachiError> {
+    table_entry_states(table, max_num_vars)
+        .map(|states| schedule_plan_from_states::<Cfg>(max_num_vars, states))
+        .transpose()
+}
+
+fn configured_schedule_plan<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    min_log_basis: u32,
+    max_log_basis: u32,
+) -> Result<HachiSchedulePlan, HachiError> {
+    if let Some(plan) = Cfg::schedule_plan(max_num_vars)? {
+        return Ok(plan);
+    }
+    planned_schedule::<Cfg>(max_num_vars, min_log_basis, max_log_basis)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlannedSuffix {
     levels: Vec<HachiPlannedLevel>,
@@ -821,6 +955,11 @@ pub(crate) fn planned_recursive_suffix_bytes<Cfg: CommitmentConfig>(
         level,
         current_w_len,
     };
+    if let Some(schedule) = Cfg::schedule_plan(max_num_vars)? {
+        if let Some(state_index) = exact_planned_state_index(&schedule, inputs, None) {
+            return Ok(scheduled_suffix_bytes_from_index(&schedule, state_index));
+        }
+    }
     let current_log_basis = Cfg::log_basis_at_level(inputs);
     let cfg = PlannerConfig {
         max_num_vars,
@@ -848,6 +987,19 @@ pub(crate) fn planned_recursive_suffix_bytes_with_log_basis<Cfg: CommitmentConfi
     current_w_len: usize,
     current_log_basis: u32,
 ) -> Result<usize, HachiError> {
+    if let Some(schedule) = Cfg::schedule_plan(max_num_vars)? {
+        if let Some(state_index) = exact_planned_state_index(
+            &schedule,
+            HachiScheduleInputs {
+                max_num_vars,
+                level,
+                current_w_len,
+            },
+            Some(current_log_basis),
+        ) {
+            return Ok(scheduled_suffix_bytes_from_index(&schedule, state_index));
+        }
+    }
     let inputs = HachiScheduleInputs {
         max_num_vars,
         level,
@@ -878,6 +1030,18 @@ pub(crate) fn planned_next_log_basis_with_current_basis<Cfg: CommitmentConfig>(
     next_inputs: HachiScheduleInputs,
     current_log_basis: u32,
 ) -> Result<u32, HachiError> {
+    if let Some(schedule) = Cfg::schedule_plan(next_inputs.max_num_vars)? {
+        if let Some(next_state_index) = exact_planned_state_index(&schedule, next_inputs, None) {
+            if let Some(prev_state) = next_state_index
+                .checked_sub(1)
+                .and_then(|idx| schedule.states.get(idx))
+            {
+                if prev_state.log_basis == current_log_basis {
+                    return Ok(schedule.states[next_state_index].log_basis);
+                }
+            }
+        }
+    }
     let (min_log_basis, max_log_basis) = Cfg::log_basis_search_range(next_inputs);
     let lower_bound = current_log_basis.max(min_log_basis);
     let cfg = PlannerConfig {
@@ -1071,7 +1235,11 @@ pub(crate) fn planned_log_basis_at_level<Cfg: CommitmentConfig>(
     min_log_basis: u32,
     max_log_basis: u32,
 ) -> Result<u32, HachiError> {
-    let schedule = planned_schedule::<Cfg>(inputs.max_num_vars, min_log_basis, max_log_basis)?;
+    let schedule =
+        configured_schedule_plan::<Cfg>(inputs.max_num_vars, min_log_basis, max_log_basis)?;
+    if let Some(state_index) = exact_planned_state_index(&schedule, inputs, None) {
+        return Ok(schedule.states[state_index].log_basis);
+    }
     let state = schedule
         .states
         .get(inputs.level)
@@ -1120,7 +1288,7 @@ pub(crate) fn planned_schedule_key<Cfg: CommitmentConfig>(
     min_log_basis: u32,
     max_log_basis: u32,
 ) -> Result<String, HachiError> {
-    let schedule = planned_schedule::<Cfg>(max_num_vars, min_log_basis, max_log_basis)?;
+    let schedule = configured_schedule_plan::<Cfg>(max_num_vars, min_log_basis, max_log_basis)?;
     let mut key = String::from("planner_v2");
     for state in schedule.states {
         let _ = write!(key, "_l{}b{}", state.level, state.log_basis);
@@ -1190,7 +1358,10 @@ mod tests {
     use super::*;
     use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
     use crate::primitives::serialization::{Compress, HachiSerialize};
-    use crate::protocol::commitment::presets::fp128_5823;
+    use crate::protocol::commitment::presets::{fp128, fp128_5823};
+    use crate::protocol::commitment::schedule_tables::{
+        fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table, GeneratedScheduleTableEntry,
+    };
     use crate::protocol::proof::{
         FlatRingVec, HachiBatchedRootProof, HachiLevelProof, HachiStage1Proof,
         HachiStage1StageProof,
@@ -1255,6 +1426,58 @@ mod tests {
                 level.inputs.level
             );
         }
+    }
+
+    fn assert_generated_table_matches_runtime_planner<Cfg: CommitmentConfig>(
+        table: &'static [GeneratedScheduleTableEntry],
+    ) {
+        for entry in table {
+            let generated = generated_schedule_plan_from_table::<Cfg>(entry.max_num_vars, table)
+                .expect("generated table should materialize")
+                .expect("entry should exist in generated table");
+            let planned = planned_schedule::<Cfg>(entry.max_num_vars, 2, 6)
+                .expect("runtime planner should succeed");
+            assert_eq!(
+                generated, planned,
+                "generated schedule should match runtime planner for max_num_vars={}",
+                entry.max_num_vars
+            );
+        }
+    }
+
+    #[test]
+    fn generated_fp128_schedule_tables_match_runtime_planner() {
+        assert_generated_table_matches_runtime_planner::<fp128::Full>(
+            fp128_adaptive_bounded_table::<128, 128, 1, 1, 1>().unwrap(),
+        );
+        assert_generated_table_matches_runtime_planner::<fp128::LogBasis>(
+            fp128_adaptive_bounded_table::<128, 3, 1, 1, 1>().unwrap(),
+        );
+        assert_generated_table_matches_runtime_planner::<fp128::OneHot>(
+            fp128_adaptive_onehot_d64_table(),
+        );
+        assert_generated_table_matches_runtime_planner::<fp128::D32Full>(
+            fp128_adaptive_bounded_table::<32, 128, 2, 2, 2>().unwrap(),
+        );
+        assert_generated_table_matches_runtime_planner::<fp128::D32LogBasis>(
+            fp128_adaptive_bounded_table::<32, 3, 2, 2, 2>().unwrap(),
+        );
+        assert_generated_table_matches_runtime_planner::<fp128::D32OneHot>(
+            fp128_adaptive_bounded_table::<32, 1, 2, 2, 2>().unwrap(),
+        );
+    }
+
+    #[test]
+    fn shared_legacy_fp128_schedule_tables_match_runtime_planner() {
+        assert_generated_table_matches_runtime_planner::<fp128_5823::Full>(
+            fp128_adaptive_bounded_table::<128, 128, 1, 1, 1>().unwrap(),
+        );
+        assert_generated_table_matches_runtime_planner::<fp128_5823::LogBasis>(
+            fp128_adaptive_bounded_table::<128, 3, 1, 1, 1>().unwrap(),
+        );
+        assert_generated_table_matches_runtime_planner::<fp128_5823::OneHot>(
+            fp128_adaptive_onehot_d64_table(),
+        );
     }
 
     #[test]

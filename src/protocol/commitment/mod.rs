@@ -5,6 +5,7 @@ mod config;
 pub mod onehot;
 pub mod presets;
 pub(crate) mod schedule;
+mod schedule_tables;
 mod scheme;
 pub(crate) mod transcript_append;
 mod types;
