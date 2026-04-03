@@ -25,7 +25,7 @@ const _: () = assert!(MAX_RANK == 4, "SIS width table only covers ranks 1..=4");
 /// binary searches. Many of those entries remain above the 128-bit floor at
 /// the search cap, so the large capped values should be read as "at least this
 /// large", not as tight cutoffs.
-fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; MAX_RANK as usize]> {
+fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[u64; MAX_RANK as usize]> {
     match (d, collision_inf) {
         // D=32
         (32, 2) => Some([11_757, 4_359_823, 5_000_000, 5_000_000]),
@@ -76,7 +76,7 @@ fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; MAX_RANK as usiz
 ///
 /// Returns `None` if the `(d, collision_inf)` pair is not in the table, or
 /// if no rank up to `MAX_RANK` can accommodate the requested width.
-pub fn min_rank_for_secure_width(d: u32, collision_inf: u32, width: usize) -> Option<u32> {
+pub fn min_rank_for_secure_width(d: u32, collision_inf: u32, width: u64) -> Option<u32> {
     let widths = sis_max_widths(d, collision_inf)?;
     for (i, &max_w) in widths.iter().enumerate() {
         if width <= max_w {

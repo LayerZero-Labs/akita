@@ -1449,16 +1449,21 @@ mod fp128_policy_tests {
                     (1u32 << level.params.log_basis) - 1
                 };
 
-                let a_rank = min_rank_for_secure_width(128, raw_collision, level.layout.inner_width)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "missing audited A-row SIS width for num_vars={}, level={}, lb={}, width={}",
-                            num_vars,
-                            level.inputs.level,
-                            level.params.log_basis,
-                            level.layout.inner_width
-                        )
-                    });
+                let a_rank = min_rank_for_secure_width(
+                    128,
+                    raw_collision,
+                    u64::try_from(level.layout.inner_width)
+                        .expect("inner width should fit in u64"),
+                )
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing audited A-row SIS width for num_vars={}, level={}, lb={}, width={}",
+                        num_vars,
+                        level.inputs.level,
+                        level.params.log_basis,
+                        level.layout.inner_width
+                    )
+                });
                 assert!(
                     a_rank <= level.params.n_a as u32,
                     "A-row SIS audit failed for num_vars={}, level={}, lb={}, width={}, required_rank={}, actual_rank={}",
@@ -1471,17 +1476,21 @@ mod fp128_policy_tests {
                 );
 
                 let bd_collision = (1u32 << level.params.log_basis) - 1;
-                let b_rank =
-                    min_rank_for_secure_width(128, bd_collision, level.layout.outer_width)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "missing audited B-row SIS width for num_vars={}, level={}, lb={}, width={}",
-                                num_vars,
-                                level.inputs.level,
-                                level.params.log_basis,
-                                level.layout.outer_width
-                            )
-                        });
+                let b_rank = min_rank_for_secure_width(
+                    128,
+                    bd_collision,
+                    u64::try_from(level.layout.outer_width)
+                        .expect("outer width should fit in u64"),
+                )
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing audited B-row SIS width for num_vars={}, level={}, lb={}, width={}",
+                        num_vars,
+                        level.inputs.level,
+                        level.params.log_basis,
+                        level.layout.outer_width
+                    )
+                });
                 assert!(
                     b_rank <= level.params.n_b as u32,
                     "B-row SIS audit failed for num_vars={}, level={}, lb={}, width={}, required_rank={}, actual_rank={}",
@@ -1493,17 +1502,21 @@ mod fp128_policy_tests {
                     level.params.n_b,
                 );
 
-                let d_rank =
-                    min_rank_for_secure_width(128, bd_collision, level.layout.d_matrix_width)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "missing audited D-row SIS width for num_vars={}, level={}, lb={}, width={}",
-                                num_vars,
-                                level.inputs.level,
-                                level.params.log_basis,
-                                level.layout.d_matrix_width
-                            )
-                        });
+                let d_rank = min_rank_for_secure_width(
+                    128,
+                    bd_collision,
+                    u64::try_from(level.layout.d_matrix_width)
+                        .expect("d-matrix width should fit in u64"),
+                )
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing audited D-row SIS width for num_vars={}, level={}, lb={}, width={}",
+                        num_vars,
+                        level.inputs.level,
+                        level.params.log_basis,
+                        level.layout.d_matrix_width
+                    )
+                });
                 assert!(
                     d_rank <= level.params.n_d as u32,
                     "D-row SIS audit failed for num_vars={}, level={}, lb={}, width={}, required_rank={}, actual_rank={}",

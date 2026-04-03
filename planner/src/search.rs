@@ -324,7 +324,8 @@ impl Planner {
             (1usize << m_vars) * lc.delta_commit
         };
         let a_sis_collision = self.a_role_sis_collision_bucket(cfg, level, log_cb, lb)?;
-        let na_needed = min_rank_for_secure_width(cfg.d, a_sis_collision, inner_width)?;
+        let na_needed =
+            min_rank_for_secure_width(cfg.d, a_sis_collision, u64::try_from(inner_width).ok()?)?;
         if na_needed > cfg.n_a {
             return None;
         }
@@ -332,8 +333,8 @@ impl Planner {
         let bd_collision = (1u32 << lb) - 1;
         let outer = cfg.n_a as usize * lc.delta_open * (1usize << r_vars);
         let d_mat = lc.delta_open * (1usize << r_vars);
-        let nb = min_rank_for_secure_width(cfg.d, bd_collision, outer)?;
-        let nd = min_rank_for_secure_width(cfg.d, bd_collision, d_mat)?;
+        let nb = min_rank_for_secure_width(cfg.d, bd_collision, u64::try_from(outer).ok()?)?;
+        let nd = min_rank_for_secure_width(cfg.d, bd_collision, u64::try_from(d_mat).ok()?)?;
 
         let lc = compute_level_witness(
             cfg,
@@ -385,7 +386,7 @@ impl Planner {
 
     fn tail_entry_nb(&self, w_len: usize, d: u32, tail_lb: u32) -> Option<u32> {
         let ring_elems = w_len.div_ceil(d as usize);
-        min_rank_for_secure_width(d, (1u32 << tail_lb) - 1, ring_elems)
+        min_rank_for_secure_width(d, (1u32 << tail_lb) - 1, u64::try_from(ring_elems).ok()?)
     }
 
     fn best_from(&mut self, w_len: usize, cur_d: u32, prev_lb: u32) -> BestSuffix {
@@ -660,7 +661,7 @@ mod tests {
         let matched_tail_entry = [16u32, 32, 64].into_iter().any(|d| {
             let ring_elems = sched.final_w_len.div_ceil(d as usize);
             (1u32..=4).any(|rank| {
-                min_rank_for_secure_width(d, collision, ring_elems) == Some(rank)
+                min_rank_for_secure_width(d, collision, ring_elems as u64) == Some(rank)
                     && overhead == ring_vec_bytes(rank as usize, d)
             })
         });
