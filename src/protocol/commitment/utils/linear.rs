@@ -2,6 +2,8 @@
 
 #[cfg(all(target_arch = "aarch64", feature = "parallel"))]
 use crate::algebra::ntt::neon;
+#[cfg(all(target_arch = "x86_64", feature = "parallel"))]
+use crate::algebra::ntt::sse41;
 #[cfg(feature = "parallel")]
 use crate::algebra::ntt::MontCoeff;
 use crate::algebra::ntt::PrimeWidth;
@@ -479,6 +481,22 @@ fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
                         prime.p.to_i64() as i16,
                     );
                 }
+            }
+        }
+        return;
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    if sse41::use_sse41_ntt() && size_of::<W>() == size_of::<i32>() {
+        for k in 0..K {
+            let prime = params.primes[k];
+            unsafe {
+                sse41::add_reduce_i32(
+                    acc.limbs[k].as_mut_ptr() as *mut i32,
+                    other.limbs[k].as_ptr() as *const i32,
+                    D,
+                    prime.p.to_i64() as i32,
+                );
             }
         }
         return;

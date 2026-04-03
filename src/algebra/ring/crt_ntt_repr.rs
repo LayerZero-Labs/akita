@@ -1,7 +1,7 @@
 //! CRT+NTT-domain representation of cyclotomic ring elements.
 
 use std::array::from_fn;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use std::mem::size_of;
 
 use crate::algebra::backend::{CrtReconstruct, NttPrimeOps, NttTransform, ScalarBackend};
@@ -12,6 +12,8 @@ use crate::algebra::ntt::crt::GarnerData;
 #[cfg(target_arch = "aarch64")]
 use crate::algebra::ntt::neon;
 use crate::algebra::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
+#[cfg(target_arch = "x86_64")]
+use crate::algebra::ntt::sse41;
 use crate::{CanonicalField, FieldCore};
 
 use super::cyclotomic::CyclotomicRing;
@@ -686,6 +688,24 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                             prime.pinv.to_i64() as i16,
                         );
                     }
+                }
+            }
+            return;
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        if sse41::use_sse41_ntt() && size_of::<W>() == size_of::<i32>() {
+            for k in 0..K {
+                let prime = params.primes[k];
+                unsafe {
+                    sse41::pointwise_mul_acc_i32(
+                        self.limbs[k].as_mut_ptr() as *mut i32,
+                        lhs.limbs[k].as_ptr() as *const i32,
+                        rhs.limbs[k].as_ptr() as *const i32,
+                        D,
+                        prime.p.to_i64() as i32,
+                        prime.pinv.to_i64() as i32,
+                    );
                 }
             }
             return;

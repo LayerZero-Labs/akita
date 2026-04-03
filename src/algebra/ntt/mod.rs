@@ -5,6 +5,8 @@ pub mod crt;
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod neon;
 pub mod prime;
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod sse41;
 pub mod tables;
 
 pub use butterfly::NttTwiddles;

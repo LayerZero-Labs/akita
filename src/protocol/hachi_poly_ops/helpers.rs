@@ -621,12 +621,23 @@ pub(super) fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const 
         && challenges
             .iter()
             .all(|challenge| challenge.positions.len() == D && challenge.coeffs.len() == D);
+    let rotated_tables = use_fused_full_challenge.then(|| {
+        challenges
+            .iter()
+            .map(|challenge| {
+                let mut rotated = [[0i32; D]; D];
+                fill_rotated_challenge::<D>(&mut rotated, challenge);
+                rotated
+            })
+            .collect::<Vec<_>>()
+    });
     let mut out = vec![[0i32; D]; block_len * num_digits];
 
     #[cfg(feature = "parallel")]
     out.par_chunks_mut(elem_chunk * num_digits)
         .enumerate()
         .for_each(|(tid, acc)| {
+            let rotated_tables = rotated_tables.as_deref();
             let elem_start = tid * elem_chunk;
             if elem_start >= block_len {
                 return;
@@ -634,7 +645,6 @@ pub(super) fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const 
             let elems_in_chunk = acc.len() / num_digits;
             let elem_end = elem_start + elems_in_chunk;
             let mut digit_buf = (!use_fused_full_challenge).then(|| vec![[0i8; D]; num_digits]);
-            let mut rotated = use_fused_full_challenge.then(|| vec![[0i32; D]; D]);
 
             for (block_idx, challenge) in challenges.iter().enumerate() {
                 let block_start = block_idx * block_len;
@@ -646,8 +656,8 @@ pub(super) fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const 
                     continue;
                 }
                 let coeff_end = (block_start + elem_end).min(coeffs.len());
-                if let Some(rotated) = rotated.as_mut() {
-                    fill_rotated_challenge::<D>(rotated, challenge);
+                if let Some(rotated_tables) = rotated_tables {
+                    let rotated = &rotated_tables[block_idx];
                     for (local_elem_idx, ring) in coeffs[coeff_start..coeff_end].iter().enumerate()
                     {
                         let base = local_elem_idx * num_digits;
@@ -679,6 +689,7 @@ pub(super) fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const 
     out.chunks_mut(elem_chunk * num_digits)
         .enumerate()
         .for_each(|(tid, acc)| {
+            let rotated_tables = rotated_tables.as_deref();
             let elem_start = tid * elem_chunk;
             if elem_start >= block_len {
                 return;
@@ -686,7 +697,6 @@ pub(super) fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const 
             let elems_in_chunk = acc.len() / num_digits;
             let elem_end = elem_start + elems_in_chunk;
             let mut digit_buf = (!use_fused_full_challenge).then(|| vec![[0i8; D]; num_digits]);
-            let mut rotated = use_fused_full_challenge.then(|| vec![[0i32; D]; D]);
 
             for (block_idx, challenge) in challenges.iter().enumerate() {
                 let block_start = block_idx * block_len;
@@ -698,8 +708,8 @@ pub(super) fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const 
                     continue;
                 }
                 let coeff_end = (block_start + elem_end).min(coeffs.len());
-                if let Some(rotated) = rotated.as_mut() {
-                    fill_rotated_challenge::<D>(rotated, challenge);
+                if let Some(rotated_tables) = rotated_tables {
+                    let rotated = &rotated_tables[block_idx];
                     for (local_elem_idx, ring) in coeffs[coeff_start..coeff_end].iter().enumerate()
                     {
                         let base = local_elem_idx * num_digits;
@@ -753,8 +763,8 @@ pub(super) fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::{
-        decompose_ring_full_challenge_accumulate, decompose_ring_interleaved,
-        fill_rotated_challenge, sparse_mul_acc, DecomposeParams,
+        balanced_ring_decompose_fold_partitioned, decompose_ring_full_challenge_accumulate,
+        decompose_ring_interleaved, fill_rotated_challenge, sparse_mul_acc, DecomposeParams,
     };
     use crate::algebra::ring::sparse_challenge::SparseChallenge;
     use crate::algebra::{CyclotomicRing, Fp64};
@@ -804,5 +814,79 @@ mod tests {
         decompose_ring_full_challenge_accumulate::<F, D>(&ring, &rotated, &mut fused_acc, &params);
 
         assert_eq!(fused_acc, generic_acc);
+    }
+
+    #[test]
+    fn partitioned_full_challenge_accumulate_matches_generic_sparse_path() {
+        type F = Fp64<4294967197>;
+        const D: usize = 32;
+        let block_len = 3;
+        let num_digits = 4;
+        let coeffs: Vec<_> = (0..6)
+            .map(|idx| {
+                CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                    let v = (((idx * 11 + k * 7) as i64) % 19) - 9;
+                    F::from_i64(v)
+                }))
+            })
+            .collect();
+        let challenges = vec![
+            SparseChallenge {
+                positions: (0..D as u32).collect(),
+                coeffs: (0..D)
+                    .map(|k| match k % 4 {
+                        0 => -2,
+                        1 => -1,
+                        2 => 1,
+                        _ => 3,
+                    })
+                    .collect(),
+            },
+            SparseChallenge {
+                positions: (0..D as u32).collect(),
+                coeffs: (0..D)
+                    .map(|k| match k % 5 {
+                        0 => -3,
+                        1 => -1,
+                        2 => 1,
+                        3 => 2,
+                        _ => 4,
+                    })
+                    .collect(),
+            },
+        ];
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let params = DecomposeParams {
+            half_q: q / 2,
+            q,
+            mask: (1i128 << 3) - 1,
+            half_b: 1i128 << 2,
+            b_val: 1i128 << 3,
+            log_basis: 3,
+        };
+
+        let fused = balanced_ring_decompose_fold_partitioned::<F, D>(
+            &coeffs,
+            &challenges,
+            block_len,
+            num_digits,
+            &params,
+        );
+
+        let mut generic = vec![[0i32; D]; block_len * num_digits];
+        let mut digit_buf = vec![[0i8; D]; num_digits];
+        for (block_idx, challenge) in challenges.iter().enumerate() {
+            let block_start = block_idx * block_len;
+            for local_idx in 0..block_len {
+                let ring = &coeffs[block_start + local_idx];
+                decompose_ring_interleaved::<F, D>(ring, &mut digit_buf, num_digits, &params);
+                let base = local_idx * num_digits;
+                for digit in 0..num_digits {
+                    sparse_mul_acc::<D>(&digit_buf[digit], challenge, &mut generic[base + digit]);
+                }
+            }
+        }
+
+        assert_eq!(fused, generic);
     }
 }
