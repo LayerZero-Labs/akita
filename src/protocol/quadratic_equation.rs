@@ -11,7 +11,7 @@ use crate::parallel::*;
 use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
-    fused_split_eq_quotients, mat_vec_mul_ntt_single_i8_blocks, mat_vec_mul_ntt_single_i8_cyclic,
+    fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
 };
 use crate::protocol::commitment::{
     CommitmentConfig, HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, RingCommitment,
@@ -297,8 +297,7 @@ where
                 w_hat_planes = w_hat.flat_digits().len()
             )
             .entered();
-            let w_hat_blocks: Vec<&[[i8; D]]> = w_hat.iter_blocks().collect();
-            mat_vec_mul_ntt_single_i8_blocks(ntt_d, level_params.n_d, &w_hat_blocks)
+            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, w_hat.flat_digits())
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
@@ -493,8 +492,7 @@ where
         let v = {
             let _span = tracing::info_span!("compute_v", w_hat_planes = w_hat.flat_digits().len())
                 .entered();
-            let w_hat_blocks: Vec<&[[i8; D]]> = w_hat.iter_blocks().collect();
-            mat_vec_mul_ntt_single_i8_blocks(ntt_d, level_params.n_d, &w_hat_blocks)
+            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, w_hat.flat_digits())
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
@@ -681,8 +679,7 @@ where
         let v = {
             let _span = tracing::info_span!("compute_v", w_hat_planes = w_hat.flat_digits().len())
                 .entered();
-            let w_hat_blocks: Vec<&[[i8; D]]> = w_hat.iter_blocks().collect();
-            mat_vec_mul_ntt_single_i8_blocks(ntt_d, level_params.n_d, &w_hat_blocks)
+            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, w_hat.flat_digits())
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));

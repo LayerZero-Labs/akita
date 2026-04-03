@@ -11,7 +11,7 @@ use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
-use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8_blocks;
+use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::HachiRootBatchSummary;
 use crate::protocol::commitment::{
@@ -910,9 +910,8 @@ where
         log_basis,
     )?;
 
-    let t_hat_blocks: Vec<&[[i8; D]]> = inner.t_hat.iter_blocks().collect();
     let u: Vec<CyclotomicRing<F, D>> =
-        mat_vec_mul_ntt_single_i8_blocks(ntt_shared, level_params.n_b, &t_hat_blocks);
+        mat_vec_mul_ntt_single_i8(ntt_shared, level_params.n_b, inner.t_hat.flat_digits());
     let hint = HachiCommitmentHint::with_t(inner.t_hat, inner.t);
     Ok((RingCommitment { u }, hint))
 }

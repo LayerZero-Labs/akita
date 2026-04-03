@@ -4,8 +4,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use hachi_pcs::protocol::commitment::presets::fp128;
 use hachi_pcs::protocol::commitment::utils::linear::{
     decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense,
-    mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_single_i8,
-    mat_vec_mul_ntt_single_i8_blocks,
+    mat_vec_mul_ntt_i8_dense_single_row,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::DensePoly;
@@ -96,27 +95,6 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
             black_box(mat_vec_mul_ntt_digits_i8::<F, D>(
                 &setup.ntt_shared,
                 setup.ntt_shared.num_rows(),
-                black_box(&digit_block_slices),
-            ))
-        })
-    });
-    let flat_digits: Vec<[i8; D]> = digit_blocks.iter().flatten().copied().collect();
-    group.bench_function("single_i8_flat_full_nv25_d32", |b| {
-        b.iter(|| {
-            black_box(mat_vec_mul_ntt_single_i8::<F, D>(
-                &setup.ntt_shared,
-                1,
-                black_box(&flat_digits),
-            ))
-        })
-    });
-    group.bench_function("single_i8_blocks_full_nv25_d32", |b| {
-        b.iter(|| {
-            let digit_block_slices: Vec<&[[i8; D]]> =
-                digit_blocks.iter().map(Vec::as_slice).collect();
-            black_box(mat_vec_mul_ntt_single_i8_blocks::<F, D>(
-                &setup.ntt_shared,
-                1,
                 black_box(&digit_block_slices),
             ))
         })
