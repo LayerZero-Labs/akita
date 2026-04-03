@@ -1118,6 +1118,7 @@ pub type DynamicOneHotScheme<Profile> = DynamicHachiCommitmentScheme<DynamicOneH
 mod tests {
     use super::*;
     use crate::algebra::eq_poly::EqPolynomial;
+    use crate::protocol::commitment::presets::fp128;
     use crate::protocol::commitment::profile::Fp128PrimeProfile;
     use crate::protocol::commitment::{
         CommitmentPreset, DynamicSmallTestCommitmentConfig, StaticBoundedPolicy,
@@ -1287,5 +1288,65 @@ mod tests {
                 32
             );
         }
+    }
+
+    #[test]
+    fn dynamic_full_tiny_root_uses_direct_step() {
+        type DynamicFull = fp128::Full;
+        type DynamicF = fp128::Field;
+
+        let num_vars = 4usize;
+        let evals = EqPolynomial::<DynamicF>::evals(&vec![DynamicF::zero(); num_vars]);
+        let poly = DenseMultilinear::from_field_evals(num_vars, &evals)
+            .unwrap()
+            .into();
+        let setup = <DynamicFull as DynamicCommitmentScheme<DynamicF>>::setup_prover(num_vars, 1);
+        let verifier = <DynamicFull as DynamicCommitmentScheme<DynamicF>>::setup_verifier(&setup);
+        let (commitment, hint) = <DynamicFull as DynamicCommitmentScheme<DynamicF>>::commit(
+            std::slice::from_ref(&poly),
+            &setup,
+        )
+        .unwrap();
+        let opening_point = vec![DynamicF::zero(); num_vars];
+        let opening = evals[0];
+        let mut prove_transcript =
+            Blake2bTranscript::<DynamicF>::new(<DynamicFull as DynamicCommitmentScheme<
+                DynamicF,
+            >>::protocol_name());
+        let proof = <DynamicFull as DynamicCommitmentScheme<DynamicF>>::prove(
+            &setup,
+            &poly,
+            &opening_point,
+            hint,
+            &mut prove_transcript,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .unwrap();
+
+        assert_eq!(proof.num_fold_levels(), 0);
+        assert_eq!(
+            proof
+                .final_witness()
+                .as_field_elements()
+                .expect("tiny dynamic roots should carry field elements directly")
+                .coeff_len(),
+            1usize << num_vars
+        );
+
+        let mut verify_transcript =
+            Blake2bTranscript::<DynamicF>::new(<DynamicFull as DynamicCommitmentScheme<
+                DynamicF,
+            >>::protocol_name());
+        <DynamicFull as DynamicCommitmentScheme<DynamicF>>::verify(
+            &proof,
+            &verifier,
+            &mut verify_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .unwrap();
     }
 }

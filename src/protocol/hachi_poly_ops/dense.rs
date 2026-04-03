@@ -21,12 +21,14 @@ use crate::protocol::hachi_poly_ops::helpers::{
     DecomposeParams,
 };
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
-use crate::protocol::proof::FlatDigitBlocks;
+use crate::protocol::proof::{DirectWitnessProof, FlatDigitBlocks, ProofRingVec};
 use crate::{CanonicalField, FieldCore};
 
 /// Dense polynomial: all ring coefficients materialized in memory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DensePoly<F: FieldCore, const D: usize> {
+    /// Actual multilinear variable count of the source witness.
+    num_vars: usize,
     /// Ring coefficients in sequential block order.
     pub coeffs: Vec<CyclotomicRing<F, D>>,
     small_i8_coeffs: Option<Vec<[i8; D]>>,
@@ -40,18 +42,12 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
     ///
     /// # Errors
     ///
-    /// Returns an error if `D` is not a power of two, `num_vars < log₂(D)`, or
+    /// Returns an error if `D` is not a power of two or if
     /// `evals.len() != 2^num_vars`.
     pub fn from_field_evals(num_vars: usize, evals: &[F]) -> Result<Self, HachiError> {
         if D == 0 || !D.is_power_of_two() {
             return Err(HachiError::InvalidInput(format!(
                 "ring degree D={D} is not a power of two"
-            )));
-        }
-        let alpha = D.trailing_zeros() as usize;
-        if num_vars < alpha {
-            return Err(HachiError::InvalidInput(format!(
-                "num_vars {num_vars} is smaller than alpha {alpha}"
             )));
         }
         let expected_len = 1usize
@@ -64,7 +60,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
             });
         }
 
-        let outer_len = expected_len / D;
+        let outer_len = expected_len.div_ceil(D);
         let q = (-F::one()).to_canonical_u128() + 1;
         let half_q = q / 2;
         let mut coeffs = Vec::with_capacity(outer_len);
@@ -72,14 +68,20 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
         let mut all_small_i8 = true;
 
         for i in 0..outer_len {
-            let slice = &evals[i * D..(i + 1) * D];
-            coeffs.push(CyclotomicRing::from_slice(slice));
+            let start = i * D;
+            let end = ((i + 1) * D).min(expected_len);
+            let slice = &evals[start..end];
+            let mut ring = CyclotomicRing::<F, D>::zero();
+            for (coeff_idx, coeff) in slice.iter().enumerate() {
+                ring.coeffs[coeff_idx] = *coeff;
+            }
+            coeffs.push(ring);
 
             if all_small_i8 {
                 let mut digits = [0i8; D];
-                for (dst, coeff) in digits.iter_mut().zip(slice.iter()) {
+                for (coeff_idx, coeff) in slice.iter().enumerate() {
                     if let Some(centered) = try_centered_i8(*coeff, q, half_q) {
-                        *dst = centered;
+                        digits[coeff_idx] = centered;
                     } else {
                         all_small_i8 = false;
                         break;
@@ -92,15 +94,25 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
         }
 
         Ok(Self {
+            num_vars,
             coeffs,
             small_i8_coeffs: all_small_i8.then_some(small_i8_coeffs),
         })
     }
 
     /// Wrap an existing vector of ring elements.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `coeffs.len() * D` overflows `usize`.
     pub fn from_ring_coeffs(coeffs: Vec<CyclotomicRing<F, D>>) -> Self {
         let small_i8_coeffs = try_small_i8_cache_from_ring_coeffs(&coeffs);
+        let total = coeffs
+            .len()
+            .checked_mul(D)
+            .expect("ring elems * D overflow");
         Self {
+            num_vars: total.trailing_zeros() as usize,
             coeffs,
             small_i8_coeffs,
         }
@@ -115,6 +127,10 @@ where
 
     fn num_ring_elems(&self) -> usize {
         self.coeffs.len()
+    }
+
+    fn num_vars(&self) -> usize {
+        self.num_vars
     }
 
     fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
@@ -398,5 +414,24 @@ where
             .zip(t.iter())
             .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
         Ok(CommitInnerWitness { t, t_hat })
+    }
+
+    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, HachiError> {
+        let live_len = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
+            HachiError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
+        })?;
+        let mut coeffs = Vec::with_capacity(live_len);
+        let mut remaining = live_len;
+        for ring in &self.coeffs {
+            let take = remaining.min(D);
+            coeffs.extend_from_slice(&ring.coefficients()[..take]);
+            remaining -= take;
+            if remaining == 0 {
+                break;
+            }
+        }
+        Ok(DirectWitnessProof::FieldElements(
+            ProofRingVec::from_coeffs(coeffs),
+        ))
     }
 }

@@ -56,7 +56,7 @@ use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
-use crate::protocol::proof::FlatDigitBlocks;
+use crate::protocol::proof::{DirectWitnessProof, FlatDigitBlocks};
 use crate::{CanonicalField, FieldCore};
 
 /// Prover-side output of the decompose + challenge-fold step.
@@ -285,6 +285,23 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     {
         Ok(None)
     }
+
+    /// Materialize a direct root witness for zero-fold openings.
+    ///
+    /// The returned witness must evaluate to the original root-opening claim
+    /// under the usual public opening point. Recursive witnesses do not use
+    /// this hook; it exists only so root proofs can choose a first-class
+    /// direct step instead of forcing a degenerate fold.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when this root representation cannot produce a direct
+    /// witness payload.
+    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, HachiError> {
+        Err(HachiError::InvalidInput(
+            "root-direct witness is not supported for this polynomial type".to_string(),
+        ))
+    }
 }
 
 impl<F, const D: usize, P> HachiPolyOps<F, D> for &P
@@ -409,6 +426,10 @@ where
             log_basis,
         )
     }
+
+    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, HachiError> {
+        <P as HachiPolyOps<F, D>>::direct_root_witness(*self)
+    }
 }
 
 #[cfg(test)]
@@ -437,6 +458,11 @@ mod tests {
         let blocks = map_onehot_to_regular_blocks(onehot_k, &indices, r_vars, m_vars, TestD)
             .expect("regular onehot blocks");
         OneHotPoly {
+            num_vars: (indices.len() * onehot_k)
+                .next_power_of_two()
+                .trailing_zeros() as usize,
+            onehot_k,
+            indices: indices.clone(),
             m_vars,
             blocks: OneHotBlocks::Regular(blocks),
             _marker: PhantomData,

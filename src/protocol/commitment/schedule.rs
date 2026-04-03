@@ -553,11 +553,13 @@ pub struct HachiPlannedState {
     pub log_basis: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// Terminal direct packed-witness handoff in a planned opening proof.
 pub struct HachiPlannedDirectStep {
     /// Public witness state carried by the direct handoff.
     pub state: HachiPlannedState,
+    /// Serialized witness shape carried by the direct handoff.
+    pub witness_shape: DirectWitnessShape,
     /// Exact bytes contributed by the packed direct witness.
     pub direct_bytes: usize,
 }
@@ -682,12 +684,7 @@ impl HachiSchedulePlan {
             .collect();
 
         let terminal = self.direct_step();
-        step_shapes.push(HachiProofStepShape::Direct(
-            DirectWitnessShape::PackedDigits((
-                terminal.state.current_w_len,
-                terminal.state.log_basis,
-            )),
-        ));
+        step_shapes.push(HachiProofStepShape::Direct(terminal.witness_shape.clone()));
         HachiProofShape { step_shapes }
     }
 }
@@ -795,9 +792,12 @@ fn schedule_plan_from_states<Cfg: CommitmentConfig>(
         .last()
         .copied()
         .expect("non-empty generated schedule states");
-    let direct_bytes = packed_digits_bytes(terminal.current_w_len, terminal.log_basis);
+    let witness_shape =
+        DirectWitnessShape::PackedDigits((terminal.current_w_len, terminal.log_basis));
+    let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
     steps.push(HachiPlannedStep::Direct(HachiPlannedDirectStep {
         state: terminal,
+        witness_shape,
         direct_bytes,
     }));
     let no_wrapper_bytes = steps
@@ -854,6 +854,15 @@ fn proof_ring_vec_bytes(ring_len: usize, ring_dim: usize, elem_bytes: usize) -> 
 
 pub(crate) fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
     (num_elems * bits_per_elem as usize).div_ceil(8)
+}
+
+fn direct_witness_bytes(field_bits: u32, shape: &DirectWitnessShape) -> usize {
+    match shape {
+        DirectWitnessShape::PackedDigits((num_elems, bits_per_elem)) => {
+            packed_digits_bytes(*num_elems, *bits_per_elem)
+        }
+        DirectWitnessShape::FieldElements(num_coeffs) => num_coeffs * field_bytes(field_bits),
+    }
 }
 
 fn compressed_unipoly_bytes(degree: usize, elem_bytes: usize) -> usize {
@@ -1024,10 +1033,12 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
         current_w_len: state.current_w_len,
         log_basis: state.log_basis,
     };
-    let direct_bytes = packed_digits_bytes(state.current_w_len, state.log_basis);
+    let witness_shape = DirectWitnessShape::PackedDigits((state.current_w_len, state.log_basis));
+    let direct_bytes = direct_witness_bytes(cfg.field_bits, &witness_shape);
     let mut best = PlannedSuffix {
         steps: vec![HachiPlannedStep::Direct(HachiPlannedDirectStep {
             state: direct_state,
+            witness_shape,
             direct_bytes,
         })],
         no_wrapper_bytes: direct_bytes,
@@ -1296,7 +1307,21 @@ pub(crate) fn planned_schedule<Cfg: CommitmentConfig>(
         half_field_bound: Cfg::planner_half_field_bound(),
     };
     let mut memo = HashMap::new();
-    let mut best: Option<PlannedSuffix> = None;
+    let direct_state = HachiPlannedState {
+        level: 0,
+        current_w_len: root_current_w_len,
+        log_basis: Cfg::decomposition().log_basis,
+    };
+    let direct_witness_shape = DirectWitnessShape::FieldElements(root_current_w_len);
+    let direct_bytes = direct_witness_bytes(cfg.field_bits, &direct_witness_shape);
+    let mut best: Option<PlannedSuffix> = Some(PlannedSuffix {
+        steps: vec![HachiPlannedStep::Direct(HachiPlannedDirectStep {
+            state: direct_state,
+            witness_shape: direct_witness_shape,
+            direct_bytes,
+        })],
+        no_wrapper_bytes: direct_bytes,
+    });
 
     for root_log_basis in min_log_basis..=max_log_basis {
         let Ok((root_params, root_layout)) =
@@ -1352,10 +1377,12 @@ pub(crate) fn planned_schedule<Cfg: CommitmentConfig>(
                     },
                 )?
             } else {
-                let direct_bytes = packed_digits_bytes(next_w_len, next_log_basis);
+                let witness_shape = DirectWitnessShape::PackedDigits((next_w_len, next_log_basis));
+                let direct_bytes = direct_witness_bytes(cfg.field_bits, &witness_shape);
                 PlannedSuffix {
                     steps: vec![HachiPlannedStep::Direct(HachiPlannedDirectStep {
                         state: next_state,
+                        witness_shape,
                         direct_bytes,
                     })],
                     no_wrapper_bytes: direct_bytes,
@@ -1553,6 +1580,36 @@ pub fn hachi_root_level_layout<Cfg: CommitmentConfig>(
     }
     let decomp = main_level_decomposition::<Cfg>(&params);
     let (m_vars, r_vars) = optimal_m_r_split_with_params(&params, decomp, reduced_vars, 0);
+    let layout = layout_from_params(m_vars, r_vars, &params, decomp, 0)?;
+    Ok((params, layout))
+}
+
+/// Derive the root commitment layout, allowing a zero-outer direct root.
+///
+/// Unlike [`hachi_root_level_layout`], this helper is for the commitment
+/// surface rather than the fold surface, so it permits tiny roots that fit
+/// entirely inside one padded ring element.
+///
+/// # Errors
+///
+/// Returns an error if `max_num_vars` underflows `alpha` or if the derived
+/// layout overflows.
+pub(crate) fn hachi_root_commitment_layout<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+) -> Result<(HachiLevelParams, HachiCommitmentLayout), HachiError> {
+    let params = Cfg::level_params(HachiScheduleInputs {
+        max_num_vars,
+        level: 0,
+        current_w_len: 1usize.checked_shl(max_num_vars as u32).unwrap_or(0),
+    });
+    let alpha = params.d.trailing_zeros() as usize;
+    let reduced_vars = max_num_vars.saturating_sub(alpha);
+    let decomp = main_level_decomposition::<Cfg>(&params);
+    let (m_vars, r_vars) = if reduced_vars == 0 {
+        (0, 0)
+    } else {
+        optimal_m_r_split_with_params(&params, decomp, reduced_vars, 0)
+    };
     let layout = layout_from_params(m_vars, r_vars, &params, decomp, 0)?;
     Ok((params, layout))
 }

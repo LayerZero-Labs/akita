@@ -32,6 +32,7 @@ const ONEHOT_TEST_NV: usize = 15;
 const BASIS2_TEST_NV: usize = 12;
 const D32_TEST_NV: usize = 12;
 const BASIS6_TEST_NV: usize = 12;
+const TINY_DIRECT_TEST_NV: usize = 4;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
 static INIT_RAYON: Once = Once::new();
@@ -231,10 +232,18 @@ fn opening_from_poly<FField: CanonicalField, const D: usize, P: HachiPolyOps<FFi
     layout: &HachiCommitmentLayout,
 ) -> FField {
     let alpha_bits = D.trailing_zeros() as usize;
-    assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
+    let target_num_vars = alpha_bits + layout.m_vars + layout.r_vars;
+    assert!(
+        point.len() <= target_num_vars,
+        "opening point length {} exceeds target root arity {}",
+        point.len(),
+        target_num_vars
+    );
+    let mut padded_point = point.to_vec();
+    padded_point.resize(target_num_vars, FField::zero());
 
-    let inner_point = &point[..alpha_bits];
-    let reduced_point = &point[alpha_bits..];
+    let inner_point = &padded_point[..alpha_bits];
+    let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
         layout.r_vars,
@@ -403,6 +412,112 @@ fn full_d32_prove_verify() {
         assert!(
             result.is_ok(),
             "D32 verification must pass: {:?}",
+            result.err()
+        );
+    });
+}
+
+#[test]
+fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = fp128::D32Full;
+        const D: usize = Cfg::D;
+
+        let nv = TINY_DIRECT_TEST_NV;
+        let plan = Cfg::schedule_plan(nv)
+            .expect("schedule plan")
+            .expect("adaptive D32 config should expose a schedule plan");
+        assert_eq!(
+            plan.num_fold_levels(),
+            0,
+            "tiny roots should use direct mode"
+        );
+
+        let layout = Cfg::commitment_layout(nv).expect("layout");
+
+        let mut rng = StdRng::seed_from_u64(0x0ddc_0ffe_e123_4567);
+        let evals: Vec<FSmall> = (0..1usize << nv)
+            .map(|_| FSmall::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+        let poly = DensePoly::<FSmall, D>::from_field_evals(nv, &evals).unwrap();
+        let opening_point = random_point::<FSmall>(nv);
+        let opening = opening_from_poly(&poly, &opening_point, &layout);
+
+        let setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FSmall, D>>::setup_prover(nv, 1);
+        let verifier_setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FSmall, D>>::setup_verifier(&setup);
+        let (commitment, hint) =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FSmall, D>>::commit(
+                std::slice::from_ref(&poly),
+                &setup,
+            )
+            .unwrap();
+        let mut prover_transcript =
+            Blake2bTranscript::<FSmall>::new(b"hachi_e2e/full-d32-direct-root");
+        let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FSmall, D>>::prove(
+            &setup,
+            &poly,
+            &opening_point,
+            hint,
+            &mut prover_transcript,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .unwrap();
+
+        assert_eq!(proof.num_fold_levels(), 0);
+        assert_eq!(proof.size(), plan.exact_proof_bytes);
+        let direct_field = proof
+            .final_witness()
+            .as_field_elements()
+            .expect("root-direct witness should keep raw field elements");
+        assert_eq!(direct_field.coeff_len(), 1usize << nv);
+        let reconstructed = DensePoly::<FSmall, D>::from_field_evals(nv, direct_field.coeffs())
+            .expect("reconstruct direct witness as dense poly");
+        assert_eq!(
+            opening_from_poly(&reconstructed, &opening_point, &layout),
+            opening,
+            "direct witness should preserve the public opening"
+        );
+        let (recomputed_commitment, _) =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FSmall, D>>::commit(
+                std::slice::from_ref(&reconstructed),
+                &setup,
+            )
+            .expect("recompute commitment from direct witness");
+        assert_eq!(
+            recomputed_commitment, commitment,
+            "direct witness should preserve the root commitment"
+        );
+
+        let mut proof_bytes = Vec::new();
+        proof
+            .serialize_compressed(&mut proof_bytes)
+            .expect("serialize direct-root proof");
+        let mut cursor = std::io::Cursor::new(proof_bytes);
+        let decoded =
+            HachiProof::<FSmall>::deserialize_compressed(&mut cursor, &plan.to_proof_shape())
+                .expect("deserialize direct-root proof");
+        assert_eq!(decoded, proof);
+
+        let mut verifier_transcript =
+            Blake2bTranscript::<FSmall>::new(b"hachi_e2e/full-d32-direct-root");
+        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FSmall, D>>::verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+        );
+
+        assert!(
+            result.is_ok(),
+            "tiny D32 direct verification must pass: {:?}",
             result.err()
         );
     });

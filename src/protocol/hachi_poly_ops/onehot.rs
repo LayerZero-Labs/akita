@@ -27,7 +27,7 @@ use crate::protocol::hachi_poly_ops::helpers::{
     sparse_onehot_accumulate, sparse_onehot_accumulate_slices,
 };
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
-use crate::protocol::proof::FlatDigitBlocks;
+use crate::protocol::proof::{DirectWitnessProof, FlatDigitBlocks, ProofRingVec};
 use crate::{CanonicalField, FieldCore};
 use std::marker::PhantomData;
 
@@ -84,6 +84,9 @@ pub(crate) enum OneHotBlocks {
 /// polynomial is converted into its internal sparse layout.
 #[derive(Debug, Clone)]
 pub struct OneHotPoly<F: FieldCore, const D: usize, I: OneHotIndex = usize> {
+    pub(crate) num_vars: usize,
+    pub(crate) onehot_k: usize,
+    pub(crate) indices: Vec<Option<usize>>,
     pub(crate) m_vars: usize,
     pub(crate) blocks: OneHotBlocks,
     pub(crate) _marker: PhantomData<(F, I)>,
@@ -103,6 +106,18 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         r_vars: usize,
         m_vars: usize,
     ) -> Result<Self, HachiError> {
+        let total_field_elems = indices.len().checked_mul(onehot_k).ok_or_else(|| {
+            HachiError::InvalidInput("onehot total field element count overflow".to_string())
+        })?;
+        if !total_field_elems.is_power_of_two() {
+            return Err(HachiError::InvalidInput(format!(
+                "onehot total field elements {total_field_elems} is not a power of two"
+            )));
+        }
+        let indices_usize: Vec<Option<usize>> = indices
+            .iter()
+            .map(|idx| idx.map(OneHotIndex::as_usize))
+            .collect();
         let use_regular_blocks = onehot_k >= D && onehot_k.is_multiple_of(D);
         let blocks = if use_regular_blocks {
             OneHotBlocks::Regular(map_onehot_to_regular_blocks(
@@ -114,6 +129,9 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             )?)
         };
         Ok(Self {
+            num_vars: total_field_elems.trailing_zeros() as usize,
+            onehot_k,
+            indices: indices_usize,
             m_vars,
             blocks,
             _marker: PhantomData,
@@ -295,6 +313,10 @@ where
 
     fn num_ring_elems(&self) -> usize {
         self.total_ring_elems()
+    }
+
+    fn num_vars(&self) -> usize {
+        self.num_vars
     }
 
     fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
@@ -618,6 +640,34 @@ where
             .collect();
 
         Ok(Some(witnesses))
+    }
+
+    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, HachiError> {
+        let total_evals = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
+            HachiError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
+        })?;
+        let mut evals = vec![F::zero(); total_evals];
+        for (chunk_idx, hot_pos) in self.indices.iter().enumerate() {
+            let Some(hot_pos) = hot_pos else {
+                continue;
+            };
+            let field_pos = chunk_idx
+                .checked_mul(self.onehot_k)
+                .and_then(|base| base.checked_add(*hot_pos))
+                .ok_or_else(|| {
+                    HachiError::InvalidInput("onehot direct witness index overflow".to_string())
+                })?;
+            if field_pos >= evals.len() {
+                return Err(HachiError::InvalidInput(format!(
+                    "onehot direct witness index {field_pos} out of range for {} evals",
+                    evals.len()
+                )));
+            }
+            evals[field_pos] = F::one();
+        }
+        Ok(DirectWitnessProof::FieldElements(
+            ProofRingVec::from_coeffs(evals),
+        ))
     }
 }
 

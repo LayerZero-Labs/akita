@@ -2,7 +2,8 @@
 
 use super::profile::{CommitmentFieldProfile, CommitmentFieldProfileSchedule};
 use super::schedule::{
-    hachi_root_level_layout, HachiLevelParams, HachiScheduleInputs, HachiSchedulePlan,
+    hachi_root_commitment_layout, hachi_root_level_layout, HachiLevelParams, HachiScheduleInputs,
+    HachiSchedulePlan,
 };
 use super::utils::math::checked_pow2;
 use super::utils::norm::detect_field_modulus;
@@ -565,7 +566,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// Returns an error if `max_num_vars` does not admit a valid layout.
     fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        let (_, layout) = hachi_root_level_layout::<Self>(max_num_vars)?;
+        let (_, layout) = hachi_root_commitment_layout::<Self>(max_num_vars)?;
         Ok(layout)
     }
 
@@ -853,18 +854,24 @@ pub(super) fn validate_and_derive_layout<
     Cfg::commitment_layout(max_num_vars)
 }
 
-/// Ensure `max_num_vars` is sufficient for config dimensions.
+/// Ensure `max_num_vars` is sufficient for a commitment layout.
 ///
 /// # Errors
 ///
-/// Returns an error when `max_num_vars < required_vars`.
-pub(super) fn ensure_supported_num_vars(
+/// Returns an error when `max_num_vars` cannot support the layout's outer
+/// variable count after accounting for the ring's inner `alpha = log2(D)`
+/// slots. Underfull roots with `max_num_vars < alpha` are allowed when the
+/// layout uses zero outer variables.
+pub(super) fn ensure_layout_supported_num_vars<const D: usize>(
     max_num_vars: usize,
-    required_vars: usize,
+    layout: HachiCommitmentLayout,
 ) -> Result<(), HachiError> {
-    if max_num_vars < required_vars {
+    let alpha = D.trailing_zeros() as usize;
+    let available_outer = max_num_vars.saturating_sub(alpha);
+    let required_outer = layout.outer_vars()?;
+    if available_outer < required_outer {
         return Err(HachiError::InvalidSetup(format!(
-            "max_num_vars {max_num_vars} is smaller than required {required_vars}"
+            "max_num_vars {max_num_vars} leaves only {available_outer} outer vars but layout requires {required_outer}"
         )));
     }
     Ok(())

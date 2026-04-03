@@ -48,6 +48,17 @@ fn generated_or_planned_schedule<Cfg: CommitmentConfig>(
 fn select_root_schedule_for_cfg<Cfg: CommitmentConfig, const D: usize>(
     key: HachiScheduleLookupKey,
 ) -> Result<DynamicRootScheduleSelection, HachiError> {
+    if key.max_num_vars == key.num_vars
+        && key.layout_num_claims == 1
+        && key.batch == HachiRootBatchSummary::singleton()
+    {
+        if let Some(plan) = Cfg::schedule_plan(key.max_num_vars)? {
+            return Ok(DynamicRootScheduleSelection {
+                root_d: D,
+                total_proof_bytes: plan.exact_proof_bytes,
+            });
+        }
+    }
     let artifact = hachi_root_schedule_artifact::<Cfg, D>(key)?;
     Ok(DynamicRootScheduleSelection {
         root_d: D,

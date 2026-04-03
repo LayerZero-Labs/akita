@@ -5,15 +5,11 @@ use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::primitives::serialization::Valid;
-use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
+use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
-#[cfg(test)]
 use crate::protocol::commitment::{
-    hachi_batched_root_layout, root_current_w_len, scale_batched_root_layout,
-};
-use crate::protocol::commitment::{
-    hachi_recursive_level_layout_from_params, hachi_root_runtime_plan,
+    hachi_batched_root_layout, hachi_recursive_level_layout_from_params, hachi_root_runtime_plan,
     hachi_root_runtime_plan_with_batch, packed_digits_bytes,
     planned_next_log_basis_with_current_basis, planned_recursive_suffix_bytes_with_log_basis,
     AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore,
@@ -21,7 +17,11 @@ use crate::protocol::commitment::{
     HachiRootBatchSummary, HachiScheduleInputs, HachiVerifierSetup, RingCommitment,
     RingCommitmentScheme,
 };
-use crate::protocol::hachi_poly_ops::{HachiPolyOps, RecursiveWitnessFlat, RecursiveWitnessView};
+#[cfg(test)]
+use crate::protocol::commitment::{root_current_w_len, scale_batched_root_layout};
+use crate::protocol::hachi_poly_ops::{
+    DensePoly, HachiPolyOps, RecursiveWitnessFlat, RecursiveWitnessView,
+};
 use crate::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
     RingOpeningPoint,
@@ -288,12 +288,6 @@ fn prepare_root_opening_point<F, const D: usize>(
 where
     F: FieldCore,
 {
-    if opening_point.len() < alpha_bits {
-        return Err(HachiError::InvalidPointDimension {
-            expected: alpha_bits,
-            actual: opening_point.len(),
-        });
-    }
     let target_num_vars = layout
         .m_vars
         .checked_add(layout.r_vars)
@@ -322,6 +316,114 @@ where
         ring_opening_point,
         inner_reduction,
     })
+}
+
+fn schedule_uses_root_direct<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+) -> Result<bool, HachiError> {
+    Ok(Cfg::schedule_plan(max_num_vars)?
+        .as_ref()
+        .is_some_and(|plan| plan.num_fold_levels() == 0))
+}
+
+fn root_direct_field_witness<F: FieldCore>(
+    direct_witness: &DirectWitnessProof<F>,
+) -> Result<&ProofRingVec<F>, HachiError> {
+    direct_witness
+        .as_field_elements()
+        .ok_or(HachiError::InvalidProof)
+}
+
+fn root_direct_opening_matches<F, const D: usize, Cfg>(
+    direct_witness: &DirectWitnessProof<F>,
+    opening_point: &[F],
+    opening: &F,
+    basis: BasisMode,
+) -> Result<bool, HachiError>
+where
+    F: FieldCore + CanonicalField,
+    Cfg: CommitmentConfig<Field = F>,
+{
+    let field_witness = root_direct_field_witness(direct_witness)?;
+    let poly = DensePoly::<F, D>::from_field_evals(opening_point.len(), field_witness.coeffs())?;
+    let layout = hachi_batched_root_layout::<Cfg, D>(opening_point.len(), 1)?;
+    let alpha_bits = D.trailing_zeros() as usize;
+    let prepared = prepare_root_opening_point::<F, D>(opening_point, basis, layout, alpha_bits)?;
+    let (y_ring, _) = poly.evaluate_and_fold(
+        &prepared.ring_opening_point.b,
+        &prepared.ring_opening_point.a,
+        layout.block_len,
+    );
+    Ok((y_ring * prepared.inner_reduction.sigma_m1()).coefficients()[0] == *opening)
+}
+
+fn verify_root_direct_commitment<F, const D: usize, Cfg>(
+    direct_witness: &DirectWitnessProof<F>,
+    setup: &HachiVerifierSetup<F>,
+    commitment: &RingCommitment<F, D>,
+) -> Result<bool, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
+    Cfg: CommitmentConfig<Field = F>,
+{
+    let field_witness = root_direct_field_witness(direct_witness)?;
+    let poly = DensePoly::<F, D>::from_field_evals(
+        field_witness.coeff_len().trailing_zeros() as usize,
+        field_witness.coeffs(),
+    )
+    .map_err(|_| HachiError::InvalidProof)?;
+    let verifier_ntt = build_ntt_slot(setup.expanded.shared_matrix.view::<D>())
+        .map_err(|_| HachiError::InvalidProof)?;
+    let temp_setup = HachiProverSetup {
+        expanded: setup.expanded.clone(),
+        ntt_shared: verifier_ntt,
+    };
+    let (expected_commitment, _) =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+            std::slice::from_ref(&poly),
+            &temp_setup,
+        )
+        .map_err(|_| HachiError::InvalidProof)?;
+    Ok(&expected_commitment == commitment)
+}
+
+fn prove_root_direct<F, const D: usize, P>(poly: &P) -> Result<HachiProof<F>, HachiError>
+where
+    F: FieldCore,
+    P: HachiPolyOps<F, D>,
+{
+    Ok(HachiProof {
+        steps: vec![HachiProofStep::Direct(poly.direct_root_witness()?)],
+    })
+}
+
+fn verify_root_direct<F, T, const D: usize, Cfg>(
+    proof: &HachiProof<F>,
+    setup: &HachiVerifierSetup<F>,
+    _transcript: &mut T,
+    opening_point: &[F],
+    opening: &F,
+    commitment: &RingCommitment<F, D>,
+    basis: BasisMode,
+) -> Result<(), HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig<Field = F>,
+{
+    if proof.steps.len() != 1 {
+        return Err(HachiError::InvalidProof);
+    }
+    let direct_witness = proof.final_witness();
+    if !root_direct_opening_matches::<F, D, Cfg>(direct_witness, opening_point, opening, basis)
+        .map_err(|_| HachiError::InvalidProof)?
+    {
+        return Err(HachiError::InvalidProof);
+    }
+    if !verify_root_direct_commitment::<F, D, Cfg>(direct_witness, setup, commitment)? {
+        return Err(HachiError::InvalidProof);
+    }
+    Ok(())
 }
 
 /// Prove one fold level: quad_eq -> ring_switch -> sumcheck.
@@ -1836,6 +1938,9 @@ where
         basis: BasisMode,
     ) -> Result<Self::Proof, HachiError> {
         let num_vars = opening_point.len();
+        if schedule_uses_root_direct::<Cfg>(num_vars)? {
+            return prove_root_direct::<F, D, P>(poly);
+        }
         let t_prove_total = Instant::now();
         let mut levels = Vec::new();
         let hint = single_prove_hint_from_group_hint(hint)?;
@@ -2147,6 +2252,20 @@ where
         basis: BasisMode,
     ) -> Result<(), HachiError> {
         let num_vars = opening_point.len();
+        if proof.num_fold_levels() == 0 {
+            if !schedule_uses_root_direct::<Cfg>(num_vars)? {
+                return Err(HachiError::InvalidProof);
+            }
+            return verify_root_direct::<F, T, D, Cfg>(
+                proof,
+                setup,
+                transcript,
+                opening_point,
+                opening,
+                commitment,
+                basis,
+            );
+        }
         let max_num_vars = setup.expanded.seed.max_num_vars;
         let root_plan = hachi_root_runtime_plan::<Cfg, D>(
             max_num_vars,
@@ -2156,9 +2275,6 @@ where
         .map_err(|_| HachiError::InvalidProof)?;
         let layout = root_plan.root_layout;
         let root_params = root_plan.params.clone();
-        if proof.num_fold_levels() == 0 {
-            return Err(HachiError::InvalidProof);
-        }
         let t_verify_hachi = Instant::now();
 
         let num_levels = proof.num_fold_levels();
@@ -4495,5 +4611,70 @@ mod tests {
             result.is_ok(),
             "monomial-basis proof should verify: {result:?}"
         );
+    }
+
+    #[test]
+    fn tiny_d32_root_direct_helpers_accept_valid_proof() {
+        type DirectCfg = fp128::D32Full;
+        type DirectF = fp128::Field;
+        const DIRECT_D: usize = DirectCfg::D;
+        type DirectScheme = HachiCommitmentScheme<DIRECT_D, DirectCfg>;
+
+        let num_vars = 4usize;
+        let evals: Vec<DirectF> = (0..(1usize << num_vars))
+            .map(|i| DirectF::from_u64((i + 1) as u64))
+            .collect();
+        let poly = DensePoly::<DirectF, DIRECT_D>::from_field_evals(num_vars, &evals).unwrap();
+        let opening_point = vec![DirectF::zero(); num_vars];
+        let opening = evals[0];
+
+        let setup =
+            <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::setup_prover(num_vars, 1);
+        let verifier_setup =
+            <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::setup_verifier(&setup);
+        let (commitment, hint) = <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::commit(
+            std::slice::from_ref(&poly),
+            &setup,
+        )
+        .unwrap();
+        let mut prover_transcript = Blake2bTranscript::<DirectF>::new(b"test/tiny-direct");
+        let proof = <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::prove(
+            &setup,
+            &poly,
+            &opening_point,
+            hint,
+            &mut prover_transcript,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .unwrap();
+
+        assert_eq!(proof.num_fold_levels(), 0);
+        assert!(root_direct_opening_matches::<DirectF, DIRECT_D, DirectCfg>(
+            proof.final_witness(),
+            &opening_point,
+            &opening,
+            BasisMode::Lagrange,
+        )
+        .unwrap());
+        assert!(
+            verify_root_direct_commitment::<DirectF, DIRECT_D, DirectCfg>(
+                proof.final_witness(),
+                &verifier_setup,
+                &commitment,
+            )
+            .unwrap()
+        );
+        let mut verifier_transcript = Blake2bTranscript::<DirectF>::new(b"test/tiny-direct");
+        verify_root_direct::<DirectF, _, DIRECT_D, DirectCfg>(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .unwrap();
     }
 }

@@ -76,6 +76,13 @@ where
         }
     }
 
+    fn num_vars(&self) -> usize {
+        match self {
+            Self::Dense(poly) => poly.num_vars(),
+            Self::OneHot(poly) => poly.num_vars(),
+        }
+    }
+
     fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
         match self {
             Self::Dense(poly) => poly.evaluate_ring(scalars),
@@ -275,6 +282,15 @@ where
                     log_basis,
                 )
             }
+        }
+    }
+
+    fn direct_root_witness(
+        &self,
+    ) -> Result<crate::protocol::proof::DirectWitnessProof<F>, HachiError> {
+        match self {
+            Self::Dense(poly) => poly.direct_root_witness(),
+            Self::OneHot(poly) => poly.direct_root_witness(),
         }
     }
 }

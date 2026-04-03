@@ -1,8 +1,8 @@
 //! Ring-native §4.1 commitment core implementation.
 
 use super::config::{
-    compute_num_digits, compute_num_digits_fold, ensure_block_layout, ensure_supported_num_vars,
-    validate_and_derive_layout, HachiCommitmentLayout,
+    compute_num_digits, compute_num_digits_fold, ensure_block_layout,
+    ensure_layout_supported_num_vars, validate_and_derive_layout, HachiCommitmentLayout,
 };
 use super::onehot::{inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks};
 use super::schedule::HachiScheduleInputs;
@@ -877,7 +877,7 @@ where
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError> {
         let layout = validate_and_derive_layout::<F, Cfg, D>(max_num_vars)?;
         let envelope = Cfg::envelope(max_num_vars);
-        ensure_supported_num_vars(max_num_vars, layout.required_num_vars::<D>()?)?;
+        ensure_layout_supported_num_vars::<D>(max_num_vars, layout)?;
 
         #[cfg(feature = "disk-persistence")]
         {
@@ -979,10 +979,7 @@ where
             level: 0,
             current_w_len: root_current_w_len::<D>(layout),
         });
-        ensure_supported_num_vars(
-            setup.expanded.seed.max_num_vars,
-            layout.required_num_vars::<D>()?,
-        )?;
+        ensure_layout_supported_num_vars::<D>(setup.expanded.seed.max_num_vars, layout)?;
         ensure_block_layout(f_blocks, layout)?;
 
         let depth_commit = layout.num_digits_commit;
@@ -1053,10 +1050,7 @@ where
             level: 0,
             current_w_len: root_current_w_len::<D>(layout),
         });
-        ensure_supported_num_vars(
-            setup.expanded.seed.max_num_vars,
-            layout.required_num_vars::<D>()?,
-        )?;
+        ensure_layout_supported_num_vars::<D>(setup.expanded.seed.max_num_vars, layout)?;
 
         let sparse_blocks =
             map_onehot_to_sparse_blocks(onehot_k, indices, layout.r_vars, layout.m_vars, D)?;
