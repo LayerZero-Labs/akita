@@ -148,9 +148,29 @@ fn compute_level_witness(cfg: &RingConfig, a: &WitnessArgs) -> LevelComputation 
 
 // ── Output types ───────────────────────────────────────────────────────────
 
-/// Per-level parameters in the planned schedule.
+/// Serialized direct-witness shape chosen at a terminal step.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DirectWitnessShape {
+    PackedDigits { num_elems: usize, bits_per_elem: u32 },
+    FieldElements { num_elems: usize },
+}
+
+impl DirectWitnessShape {
+    pub fn witness_bytes(&self) -> usize {
+        match self {
+            Self::PackedDigits {
+                num_elems,
+                bits_per_elem,
+            } => packed_digits_bytes(*num_elems, *bits_per_elem),
+            Self::FieldElements { num_elems } => num_elems.saturating_mul(elem_bytes()),
+        }
+    }
+}
+
+/// One planned folding step.
 #[derive(Clone, Debug)]
-pub struct PlannedLevel {
+pub struct PlannedFoldStep {
+    pub current_w_len: usize,
     pub d: u32,
     pub lb: u32,
     pub m_vars: u32,
@@ -167,14 +187,64 @@ pub struct PlannedLevel {
     pub label: &'static str,
 }
 
+/// One planned direct terminal step.
+#[derive(Clone, Debug)]
+pub struct PlannedDirectStep {
+    pub current_w_len: usize,
+    pub witness_shape: DirectWitnessShape,
+    pub entry_d: Option<u32>,
+    pub entry_nb: Option<u32>,
+    pub direct_bytes: usize,
+    pub total_bytes: usize,
+}
+
+/// One planned schedule step.
+#[derive(Clone, Debug)]
+pub enum PlannedStep {
+    Fold(PlannedFoldStep),
+    Direct(PlannedDirectStep),
+}
+
 /// Complete planned schedule.
 #[derive(Clone, Debug)]
 pub struct Schedule {
-    pub levels: Vec<PlannedLevel>,
-    pub tail_bytes: usize,
+    pub steps: Vec<PlannedStep>,
     pub total_bytes: usize,
-    pub final_w_len: usize,
-    pub final_lb: u32,
+}
+
+impl Schedule {
+    pub fn fold_steps(&self) -> impl Iterator<Item = &PlannedFoldStep> {
+        self.steps.iter().filter_map(|step| match step {
+            PlannedStep::Fold(level) => Some(level),
+            PlannedStep::Direct(_) => None,
+        })
+    }
+
+    pub fn num_fold_levels(&self) -> usize {
+        self.fold_steps().count()
+    }
+
+    pub fn direct_step(&self) -> Option<&PlannedDirectStep> {
+        self.steps.iter().find_map(|step| match step {
+            PlannedStep::Direct(direct) => Some(direct),
+            PlannedStep::Fold(_) => None,
+        })
+    }
+
+    pub fn direct_bytes(&self) -> usize {
+        self.direct_step().map_or(0, |step| step.total_bytes)
+    }
+
+    pub fn final_w_len(&self) -> usize {
+        self.direct_step().map_or(0, |step| step.current_w_len)
+    }
+
+    pub fn final_lb(&self) -> Option<u32> {
+        match self.direct_step().map(|step| &step.witness_shape) {
+            Some(DirectWitnessShape::PackedDigits { bits_per_elem, .. }) => Some(*bits_per_elem),
+            _ => None,
+        }
+    }
 }
 
 // ── Planner options ────────────────────────────────────────────────────────
@@ -221,8 +291,7 @@ type MemoKey = (usize, u32, u32); // (w_len, cur_D, prev_lb)
 #[derive(Clone)]
 struct BestSuffix {
     cost: usize,
-    levels: Vec<PlannedLevel>,
-    tail_lb: u32,
+    steps: Vec<PlannedStep>,
 }
 
 struct Planner {
@@ -300,7 +369,11 @@ impl Planner {
         let num_ring = if level > 0 {
             w_len / cfg.d as usize
         } else {
-            1usize << (self.opts.max_num_vars - cfg.d.trailing_zeros() as usize)
+            let alpha = cfg.d.trailing_zeros() as usize;
+            if self.opts.max_num_vars <= alpha {
+                return None;
+            }
+            1usize << (self.opts.max_num_vars - alpha)
         };
 
         let base_args = WitnessArgs {
@@ -364,6 +437,9 @@ impl Planner {
         let alpha = d.trailing_zeros() as usize;
 
         let (reduced_vars, num_ring) = if level == 0 {
+            if self.opts.max_num_vars <= alpha {
+                return None;
+            }
             let rv = self.opts.max_num_vars - alpha;
             (rv, 1usize << rv)
         } else {
@@ -397,16 +473,26 @@ impl Planner {
 
         let mut best = BestSuffix {
             cost: usize::MAX,
-            levels: Vec::new(),
-            tail_lb: prev_lb,
+            steps: Vec::new(),
         };
 
         if let Some(tnb) = self.tail_entry_nb(w_len, cur_d, prev_lb) {
-            let t = ring_vec_bytes(tnb as usize, cur_d) + packed_digits_bytes(w_len, prev_lb);
+            let witness_shape = DirectWitnessShape::PackedDigits {
+                num_elems: w_len,
+                bits_per_elem: prev_lb,
+            };
+            let direct_bytes = witness_shape.witness_bytes();
+            let total_bytes = ring_vec_bytes(tnb as usize, cur_d) + direct_bytes;
             best = BestSuffix {
-                cost: t,
-                levels: Vec::new(),
-                tail_lb: prev_lb,
+                cost: total_bytes,
+                steps: vec![PlannedStep::Direct(PlannedDirectStep {
+                    current_w_len: w_len,
+                    witness_shape,
+                    entry_d: Some(cur_d),
+                    entry_nb: Some(tnb),
+                    direct_bytes,
+                    total_bytes,
+                })],
             };
         }
 
@@ -432,8 +518,9 @@ impl Planner {
                     }
                     let total = entry_commit + prefix + suffix.cost;
                     if total < best.cost {
-                        let mut levels = Vec::with_capacity(1 + suffix.levels.len());
-                        levels.push(PlannedLevel {
+                        let mut steps = Vec::with_capacity(1 + suffix.steps.len());
+                        steps.push(PlannedStep::Fold(PlannedFoldStep {
+                            current_w_len: w_len,
                             d: cfg.d,
                             lb,
                             m_vars: lc.m_vars,
@@ -448,12 +535,11 @@ impl Planner {
                             next_w_len: lc.next_w_len,
                             level_bytes: entry_commit + prefix,
                             label: cfg.label,
-                        });
-                        levels.extend_from_slice(&suffix.levels);
+                        }));
+                        steps.extend_from_slice(&suffix.steps);
                         best = BestSuffix {
                             cost: total,
-                            levels,
-                            tail_lb: suffix.tail_lb,
+                            steps,
                         };
                     }
                 }
@@ -481,13 +567,30 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
     let mut planner = Planner::new(opts.clone());
 
     let root_w_len = 1usize << opts.max_num_vars;
-    let mut overall_best: Option<(usize, Vec<PlannedLevel>, u32)> = None;
+    let root_direct_shape = DirectWitnessShape::FieldElements {
+        num_elems: root_w_len,
+    };
+    let root_direct_bytes = root_direct_shape.witness_bytes();
+    let mut overall_best = Some((
+        root_direct_bytes,
+        vec![PlannedStep::Direct(PlannedDirectStep {
+            current_w_len: root_w_len,
+            witness_shape: root_direct_shape,
+            entry_d: None,
+            entry_nb: None,
+            direct_bytes: root_direct_bytes,
+            total_bytes: root_direct_bytes,
+        })],
+    ));
 
     let all_cfgs: Vec<RingConfig> = opts.ring_configs.to_vec();
     let unique_ds = planner.unique_ds.clone();
 
     for root_cfg in &all_cfgs {
         let alpha = root_cfg.d.trailing_zeros() as usize;
+        if opts.max_num_vars <= alpha {
+            continue;
+        }
         let rv = opts.max_num_vars - alpha;
         let num_ring = 1usize << rv;
 
@@ -536,10 +639,11 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
                     let total = root_entry_commit + root_prefix + suffix.cost;
                     let is_better = overall_best
                         .as_ref()
-                        .map_or(true, |(best_total, _, _)| total < *best_total);
+                        .is_none_or(|(best_total, _)| total < *best_total);
                     if is_better {
-                        let mut levels = Vec::with_capacity(1 + suffix.levels.len());
-                        levels.push(PlannedLevel {
+                        let mut steps = Vec::with_capacity(1 + suffix.steps.len());
+                        steps.push(PlannedStep::Fold(PlannedFoldStep {
+                            current_w_len: root_w_len,
                             d: root_cfg.d,
                             lb: root_lb,
                             m_vars: root_lc.m_vars,
@@ -554,9 +658,9 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
                             next_w_len: root_lc.next_w_len,
                             level_bytes: root_entry_commit + root_prefix,
                             label: root_cfg.label,
-                        });
-                        levels.extend_from_slice(&suffix.levels);
-                        overall_best = Some((total, levels, suffix.tail_lb));
+                        }));
+                        steps.extend_from_slice(&suffix.steps);
+                        overall_best = Some((total, steps));
                     }
                 }
             }
@@ -564,23 +668,13 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
     }
 
     match overall_best {
-        Some((total, levels, tail_lb)) => {
-            let final_w_len = levels.last().map_or(0, |l| l.next_w_len);
-            let tail_bytes = packed_digits_bytes(final_w_len, tail_lb);
-            Schedule {
-                levels,
-                tail_bytes,
-                total_bytes: total,
-                final_w_len,
-                final_lb: tail_lb,
-            }
-        }
+        Some((total, steps)) => Schedule {
+            steps,
+            total_bytes: total,
+        },
         None => Schedule {
-            levels: Vec::new(),
-            tail_bytes: 0,
+            steps: Vec::new(),
             total_bytes: usize::MAX,
-            final_w_len: 0,
-            final_lb: 0,
         },
     }
 }
@@ -593,7 +687,7 @@ mod tests {
     fn onehot_32_produces_schedule() {
         let opts = PlannerOptions::new(1, 32);
         let sched = run_universal_planner(&opts);
-        assert!(!sched.levels.is_empty());
+        assert!(sched.num_fold_levels() > 0);
         assert!(sched.total_bytes < 100_000);
     }
 
@@ -623,7 +717,7 @@ mod tests {
     fn full_25_produces_schedule() {
         let opts = PlannerOptions::new(128, 25);
         let sched = run_universal_planner(&opts);
-        assert!(!sched.levels.is_empty());
+        assert!(sched.num_fold_levels() > 0);
         assert!(sched.total_bytes < 166_613);
     }
 
@@ -639,15 +733,15 @@ mod tests {
         let d128_cfgs = Box::leak(d128_cfgs.into_boxed_slice());
         opts.ring_configs = d128_cfgs;
         let sched = run_universal_planner(&opts);
-        assert!(!sched.levels.is_empty());
-        assert!(sched.levels.iter().all(|level| level.d == 128));
+        assert!(sched.num_fold_levels() > 0);
+        assert!(sched.fold_steps().all(|level| level.d == 128));
     }
 
     #[test]
     fn onehot_44_produces_schedule() {
         let opts = PlannerOptions::new(1, 44);
         let sched = run_universal_planner(&opts);
-        assert!(!sched.levels.is_empty());
+        assert!(sched.num_fold_levels() > 0);
         assert!(sched.total_bytes < 106_533);
     }
 
@@ -655,16 +749,13 @@ mod tests {
     fn no_header_wrapper() {
         let opts = PlannerOptions::new(1, 20);
         let sched = run_universal_planner(&opts);
-        let level_sum: usize = sched.levels.iter().map(|l| l.level_bytes).sum();
-        let overhead = sched.total_bytes - (level_sum + sched.tail_bytes);
-        let collision = (1u32 << sched.final_lb) - 1;
-        let matched_tail_entry = [16u32, 32, 64].into_iter().any(|d| {
-            let ring_elems = sched.final_w_len.div_ceil(d as usize);
-            (1u32..=4).any(|rank| {
-                min_rank_for_secure_width(d, collision, ring_elems as u64) == Some(rank)
-                    && overhead == ring_vec_bytes(rank as usize, d)
-            })
-        });
+        let level_sum: usize = sched.fold_steps().map(|l| l.level_bytes).sum();
+        let direct = sched.direct_step().expect("schedule should end in direct step");
+        let overhead = sched.total_bytes - (level_sum + direct.direct_bytes);
+        let matched_tail_entry = match (&direct.entry_d, &direct.entry_nb) {
+            (Some(d), Some(rank)) => overhead == ring_vec_bytes(*rank as usize, *d),
+            _ => overhead == 0,
+        };
         assert!(
             matched_tail_entry,
             "tail overhead {overhead} should be one valid entry commitment"
