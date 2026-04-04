@@ -2,8 +2,8 @@
 
 use super::config::{CommitmentConfig, CommitmentPreset, DecompositionParams};
 use super::generated::{
-    fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table, table_entry_envelope,
-    GeneratedScheduleTable,
+    fp128_d128_full_table, fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table,
+    table_entry_envelope, GeneratedScheduleTable,
 };
 use super::schedule::{
     generated_schedule_plan_from_table, hachi_root_schedule_artifact,
@@ -216,71 +216,43 @@ impl ProfileScheduleSource {
 
 /// Internal schedule authority for profile-backed planner families.
 pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
-    /// Generated table for one adaptive bounded family, if this profile ships one.
-    fn generated_adaptive_bounded_table<
-        const D: usize,
-        const LOG_COMMIT_BOUND: u32,
-        const N_A: usize,
-        const N_B: usize,
-        const N_D: usize,
-    >() -> Option<GeneratedScheduleTable> {
-        let _ = (D, LOG_COMMIT_BOUND, N_A, N_B, N_D);
-        None
-    }
-
-    /// Generated table for the coarse `D=64` onehot family, if shipped.
-    fn generated_onehot_d64_table() -> Option<GeneratedScheduleTable> {
+    /// Generated table for one shipped planner-backed family, if available.
+    fn generated_schedule_table<const D: usize, const LOG_COMMIT_BOUND: u32>()
+    -> Option<GeneratedScheduleTable> {
+        let _ = (D, LOG_COMMIT_BOUND);
         None
     }
 
     /// Maximum `(n_a, n_b, n_d)` required by the generated entry at
     /// `max_num_vars`, if this profile ships one.
-    fn generated_adaptive_bounded_envelope<
-        const D: usize,
-        const LOG_COMMIT_BOUND: u32,
-        const N_A: usize,
-        const N_B: usize,
-        const N_D: usize,
-    >(
+    fn generated_schedule_envelope<const D: usize, const LOG_COMMIT_BOUND: u32>(
         max_num_vars: usize,
     ) -> Option<(usize, usize, usize)> {
-        let _ = (N_A, N_B, N_D);
-        Self::generated_adaptive_bounded_table::<D, LOG_COMMIT_BOUND, N_A, N_B, N_D>()
+        Self::generated_schedule_table::<D, LOG_COMMIT_BOUND>()
             .and_then(|table| table_entry_envelope(table, max_num_vars))
     }
 
-    /// Maximum `(n_a, n_b, n_d)` required by the generated D64 onehot entry at
-    /// `max_num_vars`, if this profile ships one.
-    fn generated_onehot_d64_envelope(max_num_vars: usize) -> Option<(usize, usize, usize)> {
-        Self::generated_onehot_d64_table().and_then(|table| table_entry_envelope(table, max_num_vars))
-    }
-
-    /// Exact generated schedule source for one adaptive bounded family.
+    /// Exact generated schedule source for one shipped generated family.
     ///
     /// # Errors
     ///
-    /// Returns an error if the bounded family does not ship a generated
-    /// schedule table or cannot derive a valid exact schedule source at
+    /// Returns an error if the family does not ship a generated schedule table
+    /// or cannot derive a valid exact schedule source at
     /// `max_num_vars`.
-    fn generated_adaptive_bounded_schedule_source<
+    fn generated_schedule_source<
         Cfg: CommitmentConfig,
         const D: usize,
         const LOG_COMMIT_BOUND: u32,
-        const N_A: usize,
-        const N_B: usize,
-        const N_D: usize,
     >(
         max_num_vars: usize,
     ) -> Result<ProfileScheduleSource, HachiError> {
         let (min_log_basis, max_log_basis) = Self::adaptive_log_basis_search_range();
-        let table =
-            Self::generated_adaptive_bounded_table::<D, LOG_COMMIT_BOUND, N_A, N_B, N_D>()
-                .ok_or_else(|| {
-                    HachiError::InvalidSetup(format!(
-                        "missing generated adaptive schedule table for {}",
-                        std::any::type_name::<Cfg>()
-                    ))
-                })?;
+        let table = Self::generated_schedule_table::<D, LOG_COMMIT_BOUND>().ok_or_else(|| {
+            HachiError::InvalidSetup(format!(
+                "missing generated schedule table for {}",
+                std::any::type_name::<Cfg>()
+            ))
+        })?;
         let exact_plan =
             generated_schedule::<Cfg>(max_num_vars, table, min_log_basis, max_log_basis)?;
         Ok(ProfileScheduleSource::new(
@@ -316,31 +288,6 @@ pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
         ))
     }
 
-    /// Exact generated schedule source for the coarse `D=64` onehot family.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the onehot `D=64` family does not ship a generated
-    /// schedule table or cannot derive a valid exact schedule source at
-    /// `max_num_vars`.
-    fn generated_onehot_d64_schedule_source<Cfg: CommitmentConfig>(
-        max_num_vars: usize,
-    ) -> Result<ProfileScheduleSource, HachiError> {
-        let (min_log_basis, max_log_basis) = Self::adaptive_log_basis_search_range();
-        let table = Self::generated_onehot_d64_table().ok_or_else(|| {
-            HachiError::InvalidSetup(format!(
-                "missing generated D64 onehot schedule table for {}",
-                std::any::type_name::<Cfg>()
-            ))
-        })?;
-        let exact_plan =
-            generated_schedule::<Cfg>(max_num_vars, table, min_log_basis, max_log_basis)?;
-        Ok(ProfileScheduleSource::new(
-            exact_plan,
-            min_log_basis,
-            max_log_basis,
-        ))
-    }
 }
 
 /// Internal dynamic-root selection hooks layered on top of a public profile.
@@ -475,11 +422,11 @@ impl CommitmentFieldProfile for Fp128PrimeProfile {
     type Field = Prime128Offset275;
     type FullCfg32 = CommitmentPreset<
         Self::Field,
-        super::config::GeneratedAdaptiveBoundedPolicy<Self, 32, 128, 2, 2, 2>,
+        super::config::GeneratedAdaptivePolicy<Self, 32, 128>,
     >;
     type FullCfg64 = CommitmentPreset<
         Self::Field,
-        super::config::GeneratedAdaptiveBoundedPolicy<Self, 64, 128, 1, 1, 1>,
+        super::config::GeneratedAdaptivePolicy<Self, 64, 128>,
     >;
     type FullCfg128 = CommitmentPreset<
         Self::Field,
@@ -487,10 +434,9 @@ impl CommitmentFieldProfile for Fp128PrimeProfile {
     >;
     type OneHotCfg32 = CommitmentPreset<
         Self::Field,
-        super::config::GeneratedAdaptiveBoundedPolicy<Self, 32, 1, 2, 2, 2>,
+        super::config::GeneratedAdaptivePolicy<Self, 32, 1>,
     >;
-    type OneHotCfg64 =
-        CommitmentPreset<Self::Field, super::config::GeneratedOneHotD64Policy<Self>>;
+    type OneHotCfg64 = CommitmentPreset<Self::Field, super::config::GeneratedAdaptivePolicy<Self, 64, 1>>;
     type OneHotCfg128 =
         CommitmentPreset<
             Self::Field,
@@ -548,18 +494,16 @@ impl CommitmentFieldProfile for Fp128PrimeProfile {
 }
 
 impl CommitmentFieldProfileSchedule for Fp128PrimeProfile {
-    fn generated_adaptive_bounded_table<
-        const D: usize,
-        const LOG_COMMIT_BOUND: u32,
-        const N_A: usize,
-        const N_B: usize,
-        const N_D: usize,
-    >() -> Option<GeneratedScheduleTable> {
-        fp128_adaptive_bounded_table::<D, LOG_COMMIT_BOUND, N_A, N_B, N_D>()
-    }
-
-    fn generated_onehot_d64_table() -> Option<GeneratedScheduleTable> {
-        Some(fp128_adaptive_onehot_d64_table())
+    fn generated_schedule_table<const D: usize, const LOG_COMMIT_BOUND: u32>()
+    -> Option<GeneratedScheduleTable> {
+        match (D, LOG_COMMIT_BOUND) {
+            (32, 128) => fp128_adaptive_bounded_table::<32, 128, 2, 2, 2>(),
+            (32, 3) => fp128_adaptive_bounded_table::<32, 3, 2, 2, 2>(),
+            (32, 1) => fp128_adaptive_bounded_table::<32, 1, 2, 2, 2>(),
+            (64, 1) => Some(fp128_adaptive_onehot_d64_table()),
+            (128, 128) => Some(fp128_d128_full_table()),
+            _ => None,
+        }
     }
 }
 
@@ -629,8 +573,10 @@ mod schedule_source_tests {
         };
 
         let source =
-            <Fp128PrimeProfile as CommitmentFieldProfileSchedule>::generated_onehot_d64_schedule_source::<
+            <Fp128PrimeProfile as CommitmentFieldProfileSchedule>::generated_schedule_source::<
                 Cfg,
+                64,
+                1,
             >(max_num_vars)
             .unwrap();
 

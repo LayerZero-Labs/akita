@@ -23,11 +23,11 @@ pub mod transcript;
 pub use commitment::{
     optimal_m_r_split, presets, AppendToTranscript, CommitmentConfig, CommitmentPolicy,
     CommitmentPreset, CommitmentScheme, DummyProof, DynamicCommitmentScheme,
-    DynamicSmallTestCommitmentConfig, GeneratedAdaptiveBoundedPolicy,
-    GeneratedOneHotD64Policy, HachiCommitment, HachiCommitmentCore, HachiCommitmentLayout,
-    HachiExpandedSetup, HachiOpeningClaim, HachiOpeningPoint, HachiProverSetup,
-    HachiRootBatchSummary, HachiSetupSeed, HachiVerifierSetup, PlannedAdaptiveBoundedPolicy,
-    RingCommitment, RingCommitmentScheme, SmallTestCommitmentConfig, StaticBoundedPolicy,
+    DynamicSmallTestCommitmentConfig, GeneratedAdaptivePolicy, HachiCommitment,
+    HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup, HachiOpeningClaim,
+    HachiOpeningPoint, HachiProverSetup, HachiRootBatchSummary, HachiSetupSeed,
+    HachiVerifierSetup, PlannedAdaptiveBoundedPolicy, RingCommitment, RingCommitmentScheme,
+    SmallTestCommitmentConfig, StaticBoundedPolicy,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use dynamic_commitment_scheme::{
