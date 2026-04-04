@@ -568,6 +568,15 @@ pub struct HachiPlannedDirectStep {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Exact current-step execution data recovered from a pinned schedule.
+pub struct HachiPlannedLevelExecution {
+    /// Planned fold level that matches the current public state.
+    pub level: HachiPlannedLevel,
+    /// Planned next-level params implied by the following schedule step.
+    pub next_level_params: HachiLevelParams,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// One step in a planned opening proof.
 pub enum HachiPlannedStep {
     /// A Hachi fold level with an explicit next-state handoff.
@@ -702,6 +711,53 @@ fn exact_planned_state_index(
             && state.current_w_len == inputs.current_w_len
             && log_basis.is_none_or(|basis| state.log_basis == basis)
     })
+}
+
+pub(crate) fn exact_planned_level_execution<Cfg: CommitmentConfig>(
+    schedule: &HachiSchedulePlan,
+    inputs: HachiScheduleInputs,
+    log_basis: u32,
+) -> Result<Option<HachiPlannedLevelExecution>, HachiError> {
+    let Some(state_index) = exact_planned_state_index(schedule, inputs, Some(log_basis)) else {
+        return Ok(None);
+    };
+    let Some(current_step) = schedule.steps.get(state_index) else {
+        return Ok(None);
+    };
+    let HachiPlannedStep::Fold(current_level) = current_step else {
+        return Ok(None);
+    };
+    let Some(next_step) = schedule.steps.get(state_index + 1) else {
+        return Err(HachiError::InvalidSetup(
+            "planned fold step must be followed by another schedule step".to_string(),
+        ));
+    };
+    let next_level_params = match next_step {
+        HachiPlannedStep::Fold(next_level) => next_level.params.clone(),
+        HachiPlannedStep::Direct(direct) => {
+            let (d, n_b) = match direct.witness_shape {
+                DirectWitnessShape::PackedDigits(_) => {
+                    let entry_d = current_level.params.d;
+                    let entry_nb = current_level.next_commit_coeffs / entry_d;
+                    (entry_d, entry_nb)
+                }
+                DirectWitnessShape::FieldElements(_) => (current_level.params.d, 0),
+            };
+            HachiLevelParams {
+                d,
+                log_basis: direct.state.log_basis,
+                n_a: 0,
+                n_b,
+                n_d: 0,
+                challenge_l1_mass: current_level.params.challenge_l1_mass,
+                stage1_config: Cfg::stage1_challenge_config(d),
+            }
+        }
+    };
+    Ok(Some(HachiPlannedLevelExecution {
+        level: current_level.as_ref().clone(),
+        next_level_params,
+    }))
 }
 
 fn scheduled_suffix_bytes_from_index(schedule: &HachiSchedulePlan, state_index: usize) -> usize {

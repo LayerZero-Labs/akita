@@ -36,21 +36,46 @@ const D128_RING_CONFIGS: &[RingConfig] = &[
     },
 ];
 
-const D64_ONEHOT_RING_CONFIGS: &[RingConfig] = &[RingConfig {
-    d: 64,
-    n_a: 1,
-    challenge_l1_mass: 54,
-    max_abs_challenge_coeff: 2,
-    label: "D64-na1",
-}];
+const D64_RING_CONFIGS: &[RingConfig] = &[
+    RingConfig {
+        d: 64,
+        n_a: 1,
+        challenge_l1_mass: 54,
+        max_abs_challenge_coeff: 2,
+        label: "D64-na1",
+    },
+    RingConfig {
+        d: 64,
+        n_a: 2,
+        challenge_l1_mass: 54,
+        max_abs_challenge_coeff: 2,
+        label: "D64-na2",
+    },
+];
 
-const D32_NA2_RING_CONFIGS: &[RingConfig] = &[RingConfig {
-    d: 32,
-    n_a: 2,
-    challenge_l1_mass: 256,
-    max_abs_challenge_coeff: 8,
-    label: "D32-na2",
-}];
+const D32_RING_CONFIGS: &[RingConfig] = &[
+    RingConfig {
+        d: 32,
+        n_a: 1,
+        challenge_l1_mass: 256,
+        max_abs_challenge_coeff: 8,
+        label: "D32-na1",
+    },
+    RingConfig {
+        d: 32,
+        n_a: 2,
+        challenge_l1_mass: 256,
+        max_abs_challenge_coeff: 8,
+        label: "D32-na2",
+    },
+    RingConfig {
+        d: 32,
+        n_a: 3,
+        challenge_l1_mass: 256,
+        max_abs_challenge_coeff: 8,
+        label: "D32-na3",
+    },
+];
 
 const ALL_FAMILIES: &[FamilySpec] = &[
     FamilySpec {
@@ -69,7 +94,7 @@ const ALL_FAMILIES: &[FamilySpec] = &[
         log_commit_bound: 128,
         min_num_vars: 1,
         max_num_vars: 63,
-        ring_configs: D32_NA2_RING_CONFIGS,
+        ring_configs: D32_RING_CONFIGS,
     },
     FamilySpec {
         family_name: "fp128_d32_logbasis",
@@ -78,7 +103,7 @@ const ALL_FAMILIES: &[FamilySpec] = &[
         log_commit_bound: 3,
         min_num_vars: 1,
         max_num_vars: 63,
-        ring_configs: D32_NA2_RING_CONFIGS,
+        ring_configs: D32_RING_CONFIGS,
     },
     FamilySpec {
         family_name: "fp128_d32_onehot",
@@ -87,7 +112,7 @@ const ALL_FAMILIES: &[FamilySpec] = &[
         log_commit_bound: 1,
         min_num_vars: 1,
         max_num_vars: 63,
-        ring_configs: D32_NA2_RING_CONFIGS,
+        ring_configs: D32_RING_CONFIGS,
     },
     FamilySpec {
         family_name: "fp128_d64_onehot",
@@ -96,7 +121,7 @@ const ALL_FAMILIES: &[FamilySpec] = &[
         log_commit_bound: 1,
         min_num_vars: 1,
         max_num_vars: 63,
-        ring_configs: D64_ONEHOT_RING_CONFIGS,
+        ring_configs: D64_RING_CONFIGS,
     },
 ];
 

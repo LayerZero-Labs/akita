@@ -29,11 +29,13 @@ pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
 pub use profile::{CommitmentFieldProfile, Fp128PrimeProfile};
 pub use schedule::{
     hachi_recursive_level_layout_from_params, hachi_root_level_layout, HachiLevelParams,
-    HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedState, HachiPlannedStep,
-    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
+    HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedLevelExecution, HachiPlannedState,
+    HachiPlannedStep, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
+    HachiSchedulePlan,
 };
 pub(crate) use schedule::{
-    hachi_root_runtime_plan, hachi_root_runtime_plan_with_batch, packed_digits_bytes,
+    exact_planned_level_execution, hachi_root_runtime_plan, hachi_root_runtime_plan_with_batch,
+    packed_digits_bytes,
     planned_next_log_basis_with_current_basis, planned_recursive_suffix_bytes_with_log_basis,
     recursive_level_decomposition_from_root, recursive_r_decomp_levels_for_bound,
 };

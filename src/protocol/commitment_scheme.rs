@@ -9,7 +9,8 @@ use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
 use crate::protocol::commitment::{
-    hachi_batched_root_layout, hachi_recursive_level_layout_from_params, hachi_root_runtime_plan,
+    exact_planned_level_execution, hachi_batched_root_layout,
+    hachi_recursive_level_layout_from_params, hachi_root_runtime_plan,
     hachi_root_runtime_plan_with_batch, packed_digits_bytes,
     planned_next_log_basis_with_current_basis, planned_recursive_suffix_bytes_with_log_basis,
     AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore,
@@ -456,6 +457,7 @@ fn prove_one_level<F, T, const D: usize, Cfg, P>(
     level: usize,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
+    next_level_params_override: Option<HachiLevelParams>,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
@@ -535,6 +537,7 @@ where
         level,
         level_params,
         layout,
+        next_level_params_override,
         quad_eq,
         y_ring,
     )
@@ -552,6 +555,7 @@ fn finish_prove_level<F, T, const D: usize, LevelCfg, ScheduleCfg>(
     level: usize,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
+    next_level_params_override: Option<HachiLevelParams>,
     mut quad_eq: Box<QuadraticEquation<F, { D }, LevelCfg>>,
     y_ring: CyclotomicRing<F, D>,
 ) -> Result<ProveLevelOutput<F>, HachiError>
@@ -573,8 +577,11 @@ where
         level: level + 1,
         current_w_len: w.len(),
     };
-    let next_params =
-        next_level_params_from_current_basis::<ScheduleCfg>(next_inputs, level_params.log_basis)?;
+    let next_params = if let Some(params) = next_level_params_override {
+        params
+    } else {
+        next_level_params_from_current_basis::<ScheduleCfg>(next_inputs, level_params.log_basis)?
+    };
 
     let (w_commitment_flat, w_hint_cache) = {
         let _span = tracing::info_span!("commit_w_level", level).entered();
@@ -1054,6 +1061,7 @@ fn prove_one_recursive_level<F, T, const D: usize, Cfg>(
     level: usize,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
+    next_level_params_override: Option<HachiLevelParams>,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
@@ -1140,6 +1148,7 @@ where
         level,
         level_params,
         layout,
+        next_level_params_override,
         quad_eq,
         y_ring,
     )
@@ -1257,6 +1266,7 @@ fn dispatch_prove_level<F, T, const D: usize, Cfg>(
     transcript: &mut T,
     level: usize,
     level_params: &HachiLevelParams,
+    next_level_params_override: Option<HachiLevelParams>,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
@@ -1273,6 +1283,7 @@ where
             transcript,
             level,
             level_params,
+            next_level_params_override,
         )
     } else {
         dispatch_with_ntt!(level_d, ntt_cache, expanded, |D_LEVEL, ntt_shared| {
@@ -1285,6 +1296,7 @@ where
                 transcript,
                 level,
                 level_params,
+                next_level_params_override,
             )
         })
     }
@@ -1341,6 +1353,7 @@ fn prove_subsequent_level<F, T, const D_LEVEL: usize, Cfg>(
     transcript: &mut T,
     level: usize,
     level_params: &HachiLevelParams,
+    next_level_params_override: Option<HachiLevelParams>,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
@@ -1395,6 +1408,7 @@ where
         level,
         level_params,
         w_layout,
+        next_level_params_override,
     )
 }
 
@@ -1445,6 +1459,7 @@ where
             transcript,
             level,
             &level_params,
+            None,
         )?;
 
         levels.push(out.level_proof);
@@ -1948,11 +1963,34 @@ where
         let mut ntt_cache = MultiDNttCaches::new();
         let mut commit_ntt_cache = MultiDNttCaches::new();
         let max_num_vars = setup.expanded.seed.max_num_vars;
+        let mut exact_plan = if num_vars == max_num_vars {
+            Cfg::schedule_plan(max_num_vars)?
+        } else {
+            None
+        };
         let root_plan = hachi_root_runtime_plan::<Cfg, D>(
             max_num_vars,
             num_vars,
             setup.expanded.seed.max_num_batched_polys,
         )?;
+        let mut root_next_params_override = None;
+        if let Some(plan) = exact_plan.as_ref() {
+            if let Some(planned_root) = exact_planned_level_execution::<Cfg>(
+                plan,
+                root_plan.inputs,
+                root_plan.params.log_basis,
+            )? {
+                if planned_root.level.layout == root_plan.root_layout
+                    && planned_root.level.params == root_plan.params
+                {
+                    root_next_params_override = Some(planned_root.next_level_params);
+                } else {
+                    exact_plan = None;
+                }
+            } else {
+                exact_plan = None;
+            }
+        }
         let layout = root_plan.root_layout;
         let root_params = root_plan.params.clone();
 
@@ -1993,14 +2031,14 @@ where
             0,
             &root_params,
             layout,
+            root_next_params_override,
         )?;
         levels.push(out.level_proof);
 
         let mut prev_poly_len = root_plan.inputs.current_w_len;
         let mut current_state = out.next_state;
         let mut level = 1usize;
-        let planned_num_levels =
-            Cfg::schedule_plan(max_num_vars)?.map(|plan| plan.num_fold_levels());
+        let planned_num_levels = exact_plan.as_ref().map(|plan| plan.num_fold_levels());
 
         // Subsequent levels: recursive w-opening with WCommitmentConfig.
         // Each level dispatches to the ring dimension from Cfg::d_at_level.
@@ -2014,14 +2052,36 @@ where
             if !should_continue {
                 break;
             }
-            let level_params = Cfg::level_params_with_log_basis(
-                HachiScheduleInputs {
-                    max_num_vars,
-                    level,
-                    current_w_len: current_state.w.len(),
-                },
-                current_state.log_basis,
-            );
+            let inputs = HachiScheduleInputs {
+                max_num_vars,
+                level,
+                current_w_len: current_state.w.len(),
+            };
+            let planned_level = if let Some(plan) = exact_plan.as_ref() {
+                Some(
+                    exact_planned_level_execution::<Cfg>(plan, inputs, current_state.log_basis)?
+                        .ok_or_else(|| {
+                            HachiError::InvalidSetup(
+                                "exact planned recursive level did not match runtime state"
+                                    .to_string(),
+                            )
+                        })?,
+                )
+            } else {
+                None
+            };
+            let (level_params, next_level_params_override) = if let Some(planned_level) = planned_level
+            {
+                (
+                    planned_level.level.params,
+                    Some(planned_level.next_level_params),
+                )
+            } else {
+                (
+                    Cfg::level_params_with_log_basis(inputs, current_state.log_basis),
+                    None,
+                )
+            };
             let level_d = level_params.d;
 
             let out = dispatch_prove_level::<F, T, D, Cfg>(
@@ -2035,6 +2095,7 @@ where
                 transcript,
                 level,
                 &level_params,
+                next_level_params_override,
             )?;
 
             levels.push(out.level_proof);
@@ -2050,17 +2111,40 @@ where
             "hachi prove complete"
         );
 
-        let final_params = Cfg::level_params_with_log_basis(
-            HachiScheduleInputs {
-                max_num_vars,
-                level,
-                current_w_len: current_state.w.len(),
-            },
-            current_state.log_basis,
-        );
+        let final_log_basis = if let Some(plan) = exact_plan.as_ref() {
+            let direct_step = plan.direct_step();
+            if direct_step.state.current_w_len != current_state.w.len()
+                || direct_step.state.log_basis != current_state.log_basis
+            {
+                return Err(HachiError::InvalidSetup(
+                    "exact planned direct step did not match final runtime state".to_string(),
+                ));
+            }
+            match direct_step.witness_shape {
+                crate::protocol::proof::DirectWitnessShape::PackedDigits((_, bits_per_elem)) => {
+                    bits_per_elem
+                }
+                crate::protocol::proof::DirectWitnessShape::FieldElements(_) => {
+                    return Err(HachiError::InvalidSetup(
+                        "folding proof cannot terminate in field-element direct witness"
+                            .to_string(),
+                    ))
+                }
+            }
+        } else {
+            Cfg::level_params_with_log_basis(
+                HachiScheduleInputs {
+                    max_num_vars,
+                    level,
+                    current_w_len: current_state.w.len(),
+                },
+                current_state.log_basis,
+            )
+            .log_basis
+        };
         let final_w = PackedDigits::from_i8_digits_with_min_bits(
             current_state.w.as_i8_digits(),
-            final_params.log_basis,
+            final_log_basis,
         );
         let mut steps = levels
             .into_iter()
@@ -2267,6 +2351,11 @@ where
             );
         }
         let max_num_vars = setup.expanded.seed.max_num_vars;
+        let mut exact_plan = if num_vars == max_num_vars {
+            Cfg::schedule_plan(max_num_vars).map_err(|_| HachiError::InvalidProof)?
+        } else {
+            None
+        };
         let root_plan = hachi_root_runtime_plan::<Cfg, D>(
             max_num_vars,
             num_vars,
@@ -2292,7 +2381,20 @@ where
             w_len: root_plan.inputs.current_w_len,
             log_basis: root_params.log_basis,
         };
-        if let Some(plan) = Cfg::schedule_plan(max_num_vars)? {
+        if let Some(plan) = exact_plan.as_ref() {
+            let planned_root =
+                exact_planned_level_execution::<Cfg>(plan, root_plan.inputs, root_params.log_basis)
+                    .map_err(|_| HachiError::InvalidProof)?;
+            if !matches!(
+                planned_root,
+                Some(ref planned_root)
+                    if planned_root.level.layout == layout
+                        && planned_root.level.params == root_params
+            ) {
+                exact_plan = None;
+            }
+        }
+        if let Some(plan) = exact_plan.as_ref() {
             if num_levels != plan.num_fold_levels() {
                 return Err(HachiError::InvalidProof);
             }
@@ -2300,20 +2402,48 @@ where
 
         for (i, level_proof) in proof.fold_levels().enumerate() {
             let is_last = i == num_levels - 1;
-            let level_params = Cfg::level_params_with_log_basis(
-                HachiScheduleInputs {
-                    max_num_vars,
-                    level: i,
-                    current_w_len: current_state.w_len,
-                },
-                current_state.log_basis,
-            );
-            let level_d = level_params.d;
-            let current_layout = if i == 0 {
-                layout
-            } else {
-                hachi_recursive_level_layout_from_params::<Cfg>(&level_params, current_state.w_len)?
+            let inputs = HachiScheduleInputs {
+                max_num_vars,
+                level: i,
+                current_w_len: current_state.w_len,
             };
+            let planned_level = if let Some(plan) = exact_plan.as_ref() {
+                Some(
+                    exact_planned_level_execution::<Cfg>(plan, inputs, current_state.log_basis)
+                        .map_err(|_| HachiError::InvalidProof)?
+                        .ok_or(HachiError::InvalidProof)?,
+                )
+            } else {
+                None
+            };
+            let (level_params, current_layout, planned_next_level_params, planned_next_w_len) =
+                if let Some(planned_level) = planned_level {
+                    if i == 0
+                        && (planned_level.level.layout != layout
+                            || planned_level.level.params != root_params)
+                    {
+                        return Err(HachiError::InvalidProof);
+                    }
+                    (
+                        planned_level.level.params,
+                        planned_level.level.layout,
+                        Some(planned_level.next_level_params),
+                        Some(planned_level.level.next_inputs.current_w_len),
+                    )
+                } else {
+                    let level_params =
+                        Cfg::level_params_with_log_basis(inputs, current_state.log_basis);
+                    let current_layout = if i == 0 {
+                        layout
+                    } else {
+                        hachi_recursive_level_layout_from_params::<Cfg>(
+                            &level_params,
+                            current_state.w_len,
+                        )?
+                    };
+                    (level_params, current_layout, None, None)
+                };
+            let level_d = level_params.d;
             if !current_state.commitment.can_decode_vec(level_d)
                 || !level_proof.y_ring.can_decode_single(level_d)
                 || !level_proof.v.can_decode_vec(level_d)
@@ -2365,14 +2495,24 @@ where
                 let num_l = alpha_bits;
                 let num_u = challenges.len() - num_l;
                 let next_w_len = w_ring_element_count::<F>(&level_params, current_layout) * level_d;
-                let next_level_params = next_level_params_from_current_basis::<Cfg>(
-                    HachiScheduleInputs {
-                        max_num_vars,
-                        level: i + 1,
-                        current_w_len: next_w_len,
-                    },
-                    current_state.log_basis,
-                )?;
+                if let Some(planned_next_w_len) = planned_next_w_len {
+                    if next_w_len != planned_next_w_len {
+                        return Err(HachiError::InvalidProof);
+                    }
+                }
+                let next_level_params = if let Some(next_level_params) = planned_next_level_params {
+                    next_level_params
+                } else {
+                    next_level_params_from_current_basis::<Cfg>(
+                        HachiScheduleInputs {
+                            max_num_vars,
+                            level: i + 1,
+                            current_w_len: next_w_len,
+                        },
+                        current_state.log_basis,
+                    )
+                    .map_err(|_| HachiError::InvalidProof)?
+                };
 
                 if i + 1 < num_levels {
                     let next_level_d = next_level_params.d;
