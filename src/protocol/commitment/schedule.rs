@@ -894,8 +894,12 @@ fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig>(
                     level_decomp,
                     level.current_w_len / level.d as usize,
                 )?;
-                let runtime_next_w_len =
-                    planned_next_w_len(field_bits, Cfg::planner_half_field_bound(), &params, layout);
+                let runtime_next_w_len = planned_next_w_len(
+                    field_bits,
+                    Cfg::planner_half_field_bound(),
+                    &params,
+                    layout,
+                );
                 if runtime_next_w_len != level.next_w_len {
                     return Err(HachiError::InvalidSetup(format!(
                         "generated next_w_len mismatch at level {fold_level}: pinned={}, runtime={runtime_next_w_len}",
@@ -972,7 +976,10 @@ fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig>(
                         direct.direct_bytes
                     )));
                 }
-                if !matches!((direct.entry_d, direct.entry_nb), (Some(_), Some(_)) | (None, None)) {
+                if !matches!(
+                    (direct.entry_d, direct.entry_nb),
+                    (Some(_), Some(_)) | (None, None)
+                ) {
                     return Err(HachiError::InvalidSetup(
                         "generated direct entry commitment must specify both D and n_b or neither"
                             .to_string(),
@@ -1955,27 +1962,32 @@ mod tests {
         let runtime_root = hachi_root_runtime_plan::<Cfg, D>(max_num_vars, max_num_vars, 1)
             .expect("runtime root plan should succeed");
         assert_eq!(
-            planned_root.level.inputs.current_w_len, runtime_root.inputs.current_w_len,
+            planned_root.level.inputs.current_w_len,
+            runtime_root.inputs.current_w_len,
             "planned/runtime root current_w_len mismatch for {} at max_num_vars={max_num_vars}",
             std::any::type_name::<Cfg>()
         );
         assert_eq!(
-            planned_root.level.params, runtime_root.params,
+            planned_root.level.params,
+            runtime_root.params,
             "planned/runtime root params mismatch for {} at max_num_vars={max_num_vars}",
             std::any::type_name::<Cfg>()
         );
         assert_eq!(
-            planned_root.level.layout, runtime_root.root_layout,
+            planned_root.level.layout,
+            runtime_root.root_layout,
             "planned/runtime root layout mismatch for {} at max_num_vars={max_num_vars}",
             std::any::type_name::<Cfg>()
         );
         assert_eq!(
-            planned_root.next_level_params, runtime_root.next_level_params,
+            planned_root.next_level_params,
+            runtime_root.next_level_params,
             "planned/runtime next-level params mismatch for {} at max_num_vars={max_num_vars}",
             std::any::type_name::<Cfg>()
         );
         assert_eq!(
-            planned_root.level.next_inputs.current_w_len, runtime_root.next_inputs.current_w_len,
+            planned_root.level.next_inputs.current_w_len,
+            runtime_root.next_inputs.current_w_len,
             "planned/runtime next_w_len mismatch for {} at max_num_vars={max_num_vars}",
             std::any::type_name::<Cfg>()
         );

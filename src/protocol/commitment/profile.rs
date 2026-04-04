@@ -2,7 +2,7 @@
 
 use super::config::{CommitmentConfig, CommitmentPreset, DecompositionParams};
 use super::generated::{
-    fp128_d128_full_table, fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table,
+    fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table, fp128_d128_full_table,
     table_entry_envelope, GeneratedScheduleTable,
 };
 use super::schedule::{
@@ -217,8 +217,8 @@ impl ProfileScheduleSource {
 /// Internal schedule authority for profile-backed planner families.
 pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
     /// Generated table for one shipped planner-backed family, if available.
-    fn generated_schedule_table<const D: usize, const LOG_COMMIT_BOUND: u32>()
-    -> Option<GeneratedScheduleTable> {
+    fn generated_schedule_table<const D: usize, const LOG_COMMIT_BOUND: u32>(
+    ) -> Option<GeneratedScheduleTable> {
         let _ = (D, LOG_COMMIT_BOUND);
         None
     }
@@ -287,7 +287,6 @@ pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
             max_log_basis,
         ))
     }
-
 }
 
 /// Internal dynamic-root selection hooks layered on top of a public profile.
@@ -420,28 +419,22 @@ pub struct Fp128PrimeProfile;
 
 impl CommitmentFieldProfile for Fp128PrimeProfile {
     type Field = Prime128Offset275;
-    type FullCfg32 = CommitmentPreset<
-        Self::Field,
-        super::config::GeneratedAdaptivePolicy<Self, 32, 128>,
-    >;
-    type FullCfg64 = CommitmentPreset<
-        Self::Field,
-        super::config::GeneratedAdaptivePolicy<Self, 64, 128>,
-    >;
+    type FullCfg32 =
+        CommitmentPreset<Self::Field, super::config::GeneratedAdaptivePolicy<Self, 32, 128>>;
+    type FullCfg64 =
+        CommitmentPreset<Self::Field, super::config::GeneratedAdaptivePolicy<Self, 64, 128>>;
     type FullCfg128 = CommitmentPreset<
         Self::Field,
         super::config::PlannedAdaptiveBoundedPolicy<Self, 128, 128, 1, 1, 1>,
     >;
-    type OneHotCfg32 = CommitmentPreset<
+    type OneHotCfg32 =
+        CommitmentPreset<Self::Field, super::config::GeneratedAdaptivePolicy<Self, 32, 1>>;
+    type OneHotCfg64 =
+        CommitmentPreset<Self::Field, super::config::GeneratedAdaptivePolicy<Self, 64, 1>>;
+    type OneHotCfg128 = CommitmentPreset<
         Self::Field,
-        super::config::GeneratedAdaptivePolicy<Self, 32, 1>,
+        super::config::PlannedAdaptiveBoundedPolicy<Self, 128, 1, 1, 1, 1>,
     >;
-    type OneHotCfg64 = CommitmentPreset<Self::Field, super::config::GeneratedAdaptivePolicy<Self, 64, 1>>;
-    type OneHotCfg128 =
-        CommitmentPreset<
-            Self::Field,
-            super::config::PlannedAdaptiveBoundedPolicy<Self, 128, 1, 1, 1, 1>,
-        >;
 
     fn decomposition(log_commit_bound: u32, log_basis: u32) -> DecompositionParams {
         DecompositionParams {
@@ -494,8 +487,8 @@ impl CommitmentFieldProfile for Fp128PrimeProfile {
 }
 
 impl CommitmentFieldProfileSchedule for Fp128PrimeProfile {
-    fn generated_schedule_table<const D: usize, const LOG_COMMIT_BOUND: u32>()
-    -> Option<GeneratedScheduleTable> {
+    fn generated_schedule_table<const D: usize, const LOG_COMMIT_BOUND: u32>(
+    ) -> Option<GeneratedScheduleTable> {
         match (D, LOG_COMMIT_BOUND) {
             (32, 128) => fp128_adaptive_bounded_table::<32, 128, 2, 2, 2>(),
             (32, 3) => fp128_adaptive_bounded_table::<32, 3, 2, 2, 2>(),

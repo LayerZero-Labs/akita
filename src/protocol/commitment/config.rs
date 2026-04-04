@@ -694,6 +694,11 @@ pub trait CommitmentPolicy: Clone + Send + Sync + 'static {
     ///
     /// Planner-backed families use the exact root fold layout when one is
     /// pinned; otherwise this falls back to the derived root-commitment layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the exact schedule lookup or derived root layout
+    /// construction fails for the requested witness size.
     fn commitment_layout<Cfg: CommitmentConfig>(
         max_num_vars: usize,
     ) -> Result<HachiCommitmentLayout, HachiError> {
@@ -1146,8 +1151,8 @@ where
 
     fn log_basis_at_level<Cfg: CommitmentConfig>(inputs: HachiScheduleInputs) -> u32 {
         Profile::generated_schedule_source::<Cfg, D, LOG_COMMIT_BOUND>(inputs.max_num_vars)
-        .and_then(|source| source.log_basis_at_level::<Cfg>(inputs))
-        .expect("generated adaptive schedule must be derivable from public inputs")
+            .and_then(|source| source.log_basis_at_level::<Cfg>(inputs))
+            .expect("generated adaptive schedule must be derivable from public inputs")
     }
 
     fn log_basis_search_range<Cfg: CommitmentConfig>(_inputs: HachiScheduleInputs) -> (u32, u32) {
@@ -1157,8 +1162,8 @@ where
 
     fn schedule_key<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
         Profile::generated_schedule_source::<Cfg, D, LOG_COMMIT_BOUND>(max_num_vars)
-        .map(|source| source.schedule_key())
-        .expect("generated adaptive schedule key must be derivable from public inputs")
+            .map(|source| source.schedule_key())
+            .expect("generated adaptive schedule key must be derivable from public inputs")
     }
 
     fn schedule_plan<Cfg: CommitmentConfig>(
@@ -1166,7 +1171,7 @@ where
     ) -> Result<Option<HachiSchedulePlan>, HachiError> {
         Ok(Some(
             Profile::generated_schedule_source::<Cfg, D, LOG_COMMIT_BOUND>(max_num_vars)?
-            .schedule_plan(),
+                .schedule_plan(),
         ))
     }
 
@@ -1177,7 +1182,7 @@ where
     ) -> Result<Option<usize>, HachiError> {
         Ok(Some(
             Profile::generated_schedule_source::<Cfg, D, LOG_COMMIT_BOUND>(max_num_vars)?
-            .recursive_suffix_bytes::<Cfg>(max_num_vars, level, current_w_len)?,
+                .recursive_suffix_bytes::<Cfg>(max_num_vars, level, current_w_len)?,
         ))
     }
 
@@ -1252,8 +1257,7 @@ impl<
         const N_A: usize,
         const N_B: usize,
         const N_D: usize,
-    > CommitmentPolicy
-    for PlannedAdaptiveBoundedPolicy<Profile, D, LOG_COMMIT_BOUND, N_A, N_B, N_D>
+    > CommitmentPolicy for PlannedAdaptiveBoundedPolicy<Profile, D, LOG_COMMIT_BOUND, N_A, N_B, N_D>
 where
     Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
 {
@@ -1373,7 +1377,6 @@ where
         }
     }
 }
-
 
 #[cfg(test)]
 mod fp128_policy_tests {

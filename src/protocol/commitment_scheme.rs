@@ -2073,18 +2073,18 @@ where
             } else {
                 None
             };
-            let (level_params, next_level_params_override) = if let Some(planned_level) = planned_level
-            {
-                (
-                    planned_level.level.params,
-                    Some(planned_level.next_level_params),
-                )
-            } else {
-                (
-                    Cfg::level_params_with_log_basis(inputs, current_state.log_basis),
-                    None,
-                )
-            };
+            let (level_params, next_level_params_override) =
+                if let Some(planned_level) = planned_level {
+                    (
+                        planned_level.level.params,
+                        Some(planned_level.next_level_params),
+                    )
+                } else {
+                    (
+                        Cfg::level_params_with_log_basis(inputs, current_state.log_basis),
+                        None,
+                    )
+                };
             let level_d = level_params.d;
 
             let out = dispatch_prove_level::<F, T, D, Cfg>(

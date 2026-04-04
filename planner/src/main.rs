@@ -1,9 +1,7 @@
 use std::env;
 
 use hachi_planner::baseline::{baseline_params_for, run_baseline_planner, BASELINE_CASES};
-use hachi_planner::search::{
-    run_universal_planner, DirectWitnessShape, PlannerOptions, Schedule,
-};
+use hachi_planner::search::{run_universal_planner, DirectWitnessShape, PlannerOptions, Schedule};
 
 fn get_baseline(lcb: u32, nv: usize) -> Option<usize> {
     let d = if lcb == 1 {
@@ -130,7 +128,10 @@ fn cmd_results() {
             let ds = d_schedule(&sched);
             println!(
                 "  {:>4} {:>10} {:<25} {:>10}",
-                nv, sched.total_bytes, ds, sched.direct_bytes()
+                nv,
+                sched.total_bytes,
+                ds,
+                sched.direct_bytes()
             );
 
             if let Some(baseline) = get_baseline(lcb, nv) {

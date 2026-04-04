@@ -38,11 +38,10 @@ pub mod fp128 {
     >;
 
     /// Adaptive `D=128`, rank-1 family with planner-selected bases.
-    pub type AdaptiveBounded<const LOG_COMMIT_BOUND: u32> =
-        CommitmentPreset<
-            Field,
-            PlannedAdaptiveBoundedPolicy<Profile, 128, LOG_COMMIT_BOUND, 1, 1, 1>,
-        >;
+    pub type AdaptiveBounded<const LOG_COMMIT_BOUND: u32> = CommitmentPreset<
+        Field,
+        PlannedAdaptiveBoundedPolicy<Profile, 128, LOG_COMMIT_BOUND, 1, 1, 1>,
+    >;
 
     /// Generated adaptive `D=32` family with pinned planner tables.
     pub type D32AdaptiveBounded<const LOG_COMMIT_BOUND: u32> =

@@ -1,7 +1,12 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GeneratedDirectWitnessShape {
-    PackedDigits { num_elems: usize, bits_per_elem: u32 },
-    FieldElements { num_elems: usize },
+    PackedDigits {
+        num_elems: usize,
+        bits_per_elem: u32,
+    },
+    FieldElements {
+        num_elems: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

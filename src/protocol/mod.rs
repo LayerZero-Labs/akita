@@ -25,9 +25,9 @@ pub use commitment::{
     CommitmentPreset, CommitmentScheme, DummyProof, DynamicCommitmentScheme,
     DynamicSmallTestCommitmentConfig, GeneratedAdaptivePolicy, HachiCommitment,
     HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup, HachiOpeningClaim,
-    HachiOpeningPoint, HachiProverSetup, HachiRootBatchSummary, HachiSetupSeed,
-    HachiVerifierSetup, PlannedAdaptiveBoundedPolicy, RingCommitment, RingCommitmentScheme,
-    SmallTestCommitmentConfig, StaticBoundedPolicy,
+    HachiOpeningPoint, HachiProverSetup, HachiRootBatchSummary, HachiSetupSeed, HachiVerifierSetup,
+    PlannedAdaptiveBoundedPolicy, RingCommitment, RingCommitmentScheme, SmallTestCommitmentConfig,
+    StaticBoundedPolicy,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use dynamic_commitment_scheme::{

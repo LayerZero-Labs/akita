@@ -151,8 +151,13 @@ fn compute_level_witness(cfg: &RingConfig, a: &WitnessArgs) -> LevelComputation 
 /// Serialized direct-witness shape chosen at a terminal step.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DirectWitnessShape {
-    PackedDigits { num_elems: usize, bits_per_elem: u32 },
-    FieldElements { num_elems: usize },
+    PackedDigits {
+        num_elems: usize,
+        bits_per_elem: u32,
+    },
+    FieldElements {
+        num_elems: usize,
+    },
 }
 
 impl DirectWitnessShape {
@@ -539,10 +544,7 @@ impl Planner {
                             label: cfg.label,
                         }));
                         steps.extend_from_slice(&suffix.steps);
-                        best = BestSuffix {
-                            cost: total,
-                            steps,
-                        };
+                        best = BestSuffix { cost: total, steps };
                     }
                 }
             }
@@ -755,7 +757,9 @@ mod tests {
         let opts = PlannerOptions::new(1, 20);
         let sched = run_universal_planner(&opts);
         let level_sum: usize = sched.fold_steps().map(|l| l.level_bytes).sum();
-        let direct = sched.direct_step().expect("schedule should end in direct step");
+        let direct = sched
+            .direct_step()
+            .expect("schedule should end in direct step");
         let overhead = sched.total_bytes - (level_sum + direct.direct_bytes);
         let matched_tail_entry = match (&direct.entry_d, &direct.entry_nb) {
             (Some(d), Some(rank)) => overhead == ring_vec_bytes(*rank as usize, *d),
