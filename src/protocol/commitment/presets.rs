@@ -1,7 +1,8 @@
 //! Public preset bundles for commitment field/config pairings and default schemes.
 
 use super::config::{
-    AdaptiveBoundedPolicy, AdaptiveOneHotD64Policy, CommitmentPreset, StaticBoundedPolicy,
+    CommitmentPreset, GeneratedAdaptiveBoundedPolicy, GeneratedOneHotD64Policy,
+    PlannedAdaptiveBoundedPolicy, StaticBoundedPolicy,
 };
 use crate::protocol::commitment::profile::{CommitmentFieldProfile, Fp128PrimeProfile};
 use crate::protocol::dynamic_commitment_scheme::{
@@ -39,18 +40,24 @@ pub mod fp128 {
 
     /// Adaptive `D=128`, rank-1 family with planner-selected bases.
     pub type AdaptiveBounded<const LOG_COMMIT_BOUND: u32> =
-        CommitmentPreset<Field, AdaptiveBoundedPolicy<Profile, 128, LOG_COMMIT_BOUND, 1, 1, 1>>;
+        CommitmentPreset<
+            Field,
+            PlannedAdaptiveBoundedPolicy<Profile, 128, LOG_COMMIT_BOUND, 1, 1, 1>,
+        >;
 
-    /// Adaptive `D=32`, rank-2 family with planner-selected bases.
+    /// Generated adaptive `D=32`, rank-2 family with pinned planner tables.
     pub type D32AdaptiveBounded<const LOG_COMMIT_BOUND: u32> =
-        CommitmentPreset<Field, AdaptiveBoundedPolicy<Profile, 32, LOG_COMMIT_BOUND, 2, 2, 2>>;
+        CommitmentPreset<
+            Field,
+            GeneratedAdaptiveBoundedPolicy<Profile, 32, LOG_COMMIT_BOUND, 2, 2, 2>,
+        >;
 
     /// Full-field adaptive `D=128` preset.
     pub type D128Full = AdaptiveBounded<128>;
     /// Log-bounded adaptive preset.
     pub type LogBasis = AdaptiveBounded<3>;
-    /// Binary onehot adaptive `D=64` preset.
-    pub type D64OneHot = CommitmentPreset<Field, AdaptiveOneHotD64Policy<Profile>>;
+    /// Binary onehot generated `D=64` preset.
+    pub type D64OneHot = CommitmentPreset<Field, GeneratedOneHotD64Policy<Profile>>;
 
     /// Full-field adaptive `D=32` preset.
     pub type D32Full = D32AdaptiveBounded<128>;

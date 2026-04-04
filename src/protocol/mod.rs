@@ -21,11 +21,12 @@ pub mod sumcheck;
 pub mod transcript;
 
 pub use commitment::{
-    optimal_m_r_split, presets, AdaptiveBoundedPolicy, AdaptiveOneHotD64Policy, AppendToTranscript,
-    CommitmentConfig, CommitmentPolicy, CommitmentPreset, CommitmentScheme, DummyProof,
-    DynamicCommitmentScheme, DynamicSmallTestCommitmentConfig, HachiCommitment,
-    HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup, HachiOpeningClaim,
-    HachiOpeningPoint, HachiProverSetup, HachiRootBatchSummary, HachiSetupSeed, HachiVerifierSetup,
+    optimal_m_r_split, presets, AppendToTranscript, CommitmentConfig, CommitmentPolicy,
+    CommitmentPreset, CommitmentScheme, DummyProof, DynamicCommitmentScheme,
+    DynamicSmallTestCommitmentConfig, GeneratedAdaptiveBoundedPolicy,
+    GeneratedOneHotD64Policy, HachiCommitment, HachiCommitmentCore, HachiCommitmentLayout,
+    HachiExpandedSetup, HachiOpeningClaim, HachiOpeningPoint, HachiProverSetup,
+    HachiRootBatchSummary, HachiSetupSeed, HachiVerifierSetup, PlannedAdaptiveBoundedPolicy,
     RingCommitment, RingCommitmentScheme, SmallTestCommitmentConfig, StaticBoundedPolicy,
 };
 pub use commitment_scheme::HachiCommitmentScheme;

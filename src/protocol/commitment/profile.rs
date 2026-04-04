@@ -1,7 +1,9 @@
 //! Field-profile definitions for planner-backed commitment presets.
 
 use super::config::{CommitmentConfig, CommitmentPreset, DecompositionParams};
-use super::generated::{fp128_adaptive_bounded_table, GeneratedScheduleTable};
+use super::generated::{
+    fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table, GeneratedScheduleTable,
+};
 use super::schedule::{
     generated_schedule_plan_from_table, hachi_root_schedule_artifact,
     planned_log_basis_at_level_from_schedule, planned_recursive_suffix_bytes_from_schedule,
@@ -31,7 +33,7 @@ pub(crate) struct DynamicRootScheduleSelection {
     pub total_proof_bytes: usize,
 }
 
-fn generated_or_planned_schedule<Cfg: CommitmentConfig>(
+fn generated_schedule<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     table: GeneratedScheduleTable,
     min_log_basis: u32,
@@ -230,13 +232,14 @@ pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
         None
     }
 
-    /// Exact schedule source for one adaptive bounded family.
+    /// Exact generated schedule source for one adaptive bounded family.
     ///
     /// # Errors
     ///
-    /// Returns an error if the bounded family cannot derive a valid exact
-    /// schedule source at `max_num_vars`.
-    fn adaptive_bounded_schedule_source<
+    /// Returns an error if the bounded family does not ship a generated
+    /// schedule table or cannot derive a valid exact schedule source at
+    /// `max_num_vars`.
+    fn generated_adaptive_bounded_schedule_source<
         Cfg: CommitmentConfig,
         const D: usize,
         const LOG_COMMIT_BOUND: u32,
@@ -247,13 +250,16 @@ pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
         max_num_vars: usize,
     ) -> Result<ProfileScheduleSource, HachiError> {
         let (min_log_basis, max_log_basis) = Self::adaptive_log_basis_search_range();
-        let exact_plan = if let Some(table) =
+        let table =
             Self::generated_adaptive_bounded_table::<D, LOG_COMMIT_BOUND, N_A, N_B, N_D>()
-        {
-            generated_or_planned_schedule::<Cfg>(max_num_vars, table, min_log_basis, max_log_basis)?
-        } else {
-            planned_schedule::<Cfg>(max_num_vars, min_log_basis, max_log_basis)?
-        };
+                .ok_or_else(|| {
+                    HachiError::InvalidSetup(format!(
+                        "missing generated adaptive schedule table for {}",
+                        std::any::type_name::<Cfg>()
+                    ))
+                })?;
+        let exact_plan =
+            generated_schedule::<Cfg>(max_num_vars, table, min_log_basis, max_log_basis)?;
         Ok(ProfileScheduleSource::new(
             exact_plan,
             min_log_basis,
@@ -261,21 +267,51 @@ pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
         ))
     }
 
-    /// Exact schedule source for the coarse `D=64` onehot family.
+    /// Exact live-planned schedule source for one adaptive bounded family.
     ///
     /// # Errors
     ///
-    /// Returns an error if the onehot `D=64` family cannot derive a valid
-    /// exact schedule source at `max_num_vars`.
-    fn onehot_d64_schedule_source<Cfg: CommitmentConfig>(
+    /// Returns an error if the bounded family cannot derive a valid planned
+    /// schedule source at `max_num_vars`.
+    fn planned_adaptive_bounded_schedule_source<
+        Cfg: CommitmentConfig,
+        const D: usize,
+        const LOG_COMMIT_BOUND: u32,
+        const N_A: usize,
+        const N_B: usize,
+        const N_D: usize,
+    >(
+        max_num_vars: usize,
+    ) -> Result<ProfileScheduleSource, HachiError> {
+        let _ = (D, LOG_COMMIT_BOUND, N_A, N_B, N_D);
+        let (min_log_basis, max_log_basis) = Self::adaptive_log_basis_search_range();
+        let exact_plan = planned_schedule::<Cfg>(max_num_vars, min_log_basis, max_log_basis)?;
+        Ok(ProfileScheduleSource::new(
+            exact_plan,
+            min_log_basis,
+            max_log_basis,
+        ))
+    }
+
+    /// Exact generated schedule source for the coarse `D=64` onehot family.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the onehot `D=64` family does not ship a generated
+    /// schedule table or cannot derive a valid exact schedule source at
+    /// `max_num_vars`.
+    fn generated_onehot_d64_schedule_source<Cfg: CommitmentConfig>(
         max_num_vars: usize,
     ) -> Result<ProfileScheduleSource, HachiError> {
         let (min_log_basis, max_log_basis) = Self::adaptive_log_basis_search_range();
-        let exact_plan = if let Some(table) = Self::generated_onehot_d64_table() {
-            generated_or_planned_schedule::<Cfg>(max_num_vars, table, min_log_basis, max_log_basis)?
-        } else {
-            planned_schedule::<Cfg>(max_num_vars, min_log_basis, max_log_basis)?
-        };
+        let table = Self::generated_onehot_d64_table().ok_or_else(|| {
+            HachiError::InvalidSetup(format!(
+                "missing generated D64 onehot schedule table for {}",
+                std::any::type_name::<Cfg>()
+            ))
+        })?;
+        let exact_plan =
+            generated_schedule::<Cfg>(max_num_vars, table, min_log_basis, max_log_basis)?;
         Ok(ProfileScheduleSource::new(
             exact_plan,
             min_log_basis,
@@ -414,19 +450,29 @@ pub struct Fp128PrimeProfile;
 
 impl CommitmentFieldProfile for Fp128PrimeProfile {
     type Field = Prime128Offset275;
-    type FullCfg32 =
-        CommitmentPreset<Self::Field, super::config::AdaptiveBoundedPolicy<Self, 32, 128, 2, 2, 2>>;
-    type FullCfg64 =
-        CommitmentPreset<Self::Field, super::config::AdaptiveBoundedPolicy<Self, 64, 128, 1, 1, 1>>;
+    type FullCfg32 = CommitmentPreset<
+        Self::Field,
+        super::config::GeneratedAdaptiveBoundedPolicy<Self, 32, 128, 2, 2, 2>,
+    >;
+    type FullCfg64 = CommitmentPreset<
+        Self::Field,
+        super::config::GeneratedAdaptiveBoundedPolicy<Self, 64, 128, 1, 1, 1>,
+    >;
     type FullCfg128 = CommitmentPreset<
         Self::Field,
-        super::config::AdaptiveBoundedPolicy<Self, 128, 128, 1, 1, 1>,
+        super::config::PlannedAdaptiveBoundedPolicy<Self, 128, 128, 1, 1, 1>,
     >;
-    type OneHotCfg32 =
-        CommitmentPreset<Self::Field, super::config::AdaptiveBoundedPolicy<Self, 32, 1, 2, 2, 2>>;
-    type OneHotCfg64 = CommitmentPreset<Self::Field, super::config::AdaptiveOneHotD64Policy<Self>>;
+    type OneHotCfg32 = CommitmentPreset<
+        Self::Field,
+        super::config::GeneratedAdaptiveBoundedPolicy<Self, 32, 1, 2, 2, 2>,
+    >;
+    type OneHotCfg64 =
+        CommitmentPreset<Self::Field, super::config::GeneratedOneHotD64Policy<Self>>;
     type OneHotCfg128 =
-        CommitmentPreset<Self::Field, super::config::AdaptiveBoundedPolicy<Self, 128, 1, 1, 1, 1>>;
+        CommitmentPreset<
+            Self::Field,
+            super::config::PlannedAdaptiveBoundedPolicy<Self, 128, 1, 1, 1, 1>,
+        >;
 
     fn decomposition(log_commit_bound: u32, log_basis: u32) -> DecompositionParams {
         DecompositionParams {
@@ -490,7 +536,7 @@ impl CommitmentFieldProfileSchedule for Fp128PrimeProfile {
     }
 
     fn generated_onehot_d64_table() -> Option<GeneratedScheduleTable> {
-        None
+        Some(fp128_adaptive_onehot_d64_table())
     }
 }
 
@@ -519,7 +565,7 @@ mod schedule_source_tests {
             current_w_len: 245_888,
         };
 
-        let source = <Fp128PrimeProfile as CommitmentFieldProfileSchedule>::adaptive_bounded_schedule_source::<
+        let source = <Fp128PrimeProfile as CommitmentFieldProfileSchedule>::planned_adaptive_bounded_schedule_source::<
             Cfg,
             128,
             128,
@@ -560,7 +606,7 @@ mod schedule_source_tests {
         };
 
         let source =
-            <Fp128PrimeProfile as CommitmentFieldProfileSchedule>::onehot_d64_schedule_source::<
+            <Fp128PrimeProfile as CommitmentFieldProfileSchedule>::generated_onehot_d64_schedule_source::<
                 Cfg,
             >(max_num_vars)
             .unwrap();

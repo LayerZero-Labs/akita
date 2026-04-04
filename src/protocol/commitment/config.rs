@@ -1081,9 +1081,9 @@ where
     }
 }
 
-/// Adaptive bounded policy with planner-selected per-level log bases.
+/// Generated adaptive bounded policy with table-selected per-level log bases.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct AdaptiveBoundedPolicy<
+pub struct GeneratedAdaptiveBoundedPolicy<
     Profile,
     const D: usize,
     const LOG_COMMIT_BOUND: u32,
@@ -1099,7 +1099,8 @@ impl<
         const N_A: usize,
         const N_B: usize,
         const N_D: usize,
-    > CommitmentPolicy for AdaptiveBoundedPolicy<Profile, D, LOG_COMMIT_BOUND, N_A, N_B, N_D>
+    > CommitmentPolicy
+    for GeneratedAdaptiveBoundedPolicy<Profile, D, LOG_COMMIT_BOUND, N_A, N_B, N_D>
 where
     Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
 {
@@ -1121,11 +1122,16 @@ where
     }
 
     fn log_basis_at_level<Cfg: CommitmentConfig>(inputs: HachiScheduleInputs) -> u32 {
-        Profile::adaptive_bounded_schedule_source::<Cfg, D, LOG_COMMIT_BOUND, N_A, N_B, N_D>(
-            inputs.max_num_vars,
-        )
+        Profile::generated_adaptive_bounded_schedule_source::<
+            Cfg,
+            D,
+            LOG_COMMIT_BOUND,
+            N_A,
+            N_B,
+            N_D,
+        >(inputs.max_num_vars)
         .and_then(|source| source.log_basis_at_level::<Cfg>(inputs))
-        .expect("adaptive schedule must be derivable from public inputs")
+        .expect("generated adaptive schedule must be derivable from public inputs")
     }
 
     fn log_basis_search_range<Cfg: CommitmentConfig>(_inputs: HachiScheduleInputs) -> (u32, u32) {
@@ -1134,20 +1140,30 @@ where
     }
 
     fn schedule_key<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
-        Profile::adaptive_bounded_schedule_source::<Cfg, D, LOG_COMMIT_BOUND, N_A, N_B, N_D>(
-            max_num_vars,
-        )
+        Profile::generated_adaptive_bounded_schedule_source::<
+            Cfg,
+            D,
+            LOG_COMMIT_BOUND,
+            N_A,
+            N_B,
+            N_D,
+        >(max_num_vars)
         .map(|source| source.schedule_key())
-        .expect("adaptive schedule key must be derivable from public inputs")
+        .expect("generated adaptive schedule key must be derivable from public inputs")
     }
 
     fn schedule_plan<Cfg: CommitmentConfig>(
         max_num_vars: usize,
     ) -> Result<Option<HachiSchedulePlan>, HachiError> {
         Ok(Some(
-            Profile::adaptive_bounded_schedule_source::<Cfg, D, LOG_COMMIT_BOUND, N_A, N_B, N_D>(
-                max_num_vars,
-            )?
+            Profile::generated_adaptive_bounded_schedule_source::<
+                Cfg,
+                D,
+                LOG_COMMIT_BOUND,
+                N_A,
+                N_B,
+                N_D,
+            >(max_num_vars)?
             .schedule_plan(),
         ))
     }
@@ -1158,9 +1174,14 @@ where
         current_w_len: usize,
     ) -> Result<Option<usize>, HachiError> {
         Ok(Some(
-            Profile::adaptive_bounded_schedule_source::<Cfg, D, LOG_COMMIT_BOUND, N_A, N_B, N_D>(
-                max_num_vars,
-            )?
+            Profile::generated_adaptive_bounded_schedule_source::<
+                Cfg,
+                D,
+                LOG_COMMIT_BOUND,
+                N_A,
+                N_B,
+                N_D,
+            >(max_num_vars)?
             .recursive_suffix_bytes::<Cfg>(max_num_vars, level, current_w_len)?,
         ))
     }
@@ -1200,11 +1221,152 @@ where
     }
 }
 
-/// Adaptive onehot policy with the coarse D=64 outer-rank schedule.
+/// Live-planned adaptive bounded policy with planner-selected per-level log
+/// bases.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct AdaptiveOneHotD64Policy<Profile>(PhantomData<Profile>);
+pub struct PlannedAdaptiveBoundedPolicy<
+    Profile,
+    const D: usize,
+    const LOG_COMMIT_BOUND: u32,
+    const N_A: usize = 1,
+    const N_B: usize = 1,
+    const N_D: usize = 1,
+>(PhantomData<Profile>);
 
-impl<Profile> CommitmentPolicy for AdaptiveOneHotD64Policy<Profile>
+impl<
+        Profile,
+        const D: usize,
+        const LOG_COMMIT_BOUND: u32,
+        const N_A: usize,
+        const N_B: usize,
+        const N_D: usize,
+    > CommitmentPolicy
+    for PlannedAdaptiveBoundedPolicy<Profile, D, LOG_COMMIT_BOUND, N_A, N_B, N_D>
+where
+    Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
+{
+    const D: usize = D;
+
+    fn decomposition() -> DecompositionParams {
+        Profile::decomposition(LOG_COMMIT_BOUND, 3)
+    }
+
+    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
+        let audited_root_rank = Profile::audited_root_outer_rank(D, 0, max_num_vars);
+        let audited_root_a_rank =
+            Profile::audited_root_a_rank::<LOG_COMMIT_BOUND>(D, 0, max_num_vars);
+        CommitmentEnvelope {
+            max_n_a: N_A.max(audited_root_a_rank),
+            max_n_b: N_B.max(audited_root_rank),
+            max_n_d: N_D.max(audited_root_rank),
+        }
+    }
+
+    fn n_b_at_level(level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {
+        N_B.max(Profile::audited_root_outer_rank(D, level, max_num_vars))
+    }
+
+    fn n_d_at_level(level: usize, max_num_vars: usize, current_w_len: usize) -> usize {
+        let _ = current_w_len;
+        N_D.max(Profile::audited_root_outer_rank(D, level, max_num_vars))
+    }
+
+    fn log_basis_at_level<Cfg: CommitmentConfig>(inputs: HachiScheduleInputs) -> u32 {
+        Profile::planned_adaptive_bounded_schedule_source::<
+            Cfg,
+            D,
+            LOG_COMMIT_BOUND,
+            N_A,
+            N_B,
+            N_D,
+        >(inputs.max_num_vars)
+            .and_then(|source| source.log_basis_at_level::<Cfg>(inputs))
+            .expect("planned adaptive schedule must be derivable from public inputs")
+    }
+
+    fn schedule_key<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
+        Profile::planned_adaptive_bounded_schedule_source::<
+            Cfg,
+            D,
+            LOG_COMMIT_BOUND,
+            N_A,
+            N_B,
+            N_D,
+        >(max_num_vars)
+            .map(|source| source.schedule_key())
+            .expect("planned adaptive schedule key must be derivable from public inputs")
+    }
+
+    fn schedule_plan<Cfg: CommitmentConfig>(
+        max_num_vars: usize,
+    ) -> Result<Option<HachiSchedulePlan>, HachiError> {
+        Ok(Some(
+            Profile::planned_adaptive_bounded_schedule_source::<
+                Cfg,
+                D,
+                LOG_COMMIT_BOUND,
+                N_A,
+                N_B,
+                N_D,
+            >(max_num_vars)?
+            .schedule_plan(),
+        ))
+    }
+
+    fn log_basis_search_range<Cfg: CommitmentConfig>(_inputs: HachiScheduleInputs) -> (u32, u32) {
+        let _ = PhantomData::<Cfg>;
+        Profile::adaptive_log_basis_search_range()
+    }
+
+    fn recursive_suffix_bytes<Cfg: CommitmentConfig>(
+        max_num_vars: usize,
+        level: usize,
+        current_w_len: usize,
+    ) -> Result<Option<usize>, HachiError> {
+        Ok(Some(
+            Profile::planned_adaptive_bounded_schedule_source::<
+                Cfg,
+                D,
+                LOG_COMMIT_BOUND,
+                N_A,
+                N_B,
+                N_D,
+            >(max_num_vars)?
+            .recursive_suffix_bytes::<Cfg>(max_num_vars, level, current_w_len)?,
+        ))
+    }
+
+    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        Profile::stage1_challenge_config(d)
+    }
+
+    fn level_params_with_log_basis<Cfg: CommitmentConfig>(
+        inputs: HachiScheduleInputs,
+        log_basis: u32,
+    ) -> HachiLevelParams {
+        let d = Self::d_at_level(inputs.level, inputs.current_w_len);
+        let stage1_config = Self::stage1_challenge_config(d);
+        HachiLevelParams {
+            d,
+            log_basis,
+            n_a: N_A.max(Profile::audited_root_a_rank::<LOG_COMMIT_BOUND>(
+                D,
+                inputs.level,
+                inputs.max_num_vars,
+            )),
+            n_b: Self::n_b_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
+            n_d: Self::n_d_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
+            challenge_l1_mass: stage1_config.l1_mass(),
+            stage1_config,
+        }
+    }
+}
+
+/// Generated adaptive onehot policy with the coarse D=64 outer-rank schedule.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GeneratedOneHotD64Policy<Profile>(PhantomData<Profile>);
+
+impl<Profile> CommitmentPolicy for GeneratedOneHotD64Policy<Profile>
 where
     Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
 {
@@ -1232,22 +1394,22 @@ where
     }
 
     fn log_basis_at_level<Cfg: CommitmentConfig>(inputs: HachiScheduleInputs) -> u32 {
-        Profile::onehot_d64_schedule_source::<Cfg>(inputs.max_num_vars)
+        Profile::generated_onehot_d64_schedule_source::<Cfg>(inputs.max_num_vars)
             .and_then(|source| source.log_basis_at_level::<Cfg>(inputs))
-            .expect("adaptive schedule must be derivable from public inputs")
+            .expect("generated adaptive schedule must be derivable from public inputs")
     }
 
     fn schedule_key<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
-        Profile::onehot_d64_schedule_source::<Cfg>(max_num_vars)
+        Profile::generated_onehot_d64_schedule_source::<Cfg>(max_num_vars)
             .map(|source| source.schedule_key())
-            .expect("adaptive schedule key must be derivable from public inputs")
+            .expect("generated adaptive schedule key must be derivable from public inputs")
     }
 
     fn schedule_plan<Cfg: CommitmentConfig>(
         max_num_vars: usize,
     ) -> Result<Option<HachiSchedulePlan>, HachiError> {
         Ok(Some(
-            Profile::onehot_d64_schedule_source::<Cfg>(max_num_vars)?.schedule_plan(),
+            Profile::generated_onehot_d64_schedule_source::<Cfg>(max_num_vars)?.schedule_plan(),
         ))
     }
 
@@ -1266,7 +1428,7 @@ where
         current_w_len: usize,
     ) -> Result<Option<usize>, HachiError> {
         Ok(Some(
-            Profile::onehot_d64_schedule_source::<Cfg>(max_num_vars)?
+            Profile::generated_onehot_d64_schedule_source::<Cfg>(max_num_vars)?
                 .recursive_suffix_bytes::<Cfg>(max_num_vars, level, current_w_len)?,
         ))
     }
@@ -1299,7 +1461,7 @@ mod fp128_policy_tests {
 
     type D128OneHotCandidate = CommitmentPreset<
         crate::algebra::Prime128Offset275,
-        AdaptiveBoundedPolicy<Fp128PrimeProfile, 128, 1, 1, 1, 1>,
+        PlannedAdaptiveBoundedPolicy<Fp128PrimeProfile, 128, 1, 1, 1, 1>,
     >;
 
     fn assert_d128_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
