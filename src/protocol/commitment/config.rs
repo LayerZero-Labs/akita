@@ -690,6 +690,22 @@ pub trait CommitmentPolicy: Clone + Send + Sync + 'static {
         Ok(None)
     }
 
+    /// Choose the runtime commitment layout for `max_num_vars`.
+    ///
+    /// Planner-backed families use the exact root fold layout when one is
+    /// pinned; otherwise this falls back to the derived root-commitment layout.
+    fn commitment_layout<Cfg: CommitmentConfig>(
+        max_num_vars: usize,
+    ) -> Result<HachiCommitmentLayout, HachiError> {
+        if let Some(plan) = Cfg::schedule_plan(max_num_vars)? {
+            if let Some(root_fold) = plan.fold_levels().next() {
+                return Ok(root_fold.layout);
+            }
+        }
+        let (_, layout) = hachi_root_commitment_layout::<Cfg>(max_num_vars)?;
+        Ok(layout)
+    }
+
     /// Half-range bound used by the planner when sizing recursive `r`.
     fn planner_half_field_bound(field_modulus: u128) -> u128 {
         field_modulus / 2
@@ -778,6 +794,10 @@ where
 
     fn planner_half_field_bound() -> u128 {
         Policy::planner_half_field_bound(Self::field_modulus())
+    }
+
+    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        Policy::commitment_layout::<Self>(max_num_vars)
     }
 
     fn d_at_level(level: usize, current_w_len: usize) -> usize {
@@ -1025,25 +1045,11 @@ where
         let audited_root_rank = Profile::audited_root_outer_rank(D, 0, max_num_vars);
         let audited_root_a_rank =
             Profile::audited_root_a_rank::<LOG_COMMIT_BOUND>(D, 0, max_num_vars);
-        let mut envelope = CommitmentEnvelope {
+        CommitmentEnvelope {
             max_n_a: N_A.max(audited_root_a_rank),
             max_n_b: N_B.max(audited_root_rank),
             max_n_d: N_D.max(audited_root_rank),
-        };
-        if let Some((gen_n_a, gen_n_b, gen_n_d)) =
-            Profile::generated_adaptive_bounded_envelope::<
-                D,
-                LOG_COMMIT_BOUND,
-                N_A,
-                N_B,
-                N_D,
-            >(max_num_vars)
-        {
-            envelope.max_n_a = envelope.max_n_a.max(gen_n_a);
-            envelope.max_n_b = envelope.max_n_b.max(gen_n_b);
-            envelope.max_n_d = envelope.max_n_d.max(gen_n_d);
         }
-        envelope
     }
 
     fn log_basis_at_level<Cfg: CommitmentConfig>(inputs: HachiScheduleInputs) -> u32 {
@@ -1073,21 +1079,6 @@ where
         inputs: HachiScheduleInputs,
         log_basis: u32,
     ) -> HachiLevelParams {
-        if let Ok(source) = Profile::generated_adaptive_bounded_schedule_source::<
-            Cfg,
-            D,
-            LOG_COMMIT_BOUND,
-            N_A,
-            N_B,
-            N_D,
-        >(inputs.max_num_vars)
-        {
-            if let Ok(Some(planned_level)) =
-                exact_planned_level_execution::<Cfg>(&source.schedule_plan(), inputs, log_basis)
-            {
-                return planned_level.level.params;
-            }
-        }
         let d = Self::d_at_level(inputs.level, inputs.current_w_len);
         let stage1_config = Self::stage1_challenge_config(d);
         HachiLevelParams {
@@ -1143,11 +1134,25 @@ where
         let audited_root_rank = Profile::audited_root_outer_rank(D, 0, max_num_vars);
         let audited_root_a_rank =
             Profile::audited_root_a_rank::<LOG_COMMIT_BOUND>(D, 0, max_num_vars);
-        CommitmentEnvelope {
+        let mut envelope = CommitmentEnvelope {
             max_n_a: N_A.max(audited_root_a_rank),
             max_n_b: N_B.max(audited_root_rank),
             max_n_d: N_D.max(audited_root_rank),
+        };
+        if let Some((gen_n_a, gen_n_b, gen_n_d)) =
+            Profile::generated_adaptive_bounded_envelope::<
+                D,
+                LOG_COMMIT_BOUND,
+                N_A,
+                N_B,
+                N_D,
+            >(max_num_vars)
+        {
+            envelope.max_n_a = envelope.max_n_a.max(gen_n_a);
+            envelope.max_n_b = envelope.max_n_b.max(gen_n_b);
+            envelope.max_n_d = envelope.max_n_d.max(gen_n_d);
         }
+        envelope
     }
 
     fn log_basis_at_level<Cfg: CommitmentConfig>(inputs: HachiScheduleInputs) -> u32 {
@@ -1232,6 +1237,21 @@ where
         inputs: HachiScheduleInputs,
         log_basis: u32,
     ) -> HachiLevelParams {
+        if let Ok(source) = Profile::generated_adaptive_bounded_schedule_source::<
+            Cfg,
+            D,
+            LOG_COMMIT_BOUND,
+            N_A,
+            N_B,
+            N_D,
+        >(inputs.max_num_vars)
+        {
+            if let Ok(Some(planned_level)) =
+                exact_planned_level_execution::<Cfg>(&source.schedule_plan(), inputs, log_basis)
+            {
+                return planned_level.level.params;
+            }
+        }
         let d = Self::d_at_level(inputs.level, inputs.current_w_len);
         let stage1_config = Self::stage1_challenge_config(d);
         HachiLevelParams {

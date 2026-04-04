@@ -1931,6 +1931,56 @@ mod tests {
         }
     }
 
+    fn assert_exact_root_fold_matches_runtime_root_plan<Cfg: CommitmentConfig, const D: usize>(
+        max_num_vars: usize,
+    ) {
+        let plan = Cfg::schedule_plan(max_num_vars)
+            .expect("config schedule should succeed")
+            .expect("config should provide an exact schedule");
+        let planned_root = exact_planned_level_execution::<Cfg>(
+            &plan,
+            HachiScheduleInputs {
+                max_num_vars,
+                level: 0,
+                current_w_len: 1usize.checked_shl(max_num_vars as u32).unwrap_or(0),
+            },
+            plan.fold_levels()
+                .next()
+                .expect("exact schedule should begin with a fold")
+                .params
+                .log_basis,
+        )
+        .expect("exact plan should resolve the root fold")
+        .expect("exact plan should contain a matching root fold");
+        let runtime_root = hachi_root_runtime_plan::<Cfg, D>(max_num_vars, max_num_vars, 1)
+            .expect("runtime root plan should succeed");
+        assert_eq!(
+            planned_root.level.inputs.current_w_len, runtime_root.inputs.current_w_len,
+            "planned/runtime root current_w_len mismatch for {} at max_num_vars={max_num_vars}",
+            std::any::type_name::<Cfg>()
+        );
+        assert_eq!(
+            planned_root.level.params, runtime_root.params,
+            "planned/runtime root params mismatch for {} at max_num_vars={max_num_vars}",
+            std::any::type_name::<Cfg>()
+        );
+        assert_eq!(
+            planned_root.level.layout, runtime_root.root_layout,
+            "planned/runtime root layout mismatch for {} at max_num_vars={max_num_vars}",
+            std::any::type_name::<Cfg>()
+        );
+        assert_eq!(
+            planned_root.next_level_params, runtime_root.next_level_params,
+            "planned/runtime next-level params mismatch for {} at max_num_vars={max_num_vars}",
+            std::any::type_name::<Cfg>()
+        );
+        assert_eq!(
+            planned_root.level.next_inputs.current_w_len, runtime_root.next_inputs.current_w_len,
+            "planned/runtime next_w_len mismatch for {} at max_num_vars={max_num_vars}",
+            std::any::type_name::<Cfg>()
+        );
+    }
+
     #[test]
     fn generated_fp128_schedule_tables_match_cfg_schedule() {
         assert_generated_table_matches_cfg_schedule::<fp128::D32Full>(
@@ -1942,6 +1992,11 @@ mod tests {
         assert_generated_table_matches_cfg_schedule::<fp128::D32OneHot>(
             fp128_adaptive_bounded_table::<32, 1, 2, 2, 2>().unwrap(),
         );
+    }
+
+    #[test]
+    fn generated_d32_full_root_fold_matches_runtime_root_plan() {
+        assert_exact_root_fold_matches_runtime_root_plan::<fp128::D32Full, 32>(26);
     }
 
     #[test]
