@@ -70,6 +70,27 @@ pub(crate) fn table_entry(
         .find(|entry| entry.max_num_vars == max_num_vars)
 }
 
+pub(crate) fn table_entry_envelope(
+    table: GeneratedScheduleTable,
+    max_num_vars: usize,
+) -> Option<(usize, usize, usize)> {
+    let entry = table_entry(table, max_num_vars)?;
+    let mut max_n_a = 0usize;
+    let mut max_n_b = 0usize;
+    let mut max_n_d = 0usize;
+    let mut saw_fold = false;
+    for step in entry.steps {
+        let GeneratedStep::Fold(fold) = step else {
+            continue;
+        };
+        saw_fold = true;
+        max_n_a = max_n_a.max(fold.n_a as usize);
+        max_n_b = max_n_b.max(fold.n_b as usize);
+        max_n_d = max_n_d.max(fold.n_d as usize);
+    }
+    saw_fold.then_some((max_n_a, max_n_b, max_n_d))
+}
+
 pub(crate) fn fp128_adaptive_bounded_table<
     const D: usize,
     const LOG_COMMIT_BOUND: u32,

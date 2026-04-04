@@ -2,7 +2,8 @@
 
 use super::config::{CommitmentConfig, CommitmentPreset, DecompositionParams};
 use super::generated::{
-    fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table, GeneratedScheduleTable,
+    fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table, table_entry_envelope,
+    GeneratedScheduleTable,
 };
 use super::schedule::{
     generated_schedule_plan_from_table, hachi_root_schedule_artifact,
@@ -230,6 +231,28 @@ pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
     /// Generated table for the coarse `D=64` onehot family, if shipped.
     fn generated_onehot_d64_table() -> Option<GeneratedScheduleTable> {
         None
+    }
+
+    /// Maximum `(n_a, n_b, n_d)` required by the generated entry at
+    /// `max_num_vars`, if this profile ships one.
+    fn generated_adaptive_bounded_envelope<
+        const D: usize,
+        const LOG_COMMIT_BOUND: u32,
+        const N_A: usize,
+        const N_B: usize,
+        const N_D: usize,
+    >(
+        max_num_vars: usize,
+    ) -> Option<(usize, usize, usize)> {
+        let _ = (N_A, N_B, N_D);
+        Self::generated_adaptive_bounded_table::<D, LOG_COMMIT_BOUND, N_A, N_B, N_D>()
+            .and_then(|table| table_entry_envelope(table, max_num_vars))
+    }
+
+    /// Maximum `(n_a, n_b, n_d)` required by the generated D64 onehot entry at
+    /// `max_num_vars`, if this profile ships one.
+    fn generated_onehot_d64_envelope(max_num_vars: usize) -> Option<(usize, usize, usize)> {
+        Self::generated_onehot_d64_table().and_then(|table| table_entry_envelope(table, max_num_vars))
     }
 
     /// Exact generated schedule source for one adaptive bounded family.

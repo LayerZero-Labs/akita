@@ -1963,7 +1963,7 @@ where
         let mut ntt_cache = MultiDNttCaches::new();
         let mut commit_ntt_cache = MultiDNttCaches::new();
         let max_num_vars = setup.expanded.seed.max_num_vars;
-        let mut exact_plan = if num_vars == max_num_vars {
+        let exact_plan = if num_vars == max_num_vars {
             Cfg::schedule_plan(max_num_vars)?
         } else {
             None
@@ -1975,21 +1975,24 @@ where
         )?;
         let mut root_next_params_override = None;
         if let Some(plan) = exact_plan.as_ref() {
-            if let Some(planned_root) = exact_planned_level_execution::<Cfg>(
+            let planned_root = exact_planned_level_execution::<Cfg>(
                 plan,
                 root_plan.inputs,
                 root_plan.params.log_basis,
-            )? {
-                if planned_root.level.layout == root_plan.root_layout
-                    && planned_root.level.params == root_plan.params
-                {
-                    root_next_params_override = Some(planned_root.next_level_params);
-                } else {
-                    exact_plan = None;
-                }
-            } else {
-                exact_plan = None;
+            )?
+            .ok_or_else(|| {
+                HachiError::InvalidSetup(
+                    "exact planned root fold did not match runtime root state".to_string(),
+                )
+            })?;
+            if planned_root.level.layout != root_plan.root_layout
+                || planned_root.level.params != root_plan.params
+            {
+                return Err(HachiError::InvalidSetup(
+                    "exact planned root fold drifted from runtime root plan".to_string(),
+                ));
             }
+            root_next_params_override = Some(planned_root.next_level_params);
         }
         let layout = root_plan.root_layout;
         let root_params = root_plan.params.clone();
@@ -2351,7 +2354,7 @@ where
             );
         }
         let max_num_vars = setup.expanded.seed.max_num_vars;
-        let mut exact_plan = if num_vars == max_num_vars {
+        let exact_plan = if num_vars == max_num_vars {
             Cfg::schedule_plan(max_num_vars).map_err(|_| HachiError::InvalidProof)?
         } else {
             None
@@ -2384,14 +2387,10 @@ where
         if let Some(plan) = exact_plan.as_ref() {
             let planned_root =
                 exact_planned_level_execution::<Cfg>(plan, root_plan.inputs, root_params.log_basis)
-                    .map_err(|_| HachiError::InvalidProof)?;
-            if !matches!(
-                planned_root,
-                Some(ref planned_root)
-                    if planned_root.level.layout == layout
-                        && planned_root.level.params == root_params
-            ) {
-                exact_plan = None;
+                    .map_err(|_| HachiError::InvalidProof)?
+                    .ok_or(HachiError::InvalidProof)?;
+            if planned_root.level.layout != layout || planned_root.level.params != root_params {
+                return Err(HachiError::InvalidProof);
             }
         }
         if let Some(plan) = exact_plan.as_ref() {

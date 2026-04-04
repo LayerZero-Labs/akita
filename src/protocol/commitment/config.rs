@@ -2,8 +2,8 @@
 
 use super::profile::{CommitmentFieldProfile, CommitmentFieldProfileSchedule};
 use super::schedule::{
-    hachi_root_commitment_layout, hachi_root_level_layout, HachiLevelParams, HachiScheduleInputs,
-    HachiSchedulePlan,
+    exact_planned_level_execution, hachi_root_commitment_layout, hachi_root_level_layout,
+    HachiLevelParams, HachiScheduleInputs, HachiSchedulePlan,
 };
 use super::utils::math::checked_pow2;
 use super::utils::norm::detect_field_modulus;
@@ -1025,11 +1025,25 @@ where
         let audited_root_rank = Profile::audited_root_outer_rank(D, 0, max_num_vars);
         let audited_root_a_rank =
             Profile::audited_root_a_rank::<LOG_COMMIT_BOUND>(D, 0, max_num_vars);
-        CommitmentEnvelope {
+        let mut envelope = CommitmentEnvelope {
             max_n_a: N_A.max(audited_root_a_rank),
             max_n_b: N_B.max(audited_root_rank),
             max_n_d: N_D.max(audited_root_rank),
+        };
+        if let Some((gen_n_a, gen_n_b, gen_n_d)) =
+            Profile::generated_adaptive_bounded_envelope::<
+                D,
+                LOG_COMMIT_BOUND,
+                N_A,
+                N_B,
+                N_D,
+            >(max_num_vars)
+        {
+            envelope.max_n_a = envelope.max_n_a.max(gen_n_a);
+            envelope.max_n_b = envelope.max_n_b.max(gen_n_b);
+            envelope.max_n_d = envelope.max_n_d.max(gen_n_d);
         }
+        envelope
     }
 
     fn log_basis_at_level<Cfg: CommitmentConfig>(inputs: HachiScheduleInputs) -> u32 {
@@ -1059,6 +1073,21 @@ where
         inputs: HachiScheduleInputs,
         log_basis: u32,
     ) -> HachiLevelParams {
+        if let Ok(source) = Profile::generated_adaptive_bounded_schedule_source::<
+            Cfg,
+            D,
+            LOG_COMMIT_BOUND,
+            N_A,
+            N_B,
+            N_D,
+        >(inputs.max_num_vars)
+        {
+            if let Ok(Some(planned_level)) =
+                exact_planned_level_execution::<Cfg>(&source.schedule_plan(), inputs, log_basis)
+            {
+                return planned_level.level.params;
+            }
+        }
         let d = Self::d_at_level(inputs.level, inputs.current_w_len);
         let stage1_config = Self::stage1_challenge_config(d);
         HachiLevelParams {
@@ -1378,11 +1407,19 @@ where
 
     fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
         let root_rank = Profile::onehot_d64_root_rank(0, max_num_vars);
-        CommitmentEnvelope {
+        let mut envelope = CommitmentEnvelope {
             max_n_a: 1,
             max_n_b: root_rank,
             max_n_d: root_rank,
+        };
+        if let Some((gen_n_a, gen_n_b, gen_n_d)) =
+            Profile::generated_onehot_d64_envelope(max_num_vars)
+        {
+            envelope.max_n_a = envelope.max_n_a.max(gen_n_a);
+            envelope.max_n_b = envelope.max_n_b.max(gen_n_b);
+            envelope.max_n_d = envelope.max_n_d.max(gen_n_d);
         }
+        envelope
     }
 
     fn n_b_at_level(level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {
@@ -1431,6 +1468,31 @@ where
             Profile::generated_onehot_d64_schedule_source::<Cfg>(max_num_vars)?
                 .recursive_suffix_bytes::<Cfg>(max_num_vars, level, current_w_len)?,
         ))
+    }
+
+    fn level_params_with_log_basis<Cfg: CommitmentConfig>(
+        inputs: HachiScheduleInputs,
+        log_basis: u32,
+    ) -> HachiLevelParams {
+        if let Ok(source) = Profile::generated_onehot_d64_schedule_source::<Cfg>(inputs.max_num_vars)
+        {
+            if let Ok(Some(planned_level)) =
+                exact_planned_level_execution::<Cfg>(&source.schedule_plan(), inputs, log_basis)
+            {
+                return planned_level.level.params;
+            }
+        }
+        let d = Self::d_at_level(inputs.level, inputs.current_w_len);
+        let stage1_config = Self::stage1_challenge_config(d);
+        HachiLevelParams {
+            d,
+            log_basis,
+            n_a: 1,
+            n_b: Self::n_b_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
+            n_d: Self::n_d_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
+            challenge_l1_mass: stage1_config.l1_mass(),
+            stage1_config,
+        }
     }
 }
 
