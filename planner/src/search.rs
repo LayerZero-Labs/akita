@@ -173,6 +173,7 @@ pub struct PlannedFoldStep {
     pub current_w_len: usize,
     pub d: u32,
     pub lb: u32,
+    pub challenge_l1_mass: usize,
     pub m_vars: u32,
     pub r_vars: u32,
     pub na: u32,
@@ -286,7 +287,7 @@ impl PlannerOptions {
 
 // ── Planner internals ──────────────────────────────────────────────────────
 
-type MemoKey = (usize, u32, u32); // (w_len, cur_D, prev_lb)
+type MemoKey = (usize, u32, u32); // (w_len, cur_D, current_lb)
 
 #[derive(Clone)]
 struct BestSuffix {
@@ -465,8 +466,8 @@ impl Planner {
         min_rank_for_secure_width(d, (1u32 << tail_lb) - 1, u64::try_from(ring_elems).ok()?)
     }
 
-    fn best_from(&mut self, w_len: usize, cur_d: u32, prev_lb: u32) -> BestSuffix {
-        let key = (w_len, cur_d, prev_lb);
+    fn best_from(&mut self, w_len: usize, cur_d: u32, current_lb: u32) -> BestSuffix {
+        let key = (w_len, cur_d, current_lb);
         if let Some(existing) = self.memo.get(&key) {
             return existing.clone();
         }
@@ -476,10 +477,10 @@ impl Planner {
             steps: Vec::new(),
         };
 
-        if let Some(tnb) = self.tail_entry_nb(w_len, cur_d, prev_lb) {
+        if let Some(tnb) = self.tail_entry_nb(w_len, cur_d, current_lb) {
             let witness_shape = DirectWitnessShape::PackedDigits {
                 num_elems: w_len,
-                bits_per_elem: prev_lb,
+                bits_per_elem: current_lb,
             };
             let direct_bytes = witness_shape.witness_bytes();
             let total_bytes = ring_vec_bytes(tnb as usize, cur_d) + direct_bytes;
@@ -501,18 +502,18 @@ impl Planner {
         let monotone_d = self.opts.monotone_d;
 
         for cfg in &cfgs {
-            for lb in MIN_LB..=MAX_LB {
-                let result = self.try_level(cfg, 1, w_len, lb, prev_lb);
-                let Some((prefix, lc, nb_self, nd_self)) = result else {
-                    continue;
-                };
-                let entry_commit = ring_vec_bytes(nb_self as usize, cur_d);
+            let result = self.try_level(cfg, 1, w_len, current_lb, current_lb);
+            let Some((prefix, lc, nb_self, nd_self)) = result else {
+                continue;
+            };
+            let entry_commit = ring_vec_bytes(nb_self as usize, cur_d);
 
+            for next_lb in current_lb.max(MIN_LB)..=MAX_LB {
                 for &next_d in &unique_ds {
                     if monotone_d && next_d > cur_d {
                         continue;
                     }
-                    let suffix = self.best_from(lc.next_w_len, next_d, lb);
+                    let suffix = self.best_from(lc.next_w_len, next_d, next_lb);
                     if suffix.cost == usize::MAX {
                         continue;
                     }
@@ -522,7 +523,8 @@ impl Planner {
                         steps.push(PlannedStep::Fold(PlannedFoldStep {
                             current_w_len: w_len,
                             d: cfg.d,
-                            lb,
+                            lb: current_lb,
+                            challenge_l1_mass: cfg.challenge_l1_mass,
                             m_vars: lc.m_vars,
                             r_vars: lc.r_vars,
                             na: cfg.n_a,
@@ -631,36 +633,39 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
                     if opts.monotone_d && next_d > root_cfg.d {
                         continue;
                     }
-                    let suffix = planner.best_from(root_lc.next_w_len, next_d, root_lb);
-                    if suffix.cost == usize::MAX {
-                        continue;
-                    }
-                    let root_entry_commit = ring_vec_bytes(root_nb as usize, root_cfg.d);
-                    let total = root_entry_commit + root_prefix + suffix.cost;
-                    let is_better = overall_best
-                        .as_ref()
-                        .is_none_or(|(best_total, _)| total < *best_total);
-                    if is_better {
-                        let mut steps = Vec::with_capacity(1 + suffix.steps.len());
-                        steps.push(PlannedStep::Fold(PlannedFoldStep {
-                            current_w_len: root_w_len,
-                            d: root_cfg.d,
-                            lb: root_lb,
-                            m_vars: root_lc.m_vars,
-                            r_vars: root_lc.r_vars,
-                            na: root_cfg.n_a,
-                            nb: root_nb,
-                            nd: root_nd,
-                            delta_open: root_lc.delta_open,
-                            delta_fold: root_lc.delta_fold,
-                            delta_commit: root_lc.delta_commit,
-                            w_ring: root_lc.w_ring_elems,
-                            next_w_len: root_lc.next_w_len,
-                            level_bytes: root_entry_commit + root_prefix,
-                            label: root_cfg.label,
-                        }));
-                        steps.extend_from_slice(&suffix.steps);
-                        overall_best = Some((total, steps));
+                    for next_lb in root_lb.max(MIN_LB)..=MAX_LB {
+                        let suffix = planner.best_from(root_lc.next_w_len, next_d, next_lb);
+                        if suffix.cost == usize::MAX {
+                            continue;
+                        }
+                        let root_entry_commit = ring_vec_bytes(root_nb as usize, root_cfg.d);
+                        let total = root_entry_commit + root_prefix + suffix.cost;
+                        let is_better = overall_best
+                            .as_ref()
+                            .map_or(true, |(best_total, _)| total < *best_total);
+                        if is_better {
+                            let mut steps = Vec::with_capacity(1 + suffix.steps.len());
+                            steps.push(PlannedStep::Fold(PlannedFoldStep {
+                                current_w_len: root_w_len,
+                                d: root_cfg.d,
+                                lb: root_lb,
+                                challenge_l1_mass: root_cfg.challenge_l1_mass,
+                                m_vars: root_lc.m_vars,
+                                r_vars: root_lc.r_vars,
+                                na: root_cfg.n_a,
+                                nb: root_nb,
+                                nd: root_nd,
+                                delta_open: root_lc.delta_open,
+                                delta_fold: root_lc.delta_fold,
+                                delta_commit: root_lc.delta_commit,
+                                w_ring: root_lc.w_ring_elems,
+                                next_w_len: root_lc.next_w_len,
+                                level_bytes: root_entry_commit + root_prefix,
+                                label: root_cfg.label,
+                            }));
+                            steps.extend_from_slice(&suffix.steps);
+                            overall_best = Some((total, steps));
+                        }
                     }
                 }
             }

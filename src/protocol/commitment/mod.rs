@@ -2,11 +2,11 @@
 
 mod commit;
 mod config;
+mod generated;
 pub mod onehot;
 pub mod presets;
 pub(crate) mod profile;
 pub(crate) mod schedule;
-mod schedule_tables;
 mod scheme;
 pub(crate) mod transcript_append;
 mod types;
@@ -37,8 +37,6 @@ pub(crate) use schedule::{
     planned_next_log_basis_with_current_basis, planned_recursive_suffix_bytes_with_log_basis,
     recursive_level_decomposition_from_root, recursive_r_decomp_levels_for_bound,
 };
-#[doc(hidden)]
-pub use schedule_tables::GeneratedScheduleTableEntry;
 pub use scheme::{CommitWitness, CommitmentScheme, DynamicCommitmentScheme, RingCommitmentScheme};
 pub use transcript_append::AppendToTranscript;
 pub use types::{

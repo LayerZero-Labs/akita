@@ -1,14 +1,12 @@
 //! Field-profile definitions for planner-backed commitment presets.
 
 use super::config::{CommitmentConfig, CommitmentPreset, DecompositionParams};
+use super::generated::{fp128_adaptive_bounded_table, GeneratedScheduleTable};
 use super::schedule::{
     generated_schedule_plan_from_table, hachi_root_schedule_artifact,
     planned_log_basis_at_level_from_schedule, planned_recursive_suffix_bytes_from_schedule,
     planned_schedule, planned_schedule_key_from_schedule, HachiRootBatchSummary,
     HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
-};
-use super::schedule_tables::{
-    fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table, GeneratedScheduleTable,
 };
 use crate::algebra::Prime128Offset275;
 use crate::algebra::SparseChallengeConfig;
@@ -39,10 +37,13 @@ fn generated_or_planned_schedule<Cfg: CommitmentConfig>(
     min_log_basis: u32,
     max_log_basis: u32,
 ) -> Result<HachiSchedulePlan, HachiError> {
-    if let Some(plan) = generated_schedule_plan_from_table::<Cfg>(max_num_vars, table)? {
-        return Ok(plan);
-    }
-    planned_schedule::<Cfg>(max_num_vars, min_log_basis, max_log_basis)
+    let _ = (min_log_basis, max_log_basis);
+    generated_schedule_plan_from_table::<Cfg>(max_num_vars, table)?.ok_or_else(|| {
+        HachiError::InvalidSetup(format!(
+            "missing generated schedule for {} at max_num_vars={max_num_vars}",
+            std::any::type_name::<Cfg>()
+        ))
+    })
 }
 
 fn select_root_schedule_for_cfg<Cfg: CommitmentConfig, const D: usize>(
@@ -489,7 +490,7 @@ impl CommitmentFieldProfileSchedule for Fp128PrimeProfile {
     }
 
     fn generated_onehot_d64_table() -> Option<GeneratedScheduleTable> {
-        Some(fp128_adaptive_onehot_d64_table())
+        None
     }
 }
 

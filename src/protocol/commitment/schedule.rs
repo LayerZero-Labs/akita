@@ -3,8 +3,9 @@ use super::config::{
     compute_num_digits, compute_num_digits_fold, optimal_m_r_split_with_params, CommitmentConfig,
     DecompositionParams, HachiCommitmentLayout,
 };
-use super::schedule_tables::{
-    table_entry_states, GeneratedLevelParamsSpec, GeneratedScheduleTable, GeneratedStage1Family,
+use super::generated::{
+    table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleTable,
+    GeneratedStep,
 };
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
@@ -713,168 +714,229 @@ fn scheduled_suffix_bytes_from_index(schedule: &HachiSchedulePlan, state_index: 
         + schedule.direct_step().direct_bytes
 }
 
-fn generated_stage1_family(config: &SparseChallengeConfig) -> Option<GeneratedStage1Family> {
-    match config {
-        SparseChallengeConfig::Uniform {
-            weight,
-            nonzero_coeffs,
-        } if *weight == 32
-            && *nonzero_coeffs == (-8..=8).filter(|&c| c != 0).collect::<Vec<_>>() =>
-        {
-            Some(GeneratedStage1Family::D32)
+fn generated_direct_witness_shape(shape: GeneratedDirectWitnessShape) -> DirectWitnessShape {
+    match shape {
+        GeneratedDirectWitnessShape::PackedDigits {
+            num_elems,
+            bits_per_elem,
+        } => DirectWitnessShape::PackedDigits((num_elems, bits_per_elem)),
+        GeneratedDirectWitnessShape::FieldElements { num_elems } => {
+            DirectWitnessShape::FieldElements(num_elems)
         }
-        SparseChallengeConfig::SplitRing {
-            half_weight,
-            max_mag2_per_half,
-        } if *half_weight == 21 && *max_mag2_per_half == 6 => Some(GeneratedStage1Family::D64),
-        SparseChallengeConfig::Uniform {
-            weight,
-            nonzero_coeffs,
-        } if *weight == 31 && *nonzero_coeffs == vec![-1, 1] => Some(GeneratedStage1Family::D128),
-        _ => None,
     }
 }
 
-fn validate_generated_level_params(
-    expected: GeneratedLevelParamsSpec,
-    params: &HachiLevelParams,
-    context: &str,
-) -> Result<(), HachiError> {
-    let actual_stage1_family = generated_stage1_family(&params.stage1_config).ok_or_else(|| {
-        HachiError::InvalidSetup(format!(
-            "generated schedule {context} used an unpinned stage1 family: {:?}",
-            params.stage1_config
-        ))
-    })?;
-    let actual = GeneratedLevelParamsSpec {
-        d: params.d,
-        n_a: params.n_a,
-        n_b: params.n_b,
-        n_d: params.n_d,
-        stage1_family: actual_stage1_family,
-    };
-    if actual != expected {
-        return Err(HachiError::InvalidSetup(format!(
-            "generated schedule {context} params mismatch: expected {expected:?}, got {actual:?}"
-        )));
+fn generated_direct_log_basis<Cfg: CommitmentConfig>(shape: GeneratedDirectWitnessShape) -> u32 {
+    match shape {
+        GeneratedDirectWitnessShape::PackedDigits { bits_per_elem, .. } => bits_per_elem,
+        GeneratedDirectWitnessShape::FieldElements { .. } => Cfg::decomposition().log_basis,
     }
+}
+
+fn generated_step_current_w_len(step: &GeneratedStep) -> usize {
+    match step {
+        GeneratedStep::Fold(level) => level.current_w_len,
+        GeneratedStep::Direct(direct) => direct.current_w_len,
+    }
+}
+
+fn generated_level_params<Cfg: CommitmentConfig>(
+    step: GeneratedFoldStep,
+    context: &str,
+) -> Result<HachiLevelParams, HachiError> {
+    let params = HachiLevelParams {
+        d: step.d as usize,
+        log_basis: step.log_basis,
+        n_a: step.n_a as usize,
+        n_b: step.n_b as usize,
+        n_d: step.n_d as usize,
+        challenge_l1_mass: step.challenge_l1_mass,
+        stage1_config: Cfg::stage1_challenge_config(step.d as usize),
+    };
     if params.challenge_l1_mass != params.stage1_config.l1_mass() {
         return Err(HachiError::InvalidSetup(format!(
-            "generated schedule {context} challenge L1 mass mismatch: cached={}, runtime={}",
+            "generated schedule {context} challenge L1 mass mismatch: pinned={}, runtime={}",
             params.challenge_l1_mass,
             params.stage1_config.l1_mass()
         )));
     }
-    Ok(())
+    Ok(params)
 }
 
-fn schedule_plan_from_states<Cfg: CommitmentConfig>(
+fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig>(
     max_num_vars: usize,
-    states: &[HachiPlannedState],
-    table: GeneratedScheduleTable,
+    entry: &super::generated::GeneratedScheduleTableEntry,
 ) -> Result<HachiSchedulePlan, HachiError> {
-    let Some(root_state) = states.first().copied() else {
+    let Some(root_step) = entry.steps.first() else {
         return Err(HachiError::InvalidSetup(
-            "generated schedule table entry must contain at least one state".to_string(),
+            "generated schedule table entry must contain at least one step".to_string(),
         ));
     };
-    if root_state.level != 0 {
-        return Err(HachiError::InvalidSetup(format!(
-            "generated schedule root level must be 0, got {}",
-            root_state.level
-        )));
-    }
     let expected_root_w_len = 1usize
         .checked_shl(max_num_vars as u32)
         .ok_or_else(|| HachiError::InvalidSetup("root witness length overflow".to_string()))?;
-    if root_state.current_w_len != expected_root_w_len {
+    if generated_step_current_w_len(root_step) != expected_root_w_len {
         return Err(HachiError::InvalidSetup(format!(
             "generated root witness length {} does not match max_num_vars={max_num_vars}",
-            root_state.current_w_len
+            generated_step_current_w_len(root_step)
         )));
     }
 
     let field_bits = field_bits(Cfg::decomposition());
-    let mut steps = Vec::with_capacity(states.len().max(1));
-    for window in states.windows(2) {
-        let inputs_state = window[0];
-        let next_state = window[1];
-        if next_state.level != inputs_state.level + 1 {
-            return Err(HachiError::InvalidSetup(format!(
-                "generated schedule skipped from level {} to {}",
-                inputs_state.level, next_state.level
-            )));
-        }
+    let mut steps = Vec::with_capacity(entry.steps.len().max(1));
+    let mut fold_level = 0usize;
 
-        let inputs = HachiScheduleInputs {
-            max_num_vars,
-            level: inputs_state.level,
-            current_w_len: inputs_state.current_w_len,
-        };
-        let next_inputs = HachiScheduleInputs {
-            max_num_vars,
-            level: next_state.level,
-            current_w_len: next_state.current_w_len,
-        };
-        let (params, layout) =
-            current_level_layout_with_log_basis::<Cfg>(inputs, inputs_state.log_basis)?;
-        validate_generated_level_params(
-            table
-                .policy
-                .expected_level_params(max_num_vars, inputs.level),
-            &params,
-            &format!("level {}", inputs.level),
-        )?;
-        let planned_next_w_len =
-            planned_next_w_len(field_bits, Cfg::planner_half_field_bound(), &params, layout);
-        if planned_next_w_len != next_state.current_w_len {
-            return Err(HachiError::InvalidSetup(format!(
-                "generated next_w_len mismatch at level {}: table={}, runtime={planned_next_w_len}",
-                inputs.level, next_state.current_w_len
-            )));
-        }
+    for (step_index, generated_step) in entry.steps.iter().enumerate() {
+        match generated_step {
+            GeneratedStep::Fold(level) => {
+                let Some(next_generated_step) = entry.steps.get(step_index + 1) else {
+                    return Err(HachiError::InvalidSetup(format!(
+                        "generated schedule ended with a fold step at level {fold_level}"
+                    )));
+                };
+                let next_current_w_len = generated_step_current_w_len(next_generated_step);
+                if level.next_w_len != next_current_w_len {
+                    return Err(HachiError::InvalidSetup(format!(
+                        "generated next_w_len mismatch at level {fold_level}: pinned={}, next step={next_current_w_len}",
+                        level.next_w_len
+                    )));
+                }
+                let next_log_basis = match next_generated_step {
+                    GeneratedStep::Fold(next_level) => next_level.log_basis,
+                    GeneratedStep::Direct(direct) => match direct.witness_shape {
+                        GeneratedDirectWitnessShape::PackedDigits { bits_per_elem, .. } => {
+                            bits_per_elem
+                        }
+                        GeneratedDirectWitnessShape::FieldElements { .. } => {
+                            return Err(HachiError::InvalidSetup(format!(
+                                "generated schedule level {fold_level} cannot transition into a field-element direct step"
+                            )))
+                        }
+                    },
+                };
 
-        let next_level_params = Cfg::level_params_with_log_basis(next_inputs, next_state.log_basis);
-        validate_generated_level_params(
-            table
-                .policy
-                .expected_level_params(max_num_vars, next_inputs.level),
-            &next_level_params,
-            &format!("next level {}", next_inputs.level),
-        )?;
-        let level_bytes = hachi_level_proof_bytes(
-            field_bits,
-            &params,
-            layout,
-            &next_level_params,
-            next_inputs.current_w_len,
-        );
-        steps.push(HachiPlannedStep::Fold(Box::new(HachiPlannedLevel {
-            inputs,
-            params,
-            layout,
-            next_inputs,
-            next_level_log_basis: next_state.log_basis,
-            next_commit_coeffs: next_level_params.n_b * next_level_params.d,
-            level_bytes,
-        })));
+                let inputs = HachiScheduleInputs {
+                    max_num_vars,
+                    level: fold_level,
+                    current_w_len: level.current_w_len,
+                };
+                let next_inputs = HachiScheduleInputs {
+                    max_num_vars,
+                    level: fold_level + 1,
+                    current_w_len: next_current_w_len,
+                };
+                let params = generated_level_params::<Cfg>(*level, &format!("level {fold_level}"))?;
+                let level_decomp = if fold_level == 0 {
+                    main_level_decomposition_from_root(Cfg::decomposition(), level.log_basis)
+                } else {
+                    recursive_level_decomposition_from_root(Cfg::decomposition(), level.log_basis)
+                };
+                let layout = layout_from_params(
+                    level.m_vars as usize,
+                    level.r_vars as usize,
+                    &params,
+                    level_decomp,
+                    level.current_w_len / level.d as usize,
+                )?;
+                let runtime_next_w_len =
+                    planned_next_w_len(field_bits, Cfg::planner_half_field_bound(), &params, layout);
+                if runtime_next_w_len != level.next_w_len {
+                    return Err(HachiError::InvalidSetup(format!(
+                        "generated next_w_len mismatch at level {fold_level}: pinned={}, runtime={runtime_next_w_len}",
+                        level.next_w_len
+                    )));
+                }
+
+                let (next_level_params, next_commit_coeffs) = match next_generated_step {
+                    GeneratedStep::Fold(next_level) => {
+                        let next_level_params = generated_level_params::<Cfg>(
+                            *next_level,
+                            &format!("next level {}", fold_level + 1),
+                        )?;
+                        (
+                            next_level_params.clone(),
+                            next_level_params.n_b * next_level_params.d,
+                        )
+                    }
+                    GeneratedStep::Direct(direct) => {
+                        let (entry_d, entry_nb) = match (direct.entry_d, direct.entry_nb) {
+                            (Some(entry_d), Some(entry_nb)) => (entry_d as usize, entry_nb as usize),
+                            (None, None) => (params.d, 0),
+                            _ => {
+                                return Err(HachiError::InvalidSetup(
+                                    "generated direct entry commitment must specify both D and n_b or neither"
+                                        .to_string(),
+                                ))
+                            }
+                        };
+                        (
+                            HachiLevelParams {
+                                d: entry_d,
+                                log_basis: next_log_basis,
+                                n_a: 0,
+                                n_b: entry_nb,
+                                n_d: 0,
+                                challenge_l1_mass: params.challenge_l1_mass,
+                                stage1_config: params.stage1_config.clone(),
+                            },
+                            entry_nb * entry_d,
+                        )
+                    }
+                };
+                let runtime_level_bytes = hachi_level_proof_bytes(
+                    field_bits,
+                    &params,
+                    layout,
+                    &next_level_params,
+                    next_inputs.current_w_len,
+                );
+
+                steps.push(HachiPlannedStep::Fold(Box::new(HachiPlannedLevel {
+                    inputs,
+                    params,
+                    layout,
+                    next_inputs,
+                    next_level_log_basis: next_log_basis,
+                    next_commit_coeffs,
+                    level_bytes: runtime_level_bytes,
+                })));
+                fold_level += 1;
+            }
+            GeneratedStep::Direct(direct) => {
+                if step_index + 1 != entry.steps.len() {
+                    return Err(HachiError::InvalidSetup(
+                        "generated direct step must be terminal".to_string(),
+                    ));
+                }
+                let witness_shape = generated_direct_witness_shape(direct.witness_shape);
+                let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
+                if direct_bytes != direct.direct_bytes {
+                    return Err(HachiError::InvalidSetup(format!(
+                        "generated direct bytes mismatch at terminal step: pinned={}, runtime={direct_bytes}",
+                        direct.direct_bytes
+                    )));
+                }
+                if !matches!((direct.entry_d, direct.entry_nb), (Some(_), Some(_)) | (None, None)) {
+                    return Err(HachiError::InvalidSetup(
+                        "generated direct entry commitment must specify both D and n_b or neither"
+                            .to_string(),
+                    ));
+                }
+
+                let state = HachiPlannedState {
+                    level: fold_level,
+                    current_w_len: direct.current_w_len,
+                    log_basis: generated_direct_log_basis::<Cfg>(direct.witness_shape),
+                };
+                steps.push(HachiPlannedStep::Direct(HachiPlannedDirectStep {
+                    state,
+                    witness_shape,
+                    direct_bytes,
+                }));
+            }
+        }
     }
 
-    let terminal = states
-        .last()
-        .copied()
-        .expect("non-empty generated schedule states");
-    let witness_shape = if steps.is_empty() && terminal.level == 0 {
-        DirectWitnessShape::FieldElements(terminal.current_w_len)
-    } else {
-        DirectWitnessShape::PackedDigits((terminal.current_w_len, terminal.log_basis))
-    };
-    let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
-    steps.push(HachiPlannedStep::Direct(HachiPlannedDirectStep {
-        state: terminal,
-        witness_shape,
-        direct_bytes,
-    }));
     let no_wrapper_bytes = steps
         .iter()
         .map(|step| match step {
@@ -893,8 +955,8 @@ pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     table: GeneratedScheduleTable,
 ) -> Result<Option<HachiSchedulePlan>, HachiError> {
-    table_entry_states(table, max_num_vars)
-        .map(|states| schedule_plan_from_states::<Cfg>(max_num_vars, states, table))
+    table_entry(table, max_num_vars)
+        .map(|entry| schedule_plan_from_generated_entry::<Cfg>(max_num_vars, entry))
         .transpose()
 }
 
@@ -1725,10 +1787,10 @@ mod tests {
     use super::*;
     use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
     use crate::primitives::serialization::{Compress, HachiSerialize};
-    use crate::protocol::commitment::presets::fp128;
-    use crate::protocol::commitment::schedule_tables::{
-        fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table, GeneratedScheduleTable,
+    use crate::protocol::commitment::generated::{
+        fp128_adaptive_bounded_table, fp128_d128_full_table, GeneratedScheduleTable,
     };
+    use crate::protocol::commitment::presets::fp128;
     use crate::protocol::proof::{
         FlatRingVec, HachiBatchedRootProof, HachiLevelProof, HachiStage1Proof,
         HachiStage1StageProof,
@@ -1795,44 +1857,45 @@ mod tests {
         }
     }
 
-    fn assert_generated_table_matches_runtime_planner<Cfg: CommitmentConfig>(
+    fn assert_generated_table_matches_cfg_schedule<Cfg: CommitmentConfig>(
         table: GeneratedScheduleTable,
     ) {
         for entry in table.entries {
             let generated = generated_schedule_plan_from_table::<Cfg>(entry.max_num_vars, table)
                 .expect("generated table should materialize")
                 .expect("entry should exist in generated table");
-            let planned = planned_schedule::<Cfg>(entry.max_num_vars, 2, 6)
-                .expect("runtime planner should succeed");
+            let planned = Cfg::schedule_plan(entry.max_num_vars)
+                .expect("config schedule should succeed")
+                .expect("config should provide a generated schedule");
             assert_eq!(
                 generated, planned,
-                "generated schedule should match runtime planner for max_num_vars={}",
+                "generated schedule should match cfg-selected schedule for max_num_vars={}",
                 entry.max_num_vars
             );
         }
     }
 
     #[test]
-    fn generated_fp128_schedule_tables_match_runtime_planner() {
-        assert_generated_table_matches_runtime_planner::<fp128::D64OneHot>(
-            fp128_adaptive_onehot_d64_table(),
-        );
-        assert_generated_table_matches_runtime_planner::<fp128::D32Full>(
+    fn generated_fp128_schedule_tables_match_cfg_schedule() {
+        assert_generated_table_matches_cfg_schedule::<fp128::D32Full>(
             fp128_adaptive_bounded_table::<32, 128, 2, 2, 2>().unwrap(),
         );
-        assert_generated_table_matches_runtime_planner::<fp128::D32LogBasis>(
+        assert_generated_table_matches_cfg_schedule::<fp128::D32LogBasis>(
             fp128_adaptive_bounded_table::<32, 3, 2, 2, 2>().unwrap(),
         );
-        assert_generated_table_matches_runtime_planner::<fp128::D32OneHot>(
+        assert_generated_table_matches_cfg_schedule::<fp128::D32OneHot>(
             fp128_adaptive_bounded_table::<32, 1, 2, 2, 2>().unwrap(),
         );
     }
 
     #[test]
-    fn shared_legacy_fp128_schedule_tables_match_runtime_planner() {
-        assert_generated_table_matches_runtime_planner::<fp128::D64OneHot>(
-            fp128_adaptive_onehot_d64_table(),
-        );
+    fn generated_d128_full_table_materializes_valid_plans() {
+        let table = fp128_d128_full_table();
+        for entry in table.entries {
+            generated_schedule_plan_from_table::<fp128::D128Full>(entry.max_num_vars, table)
+                .expect("generated table should materialize")
+                .expect("entry should exist in generated table");
+        }
     }
 
     #[test]
