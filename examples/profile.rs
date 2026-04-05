@@ -1,6 +1,5 @@
 #![allow(missing_docs)]
 
-use hachi_pcs::algebra::eq_poly::EqPolynomial;
 use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
     hachi_batched_root_layout, presets::fp128, CommitmentConfig, HachiCommitmentLayout,
@@ -93,31 +92,6 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
     let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)
         .expect("inner opening point should match ring dimension");
     (y_ring * v.sigma_m1()).coefficients()[0]
-}
-
-fn opening_from_public_poly(poly: &MultilinearPolynomial<F>, point: &[F]) -> F {
-    assert_eq!(
-        poly.num_vars(),
-        point.len(),
-        "opening point must match polynomial arity"
-    );
-    let eq = EqPolynomial::evals(point);
-    match poly {
-        MultilinearPolynomial::Dense(poly) => poly
-            .evals()
-            .iter()
-            .zip(eq.iter())
-            .fold(F::zero(), |acc, (eval, weight)| acc + (*eval * *weight)),
-        MultilinearPolynomial::OneHot(poly) => {
-            poly.indices()
-                .iter()
-                .enumerate()
-                .fold(F::zero(), |acc, (chunk_idx, hot_pos)| match hot_pos {
-                    Some(hot_pos) => acc + eq[chunk_idx * poly.onehot_k() + hot_pos],
-                    None => acc,
-                })
-        }
-    }
 }
 
 fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F, D>>(
@@ -680,7 +654,7 @@ where
     );
 
     let plan = dynamic_singleton_plan::<Family>(nv, root_d);
-    let opening = opening_from_public_poly(&poly, &pt);
+    let opening = poly.evaluate(&pt);
 
     let t0 = Instant::now();
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
@@ -774,10 +748,7 @@ where
         "commit"
     );
 
-    let openings: Vec<F> = polys
-        .iter()
-        .map(|poly| opening_from_public_poly(poly, &pt))
-        .collect();
+    let openings: Vec<F> = polys.iter().map(|poly| poly.evaluate(&pt)).collect();
 
     let verifier_setup = <Scheme<Family> as DynamicCommitmentScheme<F>>::setup_verifier(&setup);
     if num_polys == 1 {

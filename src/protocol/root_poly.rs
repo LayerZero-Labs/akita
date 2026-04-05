@@ -6,6 +6,7 @@
 //! a ring-agnostic form and materialize the typed root polynomial only after
 //! the concrete commitment/proof context has selected the active root ring.
 
+use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::fields::wide::HasWide;
 use crate::error::HachiError;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
@@ -51,6 +52,39 @@ impl<F: FieldCore> DenseMultilinear<F> {
     /// Borrow the raw field evaluations.
     pub fn evals(&self) -> &[F] {
         &self.evals
+    }
+
+    /// Evaluate the dense multilinear polynomial at `point` using the split-eq
+    /// factorization: split the point in two halves, build eq tables of size
+    /// O(sqrt(2^n)) for each half, then stream through the evaluations.
+    ///
+    /// Time: O(2^n). Space: O(2^{n/2}) (two half-tables instead of one full
+    /// 2^n eq table).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `point.len() != num_vars`.
+    pub fn evaluate(&self, point: &[F]) -> F {
+        assert_eq!(point.len(), self.num_vars);
+        if self.num_vars == 0 {
+            return self.evals[0];
+        }
+        let m = self.num_vars / 2;
+        let (point_lo, point_hi) = point.split_at(m);
+        let eq_lo = EqPolynomial::evals(point_lo);
+        let eq_hi = EqPolynomial::evals(point_hi);
+        let lo_len = eq_lo.len();
+        let mut result = F::zero();
+        for (x_hi, &w_hi) in eq_hi.iter().enumerate() {
+            let base = x_hi * lo_len;
+            let chunk = &self.evals[base..base + lo_len];
+            let inner = chunk
+                .iter()
+                .zip(eq_lo.iter())
+                .fold(F::zero(), |acc, (&f, &w)| acc + f * w);
+            result += inner * w_hi;
+        }
+        result
     }
 
     /// Materialize the typed dense root polynomial for ring degree `D`.
@@ -134,6 +168,34 @@ impl OneHotMultilinear {
         &self.indices
     }
 
+    /// Evaluate the one-hot multilinear at `point` without materializing a
+    /// dense eq table. For each hot position we compute `eq(point, pos)` in
+    /// O(nv) field multiplications, so the total cost is O(num_chunks * nv)
+    /// time with O(1) auxiliary space.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `point.len() != num_vars`.
+    #[allow(clippy::assign_op_pattern)]
+    pub fn evaluate<F: FieldCore>(&self, point: &[F]) -> F {
+        assert_eq!(point.len(), self.num_vars);
+        let mut result = F::zero();
+        for (chunk_idx, hot_pos) in self.indices.iter().enumerate() {
+            let Some(hot_pos) = hot_pos else { continue };
+            let global_pos = chunk_idx * self.onehot_k + hot_pos;
+            let mut eq_val = F::one();
+            for (bit, &p) in point.iter().enumerate() {
+                if (global_pos >> bit) & 1 == 1 {
+                    eq_val = eq_val * p;
+                } else {
+                    eq_val = eq_val * (F::one() - p);
+                }
+            }
+            result = result + eq_val;
+        }
+        result
+    }
+
     fn to_dense_multilinear<F: FieldCore>(&self) -> Result<DenseMultilinear<F>, HachiError> {
         let total_evals = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
             HachiError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
@@ -203,6 +265,17 @@ impl<F: FieldCore> MultilinearPolynomial<F> {
         match self {
             Self::Dense(poly) => poly.num_vars(),
             Self::OneHot(poly) => poly.num_vars(),
+        }
+    }
+
+    /// Evaluate the multilinear polynomial at `point`.
+    ///
+    /// Uses split-eq for dense (O(2^{n/2}) space) and pointwise eq for
+    /// one-hot (O(1) space).
+    pub fn evaluate(&self, point: &[F]) -> F {
+        match self {
+            Self::Dense(poly) => poly.evaluate(point),
+            Self::OneHot(poly) => poly.evaluate(point),
         }
     }
 }
