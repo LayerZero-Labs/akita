@@ -382,6 +382,9 @@ impl Planner {
             1usize << (self.opts.max_num_vars - alpha)
         };
 
+        // Bit-width of one input element: 128-bit field elements at the root,
+        // lb-bit packed digits at recursive levels. The product
+        // w_len * input_elem_bits must fit u64, which holds for nv < 57.
         let input_elem_bits: u64 = if level == 0 {
             FIELD_BITS as u64
         } else {

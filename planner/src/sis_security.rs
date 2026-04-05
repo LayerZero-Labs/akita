@@ -11,6 +11,16 @@ const _: () = assert!(MAX_RANK == 4, "SIS width table only covers ranks 1..=4");
 ///
 /// Verified with lattice-estimator (BDGL16 + lgsa, q = 2^128 - 275).
 ///
+/// Regenerate with:
+///
+/// ```bash
+/// sage -python scripts/gen_sis_table.py --search-cap 10000000000
+/// ```
+///
+/// Requires a checkout of <https://github.com/malb/lattice-estimator> at
+/// `../lattice-estimator` (sibling of the repo root) or pointed to by
+/// `LATTICE_ESTIMATOR_PATH`.
+///
 /// Parameters:
 /// - `d`: ring dimension of ZqX/(X^D + 1). One of {32, 64, 128}.
 /// - `collision_inf`: worst-case L-infinity norm of the difference between
@@ -21,35 +31,35 @@ const _: () = assert!(MAX_RANK == 4, "SIS width table only covers ranks 1..=4");
 ///   in the stage-1 challenge family and rounded up to the next supported
 ///   SIS bucket.
 ///
-/// The D=128 rows were computed with the same estimator/model and capped
-/// binary searches. Many of those entries remain above the 128-bit floor at
-/// the search cap, so the large capped values should be read as "at least this
-/// large", not as tight cutoffs.
+/// Entries that equal the search cap (10^10 for D=32/64, 5*10^10 for D=128)
+/// should be read as "at least this large", not as tight cutoffs.
 fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[u64; MAX_RANK as usize]> {
     match (d, collision_inf) {
-        // D=32
-        (32, 2) => Some([11_757, 4_359_823, 5_000_000, 5_000_000]),
-        (32, 3) => Some([5_225, 1_937_699, 5_000_000, 5_000_000]),
-        (32, 7) => Some([959, 355_903, 5_000_000, 5_000_000]),
-        (32, 15) => Some([209, 77_507, 7_357_796, 5_000_000]),
-        (32, 31) => Some([48, 18_147, 1_722_689, 5_000_000]),
-        (32, 63) => Some([19, 4_393, 417_108, 5_000_000]),
+        // D=32  (search cap: 10^10)
+        (32, 2) => Some([11_757, 4_359_823, 413_876_042, 10_000_000_000]),
+        (32, 3) => Some([5_225, 1_937_699, 183_944_907, 8_645_254_247]),
+        (32, 7) => Some([959, 355_903, 33_785_799, 1_587_903_841]),
+        (32, 15) => Some([209, 77_507, 7_357_796, 345_810_169]),
+        (32, 31) => Some([48, 18_147, 1_722_689, 80_964_920]),
+        (32, 63) => Some([19, 4_393, 417_108, 19_603_751]),
         (32, 127) => Some([15, 1_081, 102_641, 4_824_061]),
         (32, 255) => Some([13, 268, 25_459, 1_196_574]),
         (32, 511) => Some([11, 66, 6_339, 297_974]),
         (32, 1023) => Some([10, 27, 1_581, 74_347]),
         (32, 2047) => Some([9, 23, 395, 18_568]),
-        // D=64
-        (64, 2) => Some([2_179_911, 20_000_000, 20_000_000, 20_000_000]),
-        (64, 3) => Some([968_849, 20_000_000, 20_000_000, 20_000_000]),
-        (64, 7) => Some([177_951, 20_000_000, 20_000_000, 20_000_000]),
-        (64, 15) => Some([38_753, 20_000_000, 20_000_000, 20_000_000]),
-        (64, 31) => Some([9_073, 20_000_000, 20_000_000, 20_000_000]),
-        (64, 63) => Some([2_196, 9_801_875, 20_000_000, 20_000_000]),
-        (64, 127) => Some([540, 2_412_030, 20_000_000, 20_000_000]),
-        (64, 255) => Some([134, 598_287, 20_000_000, 20_000_000]),
-        (64, 511) => Some([33, 148_987, 20_000_000, 20_000_000]),
-        // D=128
+        // D=64  (search cap: 10^10)
+        (64, 2) => Some([2_179_911, 9_725_911_028, 10_000_000_000, 10_000_000_000]),
+        (64, 3) => Some([968_849, 4_322_627_123, 10_000_000_000, 10_000_000_000]),
+        (64, 7) => Some([177_951, 793_951_920, 10_000_000_000, 10_000_000_000]),
+        (64, 15) => Some([38_753, 172_905_084, 10_000_000_000, 10_000_000_000]),
+        (64, 31) => Some([9_073, 40_482_460, 10_000_000_000, 10_000_000_000]),
+        (64, 63) => Some([2_196, 9_801_875, 6_215_651_928, 10_000_000_000]),
+        (64, 127) => Some([540, 2_412_030, 1_529_538_254, 10_000_000_000]),
+        (64, 255) => Some([134, 598_287, 379_391_349, 10_000_000_000]),
+        (64, 511) => Some([33, 148_987, 94_476_976, 10_000_000_000]),
+        (64, 1023) => Some([13, 37_173, 23_573_090, 5_520_444_163]),
+        (64, 2047) => Some([11, 9_284, 5_887_515, 1_378_762_947]),
+        // D=128  (search cap: 5*10^10)
         (128, 2) => Some([
             4_862_955_514,
             50_000_000_000,
@@ -89,7 +99,7 @@ pub fn min_rank_for_secure_width(d: u32, collision_inf: u32, width: u64) -> Opti
 /// Round a requested collision bound up to the next supported SIS bucket.
 pub fn ceil_supported_collision(d: u32, collision_inf: u32) -> Option<u32> {
     const D32: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047];
-    const D64: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511];
+    const D64: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047];
     const D128: &[u32] = &[2, 3, 7, 15, 31, 63];
     let buckets = match d {
         32 => D32,
@@ -149,7 +159,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(d32.windows(2).all(|pair| pair[0] >= pair[1]));
 
-        let d64 = [2, 3, 7, 15, 31, 63, 127, 255, 511]
+        let d64 = [2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047]
             .into_iter()
             .map(|collision| sis_max_widths(64, collision).unwrap()[0])
             .collect::<Vec<_>>();
