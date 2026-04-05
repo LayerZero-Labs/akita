@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::digit_math::{compute_num_digits, compute_num_digits_fold, optimal_m_r_split};
 use crate::proof_size::{
     elem_bytes, packed_digits_bytes, ring_vec_bytes, stage1_bytes_optimized, sumcheck_bytes,
-    sumcheck_rounds,
+    sumcheck_rounds, FIELD_BITS,
 };
 use crate::sis_security::{ceil_supported_collision, min_rank_for_secure_width};
 
@@ -73,7 +73,7 @@ pub const ALL_RING_CONFIGS: &[RingConfig] = &[
 ];
 
 const MIN_LB: u32 = 2;
-const MAX_LB: u32 = 7;
+const MAX_LB: u32 = 6;
 
 // ── Witness computation ────────────────────────────────────────────────────
 
@@ -382,6 +382,12 @@ impl Planner {
             1usize << (self.opts.max_num_vars - alpha)
         };
 
+        let input_elem_bits: u64 = if level == 0 {
+            FIELD_BITS as u64
+        } else {
+            lb as u64
+        };
+
         let base_args = WitnessArgs {
             m_vars,
             r_vars,
@@ -393,7 +399,7 @@ impl Planner {
             tight_zpre: self.opts.tight_zpre,
         };
         let lc = compute_level_witness(cfg, &base_args);
-        if lc.next_w_len >= w_len {
+        if (lc.next_w_len as u64) * (lb as u64) >= (w_len as u64) * input_elem_bits {
             return None;
         }
 
@@ -423,7 +429,7 @@ impl Planner {
                 ..base_args
             },
         );
-        if lc.next_w_len >= w_len {
+        if (lc.next_w_len as u64) * (lb as u64) >= (w_len as u64) * input_elem_bits {
             return None;
         }
         let prefix = self.level_prefix(cfg, lb, lc.rounds, nd);

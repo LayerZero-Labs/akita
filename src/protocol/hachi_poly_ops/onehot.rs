@@ -361,32 +361,35 @@ where
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
         match &self.blocks {
             OneHotBlocks::Regular(blocks) => cfg_iter!(blocks)
-                .map(|entries| {
-                    let mut coeffs_acc = [F::zero(); D];
-                    for entry in entries {
-                        let pos = entry.pos_in_block();
-                        if pos < scalars.len() && pos < block_len {
-                            coeffs_acc[entry.coeff_idx()] += scalars[pos];
-                        }
-                    }
-                    CyclotomicRing::from_coefficients(coeffs_acc)
-                })
+                .map(|entries| fold_regular_onehot_block(entries, scalars, block_len))
                 .collect(),
             OneHotBlocks::General(blocks) => cfg_iter!(blocks)
-                .map(|entries| {
-                    let mut coeffs_acc = [F::zero(); D];
-                    for entry in entries {
-                        if entry.pos_in_block < scalars.len() && entry.pos_in_block < block_len {
-                            let s = scalars[entry.pos_in_block];
-                            for &ci in &entry.nonzero_coeffs {
-                                coeffs_acc[ci] += s;
-                            }
-                        }
-                    }
-                    CyclotomicRing::from_coefficients(coeffs_acc)
-                })
+                .map(|entries| fold_sparse_onehot_block(entries, scalars, block_len))
                 .collect(),
         }
+    }
+
+    fn evaluate_and_fold(
+        &self,
+        eval_outer_scalars: &[F],
+        fold_scalars: &[F],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        let folded: Vec<CyclotomicRing<F, D>> = match &self.blocks {
+            OneHotBlocks::Regular(blocks) => cfg_iter!(blocks)
+                .map(|entries| fold_regular_onehot_block(entries, fold_scalars, block_len))
+                .collect(),
+            OneHotBlocks::General(blocks) => cfg_iter!(blocks)
+                .map(|entries| fold_sparse_onehot_block(entries, fold_scalars, block_len))
+                .collect(),
+        };
+        let eval = folded
+            .iter()
+            .zip(eval_outer_scalars.iter())
+            .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
+                acc + f_i.scale(s_i)
+            });
+        (eval, folded)
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold")]
@@ -675,6 +678,38 @@ fn num_cols_a(block_len: usize, num_digits_commit: usize) -> Result<usize, Hachi
     block_len
         .checked_mul(num_digits_commit)
         .ok_or_else(|| HachiError::InvalidSetup("active A width overflow".to_string()))
+}
+
+fn fold_regular_onehot_block<F: FieldCore, const D: usize>(
+    entries: &[RegularOneHotEntry],
+    scalars: &[F],
+    block_len: usize,
+) -> CyclotomicRing<F, D> {
+    let mut coeffs_acc = [F::zero(); D];
+    for entry in entries {
+        let pos = entry.pos_in_block();
+        if pos < scalars.len() && pos < block_len {
+            coeffs_acc[entry.coeff_idx()] += scalars[pos];
+        }
+    }
+    CyclotomicRing::from_coefficients(coeffs_acc)
+}
+
+fn fold_sparse_onehot_block<F: FieldCore, const D: usize>(
+    entries: &[SparseBlockEntry],
+    scalars: &[F],
+    block_len: usize,
+) -> CyclotomicRing<F, D> {
+    let mut coeffs_acc = [F::zero(); D];
+    for entry in entries {
+        if entry.pos_in_block < scalars.len() && entry.pos_in_block < block_len {
+            let s = scalars[entry.pos_in_block];
+            for &ci in &entry.nonzero_coeffs {
+                coeffs_acc[ci] += s;
+            }
+        }
+    }
+    CyclotomicRing::from_coefficients(coeffs_acc)
 }
 
 fn inner_ajtai_regular_onehot_wide<F, const D: usize>(
@@ -1021,6 +1056,7 @@ mod tests {
     use super::*;
     use crate::algebra::fields::Pow2Offset24Field;
     use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
+    use crate::FromSmallInt;
 
     fn aggregate_witnesses<F: FieldCore, const D: usize>(
         witnesses: &[DecomposeFoldWitness<F, D>],
@@ -1137,5 +1173,70 @@ mod tests {
         .expect("onehot batched path should apply");
 
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn regular_onehot_evaluate_and_fold_matches_factorized_eval() {
+        type F = Pow2Offset24Field;
+        const D: usize = 64;
+
+        let poly = OneHotPoly::<F, D>::new(
+            64,
+            vec![Some(1usize), None, Some(9usize), Some(17usize)],
+            1,
+            1,
+        )
+        .unwrap();
+        let block_len = 1usize << poly.m_vars;
+        let fold_scalars = vec![F::from_u64(3), F::from_u64(5)];
+        let eval_outer_scalars = vec![F::from_u64(7), F::from_u64(11)];
+
+        let (eval, folded) = poly.evaluate_and_fold(&eval_outer_scalars, &fold_scalars, block_len);
+        let expected_folded = poly.fold_blocks(&fold_scalars, block_len);
+        assert_eq!(folded, expected_folded);
+
+        let full_scalars: Vec<F> = eval_outer_scalars
+            .iter()
+            .flat_map(|outer| fold_scalars.iter().map(move |inner| *outer * *inner))
+            .collect();
+        let expected_eval = poly.evaluate_ring(&full_scalars);
+        assert_eq!(eval, expected_eval);
+    }
+
+    #[test]
+    fn sparse_onehot_evaluate_and_fold_matches_factorized_eval() {
+        type F = Pow2Offset24Field;
+        const D: usize = 64;
+
+        let poly = OneHotPoly::<F, D>::new(
+            32,
+            vec![
+                Some(1usize),
+                None,
+                Some(7usize),
+                Some(12usize),
+                None,
+                Some(3usize),
+                None,
+                Some(15usize),
+            ],
+            1,
+            1,
+        )
+        .unwrap();
+        let block_len = 1usize << poly.m_vars;
+        let fold_scalars = vec![F::from_u64(2), F::from_u64(4)];
+        let eval_outer_scalars = vec![F::from_u64(3), F::from_u64(5)];
+
+        let (eval, folded) = poly.evaluate_and_fold(&eval_outer_scalars, &fold_scalars, block_len);
+        let expected_folded = poly.fold_blocks(&fold_scalars, block_len);
+        assert_eq!(folded, expected_folded);
+
+        let full_scalars: Vec<F> = eval_outer_scalars
+            .iter()
+            .flat_map(|outer| fold_scalars.iter().map(move |inner| *outer * *inner))
+            .collect();
+        let expected_eval = poly.evaluate_ring(&full_scalars);
+        assert_eq!(eval, expected_eval);
     }
 }

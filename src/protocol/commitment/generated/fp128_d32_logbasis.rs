@@ -33,27 +33,33 @@ pub(crate) static FP128_D32_LOGBASIS_SCHEDULES: &[GeneratedScheduleTableEntry] =
     GeneratedScheduleTableEntry { max_num_vars: 9, total_bytes: 8192, steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { current_w_len: 512, witness_shape: GeneratedDirectWitnessShape::FieldElements { num_elems: 512 }, entry_d: None, entry_nb: None, direct_bytes: 8192, total_bytes: 8192 }),
     ] },
-    GeneratedScheduleTableEntry { max_num_vars: 10, total_bytes: 16384, steps: &[
-        GeneratedStep::Direct(GeneratedDirectStep { current_w_len: 1024, witness_shape: GeneratedDirectWitnessShape::FieldElements { num_elems: 1024 }, entry_d: None, entry_nb: None, direct_bytes: 16384, total_bytes: 16384 }),
+    GeneratedScheduleTableEntry { max_num_vars: 10, total_bytes: 9252, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { current_w_len: 1024, d: 32, log_basis: 3, challenge_l1_mass: 256, m_vars: 4, r_vars: 1, n_a: 1, n_b: 1, n_d: 1, delta_open: 43, delta_fold: 5, delta_commit: 1, w_ring: 467, next_w_len: 14944, level_bytes: 3136, label: "D32-na1" }),
+        GeneratedStep::Direct(GeneratedDirectStep { current_w_len: 14944, witness_shape: GeneratedDirectWitnessShape::PackedDigits { num_elems: 14944, bits_per_elem: 3 }, entry_d: Some(32), entry_nb: Some(1), direct_bytes: 5604, total_bytes: 6116 }),
     ] },
-    GeneratedScheduleTableEntry { max_num_vars: 11, total_bytes: 32768, steps: &[
-        GeneratedStep::Direct(GeneratedDirectStep { current_w_len: 2048, witness_shape: GeneratedDirectWitnessShape::FieldElements { num_elems: 2048 }, entry_d: None, entry_nb: None, direct_bytes: 32768, total_bytes: 32768 }),
+    GeneratedScheduleTableEntry { max_num_vars: 11, total_bytes: 11428, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { current_w_len: 2048, d: 32, log_basis: 3, challenge_l1_mass: 256, m_vars: 4, r_vars: 2, n_a: 1, n_b: 1, n_d: 1, delta_open: 43, delta_fold: 5, delta_commit: 1, w_ring: 639, next_w_len: 20448, level_bytes: 3248, label: "D32-na1" }),
+        GeneratedStep::Direct(GeneratedDirectStep { current_w_len: 20448, witness_shape: GeneratedDirectWitnessShape::PackedDigits { num_elems: 20448, bits_per_elem: 3 }, entry_d: Some(32), entry_nb: Some(1), direct_bytes: 7668, total_bytes: 8180 }),
     ] },
-    GeneratedScheduleTableEntry { max_num_vars: 12, total_bytes: 65536, steps: &[
-        GeneratedStep::Direct(GeneratedDirectStep { current_w_len: 4096, witness_shape: GeneratedDirectWitnessShape::FieldElements { num_elems: 4096 }, entry_d: None, entry_nb: None, direct_bytes: 65536, total_bytes: 65536 }),
+    GeneratedScheduleTableEntry { max_num_vars: 12, total_bytes: 13792, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { current_w_len: 4096, d: 32, log_basis: 3, challenge_l1_mass: 256, m_vars: 6, r_vars: 1, n_a: 2, n_b: 1, n_d: 1, delta_open: 43, delta_fold: 5, delta_commit: 1, w_ring: 836, next_w_len: 26752, level_bytes: 3248, label: "D32-na2" }),
+        GeneratedStep::Direct(GeneratedDirectStep { current_w_len: 26752, witness_shape: GeneratedDirectWitnessShape::PackedDigits { num_elems: 26752, bits_per_elem: 3 }, entry_d: Some(32), entry_nb: Some(1), direct_bytes: 10032, total_bytes: 10544 }),
     ] },
-    GeneratedScheduleTableEntry { max_num_vars: 13, total_bytes: 131072, steps: &[
-        GeneratedStep::Direct(GeneratedDirectStep { current_w_len: 8192, witness_shape: GeneratedDirectWitnessShape::FieldElements { num_elems: 8192 }, entry_d: None, entry_nb: None, direct_bytes: 131072, total_bytes: 131072 }),
+    GeneratedScheduleTableEntry { max_num_vars: 13, total_bytes: 17512, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { current_w_len: 8192, d: 32, log_basis: 3, challenge_l1_mass: 256, m_vars: 6, r_vars: 2, n_a: 2, n_b: 1, n_d: 1, delta_open: 43, delta_fold: 5, delta_commit: 1, w_ring: 1094, next_w_len: 35008, level_bytes: 3360, label: "D32-na2" }),
+        GeneratedStep::Direct(GeneratedDirectStep { current_w_len: 35008, witness_shape: GeneratedDirectWitnessShape::PackedDigits { num_elems: 35008, bits_per_elem: 3 }, entry_d: Some(32), entry_nb: Some(2), direct_bytes: 13128, total_bytes: 14152 }),
     ] },
-    GeneratedScheduleTableEntry { max_num_vars: 14, total_bytes: 262144, steps: &[
-        GeneratedStep::Direct(GeneratedDirectStep { current_w_len: 16384, witness_shape: GeneratedDirectWitnessShape::FieldElements { num_elems: 16384 }, entry_d: None, entry_nb: None, direct_bytes: 262144, total_bytes: 262144 }),
+    GeneratedScheduleTableEntry { max_num_vars: 14, total_bytes: 21352, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { current_w_len: 16384, d: 32, log_basis: 3, challenge_l1_mass: 256, m_vars: 7, r_vars: 2, n_a: 2, n_b: 1, n_d: 1, delta_open: 43, delta_fold: 5, delta_commit: 1, w_ring: 1414, next_w_len: 45248, level_bytes: 3360, label: "D32-na2" }),
+        GeneratedStep::Direct(GeneratedDirectStep { current_w_len: 45248, witness_shape: GeneratedDirectWitnessShape::PackedDigits { num_elems: 45248, bits_per_elem: 3 }, entry_d: Some(32), entry_nb: Some(2), direct_bytes: 16968, total_bytes: 17992 }),
     ] },
-    GeneratedScheduleTableEntry { max_num_vars: 15, total_bytes: 524288, steps: &[
-        GeneratedStep::Direct(GeneratedDirectStep { current_w_len: 32768, witness_shape: GeneratedDirectWitnessShape::FieldElements { num_elems: 32768 }, entry_d: None, entry_nb: None, direct_bytes: 524288, total_bytes: 524288 }),
+    GeneratedScheduleTableEntry { max_num_vars: 15, total_bytes: 27544, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { current_w_len: 32768, d: 32, log_basis: 3, challenge_l1_mass: 256, m_vars: 7, r_vars: 3, n_a: 2, n_b: 1, n_d: 1, delta_open: 43, delta_fold: 5, delta_commit: 1, w_ring: 1930, next_w_len: 61760, level_bytes: 3360, label: "D32-na2" }),
+        GeneratedStep::Direct(GeneratedDirectStep { current_w_len: 61760, witness_shape: GeneratedDirectWitnessShape::PackedDigits { num_elems: 61760, bits_per_elem: 3 }, entry_d: Some(32), entry_nb: Some(2), direct_bytes: 23160, total_bytes: 24184 }),
     ] },
-    GeneratedScheduleTableEntry { max_num_vars: 16, total_bytes: 43616, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { current_w_len: 65536, d: 32, log_basis: 5, challenge_l1_mass: 256, m_vars: 8, r_vars: 3, n_a: 2, n_b: 2, n_d: 2, delta_open: 26, delta_fold: 4, delta_commit: 1, w_ring: 1856, next_w_len: 59392, level_bytes: 5472, label: "D32-na2" }),
-        GeneratedStep::Direct(GeneratedDirectStep { current_w_len: 59392, witness_shape: GeneratedDirectWitnessShape::PackedDigits { num_elems: 59392, bits_per_elem: 5 }, entry_d: Some(32), entry_nb: Some(2), direct_bytes: 37120, total_bytes: 38144 }),
+    GeneratedScheduleTableEntry { max_num_vars: 16, total_bytes: 35336, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { current_w_len: 65536, d: 32, log_basis: 3, challenge_l1_mass: 256, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1, delta_open: 43, delta_fold: 5, delta_commit: 1, w_ring: 2570, next_w_len: 82240, level_bytes: 3472, label: "D32-na2" }),
+        GeneratedStep::Direct(GeneratedDirectStep { current_w_len: 82240, witness_shape: GeneratedDirectWitnessShape::PackedDigits { num_elems: 82240, bits_per_elem: 3 }, entry_d: Some(32), entry_nb: Some(2), direct_bytes: 30840, total_bytes: 31864 }),
     ] },
     GeneratedScheduleTableEntry { max_num_vars: 17, total_bytes: 50696, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { current_w_len: 131072, d: 32, log_basis: 3, challenge_l1_mass: 256, m_vars: 9, r_vars: 3, n_a: 2, n_b: 1, n_d: 1, delta_open: 43, delta_fold: 5, delta_commit: 1, w_ring: 3850, next_w_len: 123200, level_bytes: 3472, label: "D32-na2" }),
