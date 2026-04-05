@@ -1190,17 +1190,12 @@ where
         Profile::stage1_challenge_config(d)
     }
 
-    fn n_b_at_level(level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {
-        if D == 64 && LOG_COMMIT_BOUND == 1 {
-            Profile::onehot_d64_root_rank(level, max_num_vars)
-        } else {
-            Profile::audited_root_outer_rank(D, level, max_num_vars)
-        }
+    fn n_b_at_level(_level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {
+        Self::envelope(max_num_vars).max_n_b
     }
 
-    fn n_d_at_level(level: usize, max_num_vars: usize, current_w_len: usize) -> usize {
-        let _ = current_w_len;
-        Self::n_b_at_level(level, max_num_vars, current_w_len)
+    fn n_d_at_level(_level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {
+        Self::envelope(max_num_vars).max_n_d
     }
 
     fn level_params_with_log_basis<Cfg: CommitmentConfig>(
@@ -1216,22 +1211,15 @@ where
                 return planned_level.level.params;
             }
         }
+        let envelope = Self::envelope(inputs.max_num_vars);
         let d = Self::d_at_level(inputs.level, inputs.current_w_len);
         let stage1_config = Self::stage1_challenge_config(d);
         HachiLevelParams {
             d,
             log_basis,
-            n_a: if D == 64 && LOG_COMMIT_BOUND == 1 {
-                1
-            } else {
-                Profile::audited_root_a_rank::<LOG_COMMIT_BOUND>(
-                    D,
-                    inputs.level,
-                    inputs.max_num_vars,
-                )
-            },
-            n_b: Self::n_b_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
-            n_d: Self::n_d_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
+            n_a: envelope.max_n_a,
+            n_b: envelope.max_n_b,
+            n_d: envelope.max_n_d,
             challenge_l1_mass: stage1_config.l1_mass(),
             stage1_config,
         }
