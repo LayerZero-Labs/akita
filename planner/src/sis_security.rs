@@ -80,6 +80,11 @@ fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[u64; MAX_RANK as usize]
     }
 }
 
+/// Expose the raw SIS width array for a given `(d, collision_inf)` pair.
+pub fn sis_max_widths_public(d: u32, collision_inf: u32) -> Option<[u64; MAX_RANK as usize]> {
+    sis_max_widths(d, collision_inf)
+}
+
 /// Returns the smallest Module-SIS rank in `1..=MAX_RANK` that provides
 /// 128-bit security for an SIS instance with `width` ring-element columns
 /// at ring dimension `d` and collision bound `collision_inf`.

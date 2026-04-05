@@ -113,6 +113,35 @@ impl SparseChallengeConfig {
         }
     }
 
+    /// Largest absolute value of any coefficient that can appear in a
+    /// challenge sampled from this family.
+    #[inline]
+    pub fn max_abs_coeff(&self) -> u32 {
+        match self {
+            Self::Uniform { nonzero_coeffs, .. } => nonzero_coeffs
+                .iter()
+                .map(|c| c.unsigned_abs() as u32)
+                .max()
+                .unwrap_or(0),
+            Self::SplitRing {
+                max_mag2_per_half, ..
+            } => {
+                if *max_mag2_per_half > 0 {
+                    2
+                } else {
+                    1
+                }
+            }
+            Self::ExactShell { count_mag2, .. } => {
+                if *count_mag2 > 0 {
+                    2
+                } else {
+                    1
+                }
+            }
+        }
+    }
+
     /// Total number of non-zero coefficients sampled from this family.
     #[inline]
     pub fn hamming_weight(&self) -> usize {

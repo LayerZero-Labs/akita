@@ -1106,6 +1106,57 @@ where
     }
 }
 
+/// Derive exact `(n_a, n_b, n_d)` for a recursive level from the generated
+/// SIS width thresholds.
+///
+/// Computes the recursive layout to obtain the actual matrix widths, then
+/// looks up the minimum Module-SIS rank required for 128-bit security at
+/// each role. Falls back to the envelope when the SIS table does not cover
+/// the requested parameters.
+fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
+    d: usize,
+    log_basis: u32,
+    current_w_len: usize,
+    stage1_config: &SparseChallengeConfig,
+    envelope: &CommitmentEnvelope,
+) -> Option<HachiLevelParams> {
+    use super::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
+    use super::schedule::hachi_recursive_level_layout_from_params;
+
+    let tentative = HachiLevelParams {
+        d,
+        log_basis,
+        n_a: envelope.max_n_a,
+        n_b: 1,
+        n_d: 1,
+        challenge_l1_mass: stage1_config.l1_mass(),
+        stage1_config: stage1_config.clone(),
+    };
+    let layout = hachi_recursive_level_layout_from_params::<Cfg>(&tentative, current_w_len).ok()?;
+
+    let bd_collision = (1u32 << log_basis) - 1;
+    let a_raw = bd_collision;
+    let a_collision = ceil_supported_collision(d as u32, a_raw * stage1_config.max_abs_coeff())?;
+
+    let n_a = min_rank_for_secure_width(d as u32, a_collision, layout.inner_width as u64)
+        .unwrap_or(envelope.max_n_a);
+    let exact_outer_width = n_a * layout.num_digits_open * layout.num_blocks;
+    let n_b = min_rank_for_secure_width(d as u32, bd_collision, exact_outer_width as u64)
+        .unwrap_or(envelope.max_n_b);
+    let n_d = min_rank_for_secure_width(d as u32, bd_collision, layout.d_matrix_width as u64)
+        .unwrap_or(envelope.max_n_d);
+
+    Some(HachiLevelParams {
+        d,
+        log_basis,
+        n_a,
+        n_b,
+        n_d,
+        challenge_l1_mass: stage1_config.l1_mass(),
+        stage1_config: stage1_config.clone(),
+    })
+}
+
 /// Generated adaptive policy with table-selected per-level log bases.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GeneratedAdaptivePolicy<Profile, const D: usize, const LOG_COMMIT_BOUND: u32>(
@@ -1214,6 +1265,19 @@ where
         let envelope = Self::envelope(inputs.max_num_vars);
         let d = Self::d_at_level(inputs.level, inputs.current_w_len);
         let stage1_config = Self::stage1_challenge_config(d);
+
+        if inputs.level > 0 {
+            if let Some(params) = sis_derived_recursive_params::<Cfg>(
+                d,
+                log_basis,
+                inputs.current_w_len,
+                &stage1_config,
+                &envelope,
+            ) {
+                return params;
+            }
+        }
+
         HachiLevelParams {
             d,
             log_basis,

@@ -64,6 +64,7 @@ pub(crate) mod fp128_d32_logbasis;
 pub(crate) mod fp128_d32_onehot;
 #[allow(dead_code)]
 pub(crate) mod fp128_d64_onehot;
+pub(crate) mod sis_floor;
 
 pub(crate) fn table_entry(
     table: GeneratedScheduleTable,
