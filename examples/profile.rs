@@ -25,6 +25,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
 use std::fs;
+use std::io::BufWriter;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -656,9 +657,11 @@ fn main() {
         .with_target(false);
     let _chrome_guard = if enable_trace {
         fs::create_dir_all("profile_traces").ok();
+        let file = fs::File::create(&trace_file).expect("Failed to create trace file");
+        let buffered = BufWriter::with_capacity(4 * 1024 * 1024, file);
         let (chrome_layer, guard) = ChromeLayerBuilder::new()
             .include_args(true)
-            .file(&trace_file)
+            .writer(buffered)
             .build();
         tracing_subscriber::registry()
             .with(log_filter)
