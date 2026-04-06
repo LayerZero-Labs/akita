@@ -7,6 +7,7 @@ pub mod onehot;
 pub mod presets;
 pub(crate) mod profile;
 pub(crate) mod schedule;
+pub(crate) mod schedule_planner;
 mod scheme;
 pub(crate) mod transcript_append;
 mod types;
@@ -21,9 +22,9 @@ pub use commit::{
 pub use config::optimal_m_r_split;
 pub use config::{
     beta_linf_fold_bound, compute_num_digits, compute_num_digits_fold, CommitmentConfig,
-    CommitmentEnvelope, CommitmentPolicy, CommitmentPreset, DecompositionParams,
-    GeneratedAdaptivePolicy, HachiCommitmentLayout,
-    PlannedAdaptiveBoundedPolicy, SmallTestCommitmentConfig, StaticBoundedPolicy,
+    CommitmentEnvelope, CommitmentPreset, DecompositionParams, GeneratedAdaptivePolicy,
+    HachiCommitmentLayout, PlannedAdaptiveBoundedPolicy, SmallTestCommitmentConfig,
+    StaticBoundedPolicy,
 };
 pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
 pub use profile::{CommitmentFieldProfile, Fp128PrimeProfile};

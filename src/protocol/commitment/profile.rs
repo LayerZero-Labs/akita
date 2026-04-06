@@ -7,9 +7,10 @@ use super::generated::{
 };
 use super::schedule::{
     generated_schedule_plan_from_table, planned_log_basis_at_level_from_schedule,
-    planned_recursive_suffix_bytes_from_schedule, planned_schedule,
-    planned_schedule_key_from_schedule, HachiScheduleInputs, HachiSchedulePlan,
+    planned_recursive_suffix_bytes_from_schedule, planned_schedule_key_from_schedule,
+    HachiScheduleInputs, HachiSchedulePlan,
 };
+use super::schedule_planner::planned_schedule;
 use crate::algebra::Prime128Offset275;
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;

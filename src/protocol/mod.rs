@@ -19,8 +19,8 @@ pub mod sumcheck;
 pub mod transcript;
 
 pub use commitment::{
-    optimal_m_r_split, presets, AppendToTranscript, CommitmentConfig, CommitmentPolicy,
-    CommitmentPreset, CommitmentScheme, DummyProof, GeneratedAdaptivePolicy, HachiCommitment,
+    optimal_m_r_split, presets, AppendToTranscript, CommitmentConfig, CommitmentPreset,
+    CommitmentScheme, DummyProof, GeneratedAdaptivePolicy, HachiCommitment,
     HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup, HachiOpeningClaim,
     HachiOpeningPoint, HachiProverSetup, HachiRootBatchSummary, HachiSetupSeed, HachiVerifierSetup,
     PlannedAdaptiveBoundedPolicy, RingCommitment, RingCommitmentScheme, SmallTestCommitmentConfig,

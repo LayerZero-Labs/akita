@@ -562,10 +562,18 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Choose the runtime commitment layout for `max_num_vars`.
     ///
+    /// Planner-backed families use the exact root fold layout when one is
+    /// pinned; otherwise this falls back to the derived root-commitment layout.
+    ///
     /// # Errors
     ///
     /// Returns an error if `max_num_vars` does not admit a valid layout.
     fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+        if let Some(plan) = Self::schedule_plan(max_num_vars)? {
+            if let Some(root_fold) = plan.fold_levels().next() {
+                return Ok(root_fold.layout);
+            }
+        }
         let (_, layout) = hachi_root_commitment_layout::<Self>(max_num_vars)?;
         Ok(layout)
     }
@@ -617,213 +625,10 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig;
 }
 
-/// Field-independent scheduling policy for a family of commitment presets.
-pub trait CommitmentPolicy: Clone + Send + Sync + 'static {
-    /// Ring degree used by this policy.
-    const D: usize;
-
-    /// Decomposition parameters (gadget base and coefficient bounds).
-    fn decomposition() -> DecompositionParams;
-
-    /// Maximum matrix row counts needed by this policy for the given setup size.
-    fn envelope(max_num_vars: usize) -> CommitmentEnvelope;
-
-    /// Build one level's active params from public inputs and an explicit basis.
-    fn level_params_with_log_basis<Cfg: CommitmentConfig>(
-        inputs: HachiScheduleInputs,
-        log_basis: u32,
-    ) -> HachiLevelParams {
-        let d = Self::d_at_level(inputs.level, inputs.current_w_len);
-        let stage1_config = Self::stage1_challenge_config(d);
-        HachiLevelParams {
-            d,
-            log_basis,
-            n_a: Self::n_a_at_level(inputs.level),
-            n_b: Self::n_b_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
-            n_d: Self::n_d_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
-            challenge_l1_mass: stage1_config.l1_mass(),
-            stage1_config,
-        }
-    }
-
-    /// Deterministically choose the active basis for one level from public inputs.
-    fn log_basis_at_level<Cfg: CommitmentConfig>(inputs: HachiScheduleInputs) -> u32 {
-        let _ = inputs;
-        Self::decomposition().log_basis
-    }
-
-    /// Inclusive search range for adaptive recursive basis planning at one state.
-    fn log_basis_search_range<Cfg: CommitmentConfig>(inputs: HachiScheduleInputs) -> (u32, u32) {
-        let basis = Self::log_basis_at_level::<Cfg>(inputs);
-        (basis, basis)
-    }
-
-    /// Stable identity for the active log-basis schedule at `max_num_vars`.
-    fn schedule_key<Cfg: CommitmentConfig>(_max_num_vars: usize) -> String {
-        format!("static_v1_b{}", Self::decomposition().log_basis)
-    }
-
-    /// Optional full schedule plan for policies with an explicit planner.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the policy's planner cannot derive a valid
-    /// schedule from the public inputs.
-    fn schedule_plan<Cfg: CommitmentConfig>(
-        _max_num_vars: usize,
-    ) -> Result<Option<HachiSchedulePlan>, HachiError> {
-        Ok(None)
-    }
-
-    /// Optional proof-size planner for recursive suffixes that start from an
-    /// arbitrary witness state.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the policy cannot estimate the recursive suffix
-    /// bytes for the provided public witness state.
-    fn recursive_suffix_bytes<Cfg: CommitmentConfig>(
-        _max_num_vars: usize,
-        _level: usize,
-        _current_w_len: usize,
-    ) -> Result<Option<usize>, HachiError> {
-        Ok(None)
-    }
-
-    /// Choose the runtime commitment layout for `max_num_vars`.
-    ///
-    /// Planner-backed families use the exact root fold layout when one is
-    /// pinned; otherwise this falls back to the derived root-commitment layout.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the exact schedule lookup or derived root layout
-    /// construction fails for the requested witness size.
-    fn commitment_layout<Cfg: CommitmentConfig>(
-        max_num_vars: usize,
-    ) -> Result<HachiCommitmentLayout, HachiError> {
-        if let Some(plan) = Cfg::schedule_plan(max_num_vars)? {
-            if let Some(root_fold) = plan.fold_levels().next() {
-                return Ok(root_fold.layout);
-            }
-        }
-        let (_, layout) = hachi_root_commitment_layout::<Cfg>(max_num_vars)?;
-        Ok(layout)
-    }
-
-    /// Half-range bound used by the planner when sizing recursive `r`.
-    fn planner_half_field_bound(field_modulus: u128) -> u128 {
-        field_modulus / 2
-    }
-
-    /// Ring dimension to use at a given fold level.
-    fn d_at_level(_level: usize, _current_w_len: usize) -> usize {
-        Self::D
-    }
-
-    /// Module rank (inner Ajtai row count) at a given fold level.
-    fn n_a_at_level(_level: usize) -> usize {
-        Self::envelope(0).max_n_a
-    }
-
-    /// Outer commitment matrix rank at a given fold level.
-    fn n_b_at_level(_level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {
-        Self::envelope(max_num_vars).max_n_b
-    }
-
-    /// Prover D-matrix rank at a given fold level.
-    fn n_d_at_level(_level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {
-        Self::envelope(max_num_vars).max_n_d
-    }
-
-    /// Sparse challenge family used at this level.
-    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig;
-}
-
 /// Concrete commitment preset obtained by pairing a field with a scheduling policy.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CommitmentPreset<F, Policy> {
     _marker: PhantomData<(F, Policy)>,
-}
-
-impl<F, Policy> CommitmentConfig for CommitmentPreset<F, Policy>
-where
-    F: CanonicalField + FieldCore + Send + Sync + 'static,
-    Policy: CommitmentPolicy,
-{
-    type Field = F;
-    const D: usize = Policy::D;
-
-    fn decomposition() -> DecompositionParams {
-        Policy::decomposition()
-    }
-
-    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
-        Policy::envelope(max_num_vars)
-    }
-
-    fn family_key() -> &'static str {
-        std::any::type_name::<Self>()
-    }
-
-    fn level_params_with_log_basis(
-        inputs: HachiScheduleInputs,
-        log_basis: u32,
-    ) -> HachiLevelParams {
-        Policy::level_params_with_log_basis::<Self>(inputs, log_basis)
-    }
-
-    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
-        Policy::log_basis_at_level::<Self>(inputs)
-    }
-
-    fn log_basis_search_range(inputs: HachiScheduleInputs) -> (u32, u32) {
-        Policy::log_basis_search_range::<Self>(inputs)
-    }
-
-    fn schedule_key(max_num_vars: usize) -> String {
-        Policy::schedule_key::<Self>(max_num_vars)
-    }
-
-    fn schedule_plan(max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
-        Policy::schedule_plan::<Self>(max_num_vars)
-    }
-
-    fn recursive_suffix_bytes(
-        max_num_vars: usize,
-        level: usize,
-        current_w_len: usize,
-    ) -> Result<Option<usize>, HachiError> {
-        Policy::recursive_suffix_bytes::<Self>(max_num_vars, level, current_w_len)
-    }
-
-    fn planner_half_field_bound() -> u128 {
-        Policy::planner_half_field_bound(Self::field_modulus())
-    }
-
-    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        Policy::commitment_layout::<Self>(max_num_vars)
-    }
-
-    fn d_at_level(level: usize, current_w_len: usize) -> usize {
-        Policy::d_at_level(level, current_w_len)
-    }
-
-    fn n_a_at_level(level: usize) -> usize {
-        Policy::n_a_at_level(level)
-    }
-
-    fn n_b_at_level(level: usize, max_num_vars: usize, current_w_len: usize) -> usize {
-        Policy::n_b_at_level(level, max_num_vars, current_w_len)
-    }
-
-    fn n_d_at_level(level: usize, max_num_vars: usize, current_w_len: usize) -> usize {
-        Policy::n_d_at_level(level, max_num_vars, current_w_len)
-    }
-
-    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
-        Policy::stage1_challenge_config(d)
-    }
 }
 
 /// Deterministic upper bound for the stage-1 folded-witness infinity norm.
@@ -984,7 +789,8 @@ pub struct StaticBoundedPolicy<
 >(PhantomData<Profile>);
 
 impl<
-        Profile,
+        F: CanonicalField + FieldCore + Send + Sync + 'static,
+        Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
         const D: usize,
         const LOG_COMMIT_BOUND: u32,
         const LOG_BASIS: u32,
@@ -992,11 +798,13 @@ impl<
         const N_A: usize,
         const N_B: usize,
         const N_D: usize,
-    > CommitmentPolicy
-    for StaticBoundedPolicy<Profile, D, LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS, N_A, N_B, N_D>
-where
-    Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
+    > CommitmentConfig
+    for CommitmentPreset<
+        F,
+        StaticBoundedPolicy<Profile, D, LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS, N_A, N_B, N_D>,
+    >
 {
+    type Field = F;
     const D: usize = D;
 
     fn decomposition() -> DecompositionParams {
@@ -1014,8 +822,7 @@ where
         }
     }
 
-    fn log_basis_at_level<Cfg: CommitmentConfig>(inputs: HachiScheduleInputs) -> u32 {
-        let _ = std::marker::PhantomData::<Cfg>;
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
         if inputs.level == 0 {
             LOG_BASIS
         } else {
@@ -1023,8 +830,7 @@ where
         }
     }
 
-    fn schedule_key<Cfg: CommitmentConfig>(_max_num_vars: usize) -> String {
-        let _ = std::marker::PhantomData::<Cfg>;
+    fn schedule_key(_max_num_vars: usize) -> String {
         format!("static_v1_root{LOG_BASIS}_rec{W_LOG_BASIS}")
     }
 
@@ -1037,7 +843,7 @@ where
         N_D.max(Profile::audited_root_outer_rank(D, level, max_num_vars))
     }
 
-    fn level_params_with_log_basis<Cfg: CommitmentConfig>(
+    fn level_params_with_log_basis(
         inputs: HachiScheduleInputs,
         log_basis: u32,
     ) -> HachiLevelParams {
@@ -1120,11 +926,15 @@ pub struct GeneratedAdaptivePolicy<Profile, const D: usize, const LOG_COMMIT_BOU
     PhantomData<Profile>,
 );
 
-impl<Profile, const D: usize, const LOG_COMMIT_BOUND: u32> CommitmentPolicy
-    for GeneratedAdaptivePolicy<Profile, D, LOG_COMMIT_BOUND>
-where
-    Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
+impl<
+        F: CanonicalField + FieldCore + Send + Sync + 'static,
+        Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
+        const D: usize,
+        const LOG_COMMIT_BOUND: u32,
+    > CommitmentConfig
+    for CommitmentPreset<F, GeneratedAdaptivePolicy<Profile, D, LOG_COMMIT_BOUND>>
 {
+    type Field = F;
     const D: usize = D;
 
     fn decomposition() -> DecompositionParams {
@@ -1157,40 +967,39 @@ where
         envelope
     }
 
-    fn log_basis_at_level<Cfg: CommitmentConfig>(inputs: HachiScheduleInputs) -> u32 {
-        Profile::generated_schedule_source::<Cfg, D, LOG_COMMIT_BOUND>(inputs.max_num_vars)
-            .and_then(|source| source.log_basis_at_level::<Cfg>(inputs))
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(inputs.max_num_vars)
+            .and_then(|source| source.log_basis_at_level::<Self>(inputs))
             .expect("generated adaptive schedule must be derivable from public inputs")
     }
 
-    fn log_basis_search_range<Cfg: CommitmentConfig>(_inputs: HachiScheduleInputs) -> (u32, u32) {
-        let _ = PhantomData::<Cfg>;
+    fn log_basis_search_range(_inputs: HachiScheduleInputs) -> (u32, u32) {
         Profile::adaptive_log_basis_search_range()
     }
 
-    fn schedule_key<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
-        Profile::generated_schedule_source::<Cfg, D, LOG_COMMIT_BOUND>(max_num_vars)
+    fn schedule_key(max_num_vars: usize) -> String {
+        Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(max_num_vars)
             .map(|source| source.schedule_key())
             .expect("generated adaptive schedule key must be derivable from public inputs")
     }
 
-    fn schedule_plan<Cfg: CommitmentConfig>(
+    fn schedule_plan(
         max_num_vars: usize,
     ) -> Result<Option<HachiSchedulePlan>, HachiError> {
         Ok(Some(
-            Profile::generated_schedule_source::<Cfg, D, LOG_COMMIT_BOUND>(max_num_vars)?
+            Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(max_num_vars)?
                 .schedule_plan(),
         ))
     }
 
-    fn recursive_suffix_bytes<Cfg: CommitmentConfig>(
+    fn recursive_suffix_bytes(
         max_num_vars: usize,
         level: usize,
         current_w_len: usize,
     ) -> Result<Option<usize>, HachiError> {
         Ok(Some(
-            Profile::generated_schedule_source::<Cfg, D, LOG_COMMIT_BOUND>(max_num_vars)?
-                .recursive_suffix_bytes::<Cfg>(max_num_vars, level, current_w_len)?,
+            Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(max_num_vars)?
+                .recursive_suffix_bytes::<Self>(max_num_vars, level, current_w_len)?,
         ))
     }
 
@@ -1198,23 +1007,15 @@ where
         Profile::stage1_challenge_config(d)
     }
 
-    fn n_b_at_level(_level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {
-        Self::envelope(max_num_vars).max_n_b
-    }
-
-    fn n_d_at_level(_level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {
-        Self::envelope(max_num_vars).max_n_d
-    }
-
-    fn level_params_with_log_basis<Cfg: CommitmentConfig>(
+    fn level_params_with_log_basis(
         inputs: HachiScheduleInputs,
         log_basis: u32,
     ) -> HachiLevelParams {
         if let Ok(source) =
-            Profile::generated_schedule_source::<Cfg, D, LOG_COMMIT_BOUND>(inputs.max_num_vars)
+            Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(inputs.max_num_vars)
         {
             if let Ok(Some(planned_level)) =
-                exact_planned_level_execution::<Cfg>(&source.schedule_plan(), inputs, log_basis)
+                exact_planned_level_execution::<Self>(&source.schedule_plan(), inputs, log_basis)
             {
                 return planned_level.level.params;
             }
@@ -1224,7 +1025,7 @@ where
         let stage1_config = Self::stage1_challenge_config(d);
 
         if inputs.level > 0 {
-            if let Some(params) = sis_derived_recursive_params::<Cfg>(
+            if let Some(params) = sis_derived_recursive_params::<Self>(
                 d,
                 log_basis,
                 inputs.current_w_len,
@@ -1260,16 +1061,20 @@ pub struct PlannedAdaptiveBoundedPolicy<
 >(PhantomData<Profile>);
 
 impl<
-        Profile,
+        F: CanonicalField + FieldCore + Send + Sync + 'static,
+        Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
         const D: usize,
         const LOG_COMMIT_BOUND: u32,
         const N_A: usize,
         const N_B: usize,
         const N_D: usize,
-    > CommitmentPolicy for PlannedAdaptiveBoundedPolicy<Profile, D, LOG_COMMIT_BOUND, N_A, N_B, N_D>
-where
-    Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
+    > CommitmentConfig
+    for CommitmentPreset<
+        F,
+        PlannedAdaptiveBoundedPolicy<Profile, D, LOG_COMMIT_BOUND, N_A, N_B, N_D>,
+    >
 {
+    type Field = F;
     const D: usize = D;
 
     fn decomposition() -> DecompositionParams {
@@ -1296,22 +1101,22 @@ where
         N_D.max(Profile::audited_root_outer_rank(D, level, max_num_vars))
     }
 
-    fn log_basis_at_level<Cfg: CommitmentConfig>(inputs: HachiScheduleInputs) -> u32 {
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
         Profile::planned_adaptive_bounded_schedule_source::<
-            Cfg,
+            Self,
             D,
             LOG_COMMIT_BOUND,
             N_A,
             N_B,
             N_D,
         >(inputs.max_num_vars)
-            .and_then(|source| source.log_basis_at_level::<Cfg>(inputs))
+            .and_then(|source| source.log_basis_at_level::<Self>(inputs))
             .expect("planned adaptive schedule must be derivable from public inputs")
     }
 
-    fn schedule_key<Cfg: CommitmentConfig>(max_num_vars: usize) -> String {
+    fn schedule_key(max_num_vars: usize) -> String {
         Profile::planned_adaptive_bounded_schedule_source::<
-            Cfg,
+            Self,
             D,
             LOG_COMMIT_BOUND,
             N_A,
@@ -1322,12 +1127,12 @@ where
             .expect("planned adaptive schedule key must be derivable from public inputs")
     }
 
-    fn schedule_plan<Cfg: CommitmentConfig>(
+    fn schedule_plan(
         max_num_vars: usize,
     ) -> Result<Option<HachiSchedulePlan>, HachiError> {
         Ok(Some(
             Profile::planned_adaptive_bounded_schedule_source::<
-                Cfg,
+                Self,
                 D,
                 LOG_COMMIT_BOUND,
                 N_A,
@@ -1338,26 +1143,25 @@ where
         ))
     }
 
-    fn log_basis_search_range<Cfg: CommitmentConfig>(_inputs: HachiScheduleInputs) -> (u32, u32) {
-        let _ = PhantomData::<Cfg>;
+    fn log_basis_search_range(_inputs: HachiScheduleInputs) -> (u32, u32) {
         Profile::adaptive_log_basis_search_range()
     }
 
-    fn recursive_suffix_bytes<Cfg: CommitmentConfig>(
+    fn recursive_suffix_bytes(
         max_num_vars: usize,
         level: usize,
         current_w_len: usize,
     ) -> Result<Option<usize>, HachiError> {
         Ok(Some(
             Profile::planned_adaptive_bounded_schedule_source::<
-                Cfg,
+                Self,
                 D,
                 LOG_COMMIT_BOUND,
                 N_A,
                 N_B,
                 N_D,
             >(max_num_vars)?
-            .recursive_suffix_bytes::<Cfg>(max_num_vars, level, current_w_len)?,
+            .recursive_suffix_bytes::<Self>(max_num_vars, level, current_w_len)?,
         ))
     }
 
@@ -1365,7 +1169,7 @@ where
         Profile::stage1_challenge_config(d)
     }
 
-    fn level_params_with_log_basis<Cfg: CommitmentConfig>(
+    fn level_params_with_log_basis(
         inputs: HachiScheduleInputs,
         log_basis: u32,
     ) -> HachiLevelParams {
@@ -1579,7 +1383,7 @@ mod fp128_policy_tests {
 mod split_tests {
     use super::*;
     use crate::algebra::SparseChallengeConfig;
-    use crate::protocol::commitment::schedule::planned_recursive_suffix_bytes;
+    use crate::protocol::commitment::schedule_planner::planned_recursive_suffix_bytes;
     use crate::protocol::commitment::HachiLevelParams;
 
     fn test_level_params() -> HachiLevelParams {

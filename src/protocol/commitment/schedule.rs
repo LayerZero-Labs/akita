@@ -14,7 +14,9 @@ use crate::protocol::proof::{
 };
 use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
 use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
-use std::collections::HashMap;
+#[cfg(debug_assertions)]
+use super::schedule_planner::{debug_check_dp_basis, debug_check_dp_suffix_bytes, dp_best_basis};
+use super::schedule_planner::{PlannerConfig, PlannerState};
 use std::fmt::Write;
 
 /// Public inputs that deterministically select one level's active Hachi params.
@@ -455,13 +457,6 @@ fn layout_from_params(
         decomp.log_basis,
         num_ring,
     )
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct PlannerState {
-    level: usize,
-    current_w_len: usize,
-    log_basis: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -981,28 +976,13 @@ pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
         .transpose()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PlannedSuffix {
-    steps: Vec<HachiPlannedStep>,
-    no_wrapper_bytes: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct PlannerConfig {
-    max_num_vars: usize,
-    min_log_basis: u32,
-    max_log_basis: u32,
-    field_bits: u32,
-    half_field_bound: u128,
-}
-
-fn field_bits(root_decomp: DecompositionParams) -> u32 {
+pub(super) fn field_bits(root_decomp: DecompositionParams) -> u32 {
     root_decomp
         .log_open_bound
         .unwrap_or(root_decomp.log_commit_bound)
 }
 
-fn field_bytes(field_bits: u32) -> usize {
+pub(super) fn field_bytes(field_bits: u32) -> usize {
     (field_bits as usize).div_ceil(8)
 }
 
@@ -1014,7 +994,7 @@ pub(crate) fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize
     num_elems.saturating_mul(bits_per_elem as usize).div_ceil(8)
 }
 
-fn direct_witness_bytes(field_bits: u32, shape: &DirectWitnessShape) -> usize {
+pub(super) fn direct_witness_bytes(field_bits: u32, shape: &DirectWitnessShape) -> usize {
     match shape {
         DirectWitnessShape::PackedDigits((num_elems, bits_per_elem)) => {
             packed_digits_bytes(*num_elems, *bits_per_elem)
@@ -1155,7 +1135,7 @@ pub(crate) fn batched_root_level_proof_bytes(
         + next_eval_bytes
 }
 
-fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
+pub(super) fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
     inputs: HachiScheduleInputs,
     log_basis: u32,
 ) -> Result<(HachiLevelParams, HachiCommitmentLayout), HachiError> {
@@ -1177,136 +1157,6 @@ fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
         hachi_recursive_level_layout_from_params::<Cfg>(&params, inputs.current_w_len)?
     };
     Ok((params, layout))
-}
-
-fn best_recursive_suffix<Cfg: CommitmentConfig>(
-    cfg: PlannerConfig,
-    memo: &mut HashMap<PlannerState, PlannedSuffix>,
-    state: PlannerState,
-) -> Result<PlannedSuffix, HachiError> {
-    if let Some(existing) = memo.get(&state) {
-        return Ok(existing.clone());
-    }
-
-    let direct_state = HachiPlannedState {
-        level: state.level,
-        current_w_len: state.current_w_len,
-        log_basis: state.log_basis,
-    };
-    let witness_shape = DirectWitnessShape::PackedDigits((state.current_w_len, state.log_basis));
-    let direct_bytes = direct_witness_bytes(cfg.field_bits, &witness_shape);
-    let mut best = PlannedSuffix {
-        steps: vec![HachiPlannedStep::Direct(HachiPlannedDirectStep {
-            state: direct_state,
-            witness_shape,
-            direct_bytes,
-        })],
-        no_wrapper_bytes: direct_bytes,
-    };
-
-    let inputs = HachiScheduleInputs {
-        max_num_vars: cfg.max_num_vars,
-        level: state.level,
-        current_w_len: state.current_w_len,
-    };
-    if let Ok((params, layout)) =
-        current_level_layout_with_log_basis::<Cfg>(inputs, state.log_basis)
-    {
-        let next_w_len = planned_next_w_len(cfg.field_bits, cfg.half_field_bound, &params, layout);
-        if next_w_len < state.current_w_len {
-            let next_level = state.level + 1;
-            let next_inputs = HachiScheduleInputs {
-                max_num_vars: cfg.max_num_vars,
-                level: next_level,
-                current_w_len: next_w_len,
-            };
-            for next_log_basis in state.log_basis.max(cfg.min_log_basis)..=cfg.max_log_basis {
-                let next_level_params =
-                    Cfg::level_params_with_log_basis(next_inputs, next_log_basis);
-                let level_bytes = hachi_level_proof_bytes(
-                    cfg.field_bits,
-                    &params,
-                    layout,
-                    &next_level_params,
-                    next_w_len,
-                );
-                let suffix = best_recursive_suffix::<Cfg>(
-                    cfg,
-                    memo,
-                    PlannerState {
-                        level: next_level,
-                        current_w_len: next_w_len,
-                        log_basis: next_log_basis,
-                    },
-                )?;
-                let candidate_bytes = level_bytes + suffix.no_wrapper_bytes;
-                if candidate_bytes < best.no_wrapper_bytes {
-                    let mut steps = Vec::with_capacity(suffix.steps.len() + 1);
-                    steps.push(HachiPlannedStep::Fold(Box::new(HachiPlannedLevel {
-                        inputs,
-                        params: params.clone(),
-                        layout,
-                        next_inputs,
-                        next_level_log_basis: next_log_basis,
-                        next_commit_coeffs: next_level_params.n_b * next_level_params.d,
-                        level_bytes,
-                    })));
-                    steps.extend(suffix.steps);
-                    best = PlannedSuffix {
-                        steps,
-                        no_wrapper_bytes: candidate_bytes,
-                    };
-                }
-            }
-        }
-    }
-
-    memo.insert(state, best.clone());
-    Ok(best)
-}
-
-#[cfg(test)]
-pub(crate) fn planned_recursive_suffix_bytes<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    level: usize,
-    current_w_len: usize,
-    min_log_basis: u32,
-    max_log_basis: u32,
-) -> Result<usize, HachiError> {
-    let inputs = HachiScheduleInputs {
-        max_num_vars,
-        level,
-        current_w_len,
-    };
-    if let Some(schedule) = Cfg::schedule_plan(max_num_vars)? {
-        return planned_recursive_suffix_bytes_from_schedule::<Cfg>(
-            &schedule,
-            max_num_vars,
-            level,
-            current_w_len,
-            min_log_basis,
-            max_log_basis,
-        );
-    }
-    let current_log_basis = Cfg::log_basis_at_level(inputs);
-    let cfg = PlannerConfig {
-        max_num_vars,
-        min_log_basis,
-        max_log_basis,
-        field_bits: field_bits(Cfg::decomposition()),
-        half_field_bound: Cfg::planner_half_field_bound(),
-    };
-    let mut memo = HashMap::new();
-    let suffix = best_recursive_suffix::<Cfg>(
-        cfg,
-        &mut memo,
-        PlannerState {
-            level,
-            current_w_len,
-            log_basis: current_log_basis,
-        },
-    )?;
-    Ok(suffix.no_wrapper_bytes)
 }
 
 pub(crate) fn planned_recursive_suffix_bytes_with_log_basis<Cfg: CommitmentConfig>(
@@ -1338,24 +1188,15 @@ pub(crate) fn planned_recursive_suffix_bytes_with_log_basis<Cfg: CommitmentConfi
         current_w_len,
     };
     let (min_log_basis, max_log_basis) = Cfg::log_basis_search_range(inputs);
-    let cfg = PlannerConfig {
-        max_num_vars,
-        min_log_basis,
-        max_log_basis,
-        field_bits: field_bits(Cfg::decomposition()),
-        half_field_bound: Cfg::planner_half_field_bound(),
-    };
-    let mut memo = HashMap::new();
-    let suffix = best_recursive_suffix::<Cfg>(
+    let cfg = PlannerConfig::from_cfg::<Cfg>(max_num_vars, min_log_basis, max_log_basis);
+    super::schedule_planner::dp_suffix_bytes::<Cfg>(
         cfg,
-        &mut memo,
         PlannerState {
             level,
             current_w_len,
             log_basis: current_log_basis,
         },
-    )?;
-    Ok(suffix.no_wrapper_bytes)
+    )
 }
 
 pub(crate) fn planned_next_log_basis_with_current_basis<Cfg: CommitmentConfig>(
@@ -1386,44 +1227,14 @@ pub(crate) fn planned_next_log_basis_with_current_basis<Cfg: CommitmentConfig>(
         {
             let (min_log_basis, max_log_basis) = Cfg::log_basis_search_range(next_inputs);
             let lower_bound = current_log_basis.max(min_log_basis);
-            let cfg = PlannerConfig {
-                max_num_vars: next_inputs.max_num_vars,
+            debug_check_dp_basis::<Cfg>(
+                "next_log_basis divergence (table vs DP)",
+                next_inputs,
+                table_basis,
                 min_log_basis,
                 max_log_basis,
-                field_bits: field_bits(Cfg::decomposition()),
-                half_field_bound: Cfg::planner_half_field_bound(),
-            };
-            let mut memo = HashMap::new();
-            let mut dp_best: Option<(u32, usize)> = None;
-            for log_basis in lower_bound..=max_log_basis {
-                if let Ok(suffix) = best_recursive_suffix::<Cfg>(
-                    cfg,
-                    &mut memo,
-                    PlannerState {
-                        level: next_inputs.level,
-                        current_w_len: next_inputs.current_w_len,
-                        log_basis,
-                    },
-                ) {
-                    if dp_best
-                        .as_ref()
-                        .is_none_or(|(_, b)| suffix.no_wrapper_bytes < *b)
-                    {
-                        dp_best = Some((log_basis, suffix.no_wrapper_bytes));
-                    }
-                }
-            }
-            if let Some((dp_basis, _)) = dp_best {
-                if table_basis != dp_basis {
-                    tracing::warn!(
-                        level = next_inputs.level,
-                        w_len = next_inputs.current_w_len,
-                        table_basis,
-                        dp_basis,
-                        "next_log_basis divergence (table vs DP)"
-                    );
-                }
-            }
+                lower_bound,
+            );
         }
 
         return Ok(table_basis);
@@ -1437,35 +1248,11 @@ pub(crate) fn planned_next_log_basis_with_current_basis<Cfg: CommitmentConfig>(
     {
         let (min_log_basis, max_log_basis) = Cfg::log_basis_search_range(next_inputs);
         let lower_bound = current_log_basis.max(min_log_basis);
-        let cfg = PlannerConfig {
-            max_num_vars: next_inputs.max_num_vars,
-            min_log_basis,
-            max_log_basis,
-            field_bits: field_bits(Cfg::decomposition()),
-            half_field_bound: Cfg::planner_half_field_bound(),
-        };
-        let mut memo = HashMap::new();
-        let mut best: Option<(u32, usize)> = None;
-        for log_basis in lower_bound..=max_log_basis {
-            let suffix = best_recursive_suffix::<Cfg>(
-                cfg,
-                &mut memo,
-                PlannerState {
-                    level: next_inputs.level,
-                    current_w_len: next_inputs.current_w_len,
-                    log_basis,
-                },
-            )?;
-            if best
-                .as_ref()
-                .is_none_or(|(_, best_bytes)| suffix.no_wrapper_bytes < *best_bytes)
-            {
-                best = Some((log_basis, suffix.no_wrapper_bytes));
-            }
-        }
-        best.map(|(log_basis, _)| log_basis).ok_or_else(|| {
-            HachiError::InvalidSetup("no valid next-level log basis found".to_string())
-        })
+        dp_best_basis::<Cfg>(next_inputs, min_log_basis, max_log_basis, lower_bound)
+            .map(|(log_basis, _)| log_basis)
+            .ok_or_else(|| {
+                HachiError::InvalidSetup("no valid next-level log basis found".to_string())
+            })
     }
 }
 
@@ -1506,133 +1293,6 @@ pub(crate) fn estimated_recursive_suffix_bytes<Cfg: CommitmentConfig>(
     Ok(direct_bytes.min(continue_bytes))
 }
 
-pub(crate) fn planned_schedule<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    min_log_basis: u32,
-    max_log_basis: u32,
-) -> Result<HachiSchedulePlan, HachiError> {
-    let root_current_w_len = 1usize
-        .checked_shl(max_num_vars as u32)
-        .ok_or_else(|| HachiError::InvalidSetup("root witness length overflow".to_string()))?;
-    let root_inputs = HachiScheduleInputs {
-        max_num_vars,
-        level: 0,
-        current_w_len: root_current_w_len,
-    };
-    let cfg = PlannerConfig {
-        max_num_vars,
-        min_log_basis,
-        max_log_basis,
-        field_bits: field_bits(Cfg::decomposition()),
-        half_field_bound: Cfg::planner_half_field_bound(),
-    };
-    let mut memo = HashMap::new();
-    let direct_state = HachiPlannedState {
-        level: 0,
-        current_w_len: root_current_w_len,
-        log_basis: Cfg::decomposition().log_basis,
-    };
-    let direct_witness_shape = DirectWitnessShape::FieldElements(root_current_w_len);
-    let direct_bytes = direct_witness_bytes(cfg.field_bits, &direct_witness_shape);
-    let mut best: Option<PlannedSuffix> = Some(PlannedSuffix {
-        steps: vec![HachiPlannedStep::Direct(HachiPlannedDirectStep {
-            state: direct_state,
-            witness_shape: direct_witness_shape,
-            direct_bytes,
-        })],
-        no_wrapper_bytes: direct_bytes,
-    });
-
-    for root_log_basis in min_log_basis..=max_log_basis {
-        let Ok((root_params, root_layout)) =
-            current_level_layout_with_log_basis::<Cfg>(root_inputs, root_log_basis)
-        else {
-            continue;
-        };
-        let next_w_len = planned_next_w_len(
-            cfg.field_bits,
-            cfg.half_field_bound,
-            &root_params,
-            root_layout,
-        );
-
-        let next_level = 1usize;
-        let next_inputs = HachiScheduleInputs {
-            max_num_vars,
-            level: next_level,
-            current_w_len: next_w_len,
-        };
-        for next_log_basis in root_log_basis.max(min_log_basis)..=max_log_basis {
-            let next_level_params = Cfg::level_params_with_log_basis(next_inputs, next_log_basis);
-            let level_bytes = hachi_level_proof_bytes(
-                cfg.field_bits,
-                &root_params,
-                root_layout,
-                &next_level_params,
-                next_w_len,
-            );
-            let next_state = HachiPlannedState {
-                level: next_inputs.level,
-                current_w_len: next_inputs.current_w_len,
-                log_basis: next_log_basis,
-            };
-            let mut steps = Vec::new();
-            steps.push(HachiPlannedStep::Fold(Box::new(HachiPlannedLevel {
-                inputs: root_inputs,
-                params: root_params.clone(),
-                layout: root_layout,
-                next_inputs,
-                next_level_log_basis: next_log_basis,
-                next_commit_coeffs: next_level_params.n_b * next_level_params.d,
-                level_bytes,
-            })));
-            let suffix = if next_w_len < root_inputs.current_w_len {
-                best_recursive_suffix::<Cfg>(
-                    cfg,
-                    &mut memo,
-                    PlannerState {
-                        level: next_level,
-                        current_w_len: next_w_len,
-                        log_basis: next_log_basis,
-                    },
-                )?
-            } else {
-                let witness_shape = DirectWitnessShape::PackedDigits((next_w_len, next_log_basis));
-                let direct_bytes = direct_witness_bytes(cfg.field_bits, &witness_shape);
-                PlannedSuffix {
-                    steps: vec![HachiPlannedStep::Direct(HachiPlannedDirectStep {
-                        state: next_state,
-                        witness_shape,
-                        direct_bytes,
-                    })],
-                    no_wrapper_bytes: direct_bytes,
-                }
-            };
-            let candidate_bytes = level_bytes + suffix.no_wrapper_bytes;
-            if best
-                .as_ref()
-                .is_none_or(|existing| candidate_bytes < existing.no_wrapper_bytes)
-            {
-                steps.extend(suffix.steps);
-                best = Some(PlannedSuffix {
-                    steps,
-                    no_wrapper_bytes: candidate_bytes,
-                });
-            }
-        }
-    }
-
-    let best = best.ok_or_else(|| {
-        HachiError::InvalidSetup("adaptive schedule search found no valid root level".to_string())
-    })?;
-
-    Ok(HachiSchedulePlan {
-        steps: best.steps,
-        no_wrapper_bytes: best.no_wrapper_bytes,
-        exact_proof_bytes: best.no_wrapper_bytes,
-    })
-}
-
 pub(crate) fn planned_log_basis_at_level_from_schedule<Cfg: CommitmentConfig>(
     schedule: &HachiSchedulePlan,
     inputs: HachiScheduleInputs,
@@ -1657,46 +1317,14 @@ pub(crate) fn planned_log_basis_at_level_from_schedule<Cfg: CommitmentConfig>(
         let table_basis = state.log_basis;
 
         #[cfg(debug_assertions)]
-        {
-            let cfg = PlannerConfig {
-                max_num_vars: inputs.max_num_vars,
-                min_log_basis,
-                max_log_basis,
-                field_bits: field_bits(Cfg::decomposition()),
-                half_field_bound: Cfg::planner_half_field_bound(),
-            };
-            let mut memo = HashMap::new();
-            let mut dp_best: Option<(u32, usize)> = None;
-            for log_basis in min_log_basis..=max_log_basis {
-                if let Ok(suffix) = best_recursive_suffix::<Cfg>(
-                    cfg,
-                    &mut memo,
-                    PlannerState {
-                        level: inputs.level,
-                        current_w_len: inputs.current_w_len,
-                        log_basis,
-                    },
-                ) {
-                    if dp_best
-                        .as_ref()
-                        .is_none_or(|(_, b)| suffix.no_wrapper_bytes < *b)
-                    {
-                        dp_best = Some((log_basis, suffix.no_wrapper_bytes));
-                    }
-                }
-            }
-            if let Some((dp_basis, _)) = dp_best {
-                if table_basis != dp_basis {
-                    tracing::warn!(
-                        level = inputs.level,
-                        w_len = inputs.current_w_len,
-                        table_basis,
-                        dp_basis,
-                        "planner log_basis divergence (table vs DP)"
-                    );
-                }
-            }
-        }
+        debug_check_dp_basis::<Cfg>(
+            "planner log_basis divergence (table vs DP)",
+            inputs,
+            table_basis,
+            min_log_basis,
+            max_log_basis,
+            min_log_basis,
+        );
 
         return Ok(table_basis);
     }
@@ -1738,38 +1366,22 @@ pub(crate) fn planned_recursive_suffix_bytes_from_schedule<Cfg: CommitmentConfig
             min_log_basis,
             max_log_basis,
         )?;
-        let cfg = PlannerConfig {
-            max_num_vars,
-            min_log_basis,
-            max_log_basis,
-            field_bits: field_bits(Cfg::decomposition()),
-            half_field_bound: Cfg::planner_half_field_bound(),
-        };
-        let mut memo = HashMap::new();
-        if let Ok(suffix) = best_recursive_suffix::<Cfg>(
-            cfg,
-            &mut memo,
+        debug_check_dp_suffix_bytes::<Cfg>(
+            "suffix bytes divergence (table vs DP)",
             PlannerState {
                 level,
                 current_w_len,
                 log_basis: current_log_basis,
             },
-        ) {
-            let dp_bytes = suffix.no_wrapper_bytes;
-            if dp_bytes > 0 {
-                let ratio = table_bytes as f64 / dp_bytes as f64;
-                if !(0.5..2.0).contains(&ratio) {
-                    tracing::warn!(
-                        level,
-                        current_w_len,
-                        table_bytes,
-                        dp_bytes,
-                        ratio = format_args!("{ratio:.2}"),
-                        "suffix bytes divergence (table vs DP)"
-                    );
-                }
-            }
-        }
+            table_bytes,
+            PlannerConfig {
+                max_num_vars,
+                min_log_basis,
+                max_log_basis,
+                field_bits: field_bits(Cfg::decomposition()),
+                half_field_bound: Cfg::planner_half_field_bound(),
+            },
+        );
     }
 
     let _ = (min_log_basis, max_log_basis);
@@ -1800,40 +1412,22 @@ pub(crate) fn planned_recursive_suffix_bytes_with_log_basis_from_schedule<Cfg: C
     let table_bytes = scheduled_suffix_bytes_from_index(schedule, level_index);
 
     #[cfg(debug_assertions)]
-    {
-        let cfg = PlannerConfig {
+    debug_check_dp_suffix_bytes::<Cfg>(
+        "suffix bytes (with log_basis) divergence (table vs DP)",
+        PlannerState {
+            level,
+            current_w_len,
+            log_basis: current_log_basis,
+        },
+        table_bytes,
+        PlannerConfig {
             max_num_vars,
             min_log_basis,
             max_log_basis,
             field_bits: field_bits(Cfg::decomposition()),
             half_field_bound: Cfg::planner_half_field_bound(),
-        };
-        let mut memo = HashMap::new();
-        if let Ok(suffix) = best_recursive_suffix::<Cfg>(
-            cfg,
-            &mut memo,
-            PlannerState {
-                level,
-                current_w_len,
-                log_basis: current_log_basis,
-            },
-        ) {
-            let dp_bytes = suffix.no_wrapper_bytes;
-            if dp_bytes > 0 {
-                let ratio = table_bytes as f64 / dp_bytes as f64;
-                if !(0.5..2.0).contains(&ratio) {
-                    tracing::warn!(
-                        level,
-                        current_w_len,
-                        table_bytes,
-                        dp_bytes,
-                        ratio = format_args!("{ratio:.2}"),
-                        "suffix bytes (with log_basis) divergence (table vs DP)"
-                    );
-                }
-            }
-        }
-    }
+        },
+    );
 
     let _ = (min_log_basis, max_log_basis, current_log_basis);
     Ok(table_bytes)
