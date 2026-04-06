@@ -1185,6 +1185,15 @@ pub(crate) fn should_stop_folding(w_len: usize, prev_w_len: usize) -> bool {
     ratio > MIN_SHRINK_RATIO
 }
 
+/// Batched recursion already consults the byte planner before folding again.
+///
+/// The runtime safety guard here only needs to catch tiny tails and fixed
+/// points, not enforce the single-proof shrink-ratio heuristic. Otherwise we
+/// can stop early even when another fold would still reduce proof size.
+fn should_stop_batched_folding(w_len: usize, prev_w_len: usize) -> bool {
+    w_len <= MIN_W_LEN_FOR_FOLDING || w_len >= prev_w_len
+}
+
 fn should_continue_folding_by_bytes<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     level: usize,
@@ -1456,7 +1465,7 @@ where
 
     loop {
         let current_w_len = current_state.w.len();
-        if should_stop_folding(current_w_len, prev_poly_len) {
+        if should_stop_batched_folding(current_w_len, prev_poly_len) {
             break;
         }
         eprintln!(
@@ -3337,6 +3346,23 @@ mod tests {
         let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
         let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
         (poly, evals)
+    }
+
+    #[test]
+    fn batched_suffix_stop_guard_does_not_preempt_profitable_fold() {
+        type D64Cfg = fp128::D64OneHot;
+        type D32Cfg = fp128::D32OneHot;
+
+        // These states came from the batched onehot nv=32 profile runs that
+        // regressed after adding the generic shrink-ratio guard to the batched
+        // suffix. They still have profitable recursive suffixes by bytes.
+        assert!(should_stop_folding(87_744, 140_672));
+        assert!(!should_stop_batched_folding(87_744, 140_672));
+        assert!(should_continue_folding_by_bytes::<D64Cfg>(32, 5, 87_744, 5).unwrap());
+
+        assert!(should_stop_folding(129_216, 224_064));
+        assert!(!should_stop_batched_folding(129_216, 224_064));
+        assert!(should_continue_folding_by_bytes::<D32Cfg>(32, 5, 129_216, 4).unwrap());
     }
 
     fn make_verify_fixture(
