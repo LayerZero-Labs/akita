@@ -102,7 +102,7 @@ def compute_num_digits_fold_dense(r_vars: int, log_basis: int) -> int:
 
     shift = r_vars + log_basis - 1
     if shift >= 127 or CHALLENGE_MASS == 0:
-        return num_digits_for_bound(Q_BITS, log_basis)
+        return compute_num_digits(Q_BITS, log_basis)
     beta = CHALLENGE_MASS * (1 << shift)
     if beta == 0:
         return 1

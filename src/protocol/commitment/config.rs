@@ -101,23 +101,6 @@ pub fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
     levels.max(1)
 }
 
-/// Compute the asymmetric centering threshold T_k for a full-field
-/// balanced decomposition with `levels` digits in base `b = 2^log_basis`.
-///
-/// T_k = (b/2 - 1) * (b^k - 1) / (b - 1), using saturating arithmetic.
-pub fn asymmetric_centering_threshold(levels: usize, log_basis: u32) -> u128 {
-    let b: u128 = 1u128 << log_basis;
-    let half_b_minus_1 = b / 2 - 1;
-    let b_minus_1 = b - 1;
-    let total_bits = (levels as u32).saturating_mul(log_basis);
-    let b_k_minus_1 = if total_bits >= 128 {
-        u128::MAX
-    } else {
-        (1u128 << total_bits) - 1
-    };
-    half_b_minus_1 * (b_k_minus_1 / b_minus_1)
-}
-
 /// Compute the decomposition depth for full-field values using asymmetric
 /// centering: `ceil(field_bits / log_basis)` with no +1 correction.
 ///
