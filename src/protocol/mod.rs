@@ -32,7 +32,7 @@ pub use opening_point::{BasisMode, BlockOrder, RingOpeningPoint};
 pub use proof::{
     DirectWitnessProof, DirectWitnessShape, FlatRingVec, HachiBatchedProof, HachiBatchedProofShape,
     HachiBatchedRootProof, HachiLevelProof, HachiProof, HachiProofShape, HachiProofStep,
-    HachiProofStepShape, LevelProofShape, PackedDigits, ProofRingVec,
+    HachiProofStepShape, LevelProofShape, PackedDigits,
 };
 pub use quadratic_equation::QuadraticEquation;
 pub use sumcheck::batched_sumcheck::{prove_batched_sumcheck, verify_batched_sumcheck};

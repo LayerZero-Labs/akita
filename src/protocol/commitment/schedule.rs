@@ -1841,7 +1841,7 @@ mod tests {
                 CyclotomicRing::<F, D>::zero();
                 next_level_params.n_b
             ])
-            .to_proof_ring_vec();
+            .into_compact();
             let level_proof = HachiLevelProof::new_two_stage::<D>(
                 CyclotomicRing::<F, D>::zero(),
                 vec![CyclotomicRing::<F, D>::zero(); level_params.n_d],
@@ -1907,7 +1907,7 @@ mod tests {
                 CyclotomicRing::<F, D>::zero();
                 next_level_params.n_b
             ])
-            .to_proof_ring_vec();
+            .into_compact();
             let root_proof = HachiBatchedRootProof::new_two_stage::<D>(
                 vec![CyclotomicRing::<F, D>::zero(); num_claims],
                 vec![CyclotomicRing::<F, D>::zero(); level_params.n_d],

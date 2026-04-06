@@ -27,7 +27,7 @@ use crate::protocol::hachi_poly_ops::helpers::{
     sparse_onehot_accumulate, sparse_onehot_accumulate_slices,
 };
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
-use crate::protocol::proof::{DirectWitnessProof, FlatDigitBlocks, ProofRingVec};
+use crate::protocol::proof::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use crate::{CanonicalField, FieldCore};
 use std::marker::PhantomData;
 
@@ -669,7 +669,7 @@ where
             evals[field_pos] = F::one();
         }
         Ok(DirectWitnessProof::FieldElements(
-            ProofRingVec::from_coeffs(evals),
+            FlatRingVec::from_coeffs(evals),
         ))
     }
 }

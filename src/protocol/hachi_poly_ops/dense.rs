@@ -21,7 +21,7 @@ use crate::protocol::hachi_poly_ops::helpers::{
     DecomposeParams,
 };
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
-use crate::protocol::proof::{DirectWitnessProof, FlatDigitBlocks, ProofRingVec};
+use crate::protocol::proof::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use crate::{CanonicalField, FieldCore};
 
 /// Dense polynomial: all ring coefficients materialized in memory.
@@ -431,7 +431,7 @@ where
             }
         }
         Ok(DirectWitnessProof::FieldElements(
-            ProofRingVec::from_coeffs(coeffs),
+            FlatRingVec::from_coeffs(coeffs),
         ))
     }
 }

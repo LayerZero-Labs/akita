@@ -24,7 +24,6 @@ use std::sync::{Mutex, Once};
 use std::time::Instant;
 
 type F = fp128::Field;
-type FSmall = fp128::Field;
 type Basis2Cfg = fp128::StaticBounded<128, 2, 2>;
 const ONEHOT_K: usize = 256;
 const FULL_TEST_NV: usize = 14;
@@ -394,12 +393,12 @@ fn full_d32_prove_verify() {
             .expect("schedule plan")
             .expect("adaptive D32 config should expose a schedule plan");
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
-            make_dense_fixture::<FSmall, D, Cfg>(D32_TEST_NV, b"hachi_e2e/full-d32");
+            make_dense_fixture::<F, D, Cfg>(D32_TEST_NV, b"hachi_e2e/full-d32");
 
         assert_eq!(proof.num_fold_levels(), plan.num_fold_levels());
 
-        let mut verifier_transcript = Blake2bTranscript::<FSmall>::new(b"hachi_e2e/full-d32");
-        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FSmall, D>>::verify(
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/full-d32");
+        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -438,26 +437,26 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let layout = Cfg::commitment_layout(nv).expect("layout");
 
         let mut rng = StdRng::seed_from_u64(0x0ddc_0ffe_e123_4567);
-        let evals: Vec<FSmall> = (0..1usize << nv)
-            .map(|_| FSmall::from_canonical_u128_reduced(rng.gen::<u128>()))
+        let evals: Vec<F> = (0..1usize << nv)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
-        let poly = DensePoly::<FSmall, D>::from_field_evals(nv, &evals).unwrap();
-        let opening_point = random_point::<FSmall>(nv);
+        let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
+        let opening_point = random_point::<F>(nv);
         let opening = opening_from_poly(&poly, &opening_point, &layout);
 
         let setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FSmall, D>>::setup_prover(nv, 1);
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
         let verifier_setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FSmall, D>>::setup_verifier(&setup);
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let (commitment, hint) =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FSmall, D>>::commit(
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
                 std::slice::from_ref(&poly),
                 &setup,
             )
             .unwrap();
         let mut prover_transcript =
-            Blake2bTranscript::<FSmall>::new(b"hachi_e2e/full-d32-direct-root");
-        let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FSmall, D>>::prove(
+            Blake2bTranscript::<F>::new(b"hachi_e2e/full-d32-direct-root");
+        let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
             &setup,
             &poly,
             &opening_point,
@@ -475,7 +474,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             .as_field_elements()
             .expect("root-direct witness should keep raw field elements");
         assert_eq!(direct_field.coeff_len(), 1usize << nv);
-        let reconstructed = DensePoly::<FSmall, D>::from_field_evals(nv, direct_field.coeffs())
+        let reconstructed = DensePoly::<F, D>::from_field_evals(nv, direct_field.coeffs())
             .expect("reconstruct direct witness as dense poly");
         assert_eq!(
             opening_from_poly(&reconstructed, &opening_point, &layout),
@@ -483,7 +482,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             "direct witness should preserve the public opening"
         );
         let (recomputed_commitment, _) =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FSmall, D>>::commit(
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
                 std::slice::from_ref(&reconstructed),
                 &setup,
             )
@@ -499,13 +498,13 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             .expect("serialize direct-root proof");
         let mut cursor = std::io::Cursor::new(proof_bytes);
         let decoded =
-            HachiProof::<FSmall>::deserialize_compressed(&mut cursor, &plan.to_proof_shape())
+            HachiProof::<F>::deserialize_compressed(&mut cursor, &plan.to_proof_shape())
                 .expect("deserialize direct-root proof");
         assert_eq!(decoded, proof);
 
         let mut verifier_transcript =
-            Blake2bTranscript::<FSmall>::new(b"hachi_e2e/full-d32-direct-root");
-        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FSmall, D>>::verify(
+            Blake2bTranscript::<F>::new(b"hachi_e2e/full-d32-direct-root");
+        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,

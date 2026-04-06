@@ -30,7 +30,7 @@ use crate::protocol::opening_point::{
 use crate::protocol::proof::{
     DirectWitnessProof, FlatRingVec, HachiBatchedCommitmentHint, HachiBatchedProof,
     HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProof, HachiProofStep,
-    PackedDigits, ProofRingVec,
+    PackedDigits,
 };
 use crate::protocol::quadratic_equation::{derive_stage1_challenges, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
@@ -94,7 +94,7 @@ struct RecursiveProverState<F: FieldCore> {
 struct RecursiveVerifierState<'a, F: FieldCore> {
     opening_point: Vec<F>,
     opening: F,
-    commitment: &'a ProofRingVec<F>,
+    commitment: &'a FlatRingVec<F>,
     basis: BasisMode,
     w_len: usize,
     log_basis: u32,
@@ -329,7 +329,7 @@ fn schedule_uses_root_direct<Cfg: CommitmentConfig>(
 
 fn root_direct_field_witness<F: FieldCore>(
     direct_witness: &DirectWitnessProof<F>,
-) -> Result<&ProofRingVec<F>, HachiError> {
+) -> Result<&FlatRingVec<F>, HachiError> {
     direct_witness
         .as_field_elements()
         .ok_or(HachiError::InvalidProof)
@@ -587,7 +587,7 @@ where
         let _span = tracing::info_span!("commit_w_level", level).entered();
         commit_w_fn(&w, next_params.clone())?
     };
-    let w_commitment_proof = w_commitment_flat.to_proof_ring_vec();
+    let w_commitment_proof = w_commitment_flat.clone();
 
     let rs = ring_switch_finalize::<F, T, { D }, LevelCfg>(
         &quad_eq,
@@ -943,7 +943,7 @@ where
         let _span = tracing::info_span!("commit_w_level", level = 0usize).entered();
         commit_w_fn(&w, next_params.clone())?
     };
-    let w_commitment_proof = w_commitment_flat.to_proof_ring_vec();
+    let w_commitment_proof = w_commitment_flat.clone();
 
     let rs = ring_switch_finalize_with_claim_groups::<F, T, { D }, Cfg>(
         &quad_eq,
@@ -2375,7 +2375,7 @@ where
 
         // State carried between levels.
         // Commitment is D-erased so the loop can handle varying D per level.
-        let root_commitment = ProofRingVec::from_ring_elems(&commitment.u);
+        let root_commitment = FlatRingVec::from_ring_elems(&commitment.u);
         let mut current_state = RecursiveVerifierState {
             opening_point: opening_point.to_vec(),
             opening: *opening,
@@ -2392,8 +2392,6 @@ where
             if planned_root.level.layout != layout || planned_root.level.params != root_params {
                 return Err(HachiError::InvalidProof);
             }
-        }
-        if let Some(plan) = exact_plan.as_ref() {
             if num_levels != plan.num_fold_levels() {
                 return Err(HachiError::InvalidProof);
             }
@@ -3591,7 +3589,7 @@ mod tests {
                 &w,
             )
             .expect("debug batched w commit");
-            let w_commitment_proof = w_commitment_flat.to_proof_ring_vec();
+            let w_commitment_proof = w_commitment_flat.clone();
             let rs = ring_switch_finalize_with_claim_groups::<OneHotF, _, { ONEHOT_D }, OneHotCfg>(
                 &quad_eq,
                 &batch_setup.expanded,
@@ -4550,7 +4548,7 @@ mod tests {
         let mut oversized_proof = proof.clone();
         let mut oversized_y_coeffs = oversized_proof.root.y_rings().coeffs().to_vec();
         oversized_y_coeffs.extend(vec![F::zero(); D]);
-        oversized_proof.root.y_rings = ProofRingVec::from_coeffs(oversized_y_coeffs);
+        oversized_proof.root.y_rings = FlatRingVec::from_coeffs(oversized_y_coeffs);
 
         let mut oversized_openings = openings;
         oversized_openings.push(F::zero());
@@ -4680,7 +4678,7 @@ mod tests {
             .expect("expected at least one fold level");
         let mut coeffs = first_level.y_ring.coeffs().to_vec();
         let _ = coeffs.pop().expect("expected non-empty y_ring");
-        first_level.y_ring = ProofRingVec::from_coeffs(coeffs);
+        first_level.y_ring = FlatRingVec::from_coeffs(coeffs);
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");

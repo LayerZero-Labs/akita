@@ -22,7 +22,7 @@ use crate::protocol::commitment::{
 };
 use crate::protocol::hachi_poly_ops::RecursiveWitnessFlat;
 use crate::protocol::opening_point::RingOpeningPoint;
-use crate::protocol::proof::{FlatDigitBlocks, FlatRingVec, HachiCommitmentHint, ProofRingVec};
+use crate::protocol::proof::{FlatDigitBlocks, FlatRingVec, HachiCommitmentHint};
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
 use crate::protocol::transcript::labels::{
@@ -185,7 +185,7 @@ pub(crate) fn ring_switch_finalize<F, T, const D: usize, Cfg>(
     transcript: &mut T,
     w: RecursiveWitnessFlat,
     w_commitment: FlatRingVec<F>,
-    w_commitment_proof: &ProofRingVec<F>,
+    w_commitment_proof: &FlatRingVec<F>,
     w_hint: RecursiveCommitmentHintCache<F>,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
@@ -216,7 +216,7 @@ pub(crate) fn ring_switch_finalize_with_claim_groups<F, T, const D: usize, Cfg>(
     transcript: &mut T,
     w: RecursiveWitnessFlat,
     w_commitment: FlatRingVec<F>,
-    w_commitment_proof: &ProofRingVec<F>,
+    w_commitment_proof: &FlatRingVec<F>,
     w_hint: RecursiveCommitmentHintCache<F>,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
@@ -384,7 +384,7 @@ pub(crate) fn ring_switch_verifier<F, T, const D: usize>(
     challenges: &[SparseChallenge],
     setup: &HachiExpandedSetup<F>,
     w_len: usize,
-    w_commitment: &ProofRingVec<F>,
+    w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
@@ -414,7 +414,7 @@ pub(crate) fn ring_switch_verifier_with_num_claims<F, T, const D: usize>(
     challenges: &[SparseChallenge],
     setup: &HachiExpandedSetup<F>,
     w_len: usize,
-    w_commitment: &ProofRingVec<F>,
+    w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
@@ -446,7 +446,7 @@ pub(crate) fn ring_switch_verifier_with_claim_groups<F, T, const D: usize>(
     challenges: &[SparseChallenge],
     setup: &HachiExpandedSetup<F>,
     w_len: usize,
-    w_commitment: &ProofRingVec<F>,
+    w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
@@ -527,7 +527,7 @@ pub(crate) fn ring_switch_verifier_with_opening_points_and_claim_groups<F, T, co
     challenges: &[SparseChallenge],
     setup: &HachiExpandedSetup<F>,
     w_len: usize,
-    w_commitment: &ProofRingVec<F>,
+    w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,

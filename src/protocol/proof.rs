@@ -35,7 +35,7 @@ pub enum DirectWitnessProof<F: FieldCore> {
     PackedDigits(PackedDigits),
     /// Raw field elements, for direct witnesses that are not naturally digit
     /// bounded.
-    FieldElements(ProofRingVec<F>),
+    FieldElements(FlatRingVec<F>),
 }
 
 impl<F: FieldCore> DirectWitnessProof<F> {
@@ -48,7 +48,7 @@ impl<F: FieldCore> DirectWitnessProof<F> {
     }
 
     /// Borrow the raw field-element payload, if present.
-    pub fn as_field_elements(&self) -> Option<&ProofRingVec<F>> {
+    pub fn as_field_elements(&self) -> Option<&FlatRingVec<F>> {
         match self {
             Self::PackedDigits(_) => None,
             Self::FieldElements(field_elems) => Some(field_elems),
@@ -268,6 +268,10 @@ impl HachiDeserialize for PackedDigits {
 /// Each ring element of dimension `ring_dim` is stored as `ring_dim`
 /// contiguous field elements in `coeffs`. The total number of ring elements
 /// is `coeffs.len() / ring_dim`.
+///
+/// When `ring_dim` is 0 the vector is in "compact" mode: the ring dimension
+/// is not known to this container and must be supplied externally (e.g. from
+/// the public schedule). This is the mode used inside serialised proofs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlatRingVec<F> {
     coeffs: Vec<F>,
@@ -319,17 +323,28 @@ impl<F: FieldCore> FlatRingVec<F> {
         }
     }
 
+    /// Construct from raw field coefficients in compact mode (`ring_dim = 0`).
+    pub fn from_coeffs(coeffs: Vec<F>) -> Self {
+        Self {
+            coeffs,
+            ring_dim: 0,
+        }
+    }
+
     /// Wrap a `RingCommitment`.
     pub fn from_commitment<const D: usize>(c: &RingCommitment<F, D>) -> Self {
         Self::from_ring_elems(&c.u)
     }
 
-    /// Ring dimension (number of field-element coefficients per ring element).
+    /// Ring dimension (number of field-element coefficients per ring element),
+    /// or 0 if the container is in compact mode.
     pub fn ring_dim(&self) -> usize {
         self.ring_dim
     }
 
     /// Number of ring elements stored.
+    ///
+    /// Returns 0 when `ring_dim` is unknown (compact mode).
     pub fn count(&self) -> usize {
         if self.ring_dim == 0 {
             0
@@ -343,14 +358,46 @@ impl<F: FieldCore> FlatRingVec<F> {
         &self.coeffs
     }
 
+    /// Number of stored field coefficients.
+    pub fn coeff_len(&self) -> usize {
+        self.coeffs.len()
+    }
+
+    /// Whether these coefficients can be decoded as a single ring element of
+    /// dimension `d`.
+    pub fn can_decode_single(&self, d: usize) -> bool {
+        self.coeffs.len() == d
+    }
+
+    /// Whether these coefficients can be decoded as a vector of ring elements
+    /// of dimension `d`.
+    pub fn can_decode_vec(&self, d: usize) -> bool {
+        self.coeffs.len().is_multiple_of(d)
+    }
+
+    /// Return a copy with `ring_dim` cleared (compact mode).
+    pub fn into_compact(self) -> Self {
+        Self {
+            coeffs: self.coeffs,
+            ring_dim: 0,
+        }
+    }
+
     /// Reconstruct a single ring element.
     ///
     /// # Panics
     ///
-    /// Panics if `D != ring_dim` or `count() != 1`.
+    /// Panics if `D != ring_dim` (when ring_dim is known) or
+    /// `coeffs.len() != D`.
     pub fn to_single<const D: usize>(&self) -> CyclotomicRing<F, D> {
-        assert_eq!(D, self.ring_dim, "D mismatch in to_single");
-        assert_eq!(self.count(), 1, "expected exactly one ring element");
+        if self.ring_dim > 0 {
+            assert_eq!(D, self.ring_dim, "D mismatch in to_single");
+        }
+        assert_eq!(
+            self.coeffs.len(),
+            D,
+            "expected exactly one ring element of dimension {D}"
+        );
         CyclotomicRing::from_slice(&self.coeffs)
     }
 
@@ -361,7 +408,7 @@ impl<F: FieldCore> FlatRingVec<F> {
     /// Returns [`HachiError::InvalidProof`] if the stored ring dimension or
     /// element count does not match `D`.
     pub fn try_to_single<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, HachiError> {
-        if self.ring_dim != D || self.coeffs.len() != D {
+        if (self.ring_dim > 0 && self.ring_dim != D) || self.coeffs.len() != D {
             return Err(HachiError::InvalidProof);
         }
         Ok(CyclotomicRing::from_slice(&self.coeffs))
@@ -371,9 +418,17 @@ impl<F: FieldCore> FlatRingVec<F> {
     ///
     /// # Panics
     ///
-    /// Panics if `D != ring_dim`.
+    /// Panics if `D != ring_dim` (when ring_dim is known) or
+    /// `coeffs.len()` is not a multiple of `D`.
     pub fn to_vec<const D: usize>(&self) -> Vec<CyclotomicRing<F, D>> {
-        assert_eq!(D, self.ring_dim, "D mismatch in to_vec");
+        if self.ring_dim > 0 {
+            assert_eq!(D, self.ring_dim, "D mismatch in to_vec");
+        }
+        assert_eq!(
+            self.coeffs.len() % D,
+            0,
+            "coeff count not a multiple of D={D}"
+        );
         self.coeffs
             .chunks_exact(D)
             .map(CyclotomicRing::from_slice)
@@ -387,7 +442,7 @@ impl<F: FieldCore> FlatRingVec<F> {
     /// Returns [`HachiError::InvalidProof`] if the stored ring dimension does
     /// not match `D` or the coefficient buffer is not an exact multiple of `D`.
     pub fn try_to_vec<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-        if self.ring_dim != D || !self.coeffs.len().is_multiple_of(D) {
+        if (self.ring_dim > 0 && self.ring_dim != D) || !self.coeffs.len().is_multiple_of(D) {
             return Err(HachiError::InvalidProof);
         }
         Ok(self
@@ -406,7 +461,7 @@ impl<F: FieldCore> FlatRingVec<F> {
     pub(crate) fn as_ring_slice<const D: usize>(
         &self,
     ) -> Result<&[CyclotomicRing<F, D>], HachiError> {
-        if self.ring_dim != D || !self.coeffs.len().is_multiple_of(D) {
+        if (self.ring_dim > 0 && self.ring_dim != D) || !self.coeffs.len().is_multiple_of(D) {
             return Err(HachiError::InvalidProof);
         }
         let ring_count = self.coeffs.len() / D;
@@ -419,6 +474,21 @@ impl<F: FieldCore> FlatRingVec<F> {
                 ring_count,
             )
         })
+    }
+
+    /// Borrow the stored coefficients as a single typed ring element.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HachiError::InvalidProof`] if the stored ring data is not
+    /// well-formed for ring dimension `D`, or if it contains more than one
+    /// element.
+    pub fn as_single_ring<const D: usize>(&self) -> Result<&CyclotomicRing<F, D>, HachiError> {
+        let rings = self.as_ring_slice::<D>()?;
+        match rings {
+            [ring] => Ok(ring),
+            _ => Err(HachiError::InvalidProof),
+        }
     }
 
     /// Append the stored coefficients using the same transcript encoding as a
@@ -441,18 +511,29 @@ impl<F: FieldCore> FlatRingVec<F> {
         Ok(())
     }
 
-    /// Convert to the verifier-facing proof-wire payload.
-    pub fn to_proof_ring_vec(&self) -> ProofRingVec<F> {
-        ProofRingVec {
-            coeffs: self.coeffs.clone(),
-        }
+    /// Append the stored coefficients using the typed ring-vector transcript
+    /// encoding (alias for [`Self::append_as_ring_commitment`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HachiError::InvalidProof`] if the stored ring data is not
+    /// well-formed for ring dimension `D`.
+    pub(crate) fn append_as_ring_slice<T: Transcript<F>, const D: usize>(
+        &self,
+        label: &[u8],
+        transcript: &mut T,
+    ) -> Result<(), HachiError>
+    where
+        F: CanonicalField,
+    {
+        self.append_as_ring_commitment::<T, D>(label, transcript)
     }
 
     /// Reconstruct a `RingCommitment`.
     ///
     /// # Panics
     ///
-    /// Panics if `D != ring_dim`.
+    /// Panics if `D != ring_dim` (when ring_dim is known).
     pub fn to_ring_commitment<const D: usize>(&self) -> RingCommitment<F, D> {
         RingCommitment { u: self.to_vec() }
     }
@@ -478,224 +559,6 @@ impl<F: FieldCore> HachiSerialize for FlatRingVec<F> {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        (self.ring_dim as u32).serialize_with_mode(&mut writer, compress)?;
-        self.coeffs.serialize_with_mode(&mut writer, compress)
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        4 + self.coeffs.serialized_size(compress)
-    }
-}
-
-impl<F: FieldCore> Valid for FlatRingVec<F> {
-    fn check(&self) -> Result<(), SerializationError> {
-        if self.ring_dim == 0 {
-            return Err(SerializationError::InvalidData(
-                "ring_dim must be > 0".to_string(),
-            ));
-        }
-        if !self.coeffs.len().is_multiple_of(self.ring_dim) {
-            return Err(SerializationError::InvalidData(
-                "coeffs length not a multiple of ring_dim".to_string(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-impl<F: FieldCore + Valid> HachiDeserialize for FlatRingVec<F> {
-    type Context = ();
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        let ring_dim = u32::deserialize_with_mode(&mut reader, compress, validate, &())? as usize;
-        let coeffs = Vec::<F>::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let out = Self { coeffs, ring_dim };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
-    }
-}
-
-/// Proof-wire storage for a sequence of ring-element coefficients.
-///
-/// Unlike [`FlatRingVec`], this schema does not encode the ring dimension in
-/// the proof itself. The verifier recovers the correct `D` from the public
-/// schedule and interprets the coefficient buffer accordingly.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProofRingVec<F> {
-    coeffs: Vec<F>,
-}
-
-impl<F: FieldCore> ProofRingVec<F> {
-    /// Construct directly from raw field coefficients.
-    pub fn from_coeffs(coeffs: Vec<F>) -> Self {
-        Self { coeffs }
-    }
-
-    /// Convert from a vector of ring elements.
-    pub fn from_ring_elems<const D: usize>(elems: &[CyclotomicRing<F, D>]) -> Self {
-        let mut coeffs = Vec::with_capacity(elems.len() * D);
-        for elem in elems {
-            coeffs.extend_from_slice(elem.coefficients());
-        }
-        Self { coeffs }
-    }
-
-    /// Convert from a single ring element.
-    pub fn from_single<const D: usize>(elem: &CyclotomicRing<F, D>) -> Self {
-        Self {
-            coeffs: elem.coefficients().to_vec(),
-        }
-    }
-
-    /// Raw field coefficients stored in the proof.
-    pub fn coeffs(&self) -> &[F] {
-        &self.coeffs
-    }
-
-    /// Number of stored field coefficients.
-    pub fn coeff_len(&self) -> usize {
-        self.coeffs.len()
-    }
-
-    /// Whether these coefficients can be decoded as a single ring element of
-    /// dimension `d`.
-    pub fn can_decode_single(&self, d: usize) -> bool {
-        self.coeffs.len() == d
-    }
-
-    /// Whether these coefficients can be decoded as a vector of ring elements
-    /// of dimension `d`.
-    pub fn can_decode_vec(&self, d: usize) -> bool {
-        self.coeffs.len().is_multiple_of(d)
-    }
-
-    /// Borrow the stored coefficients as a slice of typed ring elements.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HachiError::InvalidProof`] if the stored coefficient count is
-    /// not divisible by `D`.
-    pub fn as_ring_slice<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], HachiError> {
-        if !self.coeffs.len().is_multiple_of(D) {
-            return Err(HachiError::InvalidProof);
-        }
-        let ring_count = self.coeffs.len() / D;
-        Ok(unsafe {
-            std::slice::from_raw_parts(
-                self.coeffs.as_ptr() as *const CyclotomicRing<F, D>,
-                ring_count,
-            )
-        })
-    }
-
-    /// Borrow the stored coefficients as a single typed ring element.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HachiError::InvalidProof`] if the stored coefficient count is
-    /// not exactly `D`.
-    pub fn as_single_ring<const D: usize>(&self) -> Result<&CyclotomicRing<F, D>, HachiError> {
-        let rings = self.as_ring_slice::<D>()?;
-        match rings {
-            [ring] => Ok(ring),
-            _ => Err(HachiError::InvalidProof),
-        }
-    }
-
-    /// Append the stored coefficients using the typed ring-vector transcript
-    /// encoding.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HachiError::InvalidProof`] if the stored ring data is not
-    /// well-formed for ring dimension `D`.
-    pub fn append_as_ring_slice<T: Transcript<F>, const D: usize>(
-        &self,
-        label: &[u8],
-        transcript: &mut T,
-    ) -> Result<(), HachiError>
-    where
-        F: CanonicalField,
-    {
-        let rings = self.as_ring_slice::<D>()?;
-        transcript.append_serde(label, &RingSliceSerializer(rings));
-        Ok(())
-    }
-
-    /// Reconstruct a single ring element.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the stored coefficient count is not exactly `D`.
-    pub fn to_single<const D: usize>(&self) -> CyclotomicRing<F, D> {
-        assert_eq!(
-            self.coeffs.len(),
-            D,
-            "D mismatch in ProofRingVec::to_single"
-        );
-        CyclotomicRing::from_slice(&self.coeffs)
-    }
-
-    /// Reconstruct a single ring element, returning `InvalidProof` on shape mismatch.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HachiError::InvalidProof`] if the stored coefficient count is
-    /// not exactly `D`.
-    pub fn try_to_single<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, HachiError> {
-        if self.coeffs.len() != D {
-            return Err(HachiError::InvalidProof);
-        }
-        Ok(CyclotomicRing::from_slice(&self.coeffs))
-    }
-
-    /// Reconstruct a vector of ring elements.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the stored coefficient count is not divisible by `D`.
-    pub fn to_vec<const D: usize>(&self) -> Vec<CyclotomicRing<F, D>> {
-        assert_eq!(
-            self.coeffs.len() % D,
-            0,
-            "D mismatch in ProofRingVec::to_vec"
-        );
-        self.coeffs
-            .chunks_exact(D)
-            .map(CyclotomicRing::from_slice)
-            .collect()
-    }
-
-    /// Reconstruct a vector of ring elements, returning `InvalidProof` on shape mismatch.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HachiError::InvalidProof`] if the stored coefficient count is
-    /// not divisible by `D`.
-    pub fn try_to_vec<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-        if !self.coeffs.len().is_multiple_of(D) {
-            return Err(HachiError::InvalidProof);
-        }
-        Ok(self
-            .coeffs
-            .chunks_exact(D)
-            .map(CyclotomicRing::from_slice)
-            .collect())
-    }
-}
-
-impl<F: FieldCore> HachiSerialize for ProofRingVec<F> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
         for c in &self.coeffs {
             c.serialize_with_mode(&mut writer, compress)?;
         }
@@ -710,13 +573,13 @@ impl<F: FieldCore> HachiSerialize for ProofRingVec<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for ProofRingVec<F> {
+impl<F: FieldCore + Valid> Valid for FlatRingVec<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.coeffs.check()
     }
 }
 
-impl<F: FieldCore + Valid> HachiDeserialize for ProofRingVec<F> {
+impl<F: FieldCore + Valid> HachiDeserialize for FlatRingVec<F> {
     /// Number of field-element coefficients to read.
     type Context = usize;
     fn deserialize_with_mode<R: Read>(
@@ -734,13 +597,17 @@ impl<F: FieldCore + Valid> HachiDeserialize for ProofRingVec<F> {
                 &(),
             )?);
         }
-        let out = Self { coeffs };
+        let out = Self {
+            coeffs,
+            ring_dim: 0,
+        };
         if matches!(validate, Validate::Yes) {
             out.check()?;
         }
         Ok(out)
     }
 }
+
 
 /// Flat digit-plane storage plus explicit block boundaries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1162,7 +1029,7 @@ pub struct HachiStage2Proof<F: FieldCore> {
     pub sumcheck: SumcheckProof<F>,
     /// Commitment to the next witness `w`
     /// (ring dim = next level's D, may differ from y_ring/v).
-    pub next_w_commitment: ProofRingVec<F>,
+    pub next_w_commitment: FlatRingVec<F>,
     /// Claimed evaluation of the next witness `w` at the stage-2 challenge point.
     pub next_w_eval: F,
 }
@@ -1177,9 +1044,9 @@ pub struct HachiStage2Proof<F: FieldCore> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiLevelProof<F: FieldCore> {
     /// `y_ring` from the §3.1 reduction (ring dim = current level's D).
-    pub y_ring: ProofRingVec<F>,
+    pub y_ring: FlatRingVec<F>,
     /// `v = D · ŵ` (ring dim = current level's D).
-    pub v: ProofRingVec<F>,
+    pub v: FlatRingVec<F>,
     /// Stage-1 norm-check payload.
     pub stage1: HachiStage1Proof<F>,
     /// Stage-2 fused payload.
@@ -1196,8 +1063,8 @@ impl<F: FieldCore> HachiLevelProof<F> {
         stage2: HachiStage2Proof<F>,
     ) -> Self {
         Self {
-            y_ring: ProofRingVec::from_single(&y_ring),
-            v: ProofRingVec::from_ring_elems(&v),
+            y_ring: FlatRingVec::from_single(&y_ring),
+            v: FlatRingVec::from_ring_elems(&v),
             stage1,
             stage2,
         }
@@ -1210,7 +1077,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
         v: Vec<CyclotomicRing<F, D>>,
         stage1: HachiStage1Proof<F>,
         stage2_sumcheck: SumcheckProof<F>,
-        next_w_commitment: ProofRingVec<F>,
+        next_w_commitment: FlatRingVec<F>,
         next_w_eval: F,
     ) -> Self {
         Self::new::<D>(
@@ -1269,7 +1136,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
     }
 
     /// Commitment to the next witness `w`.
-    pub fn next_w_commitment(&self) -> &ProofRingVec<F> {
+    pub fn next_w_commitment(&self) -> &FlatRingVec<F> {
         &self.stage2.next_w_commitment
     }
 
@@ -1318,9 +1185,9 @@ impl<F: FieldCore> HachiLevelProof<F> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiBatchedRootProof<F: FieldCore> {
     /// Root public outputs `y_ell` stored as a ring vector.
-    pub y_rings: ProofRingVec<F>,
+    pub y_rings: FlatRingVec<F>,
     /// Aggregated `v = Σ_ell D_ell · w_hat_ell`.
-    pub v: ProofRingVec<F>,
+    pub v: FlatRingVec<F>,
     /// Stage-1 norm-check payload.
     pub stage1: HachiStage1Proof<F>,
     /// Stage-2 fused payload.
@@ -1336,8 +1203,8 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
         stage2: HachiStage2Proof<F>,
     ) -> Self {
         Self {
-            y_rings: ProofRingVec::from_ring_elems(&y_rings),
-            v: ProofRingVec::from_ring_elems(&v),
+            y_rings: FlatRingVec::from_ring_elems(&y_rings),
+            v: FlatRingVec::from_ring_elems(&v),
             stage1,
             stage2,
         }
@@ -1350,7 +1217,7 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
         v: Vec<CyclotomicRing<F, D>>,
         stage1: HachiStage1Proof<F>,
         stage2_sumcheck: SumcheckProof<F>,
-        next_w_commitment: ProofRingVec<F>,
+        next_w_commitment: FlatRingVec<F>,
         next_w_eval: F,
     ) -> Self {
         Self::new::<D>(
@@ -1366,17 +1233,17 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
     }
 
     /// Borrow the stored root `y` ring vector.
-    pub fn y_rings(&self) -> &ProofRingVec<F> {
+    pub fn y_rings(&self) -> &FlatRingVec<F> {
         &self.y_rings
     }
 
     /// Borrow the stored root `v` ring vector.
-    pub fn v(&self) -> &ProofRingVec<F> {
+    pub fn v(&self) -> &FlatRingVec<F> {
         &self.v
     }
 
     /// Commitment to the next witness `w`.
-    pub fn next_w_commitment(&self) -> &ProofRingVec<F> {
+    pub fn next_w_commitment(&self) -> &FlatRingVec<F> {
         &self.stage2.next_w_commitment
     }
 
@@ -1550,7 +1417,7 @@ fn eq_factored_sumcheck_shape<F: FieldCore>(
 
 fn level_proof_shape<F: FieldCore>(
     y_coeffs: usize,
-    v: &ProofRingVec<F>,
+    v: &FlatRingVec<F>,
     stage1: &HachiStage1Proof<F>,
     stage2: &HachiStage2Proof<F>,
 ) -> LevelProofShape {
@@ -1772,14 +1639,14 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
         validate: Validate,
         ctx: &LevelProofShape,
     ) -> Result<Self, SerializationError> {
-        let y_ring = ProofRingVec::deserialize_with_mode(
+        let y_ring = FlatRingVec::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
             &ctx.y_ring_coeffs,
         )?;
         let v =
-            ProofRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
+            FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
         let mut stage1_stages = Vec::with_capacity(ctx.stage1_stages.len());
         for stage_shape in &ctx.stage1_stages {
             let sumcheck = EqFactoredSumcheckProof::deserialize_with_mode(
@@ -1813,7 +1680,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
                 validate,
                 &ctx.stage2_sumcheck,
             )?,
-            next_w_commitment: ProofRingVec::deserialize_with_mode(
+            next_w_commitment: FlatRingVec::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
@@ -1879,7 +1746,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for DirectWitnessProof<F> {
                 PackedDigits::deserialize_with_mode(&mut reader, compress, validate, shape)?,
             ),
             DirectWitnessShape::FieldElements(num_coeffs) => Self::FieldElements(
-                ProofRingVec::deserialize_with_mode(&mut reader, compress, validate, num_coeffs)?,
+                FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, num_coeffs)?,
             ),
         };
         if matches!(validate, Validate::Yes) {
@@ -2019,14 +1886,14 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedRootProof<F> {
         validate: Validate,
         ctx: &LevelProofShape,
     ) -> Result<Self, SerializationError> {
-        let y_rings = ProofRingVec::deserialize_with_mode(
+        let y_rings = FlatRingVec::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
             &ctx.y_ring_coeffs,
         )?;
         let v =
-            ProofRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
+            FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
         let mut stage1_stages = Vec::with_capacity(ctx.stage1_stages.len());
         for stage_shape in &ctx.stage1_stages {
             let sumcheck = EqFactoredSumcheckProof::deserialize_with_mode(
@@ -2060,7 +1927,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedRootProof<F> {
                 validate,
                 &ctx.stage2_sumcheck,
             )?,
-            next_w_commitment: ProofRingVec::deserialize_with_mode(
+            next_w_commitment: FlatRingVec::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
