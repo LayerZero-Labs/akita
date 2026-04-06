@@ -133,7 +133,7 @@ pub(crate) fn fp128_d128_onehot_table() -> GeneratedScheduleTable {
     }
 }
 
-pub(crate) fn fp128_adaptive_onehot_d64_table() -> GeneratedScheduleTable {
+pub(crate) fn fp128_d64_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d64_onehot::FP128_D64_ONEHOT_SCHEDULES,
     }
