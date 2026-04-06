@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use hachi_planner::search::{
     run_universal_planner, DirectWitnessShape, PlannedStep, PlannerOptions, RingConfig,
+    ALL_RING_CONFIGS,
 };
 use hachi_planner::sis_security;
 
@@ -17,66 +18,16 @@ struct FamilySpec {
     log_commit_bound: u32,
     min_num_vars: usize,
     max_num_vars: usize,
-    ring_configs: &'static [RingConfig],
+    ring_dim: u32,
 }
 
-const D128_RING_CONFIGS: &[RingConfig] = &[
-    RingConfig {
-        d: 128,
-        n_a: 1,
-        challenge_l1_mass: 31,
-        max_abs_challenge_coeff: 1,
-        label: "D128-na1",
-    },
-    RingConfig {
-        d: 128,
-        n_a: 2,
-        challenge_l1_mass: 31,
-        max_abs_challenge_coeff: 1,
-        label: "D128-na2",
-    },
-];
-
-const D64_RING_CONFIGS: &[RingConfig] = &[
-    RingConfig {
-        d: 64,
-        n_a: 1,
-        challenge_l1_mass: 54,
-        max_abs_challenge_coeff: 2,
-        label: "D64-na1",
-    },
-    RingConfig {
-        d: 64,
-        n_a: 2,
-        challenge_l1_mass: 54,
-        max_abs_challenge_coeff: 2,
-        label: "D64-na2",
-    },
-];
-
-const D32_RING_CONFIGS: &[RingConfig] = &[
-    RingConfig {
-        d: 32,
-        n_a: 1,
-        challenge_l1_mass: 256,
-        max_abs_challenge_coeff: 8,
-        label: "D32-na1",
-    },
-    RingConfig {
-        d: 32,
-        n_a: 2,
-        challenge_l1_mass: 256,
-        max_abs_challenge_coeff: 8,
-        label: "D32-na2",
-    },
-    RingConfig {
-        d: 32,
-        n_a: 3,
-        challenge_l1_mass: 256,
-        max_abs_challenge_coeff: 8,
-        label: "D32-na3",
-    },
-];
+fn ring_configs_for_d(d: u32) -> Vec<RingConfig> {
+    ALL_RING_CONFIGS
+        .iter()
+        .filter(|cfg| cfg.d == d)
+        .cloned()
+        .collect()
+}
 
 const ALL_FAMILIES: &[FamilySpec] = &[
     FamilySpec {
@@ -86,7 +37,7 @@ const ALL_FAMILIES: &[FamilySpec] = &[
         log_commit_bound: 128,
         min_num_vars: 1,
         max_num_vars: 63,
-        ring_configs: D128_RING_CONFIGS,
+        ring_dim: 128,
     },
     FamilySpec {
         family_name: "fp128_d32_full",
@@ -95,7 +46,7 @@ const ALL_FAMILIES: &[FamilySpec] = &[
         log_commit_bound: 128,
         min_num_vars: 1,
         max_num_vars: 63,
-        ring_configs: D32_RING_CONFIGS,
+        ring_dim: 32,
     },
     FamilySpec {
         family_name: "fp128_d32_logbasis",
@@ -104,7 +55,7 @@ const ALL_FAMILIES: &[FamilySpec] = &[
         log_commit_bound: 3,
         min_num_vars: 1,
         max_num_vars: 63,
-        ring_configs: D32_RING_CONFIGS,
+        ring_dim: 32,
     },
     FamilySpec {
         family_name: "fp128_d32_onehot",
@@ -113,7 +64,7 @@ const ALL_FAMILIES: &[FamilySpec] = &[
         log_commit_bound: 1,
         min_num_vars: 1,
         max_num_vars: 63,
-        ring_configs: D32_RING_CONFIGS,
+        ring_dim: 32,
     },
     FamilySpec {
         family_name: "fp128_d64_onehot",
@@ -122,7 +73,7 @@ const ALL_FAMILIES: &[FamilySpec] = &[
         log_commit_bound: 1,
         min_num_vars: 1,
         max_num_vars: 63,
-        ring_configs: D64_RING_CONFIGS,
+        ring_dim: 64,
     },
 ];
 
@@ -169,9 +120,10 @@ fn emit_family_module(spec: FamilySpec) -> String {
         spec.const_name
     );
 
+    let cfgs = ring_configs_for_d(spec.ring_dim);
     for nv in spec.min_num_vars..=spec.max_num_vars {
         let mut opts = PlannerOptions::new(spec.log_commit_bound, nv);
-        opts.ring_configs = spec.ring_configs;
+        opts.ring_configs = cfgs.clone();
         let sched = run_universal_planner(&opts);
         let _ = writeln!(
             out,

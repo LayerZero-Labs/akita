@@ -260,7 +260,7 @@ impl Schedule {
 pub struct PlannerOptions {
     pub log_commit_bound: u32,
     pub max_num_vars: usize,
-    pub ring_configs: &'static [RingConfig],
+    pub ring_configs: Vec<RingConfig>,
     pub opt_sumcheck: bool,
     pub monotone_d: bool,
     pub tight_zpre: bool,
@@ -271,7 +271,7 @@ impl PlannerOptions {
         Self {
             log_commit_bound,
             max_num_vars,
-            ring_configs: ALL_RING_CONFIGS,
+            ring_configs: ALL_RING_CONFIGS.to_vec(),
             opt_sumcheck: true,
             monotone_d: true,
             tight_zpre: true,
@@ -740,13 +740,12 @@ mod tests {
     #[test]
     fn d128_only_configs_produce_schedule() {
         let mut opts = PlannerOptions::new(128, 25);
-        let d128_cfgs = ALL_RING_CONFIGS
+        let d128_cfgs: Vec<_> = ALL_RING_CONFIGS
             .iter()
             .filter(|cfg| cfg.d == 128)
             .cloned()
-            .collect::<Vec<_>>();
+            .collect();
         assert!(!d128_cfgs.is_empty());
-        let d128_cfgs = Box::leak(d128_cfgs.into_boxed_slice());
         opts.ring_configs = d128_cfgs;
         let sched = run_universal_planner(&opts);
         assert!(sched.num_fold_levels() > 0);
