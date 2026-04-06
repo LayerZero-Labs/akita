@@ -1035,9 +1035,9 @@ pub struct HachiStage2Proof<F: FieldCore> {
 
 /// Proof for a single fold level (quad_eq + ring_switch + sumcheck).
 ///
-/// D-agnostic: ring elements are stored as [`FlatRingVec`] with their
-/// ring dimension recorded. Use [`Self::y_ring_typed`], [`Self::v_typed`], and
-/// [`Self::w_commitment_typed`] to reconstruct typed ring elements.
+/// D-agnostic: proof-owned ring vectors are stored in compact mode
+/// (`ring_dim = 0`), and callers recover the typed ring dimension from the
+/// surrounding proof shape or runtime context.
 ///
 /// One recursive Hachi level proof with inline stage-1 and stage-2 sumchecks.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1062,8 +1062,8 @@ impl<F: FieldCore> HachiLevelProof<F> {
         stage2: HachiStage2Proof<F>,
     ) -> Self {
         Self {
-            y_ring: FlatRingVec::from_single(&y_ring),
-            v: FlatRingVec::from_ring_elems(&v),
+            y_ring: FlatRingVec::from_single(&y_ring).into_compact(),
+            v: FlatRingVec::from_ring_elems(&v).into_compact(),
             stage1,
             stage2,
         }
@@ -1085,7 +1085,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
             stage1,
             HachiStage2Proof {
                 sumcheck: stage2_sumcheck,
-                next_w_commitment,
+                next_w_commitment: next_w_commitment.into_compact(),
                 next_w_eval,
             },
         )
@@ -1202,8 +1202,8 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
         stage2: HachiStage2Proof<F>,
     ) -> Self {
         Self {
-            y_rings: FlatRingVec::from_ring_elems(&y_rings),
-            v: FlatRingVec::from_ring_elems(&v),
+            y_rings: FlatRingVec::from_ring_elems(&y_rings).into_compact(),
+            v: FlatRingVec::from_ring_elems(&v).into_compact(),
             stage1,
             stage2,
         }
@@ -1225,7 +1225,7 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
             stage1,
             HachiStage2Proof {
                 sumcheck: stage2_sumcheck,
-                next_w_commitment,
+                next_w_commitment: next_w_commitment.into_compact(),
                 next_w_eval,
             },
         )

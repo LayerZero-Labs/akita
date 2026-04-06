@@ -1442,6 +1442,7 @@ fn prove_batched_recursive_suffix<F, T, const D: usize, Cfg>(
     max_num_vars: usize,
     transcript: &mut T,
     next_state: RecursiveProverState<F>,
+    initial_prev_w_len: usize,
 ) -> Result<RecursiveSuffixResult<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
@@ -1450,10 +1451,14 @@ where
 {
     let mut levels = Vec::new();
     let mut current_state = next_state;
+    let mut prev_poly_len = initial_prev_w_len;
     let mut level = 1usize;
 
     loop {
         let current_w_len = current_state.w.len();
+        if should_stop_folding(current_w_len, prev_poly_len) {
+            break;
+        }
         eprintln!(
             "recursive_suffix:level={} current_w_len={} log_basis={}",
             level, current_w_len, current_state.log_basis
@@ -1493,6 +1498,7 @@ where
         )?;
 
         levels.push(out.level_proof);
+        prev_poly_len = current_w_len;
         eprintln!(
             "recursive_suffix:level={} next_w_len={} next_log_basis={}",
             level,
@@ -1748,6 +1754,7 @@ where
         max_num_vars,
         transcript,
         next_state,
+        root_plan.inputs.current_w_len,
     )?;
     eprintln!("same_point_batched:after_recursive_suffix");
 
@@ -2358,6 +2365,7 @@ where
             max_num_vars,
             transcript,
             next_state,
+            root_plan.inputs.current_w_len,
         )?;
 
         tracing::info!(
