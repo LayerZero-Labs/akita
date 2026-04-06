@@ -1036,6 +1036,108 @@ pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
         .transpose()
 }
 
+/// Build a schedule plan by simulating the level chain for any
+/// `CommitmentConfig` whose basis choices are fully deterministic from
+/// public inputs (e.g. static or test configs without generated tables).
+///
+/// The root fold (level 0) is always emitted because the commitment
+/// opening protocol mandates at least one fold before the direct tail.
+///
+/// `root_layout` must match the layout that `Cfg::commitment_layout()`
+/// would return.  The caller supplies it explicitly so that this function
+/// never calls `Cfg::commitment_layout()` (which may itself call
+/// `Cfg::schedule_plan()`, creating infinite recursion for configs that
+/// use the default `commitment_layout` implementation).
+pub(crate) fn build_schedule_plan_from_config<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    root_layout: HachiCommitmentLayout,
+) -> Result<HachiSchedulePlan, HachiError> {
+    let fb = field_bits(Cfg::decomposition());
+    let half_field_bound = Cfg::planner_half_field_bound();
+
+    let root_w_len = 1usize
+        .checked_shl(max_num_vars as u32)
+        .ok_or_else(|| HachiError::InvalidSetup("root witness length overflow".to_string()))?;
+
+    let mut steps = Vec::new();
+    let mut level = 0usize;
+    let mut current_w_len = root_w_len;
+
+    loop {
+        let inputs = HachiScheduleInputs {
+            max_num_vars,
+            level,
+            current_w_len,
+        };
+        let log_basis = Cfg::log_basis_at_level(inputs);
+        let (params, layout) = if level == 0 {
+            let params = Cfg::level_params_with_log_basis(inputs, log_basis);
+            (params, root_layout)
+        } else {
+            current_level_layout_with_log_basis::<Cfg>(inputs, log_basis)?
+        };
+        let next_w_len = planned_next_w_len(fb, half_field_bound, &params, layout);
+
+        let next_inputs = HachiScheduleInputs {
+            max_num_vars,
+            level: level + 1,
+            current_w_len: next_w_len,
+        };
+        let next_log_basis = Cfg::log_basis_at_level(next_inputs);
+        let next_level_params = Cfg::level_params_with_log_basis(next_inputs, next_log_basis);
+
+        let continue_bytes =
+            hachi_level_proof_bytes(fb, &params, layout, &next_level_params, next_w_len);
+
+        let should_stop = level > 0
+            && (next_w_len >= current_w_len
+                || packed_digits_bytes(current_w_len, log_basis) <= continue_bytes);
+
+        if should_stop {
+            let witness_shape = DirectWitnessShape::PackedDigits((current_w_len, log_basis));
+            let direct_bytes = direct_witness_bytes(fb, &witness_shape);
+            steps.push(HachiPlannedStep::Direct(HachiPlannedDirectStep {
+                state: HachiPlannedState {
+                    level,
+                    current_w_len,
+                    log_basis,
+                },
+                witness_shape,
+                direct_bytes,
+            }));
+            break;
+        }
+
+        let next_commit_coeffs = next_level_params.n_b * next_level_params.d;
+        steps.push(HachiPlannedStep::Fold(Box::new(HachiPlannedLevel {
+            inputs,
+            params,
+            layout,
+            next_inputs,
+            next_level_log_basis: next_log_basis,
+            next_commit_coeffs,
+            level_bytes: continue_bytes,
+        })));
+
+        level += 1;
+        current_w_len = next_w_len;
+    }
+
+    let no_wrapper_bytes: usize = steps
+        .iter()
+        .map(|step| match step {
+            HachiPlannedStep::Fold(l) => l.level_bytes,
+            HachiPlannedStep::Direct(d) => d.direct_bytes,
+        })
+        .sum();
+
+    Ok(HachiSchedulePlan {
+        steps,
+        no_wrapper_bytes,
+        exact_proof_bytes: no_wrapper_bytes,
+    })
+}
+
 pub(super) fn field_bits(root_decomp: DecompositionParams) -> u32 {
     root_decomp
         .log_open_bound

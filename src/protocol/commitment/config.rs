@@ -773,6 +773,15 @@ impl CommitmentConfig for SmallTestCommitmentConfig {
     fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
         HachiCommitmentLayout::new::<Self>(4, 2, &Self::decomposition())
     }
+
+    fn schedule_plan(
+        max_num_vars: usize,
+    ) -> Result<Option<super::schedule::HachiSchedulePlan>, HachiError> {
+        let root_layout = HachiCommitmentLayout::new::<Self>(4, 2, &Self::decomposition())?;
+        Ok(Some(super::schedule::build_schedule_plan_from_config::<
+            Self,
+        >(max_num_vars, root_layout)?))
+    }
 }
 
 /// Static bounded policy with explicit root and recursive log bases.
@@ -832,6 +841,15 @@ impl<
 
     fn schedule_key(_max_num_vars: usize) -> String {
         format!("static_v1_root{LOG_BASIS}_rec{W_LOG_BASIS}")
+    }
+
+    fn schedule_plan(
+        max_num_vars: usize,
+    ) -> Result<Option<super::schedule::HachiSchedulePlan>, crate::error::HachiError> {
+        let (_, root_layout) = super::schedule::hachi_root_commitment_layout::<Self>(max_num_vars)?;
+        Ok(Some(super::schedule::build_schedule_plan_from_config::<
+            Self,
+        >(max_num_vars, root_layout)?))
     }
 
     fn n_b_at_level(level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {

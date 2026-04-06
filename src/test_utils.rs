@@ -55,6 +55,18 @@ impl CommitmentConfig for TinyConfig {
     fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
         HachiCommitmentLayout::new::<Self>(1, 1, &Self::decomposition())
     }
+
+    fn schedule_plan(
+        max_num_vars: usize,
+    ) -> Result<Option<crate::protocol::commitment::schedule::HachiSchedulePlan>, HachiError> {
+        let root_layout = HachiCommitmentLayout::new::<Self>(1, 1, &Self::decomposition())?;
+        Ok(Some(
+            crate::protocol::commitment::schedule::build_schedule_plan_from_config::<Self>(
+                max_num_vars,
+                root_layout,
+            )?,
+        ))
+    }
 }
 
 /// Number of ring elements per block (`2^m_vars`).
