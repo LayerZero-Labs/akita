@@ -777,6 +777,9 @@ impl CommitmentConfig for SmallTestCommitmentConfig {
     fn schedule_plan(
         max_num_vars: usize,
     ) -> Result<Option<super::schedule::HachiSchedulePlan>, HachiError> {
+        if max_num_vars >= usize::BITS as usize {
+            return Ok(None);
+        }
         let root_layout = HachiCommitmentLayout::new::<Self>(4, 2, &Self::decomposition())?;
         Ok(Some(super::schedule::build_schedule_plan_from_config::<
             Self,
@@ -846,6 +849,9 @@ impl<
     fn schedule_plan(
         max_num_vars: usize,
     ) -> Result<Option<super::schedule::HachiSchedulePlan>, crate::error::HachiError> {
+        if max_num_vars >= usize::BITS as usize {
+            return Ok(None);
+        }
         let (_, root_layout) = super::schedule::hachi_root_commitment_layout::<Self>(max_num_vars)?;
         Ok(Some(super::schedule::build_schedule_plan_from_config::<
             Self,

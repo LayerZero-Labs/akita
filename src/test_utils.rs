@@ -59,6 +59,9 @@ impl CommitmentConfig for TinyConfig {
     fn schedule_plan(
         max_num_vars: usize,
     ) -> Result<Option<crate::protocol::commitment::schedule::HachiSchedulePlan>, HachiError> {
+        if max_num_vars >= usize::BITS as usize {
+            return Ok(None);
+        }
         let root_layout = HachiCommitmentLayout::new::<Self>(1, 1, &Self::decomposition())?;
         Ok(Some(
             crate::protocol::commitment::schedule::build_schedule_plan_from_config::<Self>(
