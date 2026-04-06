@@ -19,19 +19,19 @@ pub mod sumcheck;
 pub mod transcript;
 
 pub use commitment::{
-    optimal_m_r_split, AppendToTranscript, CommitmentConfig, CommitmentScheme, DummyProof,
-    DynamicSmallTestCommitmentConfig, Fp128BoundedCommitmentConfig, Fp128CommitmentConfig,
-    Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig,
-    HachiCommitment, HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup,
-    HachiOpeningClaim, HachiOpeningPoint, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup,
-    RingCommitment, RingCommitmentScheme, SmallTestCommitmentConfig,
+    optimal_m_r_split, presets, AppendToTranscript, CommitmentConfig, CommitmentPreset,
+    CommitmentScheme, DummyProof, GeneratedAdaptivePolicy, HachiCommitment, HachiCommitmentCore,
+    HachiCommitmentLayout, HachiExpandedSetup, HachiOpeningClaim, HachiOpeningPoint,
+    HachiProverSetup, HachiRootBatchSummary, HachiSetupSeed, HachiVerifierSetup, RingCommitment,
+    RingCommitmentScheme, SmallTestCommitmentConfig, StaticBoundedPolicy,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, MultilinearPolynomail, OneHotIndex, OneHotPoly};
 pub use opening_point::{BasisMode, BlockOrder, RingOpeningPoint};
 pub use proof::{
-    FlatRingVec, HachiBatchedProof, HachiBatchedProofShape, HachiBatchedRootProof, HachiLevelProof,
-    HachiProof, HachiProofShape, HachiProofTail, LevelProofShape, PackedDigits, ProofRingVec,
+    DirectWitnessProof, DirectWitnessShape, FlatRingVec, HachiBatchedProof, HachiBatchedProofShape,
+    HachiBatchedRootProof, HachiLevelProof, HachiProof, HachiProofShape, HachiProofStep,
+    HachiProofStepShape, LevelProofShape, PackedDigits,
 };
 pub use quadratic_equation::QuadraticEquation;
 pub use sumcheck::batched_sumcheck::{prove_batched_sumcheck, verify_batched_sumcheck};

@@ -46,9 +46,7 @@ use crate::algebra::split_eq::GruenSplitEq;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::{
-    cfg_fold_reduce, cfg_into_iter, AdditiveGroup, CanonicalField, FieldCore, FromSmallInt,
-};
+use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
 use std::time::Instant;
 
 const MAX_AFFINE_COEFFS: usize = 17;
@@ -359,7 +357,15 @@ fn compute_entry_coeffs_from_s_x4<E: FieldCore + HasUnreducedOps>(
     let num_rows = precomp.num_rows();
 
     let mut ap = [E::one(); 4];
-    for i in 0..num_rows {
+    let [out0, out1, out2, out3] = out.each_mut();
+    for (i, (((out0_i, out1_i), out2_i), out3_i)) in out0
+        .iter_mut()
+        .zip(out1.iter_mut())
+        .zip(out2.iter_mut())
+        .zip(out3.iter_mut())
+        .take(num_rows)
+        .enumerate()
+    {
         let mut h0 = E::zero();
         let mut h1 = E::zero();
         let mut h2 = E::zero();
@@ -371,10 +377,10 @@ fn compute_entry_coeffs_from_s_x4<E: FieldCore + HasUnreducedOps>(
             h3 = h3 * s_0[3] + coeff;
         }
 
-        out[0][i] = ap[0] * h0;
-        out[1][i] = ap[1] * h1;
-        out[2][i] = ap[2] * h2;
-        out[3][i] = ap[3] * h3;
+        *out0_i = ap[0] * h0;
+        *out1_i = ap[1] * h1;
+        *out2_i = ap[2] * h2;
+        *out3_i = ap[3] * h3;
 
         ap[0] = ap[0] * a[0];
         ap[1] = ap[1] * a[1];
@@ -1965,10 +1971,10 @@ impl<F: FieldCore + FromSmallInt> EqFactoredSumcheckInstanceVerifier<F> for Hach
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128Offset5823;
+    use crate::algebra::Prime128Offset275;
     use crate::protocol::sumcheck::{advance_eq_factored_claim, multilinear_eval};
 
-    type F = Prime128Offset5823;
+    type F = Prime128Offset275;
 
     fn pad_compact_rows(
         w_prefix: &[i8],

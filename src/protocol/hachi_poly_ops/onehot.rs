@@ -21,13 +21,14 @@ use crate::protocol::commitment::onehot::{
 };
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
-use crate::protocol::commitment::utils::linear::decompose_rows_i8;
+use crate::protocol::commitment::utils::linear::decompose_rows_i8_into;
 use crate::protocol::hachi_poly_ops::helpers::{
     build_decompose_fold_witness, regular_onehot_accumulate, regular_onehot_accumulate_slices,
     sparse_onehot_accumulate, sparse_onehot_accumulate_slices,
 };
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
-use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
+use crate::protocol::proof::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
+use crate::{CanonicalField, FieldCore};
 use std::marker::PhantomData;
 
 /// Types usable as one-hot position indices.
@@ -83,6 +84,9 @@ pub(crate) enum OneHotBlocks {
 /// polynomial is converted into its internal sparse layout.
 #[derive(Debug, Clone)]
 pub struct OneHotPoly<F: FieldCore, const D: usize, I: OneHotIndex = usize> {
+    pub(crate) num_vars: usize,
+    pub(crate) onehot_k: usize,
+    pub(crate) indices: Vec<Option<usize>>,
     pub(crate) m_vars: usize,
     pub(crate) blocks: OneHotBlocks,
     pub(crate) _marker: PhantomData<(F, I)>,
@@ -102,7 +106,19 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         r_vars: usize,
         m_vars: usize,
     ) -> Result<Self, HachiError> {
-        let use_regular_blocks = onehot_k >= D && onehot_k % D == 0;
+        let total_field_elems = indices.len().checked_mul(onehot_k).ok_or_else(|| {
+            HachiError::InvalidInput("onehot total field element count overflow".to_string())
+        })?;
+        if !total_field_elems.is_power_of_two() {
+            return Err(HachiError::InvalidInput(format!(
+                "onehot total field elements {total_field_elems} is not a power of two"
+            )));
+        }
+        let indices_usize: Vec<Option<usize>> = indices
+            .iter()
+            .map(|idx| idx.map(OneHotIndex::as_usize))
+            .collect();
+        let use_regular_blocks = onehot_k >= D && onehot_k.is_multiple_of(D);
         let blocks = if use_regular_blocks {
             OneHotBlocks::Regular(map_onehot_to_regular_blocks(
                 onehot_k, &indices, r_vars, m_vars, D,
@@ -113,6 +129,9 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             )?)
         };
         Ok(Self {
+            num_vars: total_field_elems.trailing_zeros() as usize,
+            onehot_k,
+            indices: indices_usize,
             m_vars,
             blocks,
             _marker: PhantomData,
@@ -296,6 +315,10 @@ where
         self.total_ring_elems()
     }
 
+    fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
     fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
         let block_len = 1usize << self.m_vars;
         match &self.blocks {
@@ -338,32 +361,35 @@ where
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
         match &self.blocks {
             OneHotBlocks::Regular(blocks) => cfg_iter!(blocks)
-                .map(|entries| {
-                    let mut coeffs_acc = [F::zero(); D];
-                    for entry in entries {
-                        let pos = entry.pos_in_block();
-                        if pos < scalars.len() && pos < block_len {
-                            coeffs_acc[entry.coeff_idx()] += scalars[pos];
-                        }
-                    }
-                    CyclotomicRing::from_coefficients(coeffs_acc)
-                })
+                .map(|entries| fold_regular_onehot_block(entries, scalars, block_len))
                 .collect(),
             OneHotBlocks::General(blocks) => cfg_iter!(blocks)
-                .map(|entries| {
-                    let mut coeffs_acc = [F::zero(); D];
-                    for entry in entries {
-                        if entry.pos_in_block < scalars.len() && entry.pos_in_block < block_len {
-                            let s = scalars[entry.pos_in_block];
-                            for &ci in &entry.nonzero_coeffs {
-                                coeffs_acc[ci] += s;
-                            }
-                        }
-                    }
-                    CyclotomicRing::from_coefficients(coeffs_acc)
-                })
+                .map(|entries| fold_sparse_onehot_block(entries, scalars, block_len))
                 .collect(),
         }
+    }
+
+    fn evaluate_and_fold(
+        &self,
+        eval_outer_scalars: &[F],
+        fold_scalars: &[F],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        let folded: Vec<CyclotomicRing<F, D>> = match &self.blocks {
+            OneHotBlocks::Regular(blocks) => cfg_iter!(blocks)
+                .map(|entries| fold_regular_onehot_block(entries, fold_scalars, block_len))
+                .collect(),
+            OneHotBlocks::General(blocks) => cfg_iter!(blocks)
+                .map(|entries| fold_sparse_onehot_block(entries, fold_scalars, block_len))
+                .collect(),
+        };
+        let eval = folded
+            .iter()
+            .zip(eval_outer_scalars.iter())
+            .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
+                acc + f_i.scale(s_i)
+            });
+        (eval, folded)
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold")]
@@ -407,13 +433,14 @@ where
         &self,
         a_matrix: &FlatMatrix<F>,
         _ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-    ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
-        let a_view = a_matrix.view::<D>();
-        let n_a = a_view.num_rows();
+        matrix_stride: usize,
+    ) -> Result<FlatDigitBlocks<D>, HachiError> {
+        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride);
         let num_blocks = self.num_blocks();
         let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
         if active_a_cols > a_view.num_cols() {
@@ -441,17 +468,27 @@ where
             ),
         };
 
-        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(0..num_blocks)
-            .map(|b| {
-                if t_all[b].iter().all(|r| *r == CyclotomicRing::zero()) {
-                    vec![[0i8; D]; zero_block_len]
-                } else {
-                    decompose_rows_i8(&t_all[b], num_digits_open, log_basis)
+        let mut t_hat = FlatDigitBlocks::zeroed(vec![zero_block_len; num_blocks])?;
+        let dst_blocks = t_hat.split_blocks_mut();
+        #[cfg(feature = "parallel")]
+        cfg_into_iter!(dst_blocks)
+            .zip(cfg_iter!(t_all))
+            .for_each(|(dst, t_i)| {
+                if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
+                    decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
                 }
-            })
-            .collect();
+            });
+        #[cfg(not(feature = "parallel"))]
+        dst_blocks
+            .into_iter()
+            .zip(t_all.iter())
+            .for_each(|(dst, t_i)| {
+                if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
+                    decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
+                }
+            });
 
-        Ok(t_hat_all)
+        Ok(t_hat)
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner_witness")]
@@ -459,13 +496,14 @@ where
         &self,
         a_matrix: &FlatMatrix<F>,
         _ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, HachiError> {
-        let a_view = a_matrix.view::<D>();
-        let n_a = a_view.num_rows();
+        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride);
         let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
         if active_a_cols > a_view.num_cols() {
             return Err(HachiError::InvalidSetup(format!(
@@ -492,15 +530,22 @@ where
             ),
         };
 
-        let t_hat: Vec<Vec<[i8; D]>> = cfg_iter!(t)
-            .map(|t_i| {
-                if t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                    vec![[0i8; D]; zero_block_len]
-                } else {
-                    decompose_rows_i8(t_i, num_digits_open, log_basis)
+        let mut t_hat = FlatDigitBlocks::zeroed(vec![zero_block_len; t.len()])?;
+        let dst_blocks = t_hat.split_blocks_mut();
+        #[cfg(feature = "parallel")]
+        cfg_into_iter!(dst_blocks)
+            .zip(cfg_iter!(t))
+            .for_each(|(dst, t_i)| {
+                if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
+                    decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
                 }
-            })
-            .collect();
+            });
+        #[cfg(not(feature = "parallel"))]
+        dst_blocks.into_iter().zip(t.iter()).for_each(|(dst, t_i)| {
+            if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
+                decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
+            }
+        });
 
         Ok(CommitInnerWitness { t, t_hat })
     }
@@ -509,10 +554,12 @@ where
         polys: &[&Self],
         a_matrix: &FlatMatrix<F>,
         _ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<Option<Vec<CommitInnerWitness<F, D>>>, HachiError>
     where
         F: CanonicalField,
@@ -521,8 +568,7 @@ where
             return Ok(Some(Vec::new()));
         }
 
-        let a_view = a_matrix.view::<D>();
-        let n_a = a_view.num_rows();
+        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride);
         let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
         if active_a_cols > a_view.num_cols() {
             return Err(HachiError::InvalidSetup(format!(
@@ -578,20 +624,56 @@ where
             .chunks(blocks_per_poly)
             .map(|poly_t| {
                 let t = poly_t.to_vec();
-                let t_hat: Vec<Vec<[i8; D]>> = cfg_iter!(t)
-                    .map(|t_i| {
-                        if t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
-                            vec![[0i8; D]; zero_block_len]
-                        } else {
-                            decompose_rows_i8(t_i, num_digits_open, log_basis)
+                let mut t_hat =
+                    FlatDigitBlocks::zeroed(vec![zero_block_len; t.len()]).expect("sizes fit");
+                let dst_blocks = t_hat.split_blocks_mut();
+                #[cfg(feature = "parallel")]
+                cfg_into_iter!(dst_blocks)
+                    .zip(cfg_iter!(t))
+                    .for_each(|(dst, t_i)| {
+                        if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
+                            decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
                         }
-                    })
-                    .collect();
+                    });
+                #[cfg(not(feature = "parallel"))]
+                dst_blocks.into_iter().zip(t.iter()).for_each(|(dst, t_i)| {
+                    if !t_i.iter().all(|r| *r == CyclotomicRing::zero()) {
+                        decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis);
+                    }
+                });
                 CommitInnerWitness { t, t_hat }
             })
             .collect();
 
         Ok(Some(witnesses))
+    }
+
+    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, HachiError> {
+        let total_evals = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
+            HachiError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
+        })?;
+        let mut evals = vec![F::zero(); total_evals];
+        for (chunk_idx, hot_pos) in self.indices.iter().enumerate() {
+            let Some(hot_pos) = hot_pos else {
+                continue;
+            };
+            let field_pos = chunk_idx
+                .checked_mul(self.onehot_k)
+                .and_then(|base| base.checked_add(*hot_pos))
+                .ok_or_else(|| {
+                    HachiError::InvalidInput("onehot direct witness index overflow".to_string())
+                })?;
+            if field_pos >= evals.len() {
+                return Err(HachiError::InvalidInput(format!(
+                    "onehot direct witness index {field_pos} out of range for {} evals",
+                    evals.len()
+                )));
+            }
+            evals[field_pos] = F::one();
+        }
+        Ok(DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
+            evals,
+        )))
     }
 }
 
@@ -599,6 +681,38 @@ fn num_cols_a(block_len: usize, num_digits_commit: usize) -> Result<usize, Hachi
     block_len
         .checked_mul(num_digits_commit)
         .ok_or_else(|| HachiError::InvalidSetup("active A width overflow".to_string()))
+}
+
+fn fold_regular_onehot_block<F: FieldCore, const D: usize>(
+    entries: &[RegularOneHotEntry],
+    scalars: &[F],
+    block_len: usize,
+) -> CyclotomicRing<F, D> {
+    let mut coeffs_acc = [F::zero(); D];
+    for entry in entries {
+        let pos = entry.pos_in_block();
+        if pos < scalars.len() && pos < block_len {
+            coeffs_acc[entry.coeff_idx()] += scalars[pos];
+        }
+    }
+    CyclotomicRing::from_coefficients(coeffs_acc)
+}
+
+fn fold_sparse_onehot_block<F: FieldCore, const D: usize>(
+    entries: &[SparseBlockEntry],
+    scalars: &[F],
+    block_len: usize,
+) -> CyclotomicRing<F, D> {
+    let mut coeffs_acc = [F::zero(); D];
+    for entry in entries {
+        if entry.pos_in_block < scalars.len() && entry.pos_in_block < block_len {
+            let s = scalars[entry.pos_in_block];
+            for &ci in &entry.nonzero_coeffs {
+                coeffs_acc[ci] += s;
+            }
+        }
+    }
+    CyclotomicRing::from_coefficients(coeffs_acc)
 }
 
 fn inner_ajtai_regular_onehot_wide<F, const D: usize>(
@@ -731,8 +845,6 @@ where
             })
             .collect();
     }
-    let num_cols = active_a_cols;
-
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
     let block_tile = if accum_bytes > 0 {
         (L2_TILE_BUDGET / accum_bytes).max(1)
@@ -768,21 +880,23 @@ where
             let mut result: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(my_count);
             result.resize_with(my_count, Vec::new);
 
-            // Reuse across tiles so that Vec capacities from earlier tiles
-            // carry over, avoiding repeated heap growth.
-            let mut col_entries: Vec<Vec<(u32, u16)>> = vec![Vec::new(); num_cols];
+            // Reuse across tiles so earlier capacity carries over, but only
+            // allocate buckets for columns that are actually touched.
+            let mut col_entries: Vec<(usize, u32, u16)> = Vec::new();
 
             for tile_start in (0..my_count).step_by(block_tile) {
                 let tile_end = (tile_start + block_tile).min(my_count);
                 let tile_blocks = &my_blocks[tile_start..tile_end];
                 let tile_len = tile_blocks.len();
 
+                col_entries.clear();
                 for (local_b, block_entries) in tile_blocks.iter().enumerate() {
                     for entry in block_entries.as_ref() {
                         let col = entry.pos_in_block() * num_digits_commit;
-                        col_entries[col].push((local_b as u32, entry.coeff_idx() as u16));
+                        col_entries.push((col, local_b as u32, entry.coeff_idx() as u16));
                     }
                 }
+                col_entries.sort_unstable_by_key(|&(col, _, _)| col);
 
                 let mut accums: Vec<Vec<WideCyclotomicRing<F::Wide, D>>> = (0..tile_len)
                     .map(|_| vec![WideCyclotomicRing::zero(); n_a])
@@ -790,16 +904,17 @@ where
 
                 for a_idx in 0..n_a {
                     let a_row = a_view.row(a_idx);
-                    for (col, entries) in col_entries.iter().enumerate() {
-                        if entries.is_empty() {
-                            continue;
-                        }
+                    let mut idx = 0usize;
+                    while idx < col_entries.len() {
+                        let col = col_entries[idx].0;
                         let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
-                        for &(lb, ci) in entries {
+                        while idx < col_entries.len() && col_entries[idx].0 == col {
+                            let (_, lb, ci) = col_entries[idx];
                             a_wide.shift_accumulate_into(
                                 &mut accums[lb as usize][a_idx],
                                 ci as usize,
                             );
+                            idx += 1;
                         }
                     }
                 }
@@ -807,10 +922,6 @@ where
                 for (local_b, row_accums) in accums.into_iter().enumerate() {
                     result[tile_start + local_b] =
                         row_accums.into_iter().map(|w| w.reduce()).collect();
-                }
-
-                for bucket in &mut col_entries {
-                    bucket.clear();
                 }
             }
 
@@ -852,8 +963,6 @@ where
         active_a_cols <= a_view.num_cols(),
         "active A width exceeds setup envelope"
     );
-    let num_cols = active_a_cols;
-
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
     let block_tile = if accum_bytes > 0 {
         (L2_TILE_BUDGET / accum_bytes).max(1)
@@ -889,21 +998,23 @@ where
             let mut result: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(my_count);
             result.resize_with(my_count, Vec::new);
 
-            let mut col_entries: Vec<Vec<(u32, u8)>> = vec![Vec::new(); num_cols];
+            let mut col_entries: Vec<(usize, u32, u8)> = Vec::new();
 
             for tile_start in (0..my_count).step_by(block_tile) {
                 let tile_end = (tile_start + block_tile).min(my_count);
                 let tile_blocks = &my_blocks[tile_start..tile_end];
                 let tile_len = tile_blocks.len();
 
+                col_entries.clear();
                 for (local_b, block_entries) in tile_blocks.iter().enumerate() {
                     for entry in block_entries.as_ref() {
                         let col = entry.pos_in_block * num_digits_commit;
                         for &ci in &entry.nonzero_coeffs {
-                            col_entries[col].push((local_b as u32, ci as u8));
+                            col_entries.push((col, local_b as u32, ci as u8));
                         }
                     }
                 }
+                col_entries.sort_unstable_by_key(|&(col, _, _)| col);
 
                 let mut accums: Vec<Vec<WideCyclotomicRing<F::Wide, D>>> = (0..tile_len)
                     .map(|_| vec![WideCyclotomicRing::zero(); n_a])
@@ -911,16 +1022,17 @@ where
 
                 for a_idx in 0..n_a {
                     let a_row = a_view.row(a_idx);
-                    for (col, entries) in col_entries.iter().enumerate() {
-                        if entries.is_empty() {
-                            continue;
-                        }
+                    let mut idx = 0usize;
+                    while idx < col_entries.len() {
+                        let col = col_entries[idx].0;
                         let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
-                        for &(lb, ci) in entries {
+                        while idx < col_entries.len() && col_entries[idx].0 == col {
+                            let (_, lb, ci) = col_entries[idx];
                             a_wide.shift_accumulate_into(
                                 &mut accums[lb as usize][a_idx],
                                 ci as usize,
                             );
+                            idx += 1;
                         }
                     }
                 }
@@ -928,10 +1040,6 @@ where
                 for (local_b, row_accums) in accums.into_iter().enumerate() {
                     result[tile_start + local_b] =
                         row_accums.into_iter().map(|w| w.reduce()).collect();
-                }
-
-                for bucket in &mut col_entries {
-                    bucket.clear();
                 }
             }
 
@@ -951,6 +1059,7 @@ mod tests {
     use super::*;
     use crate::algebra::fields::Pow2Offset24Field;
     use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
+    use crate::FromSmallInt;
 
     fn aggregate_witnesses<F: FieldCore, const D: usize>(
         witnesses: &[DecomposeFoldWitness<F, D>],
@@ -988,7 +1097,7 @@ mod tests {
         let block_len = MAX_WIDE_SHIFT_ACCUMULATIONS + 1;
         let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
         let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
-        let a_matrix = vec![vec![dense_ring; block_len]];
+        let a_matrix = [vec![dense_ring; block_len]];
         let regular_blocks = vec![{
             let mut entries = Vec::with_capacity(block_len);
             for pos in 0..block_len {
@@ -997,8 +1106,8 @@ mod tests {
             entries
         }];
 
-        let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
-        let a_view = a_flat.view::<D>();
+        let a_flat = FlatMatrix::from_ring_slice(&a_matrix[0]);
+        let a_view = a_flat.ring_view::<D>(1, block_len);
 
         let got =
             onehot_column_sweep_ajtai_regular::<_, F, D>(&a_view, &regular_blocks, 1, block_len, 1);
@@ -1067,5 +1176,70 @@ mod tests {
         .expect("onehot batched path should apply");
 
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn regular_onehot_evaluate_and_fold_matches_factorized_eval() {
+        type F = Pow2Offset24Field;
+        const D: usize = 64;
+
+        let poly = OneHotPoly::<F, D>::new(
+            64,
+            vec![Some(1usize), None, Some(9usize), Some(17usize)],
+            1,
+            1,
+        )
+        .unwrap();
+        let block_len = 1usize << poly.m_vars;
+        let fold_scalars = vec![F::from_u64(3), F::from_u64(5)];
+        let eval_outer_scalars = vec![F::from_u64(7), F::from_u64(11)];
+
+        let (eval, folded) = poly.evaluate_and_fold(&eval_outer_scalars, &fold_scalars, block_len);
+        let expected_folded = poly.fold_blocks(&fold_scalars, block_len);
+        assert_eq!(folded, expected_folded);
+
+        let full_scalars: Vec<F> = eval_outer_scalars
+            .iter()
+            .flat_map(|outer| fold_scalars.iter().map(move |inner| *outer * *inner))
+            .collect();
+        let expected_eval = poly.evaluate_ring(&full_scalars);
+        assert_eq!(eval, expected_eval);
+    }
+
+    #[test]
+    fn sparse_onehot_evaluate_and_fold_matches_factorized_eval() {
+        type F = Pow2Offset24Field;
+        const D: usize = 64;
+
+        let poly = OneHotPoly::<F, D>::new(
+            32,
+            vec![
+                Some(1usize),
+                None,
+                Some(7usize),
+                Some(12usize),
+                None,
+                Some(3usize),
+                None,
+                Some(15usize),
+            ],
+            1,
+            1,
+        )
+        .unwrap();
+        let block_len = 1usize << poly.m_vars;
+        let fold_scalars = vec![F::from_u64(2), F::from_u64(4)];
+        let eval_outer_scalars = vec![F::from_u64(3), F::from_u64(5)];
+
+        let (eval, folded) = poly.evaluate_and_fold(&eval_outer_scalars, &fold_scalars, block_len);
+        let expected_folded = poly.fold_blocks(&fold_scalars, block_len);
+        assert_eq!(folded, expected_folded);
+
+        let full_scalars: Vec<F> = eval_outer_scalars
+            .iter()
+            .flat_map(|outer| fold_scalars.iter().map(move |inner| *outer * *inner))
+            .collect();
+        let expected_eval = poly.evaluate_ring(&full_scalars);
+        assert_eq!(eval, expected_eval);
     }
 }

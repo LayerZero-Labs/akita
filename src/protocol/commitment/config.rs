@@ -1,19 +1,21 @@
 //! Configuration presets for ring-native commitment construction.
 
+use super::profile::{CommitmentFieldProfile, CommitmentFieldProfileSchedule};
 use super::schedule::{
-    hachi_root_level_layout, planned_log_basis_at_level, planned_recursive_suffix_bytes,
-    planned_schedule_key, HachiLevelParams, HachiScheduleInputs, HachiSchedulePlan,
+    exact_planned_level_execution, hachi_root_commitment_layout, HachiLevelParams,
+    HachiScheduleInputs, HachiSchedulePlan,
 };
 use super::utils::math::checked_pow2;
 use super::utils::norm::detect_field_modulus;
 use crate::algebra::ring::CyclotomicRing;
-use crate::algebra::{Prime128Offset5823, SparseChallengeConfig};
+use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::FieldCore;
+use crate::{CanonicalField, FieldCore};
 use std::io::{Read, Write};
+use std::marker::PhantomData;
 
 /// Parameters controlling the gadget decomposition depth (called δ in the paper).
 ///
@@ -200,33 +202,6 @@ pub fn optimal_m_r_split<Cfg: CommitmentConfig>(reduced_vars: usize) -> (usize, 
             .unwrap_or(0),
     });
     optimal_m_r_split_with_params(&params, Cfg::decomposition(), reduced_vars, 0)
-}
-
-fn uniform_pm1_stage1_challenge(weight: usize) -> SparseChallengeConfig {
-    SparseChallengeConfig::Uniform {
-        weight,
-        nonzero_coeffs: vec![-1, 1],
-    }
-}
-
-fn d64_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
-    assert_eq!(d, 64, "d64_stage1_challenge_config requires d=64, got {d}");
-    SparseChallengeConfig::SplitRing {
-        half_weight: 21,
-        max_mag2_per_half: 6,
-    }
-}
-
-fn d128_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
-    assert_eq!(
-        d, 128,
-        "d128_stage1_challenge_config requires d=128, got {d}"
-    );
-    uniform_pm1_stage1_challenge(31)
-}
-
-fn fp128_half_field_bound() -> u128 {
-    detect_field_modulus::<Prime128Offset5823>() / 2
 }
 
 /// Runtime commitment layout authority for ring-native commitments.
@@ -485,6 +460,9 @@ impl HachiDeserialize for HachiCommitmentLayout {
 /// per-config row envelope, while each level uses the exact rows selected by
 /// [`HachiLevelParams`].
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
+    /// Base field used by this config.
+    type Field: CanonicalField + FieldCore;
+
     /// Ring degree used by `CyclotomicRing<F, D>`.
     const D: usize;
 
@@ -497,6 +475,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Stable identifier for setup-cache versioning and fixture selection.
     fn family_key() -> &'static str {
         std::any::type_name::<Self>()
+    }
+
+    /// Exact field modulus used by this config's planner and runtime sizing.
+    fn field_modulus() -> u128 {
+        detect_field_modulus::<Self::Field>()
     }
 
     /// Build one level's active params from public inputs and an explicit basis.
@@ -567,14 +550,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     }
 
     /// Half-range bound used by the planner when sizing recursive `r`.
-    ///
-    /// By default this uses the decomposition bit bound as a conservative
-    /// power-of-two proxy. Configs with a known concrete field modulus should
-    /// override this with the exact centered range used at runtime.
     fn planner_half_field_bound() -> u128 {
-        let decomp = Self::decomposition();
-        let field_bits = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
-        1u128 << field_bits.saturating_sub(1)
+        Self::field_modulus() / 2
     }
 
     /// Deterministically derive the active params for one level from public inputs.
@@ -585,11 +562,19 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Choose the runtime commitment layout for `max_num_vars`.
     ///
+    /// Planner-backed families use the exact root fold layout when one is
+    /// pinned; otherwise this falls back to the derived root-commitment layout.
+    ///
     /// # Errors
     ///
     /// Returns an error if `max_num_vars` does not admit a valid layout.
     fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        let (_, layout) = hachi_root_level_layout::<Self>(max_num_vars)?;
+        if let Some(plan) = Self::schedule_plan(max_num_vars)? {
+            if let Some(root_fold) = plan.fold_levels().next() {
+                return Ok(root_fold.layout);
+            }
+        }
+        let (_, layout) = hachi_root_commitment_layout::<Self>(max_num_vars)?;
         Ok(layout)
     }
 
@@ -640,6 +625,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig;
 }
 
+/// Concrete commitment preset obtained by pairing a field with a scheduling policy.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CommitmentPreset<F, Policy> {
+    _marker: PhantomData<(F, Policy)>,
+}
+
 /// Deterministic upper bound for the stage-1 folded-witness infinity norm.
 ///
 /// This encodes the bound used in `QuadraticEquation::compute_z_hat`:
@@ -677,7 +668,11 @@ pub fn beta_linf_fold_bound(
 /// # Errors
 ///
 /// Returns an error when config constants are inconsistent or overflow.
-pub(super) fn validate_and_derive_layout<Cfg: CommitmentConfig, const D: usize>(
+pub(super) fn validate_and_derive_layout<
+    F: CanonicalField,
+    Cfg: CommitmentConfig<Field = F>,
+    const D: usize,
+>(
     max_num_vars: usize,
 ) -> Result<HachiCommitmentLayout, HachiError> {
     if D != Cfg::D {
@@ -689,18 +684,24 @@ pub(super) fn validate_and_derive_layout<Cfg: CommitmentConfig, const D: usize>(
     Cfg::commitment_layout(max_num_vars)
 }
 
-/// Ensure `max_num_vars` is sufficient for config dimensions.
+/// Ensure `max_num_vars` is sufficient for a commitment layout.
 ///
 /// # Errors
 ///
-/// Returns an error when `max_num_vars < required_vars`.
-pub(super) fn ensure_supported_num_vars(
+/// Returns an error when `max_num_vars` cannot support the layout's outer
+/// variable count after accounting for the ring's inner `alpha = log2(D)`
+/// slots. Underfull roots with `max_num_vars < alpha` are allowed when the
+/// layout uses zero outer variables.
+pub(super) fn ensure_layout_supported_num_vars<const D: usize>(
     max_num_vars: usize,
-    required_vars: usize,
+    layout: HachiCommitmentLayout,
 ) -> Result<(), HachiError> {
-    if max_num_vars < required_vars {
+    let alpha = D.trailing_zeros() as usize;
+    let available_outer = max_num_vars.saturating_sub(alpha);
+    let required_outer = layout.outer_vars()?;
+    if available_outer < required_outer {
         return Err(HachiError::InvalidSetup(format!(
-            "max_num_vars {max_num_vars} is smaller than required {required_vars}"
+            "max_num_vars {max_num_vars} leaves only {available_outer} outer vars but layout requires {required_outer}"
         )));
     }
     Ok(())
@@ -737,13 +738,13 @@ pub(super) fn ensure_block_layout<F: FieldCore, const D: usize>(
 /// Matrix envelopes may have more rows and columns than the active level uses.
 /// Small correctness-first config for tests and local benchmarks.
 ///
-/// Fixed layout (m_vars=4, r_vars=2) for fast test iteration. For larger
-/// polynomials, use [`DynamicSmallTestCommitmentConfig`] instead.
+/// Fixed layout (m_vars=4, r_vars=2) for fast test iteration.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SmallTestCommitmentConfig;
 
 impl CommitmentConfig for SmallTestCommitmentConfig {
-    const D: usize = 16;
+    type Field = crate::test_utils::F;
+    const D: usize = 32;
 
     fn decomposition() -> DecompositionParams {
         DecompositionParams {
@@ -763,341 +764,254 @@ impl CommitmentConfig for SmallTestCommitmentConfig {
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
         assert_eq!(d, Self::D, "unsupported ring dim {d}");
-        uniform_pm1_stage1_challenge(3)
+        SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
+        }
     }
 
     fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
         HachiCommitmentLayout::new::<Self>(4, 2, &Self::decomposition())
     }
-}
 
-/// D=16 config with dynamic layout that adapts to polynomial size.
-///
-/// Uses the same D=16 ring dimension as [`SmallTestCommitmentConfig`] but
-/// derives `m_vars`/`r_vars` from `max_num_vars`, so it can commit
-/// polynomials with an arbitrary number of variables.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct DynamicSmallTestCommitmentConfig;
-
-impl CommitmentConfig for DynamicSmallTestCommitmentConfig {
-    const D: usize = 16;
-
-    fn decomposition() -> DecompositionParams {
-        DecompositionParams {
-            log_basis: 3,
-            log_commit_bound: 32,
-            log_open_bound: None,
-        }
-    }
-
-    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
-        CommitmentEnvelope {
-            max_n_a: 8,
-            max_n_b: 4,
-            max_n_d: 4,
-        }
-    }
-
-    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
-        assert_eq!(d, Self::D, "unsupported ring dim {d}");
-        uniform_pm1_stage1_challenge(3)
-    }
-
-    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        let (_, layout) = hachi_root_level_layout::<Self>(max_num_vars)?;
-        Ok(layout)
-    }
-}
-
-/// Production-oriented profile for 128-bit base fields (`Fp128<P>`),
-/// parameterized by the coefficient bound and gadget basis.
-///
-/// This profile targets the `D = 128`, `n_A = n_B = n_D = 1` regime with
-/// balanced decomposition over ~128-bit moduli.
-///
-/// - `LOG_COMMIT_BOUND`: bit-width of the largest polynomial coefficient the
-///   commitment decomposition must represent.
-/// - `LOG_BASIS`: base-2 log of the gadget base at level 0.
-/// # Aliases
-///
-/// - [`Fp128FullCommitmentConfig`] = adaptive full-field preset over `D = 128`
-/// - [`Fp128LogBasisCommitmentConfig`] = adaptive log-bounded preset over `D = 128`
-/// - [`Fp128OneHotCommitmentConfig`] = adaptive `D = 64` onehot preset
-/// - [`Fp128CommitmentConfig`] — alias for `Fp128FullCommitmentConfig`
-///
-/// # β derivation (stage-1 folded witness `z`)
-///
-/// `||z||_inf <= 2^R * ω * (b/2)` where `b = 2^LOG_BASIS`.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Fp128BoundedCommitmentConfig<
-    const LOG_COMMIT_BOUND: u32,
-    const LOG_BASIS: u32,
-    const W_LOG_BASIS: u32 = LOG_BASIS,
->;
-
-impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> CommitmentConfig
-    for Fp128BoundedCommitmentConfig<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>
-{
-    const D: usize = 128;
-
-    fn decomposition() -> DecompositionParams {
-        DecompositionParams {
-            log_basis: LOG_BASIS,
-            log_commit_bound: LOG_COMMIT_BOUND,
-            log_open_bound: if LOG_COMMIT_BOUND < 128 {
-                Some(128)
-            } else {
-                None
-            },
-        }
-    }
-
-    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
-        CommitmentEnvelope {
-            max_n_a: 1,
-            max_n_b: 1,
-            max_n_d: 1,
-        }
-    }
-
-    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
-        d128_stage1_challenge_config(d)
-    }
-
-    fn planner_half_field_bound() -> u128 {
-        fp128_half_field_bound()
-    }
-
-    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
-        if inputs.level == 0 {
-            LOG_BASIS
-        } else {
-            W_LOG_BASIS
-        }
-    }
-
-    fn schedule_key(_max_num_vars: usize) -> String {
-        format!("static_v1_root{LOG_BASIS}_rec{W_LOG_BASIS}")
-    }
-
-    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        let (_, layout) = hachi_root_level_layout::<Self>(max_num_vars)?;
-        Ok(layout)
-    }
-}
-
-/// D=64, rank-1 everywhere.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Fp128D64BoundedCommitmentConfig<
-    const LOG_COMMIT_BOUND: u32,
-    const LOG_BASIS: u32,
-    const W_LOG_BASIS: u32 = LOG_BASIS,
->;
-
-impl<const LOG_COMMIT_BOUND: u32, const LOG_BASIS: u32, const W_LOG_BASIS: u32> CommitmentConfig
-    for Fp128D64BoundedCommitmentConfig<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>
-{
-    const D: usize = 64;
-
-    fn decomposition() -> DecompositionParams {
-        Fp128BoundedCommitmentConfig::<LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS>::decomposition()
-    }
-
-    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
-        CommitmentEnvelope {
-            max_n_a: 1,
-            max_n_b: 1,
-            max_n_d: 1,
-        }
-    }
-
-    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        let (_, layout) = hachi_root_level_layout::<Self>(max_num_vars)?;
-        Ok(layout)
-    }
-
-    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
-        if inputs.level == 0 {
-            LOG_BASIS
-        } else {
-            W_LOG_BASIS
-        }
-    }
-
-    fn schedule_key(_max_num_vars: usize) -> String {
-        format!("static_v1_root{LOG_BASIS}_rec{W_LOG_BASIS}")
-    }
-
-    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
-        d64_stage1_challenge_config(d)
-    }
-
-    fn planner_half_field_bound() -> u128 {
-        fp128_half_field_bound()
-    }
-}
-
-/// Adaptive `D=128`, rank-1 family that chooses the level basis by proof bytes.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Fp128AdaptiveBoundedCommitmentConfig<const LOG_COMMIT_BOUND: u32>;
-
-impl<const LOG_COMMIT_BOUND: u32> CommitmentConfig
-    for Fp128AdaptiveBoundedCommitmentConfig<LOG_COMMIT_BOUND>
-{
-    const D: usize = 128;
-
-    fn decomposition() -> DecompositionParams {
-        DecompositionParams {
-            log_basis: 3,
-            log_commit_bound: LOG_COMMIT_BOUND,
-            log_open_bound: if LOG_COMMIT_BOUND < 128 {
-                Some(128)
-            } else {
-                None
-            },
-        }
-    }
-
-    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
-        CommitmentEnvelope {
-            max_n_a: 1,
-            max_n_b: 1,
-            max_n_d: 1,
-        }
-    }
-
-    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
-        d128_stage1_challenge_config(d)
-    }
-
-    fn planner_half_field_bound() -> u128 {
-        fp128_half_field_bound()
-    }
-
-    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
-        planned_log_basis_at_level::<Self>(inputs, 2, 6)
-            .expect("adaptive schedule must be derivable from public inputs")
-    }
-
-    fn log_basis_search_range(_inputs: HachiScheduleInputs) -> (u32, u32) {
-        (2, 6)
-    }
-
-    fn schedule_key(max_num_vars: usize) -> String {
-        planned_schedule_key::<Self>(max_num_vars, 2, 6)
-            .expect("adaptive schedule key must be derivable from public inputs")
-    }
-
-    fn schedule_plan(max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
-        Ok(Some(super::schedule::planned_schedule::<Self>(
-            max_num_vars,
-            2,
-            6,
-        )?))
-    }
-
-    fn recursive_suffix_bytes(
+    fn schedule_plan(
         max_num_vars: usize,
-        level: usize,
-        current_w_len: usize,
-    ) -> Result<Option<usize>, HachiError> {
-        Ok(Some(planned_recursive_suffix_bytes::<Self>(
-            max_num_vars,
-            level,
-            current_w_len,
-            2,
-            6,
-        )?))
+    ) -> Result<Option<super::schedule::HachiSchedulePlan>, HachiError> {
+        if max_num_vars >= usize::BITS as usize {
+            return Ok(None);
+        }
+        let root_layout = HachiCommitmentLayout::new::<Self>(4, 2, &Self::decomposition())?;
+        Ok(Some(super::schedule::build_schedule_plan_from_config::<
+            Self,
+        >(max_num_vars, root_layout)?))
     }
 }
 
-/// Full-field (128-bit) coefficient family with adaptive per-level basis.
-pub type Fp128FullCommitmentConfig = Fp128AdaptiveBoundedCommitmentConfig<128>;
-
-/// Binary (1-bit) D=64 onehot preset with the coarse adaptive outer-rank
-/// schedule.
-pub type Fp128OneHotCommitmentConfig = Fp128AdaptiveOneHotCommitmentConfig;
-
-/// Log-bounded coefficient family with adaptive per-level basis.
-pub type Fp128LogBasisCommitmentConfig = Fp128AdaptiveBoundedCommitmentConfig<3>;
-
-/// Alias for [`Fp128FullCommitmentConfig`].
-pub type Fp128CommitmentConfig = Fp128FullCommitmentConfig;
-
-/// D=64 onehot preset with the coarse adaptive outer-rank schedule from the
-/// current local planning note: rank-2 only in the short early window.
+/// Static bounded policy with explicit root and recursive log bases.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct Fp128AdaptiveOneHotCommitmentConfig;
+pub struct StaticBoundedPolicy<
+    Profile,
+    const D: usize,
+    const LOG_COMMIT_BOUND: u32,
+    const LOG_BASIS: u32,
+    const W_LOG_BASIS: u32 = LOG_BASIS,
+    const N_A: usize = 1,
+    const N_B: usize = 1,
+    const N_D: usize = 1,
+>(PhantomData<Profile>);
 
-impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
-    const D: usize = 64;
+impl<
+        F: CanonicalField + FieldCore + Send + Sync + 'static,
+        Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
+        const D: usize,
+        const LOG_COMMIT_BOUND: u32,
+        const LOG_BASIS: u32,
+        const W_LOG_BASIS: u32,
+        const N_A: usize,
+        const N_B: usize,
+        const N_D: usize,
+    > CommitmentConfig
+    for CommitmentPreset<
+        F,
+        StaticBoundedPolicy<Profile, D, LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS, N_A, N_B, N_D>,
+    >
+{
+    type Field = F;
+    const D: usize = D;
 
     fn decomposition() -> DecompositionParams {
-        DecompositionParams {
-            log_basis: 3,
-            log_commit_bound: 1,
-            log_open_bound: Some(128),
-        }
+        Profile::decomposition(LOG_COMMIT_BOUND, LOG_BASIS)
     }
 
     fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
-        let root_rank = usize::from(max_num_vars >= 38) + 1;
+        let audited_root_rank = Profile::audited_root_outer_rank(D, 0, max_num_vars);
+        let audited_root_a_rank =
+            Profile::audited_root_a_rank::<LOG_COMMIT_BOUND>(D, 0, max_num_vars);
         CommitmentEnvelope {
-            max_n_a: 1,
-            max_n_b: root_rank,
-            max_n_d: root_rank,
+            max_n_a: N_A.max(audited_root_a_rank),
+            max_n_b: N_B.max(audited_root_rank),
+            max_n_d: N_D.max(audited_root_rank),
         }
-    }
-
-    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        let (_, layout) = hachi_root_level_layout::<Self>(max_num_vars)?;
-        Ok(layout)
-    }
-
-    fn n_b_at_level(level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {
-        if max_num_vars >= 38 {
-            if level == 0 {
-                2
-            } else {
-                1
-            }
-        } else {
-            1
-        }
-    }
-
-    fn n_d_at_level(level: usize, max_num_vars: usize, current_w_len: usize) -> usize {
-        Self::n_b_at_level(level, max_num_vars, current_w_len)
-    }
-
-    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
-        d64_stage1_challenge_config(d)
-    }
-
-    fn planner_half_field_bound() -> u128 {
-        fp128_half_field_bound()
     }
 
     fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
-        planned_log_basis_at_level::<Self>(inputs, 2, 6)
-            .expect("adaptive schedule must be derivable from public inputs")
+        if inputs.level == 0 {
+            LOG_BASIS
+        } else {
+            W_LOG_BASIS
+        }
+    }
+
+    fn schedule_key(_max_num_vars: usize) -> String {
+        format!("static_v1_root{LOG_BASIS}_rec{W_LOG_BASIS}")
+    }
+
+    fn schedule_plan(
+        max_num_vars: usize,
+    ) -> Result<Option<super::schedule::HachiSchedulePlan>, crate::error::HachiError> {
+        if max_num_vars >= usize::BITS as usize {
+            return Ok(None);
+        }
+        let (_, root_layout) = super::schedule::hachi_root_commitment_layout::<Self>(max_num_vars)?;
+        Ok(Some(super::schedule::build_schedule_plan_from_config::<
+            Self,
+        >(max_num_vars, root_layout)?))
+    }
+
+    fn n_b_at_level(level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {
+        N_B.max(Profile::audited_root_outer_rank(D, level, max_num_vars))
+    }
+
+    fn n_d_at_level(level: usize, max_num_vars: usize, current_w_len: usize) -> usize {
+        let _ = current_w_len;
+        N_D.max(Profile::audited_root_outer_rank(D, level, max_num_vars))
+    }
+
+    fn level_params_with_log_basis(
+        inputs: HachiScheduleInputs,
+        log_basis: u32,
+    ) -> HachiLevelParams {
+        let d = Self::d_at_level(inputs.level, inputs.current_w_len);
+        let stage1_config = Self::stage1_challenge_config(d);
+        HachiLevelParams {
+            d,
+            log_basis,
+            n_a: N_A.max(Profile::audited_root_a_rank::<LOG_COMMIT_BOUND>(
+                D,
+                inputs.level,
+                inputs.max_num_vars,
+            )),
+            n_b: Self::n_b_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
+            n_d: Self::n_d_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
+            challenge_l1_mass: stage1_config.l1_mass(),
+            stage1_config,
+        }
+    }
+
+    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        Profile::stage1_challenge_config(d)
+    }
+}
+
+/// Derive exact `(n_a, n_b, n_d)` for a recursive level from the generated
+/// SIS width thresholds.
+///
+/// Computes the recursive layout to obtain the actual matrix widths, then
+/// looks up the minimum Module-SIS rank required for 128-bit security at
+/// each role. Falls back to the envelope when the SIS table does not cover
+/// the requested parameters.
+fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
+    d: usize,
+    log_basis: u32,
+    current_w_len: usize,
+    stage1_config: &SparseChallengeConfig,
+    envelope: &CommitmentEnvelope,
+) -> Option<HachiLevelParams> {
+    use super::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
+    use super::schedule::hachi_recursive_level_layout_from_params;
+
+    let tentative = HachiLevelParams {
+        d,
+        log_basis,
+        n_a: envelope.max_n_a,
+        n_b: 1,
+        n_d: 1,
+        challenge_l1_mass: stage1_config.l1_mass(),
+        stage1_config: stage1_config.clone(),
+    };
+    let layout = hachi_recursive_level_layout_from_params::<Cfg>(&tentative, current_w_len).ok()?;
+
+    let bd_collision = (1u32 << log_basis) - 1;
+    let a_raw = bd_collision;
+    let a_collision = ceil_supported_collision(d as u32, a_raw * stage1_config.max_abs_coeff())?;
+
+    let n_a = min_rank_for_secure_width(d as u32, a_collision, layout.inner_width as u64)
+        .unwrap_or(envelope.max_n_a);
+    let exact_outer_width = n_a * layout.num_digits_open * layout.num_blocks;
+    let n_b = min_rank_for_secure_width(d as u32, bd_collision, exact_outer_width as u64)
+        .unwrap_or(envelope.max_n_b);
+    let n_d = min_rank_for_secure_width(d as u32, bd_collision, layout.d_matrix_width as u64)
+        .unwrap_or(envelope.max_n_d);
+
+    Some(HachiLevelParams {
+        d,
+        log_basis,
+        n_a,
+        n_b,
+        n_d,
+        challenge_l1_mass: stage1_config.l1_mass(),
+        stage1_config: stage1_config.clone(),
+    })
+}
+
+/// Generated adaptive policy with table-selected per-level log bases.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GeneratedAdaptivePolicy<Profile, const D: usize, const LOG_COMMIT_BOUND: u32>(
+    PhantomData<Profile>,
+);
+
+impl<
+        F: CanonicalField + FieldCore + Send + Sync + 'static,
+        Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
+        const D: usize,
+        const LOG_COMMIT_BOUND: u32,
+    > CommitmentConfig
+    for CommitmentPreset<F, GeneratedAdaptivePolicy<Profile, D, LOG_COMMIT_BOUND>>
+{
+    type Field = F;
+    const D: usize = D;
+
+    fn decomposition() -> DecompositionParams {
+        Profile::decomposition(LOG_COMMIT_BOUND, 3)
+    }
+
+    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
+        let audited_root_rank = if D == 64 && LOG_COMMIT_BOUND == 1 {
+            Profile::onehot_d64_root_rank(0, max_num_vars)
+        } else {
+            Profile::audited_root_outer_rank(D, 0, max_num_vars)
+        };
+        let audited_root_a_rank = if D == 64 && LOG_COMMIT_BOUND == 1 {
+            1
+        } else {
+            Profile::audited_root_a_rank::<LOG_COMMIT_BOUND>(D, 0, max_num_vars)
+        };
+        let mut envelope = CommitmentEnvelope {
+            max_n_a: audited_root_a_rank,
+            max_n_b: audited_root_rank,
+            max_n_d: audited_root_rank,
+        };
+        if let Some((gen_n_a, gen_n_b, gen_n_d)) =
+            Profile::generated_schedule_envelope::<D, LOG_COMMIT_BOUND>(max_num_vars)
+        {
+            envelope.max_n_a = envelope.max_n_a.max(gen_n_a);
+            envelope.max_n_b = envelope.max_n_b.max(gen_n_b);
+            envelope.max_n_d = envelope.max_n_d.max(gen_n_d);
+        }
+        envelope
+    }
+
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(inputs.max_num_vars)
+            .and_then(|source| source.log_basis_at_level::<Self>(inputs))
+            .expect("generated adaptive schedule must be derivable from public inputs")
     }
 
     fn log_basis_search_range(_inputs: HachiScheduleInputs) -> (u32, u32) {
-        (2, 6)
+        Profile::adaptive_log_basis_search_range()
     }
 
     fn schedule_key(max_num_vars: usize) -> String {
-        planned_schedule_key::<Self>(max_num_vars, 2, 6)
-            .expect("adaptive schedule key must be derivable from public inputs")
+        Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(max_num_vars)
+            .map(|source| source.schedule_key())
+            .expect("generated adaptive schedule key must be derivable from public inputs")
     }
 
     fn schedule_plan(max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
-        Ok(Some(super::schedule::planned_schedule::<Self>(
-            max_num_vars,
-            2,
-            6,
-        )?))
+        Ok(Some(
+            Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(max_num_vars)?
+                .schedule_plan(),
+        ))
     }
 
     fn recursive_suffix_bytes(
@@ -1105,20 +1019,244 @@ impl CommitmentConfig for Fp128AdaptiveOneHotCommitmentConfig {
         level: usize,
         current_w_len: usize,
     ) -> Result<Option<usize>, HachiError> {
-        Ok(Some(planned_recursive_suffix_bytes::<Self>(
-            max_num_vars,
-            level,
-            current_w_len,
-            2,
-            6,
-        )?))
+        Ok(Some(
+            Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(max_num_vars)?
+                .recursive_suffix_bytes::<Self>(max_num_vars, level, current_w_len)?,
+        ))
+    }
+
+    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        Profile::stage1_challenge_config(d)
+    }
+
+    fn level_params_with_log_basis(
+        inputs: HachiScheduleInputs,
+        log_basis: u32,
+    ) -> HachiLevelParams {
+        if let Ok(source) =
+            Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(inputs.max_num_vars)
+        {
+            if let Ok(Some(planned_level)) =
+                exact_planned_level_execution::<Self>(&source.schedule_plan(), inputs, log_basis)
+            {
+                return planned_level.level.params;
+            }
+        }
+        let envelope = Self::envelope(inputs.max_num_vars);
+        let d = Self::d_at_level(inputs.level, inputs.current_w_len);
+        let stage1_config = Self::stage1_challenge_config(d);
+
+        if inputs.level > 0 {
+            if let Some(params) = sis_derived_recursive_params::<Self>(
+                d,
+                log_basis,
+                inputs.current_w_len,
+                &stage1_config,
+                &envelope,
+            ) {
+                return params;
+            }
+        }
+
+        HachiLevelParams {
+            d,
+            log_basis,
+            n_a: envelope.max_n_a,
+            n_b: envelope.max_n_b,
+            n_d: envelope.max_n_d,
+            challenge_l1_mass: stage1_config.l1_mass(),
+            stage1_config,
+        }
     }
 }
 
 #[cfg(test)]
-mod tests {
+mod fp128_policy_tests {
+    use super::*;
+    use crate::protocol::commitment::profile::Fp128PrimeProfile;
+    use hachi_planner::sis_security::min_rank_for_secure_width;
+
+    #[test]
+    fn small_d_stage1_challenge_families_match_study_parameters() {
+        let d32 = <Fp128PrimeProfile as CommitmentFieldProfile>::stage1_challenge_config(32);
+        assert_eq!(d32.hamming_weight(), 32);
+        assert_eq!(d32.l1_mass(), 256);
+        match d32 {
+            SparseChallengeConfig::Uniform {
+                weight,
+                nonzero_coeffs,
+            } => {
+                assert_eq!(weight, 32);
+                assert_eq!(nonzero_coeffs.first().copied(), Some(-8));
+                assert_eq!(nonzero_coeffs.last().copied(), Some(8));
+                assert_eq!(nonzero_coeffs.len(), 16);
+            }
+            other => panic!("expected uniform D=32 family, got {other:?}"),
+        }
+    }
+
+    type D128OneHotCandidate = CommitmentPreset<
+        crate::algebra::Prime128Offset275,
+        GeneratedAdaptivePolicy<Fp128PrimeProfile, 128, 1>,
+    >;
+
+    fn assert_d128_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
+        min_num_vars: usize,
+        max_num_vars: usize,
+    ) {
+        assert_eq!(Cfg::D, 128, "helper only audits D=128 configs");
+
+        let root_onehot = Cfg::decomposition().log_commit_bound == 1;
+        for num_vars in min_num_vars..=max_num_vars {
+            let plan = Cfg::schedule_plan(num_vars)
+                .unwrap()
+                .expect("audited D=128 config should have a schedule");
+
+            for level in plan.fold_levels() {
+                let raw_collision = if root_onehot && level.inputs.level == 0 {
+                    2
+                } else {
+                    (1u32 << level.params.log_basis) - 1
+                };
+
+                let a_rank = min_rank_for_secure_width(
+                    128,
+                    raw_collision,
+                    u64::try_from(level.layout.inner_width)
+                        .expect("inner width should fit in u64"),
+                )
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing audited A-row SIS width for num_vars={}, level={}, lb={}, width={}",
+                        num_vars,
+                        level.inputs.level,
+                        level.params.log_basis,
+                        level.layout.inner_width
+                    )
+                });
+                assert!(
+                    a_rank <= level.params.n_a as u32,
+                    "A-row SIS audit failed for num_vars={}, level={}, lb={}, width={}, required_rank={}, actual_rank={}",
+                    num_vars,
+                    level.inputs.level,
+                    level.params.log_basis,
+                    level.layout.inner_width,
+                    a_rank,
+                    level.params.n_a,
+                );
+
+                let bd_collision = (1u32 << level.params.log_basis) - 1;
+                let b_rank = min_rank_for_secure_width(
+                    128,
+                    bd_collision,
+                    u64::try_from(level.layout.outer_width)
+                        .expect("outer width should fit in u64"),
+                )
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing audited B-row SIS width for num_vars={}, level={}, lb={}, width={}",
+                        num_vars,
+                        level.inputs.level,
+                        level.params.log_basis,
+                        level.layout.outer_width
+                    )
+                });
+                assert!(
+                    b_rank <= level.params.n_b as u32,
+                    "B-row SIS audit failed for num_vars={}, level={}, lb={}, width={}, required_rank={}, actual_rank={}",
+                    num_vars,
+                    level.inputs.level,
+                    level.params.log_basis,
+                    level.layout.outer_width,
+                    b_rank,
+                    level.params.n_b,
+                );
+
+                let d_rank = min_rank_for_secure_width(
+                    128,
+                    bd_collision,
+                    u64::try_from(level.layout.d_matrix_width)
+                        .expect("d-matrix width should fit in u64"),
+                )
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing audited D-row SIS width for num_vars={}, level={}, lb={}, width={}",
+                        num_vars,
+                        level.inputs.level,
+                        level.params.log_basis,
+                        level.layout.d_matrix_width
+                    )
+                });
+                assert!(
+                    d_rank <= level.params.n_d as u32,
+                    "D-row SIS audit failed for num_vars={}, level={}, lb={}, width={}, required_rank={}, actual_rank={}",
+                    num_vars,
+                    level.inputs.level,
+                    level.params.log_basis,
+                    level.layout.d_matrix_width,
+                    d_rank,
+                    level.params.n_d,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn current_d128_full_schedule_stays_within_audited_sis_widths() {
+        type Cfg = crate::protocol::commitment::presets::fp128::D128Full;
+        assert_d128_schedule_stays_within_audited_sis_widths::<Cfg>(8, 50);
+    }
+
+    #[test]
+    fn current_d128_onehot_candidate_schedule_stays_within_audited_sis_widths() {
+        assert_d128_schedule_stays_within_audited_sis_widths::<D128OneHotCandidate>(8, 50);
+    }
+
+    #[test]
+    fn adaptive_d128_envelope_accounts_for_audited_root_rank_escalation() {
+        type FullCfg = crate::protocol::commitment::presets::fp128::D128Full;
+        type OneHotCfg = D128OneHotCandidate;
+
+        let full_envelope = FullCfg::envelope(59);
+        assert_eq!(full_envelope.max_n_a, 2);
+        assert_eq!(full_envelope.max_n_b, 2);
+        assert_eq!(full_envelope.max_n_d, 2);
+
+        let onehot_envelope = OneHotCfg::envelope(54);
+        assert_eq!(onehot_envelope.max_n_a, 1);
+        assert_eq!(onehot_envelope.max_n_b, 2);
+        assert_eq!(onehot_envelope.max_n_d, 2);
+    }
+
+    #[test]
+    fn static_d128_level_params_account_for_audited_root_rank_escalation() {
+        type Cfg = crate::protocol::commitment::presets::fp128::StaticBounded<128, 6, 6>;
+
+        let root_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars: 59,
+            level: 0,
+            current_w_len: 1,
+        });
+        assert_eq!(root_params.n_a, 2);
+        assert_eq!(root_params.n_b, 2);
+        assert_eq!(root_params.n_d, 2);
+
+        let recursive_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars: 59,
+            level: 1,
+            current_w_len: 1,
+        });
+        assert_eq!(recursive_params.n_a, 1);
+        assert_eq!(recursive_params.n_b, 1);
+        assert_eq!(recursive_params.n_d, 1);
+    }
+}
+
+#[cfg(test)]
+mod split_tests {
     use super::*;
     use crate::algebra::SparseChallengeConfig;
+    use crate::protocol::commitment::schedule_planner::planned_recursive_suffix_bytes;
     use crate::protocol::commitment::HachiLevelParams;
 
     fn test_level_params() -> HachiLevelParams {
@@ -1158,30 +1296,27 @@ mod tests {
 
     #[test]
     fn adaptive_runtime_search_bounds_match_basis6_schedule_bounds() {
+        type FullCfg = crate::protocol::commitment::presets::fp128::D128Full;
+        type OneHotCfg = crate::protocol::commitment::presets::fp128::D64OneHot;
+
         let inputs = HachiScheduleInputs {
             max_num_vars: 30,
             level: 4,
             current_w_len: 245_888,
         };
 
-        assert_eq!(
-            Fp128AdaptiveBoundedCommitmentConfig::<128>::log_basis_search_range(inputs),
-            (2, 6)
-        );
-        assert_eq!(
-            Fp128AdaptiveOneHotCommitmentConfig::log_basis_search_range(inputs),
-            (2, 6)
-        );
+        assert_eq!(FullCfg::log_basis_search_range(inputs), (2, 6));
+        assert_eq!(OneHotCfg::log_basis_search_range(inputs), (2, 6));
 
         assert_eq!(
-            Fp128AdaptiveBoundedCommitmentConfig::<128>::recursive_suffix_bytes(
+            FullCfg::recursive_suffix_bytes(
                 inputs.max_num_vars,
                 inputs.level,
                 inputs.current_w_len
             )
             .unwrap(),
             Some(
-                planned_recursive_suffix_bytes::<Fp128AdaptiveBoundedCommitmentConfig<128>>(
+                planned_recursive_suffix_bytes::<FullCfg>(
                     inputs.max_num_vars,
                     inputs.level,
                     inputs.current_w_len,
@@ -1192,14 +1327,14 @@ mod tests {
             )
         );
         assert_eq!(
-            Fp128AdaptiveOneHotCommitmentConfig::recursive_suffix_bytes(
+            OneHotCfg::recursive_suffix_bytes(
                 inputs.max_num_vars,
                 inputs.level,
                 inputs.current_w_len
             )
             .unwrap(),
             Some(
-                planned_recursive_suffix_bytes::<Fp128AdaptiveOneHotCommitmentConfig>(
+                planned_recursive_suffix_bytes::<OneHotCfg>(
                     inputs.max_num_vars,
                     inputs.level,
                     inputs.current_w_len,

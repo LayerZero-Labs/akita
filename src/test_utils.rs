@@ -25,6 +25,7 @@ pub const D: usize = 64;
 pub struct TinyConfig;
 
 impl CommitmentConfig for TinyConfig {
+    type Field = F;
     const D: usize = 64;
 
     fn decomposition() -> DecompositionParams {
@@ -53,6 +54,21 @@ impl CommitmentConfig for TinyConfig {
 
     fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
         HachiCommitmentLayout::new::<Self>(1, 1, &Self::decomposition())
+    }
+
+    fn schedule_plan(
+        max_num_vars: usize,
+    ) -> Result<Option<crate::protocol::commitment::schedule::HachiSchedulePlan>, HachiError> {
+        if max_num_vars >= usize::BITS as usize {
+            return Ok(None);
+        }
+        let root_layout = HachiCommitmentLayout::new::<Self>(1, 1, &Self::decomposition())?;
+        Ok(Some(
+            crate::protocol::commitment::schedule::build_schedule_plan_from_config::<Self>(
+                max_num_vars,
+                root_layout,
+            )?,
+        ))
     }
 }
 
@@ -92,15 +108,21 @@ pub fn num_digits_fold() -> usize {
 
 /// Dense matrix-vector multiply over cyclotomic rings.
 ///
-/// Matrix rows may be wider than `vec` (e.g. when matrices are widened for
-/// multi-level folding); extra columns are treated as multiplying zero.
-pub fn mat_vec_mul(mat: &FlatMatrix<F>, vec: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
-    let view = mat.view::<D>();
+/// The caller specifies `num_rows` (the role-specific row count) and
+/// `stride` (the global row stride for the flat matrix).  Only the first
+/// `vec.len()` columns of each row participate in the dot product.
+pub fn mat_vec_mul(
+    mat: &FlatMatrix<F>,
+    num_rows: usize,
+    stride: usize,
+    vec: &[CyclotomicRing<F, D>],
+) -> Vec<CyclotomicRing<F, D>> {
+    let view = mat.ring_view::<D>(num_rows, stride);
     (0..view.num_rows())
         .map(|i| {
             let row = view.row(i);
-            assert!(row.len() >= vec.len());
             row.iter()
+                .take(vec.len())
                 .zip(vec.iter())
                 .fold(CyclotomicRing::<F, D>::zero(), |acc, (a, x)| {
                     acc + (*a * *x)

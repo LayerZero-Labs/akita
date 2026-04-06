@@ -76,8 +76,8 @@ pub const Q64_MODULUS: u64 = u64::MAX - 58;
 /// Number of CRT primes for the `logq = 128` parameter set.
 pub const Q128_NUM_PRIMES: usize = 5;
 
-/// The modulus `q = 2^128 - 5823`.
-pub const Q128_MODULUS: u128 = u128::MAX - 5822;
+/// Protocol modulus `q = 2^128 - 275`.
+pub const Q128_MODULUS: u128 = u128::MAX - 274;
 
 /// Raw 30-bit primes for D≤1024, each satisfying `2048 | (p - 1)`.
 ///

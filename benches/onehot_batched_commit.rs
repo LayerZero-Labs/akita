@@ -3,10 +3,10 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use hachi_pcs::algebra::Fp128;
 use hachi_pcs::protocol::commitment::utils::linear::{
-    decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_single_i8,
+    decompose_rows_i8, mat_vec_mul_ntt_single_i8,
 };
 use hachi_pcs::protocol::commitment::{
-    hachi_batched_root_layout, Fp128OneHotCommitmentConfig, HachiScheduleInputs,
+    hachi_batched_root_layout, presets::fp128, HachiScheduleInputs,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{HachiPolyOps, OneHotPoly};
@@ -15,8 +15,8 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;
 
-type F = Fp128<0xffffffffffffffffffffffffffffe941>;
-type Cfg = Fp128OneHotCommitmentConfig;
+type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
+type Cfg = fp128::D64OneHot;
 const D: usize = Cfg::D;
 
 const SINGLE_NUM_VARS: usize = 34;
@@ -39,15 +39,6 @@ fn make_onehot_poly(layout: &HachiCommitmentLayout, seed: u64) -> OneHotPoly<F, 
         .expect("benchmark onehot poly")
 }
 
-fn root_n_b(num_vars: usize, layout: hachi_pcs::protocol::HachiCommitmentLayout) -> usize {
-    Cfg::level_params(HachiScheduleInputs {
-        max_num_vars: num_vars,
-        level: 0,
-        current_w_len: layout.num_blocks * layout.block_len * D,
-    })
-    .n_b
-}
-
 fn bench_commit_breakdown(c: &mut Criterion) {
     let single_layout = Cfg::commitment_layout(SINGLE_NUM_VARS).expect("single layout");
     let batch_layout =
@@ -64,14 +55,27 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         BATCH_NUM_VARS,
         BATCH_SIZE,
     );
+    let single_params = Cfg::level_params(HachiScheduleInputs {
+        max_num_vars: SINGLE_NUM_VARS,
+        level: 0,
+        current_w_len: single_layout.num_blocks * single_layout.block_len * D,
+    });
+    let batch_params = Cfg::level_params(HachiScheduleInputs {
+        max_num_vars: BATCH_NUM_VARS,
+        level: 0,
+        current_w_len: batch_layout.num_blocks * batch_layout.block_len * D,
+    });
+
     let single_inner = single_poly
         .commit_inner_witness(
             &single_setup.expanded.shared_matrix,
             &single_setup.ntt_shared,
+            single_params.n_a,
             single_layout.block_len,
             single_layout.num_digits_commit,
             single_layout.num_digits_open,
             single_layout.log_basis,
+            single_setup.expanded.seed.max_stride(),
         )
         .expect("single inner witness");
     let batched_inner: Vec<_> = batched_polys
@@ -80,17 +84,19 @@ fn bench_commit_breakdown(c: &mut Criterion) {
             poly.commit_inner_witness(
                 &batched_setup.expanded.shared_matrix,
                 &batched_setup.ntt_shared,
+                batch_params.n_a,
                 batch_layout.block_len,
                 batch_layout.num_digits_commit,
                 batch_layout.num_digits_open,
                 batch_layout.log_basis,
+                batched_setup.expanded.seed.max_stride(),
             )
             .expect("batched inner witness")
         })
         .collect();
 
-    let single_n_b = root_n_b(SINGLE_NUM_VARS, single_layout);
-    let batch_n_b = root_n_b(BATCH_NUM_VARS, batch_layout);
+    let single_n_b = single_params.n_b;
+    let batch_n_b = batch_params.n_b;
 
     let mut group = c.benchmark_group("hachi/onehot_commit_breakdown");
     group.sample_size(10);
@@ -118,10 +124,12 @@ fn bench_commit_breakdown(c: &mut Criterion) {
                     .commit_inner_witness(
                         &single_setup.expanded.shared_matrix,
                         &single_setup.ntt_shared,
+                        single_params.n_a,
                         single_layout.block_len,
                         single_layout.num_digits_commit,
                         single_layout.num_digits_open,
                         single_layout.log_basis,
+                        single_setup.expanded.seed.max_stride(),
                     )
                     .expect("single inner witness"),
             )
@@ -148,10 +156,11 @@ fn bench_commit_breakdown(c: &mut Criterion) {
 
     group.bench_function("single_outer_only_nv34", |b| {
         b.iter(|| {
-            let flat = flatten_i8_blocks(&single_inner.t_hat);
+            let flat = single_inner.t_hat.flat_digits().to_vec();
             black_box(mat_vec_mul_ntt_single_i8::<F, D>(
                 &single_setup.ntt_shared,
                 single_n_b,
+                single_layout.outer_width,
                 &flat,
             ))
         })
@@ -178,10 +187,12 @@ fn bench_commit_breakdown(c: &mut Criterion) {
                         poly.commit_inner_witness(
                             &batched_setup.expanded.shared_matrix,
                             &batched_setup.ntt_shared,
+                            batch_params.n_a,
                             batch_layout.block_len,
                             batch_layout.num_digits_commit,
                             batch_layout.num_digits_open,
                             batch_layout.log_basis,
+                            batched_setup.expanded.seed.max_stride(),
                         )
                         .expect("batched inner witness")
                     })
@@ -217,11 +228,12 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         b.iter(|| {
             let mut flat = Vec::with_capacity(BATCH_SIZE * batch_layout.outer_width);
             for inner in &batched_inner {
-                flat.extend(flatten_i8_blocks(&inner.t_hat));
+                flat.extend_from_slice(inner.t_hat.flat_digits());
             }
             black_box(mat_vec_mul_ntt_single_i8::<F, D>(
                 &batched_setup.ntt_shared,
                 batch_n_b,
+                batch_layout.outer_width,
                 &flat,
             ))
         })

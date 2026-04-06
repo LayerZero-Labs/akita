@@ -11,8 +11,18 @@ const _: () = assert!(MAX_RANK == 4, "SIS width table only covers ranks 1..=4");
 ///
 /// Verified with lattice-estimator (BDGL16 + lgsa, q = 2^128 - 275).
 ///
+/// Regenerate with:
+///
+/// ```bash
+/// sage -python scripts/gen_sis_table.py --search-cap 10000000000
+/// ```
+///
+/// Requires a checkout of <https://github.com/malb/lattice-estimator> at
+/// `../lattice-estimator` (sibling of the repo root) or pointed to by
+/// `LATTICE_ESTIMATOR_PATH`.
+///
 /// Parameters:
-/// - `d`: ring dimension of ZqX/(X^D + 1). One of {16, 32, 64}.
+/// - `d`: ring dimension of ZqX/(X^D + 1). One of {32, 64, 128}.
 /// - `collision_inf`: worst-case L-infinity norm of the difference between
 ///   two valid witness vectors that collide under the SIS commitment.
 ///   For the B/D roles this is the balanced-digit bound `2^lb - 1`.
@@ -20,47 +30,59 @@ const _: () = assert!(MAX_RANK == 4, "SIS width table only covers ranks 1..=4");
 ///   the raw digit collision is scaled by the maximum absolute coefficient
 ///   in the stage-1 challenge family and rounded up to the next supported
 ///   SIS bucket.
-fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; MAX_RANK as usize]> {
+///
+/// Entries that equal the search cap (10^10 for D=32/64, 5*10^10 for D=128)
+/// should be read as "at least this large", not as tight cutoffs.
+fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[u64; MAX_RANK as usize]> {
     match (d, collision_inf) {
-        // D=16
-        (16, 2) => Some([158, 10_450, 260_593, 200_000]),
-        (16, 3) => Some([158, 10_450, 260_593, 200_000]),
-        (16, 7) => Some([31, 1_919, 47_864, 200_000]),
-        (16, 15) => Some([21, 418, 10_423, 155_015]),
-        (16, 31) => Some([18, 97, 2_440, 36_294]),
-        (16, 63) => Some([15, 38, 590, 8_787]),
-        (16, 127) => Some([14, 30, 145, 2_162]),
-        (16, 255) => Some([12, 26, 50, 536]),
-        (16, 511) => Some([11, 23, 40, 133]),
-        (16, 1023) => Some([10, 21, 34, 55]),
-        (16, 2047) => Some([9, 19, 31, 46]),
-        (16, 4095) => Some([9, 18, 28, 41]),
-        (16, 8191) => Some([8, 17, 26, 37]),
-        (16, 16383) => Some([7, 15, 24, 33]),
-        // D=32
-        (32, 2) => Some([11_757, 4_359_823, 5_000_000, 5_000_000]),
-        (32, 3) => Some([5_225, 1_937_699, 5_000_000, 5_000_000]),
-        (32, 7) => Some([959, 355_903, 5_000_000, 5_000_000]),
-        (32, 15) => Some([209, 77_507, 7_357_796, 5_000_000]),
-        (32, 31) => Some([48, 18_147, 1_722_689, 5_000_000]),
-        (32, 63) => Some([19, 4_393, 417_108, 5_000_000]),
+        // D=32  (search cap: 10^10)
+        (32, 2) => Some([11_757, 4_359_823, 413_876_042, 10_000_000_000]),
+        (32, 3) => Some([5_225, 1_937_699, 183_944_907, 8_645_254_247]),
+        (32, 7) => Some([959, 355_903, 33_785_799, 1_587_903_841]),
+        (32, 15) => Some([209, 77_507, 7_357_796, 345_810_169]),
+        (32, 31) => Some([48, 18_147, 1_722_689, 80_964_920]),
+        (32, 63) => Some([19, 4_393, 417_108, 19_603_751]),
         (32, 127) => Some([15, 1_081, 102_641, 4_824_061]),
         (32, 255) => Some([13, 268, 25_459, 1_196_574]),
         (32, 511) => Some([11, 66, 6_339, 297_974]),
         (32, 1023) => Some([10, 27, 1_581, 74_347]),
         (32, 2047) => Some([9, 23, 395, 18_568]),
-        // D=64
-        (64, 2) => Some([2_179_911, 20_000_000, 20_000_000, 20_000_000]),
-        (64, 3) => Some([968_849, 20_000_000, 20_000_000, 20_000_000]),
-        (64, 7) => Some([177_951, 20_000_000, 20_000_000, 20_000_000]),
-        (64, 15) => Some([38_753, 20_000_000, 20_000_000, 20_000_000]),
-        (64, 31) => Some([9_073, 20_000_000, 20_000_000, 20_000_000]),
-        (64, 63) => Some([2_196, 9_801_875, 20_000_000, 20_000_000]),
-        (64, 127) => Some([540, 2_412_030, 20_000_000, 20_000_000]),
-        (64, 255) => Some([134, 598_287, 20_000_000, 20_000_000]),
-        (64, 511) => Some([33, 148_987, 20_000_000, 20_000_000]),
+        // D=64  (search cap: 10^10)
+        (64, 2) => Some([2_179_911, 9_725_911_028, 10_000_000_000, 10_000_000_000]),
+        (64, 3) => Some([968_849, 4_322_627_123, 10_000_000_000, 10_000_000_000]),
+        (64, 7) => Some([177_951, 793_951_920, 10_000_000_000, 10_000_000_000]),
+        (64, 15) => Some([38_753, 172_905_084, 10_000_000_000, 10_000_000_000]),
+        (64, 31) => Some([9_073, 40_482_460, 10_000_000_000, 10_000_000_000]),
+        (64, 63) => Some([2_196, 9_801_875, 6_215_651_928, 10_000_000_000]),
+        (64, 127) => Some([540, 2_412_030, 1_529_538_254, 10_000_000_000]),
+        (64, 255) => Some([134, 598_287, 379_391_349, 10_000_000_000]),
+        (64, 511) => Some([33, 148_987, 94_476_976, 10_000_000_000]),
+        (64, 1023) => Some([13, 37_173, 23_573_090, 5_520_444_163]),
+        (64, 2047) => Some([11, 9_284, 5_887_515, 1_378_762_947]),
+        // D=128  (search cap: 5*10^10)
+        (128, 2) => Some([
+            4_862_955_514,
+            50_000_000_000,
+            50_000_000_000,
+            50_000_000_000,
+        ]),
+        (128, 3) => Some([
+            2_161_313_561,
+            50_000_000_000,
+            50_000_000_000,
+            50_000_000_000,
+        ]),
+        (128, 7) => Some([396_975_960, 50_000_000_000, 50_000_000_000, 50_000_000_000]),
+        (128, 15) => Some([86_452_542, 50_000_000_000, 50_000_000_000, 50_000_000_000]),
+        (128, 31) => Some([20_241_230, 50_000_000_000, 50_000_000_000, 50_000_000_000]),
+        (128, 63) => Some([4_900_937, 50_000_000_000, 50_000_000_000, 50_000_000_000]),
         _ => None,
     }
+}
+
+/// Expose the raw SIS width array for a given `(d, collision_inf)` pair.
+pub fn sis_max_widths_public(d: u32, collision_inf: u32) -> Option<[u64; MAX_RANK as usize]> {
+    sis_max_widths(d, collision_inf)
 }
 
 /// Returns the smallest Module-SIS rank in `1..=MAX_RANK` that provides
@@ -69,7 +91,7 @@ fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[usize; MAX_RANK as usiz
 ///
 /// Returns `None` if the `(d, collision_inf)` pair is not in the table, or
 /// if no rank up to `MAX_RANK` can accommodate the requested width.
-pub fn min_rank_for_secure_width(d: u32, collision_inf: u32, width: usize) -> Option<u32> {
+pub fn min_rank_for_secure_width(d: u32, collision_inf: u32, width: u64) -> Option<u32> {
     let widths = sis_max_widths(d, collision_inf)?;
     for (i, &max_w) in widths.iter().enumerate() {
         if width <= max_w {
@@ -81,15 +103,13 @@ pub fn min_rank_for_secure_width(d: u32, collision_inf: u32, width: usize) -> Op
 
 /// Round a requested collision bound up to the next supported SIS bucket.
 pub fn ceil_supported_collision(d: u32, collision_inf: u32) -> Option<u32> {
-    const D16: &[u32] = &[
-        2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383,
-    ];
     const D32: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047];
-    const D64: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511];
+    const D64: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047];
+    const D128: &[u32] = &[2, 3, 7, 15, 31, 63];
     let buckets = match d {
-        16 => D16,
         32 => D32,
         64 => D64,
+        128 => D128,
         _ => return None,
     };
     buckets
@@ -107,13 +127,11 @@ mod tests {
         assert_eq!(min_rank_for_secure_width(32, 7, 500), Some(1));
         assert_eq!(min_rank_for_secure_width(32, 7, 959), Some(1));
         assert_eq!(min_rank_for_secure_width(32, 7, 960), Some(2));
-        assert_eq!(min_rank_for_secure_width(16, 7, 32), Some(2));
-        assert_eq!(min_rank_for_secure_width(16, 7, 31), Some(1));
     }
 
     #[test]
     fn exceeds_max_rank() {
-        assert_eq!(min_rank_for_secure_width(16, 63, 9_000), None);
+        assert_eq!(min_rank_for_secure_width(32, 127, 5_000_000), None);
     }
 
     #[test]
@@ -123,8 +141,39 @@ mod tests {
 
     #[test]
     fn ceil_collision_bucket() {
-        assert_eq!(ceil_supported_collision(16, 3968), Some(4095));
         assert_eq!(ceil_supported_collision(32, 248), Some(255));
         assert_eq!(ceil_supported_collision(64, 62), Some(63));
+        assert_eq!(ceil_supported_collision(128, 62), Some(63));
+    }
+
+    #[test]
+    fn d128_rank_lookup() {
+        assert_eq!(min_rank_for_secure_width(128, 2, 4_862_955_514), Some(1));
+        assert_eq!(min_rank_for_secure_width(128, 2, 4_862_955_515), Some(2));
+        assert_eq!(min_rank_for_secure_width(128, 63, 4_900_937), Some(1));
+        assert_eq!(min_rank_for_secure_width(128, 63, 4_900_938), Some(2));
+        assert_eq!(min_rank_for_secure_width(128, 31, 20_241_230), Some(1));
+        assert_eq!(min_rank_for_secure_width(128, 31, 20_241_231), Some(2));
+    }
+
+    #[test]
+    fn rank1_widths_are_monotone_in_collision_bound() {
+        let d32 = [2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047]
+            .into_iter()
+            .map(|collision| sis_max_widths(32, collision).unwrap()[0])
+            .collect::<Vec<_>>();
+        assert!(d32.windows(2).all(|pair| pair[0] >= pair[1]));
+
+        let d64 = [2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047]
+            .into_iter()
+            .map(|collision| sis_max_widths(64, collision).unwrap()[0])
+            .collect::<Vec<_>>();
+        assert!(d64.windows(2).all(|pair| pair[0] >= pair[1]));
+
+        let d128 = [2, 3, 7, 15, 31, 63]
+            .into_iter()
+            .map(|collision| sis_max_widths(128, collision).unwrap()[0])
+            .collect::<Vec<_>>();
+        assert!(d128.windows(2).all(|pair| pair[0] >= pair[1]));
     }
 }

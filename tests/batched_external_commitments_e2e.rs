@@ -1,84 +1,26 @@
 #![allow(missing_docs)]
 
-use hachi_pcs::algebra::Fp128;
-use hachi_pcs::protocol::commitment::{hachi_batched_root_layout, Fp128OneHotCommitmentConfig};
-use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
-use hachi_pcs::protocol::hachi_poly_ops::{HachiPolyOps, OneHotPoly};
-use hachi_pcs::protocol::opening_point::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BlockOrder,
+mod common;
+
+use common::{
+    init_rayon_pool, opening_from_poly, random_point, run_on_large_stack, BasisMode,
+    CommitmentConfig, OneHotPoly, Rng, SeedableRng, StdRng, F,
 };
+use hachi_pcs::protocol::commitment::{hachi_batched_root_layout, presets::fp128};
+use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::proof::HachiBatchedProof;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
-use hachi_pcs::protocol::CommitmentConfig;
-use hachi_pcs::{
-    BasisMode, CanonicalField, CommitmentScheme, HachiDeserialize, HachiSerialize, Transcript,
-};
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
-use std::sync::{Mutex, Once};
+use hachi_pcs::{CommitmentScheme, HachiDeserialize, HachiSerialize, Transcript};
+use std::sync::Mutex;
 
-type F = Fp128<0xffffffffffffffffffffffffffffe941>;
 const ONEHOT_K: usize = 256;
 const TEST_NV: usize = 15;
 const BATCH_SIZE: usize = 3;
-const STACK_SIZE: usize = 256 * 1024 * 1024;
 
-static INIT_RAYON: Once = Once::new();
 static E2E_TEST_LOCK: Mutex<()> = Mutex::new(());
 
-fn init_rayon_pool() {
-    INIT_RAYON.call_once(|| {
-        #[cfg(feature = "parallel")]
-        rayon::ThreadPoolBuilder::new()
-            .stack_size(STACK_SIZE)
-            .build_global()
-            .ok();
-    });
-}
-
-fn random_point(nv: usize) -> Vec<F> {
-    let mut rng = StdRng::seed_from_u64(0xface_feed);
-    (0..nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-        .collect()
-}
-
-fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(STACK_SIZE)
-        .spawn(f)
-        .expect("failed to spawn thread")
-        .join()
-        .expect("test thread panicked");
-}
-
-fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
-    poly: &P,
-    point: &[F],
-    layout: &hachi_pcs::protocol::HachiCommitmentLayout,
-) -> F {
-    let alpha_bits = D.trailing_zeros() as usize;
-    assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
-
-    let inner_point = &point[..alpha_bits];
-    let reduced_point = &point[alpha_bits..];
-    let ring_opening_point = ring_opening_point_from_field(
-        reduced_point,
-        layout.r_vars,
-        layout.m_vars,
-        BasisMode::Lagrange,
-        BlockOrder::RowMajor,
-    )
-    .expect("opening point shape should match layout");
-
-    let (y_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
-    let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, BasisMode::Lagrange)
-        .expect("inner opening point should match ring dimension");
-    (y_ring * v.sigma_m1()).coefficients()[0]
+fn fixed_random_point(nv: usize) -> Vec<F> {
+    random_point(nv, 0xface_feed)
 }
 
 #[test]
@@ -86,7 +28,7 @@ fn batched_onehot_round_trip_with_individual_commitments() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = Fp128OneHotCommitmentConfig;
+        type Cfg = fp128::D64OneHot;
         const D: usize = Cfg::D;
 
         let layout = hachi_batched_root_layout::<Cfg, D>(TEST_NV, BATCH_SIZE).expect("layout");
@@ -106,7 +48,7 @@ fn batched_onehot_round_trip_with_individual_commitments() {
             })
             .collect();
 
-        let pt = random_point(TEST_NV);
+        let pt = fixed_random_point(TEST_NV);
         let openings: Vec<F> = polys
             .iter()
             .map(|poly| opening_from_poly(poly, &pt, &layout))
@@ -182,7 +124,7 @@ fn batched_onehot_round_trip_with_mixed_commitment_groups() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = Fp128OneHotCommitmentConfig;
+        type Cfg = fp128::D64OneHot;
         const D: usize = Cfg::D;
 
         let layout = hachi_batched_root_layout::<Cfg, D>(TEST_NV, BATCH_SIZE).expect("layout");
@@ -202,7 +144,7 @@ fn batched_onehot_round_trip_with_mixed_commitment_groups() {
             })
             .collect();
 
-        let pt = random_point(TEST_NV);
+        let pt = fixed_random_point(TEST_NV);
         let openings: Vec<F> = polys
             .iter()
             .map(|poly| opening_from_poly(poly, &pt, &layout))

@@ -64,4 +64,4 @@ jobs:
       - name: Run tests
         run: cargo nextest run --all-features
       - name: Planner validation
-        run: cargo run -p hachi-planner -- --validate
+        run: cargo run -p hachi-planner --bin hachi-planner -- --validate

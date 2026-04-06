@@ -24,6 +24,43 @@ pub struct CyclotomicRing<F: FieldCore, const D: usize> {
     pub(crate) coeffs: [F; D],
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BalancedDecomposePow2I8Params {
+    levels: usize,
+    log_basis: u32,
+    q: u128,
+    half_q: u128,
+    half_b: i128,
+    b: i128,
+    mask: i128,
+}
+
+impl BalancedDecomposePow2I8Params {
+    pub(crate) fn new(levels: usize, log_basis: u32, q: u128, half_q: u128) -> Self {
+        debug_assert_eq!(half_q, q / 2);
+        assert!(
+            log_basis > 0 && log_basis <= 6,
+            "log_basis must be in 1..=6 for i8 output"
+        );
+        assert!(
+            (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
+            "levels * log_basis must be <= 128 + log_basis"
+        );
+
+        let half_b = 1i128 << (log_basis - 1);
+        let b = half_b << 1;
+        Self {
+            levels,
+            log_basis,
+            q,
+            half_q,
+            half_b,
+            b,
+            mask: b - 1,
+        }
+    }
+}
+
 impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     /// Construct from a coefficient array.
     #[inline]
@@ -559,6 +596,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     /// # Panics
     ///
     /// Panics if `log_basis` is 0 or > 6, or if `levels * log_basis > 128 + log_basis`.
+    #[inline]
     pub fn balanced_decompose_pow2_i8_into(&self, out: &mut [[i8; D]], log_basis: u32)
     where
         F: CanonicalField,
@@ -573,24 +611,100 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             "levels * log_basis must be <= 128 + log_basis"
         );
 
-        let half_b = 1i128 << (log_basis - 1);
-        let b = half_b << 1;
-        let mask = b - 1;
         let q = (-F::one()).to_canonical_u128() + 1;
-        let half_q = q / 2;
+        self.balanced_decompose_pow2_i8_into_with_modulus(out, log_basis, q, q / 2);
+    }
 
-        for i in 0..D {
+    /// Internal variant of [`balanced_decompose_pow2_i8_into`](Self::balanced_decompose_pow2_i8_into)
+    /// that reuses a caller-supplied field modulus.
+    #[inline]
+    pub(crate) fn balanced_decompose_pow2_i8_into_with_modulus(
+        &self,
+        out: &mut [[i8; D]],
+        log_basis: u32,
+        q: u128,
+        half_q: u128,
+    ) where
+        F: CanonicalField,
+    {
+        let params = BalancedDecomposePow2I8Params::new(out.len(), log_basis, q, half_q);
+        self.balanced_decompose_pow2_i8_into_with_params(out, &params);
+    }
+
+    #[inline]
+    pub(crate) fn balanced_decompose_pow2_i8_into_with_params(
+        &self,
+        out: &mut [[i8; D]],
+        params: &BalancedDecomposePow2I8Params,
+    ) where
+        F: CanonicalField,
+    {
+        debug_assert_eq!(out.len(), params.levels);
+        let bulk_end = D - (D % 3);
+
+        for base in (0..bulk_end).step_by(3) {
+            let canonical0 = self.coeffs[base].to_canonical_u128();
+            let canonical1 = self.coeffs[base + 1].to_canonical_u128();
+            let canonical2 = self.coeffs[base + 2].to_canonical_u128();
+
+            let mut c0: i128 = if canonical0 > params.half_q {
+                -((params.q - canonical0) as i128)
+            } else {
+                canonical0 as i128
+            };
+            let mut c1: i128 = if canonical1 > params.half_q {
+                -((params.q - canonical1) as i128)
+            } else {
+                canonical1 as i128
+            };
+            let mut c2: i128 = if canonical2 > params.half_q {
+                -((params.q - canonical2) as i128)
+            } else {
+                canonical2 as i128
+            };
+
+            for plane in out.iter_mut() {
+                let d0 = c0 & params.mask;
+                let balanced0 = if d0 >= params.half_b {
+                    d0 - params.b
+                } else {
+                    d0
+                };
+                c0 = (c0 - balanced0) >> params.log_basis;
+                plane[base] = balanced0 as i8;
+
+                let d1 = c1 & params.mask;
+                let balanced1 = if d1 >= params.half_b {
+                    d1 - params.b
+                } else {
+                    d1
+                };
+                c1 = (c1 - balanced1) >> params.log_basis;
+                plane[base + 1] = balanced1 as i8;
+
+                let d2 = c2 & params.mask;
+                let balanced2 = if d2 >= params.half_b {
+                    d2 - params.b
+                } else {
+                    d2
+                };
+                c2 = (c2 - balanced2) >> params.log_basis;
+                plane[base + 2] = balanced2 as i8;
+            }
+        }
+
+        for i in bulk_end..D {
             let canonical = self.coeffs[i].to_canonical_u128();
-            let mut c: i128 = if canonical > half_q {
-                -((q - canonical) as i128)
+            let mut c: i128 = if canonical > params.half_q {
+                -((params.q - canonical) as i128)
             } else {
                 canonical as i128
             };
 
             for plane in out.iter_mut() {
-                let d = c & mask;
-                let balanced = if d >= half_b { d - b } else { d };
-                c = (c - balanced) >> log_basis;
+                let d = c & params.mask;
+                let balanced = if d >= params.half_b { d - params.b } else { d };
+                c = (c - balanced) >> params.log_basis;
                 plane[i] = balanced as i8;
             }
         }
@@ -987,12 +1101,12 @@ impl<W: AdditiveGroup, const D: usize> Default for WideCyclotomicRing<W, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::fields::{Fp128x8i32, Fp64, Fp64x4i32, Prime128Offset5823};
+    use crate::algebra::fields::{Fp128x8i32, Fp64, Fp64x4i32, Prime128Offset275};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
     type F64 = Fp64<4294967197>;
-    type F128 = Prime128Offset5823;
+    type F128 = Prime128Offset275;
     const D: usize = 64;
 
     #[test]

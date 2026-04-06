@@ -1,11 +1,10 @@
 #![allow(missing_docs)]
 
-use hachi_pcs::algebra::Fp128;
 use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
-    hachi_batched_root_layout, Fp128BoundedCommitmentConfig, Fp128D64BoundedCommitmentConfig,
-    Fp128FullCommitmentConfig, Fp128LogBasisCommitmentConfig, Fp128OneHotCommitmentConfig,
-    HachiCommitmentLayout, HachiSchedulePlan,
+    hachi_batched_root_layout, hachi_root_runtime_plan_with_batch, presets::fp128,
+    recursive_suffix_estimate_with_log_basis, CommitmentConfig, HachiCommitmentLayout,
+    HachiRootBatchSummary, HachiSchedulePlan,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
@@ -16,23 +15,32 @@ use hachi_pcs::protocol::proof::{
     HachiBatchedProof, HachiBatchedRootProof, HachiLevelProof, HachiProof,
 };
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
-use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
-    BasisMode, BlockOrder, CanonicalField, CommitmentScheme, FromSmallInt, HachiPolyOps,
+    BasisMode, BlockOrder, CanonicalField, CommitmentScheme, FieldCore, FromSmallInt, HachiPolyOps,
     HachiSerialize, Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
 use std::fs;
+use std::io::BufWriter;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
-type F = Fp128<0xffffffffffffffffffffffffffffe941>;
+type F = fp128::Field;
 const ONEHOT_K: usize = 256;
+
+fn onehot_k_for_num_vars(nv: usize) -> usize {
+    let max_supported_log_k = ONEHOT_K.trailing_zeros() as usize;
+    if nv >= max_supported_log_k {
+        ONEHOT_K
+    } else {
+        1usize << nv
+    }
+}
 
 fn env_flag(name: &str, default: bool) -> bool {
     env::var(name)
@@ -55,10 +63,18 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
     basis: BasisMode,
 ) -> F {
     let alpha_bits = D.trailing_zeros() as usize;
-    assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
+    let target_num_vars = alpha_bits + layout.m_vars + layout.r_vars;
+    assert!(
+        point.len() <= target_num_vars,
+        "opening point length {} exceeds target root arity {}",
+        point.len(),
+        target_num_vars
+    );
+    let mut padded_point = point.to_vec();
+    padded_point.resize(target_num_vars, F::zero());
 
-    let inner_point = &point[..alpha_bits];
-    let reduced_point = &point[alpha_bits..];
+    let inner_point = &padded_point[..alpha_bits];
+    let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
         layout.r_vars,
@@ -78,7 +94,7 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
     (y_ring * v.sigma_m1()).coefficients()[0]
 }
 
-fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
+fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F, D>>(
     label: &str,
     setup: &<HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::ProverSetup,
     poly: &P,
@@ -131,13 +147,13 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
 fn emit_planned_schedule_summary(label: &str, plan: &HachiSchedulePlan) {
     tracing::info!(
         label,
-        levels = plan.levels.len(),
+        levels = plan.num_fold_levels(),
         exact_proof_bytes = plan.exact_proof_bytes,
         no_wrapper_bytes = plan.no_wrapper_bytes,
         "planned schedule"
     );
 
-    for level in &plan.levels {
+    for level in plan.fold_levels() {
         let next_w_len = level.next_inputs.current_w_len;
         tracing::info!(
             label,
@@ -174,16 +190,15 @@ fn emit_planned_schedule_summary(label: &str, plan: &HachiSchedulePlan) {
 
 fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSchedulePlan>) {
     let hachi_levels_total: usize = proof
-        .levels
-        .iter()
+        .fold_levels()
         .map(|level| level.serialized_size(Compress::No))
         .sum();
-    let tail_total = proof.tail.direct.serialized_size(Compress::No);
+    let tail_total = proof.final_witness().serialized_size(Compress::No);
     let accounted_total = hachi_levels_total + tail_total;
 
     tracing::info!(
         label,
-        levels = proof.levels.len(),
+        levels = proof.num_fold_levels(),
         proof_size_bytes = proof.size(),
         accounted_bytes = accounted_total,
         hachi_fold_bytes = hachi_levels_total,
@@ -201,22 +216,24 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSc
         emit_planned_schedule_summary(label, plan);
     }
 
-    for (i, lp) in proof.levels.iter().enumerate() {
+    for (i, lp) in proof.fold_levels().enumerate() {
         print_hachi_level_breakdown(label, i, lp);
     }
-    let final_w = &proof.tail.direct;
+    let final_w = proof.final_witness();
     tracing::info!(
         label,
         tail_bytes = final_w.serialized_size(Compress::No),
-        final_w_num_elems = final_w.num_elems,
-        final_w_bits_per_elem = final_w.bits_per_elem,
+        final_w_num_elems = final_w.num_elems(),
+        final_w_bits_per_elem = final_w.as_packed_digits().map(|w| w.bits_per_elem),
         "proof tail summary"
     );
     eprintln!(
         "[{label}]   final_w: total={} bytes, elems={}, bits/elem={}",
         final_w.serialized_size(Compress::No),
-        final_w.num_elems,
-        final_w.bits_per_elem,
+        final_w.num_elems(),
+        final_w
+            .as_packed_digits()
+            .map_or(String::from("field"), |w| w.bits_per_elem.to_string()),
     );
 }
 
@@ -360,17 +377,16 @@ fn print_batched_root_breakdown<const D: usize>(
 fn print_batched_proof_summary<const D: usize>(label: &str, proof: &HachiBatchedProof<F>) {
     let root_total = proof.root.serialized_size(Compress::No);
     let recursive_levels_total: usize = proof
-        .levels
-        .iter()
+        .fold_levels()
         .map(|level| level.serialized_size(Compress::No))
         .sum();
     let hachi_levels_total = root_total + recursive_levels_total;
-    let tail_total = proof.tail.direct.serialized_size(Compress::No);
+    let tail_total = proof.final_witness().serialized_size(Compress::No);
     let accounted_total = hachi_levels_total + tail_total;
 
     tracing::info!(
         label,
-        levels = proof.levels.len() + 1,
+        levels = proof.num_fold_levels() + 1,
         proof_size_bytes = proof.size(),
         accounted_bytes = accounted_total,
         hachi_fold_bytes = hachi_levels_total,
@@ -379,15 +395,17 @@ fn print_batched_proof_summary<const D: usize>(label: &str, proof: &HachiBatched
     );
     debug_assert_eq!(accounted_total, proof.size());
     print_batched_root_breakdown::<D>(label, &proof.root);
-    for (i, lp) in proof.levels.iter().enumerate() {
+    for (i, lp) in proof.fold_levels().enumerate() {
         print_hachi_level_breakdown(label, i + 1, lp);
     }
-    let final_w = &proof.tail.direct;
+    let final_w = proof.final_witness();
     eprintln!(
         "[{label}]   final_w: total={} bytes, elems={}, bits/elem={}",
         final_w.serialized_size(Compress::No),
-        final_w.num_elems,
-        final_w.bits_per_elem,
+        final_w.num_elems(),
+        final_w
+            .as_packed_digits()
+            .map_or(String::from("field"), |w| w.bits_per_elem.to_string()),
     );
 }
 
@@ -405,7 +423,7 @@ fn print_layout(layout: &HachiCommitmentLayout) {
     );
 }
 
-fn run_dense<const D: usize, Cfg: CommitmentConfig>(
+fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     nv: usize,
     layout: &HachiCommitmentLayout,
     plan: Option<&HachiSchedulePlan>,
@@ -443,7 +461,7 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig>(
     run_prove::<D, Cfg, _>("dense", &setup, &poly, &pt, opening, plan);
 }
 
-fn run_onehot<const D: usize, Cfg: CommitmentConfig>(
+fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     nv: usize,
     layout: &HachiCommitmentLayout,
     plan: Option<&HachiSchedulePlan>,
@@ -452,7 +470,7 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig>(
     let total_field = (layout.num_blocks * layout.block_len)
         .checked_mul(D)
         .expect("total field size overflow");
-    let onehot_k = ONEHOT_K;
+    let onehot_k = onehot_k_for_num_vars(nv);
     let total_chunks = total_field / onehot_k;
     assert_eq!(
         total_chunks * onehot_k,
@@ -481,7 +499,7 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig>(
     run_prove::<D, Cfg, _>("onehot", &setup, &onehot_poly, &pt, opening, plan);
 }
 
-fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig>(
+fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     nv: usize,
     num_polys: usize,
     layout: &HachiCommitmentLayout,
@@ -491,7 +509,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig>(
     let total_field = (layout.num_blocks * layout.block_len)
         .checked_mul(D)
         .expect("total field size overflow");
-    let onehot_k = ONEHOT_K;
+    let onehot_k = onehot_k_for_num_vars(nv);
     let total_chunks = total_field / onehot_k;
     assert_eq!(
         total_chunks * onehot_k,
@@ -557,6 +575,34 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig>(
         "prove"
     );
     print_batched_proof_summary::<D>("onehot", &proof);
+    let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
+        nv,
+        nv,
+        num_polys,
+        HachiRootBatchSummary::new(num_polys, 1, 1).expect("same-point batch summary"),
+    )
+    .expect("batched root runtime plan");
+    let suffix_estimate = recursive_suffix_estimate_with_log_basis::<Cfg>(
+        nv,
+        root_plan.next_inputs.level,
+        root_plan.next_w_len(),
+        root_plan.next_level_params.log_basis,
+        root_plan.planning_envelope,
+    )
+    .expect("batched recursive suffix estimate");
+    let root_bytes = root_plan.level_proof_bytes::<Cfg>();
+    tracing::info!(
+        label = "onehot",
+        root_bytes,
+        table_suffix_bytes = suffix_estimate.table_bytes,
+        actual_state_suffix_bytes = suffix_estimate.actual_state_bytes,
+        table_total_bytes = root_bytes + suffix_estimate.table_bytes,
+        actual_state_total_bytes = root_bytes + suffix_estimate.actual_state_bytes,
+        observed_total_bytes = proof.size(),
+        exact_schedule_state = suffix_estimate.exact_state_match,
+        used_actual_state_planner = suffix_estimate.used_actual_state_planner,
+        "batched planner estimate"
+    );
 
     let t0 = Instant::now();
     let verifier_setup = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
@@ -581,7 +627,39 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig>(
     }
 }
 
-fn run_dense_mode<const D: usize, Cfg: CommitmentConfig>(title: &str, nv: usize) {
+fn best_full_d(nv: usize) -> usize {
+    let d32_bytes = fp128::D32Full::schedule_plan(nv)
+        .ok()
+        .flatten()
+        .map(|p| p.exact_proof_bytes);
+    let d128_bytes = fp128::D128Full::schedule_plan(nv)
+        .ok()
+        .flatten()
+        .map(|p| p.exact_proof_bytes);
+    match (d32_bytes, d128_bytes) {
+        (Some(b32), Some(b128)) if b32 <= b128 => 32,
+        (None, Some(_)) => 128,
+        _ => 32,
+    }
+}
+
+fn best_onehot_d(nv: usize) -> usize {
+    let d32_bytes = fp128::D32OneHot::schedule_plan(nv)
+        .ok()
+        .flatten()
+        .map(|p| p.exact_proof_bytes);
+    let d64_bytes = fp128::D64OneHot::schedule_plan(nv)
+        .ok()
+        .flatten()
+        .map(|p| p.exact_proof_bytes);
+    match (d32_bytes, d64_bytes) {
+        (Some(b32), Some(b64)) if b32 <= b64 => 32,
+        (None, Some(_)) => 64,
+        _ => 32,
+    }
+}
+
+fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(title: &str, nv: usize) {
     let layout = resolve_layout::<Cfg>(nv);
     let plan = Cfg::schedule_plan(nv).expect("schedule plan");
     tracing::info!("{}", title);
@@ -589,7 +667,7 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig>(title: &str, nv: usize)
     run_dense::<D, Cfg>(nv, &layout, plan.as_ref());
 }
 
-fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig>(
+fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     title: &str,
     nv: usize,
     num_polys: usize,
@@ -597,13 +675,233 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig>(
     tracing::info!("{}", title);
     if num_polys == 1 {
         let layout = resolve_layout::<Cfg>(nv);
+        let required_vars = layout.required_num_vars::<D>().expect("layout arity");
+        if required_vars > nv {
+            tracing::info!(
+                required_vars,
+                "skipping fixed onehot mode because the typed root layout exceeds the public polynomial arity"
+            );
+            return;
+        }
         let plan = Cfg::schedule_plan(nv).expect("schedule plan");
         print_layout(&layout);
         run_onehot::<D, Cfg>(nv, &layout, plan.as_ref());
     } else {
         let layout = hachi_batched_root_layout::<Cfg, D>(nv, num_polys).expect("layout");
+        let required_vars = layout.required_num_vars::<D>().expect("layout arity");
+        if required_vars > nv {
+            tracing::info!(
+                required_vars,
+                "skipping fixed batched onehot mode because the typed root layout exceeds the public polynomial arity"
+            );
+            return;
+        }
         print_layout(&layout);
         run_batched_onehot::<D, Cfg>(nv, num_polys, &layout);
+    }
+}
+
+type ProfileModeRunner = fn(usize, usize);
+
+struct ProfileMode {
+    name: &'static str,
+    run: ProfileModeRunner,
+}
+
+const PROFILE_MODES: &[ProfileMode] = &[
+    ProfileMode {
+        name: "full",
+        run: run_profile_full,
+    },
+    ProfileMode {
+        name: "onehot",
+        run: run_profile_onehot,
+    },
+    ProfileMode {
+        name: "full_d128",
+        run: run_profile_full_d128,
+    },
+    ProfileMode {
+        name: "onehot_d64",
+        run: run_profile_onehot_d64,
+    },
+    ProfileMode {
+        name: "full_d32",
+        run: run_profile_full_d32,
+    },
+    ProfileMode {
+        name: "onehot_d32",
+        run: run_profile_onehot_d32,
+    },
+    ProfileMode {
+        name: "compare_onehot",
+        run: run_profile_compare_onehot,
+    },
+    ProfileMode {
+        name: "compare_basis",
+        run: run_profile_compare_basis,
+    },
+];
+
+const ALL_PROFILE_MODE_NAMES: &[&str] = &[
+    "full",
+    "onehot",
+    "full_d128",
+    "onehot_d64",
+    "full_d32",
+    "onehot_d32",
+];
+
+fn assert_singleton_mode(mode: &str, num_polys: usize) {
+    assert_eq!(
+        num_polys, 1,
+        "{mode} currently profiles only singleton commitments"
+    );
+}
+
+fn fixed_onehot_title(d: usize, nv: usize, num_polys: usize) -> String {
+    let onehot_k = onehot_k_for_num_vars(nv);
+    if num_polys == 1 {
+        format!("=== onehot_d{d} (q=2^128-275, D={d}, 1-of-{onehot_k}, log_commit_bound=1) ===")
+    } else {
+        format!(
+            "=== onehot_d{d} batched (q=2^128-275, D={d}, 1-of-{onehot_k}, log_commit_bound=1, same-point batch={num_polys}) ==="
+        )
+    }
+}
+
+fn run_profile_full(nv: usize, num_polys: usize) {
+    assert_singleton_mode("full", num_polys);
+    let d = best_full_d(nv);
+    let title = format!("=== full (q=2^128-275, D={d}, dense) ===");
+    match d {
+        32 => run_dense_mode::<32, fp128::D32Full>(&title, nv),
+        128 => run_dense_mode::<128, fp128::D128Full>(&title, nv),
+        _ => unreachable!(),
+    }
+}
+
+fn run_profile_onehot(nv: usize, num_polys: usize) {
+    let onehot_k = onehot_k_for_num_vars(nv);
+    let d = best_onehot_d(nv);
+    let title = if num_polys == 1 {
+        format!("=== onehot (q=2^128-275, D={d}, 1-of-{onehot_k}) ===")
+    } else {
+        format!(
+            "=== onehot batched (q=2^128-275, D={d}, 1-of-{onehot_k}, same-point batch={num_polys}) ==="
+        )
+    };
+    match d {
+        32 => run_onehot_mode::<32, fp128::D32OneHot>(&title, nv, num_polys),
+        64 => run_onehot_mode::<64, fp128::D64OneHot>(&title, nv, num_polys),
+        _ => unreachable!(),
+    }
+}
+
+fn run_profile_full_d128(nv: usize, num_polys: usize) {
+    type Cfg = fp128::D128Full;
+    assert_singleton_mode("full_d128", num_polys);
+    run_dense_mode::<{ Cfg::D }, Cfg>(
+        "=== full_d128 (q=2^128-275, D=128 dense, log_commit_bound=128) ===",
+        nv,
+    );
+}
+
+fn run_profile_onehot_d64(nv: usize, num_polys: usize) {
+    type Cfg = fp128::D64OneHot;
+    let title = fixed_onehot_title(64, nv, num_polys);
+    run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
+}
+
+fn run_profile_full_d32(nv: usize, num_polys: usize) {
+    type Cfg = fp128::D32Full;
+    assert_singleton_mode("full_d32", num_polys);
+    run_dense_mode::<{ Cfg::D }, Cfg>(
+        "=== full_d32 (q=2^128-275, D=32 dense, log_commit_bound=128) ===",
+        nv,
+    );
+}
+
+fn run_profile_onehot_d32(nv: usize, num_polys: usize) {
+    type Cfg = fp128::D32OneHot;
+    let title = fixed_onehot_title(32, nv, num_polys);
+    run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
+}
+
+fn run_profile_compare_onehot(nv: usize, num_polys: usize) {
+    assert_singleton_mode("compare_onehot", num_polys);
+    let onehot_k = onehot_k_for_num_vars(nv);
+
+    type A = fp128::D64StaticBounded<1, 3, 3>;
+    type B = fp128::D64StaticBounded<1, 2, 2>;
+    type C = fp128::D64StaticBounded<1, 2, 3>;
+    type D = fp128::D64StaticBounded<1, 2, 4>;
+
+    run_onehot_mode::<{ A::D }, A>(
+        &format!("=== [A] onehot (D=64, 1-of-{onehot_k}), basis=3 everywhere ==="),
+        nv,
+        1,
+    );
+    run_onehot_mode::<{ B::D }, B>(
+        &format!("=== [B] onehot (D=64, 1-of-{onehot_k}), basis=2 everywhere ==="),
+        nv,
+        1,
+    );
+    run_onehot_mode::<{ C::D }, C>(
+        &format!("=== [C] onehot (D=64, 1-of-{onehot_k}), L0 basis=2, w-levels basis=3 ==="),
+        nv,
+        1,
+    );
+    run_onehot_mode::<{ D::D }, D>(
+        &format!("=== [D] onehot (D=64, 1-of-{onehot_k}), L0 basis=2, w-levels basis=4 ==="),
+        nv,
+        1,
+    );
+}
+
+fn run_profile_compare_basis(nv: usize, num_polys: usize) {
+    assert_singleton_mode("compare_basis", num_polys);
+
+    type A = fp128::StaticBounded<128, 3, 3>;
+    type B = fp128::StaticBounded<128, 2, 2>;
+    type C = fp128::StaticBounded<128, 2, 3>;
+    type D = fp128::StaticBounded<128, 2, 4>;
+
+    run_dense_mode::<{ A::D }, A>("=== [A] baseline (D=128): log_basis=3 everywhere ===", nv);
+    run_dense_mode::<{ B::D }, B>("=== [B] baseline (D=128): log_basis=2 everywhere ===", nv);
+    run_dense_mode::<{ C::D }, C>(
+        "=== [C] baseline (D=128): L0 basis=2, w-levels basis=3 ===",
+        nv,
+    );
+    run_dense_mode::<{ D::D }, D>(
+        "=== [D] baseline (D=128): L0 basis=2, w-levels basis=4 ===",
+        nv,
+    );
+}
+
+fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {
+    let profile_mode = PROFILE_MODES
+        .iter()
+        .find(|entry| entry.name == mode)
+        .unwrap_or_else(|| {
+            let mut known_modes = PROFILE_MODES
+                .iter()
+                .map(|entry| entry.name)
+                .collect::<Vec<_>>();
+            known_modes.push("all");
+            tracing::error!(
+                mode,
+                known_modes = %known_modes.join(", "),
+                "Unknown HACHI_MODE"
+            );
+            std::process::exit(1);
+        });
+    (profile_mode.run)(nv, num_polys);
+}
+
+fn run_all_profile_modes(nv: usize) {
+    for mode in ALL_PROFILE_MODE_NAMES {
+        run_profile_mode(mode, nv, 1);
     }
 }
 
@@ -656,9 +954,11 @@ fn main() {
         .with_target(false);
     let _chrome_guard = if enable_trace {
         fs::create_dir_all("profile_traces").ok();
+        let file = fs::File::create(&trace_file).expect("Failed to create trace file");
+        let buffered = BufWriter::with_capacity(4 * 1024 * 1024, file);
         let (chrome_layer, guard) = ChromeLayerBuilder::new()
             .include_args(true)
-            .file(&trace_file)
+            .writer(buffered)
             .build();
         tracing_subscriber::registry()
             .with(log_filter)
@@ -677,157 +977,10 @@ fn main() {
     };
     tracing::info!(num_vars = nv, num_polys, mode = %mode, "profile config");
 
-    match mode.as_str() {
-        "full" => {
-            type Cfg = Fp128FullCommitmentConfig;
-            run_dense_mode::<{ Fp128FullCommitmentConfig::D }, Cfg>(
-                "=== full (D=128 dense, log_commit_bound=128) ===",
-                nv,
-            );
-        }
-        "onehot" => {
-            type Cfg = Fp128OneHotCommitmentConfig;
-            let title = if num_polys == 1 {
-                "=== onehot (D=64, 1-of-256, log_commit_bound=1) ===".to_string()
-            } else {
-                format!(
-                    "=== onehot batched (D=64, 1-of-256, log_commit_bound=1, same-point batch={num_polys}) ==="
-                )
-            };
-            run_onehot_mode::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(&title, nv, num_polys);
-        }
-        "logbasis" => {
-            type Cfg = Fp128LogBasisCommitmentConfig;
-            run_dense_mode::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(
-                "=== logbasis (D=128 dense, log_commit_bound=3) ===",
-                nv,
-            );
-        }
-        "all" => {
-            {
-                type Cfg = Fp128FullCommitmentConfig;
-                run_dense_mode::<{ Fp128FullCommitmentConfig::D }, Cfg>(
-                    "=== full (D=128 dense, log_commit_bound=128) ===",
-                    nv,
-                );
-            }
-            {
-                type Cfg = Fp128OneHotCommitmentConfig;
-                run_onehot_mode::<{ Fp128OneHotCommitmentConfig::D }, Cfg>(
-                    "=== onehot (D=64, 1-of-256, log_commit_bound=1) ===",
-                    nv,
-                    1,
-                );
-            }
-            {
-                type Cfg = Fp128LogBasisCommitmentConfig;
-                run_dense_mode::<{ Fp128LogBasisCommitmentConfig::D }, Cfg>(
-                    "=== logbasis (D=128 dense, log_commit_bound=3) ===",
-                    nv,
-                );
-            }
-        }
-        "compare_onehot" => {
-            {
-                type Cfg = Fp128D64BoundedCommitmentConfig<1, 3, 3>;
-                run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== [A] onehot (D=64, 1-of-256), basis=3 everywhere ===",
-                    nv,
-                    1,
-                );
-            }
-            {
-                type Cfg = Fp128D64BoundedCommitmentConfig<1, 2, 2>;
-                run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== [B] onehot (D=64, 1-of-256), basis=2 everywhere ===",
-                    nv,
-                    1,
-                );
-            }
-            {
-                type Cfg = Fp128D64BoundedCommitmentConfig<1, 2, 3>;
-                run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== [C] onehot (D=64, 1-of-256), L0 basis=2, w-levels basis=3 ===",
-                    nv,
-                    1,
-                );
-            }
-            {
-                type Cfg = Fp128D64BoundedCommitmentConfig<1, 2, 4>;
-                run_onehot_mode::<{ Cfg::D }, Cfg>(
-                    "=== [D] onehot (D=64, 1-of-256), L0 basis=2, w-levels basis=4 ===",
-                    nv,
-                    1,
-                );
-            }
-        }
-        "compare_logbasis" => {
-            {
-                type Cfg = Fp128BoundedCommitmentConfig<3, 3, 3>;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [A] logbasis coeffs (D=128), basis=3 everywhere ===",
-                    nv,
-                );
-            }
-            {
-                type Cfg = Fp128BoundedCommitmentConfig<3, 2, 2>;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [B] logbasis coeffs (D=128), basis=2 everywhere ===",
-                    nv,
-                );
-            }
-            {
-                type Cfg = Fp128BoundedCommitmentConfig<3, 2, 3>;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [C] logbasis coeffs (D=128), L0 basis=2, w-levels basis=3 ===",
-                    nv,
-                );
-            }
-            {
-                type Cfg = Fp128BoundedCommitmentConfig<3, 2, 4>;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [D] logbasis coeffs (D=128), L0 basis=2, w-levels basis=4 ===",
-                    nv,
-                );
-            }
-        }
-        "compare_basis" => {
-            {
-                type Cfg = Fp128BoundedCommitmentConfig<128, 3, 3>;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [A] baseline (D=128): log_basis=3 everywhere ===",
-                    nv,
-                );
-            }
-            {
-                type Cfg = Fp128BoundedCommitmentConfig<128, 2, 2>;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [B] baseline (D=128): log_basis=2 everywhere ===",
-                    nv,
-                );
-            }
-            {
-                type Cfg = Fp128BoundedCommitmentConfig<128, 2, 3>;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [C] baseline (D=128): L0 basis=2, w-levels basis=3 ===",
-                    nv,
-                );
-            }
-            {
-                type Cfg = Fp128BoundedCommitmentConfig<128, 2, 4>;
-                run_dense_mode::<{ Cfg::D }, Cfg>(
-                    "=== [D] baseline (D=128): L0 basis=2, w-levels basis=4 ===",
-                    nv,
-                );
-            }
-        }
-        other => {
-            tracing::error!(
-                mode = other,
-                "Unknown HACHI_MODE. Use: full, onehot, logbasis, all, compare_onehot, compare_logbasis, compare_basis"
-            );
-            std::process::exit(1);
-        }
+    if mode == "all" {
+        run_all_profile_modes(nv);
+    } else {
+        run_profile_mode(&mode, nv, num_polys);
     }
 
     if enable_trace {
@@ -837,6 +990,6 @@ fn main() {
     }
 }
 
-fn resolve_layout<Cfg: CommitmentConfig>(nv: usize) -> HachiCommitmentLayout {
+fn resolve_layout<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> HachiCommitmentLayout {
     Cfg::commitment_layout(nv).expect("layout")
 }

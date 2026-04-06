@@ -1,9 +1,13 @@
-//! D-agnostic flat matrix storage with typed ring-element views.
+//! D-agnostic flat vector storage with typed ring-element views.
 //!
-//! [`FlatMatrix`] stores matrix entries as raw field elements, independent of
-//! any ring dimension. A [`RingMatrixView`] borrows the flat data and
-//! interprets it as `CyclotomicRing<F, D>` slices, enabling the same
-//! underlying matrix to be viewed at different ring dimensions.
+//! [`FlatMatrix`] stores ring elements as raw field elements in a single
+//! contiguous 1D vector, independent of any ring dimension. Each role
+//! (A, B, D) interprets a prefix of this vector as its own matrix with
+//! role-specific `(num_rows, num_cols)` dimensions.
+//!
+//! A [`RingMatrixView`] borrows a prefix of the flat data and interprets it
+//! as a `rows × cols` matrix of `CyclotomicRing<F, D>` elements, enabling
+//! the same underlying vector to serve multiple roles with different shapes.
 
 use crate::algebra::CyclotomicRing;
 use crate::primitives::serialization::{
@@ -12,35 +16,31 @@ use crate::primitives::serialization::{
 use crate::FieldCore;
 use std::io::{Read, Write};
 
-/// Row-major matrix of field elements, independent of ring dimension.
+/// Flat 1D vector of field elements, independent of ring dimension.
 ///
-/// Each row contains `cols_ring * gen_ring_dim` contiguous field elements,
-/// where `cols_ring` is the number of ring elements per row at the dimension
-/// (`gen_ring_dim`) used when the matrix was generated.
+/// Stores `total_ring_elements * gen_ring_dim` contiguous field elements.
+/// Each role matrix (A, B, D) views a prefix of this vector reshaped into
+/// its own `(num_rows, num_cols)` dimensions via [`RingMatrixView`].
 ///
-/// To view with a smaller ring dimension D' (where D' divides `gen_ring_dim`),
-/// each row is re-chunked into `cols_ring * gen_ring_dim / D'` ring elements.
+/// See `SHARED_PREFIX_BINDING.md` for the security argument: any prefix
+/// of a uniformly random vector is uniformly random, so role matrices
+/// derived from prefixes of the same flat vector are binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlatMatrix<F: FieldCore> {
     data: Vec<F>,
-    num_rows: usize,
-    /// Number of ring elements per row at the generation dimension.
-    cols_ring: usize,
     /// Ring dimension used when generating (D_max).
     gen_ring_dim: usize,
 }
 
 impl<F: FieldCore> FlatMatrix<F> {
-    /// Number of rows.
+    /// Total number of ring elements at the generation dimension.
     #[inline]
-    pub fn num_rows(&self) -> usize {
-        self.num_rows
-    }
-
-    /// Number of ring-element columns at the generation dimension.
-    #[inline]
-    pub fn cols_ring(&self) -> usize {
-        self.cols_ring
+    pub fn total_ring_elements(&self) -> usize {
+        if self.gen_ring_dim == 0 {
+            0
+        } else {
+            self.data.len() / self.gen_ring_dim
+        }
     }
 
     /// Ring dimension used during generation.
@@ -49,127 +49,72 @@ impl<F: FieldCore> FlatMatrix<F> {
         self.gen_ring_dim
     }
 
-    /// Number of field elements per row.
+    /// Total number of ring elements when viewed at dimension D.
     #[inline]
-    pub fn row_field_len(&self) -> usize {
-        self.cols_ring * self.gen_ring_dim
+    pub fn total_ring_elements_at<const D: usize>(&self) -> usize {
+        debug_assert!(D > 0 && self.gen_ring_dim.is_multiple_of(D));
+        self.total_ring_elements() * (self.gen_ring_dim / D)
     }
 
     /// Build from pre-flattened field-element data.
     ///
     /// # Panics
     ///
-    /// Panics if `data.len() != num_rows * cols_ring * gen_ring_dim`.
-    pub(crate) fn from_flat_data(
-        data: Vec<F>,
-        num_rows: usize,
-        cols_ring: usize,
-        gen_ring_dim: usize,
-    ) -> Self {
-        debug_assert_eq!(data.len(), num_rows * cols_ring * gen_ring_dim);
-        Self {
-            data,
-            num_rows,
-            cols_ring,
+    /// Panics if `data.len()` is not a multiple of `gen_ring_dim`.
+    pub(crate) fn from_flat_data(data: Vec<F>, gen_ring_dim: usize) -> Self {
+        debug_assert!(
+            gen_ring_dim > 0 && data.len().is_multiple_of(gen_ring_dim),
+            "data length {} must be a positive multiple of gen_ring_dim={}",
+            data.len(),
             gen_ring_dim,
-        }
+        );
+        Self { data, gen_ring_dim }
     }
 
-    /// Build from a `Vec<Vec<CyclotomicRing<F, D>>>`, flattening ring elements
-    /// into contiguous field-element storage.
-    pub fn from_ring_matrix<const D: usize>(mat: &[Vec<CyclotomicRing<F, D>>]) -> Self {
-        let num_rows = mat.len();
-        let cols_ring = if num_rows > 0 { mat[0].len() } else { 0 };
-        let row_len = cols_ring * D;
-        let mut data = Vec::with_capacity(num_rows * row_len);
-        for row in mat {
-            debug_assert_eq!(row.len(), cols_ring);
-            for ring_elem in row {
-                data.extend_from_slice(&ring_elem.coeffs);
-            }
+    /// Build from a flat slice of ring elements.
+    pub fn from_ring_slice<const D: usize>(elements: &[CyclotomicRing<F, D>]) -> Self {
+        let mut data = Vec::with_capacity(elements.len() * D);
+        for ring_elem in elements {
+            data.extend_from_slice(&ring_elem.coeffs);
         }
         Self {
             data,
-            num_rows,
-            cols_ring,
             gen_ring_dim: D,
         }
     }
 
-    /// Create a typed view at ring dimension D.
+    /// Create a typed matrix view at ring dimension D with the given shape.
     ///
-    /// D must divide `gen_ring_dim`. The view re-chunks each row so that
-    /// `cols_at_d = cols_ring * gen_ring_dim / D`.
+    /// The view interprets the first `num_rows * num_cols` ring elements
+    /// (at dimension D) as a `num_rows × num_cols` matrix.
     ///
     /// # Panics
     ///
-    /// Panics if `D == 0`, D does not divide `gen_ring_dim`, or the matrix is
-    /// empty with inconsistent metadata.
-    pub fn view<const D: usize>(&self) -> RingMatrixView<'_, F, D> {
+    /// Panics if `D` does not divide `gen_ring_dim` or if the requested
+    /// shape exceeds the available data.
+    pub fn ring_view<const D: usize>(
+        &self,
+        num_rows: usize,
+        num_cols: usize,
+    ) -> RingMatrixView<'_, F, D> {
         assert!(D > 0, "ring dimension must be positive");
         assert!(
-            self.gen_ring_dim % D == 0,
+            self.gen_ring_dim.is_multiple_of(D),
             "D={D} does not divide gen_ring_dim={}",
             self.gen_ring_dim
         );
-        let scale = self.gen_ring_dim / D;
-        let cols_at_d = self.cols_ring * scale;
+        let total_at_d = self.total_ring_elements_at::<D>();
+        let needed = num_rows * num_cols;
+        assert!(
+            needed <= total_at_d,
+            "requested {num_rows}×{num_cols}={needed} ring elements at D={D}, \
+             but only {total_at_d} available"
+        );
+        let field_len = needed * D;
         RingMatrixView {
-            data: &self.data,
-            num_rows: self.num_rows,
-            num_cols: cols_at_d,
-        }
-    }
-
-    /// Borrow the raw field-element data.
-    #[inline]
-    pub fn raw_data(&self) -> &[F] {
-        &self.data
-    }
-
-    /// Number of ring-element columns when viewed at dimension D.
-    #[inline]
-    pub fn num_cols_at<const D: usize>(&self) -> usize {
-        debug_assert!(D > 0 && self.gen_ring_dim % D == 0);
-        self.cols_ring * (self.gen_ring_dim / D)
-    }
-
-    /// Borrow a single row as a slice of ring elements at dimension D (zero-copy).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `row >= num_rows` or D does not divide `gen_ring_dim`.
-    #[inline]
-    pub fn row<const D: usize>(&self, row: usize) -> &[CyclotomicRing<F, D>] {
-        assert!(D > 0 && self.gen_ring_dim % D == 0);
-        assert!(row < self.num_rows, "row {row} out of bounds");
-        let row_field_len = self.cols_ring * self.gen_ring_dim;
-        let start = row * row_field_len;
-        let field_slice = &self.data[start..start + row_field_len];
-        let num_cols = row_field_len / D;
-        // SAFETY: CyclotomicRing<F, D> is #[repr(transparent)] over [F; D].
-        unsafe {
-            std::slice::from_raw_parts(
-                field_slice.as_ptr() as *const CyclotomicRing<F, D>,
-                num_cols,
-            )
-        }
-    }
-
-    /// Whether the matrix has zero rows.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.num_rows == 0
-    }
-
-    /// Convenience: number of ring-element columns in the first row at dimension D,
-    /// or 0 if empty.
-    #[inline]
-    pub fn first_row_len<const D: usize>(&self) -> usize {
-        if self.is_empty() {
-            0
-        } else {
-            self.num_cols_at::<D>()
+            data: &self.data[..field_len],
+            num_rows,
+            num_cols,
         }
     }
 }
@@ -189,8 +134,8 @@ impl<F: FieldCore> HachiSerialize for FlatMatrix<F> {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.num_rows.serialize_with_mode(&mut writer, compress)?;
-        self.cols_ring.serialize_with_mode(&mut writer, compress)?;
+        self.total_ring_elements()
+            .serialize_with_mode(&mut writer, compress)?;
         self.gen_ring_dim
             .serialize_with_mode(&mut writer, compress)?;
         for f in &self.data {
@@ -200,7 +145,7 @@ impl<F: FieldCore> HachiSerialize for FlatMatrix<F> {
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        3 * std::mem::size_of::<usize>()
+        2 * std::mem::size_of::<usize>()
             + self
                 .data
                 .iter()
@@ -217,12 +162,11 @@ impl<F: FieldCore + Valid> HachiDeserialize for FlatMatrix<F> {
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let num_rows = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let cols_ring = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let total_ring = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let gen_ring_dim = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let total = num_rows * cols_ring * gen_ring_dim;
-        let mut data = Vec::with_capacity(total);
-        for _ in 0..total {
+        let total_fields = total_ring * gen_ring_dim;
+        let mut data = Vec::with_capacity(total_fields);
+        for _ in 0..total_fields {
             data.push(F::deserialize_with_mode(
                 &mut reader,
                 compress,
@@ -230,12 +174,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for FlatMatrix<F> {
                 &(),
             )?);
         }
-        let out = Self {
-            data,
-            num_rows,
-            cols_ring,
-            gen_ring_dim,
-        };
+        let out = Self { data, gen_ring_dim };
         if matches!(validate, Validate::Yes) {
             out.check()?;
         }
@@ -243,7 +182,8 @@ impl<F: FieldCore + Valid> HachiDeserialize for FlatMatrix<F> {
     }
 }
 
-/// Typed read-only view of a [`FlatMatrix`] at a specific ring dimension D.
+/// Typed read-only view of a [`FlatMatrix`] prefix at a specific ring
+/// dimension D, interpreted as a `num_rows × num_cols` matrix.
 ///
 /// Provides zero-copy access to rows as `&[CyclotomicRing<F, D>]` by
 /// transmuting the underlying `&[F]` slice (safe because `CyclotomicRing`
@@ -289,144 +229,64 @@ impl<'a, F: FieldCore, const D: usize> RingMatrixView<'a, F, D> {
             )
         }
     }
-
-    /// Iterate over all rows.
-    pub fn rows(&self) -> impl Iterator<Item = &'a [CyclotomicRing<F, D>]> + '_ {
-        (0..self.num_rows).map(move |i| self.row(i))
-    }
-
-    /// Take a sub-view: first `n_rows` rows, first `n_cols` ring-element columns.
-    ///
-    /// This cannot produce a contiguous sub-view because rows are not
-    /// contiguous after column truncation. Instead it returns a
-    /// [`SubMatrixView`] that copies on access.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `n_rows > self.num_rows` or `n_cols > self.num_cols`.
-    pub fn submatrix(&self, n_rows: usize, n_cols: usize) -> SubMatrixView<'a, F, D> {
-        assert!(n_rows <= self.num_rows);
-        assert!(n_cols <= self.num_cols);
-        SubMatrixView {
-            parent: *self,
-            n_rows,
-            n_cols,
-        }
-    }
-
-    /// Collect into the legacy `Vec<Vec<CyclotomicRing<F, D>>>` representation.
-    pub fn to_vec_vec(&self) -> Vec<Vec<CyclotomicRing<F, D>>> {
-        (0..self.num_rows).map(|i| self.row(i).to_vec()).collect()
-    }
-}
-
-/// A non-contiguous sub-view that yields column-truncated rows.
-#[derive(Debug, Clone, Copy)]
-pub struct SubMatrixView<'a, F: FieldCore, const D: usize> {
-    parent: RingMatrixView<'a, F, D>,
-    n_rows: usize,
-    n_cols: usize,
-}
-
-impl<'a, F: FieldCore, const D: usize> SubMatrixView<'a, F, D> {
-    /// Number of rows.
-    #[inline]
-    pub fn num_rows(&self) -> usize {
-        self.n_rows
-    }
-
-    /// Number of ring-element columns.
-    #[inline]
-    pub fn num_cols(&self) -> usize {
-        self.n_cols
-    }
-
-    /// Borrow a row, truncated to `n_cols` ring elements.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `row >= n_rows`.
-    #[inline]
-    pub fn row(&self, row: usize) -> &'a [CyclotomicRing<F, D>] {
-        assert!(row < self.n_rows, "row {row} out of bounds");
-        &self.parent.row(row)[..self.n_cols]
-    }
-
-    /// Iterate over rows.
-    pub fn rows(&self) -> impl Iterator<Item = &'a [CyclotomicRing<F, D>]> + '_ {
-        (0..self.n_rows).map(move |i| self.row(i))
-    }
-
-    /// Collect into the legacy `Vec<Vec<CyclotomicRing<F, D>>>` representation.
-    pub fn to_vec_vec(&self) -> Vec<Vec<CyclotomicRing<F, D>>> {
-        self.rows().map(|r| r.to_vec()).collect()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::fields::Prime128Offset5823;
+    use crate::algebra::fields::Prime128Offset275;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
-    type F = Prime128Offset5823;
+    type F = Prime128Offset275;
 
     #[test]
-    fn roundtrip_from_ring_matrix_and_view() {
+    fn ring_view_roundtrip() {
         let mut rng = StdRng::seed_from_u64(42);
         let rows = 3usize;
         let cols = 5usize;
-        let mat: Vec<Vec<CyclotomicRing<F, 64>>> = (0..rows)
-            .map(|_| {
-                (0..cols)
-                    .map(|_| CyclotomicRing::random(&mut rng))
-                    .collect()
-            })
+        let elements: Vec<CyclotomicRing<F, 64>> = (0..rows * cols)
+            .map(|_| CyclotomicRing::random(&mut rng))
             .collect();
 
-        let flat = FlatMatrix::from_ring_matrix(&mat);
-        assert_eq!(flat.num_rows(), rows);
-        assert_eq!(flat.cols_ring(), cols);
+        let flat = FlatMatrix::from_ring_slice(&elements);
+        assert_eq!(flat.total_ring_elements(), rows * cols);
         assert_eq!(flat.gen_ring_dim(), 64);
 
-        let view = flat.view::<64>();
+        let view = flat.ring_view::<64>(rows, cols);
         assert_eq!(view.num_rows(), rows);
         assert_eq!(view.num_cols(), cols);
 
-        for (i, orig_row) in mat.iter().enumerate() {
-            let view_row = view.row(i);
-            assert_eq!(view_row, orig_row.as_slice());
+        for r in 0..rows {
+            let view_row = view.row(r);
+            for c in 0..cols {
+                assert_eq!(view_row[c], elements[r * cols + c]);
+            }
         }
     }
 
     #[test]
-    fn view_at_smaller_d_rechunks_correctly() {
+    fn ring_view_at_smaller_d() {
         let mut rng = StdRng::seed_from_u64(99);
-        let rows = 2usize;
-        let cols = 4usize;
-        let mat: Vec<Vec<CyclotomicRing<F, 64>>> = (0..rows)
-            .map(|_| {
-                (0..cols)
-                    .map(|_| CyclotomicRing::random(&mut rng))
-                    .collect()
-            })
+        let total = 8usize;
+        let elements: Vec<CyclotomicRing<F, 64>> = (0..total)
+            .map(|_| CyclotomicRing::random(&mut rng))
             .collect();
 
-        let flat = FlatMatrix::from_ring_matrix(&mat);
+        let flat = FlatMatrix::from_ring_slice(&elements);
+        assert_eq!(flat.total_ring_elements_at::<32>(), total * 2);
 
-        // View at D=32: each D=64 element becomes 2 D=32 elements
-        let view32 = flat.view::<32>();
-        assert_eq!(view32.num_rows(), rows);
-        assert_eq!(view32.num_cols(), cols * 2);
+        let view32 = flat.ring_view::<32>(2, total);
+        assert_eq!(view32.num_rows(), 2);
+        assert_eq!(view32.num_cols(), total);
 
-        // Verify field elements are the same
-        for r in 0..rows {
-            let ring32_row = view32.row(r);
-            let orig_row = flat.view::<64>().row(r);
-            for (j, orig_ring) in orig_row.iter().enumerate() {
-                let lo = &ring32_row[j * 2];
-                let hi = &ring32_row[j * 2 + 1];
+        let view64 = flat.ring_view::<64>(2, 4);
+        for r in 0..2 {
+            let row64 = view64.row(r);
+            let row32 = view32.row(r);
+            for (j, orig_ring) in row64.iter().enumerate() {
+                let lo = &row32[j * 2];
+                let hi = &row32[j * 2 + 1];
                 assert_eq!(&orig_ring.coeffs[..32], lo.coefficients());
                 assert_eq!(&orig_ring.coeffs[32..], hi.coefficients());
             }
@@ -434,20 +294,21 @@ mod tests {
     }
 
     #[test]
-    fn submatrix_truncates_correctly() {
+    fn different_role_views_from_same_flat() {
         let mut rng = StdRng::seed_from_u64(7);
-        let mat: Vec<Vec<CyclotomicRing<F, 64>>> = (0..4)
-            .map(|_| (0..8).map(|_| CyclotomicRing::random(&mut rng)).collect())
+        let total = 64usize;
+        let elements: Vec<CyclotomicRing<F, 64>> = (0..total)
+            .map(|_| CyclotomicRing::random(&mut rng))
             .collect();
 
-        let flat = FlatMatrix::from_ring_matrix(&mat);
-        let view = flat.view::<64>();
-        let sub = view.submatrix(2, 5);
+        let flat = FlatMatrix::from_ring_slice(&elements);
 
-        assert_eq!(sub.num_rows(), 2);
-        assert_eq!(sub.num_cols(), 5);
-        for (r, row) in mat.iter().enumerate().take(2) {
-            assert_eq!(sub.row(r), &row[..5]);
-        }
+        let view_a = flat.ring_view::<64>(2, 16);
+        let view_b = flat.ring_view::<64>(4, 8);
+
+        assert_eq!(view_a.row(0)[0], elements[0]);
+        assert_eq!(view_a.row(1)[0], elements[16]);
+        assert_eq!(view_b.row(0)[0], elements[0]);
+        assert_eq!(view_b.row(1)[0], elements[8]);
     }
 }

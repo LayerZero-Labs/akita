@@ -17,6 +17,8 @@ use crate::{CanonicalField, FieldCore};
 /// arrays, so storing them unboxed would make this struct ~155 KB.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultiDNttCaches {
+    /// Cache for D=32.
+    pub d32: Option<Box<NttSlotCache<32>>>,
     /// Cache for D=64.
     pub d64: Option<Box<NttSlotCache<64>>>,
     /// Cache for D=128.
@@ -41,7 +43,9 @@ macro_rules! impl_get_or_build {
             mat: &FlatMatrix<F>,
         ) -> Result<&NttSlotCache<$d_val>, HachiError> {
             if self.$field.is_none() {
-                self.$field = Some(Box::new(build_ntt_slot(mat.view::<$d_val>())?));
+                self.$field = Some(Box::new(build_ntt_slot(
+                    mat.ring_view::<$d_val>(1, mat.total_ring_elements_at::<$d_val>()),
+                )?));
             }
             Ok(self.$field.as_deref().unwrap())
         }
@@ -52,6 +56,7 @@ impl MultiDNttCaches {
     /// Empty cache set.
     pub fn new() -> Self {
         Self {
+            d32: None,
             d64: None,
             d128: None,
             d256: None,
@@ -60,6 +65,7 @@ impl MultiDNttCaches {
         }
     }
 
+    impl_get_or_build!(get_or_build_32, d32, 32);
     impl_get_or_build!(get_or_build_64, d64, 64);
     impl_get_or_build!(get_or_build_128, d128, 128);
     impl_get_or_build!(get_or_build_256, d256, 256);
@@ -69,6 +75,7 @@ impl MultiDNttCaches {
     /// Check if a cache for dimension `d` is already populated.
     pub fn has(&self, d: usize) -> bool {
         match d {
+            32 => self.d32.is_some(),
             64 => self.d64.is_some(),
             128 => self.d128.is_some(),
             256 => self.d256.is_some(),

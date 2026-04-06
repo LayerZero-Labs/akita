@@ -29,7 +29,7 @@ pub(super) unsafe fn sparse_mul_acc_neon(
     positions: &[u32],
     coeffs: &[i16],
 ) {
-    debug_assert!(d % 16 == 0);
+    debug_assert!(d.is_multiple_of(16));
 
     for (&pos, &coeff) in positions.iter().zip(coeffs.iter()) {
         let p = pos as usize;

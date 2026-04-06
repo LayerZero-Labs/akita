@@ -68,9 +68,10 @@ pub trait MatrixPrgBackend: Clone + Send + Sync + 'static {
 }
 
 /// Runtime backend selector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MatrixPrgBackendChoice {
     /// SHAKE256 XOF stream.
+    #[default]
     Shake256,
     /// AES-128-CTR stream.
     Aes128Ctr,
@@ -91,12 +92,6 @@ impl MatrixPrgBackendChoice {
             Self::Shake256 => Shake256Backend.entry_rng(context),
             Self::Aes128Ctr => Aes128CtrBackend.entry_rng(context),
         }
-    }
-}
-
-impl Default for MatrixPrgBackendChoice {
-    fn default() -> Self {
-        Self::Shake256
     }
 }
 

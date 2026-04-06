@@ -56,6 +56,7 @@ use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
+use crate::protocol::proof::{DirectWitnessProof, FlatDigitBlocks};
 use crate::{CanonicalField, FieldCore};
 
 /// Prover-side output of the decompose + challenge-fold step.
@@ -73,12 +74,13 @@ pub struct DecomposeFoldWitness<F: FieldCore, const D: usize> {
 pub struct CommitInnerWitness<F: FieldCore, const D: usize> {
     /// Undecomposed `t_i = A * s_i` rows, grouped by block.
     pub t: Vec<Vec<CyclotomicRing<F, D>>>,
-    /// Decomposed `t_hat_i = G^{-1}(t_i)` rows, grouped by block.
-    pub t_hat: Vec<Vec<[i8; D]>>,
+    /// Decomposed `t_hat_i = G^{-1}(t_i)` rows in flat column-major order plus
+    /// explicit block boundaries.
+    pub t_hat: FlatDigitBlocks<D>,
 }
 
 fn recompose_commit_inner_blocks<F: CanonicalField, const D: usize>(
-    t_hat_blocks: &[Vec<[i8; D]>],
+    t_hat_blocks: &FlatDigitBlocks<D>,
     num_digits_open: usize,
     log_basis: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError> {
@@ -88,7 +90,7 @@ fn recompose_commit_inner_blocks<F: CanonicalField, const D: usize>(
         ));
     }
     t_hat_blocks
-        .iter()
+        .iter_blocks()
         .map(|block| {
             if block.len() % num_digits_open != 0 {
                 return Err(HachiError::InvalidSetup(format!(
@@ -111,6 +113,7 @@ fn recompose_commit_inner_blocks<F: CanonicalField, const D: usize>(
 /// decompose + NTT, sparse monomial tricks, digit-plane bypass, etc.). Most
 /// heterogeneous callers should use [`MultilinearPolynomail`] and let it
 /// implement this trait on their behalf.
+#[allow(clippy::too_many_arguments)]
 pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// Per-polynomial cache type for the A-matrix commit path.
     ///
@@ -223,11 +226,13 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         &self,
         a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-    ) -> Result<Vec<Vec<[i8; D]>>, HachiError>;
+        matrix_stride: usize,
+    ) -> Result<FlatDigitBlocks<D>, HachiError>;
 
     /// Like [`commit_inner`](Self::commit_inner), but also preserves the
     /// undecomposed `t_i` rows for prover-side consumers that would otherwise
@@ -241,10 +246,12 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         &self,
         a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, HachiError>
     where
         F: CanonicalField,
@@ -252,10 +259,12 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         let t_hat = self.commit_inner(
             a_matrix,
             ntt_a,
+            n_a,
             block_len,
             num_digits_commit,
             num_digits_open,
             log_basis,
+            matrix_stride,
         )?;
         let t = recompose_commit_inner_blocks::<F, D>(&t_hat, num_digits_open, log_basis)?;
         Ok(CommitInnerWitness { t, t_hat })
@@ -273,15 +282,34 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         _polys: &[&Self],
         _a_matrix: &FlatMatrix<F>,
         _ntt_a: &NttSlotCache<D>,
+        _n_a: usize,
         _block_len: usize,
         _num_digits_commit: usize,
         _num_digits_open: usize,
         _log_basis: u32,
+        _matrix_stride: usize,
     ) -> Result<Option<Vec<CommitInnerWitness<F, D>>>, HachiError>
     where
         F: CanonicalField,
     {
         Ok(None)
+    }
+
+    /// Materialize a direct root witness for zero-fold openings.
+    ///
+    /// The returned witness must evaluate to the original root-opening claim
+    /// under the usual public opening point. Recursive witnesses do not use
+    /// this hook; it exists only so root proofs can choose a first-class
+    /// direct step instead of forcing a degenerate fold.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when this root representation cannot produce a direct
+    /// witness payload.
+    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, HachiError> {
+        Err(HachiError::InvalidInput(
+            "root-direct witness is not supported for this polynomial type".to_string(),
+        ))
     }
 }
 
@@ -345,19 +373,23 @@ where
         &self,
         a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-    ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
+        matrix_stride: usize,
+    ) -> Result<FlatDigitBlocks<D>, HachiError> {
         <P as HachiPolyOps<F, D>>::commit_inner(
             *self,
             a_matrix,
             ntt_a,
+            n_a,
             block_len,
             num_digits_commit,
             num_digits_open,
             log_basis,
+            matrix_stride,
         )
     }
 
@@ -365,10 +397,12 @@ where
         &self,
         a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, HachiError>
     where
         F: CanonicalField,
@@ -377,10 +411,12 @@ where
             *self,
             a_matrix,
             ntt_a,
+            n_a,
             block_len,
             num_digits_commit,
             num_digits_open,
             log_basis,
+            matrix_stride,
         )
     }
 
@@ -388,10 +424,12 @@ where
         polys: &[&Self],
         a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<Option<Vec<CommitInnerWitness<F, D>>>, HachiError>
     where
         F: CanonicalField,
@@ -401,11 +439,17 @@ where
             &inner_refs,
             a_matrix,
             ntt_a,
+            n_a,
             block_len,
             num_digits_commit,
             num_digits_open,
             log_basis,
+            matrix_stride,
         )
+    }
+
+    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, HachiError> {
+        <P as HachiPolyOps<F, D>>::direct_root_witness(*self)
     }
 }
 
@@ -435,6 +479,11 @@ mod tests {
         let blocks = map_onehot_to_regular_blocks(onehot_k, &indices, r_vars, m_vars, TestD)
             .expect("regular onehot blocks");
         OneHotPoly {
+            num_vars: (indices.len() * onehot_k)
+                .next_power_of_two()
+                .trailing_zeros() as usize,
+            onehot_k,
+            indices: indices.clone(),
             m_vars,
             blocks: OneHotBlocks::Regular(blocks),
             _marker: PhantomData,
@@ -465,14 +514,21 @@ mod tests {
         let num_vars = alpha + layout.m_vars + layout.r_vars;
         let poly = DensePoly::<TestF, TestD>::from_field_evals(num_vars, &evals).unwrap();
 
+        let level_params = TinyConfig::level_params(HachiScheduleInputs {
+            max_num_vars: setup.expanded.seed.max_num_vars,
+            level: 0,
+            current_w_len: layout.num_blocks * layout.block_len * TestD,
+        });
         let t_hat_poly = poly
             .commit_inner(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
+                level_params.n_a,
                 layout.block_len,
                 layout.num_digits_commit,
                 layout.num_digits_open,
                 layout.log_basis,
+                setup.expanded.seed.max_stride(),
             )
             .unwrap();
 
@@ -499,14 +555,21 @@ mod tests {
 
         let poly = regular_onehot_poly(onehot_k, indices.clone(), layout.r_vars, layout.m_vars);
 
+        let level_params = TinyConfig::level_params(HachiScheduleInputs {
+            max_num_vars: setup.expanded.seed.max_num_vars,
+            level: 0,
+            current_w_len: layout.num_blocks * layout.block_len * TestD,
+        });
         let t_hat_poly = poly
             .commit_inner(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
+                level_params.n_a,
                 layout.block_len,
                 layout.num_digits_commit,
                 layout.num_digits_open,
                 layout.log_basis,
+                setup.expanded.seed.max_stride(),
             )
             .unwrap();
 
@@ -645,6 +708,7 @@ mod tests {
         let w_len = w_ring_element_count::<TestF>(&level_params, layout) * TestD;
         let w_layout =
             hachi_recursive_level_layout_from_params::<TinyConfig>(&level_params, w_len).unwrap();
+        let max_stride = setup.expanded.seed.max_stride();
         let digit_commit = digit_view
             .commit_inner(
                 &setup.ntt_shared,
@@ -654,16 +718,19 @@ mod tests {
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
                 w_layout.log_basis,
+                max_stride,
             )
             .unwrap();
         let dense_commit = dense_cm
             .commit_inner(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
+                level_params.n_a,
                 block_len,
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
                 w_layout.log_basis,
+                max_stride,
             )
             .unwrap();
 
@@ -678,16 +745,19 @@ mod tests {
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
                 w_layout.log_basis,
+                max_stride,
             )
             .unwrap();
         let dense_witness = dense_cm
             .commit_inner_witness(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
+                level_params.n_a,
                 block_len,
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
                 w_layout.log_basis,
+                max_stride,
             )
             .unwrap();
 

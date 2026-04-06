@@ -7,16 +7,16 @@ use hachi_pcs::algebra::tables::{
 };
 use hachi_pcs::algebra::{
     CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, Fp64, HasPacking, MontCoeff,
-    PackedPartialSplitEval32, PartialSplitEval32, PartialSplitNtt32, Prime128Offset5823,
+    PackedPartialSplitEval16, PartialSplitEval16, PartialSplitNtt16, Prime128Offset159,
 };
 use hachi_pcs::{FieldCore, FromSmallInt};
 
 type F = Fp64<{ Q32_MODULUS }>;
 type R = CyclotomicRing<F, 64>;
 type N = CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, 64>;
-type F128 = Prime128Offset5823;
-type R128 = CyclotomicRing<F128, 64>;
-type N128 = CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, 64>;
+type F128 = Prime128Offset159;
+type R128 = CyclotomicRing<F128, 32>;
+type N128 = CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, 32>;
 type PF128 = <F128 as HasPacking>::Packing;
 const CACHE_MAT_ROWS: usize = 8;
 const CACHE_MAT_COLS: usize = 16;
@@ -32,7 +32,7 @@ fn sample_ring(seed: u64) -> R {
     R::from_coefficients(coeffs)
 }
 
-fn sample_ring_q128m5823(seed: u64) -> R128 {
+fn sample_ring_q128m159(seed: u64) -> R128 {
     let coeffs = std::array::from_fn(|i| {
         let x = seed
             .wrapping_mul(29)
@@ -43,7 +43,7 @@ fn sample_ring_q128m5823(seed: u64) -> R128 {
     R128::from_coefficients(coeffs)
 }
 
-fn sample_centered_i8(seed: u64) -> [i8; 64] {
+fn sample_centered_i8(seed: u64) -> [i8; 32] {
     std::array::from_fn(|i| {
         let x = seed
             .wrapping_mul(43)
@@ -52,16 +52,16 @@ fn sample_centered_i8(seed: u64) -> [i8; 64] {
     })
 }
 
-fn sample_ring_q128m5823_tag(seed: u64, tag: u64) -> R128 {
-    sample_ring_q128m5823(seed.wrapping_mul(131).wrapping_add(tag))
+fn sample_ring_q128m159_tag(seed: u64, tag: u64) -> R128 {
+    sample_ring_q128m159(seed.wrapping_mul(131).wrapping_add(tag))
 }
 
-fn pack_split_batch(batch: &[PartialSplitEval32<F128>]) -> Vec<PackedPartialSplitEval32<PF128>> {
-    let width = PackedPartialSplitEval32::<PF128>::WIDTH;
+fn pack_split_batch(batch: &[PartialSplitEval16<F128>]) -> Vec<PackedPartialSplitEval16<PF128>> {
+    let width = PackedPartialSplitEval16::<PF128>::WIDTH;
     debug_assert_eq!(batch.len() % width, 0);
     batch
         .chunks_exact(width)
-        .map(|chunk| PackedPartialSplitEval32::<PF128>::from_fn(|lane| chunk[lane]))
+        .map(|chunk| PackedPartialSplitEval16::<PF128>::from_fn(|lane| chunk[lane]))
         .collect()
 }
 
@@ -104,29 +104,29 @@ fn bench_crt_round_trip(c: &mut Criterion) {
     });
 }
 
-fn bench_ring_schoolbook_mul_q128m5823(c: &mut Criterion) {
-    let lhs = sample_ring_q128m5823(23);
-    let rhs = sample_ring_q128m5823(41);
-    c.bench_function("ring_schoolbook_mul_d64_q128m5823", |b| {
+fn bench_ring_schoolbook_mul_q128m159(c: &mut Criterion) {
+    let lhs = sample_ring_q128m159(23);
+    let rhs = sample_ring_q128m159(41);
+    c.bench_function("ring_schoolbook_mul_d32_q128m159", |b| {
         b.iter(|| black_box(lhs) * black_box(rhs))
     });
 }
 
-fn bench_partial_split_mul_q128m5823(c: &mut Criterion) {
-    let lhs = sample_ring_q128m5823(23);
-    let rhs = sample_ring_q128m5823(41);
-    let split = PartialSplitNtt32::<F128>::compute();
-    c.bench_function("ring_partial_split_mul_d64_q128m5823", |b| {
-        b.iter(|| split.multiply_d64(black_box(&lhs), black_box(&rhs)))
+fn bench_partial_split_mul_q128m159(c: &mut Criterion) {
+    let lhs = sample_ring_q128m159(23);
+    let rhs = sample_ring_q128m159(41);
+    let split = PartialSplitNtt16::<F128>::compute();
+    c.bench_function("ring_partial_split_mul_d32_q128m159", |b| {
+        b.iter(|| split.multiply_d32(black_box(&lhs), black_box(&rhs)))
     });
 }
 
-fn bench_crt_mul_q128m5823(c: &mut Criterion) {
-    let lhs = sample_ring_q128m5823(23);
-    let rhs = sample_ring_q128m5823(41);
+fn bench_crt_mul_q128m159(c: &mut Criterion) {
+    let lhs = sample_ring_q128m159(23);
+    let rhs = sample_ring_q128m159(41);
     let params = CrtNttParamSet::new(q128_primes());
 
-    c.bench_function("ring_crt_ntt_mul_d64_q128m5823_k5", |b| {
+    c.bench_function("ring_crt_ntt_mul_d32_q128m159_k5", |b| {
         b.iter(|| {
             let lhs_ntt = N128::from_ring_with_params(black_box(&lhs), &params);
             let rhs_ntt = N128::from_ring_with_params(black_box(&rhs), &params);
@@ -137,21 +137,21 @@ fn bench_crt_mul_q128m5823(c: &mut Criterion) {
     });
 }
 
-fn bench_partial_split_mul_i8_rhs_q128m5823(c: &mut Criterion) {
-    let lhs = sample_ring_q128m5823(23);
+fn bench_partial_split_mul_i8_rhs_q128m159(c: &mut Criterion) {
+    let lhs = sample_ring_q128m159(23);
     let rhs = sample_centered_i8(41);
-    let split = PartialSplitNtt32::<F128>::compute();
-    c.bench_function("ring_partial_split_mul_i8_rhs_d64_q128m5823", |b| {
-        b.iter(|| split.multiply_d64_rhs_i8(black_box(&lhs), black_box(&rhs)))
+    let split = PartialSplitNtt16::<F128>::compute();
+    c.bench_function("ring_partial_split_mul_i8_rhs_d32_q128m159", |b| {
+        b.iter(|| split.multiply_d32_rhs_i8(black_box(&lhs), black_box(&rhs)))
     });
 }
 
-fn bench_crt_mul_i8_rhs_q128m5823(c: &mut Criterion) {
-    let lhs = sample_ring_q128m5823(23);
+fn bench_crt_mul_i8_rhs_q128m159(c: &mut Criterion) {
+    let lhs = sample_ring_q128m159(23);
     let rhs = sample_centered_i8(41);
     let params = CrtNttParamSet::new(q128_primes());
 
-    c.bench_function("ring_crt_ntt_mul_i8_rhs_d64_q128m5823_k5", |b| {
+    c.bench_function("ring_crt_ntt_mul_i8_rhs_d32_q128m159_k5", |b| {
         b.iter(|| {
             let lhs_ntt = N128::from_ring_with_params(black_box(&lhs), &params);
             let rhs_ntt = N128::from_i8_with_params(black_box(&rhs), &params);
@@ -162,35 +162,35 @@ fn bench_crt_mul_i8_rhs_q128m5823(c: &mut Criterion) {
     });
 }
 
-fn bench_cached_mul_batch_scaling_q128m5823(c: &mut Criterion) {
-    let width = PackedPartialSplitEval32::<PF128>::WIDTH;
-    let split = PartialSplitNtt32::<F128>::compute();
+fn bench_cached_mul_batch_scaling_q128m159(c: &mut Criterion) {
+    let width = PackedPartialSplitEval16::<PF128>::WIDTH;
+    let split = PartialSplitNtt16::<F128>::compute();
     let packed = split.packed::<PF128>();
     let params = CrtNttParamSet::new(q128_primes());
-    let mut group = c.benchmark_group("ring_cached_mul_batch_scaling_d64_q128m5823");
+    let mut group = c.benchmark_group("ring_cached_mul_batch_scaling_d32_q128m159");
 
     for factor in MUL_BATCH_FACTORS {
         let count = factor * width;
-        let lhs_split: Vec<PartialSplitEval32<F128>> = (0..count)
+        let lhs_split: Vec<PartialSplitEval16<F128>> = (0..count)
             .map(|idx| {
-                PartialSplitEval32::from_ring(&split, &sample_ring_q128m5823_tag(23, idx as u64))
+                PartialSplitEval16::from_ring(&split, &sample_ring_q128m159_tag(23, idx as u64))
             })
             .collect();
-        let rhs_split: Vec<PartialSplitEval32<F128>> = (0..count)
+        let rhs_split: Vec<PartialSplitEval16<F128>> = (0..count)
             .map(|idx| {
-                PartialSplitEval32::from_ring(&split, &sample_ring_q128m5823_tag(41, idx as u64))
+                PartialSplitEval16::from_ring(&split, &sample_ring_q128m159_tag(41, idx as u64))
             })
             .collect();
         let lhs_packed = pack_split_batch(&lhs_split);
         let rhs_packed = pack_split_batch(&rhs_split);
         let lhs_crt: Vec<N128> = (0..count)
             .map(|idx| {
-                N128::from_ring_with_params(&sample_ring_q128m5823_tag(23, idx as u64), &params)
+                N128::from_ring_with_params(&sample_ring_q128m159_tag(23, idx as u64), &params)
             })
             .collect();
         let rhs_crt: Vec<N128> = (0..count)
             .map(|idx| {
-                N128::from_ring_with_params(&sample_ring_q128m5823_tag(41, idx as u64), &params)
+                N128::from_ring_with_params(&sample_ring_q128m159_tag(41, idx as u64), &params)
             })
             .collect();
 
@@ -248,28 +248,28 @@ fn bench_cached_mul_batch_scaling_q128m5823(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_cached_mul_batch_scaling_i8_rhs_q128m5823(c: &mut Criterion) {
-    let width = PackedPartialSplitEval32::<PF128>::WIDTH;
-    let split = PartialSplitNtt32::<F128>::compute();
+fn bench_cached_mul_batch_scaling_i8_rhs_q128m159(c: &mut Criterion) {
+    let width = PackedPartialSplitEval16::<PF128>::WIDTH;
+    let split = PartialSplitNtt16::<F128>::compute();
     let packed = split.packed::<PF128>();
     let params = CrtNttParamSet::new(q128_primes());
-    let mut group = c.benchmark_group("ring_cached_mul_batch_scaling_i8_rhs_d64_q128m5823");
+    let mut group = c.benchmark_group("ring_cached_mul_batch_scaling_i8_rhs_d32_q128m159");
 
     for factor in MUL_BATCH_FACTORS {
         let count = factor * width;
-        let lhs_split: Vec<PartialSplitEval32<F128>> = (0..count)
+        let lhs_split: Vec<PartialSplitEval16<F128>> = (0..count)
             .map(|idx| {
-                PartialSplitEval32::from_ring(&split, &sample_ring_q128m5823_tag(23, idx as u64))
+                PartialSplitEval16::from_ring(&split, &sample_ring_q128m159_tag(23, idx as u64))
             })
             .collect();
-        let rhs_split: Vec<PartialSplitEval32<F128>> = (0..count)
-            .map(|idx| PartialSplitEval32::from_i8(&split, &sample_centered_i8(41 + idx as u64)))
+        let rhs_split: Vec<PartialSplitEval16<F128>> = (0..count)
+            .map(|idx| PartialSplitEval16::from_i8(&split, &sample_centered_i8(41 + idx as u64)))
             .collect();
         let lhs_packed = pack_split_batch(&lhs_split);
         let rhs_packed = pack_split_batch(&rhs_split);
         let lhs_crt: Vec<N128> = (0..count)
             .map(|idx| {
-                N128::from_ring_with_params(&sample_ring_q128m5823_tag(23, idx as u64), &params)
+                N128::from_ring_with_params(&sample_ring_q128m159_tag(23, idx as u64), &params)
             })
             .collect();
         let rhs_crt: Vec<N128> = (0..count)
@@ -330,25 +330,25 @@ fn bench_cached_mul_batch_scaling_i8_rhs_q128m5823(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_partial_split_cyclic_mul_q128m5823(c: &mut Criterion) {
-    let split = PartialSplitNtt32::<F128>::compute();
-    let lhs = sample_ring_q128m5823(23);
-    let rhs = sample_ring_q128m5823(41);
+fn bench_partial_split_cyclic_mul_q128m159(c: &mut Criterion) {
+    let split = PartialSplitNtt16::<F128>::compute();
+    let lhs = sample_ring_q128m159(23);
+    let rhs = sample_ring_q128m159(41);
 
-    c.bench_function("ring_partial_split_cyclic_mul_d64_q128m5823", |b| {
+    c.bench_function("ring_partial_split_cyclic_mul_d32_q128m159", |b| {
         b.iter(|| {
-            let out = split.multiply_cyclic_d64(black_box(&lhs), black_box(&rhs));
+            let out = split.multiply_cyclic_d32(black_box(&lhs), black_box(&rhs));
             black_box(out)
         })
     });
 }
 
-fn bench_crt_cyclic_mul_q128m5823(c: &mut Criterion) {
+fn bench_crt_cyclic_mul_q128m159(c: &mut Criterion) {
     let params = CrtNttParamSet::new(q128_primes());
-    let lhs = sample_ring_q128m5823(23);
-    let rhs = sample_ring_q128m5823(41);
+    let lhs = sample_ring_q128m159(23);
+    let rhs = sample_ring_q128m159(41);
 
-    c.bench_function("ring_crt_ntt_cyclic_mul_d64_q128m5823_k5", |b| {
+    c.bench_function("ring_crt_ntt_cyclic_mul_d32_q128m159_k5", |b| {
         b.iter(|| {
             let lhs_ntt = N128::from_ring_cyclic(black_box(&lhs), &params);
             let rhs_ntt = N128::from_ring_cyclic(black_box(&rhs), &params);
@@ -359,25 +359,25 @@ fn bench_crt_cyclic_mul_q128m5823(c: &mut Criterion) {
     });
 }
 
-fn bench_partial_split_quotient_q128m5823(c: &mut Criterion) {
-    let split = PartialSplitNtt32::<F128>::compute();
-    let lhs = sample_ring_q128m5823(23);
-    let rhs = sample_ring_q128m5823(41);
+fn bench_partial_split_quotient_q128m159(c: &mut Criterion) {
+    let split = PartialSplitNtt16::<F128>::compute();
+    let lhs = sample_ring_q128m159(23);
+    let rhs = sample_ring_q128m159(41);
 
-    c.bench_function("ring_partial_split_quotient_d64_q128m5823", |b| {
+    c.bench_function("ring_partial_split_quotient_d32_q128m159", |b| {
         b.iter(|| {
-            let out = split.unreduced_quotient_d64(black_box(&lhs), black_box(&rhs));
+            let out = split.unreduced_quotient_d32(black_box(&lhs), black_box(&rhs));
             black_box(out)
         })
     });
 }
 
-fn bench_crt_quotient_q128m5823(c: &mut Criterion) {
+fn bench_crt_quotient_q128m159(c: &mut Criterion) {
     let params = CrtNttParamSet::new(q128_primes());
-    let lhs = sample_ring_q128m5823(23);
-    let rhs = sample_ring_q128m5823(41);
+    let lhs = sample_ring_q128m159(23);
+    let rhs = sample_ring_q128m159(41);
 
-    c.bench_function("ring_crt_ntt_quotient_d64_q128m5823_k5", |b| {
+    c.bench_function("ring_crt_ntt_quotient_d32_q128m159_k5", |b| {
         b.iter(|| {
             let lhs_neg = N128::from_ring_with_params(black_box(&lhs), &params);
             let rhs_neg = N128::from_ring_with_params(black_box(&rhs), &params);
@@ -399,32 +399,30 @@ fn bench_crt_quotient_q128m5823(c: &mut Criterion) {
     });
 }
 
-fn bench_partial_split_cached_matvec_q128m5823(c: &mut Criterion) {
-    let split = PartialSplitNtt32::<F128>::compute();
-    let matrix: Vec<Vec<PartialSplitEval32<F128>>> = (0..CACHE_MAT_ROWS)
+fn bench_partial_split_cached_matvec_q128m159(c: &mut Criterion) {
+    let split = PartialSplitNtt16::<F128>::compute();
+    let matrix: Vec<Vec<PartialSplitEval16<F128>>> = (0..CACHE_MAT_ROWS)
         .map(|r| {
             (0..CACHE_MAT_COLS)
                 .map(|col| {
-                    PartialSplitEval32::from_ring(
+                    PartialSplitEval16::from_ring(
                         &split,
-                        &sample_ring_q128m5823_tag(23, (r * CACHE_MAT_COLS + col) as u64),
+                        &sample_ring_q128m159_tag(23, (r * CACHE_MAT_COLS + col) as u64),
                     )
                 })
                 .collect()
         })
         .collect();
-    let vector: Vec<PartialSplitEval32<F128>> = (0..CACHE_MAT_COLS)
-        .map(|col| {
-            PartialSplitEval32::from_ring(&split, &sample_ring_q128m5823_tag(41, col as u64))
-        })
+    let vector: Vec<PartialSplitEval16<F128>> = (0..CACHE_MAT_COLS)
+        .map(|col| PartialSplitEval16::from_ring(&split, &sample_ring_q128m159_tag(41, col as u64)))
         .collect();
 
-    c.bench_function("ring_partial_split_cached_matvec_d64_q128m5823", |b| {
+    c.bench_function("ring_partial_split_cached_matvec_d32_q128m159", |b| {
         b.iter(|| {
             let out: Vec<R128> = matrix
                 .iter()
                 .map(|row| {
-                    let mut acc = PartialSplitEval32::zero();
+                    let mut acc = PartialSplitEval16::zero();
                     for (mat_entry, vec_entry) in row.iter().zip(vector.iter()) {
                         acc.add_mul_assign(mat_entry, black_box(vec_entry), &split);
                     }
@@ -436,32 +434,32 @@ fn bench_partial_split_cached_matvec_q128m5823(c: &mut Criterion) {
     });
 }
 
-fn bench_partial_split_cached_matvec_i8_rhs_q128m5823(c: &mut Criterion) {
-    let split = PartialSplitNtt32::<F128>::compute();
-    let matrix: Vec<Vec<PartialSplitEval32<F128>>> = (0..CACHE_MAT_ROWS)
+fn bench_partial_split_cached_matvec_i8_rhs_q128m159(c: &mut Criterion) {
+    let split = PartialSplitNtt16::<F128>::compute();
+    let matrix: Vec<Vec<PartialSplitEval16<F128>>> = (0..CACHE_MAT_ROWS)
         .map(|r| {
             (0..CACHE_MAT_COLS)
                 .map(|col| {
-                    PartialSplitEval32::from_ring(
+                    PartialSplitEval16::from_ring(
                         &split,
-                        &sample_ring_q128m5823_tag(23, (r * CACHE_MAT_COLS + col) as u64),
+                        &sample_ring_q128m159_tag(23, (r * CACHE_MAT_COLS + col) as u64),
                     )
                 })
                 .collect()
         })
         .collect();
-    let vector: Vec<PartialSplitEval32<F128>> = (0..CACHE_MAT_COLS)
-        .map(|col| PartialSplitEval32::from_i8(&split, &sample_centered_i8(41 + col as u64)))
+    let vector: Vec<PartialSplitEval16<F128>> = (0..CACHE_MAT_COLS)
+        .map(|col| PartialSplitEval16::from_i8(&split, &sample_centered_i8(41 + col as u64)))
         .collect();
 
     c.bench_function(
-        "ring_partial_split_cached_matvec_i8_rhs_d64_q128m5823",
+        "ring_partial_split_cached_matvec_i8_rhs_d32_q128m159",
         |b| {
             b.iter(|| {
                 let out: Vec<R128> = matrix
                     .iter()
                     .map(|row| {
-                        let mut acc = PartialSplitEval32::zero();
+                        let mut acc = PartialSplitEval16::zero();
                         for (mat_entry, vec_entry) in row.iter().zip(vector.iter()) {
                             acc.add_mul_assign(mat_entry, black_box(vec_entry), &split);
                         }
@@ -474,55 +472,53 @@ fn bench_partial_split_cached_matvec_i8_rhs_q128m5823(c: &mut Criterion) {
     );
 }
 
-fn bench_partial_split_packed_cached_matvec_q128m5823(c: &mut Criterion) {
-    let split = PartialSplitNtt32::<F128>::compute();
+fn bench_partial_split_packed_cached_matvec_q128m159(c: &mut Criterion) {
+    let split = PartialSplitNtt16::<F128>::compute();
     let packed = split.packed::<PF128>();
-    let matrix_scalar: Vec<Vec<PartialSplitEval32<F128>>> = (0..CACHE_MAT_ROWS)
+    let matrix_scalar: Vec<Vec<PartialSplitEval16<F128>>> = (0..CACHE_MAT_ROWS)
         .map(|r| {
             (0..CACHE_MAT_COLS)
                 .map(|col| {
-                    PartialSplitEval32::from_ring(
+                    PartialSplitEval16::from_ring(
                         &split,
-                        &sample_ring_q128m5823_tag(23, (r * CACHE_MAT_COLS + col) as u64),
+                        &sample_ring_q128m159_tag(23, (r * CACHE_MAT_COLS + col) as u64),
                     )
                 })
                 .collect()
         })
         .collect();
-    let vector_scalar: Vec<PartialSplitEval32<F128>> = (0..CACHE_MAT_COLS)
-        .map(|col| {
-            PartialSplitEval32::from_ring(&split, &sample_ring_q128m5823_tag(41, col as u64))
-        })
+    let vector_scalar: Vec<PartialSplitEval16<F128>> = (0..CACHE_MAT_COLS)
+        .map(|col| PartialSplitEval16::from_ring(&split, &sample_ring_q128m159_tag(41, col as u64)))
         .collect();
-    let mut matrix_chunks = matrix_scalar.chunks_exact(PackedPartialSplitEval32::<PF128>::WIDTH);
-    let matrix_packed: Vec<Vec<PackedPartialSplitEval32<PF128>>> = matrix_chunks
+    let mut matrix_chunks = matrix_scalar.chunks_exact(PackedPartialSplitEval16::<PF128>::WIDTH);
+    let matrix_packed: Vec<Vec<PackedPartialSplitEval16<PF128>>> = matrix_chunks
         .by_ref()
         .map(|row_chunk| {
             (0..CACHE_MAT_COLS)
-                .map(|col| PackedPartialSplitEval32::<PF128>::from_fn(|lane| row_chunk[lane][col]))
+                .map(|col| PackedPartialSplitEval16::<PF128>::from_fn(|lane| row_chunk[lane][col]))
                 .collect()
         })
         .collect();
     let matrix_scalar_tail = matrix_chunks.remainder();
-    let vector_packed: Vec<PackedPartialSplitEval32<PF128>> = vector_scalar
+    let vector_packed: Vec<PackedPartialSplitEval16<PF128>> = vector_scalar
         .iter()
-        .map(PackedPartialSplitEval32::<PF128>::broadcast)
+        .map(PackedPartialSplitEval16::<PF128>::broadcast)
         .collect();
 
     c.bench_function(
-        "ring_partial_split_packed_cached_matvec_d64_q128m5823",
+        "ring_partial_split_packed_cached_matvec_d32_q128m159",
         |b| {
             b.iter(|| {
                 let mut out = Vec::with_capacity(CACHE_MAT_ROWS);
                 for packed_row in &matrix_packed {
-                    let mut acc = PackedPartialSplitEval32::<PF128>::zero();
+                    let mut acc = PackedPartialSplitEval16::<PF128>::zero();
                     for (mat_entry, vec_entry) in packed_row.iter().zip(vector_packed.iter()) {
                         packed.add_mul_assign(&mut acc, mat_entry, black_box(vec_entry));
                     }
                     packed.append_rings(&acc, &mut out);
                 }
                 for row in matrix_scalar_tail {
-                    let mut acc = PartialSplitEval32::zero();
+                    let mut acc = PartialSplitEval16::zero();
                     for (mat_entry, vec_entry) in row.iter().zip(vector_scalar.iter()) {
                         acc.add_mul_assign(mat_entry, black_box(vec_entry), &split);
                     }
@@ -534,14 +530,14 @@ fn bench_partial_split_packed_cached_matvec_q128m5823(c: &mut Criterion) {
     );
 }
 
-fn bench_crt_simd_cached_matvec_q128m5823(c: &mut Criterion) {
+fn bench_crt_simd_cached_matvec_q128m159(c: &mut Criterion) {
     let params = CrtNttParamSet::new(q128_primes());
     let matrix: Vec<Vec<N128>> = (0..CACHE_MAT_ROWS)
         .map(|r| {
             (0..CACHE_MAT_COLS)
                 .map(|col| {
                     N128::from_ring_with_params(
-                        &sample_ring_q128m5823_tag(23, (r * CACHE_MAT_COLS + col) as u64),
+                        &sample_ring_q128m159_tag(23, (r * CACHE_MAT_COLS + col) as u64),
                         &params,
                     )
                 })
@@ -549,10 +545,10 @@ fn bench_crt_simd_cached_matvec_q128m5823(c: &mut Criterion) {
         })
         .collect();
     let vector: Vec<N128> = (0..CACHE_MAT_COLS)
-        .map(|col| N128::from_ring_with_params(&sample_ring_q128m5823_tag(41, col as u64), &params))
+        .map(|col| N128::from_ring_with_params(&sample_ring_q128m159_tag(41, col as u64), &params))
         .collect();
 
-    c.bench_function("ring_crt_ntt_simd_cached_matvec_d64_q128m5823_k5", |b| {
+    c.bench_function("ring_crt_ntt_simd_cached_matvec_d32_q128m159_k5", |b| {
         b.iter(|| {
             let out: Vec<R128> = matrix
                 .iter()
@@ -573,53 +569,53 @@ fn bench_crt_simd_cached_matvec_q128m5823(c: &mut Criterion) {
     });
 }
 
-fn bench_partial_split_packed_cached_matvec_i8_rhs_q128m5823(c: &mut Criterion) {
-    let split = PartialSplitNtt32::<F128>::compute();
+fn bench_partial_split_packed_cached_matvec_i8_rhs_q128m159(c: &mut Criterion) {
+    let split = PartialSplitNtt16::<F128>::compute();
     let packed = split.packed::<PF128>();
-    let matrix_scalar: Vec<Vec<PartialSplitEval32<F128>>> = (0..CACHE_MAT_ROWS)
+    let matrix_scalar: Vec<Vec<PartialSplitEval16<F128>>> = (0..CACHE_MAT_ROWS)
         .map(|r| {
             (0..CACHE_MAT_COLS)
                 .map(|col| {
-                    PartialSplitEval32::from_ring(
+                    PartialSplitEval16::from_ring(
                         &split,
-                        &sample_ring_q128m5823_tag(23, (r * CACHE_MAT_COLS + col) as u64),
+                        &sample_ring_q128m159_tag(23, (r * CACHE_MAT_COLS + col) as u64),
                     )
                 })
                 .collect()
         })
         .collect();
-    let vector_scalar: Vec<PartialSplitEval32<F128>> = (0..CACHE_MAT_COLS)
-        .map(|col| PartialSplitEval32::from_i8(&split, &sample_centered_i8(41 + col as u64)))
+    let vector_scalar: Vec<PartialSplitEval16<F128>> = (0..CACHE_MAT_COLS)
+        .map(|col| PartialSplitEval16::from_i8(&split, &sample_centered_i8(41 + col as u64)))
         .collect();
-    let mut matrix_chunks = matrix_scalar.chunks_exact(PackedPartialSplitEval32::<PF128>::WIDTH);
-    let matrix_packed: Vec<Vec<PackedPartialSplitEval32<PF128>>> = matrix_chunks
+    let mut matrix_chunks = matrix_scalar.chunks_exact(PackedPartialSplitEval16::<PF128>::WIDTH);
+    let matrix_packed: Vec<Vec<PackedPartialSplitEval16<PF128>>> = matrix_chunks
         .by_ref()
         .map(|row_chunk| {
             (0..CACHE_MAT_COLS)
-                .map(|col| PackedPartialSplitEval32::<PF128>::from_fn(|lane| row_chunk[lane][col]))
+                .map(|col| PackedPartialSplitEval16::<PF128>::from_fn(|lane| row_chunk[lane][col]))
                 .collect()
         })
         .collect();
     let matrix_scalar_tail = matrix_chunks.remainder();
-    let vector_packed: Vec<PackedPartialSplitEval32<PF128>> = vector_scalar
+    let vector_packed: Vec<PackedPartialSplitEval16<PF128>> = vector_scalar
         .iter()
-        .map(PackedPartialSplitEval32::<PF128>::broadcast)
+        .map(PackedPartialSplitEval16::<PF128>::broadcast)
         .collect();
 
     c.bench_function(
-        "ring_partial_split_packed_cached_matvec_i8_rhs_d64_q128m5823",
+        "ring_partial_split_packed_cached_matvec_i8_rhs_d32_q128m159",
         |b| {
             b.iter(|| {
                 let mut out = Vec::with_capacity(CACHE_MAT_ROWS);
                 for packed_row in &matrix_packed {
-                    let mut acc = PackedPartialSplitEval32::<PF128>::zero();
+                    let mut acc = PackedPartialSplitEval16::<PF128>::zero();
                     for (mat_entry, vec_entry) in packed_row.iter().zip(vector_packed.iter()) {
                         packed.add_mul_assign(&mut acc, mat_entry, black_box(vec_entry));
                     }
                     packed.append_rings(&acc, &mut out);
                 }
                 for row in matrix_scalar_tail {
-                    let mut acc = PartialSplitEval32::zero();
+                    let mut acc = PartialSplitEval16::zero();
                     for (mat_entry, vec_entry) in row.iter().zip(vector_scalar.iter()) {
                         acc.add_mul_assign(mat_entry, black_box(vec_entry), &split);
                     }
@@ -631,14 +627,14 @@ fn bench_partial_split_packed_cached_matvec_i8_rhs_q128m5823(c: &mut Criterion) 
     );
 }
 
-fn bench_crt_simd_cached_matvec_i8_rhs_q128m5823(c: &mut Criterion) {
+fn bench_crt_simd_cached_matvec_i8_rhs_q128m159(c: &mut Criterion) {
     let params = CrtNttParamSet::new(q128_primes());
     let matrix: Vec<Vec<N128>> = (0..CACHE_MAT_ROWS)
         .map(|r| {
             (0..CACHE_MAT_COLS)
                 .map(|col| {
                     N128::from_ring_with_params(
-                        &sample_ring_q128m5823_tag(23, (r * CACHE_MAT_COLS + col) as u64),
+                        &sample_ring_q128m159_tag(23, (r * CACHE_MAT_COLS + col) as u64),
                         &params,
                     )
                 })
@@ -650,7 +646,7 @@ fn bench_crt_simd_cached_matvec_i8_rhs_q128m5823(c: &mut Criterion) {
         .collect();
 
     c.bench_function(
-        "ring_crt_ntt_simd_cached_matvec_i8_rhs_d64_q128m5823_k5",
+        "ring_crt_ntt_simd_cached_matvec_i8_rhs_d32_q128m159_k5",
         |b| {
             b.iter(|| {
                 let out: Vec<R128> = matrix
@@ -678,22 +674,22 @@ criterion_group!(
     bench_ring_schoolbook_mul,
     bench_ntt_single_prime_round_trip,
     bench_crt_round_trip,
-    bench_ring_schoolbook_mul_q128m5823,
-    bench_partial_split_mul_q128m5823,
-    bench_crt_mul_q128m5823,
-    bench_partial_split_mul_i8_rhs_q128m5823,
-    bench_crt_mul_i8_rhs_q128m5823,
-    bench_cached_mul_batch_scaling_q128m5823,
-    bench_cached_mul_batch_scaling_i8_rhs_q128m5823,
-    bench_partial_split_cyclic_mul_q128m5823,
-    bench_crt_cyclic_mul_q128m5823,
-    bench_partial_split_quotient_q128m5823,
-    bench_crt_quotient_q128m5823,
-    bench_partial_split_cached_matvec_q128m5823,
-    bench_partial_split_packed_cached_matvec_q128m5823,
-    bench_crt_simd_cached_matvec_q128m5823,
-    bench_partial_split_cached_matvec_i8_rhs_q128m5823,
-    bench_partial_split_packed_cached_matvec_i8_rhs_q128m5823,
-    bench_crt_simd_cached_matvec_i8_rhs_q128m5823
+    bench_ring_schoolbook_mul_q128m159,
+    bench_partial_split_mul_q128m159,
+    bench_crt_mul_q128m159,
+    bench_partial_split_mul_i8_rhs_q128m159,
+    bench_crt_mul_i8_rhs_q128m159,
+    bench_cached_mul_batch_scaling_q128m159,
+    bench_cached_mul_batch_scaling_i8_rhs_q128m159,
+    bench_partial_split_cyclic_mul_q128m159,
+    bench_crt_cyclic_mul_q128m159,
+    bench_partial_split_quotient_q128m159,
+    bench_crt_quotient_q128m159,
+    bench_partial_split_cached_matvec_q128m159,
+    bench_partial_split_packed_cached_matvec_q128m159,
+    bench_crt_simd_cached_matvec_q128m159,
+    bench_partial_split_cached_matvec_i8_rhs_q128m159,
+    bench_partial_split_packed_cached_matvec_i8_rhs_q128m159,
+    bench_crt_simd_cached_matvec_i8_rhs_q128m159
 );
 criterion_main!(ring_ntt);

@@ -63,7 +63,7 @@ HACHI_MODE=onehot HACHI_NUM_VARS=32 cargo run --release --example profile
 
 Knobs:
 
-- `HACHI_MODE=full|onehot|logbasis|all|compare_onehot|compare_logbasis|compare_basis`
+- `HACHI_MODE=full|onehot|all|compare_onehot|compare_basis`
 - `HACHI_NUM_VARS=<n>` — number of variables, default `25`
 - `HACHI_PROFILE_TRACE=0|1` — write a Perfetto JSON trace to `profile_traces/`, default `1`
 - `HACHI_PROFILE_LOG=<filter>` — tracing filter, default `trace`

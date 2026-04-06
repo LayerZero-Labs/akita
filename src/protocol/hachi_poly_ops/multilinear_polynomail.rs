@@ -18,6 +18,7 @@ use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
+use crate::protocol::proof::FlatDigitBlocks;
 use crate::{CanonicalField, FieldCore};
 
 /// Borrowed multilinear-polynomial wrapper for dense and one-hot batches.
@@ -72,6 +73,13 @@ where
         match self {
             Self::Dense(poly) => poly.num_ring_elems(),
             Self::OneHot(poly) => poly.num_ring_elems(),
+        }
+    }
+
+    fn num_vars(&self) -> usize {
+        match self {
+            Self::Dense(poly) => poly.num_vars(),
+            Self::OneHot(poly) => poly.num_vars(),
         }
     }
 
@@ -165,27 +173,33 @@ where
         &self,
         a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-    ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
+        matrix_stride: usize,
+    ) -> Result<FlatDigitBlocks<D>, HachiError> {
         match self {
             Self::Dense(poly) => poly.commit_inner(
                 a_matrix,
                 ntt_a,
+                n_a,
                 block_len,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
+                matrix_stride,
             ),
             Self::OneHot(poly) => poly.commit_inner(
                 a_matrix,
                 ntt_a,
+                n_a,
                 block_len,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
+                matrix_stride,
             ),
         }
     }
@@ -194,10 +208,12 @@ where
         &self,
         a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, HachiError>
     where
         F: CanonicalField,
@@ -206,18 +222,22 @@ where
             Self::Dense(poly) => poly.commit_inner_witness(
                 a_matrix,
                 ntt_a,
+                n_a,
                 block_len,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
+                matrix_stride,
             ),
             Self::OneHot(poly) => poly.commit_inner_witness(
                 a_matrix,
                 ntt_a,
+                n_a,
                 block_len,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
+                matrix_stride,
             ),
         }
     }
@@ -226,10 +246,12 @@ where
         polys: &[&Self],
         a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<Option<Vec<CommitInnerWitness<F, D>>>, HachiError>
     where
         F: CanonicalField,
@@ -250,10 +272,12 @@ where
                     &dense_polys,
                     a_matrix,
                     ntt_a,
+                    n_a,
                     block_len,
                     num_digits_commit,
                     num_digits_open,
                     log_basis,
+                    matrix_stride,
                 )
             }
             Self::OneHot(_) => {
@@ -268,12 +292,23 @@ where
                     &onehot_polys,
                     a_matrix,
                     ntt_a,
+                    n_a,
                     block_len,
                     num_digits_commit,
                     num_digits_open,
                     log_basis,
+                    matrix_stride,
                 )
             }
+        }
+    }
+
+    fn direct_root_witness(
+        &self,
+    ) -> Result<crate::protocol::proof::DirectWitnessProof<F>, HachiError> {
+        match self {
+            Self::Dense(poly) => poly.direct_root_witness(),
+            Self::OneHot(poly) => poly.direct_root_witness(),
         }
     }
 }

@@ -40,7 +40,7 @@ from typing import Literal
 
 FIELD_BYTES = 16
 Q_BITS = 128
-Q = (1 << 128) - 5823
+Q = (1 << 128) - 275
 HALF_Q = Q // 2
 D = 64
 ALPHA = D.bit_length() - 1

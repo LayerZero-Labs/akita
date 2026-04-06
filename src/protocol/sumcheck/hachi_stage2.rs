@@ -59,9 +59,8 @@ use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::protocol::proof::PackedDigits;
+use crate::protocol::proof::{DirectWitnessProof, PackedDigits};
 use crate::protocol::ring_switch::eval_ring_at;
-use crate::{cfg_fold_reduce, cfg_into_iter};
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
 use std::marker::PhantomData;
 use std::mem;
@@ -245,7 +244,7 @@ fn packed_witness_eval<F: FieldCore + FromSmallInt>(
     }
 
     let d = 1usize << num_l;
-    if packed_witness.num_elems % d != 0 {
+    if !packed_witness.num_elems.is_multiple_of(d) {
         return Err(HachiError::InvalidProof);
     }
 
@@ -268,6 +267,58 @@ fn packed_witness_eval<F: FieldCore + FromSmallInt>(
     }
 
     Ok(acc)
+}
+
+fn field_witness_eval<F: FieldCore>(
+    field_witness: &[F],
+    challenges: &[F],
+    num_u: usize,
+    num_l: usize,
+) -> Result<F, HachiError> {
+    if challenges.len() != num_u + num_l {
+        return Err(HachiError::InvalidSize {
+            expected: num_u + num_l,
+            actual: challenges.len(),
+        });
+    }
+
+    let d = 1usize << num_l;
+    if !field_witness.len().is_multiple_of(d) {
+        return Err(HachiError::InvalidProof);
+    }
+
+    let (x_challenges, y_challenges) = challenges.split_at(num_u);
+    let eq_x = EqPolynomial::evals(x_challenges);
+    let eq_y = EqPolynomial::evals(y_challenges);
+    let live_x_cols = field_witness.len() / d;
+
+    let mut acc = F::zero();
+    for (x, &x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
+        let base = x << num_l;
+        let mut y_eval = F::zero();
+        for (y, &y_weight) in eq_y.iter().enumerate() {
+            y_eval += field_witness[base + y] * y_weight;
+        }
+        acc += x_weight * y_eval;
+    }
+
+    Ok(acc)
+}
+
+fn direct_witness_eval<F: FieldCore + FromSmallInt>(
+    direct_witness: &DirectWitnessProof<F>,
+    challenges: &[F],
+    num_u: usize,
+    num_l: usize,
+) -> Result<F, HachiError> {
+    match direct_witness {
+        DirectWitnessProof::PackedDigits(packed_witness) => {
+            packed_witness_eval(packed_witness, challenges, num_u, num_l)
+        }
+        DirectWitnessProof::FieldElements(field_witness) => {
+            field_witness_eval(field_witness.coeffs(), challenges, num_u, num_l)
+        }
+    }
 }
 
 /// Stage-2 fused virtual-claim + relation sumcheck prover.
@@ -2127,7 +2178,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
 
 /// Source of the witness oracle used by the stage-2 verifier.
 enum Stage2WitnessOracle<'a, F: FieldCore> {
-    Packed(&'a PackedDigits),
+    Direct(&'a DirectWitnessProof<F>),
     ClaimedEval(F),
 }
 
@@ -2180,13 +2231,13 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
     }
 
     /// Create a fused verifier for the stage-2 sumcheck when the verifier holds
-    /// the packed direct tail.
+    /// the terminal direct witness.
     #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all, name = "HachiStage2Verifier::new_with_packed_witness")]
-    pub fn new_with_packed_witness(
+    #[tracing::instrument(skip_all, name = "HachiStage2Verifier::new_with_direct_witness")]
+    pub fn new_with_direct_witness(
         batching_coeff: F,
         s_claim: F,
-        packed_witness: &'a PackedDigits,
+        direct_witness: &'a DirectWitnessProof<F>,
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
         m_evals_x: Vec<F>,
@@ -2198,10 +2249,10 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         num_u: usize,
         num_l: usize,
     ) -> Self {
-        Self::new_with_packed_witness_batched(
+        Self::new_with_direct_witness_batched(
             batching_coeff,
             s_claim,
-            packed_witness,
+            direct_witness,
             r_stage1,
             alpha_evals_y,
             m_evals_x,
@@ -2220,12 +2271,12 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(
         skip_all,
-        name = "HachiStage2Verifier::new_with_packed_witness_batched"
+        name = "HachiStage2Verifier::new_with_direct_witness_batched"
     )]
-    pub fn new_with_packed_witness_batched(
+    pub fn new_with_direct_witness_batched(
         batching_coeff: F,
         s_claim: F,
-        packed_witness: &'a PackedDigits,
+        direct_witness: &'a DirectWitnessProof<F>,
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
         m_evals_x: Vec<F>,
@@ -2240,7 +2291,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         Self::new(
             batching_coeff,
             s_claim,
-            Stage2WitnessOracle::Packed(packed_witness),
+            Stage2WitnessOracle::Direct(direct_witness),
             r_stage1,
             alpha_evals_y,
             m_evals_x,
@@ -2331,8 +2382,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
 
     pub(crate) fn witness_eval(&self, challenges: &[F]) -> Result<F, HachiError> {
         match &self.witness_oracle {
-            Stage2WitnessOracle::Packed(packed_witness) => {
-                packed_witness_eval(packed_witness, challenges, self.num_u, self.num_l)
+            Stage2WitnessOracle::Direct(direct_witness) => {
+                direct_witness_eval(direct_witness, challenges, self.num_u, self.num_l)
             }
             Stage2WitnessOracle::ClaimedEval(w_eval) => Ok(*w_eval),
         }
@@ -2382,11 +2433,11 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckI
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128Offset5823;
+    use crate::algebra::Prime128Offset275;
     use crate::protocol::ring_switch::build_w_evals;
     use crate::protocol::sumcheck::multilinear_eval;
 
-    type F = Prime128Offset5823;
+    type F = Prime128Offset275;
 
     #[derive(Clone, Copy)]
     struct Stage2Params<'a> {

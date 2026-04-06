@@ -1,7 +1,7 @@
 //! Runtime-to-const-generic dispatch for ring dimension D.
 //!
 //! The supported D values (all powers of 2 that admit a CRT+NTT decomposition)
-//! are: 64, 128, 256, 512, 1024.
+//! are: 32, 64, 128, 256, 512, 1024.
 
 /// Bridge a runtime `d: usize` to a const-generic `D` context.
 ///
@@ -10,7 +10,7 @@
 ///
 /// # Supported dimensions
 ///
-/// 64, 128, 256, 512, 1024.
+/// 32, 64, 128, 256, 512, 1024.
 ///
 /// # Panics
 ///
@@ -29,6 +29,10 @@ macro_rules! dispatch_ring_dim {
     ($d:expr, |$D:ident| $body:expr) => {{
         let __d = $d;
         match __d {
+            32 => {
+                const $D: usize = 32;
+                $body
+            }
             64 => {
                 const $D: usize = 64;
                 $body
@@ -71,6 +75,11 @@ macro_rules! dispatch_with_ntt {
      |$D:ident, $ntt_shared:ident| $body:expr) => {{
         let __d = $d;
         match __d {
+            32 => {
+                const $D: usize = 32;
+                let $ntt_shared = ($ntt).get_or_build_32(&($expanded).shared_matrix)?;
+                $body
+            }
             64 => {
                 const $D: usize = 64;
                 let $ntt_shared = ($ntt).get_or_build_64(&($expanded).shared_matrix)?;
@@ -102,7 +111,7 @@ macro_rules! dispatch_with_ntt {
 }
 
 /// The set of supported ring dimensions for [`dispatch_ring_dim!`].
-pub const SUPPORTED_RING_DIMS: &[usize] = &[64, 128, 256, 512, 1024];
+pub const SUPPORTED_RING_DIMS: &[usize] = &[32, 64, 128, 256, 512, 1024];
 
 #[cfg(test)]
 mod tests {

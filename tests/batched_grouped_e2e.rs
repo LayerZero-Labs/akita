@@ -7,124 +7,25 @@
 //! `batched_verify`, and additionally cross-checks that committing each group
 //! individually produces the same commitment as the multi-group call.
 //!
-//! Two polynomial representations are covered:
+//! This file intentionally keeps only a few representative grouped cases.
+//! The broader batch-size and variable-count matrix is already exercised by
+//! the aggregated, multipoint, and core batched E2E suites; the unique value
+//! here is checking that multi-group commitment partitioning matches the
+//! per-group individual commits.
 //!
-//! * **One-hot** — `Fp128OneHotCommitmentConfig` (D = 64, K = D).
-//!   Variable counts: 10, 15, 20, 25 (28 tests).
-//! * **Dense** — `Fp128FullCommitmentConfig` (D = 128, full-field coefficients).
-//!   Variable counts: 10, 15, 20 (21 tests — nv 25 is omitted for speed).
-//!
-//! Batch sizes per variable count: 1, 2, 3, 4, 7, 12, 16 (49 tests total).
-//!
-//! Group partitions by batch size:
-//!   1 → \[1\],  2 → \[1,1\],  3 → \[2,1\],  4 → \[2,2\],
-//!   7 → \[3,2,2\],  12 → \[4,4,4\],  16 → \[5,5,3,3\].
+//! Retained partitions:
+//!   2 → \[1,1\],  3 → \[2,1\],  7 → \[3,2,2\].
 
 #![allow(missing_docs)]
 
-use hachi_pcs::algebra::Fp128;
-use hachi_pcs::protocol::commitment::{
-    hachi_batched_root_layout, Fp128FullCommitmentConfig, Fp128OneHotCommitmentConfig,
-};
+mod common;
+
+use common::*;
+use hachi_pcs::protocol::commitment::hachi_batched_root_layout;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
-use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
-use hachi_pcs::protocol::opening_point::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BlockOrder,
-};
 use hachi_pcs::protocol::proof::HachiBatchedProof;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
-use hachi_pcs::protocol::{CommitmentConfig, HachiCommitmentLayout};
-use hachi_pcs::{
-    BasisMode, CanonicalField, CommitmentScheme, HachiDeserialize, HachiSerialize, Transcript,
-};
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
-use std::sync::Once;
-
-type F = Fp128<0xffffffffffffffffffffffffffffe941>;
-const STACK_SIZE: usize = 256 * 1024 * 1024;
-
-type OneHotCfg = Fp128OneHotCommitmentConfig;
-const ONEHOT_D: usize = OneHotCfg::D;
-const ONEHOT_K: usize = ONEHOT_D;
-
-type DenseCfg = Fp128FullCommitmentConfig;
-const DENSE_D: usize = DenseCfg::D;
-
-static INIT_RAYON: Once = Once::new();
-
-fn init_rayon_pool() {
-    INIT_RAYON.call_once(|| {
-        #[cfg(feature = "parallel")]
-        rayon::ThreadPoolBuilder::new()
-            .stack_size(STACK_SIZE)
-            .build_global()
-            .ok();
-    });
-}
-
-fn random_point(nv: usize, seed: u64) -> Vec<F> {
-    let mut rng = StdRng::seed_from_u64(seed);
-    (0..nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-        .collect()
-}
-
-fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(STACK_SIZE)
-        .spawn(f)
-        .expect("failed to spawn thread")
-        .join()
-        .expect("test thread panicked");
-}
-
-fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
-    poly: &P,
-    point: &[F],
-    layout: &HachiCommitmentLayout,
-) -> F {
-    let alpha_bits = D.trailing_zeros() as usize;
-    assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
-
-    let inner_point = &point[..alpha_bits];
-    let reduced_point = &point[alpha_bits..];
-    let ring_opening_point = ring_opening_point_from_field(
-        reduced_point,
-        layout.r_vars,
-        layout.m_vars,
-        BasisMode::Lagrange,
-        BlockOrder::RowMajor,
-    )
-    .expect("opening point shape should match layout");
-
-    let (y_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
-    let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, BasisMode::Lagrange)
-        .expect("inner opening point should match ring dimension");
-    (y_ring * v.sigma_m1()).coefficients()[0]
-}
-
-fn make_onehot_poly(layout: &HachiCommitmentLayout, seed: u64) -> OneHotPoly<F, ONEHOT_D, u8> {
-    let total_ring = layout.num_blocks * layout.block_len;
-    let mut rng = StdRng::seed_from_u64(seed);
-    let indices: Vec<Option<u8>> = (0..total_ring)
-        .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
-        .collect();
-    OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices, layout.r_vars, layout.m_vars)
-        .expect("onehot poly")
-}
-
-fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F, DENSE_D> {
-    let mut rng = StdRng::seed_from_u64(seed);
-    let evals: Vec<F> = (0..1usize << nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-        .collect();
-    DensePoly::<F, DENSE_D>::from_field_evals(nv, &evals).expect("dense poly")
-}
+use hachi_pcs::{CommitmentScheme, HachiDeserialize, HachiSerialize, Transcript};
 
 /// Return the group-size partition for a given total batch size.
 fn group_partition(batch_size: usize) -> Vec<usize> {
@@ -373,279 +274,27 @@ fn run_grouped_dense(nv: usize, batch_size: usize) {
     });
 }
 
-// ---------------------------------------------------------------------------
-// nv = 10
-// ---------------------------------------------------------------------------
-
-#[test]
-fn grouped_onehot_nv10_batch1() {
-    run_grouped_onehot(10, 1);
+macro_rules! grouped_onehot_case {
+    ($name:ident, $nv:expr, $batch_size:expr) => {
+        #[test]
+        fn $name() {
+            run_grouped_onehot($nv, $batch_size);
+        }
+    };
 }
 
-#[test]
-fn grouped_onehot_nv10_batch2() {
-    run_grouped_onehot(10, 2);
+macro_rules! grouped_dense_case {
+    ($name:ident, $nv:expr, $batch_size:expr) => {
+        #[test]
+        fn $name() {
+            run_grouped_dense($nv, $batch_size);
+        }
+    };
 }
 
-#[test]
-fn grouped_onehot_nv10_batch3() {
-    run_grouped_onehot(10, 3);
-}
+grouped_onehot_case!(grouped_onehot_nv10_batch2, 10, 2);
+grouped_onehot_case!(grouped_onehot_nv20_batch7, 20, 7);
+grouped_onehot_case!(grouped_onehot_nv25_batch3, 25, 3);
 
-#[test]
-fn grouped_onehot_nv10_batch4() {
-    run_grouped_onehot(10, 4);
-}
-
-#[test]
-fn grouped_onehot_nv10_batch7() {
-    run_grouped_onehot(10, 7);
-}
-
-#[test]
-fn grouped_onehot_nv10_batch12() {
-    run_grouped_onehot(10, 12);
-}
-
-#[test]
-fn grouped_onehot_nv10_batch16() {
-    run_grouped_onehot(10, 16);
-}
-
-// ---------------------------------------------------------------------------
-// nv = 15
-// ---------------------------------------------------------------------------
-
-#[test]
-fn grouped_onehot_nv15_batch1() {
-    run_grouped_onehot(15, 1);
-}
-
-#[test]
-fn grouped_onehot_nv15_batch2() {
-    run_grouped_onehot(15, 2);
-}
-
-#[test]
-fn grouped_onehot_nv15_batch3() {
-    run_grouped_onehot(15, 3);
-}
-
-#[test]
-fn grouped_onehot_nv15_batch4() {
-    run_grouped_onehot(15, 4);
-}
-
-#[test]
-fn grouped_onehot_nv15_batch7() {
-    run_grouped_onehot(15, 7);
-}
-
-#[test]
-fn grouped_onehot_nv15_batch12() {
-    run_grouped_onehot(15, 12);
-}
-
-#[test]
-fn grouped_onehot_nv15_batch16() {
-    run_grouped_onehot(15, 16);
-}
-
-// ---------------------------------------------------------------------------
-// nv = 20
-// ---------------------------------------------------------------------------
-
-#[test]
-fn grouped_onehot_nv20_batch1() {
-    run_grouped_onehot(20, 1);
-}
-
-#[test]
-fn grouped_onehot_nv20_batch2() {
-    run_grouped_onehot(20, 2);
-}
-
-#[test]
-fn grouped_onehot_nv20_batch3() {
-    run_grouped_onehot(20, 3);
-}
-
-#[test]
-fn grouped_onehot_nv20_batch4() {
-    run_grouped_onehot(20, 4);
-}
-
-#[test]
-fn grouped_onehot_nv20_batch7() {
-    run_grouped_onehot(20, 7);
-}
-
-#[test]
-fn grouped_onehot_nv20_batch12() {
-    run_grouped_onehot(20, 12);
-}
-
-// #[test]
-// fn grouped_onehot_nv20_batch16() {
-//     run_grouped_onehot(20, 16);
-// }
-
-// ---------------------------------------------------------------------------
-// nv = 25
-// ---------------------------------------------------------------------------
-
-#[test]
-fn grouped_onehot_nv25_batch1() {
-    run_grouped_onehot(25, 1);
-}
-
-#[test]
-fn grouped_onehot_nv25_batch2() {
-    run_grouped_onehot(25, 2);
-}
-
-#[test]
-fn grouped_onehot_nv25_batch3() {
-    run_grouped_onehot(25, 3);
-}
-
-#[test]
-fn grouped_onehot_nv25_batch4() {
-    run_grouped_onehot(25, 4);
-}
-
-#[test]
-fn grouped_onehot_nv25_batch7() {
-    run_grouped_onehot(25, 7);
-}
-
-// #[test]
-// fn grouped_onehot_nv25_batch12() {
-//     run_grouped_onehot(25, 12);
-// }
-
-// #[test]
-// fn grouped_onehot_nv25_batch16() {
-//     run_grouped_onehot(25, 16);
-// }
-
-// ===========================================================================
-// Dense batched-grouped tests (D = 128)
-// ===========================================================================
-
-// ---------------------------------------------------------------------------
-// nv = 10
-// ---------------------------------------------------------------------------
-
-#[test]
-fn grouped_dense_nv10_batch1() {
-    run_grouped_dense(10, 1);
-}
-
-#[test]
-fn grouped_dense_nv10_batch2() {
-    run_grouped_dense(10, 2);
-}
-
-#[test]
-fn grouped_dense_nv10_batch3() {
-    run_grouped_dense(10, 3);
-}
-
-#[test]
-fn grouped_dense_nv10_batch4() {
-    run_grouped_dense(10, 4);
-}
-
-#[test]
-fn grouped_dense_nv10_batch7() {
-    run_grouped_dense(10, 7);
-}
-
-#[test]
-fn grouped_dense_nv10_batch12() {
-    run_grouped_dense(10, 12);
-}
-
-#[test]
-fn grouped_dense_nv10_batch16() {
-    run_grouped_dense(10, 16);
-}
-
-// ---------------------------------------------------------------------------
-// nv = 15
-// ---------------------------------------------------------------------------
-
-#[test]
-fn grouped_dense_nv15_batch1() {
-    run_grouped_dense(15, 1);
-}
-
-#[test]
-fn grouped_dense_nv15_batch2() {
-    run_grouped_dense(15, 2);
-}
-
-#[test]
-fn grouped_dense_nv15_batch3() {
-    run_grouped_dense(15, 3);
-}
-
-#[test]
-fn grouped_dense_nv15_batch4() {
-    run_grouped_dense(15, 4);
-}
-
-#[test]
-fn grouped_dense_nv15_batch7() {
-    run_grouped_dense(15, 7);
-}
-
-#[test]
-fn grouped_dense_nv15_batch12() {
-    run_grouped_dense(15, 12);
-}
-
-// #[test]
-// fn grouped_dense_nv15_batch16() {
-//     run_grouped_dense(15, 16);
-// }
-
-// ---------------------------------------------------------------------------
-// nv = 20
-// ---------------------------------------------------------------------------
-
-#[test]
-fn grouped_dense_nv20_batch1() {
-    run_grouped_dense(20, 1);
-}
-
-#[test]
-fn grouped_dense_nv20_batch2() {
-    run_grouped_dense(20, 2);
-}
-
-#[test]
-fn grouped_dense_nv20_batch3() {
-    run_grouped_dense(20, 3);
-}
-
-#[test]
-fn grouped_dense_nv20_batch4() {
-    run_grouped_dense(20, 4);
-}
-
-#[test]
-fn grouped_dense_nv20_batch7() {
-    run_grouped_dense(20, 7);
-}
-
-// #[test]
-// fn grouped_dense_nv20_batch12() {
-//     run_grouped_dense(20, 12);
-// }
-
-// #[test]
-// fn grouped_dense_nv20_batch16() {
-//     run_grouped_dense(20, 16);
-// }
+grouped_dense_case!(grouped_dense_nv10_batch2, 10, 2);
+grouped_dense_case!(grouped_dense_nv15_batch3, 15, 3);

@@ -1,21 +1,22 @@
 //! Ring-native §4.1 commitment core implementation.
 
 use super::config::{
-    compute_num_digits, compute_num_digits_fold, ensure_block_layout, ensure_supported_num_vars,
-    validate_and_derive_layout, HachiCommitmentLayout,
+    compute_num_digits, compute_num_digits_fold, ensure_block_layout,
+    ensure_layout_supported_num_vars, validate_and_derive_layout, HachiCommitmentLayout,
 };
 use super::onehot::{inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks};
 use super::schedule::HachiScheduleInputs;
 use super::schedule::{
-    batched_root_level_proof_bytes, estimated_recursive_suffix_bytes,
-    recursive_r_decomp_levels_for_bound,
+    estimated_recursive_suffix_bytes, hachi_root_runtime_plan_from_root_layout,
+    HachiRootBatchSummary, HachiScheduleLookupKey,
 };
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
 use super::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use super::utils::flat_matrix::FlatMatrix;
 use super::utils::linear::{
-    decompose_rows_i8, flatten_i8_blocks, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_single_i8,
+    decompose_rows_i8_into, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
+    mat_vec_mul_ntt_single_i8,
 };
 use super::utils::matrix::{
     derive_public_matrix_flat, sample_public_matrix_seed, PublicMatrixSeed,
@@ -31,10 +32,9 @@ use crate::primitives::serialization::{
 };
 use crate::protocol::commitment_scheme::should_stop_folding;
 use crate::protocol::hachi_poly_ops::OneHotIndex;
-use crate::protocol::ring_switch::{
-    w_ring_element_count, w_ring_element_count_with_num_claims_and_points,
-};
-use crate::{cfg_into_iter, cfg_iter, CanonicalField, FieldCore, FieldSampling};
+use crate::protocol::proof::FlatDigitBlocks;
+use crate::protocol::ring_switch::w_ring_element_count;
+use crate::{CanonicalField, FieldCore, FieldSampling};
 #[cfg(feature = "disk-persistence")]
 use std::fs;
 use std::io::{Read, Write};
@@ -55,23 +55,40 @@ pub struct HachiSetupSeed {
     pub max_outer_width: usize,
     /// Maximum D-matrix width across all recursion levels.
     pub max_d_matrix_width: usize,
+    /// Total ring-element count for the 1D flat backing vector.
+    pub max_total_ring_elements: usize,
     /// Public seed used to derive commitment matrices.
     pub public_matrix_seed: PublicMatrixSeed,
+}
+
+impl HachiSetupSeed {
+    /// Global row stride for the flat NTT cache.
+    ///
+    /// All levels and all matrix roles (A, B, D) share the same flat cache.
+    /// The stride is the maximum column width across all levels and roles,
+    /// ensuring that `(row, col)` maps to the same physical element regardless
+    /// of which level or role is accessing it.
+    pub fn max_stride(&self) -> usize {
+        self.max_inner_width
+            .max(self.max_outer_width)
+            .max(self.max_d_matrix_width)
+    }
 }
 
 /// Expanded setup stage containing a single shared coefficient-form matrix
 /// stored as a D-agnostic flat field-element array.
 ///
-/// All role matrices (A, B, D) are row/column prefixes of this shared matrix.
+/// All role matrices (A, B, D) are row/column prefixes of this shared vector.
 /// See `SHARED_PREFIX_BINDING.md` for the security argument. The same setup
-/// can be viewed at different ring dimensions by calling [`FlatMatrix::view`]
-/// with the desired const-generic `D`.
+/// can be viewed at different ring dimensions by calling
+/// [`FlatMatrix::ring_view`] with the desired const-generic `D` and
+/// role-specific `(num_rows, num_cols)` dimensions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiExpandedSetup<F: FieldCore> {
     /// Setup seed and runtime layout metadata.
     pub seed: HachiSetupSeed,
-    /// Shared backing matrix (max_rows × max_cols). Each role matrix
-    /// (A, B, D) is a row/column prefix of this matrix.
+    /// Shared 1D flat backing vector. Each role matrix (A, B, D) views a
+    /// prefix of this vector reshaped with role-specific dimensions.
     pub shared_matrix: FlatMatrix<F>,
 }
 
@@ -175,6 +192,11 @@ impl Valid for HachiSetupSeed {
                 "setup seed matrix widths must be non-zero".to_string(),
             ));
         }
+        if self.max_total_ring_elements == 0 {
+            return Err(SerializationError::InvalidData(
+                "setup seed max_total_ring_elements must be non-zero".to_string(),
+            ));
+        }
         Ok(())
     }
 }
@@ -195,6 +217,8 @@ impl HachiSerialize for HachiSetupSeed {
             .serialize_with_mode(&mut writer, compress)?;
         self.max_d_matrix_width
             .serialize_with_mode(&mut writer, compress)?;
+        self.max_total_ring_elements
+            .serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.public_matrix_seed)?;
         Ok(())
     }
@@ -205,6 +229,7 @@ impl HachiSerialize for HachiSetupSeed {
             + self.max_inner_width.serialized_size(compress)
             + self.max_outer_width.serialized_size(compress)
             + self.max_d_matrix_width.serialized_size(compress)
+            + self.max_total_ring_elements.serialized_size(compress)
             + 32
     }
 }
@@ -224,6 +249,8 @@ impl HachiDeserialize for HachiSetupSeed {
         let max_outer_width = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let max_d_matrix_width =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let max_total_ring_elements =
+            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let mut public_matrix_seed = [0u8; 32];
         reader.read_exact(&mut public_matrix_seed)?;
         let out = Self {
@@ -232,6 +259,7 @@ impl HachiDeserialize for HachiSetupSeed {
             max_inner_width,
             max_outer_width,
             max_d_matrix_width,
+            max_total_ring_elements,
             public_matrix_seed,
         };
         if matches!(validate, Validate::Yes) {
@@ -458,24 +486,11 @@ where
         ));
     }
 
-    let decomp = Cfg::decomposition();
-    let field_bits = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
-    let r_decomp_levels = recursive_r_decomp_levels_for_bound(
-        field_bits,
-        Cfg::planner_half_field_bound(),
-        root_layout.log_basis,
-    );
-    let row_count = root_params.batched_root_m_row_count(num_claims);
+    let batch = HachiRootBatchSummary::new(num_claims, num_claims, 1)?;
 
     let mut best = None;
     for r_vars in 1..reduced_vars {
         let m_vars = reduced_vars - r_vars;
-        let num_blocks = 1usize
-            .checked_shl(r_vars as u32)
-            .ok_or_else(|| HachiError::InvalidSetup("num_blocks overflow".to_string()))?;
-        let block_len = 1usize
-            .checked_shl(m_vars as u32)
-            .ok_or_else(|| HachiError::InvalidSetup("block_len overflow".to_string()))?;
         let num_digits_fold = root_layout
             .num_digits_fold
             .max(compute_num_digits_fold_batched(
@@ -485,29 +500,6 @@ where
                 num_claims,
             ));
 
-        let w_hat_count = num_claims
-            .checked_mul(num_blocks)
-            .and_then(|count| count.checked_mul(root_layout.num_digits_open))
-            .ok_or_else(|| HachiError::InvalidSetup("w_hat count overflow".to_string()))?;
-        let t_hat_count = w_hat_count
-            .checked_mul(root_params.n_a)
-            .ok_or_else(|| HachiError::InvalidSetup("t_hat count overflow".to_string()))?;
-        let z_pre_count = block_len
-            .checked_mul(root_layout.num_digits_commit)
-            .and_then(|count| count.checked_mul(num_digits_fold))
-            .ok_or_else(|| HachiError::InvalidSetup("z_pre count overflow".to_string()))?;
-        let r_count = row_count
-            .checked_mul(r_decomp_levels)
-            .ok_or_else(|| HachiError::InvalidSetup("r count overflow".to_string()))?;
-        let witness_cost = w_hat_count
-            .checked_add(t_hat_count)
-            .and_then(|count| count.checked_add(z_pre_count))
-            .and_then(|count| count.checked_add(r_count))
-            .ok_or_else(|| HachiError::InvalidSetup("batched witness cost overflow".to_string()))?;
-
-        let next_w_len = witness_cost.checked_mul(root_params.d).ok_or_else(|| {
-            HachiError::InvalidSetup("batched next w length overflow".to_string())
-        })?;
         let candidate_layout = HachiCommitmentLayout::new_with_decomp(
             m_vars,
             r_vars,
@@ -518,26 +510,18 @@ where
             root_layout.log_basis,
             0,
         )?;
-        let next_inputs = HachiScheduleInputs {
-            max_num_vars,
-            level: 1,
-            current_w_len: next_w_len,
-        };
-        let next_level_params = Cfg::level_params(next_inputs);
-        let root_proof_cost = batched_root_level_proof_bytes(
-            field_bits,
-            root_params,
+        let candidate_plan = hachi_root_runtime_plan_from_root_layout::<Cfg, D>(
+            HachiScheduleLookupKey::with_batch(max_num_vars, max_num_vars, num_claims, batch),
             candidate_layout,
-            &next_level_params,
-            next_w_len,
-            num_claims,
-        );
+        )?;
+        let next_w_len = candidate_plan.next_w_len();
+        let root_proof_cost = candidate_plan.level_proof_bytes::<Cfg>();
         let suffix_cost = estimated_recursive_suffix_bytes::<Cfg>(max_num_vars, 1, next_w_len)?;
         let candidate = (
             root_proof_cost.checked_add(suffix_cost).ok_or_else(|| {
                 HachiError::InvalidSetup("batched proof cost overflow".to_string())
             })?,
-            witness_cost,
+            candidate_plan.next_w_len(),
             r_vars,
             m_vars,
             num_digits_fold,
@@ -644,7 +628,7 @@ fn scan_layout_chain<F, const D: usize, Cfg>(
 ) -> Result<LayoutChainStats, HachiError>
 where
     F: FieldCore + CanonicalField,
-    Cfg: CommitmentConfig,
+    Cfg: CommitmentConfig<Field = F>,
 {
     let mut stats = LayoutChainStats::default();
     let batched_root_layout =
@@ -655,35 +639,33 @@ where
         Cfg::commitment_layout(max_num_vars).is_ok_and(|planned_root| planned_root == root_layout);
     if can_use_planned_root && max_num_batched_polys == 1 {
         if let Some(plan) = Cfg::schedule_plan(max_num_vars)? {
-            for level in plan.levels.iter().skip(1) {
+            for level in plan.fold_levels().skip(1) {
                 stats.include(level.layout);
             }
             return Ok(stats);
         }
     }
 
-    let root_inputs = HachiScheduleInputs {
-        max_num_vars,
-        level: 0,
-        current_w_len: root_current_w_len::<D>(root_layout),
-    };
-    let root_params = Cfg::level_params_with_log_basis(root_inputs, root_layout.log_basis);
-    let mut prev_w_len = root_inputs
+    let root_plan = hachi_root_runtime_plan_from_root_layout::<Cfg, D>(
+        HachiScheduleLookupKey::with_batch(
+            max_num_vars,
+            max_num_vars,
+            max_num_batched_polys,
+            HachiRootBatchSummary::new(
+                max_num_batched_polys,
+                max_num_batched_polys,
+                max_num_batched_polys,
+            )?,
+        ),
+        root_layout,
+    )?;
+    let mut prev_w_len = root_plan
+        .inputs
         .current_w_len
-        .checked_mul(max_num_batched_polys)
-        .unwrap_or(usize::MAX);
+        .saturating_mul(root_plan.batch.num_claims);
     let mut level = 1usize;
-    let mut current_w_len = w_ring_element_count_with_num_claims_and_points::<F>(
-        &root_params,
-        batched_root_layout,
-        max_num_batched_polys,
-        max_num_batched_polys,
-    ) * root_params.d;
-    let mut current_params = Cfg::level_params(HachiScheduleInputs {
-        max_num_vars,
-        level,
-        current_w_len,
-    });
+    let mut current_w_len = root_plan.next_w_len();
+    let mut current_params = root_plan.next_level_params.clone();
     let mut current_layout =
         super::hachi_recursive_level_layout_from_params::<Cfg>(&current_params, current_w_len)?;
     stats.include(current_layout);
@@ -729,8 +711,9 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
+    let modulus = Cfg::field_modulus();
     format!(
-        "hachi_{family}_sched_{schedule}_d{}_na{}_nb{}_nd{}_nv{max_num_vars}_batch{max_num_batched_polys}.setup",
+        "hachi_q{modulus:032x}_{family}_sched_{schedule}_d{}_na{}_nb{}_nd{}_nv{max_num_vars}_batch{max_num_batched_polys}.setup",
         Cfg::D,
         envelope.max_n_a,
         envelope.max_n_b,
@@ -772,7 +755,7 @@ fn get_storage_path<Cfg: CommitmentConfig>(
 }
 
 #[cfg(feature = "disk-persistence")]
-fn save_expanded_setup<F: FieldCore, Cfg: CommitmentConfig>(
+fn save_expanded_setup<F: FieldCore + CanonicalField, Cfg: CommitmentConfig<Field = F>>(
     setup: &HachiExpandedSetup<F>,
     max_num_vars: usize,
     max_num_batched_polys: usize,
@@ -819,7 +802,7 @@ fn save_expanded_setup<F: FieldCore, Cfg: CommitmentConfig>(
 }
 
 #[cfg(feature = "disk-persistence")]
-fn validate_cached_setup_dimensions<F, const D: usize, Cfg: CommitmentConfig>(
+fn validate_cached_setup_dimensions<F, const D: usize, Cfg: CommitmentConfig<Field = F>>(
     expanded: &HachiExpandedSetup<F>,
     max_num_vars: usize,
     max_num_batched_polys: usize,
@@ -830,24 +813,17 @@ where
 {
     let envelope = Cfg::envelope(max_num_vars);
     let chain_stats = scan_layout_chain::<F, D, Cfg>(max_num_vars, layout, max_num_batched_polys)?;
-    let required_rows = [envelope.max_n_a, envelope.max_n_b, envelope.max_n_d]
-        .into_iter()
-        .max()
-        .unwrap();
-    let required_cols = [
-        chain_stats.max_inner_width,
-        chain_stats.max_outer_width,
-        chain_stats.max_d_matrix_width,
-    ]
-    .into_iter()
-    .max()
-    .unwrap();
+    let a_cols = chain_stats.max_inner_width;
+    let b_cols = chain_stats.max_outer_width;
+    let d_cols = chain_stats.max_d_matrix_width;
 
-    let actual_rows = expanded.shared_matrix.num_rows();
-    let actual_cols = expanded.shared_matrix.first_row_len::<D>();
-    if actual_rows < required_rows || actual_cols < required_cols {
+    let max_stride = a_cols.max(b_cols).max(d_cols);
+    let required_total = envelope.max_n_a * max_stride;
+
+    let actual_total = expanded.shared_matrix.total_ring_elements_at::<D>();
+    if actual_total < required_total {
         return Err(HachiError::InvalidSetup(format!(
-            "cached setup matrix too small: have {actual_rows}x{actual_cols}, need at least {required_rows}x{required_cols}"
+            "cached setup matrix too small: have {actual_total} ring elements, need at least {required_total}"
         )));
     }
 
@@ -855,7 +831,7 @@ where
 }
 
 #[cfg(feature = "disk-persistence")]
-fn load_expanded_setup<F: FieldCore + Valid, Cfg: CommitmentConfig>(
+fn load_expanded_setup<F: FieldCore + Valid + CanonicalField, Cfg: CommitmentConfig<Field = F>>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<HachiExpandedSetup<F>, HachiError> {
@@ -893,7 +869,8 @@ pub(crate) fn setup_from_expanded<F: FieldCore + CanonicalField, const D: usize>
     expanded: HachiExpandedSetup<F>,
 ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError> {
     let expanded = Arc::new(expanded);
-    let ntt_shared = build_ntt_slot(expanded.shared_matrix.view::<D>())?;
+    let total = expanded.shared_matrix.total_ring_elements_at::<D>();
+    let ntt_shared = build_ntt_slot(expanded.shared_matrix.ring_view::<D>(1, total))?;
     let prover_setup = HachiProverSetup {
         expanded: Arc::clone(&expanded),
         ntt_shared,
@@ -909,7 +886,7 @@ pub struct HachiCommitmentCore;
 impl<F, const D: usize, Cfg> RingCommitmentScheme<F, D, Cfg> for HachiCommitmentCore
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + Valid,
-    Cfg: CommitmentConfig,
+    Cfg: CommitmentConfig<Field = F>,
 {
     type ProverSetup = HachiProverSetup<F, D>;
     type VerifierSetup = HachiVerifierSetup<F>;
@@ -920,9 +897,9 @@ where
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError> {
-        let layout = validate_and_derive_layout::<Cfg, D>(max_num_vars)?;
+        let layout = validate_and_derive_layout::<F, Cfg, D>(max_num_vars)?;
         let envelope = Cfg::envelope(max_num_vars);
-        ensure_supported_num_vars(max_num_vars, layout.required_num_vars::<D>()?)?;
+        ensure_layout_supported_num_vars::<D>(max_num_vars, layout)?;
 
         #[cfg(feature = "disk-persistence")]
         {
@@ -972,16 +949,12 @@ where
         let b_cols = chain_stats.max_outer_width;
         let d_cols = chain_stats.max_d_matrix_width;
 
-        let max_rows = [envelope.max_n_a, envelope.max_n_b, envelope.max_n_d]
-            .into_iter()
-            .max()
-            .unwrap();
-        let max_cols = [a_cols, b_cols, d_cols].into_iter().max().unwrap();
+        let max_stride = a_cols.max(b_cols).max(d_cols);
+        let max_total = envelope.max_n_a * max_stride;
 
         let public_matrix_seed = sample_public_matrix_seed();
-        let shared_flat =
-            derive_public_matrix_flat::<F, D>(max_rows, max_cols, &public_matrix_seed);
-        let ntt_shared = build_ntt_slot(shared_flat.view::<D>())?;
+        let shared_flat = derive_public_matrix_flat::<F, D>(max_total, &public_matrix_seed);
+        let ntt_shared = build_ntt_slot(shared_flat.ring_view::<D>(1, max_total))?;
 
         let expanded = Arc::new(HachiExpandedSetup {
             seed: HachiSetupSeed {
@@ -990,6 +963,7 @@ where
                 max_inner_width: chain_stats.max_inner_width,
                 max_outer_width: chain_stats.max_outer_width,
                 max_d_matrix_width: chain_stats.max_d_matrix_width,
+                max_total_ring_elements: max_total,
                 public_matrix_seed,
             },
             shared_matrix: shared_flat,
@@ -1024,10 +998,7 @@ where
             level: 0,
             current_w_len: root_current_w_len::<D>(layout),
         });
-        ensure_supported_num_vars(
-            setup.expanded.seed.max_num_vars,
-            layout.required_num_vars::<D>()?,
-        )?;
+        ensure_layout_supported_num_vars::<D>(setup.expanded.seed.max_num_vars, layout)?;
         ensure_block_layout(f_blocks, layout)?;
 
         let depth_commit = layout.num_digits_commit;
@@ -1035,21 +1006,61 @@ where
         let log_basis = layout.log_basis;
         let block_slices: Vec<&[CyclotomicRing<F, D>]> =
             f_blocks.iter().map(|b| b.as_slice()).collect();
-        let t_all = mat_vec_mul_ntt_i8(
-            &setup.ntt_shared,
-            root_params.n_a,
-            &block_slices,
-            depth_commit,
-            log_basis,
-        );
-        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
-            .map(|t_i| decompose_rows_i8(&t_i, depth_open, log_basis))
-            .collect();
+        let t_hat = if root_params.n_a == 1 {
+            let t_single = mat_vec_mul_ntt_i8_dense_single_row(
+                &setup.ntt_shared,
+                setup.expanded.seed.max_stride(),
+                &block_slices,
+                depth_commit,
+                log_basis,
+            );
+            let mut t_hat = FlatDigitBlocks::zeroed(vec![depth_open; t_single.len()])?;
+            let dst_blocks = t_hat.split_blocks_mut();
+            #[cfg(feature = "parallel")]
+            cfg_into_iter!(dst_blocks)
+                .zip(cfg_iter!(t_single))
+                .for_each(|(dst, t_i)| {
+                    decompose_rows_i8_into(std::slice::from_ref(t_i), dst, depth_open, log_basis)
+                });
+            #[cfg(not(feature = "parallel"))]
+            dst_blocks
+                .into_iter()
+                .zip(t_single.iter())
+                .for_each(|(dst, t_i)| {
+                    decompose_rows_i8_into(std::slice::from_ref(t_i), dst, depth_open, log_basis)
+                });
+            t_hat
+        } else {
+            let t_all = mat_vec_mul_ntt_i8_dense(
+                &setup.ntt_shared,
+                root_params.n_a,
+                setup.expanded.seed.max_stride(),
+                &block_slices,
+                depth_commit,
+                log_basis,
+            );
+            let block_sizes: Vec<usize> = t_all.iter().map(|t_i| t_i.len() * depth_open).collect();
+            let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
+            let dst_blocks = t_hat.split_blocks_mut();
+            #[cfg(feature = "parallel")]
+            cfg_into_iter!(dst_blocks)
+                .zip(cfg_iter!(t_all))
+                .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, depth_open, log_basis));
+            #[cfg(not(feature = "parallel"))]
+            dst_blocks
+                .into_iter()
+                .zip(t_all.iter())
+                .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, depth_open, log_basis));
+            t_hat
+        };
 
-        let t_hat_flat = flatten_i8_blocks(&t_hat_all);
-        let u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, root_params.n_b, &t_hat_flat);
-        Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
+        let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
+            &setup.ntt_shared,
+            root_params.n_b,
+            setup.expanded.seed.max_stride(),
+            t_hat.flat_digits(),
+        );
+        Ok(CommitWitness::new(RingCommitment { u }, t_hat))
     }
 
     #[tracing::instrument(skip_all, name = "RingCommitmentScheme::commit_onehot")]
@@ -1064,10 +1075,7 @@ where
             level: 0,
             current_w_len: root_current_w_len::<D>(layout),
         });
-        ensure_supported_num_vars(
-            setup.expanded.seed.max_num_vars,
-            layout.required_num_vars::<D>()?,
-        )?;
+        ensure_layout_supported_num_vars::<D>(setup.expanded.seed.max_num_vars, layout)?;
 
         let sparse_blocks =
             map_onehot_to_sparse_blocks(onehot_k, indices, layout.r_vars, layout.m_vars, D)?;
@@ -1076,26 +1084,46 @@ where
         let depth_open = layout.num_digits_open;
         let log_basis = layout.log_basis;
         let zero_block_len = root_params.n_a.checked_mul(depth_open).unwrap();
-        let a_view = setup.expanded.shared_matrix.view::<D>();
+        let a_view = setup
+            .expanded
+            .shared_matrix
+            .ring_view::<D>(root_params.n_a, setup.expanded.seed.max_stride());
         let block_len = layout.block_len;
 
-        let t_hat_all: Vec<Vec<[i8; D]>> = cfg_iter!(sparse_blocks)
-            .map(|block_entries| {
-                if block_entries.is_empty() {
-                    vec![[0i8; D]; zero_block_len]
-                } else {
+        let block_sizes = vec![zero_block_len; sparse_blocks.len()];
+        let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
+        let dst_blocks = t_hat.split_blocks_mut();
+        #[cfg(feature = "parallel")]
+        cfg_into_iter!(dst_blocks)
+            .zip(cfg_iter!(sparse_blocks))
+            .for_each(|(dst, block_entries)| {
+                if !block_entries.is_empty() {
                     let mut t_i =
                         inner_ajtai_onehot_wide(&a_view, block_entries, block_len, depth_commit);
                     t_i.truncate(root_params.n_a);
-                    decompose_rows_i8(&t_i, depth_open, log_basis)
+                    decompose_rows_i8_into(&t_i, dst, depth_open, log_basis);
                 }
-            })
-            .collect();
+            });
+        #[cfg(not(feature = "parallel"))]
+        dst_blocks
+            .into_iter()
+            .zip(sparse_blocks.iter())
+            .for_each(|(dst, block_entries)| {
+                if !block_entries.is_empty() {
+                    let mut t_i =
+                        inner_ajtai_onehot_wide(&a_view, block_entries, block_len, depth_commit);
+                    t_i.truncate(root_params.n_a);
+                    decompose_rows_i8_into(&t_i, dst, depth_open, log_basis);
+                }
+            });
 
-        let t_hat_flat = flatten_i8_blocks(&t_hat_all);
-        let u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, root_params.n_b, &t_hat_flat);
-        Ok(CommitWitness::new(RingCommitment { u }, t_hat_all))
+        let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
+            &setup.ntt_shared,
+            root_params.n_b,
+            setup.expanded.seed.max_stride(),
+            t_hat.flat_digits(),
+        );
+        Ok(CommitWitness::new(RingCommitment { u }, t_hat))
     }
 }
 
@@ -1156,7 +1184,7 @@ impl HachiCommitmentCore {
     ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError>
     where
         F: FieldCore + CanonicalField + FieldSampling,
-        Cfg: CommitmentConfig,
+        Cfg: CommitmentConfig<Field = F>,
     {
         let max_num_vars = layout.required_num_vars::<D>()?;
         let public_matrix_seed = sample_public_matrix_seed();
@@ -1178,7 +1206,7 @@ impl HachiCommitmentCore {
     ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError>
     where
         F: FieldCore + CanonicalField + FieldSampling,
-        Cfg: CommitmentConfig,
+        Cfg: CommitmentConfig<Field = F>,
     {
         let Some((&first_layout, _)) = layouts.split_first() else {
             return Err(HachiError::InvalidSetup(
@@ -1238,7 +1266,7 @@ impl HachiCommitmentCore {
     ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError>
     where
         F: FieldCore + CanonicalField + FieldSampling,
-        Cfg: CommitmentConfig,
+        Cfg: CommitmentConfig<Field = F>,
     {
         let layout_num_vars = layout.required_num_vars::<D>()?;
         let chain_stats = scan_layout_chain::<F, D, Cfg>(layout_num_vars, layout, 1)?;
@@ -1266,31 +1294,27 @@ impl HachiCommitmentCore {
     ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError>
     where
         F: FieldCore + CanonicalField + FieldSampling,
-        Cfg: CommitmentConfig,
+        Cfg: CommitmentConfig<Field = F>,
     {
         let envelope = Cfg::envelope(max_num_vars);
-        let max_rows = [envelope.max_n_a, envelope.max_n_b, envelope.max_n_d]
-            .into_iter()
-            .max()
-            .unwrap();
-        let max_cols = [a_cols, b_cols, d_cols].into_iter().max().unwrap();
+        let max_stride = a_cols.max(b_cols).max(d_cols);
+        let max_total = envelope.max_n_a * max_stride;
         {
             let ring_bytes = std::mem::size_of::<CyclotomicRing<F, D>>();
-            let shared_mb = (max_rows * max_cols * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
+            let shared_mb = (max_total * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
             tracing::debug!(
                 a_cols,
                 b_cols,
                 d_cols,
-                max_rows,
-                max_cols,
+                max_stride,
+                max_total,
                 ring_bytes,
                 shared_mb,
                 "setup shared matrix size"
             );
         }
-        let shared_flat =
-            derive_public_matrix_flat::<F, D>(max_rows, max_cols, &public_matrix_seed);
-        let ntt_shared = build_ntt_slot(shared_flat.view::<D>())?;
+        let shared_flat = derive_public_matrix_flat::<F, D>(max_total, &public_matrix_seed);
+        let ntt_shared = build_ntt_slot(shared_flat.ring_view::<D>(1, max_total))?;
 
         let expanded = Arc::new(HachiExpandedSetup {
             seed: HachiSetupSeed {
@@ -1299,6 +1323,7 @@ impl HachiCommitmentCore {
                 max_inner_width: a_cols,
                 max_outer_width: b_cols,
                 max_d_matrix_width: d_cols,
+                max_total_ring_elements: max_total,
                 public_matrix_seed,
             },
             shared_matrix: shared_flat,
@@ -1316,8 +1341,7 @@ impl HachiCommitmentCore {
 mod tests {
     use super::*;
     use crate::primitives::{HachiDeserialize, HachiSerialize};
-    use crate::protocol::commitment::hachi_recursive_level_layout_from_params;
-    use crate::protocol::commitment::Fp128OneHotCommitmentConfig;
+    use crate::protocol::commitment::{hachi_recursive_level_layout_from_params, presets::fp128};
     use crate::protocol::ring_switch::w_ring_element_count_with_num_claims_and_points;
     use crate::test_utils::{TinyConfig, F as TestF};
 
@@ -1350,7 +1374,8 @@ mod tests {
         const MAX_NUM_VARS: usize = 16;
         const MAX_BATCH: usize = 3;
 
-        let root_layout = validate_and_derive_layout::<TinyConfig, TEST_D>(MAX_NUM_VARS).unwrap();
+        let root_layout =
+            validate_and_derive_layout::<TestF, TinyConfig, TEST_D>(MAX_NUM_VARS).unwrap();
         let root_inputs = HachiScheduleInputs {
             max_num_vars: MAX_NUM_VARS,
             level: 0,
@@ -1405,15 +1430,19 @@ mod tests {
         assert!(seed.max_inner_width >= multipoint_level1_layout.inner_width);
         assert!(seed.max_outer_width >= multipoint_level1_layout.outer_width);
         assert!(seed.max_d_matrix_width >= multipoint_level1_layout.d_matrix_width);
-        let shared_cols = setup.expanded.shared_matrix.first_row_len::<TEST_D>();
-        assert!(shared_cols >= batched_stats.max_inner_width);
-        assert!(shared_cols >= batched_stats.max_outer_width);
-        assert!(shared_cols >= batched_stats.max_d_matrix_width);
+        let envelope = TinyConfig::envelope(MAX_NUM_VARS);
+        let total_elements = setup
+            .expanded
+            .shared_matrix
+            .total_ring_elements_at::<TEST_D>();
+        assert!(total_elements >= envelope.max_n_a * batched_stats.max_inner_width);
+        assert!(total_elements >= envelope.max_n_b * batched_stats.max_outer_width);
+        assert!(total_elements >= envelope.max_n_d * batched_stats.max_d_matrix_width);
     }
 
     #[test]
     fn onehot_batched_helper_matches_setup_root_layout() {
-        type Cfg = Fp128OneHotCommitmentConfig;
+        type Cfg = fp128::D64OneHot;
         const TEST_D: usize = Cfg::D;
         const NV: usize = 15;
         const BATCH: usize = 2;
@@ -1423,11 +1452,15 @@ mod tests {
                 .unwrap();
         let helper_root = hachi_batched_root_layout::<Cfg, TEST_D>(NV, BATCH).unwrap();
         let (setup, _) =
-            <HachiCommitmentCore as RingCommitmentScheme<TestF, TEST_D, Cfg>>::setup(NV, BATCH)
-                .unwrap();
+            <HachiCommitmentCore as RingCommitmentScheme<fp128::Field, TEST_D, Cfg>>::setup(
+                NV, BATCH,
+            )
+            .unwrap();
         let runtime_layout =
-            <HachiCommitmentCore as RingCommitmentScheme<TestF, TEST_D, Cfg>>::layout(&setup)
-                .unwrap();
+            <HachiCommitmentCore as RingCommitmentScheme<fp128::Field, TEST_D, Cfg>>::layout(
+                &setup,
+            )
+            .unwrap();
 
         assert_eq!(helper_root.m_vars, setup_root.m_vars);
         assert_eq!(helper_root.r_vars, setup_root.r_vars);
@@ -1517,10 +1550,32 @@ mod tests {
         assert!(seed.max_inner_width >= expected_inner);
         assert!(seed.max_outer_width >= expected_outer);
         assert!(seed.max_d_matrix_width >= expected_d);
-        let shared_cols = setup.expanded.shared_matrix.first_row_len::<TEST_D>();
-        assert!(shared_cols >= expected_inner);
-        assert!(shared_cols >= expected_outer);
-        assert!(shared_cols >= expected_d);
+        let total_elements = setup
+            .expanded
+            .shared_matrix
+            .total_ring_elements_at::<TEST_D>();
+        let envelope = TinyConfig::envelope(expected_max_num_vars);
+        assert!(total_elements >= envelope.max_n_a * expected_inner);
+        assert!(total_elements >= envelope.max_n_b * expected_outer);
+        assert!(total_elements >= envelope.max_n_d * expected_d);
+    }
+
+    #[test]
+    fn setup_accepts_field_coupled_presets() {
+        <HachiCommitmentCore as RingCommitmentScheme<fp128::Field, 128, fp128::D128Full>>::setup(
+            12, 1,
+        )
+        .expect("legacy fp128 preset should accept the legacy field");
+
+        <HachiCommitmentCore as RingCommitmentScheme<fp128::Field, 128, fp128::D128Full>>::setup(
+            12, 1,
+        )
+        .expect("default fp128 fixed-D preset should accept the default field");
+
+        <HachiCommitmentCore as RingCommitmentScheme<fp128::Field, 32, fp128::D32Full>>::setup(
+            12, 1,
+        )
+        .expect("small-D fp128 preset should accept the default field");
     }
 
     #[cfg(feature = "disk-persistence")]

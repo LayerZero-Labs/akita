@@ -27,6 +27,64 @@ pub struct PackedDigits {
     pub data: Vec<u8>,
 }
 
+/// Terminal direct witness payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DirectWitnessProof<F: FieldCore> {
+    /// Packed small signed digits, used by the current recursive terminal
+    /// witness.
+    PackedDigits(PackedDigits),
+    /// Raw field elements, for direct witnesses that are not naturally digit
+    /// bounded.
+    FieldElements(FlatRingVec<F>),
+}
+
+impl<F: FieldCore> DirectWitnessProof<F> {
+    /// Borrow the packed-digits payload, if present.
+    pub fn as_packed_digits(&self) -> Option<&PackedDigits> {
+        match self {
+            Self::PackedDigits(packed) => Some(packed),
+            Self::FieldElements(_) => None,
+        }
+    }
+
+    /// Borrow the raw field-element payload, if present.
+    pub fn as_field_elements(&self) -> Option<&FlatRingVec<F>> {
+        match self {
+            Self::PackedDigits(_) => None,
+            Self::FieldElements(field_elems) => Some(field_elems),
+        }
+    }
+
+    /// Shape descriptor for this direct witness payload.
+    pub fn shape(&self) -> DirectWitnessShape {
+        match self {
+            Self::PackedDigits(packed) => {
+                DirectWitnessShape::PackedDigits((packed.num_elems, packed.bits_per_elem))
+            }
+            Self::FieldElements(field_elems) => {
+                DirectWitnessShape::FieldElements(field_elems.coeff_len())
+            }
+        }
+    }
+
+    /// Number of logical field elements carried by this witness payload.
+    pub fn num_elems(&self) -> usize {
+        match self {
+            Self::PackedDigits(packed) => packed.num_elems,
+            Self::FieldElements(field_elems) => field_elems.coeff_len(),
+        }
+    }
+}
+
+/// Shape descriptor for deserializing a direct witness payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DirectWitnessShape {
+    /// Packed balanced digits.
+    PackedDigits((usize, u32)),
+    /// Raw field elements.
+    FieldElements(usize),
+}
+
 impl PackedDigits {
     /// Smallest `bits_per_elem` that can encode every signed digit in `w`.
     pub fn required_bits_per_elem(w: &[i8]) -> u32 {
@@ -210,6 +268,10 @@ impl HachiDeserialize for PackedDigits {
 /// Each ring element of dimension `ring_dim` is stored as `ring_dim`
 /// contiguous field elements in `coeffs`. The total number of ring elements
 /// is `coeffs.len() / ring_dim`.
+///
+/// When `ring_dim` is 0 the vector is in "compact" mode: the ring dimension
+/// is not known to this container and must be supplied externally (e.g. from
+/// the public schedule). This is the mode used inside serialised proofs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlatRingVec<F> {
     coeffs: Vec<F>,
@@ -261,17 +323,28 @@ impl<F: FieldCore> FlatRingVec<F> {
         }
     }
 
+    /// Construct from raw field coefficients in compact mode (`ring_dim = 0`).
+    pub fn from_coeffs(coeffs: Vec<F>) -> Self {
+        Self {
+            coeffs,
+            ring_dim: 0,
+        }
+    }
+
     /// Wrap a `RingCommitment`.
     pub fn from_commitment<const D: usize>(c: &RingCommitment<F, D>) -> Self {
         Self::from_ring_elems(&c.u)
     }
 
-    /// Ring dimension (number of field-element coefficients per ring element).
+    /// Ring dimension (number of field-element coefficients per ring element),
+    /// or 0 if the container is in compact mode.
     pub fn ring_dim(&self) -> usize {
         self.ring_dim
     }
 
     /// Number of ring elements stored.
+    ///
+    /// Returns 0 when `ring_dim` is unknown (compact mode).
     pub fn count(&self) -> usize {
         if self.ring_dim == 0 {
             0
@@ -285,14 +358,46 @@ impl<F: FieldCore> FlatRingVec<F> {
         &self.coeffs
     }
 
+    /// Number of stored field coefficients.
+    pub fn coeff_len(&self) -> usize {
+        self.coeffs.len()
+    }
+
+    /// Whether these coefficients can be decoded as a single ring element of
+    /// dimension `d`.
+    pub fn can_decode_single(&self, d: usize) -> bool {
+        self.coeffs.len() == d
+    }
+
+    /// Whether these coefficients can be decoded as a vector of ring elements
+    /// of dimension `d`.
+    pub fn can_decode_vec(&self, d: usize) -> bool {
+        self.coeffs.len().is_multiple_of(d)
+    }
+
+    /// Return a copy with `ring_dim` cleared (compact mode).
+    pub fn into_compact(self) -> Self {
+        Self {
+            coeffs: self.coeffs,
+            ring_dim: 0,
+        }
+    }
+
     /// Reconstruct a single ring element.
     ///
     /// # Panics
     ///
-    /// Panics if `D != ring_dim` or `count() != 1`.
+    /// Panics if `D != ring_dim` (when ring_dim is known) or
+    /// `coeffs.len() != D`.
     pub fn to_single<const D: usize>(&self) -> CyclotomicRing<F, D> {
-        assert_eq!(D, self.ring_dim, "D mismatch in to_single");
-        assert_eq!(self.count(), 1, "expected exactly one ring element");
+        if self.ring_dim > 0 {
+            assert_eq!(D, self.ring_dim, "D mismatch in to_single");
+        }
+        assert_eq!(
+            self.coeffs.len(),
+            D,
+            "expected exactly one ring element of dimension {D}"
+        );
         CyclotomicRing::from_slice(&self.coeffs)
     }
 
@@ -303,7 +408,7 @@ impl<F: FieldCore> FlatRingVec<F> {
     /// Returns [`HachiError::InvalidProof`] if the stored ring dimension or
     /// element count does not match `D`.
     pub fn try_to_single<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, HachiError> {
-        if self.ring_dim != D || self.coeffs.len() != D {
+        if (self.ring_dim > 0 && self.ring_dim != D) || self.coeffs.len() != D {
             return Err(HachiError::InvalidProof);
         }
         Ok(CyclotomicRing::from_slice(&self.coeffs))
@@ -313,9 +418,17 @@ impl<F: FieldCore> FlatRingVec<F> {
     ///
     /// # Panics
     ///
-    /// Panics if `D != ring_dim`.
+    /// Panics if `D != ring_dim` (when ring_dim is known) or
+    /// `coeffs.len()` is not a multiple of `D`.
     pub fn to_vec<const D: usize>(&self) -> Vec<CyclotomicRing<F, D>> {
-        assert_eq!(D, self.ring_dim, "D mismatch in to_vec");
+        if self.ring_dim > 0 {
+            assert_eq!(D, self.ring_dim, "D mismatch in to_vec");
+        }
+        assert_eq!(
+            self.coeffs.len() % D,
+            0,
+            "coeff count not a multiple of D={D}"
+        );
         self.coeffs
             .chunks_exact(D)
             .map(CyclotomicRing::from_slice)
@@ -329,7 +442,7 @@ impl<F: FieldCore> FlatRingVec<F> {
     /// Returns [`HachiError::InvalidProof`] if the stored ring dimension does
     /// not match `D` or the coefficient buffer is not an exact multiple of `D`.
     pub fn try_to_vec<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-        if self.ring_dim != D || self.coeffs.len() % D != 0 {
+        if (self.ring_dim > 0 && self.ring_dim != D) || !self.coeffs.len().is_multiple_of(D) {
             return Err(HachiError::InvalidProof);
         }
         Ok(self
@@ -348,7 +461,7 @@ impl<F: FieldCore> FlatRingVec<F> {
     pub(crate) fn as_ring_slice<const D: usize>(
         &self,
     ) -> Result<&[CyclotomicRing<F, D>], HachiError> {
-        if self.ring_dim != D || self.coeffs.len() % D != 0 {
+        if (self.ring_dim > 0 && self.ring_dim != D) || !self.coeffs.len().is_multiple_of(D) {
             return Err(HachiError::InvalidProof);
         }
         let ring_count = self.coeffs.len() / D;
@@ -361,6 +474,21 @@ impl<F: FieldCore> FlatRingVec<F> {
                 ring_count,
             )
         })
+    }
+
+    /// Borrow the stored coefficients as a single typed ring element.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HachiError::InvalidProof`] if the stored ring data is not
+    /// well-formed for ring dimension `D`, or if it contains more than one
+    /// element.
+    pub fn as_single_ring<const D: usize>(&self) -> Result<&CyclotomicRing<F, D>, HachiError> {
+        let rings = self.as_ring_slice::<D>()?;
+        match rings {
+            [ring] => Ok(ring),
+            _ => Err(HachiError::InvalidProof),
+        }
     }
 
     /// Append the stored coefficients using the same transcript encoding as a
@@ -383,18 +511,29 @@ impl<F: FieldCore> FlatRingVec<F> {
         Ok(())
     }
 
-    /// Convert to the verifier-facing proof-wire payload.
-    pub fn to_proof_ring_vec(&self) -> ProofRingVec<F> {
-        ProofRingVec {
-            coeffs: self.coeffs.clone(),
-        }
+    /// Append the stored coefficients using the typed ring-vector transcript
+    /// encoding (alias for [`Self::append_as_ring_commitment`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HachiError::InvalidProof`] if the stored ring data is not
+    /// well-formed for ring dimension `D`.
+    pub(crate) fn append_as_ring_slice<T: Transcript<F>, const D: usize>(
+        &self,
+        label: &[u8],
+        transcript: &mut T,
+    ) -> Result<(), HachiError>
+    where
+        F: CanonicalField,
+    {
+        self.append_as_ring_commitment::<T, D>(label, transcript)
     }
 
     /// Reconstruct a `RingCommitment`.
     ///
     /// # Panics
     ///
-    /// Panics if `D != ring_dim`.
+    /// Panics if `D != ring_dim` (when ring_dim is known).
     pub fn to_ring_commitment<const D: usize>(&self) -> RingCommitment<F, D> {
         RingCommitment { u: self.to_vec() }
     }
@@ -420,224 +559,6 @@ impl<F: FieldCore> HachiSerialize for FlatRingVec<F> {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        (self.ring_dim as u32).serialize_with_mode(&mut writer, compress)?;
-        self.coeffs.serialize_with_mode(&mut writer, compress)
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        4 + self.coeffs.serialized_size(compress)
-    }
-}
-
-impl<F: FieldCore> Valid for FlatRingVec<F> {
-    fn check(&self) -> Result<(), SerializationError> {
-        if self.ring_dim == 0 {
-            return Err(SerializationError::InvalidData(
-                "ring_dim must be > 0".to_string(),
-            ));
-        }
-        if self.coeffs.len() % self.ring_dim != 0 {
-            return Err(SerializationError::InvalidData(
-                "coeffs length not a multiple of ring_dim".to_string(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-impl<F: FieldCore + Valid> HachiDeserialize for FlatRingVec<F> {
-    type Context = ();
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        let ring_dim = u32::deserialize_with_mode(&mut reader, compress, validate, &())? as usize;
-        let coeffs = Vec::<F>::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let out = Self { coeffs, ring_dim };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
-    }
-}
-
-/// Proof-wire storage for a sequence of ring-element coefficients.
-///
-/// Unlike [`FlatRingVec`], this schema does not encode the ring dimension in
-/// the proof itself. The verifier recovers the correct `D` from the public
-/// schedule and interprets the coefficient buffer accordingly.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProofRingVec<F> {
-    coeffs: Vec<F>,
-}
-
-impl<F: FieldCore> ProofRingVec<F> {
-    /// Construct directly from raw field coefficients.
-    pub fn from_coeffs(coeffs: Vec<F>) -> Self {
-        Self { coeffs }
-    }
-
-    /// Convert from a vector of ring elements.
-    pub fn from_ring_elems<const D: usize>(elems: &[CyclotomicRing<F, D>]) -> Self {
-        let mut coeffs = Vec::with_capacity(elems.len() * D);
-        for elem in elems {
-            coeffs.extend_from_slice(elem.coefficients());
-        }
-        Self { coeffs }
-    }
-
-    /// Convert from a single ring element.
-    pub fn from_single<const D: usize>(elem: &CyclotomicRing<F, D>) -> Self {
-        Self {
-            coeffs: elem.coefficients().to_vec(),
-        }
-    }
-
-    /// Raw field coefficients stored in the proof.
-    pub fn coeffs(&self) -> &[F] {
-        &self.coeffs
-    }
-
-    /// Number of stored field coefficients.
-    pub fn coeff_len(&self) -> usize {
-        self.coeffs.len()
-    }
-
-    /// Whether these coefficients can be decoded as a single ring element of
-    /// dimension `d`.
-    pub fn can_decode_single(&self, d: usize) -> bool {
-        self.coeffs.len() == d
-    }
-
-    /// Whether these coefficients can be decoded as a vector of ring elements
-    /// of dimension `d`.
-    pub fn can_decode_vec(&self, d: usize) -> bool {
-        d != 0 && self.coeffs.len() % d == 0
-    }
-
-    /// Borrow the stored coefficients as a slice of typed ring elements.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HachiError::InvalidProof`] if the stored coefficient count is
-    /// not divisible by `D`.
-    pub fn as_ring_slice<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], HachiError> {
-        if self.coeffs.len() % D != 0 {
-            return Err(HachiError::InvalidProof);
-        }
-        let ring_count = self.coeffs.len() / D;
-        Ok(unsafe {
-            std::slice::from_raw_parts(
-                self.coeffs.as_ptr() as *const CyclotomicRing<F, D>,
-                ring_count,
-            )
-        })
-    }
-
-    /// Borrow the stored coefficients as a single typed ring element.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HachiError::InvalidProof`] if the stored coefficient count is
-    /// not exactly `D`.
-    pub fn as_single_ring<const D: usize>(&self) -> Result<&CyclotomicRing<F, D>, HachiError> {
-        let rings = self.as_ring_slice::<D>()?;
-        match rings {
-            [ring] => Ok(ring),
-            _ => Err(HachiError::InvalidProof),
-        }
-    }
-
-    /// Append the stored coefficients using the typed ring-vector transcript
-    /// encoding.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HachiError::InvalidProof`] if the stored ring data is not
-    /// well-formed for ring dimension `D`.
-    pub fn append_as_ring_slice<T: Transcript<F>, const D: usize>(
-        &self,
-        label: &[u8],
-        transcript: &mut T,
-    ) -> Result<(), HachiError>
-    where
-        F: CanonicalField,
-    {
-        let rings = self.as_ring_slice::<D>()?;
-        transcript.append_serde(label, &RingSliceSerializer(rings));
-        Ok(())
-    }
-
-    /// Reconstruct a single ring element.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the stored coefficient count is not exactly `D`.
-    pub fn to_single<const D: usize>(&self) -> CyclotomicRing<F, D> {
-        assert_eq!(
-            self.coeffs.len(),
-            D,
-            "D mismatch in ProofRingVec::to_single"
-        );
-        CyclotomicRing::from_slice(&self.coeffs)
-    }
-
-    /// Reconstruct a single ring element, returning `InvalidProof` on shape mismatch.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HachiError::InvalidProof`] if the stored coefficient count is
-    /// not exactly `D`.
-    pub fn try_to_single<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, HachiError> {
-        if self.coeffs.len() != D {
-            return Err(HachiError::InvalidProof);
-        }
-        Ok(CyclotomicRing::from_slice(&self.coeffs))
-    }
-
-    /// Reconstruct a vector of ring elements.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the stored coefficient count is not divisible by `D`.
-    pub fn to_vec<const D: usize>(&self) -> Vec<CyclotomicRing<F, D>> {
-        assert_eq!(
-            self.coeffs.len() % D,
-            0,
-            "D mismatch in ProofRingVec::to_vec"
-        );
-        self.coeffs
-            .chunks_exact(D)
-            .map(CyclotomicRing::from_slice)
-            .collect()
-    }
-
-    /// Reconstruct a vector of ring elements, returning `InvalidProof` on shape mismatch.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HachiError::InvalidProof`] if the stored coefficient count is
-    /// not divisible by `D`.
-    pub fn try_to_vec<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
-        if self.coeffs.len() % D != 0 {
-            return Err(HachiError::InvalidProof);
-        }
-        Ok(self
-            .coeffs
-            .chunks_exact(D)
-            .map(CyclotomicRing::from_slice)
-            .collect())
-    }
-}
-
-impl<F: FieldCore> HachiSerialize for ProofRingVec<F> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
         for c in &self.coeffs {
             c.serialize_with_mode(&mut writer, compress)?;
         }
@@ -652,13 +573,13 @@ impl<F: FieldCore> HachiSerialize for ProofRingVec<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for ProofRingVec<F> {
+impl<F: FieldCore + Valid> Valid for FlatRingVec<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.coeffs.check()
     }
 }
 
-impl<F: FieldCore + Valid> HachiDeserialize for ProofRingVec<F> {
+impl<F: FieldCore + Valid> HachiDeserialize for FlatRingVec<F> {
     /// Number of field-element coefficients to read.
     type Context = usize;
     fn deserialize_with_mode<R: Read>(
@@ -676,11 +597,196 @@ impl<F: FieldCore + Valid> HachiDeserialize for ProofRingVec<F> {
                 &(),
             )?);
         }
-        let out = Self { coeffs };
+        let out = Self {
+            coeffs,
+            ring_dim: 0,
+        };
         if matches!(validate, Validate::Yes) {
             out.check()?;
         }
         Ok(out)
+    }
+}
+
+/// Flat digit-plane storage plus explicit block boundaries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatDigitBlocks<const D: usize> {
+    flat_digits: Vec<[i8; D]>,
+    block_sizes: Vec<usize>,
+}
+
+/// Iterator over logical blocks inside [`FlatDigitBlocks`].
+pub struct FlatDigitBlockIter<'a, const D: usize> {
+    flat_digits: &'a [[i8; D]],
+    block_sizes: &'a [usize],
+    offset: usize,
+}
+
+impl<const D: usize> FlatDigitBlocks<D> {
+    /// Construct zero-initialized flat digits for explicit block sizes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the block sizes overflow the total flat length.
+    pub fn zeroed(block_sizes: Vec<usize>) -> Result<Self, HachiError> {
+        let total_planes = block_sizes.iter().try_fold(0usize, |acc, &size| {
+            acc.checked_add(size).ok_or_else(|| {
+                HachiError::InvalidInput("flat digit block size overflow".to_string())
+            })
+        })?;
+        Ok(Self {
+            flat_digits: vec![[0i8; D]; total_planes],
+            block_sizes,
+        })
+    }
+
+    /// Construct from flat digits and explicit block sizes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the block sizes do not sum to the flat digit count.
+    pub fn new(flat_digits: Vec<[i8; D]>, block_sizes: Vec<usize>) -> Result<Self, HachiError> {
+        let expected = block_sizes.iter().try_fold(0usize, |acc, &size| {
+            acc.checked_add(size).ok_or_else(|| {
+                HachiError::InvalidInput("flat digit block size overflow".to_string())
+            })
+        })?;
+        if expected != flat_digits.len() {
+            return Err(HachiError::InvalidSize {
+                expected,
+                actual: flat_digits.len(),
+            });
+        }
+        Ok(Self {
+            flat_digits,
+            block_sizes,
+        })
+    }
+
+    /// Flatten a block-owned representation into canonical storage.
+    pub fn from_blocks(blocks: Vec<Vec<[i8; D]>>) -> Self {
+        let block_sizes: Vec<usize> = blocks.iter().map(Vec::len).collect();
+        let total_planes: usize = block_sizes.iter().sum();
+        let mut flat_digits = Vec::with_capacity(total_planes);
+        for block in blocks {
+            flat_digits.extend(block);
+        }
+        Self {
+            flat_digits,
+            block_sizes,
+        }
+    }
+
+    /// Number of logical blocks.
+    pub fn block_count(&self) -> usize {
+        self.block_sizes.len()
+    }
+
+    /// Number of logical blocks.
+    pub fn len(&self) -> usize {
+        self.block_count()
+    }
+
+    /// Whether there are no logical blocks.
+    pub fn is_empty(&self) -> bool {
+        self.block_sizes.is_empty()
+    }
+
+    /// Per-block digit-plane counts.
+    pub fn block_sizes(&self) -> &[usize] {
+        &self.block_sizes
+    }
+
+    /// Flat digit stream in column-major block order.
+    pub fn flat_digits(&self) -> &[[i8; D]] {
+        &self.flat_digits
+    }
+
+    /// Mutable flat digit stream in column-major block order.
+    pub fn flat_digits_mut(&mut self) -> &mut [[i8; D]] {
+        &mut self.flat_digits
+    }
+
+    /// Split the flat digit stream into disjoint mutable block slices.
+    pub fn split_blocks_mut(&mut self) -> Vec<&mut [[i8; D]]> {
+        let mut blocks = Vec::with_capacity(self.block_sizes.len());
+        let mut tail = self.flat_digits.as_mut_slice();
+        for &block_size in &self.block_sizes {
+            let (head, rest) = tail.split_at_mut(block_size);
+            blocks.push(head);
+            tail = rest;
+        }
+        blocks
+    }
+
+    /// Iterate over blocks as slices into the flat digit stream.
+    pub fn iter_blocks(&self) -> FlatDigitBlockIter<'_, D> {
+        FlatDigitBlockIter {
+            flat_digits: &self.flat_digits,
+            block_sizes: &self.block_sizes,
+            offset: 0,
+        }
+    }
+
+    /// Iterate over logical blocks.
+    pub fn iter(&self) -> FlatDigitBlockIter<'_, D> {
+        self.iter_blocks()
+    }
+
+    /// Append the flat digit stream to `dst`.
+    pub fn extend_flat_digits(&self, dst: &mut Vec<[i8; D]>) {
+        dst.extend_from_slice(&self.flat_digits);
+    }
+
+    /// Truncate every block to at most `block_len` digit planes.
+    pub fn truncate_each_block(&mut self, block_len: usize) {
+        if self.block_sizes.iter().all(|&size| size <= block_len) {
+            return;
+        }
+
+        let total_planes: usize = self
+            .block_sizes
+            .iter()
+            .map(|&size| size.min(block_len))
+            .sum();
+        let mut new_flat = Vec::with_capacity(total_planes);
+        let mut offset = 0usize;
+        for size in &mut self.block_sizes {
+            let keep = (*size).min(block_len);
+            new_flat.extend_from_slice(&self.flat_digits[offset..offset + keep]);
+            offset += *size;
+            *size = keep;
+        }
+        self.flat_digits = new_flat;
+    }
+
+    /// Consume the storage and rebuild owned blocks.
+    pub fn into_blocks(self) -> Vec<Vec<[i8; D]>> {
+        let mut blocks = Vec::with_capacity(self.block_sizes.len());
+        let mut offset = 0usize;
+        for size in self.block_sizes {
+            blocks.push(self.flat_digits[offset..offset + size].to_vec());
+            offset += size;
+        }
+        blocks
+    }
+
+    /// Consume into the flat digits and block sizes.
+    pub fn into_parts(self) -> (Vec<[i8; D]>, Vec<usize>) {
+        (self.flat_digits, self.block_sizes)
+    }
+}
+
+impl<'a, const D: usize> Iterator for FlatDigitBlockIter<'a, D> {
+    type Item = &'a [[i8; D]];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let size = *self.block_sizes.first()?;
+        let start = self.offset;
+        let end = start + size;
+        self.offset = end;
+        self.block_sizes = &self.block_sizes[1..];
+        Some(&self.flat_digits[start..end])
     }
 }
 
@@ -691,17 +797,17 @@ impl<F: FieldCore + Valid> HachiDeserialize for ProofRingVec<F> {
 /// coefficients) is passed separately to `prove` via `HachiPolyOps`.
 #[derive(Debug, Clone)]
 pub struct HachiCommitmentHint<F: FieldCore, const D: usize> {
-    /// Decomposed inner-opening digit blocks from the commitment phase as i8
-    /// digit planes (formerly `t_hat`).
-    pub inner_opening_digits: Vec<Vec<[i8; D]>>,
+    /// Decomposed inner-opening digits in flat column-major order plus block
+    /// boundaries.
+    pub inner_opening_digits: FlatDigitBlocks<D>,
     /// Optional recomposed `t_i` rows cached for prover-side A-row work.
     t: Option<Vec<Vec<CyclotomicRing<F, D>>>>,
     _marker: PhantomData<F>,
 }
 
 impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
-    /// Construct a new hint from i8 digit plane blocks.
-    pub fn new(inner_opening_digits: Vec<Vec<[i8; D]>>) -> Self {
+    /// Construct a new hint from flat digit blocks.
+    pub fn new(inner_opening_digits: FlatDigitBlocks<D>) -> Self {
         Self {
             inner_opening_digits,
             t: None,
@@ -711,7 +817,7 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
 
     /// Construct a hint that also preserves the undecomposed `t_i` rows.
     pub fn with_t(
-        inner_opening_digits: Vec<Vec<[i8; D]>>,
+        inner_opening_digits: FlatDigitBlocks<D>,
         t: Vec<Vec<CyclotomicRing<F, D>>>,
     ) -> Self {
         Self {
@@ -729,7 +835,7 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
     /// Consume the hint and return its decomposed digits plus the optional
     /// recomposed `t_i` rows.
     #[allow(clippy::type_complexity)]
-    pub fn into_parts(self) -> (Vec<Vec<[i8; D]>>, Option<Vec<Vec<CyclotomicRing<F, D>>>>) {
+    pub fn into_parts(self) -> (FlatDigitBlocks<D>, Option<Vec<Vec<CyclotomicRing<F, D>>>>) {
         (self.inner_opening_digits, self.t)
     }
 
@@ -759,7 +865,7 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
 
         let t = self
             .inner_opening_digits
-            .iter()
+            .iter_blocks()
             .map(|block| {
                 if block.len() % num_digits_open != 0 {
                     return Err(HachiError::InvalidSetup(format!(
@@ -788,21 +894,21 @@ impl<F: FieldCore, const D: usize> Eq for HachiCommitmentHint<F, D> {}
 
 /// Prover-side hint for one same-point commitment group.
 ///
-/// Stores per-polynomial `t_hat` blocks and, when available, the corresponding
-/// undecomposed `t_i` rows for all claims that were aggregated into the same
-/// commitment.
+/// Stores per-polynomial `t_hat` digit streams and, when available, the
+/// corresponding undecomposed `t_i` rows for all claims that were aggregated
+/// into the same commitment.
 #[derive(Debug, Clone)]
 pub struct HachiBatchedCommitmentHint<F: FieldCore, const D: usize> {
-    /// Per-polynomial decomposed inner-opening digit blocks.
-    pub inner_opening_digits: Vec<Vec<Vec<[i8; D]>>>,
+    /// Per-polynomial decomposed inner-opening digits.
+    pub inner_opening_digits: Vec<FlatDigitBlocks<D>>,
     /// Optional recomposed `t_i` rows grouped by polynomial then block.
     t: Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
     _marker: PhantomData<F>,
 }
 
 impl<F: FieldCore, const D: usize> HachiBatchedCommitmentHint<F, D> {
-    /// Construct a new batched hint from per-polynomial i8 digit plane blocks.
-    pub fn new(inner_opening_digits: Vec<Vec<Vec<[i8; D]>>>) -> Self {
+    /// Construct a new batched hint from per-polynomial digit streams.
+    pub fn new(inner_opening_digits: Vec<FlatDigitBlocks<D>>) -> Self {
         Self {
             inner_opening_digits,
             t: None,
@@ -812,7 +918,7 @@ impl<F: FieldCore, const D: usize> HachiBatchedCommitmentHint<F, D> {
 
     /// Construct a batched hint that also preserves the undecomposed `t_i` rows.
     pub fn with_t(
-        inner_opening_digits: Vec<Vec<Vec<[i8; D]>>>,
+        inner_opening_digits: Vec<FlatDigitBlocks<D>>,
         t: Vec<Vec<Vec<CyclotomicRing<F, D>>>>,
     ) -> Self {
         Self {
@@ -828,8 +934,26 @@ impl<F: FieldCore, const D: usize> HachiBatchedCommitmentHint<F, D> {
     }
 
     /// Flatten the batched hint into one root-hint view over all claims.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the flattened digit planes do not match the concatenated
+    /// block-size metadata. This would indicate an internal bug, since the
+    /// flattened view is derived directly from well-formed component hints.
     pub fn into_flattened(self) -> HachiCommitmentHint<F, D> {
-        let inner_opening_digits = self.inner_opening_digits.into_iter().flatten().collect();
+        let mut block_sizes = Vec::new();
+        let total_planes: usize = self
+            .inner_opening_digits
+            .iter()
+            .map(|digits| digits.flat_digits().len())
+            .sum();
+        let mut flat_digits = Vec::with_capacity(total_planes);
+        for digits in &self.inner_opening_digits {
+            block_sizes.extend_from_slice(digits.block_sizes());
+            digits.extend_flat_digits(&mut flat_digits);
+        }
+        let inner_opening_digits = FlatDigitBlocks::new(flat_digits, block_sizes)
+            .expect("batched hint flattening preserves block metadata");
         let t = self
             .t
             .map(|rows_by_poly| rows_by_poly.into_iter().flatten().collect());
@@ -904,24 +1028,24 @@ pub struct HachiStage2Proof<F: FieldCore> {
     pub sumcheck: SumcheckProof<F>,
     /// Commitment to the next witness `w`
     /// (ring dim = next level's D, may differ from y_ring/v).
-    pub next_w_commitment: ProofRingVec<F>,
+    pub next_w_commitment: FlatRingVec<F>,
     /// Claimed evaluation of the next witness `w` at the stage-2 challenge point.
     pub next_w_eval: F,
 }
 
 /// Proof for a single fold level (quad_eq + ring_switch + sumcheck).
 ///
-/// D-agnostic: ring elements are stored as [`FlatRingVec`] with their
-/// ring dimension recorded. Use [`Self::y_ring_typed`], [`Self::v_typed`], and
-/// [`Self::w_commitment_typed`] to reconstruct typed ring elements.
+/// D-agnostic: proof-owned ring vectors are stored in compact mode
+/// (`ring_dim = 0`), and callers recover the typed ring dimension from the
+/// surrounding proof shape or runtime context.
 ///
 /// One recursive Hachi level proof with inline stage-1 and stage-2 sumchecks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiLevelProof<F: FieldCore> {
     /// `y_ring` from the §3.1 reduction (ring dim = current level's D).
-    pub y_ring: ProofRingVec<F>,
+    pub y_ring: FlatRingVec<F>,
     /// `v = D · ŵ` (ring dim = current level's D).
-    pub v: ProofRingVec<F>,
+    pub v: FlatRingVec<F>,
     /// Stage-1 norm-check payload.
     pub stage1: HachiStage1Proof<F>,
     /// Stage-2 fused payload.
@@ -938,8 +1062,8 @@ impl<F: FieldCore> HachiLevelProof<F> {
         stage2: HachiStage2Proof<F>,
     ) -> Self {
         Self {
-            y_ring: ProofRingVec::from_single(&y_ring),
-            v: ProofRingVec::from_ring_elems(&v),
+            y_ring: FlatRingVec::from_single(&y_ring).into_compact(),
+            v: FlatRingVec::from_ring_elems(&v).into_compact(),
             stage1,
             stage2,
         }
@@ -952,7 +1076,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
         v: Vec<CyclotomicRing<F, D>>,
         stage1: HachiStage1Proof<F>,
         stage2_sumcheck: SumcheckProof<F>,
-        next_w_commitment: ProofRingVec<F>,
+        next_w_commitment: FlatRingVec<F>,
         next_w_eval: F,
     ) -> Self {
         Self::new::<D>(
@@ -961,7 +1085,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
             stage1,
             HachiStage2Proof {
                 sumcheck: stage2_sumcheck,
-                next_w_commitment,
+                next_w_commitment: next_w_commitment.into_compact(),
                 next_w_eval,
             },
         )
@@ -1011,7 +1135,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
     }
 
     /// Commitment to the next witness `w`.
-    pub fn next_w_commitment(&self) -> &ProofRingVec<F> {
+    pub fn next_w_commitment(&self) -> &FlatRingVec<F> {
         &self.stage2.next_w_commitment
     }
 
@@ -1060,9 +1184,9 @@ impl<F: FieldCore> HachiLevelProof<F> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiBatchedRootProof<F: FieldCore> {
     /// Root public outputs `y_ell` stored as a ring vector.
-    pub y_rings: ProofRingVec<F>,
+    pub y_rings: FlatRingVec<F>,
     /// Aggregated `v = Σ_ell D_ell · w_hat_ell`.
-    pub v: ProofRingVec<F>,
+    pub v: FlatRingVec<F>,
     /// Stage-1 norm-check payload.
     pub stage1: HachiStage1Proof<F>,
     /// Stage-2 fused payload.
@@ -1078,8 +1202,8 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
         stage2: HachiStage2Proof<F>,
     ) -> Self {
         Self {
-            y_rings: ProofRingVec::from_ring_elems(&y_rings),
-            v: ProofRingVec::from_ring_elems(&v),
+            y_rings: FlatRingVec::from_ring_elems(&y_rings).into_compact(),
+            v: FlatRingVec::from_ring_elems(&v).into_compact(),
             stage1,
             stage2,
         }
@@ -1092,7 +1216,7 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
         v: Vec<CyclotomicRing<F, D>>,
         stage1: HachiStage1Proof<F>,
         stage2_sumcheck: SumcheckProof<F>,
-        next_w_commitment: ProofRingVec<F>,
+        next_w_commitment: FlatRingVec<F>,
         next_w_eval: F,
     ) -> Self {
         Self::new::<D>(
@@ -1101,24 +1225,24 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
             stage1,
             HachiStage2Proof {
                 sumcheck: stage2_sumcheck,
-                next_w_commitment,
+                next_w_commitment: next_w_commitment.into_compact(),
                 next_w_eval,
             },
         )
     }
 
     /// Borrow the stored root `y` ring vector.
-    pub fn y_rings(&self) -> &ProofRingVec<F> {
+    pub fn y_rings(&self) -> &FlatRingVec<F> {
         &self.y_rings
     }
 
     /// Borrow the stored root `v` ring vector.
-    pub fn v(&self) -> &ProofRingVec<F> {
+    pub fn v(&self) -> &FlatRingVec<F> {
         &self.v
     }
 
     /// Commitment to the next witness `w`.
-    pub fn next_w_commitment(&self) -> &ProofRingVec<F> {
+    pub fn next_w_commitment(&self) -> &FlatRingVec<F> {
         &self.stage2.next_w_commitment
     }
 
@@ -1143,24 +1267,38 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
 pub struct HachiBatchedProof<F: FieldCore> {
     /// Batched root proof over all original-polynomial claims.
     pub root: HachiBatchedRootProof<F>,
-    /// Recursive proofs for subsequent `w` openings.
-    pub levels: Vec<HachiLevelProof<F>>,
-    /// Proof tail: direct final witness as packed digits.
-    pub tail: HachiProofTail<F>,
+    /// Recursive proof steps following the batched root proof.
+    pub steps: Vec<HachiProofStep<F>>,
 }
 
 impl<F: FieldCore> HachiBatchedProof<F> {
-    /// Access the final witness.
-    pub fn final_w(&self) -> &PackedDigits {
-        &self.tail.direct
+    /// Access the terminal direct witness.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the proof does not terminate with a direct witness step.
+    pub fn final_witness(&self) -> &DirectWitnessProof<F> {
+        self.steps
+            .last()
+            .and_then(HachiProofStep::as_direct)
+            .expect("batched hachi proof must terminate with a direct step")
+    }
+
+    /// Iterate over recursive fold levels.
+    pub fn fold_levels(&self) -> impl Iterator<Item = &HachiLevelProof<F>> {
+        self.steps.iter().filter_map(HachiProofStep::as_fold)
+    }
+
+    /// Number of recursive fold levels.
+    pub fn num_fold_levels(&self) -> usize {
+        self.fold_levels().count()
     }
 
     /// Derive the [`HachiBatchedProofShape`] for this proof.
     pub fn shape(&self) -> HachiBatchedProofShape {
         HachiBatchedProofShape {
             root_shape: self.root.shape(),
-            level_shapes: self.levels.iter().map(|l| l.shape()).collect(),
-            tail_shape: (self.tail.direct.num_elems, self.tail.direct.bits_per_elem),
+            step_shapes: self.steps.iter().map(HachiProofStep::shape).collect(),
         }
     }
 }
@@ -1172,26 +1310,52 @@ impl<F: FieldCore + HachiSerialize> HachiBatchedProof<F> {
     }
 }
 
-/// Proof tail: the final witness sent in clear as packed balanced digits.
+/// A recursive proof step, either a Hachi fold or a direct packed-witness
+/// handoff.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiProofTail<F: FieldCore> {
-    /// Final witness sent in clear as packed balanced digits.
-    pub direct: PackedDigits,
-    _marker: PhantomData<F>,
+pub enum HachiProofStep<F: FieldCore> {
+    /// One recursive Hachi fold.
+    Fold(HachiLevelProof<F>),
+    /// Terminal direct witness handoff.
+    Direct(DirectWitnessProof<F>),
 }
 
-impl<F: FieldCore> HachiProofTail<F> {
-    /// Construct a direct proof tail from packed digits.
-    pub fn new(packed: PackedDigits) -> Self {
-        Self {
-            direct: packed,
-            _marker: PhantomData,
+impl<F: FieldCore> HachiProofStep<F> {
+    /// Borrow the fold proof when this is a fold step.
+    pub fn as_fold(&self) -> Option<&HachiLevelProof<F>> {
+        match self {
+            Self::Fold(level) => Some(level),
+            Self::Direct(_) => None,
+        }
+    }
+
+    /// Mutably borrow the fold proof when this is a fold step.
+    pub fn as_fold_mut(&mut self) -> Option<&mut HachiLevelProof<F>> {
+        match self {
+            Self::Fold(level) => Some(level),
+            Self::Direct(_) => None,
+        }
+    }
+
+    /// Borrow the packed witness when this is a direct step.
+    pub fn as_direct(&self) -> Option<&DirectWitnessProof<F>> {
+        match self {
+            Self::Fold(_) => None,
+            Self::Direct(direct) => Some(direct),
+        }
+    }
+
+    /// Derive the shape for this proof step.
+    pub fn shape(&self) -> HachiProofStepShape {
+        match self {
+            Self::Fold(level) => HachiProofStepShape::Fold(level.shape()),
+            Self::Direct(direct) => HachiProofStepShape::Direct(direct.shape()),
         }
     }
 }
 
 /// Shape descriptor for deserializing a [`HachiLevelProof`] without headers.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LevelProofShape {
     /// Number of field coefficients in `y_ring`.
     pub y_ring_coeffs: usize,
@@ -1207,24 +1371,29 @@ pub struct LevelProofShape {
 
 /// Shape descriptor for deserializing an entire [`HachiProof`] without
 /// headers.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiProofShape {
-    /// Per-level shapes in execution order.
-    pub level_shapes: Vec<LevelProofShape>,
-    /// Tail packed-digit shape: `(num_elems, bits_per_elem)`.
-    pub tail_shape: (usize, u32),
+    /// Proof step shapes in execution order.
+    pub step_shapes: Vec<HachiProofStepShape>,
 }
 
 /// Shape descriptor for deserializing an [`HachiBatchedProof`] without
 /// headers.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiBatchedProofShape {
     /// Root-level shape (same field layout as a regular level).
     pub root_shape: LevelProofShape,
-    /// Per-level shapes for the recursive folding levels.
-    pub level_shapes: Vec<LevelProofShape>,
-    /// Tail packed-digit shape: `(num_elems, bits_per_elem)`.
-    pub tail_shape: (usize, u32),
+    /// Recursive proof step shapes following the batched root level.
+    pub step_shapes: Vec<HachiProofStepShape>,
+}
+
+/// Shape descriptor for deserializing a proof step without headers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HachiProofStepShape {
+    /// Shape of a recursive fold level.
+    Fold(LevelProofShape),
+    /// Shape of a direct packed witness.
+    Direct(DirectWitnessShape),
 }
 
 fn sumcheck_shape<F: FieldCore>(sc: &SumcheckProof<F>) -> SumcheckProofShape {
@@ -1247,7 +1416,7 @@ fn eq_factored_sumcheck_shape<F: FieldCore>(
 
 fn level_proof_shape<F: FieldCore>(
     y_coeffs: usize,
-    v: &ProofRingVec<F>,
+    v: &FlatRingVec<F>,
     stage1: &HachiStage1Proof<F>,
     stage2: &HachiStage2Proof<F>,
 ) -> LevelProofShape {
@@ -1270,31 +1439,52 @@ fn level_proof_shape<F: FieldCore>(
 /// Hachi PCS proof with multi-level folding.
 ///
 /// Each level runs the full protocol (quadratic equation, ring switch,
-/// sumcheck) on the previous level's witness `w`. The tail contains
-/// the final witness as packed digits.
+/// sumcheck) on the previous level's witness `w`. The final step is a direct
+/// packed-witness handoff.
 ///
 /// D-agnostic: per-level ring dimensions are recorded in each
 /// [`HachiLevelProof`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiProof<F: FieldCore> {
-    /// Per-level proofs, from the original polynomial (level 0) through
-    /// recursive w-openings.
-    pub levels: Vec<HachiLevelProof<F>>,
-    /// Proof tail: direct final witness as packed digits.
-    pub tail: HachiProofTail<F>,
+    /// Proof steps from the original polynomial through the terminal direct
+    /// witness handoff.
+    pub steps: Vec<HachiProofStep<F>>,
 }
 
 impl<F: FieldCore> HachiProof<F> {
-    /// Access the final witness.
-    pub fn final_w(&self) -> &PackedDigits {
-        &self.tail.direct
+    /// Access the terminal direct witness.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the proof does not terminate with a direct witness step.
+    pub fn final_witness(&self) -> &DirectWitnessProof<F> {
+        self.steps
+            .last()
+            .and_then(HachiProofStep::as_direct)
+            .expect("hachi proof must terminate with a direct step")
+    }
+
+    /// Iterate over fold levels.
+    pub fn fold_levels(&self) -> impl Iterator<Item = &HachiLevelProof<F>> {
+        self.steps.iter().filter_map(HachiProofStep::as_fold)
+    }
+
+    /// Mutably iterate over fold levels.
+    pub fn fold_levels_mut(&mut self) -> impl Iterator<Item = &mut HachiLevelProof<F>> {
+        self.steps
+            .iter_mut()
+            .filter_map(HachiProofStep::as_fold_mut)
+    }
+
+    /// Number of fold levels in the proof.
+    pub fn num_fold_levels(&self) -> usize {
+        self.fold_levels().count()
     }
 
     /// Derive the [`HachiProofShape`] for this proof.
     pub fn shape(&self) -> HachiProofShape {
         HachiProofShape {
-            level_shapes: self.levels.iter().map(|l| l.shape()).collect(),
-            tail_shape: (self.tail.direct.num_elems, self.tail.direct.bits_per_elem),
+            step_shapes: self.steps.iter().map(HachiProofStep::shape).collect(),
         }
     }
 }
@@ -1312,22 +1502,26 @@ impl<F: FieldCore, const D: usize> HachiSerialize for HachiCommitmentHint<F, D> 
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        (self.inner_opening_digits.len() as u64).serialize_with_mode(&mut writer, compress)?;
-        for block in &self.inner_opening_digits {
-            (block.len() as u64).serialize_with_mode(&mut writer, compress)?;
-            for plane in block {
+        (self.inner_opening_digits.block_count() as u64)
+            .serialize_with_mode(&mut writer, compress)?;
+        let mut offset = 0usize;
+        for &block_len in self.inner_opening_digits.block_sizes() {
+            (block_len as u64).serialize_with_mode(&mut writer, compress)?;
+            for plane in &self.inner_opening_digits.flat_digits()[offset..offset + block_len] {
                 let bytes: &[u8] =
                     unsafe { std::slice::from_raw_parts(plane.as_ptr().cast::<u8>(), D) };
                 writer.write_all(bytes)?;
             }
+            offset += block_len;
         }
         Ok(())
     }
     fn serialized_size(&self, _compress: Compress) -> usize {
         8 + self
             .inner_opening_digits
+            .block_sizes()
             .iter()
-            .map(|block| 8 + block.len() * D)
+            .map(|&block_len| 8 + block_len * D)
             .sum::<usize>()
     }
 }
@@ -1347,20 +1541,22 @@ impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiCommitmentH
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
         let num_blocks = u64::deserialize_with_mode(&mut reader, compress, validate, &())? as usize;
-        let mut inner_opening_digits = Vec::with_capacity(num_blocks);
+        let mut block_sizes = Vec::with_capacity(num_blocks);
+        let mut flat_digits = Vec::new();
         for _ in 0..num_blocks {
             let block_len =
                 u64::deserialize_with_mode(&mut reader, compress, validate, &())? as usize;
-            let mut block = Vec::with_capacity(block_len);
+            block_sizes.push(block_len);
             for _ in 0..block_len {
                 let mut plane = [0i8; D];
                 let bytes: &mut [u8] =
                     unsafe { std::slice::from_raw_parts_mut(plane.as_mut_ptr().cast::<u8>(), D) };
                 reader.read_exact(bytes)?;
-                block.push(plane);
+                flat_digits.push(plane);
             }
-            inner_opening_digits.push(block);
         }
+        let inner_opening_digits = FlatDigitBlocks::new(flat_digits, block_sizes)
+            .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         Ok(Self::new(inner_opening_digits))
     }
 }
@@ -1442,14 +1638,13 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
         validate: Validate,
         ctx: &LevelProofShape,
     ) -> Result<Self, SerializationError> {
-        let y_ring = ProofRingVec::deserialize_with_mode(
+        let y_ring = FlatRingVec::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
             &ctx.y_ring_coeffs,
         )?;
-        let v =
-            ProofRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
+        let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
         let mut stage1_stages = Vec::with_capacity(ctx.stage1_stages.len());
         for stage_shape in &ctx.stage1_stages {
             let sumcheck = EqFactoredSumcheckProof::deserialize_with_mode(
@@ -1483,7 +1678,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
                 validate,
                 &ctx.stage2_sumcheck,
             )?,
-            next_w_commitment: ProofRingVec::deserialize_with_mode(
+            next_w_commitment: FlatRingVec::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
@@ -1496,6 +1691,117 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
             v,
             stage1,
             stage2,
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
+impl<F: FieldCore> HachiSerialize for DirectWitnessProof<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        match self {
+            Self::PackedDigits(packed) => packed.serialize_with_mode(&mut writer, compress),
+            Self::FieldElements(field_elems) => {
+                field_elems.serialize_with_mode(&mut writer, compress)
+            }
+        }
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        match self {
+            Self::PackedDigits(packed) => packed.serialized_size(compress),
+            Self::FieldElements(field_elems) => field_elems.serialized_size(compress),
+        }
+    }
+}
+
+impl<F: FieldCore + Valid> Valid for DirectWitnessProof<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        match self {
+            Self::PackedDigits(packed) => packed.check(),
+            Self::FieldElements(field_elems) => field_elems.check(),
+        }
+    }
+}
+
+impl<F: FieldCore + Valid> HachiDeserialize for DirectWitnessProof<F> {
+    type Context = DirectWitnessShape;
+
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        ctx: &DirectWitnessShape,
+    ) -> Result<Self, SerializationError> {
+        let out = match ctx {
+            DirectWitnessShape::PackedDigits(shape) => Self::PackedDigits(
+                PackedDigits::deserialize_with_mode(&mut reader, compress, validate, shape)?,
+            ),
+            DirectWitnessShape::FieldElements(num_coeffs) => Self::FieldElements(
+                FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, num_coeffs)?,
+            ),
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
+impl<F: FieldCore> HachiSerialize for HachiProofStep<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        match self {
+            Self::Fold(level) => level.serialize_with_mode(&mut writer, compress),
+            Self::Direct(direct) => direct.serialize_with_mode(&mut writer, compress),
+        }
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        match self {
+            Self::Fold(level) => level.serialized_size(compress),
+            Self::Direct(direct) => direct.serialized_size(compress),
+        }
+    }
+}
+
+impl<F: FieldCore + Valid> Valid for HachiProofStep<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        match self {
+            Self::Fold(level) => level.check(),
+            Self::Direct(direct) => direct.check(),
+        }
+    }
+}
+
+impl<F: FieldCore + Valid> HachiDeserialize for HachiProofStep<F> {
+    type Context = HachiProofStepShape;
+
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        ctx: &HachiProofStepShape,
+    ) -> Result<Self, SerializationError> {
+        let out = match ctx {
+            HachiProofStepShape::Fold(shape) => Self::Fold(HachiLevelProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                shape,
+            )?),
+            HachiProofStepShape::Direct(shape) => Self::Direct(
+                DirectWitnessProof::deserialize_with_mode(&mut reader, compress, validate, shape)?,
+            ),
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -1578,14 +1884,13 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedRootProof<F> {
         validate: Validate,
         ctx: &LevelProofShape,
     ) -> Result<Self, SerializationError> {
-        let y_rings = ProofRingVec::deserialize_with_mode(
+        let y_rings = FlatRingVec::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
             &ctx.y_ring_coeffs,
         )?;
-        let v =
-            ProofRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
+        let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
         let mut stage1_stages = Vec::with_capacity(ctx.stage1_stages.len());
         for stage_shape in &ctx.stage1_stages {
             let sumcheck = EqFactoredSumcheckProof::deserialize_with_mode(
@@ -1619,7 +1924,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedRootProof<F> {
                 validate,
                 &ctx.stage2_sumcheck,
             )?,
-            next_w_commitment: ProofRingVec::deserialize_with_mode(
+            next_w_commitment: FlatRingVec::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
@@ -1647,30 +1952,44 @@ impl<F: FieldCore> HachiSerialize for HachiBatchedProof<F> {
         compress: Compress,
     ) -> Result<(), SerializationError> {
         self.root.serialize_with_mode(&mut writer, compress)?;
-        for level in &self.levels {
-            level.serialize_with_mode(&mut writer, compress)?;
+        for step in &self.steps {
+            step.serialize_with_mode(&mut writer, compress)?;
         }
-        self.tail.direct.serialize_with_mode(&mut writer, compress)
+        Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
         self.root.serialized_size(compress)
             + self
-                .levels
+                .steps
                 .iter()
-                .map(|l| l.serialized_size(compress))
+                .map(|step| step.serialized_size(compress))
                 .sum::<usize>()
-            + self.tail.direct.serialized_size(compress)
     }
 }
 
 impl<F: FieldCore + Valid> Valid for HachiBatchedProof<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.root.check()?;
-        for level in &self.levels {
-            level.check()?;
+        for step in &self.steps {
+            step.check()?;
         }
-        if let Some(first) = self.levels.first() {
+        let Some(HachiProofStep::Direct(_)) = self.steps.last() else {
+            return Err(SerializationError::InvalidData(
+                "batched hachi proof must terminate with a direct step".to_string(),
+            ));
+        };
+        if self.steps[..self.steps.len().saturating_sub(1)]
+            .iter()
+            .any(|step| !matches!(step, HachiProofStep::Fold(_)))
+        {
+            return Err(SerializationError::InvalidData(
+                "batched hachi proof may only contain fold steps before the terminal direct step"
+                    .to_string(),
+            ));
+        }
+        let mut levels = self.fold_levels();
+        if let Some(first) = levels.next() {
             if !self
                 .root
                 .next_w_commitment()
@@ -1681,7 +2000,8 @@ impl<F: FieldCore + Valid> Valid for HachiBatchedProof<F> {
                 ));
             }
         }
-        for levels in self.levels.windows(2) {
+        let fold_levels: Vec<_> = self.fold_levels().collect();
+        for levels in fold_levels.windows(2) {
             if !levels[0]
                 .next_w_commitment()
                 .can_decode_vec(levels[1].level_d())
@@ -1691,7 +2011,7 @@ impl<F: FieldCore + Valid> Valid for HachiBatchedProof<F> {
                 ));
             }
         }
-        self.tail.direct.check()
+        Ok(())
     }
 }
 
@@ -1709,19 +2029,16 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedProof<F> {
             validate,
             &ctx.root_shape,
         )?;
-        let mut levels = Vec::with_capacity(ctx.level_shapes.len());
-        for shape in &ctx.level_shapes {
-            levels.push(HachiLevelProof::deserialize_with_mode(
+        let mut steps = Vec::with_capacity(ctx.step_shapes.len());
+        for shape in &ctx.step_shapes {
+            steps.push(HachiProofStep::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
                 shape,
             )?);
         }
-        let pw =
-            PackedDigits::deserialize_with_mode(&mut reader, compress, validate, &ctx.tail_shape)?;
-        let tail = HachiProofTail::new(pw);
-        let out = Self { root, levels, tail };
+        let out = Self { root, steps };
         if matches!(validate, Validate::Yes) {
             out.check()?;
         }
@@ -1735,26 +2052,40 @@ impl<F: FieldCore> HachiSerialize for HachiProof<F> {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        for level in &self.levels {
-            level.serialize_with_mode(&mut writer, compress)?;
+        for step in &self.steps {
+            step.serialize_with_mode(&mut writer, compress)?;
         }
-        self.tail.direct.serialize_with_mode(&mut writer, compress)
+        Ok(())
     }
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.levels
+        self.steps
             .iter()
-            .map(|l| l.serialized_size(compress))
+            .map(|step| step.serialized_size(compress))
             .sum::<usize>()
-            + self.tail.direct.serialized_size(compress)
     }
 }
 
 impl<F: FieldCore + Valid> Valid for HachiProof<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        for lp in &self.levels {
-            lp.check()?;
+        for step in &self.steps {
+            step.check()?;
         }
-        for levels in self.levels.windows(2) {
+        let Some(HachiProofStep::Direct(_)) = self.steps.last() else {
+            return Err(SerializationError::InvalidData(
+                "hachi proof must terminate with a direct step".to_string(),
+            ));
+        };
+        if self.steps[..self.steps.len().saturating_sub(1)]
+            .iter()
+            .any(|step| !matches!(step, HachiProofStep::Fold(_)))
+        {
+            return Err(SerializationError::InvalidData(
+                "hachi proof may only contain fold steps before the terminal direct step"
+                    .to_string(),
+            ));
+        }
+        let fold_levels: Vec<_> = self.fold_levels().collect();
+        for levels in fold_levels.windows(2) {
             if !levels[0]
                 .next_w_commitment()
                 .can_decode_vec(levels[1].level_d())
@@ -1764,7 +2095,7 @@ impl<F: FieldCore + Valid> Valid for HachiProof<F> {
                 ));
             }
         }
-        self.tail.direct.check()
+        Ok(())
     }
 }
 
@@ -1776,19 +2107,16 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiProof<F> {
         validate: Validate,
         ctx: &HachiProofShape,
     ) -> Result<Self, SerializationError> {
-        let mut levels = Vec::with_capacity(ctx.level_shapes.len());
-        for shape in &ctx.level_shapes {
-            levels.push(HachiLevelProof::deserialize_with_mode(
+        let mut steps = Vec::with_capacity(ctx.step_shapes.len());
+        for shape in &ctx.step_shapes {
+            steps.push(HachiProofStep::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
                 shape,
             )?);
         }
-        let pw =
-            PackedDigits::deserialize_with_mode(&mut reader, compress, validate, &ctx.tail_shape)?;
-        let tail = HachiProofTail::new(pw);
-        let out = Self { levels, tail };
+        let out = Self { steps };
         if matches!(validate, Validate::Yes) {
             out.check()?;
         }
@@ -1799,7 +2127,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiProof<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128Offset5823;
+    use crate::algebra::Prime128Offset275;
     use crate::primitives::serialization::Valid;
     use crate::FromSmallInt;
 
@@ -1814,14 +2142,11 @@ mod tests {
             .collect();
         assert_eq!(recovered, digits);
 
-        let expected_field: Vec<Prime128Offset5823> = digits
+        let expected_field: Vec<Prime128Offset275> = digits
             .iter()
-            .map(|&digit| Prime128Offset5823::from_i64(digit as i64))
+            .map(|&digit| Prime128Offset275::from_i64(digit as i64))
             .collect();
-        assert_eq!(
-            packed.to_field_elems::<Prime128Offset5823>(),
-            expected_field
-        );
+        assert_eq!(packed.to_field_elems::<Prime128Offset275>(), expected_field);
     }
 
     #[test]

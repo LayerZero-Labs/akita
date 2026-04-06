@@ -1789,13 +1789,13 @@ impl<E: FieldCore + FromSmallInt> Stage2BivariateSkipState<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128Offset5823;
+    use crate::algebra::Prime128Offset275;
     use crate::primitives::{HachiDeserialize, HachiSerialize};
     use crate::protocol::sumcheck::hachi_stage1::HachiStage1Prover;
     use crate::protocol::sumcheck::{advance_eq_factored_claim, EqFactoredSumcheckInstanceProver};
     use std::collections::HashMap;
 
-    type F = Prime128Offset5823;
+    type F = Prime128Offset275;
 
     fn advance_stage1_claim(
         prover: &HachiStage1Prover<F>,

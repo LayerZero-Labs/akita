@@ -26,14 +26,11 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
     pub(crate) fn from_typed<const D: usize>(
         hint: HachiCommitmentHint<F, D>,
     ) -> Result<Self, HachiError> {
-        let inner_opening_block_sizes: Vec<usize> =
-            hint.inner_opening_digits.iter().map(Vec::len).collect();
-        let total_digit_planes: usize = inner_opening_block_sizes.iter().sum();
+        let inner_opening_block_sizes = hint.inner_opening_digits.block_sizes().to_vec();
+        let total_digit_planes: usize = hint.inner_opening_digits.flat_digits().len();
         let mut inner_opening_digits = Vec::with_capacity(total_digit_planes * D);
-        for block in &hint.inner_opening_digits {
-            for plane in block {
-                inner_opening_digits.extend_from_slice(plane);
-            }
+        for plane in hint.inner_opening_digits.flat_digits() {
+            inner_opening_digits.extend_from_slice(plane);
         }
 
         let t = hint.t().ok_or_else(|| {
@@ -90,7 +87,7 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
 
         let mut digit_offset = 0usize;
         let mut t_offset = 0usize;
-        let mut inner_opening_digits = Vec::with_capacity(self.inner_opening_block_sizes.len());
+        let mut inner_opening_digits = Vec::with_capacity(flat_digits.len());
         let mut t = Vec::with_capacity(self.t_block_sizes.len());
 
         for (&digit_block_size, &t_block_size) in self
@@ -106,7 +103,7 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
                 ));
             }
 
-            inner_opening_digits.push(flat_digits[digit_offset..digit_end].to_vec());
+            inner_opening_digits.extend_from_slice(&flat_digits[digit_offset..digit_end]);
             t.push(
                 flat_t[t_offset..t_end]
                     .iter()
@@ -123,6 +120,10 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
             ));
         }
 
+        let inner_opening_digits = crate::protocol::proof::FlatDigitBlocks::new(
+            inner_opening_digits,
+            self.inner_opening_block_sizes.clone(),
+        )?;
         Ok(HachiCommitmentHint::with_t(inner_opening_digits, t))
     }
 }

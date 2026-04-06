@@ -13,13 +13,14 @@ use crate::error::HachiError;
 use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
-    decompose_rows_i8, mat_vec_mul_ntt_digits_i8_strided, mat_vec_mul_ntt_i8_strided,
+    decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8_strided, mat_vec_mul_ntt_i8_strided,
 };
 use crate::protocol::hachi_poly_ops::helpers::{
     balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
 };
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness};
-use crate::{cfg_fold_reduce, cfg_into_iter, cfg_iter, CanonicalField, FieldCore};
+use crate::protocol::proof::FlatDigitBlocks;
+use crate::{CanonicalField, FieldCore};
 use std::array::from_fn;
 use std::marker::PhantomData;
 
@@ -202,9 +203,17 @@ where
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-    ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
+        matrix_stride: usize,
+    ) -> Result<FlatDigitBlocks<D>, HachiError> {
         let t_all = if num_digits_commit == 1 {
-            mat_vec_mul_ntt_digits_i8_strided(ntt_a, n_rows, self.coeffs, num_blocks, block_len)
+            mat_vec_mul_ntt_digits_i8_strided(
+                ntt_a,
+                n_rows,
+                matrix_stride,
+                self.coeffs,
+                num_blocks,
+                block_len,
+            )
         } else {
             let ring_elems: Vec<CyclotomicRing<F, D>> = self
                 .coeffs
@@ -217,6 +226,7 @@ where
             mat_vec_mul_ntt_i8_strided(
                 ntt_a,
                 n_rows,
+                matrix_stride,
                 &ring_elems,
                 num_blocks,
                 block_len,
@@ -225,10 +235,22 @@ where
             )
         };
 
-        let results = cfg_into_iter!(t_all)
-            .map(|t_i| decompose_rows_i8(&t_i, num_digits_open, log_basis))
+        let block_sizes: Vec<usize> = t_all
+            .iter()
+            .map(|t_i| t_i.len() * num_digits_open)
             .collect();
-        Ok(results)
+        let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
+        let dst_blocks = t_hat.split_blocks_mut();
+        #[cfg(feature = "parallel")]
+        cfg_into_iter!(dst_blocks)
+            .zip(cfg_iter!(t_all))
+            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
+        #[cfg(not(feature = "parallel"))]
+        dst_blocks
+            .into_iter()
+            .zip(t_all.iter())
+            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
+        Ok(t_hat)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -242,9 +264,17 @@ where
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, HachiError> {
         let t = if num_digits_commit == 1 {
-            mat_vec_mul_ntt_digits_i8_strided(ntt_a, n_rows, self.coeffs, num_blocks, block_len)
+            mat_vec_mul_ntt_digits_i8_strided(
+                ntt_a,
+                n_rows,
+                matrix_stride,
+                self.coeffs,
+                num_blocks,
+                block_len,
+            )
         } else {
             let ring_elems: Vec<CyclotomicRing<F, D>> = self
                 .coeffs
@@ -257,6 +287,7 @@ where
             mat_vec_mul_ntt_i8_strided(
                 ntt_a,
                 n_rows,
+                matrix_stride,
                 &ring_elems,
                 num_blocks,
                 block_len,
@@ -265,9 +296,18 @@ where
             )
         };
 
-        let t_hat = cfg_iter!(t)
-            .map(|t_i| decompose_rows_i8(t_i, num_digits_open, log_basis))
-            .collect();
+        let block_sizes: Vec<usize> = t.iter().map(|t_i| t_i.len() * num_digits_open).collect();
+        let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
+        let dst_blocks = t_hat.split_blocks_mut();
+        #[cfg(feature = "parallel")]
+        cfg_into_iter!(dst_blocks)
+            .zip(cfg_iter!(t))
+            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
+        #[cfg(not(feature = "parallel"))]
+        dst_blocks
+            .into_iter()
+            .zip(t.iter())
+            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
         Ok(CommitInnerWitness { t, t_hat })
     }
 }

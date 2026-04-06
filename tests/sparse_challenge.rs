@@ -10,7 +10,7 @@ use hachi_pcs::{FieldCore, FromSmallInt};
 
 type F = Fp64<4294967197>;
 
-const D: usize = 16;
+const D: usize = 32;
 
 fn dense_eval<E: FieldCore + LiftBase<F>>(alpha: E, x: &CyclotomicRing<F, D>) -> E {
     let mut acc = E::zero();

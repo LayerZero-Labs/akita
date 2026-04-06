@@ -12,18 +12,23 @@ use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::linear::{
-    decompose_rows_i8, mat_vec_mul_ntt_i8, try_centered_i8,
+    decompose_rows_i8_into, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
+    try_centered_i8,
 };
 use crate::protocol::hachi_poly_ops::helpers::{
-    build_decompose_fold_witness, decompose_ring_interleaved, decompose_ring_single_digit,
-    sparse_mul_acc, try_small_i8_cache_from_ring_coeffs, DecomposeParams,
+    balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
+    decompose_ring_single_digit, sparse_mul_acc, try_small_i8_cache_from_ring_coeffs,
+    DecomposeParams,
 };
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
-use crate::{cfg_into_iter, CanonicalField, FieldCore};
+use crate::protocol::proof::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
+use crate::{CanonicalField, FieldCore};
 
 /// Dense polynomial: all ring coefficients materialized in memory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DensePoly<F: FieldCore, const D: usize> {
+    /// Actual multilinear variable count of the source witness.
+    num_vars: usize,
     /// Ring coefficients in sequential block order.
     pub coeffs: Vec<CyclotomicRing<F, D>>,
     small_i8_coeffs: Option<Vec<[i8; D]>>,
@@ -37,18 +42,12 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
     ///
     /// # Errors
     ///
-    /// Returns an error if `D` is not a power of two, `num_vars < log₂(D)`, or
+    /// Returns an error if `D` is not a power of two or if
     /// `evals.len() != 2^num_vars`.
     pub fn from_field_evals(num_vars: usize, evals: &[F]) -> Result<Self, HachiError> {
         if D == 0 || !D.is_power_of_two() {
             return Err(HachiError::InvalidInput(format!(
                 "ring degree D={D} is not a power of two"
-            )));
-        }
-        let alpha = D.trailing_zeros() as usize;
-        if num_vars < alpha {
-            return Err(HachiError::InvalidInput(format!(
-                "num_vars {num_vars} is smaller than alpha {alpha}"
             )));
         }
         let expected_len = 1usize
@@ -61,7 +60,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
             });
         }
 
-        let outer_len = expected_len / D;
+        let outer_len = expected_len.div_ceil(D);
         let q = (-F::one()).to_canonical_u128() + 1;
         let half_q = q / 2;
         let mut coeffs = Vec::with_capacity(outer_len);
@@ -69,14 +68,20 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
         let mut all_small_i8 = true;
 
         for i in 0..outer_len {
-            let slice = &evals[i * D..(i + 1) * D];
-            coeffs.push(CyclotomicRing::from_slice(slice));
+            let start = i * D;
+            let end = ((i + 1) * D).min(expected_len);
+            let slice = &evals[start..end];
+            let mut ring = CyclotomicRing::<F, D>::zero();
+            for (coeff_idx, coeff) in slice.iter().enumerate() {
+                ring.coeffs[coeff_idx] = *coeff;
+            }
+            coeffs.push(ring);
 
             if all_small_i8 {
                 let mut digits = [0i8; D];
-                for (dst, coeff) in digits.iter_mut().zip(slice.iter()) {
+                for (coeff_idx, coeff) in slice.iter().enumerate() {
                     if let Some(centered) = try_centered_i8(*coeff, q, half_q) {
-                        *dst = centered;
+                        digits[coeff_idx] = centered;
                     } else {
                         all_small_i8 = false;
                         break;
@@ -89,15 +94,25 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
         }
 
         Ok(Self {
+            num_vars,
             coeffs,
             small_i8_coeffs: all_small_i8.then_some(small_i8_coeffs),
         })
     }
 
     /// Wrap an existing vector of ring elements.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `coeffs.len() * D` overflows `usize`.
     pub fn from_ring_coeffs(coeffs: Vec<CyclotomicRing<F, D>>) -> Self {
         let small_i8_coeffs = try_small_i8_cache_from_ring_coeffs(&coeffs);
+        let total = coeffs
+            .len()
+            .checked_mul(D)
+            .expect("ring elems * D overflow");
         Self {
+            num_vars: total.trailing_zeros() as usize,
             coeffs,
             small_i8_coeffs,
         }
@@ -112,6 +127,10 @@ where
 
     fn num_ring_elems(&self) -> usize {
         self.coeffs.len()
+    }
+
+    fn num_vars(&self) -> usize {
+        self.num_vars
     }
 
     fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
@@ -227,41 +246,14 @@ where
             return build_decompose_fold_witness::<F, D>(coeff_accum, params.q);
         }
 
-        let z_chunks: Vec<Vec<[i32; D]>> = {
+        let centered_coeffs = {
             let _span = tracing::info_span!("dense_multi_digit_accumulate").entered();
-            cfg_into_iter!(0..block_len)
-                .map(|elem_idx| {
-                    let mut z_local: Vec<[i32; D]> = vec![[0i32; D]; num_digits];
-                    let mut digit_buf: Vec<Vec<i8>> = vec![vec![0i8; D]; num_digits];
-
-                    for (block_idx, c_i) in challenges.iter().enumerate() {
-                        let global_idx = block_idx * block_len + elem_idx;
-                        if global_idx >= n {
-                            continue;
-                        }
-                        let ring = &coeffs[global_idx];
-                        decompose_ring_interleaved::<F, D>(
-                            ring,
-                            &mut digit_buf,
-                            num_digits,
-                            &params,
-                        );
-
-                        for digit in 0..num_digits {
-                            sparse_mul_acc::<D>(&digit_buf[digit], c_i, &mut z_local[digit]);
-                        }
-                    }
-
-                    z_local
-                })
-                .collect()
+            balanced_ring_decompose_fold_partitioned::<F, D>(
+                coeffs, challenges, block_len, num_digits, &params,
+            )
         };
 
         let _span = tracing::info_span!("dense_multi_digit_convert").entered();
-        let mut centered_coeffs = Vec::with_capacity(block_len * num_digits);
-        for chunk in z_chunks {
-            centered_coeffs.extend(chunk);
-        }
         build_decompose_fold_witness::<F, D>(centered_coeffs, params.q)
     }
 
@@ -270,11 +262,13 @@ where
         &self,
         _a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-    ) -> Result<Vec<Vec<[i8; D]>>, HachiError> {
+        matrix_stride: usize,
+    ) -> Result<FlatDigitBlocks<D>, HachiError> {
         let n = self.coeffs.len();
         let num_blocks = n.div_ceil(block_len);
 
@@ -289,29 +283,72 @@ where
             })
             .collect();
 
-        let t_all = mat_vec_mul_ntt_i8(
+        if n_a == 1 {
+            let t = mat_vec_mul_ntt_i8_dense_single_row(
+                ntt_a,
+                matrix_stride,
+                &block_slices,
+                num_digits_commit,
+                log_basis,
+            );
+            let mut t_hat = FlatDigitBlocks::zeroed(vec![num_digits_open; t.len()])?;
+            let dst_blocks = t_hat.split_blocks_mut();
+            #[cfg(feature = "parallel")]
+            cfg_into_iter!(dst_blocks)
+                .zip(cfg_iter!(t))
+                .for_each(|(dst, t_i)| {
+                    decompose_rows_i8_into(
+                        std::slice::from_ref(t_i),
+                        dst,
+                        num_digits_open,
+                        log_basis,
+                    )
+                });
+            #[cfg(not(feature = "parallel"))]
+            dst_blocks.into_iter().zip(t.iter()).for_each(|(dst, t_i)| {
+                decompose_rows_i8_into(std::slice::from_ref(t_i), dst, num_digits_open, log_basis)
+            });
+            return Ok(t_hat);
+        }
+
+        let t_all = mat_vec_mul_ntt_i8_dense(
             ntt_a,
-            ntt_a.num_rows(),
+            n_a,
+            matrix_stride,
             &block_slices,
             num_digits_commit,
             log_basis,
         );
 
-        let results: Vec<Vec<[i8; D]>> = cfg_into_iter!(t_all)
-            .map(|t_i| decompose_rows_i8(&t_i, num_digits_open, log_basis))
+        let block_sizes: Vec<usize> = t_all
+            .iter()
+            .map(|t_i| t_i.len() * num_digits_open)
             .collect();
+        let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
+        let dst_blocks = t_hat.split_blocks_mut();
+        #[cfg(feature = "parallel")]
+        cfg_into_iter!(dst_blocks)
+            .zip(cfg_iter!(t_all))
+            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
+        #[cfg(not(feature = "parallel"))]
+        dst_blocks
+            .into_iter()
+            .zip(t_all.iter())
+            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
 
-        Ok(results)
+        Ok(t_hat)
     }
 
     fn commit_inner_witness(
         &self,
         _a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, HachiError> {
         let n = self.coeffs.len();
         let num_blocks = n.div_ceil(block_len);
@@ -327,16 +364,82 @@ where
             })
             .collect();
 
-        let t = mat_vec_mul_ntt_i8(
+        if n_a == 1 {
+            let t_single = mat_vec_mul_ntt_i8_dense_single_row(
+                ntt_a,
+                matrix_stride,
+                &block_slices,
+                num_digits_commit,
+                log_basis,
+            );
+            let mut t_hat = FlatDigitBlocks::zeroed(vec![num_digits_open; t_single.len()])?;
+            let dst_blocks = t_hat.split_blocks_mut();
+            #[cfg(feature = "parallel")]
+            cfg_into_iter!(dst_blocks)
+                .zip(cfg_iter!(t_single))
+                .for_each(|(dst, t_i)| {
+                    decompose_rows_i8_into(
+                        std::slice::from_ref(t_i),
+                        dst,
+                        num_digits_open,
+                        log_basis,
+                    )
+                });
+            #[cfg(not(feature = "parallel"))]
+            dst_blocks
+                .into_iter()
+                .zip(t_single.iter())
+                .for_each(|(dst, t_i)| {
+                    decompose_rows_i8_into(
+                        std::slice::from_ref(t_i),
+                        dst,
+                        num_digits_open,
+                        log_basis,
+                    )
+                });
+            let t = t_single.into_iter().map(|ring| vec![ring]).collect();
+            return Ok(CommitInnerWitness { t, t_hat });
+        }
+
+        let t = mat_vec_mul_ntt_i8_dense(
             ntt_a,
-            ntt_a.num_rows(),
+            n_a,
+            matrix_stride,
             &block_slices,
             num_digits_commit,
             log_basis,
         );
-        let t_hat = cfg_iter!(t)
-            .map(|t_i| decompose_rows_i8(t_i, num_digits_open, log_basis))
-            .collect();
+        let block_sizes: Vec<usize> = t.iter().map(|t_i| t_i.len() * num_digits_open).collect();
+        let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
+        let dst_blocks = t_hat.split_blocks_mut();
+        #[cfg(feature = "parallel")]
+        cfg_into_iter!(dst_blocks)
+            .zip(cfg_iter!(t))
+            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
+        #[cfg(not(feature = "parallel"))]
+        dst_blocks
+            .into_iter()
+            .zip(t.iter())
+            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
         Ok(CommitInnerWitness { t, t_hat })
+    }
+
+    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, HachiError> {
+        let live_len = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
+            HachiError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
+        })?;
+        let mut coeffs = Vec::with_capacity(live_len);
+        let mut remaining = live_len;
+        for ring in &self.coeffs {
+            let take = remaining.min(D);
+            coeffs.extend_from_slice(&ring.coefficients()[..take]);
+            remaining -= take;
+            if remaining == 0 {
+                break;
+            }
+        }
+        Ok(DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
+            coeffs,
+        )))
     }
 }

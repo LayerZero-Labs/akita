@@ -9,7 +9,7 @@ determine the proof-aligned binding floor.
 
 The setup studied here is:
 
-- field modulus `q = 2^128 - 5823`
+- field modulus `q = 2^128 - 275`
 - ring degree `D = 64`, i.e. ring `F_q[X] / (X^64 + 1)`
 - one-hot chunk size `K = 256`
 - sparse challenge coefficients in `{-2, -1, 1, 2}`
@@ -87,8 +87,8 @@ from textwrap import dedent
 
 
 # Fixed family parameters for the experiment.
-Q = (1 << 128) - 5823
-Q_LABEL = "2^128 - 5823"
+Q = (1 << 128) - 275
+Q_LABEL = "2^128 - 275"
 D = 64
 K = 256
 LOG_BASIS = 3

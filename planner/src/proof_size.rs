@@ -1,4 +1,4 @@
-const FIELD_BITS: u32 = 128;
+pub const FIELD_BITS: u32 = 128;
 const ELEM_BYTES: usize = (FIELD_BITS / 8) as usize; // 16
 
 // ── Optimized (header-stripped) sizing ──────────────────────────────────────

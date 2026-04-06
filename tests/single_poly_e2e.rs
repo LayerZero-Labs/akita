@@ -5,97 +5,20 @@
 //!
 //! Two polynomial representations are covered:
 //!
-//! * **One-hot** — `Fp128OneHotCommitmentConfig` (D = 64, K = D).
-//! * **Dense**   — `Fp128FullCommitmentConfig`   (D = 128, full-field coefficients).
+//! * **One-hot** — `fp128::D64OneHot` (D = 64, K = D).
+//! * **Dense**   — `fp128::D128Full`   (D = 128, full-field coefficients).
 //!
 //! Variable counts: 10, 15, 20, 25 for each representation (8 tests total).
 
 #![allow(missing_docs)]
 
-use hachi_pcs::algebra::Fp128;
-use hachi_pcs::protocol::commitment::{Fp128FullCommitmentConfig, Fp128OneHotCommitmentConfig};
+mod common;
+
+use common::*;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
-use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
-use hachi_pcs::protocol::opening_point::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BlockOrder,
-};
 use hachi_pcs::protocol::proof::HachiProof;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
-use hachi_pcs::protocol::{CommitmentConfig, HachiCommitmentLayout};
-use hachi_pcs::{
-    BasisMode, CanonicalField, CommitmentScheme, HachiDeserialize, HachiSerialize, Transcript,
-};
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
-use std::sync::Once;
-
-type F = Fp128<0xffffffffffffffffffffffffffffe941>;
-const STACK_SIZE: usize = 256 * 1024 * 1024;
-
-static INIT_RAYON: Once = Once::new();
-
-fn init_rayon_pool() {
-    INIT_RAYON.call_once(|| {
-        #[cfg(feature = "parallel")]
-        rayon::ThreadPoolBuilder::new()
-            .stack_size(STACK_SIZE)
-            .build_global()
-            .ok();
-    });
-}
-
-fn random_point(nv: usize, seed: u64) -> Vec<F> {
-    let mut rng = StdRng::seed_from_u64(seed);
-    (0..nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-        .collect()
-}
-
-fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(STACK_SIZE)
-        .spawn(f)
-        .expect("failed to spawn thread")
-        .join()
-        .expect("test thread panicked");
-}
-
-fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
-    poly: &P,
-    point: &[F],
-    layout: &HachiCommitmentLayout,
-) -> F {
-    let alpha_bits = D.trailing_zeros() as usize;
-    assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
-
-    let inner_point = &point[..alpha_bits];
-    let reduced_point = &point[alpha_bits..];
-    let ring_opening_point = ring_opening_point_from_field(
-        reduced_point,
-        layout.r_vars,
-        layout.m_vars,
-        BasisMode::Lagrange,
-        BlockOrder::RowMajor,
-    )
-    .expect("opening point shape should match layout");
-
-    let (y_ring, _) = poly.evaluate_and_fold(
-        &ring_opening_point.b,
-        &ring_opening_point.a,
-        layout.block_len,
-    );
-    let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, BasisMode::Lagrange)
-        .expect("inner opening point should match ring dimension");
-    (y_ring * v.sigma_m1()).coefficients()[0]
-}
-
-// ---------------------------------------------------------------------------
-// One-hot helpers (D = 64)
-// ---------------------------------------------------------------------------
-
-type OneHotCfg = Fp128OneHotCommitmentConfig;
-const ONEHOT_D: usize = OneHotCfg::D;
-const ONEHOT_K: usize = ONEHOT_D;
+use hachi_pcs::{CommitmentScheme, HachiDeserialize, HachiSerialize, Transcript};
 
 fn run_single_onehot(nv: usize) {
     init_rayon_pool();
@@ -175,7 +98,7 @@ fn run_single_onehot(nv: usize) {
 // Dense helpers (D = 128)
 // ---------------------------------------------------------------------------
 
-type DenseCfg = Fp128FullCommitmentConfig;
+type DenseCfg = fp128::D128Full;
 const DENSE_D: usize = DenseCfg::D;
 
 fn run_single_dense(nv: usize) {

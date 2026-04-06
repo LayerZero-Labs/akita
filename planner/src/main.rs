@@ -1,7 +1,7 @@
 use std::env;
 
 use hachi_planner::baseline::{baseline_params_for, run_baseline_planner, BASELINE_CASES};
-use hachi_planner::search::{run_universal_planner, PlannerOptions, Schedule};
+use hachi_planner::search::{run_universal_planner, DirectWitnessShape, PlannerOptions, Schedule};
 
 fn get_baseline(lcb: u32, nv: usize) -> Option<usize> {
     let d = if lcb == 1 {
@@ -17,16 +17,15 @@ fn get_baseline(lcb: u32, nv: usize) -> Option<usize> {
 
 fn d_schedule(sched: &Schedule) -> String {
     sched
-        .levels
-        .iter()
+        .fold_steps()
         .map(|l| l.d.to_string())
         .collect::<Vec<_>>()
         .join("->")
 }
 
 fn print_detailed(sched: &Schedule) {
-    println!("  levels ({}):", sched.levels.len());
-    for (i, l) in sched.levels.iter().enumerate() {
+    println!("  fold steps ({}):", sched.num_fold_levels());
+    for (i, l) in sched.fold_steps().enumerate() {
         println!(
             "    L{}: D={} lb={} m={} r={} [{}]",
             i, l.d, l.lb, l.m_vars, l.r_vars, l.label
@@ -44,10 +43,21 @@ fn print_detailed(sched: &Schedule) {
             l.level_bytes
         );
     }
-    println!(
-        "  terminal: w_len={}  lb={}  tail={}B",
-        sched.final_w_len, sched.final_lb, sched.tail_bytes
-    );
+    if let Some(direct) = sched.direct_step() {
+        match &direct.witness_shape {
+            DirectWitnessShape::PackedDigits {
+                num_elems,
+                bits_per_elem,
+            } => println!(
+                "  terminal: direct packed-digits w_len={}  lb={}  witness={}B total={}B",
+                num_elems, bits_per_elem, direct.direct_bytes, direct.total_bytes
+            ),
+            DirectWitnessShape::FieldElements { num_elems } => println!(
+                "  terminal: direct field-elements w_len={}  witness={}B",
+                num_elems, direct.total_bytes
+            ),
+        }
+    }
     println!(
         "  TOTAL: {} B  ({:.1} KB)",
         sched.total_bytes,
@@ -118,7 +128,10 @@ fn cmd_results() {
             let ds = d_schedule(&sched);
             println!(
                 "  {:>4} {:>10} {:<25} {:>10}",
-                nv, sched.total_bytes, ds, sched.tail_bytes
+                nv,
+                sched.total_bytes,
+                ds,
+                sched.direct_bytes()
             );
 
             if let Some(baseline) = get_baseline(lcb, nv) {

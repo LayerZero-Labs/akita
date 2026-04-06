@@ -13,6 +13,7 @@ use std::array::from_fn;
 struct BadDegreeConfig;
 
 impl CommitmentConfig for BadDegreeConfig {
+    type Field = F;
     const D: usize = 32;
 
     fn decomposition() -> DecompositionParams {
@@ -56,13 +57,11 @@ fn setup_shape_is_consistent() {
     assert_eq!(v1.expanded.seed.max_num_vars, 16);
     assert_eq!(p2.expanded.seed.max_num_vars, 16);
     assert_eq!(v2.expanded.seed.max_num_vars, 16);
-    assert!(p1.expanded.shared_matrix.num_rows() >= envelope.max_n_a);
-    assert!(p1.expanded.shared_matrix.num_cols_at::<D>() >= BLOCK_LEN * num_digits_commit());
-    assert!(p1.expanded.shared_matrix.num_rows() >= envelope.max_n_b);
-    assert!(
-        p1.expanded.shared_matrix.num_cols_at::<D>()
-            >= envelope.max_n_a * num_digits_open() * NUM_BLOCKS
-    );
+    let total = p1.expanded.shared_matrix.total_ring_elements_at::<D>();
+    let inner_width = BLOCK_LEN * num_digits_commit();
+    let outer_width = envelope.max_n_a * num_digits_open() * NUM_BLOCKS;
+    assert!(total >= envelope.max_n_a * inner_width);
+    assert!(total >= envelope.max_n_b * outer_width);
 }
 
 #[test]
@@ -157,12 +156,22 @@ fn opening_satisfies_inner_and_outer_equations() {
     let log_basis = log_basis();
     for (i, block) in blocks.iter().enumerate() {
         let s_i = decompose_block(block, depth, log_basis);
-        let lhs = mat_vec_mul(&psetup.expanded.shared_matrix, &s_i);
+        let lhs = mat_vec_mul(
+            &psetup.expanded.shared_matrix,
+            TinyConfig::envelope(16).max_n_a,
+            psetup.expanded.seed.max_stride(),
+            &s_i,
+        );
+        let t_hat_block = w
+            .t_hat
+            .iter()
+            .nth(i)
+            .expect("commit witness should retain every block");
         let rhs: Vec<CyclotomicRing<F, D>> = (0..TinyConfig::envelope(16).max_n_a)
             .map(|j| {
                 let start = j * depth;
                 let end = start + depth;
-                CyclotomicRing::gadget_recompose_pow2_i8(&w.t_hat[i][start..end], log_basis)
+                CyclotomicRing::gadget_recompose_pow2_i8(&t_hat_block[start..end], log_basis)
             })
             .collect();
         assert_eq!(lhs, rhs);
@@ -170,20 +179,25 @@ fn opening_satisfies_inner_and_outer_equations() {
 
     let t_hat_flat_ring: Vec<CyclotomicRing<F, D>> = w
         .t_hat
+        .flat_digits()
         .iter()
-        .flat_map(|x| x.iter())
         .map(|plane| {
             let coeffs: [F; D] = from_fn(|k| F::from_i64(plane[k] as i64));
             CyclotomicRing::from_coefficients(coeffs)
         })
         .collect();
-    let outer = mat_vec_mul(&psetup.expanded.shared_matrix, &t_hat_flat_ring);
+    let outer = mat_vec_mul(
+        &psetup.expanded.shared_matrix,
+        TinyConfig::envelope(16).max_n_b,
+        psetup.expanded.seed.max_stride(),
+        &t_hat_flat_ring,
+    );
     assert_eq!(outer, w.commitment.u);
 }
 
 #[test]
 fn small_test_config_has_expected_shape() {
-    assert_eq!(SmallTestCommitmentConfig::D, 16);
+    assert_eq!(SmallTestCommitmentConfig::D, 32);
     let layout = SmallTestCommitmentConfig::commitment_layout(8).unwrap();
     assert_eq!(layout.block_len, 16);
     assert_eq!(layout.num_blocks, 4);
