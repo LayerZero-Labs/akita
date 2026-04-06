@@ -1526,7 +1526,8 @@ mod tests {
     use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
     use crate::primitives::serialization::{Compress, HachiSerialize};
     use crate::protocol::commitment::generated::{
-        fp128_adaptive_bounded_table, fp128_d128_full_table, GeneratedScheduleTable,
+        fp128_d128_full_table, fp128_d32_full_table, fp128_d32_logbasis_table,
+        fp128_d32_onehot_table, GeneratedScheduleTable,
     };
     use crate::protocol::commitment::presets::fp128;
     use crate::protocol::proof::{
@@ -1670,15 +1671,11 @@ mod tests {
 
     #[test]
     fn generated_fp128_schedule_tables_match_cfg_schedule() {
-        assert_generated_table_matches_cfg_schedule::<fp128::D32Full>(
-            fp128_adaptive_bounded_table::<32, 128, 2, 2, 2>().unwrap(),
-        );
+        assert_generated_table_matches_cfg_schedule::<fp128::D32Full>(fp128_d32_full_table());
         assert_generated_table_matches_cfg_schedule::<fp128::D32LogBasis>(
-            fp128_adaptive_bounded_table::<32, 3, 2, 2, 2>().unwrap(),
+            fp128_d32_logbasis_table(),
         );
-        assert_generated_table_matches_cfg_schedule::<fp128::D32OneHot>(
-            fp128_adaptive_bounded_table::<32, 1, 2, 2, 2>().unwrap(),
-        );
+        assert_generated_table_matches_cfg_schedule::<fp128::D32OneHot>(fp128_d32_onehot_table());
     }
 
     #[test]
@@ -1694,12 +1691,6 @@ mod tests {
                 .expect("generated table should materialize")
                 .expect("entry should exist in generated table");
         }
-    }
-
-    #[test]
-    fn d128_bounded_families_fall_back_to_runtime_planner() {
-        assert!(fp128_adaptive_bounded_table::<128, 128, 1, 1, 1>().is_none());
-        assert!(fp128_adaptive_bounded_table::<128, 3, 1, 1, 1>().is_none());
     }
 
     #[test]

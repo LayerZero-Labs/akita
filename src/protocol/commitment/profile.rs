@@ -2,9 +2,9 @@
 
 use super::config::{CommitmentConfig, DecompositionParams};
 use super::generated::{
-    fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table, fp128_d128_full_table,
-    fp128_d128_logbasis_table, fp128_d128_onehot_table, table_entry_envelope,
-    GeneratedScheduleTable,
+    fp128_adaptive_onehot_d64_table, fp128_d128_full_table, fp128_d128_logbasis_table,
+    fp128_d128_onehot_table, fp128_d32_full_table, fp128_d32_logbasis_table,
+    fp128_d32_onehot_table, table_entry_envelope, GeneratedScheduleTable,
 };
 use super::schedule::{
     generated_schedule_plan_from_table, planned_log_basis_at_level_from_schedule,
@@ -277,9 +277,9 @@ impl CommitmentFieldProfileSchedule for Fp128PrimeProfile {
     fn generated_schedule_table<const D: usize, const LOG_COMMIT_BOUND: u32>(
     ) -> Option<GeneratedScheduleTable> {
         match (D, LOG_COMMIT_BOUND) {
-            (32, 128) => fp128_adaptive_bounded_table::<32, 128, 2, 2, 2>(),
-            (32, 3) => fp128_adaptive_bounded_table::<32, 3, 2, 2, 2>(),
-            (32, 1) => fp128_adaptive_bounded_table::<32, 1, 2, 2, 2>(),
+            (32, 128) => Some(fp128_d32_full_table()),
+            (32, 3) => Some(fp128_d32_logbasis_table()),
+            (32, 1) => Some(fp128_d32_onehot_table()),
             (64, 1) => Some(fp128_adaptive_onehot_d64_table()),
             (128, 128) => Some(fp128_d128_full_table()),
             (128, 3) => Some(fp128_d128_logbasis_table()),

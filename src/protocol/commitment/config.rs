@@ -1182,18 +1182,18 @@ mod fp128_policy_tests {
     #[test]
     fn current_d128_full_schedule_stays_within_audited_sis_widths() {
         type Cfg = crate::protocol::commitment::presets::fp128::D128Full;
-        assert_d128_schedule_stays_within_audited_sis_widths::<Cfg>(8, 63);
+        assert_d128_schedule_stays_within_audited_sis_widths::<Cfg>(8, 50);
     }
 
     #[test]
     fn current_d128_logbasis_schedule_stays_within_audited_sis_widths() {
         type Cfg = crate::protocol::commitment::presets::fp128::LogBasis;
-        assert_d128_schedule_stays_within_audited_sis_widths::<Cfg>(8, 63);
+        assert_d128_schedule_stays_within_audited_sis_widths::<Cfg>(8, 50);
     }
 
     #[test]
     fn current_d128_onehot_candidate_schedule_stays_within_audited_sis_widths() {
-        assert_d128_schedule_stays_within_audited_sis_widths::<D128OneHotCandidate>(8, 63);
+        assert_d128_schedule_stays_within_audited_sis_widths::<D128OneHotCandidate>(8, 50);
     }
 
     #[test]

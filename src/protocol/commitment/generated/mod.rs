@@ -97,24 +97,21 @@ pub(crate) fn table_entry_envelope(
     saw_fold.then_some((max_n_a, max_n_b, max_n_d))
 }
 
-pub(crate) fn fp128_adaptive_bounded_table<
-    const D: usize,
-    const LOG_COMMIT_BOUND: u32,
-    const N_A: usize,
-    const N_B: usize,
-    const N_D: usize,
->() -> Option<GeneratedScheduleTable> {
-    match (D, LOG_COMMIT_BOUND, N_A, N_B, N_D) {
-        (32, 128, 2, 2, 2) => Some(GeneratedScheduleTable {
-            entries: fp128_d32_full::FP128_D32_FULL_SCHEDULES,
-        }),
-        (32, 3, 2, 2, 2) => Some(GeneratedScheduleTable {
-            entries: fp128_d32_logbasis::FP128_D32_LOGBASIS_SCHEDULES,
-        }),
-        (32, 1, 2, 2, 2) => Some(GeneratedScheduleTable {
-            entries: fp128_d32_onehot::FP128_D32_ONEHOT_SCHEDULES,
-        }),
-        _ => None,
+pub(crate) fn fp128_d32_full_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_d32_full::FP128_D32_FULL_SCHEDULES,
+    }
+}
+
+pub(crate) fn fp128_d32_logbasis_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_d32_logbasis::FP128_D32_LOGBASIS_SCHEDULES,
+    }
+}
+
+pub(crate) fn fp128_d32_onehot_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_d32_onehot::FP128_D32_ONEHOT_SCHEDULES,
     }
 }
 
