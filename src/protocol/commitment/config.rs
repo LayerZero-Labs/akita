@@ -359,17 +359,6 @@ impl HachiCommitmentLayout {
             .checked_add(alpha)
             .ok_or_else(|| HachiError::InvalidSetup("variable count overflow".to_string()))
     }
-
-    /// The uniform row stride for the shared coefficient matrix.
-    ///
-    /// All roles (A, B, D) share the same underlying matrix and must use the
-    /// same row pitch so that logical position `(i, j)` maps to the same
-    /// physical element regardless of which role is accessing it.
-    pub fn matrix_stride(&self) -> usize {
-        self.inner_width
-            .max(self.outer_width)
-            .max(self.d_matrix_width)
-    }
 }
 
 /// Maximum matrix row envelope needed across all runtime levels for a config.

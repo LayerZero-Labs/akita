@@ -117,18 +117,6 @@ impl<F: FieldCore> FlatMatrix<F> {
             num_cols,
         }
     }
-
-    /// Borrow the raw field-element data.
-    #[inline]
-    pub fn raw_data(&self) -> &[F] {
-        &self.data
-    }
-
-    /// Whether the vector has zero elements.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
-    }
 }
 
 impl<F: FieldCore + Valid> Valid for FlatMatrix<F> {
@@ -240,16 +228,6 @@ impl<'a, F: FieldCore, const D: usize> RingMatrixView<'a, F, D> {
                 self.num_cols,
             )
         }
-    }
-
-    /// Iterate over all rows.
-    pub fn rows(&self) -> impl Iterator<Item = &'a [CyclotomicRing<F, D>]> + '_ {
-        (0..self.num_rows).map(move |i| self.row(i))
-    }
-
-    /// Collect into the legacy `Vec<Vec<CyclotomicRing<F, D>>>` representation.
-    pub fn to_vec_vec(&self) -> Vec<Vec<CyclotomicRing<F, D>>> {
-        (0..self.num_rows).map(|i| self.row(i).to_vec()).collect()
     }
 }
 

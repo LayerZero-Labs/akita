@@ -627,6 +627,7 @@ where
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
     let (stage1_proof, r_stage1, s_claim) = {
+        eprintln!("finish_batched_root:before_stage1");
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         let stage1_prover =
             HachiStage1Prover::new(&w_evals_compact, &tau0, b, live_x_cols, num_u, num_l)?;
@@ -634,10 +635,12 @@ where
         let s_claim = stage1_proof.s_claim;
         (stage1_proof, r_stage1, s_claim)
     };
+    eprintln!("finish_batched_root:after_stage1");
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
+        eprintln!("finish_batched_root:before_stage2");
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         let mut stage2_prover = HachiStage2Prover::new(
             batching_coeff,
@@ -668,6 +671,7 @@ where
             w_eval,
         )
     };
+    eprintln!("finish_batched_root:after_stage2");
 
     let (level_proof, sumcheck_challenges) = (
         HachiLevelProof::new_two_stage::<D>(
@@ -733,6 +737,7 @@ where
             "batched root claim-to-point index out of range".to_string(),
         ));
     }
+    eprintln!("batched_root:before_evaluate_and_fold");
     let (y_rings, w_folded_by_poly) = {
         let _span = tracing::info_span!(
             "evaluate_and_fold_batched_with_points",
@@ -768,6 +773,7 @@ where
         }
         (y_rings, w_folded_by_poly)
     };
+    eprintln!("batched_root:after_evaluate_and_fold");
 
     if let Some(point_group_sizes) = point_group_sizes {
         append_batch_shape_to_transcript::<F, T>(point_group_sizes, claim_group_sizes, transcript);
@@ -786,6 +792,7 @@ where
         .iter()
         .map(|prepared_point| prepared_point.ring_opening_point.clone())
         .collect();
+    eprintln!("batched_root:before_quad_eq");
     let quad_eq = Box::new(
         QuadraticEquation::<F, { D }, Cfg>::new_multipoint_batched_prover(
             ntt_shared,
@@ -803,7 +810,9 @@ where
             expanded.seed.max_stride(),
         )?,
     );
+    eprintln!("batched_root:after_quad_eq");
 
+    eprintln!("batched_root:before_finish");
     finish_batched_root_level::<F, T, D, Cfg>(
         expanded,
         ntt_shared,
@@ -927,6 +936,7 @@ where
     Cfg: CommitmentConfig<Field = F>,
 {
     let commitment_rows = flatten_batched_commitment_rows(commitments);
+    eprintln!("finish_batched_root:before_build_w");
     let w = ring_switch_build_w::<F, { D }, Cfg>(
         &mut quad_eq,
         expanded,
@@ -934,6 +944,7 @@ where
         level_params,
         layout,
     )?;
+    eprintln!("finish_batched_root:after_build_w w_len={}", w.len());
     let next_inputs = HachiScheduleInputs {
         max_num_vars,
         level: 1,
@@ -943,11 +954,14 @@ where
         next_level_params_from_current_basis::<Cfg>(next_inputs, level_params.log_basis)?;
 
     let (w_commitment_flat, w_hint_cache) = {
+        eprintln!("finish_batched_root:before_commit_w");
         let _span = tracing::info_span!("commit_w_level", level = 0usize).entered();
         commit_w_fn(&w, next_params.clone())?
     };
+    eprintln!("finish_batched_root:after_commit_w");
     let w_commitment_proof = w_commitment_flat.clone();
 
+    eprintln!("finish_batched_root:before_finalize");
     let rs = ring_switch_finalize_with_claim_groups::<F, T, { D }, Cfg>(
         &quad_eq,
         expanded,
@@ -959,6 +973,7 @@ where
         level_params,
         layout,
     )?;
+    eprintln!("finish_batched_root:after_finalize");
 
     let relation_claim = relation_claim_from_rows::<F, D>(
         &rs.tau1,
@@ -1438,19 +1453,26 @@ where
     let mut level = 1usize;
 
     loop {
-        if !should_continue_folding_by_bytes::<Cfg>(
+        let current_w_len = current_state.w.len();
+        eprintln!(
+            "recursive_suffix:level={} current_w_len={} log_basis={}",
+            level, current_w_len, current_state.log_basis
+        );
+        let should_continue = should_continue_folding_by_bytes::<Cfg>(
             max_num_vars,
             level,
-            current_state.w.len(),
+            current_w_len,
             current_state.log_basis,
-        )? {
+        )?;
+        eprintln!("recursive_suffix:level={level} should_continue={should_continue}");
+        if !should_continue {
             break;
         }
         let level_params = Cfg::level_params_with_log_basis(
             HachiScheduleInputs {
                 max_num_vars,
                 level,
-                current_w_len: current_state.w.len(),
+                current_w_len,
             },
             current_state.log_basis,
         );
@@ -1471,6 +1493,12 @@ where
         )?;
 
         levels.push(out.level_proof);
+        eprintln!(
+            "recursive_suffix:level={} next_w_len={} next_log_basis={}",
+            level,
+            out.next_state.w.len(),
+            out.next_state.log_basis
+        );
         current_state = out.next_state;
         level += 1;
     }
@@ -1710,7 +1738,9 @@ where
         batched_layout,
         layout,
     )?;
+    eprintln!("same_point_batched:after_root_level");
 
+    eprintln!("same_point_batched:before_recursive_suffix");
     let (levels, level, current_state) = prove_batched_recursive_suffix::<F, T, D, Cfg>(
         setup,
         &mut ntt_cache,
@@ -1719,6 +1749,7 @@ where
         transcript,
         next_state,
     )?;
+    eprintln!("same_point_batched:after_recursive_suffix");
 
     tracing::info!(
         levels = level,
@@ -3228,12 +3259,22 @@ mod tests {
         let root_w_len = root_plan.next_w_len();
         let root_shape = root_plan.level_proof_shape();
         let first_level_params = root_plan.next_level_params.clone();
+        eprintln!(
+            "shape:start levels={} root_w_len={} next_log_basis={}",
+            proof.num_fold_levels(),
+            root_w_len,
+            first_level_params.log_basis
+        );
 
         let mut step_shapes = Vec::with_capacity(proof.num_fold_levels() + 1);
         let mut current_w_len = root_w_len;
         let mut current_log_basis = first_level_params.log_basis;
         let mut current_level = 1usize;
         for _ in proof.fold_levels() {
+            eprintln!(
+                "shape:level={} in_w_len={} log_basis={}",
+                current_level, current_w_len, current_log_basis
+            );
             let inputs = HachiScheduleInputs {
                 max_num_vars,
                 level: current_level,
@@ -3254,6 +3295,10 @@ mod tests {
                 current_log_basis,
             )
             .expect("next recursive params");
+            eprintln!(
+                "shape:level={} out_w_len={} next_log_basis={}",
+                current_level, next_w_len, next_level_params.log_basis
+            );
             let rounds = batched_shape_rounds(level_params.d, next_w_len);
             step_shapes.push(HachiProofStepShape::Fold(LevelProofShape {
                 y_ring_coeffs: level_params.d,
@@ -4400,9 +4445,11 @@ mod tests {
     fn batched_onehot_roundtrip_matches_public_shape_context() {
         const NV: usize = 15;
         const BATCH_SIZE: usize = 2;
+        eprintln!("test:start");
 
         let layout =
             hachi_batched_root_layout::<OneHotCfg, ONEHOT_D>(NV, BATCH_SIZE).expect("layout");
+        eprintln!("test:after_layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(ONEHOT_D)
             .expect("total field size overflow");
@@ -4414,25 +4461,33 @@ mod tests {
                 debug_make_onehot_poly(&layout, 0x0bee_fcaf_e000_1500 + poly_idx as u64)
             })
             .collect();
+        eprintln!("test:after_polys");
         let poly_refs: Vec<&OneHotPoly<OneHotF, ONEHOT_D, u8>> = polys.iter().collect();
         let point = debug_random_point(NV);
         let openings: Vec<OneHotF> = polys
             .iter()
             .map(|poly| debug_opening_from_poly(poly, &point, &layout))
             .collect();
+        eprintln!("test:after_openings");
 
+        eprintln!("test:before_setup");
         let setup =
             <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(NV, BATCH_SIZE);
+        eprintln!("test:after_setup");
         let verifier_setup =
             <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(&setup);
+        eprintln!("test:after_verifier_setup");
         let poly_groups = [&poly_refs[..]];
+        eprintln!("test:before_commit");
         let (commitment, hint) =
             <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::commit(&poly_refs, &setup)
                 .expect("batched onehot commit");
+        eprintln!("test:after_commit");
         let commitments = [commitment];
         let hints = vec![hint];
 
         let mut prover_transcript = Blake2bTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
+        eprintln!("test:before_batched_prove");
         let proof = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_prove(
             &setup,
             &[&poly_groups[..]],
@@ -4443,9 +4498,17 @@ mod tests {
             BasisMode::Lagrange,
         )
         .expect("batched onehot prove");
+        eprintln!(
+            "test:after_batched_prove fold_levels={}",
+            proof.num_fold_levels()
+        );
 
+        eprintln!("test:before_expected_shape");
         let expected_shape = expected_same_point_batched_shape(NV, BATCH_SIZE, &proof);
+        eprintln!("test:after_expected_shape");
+        eprintln!("test:before_actual_shape");
         let actual_shape = proof.shape();
+        eprintln!("test:after_actual_shape");
         assert_eq!(
             expected_shape.root_shape.y_ring_coeffs,
             actual_shape.root_shape.y_ring_coeffs
@@ -4468,6 +4531,7 @@ mod tests {
         );
         assert_eq!(expected_shape.step_shapes, actual_shape.step_shapes);
         let mut bytes = Vec::new();
+        eprintln!("test:before_serialize");
         proof.serialize_uncompressed(&mut bytes).unwrap();
         let decoded =
             HachiBatchedProof::<OneHotF>::deserialize_uncompressed(&*bytes, &expected_shape)
@@ -4477,6 +4541,7 @@ mod tests {
         let opening_groups = [&openings[..]];
         let mut verifier_transcript =
             Blake2bTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
+        eprintln!("test:before_verify");
         <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_verify(
             &decoded,
             &verifier_setup,
@@ -4487,6 +4552,7 @@ mod tests {
             BasisMode::Lagrange,
         )
         .expect("batched onehot verify");
+        eprintln!("test:done");
     }
 
     #[test]
