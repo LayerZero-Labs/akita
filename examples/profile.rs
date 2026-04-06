@@ -705,16 +705,8 @@ const PROFILE_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_d32,
     },
     ProfileMode {
-        name: "logbasis",
-        run: run_profile_logbasis,
-    },
-    ProfileMode {
         name: "compare_onehot",
         run: run_profile_compare_onehot,
-    },
-    ProfileMode {
-        name: "compare_logbasis",
-        run: run_profile_compare_logbasis,
     },
     ProfileMode {
         name: "compare_basis",
@@ -729,7 +721,6 @@ const ALL_PROFILE_MODE_NAMES: &[&str] = &[
     "onehot_d64",
     "full_d32",
     "onehot_d32",
-    "logbasis",
 ];
 
 fn assert_singleton_mode(mode: &str, num_polys: usize) {
@@ -808,15 +799,6 @@ fn run_profile_onehot_d32(nv: usize, num_polys: usize) {
     run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
 }
 
-fn run_profile_logbasis(nv: usize, num_polys: usize) {
-    type Cfg = fp128::LogBasis;
-    assert_singleton_mode("logbasis", num_polys);
-    run_dense_mode::<{ Cfg::D }, Cfg>(
-        "=== logbasis (q=2^128-275, D=128 dense, log_commit_bound=3) ===",
-        nv,
-    );
-}
-
 fn run_profile_compare_onehot(nv: usize, num_polys: usize) {
     assert_singleton_mode("compare_onehot", num_polys);
     let onehot_k = onehot_k_for_num_vars(nv);
@@ -845,32 +827,6 @@ fn run_profile_compare_onehot(nv: usize, num_polys: usize) {
         &format!("=== [D] onehot (D=64, 1-of-{onehot_k}), L0 basis=2, w-levels basis=4 ==="),
         nv,
         1,
-    );
-}
-
-fn run_profile_compare_logbasis(nv: usize, num_polys: usize) {
-    assert_singleton_mode("compare_logbasis", num_polys);
-
-    type A = fp128::StaticBounded<3, 3, 3>;
-    type B = fp128::StaticBounded<3, 2, 2>;
-    type C = fp128::StaticBounded<3, 2, 3>;
-    type D = fp128::StaticBounded<3, 2, 4>;
-
-    run_dense_mode::<{ A::D }, A>(
-        "=== [A] logbasis coeffs (D=128), basis=3 everywhere ===",
-        nv,
-    );
-    run_dense_mode::<{ B::D }, B>(
-        "=== [B] logbasis coeffs (D=128), basis=2 everywhere ===",
-        nv,
-    );
-    run_dense_mode::<{ C::D }, C>(
-        "=== [C] logbasis coeffs (D=128), L0 basis=2, w-levels basis=3 ===",
-        nv,
-    );
-    run_dense_mode::<{ D::D }, D>(
-        "=== [D] logbasis coeffs (D=128), L0 basis=2, w-levels basis=4 ===",
-        nv,
     );
 }
 

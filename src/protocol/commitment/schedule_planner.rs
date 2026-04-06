@@ -201,11 +201,7 @@ pub(super) fn dp_best_basis<Cfg: CommitmentConfig>(
     max_log_basis: u32,
     lower_bound: u32,
 ) -> Option<(u32, usize)> {
-    let cfg = PlannerConfig::from_cfg::<Cfg>(
-        inputs.max_num_vars,
-        min_log_basis,
-        max_log_basis,
-    );
+    let cfg = PlannerConfig::from_cfg::<Cfg>(inputs.max_num_vars, min_log_basis, max_log_basis);
     let mut memo = HashMap::new();
     let mut best: Option<(u32, usize)> = None;
     for log_basis in lower_bound..=max_log_basis {

@@ -79,7 +79,10 @@ pub(super) fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
     (y_ring * v.sigma_m1()).coefficients()[0]
 }
 
-pub(super) fn make_onehot_poly(layout: &HachiCommitmentLayout, seed: u64) -> OneHotPoly<F, ONEHOT_D, u8> {
+pub(super) fn make_onehot_poly(
+    layout: &HachiCommitmentLayout,
+    seed: u64,
+) -> OneHotPoly<F, ONEHOT_D, u8> {
     let total_ring = layout.num_blocks * layout.block_len;
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_ring)

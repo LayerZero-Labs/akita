@@ -444,18 +444,15 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let opening_point = random_point::<F>(nv);
         let opening = opening_from_poly(&poly, &opening_point, &layout);
 
-        let setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
+        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
-        let (commitment, hint) =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-                std::slice::from_ref(&poly),
-                &setup,
-            )
-            .unwrap();
-        let mut prover_transcript =
-            Blake2bTranscript::<F>::new(b"hachi_e2e/full-d32-direct-root");
+        let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+            std::slice::from_ref(&poly),
+            &setup,
+        )
+        .unwrap();
+        let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/full-d32-direct-root");
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
             &setup,
             &poly,
@@ -497,9 +494,8 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             .serialize_compressed(&mut proof_bytes)
             .expect("serialize direct-root proof");
         let mut cursor = std::io::Cursor::new(proof_bytes);
-        let decoded =
-            HachiProof::<F>::deserialize_compressed(&mut cursor, &plan.to_proof_shape())
-                .expect("deserialize direct-root proof");
+        let decoded = HachiProof::<F>::deserialize_compressed(&mut cursor, &plan.to_proof_shape())
+            .expect("deserialize direct-root proof");
         assert_eq!(decoded, proof);
 
         let mut verifier_transcript =
@@ -1115,7 +1111,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
 
 #[test]
 fn adaptive_schedule_key_changes_when_schedule_changes() {
-    type Cfg = fp128::LogBasis;
+    type Cfg = fp128::D128Full;
 
     let mut distinct = std::collections::BTreeMap::new();
     for nv in 10..=18 {

@@ -40,15 +40,6 @@ const ALL_FAMILIES: &[FamilySpec] = &[
         ring_dim: 128,
     },
     FamilySpec {
-        family_name: "fp128_d128_logbasis",
-        module_name: "fp128_d128_logbasis",
-        const_name: "FP128_D128_LOGBASIS_SCHEDULES",
-        log_commit_bound: 3,
-        min_num_vars: 1,
-        max_num_vars: 50,
-        ring_dim: 128,
-    },
-    FamilySpec {
         family_name: "fp128_d128_onehot",
         module_name: "fp128_d128_onehot",
         const_name: "FP128_D128_ONEHOT_SCHEDULES",
@@ -67,15 +58,6 @@ const ALL_FAMILIES: &[FamilySpec] = &[
         ring_dim: 32,
     },
     FamilySpec {
-        family_name: "fp128_d32_logbasis",
-        module_name: "fp128_d32_logbasis",
-        const_name: "FP128_D32_LOGBASIS_SCHEDULES",
-        log_commit_bound: 3,
-        min_num_vars: 1,
-        max_num_vars: 50,
-        ring_dim: 32,
-    },
-    FamilySpec {
         family_name: "fp128_d32_onehot",
         module_name: "fp128_d32_onehot",
         const_name: "FP128_D32_ONEHOT_SCHEDULES",
@@ -83,6 +65,15 @@ const ALL_FAMILIES: &[FamilySpec] = &[
         min_num_vars: 1,
         max_num_vars: 50,
         ring_dim: 32,
+    },
+    FamilySpec {
+        family_name: "fp128_d64_full",
+        module_name: "fp128_d64_full",
+        const_name: "FP128_D64_FULL_SCHEDULES",
+        log_commit_bound: 128,
+        min_num_vars: 1,
+        max_num_vars: 50,
+        ring_dim: 64,
     },
     FamilySpec {
         family_name: "fp128_d64_onehot",

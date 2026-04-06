@@ -7,6 +7,9 @@ use super::generated::{
     table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleTable,
     GeneratedStep,
 };
+#[cfg(debug_assertions)]
+use super::schedule_planner::{debug_check_dp_basis, debug_check_dp_suffix_bytes, dp_best_basis};
+use super::schedule_planner::{PlannerConfig, PlannerState};
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
 use crate::protocol::proof::{
@@ -14,9 +17,6 @@ use crate::protocol::proof::{
 };
 use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
 use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
-#[cfg(debug_assertions)]
-use super::schedule_planner::{debug_check_dp_basis, debug_check_dp_suffix_bytes, dp_best_basis};
-use super::schedule_planner::{PlannerConfig, PlannerState};
 use std::fmt::Write;
 
 /// Public inputs that deterministically select one level's active Hachi params.
@@ -1526,8 +1526,7 @@ mod tests {
     use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
     use crate::primitives::serialization::{Compress, HachiSerialize};
     use crate::protocol::commitment::generated::{
-        fp128_d128_full_table, fp128_d32_full_table, fp128_d32_logbasis_table,
-        fp128_d32_onehot_table, GeneratedScheduleTable,
+        fp128_d128_full_table, fp128_d32_full_table, fp128_d32_onehot_table, GeneratedScheduleTable,
     };
     use crate::protocol::commitment::presets::fp128;
     use crate::protocol::proof::{
@@ -1672,9 +1671,6 @@ mod tests {
     #[test]
     fn generated_fp128_schedule_tables_match_cfg_schedule() {
         assert_generated_table_matches_cfg_schedule::<fp128::D32Full>(fp128_d32_full_table());
-        assert_generated_table_matches_cfg_schedule::<fp128::D32LogBasis>(
-            fp128_d32_logbasis_table(),
-        );
         assert_generated_table_matches_cfg_schedule::<fp128::D32OneHot>(fp128_d32_onehot_table());
     }
 

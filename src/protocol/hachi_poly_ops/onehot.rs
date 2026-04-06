@@ -668,9 +668,9 @@ where
             }
             evals[field_pos] = F::one();
         }
-        Ok(DirectWitnessProof::FieldElements(
-            FlatRingVec::from_coeffs(evals),
-        ))
+        Ok(DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
+            evals,
+        )))
     }
 }
 

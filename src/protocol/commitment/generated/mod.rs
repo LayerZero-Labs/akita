@@ -58,11 +58,10 @@ pub(crate) struct GeneratedScheduleTable {
 }
 
 pub(crate) mod fp128_d128_full;
-pub(crate) mod fp128_d128_logbasis;
 pub(crate) mod fp128_d128_onehot;
 pub(crate) mod fp128_d32_full;
-pub(crate) mod fp128_d32_logbasis;
 pub(crate) mod fp128_d32_onehot;
+pub(crate) mod fp128_d64_full;
 pub(crate) mod fp128_d64_onehot;
 pub(crate) mod sis_floor;
 
@@ -103,12 +102,6 @@ pub(crate) fn fp128_d32_full_table() -> GeneratedScheduleTable {
     }
 }
 
-pub(crate) fn fp128_d32_logbasis_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d32_logbasis::FP128_D32_LOGBASIS_SCHEDULES,
-    }
-}
-
 pub(crate) fn fp128_d32_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d32_onehot::FP128_D32_ONEHOT_SCHEDULES,
@@ -121,15 +114,15 @@ pub(crate) fn fp128_d128_full_table() -> GeneratedScheduleTable {
     }
 }
 
-pub(crate) fn fp128_d128_logbasis_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d128_logbasis::FP128_D128_LOGBASIS_SCHEDULES,
-    }
-}
-
 pub(crate) fn fp128_d128_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d128_onehot::FP128_D128_ONEHOT_SCHEDULES,
+    }
+}
+
+pub(crate) fn fp128_d64_full_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_d64_full::FP128_D64_FULL_SCHEDULES,
     }
 }
 

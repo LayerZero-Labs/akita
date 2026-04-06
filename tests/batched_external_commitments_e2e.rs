@@ -4,7 +4,7 @@ mod common;
 
 use common::{
     init_rayon_pool, opening_from_poly, random_point, run_on_large_stack, BasisMode,
-    CommitmentConfig, F, OneHotPoly, Rng, SeedableRng, StdRng,
+    CommitmentConfig, OneHotPoly, Rng, SeedableRng, StdRng, F,
 };
 use hachi_pcs::protocol::commitment::{hachi_batched_root_layout, presets::fp128};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;

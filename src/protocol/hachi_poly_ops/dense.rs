@@ -430,8 +430,8 @@ where
                 break;
             }
         }
-        Ok(DirectWitnessProof::FieldElements(
-            FlatRingVec::from_coeffs(coeffs),
-        ))
+        Ok(DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
+            coeffs,
+        )))
     }
 }

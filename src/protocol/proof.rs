@@ -608,7 +608,6 @@ impl<F: FieldCore + Valid> HachiDeserialize for FlatRingVec<F> {
     }
 }
 
-
 /// Flat digit-plane storage plus explicit block boundaries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlatDigitBlocks<const D: usize> {
@@ -1645,8 +1644,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
             validate,
             &ctx.y_ring_coeffs,
         )?;
-        let v =
-            FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
+        let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
         let mut stage1_stages = Vec::with_capacity(ctx.stage1_stages.len());
         for stage_shape in &ctx.stage1_stages {
             let sumcheck = EqFactoredSumcheckProof::deserialize_with_mode(
@@ -1892,8 +1890,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedRootProof<F> {
             validate,
             &ctx.y_ring_coeffs,
         )?;
-        let v =
-            FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
+        let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
         let mut stage1_stages = Vec::with_capacity(ctx.stage1_stages.len());
         for stage_shape in &ctx.stage1_stages {
             let sumcheck = EqFactoredSumcheckProof::deserialize_with_mode(

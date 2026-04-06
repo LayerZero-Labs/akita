@@ -38,15 +38,13 @@ pub mod fp128 {
 
     /// Full-field adaptive `D=128` preset.
     pub type D128Full = AdaptiveBounded<128, 128>;
-    /// Log-bounded adaptive `D=128` preset.
-    pub type LogBasis = AdaptiveBounded<128, 3>;
+    /// Full-field adaptive `D=64` preset.
+    pub type D64Full = AdaptiveBounded<64, 128>;
     /// Binary onehot generated `D=64` preset.
     pub type D64OneHot = AdaptiveBounded<64, 1>;
 
     /// Full-field adaptive `D=32` preset.
     pub type D32Full = AdaptiveBounded<32, 128>;
-    /// Log-bounded adaptive `D=32` preset.
-    pub type D32LogBasis = AdaptiveBounded<32, 3>;
     /// Onehot adaptive `D=32` preset.
     pub type D32OneHot = AdaptiveBounded<32, 1>;
 }

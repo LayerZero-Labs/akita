@@ -337,16 +337,6 @@ fn bench_onehot_nv25(c: &mut Criterion) {
     bench_onehot_phases::<{ fp128::D64OneHot::D }, fp128::D64OneHot>(c, "onehot-d64", 25);
 }
 
-fn bench_logbasis_nv15(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128::LogBasis::D }, fp128::LogBasis>(c, "logbasis-d128", 15);
-}
-fn bench_logbasis_nv20(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128::LogBasis::D }, fp128::LogBasis>(c, "logbasis-d128", 20);
-}
-fn bench_logbasis_nv25(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128::LogBasis::D }, fp128::LogBasis>(c, "logbasis-d128", 25);
-}
-
 criterion_group!(
     hachi_benches,
     bench_full_nv15,
@@ -355,9 +345,6 @@ criterion_group!(
     bench_onehot_nv15,
     bench_onehot_nv20,
     bench_onehot_nv25,
-    bench_logbasis_nv15,
-    bench_logbasis_nv20,
-    bench_logbasis_nv25,
 );
 
 /// Set `HACHI_PARALLEL=0` to run benchmarks single-threaded.

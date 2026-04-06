@@ -2,8 +2,8 @@
 
 use super::profile::{CommitmentFieldProfile, CommitmentFieldProfileSchedule};
 use super::schedule::{
-    exact_planned_level_execution, hachi_root_commitment_layout,
-    HachiLevelParams, HachiScheduleInputs, HachiSchedulePlan,
+    exact_planned_level_execution, hachi_root_commitment_layout, HachiLevelParams,
+    HachiScheduleInputs, HachiSchedulePlan,
 };
 use super::utils::math::checked_pow2;
 use super::utils::norm::detect_field_modulus;
@@ -983,9 +983,7 @@ impl<
             .expect("generated adaptive schedule key must be derivable from public inputs")
     }
 
-    fn schedule_plan(
-        max_num_vars: usize,
-    ) -> Result<Option<HachiSchedulePlan>, HachiError> {
+    fn schedule_plan(max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
         Ok(Some(
             Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(max_num_vars)?
                 .schedule_plan(),
@@ -1182,12 +1180,6 @@ mod fp128_policy_tests {
     #[test]
     fn current_d128_full_schedule_stays_within_audited_sis_widths() {
         type Cfg = crate::protocol::commitment::presets::fp128::D128Full;
-        assert_d128_schedule_stays_within_audited_sis_widths::<Cfg>(8, 50);
-    }
-
-    #[test]
-    fn current_d128_logbasis_schedule_stays_within_audited_sis_widths() {
-        type Cfg = crate::protocol::commitment::presets::fp128::LogBasis;
         assert_d128_schedule_stays_within_audited_sis_widths::<Cfg>(8, 50);
     }
 
