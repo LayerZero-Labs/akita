@@ -23,8 +23,7 @@ pub use commitment::{
     CommitmentScheme, DummyProof, GeneratedAdaptivePolicy, HachiCommitment,
     HachiCommitmentCore, HachiCommitmentLayout, HachiExpandedSetup, HachiOpeningClaim,
     HachiOpeningPoint, HachiProverSetup, HachiRootBatchSummary, HachiSetupSeed, HachiVerifierSetup,
-    PlannedAdaptiveBoundedPolicy, RingCommitment, RingCommitmentScheme, SmallTestCommitmentConfig,
-    StaticBoundedPolicy,
+    RingCommitment, RingCommitmentScheme, SmallTestCommitmentConfig, StaticBoundedPolicy,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, MultilinearPolynomail, OneHotIndex, OneHotPoly};

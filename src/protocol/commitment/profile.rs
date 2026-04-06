@@ -3,14 +3,14 @@
 use super::config::{CommitmentConfig, DecompositionParams};
 use super::generated::{
     fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table, fp128_d128_full_table,
-    table_entry_envelope, GeneratedScheduleTable,
+    fp128_d128_logbasis_table, fp128_d128_onehot_table, table_entry_envelope,
+    GeneratedScheduleTable,
 };
 use super::schedule::{
     generated_schedule_plan_from_table, planned_log_basis_at_level_from_schedule,
     planned_recursive_suffix_bytes_from_schedule, planned_schedule_key_from_schedule,
     HachiScheduleInputs, HachiSchedulePlan,
 };
-use super::schedule_planner::planned_schedule;
 use crate::algebra::Prime128Offset275;
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
@@ -174,31 +174,6 @@ pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
         ))
     }
 
-    /// Exact live-planned schedule source for one adaptive bounded family.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the bounded family cannot derive a valid planned
-    /// schedule source at `max_num_vars`.
-    fn planned_adaptive_bounded_schedule_source<
-        Cfg: CommitmentConfig,
-        const D: usize,
-        const LOG_COMMIT_BOUND: u32,
-        const N_A: usize,
-        const N_B: usize,
-        const N_D: usize,
-    >(
-        max_num_vars: usize,
-    ) -> Result<ProfileScheduleSource, HachiError> {
-        let _ = (D, LOG_COMMIT_BOUND, N_A, N_B, N_D);
-        let (min_log_basis, max_log_basis) = Self::adaptive_log_basis_search_range();
-        let exact_plan = planned_schedule::<Cfg>(max_num_vars, min_log_basis, max_log_basis)?;
-        Ok(ProfileScheduleSource::new(
-            exact_plan,
-            min_log_basis,
-            max_log_basis,
-        ))
-    }
 }
 
 fn uniform_pm1_stage1_challenge(weight: usize) -> SparseChallengeConfig {
@@ -307,6 +282,8 @@ impl CommitmentFieldProfileSchedule for Fp128PrimeProfile {
             (32, 1) => fp128_adaptive_bounded_table::<32, 1, 2, 2, 2>(),
             (64, 1) => Some(fp128_adaptive_onehot_d64_table()),
             (128, 128) => Some(fp128_d128_full_table()),
+            (128, 3) => Some(fp128_d128_logbasis_table()),
+            (128, 1) => Some(fp128_d128_onehot_table()),
             _ => None,
         }
     }
@@ -318,7 +295,7 @@ mod schedule_source_tests {
     use crate::protocol::commitment::presets::fp128;
 
     #[test]
-    fn bounded_schedule_source_matches_cfg_hooks() {
+    fn d128_full_schedule_source_matches_cfg_hooks() {
         type Cfg = fp128::D128Full;
 
         let max_num_vars = 30usize;
@@ -328,15 +305,13 @@ mod schedule_source_tests {
             current_w_len: 245_888,
         };
 
-        let source = <Fp128PrimeProfile as CommitmentFieldProfileSchedule>::planned_adaptive_bounded_schedule_source::<
-            Cfg,
-            128,
-            128,
-            1,
-            1,
-            1,
-        >(max_num_vars)
-        .unwrap();
+        let source =
+            <Fp128PrimeProfile as CommitmentFieldProfileSchedule>::generated_schedule_source::<
+                Cfg,
+                128,
+                128,
+            >(max_num_vars)
+            .unwrap();
 
         assert_eq!(source.schedule_key(), Cfg::schedule_key(max_num_vars));
         assert_eq!(

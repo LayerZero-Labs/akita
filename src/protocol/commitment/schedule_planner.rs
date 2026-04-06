@@ -2,14 +2,14 @@
 //!
 //! The core DP planner (`best_recursive_suffix`) finds the minimum-proof-size
 //! recursion schedule by dynamic programming over `(level, w_len, log_basis)`
-//! states.  It is used at runtime by `PlannedAdaptiveBoundedPolicy` and in
-//! debug builds as a cross-check against the pre-generated schedule tables.
+//! states.  It is used at build time by the table generator and in debug
+//! builds as a cross-check against the pre-generated schedule tables.
 
 use super::config::CommitmentConfig;
 use super::schedule::{
     current_level_layout_with_log_basis, direct_witness_bytes, field_bits, hachi_level_proof_bytes,
     planned_next_w_len, HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedState,
-    HachiPlannedStep, HachiScheduleInputs, HachiSchedulePlan,
+    HachiPlannedStep, HachiScheduleInputs,
 };
 use crate::error::HachiError;
 use crate::protocol::proof::DirectWitnessShape;
@@ -151,137 +151,6 @@ pub(super) fn dp_suffix_bytes<Cfg: CommitmentConfig>(
     let mut memo = HashMap::new();
     let suffix = best_recursive_suffix::<Cfg>(cfg, &mut memo, state)?;
     Ok(suffix.no_wrapper_bytes)
-}
-
-// ---------------------------------------------------------------------------
-// Entry points
-// ---------------------------------------------------------------------------
-
-pub(crate) fn planned_schedule<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    min_log_basis: u32,
-    max_log_basis: u32,
-) -> Result<HachiSchedulePlan, HachiError> {
-    let root_current_w_len = 1usize
-        .checked_shl(max_num_vars as u32)
-        .ok_or_else(|| HachiError::InvalidSetup("root witness length overflow".to_string()))?;
-    let root_inputs = HachiScheduleInputs {
-        max_num_vars,
-        level: 0,
-        current_w_len: root_current_w_len,
-    };
-    let cfg = PlannerConfig {
-        max_num_vars,
-        min_log_basis,
-        max_log_basis,
-        field_bits: field_bits(Cfg::decomposition()),
-        half_field_bound: Cfg::planner_half_field_bound(),
-    };
-    let mut memo = HashMap::new();
-    let direct_state = HachiPlannedState {
-        level: 0,
-        current_w_len: root_current_w_len,
-        log_basis: Cfg::decomposition().log_basis,
-    };
-    let direct_witness_shape = DirectWitnessShape::FieldElements(root_current_w_len);
-    let direct_bytes = direct_witness_bytes(cfg.field_bits, &direct_witness_shape);
-    let mut best: Option<PlannedSuffix> = Some(PlannedSuffix {
-        steps: vec![HachiPlannedStep::Direct(HachiPlannedDirectStep {
-            state: direct_state,
-            witness_shape: direct_witness_shape,
-            direct_bytes,
-        })],
-        no_wrapper_bytes: direct_bytes,
-    });
-
-    for root_log_basis in min_log_basis..=max_log_basis {
-        let Ok((root_params, root_layout)) =
-            current_level_layout_with_log_basis::<Cfg>(root_inputs, root_log_basis)
-        else {
-            continue;
-        };
-        let next_w_len = planned_next_w_len(
-            cfg.field_bits,
-            cfg.half_field_bound,
-            &root_params,
-            root_layout,
-        );
-
-        let next_level = 1usize;
-        let next_inputs = HachiScheduleInputs {
-            max_num_vars,
-            level: next_level,
-            current_w_len: next_w_len,
-        };
-        for next_log_basis in root_log_basis.max(min_log_basis)..=max_log_basis {
-            let next_level_params = Cfg::level_params_with_log_basis(next_inputs, next_log_basis);
-            let level_bytes = hachi_level_proof_bytes(
-                cfg.field_bits,
-                &root_params,
-                root_layout,
-                &next_level_params,
-                next_w_len,
-            );
-            let next_state = HachiPlannedState {
-                level: next_inputs.level,
-                current_w_len: next_inputs.current_w_len,
-                log_basis: next_log_basis,
-            };
-            let mut steps = Vec::new();
-            steps.push(HachiPlannedStep::Fold(Box::new(HachiPlannedLevel {
-                inputs: root_inputs,
-                params: root_params.clone(),
-                layout: root_layout,
-                next_inputs,
-                next_level_log_basis: next_log_basis,
-                next_commit_coeffs: next_level_params.n_b * next_level_params.d,
-                level_bytes,
-            })));
-            let suffix = if next_w_len < root_inputs.current_w_len {
-                best_recursive_suffix::<Cfg>(
-                    cfg,
-                    &mut memo,
-                    PlannerState {
-                        level: next_level,
-                        current_w_len: next_w_len,
-                        log_basis: next_log_basis,
-                    },
-                )?
-            } else {
-                let witness_shape = DirectWitnessShape::PackedDigits((next_w_len, next_log_basis));
-                let direct_bytes = direct_witness_bytes(cfg.field_bits, &witness_shape);
-                PlannedSuffix {
-                    steps: vec![HachiPlannedStep::Direct(HachiPlannedDirectStep {
-                        state: next_state,
-                        witness_shape,
-                        direct_bytes,
-                    })],
-                    no_wrapper_bytes: direct_bytes,
-                }
-            };
-            let candidate_bytes = level_bytes + suffix.no_wrapper_bytes;
-            if best
-                .as_ref()
-                .is_none_or(|existing| candidate_bytes < existing.no_wrapper_bytes)
-            {
-                steps.extend(suffix.steps);
-                best = Some(PlannedSuffix {
-                    steps,
-                    no_wrapper_bytes: candidate_bytes,
-                });
-            }
-        }
-    }
-
-    let best = best.ok_or_else(|| {
-        HachiError::InvalidSetup("adaptive schedule search found no valid root level".to_string())
-    })?;
-
-    Ok(HachiSchedulePlan {
-        steps: best.steps,
-        no_wrapper_bytes: best.no_wrapper_bytes,
-        exact_proof_bytes: best.no_wrapper_bytes,
-    })
 }
 
 #[cfg(test)]
