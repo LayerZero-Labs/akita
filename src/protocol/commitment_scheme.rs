@@ -1950,6 +1950,11 @@ where
             ));
         }
         let num_vars = polys[0].num_vars();
+        if polys.iter().any(|p| p.num_vars() != num_vars) {
+            return Err(HachiError::InvalidInput(
+                "all polynomials in a batched commit must have the same num_vars".to_string(),
+            ));
+        }
         if polys.len() > setup.expanded.seed.max_num_batched_polys {
             return Err(HachiError::InvalidInput(format!(
                 "commit received {} polynomials but setup supports at most {}",
