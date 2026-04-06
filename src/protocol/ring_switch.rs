@@ -148,6 +148,7 @@ where
         quad_eq.claim_group_sizes(),
         layout.num_blocks,
         layout.inner_width,
+        setup.seed.max_stride(),
         ntt_shared,
     )?;
     let w = {
@@ -866,6 +867,7 @@ pub(crate) fn commit_w<F, const D: usize, Cfg>(
     w: &RecursiveWitnessFlat,
     ntt_shared: &NttSlotCache<D>,
     level_params: &HachiLevelParams,
+    stride: usize,
 ) -> Result<(RingCommitment<F, D>, HachiCommitmentHint<F, D>), HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
@@ -908,10 +910,15 @@ where
         depth_commit,
         depth_open,
         log_basis,
+        stride,
     )?;
 
-    let u: Vec<CyclotomicRing<F, D>> =
-        mat_vec_mul_ntt_single_i8(ntt_shared, level_params.n_b, inner.t_hat.flat_digits());
+    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
+        ntt_shared,
+        level_params.n_b,
+        stride,
+        inner.t_hat.flat_digits(),
+    );
     let hint = HachiCommitmentHint::with_t(inner.t_hat, inner.t);
     Ok((RingCommitment { u }, hint))
 }
@@ -1184,7 +1191,10 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
         .map(|challenge| eval_sparse_challenge_at_pows::<F, D>(challenge, alpha_pows))
         .collect::<Result<_, _>>()?;
 
-    let shared_view = setup.shared_matrix.view::<D>();
+    let stride = setup.seed.max_stride();
+    let d_view = setup.shared_matrix.ring_view::<D>(level_params.n_d, stride);
+    let b_view = setup.shared_matrix.ring_view::<D>(level_params.n_b, stride);
+    let a_view = setup.shared_matrix.ring_view::<D>(level_params.n_a, stride);
 
     let commitment_row_count = level_params.n_b * num_commitment_groups;
     let public_row_start = level_params.n_d + commitment_row_count;
@@ -1199,6 +1209,7 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
         })
         .collect();
 
+    let d_matrix_width = layout.d_matrix_width;
     let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
         .map(|x| {
             let blocks_per_claim = num_blocks * depth_open;
@@ -1212,7 +1223,8 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
                 * g1_open[digit_idx];
             for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(level_params.n_d) {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&shared_view.row(row_idx)[x], alpha_pows);
+                    acc += *eq_i
+                        * eval_ring_at_pows(&d_view.row(row_idx)[x % d_matrix_width], alpha_pows);
                 }
             }
             acc
@@ -1237,8 +1249,7 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
             let mut acc = a_weights[a_idx] * c_alphas[global_block_idx] * g1_open[digit_idx];
             for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc +=
-                        *eq_i * eval_ring_at_pows(&shared_view.row(row_idx)[local_col], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[local_col], alpha_pows);
                 }
             }
             acc
@@ -1253,7 +1264,7 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
             let mut acc = row4_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
             for (a_idx, eq_i) in a_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&shared_view.row(a_idx)[k], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[k], alpha_pows);
                 }
             }
             acc
@@ -1407,7 +1418,10 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
         .map(|challenge| eval_sparse_challenge_at_pows::<F, D>(challenge, alpha_pows))
         .collect::<Result<_, _>>()?;
 
-    let shared_view = setup.shared_matrix.view::<D>();
+    let stride = setup.seed.max_stride();
+    let d_view = setup.shared_matrix.ring_view::<D>(level_params.n_d, stride);
+    let b_view = setup.shared_matrix.ring_view::<D>(level_params.n_b, stride);
+    let a_view = setup.shared_matrix.ring_view::<D>(level_params.n_a, stride);
 
     let commitment_row_count = level_params.n_b * num_commitment_groups;
     let public_row_start = level_params.n_d + commitment_row_count;
@@ -1422,6 +1436,7 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
         })
         .collect();
 
+    let d_matrix_width = layout.d_matrix_width;
     let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
         .map(|x| {
             let blocks_per_claim = num_blocks * depth_open;
@@ -1436,7 +1451,8 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
                 * g1_open[digit_idx];
             for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(level_params.n_d) {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&shared_view.row(row_idx)[x], alpha_pows);
+                    acc += *eq_i
+                        * eval_ring_at_pows(&d_view.row(row_idx)[x % d_matrix_width], alpha_pows);
                 }
             }
             acc
@@ -1461,8 +1477,7 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
             let mut acc = a_weights[a_idx] * c_alphas[global_block_idx] * g1_open[digit_idx];
             for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc +=
-                        *eq_i * eval_ring_at_pows(&shared_view.row(row_idx)[local_col], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[local_col], alpha_pows);
                 }
             }
             acc
@@ -1480,7 +1495,7 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
             let mut acc = row4_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
             for (a_idx, eq_i) in a_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&shared_view.row(a_idx)[local_k], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[local_k], alpha_pows);
                 }
             }
             acc
@@ -1816,6 +1831,7 @@ mod tests {
             &commitment,
             &y_ring,
             layout,
+            setup.expanded.seed.max_stride(),
         )
         .expect("quadratic equation");
 
@@ -1905,7 +1921,7 @@ mod tests {
         let (setup, _) = <HachiCommitmentCore as RingCommitmentScheme<TestF, D, Cfg>>::setup(12, 1)
             .expect("setup");
         assert!(
-            setup.ntt_shared.num_rows() > 3,
+            setup.ntt_shared.total_elements() > 3,
             "test needs a shared cache envelope"
         );
 
@@ -1922,8 +1938,13 @@ mod tests {
         let expected_layout =
             hachi_recursive_level_layout_from_params::<WCfg>(&level_params, w.len())
                 .expect("layout");
-        let (_commitment, hint) =
-            commit_w::<TestF, D, WCfg>(&w, &setup.ntt_shared, &level_params).expect("commit w");
+        let (_commitment, hint) = commit_w::<TestF, D, WCfg>(
+            &w,
+            &setup.ntt_shared,
+            &level_params,
+            setup.expanded.seed.max_stride(),
+        )
+        .expect("commit w");
         let t = hint
             .t()
             .expect("commit_w should preserve recomposed t rows");

@@ -1103,9 +1103,11 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
             max_d_width = max_d_width.max(recursive_layout.d_matrix_width);
         }
 
-        assert!(setup.expanded.shared_matrix.first_row_len::<D>() >= max_inner);
-        assert!(setup.expanded.shared_matrix.first_row_len::<D>() >= max_outer);
-        assert!(setup.expanded.shared_matrix.first_row_len::<D>() >= max_d_width);
+        let envelope = Cfg::envelope(nv);
+        let total = setup.expanded.shared_matrix.total_ring_elements_at::<D>();
+        assert!(total >= envelope.max_n_a * max_inner);
+        assert!(total >= envelope.max_n_b * max_outer);
+        assert!(total >= envelope.max_n_d * max_d_width);
     });
 }
 

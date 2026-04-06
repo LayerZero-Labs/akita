@@ -10,7 +10,7 @@ use crate::algebra::Prime128Offset159;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::{CanonicalField, FieldCore, PseudoMersenneField};
+use crate::{cfg_into_iter, cfg_join, CanonicalField, FieldCore, PseudoMersenneField};
 
 use super::flat_matrix::RingMatrixView;
 use super::norm::detect_field_modulus;
@@ -70,70 +70,72 @@ pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
     )))
 }
 
-/// Pre-converted CRT+NTT cache for a single matrix, keyed by parameter family.
+/// Pre-converted CRT+NTT cache for a flat 1D matrix, keyed by parameter family.
 ///
 /// Stores both negacyclic (for mat-vec) and cyclic (for quotient) representations
-/// to avoid repeated coefficient-to-NTT conversion.
+/// as flat contiguous vectors. Callers provide `(num_rows, num_cols)` when
+/// accessing elements, treating the flat data as a row-major matrix with
+/// stride = `num_cols`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(missing_docs, clippy::large_enum_variant)]
 pub enum NttSlotCache<const D: usize> {
     /// 32-bit CRT primes.
     Q32 {
-        neg: Vec<Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>>,
-        cyc: Vec<Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>>,
+        neg: Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>,
+        cyc: Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>,
         params: CrtNttParamSet<i16, Q32_NUM_PRIMES, D>,
     },
     /// 64-bit CRT primes.
     Q64 {
-        neg: Vec<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
-        cyc: Vec<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
+        neg: Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>,
+        cyc: Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>,
         params: CrtNttParamSet<i32, Q64_NUM_PRIMES, D>,
     },
     /// 128-bit CRT primes.
     Q128 {
-        neg: Vec<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
-        cyc: Vec<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
+        neg: Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>,
+        cyc: Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>,
         params: CrtNttParamSet<i32, Q128_NUM_PRIMES, D>,
     },
 }
 
-fn convert_mat<F, W, const K: usize, const D: usize>(
+fn convert_flat<F, W, const K: usize, const D: usize>(
     mat: RingMatrixView<'_, F, D>,
     params: &CrtNttParamSet<W, K, D>,
-) -> Vec<Vec<CyclotomicCrtNtt<W, K, D>>>
+) -> Vec<CyclotomicCrtNtt<W, K, D>>
 where
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
 {
-    cfg_into_iter!(0..mat.num_rows())
-        .map(|i| {
-            mat.row(i)
-                .iter()
-                .map(|a| CyclotomicCrtNtt::from_ring_with_params(a, params))
-                .collect()
+    let total = mat.num_rows() * mat.num_cols();
+    cfg_into_iter!(0..total)
+        .map(|idx| {
+            let r = idx / mat.num_cols();
+            let c = idx % mat.num_cols();
+            CyclotomicCrtNtt::from_ring_with_params(&mat.row(r)[c], params)
         })
         .collect()
 }
 
-fn convert_mat_cyclic<F, W, const K: usize, const D: usize>(
+fn convert_flat_cyclic<F, W, const K: usize, const D: usize>(
     mat: RingMatrixView<'_, F, D>,
     params: &CrtNttParamSet<W, K, D>,
-) -> Vec<Vec<CyclotomicCrtNtt<W, K, D>>>
+) -> Vec<CyclotomicCrtNtt<W, K, D>>
 where
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
 {
-    cfg_into_iter!(0..mat.num_rows())
-        .map(|i| {
-            mat.row(i)
-                .iter()
-                .map(|a| CyclotomicCrtNtt::from_ring_cyclic(a, params))
-                .collect()
+    let total = mat.num_rows() * mat.num_cols();
+    cfg_into_iter!(0..total)
+        .map(|idx| {
+            let r = idx / mat.num_cols();
+            let c = idx % mat.num_cols();
+            CyclotomicCrtNtt::from_ring_cyclic(&mat.row(r)[c], params)
         })
         .collect()
 }
 
-/// Build an NTT slot cache for a single matrix.
+/// Build an NTT slot cache for a matrix view (flat 1D storage).
 ///
 /// # Errors
 ///
@@ -152,7 +154,7 @@ fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
 ) -> NttSlotCache<D> {
     match params {
         ProtocolCrtNttParams::Q32(p) => {
-            let (neg, cyc) = cfg_join!(|| convert_mat(mat, &p), || convert_mat_cyclic(mat, &p));
+            let (neg, cyc) = cfg_join!(|| convert_flat(mat, &p), || convert_flat_cyclic(mat, &p));
             NttSlotCache::Q32 {
                 neg,
                 cyc,
@@ -160,7 +162,7 @@ fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
             }
         }
         ProtocolCrtNttParams::Q64(p) => {
-            let (neg, cyc) = cfg_join!(|| convert_mat(mat, &p), || convert_mat_cyclic(mat, &p));
+            let (neg, cyc) = cfg_join!(|| convert_flat(mat, &p), || convert_flat_cyclic(mat, &p));
             NttSlotCache::Q64 {
                 neg,
                 cyc,
@@ -168,7 +170,7 @@ fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
             }
         }
         ProtocolCrtNttParams::Q128(p) => {
-            let (neg, cyc) = cfg_join!(|| convert_mat(mat, &p), || convert_mat_cyclic(mat, &p));
+            let (neg, cyc) = cfg_join!(|| convert_flat(mat, &p), || convert_flat_cyclic(mat, &p));
             NttSlotCache::Q128 {
                 neg,
                 cyc,
@@ -179,8 +181,8 @@ fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
 }
 
 impl<const D: usize> NttSlotCache<D> {
-    /// Number of matrix rows stored in this cache.
-    pub fn num_rows(&self) -> usize {
+    /// Total number of NTT elements stored in this cache.
+    pub fn total_elements(&self) -> usize {
         match self {
             NttSlotCache::Q32 { neg, .. } => neg.len(),
             NttSlotCache::Q64 { neg, .. } => neg.len(),

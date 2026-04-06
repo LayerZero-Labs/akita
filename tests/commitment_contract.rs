@@ -74,10 +74,12 @@ impl HachiPolyOps<F, 1> for DummyPoly {
         &self,
         _a_matrix: &FlatMatrix<F>,
         _ntt_a: &NttSlotCache<1>,
+        _n_a: usize,
         _block_len: usize,
         _num_digits_commit: usize,
         _num_digits_open: usize,
         _log_basis: u32,
+        _matrix_stride: usize,
     ) -> Result<FlatDigitBlocks<1>, HachiError> {
         Ok(FlatDigitBlocks::from_blocks(vec![]))
     }

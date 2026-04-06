@@ -55,23 +55,40 @@ pub struct HachiSetupSeed {
     pub max_outer_width: usize,
     /// Maximum D-matrix width across all recursion levels.
     pub max_d_matrix_width: usize,
+    /// Total ring-element count for the 1D flat backing vector.
+    pub max_total_ring_elements: usize,
     /// Public seed used to derive commitment matrices.
     pub public_matrix_seed: PublicMatrixSeed,
+}
+
+impl HachiSetupSeed {
+    /// Global row stride for the flat NTT cache.
+    ///
+    /// All levels and all matrix roles (A, B, D) share the same flat cache.
+    /// The stride is the maximum column width across all levels and roles,
+    /// ensuring that `(row, col)` maps to the same physical element regardless
+    /// of which level or role is accessing it.
+    pub fn max_stride(&self) -> usize {
+        self.max_inner_width
+            .max(self.max_outer_width)
+            .max(self.max_d_matrix_width)
+    }
 }
 
 /// Expanded setup stage containing a single shared coefficient-form matrix
 /// stored as a D-agnostic flat field-element array.
 ///
-/// All role matrices (A, B, D) are row/column prefixes of this shared matrix.
+/// All role matrices (A, B, D) are row/column prefixes of this shared vector.
 /// See `SHARED_PREFIX_BINDING.md` for the security argument. The same setup
-/// can be viewed at different ring dimensions by calling [`FlatMatrix::view`]
-/// with the desired const-generic `D`.
+/// can be viewed at different ring dimensions by calling
+/// [`FlatMatrix::ring_view`] with the desired const-generic `D` and
+/// role-specific `(num_rows, num_cols)` dimensions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiExpandedSetup<F: FieldCore> {
     /// Setup seed and runtime layout metadata.
     pub seed: HachiSetupSeed,
-    /// Shared backing matrix (max_rows × max_cols). Each role matrix
-    /// (A, B, D) is a row/column prefix of this matrix.
+    /// Shared 1D flat backing vector. Each role matrix (A, B, D) views a
+    /// prefix of this vector reshaped with role-specific dimensions.
     pub shared_matrix: FlatMatrix<F>,
 }
 
@@ -175,6 +192,11 @@ impl Valid for HachiSetupSeed {
                 "setup seed matrix widths must be non-zero".to_string(),
             ));
         }
+        if self.max_total_ring_elements == 0 {
+            return Err(SerializationError::InvalidData(
+                "setup seed max_total_ring_elements must be non-zero".to_string(),
+            ));
+        }
         Ok(())
     }
 }
@@ -195,6 +217,8 @@ impl HachiSerialize for HachiSetupSeed {
             .serialize_with_mode(&mut writer, compress)?;
         self.max_d_matrix_width
             .serialize_with_mode(&mut writer, compress)?;
+        self.max_total_ring_elements
+            .serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.public_matrix_seed)?;
         Ok(())
     }
@@ -205,6 +229,7 @@ impl HachiSerialize for HachiSetupSeed {
             + self.max_inner_width.serialized_size(compress)
             + self.max_outer_width.serialized_size(compress)
             + self.max_d_matrix_width.serialized_size(compress)
+            + self.max_total_ring_elements.serialized_size(compress)
             + 32
     }
 }
@@ -224,6 +249,8 @@ impl HachiDeserialize for HachiSetupSeed {
         let max_outer_width = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let max_d_matrix_width =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let max_total_ring_elements =
+            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let mut public_matrix_seed = [0u8; 32];
         reader.read_exact(&mut public_matrix_seed)?;
         let out = Self {
@@ -232,6 +259,7 @@ impl HachiDeserialize for HachiSetupSeed {
             max_inner_width,
             max_outer_width,
             max_d_matrix_width,
+            max_total_ring_elements,
             public_matrix_seed,
         };
         if matches!(validate, Validate::Yes) {
@@ -785,24 +813,17 @@ where
 {
     let envelope = Cfg::envelope(max_num_vars);
     let chain_stats = scan_layout_chain::<F, D, Cfg>(max_num_vars, layout, max_num_batched_polys)?;
-    let required_rows = [envelope.max_n_a, envelope.max_n_b, envelope.max_n_d]
-        .into_iter()
-        .max()
-        .unwrap();
-    let required_cols = [
-        chain_stats.max_inner_width,
-        chain_stats.max_outer_width,
-        chain_stats.max_d_matrix_width,
-    ]
-    .into_iter()
-    .max()
-    .unwrap();
+    let a_cols = chain_stats.max_inner_width;
+    let b_cols = chain_stats.max_outer_width;
+    let d_cols = chain_stats.max_d_matrix_width;
 
-    let actual_rows = expanded.shared_matrix.num_rows();
-    let actual_cols = expanded.shared_matrix.first_row_len::<D>();
-    if actual_rows < required_rows || actual_cols < required_cols {
+    let max_stride = a_cols.max(b_cols).max(d_cols);
+    let required_total = envelope.max_n_a * max_stride;
+
+    let actual_total = expanded.shared_matrix.total_ring_elements_at::<D>();
+    if actual_total < required_total {
         return Err(HachiError::InvalidSetup(format!(
-            "cached setup matrix too small: have {actual_rows}x{actual_cols}, need at least {required_rows}x{required_cols}"
+            "cached setup matrix too small: have {actual_total} ring elements, need at least {required_total}"
         )));
     }
 
@@ -848,7 +869,8 @@ pub(crate) fn setup_from_expanded<F: FieldCore + CanonicalField, const D: usize>
     expanded: HachiExpandedSetup<F>,
 ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError> {
     let expanded = Arc::new(expanded);
-    let ntt_shared = build_ntt_slot(expanded.shared_matrix.view::<D>())?;
+    let total = expanded.shared_matrix.total_ring_elements_at::<D>();
+    let ntt_shared = build_ntt_slot(expanded.shared_matrix.ring_view::<D>(1, total))?;
     let prover_setup = HachiProverSetup {
         expanded: Arc::clone(&expanded),
         ntt_shared,
@@ -927,16 +949,12 @@ where
         let b_cols = chain_stats.max_outer_width;
         let d_cols = chain_stats.max_d_matrix_width;
 
-        let max_rows = [envelope.max_n_a, envelope.max_n_b, envelope.max_n_d]
-            .into_iter()
-            .max()
-            .unwrap();
-        let max_cols = [a_cols, b_cols, d_cols].into_iter().max().unwrap();
+        let max_stride = a_cols.max(b_cols).max(d_cols);
+        let max_total = envelope.max_n_a * max_stride;
 
         let public_matrix_seed = sample_public_matrix_seed();
-        let shared_flat =
-            derive_public_matrix_flat::<F, D>(max_rows, max_cols, &public_matrix_seed);
-        let ntt_shared = build_ntt_slot(shared_flat.view::<D>())?;
+        let shared_flat = derive_public_matrix_flat::<F, D>(max_total, &public_matrix_seed);
+        let ntt_shared = build_ntt_slot(shared_flat.ring_view::<D>(1, max_total))?;
 
         let expanded = Arc::new(HachiExpandedSetup {
             seed: HachiSetupSeed {
@@ -945,6 +963,7 @@ where
                 max_inner_width: chain_stats.max_inner_width,
                 max_outer_width: chain_stats.max_outer_width,
                 max_d_matrix_width: chain_stats.max_d_matrix_width,
+                max_total_ring_elements: max_total,
                 public_matrix_seed,
             },
             shared_matrix: shared_flat,
@@ -990,6 +1009,7 @@ where
         let t_hat = if root_params.n_a == 1 {
             let t_single = mat_vec_mul_ntt_i8_dense_single_row(
                 &setup.ntt_shared,
+                setup.expanded.seed.max_stride(),
                 &block_slices,
                 depth_commit,
                 log_basis,
@@ -1014,6 +1034,7 @@ where
             let t_all = mat_vec_mul_ntt_i8_dense(
                 &setup.ntt_shared,
                 root_params.n_a,
+                setup.expanded.seed.max_stride(),
                 &block_slices,
                 depth_commit,
                 log_basis,
@@ -1033,8 +1054,12 @@ where
             t_hat
         };
 
-        let u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, root_params.n_b, t_hat.flat_digits());
+        let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
+            &setup.ntt_shared,
+            root_params.n_b,
+            setup.expanded.seed.max_stride(),
+            t_hat.flat_digits(),
+        );
         Ok(CommitWitness::new(RingCommitment { u }, t_hat))
     }
 
@@ -1059,7 +1084,10 @@ where
         let depth_open = layout.num_digits_open;
         let log_basis = layout.log_basis;
         let zero_block_len = root_params.n_a.checked_mul(depth_open).unwrap();
-        let a_view = setup.expanded.shared_matrix.view::<D>();
+        let a_view = setup
+            .expanded
+            .shared_matrix
+            .ring_view::<D>(root_params.n_a, setup.expanded.seed.max_stride());
         let block_len = layout.block_len;
 
         let block_sizes = vec![zero_block_len; sparse_blocks.len()];
@@ -1089,8 +1117,12 @@ where
                 }
             });
 
-        let u: Vec<CyclotomicRing<F, D>> =
-            mat_vec_mul_ntt_single_i8(&setup.ntt_shared, root_params.n_b, t_hat.flat_digits());
+        let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
+            &setup.ntt_shared,
+            root_params.n_b,
+            setup.expanded.seed.max_stride(),
+            t_hat.flat_digits(),
+        );
         Ok(CommitWitness::new(RingCommitment { u }, t_hat))
     }
 }
@@ -1265,28 +1297,24 @@ impl HachiCommitmentCore {
         Cfg: CommitmentConfig<Field = F>,
     {
         let envelope = Cfg::envelope(max_num_vars);
-        let max_rows = [envelope.max_n_a, envelope.max_n_b, envelope.max_n_d]
-            .into_iter()
-            .max()
-            .unwrap();
-        let max_cols = [a_cols, b_cols, d_cols].into_iter().max().unwrap();
+        let max_stride = a_cols.max(b_cols).max(d_cols);
+        let max_total = envelope.max_n_a * max_stride;
         {
             let ring_bytes = std::mem::size_of::<CyclotomicRing<F, D>>();
-            let shared_mb = (max_rows * max_cols * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
+            let shared_mb = (max_total * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);
             tracing::debug!(
                 a_cols,
                 b_cols,
                 d_cols,
-                max_rows,
-                max_cols,
+                max_stride,
+                max_total,
                 ring_bytes,
                 shared_mb,
                 "setup shared matrix size"
             );
         }
-        let shared_flat =
-            derive_public_matrix_flat::<F, D>(max_rows, max_cols, &public_matrix_seed);
-        let ntt_shared = build_ntt_slot(shared_flat.view::<D>())?;
+        let shared_flat = derive_public_matrix_flat::<F, D>(max_total, &public_matrix_seed);
+        let ntt_shared = build_ntt_slot(shared_flat.ring_view::<D>(1, max_total))?;
 
         let expanded = Arc::new(HachiExpandedSetup {
             seed: HachiSetupSeed {
@@ -1295,6 +1323,7 @@ impl HachiCommitmentCore {
                 max_inner_width: a_cols,
                 max_outer_width: b_cols,
                 max_d_matrix_width: d_cols,
+                max_total_ring_elements: max_total,
                 public_matrix_seed,
             },
             shared_matrix: shared_flat,
@@ -1401,10 +1430,14 @@ mod tests {
         assert!(seed.max_inner_width >= multipoint_level1_layout.inner_width);
         assert!(seed.max_outer_width >= multipoint_level1_layout.outer_width);
         assert!(seed.max_d_matrix_width >= multipoint_level1_layout.d_matrix_width);
-        let shared_cols = setup.expanded.shared_matrix.first_row_len::<TEST_D>();
-        assert!(shared_cols >= batched_stats.max_inner_width);
-        assert!(shared_cols >= batched_stats.max_outer_width);
-        assert!(shared_cols >= batched_stats.max_d_matrix_width);
+        let envelope = TinyConfig::envelope(MAX_NUM_VARS);
+        let total_elements = setup
+            .expanded
+            .shared_matrix
+            .total_ring_elements_at::<TEST_D>();
+        assert!(total_elements >= envelope.max_n_a * batched_stats.max_inner_width);
+        assert!(total_elements >= envelope.max_n_b * batched_stats.max_outer_width);
+        assert!(total_elements >= envelope.max_n_d * batched_stats.max_d_matrix_width);
     }
 
     #[test]
@@ -1517,10 +1550,14 @@ mod tests {
         assert!(seed.max_inner_width >= expected_inner);
         assert!(seed.max_outer_width >= expected_outer);
         assert!(seed.max_d_matrix_width >= expected_d);
-        let shared_cols = setup.expanded.shared_matrix.first_row_len::<TEST_D>();
-        assert!(shared_cols >= expected_inner);
-        assert!(shared_cols >= expected_outer);
-        assert!(shared_cols >= expected_d);
+        let total_elements = setup
+            .expanded
+            .shared_matrix
+            .total_ring_elements_at::<TEST_D>();
+        let envelope = TinyConfig::envelope(expected_max_num_vars);
+        assert!(total_elements >= envelope.max_n_a * expected_inner);
+        assert!(total_elements >= envelope.max_n_b * expected_outer);
+        assert!(total_elements >= envelope.max_n_d * expected_d);
     }
 
     #[test]

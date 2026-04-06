@@ -202,79 +202,84 @@ where
     CyclotomicRing::from_coefficients(quotient)
 }
 
-macro_rules! dispatch_slot_quotient {
-    ($slot:expr, $vec:expr, $convert_neg:ident, $convert_cyc:ident, $quotient_fn:ident) => {{
-        match $slot {
-            NttSlotCache::Q32 {
-                neg,
-                cyc,
-                params: p,
-            } => {
-                let v = $vec;
-                let n = neg.first().map_or(0, |r| r.len().min(v.len()));
-                let v_neg: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| CyclotomicCrtNtt::$convert_neg(x, p))
-                    .collect();
-                let v_cyc: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| CyclotomicCrtNtt::$convert_cyc(x, p))
-                    .collect();
-                cfg_into_iter!(0..neg.len())
-                    .map(|i| $quotient_fn(&neg[i], &cyc[i], &v_neg, &v_cyc, p))
-                    .collect()
-            }
-            NttSlotCache::Q64 {
-                neg,
-                cyc,
-                params: p,
-            } => {
-                let v = $vec;
-                let n = neg.first().map_or(0, |r| r.len().min(v.len()));
-                let v_neg: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| CyclotomicCrtNtt::$convert_neg(x, p))
-                    .collect();
-                let v_cyc: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| CyclotomicCrtNtt::$convert_cyc(x, p))
-                    .collect();
-                cfg_into_iter!(0..neg.len())
-                    .map(|i| $quotient_fn(&neg[i], &cyc[i], &v_neg, &v_cyc, p))
-                    .collect()
-            }
-            NttSlotCache::Q128 {
-                neg,
-                cyc,
-                params: p,
-            } => {
-                let v = $vec;
-                let n = neg.first().map_or(0, |r| r.len().min(v.len()));
-                let v_neg: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| CyclotomicCrtNtt::$convert_neg(x, p))
-                    .collect();
-                let v_cyc: Vec<_> = cfg_iter!(v[..n])
-                    .map(|x| CyclotomicCrtNtt::$convert_cyc(x, p))
-                    .collect();
-                cfg_into_iter!(0..neg.len())
-                    .map(|i| $quotient_fn(&neg[i], &cyc[i], &v_neg, &v_cyc, p))
-                    .collect()
-            }
-        }
-    }};
-}
-
 /// Compute unreduced quotients for matrix rows against a witness vector.
 ///
 /// For each row: `r_i = high_part(sum_j row_ij * vec_j) = (cyc - neg) / 2`.
 /// Vec NTT conversions and matrix cyclic NTT are precomputed once (not per-row).
 pub fn unreduced_quotient_rows_ntt_cached<F: FieldCore + CanonicalField, const D: usize>(
     slot: &NttSlotCache<D>,
+    num_rows: usize,
+    num_cols: usize,
     vec: &[CyclotomicRing<F, D>],
 ) -> Vec<CyclotomicRing<F, D>> {
-    dispatch_slot_quotient!(
-        slot,
-        vec,
-        from_ring_with_params,
-        from_ring_cyclic,
-        unreduced_quotient_ntt
-    )
+    match slot {
+        NttSlotCache::Q32 {
+            neg,
+            cyc,
+            params: p,
+        } => {
+            let neg_rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            let cyc_rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            let n = num_cols.min(vec.len());
+            let v_neg: Vec<_> = cfg_iter!(vec[..n])
+                .map(|x| CyclotomicCrtNtt::from_ring_with_params(x, p))
+                .collect();
+            let v_cyc: Vec<_> = cfg_iter!(vec[..n])
+                .map(|x| CyclotomicCrtNtt::from_ring_cyclic(x, p))
+                .collect();
+            cfg_into_iter!(0..num_rows)
+                .map(|i| unreduced_quotient_ntt(neg_rows[i], cyc_rows[i], &v_neg, &v_cyc, p))
+                .collect()
+        }
+        NttSlotCache::Q64 {
+            neg,
+            cyc,
+            params: p,
+        } => {
+            let neg_rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            let cyc_rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            let n = num_cols.min(vec.len());
+            let v_neg: Vec<_> = cfg_iter!(vec[..n])
+                .map(|x| CyclotomicCrtNtt::from_ring_with_params(x, p))
+                .collect();
+            let v_cyc: Vec<_> = cfg_iter!(vec[..n])
+                .map(|x| CyclotomicCrtNtt::from_ring_cyclic(x, p))
+                .collect();
+            cfg_into_iter!(0..num_rows)
+                .map(|i| unreduced_quotient_ntt(neg_rows[i], cyc_rows[i], &v_neg, &v_cyc, p))
+                .collect()
+        }
+        NttSlotCache::Q128 {
+            neg,
+            cyc,
+            params: p,
+        } => {
+            let neg_rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            let cyc_rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            let n = num_cols.min(vec.len());
+            let v_neg: Vec<_> = cfg_iter!(vec[..n])
+                .map(|x| CyclotomicCrtNtt::from_ring_with_params(x, p))
+                .collect();
+            let v_cyc: Vec<_> = cfg_iter!(vec[..n])
+                .map(|x| CyclotomicCrtNtt::from_ring_cyclic(x, p))
+                .collect();
+            cfg_into_iter!(0..num_rows)
+                .map(|i| unreduced_quotient_ntt(neg_rows[i], cyc_rows[i], &v_neg, &v_cyc, p))
+                .collect()
+        }
+    }
 }
 
 /// Like [`unreduced_quotient_rows_ntt_cached`] but accepts centered i32
@@ -285,6 +290,8 @@ pub fn unreduced_quotient_rows_ntt_cached_centered_i32<
     const D: usize,
 >(
     slot: &NttSlotCache<D>,
+    num_rows: usize,
+    num_cols: usize,
     vec: &[[i32; D]],
     max_abs: u32,
 ) -> Vec<CyclotomicRing<F, D>> {
@@ -293,27 +300,61 @@ pub fn unreduced_quotient_rows_ntt_cached_centered_i32<
             neg,
             cyc,
             params: p,
-        } => quotient_single_centered_i32_with_params(neg, cyc, vec, max_abs, p),
+        } => {
+            let neg_rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            let cyc_rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            quotient_single_centered_i32_with_params(&neg_rows, &cyc_rows, vec, max_abs, p)
+        }
         NttSlotCache::Q64 {
             neg,
             cyc,
             params: p,
-        } => quotient_single_centered_i32_with_params(neg, cyc, vec, max_abs, p),
+        } => {
+            let neg_rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            let cyc_rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            quotient_single_centered_i32_with_params(&neg_rows, &cyc_rows, vec, max_abs, p)
+        }
         NttSlotCache::Q128 {
             neg,
             cyc,
             params: p,
-        } => quotient_single_centered_i32_with_params(neg, cyc, vec, max_abs, p),
+        } => {
+            let neg_rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            let cyc_rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            quotient_single_centered_i32_with_params(&neg_rows, &cyc_rows, vec, max_abs, p)
+        }
     }
 }
 
 macro_rules! dispatch_slot {
-    ($slot:expr, $num_rows:expr, $func:ident $(, $arg:expr)*) => {{
-        let n = $num_rows;
+    ($slot:expr, $num_rows:expr, $num_cols:expr, $func:ident $(, $arg:expr)*) => {{
+        let nr: usize = $num_rows;
+        let nc: usize = $num_cols;
         match $slot {
-            NttSlotCache::Q32 { neg, params: p, .. } => $func(&neg[..n], $($arg,)* p),
-            NttSlotCache::Q64 { neg, params: p, .. } => $func(&neg[..n], $($arg,)* p),
-            NttSlotCache::Q128 { neg, params: p, .. } => $func(&neg[..n], $($arg,)* p),
+            NttSlotCache::Q32 { neg, params: p, .. } => {
+                let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
+                $func(&rows, $($arg,)* p)
+            }
+            NttSlotCache::Q64 { neg, params: p, .. } => {
+                let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
+                $func(&rows, $($arg,)* p)
+            }
+            NttSlotCache::Q128 { neg, params: p, .. } => {
+                let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
+                $func(&rows, $($arg,)* p)
+            }
         }
     }};
 }
@@ -515,6 +556,7 @@ fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
 pub fn mat_vec_mul_ntt_i8<F: FieldCore + CanonicalField, const D: usize>(
     slot: &NttSlotCache<D>,
     num_rows: usize,
+    num_cols: usize,
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
@@ -522,6 +564,7 @@ pub fn mat_vec_mul_ntt_i8<F: FieldCore + CanonicalField, const D: usize>(
     dispatch_slot!(
         slot,
         num_rows,
+        num_cols,
         mat_vec_mul_i8_with_params,
         blocks,
         num_digits,
@@ -537,6 +580,7 @@ pub fn mat_vec_mul_ntt_i8<F: FieldCore + CanonicalField, const D: usize>(
 pub fn mat_vec_mul_ntt_i8_dense<F: FieldCore + CanonicalField, const D: usize>(
     slot: &NttSlotCache<D>,
     num_rows: usize,
+    num_cols: usize,
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
@@ -544,6 +588,7 @@ pub fn mat_vec_mul_ntt_i8_dense<F: FieldCore + CanonicalField, const D: usize>(
     dispatch_slot!(
         slot,
         num_rows,
+        num_cols,
         mat_vec_mul_i8_dense_with_params,
         blocks,
         num_digits,
@@ -555,6 +600,7 @@ pub fn mat_vec_mul_ntt_i8_dense<F: FieldCore + CanonicalField, const D: usize>(
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8_dense_single_row")]
 pub fn mat_vec_mul_ntt_i8_dense_single_row<F: FieldCore + CanonicalField, const D: usize>(
     slot: &NttSlotCache<D>,
+    num_cols: usize,
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
@@ -562,6 +608,7 @@ pub fn mat_vec_mul_ntt_i8_dense_single_row<F: FieldCore + CanonicalField, const 
     dispatch_slot!(
         slot,
         1usize,
+        num_cols,
         mat_vec_mul_i8_dense_single_row_with_params,
         blocks,
         num_digits,
@@ -570,10 +617,12 @@ pub fn mat_vec_mul_ntt_i8_dense_single_row<F: FieldCore + CanonicalField, const 
 }
 
 /// Strided variant of [`mat_vec_mul_ntt_i8`] for recursive witnesses.
+#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8_strided")]
 pub fn mat_vec_mul_ntt_i8_strided<F: FieldCore + CanonicalField, const D: usize>(
     slot: &NttSlotCache<D>,
     num_rows: usize,
+    num_cols: usize,
     coeffs: &[CyclotomicRing<F, D>],
     num_blocks: usize,
     block_len: usize,
@@ -583,6 +632,7 @@ pub fn mat_vec_mul_ntt_i8_strided<F: FieldCore + CanonicalField, const D: usize>
     dispatch_slot!(
         slot,
         num_rows,
+        num_cols,
         mat_vec_mul_i8_strided_with_params,
         coeffs,
         num_blocks,
@@ -602,9 +652,16 @@ pub fn mat_vec_mul_ntt_i8_strided<F: FieldCore + CanonicalField, const D: usize>
 pub fn mat_vec_mul_ntt_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
     slot: &NttSlotCache<D>,
     num_rows: usize,
+    num_cols: usize,
     blocks: &[&[[i8; D]]],
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    dispatch_slot!(slot, num_rows, mat_vec_mul_digits_i8_with_params, blocks)
+    dispatch_slot!(
+        slot,
+        num_rows,
+        num_cols,
+        mat_vec_mul_digits_i8_with_params,
+        blocks
+    )
 }
 
 /// Strided variant of [`mat_vec_mul_ntt_digits_i8`] for recursive witnesses.
@@ -612,6 +669,7 @@ pub fn mat_vec_mul_ntt_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
 pub fn mat_vec_mul_ntt_digits_i8_strided<F: FieldCore + CanonicalField, const D: usize>(
     slot: &NttSlotCache<D>,
     num_rows: usize,
+    num_cols: usize,
     coeffs: &[[i8; D]],
     num_blocks: usize,
     block_len: usize,
@@ -619,6 +677,7 @@ pub fn mat_vec_mul_ntt_digits_i8_strided<F: FieldCore + CanonicalField, const D:
     dispatch_slot!(
         slot,
         num_rows,
+        num_cols,
         mat_vec_mul_digits_i8_strided_with_params,
         coeffs,
         num_blocks,
@@ -632,7 +691,7 @@ fn mat_vec_mul_digits_i8_with_params<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[[i8; D]]],
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
@@ -713,7 +772,7 @@ fn mat_vec_mul_digits_i8_strided_with_params<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[[i8; D]],
     num_blocks: usize,
     block_len: usize,
@@ -801,7 +860,7 @@ fn mat_vec_mul_digits_i8_block_parallel<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[[i8; D]]],
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
@@ -849,7 +908,7 @@ fn mat_vec_mul_digits_i8_single_row_block_parallel<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[[i8; D]]],
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
@@ -886,7 +945,7 @@ fn mat_vec_mul_digits_i8_two_row_block_parallel<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[[i8; D]]],
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
@@ -929,7 +988,7 @@ fn mat_vec_mul_digits_i8_three_row_block_parallel<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[[i8; D]]],
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
@@ -975,7 +1034,7 @@ fn mat_vec_mul_digits_i8_strided_block_parallel<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[[i8; D]],
     num_blocks: usize,
     block_len: usize,
@@ -1035,7 +1094,7 @@ fn mat_vec_mul_digits_i8_single_row_strided_block_parallel<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[[i8; D]],
     num_blocks: usize,
     block_len: usize,
@@ -1078,7 +1137,7 @@ fn mat_vec_mul_digits_i8_two_row_strided_block_parallel<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[[i8; D]],
     num_blocks: usize,
     block_len: usize,
@@ -1132,7 +1191,7 @@ fn mat_vec_mul_digits_i8_three_row_strided_block_parallel<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[[i8; D]],
     num_blocks: usize,
     block_len: usize,
@@ -1191,7 +1250,7 @@ fn mat_vec_mul_i8_block_parallel_with_params_impl<
     const D: usize,
     const CHECK_ZERO: bool,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
@@ -1239,7 +1298,7 @@ fn mat_vec_mul_i8_block_parallel_with_params<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
@@ -1256,7 +1315,7 @@ fn mat_vec_mul_i8_dense_block_parallel_with_params<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
@@ -1292,7 +1351,7 @@ fn mat_vec_mul_i8_dense_single_row_with_params<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
@@ -1338,7 +1397,7 @@ fn mat_vec_mul_i8_dense_two_row_fused_with_params<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
@@ -1390,7 +1449,7 @@ fn mat_vec_mul_i8_dense_three_row_fused_with_params<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
@@ -1445,7 +1504,7 @@ fn mat_vec_mul_i8_strided_block_parallel_with_params<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[CyclotomicRing<F, D>],
     num_blocks: usize,
     block_len: usize,
@@ -1503,7 +1562,7 @@ fn mat_vec_mul_i8_with_params_impl<
     const D: usize,
     const CHECK_ZERO: bool,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
@@ -1610,7 +1669,7 @@ fn mat_vec_mul_i8_with_params<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
@@ -1627,7 +1686,7 @@ fn mat_vec_mul_i8_dense_with_params<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
@@ -1644,7 +1703,7 @@ fn mat_vec_mul_i8_strided_with_params<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[CyclotomicRing<F, D>],
     num_blocks: usize,
     block_len: usize,
@@ -1752,17 +1811,27 @@ fn mat_vec_mul_i8_strided_with_params<
 pub fn mat_vec_mul_ntt_single_i8<F: FieldCore + CanonicalField, const D: usize>(
     slot: &NttSlotCache<D>,
     num_rows: usize,
+    num_cols: usize,
     vec: &[[i8; D]],
 ) -> Vec<CyclotomicRing<F, D>> {
     match slot {
         NttSlotCache::Q32 { neg, params: p, .. } => {
-            mat_vec_mul_single_i8_with_params(&neg[..num_rows], vec, p)
+            let rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            mat_vec_mul_single_i8_with_params(&rows, vec, p)
         }
         NttSlotCache::Q64 { neg, params: p, .. } => {
-            mat_vec_mul_single_i8_with_params(&neg[..num_rows], vec, p)
+            let rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            mat_vec_mul_single_i8_with_params(&rows, vec, p)
         }
         NttSlotCache::Q128 { neg, params: p, .. } => {
-            mat_vec_mul_single_i8_with_params(&neg[..num_rows], vec, p)
+            let rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            mat_vec_mul_single_i8_with_params(&rows, vec, p)
         }
     }
 }
@@ -1772,17 +1841,27 @@ pub fn mat_vec_mul_ntt_single_i8<F: FieldCore + CanonicalField, const D: usize>(
 pub fn mat_vec_mul_ntt_single_i8_cyclic<F: FieldCore + CanonicalField, const D: usize>(
     slot: &NttSlotCache<D>,
     num_rows: usize,
+    num_cols: usize,
     vec: &[[i8; D]],
 ) -> Vec<CyclotomicRing<F, D>> {
     match slot {
         NttSlotCache::Q32 { cyc, params: p, .. } => {
-            mat_vec_mul_single_i8_cyclic_with_params(&cyc[..num_rows], vec, p)
+            let rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, p)
         }
         NttSlotCache::Q64 { cyc, params: p, .. } => {
-            mat_vec_mul_single_i8_cyclic_with_params(&cyc[..num_rows], vec, p)
+            let rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, p)
         }
         NttSlotCache::Q128 { cyc, params: p, .. } => {
-            mat_vec_mul_single_i8_cyclic_with_params(&cyc[..num_rows], vec, p)
+            let rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, p)
         }
     }
 }
@@ -1793,7 +1872,7 @@ fn mat_vec_mul_single_i8_with_params<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     vec: &[[i8; D]],
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
@@ -1850,7 +1929,7 @@ fn mat_vec_mul_single_i8_cyclic_with_params<
     const K: usize,
     const D: usize,
 >(
-    ntt_mat: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     vec: &[[i8; D]],
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
@@ -1907,8 +1986,8 @@ fn quotient_single_centered_i32_with_params<
     const K: usize,
     const D: usize,
 >(
-    ntt_neg: &[Vec<CyclotomicCrtNtt<W, K, D>>],
-    ntt_cyc: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_neg: &[&[CyclotomicCrtNtt<W, K, D>]],
+    ntt_cyc: &[&[CyclotomicCrtNtt<W, K, D>]],
     vec: &[[i32; D]],
     max_abs: u32,
     params: &CrtNttParamSet<W, K, D>,
@@ -2016,8 +2095,8 @@ fn fused_split_eq_quotients_with_params<
     const K: usize,
     const D: usize,
 >(
-    ntt_neg: &[Vec<CyclotomicCrtNtt<W, K, D>>],
-    ntt_cyc: &[Vec<CyclotomicCrtNtt<W, K, D>>],
+    cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
+    neg_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
     n_d: usize,
     n_b: usize,
     n_a: usize,
@@ -2031,7 +2110,7 @@ fn fused_split_eq_quotients_with_params<
     Vec<CyclotomicRing<F, D>>,
     Vec<CyclotomicRing<F, D>>,
 ) {
-    let mat_width = ntt_cyc.first().map_or(0, |row| row.len());
+    let mat_width = cyc_rows.first().map_or(0, |r| r.len());
     let w_len = w_hat.len().min(mat_width);
     let t_len = t_hat.len().min(mat_width);
     let z_len = z_pre.len().min(mat_width);
@@ -2075,14 +2154,14 @@ fn fused_split_eq_quotients_with_params<
             for j in tile_start..tile_end {
                 if j < w_len && !is_zero_plane(&w_hat[j]) {
                     let ntt_w = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&w_hat[j], params, &lut);
-                    for (acc_d, cyc_row) in accs.0.iter_mut().zip(ntt_cyc.iter()) {
+                    for (acc_d, cyc_row) in accs.0.iter_mut().zip(cyc_rows.iter()) {
                         accumulate_pointwise_product_into(acc_d, &cyc_row[j], &ntt_w, params);
                     }
                 }
 
                 if j < t_len && !is_zero_plane(&t_hat[j]) {
                     let ntt_t = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&t_hat[j], params, &lut);
-                    for (acc_b, cyc_row) in accs.1.iter_mut().zip(ntt_cyc.iter()) {
+                    for (acc_b, cyc_row) in accs.1.iter_mut().zip(cyc_rows.iter()) {
                         accumulate_pointwise_product_into(acc_b, &cyc_row[j], &ntt_t, params);
                     }
                 }
@@ -2097,7 +2176,7 @@ fn fused_split_eq_quotients_with_params<
                         .2
                         .iter_mut()
                         .zip(accs.3.iter_mut())
-                        .zip(ntt_neg.iter().zip(ntt_cyc.iter()))
+                        .zip(neg_rows.iter().zip(cyc_rows.iter()))
                     {
                         accumulate_pointwise_product_into(acc_neg, &neg_row[j], &ntt_z_neg, params);
                         accumulate_pointwise_product_into(acc_cyc, &cyc_row[j], &ntt_z_cyc, params);
@@ -2159,6 +2238,10 @@ fn fused_split_eq_quotients_with_params<
 /// - D-cyclic: `cyc[0..n_d] · w_hat` (cyclic domain)
 /// - B-cyclic: `cyc[0..n_b] · t_hat` (cyclic domain)
 /// - A-quotient: `(cyc[0..n_a]·z_cyc − neg[0..n_a]·z_neg) / 2`
+///
+/// All roles share the same underlying coefficient matrix and must use the
+/// same row `stride` so that logical position `(i, j)` maps to the same
+/// physical flat-cache element regardless of role.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[tracing::instrument(skip_all, name = "fused_split_eq_quotients")]
 pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField, const D: usize>(
@@ -2166,6 +2249,7 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField, const D: usize>(
     n_d: usize,
     n_b: usize,
     n_a: usize,
+    stride: usize,
     w_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_pre: &[[i32; D]],
@@ -2180,50 +2264,74 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField, const D: usize>(
             neg,
             cyc,
             params: p,
-        } => fused_split_eq_quotients_with_params(
-            neg,
-            cyc,
-            n_d,
-            n_b,
-            n_a,
-            w_hat,
-            t_hat,
-            z_pre,
-            z_pre_max_abs,
-            p,
-        ),
+        } => {
+            let neg_rows: Vec<&[_]> = (0..n_a)
+                .map(|i| &neg[i * stride..(i + 1) * stride])
+                .collect();
+            let cyc_rows: Vec<&[_]> = (0..n_a)
+                .map(|i| &cyc[i * stride..(i + 1) * stride])
+                .collect();
+            fused_split_eq_quotients_with_params(
+                &cyc_rows,
+                &neg_rows,
+                n_d,
+                n_b,
+                n_a,
+                w_hat,
+                t_hat,
+                z_pre,
+                z_pre_max_abs,
+                p,
+            )
+        }
         NttSlotCache::Q64 {
             neg,
             cyc,
             params: p,
-        } => fused_split_eq_quotients_with_params(
-            neg,
-            cyc,
-            n_d,
-            n_b,
-            n_a,
-            w_hat,
-            t_hat,
-            z_pre,
-            z_pre_max_abs,
-            p,
-        ),
+        } => {
+            let neg_rows: Vec<&[_]> = (0..n_a)
+                .map(|i| &neg[i * stride..(i + 1) * stride])
+                .collect();
+            let cyc_rows: Vec<&[_]> = (0..n_a)
+                .map(|i| &cyc[i * stride..(i + 1) * stride])
+                .collect();
+            fused_split_eq_quotients_with_params(
+                &cyc_rows,
+                &neg_rows,
+                n_d,
+                n_b,
+                n_a,
+                w_hat,
+                t_hat,
+                z_pre,
+                z_pre_max_abs,
+                p,
+            )
+        }
         NttSlotCache::Q128 {
             neg,
             cyc,
             params: p,
-        } => fused_split_eq_quotients_with_params(
-            neg,
-            cyc,
-            n_d,
-            n_b,
-            n_a,
-            w_hat,
-            t_hat,
-            z_pre,
-            z_pre_max_abs,
-            p,
-        ),
+        } => {
+            let neg_rows: Vec<&[_]> = (0..n_a)
+                .map(|i| &neg[i * stride..(i + 1) * stride])
+                .collect();
+            let cyc_rows: Vec<&[_]> = (0..n_a)
+                .map(|i| &cyc[i * stride..(i + 1) * stride])
+                .collect();
+            fused_split_eq_quotients_with_params(
+                &cyc_rows,
+                &neg_rows,
+                n_d,
+                n_b,
+                n_a,
+                w_hat,
+                t_hat,
+                z_pre,
+                z_pre_max_abs,
+                p,
+            )
+        }
     }
 }
 
@@ -2388,7 +2496,8 @@ mod tests {
 
         match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
             ProtocolCrtNttParams::Q32(params) => {
-                let ntt_mat = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
                 let via_roundtrip =
                     mat_vec_mul_i8_with_params(&ntt_mat, &ring_block_slices, 1, log_basis, &params);
                 let direct =
@@ -2460,7 +2569,8 @@ mod tests {
 
         match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
             ProtocolCrtNttParams::Q32(params) => {
-                let ntt_mat = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
                 let via_roundtrip = mat_vec_mul_i8_with_params(
                     &ntt_mat,
                     &ring_block_slices,
@@ -2520,7 +2630,8 @@ mod tests {
 
         match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
             ProtocolCrtNttParams::Q32(params) => {
-                let ntt_mat = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
                 let generic = mat_vec_mul_i8_with_params(
                     &ntt_mat,
                     &ring_block_slices,
@@ -2581,7 +2692,8 @@ mod tests {
 
         match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
             ProtocolCrtNttParams::Q32(params) => {
-                let ntt_mat = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
                 let generic = mat_vec_mul_i8_dense_with_params(
                     &ntt_mat,
                     &ring_block_slices,
@@ -2648,7 +2760,8 @@ mod tests {
 
         match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
             ProtocolCrtNttParams::Q32(params) => {
-                let ntt_mat = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
                 let generic = mat_vec_mul_i8_dense_with_params(
                     &ntt_mat,
                     &ring_block_slices,
@@ -2704,7 +2817,8 @@ mod tests {
 
         match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
             ProtocolCrtNttParams::Q32(params) => {
-                let ntt_mat = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
                 let generic = mat_vec_mul_digits_i8_with_params::<F, i16, Q32_NUM_PRIMES, D>(
                     &ntt_mat,
                     &digit_block_slices,
@@ -2759,7 +2873,8 @@ mod tests {
 
         match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
             ProtocolCrtNttParams::Q32(params) => {
-                let ntt_mat = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
                 let block_path = mat_vec_mul_digits_i8_with_params::<F, i16, Q32_NUM_PRIMES, D>(
                     &ntt_mat,
                     &digit_block_slices,
@@ -2827,7 +2942,8 @@ mod tests {
 
         match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
             ProtocolCrtNttParams::Q32(params) => {
-                let ntt_mat = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
                 let block_path = mat_vec_mul_i8_with_params(
                     &ntt_mat,
                     &ring_block_slices,

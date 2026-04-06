@@ -203,9 +203,17 @@ where
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<FlatDigitBlocks<D>, HachiError> {
         let t_all = if num_digits_commit == 1 {
-            mat_vec_mul_ntt_digits_i8_strided(ntt_a, n_rows, self.coeffs, num_blocks, block_len)
+            mat_vec_mul_ntt_digits_i8_strided(
+                ntt_a,
+                n_rows,
+                matrix_stride,
+                self.coeffs,
+                num_blocks,
+                block_len,
+            )
         } else {
             let ring_elems: Vec<CyclotomicRing<F, D>> = self
                 .coeffs
@@ -218,6 +226,7 @@ where
             mat_vec_mul_ntt_i8_strided(
                 ntt_a,
                 n_rows,
+                matrix_stride,
                 &ring_elems,
                 num_blocks,
                 block_len,
@@ -255,9 +264,17 @@ where
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, HachiError> {
         let t = if num_digits_commit == 1 {
-            mat_vec_mul_ntt_digits_i8_strided(ntt_a, n_rows, self.coeffs, num_blocks, block_len)
+            mat_vec_mul_ntt_digits_i8_strided(
+                ntt_a,
+                n_rows,
+                matrix_stride,
+                self.coeffs,
+                num_blocks,
+                block_len,
+            )
         } else {
             let ring_elems: Vec<CyclotomicRing<F, D>> = self
                 .coeffs
@@ -270,6 +287,7 @@ where
             mat_vec_mul_ntt_i8_strided(
                 ntt_a,
                 n_rows,
+                matrix_stride,
                 &ring_elems,
                 num_blocks,
                 block_len,

@@ -57,13 +57,11 @@ fn setup_shape_is_consistent() {
     assert_eq!(v1.expanded.seed.max_num_vars, 16);
     assert_eq!(p2.expanded.seed.max_num_vars, 16);
     assert_eq!(v2.expanded.seed.max_num_vars, 16);
-    assert!(p1.expanded.shared_matrix.num_rows() >= envelope.max_n_a);
-    assert!(p1.expanded.shared_matrix.num_cols_at::<D>() >= BLOCK_LEN * num_digits_commit());
-    assert!(p1.expanded.shared_matrix.num_rows() >= envelope.max_n_b);
-    assert!(
-        p1.expanded.shared_matrix.num_cols_at::<D>()
-            >= envelope.max_n_a * num_digits_open() * NUM_BLOCKS
-    );
+    let total = p1.expanded.shared_matrix.total_ring_elements_at::<D>();
+    let inner_width = BLOCK_LEN * num_digits_commit();
+    let outer_width = envelope.max_n_a * num_digits_open() * NUM_BLOCKS;
+    assert!(total >= envelope.max_n_a * inner_width);
+    assert!(total >= envelope.max_n_b * outer_width);
 }
 
 #[test]
@@ -158,7 +156,12 @@ fn opening_satisfies_inner_and_outer_equations() {
     let log_basis = log_basis();
     for (i, block) in blocks.iter().enumerate() {
         let s_i = decompose_block(block, depth, log_basis);
-        let lhs = mat_vec_mul(&psetup.expanded.shared_matrix, &s_i);
+        let lhs = mat_vec_mul(
+            &psetup.expanded.shared_matrix,
+            TinyConfig::envelope(16).max_n_a,
+            psetup.expanded.seed.max_stride(),
+            &s_i,
+        );
         let t_hat_block = w
             .t_hat
             .iter()
@@ -183,7 +186,12 @@ fn opening_satisfies_inner_and_outer_equations() {
             CyclotomicRing::from_coefficients(coeffs)
         })
         .collect();
-    let outer = mat_vec_mul(&psetup.expanded.shared_matrix, &t_hat_flat_ring);
+    let outer = mat_vec_mul(
+        &psetup.expanded.shared_matrix,
+        TinyConfig::envelope(16).max_n_b,
+        psetup.expanded.seed.max_stride(),
+        &t_hat_flat_ring,
+    );
     assert_eq!(outer, w.commitment.u);
 }
 

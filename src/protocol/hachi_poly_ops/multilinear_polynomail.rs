@@ -173,27 +173,33 @@ where
         &self,
         a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<FlatDigitBlocks<D>, HachiError> {
         match self {
             Self::Dense(poly) => poly.commit_inner(
                 a_matrix,
                 ntt_a,
+                n_a,
                 block_len,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
+                matrix_stride,
             ),
             Self::OneHot(poly) => poly.commit_inner(
                 a_matrix,
                 ntt_a,
+                n_a,
                 block_len,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
+                matrix_stride,
             ),
         }
     }
@@ -202,10 +208,12 @@ where
         &self,
         a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, HachiError>
     where
         F: CanonicalField,
@@ -214,18 +222,22 @@ where
             Self::Dense(poly) => poly.commit_inner_witness(
                 a_matrix,
                 ntt_a,
+                n_a,
                 block_len,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
+                matrix_stride,
             ),
             Self::OneHot(poly) => poly.commit_inner_witness(
                 a_matrix,
                 ntt_a,
+                n_a,
                 block_len,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
+                matrix_stride,
             ),
         }
     }
@@ -234,10 +246,12 @@ where
         polys: &[&Self],
         a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<Option<Vec<CommitInnerWitness<F, D>>>, HachiError>
     where
         F: CanonicalField,
@@ -258,10 +272,12 @@ where
                     &dense_polys,
                     a_matrix,
                     ntt_a,
+                    n_a,
                     block_len,
                     num_digits_commit,
                     num_digits_open,
                     log_basis,
+                    matrix_stride,
                 )
             }
             Self::OneHot(_) => {
@@ -276,10 +292,12 @@ where
                     &onehot_polys,
                     a_matrix,
                     ntt_a,
+                    n_a,
                     block_len,
                     num_digits_commit,
                     num_digits_open,
                     log_basis,
+                    matrix_stride,
                 )
             }
         }

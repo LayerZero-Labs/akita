@@ -433,13 +433,14 @@ where
         &self,
         a_matrix: &FlatMatrix<F>,
         _ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<FlatDigitBlocks<D>, HachiError> {
-        let a_view = a_matrix.view::<D>();
-        let n_a = a_view.num_rows();
+        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride);
         let num_blocks = self.num_blocks();
         let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
         if active_a_cols > a_view.num_cols() {
@@ -495,13 +496,14 @@ where
         &self,
         a_matrix: &FlatMatrix<F>,
         _ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, HachiError> {
-        let a_view = a_matrix.view::<D>();
-        let n_a = a_view.num_rows();
+        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride);
         let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
         if active_a_cols > a_view.num_cols() {
             return Err(HachiError::InvalidSetup(format!(
@@ -552,10 +554,12 @@ where
         polys: &[&Self],
         a_matrix: &FlatMatrix<F>,
         _ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<Option<Vec<CommitInnerWitness<F, D>>>, HachiError>
     where
         F: CanonicalField,
@@ -564,8 +568,7 @@ where
             return Ok(Some(Vec::new()));
         }
 
-        let a_view = a_matrix.view::<D>();
-        let n_a = a_view.num_rows();
+        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride);
         let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
         if active_a_cols > a_view.num_cols() {
             return Err(HachiError::InvalidSetup(format!(
@@ -1103,8 +1106,8 @@ mod tests {
             entries
         }];
 
-        let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
-        let a_view = a_flat.view::<D>();
+        let a_flat = FlatMatrix::from_ring_slice(&a_matrix[0]);
+        let a_view = a_flat.ring_view::<D>(1, block_len);
 
         let got =
             onehot_column_sweep_ajtai_regular::<_, F, D>(&a_view, &regular_blocks, 1, block_len, 1);

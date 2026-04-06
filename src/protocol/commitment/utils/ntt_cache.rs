@@ -43,7 +43,9 @@ macro_rules! impl_get_or_build {
             mat: &FlatMatrix<F>,
         ) -> Result<&NttSlotCache<$d_val>, HachiError> {
             if self.$field.is_none() {
-                self.$field = Some(Box::new(build_ntt_slot(mat.view::<$d_val>())?));
+                self.$field = Some(Box::new(build_ntt_slot(
+                    mat.ring_view::<$d_val>(1, mat.total_ring_elements_at::<$d_val>()),
+                )?));
             }
             Ok(self.$field.as_deref().unwrap())
         }

@@ -403,8 +403,12 @@ mod tests {
             },
         ];
 
-        let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
-        let a_view = a_flat.view::<D>();
+        let a_flat_elems: Vec<CyclotomicRing<F, D>> = a_matrix
+            .iter()
+            .flat_map(|row| row.iter().copied())
+            .collect();
+        let a_flat = FlatMatrix::from_ring_slice(&a_flat_elems);
+        let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits);
         let ref_result = inner_ajtai_onehot_t_only(&a_matrix, &entries, block_len, num_digits);
         let wide_result = inner_ajtai_onehot_wide(&a_view, &entries, block_len, num_digits);
 
@@ -442,8 +446,12 @@ mod tests {
             },
         ];
 
-        let a_flat = FlatMatrix::from_ring_matrix(&a_matrix);
-        let a_view = a_flat.view::<D>();
+        let a_flat_elems: Vec<CyclotomicRing<F, D>> = a_matrix
+            .iter()
+            .flat_map(|row| row.iter().copied())
+            .collect();
+        let a_flat = FlatMatrix::from_ring_slice(&a_flat_elems);
+        let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits);
         let ref_result = inner_ajtai_onehot_t_only(&a_matrix, &entries, block_len, num_digits);
         let wide_result = inner_ajtai_onehot_wide(&a_view, &entries, block_len, num_digits);
 

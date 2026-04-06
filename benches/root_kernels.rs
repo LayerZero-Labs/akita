@@ -51,12 +51,17 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
         })
         .collect();
 
+    let envelope = Cfg::envelope(NV);
+    let n_a = envelope.max_n_a;
+    let inner_width = layout.inner_width;
+
     let mut group = c.benchmark_group("root_kernels");
     group.bench_function("dense_root_matvec_full_nv25_d32", |b| {
         b.iter(|| {
             black_box(mat_vec_mul_ntt_i8_dense(
                 &setup.ntt_shared,
-                setup.ntt_shared.num_rows(),
+                n_a,
+                inner_width,
                 black_box(&block_slices),
                 layout.num_digits_commit,
                 layout.log_basis,
@@ -69,6 +74,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
             b.iter(|| {
                 black_box(mat_vec_mul_ntt_i8_dense_single_row(
                     &setup.ntt_shared,
+                    inner_width,
                     black_box(&block_slices),
                     layout.num_digits_commit,
                     layout.log_basis,
@@ -94,7 +100,8 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
                 digit_blocks.iter().map(Vec::as_slice).collect();
             black_box(mat_vec_mul_ntt_digits_i8::<F, D>(
                 &setup.ntt_shared,
-                setup.ntt_shared.num_rows(),
+                n_a,
+                inner_width,
                 black_box(&digit_block_slices),
             ))
         })

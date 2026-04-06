@@ -262,10 +262,12 @@ where
         &self,
         _a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<FlatDigitBlocks<D>, HachiError> {
         let n = self.coeffs.len();
         let num_blocks = n.div_ceil(block_len);
@@ -281,9 +283,10 @@ where
             })
             .collect();
 
-        if ntt_a.num_rows() == 1 {
+        if n_a == 1 {
             let t = mat_vec_mul_ntt_i8_dense_single_row(
                 ntt_a,
+                matrix_stride,
                 &block_slices,
                 num_digits_commit,
                 log_basis,
@@ -310,7 +313,8 @@ where
 
         let t_all = mat_vec_mul_ntt_i8_dense(
             ntt_a,
-            ntt_a.num_rows(),
+            n_a,
+            matrix_stride,
             &block_slices,
             num_digits_commit,
             log_basis,
@@ -339,10 +343,12 @@ where
         &self,
         _a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, HachiError> {
         let n = self.coeffs.len();
         let num_blocks = n.div_ceil(block_len);
@@ -358,9 +364,10 @@ where
             })
             .collect();
 
-        if ntt_a.num_rows() == 1 {
+        if n_a == 1 {
             let t_single = mat_vec_mul_ntt_i8_dense_single_row(
                 ntt_a,
+                matrix_stride,
                 &block_slices,
                 num_digits_commit,
                 log_basis,
@@ -396,7 +403,8 @@ where
 
         let t = mat_vec_mul_ntt_i8_dense(
             ntt_a,
-            ntt_a.num_rows(),
+            n_a,
+            matrix_stride,
             &block_slices,
             num_digits_commit,
             log_basis,

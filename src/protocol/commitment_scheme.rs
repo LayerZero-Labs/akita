@@ -373,7 +373,8 @@ where
         field_witness.coeffs(),
     )
     .map_err(|_| HachiError::InvalidProof)?;
-    let verifier_ntt = build_ntt_slot(setup.expanded.shared_matrix.view::<D>())
+    let total = setup.expanded.shared_matrix.total_ring_elements_at::<D>();
+    let verifier_ntt = build_ntt_slot(setup.expanded.shared_matrix.ring_view::<D>(1, total))
         .map_err(|_| HachiError::InvalidProof)?;
     let temp_setup = HachiProverSetup {
         expanded: setup.expanded.clone(),
@@ -525,6 +526,7 @@ where
         commitment,
         &y_ring,
         layout,
+        expanded.seed.max_stride(),
     )?);
 
     finish_prove_level::<F, T, D, Cfg, Cfg>(
@@ -798,6 +800,7 @@ where
             commitments,
             &y_rings,
             batched_layout,
+            expanded.seed.max_stride(),
         )?,
     );
 
@@ -1135,6 +1138,7 @@ where
             commitment_u,
             &y_ring,
             layout,
+            expanded.seed.max_stride(),
         )?,
     );
 
@@ -1230,6 +1234,7 @@ where
     Cfg: CommitmentConfig<Field = F>,
 {
     let commit_d = commit_params.d;
+    let stride = expanded.seed.max_stride();
     dispatch_with_ntt!(
         commit_d,
         commit_ntt_cache,
@@ -1239,6 +1244,7 @@ where
                 w,
                 ntt_shared,
                 &commit_params,
+                stride,
             )?;
             Ok((
                 FlatRingVec::from_commitment(&wc),
@@ -1375,6 +1381,7 @@ where
         current_state.hint.to_typed::<{ D_LEVEL }>()?;
     drop(_setup_span);
 
+    let max_stride = expanded.seed.max_stride();
     let commit_fn: CommitFn<'_, F> = Box::new(
         |w: &RecursiveWitnessFlat,
          next_params: HachiLevelParams|
@@ -1384,6 +1391,7 @@ where
                     w,
                     ntt_shared,
                     &next_params,
+                    max_stride,
                 )?;
                 Ok((
                     FlatRingVec::from_commitment(&wc),
@@ -1665,13 +1673,15 @@ where
         ));
     }
     let flat_polys = flatten_poly_groups(poly_groups);
+    let max_stride = setup.expanded.seed.max_stride();
 
     let commit_fn_0: CommitFn<'_, F> = Box::new(
         |w: &RecursiveWitnessFlat,
          next_params: HachiLevelParams|
          -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError> {
             if next_params.d == D {
-                let (wc, wh) = commit_w::<F, D, Cfg>(w, &setup.ntt_shared, &next_params)?;
+                let (wc, wh) =
+                    commit_w::<F, D, Cfg>(w, &setup.ntt_shared, &next_params, max_stride)?;
                 Ok((
                     FlatRingVec::from_commitment(&wc),
                     RecursiveCommitmentHintCache::from_typed(wh)?,
@@ -1895,10 +1905,12 @@ where
             &poly_refs,
             &setup.expanded.shared_matrix,
             &setup.ntt_shared,
+            root_params.n_a,
             layout.block_len,
             layout.num_digits_commit,
             layout.num_digits_open,
             layout.log_basis,
+            setup.expanded.seed.max_stride(),
         )? {
             witnesses
         } else {
@@ -1908,10 +1920,12 @@ where
                     poly.commit_inner_witness(
                         &setup.expanded.shared_matrix,
                         &setup.ntt_shared,
+                        root_params.n_a,
                         layout.block_len,
                         layout.num_digits_commit,
                         layout.num_digits_open,
                         layout.log_basis,
+                        setup.expanded.seed.max_stride(),
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?
@@ -1934,6 +1948,7 @@ where
         let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
             &setup.ntt_shared,
             root_params.n_b,
+            setup.expanded.seed.max_stride(),
             &inner_opening_digits_flat,
         );
         Ok((
@@ -1996,16 +2011,15 @@ where
         }
         let layout = root_plan.root_layout;
         let root_params = root_plan.params.clone();
+        let max_stride = setup.expanded.seed.max_stride();
 
-        // Level 0: original polynomial with derived layout.
-        // The w-commitment is produced at the next level's params, derived from
-        // public state once `w` has been built.
         let commit_fn_0: CommitFn<'_, F> = Box::new(
             |w: &RecursiveWitnessFlat,
              next_params: HachiLevelParams|
              -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError> {
                 if next_params.d == D {
-                    let (wc, wh) = commit_w::<F, D, Cfg>(w, &setup.ntt_shared, &next_params)?;
+                    let (wc, wh) =
+                        commit_w::<F, D, Cfg>(w, &setup.ntt_shared, &next_params, max_stride)?;
                     Ok((
                         FlatRingVec::from_commitment(&wc),
                         RecursiveCommitmentHintCache::from_typed(wh)?,
@@ -2264,13 +2278,15 @@ where
         }
         let flat_polys = flatten_poly_groups_by_point(poly_groups_by_point);
         let flat_hints = flatten_batched_hints_by_point(hints_by_point);
+        let max_stride = setup.expanded.seed.max_stride();
 
         let commit_fn_0: CommitFn<'_, F> = Box::new(
             |w: &RecursiveWitnessFlat,
              next_params: HachiLevelParams|
              -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError> {
                 if next_params.d == D {
-                    let (wc, wh) = commit_w::<F, D, Cfg>(w, &setup.ntt_shared, &next_params)?;
+                    let (wc, wh) =
+                        commit_w::<F, D, Cfg>(w, &setup.ntt_shared, &next_params, max_stride)?;
                     Ok((
                         FlatRingVec::from_commitment(&wc),
                         RecursiveCommitmentHintCache::from_typed(wh)?,
@@ -3565,6 +3581,7 @@ mod tests {
                     &batch_commitments,
                     &y_rings,
                     batched_root_layout,
+                    batch_setup.expanded.seed.max_stride(),
                 )
                 .expect("debug batched quadratic equation"),
             );
@@ -3720,7 +3737,19 @@ mod tests {
                 gadget_scalars(crate::protocol::ring_switch::r_decomp_levels::<OneHotF>(
                     batched_root_layout.log_basis,
                 ));
-            let shared_view = batch_setup.expanded.shared_matrix.view::<ONEHOT_D>();
+            let debug_stride = batch_setup.expanded.seed.max_stride();
+            let d_view = batch_setup
+                .expanded
+                .shared_matrix
+                .ring_view::<ONEHOT_D>(batch_root_params.n_d, debug_stride);
+            let b_view = batch_setup
+                .expanded
+                .shared_matrix
+                .ring_view::<ONEHOT_D>(batch_root_params.n_b, debug_stride);
+            let a_view = batch_setup
+                .expanded
+                .shared_matrix
+                .ring_view::<ONEHOT_D>(batch_root_params.n_a, debug_stride);
             let denom = alpha_pows[ONEHOT_D - 1] * rs.alpha + OneHotF::one();
             let expected_d_sum = quad_eq
                 .v
@@ -3819,7 +3848,7 @@ mod tests {
                     let first_block_ref_t = regular_blocks[0].iter().fold(
                         CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
                         |mut acc, entry| {
-                            shared_view.row(0)[entry.pos_in_block()]
+                            a_view.row(0)[entry.pos_in_block()]
                                 .shift_accumulate_into(&mut acc, entry.coeff_idx());
                             acc
                         },
@@ -3890,6 +3919,7 @@ mod tests {
                     &[BATCH_SIZE],
                     batched_root_layout.num_blocks,
                     batched_root_layout.inner_width,
+                    batch_setup.expanded.seed.max_stride(),
                     &batch_setup.ntt_shared,
                 )
                 .expect("debug batched r");
@@ -3911,7 +3941,7 @@ mod tests {
             let reduced_a_z = debug_z.z_pre.iter().enumerate().fold(
                 CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
                 |mut acc, (k, z_ring)| {
-                    shared_view.row(0)[k].mul_accumulate_into(z_ring, &mut acc);
+                    a_view.row(0)[k].mul_accumulate_into(z_ring, &mut acc);
                     acc
                 },
             );
@@ -3929,17 +3959,21 @@ mod tests {
                     .iter()
                     .enumerate()
                     .fold(OneHotF::zero(), |acc, (k, z_ring)| {
-                        acc - eval_ring_at_pows_local(&shared_view.row(0)[k], alpha_pows)
+                        acc - eval_ring_at_pows_local(&a_view.row(0)[k], alpha_pows)
                             * crate::protocol::ring_switch::eval_ring_at(z_ring, &rs.alpha)
                     });
             let direct_raw_a_r = -(denom
                 * crate::protocol::ring_switch::eval_ring_at(&debug_r[a_row_start], &rs.alpha));
             let direct_raw_a_total = direct_raw_a_t + direct_raw_a_z + direct_raw_a_r;
+            let d_matrix_width = batched_root_layout.d_matrix_width;
             let d_group_w = (0..w_hat_len).fold(OneHotF::zero(), |acc, x| {
                 let coeff = (0..batch_root_params.n_d).fold(OneHotF::zero(), |inner, row_idx| {
                     inner
                         + eq_tau1[row_idx]
-                            * eval_ring_at_pows_local(&shared_view.row(row_idx)[x], alpha_pows)
+                            * eval_ring_at_pows_local(
+                                &d_view.row(row_idx)[x % d_matrix_width],
+                                alpha_pows,
+                            )
                 });
                 acc + w_alpha_evals[x] * coeff
             });
@@ -3951,11 +3985,15 @@ mod tests {
                             * (-(eq_tau1[row_idx] * denom * r_gadget[level_idx]))
                 })
             });
+            let outer_width = batched_root_layout.outer_width;
             let b_group_t = (0..t_hat_len).fold(OneHotF::zero(), |acc, x| {
                 let coeff = (0..batch_root_params.n_b).fold(OneHotF::zero(), |inner, row_idx| {
                     inner
                         + eq_tau1[batch_root_params.n_d + row_idx]
-                            * eval_ring_at_pows_local(&shared_view.row(row_idx)[x], alpha_pows)
+                            * eval_ring_at_pows_local(
+                                &b_view.row(row_idx)[x % outer_width],
+                                alpha_pows,
+                            )
                 });
                 acc + w_alpha_evals[w_hat_len + x] * coeff
             });
@@ -4048,11 +4086,7 @@ mod tests {
                         .enumerate()
                         .fold(OneHotF::zero(), |inner, (a_idx, eq_i)| {
                             inner
-                                + *eq_i
-                                    * eval_ring_at_pows_local(
-                                        &shared_view.row(a_idx)[k],
-                                        alpha_pows,
-                                    )
+                                + *eq_i * eval_ring_at_pows_local(&a_view.row(a_idx)[k], alpha_pows)
                         });
                 let _ = block_idx;
                 acc + w_alpha_evals[w_hat_len + t_hat_len + idx]

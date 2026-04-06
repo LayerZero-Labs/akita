@@ -172,6 +172,7 @@ where
         commitments: &[RingCommitment<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
         layout: HachiCommitmentLayout,
+        stride: usize,
     ) -> Result<Self, HachiError> {
         if opening_points.is_empty() {
             return Err(HachiError::InvalidInput(
@@ -297,7 +298,7 @@ where
                 w_hat_planes = w_hat.flat_digits().len()
             )
             .entered();
-            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, w_hat.flat_digits())
+            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, stride, w_hat.flat_digits())
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
@@ -461,6 +462,7 @@ where
         commitment: &RingCommitment<F, D>,
         y_ring: &CyclotomicRing<F, D>,
         layout: HachiCommitmentLayout,
+        stride: usize,
     ) -> Result<Self, HachiError> {
         {
             let x: u8 = 0;
@@ -492,7 +494,7 @@ where
         let v = {
             let _span = tracing::info_span!("compute_v", w_hat_planes = w_hat.flat_digits().len())
                 .entered();
-            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, w_hat.flat_digits())
+            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, stride, w_hat.flat_digits())
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
@@ -563,6 +565,7 @@ where
         commitments: &[RingCommitment<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
         layout: HachiCommitmentLayout,
+        stride: usize,
     ) -> Result<Self, HachiError> {
         let num_claims = claim_group_sizes
             .iter()
@@ -584,6 +587,7 @@ where
             commitments,
             y_rings,
             layout,
+            stride,
         )
     }
 
@@ -610,6 +614,7 @@ where
         commitments: &[RingCommitment<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
         layout: HachiCommitmentLayout,
+        stride: usize,
     ) -> Result<Self, HachiError> {
         Self::new_batched_prover_with_points(
             ntt_d,
@@ -624,6 +629,7 @@ where
             commitments,
             y_rings,
             layout,
+            stride,
         )
     }
 
@@ -648,6 +654,7 @@ where
         commitment: &[CyclotomicRing<F, D>],
         y_ring: &CyclotomicRing<F, D>,
         layout: HachiCommitmentLayout,
+        stride: usize,
     ) -> Result<Self, HachiError> {
         {
             let x: u8 = 0;
@@ -679,7 +686,7 @@ where
         let v = {
             let _span = tracing::info_span!("compute_v", w_hat_planes = w_hat.flat_digits().len())
                 .entered();
-            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, w_hat.flat_digits())
+            mat_vec_mul_ntt_single_i8(ntt_d, level_params.n_d, stride, w_hat.flat_digits())
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
@@ -899,6 +906,7 @@ fn quotient_from_cyclic_and_reduced<F: FieldCore, const D: usize>(
 fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
     ntt_shared: &NttSlotCache<D>,
     n_b: usize,
+    outer_width: usize,
     t_hat: &FlatDigitBlocks<D>,
     claim_group_sizes: &[usize],
     blocks_per_claim: usize,
@@ -942,6 +950,7 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
         rows.extend(mat_vec_mul_ntt_single_i8_cyclic(
             ntt_shared,
             n_b,
+            outer_width,
             group_digits,
         ));
         block_offset = next_block_offset;
@@ -973,6 +982,7 @@ pub(crate) fn compute_r_split_eq<F, const D: usize>(
     claim_group_sizes: &[usize],
     blocks_per_claim: usize,
     inner_width: usize,
+    stride: usize,
     ntt_shared: &NttSlotCache<D>,
 ) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
 where
@@ -1015,6 +1025,7 @@ where
         level_params.n_d,
         level_params.n_b,
         level_params.n_a,
+        stride,
         w_hat_flat,
         t_hat.flat_digits(),
         first_z_segment,
@@ -1026,6 +1037,7 @@ where
             0,
             0,
             level_params.n_a,
+            stride,
             &[],
             &[],
             z_segment,
@@ -1042,6 +1054,7 @@ where
             repeated_b_commitment_rows(
                 ntt_shared,
                 level_params.n_b,
+                stride,
                 t_hat,
                 claim_group_sizes,
                 blocks_per_claim,
@@ -1243,6 +1256,7 @@ mod tests {
             &w.commitment,
             &y_ring,
             layout,
+            setup.expanded.seed.max_stride(),
         )
         .unwrap();
 
@@ -1275,7 +1289,12 @@ mod tests {
 
         let w_hat = f.quad_eq.w_hat().unwrap();
         let w_hat_flat: Vec<CyclotomicRing<F, D>> = i8_to_ring(w_hat.flat_digits());
-        let lhs = mat_vec_mul(&f.setup.expanded.shared_matrix, &w_hat_flat);
+        let lhs = mat_vec_mul(
+            &f.setup.expanded.shared_matrix,
+            N_A,
+            f.setup.expanded.seed.max_stride(),
+            &w_hat_flat,
+        );
 
         assert_eq!(lhs, f.quad_eq.v(), "Row 1 failed: D · ŵ ≠ v");
     }
@@ -1297,6 +1316,8 @@ mod tests {
             .collect();
         let lhs = mat_vec_mul(
             &f.setup.expanded.shared_matrix,
+            N_A,
+            f.setup.expanded.seed.max_stride(),
             &inner_opening_digits_flat_ring,
         );
 
@@ -1396,7 +1417,12 @@ mod tests {
 
         let z_hat = derive_z_hat(f.quad_eq.z_pre().unwrap());
         let z_recovered = recompose_z_hat(&z_hat);
-        let rhs = mat_vec_mul(&f.setup.expanded.shared_matrix, &z_recovered);
+        let rhs = mat_vec_mul(
+            &f.setup.expanded.shared_matrix,
+            N_A,
+            f.setup.expanded.seed.max_stride(),
+            &z_recovered,
+        );
 
         assert_eq!(
             lhs, rhs,

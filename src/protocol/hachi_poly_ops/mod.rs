@@ -113,6 +113,7 @@ fn recompose_commit_inner_blocks<F: CanonicalField, const D: usize>(
 /// decompose + NTT, sparse monomial tricks, digit-plane bypass, etc.). Most
 /// heterogeneous callers should use [`MultilinearPolynomail`] and let it
 /// implement this trait on their behalf.
+#[allow(clippy::too_many_arguments)]
 pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// Per-polynomial cache type for the A-matrix commit path.
     ///
@@ -225,10 +226,12 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         &self,
         a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<FlatDigitBlocks<D>, HachiError>;
 
     /// Like [`commit_inner`](Self::commit_inner), but also preserves the
@@ -243,10 +246,12 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         &self,
         a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, HachiError>
     where
         F: CanonicalField,
@@ -254,10 +259,12 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         let t_hat = self.commit_inner(
             a_matrix,
             ntt_a,
+            n_a,
             block_len,
             num_digits_commit,
             num_digits_open,
             log_basis,
+            matrix_stride,
         )?;
         let t = recompose_commit_inner_blocks::<F, D>(&t_hat, num_digits_open, log_basis)?;
         Ok(CommitInnerWitness { t, t_hat })
@@ -275,10 +282,12 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         _polys: &[&Self],
         _a_matrix: &FlatMatrix<F>,
         _ntt_a: &NttSlotCache<D>,
+        _n_a: usize,
         _block_len: usize,
         _num_digits_commit: usize,
         _num_digits_open: usize,
         _log_basis: u32,
+        _matrix_stride: usize,
     ) -> Result<Option<Vec<CommitInnerWitness<F, D>>>, HachiError>
     where
         F: CanonicalField,
@@ -364,19 +373,23 @@ where
         &self,
         a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<FlatDigitBlocks<D>, HachiError> {
         <P as HachiPolyOps<F, D>>::commit_inner(
             *self,
             a_matrix,
             ntt_a,
+            n_a,
             block_len,
             num_digits_commit,
             num_digits_open,
             log_basis,
+            matrix_stride,
         )
     }
 
@@ -384,10 +397,12 @@ where
         &self,
         a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, HachiError>
     where
         F: CanonicalField,
@@ -396,10 +411,12 @@ where
             *self,
             a_matrix,
             ntt_a,
+            n_a,
             block_len,
             num_digits_commit,
             num_digits_open,
             log_basis,
+            matrix_stride,
         )
     }
 
@@ -407,10 +424,12 @@ where
         polys: &[&Self],
         a_matrix: &FlatMatrix<F>,
         ntt_a: &NttSlotCache<D>,
+        n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
+        matrix_stride: usize,
     ) -> Result<Option<Vec<CommitInnerWitness<F, D>>>, HachiError>
     where
         F: CanonicalField,
@@ -420,10 +439,12 @@ where
             &inner_refs,
             a_matrix,
             ntt_a,
+            n_a,
             block_len,
             num_digits_commit,
             num_digits_open,
             log_basis,
+            matrix_stride,
         )
     }
 
@@ -493,14 +514,21 @@ mod tests {
         let num_vars = alpha + layout.m_vars + layout.r_vars;
         let poly = DensePoly::<TestF, TestD>::from_field_evals(num_vars, &evals).unwrap();
 
+        let level_params = TinyConfig::level_params(HachiScheduleInputs {
+            max_num_vars: setup.expanded.seed.max_num_vars,
+            level: 0,
+            current_w_len: layout.num_blocks * layout.block_len * TestD,
+        });
         let t_hat_poly = poly
             .commit_inner(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
+                level_params.n_a,
                 layout.block_len,
                 layout.num_digits_commit,
                 layout.num_digits_open,
                 layout.log_basis,
+                setup.expanded.seed.max_stride(),
             )
             .unwrap();
 
@@ -527,14 +555,21 @@ mod tests {
 
         let poly = regular_onehot_poly(onehot_k, indices.clone(), layout.r_vars, layout.m_vars);
 
+        let level_params = TinyConfig::level_params(HachiScheduleInputs {
+            max_num_vars: setup.expanded.seed.max_num_vars,
+            level: 0,
+            current_w_len: layout.num_blocks * layout.block_len * TestD,
+        });
         let t_hat_poly = poly
             .commit_inner(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
+                level_params.n_a,
                 layout.block_len,
                 layout.num_digits_commit,
                 layout.num_digits_open,
                 layout.log_basis,
+                setup.expanded.seed.max_stride(),
             )
             .unwrap();
 
@@ -673,6 +708,7 @@ mod tests {
         let w_len = w_ring_element_count::<TestF>(&level_params, layout) * TestD;
         let w_layout =
             hachi_recursive_level_layout_from_params::<TinyConfig>(&level_params, w_len).unwrap();
+        let max_stride = setup.expanded.seed.max_stride();
         let digit_commit = digit_view
             .commit_inner(
                 &setup.ntt_shared,
@@ -682,16 +718,19 @@ mod tests {
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
                 w_layout.log_basis,
+                max_stride,
             )
             .unwrap();
         let dense_commit = dense_cm
             .commit_inner(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
+                level_params.n_a,
                 block_len,
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
                 w_layout.log_basis,
+                max_stride,
             )
             .unwrap();
 
@@ -706,16 +745,19 @@ mod tests {
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
                 w_layout.log_basis,
+                max_stride,
             )
             .unwrap();
         let dense_witness = dense_cm
             .commit_inner_witness(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
+                level_params.n_a,
                 block_len,
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
                 w_layout.log_basis,
+                max_stride,
             )
             .unwrap();
 
