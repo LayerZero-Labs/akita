@@ -4,7 +4,7 @@
 //! position-partitioned accumulation strategies, and the final witness
 //! construction used by all three [`super::HachiPolyOps`] implementations.
 
-use crate::algebra::ring::cyclotomic::center_for_decomposition;
+use crate::algebra::ring::cyclotomic::peel_first_balanced_digit;
 use crate::algebra::ring::sparse_challenge::SparseChallenge;
 use crate::algebra::CyclotomicRing;
 #[cfg(feature = "parallel")]
@@ -89,31 +89,47 @@ fn decompose_ring_interleaved_overflow<F: CanonicalField, const D: usize>(
     num_digits: usize,
     p: &DecomposeParams,
 ) {
-    let mut centered = [0i128; D];
-    for (i, coeff) in ring.coeffs.iter().enumerate() {
-        let canonical = coeff.to_canonical_u128();
-        let (c, first_digit) = center_for_decomposition(canonical, p.q, p.threshold, p.log_basis);
-        match first_digit {
-            Some(d0) => {
-                digit_buf[0][i] = d0 as i8;
-                centered[i] = c;
-            }
-            None => {
-                let d = c & p.mask;
-                let balanced = if d >= p.half_b { d - p.b_val } else { d };
-                digit_buf[0][i] = balanced as i8;
-                centered[i] = (c - balanced) >> p.log_basis;
-            }
-        }
-    }
-
-    let remaining = &mut digit_buf[1..];
+    let (first_plane, remaining) = digit_buf
+        .split_first_mut()
+        .expect("decompose_ring_interleaved_overflow requires at least one plane");
     let bulk_end = D - (D % 3);
 
     for base in (0..bulk_end).step_by(3) {
-        let mut c0 = centered[base];
-        let mut c1 = centered[base + 1];
-        let mut c2 = centered[base + 2];
+        let canonical0 = ring.coeffs[base].to_canonical_u128();
+        let canonical1 = ring.coeffs[base + 1].to_canonical_u128();
+        let canonical2 = ring.coeffs[base + 2].to_canonical_u128();
+
+        let (mut c0, d0) = peel_first_balanced_digit(
+            canonical0,
+            p.q,
+            p.threshold,
+            p.mask,
+            p.half_b,
+            p.b_val,
+            p.log_basis,
+        );
+        let (mut c1, d1) = peel_first_balanced_digit(
+            canonical1,
+            p.q,
+            p.threshold,
+            p.mask,
+            p.half_b,
+            p.b_val,
+            p.log_basis,
+        );
+        let (mut c2, d2) = peel_first_balanced_digit(
+            canonical2,
+            p.q,
+            p.threshold,
+            p.mask,
+            p.half_b,
+            p.b_val,
+            p.log_basis,
+        );
+
+        first_plane[base] = d0 as i8;
+        first_plane[base + 1] = d1 as i8;
+        first_plane[base + 2] = d2 as i8;
 
         for plane in remaining.iter_mut().take(num_digits - 1) {
             let d0 = extract_balanced_digit(&mut c0, p);
@@ -126,7 +142,17 @@ fn decompose_ring_interleaved_overflow<F: CanonicalField, const D: usize>(
     }
 
     for idx in bulk_end..D {
-        let mut c = centered[idx];
+        let canonical = ring.coeffs[idx].to_canonical_u128();
+        let (mut c, d0) = peel_first_balanced_digit(
+            canonical,
+            p.q,
+            p.threshold,
+            p.mask,
+            p.half_b,
+            p.b_val,
+            p.log_basis,
+        );
+        first_plane[idx] = d0 as i8;
         for plane in remaining.iter_mut().take(num_digits - 1) {
             plane[idx] = extract_balanced_digit(&mut c, p) as i8;
         }
@@ -402,38 +428,57 @@ fn decompose_ring_full_challenge_accumulate_overflow<F: CanonicalField, const D:
     acc: &mut [[i32; D]],
     p: &DecomposeParams,
 ) {
-    let mut centered = [0i128; D];
-    for (i, coeff) in ring.coeffs.iter().enumerate() {
-        let canonical = coeff.to_canonical_u128();
-        let (c, first_digit) = center_for_decomposition(canonical, p.q, p.threshold, p.log_basis);
-        let d0 = match first_digit {
-            Some(d) => {
-                centered[i] = c;
-                d as i32
-            }
-            None => {
-                let d = c & p.mask;
-                let balanced = if d >= p.half_b { d - p.b_val } else { d };
-                centered[i] = (c - balanced) >> p.log_basis;
-                balanced as i32
-            }
-        };
-        let rot = &rotated[i];
-        if d0 != 0 {
-            add_scaled_rotated_row(&mut acc[0], rot, d0);
-        }
-    }
-
-    let remaining_acc = &mut acc[1..];
+    let (first_acc, remaining_acc) = acc
+        .split_first_mut()
+        .expect("decompose_ring_full_challenge_accumulate_overflow requires at least one plane");
     let bulk_end = D - (D % 3);
 
     for base in (0..bulk_end).step_by(3) {
-        let mut c0 = centered[base];
-        let mut c1 = centered[base + 1];
-        let mut c2 = centered[base + 2];
         let rot0 = &rotated[base];
         let rot1 = &rotated[base + 1];
         let rot2 = &rotated[base + 2];
+
+        let canonical0 = ring.coeffs[base].to_canonical_u128();
+        let canonical1 = ring.coeffs[base + 1].to_canonical_u128();
+        let canonical2 = ring.coeffs[base + 2].to_canonical_u128();
+
+        let (mut c0, d0) = peel_first_balanced_digit(
+            canonical0,
+            p.q,
+            p.threshold,
+            p.mask,
+            p.half_b,
+            p.b_val,
+            p.log_basis,
+        );
+        let (mut c1, d1) = peel_first_balanced_digit(
+            canonical1,
+            p.q,
+            p.threshold,
+            p.mask,
+            p.half_b,
+            p.b_val,
+            p.log_basis,
+        );
+        let (mut c2, d2) = peel_first_balanced_digit(
+            canonical2,
+            p.q,
+            p.threshold,
+            p.mask,
+            p.half_b,
+            p.b_val,
+            p.log_basis,
+        );
+
+        if d0 != 0 {
+            add_scaled_rotated_row(first_acc, rot0, d0 as i32);
+        }
+        if d1 != 0 {
+            add_scaled_rotated_row(first_acc, rot1, d1 as i32);
+        }
+        if d2 != 0 {
+            add_scaled_rotated_row(first_acc, rot2, d2 as i32);
+        }
 
         for plane in remaining_acc.iter_mut() {
             let d0 = extract_balanced_digit(&mut c0, p);
@@ -450,7 +495,19 @@ fn decompose_ring_full_challenge_accumulate_overflow<F: CanonicalField, const D:
     }
 
     for (idx, rot) in rotated.iter().enumerate().take(D).skip(bulk_end) {
-        let mut c = centered[idx];
+        let canonical = ring.coeffs[idx].to_canonical_u128();
+        let (mut c, d0) = peel_first_balanced_digit(
+            canonical,
+            p.q,
+            p.threshold,
+            p.mask,
+            p.half_b,
+            p.b_val,
+            p.log_basis,
+        );
+        if d0 != 0 {
+            add_scaled_rotated_row(first_acc, rot, d0 as i32);
+        }
         for plane in remaining_acc.iter_mut() {
             let digit = extract_balanced_digit(&mut c, p);
             if digit != 0 {
@@ -918,7 +975,8 @@ mod tests {
         decompose_ring_interleaved, fill_rotated_challenge, sparse_mul_acc, DecomposeParams,
     };
     use crate::algebra::ring::sparse_challenge::SparseChallenge;
-    use crate::algebra::{CyclotomicRing, Fp64};
+    use crate::algebra::{CyclotomicRing, Fp64, Prime128Offset275};
+    use crate::protocol::commitment::compute_num_digits_full_field;
     use crate::{CanonicalField, FieldCore, FromSmallInt};
 
     #[test]
@@ -1049,5 +1107,73 @@ mod tests {
         }
 
         assert_eq!(fused, generic);
+    }
+
+    #[test]
+    fn fp128_overflow_paths_match_direct_and_fused_sparse_path() {
+        type F = Prime128Offset275;
+        const D: usize = 32;
+
+        let log_basis = 4u32;
+        let num_digits = compute_num_digits_full_field(128, log_basis);
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let threshold = crate::algebra::ring::cyclotomic::decompose_centering_threshold(
+            num_digits, log_basis, q,
+        );
+        let i128_max = i128::MAX as u128;
+        let boundary_values = [
+            0,
+            threshold,
+            threshold + 1,
+            q - i128_max - 1,
+            q - i128_max,
+            q - 1,
+        ];
+        let ring = CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+            F::from_canonical_u128_reduced(boundary_values[k % boundary_values.len()])
+        }));
+        let challenge = SparseChallenge {
+            positions: (0..D as u32).collect(),
+            coeffs: (0..D)
+                .map(|k| match k % 5 {
+                    0 => -3,
+                    1 => -1,
+                    2 => 1,
+                    3 => 2,
+                    _ => 4,
+                })
+                .collect(),
+        };
+        let params = DecomposeParams {
+            threshold,
+            q,
+            mask: (1i128 << log_basis) - 1,
+            half_b: 1i128 << (log_basis - 1),
+            b_val: 1i128 << log_basis,
+            log_basis,
+            overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
+        };
+
+        assert!(
+            params.overflow_possible,
+            "test must exercise the overflow path"
+        );
+
+        let mut actual_digits = vec![[0i8; D]; num_digits];
+        decompose_ring_interleaved::<F, D>(&ring, &mut actual_digits, num_digits, &params);
+        let mut expected_digits = vec![[0i8; D]; num_digits];
+        ring.balanced_decompose_pow2_i8_into(&mut expected_digits, log_basis);
+        assert_eq!(actual_digits, expected_digits);
+
+        let mut generic_acc = vec![[0i32; D]; num_digits];
+        for digit in 0..num_digits {
+            sparse_mul_acc::<D>(&actual_digits[digit], &challenge, &mut generic_acc[digit]);
+        }
+
+        let mut rotated = vec![[0i16; D]; D];
+        fill_rotated_challenge::<D>(&mut rotated, &challenge);
+        let mut fused_acc = vec![[0i32; D]; num_digits];
+        decompose_ring_full_challenge_accumulate::<F, D>(&ring, &rotated, &mut fused_acc, &params);
+        assert_eq!(fused_acc, generic_acc);
     }
 }
