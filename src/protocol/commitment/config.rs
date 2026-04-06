@@ -2,7 +2,7 @@
 
 use super::profile::{CommitmentFieldProfile, CommitmentFieldProfileSchedule};
 use super::schedule::{
-    exact_planned_level_execution, hachi_root_commitment_layout, hachi_root_level_layout,
+    exact_planned_level_execution, hachi_root_commitment_layout,
     HachiLevelParams, HachiScheduleInputs, HachiSchedulePlan,
 };
 use super::utils::math::checked_pow2;
@@ -933,8 +933,7 @@ pub(super) fn ensure_block_layout<F: FieldCore, const D: usize>(
 /// Matrix envelopes may have more rows and columns than the active level uses.
 /// Small correctness-first config for tests and local benchmarks.
 ///
-/// Fixed layout (m_vars=4, r_vars=2) for fast test iteration. For larger
-/// polynomials, use [`DynamicSmallTestCommitmentConfig`] instead.
+/// Fixed layout (m_vars=4, r_vars=2) for fast test iteration.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SmallTestCommitmentConfig;
 
@@ -968,48 +967,6 @@ impl CommitmentConfig for SmallTestCommitmentConfig {
 
     fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
         HachiCommitmentLayout::new::<Self>(4, 2, &Self::decomposition())
-    }
-}
-
-/// Small-D config with dynamic layout that adapts to polynomial size.
-///
-/// Uses the same ring dimension as [`SmallTestCommitmentConfig`] but
-/// derives `m_vars`/`r_vars` from `max_num_vars`, so it can commit
-/// polynomials with an arbitrary number of variables.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct DynamicSmallTestCommitmentConfig;
-
-impl CommitmentConfig for DynamicSmallTestCommitmentConfig {
-    type Field = crate::test_utils::F;
-    const D: usize = 32;
-
-    fn decomposition() -> DecompositionParams {
-        DecompositionParams {
-            log_basis: 3,
-            log_commit_bound: 32,
-            log_open_bound: None,
-        }
-    }
-
-    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
-        CommitmentEnvelope {
-            max_n_a: 8,
-            max_n_b: 4,
-            max_n_d: 4,
-        }
-    }
-
-    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
-        assert_eq!(d, Self::D, "unsupported ring dim {d}");
-        SparseChallengeConfig::Uniform {
-            weight: 3,
-            nonzero_coeffs: vec![-1, 1],
-        }
-    }
-
-    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        let (_, layout) = hachi_root_level_layout::<Self>(max_num_vars)?;
-        Ok(layout)
     }
 }
 

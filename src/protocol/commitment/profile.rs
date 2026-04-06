@@ -1,6 +1,6 @@
 //! Field-profile definitions for planner-backed commitment presets.
 
-use super::config::{CommitmentConfig, CommitmentPreset, DecompositionParams};
+use super::config::{CommitmentConfig, DecompositionParams};
 use super::generated::{
     fp128_adaptive_bounded_table, fp128_adaptive_onehot_d64_table, fp128_d128_full_table,
     table_entry_envelope, GeneratedScheduleTable,
@@ -33,25 +33,10 @@ fn generated_schedule<Cfg: CommitmentConfig>(
 /// Planner/security profile for one commitment base field.
 ///
 /// A profile owns the field-specific challenge families, generated schedule
-/// tables, audited root-rank escalations, and dynamic root-ring selection
-/// policy used by the public preset surface.
+/// tables, and audited root-rank escalations used by the public preset surface.
 pub trait CommitmentFieldProfile: Clone + Copy + Default + Send + Sync + 'static {
     /// Base field for this commitment profile.
     type Field: CanonicalField + FieldCore + Send + Sync + 'static;
-
-    /// Typed config to use when the dynamic full family chooses `D=32`.
-    type FullCfg32: CommitmentConfig<Field = Self::Field>;
-    /// Typed config to use when the dynamic full family chooses `D=64`.
-    type FullCfg64: CommitmentConfig<Field = Self::Field>;
-    /// Typed config to use when the dynamic full family chooses `D=128`.
-    type FullCfg128: CommitmentConfig<Field = Self::Field>;
-
-    /// Typed config to use when the dynamic onehot family chooses `D=32`.
-    type OneHotCfg32: CommitmentConfig<Field = Self::Field>;
-    /// Typed config to use when the dynamic onehot family chooses `D=64`.
-    type OneHotCfg64: CommitmentConfig<Field = Self::Field>;
-    /// Typed config to use when the dynamic onehot family chooses `D=128`.
-    type OneHotCfg128: CommitmentConfig<Field = Self::Field>;
 
     /// Build decomposition parameters for this field.
     fn decomposition(log_commit_bound: u32, log_basis: u32) -> DecompositionParams;
@@ -261,22 +246,6 @@ pub struct Fp128PrimeProfile;
 
 impl CommitmentFieldProfile for Fp128PrimeProfile {
     type Field = Prime128Offset275;
-    type FullCfg32 =
-        CommitmentPreset<Self::Field, super::config::GeneratedAdaptivePolicy<Self, 32, 128>>;
-    type FullCfg64 =
-        CommitmentPreset<Self::Field, super::config::GeneratedAdaptivePolicy<Self, 64, 128>>;
-    type FullCfg128 = CommitmentPreset<
-        Self::Field,
-        super::config::PlannedAdaptiveBoundedPolicy<Self, 128, 128, 1, 1, 1>,
-    >;
-    type OneHotCfg32 =
-        CommitmentPreset<Self::Field, super::config::GeneratedAdaptivePolicy<Self, 32, 1>>;
-    type OneHotCfg64 =
-        CommitmentPreset<Self::Field, super::config::GeneratedAdaptivePolicy<Self, 64, 1>>;
-    type OneHotCfg128 = CommitmentPreset<
-        Self::Field,
-        super::config::PlannedAdaptiveBoundedPolicy<Self, 128, 1, 1, 1, 1>,
-    >;
 
     fn decomposition(log_commit_bound: u32, log_basis: u32) -> DecompositionParams {
         DecompositionParams {

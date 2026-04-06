@@ -22,7 +22,7 @@ pub use config::optimal_m_r_split;
 pub use config::{
     beta_linf_fold_bound, compute_num_digits, compute_num_digits_fold, CommitmentConfig,
     CommitmentEnvelope, CommitmentPolicy, CommitmentPreset, DecompositionParams,
-    DynamicSmallTestCommitmentConfig, GeneratedAdaptivePolicy, HachiCommitmentLayout,
+    GeneratedAdaptivePolicy, HachiCommitmentLayout,
     PlannedAdaptiveBoundedPolicy, SmallTestCommitmentConfig, StaticBoundedPolicy,
 };
 pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
