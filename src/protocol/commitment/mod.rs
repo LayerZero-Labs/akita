@@ -28,15 +28,17 @@ pub use config::{
 pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
 pub use profile::{CommitmentFieldProfile, Fp128PrimeProfile};
 pub(crate) use schedule::{
-    exact_planned_level_execution, hachi_root_runtime_plan, hachi_root_runtime_plan_with_batch,
-    packed_digits_bytes, planned_next_log_basis_with_current_basis,
-    planned_recursive_suffix_bytes_with_log_basis, recursive_level_decomposition_from_root,
-    recursive_r_decomp_levels_for_bound,
+    exact_planned_level_execution, hachi_root_runtime_plan, packed_digits_bytes,
+    planned_next_log_basis_with_current_basis_and_envelope,
+    planned_recursive_suffix_bytes_with_log_basis_and_envelope,
+    recursive_level_decomposition_from_root, recursive_r_decomp_levels_for_bound,
 };
 pub use schedule::{
-    hachi_recursive_level_layout_from_params, hachi_root_level_layout, HachiLevelParams,
-    HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedLevelExecution, HachiPlannedState,
-    HachiPlannedStep, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
+    hachi_recursive_level_layout_from_params, hachi_root_level_layout,
+    hachi_root_runtime_plan_with_batch, recursive_suffix_estimate_with_log_basis,
+    HachiBatchPlanningEnvelope, HachiLevelParams, HachiPlannedDirectStep, HachiPlannedLevel,
+    HachiPlannedLevelExecution, HachiPlannedState, HachiPlannedStep, HachiRecursiveSuffixEstimate,
+    HachiRootBatchSummary, HachiRootRuntimePlan, HachiScheduleInputs, HachiScheduleLookupKey,
     HachiSchedulePlan,
 };
 pub use scheme::{CommitWitness, CommitmentScheme, RingCommitmentScheme};

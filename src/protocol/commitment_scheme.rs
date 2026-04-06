@@ -12,8 +12,9 @@ use crate::protocol::commitment::{
     exact_planned_level_execution, hachi_batched_root_layout,
     hachi_recursive_level_layout_from_params, hachi_root_runtime_plan,
     hachi_root_runtime_plan_with_batch, packed_digits_bytes,
-    planned_next_log_basis_with_current_basis, planned_recursive_suffix_bytes_with_log_basis,
-    AppendToTranscript, CommitmentConfig, CommitmentScheme, HachiCommitmentCore,
+    planned_next_log_basis_with_current_basis_and_envelope,
+    planned_recursive_suffix_bytes_with_log_basis_and_envelope, AppendToTranscript,
+    CommitmentConfig, CommitmentScheme, HachiBatchPlanningEnvelope, HachiCommitmentCore,
     HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams, HachiProverSetup,
     HachiRootBatchSummary, HachiScheduleInputs, HachiVerifierSetup, RingCommitment,
     RingCommitmentScheme,
@@ -85,6 +86,7 @@ struct RecursiveProverState<F: FieldCore> {
     commitment: FlatRingVec<F>,
     hint: RecursiveCommitmentHintCache<F>,
     log_basis: u32,
+    planning_envelope: HachiBatchPlanningEnvelope,
     sumcheck_challenges: Vec<F>,
     num_u: usize,
     num_l: usize,
@@ -98,6 +100,7 @@ struct RecursiveVerifierState<'a, F: FieldCore> {
     basis: BasisMode,
     w_len: usize,
     log_basis: u32,
+    planning_envelope: HachiBatchPlanningEnvelope,
 }
 
 /// Output from a single prove level, needed to extend both the proof wire and
@@ -458,6 +461,7 @@ fn prove_one_level<F, T, const D: usize, Cfg, P>(
     level: usize,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
+    planning_envelope: HachiBatchPlanningEnvelope,
     next_level_params_override: Option<HachiLevelParams>,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
@@ -539,6 +543,7 @@ where
         level,
         level_params,
         layout,
+        planning_envelope,
         next_level_params_override,
         quad_eq,
         y_ring,
@@ -557,6 +562,7 @@ fn finish_prove_level<F, T, const D: usize, LevelCfg, ScheduleCfg>(
     level: usize,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
+    planning_envelope: HachiBatchPlanningEnvelope,
     next_level_params_override: Option<HachiLevelParams>,
     mut quad_eq: Box<QuadraticEquation<F, { D }, LevelCfg>>,
     y_ring: CyclotomicRing<F, D>,
@@ -582,7 +588,11 @@ where
     let next_params = if let Some(params) = next_level_params_override {
         params
     } else {
-        next_level_params_from_current_basis::<ScheduleCfg>(next_inputs, level_params.log_basis)?
+        next_level_params_from_current_basis_and_envelope::<ScheduleCfg>(
+            next_inputs,
+            level_params.log_basis,
+            planning_envelope,
+        )?
     };
 
     let (w_commitment_flat, w_hint_cache) = {
@@ -627,7 +637,6 @@ where
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
     let (stage1_proof, r_stage1, s_claim) = {
-        eprintln!("finish_batched_root:before_stage1");
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         let stage1_prover =
             HachiStage1Prover::new(&w_evals_compact, &tau0, b, live_x_cols, num_u, num_l)?;
@@ -635,12 +644,10 @@ where
         let s_claim = stage1_proof.s_claim;
         (stage1_proof, r_stage1, s_claim)
     };
-    eprintln!("finish_batched_root:after_stage1");
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
-        eprintln!("finish_batched_root:before_stage2");
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         let mut stage2_prover = HachiStage2Prover::new(
             batching_coeff,
@@ -671,7 +678,6 @@ where
             w_eval,
         )
     };
-    eprintln!("finish_batched_root:after_stage2");
 
     let (level_proof, sumcheck_challenges) = (
         HachiLevelProof::new_two_stage::<D>(
@@ -692,6 +698,7 @@ where
             commitment: w_commitment,
             hint: w_hint.expect("prover ring switch must preserve recursive hint cache"),
             log_basis: next_params.log_basis,
+            planning_envelope,
             sumcheck_challenges,
             num_u,
             num_l,
@@ -717,6 +724,7 @@ fn prove_batched_root_level_with_points<F, T, const D: usize, Cfg, P>(
     level_params: &HachiLevelParams,
     batched_layout: HachiCommitmentLayout,
     layout: HachiCommitmentLayout,
+    planning_envelope: HachiBatchPlanningEnvelope,
 ) -> Result<BatchedProveLevelOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
@@ -737,7 +745,6 @@ where
             "batched root claim-to-point index out of range".to_string(),
         ));
     }
-    eprintln!("batched_root:before_evaluate_and_fold");
     let (y_rings, w_folded_by_poly) = {
         let _span = tracing::info_span!(
             "evaluate_and_fold_batched_with_points",
@@ -773,8 +780,6 @@ where
         }
         (y_rings, w_folded_by_poly)
     };
-    eprintln!("batched_root:after_evaluate_and_fold");
-
     if let Some(point_group_sizes) = point_group_sizes {
         append_batch_shape_to_transcript::<F, T>(point_group_sizes, claim_group_sizes, transcript);
     }
@@ -792,7 +797,6 @@ where
         .iter()
         .map(|prepared_point| prepared_point.ring_opening_point.clone())
         .collect();
-    eprintln!("batched_root:before_quad_eq");
     let quad_eq = Box::new(
         QuadraticEquation::<F, { D }, Cfg>::new_multipoint_batched_prover(
             ntt_shared,
@@ -810,9 +814,6 @@ where
             expanded.seed.max_stride(),
         )?,
     );
-    eprintln!("batched_root:after_quad_eq");
-
-    eprintln!("batched_root:before_finish");
     finish_batched_root_level::<F, T, D, Cfg>(
         expanded,
         ntt_shared,
@@ -822,6 +823,7 @@ where
         commitments,
         level_params,
         batched_layout,
+        planning_envelope,
         quad_eq,
         y_rings,
     )
@@ -844,6 +846,7 @@ fn prove_batched_root_level<F, T, const D: usize, Cfg, P>(
     level_params: &HachiLevelParams,
     batched_layout: HachiCommitmentLayout,
     layout: HachiCommitmentLayout,
+    planning_envelope: HachiBatchPlanningEnvelope,
 ) -> Result<BatchedProveLevelOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
@@ -871,6 +874,7 @@ where
         level_params,
         batched_layout,
         layout,
+        planning_envelope,
     )
 }
 
@@ -890,6 +894,7 @@ fn prove_multipoint_batched_root_level<F, T, const D: usize, Cfg, P>(
     level_params: &HachiLevelParams,
     batched_layout: HachiCommitmentLayout,
     layout: HachiCommitmentLayout,
+    planning_envelope: HachiBatchPlanningEnvelope,
 ) -> Result<BatchedProveLevelOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
@@ -913,6 +918,7 @@ where
         level_params,
         batched_layout,
         layout,
+        planning_envelope,
     )
 }
 
@@ -927,6 +933,7 @@ fn finish_batched_root_level<F, T, const D: usize, Cfg>(
     commitments: &[RingCommitment<F, D>],
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
+    planning_envelope: HachiBatchPlanningEnvelope,
     mut quad_eq: Box<QuadraticEquation<F, { D }, Cfg>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
 ) -> Result<BatchedProveLevelOutput<F>, HachiError>
@@ -936,7 +943,6 @@ where
     Cfg: CommitmentConfig<Field = F>,
 {
     let commitment_rows = flatten_batched_commitment_rows(commitments);
-    eprintln!("finish_batched_root:before_build_w");
     let w = ring_switch_build_w::<F, { D }, Cfg>(
         &mut quad_eq,
         expanded,
@@ -944,24 +950,23 @@ where
         level_params,
         layout,
     )?;
-    eprintln!("finish_batched_root:after_build_w w_len={}", w.len());
     let next_inputs = HachiScheduleInputs {
         max_num_vars,
         level: 1,
         current_w_len: w.len(),
     };
-    let next_params =
-        next_level_params_from_current_basis::<Cfg>(next_inputs, level_params.log_basis)?;
+    let next_params = next_level_params_from_current_basis_and_envelope::<Cfg>(
+        next_inputs,
+        level_params.log_basis,
+        planning_envelope,
+    )?;
 
     let (w_commitment_flat, w_hint_cache) = {
-        eprintln!("finish_batched_root:before_commit_w");
         let _span = tracing::info_span!("commit_w_level", level = 0usize).entered();
         commit_w_fn(&w, next_params.clone())?
     };
-    eprintln!("finish_batched_root:after_commit_w");
     let w_commitment_proof = w_commitment_flat.clone();
 
-    eprintln!("finish_batched_root:before_finalize");
     let rs = ring_switch_finalize_with_claim_groups::<F, T, { D }, Cfg>(
         &quad_eq,
         expanded,
@@ -973,7 +978,6 @@ where
         level_params,
         layout,
     )?;
-    eprintln!("finish_batched_root:after_finalize");
 
     let relation_claim = relation_claim_from_rows::<F, D>(
         &rs.tau1,
@@ -1057,6 +1061,7 @@ where
             commitment: w_commitment,
             hint: w_hint.expect("prover ring switch must preserve recursive hint cache"),
             log_basis: next_params.log_basis,
+            planning_envelope,
             sumcheck_challenges,
             num_u,
             num_l,
@@ -1079,6 +1084,7 @@ fn prove_one_recursive_level<F, T, const D: usize, Cfg>(
     level: usize,
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
+    planning_envelope: HachiBatchPlanningEnvelope,
     next_level_params_override: Option<HachiLevelParams>,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
@@ -1167,6 +1173,7 @@ where
         level,
         level_params,
         layout,
+        planning_envelope,
         next_level_params_override,
         quad_eq,
         y_ring,
@@ -1194,27 +1201,51 @@ fn should_stop_batched_folding(w_len: usize, prev_w_len: usize) -> bool {
     w_len <= MIN_W_LEN_FOR_FOLDING || w_len >= prev_w_len
 }
 
+#[cfg(test)]
 fn should_continue_folding_by_bytes<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     level: usize,
     current_w_len: usize,
     current_log_basis: u32,
 ) -> Result<bool, HachiError> {
-    let direct_bytes = packed_digits_bytes(current_w_len, current_log_basis);
-    Ok(planned_recursive_suffix_bytes_with_log_basis::<Cfg>(
+    should_continue_folding_by_bytes_and_envelope::<Cfg>(
         max_num_vars,
         level,
         current_w_len,
         current_log_basis,
-    )? < direct_bytes)
+        HachiBatchPlanningEnvelope::singleton::<Cfg>(),
+    )
 }
 
-fn next_level_params_from_current_basis<Cfg: CommitmentConfig>(
+fn should_continue_folding_by_bytes_and_envelope<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    level: usize,
+    current_w_len: usize,
+    current_log_basis: u32,
+    planning_envelope: HachiBatchPlanningEnvelope,
+) -> Result<bool, HachiError> {
+    let direct_bytes = packed_digits_bytes(current_w_len, current_log_basis);
+    Ok(
+        planned_recursive_suffix_bytes_with_log_basis_and_envelope::<Cfg>(
+            max_num_vars,
+            level,
+            current_w_len,
+            current_log_basis,
+            planning_envelope,
+        )? < direct_bytes,
+    )
+}
+
+fn next_level_params_from_current_basis_and_envelope<Cfg: CommitmentConfig>(
     next_inputs: HachiScheduleInputs,
     current_log_basis: u32,
+    planning_envelope: HachiBatchPlanningEnvelope,
 ) -> Result<HachiLevelParams, HachiError> {
-    let next_log_basis =
-        planned_next_log_basis_with_current_basis::<Cfg>(next_inputs, current_log_basis)?;
+    let next_log_basis = planned_next_log_basis_with_current_basis_and_envelope::<Cfg>(
+        next_inputs,
+        current_log_basis,
+        planning_envelope,
+    )?;
     Ok(Cfg::level_params_with_log_basis(
         next_inputs,
         next_log_basis,
@@ -1440,6 +1471,7 @@ where
         level,
         level_params,
         w_layout,
+        current_state.planning_envelope,
         next_level_params_override,
     )
 }
@@ -1468,17 +1500,13 @@ where
         if should_stop_batched_folding(current_w_len, prev_poly_len) {
             break;
         }
-        eprintln!(
-            "recursive_suffix:level={} current_w_len={} log_basis={}",
-            level, current_w_len, current_state.log_basis
-        );
-        let should_continue = should_continue_folding_by_bytes::<Cfg>(
+        let should_continue = should_continue_folding_by_bytes_and_envelope::<Cfg>(
             max_num_vars,
             level,
             current_w_len,
             current_state.log_basis,
+            current_state.planning_envelope,
         )?;
-        eprintln!("recursive_suffix:level={level} should_continue={should_continue}");
         if !should_continue {
             break;
         }
@@ -1508,12 +1536,6 @@ where
 
         levels.push(out.level_proof);
         prev_poly_len = current_w_len;
-        eprintln!(
-            "recursive_suffix:level={} next_w_len={} next_log_basis={}",
-            level,
-            out.next_state.w.len(),
-            out.next_state.log_basis
-        );
         current_state = out.next_state;
         level += 1;
     }
@@ -1625,13 +1647,14 @@ where
             let num_l = alpha_bits;
             let num_u = challenges.len() - num_l;
             let next_w_len = w_ring_element_count::<F>(&level_params, current_layout) * level_d;
-            let next_level_params = next_level_params_from_current_basis::<Cfg>(
+            let next_level_params = next_level_params_from_current_basis_and_envelope::<Cfg>(
                 HachiScheduleInputs {
                     max_num_vars,
                     level: level_index + 1,
                     current_w_len: next_w_len,
                 },
                 current_state.log_basis,
+                current_state.planning_envelope,
             )?;
 
             if level_index < num_levels {
@@ -1647,6 +1670,7 @@ where
                 basis: BasisMode::Lagrange,
                 w_len: next_w_len,
                 log_basis: next_level_params.log_basis,
+                planning_envelope: current_state.planning_envelope,
             };
         }
     }
@@ -1752,10 +1776,8 @@ where
         &root_params,
         batched_layout,
         layout,
+        root_plan.planning_envelope,
     )?;
-    eprintln!("same_point_batched:after_root_level");
-
-    eprintln!("same_point_batched:before_recursive_suffix");
     let (levels, level, current_state) = prove_batched_recursive_suffix::<F, T, D, Cfg>(
         setup,
         &mut ntt_cache,
@@ -1765,7 +1787,6 @@ where
         next_state,
         root_plan.inputs.current_w_len,
     )?;
-    eprintln!("same_point_batched:after_recursive_suffix");
 
     tracing::info!(
         levels = level,
@@ -1868,6 +1889,7 @@ where
             basis: BasisMode::Lagrange,
             w_len: root_w_len,
             log_basis: root_plan.next_level_params.log_basis,
+            planning_envelope: root_plan.planning_envelope,
         };
         verify_batched_recursive_suffix::<F, T, D, Cfg>(
             proof,
@@ -2095,6 +2117,7 @@ where
             0,
             &root_params,
             layout,
+            root_plan.planning_envelope,
             root_next_params_override,
         )?;
         levels.push(out.level_proof);
@@ -2365,6 +2388,7 @@ where
             &root_params,
             batched_layout,
             layout,
+            root_plan.planning_envelope,
         )?;
 
         let (levels, level, current_state) = prove_batched_recursive_suffix::<F, T, D, Cfg>(
@@ -2447,6 +2471,7 @@ where
             basis,
             w_len: root_plan.inputs.current_w_len,
             log_basis: root_params.log_basis,
+            planning_envelope: root_plan.planning_envelope,
         };
         if let Some(plan) = exact_plan.as_ref() {
             let planned_root =
@@ -2564,13 +2589,14 @@ where
                 let next_level_params = if let Some(next_level_params) = planned_next_level_params {
                     next_level_params
                 } else {
-                    next_level_params_from_current_basis::<Cfg>(
+                    next_level_params_from_current_basis_and_envelope::<Cfg>(
                         HachiScheduleInputs {
                             max_num_vars,
                             level: i + 1,
                             current_w_len: next_w_len,
                         },
                         current_state.log_basis,
+                        current_state.planning_envelope,
                     )
                     .map_err(|_| HachiError::InvalidProof)?
                 };
@@ -2588,6 +2614,7 @@ where
                     basis: BasisMode::Lagrange,
                     w_len: next_w_len,
                     log_basis: next_level_params.log_basis,
+                    planning_envelope: current_state.planning_envelope,
                 };
             }
         }
@@ -2719,6 +2746,7 @@ where
                 basis: BasisMode::Lagrange,
                 w_len: root_w_len,
                 log_basis: root_plan.next_level_params.log_basis,
+                planning_envelope: root_plan.planning_envelope,
             };
             verify_batched_recursive_suffix::<F, T, D, Cfg>(
                 proof,
@@ -3227,8 +3255,11 @@ fn trace<F: FieldCore + FromSmallInt, const D: usize>(u: &CyclotomicRing<F, D>) 
 mod tests {
     use super::*;
     use crate::algebra::Fp128;
+    use crate::primitives::serialization::Compress;
     use crate::protocol::commitment::presets::fp128;
-    use crate::protocol::commitment::schedule::hachi_root_runtime_plan_with_batch;
+    use crate::protocol::commitment::schedule::{
+        hachi_root_runtime_plan_with_batch, recursive_suffix_estimate_with_log_basis,
+    };
     use crate::protocol::commitment::{CommitmentConfig, HachiRootBatchSummary};
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
     use crate::protocol::opening_point::{
@@ -3276,22 +3307,12 @@ mod tests {
         let root_w_len = root_plan.next_w_len();
         let root_shape = root_plan.level_proof_shape();
         let first_level_params = root_plan.next_level_params.clone();
-        eprintln!(
-            "shape:start levels={} root_w_len={} next_log_basis={}",
-            proof.num_fold_levels(),
-            root_w_len,
-            first_level_params.log_basis
-        );
 
         let mut step_shapes = Vec::with_capacity(proof.num_fold_levels() + 1);
         let mut current_w_len = root_w_len;
         let mut current_log_basis = first_level_params.log_basis;
         let mut current_level = 1usize;
         for _ in proof.fold_levels() {
-            eprintln!(
-                "shape:level={} in_w_len={} log_basis={}",
-                current_level, current_w_len, current_log_basis
-            );
             let inputs = HachiScheduleInputs {
                 max_num_vars,
                 level: current_level,
@@ -3303,19 +3324,16 @@ mod tests {
                     .expect("recursive layout");
             let next_w_len =
                 w_ring_element_count::<OneHotF>(&level_params, current_layout) * level_params.d;
-            let next_level_params = next_level_params_from_current_basis::<OneHotCfg>(
+            let next_level_params = next_level_params_from_current_basis_and_envelope::<OneHotCfg>(
                 HachiScheduleInputs {
                     max_num_vars,
                     level: current_level + 1,
                     current_w_len: next_w_len,
                 },
                 current_log_basis,
+                root_plan.planning_envelope,
             )
             .expect("next recursive params");
-            eprintln!(
-                "shape:level={} out_w_len={} next_log_basis={}",
-                current_level, next_w_len, next_level_params.log_basis
-            );
             let rounds = batched_shape_rounds(level_params.d, next_w_len);
             step_shapes.push(HachiProofStepShape::Fold(LevelProofShape {
                 y_ring_coeffs: level_params.d,
@@ -3363,6 +3381,125 @@ mod tests {
         assert!(should_stop_folding(129_216, 224_064));
         assert!(!should_stop_batched_folding(129_216, 224_064));
         assert!(should_continue_folding_by_bytes::<D32Cfg>(32, 5, 129_216, 4).unwrap());
+    }
+
+    fn assert_batched_onehot_planner_gap<const D_LOCAL: usize, CfgLocal>(
+        nv: usize,
+        batch_size: usize,
+        slack_bytes: usize,
+    ) where
+        CfgLocal: CommitmentConfig<Field = OneHotF>,
+    {
+        type SchemeLocal<const D_INNER: usize, CfgInner> = HachiCommitmentScheme<D_INNER, CfgInner>;
+
+        let layout =
+            hachi_batched_root_layout::<CfgLocal, D_LOCAL>(nv, batch_size).expect("batched layout");
+        let polys: Vec<OneHotPoly<OneHotF, D_LOCAL, u8>> = (0..batch_size)
+            .map(|poly_idx| {
+                debug_make_onehot_poly_generic::<D_LOCAL>(
+                    &layout,
+                    0x0bee_fcaf_e000_2000 + poly_idx as u64,
+                )
+            })
+            .collect();
+        let poly_refs: Vec<&OneHotPoly<OneHotF, D_LOCAL, u8>> = polys.iter().collect();
+        let point = debug_random_point(nv);
+        let openings: Vec<OneHotF> = polys
+            .iter()
+            .map(|poly| debug_opening_from_poly_generic::<D_LOCAL, _>(poly, &point, &layout))
+            .collect();
+        let poly_groups = [&poly_refs[..]];
+        let opening_groups = [&openings[..]];
+
+        let setup =
+            <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<OneHotF, D_LOCAL>>::setup_prover(
+                nv, batch_size,
+            );
+        let verifier_setup = <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<
+            OneHotF,
+            D_LOCAL,
+        >>::setup_verifier(&setup);
+        let (commitment, hint) = <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<
+            OneHotF,
+            D_LOCAL,
+        >>::commit(&poly_refs, &setup)
+        .expect("batched onehot commit");
+        let commitments = [commitment];
+        let hints = vec![hint];
+
+        let mut prover_transcript =
+            Blake2bTranscript::<OneHotF>::new(b"test/batched-onehot-planner-gap");
+        let proof =
+            <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<OneHotF, D_LOCAL>>::batched_prove(
+                &setup,
+                &[&poly_groups[..]],
+                &[&point[..]],
+                vec![hints],
+                &mut prover_transcript,
+                &[&commitments[..]],
+                BasisMode::Lagrange,
+            )
+            .expect("batched onehot prove");
+
+        let mut verifier_transcript =
+            Blake2bTranscript::<OneHotF>::new(b"test/batched-onehot-planner-gap");
+        <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<OneHotF, D_LOCAL>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &[&point[..]],
+            &[&opening_groups[..]],
+            &[&commitments[..]],
+            BasisMode::Lagrange,
+        )
+        .expect("batched onehot verify");
+
+        let root_plan = hachi_root_runtime_plan_with_batch::<CfgLocal, D_LOCAL>(
+            nv,
+            nv,
+            batch_size,
+            HachiRootBatchSummary::new(batch_size, 1, 1).expect("same-point batch summary"),
+        )
+        .expect("batched root plan");
+        let estimate = recursive_suffix_estimate_with_log_basis::<CfgLocal>(
+            nv,
+            root_plan.next_inputs.level,
+            root_plan.next_w_len(),
+            root_plan.next_level_params.log_basis,
+            root_plan.planning_envelope,
+        )
+        .expect("recursive suffix estimate");
+
+        let root_bytes = root_plan.level_proof_bytes::<CfgLocal>();
+        let observed_total = proof.size();
+        let table_total = root_bytes + estimate.table_bytes;
+        let actual_total = root_bytes + estimate.actual_state_bytes;
+        let actual_gap = observed_total.abs_diff(actual_total);
+
+        assert_eq!(root_bytes, proof.root.serialized_size(Compress::No));
+        assert!(
+            !estimate.exact_state_match,
+            "batch-4 onehot root should miss the singleton generated schedule state"
+        );
+        assert!(
+            estimate.used_actual_state_planner,
+            "batch-4 onehot proof should use the actual-state miss-path planner"
+        );
+        assert_eq!(table_total, observed_total);
+        assert!(
+            actual_gap <= slack_bytes,
+            "actual-state suffix gap {actual_gap} exceeded slack bound {slack_bytes}"
+        );
+    }
+
+    #[test]
+    fn batched_d32_onehot_planner_gap_stays_small() {
+        assert_batched_onehot_planner_gap::<32, fp128::D32OneHot>(20, 4, 0);
+    }
+
+    #[test]
+    fn batched_d64_onehot_planner_gap_stays_small() {
+        assert_batched_onehot_planner_gap::<64, fp128::D64OneHot>(20, 4, 0);
     }
 
     fn make_verify_fixture(
@@ -3497,6 +3634,24 @@ mod tests {
         .expect("debug onehot poly")
     }
 
+    fn debug_make_onehot_poly_generic<const D_LOCAL: usize>(
+        layout: &HachiCommitmentLayout,
+        seed: u64,
+    ) -> OneHotPoly<OneHotF, D_LOCAL, u8> {
+        let onehot_k = D_LOCAL;
+        let total_ring = layout.num_blocks * layout.block_len;
+        let num_vars = layout.m_vars + layout.r_vars + D_LOCAL.trailing_zeros() as usize;
+        assert_eq!(total_ring * onehot_k, 1usize << num_vars);
+
+        let mut rng = StdRng::seed_from_u64(seed);
+        let indices: Vec<Option<u8>> = (0..total_ring)
+            .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
+            .collect();
+
+        OneHotPoly::<OneHotF, D_LOCAL, u8>::new(onehot_k, indices, layout.r_vars, layout.m_vars)
+            .expect("debug generic onehot poly")
+    }
+
     fn debug_opening_from_poly<P: HachiPolyOps<OneHotF, ONEHOT_D>>(
         poly: &P,
         point: &[OneHotF],
@@ -3526,6 +3681,38 @@ mod tests {
             BasisMode::Lagrange,
         )
         .expect("debug inner opening point");
+        (y_ring * v.sigma_m1()).coefficients()[0]
+    }
+
+    fn debug_opening_from_poly_generic<const D_LOCAL: usize, P: HachiPolyOps<OneHotF, D_LOCAL>>(
+        poly: &P,
+        point: &[OneHotF],
+        layout: &HachiCommitmentLayout,
+    ) -> OneHotF {
+        let alpha_bits = D_LOCAL.trailing_zeros() as usize;
+        assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
+
+        let inner_point = &point[..alpha_bits];
+        let reduced_point = &point[alpha_bits..];
+        let ring_opening_point = ring_opening_point_from_field(
+            reduced_point,
+            layout.r_vars,
+            layout.m_vars,
+            BasisMode::Lagrange,
+            BlockOrder::RowMajor,
+        )
+        .expect("debug generic opening point");
+
+        let (y_ring, _) = poly.evaluate_and_fold(
+            &ring_opening_point.b,
+            &ring_opening_point.a,
+            layout.block_len,
+        );
+        let v = reduce_inner_opening_to_ring_element::<OneHotF, D_LOCAL>(
+            inner_point,
+            BasisMode::Lagrange,
+        )
+        .expect("debug generic inner opening point");
         (y_ring * v.sigma_m1()).coefficients()[0]
     }
 
@@ -4479,11 +4666,9 @@ mod tests {
     fn batched_onehot_roundtrip_matches_public_shape_context() {
         const NV: usize = 15;
         const BATCH_SIZE: usize = 2;
-        eprintln!("test:start");
 
         let layout =
             hachi_batched_root_layout::<OneHotCfg, ONEHOT_D>(NV, BATCH_SIZE).expect("layout");
-        eprintln!("test:after_layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(ONEHOT_D)
             .expect("total field size overflow");
@@ -4495,33 +4680,25 @@ mod tests {
                 debug_make_onehot_poly(&layout, 0x0bee_fcaf_e000_1500 + poly_idx as u64)
             })
             .collect();
-        eprintln!("test:after_polys");
         let poly_refs: Vec<&OneHotPoly<OneHotF, ONEHOT_D, u8>> = polys.iter().collect();
         let point = debug_random_point(NV);
         let openings: Vec<OneHotF> = polys
             .iter()
             .map(|poly| debug_opening_from_poly(poly, &point, &layout))
             .collect();
-        eprintln!("test:after_openings");
 
-        eprintln!("test:before_setup");
         let setup =
             <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(NV, BATCH_SIZE);
-        eprintln!("test:after_setup");
         let verifier_setup =
             <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(&setup);
-        eprintln!("test:after_verifier_setup");
         let poly_groups = [&poly_refs[..]];
-        eprintln!("test:before_commit");
         let (commitment, hint) =
             <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::commit(&poly_refs, &setup)
                 .expect("batched onehot commit");
-        eprintln!("test:after_commit");
         let commitments = [commitment];
         let hints = vec![hint];
 
         let mut prover_transcript = Blake2bTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
-        eprintln!("test:before_batched_prove");
         let proof = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_prove(
             &setup,
             &[&poly_groups[..]],
@@ -4532,17 +4709,9 @@ mod tests {
             BasisMode::Lagrange,
         )
         .expect("batched onehot prove");
-        eprintln!(
-            "test:after_batched_prove fold_levels={}",
-            proof.num_fold_levels()
-        );
 
-        eprintln!("test:before_expected_shape");
         let expected_shape = expected_same_point_batched_shape(NV, BATCH_SIZE, &proof);
-        eprintln!("test:after_expected_shape");
-        eprintln!("test:before_actual_shape");
         let actual_shape = proof.shape();
-        eprintln!("test:after_actual_shape");
         assert_eq!(
             expected_shape.root_shape.y_ring_coeffs,
             actual_shape.root_shape.y_ring_coeffs
@@ -4565,7 +4734,6 @@ mod tests {
         );
         assert_eq!(expected_shape.step_shapes, actual_shape.step_shapes);
         let mut bytes = Vec::new();
-        eprintln!("test:before_serialize");
         proof.serialize_uncompressed(&mut bytes).unwrap();
         let decoded =
             HachiBatchedProof::<OneHotF>::deserialize_uncompressed(&*bytes, &expected_shape)
@@ -4575,7 +4743,6 @@ mod tests {
         let opening_groups = [&openings[..]];
         let mut verifier_transcript =
             Blake2bTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
-        eprintln!("test:before_verify");
         <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_verify(
             &decoded,
             &verifier_setup,
@@ -4586,7 +4753,6 @@ mod tests {
             BasisMode::Lagrange,
         )
         .expect("batched onehot verify");
-        eprintln!("test:done");
     }
 
     #[test]

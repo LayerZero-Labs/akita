@@ -1097,7 +1097,7 @@ mod tests {
         let block_len = MAX_WIDE_SHIFT_ACCUMULATIONS + 1;
         let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
         let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
-        let a_matrix = vec![vec![dense_ring; block_len]];
+        let a_matrix = [vec![dense_ring; block_len]];
         let regular_blocks = vec![{
             let mut entries = Vec::with_capacity(block_len);
             for pos in 0..block_len {

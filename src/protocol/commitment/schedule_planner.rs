@@ -8,12 +8,13 @@
 use super::config::CommitmentConfig;
 use super::schedule::{
     current_level_layout_with_log_basis, direct_witness_bytes, field_bits, hachi_level_proof_bytes,
-    planned_next_w_len, HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedState,
-    HachiPlannedStep, HachiScheduleInputs,
+    planned_next_w_len, HachiBatchPlanningEnvelope, HachiPlannedDirectStep, HachiPlannedLevel,
+    HachiPlannedState, HachiPlannedStep, HachiScheduleInputs,
 };
 use crate::error::HachiError;
 use crate::protocol::proof::DirectWitnessShape;
 use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct PlannerState {
@@ -28,7 +29,7 @@ struct PlannedSuffix {
     no_wrapper_bytes: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct PlannerConfig {
     pub max_num_vars: usize,
     pub min_log_basis: u32,
@@ -51,6 +52,34 @@ impl PlannerConfig {
             half_field_bound: Cfg::planner_half_field_bound(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct CachedSuffixStateKey {
+    cfg: PlannerConfig,
+    envelope: HachiBatchPlanningEnvelope,
+    state: PlannerState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct CachedBasisChoiceKey {
+    cfg: PlannerConfig,
+    envelope: HachiBatchPlanningEnvelope,
+    inputs: HachiScheduleInputs,
+    lower_bound: u32,
+}
+
+type ExactSuffixCache = HashMap<CachedSuffixStateKey, usize>;
+type BestBasisCache = HashMap<CachedBasisChoiceKey, (u32, usize)>;
+
+fn exact_suffix_cache() -> &'static Mutex<ExactSuffixCache> {
+    static CACHE: OnceLock<Mutex<ExactSuffixCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn best_basis_cache() -> &'static Mutex<BestBasisCache> {
+    static CACHE: OnceLock<Mutex<BestBasisCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 // ---------------------------------------------------------------------------
@@ -144,6 +173,7 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
 }
 
 /// Suffix byte estimate from the DP planner at a specific state.
+#[cfg(test)]
 pub(super) fn dp_suffix_bytes<Cfg: CommitmentConfig>(
     cfg: PlannerConfig,
     state: PlannerState,
@@ -151,6 +181,99 @@ pub(super) fn dp_suffix_bytes<Cfg: CommitmentConfig>(
     let mut memo = HashMap::new();
     let suffix = best_recursive_suffix::<Cfg>(cfg, &mut memo, state)?;
     Ok(suffix.no_wrapper_bytes)
+}
+
+pub(super) fn cached_dp_suffix_bytes<Cfg: CommitmentConfig>(
+    cfg: PlannerConfig,
+    envelope: HachiBatchPlanningEnvelope,
+    state: PlannerState,
+) -> Result<usize, HachiError> {
+    let cache_key = CachedSuffixStateKey {
+        cfg,
+        envelope,
+        state,
+    };
+    if let Some(bytes) = exact_suffix_cache()
+        .lock()
+        .expect("exact suffix cache lock poisoned")
+        .get(&cache_key)
+        .copied()
+    {
+        return Ok(bytes);
+    }
+
+    let mut memo = HashMap::new();
+    let suffix = best_recursive_suffix::<Cfg>(cfg, &mut memo, state)?;
+    let mut cache = exact_suffix_cache()
+        .lock()
+        .expect("exact suffix cache lock poisoned");
+    for (memo_state, planned_suffix) in memo {
+        cache
+            .entry(CachedSuffixStateKey {
+                cfg,
+                envelope,
+                state: memo_state,
+            })
+            .or_insert(planned_suffix.no_wrapper_bytes);
+    }
+    Ok(suffix.no_wrapper_bytes)
+}
+
+pub(super) fn cached_dp_best_basis<Cfg: CommitmentConfig>(
+    cfg: PlannerConfig,
+    envelope: HachiBatchPlanningEnvelope,
+    inputs: HachiScheduleInputs,
+    lower_bound: u32,
+) -> Option<(u32, usize)> {
+    let cache_key = CachedBasisChoiceKey {
+        cfg,
+        envelope,
+        inputs,
+        lower_bound,
+    };
+    if let Some(best) = best_basis_cache()
+        .lock()
+        .expect("best basis cache lock poisoned")
+        .get(&cache_key)
+        .copied()
+    {
+        return Some(best);
+    }
+
+    let best = if lower_bound > cfg.max_log_basis {
+        cached_dp_suffix_bytes::<Cfg>(
+            cfg,
+            envelope,
+            PlannerState {
+                level: inputs.level,
+                current_w_len: inputs.current_w_len,
+                log_basis: lower_bound,
+            },
+        )
+        .ok()
+        .map(|bytes| (lower_bound, bytes))
+    } else {
+        let mut best: Option<(u32, usize)> = None;
+        for log_basis in lower_bound..=cfg.max_log_basis {
+            let state = PlannerState {
+                level: inputs.level,
+                current_w_len: inputs.current_w_len,
+                log_basis,
+            };
+            if let Ok(suffix_bytes) = cached_dp_suffix_bytes::<Cfg>(cfg, envelope, state) {
+                if best.as_ref().is_none_or(|(_, bytes)| suffix_bytes < *bytes) {
+                    best = Some((log_basis, suffix_bytes));
+                }
+            }
+        }
+        best
+    }?;
+
+    best_basis_cache()
+        .lock()
+        .expect("best basis cache lock poisoned")
+        .insert(cache_key, best);
+    Some(best)
 }
 
 #[cfg(test)]
@@ -186,95 +309,4 @@ pub(crate) fn planned_recursive_suffix_bytes<Cfg: CommitmentConfig>(
         log_basis: current_log_basis,
     };
     dp_suffix_bytes::<Cfg>(cfg, state)
-}
-
-// ---------------------------------------------------------------------------
-// Debug cross-check helpers
-// ---------------------------------------------------------------------------
-
-/// Find the best log_basis (minimising suffix bytes) via the DP planner over
-/// the given search range.
-#[cfg(debug_assertions)]
-pub(super) fn dp_best_basis<Cfg: CommitmentConfig>(
-    inputs: HachiScheduleInputs,
-    min_log_basis: u32,
-    max_log_basis: u32,
-    lower_bound: u32,
-) -> Option<(u32, usize)> {
-    let cfg = PlannerConfig::from_cfg::<Cfg>(inputs.max_num_vars, min_log_basis, max_log_basis);
-    let mut memo = HashMap::new();
-    let mut best: Option<(u32, usize)> = None;
-    for log_basis in lower_bound..=max_log_basis {
-        if let Ok(suffix) = best_recursive_suffix::<Cfg>(
-            cfg,
-            &mut memo,
-            PlannerState {
-                level: inputs.level,
-                current_w_len: inputs.current_w_len,
-                log_basis,
-            },
-        ) {
-            if best
-                .as_ref()
-                .is_none_or(|(_, b)| suffix.no_wrapper_bytes < *b)
-            {
-                best = Some((log_basis, suffix.no_wrapper_bytes));
-            }
-        }
-    }
-    best
-}
-
-/// Warn when the table-selected log_basis diverges from the DP planner's
-/// optimal choice.
-#[cfg(debug_assertions)]
-pub(super) fn debug_check_dp_basis<Cfg: CommitmentConfig>(
-    label: &str,
-    inputs: HachiScheduleInputs,
-    table_basis: u32,
-    min_log_basis: u32,
-    max_log_basis: u32,
-    lower_bound: u32,
-) {
-    if let Some((dp_basis, _)) =
-        dp_best_basis::<Cfg>(inputs, min_log_basis, max_log_basis, lower_bound)
-    {
-        if table_basis != dp_basis {
-            tracing::warn!(
-                level = inputs.level,
-                w_len = inputs.current_w_len,
-                table_basis,
-                dp_basis,
-                "{label}"
-            );
-        }
-    }
-}
-
-/// Warn when the table suffix byte estimate diverges significantly from the
-/// DP planner's value (ratio outside `[0.5, 2.0)`).
-#[cfg(debug_assertions)]
-pub(super) fn debug_check_dp_suffix_bytes<Cfg: CommitmentConfig>(
-    label: &str,
-    state: PlannerState,
-    table_bytes: usize,
-    planner_cfg: PlannerConfig,
-) {
-    let mut memo = HashMap::new();
-    if let Ok(suffix) = best_recursive_suffix::<Cfg>(planner_cfg, &mut memo, state) {
-        let dp_bytes = suffix.no_wrapper_bytes;
-        if dp_bytes > 0 {
-            let ratio = table_bytes as f64 / dp_bytes as f64;
-            if !(0.5..2.0).contains(&ratio) {
-                tracing::warn!(
-                    level = state.level,
-                    current_w_len = state.current_w_len,
-                    table_bytes,
-                    dp_bytes,
-                    ratio = format_args!("{ratio:.2}"),
-                    "{label}"
-                );
-            }
-        }
-    }
 }
