@@ -462,8 +462,7 @@ pub fn decompose_rows_i8_into<F: FieldCore + CanonicalField, const D: usize>(
         return;
     }
     let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q, half_q);
+    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
 
     #[cfg(feature = "parallel")]
     out.par_chunks_mut(num_digits)
@@ -1259,8 +1258,7 @@ fn mat_vec_mul_i8_block_parallel_with_params_impl<
     let n_a = ntt_mat.len();
     let lut = DigitMontLut::new(params);
     let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q, half_q);
+    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
 
     cfg_into_iter!(blocks)
         .map(|block| {
@@ -1361,8 +1359,7 @@ fn mat_vec_mul_i8_dense_single_row_with_params<
     let lut = DigitMontLut::new(params);
     let mat_row = &ntt_mat[0];
     let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q, half_q);
+    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
 
     cfg_into_iter!(blocks)
         .map(|block| {
@@ -1408,8 +1405,7 @@ fn mat_vec_mul_i8_dense_two_row_fused_with_params<
     let mat_row0 = &ntt_mat[0];
     let mat_row1 = &ntt_mat[1];
     let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q, half_q);
+    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
 
     cfg_into_iter!(blocks)
         .map(|block| {
@@ -1461,8 +1457,7 @@ fn mat_vec_mul_i8_dense_three_row_fused_with_params<
     let mat_row1 = &ntt_mat[1];
     let mat_row2 = &ntt_mat[2];
     let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q, half_q);
+    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
 
     cfg_into_iter!(blocks)
         .map(|block| {
@@ -1515,8 +1510,7 @@ fn mat_vec_mul_i8_strided_block_parallel_with_params<
     let n_a = ntt_mat.len();
     let lut = DigitMontLut::new(params);
     let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q, half_q);
+    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
 
     cfg_into_iter!(0..num_blocks)
         .map(|block_idx| {

@@ -1,7 +1,7 @@
 use super::commit::{hachi_batched_root_layout, root_current_w_len, scale_batched_root_layout};
 use super::config::{
-    compute_num_digits, compute_num_digits_fold, optimal_m_r_split_with_params, CommitmentConfig,
-    DecompositionParams, HachiCommitmentLayout,
+    compute_num_digits_fold, compute_num_digits_full_field, num_digits_for_bound,
+    optimal_m_r_split_with_params, CommitmentConfig, DecompositionParams, HachiCommitmentLayout,
 };
 use super::generated::{
     table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleTable,
@@ -503,9 +503,9 @@ fn layout_from_params(
     decomp: DecompositionParams,
     num_ring: usize,
 ) -> Result<HachiCommitmentLayout, HachiError> {
-    let depth_commit = compute_num_digits(decomp.log_commit_bound, decomp.log_basis);
+    let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
     let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
-    let depth_open = compute_num_digits(open_bound, decomp.log_basis);
+    let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
     let depth_fold = compute_num_digits_fold(r_vars, params.challenge_l1_mass, decomp.log_basis);
     HachiCommitmentLayout::new_with_decomp(
         m_vars,
@@ -1185,34 +1185,14 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
         + elem_bytes
 }
 
+/// Compute the number of digits needed when decomposing the `r` polynomial
+/// at a recursive level (always full-field, so use asymmetric centering).
 pub(crate) fn recursive_r_decomp_levels_for_bound(
     field_bits: u32,
-    half_field_bound: u128,
+    _half_field_bound: u128,
     log_basis: u32,
 ) -> usize {
-    let bits = field_bits as usize;
-    let lb = log_basis as usize;
-    let mut levels = compute_num_digits(field_bits, log_basis);
-    if levels == 0 {
-        levels = 1;
-    }
-
-    let total_bits = levels * lb;
-    if total_bits <= bits {
-        let b = 1u128 << log_basis;
-        let half_b_minus_1 = b / 2 - 1;
-        let b_minus_1 = b - 1;
-        let mut b_pow = 1u128;
-        for _ in 0..levels {
-            b_pow = b_pow.saturating_mul(b);
-        }
-        let max_positive = half_b_minus_1.saturating_mul((b_pow - 1) / b_minus_1);
-        if max_positive < half_field_bound {
-            levels += 1;
-        }
-    }
-
-    levels
+    compute_num_digits_full_field(field_bits, log_basis).max(1)
 }
 
 pub(crate) fn planned_w_ring_element_count(

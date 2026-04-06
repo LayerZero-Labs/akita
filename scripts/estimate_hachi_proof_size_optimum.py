@@ -81,12 +81,28 @@ def compute_num_digits(log_bound: int, log_basis: int) -> int:
     return max(levels, 1)
 
 
+def compute_num_digits_full_field(field_bits: int, log_basis: int) -> int:
+    """Asymmetric centering: ceil(field_bits / log_basis) with no +1."""
+    if log_basis <= 0 or log_basis >= 128:
+        raise ValueError(f"invalid log_basis={log_basis}")
+    if field_bits == 0:
+        return 1
+    return max(ceil_div(field_bits, log_basis), 1)
+
+
+def num_digits_for_bound(log_bound: int, log_basis: int) -> int:
+    """Select asymmetric or symmetric centering based on bound width."""
+    if log_bound >= 128:
+        return compute_num_digits_full_field(log_bound, log_basis)
+    return compute_num_digits(log_bound, log_basis)
+
+
 def compute_num_digits_fold_dense(r_vars: int, log_basis: int) -> int:
     """Mirror `compute_num_digits_fold()` for the generic dense bound."""
 
     shift = r_vars + log_basis - 1
     if shift >= 127 or CHALLENGE_MASS == 0:
-        return compute_num_digits(Q_BITS, log_basis)
+        return num_digits_for_bound(Q_BITS, log_basis)
     beta = CHALLENGE_MASS * (1 << shift)
     if beta == 0:
         return 1
@@ -101,21 +117,12 @@ def compute_num_digits_fold_onehot_root(r_vars: int, log_basis: int) -> int:
 
 
 def r_decomp_levels(log_basis: int) -> int:
-    """Mirror `r_decomp_levels()` from `src/protocol/ring_switch.rs`."""
+    """Mirror `r_decomp_levels()` from `src/protocol/ring_switch.rs`.
 
+    Always full-field, so uses asymmetric centering (no +1 correction).
+    """
     bits = (Q - 1).bit_length()
-    levels = ceil_div(bits, log_basis)
-    levels = max(levels, 1)
-
-    total_bits = levels * log_basis
-    if total_bits <= bits:
-        b = 1 << log_basis
-        half_b_minus_1 = b // 2 - 1
-        b_pow = b**levels
-        max_positive = half_b_minus_1 * ((b_pow - 1) // (b - 1))
-        if max_positive < HALF_Q:
-            levels += 1
-    return levels
+    return max(compute_num_digits_full_field(bits, log_basis), 1)
 
 
 def flat_ring_vec_bytes(ring_len: int) -> int:
@@ -190,7 +197,7 @@ def root_delta_commit_bits(family: str, log_basis: int) -> int:
     if family == "log":
         return compute_num_digits(log_basis, log_basis)
     if family == "full":
-        return compute_num_digits(Q_BITS, log_basis)
+        return num_digits_for_bound(Q_BITS, log_basis)
     raise ValueError(f"unknown family={family}")
 
 
@@ -292,7 +299,7 @@ def recursive_transitions(
     transitions: list[LevelTransition] = []
     for log_basis in range(min_log_basis, max_log_basis + 1):
         num_digits_commit = 1
-        num_digits_open = compute_num_digits(Q_BITS, log_basis)
+        num_digits_open = num_digits_for_bound(Q_BITS, log_basis)
         r_levels = r_decomp_levels(log_basis)
         for r_vars in range(1, reduced_vars):
             m_vars = reduced_vars - r_vars
@@ -338,7 +345,7 @@ def root_transitions(
     transitions: list[LevelTransition] = []
     for log_basis in range(2, max_log_basis + 1):
         num_digits_commit = root_delta_commit_bits(family, log_basis)
-        num_digits_open = compute_num_digits(Q_BITS, log_basis)
+        num_digits_open = num_digits_for_bound(Q_BITS, log_basis)
         r_levels = r_decomp_levels(log_basis)
         for r_vars in range(1, reduced_vars):
             m_vars = reduced_vars - r_vars

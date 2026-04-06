@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use crate::digit_math::{baseline_optimal_m_r_split, compute_num_digits, compute_num_digits_fold};
+use crate::digit_math::{
+    baseline_optimal_m_r_split, compute_num_digits_fold, num_digits_for_bound,
+};
 use crate::proof_size::{
     baseline_packed_digits_bytes, baseline_ring_vec_bytes, baseline_sumcheck_bytes, elem_bytes,
     sumcheck_rounds,
@@ -47,8 +49,8 @@ fn compute_level(
 
     let (m, r) = baseline_optimal_m_r_split(bp.n_a, bp.challenge_l1_mass, log_cb, lb, reduced);
     let op = if log_cb < 128 { 128 } else { log_cb };
-    let d_open = compute_num_digits(op, lb);
-    let d_commit = compute_num_digits(log_cb, lb);
+    let d_open = num_digits_for_bound(op, lb);
+    let d_commit = num_digits_for_bound(log_cb, lb);
     let d_fold = compute_num_digits_fold(r, bp.challenge_l1_mass, lb);
     let bl = 1usize << m;
     let iw = bl * d_commit;
@@ -56,7 +58,7 @@ fn compute_level(
     let t_hat = (1usize << r) * bp.n_a as usize * d_open;
     let z_pre = iw * d_fold;
     let r_ct =
-        (bp.n_d as usize + bp.n_b as usize + 2 + bp.n_a as usize) * compute_num_digits(128, lb);
+        (bp.n_d as usize + bp.n_b as usize + 2 + bp.n_a as usize) * num_digits_for_bound(128, lb);
     let w_ring = w_hat + t_hat + z_pre + r_ct;
     let nw = w_ring * bp.d as usize;
     let rnds = sumcheck_rounds(bp.d, nw);

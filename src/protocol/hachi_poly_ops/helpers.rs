@@ -4,6 +4,7 @@
 //! position-partitioned accumulation strategies, and the final witness
 //! construction used by all three [`super::HachiPolyOps`] implementations.
 
+use crate::algebra::ring::cyclotomic::center_for_decomposition;
 use crate::algebra::ring::sparse_challenge::SparseChallenge;
 use crate::algebra::CyclotomicRing;
 #[cfg(feature = "parallel")]
@@ -21,12 +22,13 @@ use crate::algebra::ntt::neon;
 use super::decompose_fold_neon;
 
 pub(super) struct DecomposeParams {
-    pub half_q: u128,
+    pub threshold: u128,
     pub q: u128,
     pub mask: i128,
     pub half_b: i128,
     pub b_val: i128,
     pub log_basis: u32,
+    pub overflow_possible: bool,
 }
 
 /// Decompose all D coefficients of a ring element into balanced base-b digits,
@@ -38,6 +40,19 @@ pub(super) struct DecomposeParams {
 /// `digit_buf` is `[num_digits][D]` in i8, OVERWRITTEN (not accumulated).
 #[inline(never)]
 pub(super) fn decompose_ring_interleaved<F: CanonicalField, const D: usize>(
+    ring: &CyclotomicRing<F, D>,
+    digit_buf: &mut [[i8; D]],
+    num_digits: usize,
+    p: &DecomposeParams,
+) {
+    if p.overflow_possible {
+        decompose_ring_interleaved_overflow(ring, digit_buf, num_digits, p);
+    } else {
+        decompose_ring_interleaved_fast(ring, digit_buf, num_digits, p);
+    }
+}
+
+fn decompose_ring_interleaved_fast<F: CanonicalField, const D: usize>(
     ring: &CyclotomicRing<F, D>,
     digit_buf: &mut [[i8; D]],
     num_digits: usize,
@@ -68,6 +83,56 @@ pub(super) fn decompose_ring_interleaved<F: CanonicalField, const D: usize>(
     }
 }
 
+fn decompose_ring_interleaved_overflow<F: CanonicalField, const D: usize>(
+    ring: &CyclotomicRing<F, D>,
+    digit_buf: &mut [[i8; D]],
+    num_digits: usize,
+    p: &DecomposeParams,
+) {
+    let mut centered = [0i128; D];
+    for (i, coeff) in ring.coeffs.iter().enumerate() {
+        let canonical = coeff.to_canonical_u128();
+        let (c, first_digit) = center_for_decomposition(canonical, p.q, p.threshold, p.log_basis);
+        match first_digit {
+            Some(d0) => {
+                digit_buf[0][i] = d0 as i8;
+                centered[i] = c;
+            }
+            None => {
+                let d = c & p.mask;
+                let balanced = if d >= p.half_b { d - p.b_val } else { d };
+                digit_buf[0][i] = balanced as i8;
+                centered[i] = (c - balanced) >> p.log_basis;
+            }
+        }
+    }
+
+    let remaining = &mut digit_buf[1..];
+    let bulk_end = D - (D % 3);
+
+    for base in (0..bulk_end).step_by(3) {
+        let mut c0 = centered[base];
+        let mut c1 = centered[base + 1];
+        let mut c2 = centered[base + 2];
+
+        for plane in remaining.iter_mut().take(num_digits - 1) {
+            let d0 = extract_balanced_digit(&mut c0, p);
+            let d1 = extract_balanced_digit(&mut c1, p);
+            let d2 = extract_balanced_digit(&mut c2, p);
+            plane[base] = d0 as i8;
+            plane[base + 1] = d1 as i8;
+            plane[base + 2] = d2 as i8;
+        }
+    }
+
+    for idx in bulk_end..D {
+        let mut c = centered[idx];
+        for plane in remaining.iter_mut().take(num_digits - 1) {
+            plane[idx] = extract_balanced_digit(&mut c, p) as i8;
+        }
+    }
+}
+
 #[inline(never)]
 pub(super) fn decompose_ring_single_digit<F: CanonicalField, const D: usize>(
     ring: &CyclotomicRing<F, D>,
@@ -85,7 +150,7 @@ pub(super) fn decompose_ring_single_digit<F: CanonicalField, const D: usize>(
 
 #[inline(always)]
 fn to_signed(canonical: u128, p: &DecomposeParams) -> i128 {
-    if canonical > p.half_q {
+    if canonical > p.threshold {
         -((p.q - canonical) as i128)
     } else {
         canonical as i128
@@ -283,6 +348,19 @@ fn decompose_ring_full_challenge_accumulate<F: CanonicalField, const D: usize>(
     acc: &mut [[i32; D]],
     p: &DecomposeParams,
 ) {
+    if p.overflow_possible {
+        decompose_ring_full_challenge_accumulate_overflow(ring, rotated, acc, p);
+    } else {
+        decompose_ring_full_challenge_accumulate_fast(ring, rotated, acc, p);
+    }
+}
+
+fn decompose_ring_full_challenge_accumulate_fast<F: CanonicalField, const D: usize>(
+    ring: &CyclotomicRing<F, D>,
+    rotated: &[[i16; D]],
+    acc: &mut [[i32; D]],
+    p: &DecomposeParams,
+) {
     let bulk_end = D - (D % 3);
 
     for base in (0..bulk_end).step_by(3) {
@@ -310,6 +388,70 @@ fn decompose_ring_full_challenge_accumulate<F: CanonicalField, const D: usize>(
     for (idx, rot) in rotated.iter().enumerate().take(D).skip(bulk_end) {
         let mut c = to_signed(ring.coeffs[idx].to_canonical_u128(), p);
         for plane in acc.iter_mut() {
+            let digit = extract_balanced_digit(&mut c, p);
+            if digit != 0 {
+                add_scaled_rotated_row(plane, rot, digit);
+            }
+        }
+    }
+}
+
+fn decompose_ring_full_challenge_accumulate_overflow<F: CanonicalField, const D: usize>(
+    ring: &CyclotomicRing<F, D>,
+    rotated: &[[i16; D]],
+    acc: &mut [[i32; D]],
+    p: &DecomposeParams,
+) {
+    let mut centered = [0i128; D];
+    for (i, coeff) in ring.coeffs.iter().enumerate() {
+        let canonical = coeff.to_canonical_u128();
+        let (c, first_digit) = center_for_decomposition(canonical, p.q, p.threshold, p.log_basis);
+        let d0 = match first_digit {
+            Some(d) => {
+                centered[i] = c;
+                d as i32
+            }
+            None => {
+                let d = c & p.mask;
+                let balanced = if d >= p.half_b { d - p.b_val } else { d };
+                centered[i] = (c - balanced) >> p.log_basis;
+                balanced as i32
+            }
+        };
+        let rot = &rotated[i];
+        if d0 != 0 {
+            add_scaled_rotated_row(&mut acc[0], rot, d0);
+        }
+    }
+
+    let remaining_acc = &mut acc[1..];
+    let bulk_end = D - (D % 3);
+
+    for base in (0..bulk_end).step_by(3) {
+        let mut c0 = centered[base];
+        let mut c1 = centered[base + 1];
+        let mut c2 = centered[base + 2];
+        let rot0 = &rotated[base];
+        let rot1 = &rotated[base + 1];
+        let rot2 = &rotated[base + 2];
+
+        for plane in remaining_acc.iter_mut() {
+            let d0 = extract_balanced_digit(&mut c0, p);
+            let d1 = extract_balanced_digit(&mut c1, p);
+            let d2 = extract_balanced_digit(&mut c2, p);
+            match (d0 != 0, d1 != 0, d2 != 0) {
+                (false, false, false) => {}
+                (true, false, false) => add_scaled_rotated_row(plane, rot0, d0),
+                (false, true, false) => add_scaled_rotated_row(plane, rot1, d1),
+                (false, false, true) => add_scaled_rotated_row(plane, rot2, d2),
+                _ => add_scaled_rotated_rows_triplet(plane, [rot0, rot1, rot2], [d0, d1, d2]),
+            }
+        }
+    }
+
+    for (idx, rot) in rotated.iter().enumerate().take(D).skip(bulk_end) {
+        let mut c = centered[idx];
+        for plane in remaining_acc.iter_mut() {
             let digit = extract_balanced_digit(&mut c, p);
             if digit != 0 {
                 add_scaled_rotated_row(plane, rot, digit);
@@ -801,13 +943,18 @@ mod tests {
                 .collect(),
         };
         let q = (-F::one()).to_canonical_u128() + 1;
+        let log_basis = 3u32;
+        let threshold = crate::algebra::ring::cyclotomic::decompose_centering_threshold(
+            num_digits, log_basis, q,
+        );
         let params = DecomposeParams {
-            half_q: q / 2,
+            threshold,
             q,
-            mask: (1i128 << 3) - 1,
-            half_b: 1i128 << 2,
-            b_val: 1i128 << 3,
-            log_basis: 3,
+            mask: (1i128 << log_basis) - 1,
+            half_b: 1i128 << (log_basis - 1),
+            b_val: 1i128 << log_basis,
+            log_basis,
+            overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
         };
 
         let mut generic_digits = vec![[0i8; D]; num_digits];
@@ -865,13 +1012,18 @@ mod tests {
             },
         ];
         let q = (-F::one()).to_canonical_u128() + 1;
+        let log_basis = 3u32;
+        let threshold = crate::algebra::ring::cyclotomic::decompose_centering_threshold(
+            num_digits, log_basis, q,
+        );
         let params = DecomposeParams {
-            half_q: q / 2,
+            threshold,
             q,
-            mask: (1i128 << 3) - 1,
-            half_b: 1i128 << 2,
-            b_val: 1i128 << 3,
-            log_basis: 3,
+            mask: (1i128 << log_basis) - 1,
+            half_b: 1i128 << (log_basis - 1),
+            b_val: 1i128 << log_basis,
+            log_basis,
+            overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
         };
 
         let fused = balanced_ring_decompose_fold_partitioned::<F, D>(
