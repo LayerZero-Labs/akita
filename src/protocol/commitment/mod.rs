@@ -39,7 +39,7 @@ pub use schedule::{
     HachiPlannedStep, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
     HachiSchedulePlan,
 };
-pub use scheme::{CommitWitness, CommitmentScheme, DynamicCommitmentScheme, RingCommitmentScheme};
+pub use scheme::{CommitWitness, CommitmentScheme, RingCommitmentScheme};
 pub use transcript_append::AppendToTranscript;
 pub use types::{
     DummyProof, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint, RingCommitment,

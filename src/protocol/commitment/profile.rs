@@ -6,33 +6,14 @@ use super::generated::{
     table_entry_envelope, GeneratedScheduleTable,
 };
 use super::schedule::{
-    generated_schedule_plan_from_table, hachi_root_schedule_artifact,
-    planned_log_basis_at_level_from_schedule, planned_recursive_suffix_bytes_from_schedule,
-    planned_schedule, planned_schedule_key_from_schedule, HachiRootBatchSummary,
-    HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
+    generated_schedule_plan_from_table, planned_log_basis_at_level_from_schedule,
+    planned_recursive_suffix_bytes_from_schedule, planned_schedule,
+    planned_schedule_key_from_schedule, HachiScheduleInputs, HachiSchedulePlan,
 };
 use crate::algebra::Prime128Offset275;
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
 use crate::{CanonicalField, FieldCore};
-
-/// Dynamic proof-family selector used by prime-profile root planning.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DynamicScheduleFamily {
-    /// Full-field coefficient family.
-    Full,
-    /// Onehot/small-coefficient family.
-    OneHot,
-}
-
-/// Selected root schedule for one dynamic commitment/proof context.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DynamicRootScheduleSelection {
-    /// Chosen root ring degree.
-    pub root_d: usize,
-    /// Estimated total proof bytes for the chosen root schedule.
-    pub total_proof_bytes: usize,
-}
 
 fn generated_schedule<Cfg: CommitmentConfig>(
     max_num_vars: usize,
@@ -45,61 +26,6 @@ fn generated_schedule<Cfg: CommitmentConfig>(
         HachiError::InvalidSetup(format!(
             "missing generated schedule for {} at max_num_vars={max_num_vars}",
             std::any::type_name::<Cfg>()
-        ))
-    })
-}
-
-fn select_root_schedule_for_cfg<Cfg: CommitmentConfig, const D: usize>(
-    key: HachiScheduleLookupKey,
-) -> Result<DynamicRootScheduleSelection, HachiError> {
-    if key.max_num_vars == key.num_vars
-        && key.layout_num_claims == 1
-        && key.batch == HachiRootBatchSummary::singleton()
-    {
-        if let Some(plan) = Cfg::schedule_plan(key.max_num_vars)? {
-            return Ok(DynamicRootScheduleSelection {
-                root_d: D,
-                total_proof_bytes: plan.exact_proof_bytes,
-            });
-        }
-    }
-    let artifact = hachi_root_schedule_artifact::<Cfg, D>(key)?;
-    Ok(DynamicRootScheduleSelection {
-        root_d: D,
-        total_proof_bytes: artifact.total_proof_bytes,
-    })
-}
-
-fn select_smallest_root_schedule<Cfg32, Cfg64, Cfg128>(
-    key: HachiScheduleLookupKey,
-) -> Result<DynamicRootScheduleSelection, HachiError>
-where
-    Cfg32: CommitmentConfig,
-    Cfg64: CommitmentConfig,
-    Cfg128: CommitmentConfig,
-{
-    let mut best: Option<DynamicRootScheduleSelection> = None;
-    for candidate in [
-        select_root_schedule_for_cfg::<Cfg32, 32>(key),
-        select_root_schedule_for_cfg::<Cfg64, 64>(key),
-        select_root_schedule_for_cfg::<Cfg128, 128>(key),
-    ] {
-        let Ok(candidate) = candidate else {
-            continue;
-        };
-        if best.as_ref().is_none_or(|best_sel| {
-            candidate.total_proof_bytes < best_sel.total_proof_bytes
-                || (candidate.total_proof_bytes == best_sel.total_proof_bytes
-                    && candidate.root_d < best_sel.root_d)
-        }) {
-            best = Some(candidate);
-        }
-    }
-
-    best.ok_or_else(|| {
-        HachiError::InvalidInput(format!(
-            "dynamic root selection found no supported root D for num_vars={}, layout_num_claims={}, batch_claims={}",
-            key.num_vars, key.layout_num_claims, key.batch.num_claims
         ))
     })
 }
@@ -289,83 +215,6 @@ pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
     }
 }
 
-/// Internal dynamic-root selection hooks layered on top of a public profile.
-pub(crate) trait CommitmentFieldProfileDynamic:
-    CommitmentFieldProfile + CommitmentFieldProfileSchedule
-{
-    /// Optional profile-level override for dynamic root selection.
-    fn preferred_dynamic_root_d(
-        family: DynamicScheduleFamily,
-        key: HachiScheduleLookupKey,
-    ) -> Option<usize> {
-        let _ = (family, key);
-        None
-    }
-
-    /// Select the dynamic root schedule for one public proof family.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the profile cannot choose or materialize a
-    /// supported root schedule for the provided family and public batch key.
-    fn select_dynamic_root_schedule(
-        family: DynamicScheduleFamily,
-        key: HachiScheduleLookupKey,
-    ) -> Result<DynamicRootScheduleSelection, HachiError> {
-        if let Some(root_d) = Self::preferred_dynamic_root_d(family, key) {
-            return match (family, root_d) {
-                (DynamicScheduleFamily::Full, 32) => {
-                    select_root_schedule_for_cfg::<Self::FullCfg32, 32>(key)
-                }
-                (DynamicScheduleFamily::Full, 64) => {
-                    select_root_schedule_for_cfg::<Self::FullCfg64, 64>(key)
-                }
-                (DynamicScheduleFamily::Full, 128) => {
-                    select_root_schedule_for_cfg::<Self::FullCfg128, 128>(key)
-                }
-                (DynamicScheduleFamily::OneHot, 32) => {
-                    select_root_schedule_for_cfg::<Self::OneHotCfg32, 32>(key)
-                }
-                (DynamicScheduleFamily::OneHot, 64) => {
-                    select_root_schedule_for_cfg::<Self::OneHotCfg64, 64>(key)
-                }
-                (DynamicScheduleFamily::OneHot, 128) => {
-                    select_root_schedule_for_cfg::<Self::OneHotCfg128, 128>(key)
-                }
-                _ => Err(HachiError::InvalidSetup(format!(
-                    "unsupported dynamic root D={root_d} for {family:?} family"
-                ))),
-            };
-        }
-
-        match family {
-            DynamicScheduleFamily::Full => {
-                select_smallest_root_schedule::<Self::FullCfg32, Self::FullCfg64, Self::FullCfg128>(
-                    key,
-                )
-            }
-            DynamicScheduleFamily::OneHot => select_smallest_root_schedule::<
-                Self::OneHotCfg32,
-                Self::OneHotCfg64,
-                Self::OneHotCfg128,
-            >(key),
-        }
-    }
-
-    /// Select only the dynamic root ring degree for one public proof family.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the profile cannot choose or materialize a
-    /// supported root schedule for the provided family and public batch key.
-    fn select_dynamic_root_ring_dim(
-        family: DynamicScheduleFamily,
-        key: HachiScheduleLookupKey,
-    ) -> Result<usize, HachiError> {
-        Ok(Self::select_dynamic_root_schedule(family, key)?.root_d)
-    }
-}
-
 fn uniform_pm1_stage1_challenge(weight: usize) -> SparseChallengeConfig {
     SparseChallengeConfig::Uniform {
         weight,
@@ -405,13 +254,6 @@ fn d128_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
 
 const FP128_D128_AUDITED_ROOT_RANK2_FROM_NV: usize = 54;
 const FP128_D128_AUDITED_ROOT_A_RANK2_FROM_NV: usize = 59;
-
-fn fp128_exact_fit_singleton_prefers_d32(key: HachiScheduleLookupKey) -> bool {
-    key.max_num_vars == key.num_vars
-        && key.layout_num_claims == 1
-        && key.batch == HachiRootBatchSummary::singleton()
-        && (6..=63).contains(&key.num_vars)
-}
 
 /// Planner/security profile for the blessed fp128 prime `2^128 - 275`.
 #[derive(Clone, Copy, Debug, Default)]
@@ -497,15 +339,6 @@ impl CommitmentFieldProfileSchedule for Fp128PrimeProfile {
             (128, 128) => Some(fp128_d128_full_table()),
             _ => None,
         }
-    }
-}
-
-impl CommitmentFieldProfileDynamic for Fp128PrimeProfile {
-    fn preferred_dynamic_root_d(
-        _family: DynamicScheduleFamily,
-        key: HachiScheduleLookupKey,
-    ) -> Option<usize> {
-        fp128_exact_fit_singleton_prefers_d32(key).then_some(32)
     }
 }
 

@@ -7,7 +7,6 @@ use crate::error::HachiError;
 use crate::protocol::hachi_poly_ops::{HachiPolyOps, OneHotIndex};
 use crate::protocol::opening_point::BasisMode;
 use crate::protocol::proof::FlatDigitBlocks;
-use crate::protocol::root_poly::MultilinearPolynomial;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
 
@@ -156,122 +155,6 @@ where
     /// The root layout is derived deterministically from the opening points.
     ///
     /// Same-point batching is the special case `opening_points.len() == 1`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when verification fails.
-    #[allow(clippy::too_many_arguments)]
-    fn batched_verify<T: Transcript<F>>(
-        proof: &Self::BatchedProof,
-        setup: &Self::VerifierSetup,
-        transcript: &mut T,
-        opening_points: &[&[F]],
-        opening_groups_by_point: &[&[&[F]]],
-        commitments_by_point: &[&[Self::Commitment]],
-        basis: BasisMode,
-    ) -> Result<(), HachiError>;
-
-    /// Protocol identifier.
-    fn protocol_name() -> &'static [u8];
-}
-
-/// Public PCS interface with root ring selection chosen from runtime context.
-///
-/// Callers provide D-independent root polynomials via
-/// [`MultilinearPolynomial`]. The implementation builds one preferred root-ring
-/// setup eagerly and materializes the other supported root rings lazily as
-/// commitment groups actually select them from public runtime inputs.
-pub trait DynamicCommitmentScheme<F>: Clone + Send + Sync + 'static
-where
-    F: FieldCore + CanonicalField,
-{
-    /// Prover setup parameters.
-    type ProverSetup: Clone + Send + Sync;
-    /// Verifier setup parameters.
-    type VerifierSetup: Clone + Send + Sync;
-    /// Commitment object.
-    type Commitment: Clone + PartialEq + Send + Sync + AppendToTranscript<F>;
-    /// Evaluation/opening proof object.
-    type Proof: Clone + Send + Sync;
-    /// Batched same-point evaluation/opening proof object.
-    type BatchedProof: Clone + Send + Sync;
-    /// Prover-side hint produced for one commitment group.
-    type CommitHint: Clone + Send + Sync;
-    /// Prover-side hint collection for same-point grouped openings.
-    type BatchedCommitHint: Clone + Send + Sync;
-
-    /// Build prover setup for maximum polynomial dimension and batch capacity.
-    ///
-    /// # Panics
-    ///
-    /// Panics if internal setup fails (programming error, not adversarial
-    /// input).
-    fn setup_prover(max_num_vars: usize, max_num_batched_polys: usize) -> Self::ProverSetup;
-
-    /// Derive verifier setup from prover setup.
-    fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;
-
-    /// Commit to D-independent root polynomials.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when setup/parameter constraints are not satisfied.
-    fn commit(
-        polys: &[MultilinearPolynomial<F>],
-        setup: &Self::ProverSetup,
-    ) -> Result<(Self::Commitment, Self::CommitHint), HachiError>;
-
-    /// Produce an opening proof at `opening_point`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the opening point is invalid or proof generation
-    /// fails.
-    #[allow(clippy::too_many_arguments)]
-    fn prove<T: Transcript<F>>(
-        setup: &Self::ProverSetup,
-        poly: &MultilinearPolynomial<F>,
-        opening_point: &[F],
-        hint: Self::CommitHint,
-        transcript: &mut T,
-        commitment: &Self::Commitment,
-        basis: BasisMode,
-    ) -> Result<Self::Proof, HachiError>;
-
-    /// Produce a fused batched opening proof for one or more opening points.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any opening point is invalid or proof generation
-    /// fails.
-    #[allow(clippy::too_many_arguments)]
-    fn batched_prove<T: Transcript<F>>(
-        setup: &Self::ProverSetup,
-        poly_groups_by_point: &[&[&[MultilinearPolynomial<F>]]],
-        opening_points: &[&[F]],
-        hints_by_point: Vec<Self::BatchedCommitHint>,
-        transcript: &mut T,
-        commitments_by_point: &[&[Self::Commitment]],
-        basis: BasisMode,
-    ) -> Result<Self::BatchedProof, HachiError>;
-
-    /// Verify an opening proof.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when verification fails.
-    #[allow(clippy::too_many_arguments)]
-    fn verify<T: Transcript<F>>(
-        proof: &Self::Proof,
-        setup: &Self::VerifierSetup,
-        transcript: &mut T,
-        opening_point: &[F],
-        opening: &F,
-        commitment: &Self::Commitment,
-        basis: BasisMode,
-    ) -> Result<(), HachiError>;
-
-    /// Verify a fused batched opening proof over one or more opening points.
     ///
     /// # Errors
     ///

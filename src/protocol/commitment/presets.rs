@@ -4,9 +4,6 @@ use super::config::{
     CommitmentPreset, GeneratedAdaptivePolicy, PlannedAdaptiveBoundedPolicy, StaticBoundedPolicy,
 };
 use crate::protocol::commitment::profile::{CommitmentFieldProfile, Fp128PrimeProfile};
-use crate::protocol::dynamic_commitment_scheme::{
-    DynamicFullFamily, DynamicFullScheme, DynamicOneHotFamily, DynamicOneHotScheme,
-};
 
 /// Default fp128 protocol presets on `p = 2^128 - 275`.
 pub mod fp128 {
@@ -60,13 +57,4 @@ pub mod fp128 {
     pub type D32LogBasis = D32AdaptiveBounded<3>;
     /// Onehot adaptive `D=32` preset.
     pub type D32OneHot = D32AdaptiveBounded<1>;
-
-    /// Family selector for the default dynamic full-field preset.
-    pub type FullFamily = DynamicFullFamily<Profile>;
-    /// Default full-field preset with runtime-selected root `D`.
-    pub type Full = DynamicFullScheme<Profile>;
-    /// Family selector for the default dynamic onehot preset.
-    pub type OneHotFamily = DynamicOneHotFamily<Profile>;
-    /// Default onehot preset with runtime-selected root `D`.
-    pub type OneHot = DynamicOneHotScheme<Profile>;
 }

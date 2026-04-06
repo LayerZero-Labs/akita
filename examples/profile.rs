@@ -15,10 +15,8 @@ use hachi_pcs::protocol::proof::{
 };
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::{
-    BasisMode, BlockOrder, CanonicalField, CommitmentScheme, DenseMultilinear,
-    DynamicCommitmentScheme, DynamicHachiCommitmentScheme, DynamicRootConfigFamily, FieldCore,
-    FromSmallInt, HachiPolyOps, HachiSerialize, MultilinearPolynomial, OneHotMultilinear,
-    Transcript,
+    BasisMode, BlockOrder, CanonicalField, CommitmentScheme, FieldCore, FromSmallInt, HachiPolyOps,
+    HachiSerialize, Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -599,266 +597,35 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     }
 }
 
-fn dynamic_singleton_plan<Family: DynamicRootConfigFamily<F>>(
-    nv: usize,
-    root_d: usize,
-) -> Option<HachiSchedulePlan> {
-    match root_d {
-        32 => Family::Cfg32::schedule_plan(nv).expect("dynamic singleton schedule plan"),
-        64 => Family::Cfg64::schedule_plan(nv).expect("dynamic singleton schedule plan"),
-        128 => Family::Cfg128::schedule_plan(nv).expect("dynamic singleton schedule plan"),
-        _ => unreachable!("dynamic schemes only select D in 32/64/128"),
+fn best_full_d(nv: usize) -> usize {
+    let d32_bytes = fp128::D32Full::schedule_plan(nv)
+        .ok()
+        .flatten()
+        .map(|p| p.exact_proof_bytes);
+    let d128_bytes = fp128::D128Full::schedule_plan(nv)
+        .ok()
+        .flatten()
+        .map(|p| p.exact_proof_bytes);
+    match (d32_bytes, d128_bytes) {
+        (Some(b32), Some(b128)) if b32 <= b128 => 32,
+        (None, Some(_)) => 128,
+        _ => 32,
     }
 }
 
-fn run_dynamic_dense_mode<Family>(label: &str, title: &str, nv: usize)
-where
-    Family: DynamicRootConfigFamily<F>,
-{
-    type Scheme<Family> = DynamicHachiCommitmentScheme<Family>;
-
-    tracing::info!("{}", title);
-
-    let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
-    let pt: Vec<F> = (0..nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-        .collect();
-    let decomp = Family::Cfg128::decomposition();
-    let half_bound = 1i64 << (decomp.log_commit_bound.min(62) - 1);
-    let evals: Vec<F> = if decomp.log_commit_bound >= 128 {
-        (0..(1usize << nv))
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-            .collect()
-    } else {
-        (0..(1usize << nv))
-            .map(|_| F::from_i64(rng.gen_range(-half_bound..half_bound)))
-            .collect()
-    };
-    let dense = DenseMultilinear::from_field_evals(nv, &evals).unwrap();
-    let poly: MultilinearPolynomial<F> = dense.clone().into();
-
-    let t0 = Instant::now();
-    let setup = <Scheme<Family> as DynamicCommitmentScheme<F>>::setup_prover(nv, 1);
-    tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "setup");
-
-    let t0 = Instant::now();
-    let (commitment, hint) =
-        <Scheme<Family> as DynamicCommitmentScheme<F>>::commit(std::slice::from_ref(&poly), &setup)
-            .unwrap();
-    let root_d = commitment.root_ring_dim();
-    tracing::info!(
-        label,
-        root_d,
-        elapsed_s = t0.elapsed().as_secs_f64(),
-        "commit"
-    );
-
-    let plan = dynamic_singleton_plan::<Family>(nv, root_d);
-    let opening = poly.evaluate(&pt);
-
-    let t0 = Instant::now();
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
-    let proof = <Scheme<Family> as DynamicCommitmentScheme<F>>::prove(
-        &setup,
-        &poly,
-        &pt,
-        hint,
-        &mut prover_transcript,
-        &commitment,
-        BasisMode::Lagrange,
-    )
-    .unwrap();
-    tracing::info!(
-        label,
-        root_d,
-        elapsed_s = t0.elapsed().as_secs_f64(),
-        "prove"
-    );
-    print_proof_summary(label, &proof, plan.as_ref());
-
-    let t0 = Instant::now();
-    let verifier_setup = <Scheme<Family> as DynamicCommitmentScheme<F>>::setup_verifier(&setup);
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
-    match <Scheme<Family> as DynamicCommitmentScheme<F>>::verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        &pt,
-        &opening,
-        &commitment,
-        BasisMode::Lagrange,
-    ) {
-        Ok(()) => tracing::info!(
-            label,
-            root_d,
-            elapsed_s = t0.elapsed().as_secs_f64(),
-            "verify OK"
-        ),
-        Err(e) => tracing::error!(
-            label,
-            root_d,
-            elapsed_s = t0.elapsed().as_secs_f64(),
-            error = %e,
-            "verify FAILED"
-        ),
-    }
-}
-
-fn run_dynamic_onehot_mode<Family>(label: &str, title: &str, nv: usize, num_polys: usize)
-where
-    Family: DynamicRootConfigFamily<F>,
-{
-    type Scheme<Family> = DynamicHachiCommitmentScheme<Family>;
-
-    tracing::info!("{}", title);
-
-    let onehots: Vec<OneHotMultilinear> = (0..num_polys)
-        .map(|poly_idx| {
-            let mut rng = StdRng::seed_from_u64(0xbeef_cafe ^ ((poly_idx as u64 + 1) << 32));
-            let onehot_k = onehot_k_for_num_vars(nv);
-            let total_chunks = (1usize << nv) / onehot_k;
-            let indices: Vec<Option<usize>> = (0..total_chunks)
-                .map(|_| Some(rng.gen_range(0..onehot_k)))
-                .collect();
-            OneHotMultilinear::new(nv, onehot_k, indices).unwrap()
-        })
-        .collect();
-    let polys: Vec<MultilinearPolynomial<F>> = onehots
-        .iter()
-        .cloned()
-        .map(MultilinearPolynomial::from)
-        .collect();
-    let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
-    let pt: Vec<F> = (0..nv)
-        .map(|_| F::from_canonical_u128_reduced(point_rng.gen::<u128>()))
-        .collect();
-
-    let t0 = Instant::now();
-    let setup = <Scheme<Family> as DynamicCommitmentScheme<F>>::setup_prover(nv, num_polys);
-    tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "setup");
-
-    let t0 = Instant::now();
-    let (commitment, hint) =
-        <Scheme<Family> as DynamicCommitmentScheme<F>>::commit(&polys, &setup).unwrap();
-    let root_d = commitment.root_ring_dim();
-    tracing::info!(
-        label,
-        root_d,
-        elapsed_s = t0.elapsed().as_secs_f64(),
-        "commit"
-    );
-
-    let openings: Vec<F> = polys.iter().map(|poly| poly.evaluate(&pt)).collect();
-
-    let verifier_setup = <Scheme<Family> as DynamicCommitmentScheme<F>>::setup_verifier(&setup);
-    if num_polys == 1 {
-        let plan = dynamic_singleton_plan::<Family>(nv, root_d);
-        let poly = &polys[0];
-        let opening = openings[0];
-
-        let t0 = Instant::now();
-        let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
-        let proof = <Scheme<Family> as DynamicCommitmentScheme<F>>::prove(
-            &setup,
-            poly,
-            &pt,
-            hint,
-            &mut prover_transcript,
-            &commitment,
-            BasisMode::Lagrange,
-        )
-        .unwrap();
-        tracing::info!(
-            label,
-            root_d,
-            elapsed_s = t0.elapsed().as_secs_f64(),
-            "prove"
-        );
-        print_proof_summary(label, &proof, plan.as_ref());
-
-        let t0 = Instant::now();
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
-        match <Scheme<Family> as DynamicCommitmentScheme<F>>::verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            &pt,
-            &opening,
-            &commitment,
-            BasisMode::Lagrange,
-        ) {
-            Ok(()) => tracing::info!(
-                label,
-                root_d,
-                elapsed_s = t0.elapsed().as_secs_f64(),
-                "verify OK"
-            ),
-            Err(e) => tracing::error!(
-                label,
-                root_d,
-                elapsed_s = t0.elapsed().as_secs_f64(),
-                error = %e,
-                "verify FAILED"
-            ),
-        }
-    } else {
-        let poly_refs: Vec<&[MultilinearPolynomial<F>]> = vec![polys.as_slice()];
-        let point_refs: Vec<&[&[MultilinearPolynomial<F>]]> = vec![poly_refs.as_slice()];
-        let commitments = [commitment];
-        let commitment_refs: Vec<&[<Scheme<Family> as DynamicCommitmentScheme<F>>::Commitment]> =
-            vec![commitments.as_slice()];
-        let opening_groups = [&openings[..]];
-
-        let t0 = Instant::now();
-        let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
-        let proof = <Scheme<Family> as DynamicCommitmentScheme<F>>::batched_prove(
-            &setup,
-            &point_refs,
-            &[&pt[..]],
-            vec![vec![hint]],
-            &mut prover_transcript,
-            &commitment_refs,
-            BasisMode::Lagrange,
-        )
-        .unwrap();
-        tracing::info!(
-            label,
-            root_d,
-            elapsed_s = t0.elapsed().as_secs_f64(),
-            "prove"
-        );
-        match root_d {
-            32 => print_batched_proof_summary::<32>(label, &proof),
-            64 => print_batched_proof_summary::<64>(label, &proof),
-            128 => print_batched_proof_summary::<128>(label, &proof),
-            _ => unreachable!("dynamic schemes only select D in 32/64/128"),
-        }
-
-        let t0 = Instant::now();
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
-        match <Scheme<Family> as DynamicCommitmentScheme<F>>::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            &[&pt[..]],
-            &[&opening_groups[..]],
-            &commitment_refs,
-            BasisMode::Lagrange,
-        ) {
-            Ok(()) => tracing::info!(
-                label,
-                root_d,
-                elapsed_s = t0.elapsed().as_secs_f64(),
-                "verify OK"
-            ),
-            Err(e) => tracing::error!(
-                label,
-                root_d,
-                elapsed_s = t0.elapsed().as_secs_f64(),
-                error = %e,
-                "verify FAILED"
-            ),
-        }
+fn best_onehot_d(nv: usize) -> usize {
+    let d32_bytes = fp128::D32OneHot::schedule_plan(nv)
+        .ok()
+        .flatten()
+        .map(|p| p.exact_proof_bytes);
+    let d64_bytes = fp128::D64OneHot::schedule_plan(nv)
+        .ok()
+        .flatten()
+        .map(|p| p.exact_proof_bytes);
+    match (d32_bytes, d64_bytes) {
+        (Some(b32), Some(b64)) if b32 <= b64 => 32,
+        (None, Some(_)) => 64,
+        _ => 32,
     }
 }
 
@@ -984,23 +751,30 @@ fn fixed_onehot_title(d: usize, nv: usize, num_polys: usize) -> String {
 
 fn run_profile_full(nv: usize, num_polys: usize) {
     assert_singleton_mode("full", num_polys);
-    run_dynamic_dense_mode::<fp128::FullFamily>(
-        "dense",
-        "=== full (q=2^128-275, runtime-selected root D, dense) ===",
-        nv,
-    );
+    let d = best_full_d(nv);
+    let title = format!("=== full (q=2^128-275, D={d}, dense) ===");
+    match d {
+        32 => run_dense_mode::<32, fp128::D32Full>(&title, nv),
+        128 => run_dense_mode::<128, fp128::D128Full>(&title, nv),
+        _ => unreachable!(),
+    }
 }
 
 fn run_profile_onehot(nv: usize, num_polys: usize) {
     let onehot_k = onehot_k_for_num_vars(nv);
+    let d = best_onehot_d(nv);
     let title = if num_polys == 1 {
-        format!("=== onehot (q=2^128-275, runtime-selected root D, 1-of-{onehot_k}) ===")
+        format!("=== onehot (q=2^128-275, D={d}, 1-of-{onehot_k}) ===")
     } else {
         format!(
-            "=== onehot batched (q=2^128-275, runtime-selected root D, 1-of-{onehot_k}, same-point batch={num_polys}) ==="
+            "=== onehot batched (q=2^128-275, D={d}, 1-of-{onehot_k}, same-point batch={num_polys}) ==="
         )
     };
-    run_dynamic_onehot_mode::<fp128::OneHotFamily>("onehot", &title, nv, num_polys);
+    match d {
+        32 => run_onehot_mode::<32, fp128::D32OneHot>(&title, nv, num_polys),
+        64 => run_onehot_mode::<64, fp128::D64OneHot>(&title, nv, num_polys),
+        _ => unreachable!(),
+    }
 }
 
 fn run_profile_full_d128(nv: usize, num_polys: usize) {
