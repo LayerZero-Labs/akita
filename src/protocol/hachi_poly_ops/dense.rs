@@ -4,6 +4,7 @@
 //! dense algorithms — balanced-digit decomposition, NTT-based matrix-vector
 //! multiply, and parallel block folds.
 
+use crate::algebra::ring::cyclotomic::decompose_centering_threshold;
 use crate::algebra::ring::sparse_challenge::SparseChallenge;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
@@ -185,13 +186,15 @@ where
         let coeffs = &self.coeffs;
 
         let q = (-F::one()).to_canonical_u128() + 1;
+        let threshold = decompose_centering_threshold(num_digits, log_basis, q);
         let params = DecomposeParams {
-            half_q: q / 2,
+            threshold,
             q,
             mask: (1i128 << log_basis) - 1,
             half_b: 1i128 << (log_basis - 1),
             b_val: 1i128 << log_basis,
             log_basis,
+            overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
         };
 
         if num_digits == 1 {

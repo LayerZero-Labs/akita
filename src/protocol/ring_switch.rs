@@ -1623,8 +1623,7 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     }
     let mut r_planes = vec![[0i8; D]; levels];
     let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    let decompose_params = BalancedDecomposePow2I8Params::new(levels, log_basis, q, half_q);
+    let decompose_params = BalancedDecomposePow2I8Params::new(levels, log_basis, q);
     for ri in r {
         r_planes.fill([0i8; D]);
         ri.balanced_decompose_pow2_i8_into_with_params(&mut r_planes, &decompose_params);
@@ -1911,6 +1910,39 @@ mod tests {
             assert_eq!(
                 got, expected,
                 "centered i32 decomposition mismatch for num_digits={num_digits} log_basis={log_basis}"
+            );
+        }
+    }
+
+    #[test]
+    fn asymmetric_centering_decompose_roundtrip() {
+        use crate::protocol::commitment::compute_num_digits_full_field;
+
+        type F = fp128::Field;
+        const D: usize = 64;
+
+        let mut rng = rand::thread_rng();
+
+        for log_basis in [2u32, 3, 4, 5, 6] {
+            let field_bits = 128u32;
+            let num_digits = compute_num_digits_full_field(field_bits, log_basis);
+
+            let ring = CyclotomicRing::<F, D>::random(&mut rng);
+
+            let mut digits = vec![CyclotomicRing::<F, D>::zero(); num_digits];
+            ring.balanced_decompose_pow2_into(&mut digits, log_basis);
+            let recomposed = CyclotomicRing::gadget_recompose_pow2(&digits, log_basis);
+            assert_eq!(
+                ring, recomposed,
+                "field-element roundtrip failed for log_basis={log_basis}, num_digits={num_digits}"
+            );
+
+            let mut i8_digits = vec![[0i8; D]; num_digits];
+            ring.balanced_decompose_pow2_i8_into(&mut i8_digits, log_basis);
+            let recomposed_i8 = CyclotomicRing::gadget_recompose_pow2_i8(&i8_digits, log_basis);
+            assert_eq!(
+                ring, recomposed_i8,
+                "i8 roundtrip failed for log_basis={log_basis}, num_digits={num_digits}"
             );
         }
     }

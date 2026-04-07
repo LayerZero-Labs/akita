@@ -237,9 +237,7 @@ where
             let depth_open = layout.num_digits_open;
             let log_basis = layout.log_basis;
             let q = (-F::one()).to_canonical_u128() + 1;
-            let half_q = q / 2;
-            let decompose_params =
-                BalancedDecomposePow2I8Params::new(depth_open, log_basis, q, half_q);
+            let decompose_params = BalancedDecomposePow2I8Params::new(depth_open, log_basis, q);
             let total_rows: usize = pre_folded_by_poly.iter().map(Vec::len).sum();
             let block_sizes = vec![depth_open; total_rows];
             let mut w_hat = FlatDigitBlocks::zeroed(block_sizes)
@@ -476,9 +474,8 @@ where
             let depth_open = layout.num_digits_open;
             let log_basis = layout.log_basis;
             let q = (-F::one()).to_canonical_u128() + 1;
-            let half_q = q / 2;
-            let decompose_params =
-                BalancedDecomposePow2I8Params::new(depth_open, log_basis, q, half_q);
+
+            let decompose_params = BalancedDecomposePow2I8Params::new(depth_open, log_basis, q);
             let mut w_hat = FlatDigitBlocks::zeroed(vec![depth_open; pre_folded.len()])?;
             for (idx, w_i) in pre_folded.iter().enumerate() {
                 let start = idx * depth_open;
@@ -668,9 +665,8 @@ where
             let depth_open = layout.num_digits_open;
             let log_basis = layout.log_basis;
             let q = (-F::one()).to_canonical_u128() + 1;
-            let half_q = q / 2;
-            let decompose_params =
-                BalancedDecomposePow2I8Params::new(depth_open, log_basis, q, half_q);
+
+            let decompose_params = BalancedDecomposePow2I8Params::new(depth_open, log_basis, q);
             let mut w_hat = FlatDigitBlocks::zeroed(vec![depth_open; pre_folded.len()])?;
             for (idx, w_i) in pre_folded.iter().enumerate() {
                 let start = idx * depth_open;

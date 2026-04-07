@@ -100,6 +100,32 @@ pub fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
     levels.max(1)
 }
 
+/// Compute the decomposition depth for full-field values using asymmetric
+/// centering: `ceil(field_bits / log_basis)` with no +1 correction.
+///
+/// # Panics
+///
+/// Panics if `log_basis` is 0 or >= 128.
+pub fn compute_num_digits_full_field(field_bits: u32, log_basis: u32) -> usize {
+    assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
+    if field_bits == 0 {
+        return 1;
+    }
+    (field_bits as usize).div_ceil(log_basis as usize).max(1)
+}
+
+/// Choose the correct digit-count function for a given bit-width bound.
+///
+/// Full-field bounds (>=128 bits) use asymmetric centering (no +1 correction).
+/// Smaller bounds use symmetric centering (possible +1 correction).
+pub fn num_digits_for_bound(log_bound: u32, log_basis: u32) -> usize {
+    if log_bound >= 128 {
+        compute_num_digits_full_field(log_bound, log_basis)
+    } else {
+        compute_num_digits(log_bound, log_basis)
+    }
+}
+
 /// Compute the decomposition depth for the folded witness `z_pre`
 /// (τ in the paper).
 ///
@@ -165,8 +191,8 @@ pub(super) fn optimal_m_r_split_with_params(
     }
 
     let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
-    let delta_open = compute_num_digits(open_bound, decomp.log_basis) as u64;
-    let delta_commit = compute_num_digits(decomp.log_commit_bound, decomp.log_basis) as u64;
+    let delta_open = num_digits_for_bound(open_bound, decomp.log_basis) as u64;
+    let delta_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis) as u64;
     let c1 = delta_open + params.n_a as u64 * delta_open;
 
     let mut best_r = reduced_vars / 2;
@@ -264,9 +290,9 @@ impl HachiCommitmentLayout {
             level: 0,
             current_w_len,
         });
-        let depth_commit = compute_num_digits(decomp.log_commit_bound, decomp.log_basis);
+        let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
         let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
-        let depth_open = compute_num_digits(open_bound, decomp.log_basis);
+        let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
         let depth_fold =
             compute_num_digits_fold(r_vars, params.challenge_l1_mass, decomp.log_basis);
         Self::new_with_decomp(
@@ -1074,8 +1100,8 @@ fn derived_root_commitment_layout_from_params<Cfg: CommitmentConfig>(
         optimal_m_r_split_with_params(params, decomp, reduced_vars, 0)
     };
     let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
-    let num_digits_commit = compute_num_digits(decomp.log_commit_bound, decomp.log_basis);
-    let num_digits_open = compute_num_digits(open_bound, decomp.log_basis);
+    let num_digits_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
+    let num_digits_open = num_digits_for_bound(open_bound, decomp.log_basis);
     let num_digits_fold =
         compute_num_digits_fold(r_vars, params.challenge_l1_mass, decomp.log_basis);
     HachiCommitmentLayout::new_with_decomp(

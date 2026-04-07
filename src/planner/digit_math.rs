@@ -24,7 +24,7 @@ fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
 }
 
 /// Minimum number of balanced base-`2^log_basis` digits needed to represent
-/// any value in `[-V, V]` where `V < 2^log_bound`.
+/// any value in `[-V, V]` where `V < 2^log_bound`, using symmetric centering.
 ///
 /// **Balanced digits:** each digit `d_i ∈ [-b/2, b/2-1]` with `b = 2^log_basis`.
 /// A number is represented as `Σ d_i · b^i` for `i = 0..n-1`.
@@ -34,6 +34,9 @@ fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
 /// 2. When the bit budget is tight (`n * log_basis ≤ log_bound`), verify that
 ///    the balanced range actually covers `2^(log_bound-1) - 1`. If not, add
 ///    one more digit.
+///
+/// For full-field bounds (128 bits), prefer [`num_digits_for_bound`] which
+/// uses asymmetric centering to avoid the +1 correction.
 ///
 /// # Examples
 ///
@@ -70,6 +73,32 @@ pub fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
     }
 
     num_digits.max(1)
+}
+
+/// Decomposition depth for full-field values using asymmetric centering:
+/// `ceil(field_bits / log_basis)` with no +1 correction.
+///
+/// # Panics
+///
+/// Panics if `log_basis` is 0 or >= 128.
+pub fn compute_num_digits_full_field(field_bits: u32, log_basis: u32) -> usize {
+    assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
+    if field_bits == 0 {
+        return 1;
+    }
+    (field_bits as usize).div_ceil(log_basis as usize).max(1)
+}
+
+/// Choose the correct digit-count function for a given bit-width bound.
+///
+/// Full-field bounds (>=128 bits) use asymmetric centering (no +1 correction).
+/// Smaller bounds use symmetric centering (possible +1 correction).
+pub fn num_digits_for_bound(log_bound: u32, log_basis: u32) -> usize {
+    if log_bound >= 128 {
+        compute_num_digits_full_field(log_bound, log_basis)
+    } else {
+        compute_num_digits(log_bound, log_basis)
+    }
 }
 
 /// Number of balanced digits needed to decompose the folded witness `z_pre`.
@@ -185,10 +214,9 @@ pub fn optimal_m_r_split(
         return (reduced_vars - r, r);
     }
 
-    // δ_open: opening proof needs to cover at least 128 bits (field size).
     let open_bound = log_commit_bound.max(128);
-    let delta_open = compute_num_digits(open_bound, log_basis) as u64;
-    let delta_commit = compute_num_digits(log_commit_bound, log_basis) as u64;
+    let delta_open = num_digits_for_bound(open_bound, log_basis) as u64;
+    let delta_commit = num_digits_for_bound(log_commit_bound, log_basis) as u64;
 
     // Per-block cost from |t̂| + |ŵ|: each of the 2^r blocks contributes
     // (1 + n_A) · δ_open ring elements, matching the witness construction
@@ -267,6 +295,24 @@ mod tests {
         assert_eq!(compute_num_digits(128, 3), 43);
         assert_eq!(compute_num_digits(1, 2), 1);
         assert_eq!(compute_num_digits(0, 2), 1);
+    }
+
+    #[test]
+    fn full_field_digits() {
+        assert_eq!(compute_num_digits_full_field(128, 2), 64);
+        assert_eq!(compute_num_digits_full_field(128, 3), 43);
+        assert_eq!(compute_num_digits_full_field(128, 4), 32);
+        assert_eq!(compute_num_digits_full_field(128, 8), 16);
+    }
+
+    #[test]
+    fn num_digits_for_bound_selects_correctly() {
+        // Full-field (128 bits): asymmetric centering, no +1
+        assert_eq!(num_digits_for_bound(128, 2), 64);
+        // Sub-field bound: symmetric centering
+        assert_eq!(num_digits_for_bound(10, 2), compute_num_digits(10, 2));
+        // Full-field with log_basis=3: asymmetric gives same as symmetric
+        assert_eq!(num_digits_for_bound(128, 3), 43);
     }
 
     #[test]
