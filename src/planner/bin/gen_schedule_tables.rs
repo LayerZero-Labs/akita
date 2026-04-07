@@ -292,7 +292,7 @@ fn emit_family_module(spec: FamilySpec) -> Result<String, String> {
     .map_err(|err| err.to_string())?;
     writeln!(
         out,
-        "use super::{{GeneratedDirectStep, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleKey, GeneratedScheduleTableEntry, GeneratedStep}};"
+        "use super::{{\n    GeneratedDirectStep, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleKey,\n    GeneratedScheduleTableEntry, GeneratedStep,\n}};"
     )
     .map_err(|err| err.to_string())?;
     writeln!(out).map_err(|err| err.to_string())?;
