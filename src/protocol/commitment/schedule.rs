@@ -1694,20 +1694,12 @@ pub(crate) fn planned_recursive_suffix_bytes_with_log_basis_and_envelope<Cfg: Co
     planning_envelope: HachiBatchPlanningEnvelope,
 ) -> Result<usize, HachiError> {
     if let Some(schedule) = Cfg::schedule_plan(root_key)? {
-        let inputs = HachiScheduleInputs {
-            max_num_vars: root_key.max_num_vars,
-            level,
-            current_w_len,
-        };
-        let (min_log_basis, max_log_basis) = Cfg::log_basis_search_range(inputs);
         return planned_recursive_suffix_bytes_with_log_basis_from_schedule_and_envelope::<Cfg>(
             &schedule,
             root_key.max_num_vars,
             level,
             current_w_len,
             current_log_basis,
-            min_log_basis,
-            max_log_basis,
             planning_envelope,
         );
     }
@@ -1754,7 +1746,6 @@ pub(crate) fn planned_next_log_basis_with_current_basis_and_envelope<Cfg: Commit
                 }
             }
         }
-        let (_min_log_basis, _max_log_basis) = Cfg::log_basis_search_range(next_inputs);
         return dp_best_basis_with_current_basis_and_envelope::<Cfg>(
             next_inputs,
             current_log_basis,
@@ -1893,7 +1884,6 @@ pub fn recursive_suffix_estimate_with_log_basis<Cfg: CommitmentConfig>(
             level,
             current_w_len,
         };
-        let (min_log_basis, max_log_basis) = Cfg::log_basis_search_range(inputs);
         let exact_state_match =
             exact_planned_state_index(&schedule, inputs, Some(current_log_basis)).is_some();
         let table_bytes = planned_recursive_suffix_bytes_with_log_basis_from_schedule::<Cfg>(
@@ -1902,8 +1892,6 @@ pub fn recursive_suffix_estimate_with_log_basis<Cfg: CommitmentConfig>(
             level,
             current_w_len,
             current_log_basis,
-            min_log_basis,
-            max_log_basis,
         )?;
         let actual_state_bytes = dp_recursive_suffix_bytes_with_log_basis_and_envelope::<Cfg>(
             root_key.max_num_vars,
@@ -1993,8 +1981,6 @@ pub(crate) fn planned_recursive_suffix_bytes_with_log_basis_from_schedule<Cfg: C
     level: usize,
     current_w_len: usize,
     current_log_basis: u32,
-    min_log_basis: u32,
-    max_log_basis: u32,
 ) -> Result<usize, HachiError> {
     planned_recursive_suffix_bytes_with_log_basis_from_schedule_and_envelope::<Cfg>(
         schedule,
@@ -2002,8 +1988,6 @@ pub(crate) fn planned_recursive_suffix_bytes_with_log_basis_from_schedule<Cfg: C
         level,
         current_w_len,
         current_log_basis,
-        min_log_basis,
-        max_log_basis,
         HachiBatchPlanningEnvelope::singleton::<Cfg>(),
     )
 }
@@ -2017,8 +2001,6 @@ fn planned_recursive_suffix_bytes_with_log_basis_from_schedule_and_envelope<
     level: usize,
     current_w_len: usize,
     current_log_basis: u32,
-    min_log_basis: u32,
-    max_log_basis: u32,
     planning_envelope: HachiBatchPlanningEnvelope,
 ) -> Result<usize, HachiError> {
     if let Some(state_index) = exact_planned_state_index(
@@ -2032,7 +2014,6 @@ fn planned_recursive_suffix_bytes_with_log_basis_from_schedule_and_envelope<
     ) {
         return Ok(scheduled_suffix_bytes_from_index(schedule, state_index));
     }
-    let _ = (min_log_basis, max_log_basis);
     dp_recursive_suffix_bytes_with_log_basis_and_envelope::<Cfg>(
         max_num_vars,
         level,

@@ -19,10 +19,7 @@ use crate::{CanonicalField, FieldCore};
 fn generated_schedule<Cfg: CommitmentConfig, const D: usize>(
     key: HachiScheduleLookupKey,
     table: GeneratedScheduleTable,
-    min_log_basis: u32,
-    max_log_basis: u32,
 ) -> Result<HachiSchedulePlan, HachiError> {
-    let _ = (min_log_basis, max_log_basis);
     generated_schedule_plan_from_table::<Cfg, D>(key, table)?.ok_or_else(|| {
         HachiError::InvalidSetup(format!(
             "missing generated schedule for {} at key={key:?}",
@@ -172,7 +169,7 @@ pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
                 std::any::type_name::<Cfg>()
             ))
         })?;
-        let exact_plan = generated_schedule::<Cfg, D>(key, table, min_log_basis, max_log_basis)?;
+        let exact_plan = generated_schedule::<Cfg, D>(key, table)?;
         Ok(ProfileScheduleSource::new(
             key,
             exact_plan,

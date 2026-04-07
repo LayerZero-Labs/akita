@@ -977,7 +977,7 @@ pub struct GeneratedAdaptivePolicy<Profile, const D: usize, const LOG_COMMIT_BOU
 );
 
 fn missing_generated_schedule(err: &HachiError) -> bool {
-    matches!(err, HachiError::InvalidSetup(msg) if msg.starts_with("missing generated schedule "))
+    matches!(err, HachiError::InvalidSetup(msg) if msg.starts_with("missing generated schedule for "))
 }
 
 impl<
@@ -1382,5 +1382,15 @@ mod split_tests {
                 .unwrap()
             )
         );
+    }
+
+    #[test]
+    fn missing_generated_schedule_does_not_swallow_missing_table_errors() {
+        assert!(missing_generated_schedule(&HachiError::InvalidSetup(
+            "missing generated schedule for test".to_string(),
+        )));
+        assert!(!missing_generated_schedule(&HachiError::InvalidSetup(
+            "missing generated schedule table for test".to_string(),
+        )));
     }
 }
