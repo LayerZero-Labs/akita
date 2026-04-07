@@ -85,7 +85,7 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
 }
 
 fn bench_single_case(c: &mut Criterion) {
-    let layout = Cfg::commitment_layout(SINGLE_NUM_VARS).expect("single layout");
+    let layout = Cfg::commitment_layout(SINGLE_NUM_VARS, 1).expect("single layout");
     let poly = make_onehot_poly(&layout, 0x0bee_fcaf_e000_0034);
     let point = random_point(SINGLE_NUM_VARS);
     let opening = opening_from_poly(&poly, &point, &layout);

@@ -52,7 +52,10 @@ impl CommitmentConfig for TinyConfig {
         }
     }
 
-    fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+    fn commitment_layout(
+        _max_num_vars: usize,
+        _num_claims: usize,
+    ) -> Result<HachiCommitmentLayout, HachiError> {
         HachiCommitmentLayout::new::<Self>(1, 1, &Self::decomposition())
     }
 

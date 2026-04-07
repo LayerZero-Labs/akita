@@ -23,7 +23,7 @@ use hachi_pcs::{CommitmentScheme, HachiDeserialize, HachiSerialize, Transcript};
 fn run_single_onehot(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = OneHotCfg::commitment_layout(nv).expect("layout");
+        let layout = OneHotCfg::commitment_layout(nv, 1).expect("layout");
         let total_ring = layout.num_blocks * layout.block_len;
         assert_eq!(total_ring * ONEHOT_K, 1usize << nv);
 
@@ -104,7 +104,7 @@ const DENSE_D: usize = DenseCfg::D;
 fn run_single_dense(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = DenseCfg::commitment_layout(nv).expect("layout");
+        let layout = DenseCfg::commitment_layout(nv, 1).expect("layout");
 
         let mut rng = StdRng::seed_from_u64(0xface_feed_0000 + nv as u64);
         let evals: Vec<F> = (0..1usize << nv)

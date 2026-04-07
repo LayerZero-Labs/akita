@@ -94,6 +94,32 @@ pub fn compute_num_digits_fold(r_vars: usize, challenge_l1_mass: usize, log_basi
     compute_num_digits(log_beta, log_basis)
 }
 
+/// Batched variant of [`compute_num_digits_fold`] that accounts for `num_claims`
+/// polynomials being opened simultaneously.
+///
+/// The batched beta bound includes the claim count:
+///
+///   β = challenge_l1_mass · num_claims · 2^r_vars · 2^(log_basis - 1)
+pub fn compute_num_digits_fold_batched(
+    r_vars: usize,
+    challenge_l1_mass: usize,
+    log_basis: u32,
+    num_claims: usize,
+) -> usize {
+    let shift = r_vars + (log_basis as usize) - 1;
+    if shift >= 127 || challenge_l1_mass == 0 {
+        return compute_num_digits(128, log_basis);
+    }
+    let beta = (challenge_l1_mass as u128)
+        .saturating_mul(num_claims as u128)
+        .saturating_mul(1u128 << shift);
+    if beta == 0 {
+        return 1;
+    }
+    let log_beta = 128 - beta.leading_zeros();
+    compute_num_digits(log_beta, log_basis)
+}
+
 /// Find the `(m, r)` split of `reduced_vars` that minimizes next-level witness size.
 ///
 /// # Background (Hachi paper, Section 4.5)

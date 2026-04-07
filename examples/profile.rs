@@ -1006,5 +1006,5 @@ fn main() {
 }
 
 fn resolve_layout<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> HachiCommitmentLayout {
-    Cfg::commitment_layout(nv).expect("layout")
+    Cfg::commitment_layout(nv, 1).expect("layout")
 }

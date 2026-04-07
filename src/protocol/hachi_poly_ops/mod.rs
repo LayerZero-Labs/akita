@@ -504,7 +504,7 @@ mod tests {
         let (setup, _) =
             <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16, 1)
                 .unwrap();
-        let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
+        let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars, 1).unwrap();
         let num_ring = layout.num_blocks * layout.block_len;
         let evals: Vec<TestF> = (0..num_ring * TestD)
             .map(|i| TestF::from_u64(i as u64))
@@ -547,7 +547,7 @@ mod tests {
         let (setup, _) =
             <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16, 1)
                 .unwrap();
-        let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
+        let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars, 1).unwrap();
         let total_ring = layout.num_blocks * layout.block_len;
         let onehot_k = TestD;
         let num_chunks = total_ring;
@@ -587,7 +587,7 @@ mod tests {
         let (setup, _) =
             <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16, 1)
                 .unwrap();
-        let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
+        let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars, 1).unwrap();
         let total_ring = layout.num_blocks * layout.block_len;
         let onehot_k = TestD;
         let indices: Vec<Option<usize>> = (0..total_ring)
@@ -699,7 +699,7 @@ mod tests {
         let (setup, _) =
             <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16, 1)
                 .unwrap();
-        let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
+        let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars, 1).unwrap();
         let level_params = TinyConfig::level_params(HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,

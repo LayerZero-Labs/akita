@@ -182,7 +182,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     label: &str,
     nv: usize,
 ) {
-    let layout = Cfg::commitment_layout(nv).expect("benchmark layout");
+    let layout = Cfg::commitment_layout(nv, 1).expect("benchmark layout");
     let total_ring = layout.num_blocks * layout.block_len;
     let onehot_k = D;
 

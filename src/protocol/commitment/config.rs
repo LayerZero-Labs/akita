@@ -616,11 +616,17 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// pinned; otherwise the planner computes the layout from first principles
     /// using SIS security tables and digit math.
     ///
+    /// When `num_claims > 1`, the `(m_vars, r_vars)` split is re-optimized
+    /// for the batched fold-digit cost model.
+    ///
     /// # Errors
     ///
     /// Returns an error if `max_num_vars` does not admit a valid layout.
-    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        let key = HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
+    fn commitment_layout(
+        max_num_vars: usize,
+        num_claims: usize,
+    ) -> Result<HachiCommitmentLayout, HachiError> {
+        let key = HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, num_claims);
         if let Some(plan) = Self::schedule_plan(key)? {
             if let Some(root_fold) = plan.fold_levels().next() {
                 return Ok(root_fold.layout);
@@ -637,6 +643,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             open_bound,
             stage1_config.l1_mass(),
             stage1_config.max_abs_coeff(),
+            num_claims,
         )
         .ok_or_else(|| {
             HachiError::InvalidSetup(format!(
@@ -759,7 +766,7 @@ pub(super) fn validate_and_derive_layout<
             Cfg::D
         )));
     }
-    Cfg::commitment_layout(max_num_vars)
+    Cfg::commitment_layout(max_num_vars, 1)
 }
 
 /// Ensure `max_num_vars` is sufficient for a commitment layout.
@@ -848,7 +855,10 @@ impl CommitmentConfig for SmallTestCommitmentConfig {
         }
     }
 
-    fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+    fn commitment_layout(
+        _max_num_vars: usize,
+        _num_claims: usize,
+    ) -> Result<HachiCommitmentLayout, HachiError> {
         HachiCommitmentLayout::new::<Self>(4, 2, &Self::decomposition())
     }
 

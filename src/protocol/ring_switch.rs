@@ -730,7 +730,10 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         )
     }
 
-    fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+    fn commitment_layout(
+        _max_num_vars: usize,
+        _num_claims: usize,
+    ) -> Result<HachiCommitmentLayout, HachiError> {
         Err(HachiError::InvalidSetup(
             "recursive w layout requires active level params".to_string(),
         ))
@@ -1773,7 +1776,7 @@ mod tests {
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
-        let layout = Cfg::commitment_layout(NV).expect("layout");
+        let layout = Cfg::commitment_layout(NV, 1).expect("layout");
         let level_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: NV,
             level: 0,

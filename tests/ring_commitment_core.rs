@@ -40,7 +40,10 @@ impl CommitmentConfig for BadDegreeConfig {
         }
     }
 
-    fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+    fn commitment_layout(
+        _max_num_vars: usize,
+        _num_claims: usize,
+    ) -> Result<HachiCommitmentLayout, HachiError> {
         HachiCommitmentLayout::new::<Self>(4, 2, &Self::decomposition())
     }
 }
@@ -198,7 +201,7 @@ fn opening_satisfies_inner_and_outer_equations() {
 #[test]
 fn small_test_config_has_expected_shape() {
     assert_eq!(SmallTestCommitmentConfig::D, 32);
-    let layout = SmallTestCommitmentConfig::commitment_layout(8).unwrap();
+    let layout = SmallTestCommitmentConfig::commitment_layout(8, 1).unwrap();
     assert_eq!(layout.block_len, 16);
     assert_eq!(layout.num_blocks, 4);
     let depth = layout.num_digits_commit;

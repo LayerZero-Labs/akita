@@ -84,7 +84,7 @@ type DenseFixture<FField, const D: usize, Cfg> = (
 fn make_dense_basis2_fixture(nv: usize, transcript_label: &'static [u8]) -> DenseBasis2Fixture {
     type Cfg = Basis2Cfg;
     const D: usize = Cfg::D;
-    let layout = Cfg::commitment_layout(nv).expect("layout");
+    let layout = Cfg::commitment_layout(nv, 1).expect("layout");
 
     let mut rng = StdRng::seed_from_u64(0x1234_5678);
     let evals: Vec<F> = (0..1usize << nv)
@@ -140,7 +140,7 @@ fn make_dense_fixture<
 where
     HachiCommitmentScheme<D, Cfg>: CommitmentScheme<FField, D>,
 {
-    let layout = Cfg::commitment_layout(nv).expect("layout");
+    let layout = Cfg::commitment_layout(nv, 1).expect("layout");
 
     let mut rng = StdRng::seed_from_u64(0x0ddc_0ffe_e123_4567);
     let evals: Vec<FField> = (0..1usize << nv)
@@ -270,7 +270,7 @@ fn full_d128_prove_verify() {
         type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
 
-        let layout = Cfg::commitment_layout(FULL_TEST_NV).expect("layout");
+        let layout = Cfg::commitment_layout(FULL_TEST_NV, 1).expect("layout");
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
         let evals: Vec<F> = (0..1usize << FULL_TEST_NV)
@@ -442,7 +442,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             "tiny roots should use direct mode"
         );
 
-        let layout = Cfg::commitment_layout(nv).expect("layout");
+        let layout = Cfg::commitment_layout(nv, 1).expect("layout");
 
         let mut rng = StdRng::seed_from_u64(0x0ddc_0ffe_e123_4567);
         let evals: Vec<F> = (0..1usize << nv)
@@ -715,7 +715,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = Cfg::commitment_layout(nv).expect("layout");
+        let layout = Cfg::commitment_layout(nv, 1).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -1087,7 +1087,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
         const D: usize = Cfg::D;
 
         let nv = FULL_TEST_NV;
-        let layout = Cfg::commitment_layout(nv).expect("layout");
+        let layout = Cfg::commitment_layout(nv, 1).expect("layout");
         let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
         let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1))
             .expect("schedule plan")

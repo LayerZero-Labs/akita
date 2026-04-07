@@ -1238,7 +1238,7 @@ mod tests {
         let hint = HachiCommitmentHint::new(w.t_hat);
         let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_SEED);
         let y_ring = CyclotomicRing::<F, D>::zero();
-        let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
+        let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars, 1).unwrap();
         let w_folded = poly.fold_blocks(&point.a, layout.block_len);
         let level_params = TinyConfig::level_params(HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
