@@ -193,6 +193,8 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
             summary["accounted_bytes"] = int(kvs["accounted_bytes"])
             summary["hachi_fold_bytes"] = int(kvs["hachi_fold_bytes"])
             summary["tail_bytes"] = int(kvs["tail_bytes"])
+            if "proof_framing_bytes" in kvs:
+                summary["proof_framing_bytes"] = int(kvs["proof_framing_bytes"])
             if "levels" in kvs and "hachi_levels" not in summary:
                 summary["hachi_levels"] = int(kvs["levels"])
         elif "planned fold level" in line and kvs.get("label") == mode:
@@ -217,9 +219,6 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
                 "next_w_len": int(kvs["next_w_len"]),
                 "level_bytes": int(kvs["level_bytes"]),
             }
-        elif "planned terminal state" in line and kvs.get("label") == mode:
-            summary["terminal_w_len"] = int(kvs["final_w_len"])
-            summary["terminal_log_basis"] = int(kvs["final_log_basis"])
         elif "proof fold level" in line and kvs.get("label") == mode:
             level = int(kvs["level"])
             proof_levels[level] = {
@@ -237,7 +236,13 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
             }
         elif "proof tail summary" in line and kvs.get("label") == mode:
             summary["tail_num_elems"] = int(kvs["final_w_num_elems"])
-            summary["tail_bits_per_elem"] = int(kvs["final_w_bits_per_elem"])
+            if "final_w_encoding" in kvs:
+                summary["tail_encoding"] = kvs["final_w_encoding"]
+            bits_per_elem = kvs.get("final_w_bits_per_elem")
+            summary["terminal_w_len"] = int(kvs["final_w_num_elems"])
+            if bits_per_elem is not None and bits_per_elem != "None":
+                summary["tail_bits_per_elem"] = int(bits_per_elem)
+                summary["terminal_log_basis"] = int(bits_per_elem)
     for index, pattern in enumerate(RSS_PATTERNS):
         rss_match = pattern.search(log_text)
         if rss_match:
@@ -624,13 +629,18 @@ def render_report(args: argparse.Namespace) -> int:
         if current.get("tail_bytes") is not None:
             print(f"- Tail bytes: `{fmt_bytes(float(current['tail_bytes']))} B`")
         if (
-            current.get("proof_size_bytes") is not None
-            and current.get("hachi_fold_bytes") is not None
-            and current.get("tail_bytes") is not None
-        ):
-            framing_bytes = int(current["proof_size_bytes"]) - int(current["hachi_fold_bytes"]) - int(
-                current["tail_bytes"]
+            current.get("proof_framing_bytes") is not None
+            or (
+                current.get("proof_size_bytes") is not None
+                and current.get("hachi_fold_bytes") is not None
+                and current.get("tail_bytes") is not None
             )
+        ):
+            framing_bytes = int(current.get("proof_framing_bytes", 0))
+            if "proof_framing_bytes" not in current:
+                framing_bytes = int(current["proof_size_bytes"]) - int(current["hachi_fold_bytes"]) - int(
+                    current["tail_bytes"]
+                )
             print(f"- Proof framing bytes: `{fmt_bytes(float(framing_bytes))} B`")
         if current.get("hachi_levels") is not None:
             print(f"- Hachi levels: `{current['hachi_levels']}`")
@@ -639,10 +649,17 @@ def render_report(args: argparse.Namespace) -> int:
                 f"- Tail shape: `{fmt_count(float(current['tail_num_elems']))}` elems at "
                 f"`{current['tail_bits_per_elem']}` bits/elem"
             )
+        elif current.get("tail_num_elems") is not None and current.get("tail_encoding") == "field_elements":
+            print(f"- Tail shape: `{fmt_count(float(current['tail_num_elems']))}` field elements")
         if current.get("terminal_w_len") is not None and current.get("terminal_log_basis") is not None:
             print(
-                f"- Terminal state: `w_len={fmt_count(float(current['terminal_w_len']))}` "
+                f"- Observed terminal state: `w_len={fmt_count(float(current['terminal_w_len']))}` "
                 f"with `log_basis={current['terminal_log_basis']}`"
+            )
+        elif current.get("terminal_w_len") is not None and current.get("tail_encoding") == "field_elements":
+            print(
+                f"- Observed terminal state: `w_len={fmt_count(float(current['terminal_w_len']))}` "
+                f"with field-element encoding"
             )
 
         planned_levels = current.get("planned_levels")

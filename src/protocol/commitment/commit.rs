@@ -444,7 +444,8 @@ where
         level: 0,
         current_w_len: root_current_w_len::<D>(root_layout),
     };
-    let root_params = Cfg::level_params_with_log_basis(root_inputs, root_layout.log_basis);
+    let root_stage1_config =
+        Cfg::stage1_challenge_config(Cfg::d_at_level(0, root_inputs.current_w_len));
     root_layout.outer_width = root_layout
         .outer_width
         .checked_mul(num_claims)
@@ -457,7 +458,7 @@ where
         .num_digits_fold
         .max(compute_num_digits_fold_batched(
             root_layout.r_vars,
-            root_params.challenge_l1_mass,
+            root_stage1_config.l1_mass(),
             root_layout.log_basis,
             num_claims,
         ));
@@ -516,7 +517,8 @@ where
         )?;
         let next_w_len = candidate_plan.next_w_len();
         let root_proof_cost = candidate_plan.level_proof_bytes::<Cfg>();
-        let suffix_cost = estimated_recursive_suffix_bytes::<Cfg>(max_num_vars, 1, next_w_len)?;
+        let suffix_cost =
+            estimated_recursive_suffix_bytes::<Cfg>(candidate_plan.lookup_key(), 1, next_w_len)?;
         let candidate = (
             root_proof_cost.checked_add(suffix_cost).ok_or_else(|| {
                 HachiError::InvalidSetup("batched proof cost overflow".to_string())
@@ -551,7 +553,8 @@ where
             level: 0,
             current_w_len: root_current_w_len::<D>(root_layout),
         };
-        let root_params = Cfg::level_params_with_log_basis(root_inputs, root_layout.log_basis);
+        let root_params =
+            Cfg::root_level_params_for_layout_with_log_basis(root_inputs, root_layout)?;
         let (m_vars, r_vars, num_digits_fold) = optimal_root_batch_split::<Cfg, D>(
             max_num_vars,
             &root_params,
@@ -601,7 +604,7 @@ where
         level: 0,
         current_w_len: root_current_w_len::<D>(root_layout),
     };
-    let root_params = Cfg::level_params_with_log_basis(root_inputs, root_layout.log_basis);
+    let root_params = Cfg::root_level_params_for_layout_with_log_basis(root_inputs, root_layout)?;
     let (m_vars, r_vars, _num_digits_fold_batched) =
         optimal_root_batch_split::<Cfg, D>(max_num_vars, &root_params, root_layout, num_claims)?;
     let per_poly_num_digits_fold = root_layout.num_digits_fold.max(compute_num_digits_fold(
@@ -638,7 +641,8 @@ where
     let can_use_planned_root =
         Cfg::commitment_layout(max_num_vars).is_ok_and(|planned_root| planned_root == root_layout);
     if can_use_planned_root && max_num_batched_polys == 1 {
-        if let Some(plan) = Cfg::schedule_plan(max_num_vars)? {
+        let schedule_key = HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
+        if let Some(plan) = Cfg::schedule_plan(schedule_key)? {
             for level in plan.fold_levels().skip(1) {
                 stats.include(level.layout);
             }
@@ -707,7 +711,18 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
-    let schedule = Cfg::schedule_key(max_num_vars)
+    let schedule_lookup_key = HachiScheduleLookupKey::with_batch(
+        max_num_vars,
+        max_num_vars,
+        max_num_batched_polys,
+        HachiRootBatchSummary::new(
+            max_num_batched_polys,
+            max_num_batched_polys,
+            max_num_batched_polys,
+        )
+        .expect("setup cache key requires positive batch counts"),
+    );
+    let schedule = Cfg::schedule_key(schedule_lookup_key)
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
@@ -818,7 +833,8 @@ where
     let d_cols = chain_stats.max_d_matrix_width;
 
     let max_stride = a_cols.max(b_cols).max(d_cols);
-    let required_total = envelope.max_n_a * max_stride;
+    let max_rows = envelope.max_n_a.max(envelope.max_n_b).max(envelope.max_n_d);
+    let required_total = max_rows * max_stride;
 
     let actual_total = expanded.shared_matrix.total_ring_elements_at::<D>();
     if actual_total < required_total {
@@ -950,7 +966,8 @@ where
         let d_cols = chain_stats.max_d_matrix_width;
 
         let max_stride = a_cols.max(b_cols).max(d_cols);
-        let max_total = envelope.max_n_a * max_stride;
+        let max_rows = envelope.max_n_a.max(envelope.max_n_b).max(envelope.max_n_d);
+        let max_total = max_rows * max_stride;
 
         let public_matrix_seed = sample_public_matrix_seed();
         let shared_flat = derive_public_matrix_flat::<F, D>(max_total, &public_matrix_seed);
@@ -993,11 +1010,12 @@ where
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let layout = <Self as RingCommitmentScheme<F, D, Cfg>>::layout(setup)?;
-        let root_params = Cfg::level_params(HachiScheduleInputs {
+        let root_inputs = HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,
             current_w_len: root_current_w_len::<D>(layout),
-        });
+        };
+        let root_params = Cfg::root_level_params_for_layout_with_log_basis(root_inputs, layout)?;
         ensure_layout_supported_num_vars::<D>(setup.expanded.seed.max_num_vars, layout)?;
         ensure_block_layout(f_blocks, layout)?;
 
@@ -1070,11 +1088,12 @@ where
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let layout = <Self as RingCommitmentScheme<F, D, Cfg>>::layout(setup)?;
-        let root_params = Cfg::level_params(HachiScheduleInputs {
+        let root_inputs = HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,
             current_w_len: root_current_w_len::<D>(layout),
-        });
+        };
+        let root_params = Cfg::root_level_params_for_layout_with_log_basis(root_inputs, layout)?;
         ensure_layout_supported_num_vars::<D>(setup.expanded.seed.max_num_vars, layout)?;
 
         let sparse_blocks =
@@ -1298,7 +1317,8 @@ impl HachiCommitmentCore {
     {
         let envelope = Cfg::envelope(max_num_vars);
         let max_stride = a_cols.max(b_cols).max(d_cols);
-        let max_total = envelope.max_n_a * max_stride;
+        let max_rows = envelope.max_n_a.max(envelope.max_n_b).max(envelope.max_n_d);
+        let max_total = max_rows * max_stride;
         {
             let ring_bytes = std::mem::size_of::<CyclotomicRing<F, D>>();
             let shared_mb = (max_total * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);

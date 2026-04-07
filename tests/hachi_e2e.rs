@@ -2,7 +2,7 @@
 
 use hachi_pcs::protocol::commitment::{
     hachi_batched_root_layout, hachi_recursive_level_layout_from_params, presets::fp128,
-    HachiCommitmentLayout, HachiScheduleInputs,
+    HachiCommitmentLayout, HachiScheduleInputs, HachiScheduleLookupKey,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
@@ -314,9 +314,13 @@ fn full_d128_prove_verify() {
             proof.num_fold_levels() > 0,
             "proof must have at least one level"
         );
-        let plan = Cfg::schedule_plan(FULL_TEST_NV)
-            .expect("schedule plan")
-            .expect("adaptive full config should expose a schedule plan");
+        let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(
+            FULL_TEST_NV,
+            FULL_TEST_NV,
+            1,
+        ))
+        .expect("schedule plan")
+        .expect("adaptive full config should expose a schedule plan");
         assert_eq!(proof.num_fold_levels(), plan.num_fold_levels());
 
         let verifier_setup =
@@ -389,9 +393,13 @@ fn full_d32_prove_verify() {
         type Cfg = fp128::D32Full;
         const D: usize = Cfg::D;
 
-        let plan = Cfg::schedule_plan(D32_TEST_NV)
-            .expect("schedule plan")
-            .expect("adaptive D32 config should expose a schedule plan");
+        let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(
+            D32_TEST_NV,
+            D32_TEST_NV,
+            1,
+        ))
+        .expect("schedule plan")
+        .expect("adaptive D32 config should expose a schedule plan");
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(D32_TEST_NV, b"hachi_e2e/full-d32");
 
@@ -425,7 +433,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         const D: usize = Cfg::D;
 
         let nv = TINY_DIRECT_TEST_NV;
-        let plan = Cfg::schedule_plan(nv)
+        let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1))
             .expect("schedule plan")
             .expect("adaptive D32 config should expose a schedule plan");
         assert_eq!(
@@ -654,7 +662,7 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
         const D: usize = Cfg::D;
 
         let nv = FULL_TEST_NV;
-        let plan = Cfg::schedule_plan(nv)
+        let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1))
             .expect("schedule plan")
             .expect("adaptive full config should expose a schedule plan");
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
@@ -722,7 +730,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             OneHotPoly::<F, D>::new(ONEHOT_K, indices, layout.r_vars, layout.m_vars).unwrap();
         let pt = random_point::<F>(nv);
         let expected_opening = opening_from_poly(&onehot_poly, &pt, &layout);
-        let plan = Cfg::schedule_plan(nv)
+        let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1))
             .expect("schedule plan")
             .expect("adaptive onehot config should expose a schedule plan");
 
@@ -795,7 +803,7 @@ fn adaptive_onehot_schedule_stays_below_basis6_in_current_range() {
     type Cfg = fp128::D64OneHot;
 
     for nv in 10..=120 {
-        let plan = match Cfg::schedule_plan(nv) {
+        let plan = match Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1)) {
             Ok(Some(plan)) => plan,
             _ => continue,
         };
@@ -1081,7 +1089,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
         let nv = FULL_TEST_NV;
         let layout = Cfg::commitment_layout(nv).expect("layout");
         let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
-        let plan = Cfg::schedule_plan(nv)
+        let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1))
             .expect("schedule plan")
             .expect("adaptive full config should expose a schedule plan");
 
@@ -1117,7 +1125,10 @@ fn adaptive_schedule_key_changes_when_schedule_changes() {
 
     let mut distinct = std::collections::BTreeMap::new();
     for nv in 10..=18 {
-        distinct.insert(Cfg::schedule_key(nv), nv);
+        distinct.insert(
+            Cfg::schedule_key(HachiScheduleLookupKey::singleton(nv, nv, 1)),
+            nv,
+        );
     }
 
     assert!(
