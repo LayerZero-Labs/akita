@@ -219,9 +219,6 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
                 "next_w_len": int(kvs["next_w_len"]),
                 "level_bytes": int(kvs["level_bytes"]),
             }
-        elif "planned terminal state" in line and kvs.get("label") == mode:
-            summary["planned_terminal_w_len"] = int(kvs["final_w_len"])
-            summary["planned_terminal_log_basis"] = int(kvs["final_log_basis"])
         elif "proof fold level" in line and kvs.get("label") == mode:
             level = int(kvs["level"])
             proof_levels[level] = {
