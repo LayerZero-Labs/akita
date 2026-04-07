@@ -12,11 +12,17 @@ use super::schedule_planner::{
 };
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
+use crate::primitives::serialization::{Compress, HachiSerialize};
 use crate::protocol::proof::{
-    DirectWitnessShape, HachiProofShape, HachiProofStepShape, LevelProofShape,
+    DirectWitnessShape, FlatRingVec, HachiLevelProof, HachiProofShape, HachiProofStepShape,
+    HachiStage1Proof, HachiStage1StageProof, HachiStage2Proof, LevelProofShape,
 };
 use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
 use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
+use crate::protocol::sumcheck::{
+    CompressedUniPoly, EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof,
+};
+use crate::FieldCore;
 use std::fmt::Write;
 
 /// Public inputs that deterministically select one level's active Hachi params.
@@ -1271,6 +1277,75 @@ pub(crate) fn hachi_level_proof_bytes(
         + next_eval_bytes
 }
 
+fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
+    SumcheckProof {
+        round_polys: (0..rounds)
+            .map(|_| CompressedUniPoly {
+                coeffs_except_linear_term: vec![F::zero(); degree],
+            })
+            .collect(),
+    }
+}
+
+fn dummy_eq_factored_sumcheck<F: FieldCore>(
+    rounds: usize,
+    degree: usize,
+) -> EqFactoredSumcheckProof<F> {
+    EqFactoredSumcheckProof {
+        round_polys: (0..rounds)
+            .map(|_| EqFactoredUniPoly {
+                coeffs_except_linear_term: vec![
+                    F::zero();
+                    EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(degree)
+                ],
+            })
+            .collect(),
+    }
+}
+
+fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> HachiStage1Proof<F> {
+    HachiStage1Proof {
+        stages: stage1_tree_stage_shapes(rounds, b)
+            .into_iter()
+            .map(|shape| HachiStage1StageProof {
+                sumcheck: dummy_eq_factored_sumcheck(rounds, shape.sumcheck.1),
+                child_claims: vec![F::zero(); shape.child_claims],
+            })
+            .collect(),
+        s_claim: F::zero(),
+    }
+}
+
+pub(super) fn exact_recursive_level_proof_bytes<F: FieldCore>(
+    level_params: &HachiLevelParams,
+    layout: HachiCommitmentLayout,
+    next_level_params: &HachiLevelParams,
+    next_w_len: usize,
+) -> Result<usize, HachiError> {
+    let current_coeffs = level_params
+        .n_d
+        .checked_mul(level_params.d)
+        .ok_or_else(|| HachiError::InvalidSetup("recursive proof sizing overflow".to_string()))?;
+    let next_commit_coeffs = next_level_params
+        .n_b
+        .checked_mul(next_level_params.d)
+        .ok_or_else(|| HachiError::InvalidSetup("recursive proof sizing overflow".to_string()))?;
+    let rounds = sumcheck_rounds(level_params.d, next_w_len);
+    let b = 1usize << layout.log_basis;
+
+    let proof = HachiLevelProof {
+        y_ring: FlatRingVec::from_coeffs(vec![F::zero(); level_params.d]),
+        v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
+        stage1: dummy_stage1_proof(rounds, b),
+        stage2: HachiStage2Proof {
+            sumcheck: dummy_sumcheck(rounds, 3),
+            next_w_commitment: FlatRingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
+            next_w_eval: F::zero(),
+        },
+    };
+    Ok(proof.serialized_size(Compress::No))
+}
+
 pub(crate) fn batched_root_level_proof_bytes(
     field_bits: u32,
     level_params: &HachiLevelParams,
@@ -1321,6 +1396,57 @@ pub(super) fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
     Ok((params, layout))
 }
 
+fn dp_recursive_suffix_bytes_with_log_basis_and_envelope<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    level: usize,
+    current_w_len: usize,
+    current_log_basis: u32,
+    planning_envelope: HachiBatchPlanningEnvelope,
+) -> Result<usize, HachiError> {
+    let inputs = HachiScheduleInputs {
+        max_num_vars,
+        level,
+        current_w_len,
+    };
+    let (min_log_basis, max_log_basis) = Cfg::log_basis_search_range(inputs);
+    let cfg = PlannerConfig::from_cfg::<Cfg>(max_num_vars, min_log_basis, max_log_basis);
+    cached_dp_suffix_bytes::<Cfg>(
+        cfg,
+        planning_envelope,
+        PlannerState {
+            level,
+            current_w_len,
+            log_basis: current_log_basis,
+        },
+    )
+}
+
+fn dp_best_basis_with_current_basis_and_envelope<Cfg: CommitmentConfig>(
+    next_inputs: HachiScheduleInputs,
+    current_log_basis: u32,
+    planning_envelope: HachiBatchPlanningEnvelope,
+) -> Result<u32, HachiError> {
+    let (min_log_basis, max_log_basis) = Cfg::log_basis_search_range(next_inputs);
+    let lower_bound = current_log_basis.max(min_log_basis);
+    let cfg =
+        PlannerConfig::from_cfg::<Cfg>(next_inputs.max_num_vars, min_log_basis, max_log_basis);
+    cached_dp_best_basis::<Cfg>(cfg, planning_envelope, next_inputs, lower_bound)
+        .map(|(log_basis, _)| log_basis)
+        .ok_or_else(|| HachiError::InvalidSetup("no valid next-level log basis found".to_string()))
+}
+
+fn dp_log_basis_at_level_from_schedule_and_envelope<Cfg: CommitmentConfig>(
+    inputs: HachiScheduleInputs,
+    min_log_basis: u32,
+    max_log_basis: u32,
+    planning_envelope: HachiBatchPlanningEnvelope,
+) -> Result<u32, HachiError> {
+    let cfg = PlannerConfig::from_cfg::<Cfg>(inputs.max_num_vars, min_log_basis, max_log_basis);
+    cached_dp_best_basis::<Cfg>(cfg, planning_envelope, inputs, min_log_basis)
+        .map(|(log_basis, _)| log_basis)
+        .ok_or_else(|| HachiError::InvalidSetup("no valid log basis found".to_string()))
+}
+
 #[cfg(test)]
 pub(crate) fn planned_recursive_suffix_bytes_with_log_basis<Cfg: CommitmentConfig>(
     max_num_vars: usize,
@@ -1362,21 +1488,12 @@ pub(crate) fn planned_recursive_suffix_bytes_with_log_basis_and_envelope<Cfg: Co
             planning_envelope,
         );
     }
-    let inputs = HachiScheduleInputs {
+    dp_recursive_suffix_bytes_with_log_basis_and_envelope::<Cfg>(
         max_num_vars,
         level,
         current_w_len,
-    };
-    let (min_log_basis, max_log_basis) = Cfg::log_basis_search_range(inputs);
-    let cfg = PlannerConfig::from_cfg::<Cfg>(max_num_vars, min_log_basis, max_log_basis);
-    cached_dp_suffix_bytes::<Cfg>(
-        cfg,
+        current_log_basis,
         planning_envelope,
-        PlannerState {
-            level,
-            current_w_len,
-            log_basis: current_log_basis,
-        },
     )
 }
 
@@ -1411,15 +1528,12 @@ pub(crate) fn planned_next_log_basis_with_current_basis_and_envelope<Cfg: Commit
                 }
             }
         }
-        let (min_log_basis, max_log_basis) = Cfg::log_basis_search_range(next_inputs);
-        let lower_bound = current_log_basis.max(min_log_basis);
-        let cfg =
-            PlannerConfig::from_cfg::<Cfg>(next_inputs.max_num_vars, min_log_basis, max_log_basis);
-        return cached_dp_best_basis::<Cfg>(cfg, planning_envelope, next_inputs, lower_bound)
-            .map(|(log_basis, _)| log_basis)
-            .ok_or_else(|| {
-                HachiError::InvalidSetup("no valid next-level log basis found".to_string())
-            });
+        let (_min_log_basis, _max_log_basis) = Cfg::log_basis_search_range(next_inputs);
+        return dp_best_basis_with_current_basis_and_envelope::<Cfg>(
+            next_inputs,
+            current_log_basis,
+            planning_envelope,
+        );
     }
     #[cfg(not(debug_assertions))]
     return Err(HachiError::InvalidSetup(format!(
@@ -1428,16 +1542,11 @@ pub(crate) fn planned_next_log_basis_with_current_basis_and_envelope<Cfg: Commit
     )));
     #[cfg(debug_assertions)]
     {
-        let (min_log_basis, max_log_basis) = Cfg::log_basis_search_range(next_inputs);
-        let lower_bound = current_log_basis.max(min_log_basis);
-        cached_dp_best_basis::<Cfg>(
-            PlannerConfig::from_cfg::<Cfg>(next_inputs.max_num_vars, min_log_basis, max_log_basis),
-            planning_envelope,
+        dp_best_basis_with_current_basis_and_envelope::<Cfg>(
             next_inputs,
-            lower_bound,
+            current_log_basis,
+            planning_envelope,
         )
-        .map(|(log_basis, _)| log_basis)
-        .ok_or_else(|| HachiError::InvalidSetup("no valid next-level log basis found".to_string()))
     }
 }
 
@@ -1506,10 +1615,12 @@ fn planned_log_basis_at_level_from_schedule_and_envelope<Cfg: CommitmentConfig>(
             .expect("exact planned state index must resolve to a state")
             .log_basis);
     }
-    let cfg = PlannerConfig::from_cfg::<Cfg>(inputs.max_num_vars, min_log_basis, max_log_basis);
-    cached_dp_best_basis::<Cfg>(cfg, planning_envelope, inputs, min_log_basis)
-        .map(|(log_basis, _)| log_basis)
-        .ok_or_else(|| HachiError::InvalidSetup("no valid log basis found".to_string()))
+    dp_log_basis_at_level_from_schedule_and_envelope::<Cfg>(
+        inputs,
+        min_log_basis,
+        max_log_basis,
+        planning_envelope,
+    )
 }
 
 pub(crate) fn planned_schedule_key_from_schedule(schedule: &HachiSchedulePlan) -> String {
@@ -1565,17 +1676,13 @@ pub fn recursive_suffix_estimate_with_log_basis<Cfg: CommitmentConfig>(
             min_log_basis,
             max_log_basis,
         )?;
-        let actual_state_bytes =
-            planned_recursive_suffix_bytes_with_log_basis_from_schedule_and_envelope::<Cfg>(
-                &schedule,
-                max_num_vars,
-                level,
-                current_w_len,
-                current_log_basis,
-                min_log_basis,
-                max_log_basis,
-                planning_envelope,
-            )?;
+        let actual_state_bytes = dp_recursive_suffix_bytes_with_log_basis_and_envelope::<Cfg>(
+            max_num_vars,
+            level,
+            current_w_len,
+            current_log_basis,
+            planning_envelope,
+        )?;
         return Ok(HachiRecursiveSuffixEstimate {
             table_bytes,
             actual_state_bytes,
@@ -1584,7 +1691,7 @@ pub fn recursive_suffix_estimate_with_log_basis<Cfg: CommitmentConfig>(
         });
     }
 
-    let actual_state_bytes = planned_recursive_suffix_bytes_with_log_basis_and_envelope::<Cfg>(
+    let actual_state_bytes = dp_recursive_suffix_bytes_with_log_basis_and_envelope::<Cfg>(
         max_num_vars,
         level,
         current_w_len,
@@ -1642,15 +1749,12 @@ fn planned_recursive_suffix_bytes_from_schedule_and_envelope<Cfg: CommitmentConf
         max_log_basis,
         planning_envelope,
     )?;
-    let cfg = PlannerConfig::from_cfg::<Cfg>(max_num_vars, min_log_basis, max_log_basis);
-    cached_dp_suffix_bytes::<Cfg>(
-        cfg,
+    dp_recursive_suffix_bytes_with_log_basis_and_envelope::<Cfg>(
+        max_num_vars,
+        level,
+        current_w_len,
+        current_log_basis,
         planning_envelope,
-        PlannerState {
-            level,
-            current_w_len,
-            log_basis: current_log_basis,
-        },
     )
 }
 
@@ -1699,15 +1803,13 @@ fn planned_recursive_suffix_bytes_with_log_basis_from_schedule_and_envelope<
     ) {
         return Ok(scheduled_suffix_bytes_from_index(schedule, state_index));
     }
-    let cfg = PlannerConfig::from_cfg::<Cfg>(max_num_vars, min_log_basis, max_log_basis);
-    cached_dp_suffix_bytes::<Cfg>(
-        cfg,
+    let _ = (min_log_basis, max_log_basis);
+    dp_recursive_suffix_bytes_with_log_basis_and_envelope::<Cfg>(
+        max_num_vars,
+        level,
+        current_w_len,
+        current_log_basis,
         planning_envelope,
-        PlannerState {
-            level,
-            current_w_len,
-            log_basis: current_log_basis,
-        },
     )
 }
 
@@ -1807,56 +1909,13 @@ mod tests {
         fp128_d128_full_table, fp128_d32_full_table, fp128_d32_onehot_table, GeneratedScheduleTable,
     };
     use crate::protocol::commitment::presets::fp128;
-    use crate::protocol::proof::{
-        FlatRingVec, HachiBatchedRootProof, HachiLevelProof, HachiStage1Proof,
-        HachiStage1StageProof,
-    };
+    use crate::protocol::proof::{FlatRingVec, HachiBatchedRootProof};
     use crate::protocol::ring_switch::{
         w_ring_element_count, w_ring_element_count_with_point_claim_groups,
-    };
-    use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
-    use crate::protocol::sumcheck::{
-        CompressedUniPoly, EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof,
     };
     use crate::FieldCore;
 
     type F = fp128::Field;
-
-    fn dummy_sumcheck(rounds: usize, degree: usize) -> SumcheckProof<F> {
-        SumcheckProof {
-            round_polys: (0..rounds)
-                .map(|_| CompressedUniPoly {
-                    coeffs_except_linear_term: vec![F::zero(); degree],
-                })
-                .collect(),
-        }
-    }
-
-    fn dummy_eq_factored_sumcheck(rounds: usize, degree: usize) -> EqFactoredSumcheckProof<F> {
-        EqFactoredSumcheckProof {
-            round_polys: (0..rounds)
-                .map(|_| EqFactoredUniPoly {
-                    coeffs_except_linear_term: vec![
-                        F::zero();
-                        EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(degree)
-                    ],
-                })
-                .collect(),
-        }
-    }
-
-    fn dummy_stage1_proof(rounds: usize, b: usize) -> HachiStage1Proof<F> {
-        HachiStage1Proof {
-            stages: stage1_tree_stage_shapes(rounds, b)
-                .into_iter()
-                .map(|shape| HachiStage1StageProof {
-                    sumcheck: dummy_eq_factored_sumcheck(rounds, shape.sumcheck.1),
-                    child_claims: vec![F::zero(); shape.child_claims],
-                })
-                .collect(),
-            s_claim: F::zero(),
-        }
-    }
 
     fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(max_num_vars: usize) {
         let plan = Cfg::schedule_plan(max_num_vars)
@@ -2142,25 +2201,15 @@ mod tests {
                 num_digits_fold: 1,
                 log_basis,
             };
-            let rounds = sumcheck_rounds(D, next_w_len);
-            let b = 1usize << log_basis;
-            let next_commitment = FlatRingVec::from_ring_elems(&vec![
-                CyclotomicRing::<F, D>::zero();
-                next_level_params.n_b
-            ])
-            .into_compact();
-            let level_proof = HachiLevelProof::new_two_stage::<D>(
-                CyclotomicRing::<F, D>::zero(),
-                vec![CyclotomicRing::<F, D>::zero(); level_params.n_d],
-                dummy_stage1_proof(rounds, b),
-                dummy_sumcheck(rounds, 3),
-                next_commitment,
-                F::zero(),
-            );
-
             assert_eq!(
                 hachi_level_proof_bytes(128, &level_params, layout, &next_level_params, next_w_len),
-                level_proof.serialized_size(Compress::No),
+                exact_recursive_level_proof_bytes::<F>(
+                    &level_params,
+                    layout,
+                    &next_level_params,
+                    next_w_len,
+                )
+                .unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
         }

@@ -576,7 +576,7 @@ impl Planner {
 ///
 /// Header stripping (optimization #5) is modeled: the total does NOT include
 /// the 4-byte `num_levels` wrapper that the current serialization adds.
-pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
+fn run_universal_planner_internal(opts: &PlannerOptions) -> Schedule {
     let mut planner = Planner::new(opts.clone());
 
     let root_w_len = 1usize << opts.max_num_vars;
@@ -691,6 +691,10 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
             total_bytes: usize::MAX,
         },
     }
+}
+
+pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
+    run_universal_planner_internal(opts)
 }
 
 #[cfg(test)]

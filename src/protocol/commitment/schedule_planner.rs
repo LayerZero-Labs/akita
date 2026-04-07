@@ -2,17 +2,20 @@
 //!
 //! The core DP planner (`best_recursive_suffix`) finds the minimum-proof-size
 //! recursion schedule by dynamic programming over `(level, w_len, log_basis)`
-//! states.  It is used at build time by the table generator and in debug
-//! builds as a cross-check against the pre-generated schedule tables.
+//! states. Recursive candidate levels are scored by exact serialized proof-body
+//! size under the current wire format. It is used at build time by the table
+//! generator and in debug builds as a cross-check against the pre-generated
+//! schedule tables.
 
 use super::config::CommitmentConfig;
 use super::schedule::{
-    current_level_layout_with_log_basis, direct_witness_bytes, field_bits, hachi_level_proof_bytes,
-    planned_next_w_len, HachiBatchPlanningEnvelope, HachiPlannedDirectStep, HachiPlannedLevel,
-    HachiPlannedState, HachiPlannedStep, HachiScheduleInputs,
+    current_level_layout_with_log_basis, direct_witness_bytes, exact_recursive_level_proof_bytes,
+    field_bits, planned_next_w_len, HachiBatchPlanningEnvelope, HachiPlannedDirectStep,
+    HachiPlannedLevel, HachiPlannedState, HachiPlannedStep, HachiScheduleInputs,
 };
 use crate::error::HachiError;
 use crate::protocol::proof::DirectWitnessShape;
+use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
@@ -56,6 +59,7 @@ impl PlannerConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct CachedSuffixStateKey {
+    cfg_type: TypeId,
     cfg: PlannerConfig,
     envelope: HachiBatchPlanningEnvelope,
     state: PlannerState,
@@ -63,6 +67,7 @@ struct CachedSuffixStateKey {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct CachedBasisChoiceKey {
+    cfg_type: TypeId,
     cfg: PlannerConfig,
     envelope: HachiBatchPlanningEnvelope,
     inputs: HachiScheduleInputs,
@@ -130,13 +135,12 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
             for next_log_basis in state.log_basis.max(cfg.min_log_basis)..=cfg.max_log_basis {
                 let next_level_params =
                     Cfg::level_params_with_log_basis(next_inputs, next_log_basis);
-                let level_bytes = hachi_level_proof_bytes(
-                    cfg.field_bits,
+                let level_bytes = exact_recursive_level_proof_bytes::<Cfg::Field>(
                     &params,
                     layout,
                     &next_level_params,
                     next_w_len,
-                );
+                )?;
                 let suffix = best_recursive_suffix::<Cfg>(
                     cfg,
                     memo,
@@ -189,6 +193,7 @@ pub(super) fn cached_dp_suffix_bytes<Cfg: CommitmentConfig>(
     state: PlannerState,
 ) -> Result<usize, HachiError> {
     let cache_key = CachedSuffixStateKey {
+        cfg_type: TypeId::of::<Cfg>(),
         cfg,
         envelope,
         state,
@@ -210,6 +215,7 @@ pub(super) fn cached_dp_suffix_bytes<Cfg: CommitmentConfig>(
     for (memo_state, planned_suffix) in memo {
         cache
             .entry(CachedSuffixStateKey {
+                cfg_type: TypeId::of::<Cfg>(),
                 cfg,
                 envelope,
                 state: memo_state,
@@ -226,6 +232,7 @@ pub(super) fn cached_dp_best_basis<Cfg: CommitmentConfig>(
     lower_bound: u32,
 ) -> Option<(u32, usize)> {
     let cache_key = CachedBasisChoiceKey {
+        cfg_type: TypeId::of::<Cfg>(),
         cfg,
         envelope,
         inputs,

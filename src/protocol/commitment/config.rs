@@ -1,5 +1,4 @@
 //! Configuration presets for ring-native commitment construction.
-
 use super::profile::{CommitmentFieldProfile, CommitmentFieldProfileSchedule};
 use super::schedule::{
     exact_planned_level_execution, hachi_root_commitment_layout, HachiLevelParams,
