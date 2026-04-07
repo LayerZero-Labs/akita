@@ -1995,7 +1995,10 @@ where
             setup.expanded.seed.max_num_batched_polys,
             HachiRootBatchSummary::new(polys.len(), 1, 1)?,
         )?;
-        let layout = root_plan.root_layout;
+        let layout = hachi_batched_root_layout::<Cfg, D>(
+            num_vars,
+            setup.expanded.seed.max_num_batched_polys,
+        )?;
         let batched_layout = root_plan.level_layout;
         let root_params = root_plan.params.clone();
         setup.ensure_layout_fits(&batched_layout)?;

@@ -1,8 +1,8 @@
 //! Configuration presets for ring-native commitment construction.
 use super::profile::{CommitmentFieldProfile, CommitmentFieldProfileSchedule};
 use super::schedule::{
-    exact_planned_level_execution, hachi_root_commitment_layout, HachiLevelParams,
-    HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
+    exact_planned_level_execution, HachiLevelParams, HachiScheduleInputs, HachiScheduleLookupKey,
+    HachiSchedulePlan,
 };
 use super::utils::math::checked_pow2;
 use super::utils::norm::detect_field_modulus;
@@ -613,7 +613,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Choose the runtime commitment layout for `max_num_vars`.
     ///
     /// Planner-backed families use the exact root fold layout when one is
-    /// pinned; otherwise this falls back to the derived root-commitment layout.
+    /// pinned; otherwise the planner computes the layout from first principles
+    /// using SIS security tables and digit math.
     ///
     /// # Errors
     ///
@@ -625,8 +626,34 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
                 return Ok(root_fold.layout);
             }
         }
-        let (_, layout) = hachi_root_commitment_layout::<Self>(max_num_vars)?;
-        Ok(layout)
+        let decomp = Self::decomposition();
+        let stage1_config = Self::stage1_challenge_config(Self::D);
+        let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
+        let dims = crate::planner::compute_root_layout_dimensions(
+            max_num_vars,
+            Self::D,
+            decomp.log_basis,
+            decomp.log_commit_bound,
+            open_bound,
+            stage1_config.l1_mass(),
+            stage1_config.max_abs_coeff(),
+        )
+        .ok_or_else(|| {
+            HachiError::InvalidSetup(format!(
+                "planner failed to derive root layout for max_num_vars={max_num_vars}, D={}",
+                Self::D
+            ))
+        })?;
+        HachiCommitmentLayout::new_with_decomp(
+            dims.m_vars,
+            dims.r_vars,
+            dims.n_a,
+            dims.num_digits_commit,
+            dims.num_digits_open,
+            dims.num_digits_fold,
+            dims.log_basis,
+            0,
+        )
     }
 
     /// Runtime L∞ bound for `z` (`β`) used by stage-1 folding checks.

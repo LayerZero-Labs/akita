@@ -13,6 +13,7 @@
 
 pub mod baseline;
 pub mod digit_math;
+pub mod layout;
 pub mod proof_size;
 pub mod search;
 pub mod sis_security;
@@ -20,6 +21,7 @@ pub mod sis_security;
 pub use baseline::{
     baseline_params_for, run_baseline_planner, BaselineParams, BaselineResult, BASELINE_CASES,
 };
+pub use layout::{compute_root_layout_dimensions, RootLayoutDimensions};
 pub use search::{
     run_universal_planner, DirectWitnessShape, PlannedDirectStep, PlannedFoldStep, PlannedStep,
     PlannerOptions, Schedule,
