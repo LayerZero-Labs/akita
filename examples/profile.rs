@@ -4,7 +4,7 @@ use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
     hachi_batched_root_layout, hachi_root_runtime_plan_with_batch, presets::fp128,
     recursive_suffix_estimate_with_log_basis, CommitmentConfig, HachiCommitmentLayout,
-    HachiRootBatchSummary, HachiSchedulePlan,
+    HachiRootBatchSummary, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
@@ -12,7 +12,7 @@ use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
 };
 use hachi_pcs::protocol::proof::{
-    HachiBatchedProof, HachiBatchedRootProof, HachiLevelProof, HachiProof,
+    DirectWitnessProof, HachiBatchedProof, HachiBatchedRootProof, HachiLevelProof, HachiProof,
 };
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::{
@@ -195,6 +195,7 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSc
         .sum();
     let tail_total = proof.final_witness().serialized_size(Compress::No);
     let accounted_total = hachi_levels_total + tail_total;
+    let framing_total = proof.size() - accounted_total;
 
     tracing::info!(
         label,
@@ -203,6 +204,7 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSc
         accounted_bytes = accounted_total,
         hachi_fold_bytes = hachi_levels_total,
         tail_bytes = tail_total,
+        proof_framing_bytes = framing_total,
         "proof summary"
     );
     debug_assert_eq!(accounted_total, proof.size());
@@ -219,22 +221,7 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSc
     for (i, lp) in proof.fold_levels().enumerate() {
         print_hachi_level_breakdown(label, i, lp);
     }
-    let final_w = proof.final_witness();
-    tracing::info!(
-        label,
-        tail_bytes = final_w.serialized_size(Compress::No),
-        final_w_num_elems = final_w.num_elems(),
-        final_w_bits_per_elem = final_w.as_packed_digits().map(|w| w.bits_per_elem),
-        "proof tail summary"
-    );
-    eprintln!(
-        "[{label}]   final_w: total={} bytes, elems={}, bits/elem={}",
-        final_w.serialized_size(Compress::No),
-        final_w.num_elems(),
-        final_w
-            .as_packed_digits()
-            .map_or(String::from("field"), |w| w.bits_per_elem.to_string()),
-    );
+    emit_observed_tail_summary(label, proof.final_witness());
 }
 
 fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
@@ -383,6 +370,7 @@ fn print_batched_proof_summary<const D: usize>(label: &str, proof: &HachiBatched
     let hachi_levels_total = root_total + recursive_levels_total;
     let tail_total = proof.final_witness().serialized_size(Compress::No);
     let accounted_total = hachi_levels_total + tail_total;
+    let framing_total = proof.size() - accounted_total;
 
     tracing::info!(
         label,
@@ -391,6 +379,7 @@ fn print_batched_proof_summary<const D: usize>(label: &str, proof: &HachiBatched
         accounted_bytes = accounted_total,
         hachi_fold_bytes = hachi_levels_total,
         tail_bytes = tail_total,
+        proof_framing_bytes = framing_total,
         "proof summary"
     );
     debug_assert_eq!(accounted_total, proof.size());
@@ -398,15 +387,37 @@ fn print_batched_proof_summary<const D: usize>(label: &str, proof: &HachiBatched
     for (i, lp) in proof.fold_levels().enumerate() {
         print_hachi_level_breakdown(label, i + 1, lp);
     }
-    let final_w = proof.final_witness();
-    eprintln!(
-        "[{label}]   final_w: total={} bytes, elems={}, bits/elem={}",
-        final_w.serialized_size(Compress::No),
-        final_w.num_elems(),
-        final_w
-            .as_packed_digits()
-            .map_or(String::from("field"), |w| w.bits_per_elem.to_string()),
-    );
+    emit_observed_tail_summary(label, proof.final_witness());
+}
+
+fn emit_observed_tail_summary(label: &str, final_w: &DirectWitnessProof<F>) {
+    let tail_bytes = final_w.serialized_size(Compress::No);
+    let num_elems = final_w.num_elems();
+    if let Some(packed) = final_w.as_packed_digits() {
+        tracing::info!(
+            label,
+            tail_bytes,
+            final_w_num_elems = num_elems,
+            final_w_bits_per_elem = packed.bits_per_elem,
+            final_w_encoding = "packed_digits",
+            "proof tail summary"
+        );
+        eprintln!(
+            "[{label}]   final_w: total={tail_bytes} bytes, elems={num_elems}, bits/elem={}",
+            packed.bits_per_elem,
+        );
+    } else {
+        tracing::info!(
+            label,
+            tail_bytes,
+            final_w_num_elems = num_elems,
+            final_w_encoding = "field_elements",
+            "proof tail summary"
+        );
+        eprintln!(
+            "[{label}]   final_w: total={tail_bytes} bytes, elems={num_elems}, bits/elem=field"
+        );
+    }
 }
 
 fn print_layout(layout: &HachiCommitmentLayout) {
@@ -583,7 +594,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     )
     .expect("batched root runtime plan");
     let suffix_estimate = recursive_suffix_estimate_with_log_basis::<Cfg>(
-        nv,
+        root_plan.lookup_key(),
         root_plan.next_inputs.level,
         root_plan.next_w_len(),
         root_plan.next_level_params.log_basis,
@@ -628,11 +639,12 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
 }
 
 fn best_full_d(nv: usize) -> usize {
-    let d32_bytes = fp128::D32Full::schedule_plan(nv)
+    let key = HachiScheduleLookupKey::singleton(nv, nv, 1);
+    let d32_bytes = fp128::D32Full::schedule_plan(key)
         .ok()
         .flatten()
         .map(|p| p.exact_proof_bytes);
-    let d128_bytes = fp128::D128Full::schedule_plan(nv)
+    let d128_bytes = fp128::D128Full::schedule_plan(key)
         .ok()
         .flatten()
         .map(|p| p.exact_proof_bytes);
@@ -644,11 +656,12 @@ fn best_full_d(nv: usize) -> usize {
 }
 
 fn best_onehot_d(nv: usize) -> usize {
-    let d32_bytes = fp128::D32OneHot::schedule_plan(nv)
+    let key = HachiScheduleLookupKey::singleton(nv, nv, 1);
+    let d32_bytes = fp128::D32OneHot::schedule_plan(key)
         .ok()
         .flatten()
         .map(|p| p.exact_proof_bytes);
-    let d64_bytes = fp128::D64OneHot::schedule_plan(nv)
+    let d64_bytes = fp128::D64OneHot::schedule_plan(key)
         .ok()
         .flatten()
         .map(|p| p.exact_proof_bytes);
@@ -661,7 +674,8 @@ fn best_onehot_d(nv: usize) -> usize {
 
 fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(title: &str, nv: usize) {
     let layout = resolve_layout::<Cfg>(nv);
-    let plan = Cfg::schedule_plan(nv).expect("schedule plan");
+    let plan =
+        Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1)).expect("schedule plan");
     tracing::info!("{}", title);
     print_layout(&layout);
     run_dense::<D, Cfg>(nv, &layout, plan.as_ref());
@@ -683,7 +697,8 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(
             );
             return;
         }
-        let plan = Cfg::schedule_plan(nv).expect("schedule plan");
+        let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1))
+            .expect("schedule plan");
         print_layout(&layout);
         run_onehot::<D, Cfg>(nv, &layout, plan.as_ref());
     } else {

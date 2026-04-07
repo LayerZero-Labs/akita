@@ -4,9 +4,8 @@ pub(crate) enum GeneratedDirectWitnessShape {
         num_elems: usize,
         bits_per_elem: u32,
     },
-    FieldElements {
-        num_elems: usize,
-    },
+    #[allow(dead_code)]
+    FieldElements { num_elems: usize },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,8 +45,18 @@ pub(crate) enum GeneratedStep {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct GeneratedScheduleTableEntry {
+pub(crate) struct GeneratedScheduleKey {
     pub max_num_vars: usize,
+    pub num_vars: usize,
+    pub layout_num_claims: usize,
+    pub batch_num_claims: usize,
+    pub batch_num_commitment_groups: usize,
+    pub batch_num_points: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct GeneratedScheduleTableEntry {
+    pub key: GeneratedScheduleKey,
     pub total_bytes: usize,
     pub steps: &'static [GeneratedStep],
 }
@@ -67,33 +76,42 @@ pub(crate) mod sis_floor;
 
 pub(crate) fn table_entry(
     table: GeneratedScheduleTable,
-    max_num_vars: usize,
+    key: GeneratedScheduleKey,
 ) -> Option<&'static GeneratedScheduleTableEntry> {
-    table
-        .entries
-        .iter()
-        .find(|entry| entry.max_num_vars == max_num_vars)
+    table.entries.iter().find(|entry| entry.key == key)
 }
 
-pub(crate) fn table_entry_envelope(
+pub(crate) fn table_entry_envelope_for_max_num_vars(
     table: GeneratedScheduleTable,
     max_num_vars: usize,
 ) -> Option<(usize, usize, usize)> {
-    let entry = table_entry(table, max_num_vars)?;
     let mut max_n_a = 0usize;
     let mut max_n_b = 0usize;
     let mut max_n_d = 0usize;
-    let mut saw_fold = false;
-    for step in entry.steps {
-        let GeneratedStep::Fold(fold) = step else {
-            continue;
-        };
-        saw_fold = true;
-        max_n_a = max_n_a.max(fold.n_a as usize);
-        max_n_b = max_n_b.max(fold.n_b as usize);
-        max_n_d = max_n_d.max(fold.n_d as usize);
+    let mut saw_entry = false;
+    for entry in table
+        .entries
+        .iter()
+        .filter(|entry| entry.key.max_num_vars == max_num_vars)
+    {
+        for step in entry.steps {
+            match step {
+                GeneratedStep::Fold(fold) => {
+                    saw_entry = true;
+                    max_n_a = max_n_a.max(fold.n_a as usize);
+                    max_n_b = max_n_b.max(fold.n_b as usize);
+                    max_n_d = max_n_d.max(fold.n_d as usize);
+                }
+                GeneratedStep::Direct(direct) => {
+                    if let Some(entry_nb) = direct.entry_nb {
+                        saw_entry = true;
+                        max_n_b = max_n_b.max(entry_nb as usize);
+                    }
+                }
+            }
+        }
     }
-    saw_fold.then_some((max_n_a, max_n_b, max_n_d))
+    saw_entry.then_some((max_n_a, max_n_b, max_n_d))
 }
 
 pub(crate) fn fp128_d32_full_table() -> GeneratedScheduleTable {

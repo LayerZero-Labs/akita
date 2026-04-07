@@ -1,7 +1,7 @@
 pub const FIELD_BITS: u32 = 128;
 const ELEM_BYTES: usize = (FIELD_BITS / 8) as usize; // 16
 
-// ── Optimized (header-stripped) sizing ──────────────────────────────────────
+// Optimized (header-stripped) sizing.
 
 /// Ring vector bytes without length prefix.
 pub fn ring_vec_bytes(ring_len: usize, ring_dim: u32) -> usize {
@@ -74,7 +74,7 @@ pub const fn elem_bytes() -> usize {
     ELEM_BYTES
 }
 
-// ── Baseline sizing (with serialization headers) ───────────────────────────
+// Baseline sizing (with serialization headers).
 
 /// Ring vector bytes with 8-byte length prefix.
 pub fn baseline_ring_vec_bytes(ring_len: usize, ring_dim: u32) -> usize {

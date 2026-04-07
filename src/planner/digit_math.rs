@@ -41,8 +41,8 @@ fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
 /// # Examples
 ///
 /// ```
-/// # use hachi_planner::digit_math::compute_num_digits;
-/// // 128-bit value in balanced base-4 (log_basis=2): needs 65 digits (symmetric)
+/// # use hachi_pcs::planner::digit_math::compute_num_digits;
+/// // 128-bit value in balanced base-4 (log_basis=2): needs 65 digits
 /// assert_eq!(compute_num_digits(128, 2), 65);
 ///
 /// // 128-bit value in balanced base-8 (log_basis=3): 43 suffices

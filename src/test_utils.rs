@@ -11,7 +11,7 @@ use crate::error::HachiError;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::{
     compute_num_digits_fold, num_digits_for_bound, CommitmentConfig, CommitmentEnvelope,
-    DecompositionParams, HachiCommitmentLayout,
+    DecompositionParams, HachiCommitmentLayout, HachiScheduleLookupKey,
 };
 use crate::{FieldCore, FromSmallInt};
 
@@ -57,15 +57,18 @@ impl CommitmentConfig for TinyConfig {
     }
 
     fn schedule_plan(
-        max_num_vars: usize,
+        key: HachiScheduleLookupKey,
     ) -> Result<Option<crate::protocol::commitment::schedule::HachiSchedulePlan>, HachiError> {
-        if max_num_vars >= usize::BITS as usize {
+        if key != HachiScheduleLookupKey::singleton(key.max_num_vars, key.max_num_vars, 1) {
+            return Ok(None);
+        }
+        if key.max_num_vars >= usize::BITS as usize {
             return Ok(None);
         }
         let root_layout = HachiCommitmentLayout::new::<Self>(1, 1, &Self::decomposition())?;
         Ok(Some(
             crate::protocol::commitment::schedule::build_schedule_plan_from_config::<Self>(
-                max_num_vars,
+                key.max_num_vars,
                 root_layout,
             )?,
         ))
