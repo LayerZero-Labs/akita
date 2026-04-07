@@ -61,11 +61,10 @@ fn padded_s_table<E: FieldCore + FromSmallInt>(
     }
 
     let mut out = vec![E::zero(); x_len * y_len];
-    for y in 0..y_len {
-        let src_start = y * live_x_cols;
-        let dst_start = y * x_len;
-        for x in 0..live_x_cols {
-            out[dst_start + x] = E::from_i64(compact_s_from_w(w_evals_compact[src_start + x]));
+    for x in 0..live_x_cols {
+        let src_start = x * y_len;
+        for y in 0..y_len {
+            out[y * x_len + x] = E::from_i64(compact_s_from_w(w_evals_compact[src_start + y]));
         }
     }
     Ok(out)

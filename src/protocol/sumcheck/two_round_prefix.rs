@@ -709,14 +709,16 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact<
     num_u: usize,
     num_l: usize,
 ) -> Option<Stage1BivariateSkipProof<E>> {
-    let s_compact: Vec<i16> = w_compact
-        .iter()
-        .copied()
-        .map(|w| {
-            let w = i32::from(w);
-            (w * (w + 1)) as i16
-        })
-        .collect();
+    let y_len = 1usize << num_l;
+    assert_eq!(w_compact.len(), live_x_cols * y_len);
+    let mut s_compact = vec![0i16; w_compact.len()];
+    for x in 0..live_x_cols {
+        let src_start = x * y_len;
+        for y in 0..y_len {
+            let w = i32::from(w_compact[src_start + y]);
+            s_compact[y * live_x_cols + x] = (w * (w + 1)) as i16;
+        }
+    }
     build_stage1_bivariate_skip_proof_from_s_compact(&s_compact, tau0, b, live_x_cols, num_u, num_l)
 }
 
@@ -1242,19 +1244,20 @@ pub(crate) fn stage2_local_norm_raw_eval<E: FieldCore>(
     }
 }
 
-/// Evaluate the stage-2 local relation contribution for one `(w^4, m^4)` pair.
+/// Evaluate the stage-2 local relation contribution for one witness quad, one
+/// local bilinear factor quad, and one fixed scalar factor.
 #[inline]
 #[cfg(test)]
 pub(crate) fn stage2_local_relation_eval<E: FieldCore>(
     w_quad: [E; 4],
-    m_quad: [E; 4],
-    alpha: E,
+    local_factor_quad: [E; 4],
+    fixed_factor: E,
     x: PrefixPoint<E>,
     y: PrefixPoint<E>,
 ) -> E {
-    alpha
+    fixed_factor
         * bilinear_eval_on_prefix_points(w_quad, x, y)
-        * bilinear_eval_on_prefix_points(m_quad, x, y)
+        * bilinear_eval_on_prefix_points(local_factor_quad, x, y)
 }
 
 /// Boolean corner in the `{0, 1}^2` sub-grid of the stage-2 full domain.
@@ -1519,16 +1522,16 @@ pub(crate) fn recover_stage2_norm_grid_from_claim<E: FieldCore>(
     recover_stage2_grid_from_corner_claim(compressed, corner_weights, norm_claim)
 }
 
-/// Whether stage 2 has enough x-rounds to use the 2-round prefix path.
+/// Whether stage 2 has enough y-rounds to use the 2-round prefix path.
 #[inline]
-pub(crate) fn can_use_stage2_two_round_prefix(num_u: usize, b: usize) -> bool {
-    num_u >= 2 && matches!(b, 4 | 8)
+pub(crate) fn can_use_stage2_two_round_prefix(num_l: usize, b: usize) -> bool {
+    num_l >= 2 && matches!(b, 4 | 8)
 }
 
 /// Build the stage-2 first-two-round bivariate-skip proof from the compact witness
-/// rows at the start of stage 2.
+/// table at the start of stage 2.
 ///
-/// Returns `None` when there are fewer than two x-rounds to batch.
+/// Returns `None` when there are fewer than two y-rounds to batch.
 #[tracing::instrument(
     skip_all,
     name = "two_round_prefix::build_stage2_bivariate_skip_proof_from_compact"
@@ -1546,7 +1549,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
     num_u: usize,
     num_l: usize,
 ) -> Option<Stage2BivariateSkipProof<E>> {
-    if !can_use_stage2_two_round_prefix(num_u, b) {
+    if !can_use_stage2_two_round_prefix(num_l, b) {
         return None;
     }
 
@@ -1556,20 +1559,20 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
     assert_eq!(m_evals_x.len(), 1usize << num_u);
     assert_eq!(r_stage1.len(), num_u + num_l);
 
-    let eq_x_suffix = EqPolynomial::evals(&r_stage1[2..num_u]);
-    let eq_y = EqPolynomial::evals(&r_stage1[num_u..]);
-    let live_x_quads = live_x_cols.div_ceil(4);
-    debug_assert!(eq_x_suffix.len() >= live_x_quads);
+    let eq_y_suffix = EqPolynomial::evals(&r_stage1[2..num_l]);
+    let eq_x = EqPolynomial::evals(&r_stage1[num_l..]);
+    let y_quads = y_len >> 2;
+    debug_assert_eq!(eq_y_suffix.len(), y_quads);
     let norm_omitted_corner = default_stage2_norm_omitted_corner(
         stage2_norm_corner_weights_from_taus(r_stage1[0], r_stage1[1]),
     );
     let norm_point_indices =
         &STAGE2_COMPRESSED_POINT_INDICES_BY_OMITTED_CORNER[norm_omitted_corner.boolean_index()];
-    let m_point_values_by_quad: Vec<[E; STAGE2_COMPRESSED_POINT_COUNT]> = (0..live_x_quads)
-        .map(|x_quad| {
-            let base = 4 * x_quad;
-            let m_quad = std::array::from_fn(|offset| m_evals_x[base + offset]);
-            stage2_relation_m_point_values_compressed(m_quad)
+    let alpha_point_values_by_quad: Vec<[E; STAGE2_COMPRESSED_POINT_COUNT]> = (0..y_quads)
+        .map(|y_quad| {
+            let base = 4 * y_quad;
+            let alpha_quad = std::array::from_fn(|offset| alpha_evals_y[base + offset]);
+            stage2_relation_m_point_values_compressed(alpha_quad)
         })
         .collect();
 
@@ -1583,7 +1586,6 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
         8 => stage2_b8_lookup_index_from_digits,
         _ => unreachable!(),
     };
-    let default_digit = b / 2;
     let norm_table: &[[i64; STAGE2_PREFIX_POINT_COUNT]] = match b {
         4 => &STAGE2_B4_NORM_LOOKUP_TABLE,
         8 => &STAGE2_B8_NORM_LOOKUP_TABLE,
@@ -1596,7 +1598,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
     };
 
     let (norm_pos, norm_neg, rel_accum) = cfg_fold_reduce!(
-        0..y_len,
+        0..live_x_cols,
         || {
             (
                 [E::MulU64Accum::ZERO; STAGE2_COMPRESSED_POINT_COUNT],
@@ -1604,37 +1606,21 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
                 [E::ProductAccum::ZERO; STAGE2_COMPRESSED_POINT_COUNT],
             )
         },
-        |(mut norm_pos, mut norm_neg, mut rel_accum), y_idx| {
-            let row = &w_compact[y_idx * live_x_cols..(y_idx + 1) * live_x_cols];
-            let alpha = alpha_evals_y[y_idx];
-            let eq_y_weight = eq_y[y_idx];
-            let mut row_rel_pos = [E::MulU64Accum::ZERO; STAGE2_COMPRESSED_POINT_COUNT];
-            let mut row_rel_neg = [E::MulU64Accum::ZERO; STAGE2_COMPRESSED_POINT_COUNT];
-            for (x_quad, &eq_x_weight) in eq_x_suffix.iter().take(live_x_quads).enumerate() {
-                let base = 4 * x_quad;
+        |(mut norm_pos, mut norm_neg, mut rel_accum), x_idx| {
+            let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
+            let eq_x_weight = eq_x[x_idx];
+            let m_val = m_evals_x[x_idx];
+            let mut x_rel_pos = [E::MulU64Accum::ZERO; STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_rel_neg = [E::MulU64Accum::ZERO; STAGE2_COMPRESSED_POINT_COUNT];
+            for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate() {
+                let base = 4 * y_quad;
                 let lookup_idx = lookup_index_fn([
-                    if base < live_x_cols {
-                        w_digit_fn(row[base])
-                    } else {
-                        default_digit
-                    },
-                    if base + 1 < live_x_cols {
-                        w_digit_fn(row[base + 1])
-                    } else {
-                        default_digit
-                    },
-                    if base + 2 < live_x_cols {
-                        w_digit_fn(row[base + 2])
-                    } else {
-                        default_digit
-                    },
-                    if base + 3 < live_x_cols {
-                        w_digit_fn(row[base + 3])
-                    } else {
-                        default_digit
-                    },
+                    w_digit_fn(column[base]),
+                    w_digit_fn(column[base + 1]),
+                    w_digit_fn(column[base + 2]),
+                    w_digit_fn(column[base + 3]),
                 ]);
-                let norm_weight = eq_x_weight * eq_y_weight;
+                let norm_weight = eq_y_weight * eq_x_weight;
                 accum_lookup_vector_signed_selected(
                     &mut norm_pos,
                     &mut norm_neg,
@@ -1643,15 +1629,15 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
                     norm_point_indices,
                 );
                 accum_pointwise_signed(
-                    &mut row_rel_pos,
-                    &mut row_rel_neg,
-                    &m_point_values_by_quad[x_quad],
+                    &mut x_rel_pos,
+                    &mut x_rel_neg,
+                    &alpha_point_values_by_quad[y_quad],
                     &rel_table[lookup_idx],
                 );
             }
             for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {
-                let row_rel = reduce_signed_accum::<E>(row_rel_pos[idx], row_rel_neg[idx]);
-                rel_accum[idx] += alpha.mul_to_product_accum(row_rel);
+                let x_rel = reduce_signed_accum::<E>(x_rel_pos[idx], x_rel_neg[idx]);
+                rel_accum[idx] += m_val.mul_to_product_accum(x_rel);
             }
             (norm_pos, norm_neg, rel_accum)
         },
@@ -1999,6 +1985,13 @@ mod tests {
         let points = stage1_full_prefix_points::<F>();
         let live_x_quads = live_x_cols.div_ceil(4);
         let mut evals_except_boolean_core = Vec::with_capacity(STAGE1_PREFIX_EVAL_COUNT);
+        let mut w_rows = vec![0i8; w_compact.len()];
+        for x in 0..live_x_cols {
+            let src_start = x * y_len;
+            for y in 0..y_len {
+                w_rows[y * live_x_cols + x] = w_compact[src_start + y];
+            }
+        }
 
         for x_idx in 0..5 {
             for y_idx in 0..5 {
@@ -2009,7 +2002,7 @@ mod tests {
                 let x = points[x_idx];
                 let y = points[y_idx];
                 for y_row in 0..y_len {
-                    let row = &w_compact[y_row * live_x_cols..(y_row + 1) * live_x_cols];
+                    let row = &w_rows[y_row * live_x_cols..(y_row + 1) * live_x_cols];
                     let eq_y_weight = eq_y[y_row];
                     for (x_quad, &eq_x_weight) in eq_x_suffix.iter().enumerate().take(live_x_quads)
                     {
@@ -2047,43 +2040,35 @@ mod tests {
         num_u: usize,
         num_l: usize,
     ) -> Option<Stage2BivariateSkipProof<F>> {
-        if !can_use_stage2_two_round_prefix(num_u, b) {
+        if !can_use_stage2_two_round_prefix(num_l, b) {
             return None;
         }
 
         let y_len = 1usize << num_l;
         assert_eq!(m_evals_x.len(), 1usize << num_u);
-        let eq_x_suffix = EqPolynomial::evals(&r_stage1[2..num_u]);
-        let eq_y = EqPolynomial::evals(&r_stage1[num_u..]);
+        let eq_y_suffix = EqPolynomial::evals(&r_stage1[2..num_l]);
+        let eq_x = EqPolynomial::evals(&r_stage1[num_l..]);
         let points = stage2_full_prefix_points::<F>();
-        let live_x_quads = live_x_cols.div_ceil(4);
+        let y_quads = y_len >> 2;
         let mut norm_full = [F::zero(); 9];
         let mut relation_full = [F::zero(); 9];
 
-        for y_idx in 0..y_len {
-            let row = &w_compact[y_idx * live_x_cols..(y_idx + 1) * live_x_cols];
-            let alpha = alpha_evals_y[y_idx];
-            let eq_y_weight = eq_y[y_idx];
-            for (x_quad, &eq_x_weight) in eq_x_suffix.iter().enumerate().take(live_x_quads) {
-                let base = 4 * x_quad;
-                let w_quad = std::array::from_fn(|offset| {
-                    let idx = base + offset;
-                    if idx < live_x_cols {
-                        F::from_i64(row[idx] as i64)
-                    } else {
-                        F::zero()
-                    }
-                });
-                let m_quad = std::array::from_fn(|offset| {
-                    let idx = base + offset;
-                    m_evals_x[idx]
-                });
-                let norm_weight = eq_x_weight * eq_y_weight;
+        for x_idx in 0..live_x_cols {
+            let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
+            let m_val = m_evals_x[x_idx];
+            let eq_x_weight = eq_x[x_idx];
+            for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate().take(y_quads) {
+                let base = 4 * y_quad;
+                let w_quad =
+                    std::array::from_fn(|offset| F::from_i64(column[base + offset] as i64));
+                let alpha_quad = std::array::from_fn(|offset| alpha_evals_y[base + offset]);
+                let norm_weight = eq_y_weight * eq_x_weight;
                 for idx in 0..9 {
                     let x = points[idx / 3];
                     let y = points[idx % 3];
                     norm_full[idx] += norm_weight * stage2_local_norm_raw_eval(w_quad, x, y);
-                    relation_full[idx] += stage2_local_relation_eval(w_quad, m_quad, alpha, x, y);
+                    relation_full[idx] +=
+                        stage2_local_relation_eval(w_quad, alpha_quad, m_val, x, y);
                 }
             }
         }

@@ -618,6 +618,22 @@ fn compact_s_from_w(w: i8) -> i16 {
     s as i16
 }
 
+fn build_compact_s_table_from_y_first_w(
+    w_evals_compact: &[i8],
+    live_x_cols: usize,
+    num_l: usize,
+) -> Vec<i16> {
+    let y_len = 1usize << num_l;
+    let mut s_table = vec![0i16; w_evals_compact.len()];
+    for x in 0..live_x_cols {
+        let src_start = x * y_len;
+        for y in 0..y_len {
+            s_table[y * live_x_cols + x] = compact_s_from_w(w_evals_compact[src_start + y]);
+        }
+    }
+    s_table
+}
+
 struct Stage1TwoRoundPrefix<E: FieldCore> {
     skip_state: Stage1BivariateSkipState<E>,
     first_challenge: Option<E>,
@@ -657,12 +673,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         let y_len = 1usize << num_l;
         assert_eq!(w_evals_compact.len(), live_x_cols * y_len);
         assert_eq!(tau0.len(), num_vars);
-
-        let s_table = w_evals_compact
-            .iter()
-            .copied()
-            .map(compact_s_from_w)
-            .collect();
+        let s_table = build_compact_s_table_from_y_first_w(w_evals_compact, live_x_cols, num_l);
 
         Self {
             s_table: STable::Compact(s_table),
@@ -1985,11 +1996,11 @@ mod tests {
         let x_len = 1usize << num_u;
         let y_len = 1usize << num_l;
         let mut padded = vec![0i8; x_len * y_len];
-        for y in 0..y_len {
-            let src_start = y * live_x_cols;
-            let dst_start = y * x_len;
-            padded[dst_start..dst_start + live_x_cols]
-                .copy_from_slice(&w_prefix[src_start..src_start + live_x_cols]);
+        for x in 0..live_x_cols {
+            let src_start = x * y_len;
+            let dst_start = x * y_len;
+            padded[dst_start..dst_start + y_len]
+                .copy_from_slice(&w_prefix[src_start..src_start + y_len]);
         }
         padded
     }
@@ -2076,13 +2087,8 @@ mod tests {
             let mut prover =
                 HachiStage1Prover::new(&w_compact, &tau0, b, 1usize << num_u, num_u, num_l);
             let stage1_poly = prover.compute_round_eq_factored(0);
-            let s_compact: Vec<i16> = w_compact
-                .iter()
-                .map(|&w| {
-                    let w = w as i32;
-                    (w * (w + 1)) as i16
-                })
-                .collect();
+            let s_compact =
+                build_compact_s_table_from_y_first_w(&w_compact, 1usize << num_u, num_l);
             let reference = compute_norm_round_eq_poly_from_s_compact(
                 &prover.split_eq,
                 &s_compact,
@@ -2177,13 +2183,11 @@ mod tests {
                 assert_eq!(prefix_prover.final_s_claim(), padded_prover.final_s_claim());
                 assert_eq!(prefix_claim, padded_claim);
                 assert_eq!(prefix_scale, padded_scale);
-                let s_padded: Vec<F> = w_padded
-                    .iter()
-                    .map(|&w| {
-                        let w = F::from_i64(w as i64);
-                        w * (w + F::one())
-                    })
-                    .collect();
+                let s_padded: Vec<F> =
+                    build_compact_s_table_from_y_first_w(&w_padded, 1usize << num_u, num_l)
+                        .into_iter()
+                        .map(|s| F::from_i64(i64::from(s)))
+                        .collect();
                 assert_eq!(
                     prefix_prover.final_s_claim(),
                     multilinear_eval(&s_padded, &challenges).unwrap(),
@@ -2204,13 +2208,7 @@ mod tests {
             let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
                 .map(|i| ((i * 9 + 5) % b) as i8 - half)
                 .collect();
-            let s_compact: Vec<i16> = w_prefix
-                .iter()
-                .map(|&w| {
-                    let w = w as i32;
-                    (w * (w + 1)) as i16
-                })
-                .collect();
+            let s_compact = build_compact_s_table_from_y_first_w(&w_prefix, live_x_cols, num_l);
             let tau0: Vec<F> = (0..(num_u + num_l))
                 .map(|i| F::from_u64((i as u64) + 53))
                 .collect();

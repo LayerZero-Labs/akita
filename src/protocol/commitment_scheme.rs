@@ -44,7 +44,7 @@ use crate::protocol::ring_switch::{
 };
 use crate::protocol::sumcheck::hachi_stage1_tree::{HachiStage1Prover, HachiStage1Verifier};
 use crate::protocol::sumcheck::hachi_stage2::{
-    relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier,
+    relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier, Stage2MEvalSource,
 };
 use crate::protocol::sumcheck::{prove_sumcheck, verify_sumcheck, SumcheckInstanceVerifier};
 use crate::protocol::transcript::labels::{
@@ -116,6 +116,18 @@ struct ProveLevelOutput<F: FieldCore> {
 struct BatchedProveLevelOutput<F: FieldCore> {
     root_proof: HachiBatchedRootProof<F>,
     next_state: RecursiveProverState<F>,
+}
+
+fn reorder_stage1_challenges_y_first<F: FieldCore>(
+    r_stage1: &[F],
+    num_u: usize,
+    num_l: usize,
+) -> Vec<F> {
+    assert_eq!(r_stage1.len(), num_u + num_l);
+    let mut reordered = Vec::with_capacity(r_stage1.len());
+    reordered.extend_from_slice(&r_stage1[num_u..]);
+    reordered.extend_from_slice(&r_stage1[..num_u]);
+    reordered
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -651,6 +663,7 @@ where
         let s_claim = stage1_proof.s_claim;
         (stage1_proof, r_stage1, s_claim)
     };
+    let r_stage2 = reorder_stage1_challenges_y_first(&r_stage1, num_u, num_l);
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
@@ -659,7 +672,7 @@ where
         let mut stage2_prover = HachiStage2Prover::new(
             batching_coeff,
             w_evals_compact,
-            &r_stage1,
+            &r_stage2,
             s_claim,
             b,
             alpha_evals_y,
@@ -1026,6 +1039,7 @@ where
         let s_claim = stage1_proof.s_claim;
         (stage1_proof, r_stage1, s_claim)
     };
+    let r_stage2 = reorder_stage1_challenges_y_first(&r_stage1, num_u, num_l);
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
@@ -1034,7 +1048,7 @@ where
         let mut stage2_prover = HachiStage2Prover::new(
             batching_coeff,
             w_evals_compact,
-            &r_stage1,
+            &r_stage2,
             s_claim,
             b,
             alpha_evals_y,
@@ -1276,16 +1290,17 @@ fn next_level_params_from_current_basis_and_envelope<Cfg: CommitmentConfig>(
 /// Derive the opening point for the next fold level from the sumcheck
 /// challenges of the current level.
 ///
-/// Sumcheck challenges are ordered `[x_0..x_{num_u-1}, y_0..y_{num_l-1}]`
-/// where x selects ring elements and y selects coefficients.
-/// The PCS opening point is `[inner, outer]` = `[y, x]`.
+/// Stage-2 sumcheck challenges are ordered `[y_0..y_{num_l-1}, x_0..x_{num_u-1}]`
+/// where `y` selects coefficients and `x` selects ring elements.
+/// The PCS opening point is `[inner, outer] = [y, x]`, so after the y-first
+/// Stage-2 migration the next opening point preserves the challenge order.
 pub(crate) fn next_level_opening_point<F: FieldCore>(
     sumcheck_challenges: &[F],
     num_u: usize,
     num_l: usize,
 ) -> Vec<F> {
-    let (x, y) = sumcheck_challenges.split_at(num_u);
-    debug_assert_eq!(y.len(), num_l);
+    let (y, x) = sumcheck_challenges.split_at(num_l);
+    debug_assert_eq!(x.len(), num_u);
     let mut point = Vec::with_capacity(num_u + num_l);
     point.extend_from_slice(y);
     point.extend_from_slice(x);
@@ -2920,18 +2935,27 @@ where
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         stage1_verifier.verify(stage1, transcript)?
     };
+    let r_stage2 = reorder_stage1_challenges_y_first(&r_stage1, rs.num_u, rs.num_l);
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
+    let m_eval_source = Stage2MEvalSource::ClaimGroups {
+        setup: &setup.expanded,
+        opening_point: &ring_opening_point,
+        challenges: &stage1_challenges,
+        level_params,
+        layout: batched_layout,
+        claim_group_sizes,
+    };
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
         HachiStage2Verifier::new_with_direct_witness_batched(
             batching_coeff,
             stage1.s_claim,
             fw,
-            r_stage1.clone(),
+            r_stage2.clone(),
             rs.alpha_evals_y,
-            rs.m_evals_x,
+            m_eval_source,
             &rs.tau1,
             v_typed,
             &commitment_rows,
@@ -2944,9 +2968,9 @@ where
         HachiStage2Verifier::new_with_claimed_w_eval_batched(
             batching_coeff,
             stage1.s_claim,
-            r_stage1.clone(),
+            r_stage2.clone(),
             rs.alpha_evals_y,
-            rs.m_evals_x,
+            m_eval_source,
             &rs.tau1,
             v_typed,
             &commitment_rows,
@@ -3083,18 +3107,28 @@ where
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         stage1_verifier.verify(stage1, transcript)?
     };
+    let r_stage2 = reorder_stage1_challenges_y_first(&r_stage1, rs.num_u, rs.num_l);
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
+    let m_eval_source = Stage2MEvalSource::OpeningPointsAndClaimGroups {
+        setup: &setup.expanded,
+        opening_points: &ring_opening_points,
+        claim_to_point: &batch_shape.claim_to_point,
+        challenges: &stage1_challenges,
+        level_params,
+        layout: batched_layout,
+        claim_group_sizes: &batch_shape.claim_group_sizes,
+    };
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
         HachiStage2Verifier::new_with_direct_witness_batched(
             batching_coeff,
             stage1.s_claim,
             fw,
-            r_stage1.clone(),
+            r_stage2.clone(),
             rs.alpha_evals_y,
-            rs.m_evals_x,
+            m_eval_source,
             &rs.tau1,
             v_typed,
             &commitment_rows,
@@ -3107,9 +3141,9 @@ where
         HachiStage2Verifier::new_with_claimed_w_eval_batched(
             batching_coeff,
             stage1.s_claim,
-            r_stage1.clone(),
+            r_stage2.clone(),
             rs.alpha_evals_y,
-            rs.m_evals_x,
+            m_eval_source,
             &rs.tau1,
             v_typed,
             &commitment_rows,
@@ -3230,10 +3264,18 @@ where
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         stage1_verifier.verify(stage1, transcript)?
     };
+    let r_stage2 = reorder_stage1_challenges_y_first(&r_stage1, rs.num_u, rs.num_l);
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
+    let m_eval_source = Stage2MEvalSource::Single {
+        setup: &setup.expanded,
+        opening_point: &ring_opening_point,
+        challenges: &stage1_challenges,
+        level_params,
+        layout,
+    };
 
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
@@ -3241,9 +3283,9 @@ where
             batching_coeff,
             stage1.s_claim,
             fw,
-            r_stage1.clone(),
+            r_stage2.clone(),
             rs.alpha_evals_y,
-            rs.m_evals_x,
+            m_eval_source,
             &rs.tau1,
             v_typed,
             commitment_u,
@@ -3257,9 +3299,9 @@ where
             batching_coeff,
             stage1.s_claim,
             stage2.next_w_eval,
-            r_stage1.clone(),
+            r_stage2.clone(),
             rs.alpha_evals_y,
-            rs.m_evals_x,
+            m_eval_source,
             &rs.tau1,
             v_typed,
             commitment_u,
@@ -3327,6 +3369,40 @@ mod tests {
         let num_ring_elems = next_w_len / level_d;
         num_ring_elems.next_power_of_two().trailing_zeros() as usize
             + level_d.trailing_zeros() as usize
+    }
+
+    #[test]
+    fn next_level_opening_point_preserves_y_first_stage2_order() {
+        let challenges = [
+            F::from_u64(3),
+            F::from_u64(5),
+            F::from_u64(7),
+            F::from_u64(11),
+        ];
+        assert_eq!(next_level_opening_point(&challenges, 2, 2), challenges);
+    }
+
+    #[test]
+    fn same_point_batched_root_preserves_opening_geometry() {
+        for num_claims in [4usize, 6] {
+            let root_plan = hachi_root_runtime_plan_with_batch::<OneHotCfg, ONEHOT_D>(
+                20,
+                20,
+                num_claims,
+                HachiRootBatchSummary::new(num_claims, 1, 1).expect("same-point batch summary"),
+            )
+            .expect("same-point root plan");
+            assert_eq!(
+                root_plan.root_layout.block_len,
+                root_plan.level_layout.block_len
+            );
+            assert_eq!(
+                root_plan.root_layout.num_blocks,
+                root_plan.level_layout.num_blocks
+            );
+            assert_eq!(root_plan.root_layout.m_vars, root_plan.level_layout.m_vars);
+            assert_eq!(root_plan.root_layout.r_vars, root_plan.level_layout.r_vars);
+        }
     }
 
     fn expected_same_point_batched_shape(
@@ -3940,7 +4016,7 @@ mod tests {
 
     fn debug_relation_sum_from_tables(
         w_evals_compact: &[i8],
-        live_x_cols: usize,
+        _live_x_cols: usize,
         alpha_evals_y: &[OneHotF],
         m_evals_x: &[OneHotF],
         start_x: usize,
@@ -3950,8 +4026,8 @@ mod tests {
         for x in start_x..end_x {
             let mut y_eval = OneHotF::zero();
             for (y, alpha_eval) in alpha_evals_y.iter().enumerate() {
-                y_eval +=
-                    *alpha_eval * OneHotF::from_i64(w_evals_compact[y * live_x_cols + x] as i64);
+                y_eval += *alpha_eval
+                    * OneHotF::from_i64(w_evals_compact[x * alpha_evals_y.len() + y] as i64);
             }
             acc += y_eval * m_evals_x[x];
         }
@@ -4130,7 +4206,7 @@ mod tests {
                         |acc, (y, alpha_eval)| {
                             acc + *alpha_eval
                                 * OneHotF::from_i64(
-                                    rs.w_evals_compact[y * rs.live_x_cols + x] as i64,
+                                    rs.w_evals_compact[x * rs.alpha_evals_y.len() + y] as i64,
                                 )
                         },
                     )
