@@ -4,7 +4,7 @@ use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
     hachi_batched_root_layout, hachi_root_runtime_plan_with_batch, presets::fp128,
     recursive_suffix_estimate_with_log_basis, CommitmentConfig, HachiCommitmentLayout,
-    HachiRootBatchSummary, HachiSchedulePlan,
+    HachiRootBatchSummary, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
@@ -583,7 +583,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     )
     .expect("batched root runtime plan");
     let suffix_estimate = recursive_suffix_estimate_with_log_basis::<Cfg>(
-        nv,
+        root_plan.lookup_key(),
         root_plan.next_inputs.level,
         root_plan.next_w_len(),
         root_plan.next_level_params.log_basis,
@@ -628,11 +628,12 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
 }
 
 fn best_full_d(nv: usize) -> usize {
-    let d32_bytes = fp128::D32Full::schedule_plan(nv)
+    let key = HachiScheduleLookupKey::singleton(nv, nv, 1);
+    let d32_bytes = fp128::D32Full::schedule_plan(key)
         .ok()
         .flatten()
         .map(|p| p.exact_proof_bytes);
-    let d128_bytes = fp128::D128Full::schedule_plan(nv)
+    let d128_bytes = fp128::D128Full::schedule_plan(key)
         .ok()
         .flatten()
         .map(|p| p.exact_proof_bytes);
@@ -644,11 +645,12 @@ fn best_full_d(nv: usize) -> usize {
 }
 
 fn best_onehot_d(nv: usize) -> usize {
-    let d32_bytes = fp128::D32OneHot::schedule_plan(nv)
+    let key = HachiScheduleLookupKey::singleton(nv, nv, 1);
+    let d32_bytes = fp128::D32OneHot::schedule_plan(key)
         .ok()
         .flatten()
         .map(|p| p.exact_proof_bytes);
-    let d64_bytes = fp128::D64OneHot::schedule_plan(nv)
+    let d64_bytes = fp128::D64OneHot::schedule_plan(key)
         .ok()
         .flatten()
         .map(|p| p.exact_proof_bytes);
@@ -661,7 +663,8 @@ fn best_onehot_d(nv: usize) -> usize {
 
 fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(title: &str, nv: usize) {
     let layout = resolve_layout::<Cfg>(nv);
-    let plan = Cfg::schedule_plan(nv).expect("schedule plan");
+    let plan =
+        Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1)).expect("schedule plan");
     tracing::info!("{}", title);
     print_layout(&layout);
     run_dense::<D, Cfg>(nv, &layout, plan.as_ref());
@@ -683,7 +686,8 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(
             );
             return;
         }
-        let plan = Cfg::schedule_plan(nv).expect("schedule plan");
+        let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1))
+            .expect("schedule plan");
         print_layout(&layout);
         run_onehot::<D, Cfg>(nv, &layout, plan.as_ref());
     } else {

@@ -516,7 +516,8 @@ where
         )?;
         let next_w_len = candidate_plan.next_w_len();
         let root_proof_cost = candidate_plan.level_proof_bytes::<Cfg>();
-        let suffix_cost = estimated_recursive_suffix_bytes::<Cfg>(max_num_vars, 1, next_w_len)?;
+        let suffix_cost =
+            estimated_recursive_suffix_bytes::<Cfg>(candidate_plan.lookup_key(), 1, next_w_len)?;
         let candidate = (
             root_proof_cost.checked_add(suffix_cost).ok_or_else(|| {
                 HachiError::InvalidSetup("batched proof cost overflow".to_string())
@@ -638,7 +639,8 @@ where
     let can_use_planned_root =
         Cfg::commitment_layout(max_num_vars).is_ok_and(|planned_root| planned_root == root_layout);
     if can_use_planned_root && max_num_batched_polys == 1 {
-        if let Some(plan) = Cfg::schedule_plan(max_num_vars)? {
+        let schedule_key = HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
+        if let Some(plan) = Cfg::schedule_plan(schedule_key)? {
             for level in plan.fold_levels().skip(1) {
                 stats.include(level.layout);
             }
@@ -707,7 +709,18 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
-    let schedule = Cfg::schedule_key(max_num_vars)
+    let schedule_lookup_key = HachiScheduleLookupKey::with_batch(
+        max_num_vars,
+        max_num_vars,
+        max_num_batched_polys,
+        HachiRootBatchSummary::new(
+            max_num_batched_polys,
+            max_num_batched_polys,
+            max_num_batched_polys,
+        )
+        .expect("setup cache key requires positive batch counts"),
+    );
+    let schedule = Cfg::schedule_key(schedule_lookup_key)
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
@@ -818,7 +831,8 @@ where
     let d_cols = chain_stats.max_d_matrix_width;
 
     let max_stride = a_cols.max(b_cols).max(d_cols);
-    let required_total = envelope.max_n_a * max_stride;
+    let max_rows = envelope.max_n_a.max(envelope.max_n_b).max(envelope.max_n_d);
+    let required_total = max_rows * max_stride;
 
     let actual_total = expanded.shared_matrix.total_ring_elements_at::<D>();
     if actual_total < required_total {
@@ -950,7 +964,8 @@ where
         let d_cols = chain_stats.max_d_matrix_width;
 
         let max_stride = a_cols.max(b_cols).max(d_cols);
-        let max_total = envelope.max_n_a * max_stride;
+        let max_rows = envelope.max_n_a.max(envelope.max_n_b).max(envelope.max_n_d);
+        let max_total = max_rows * max_stride;
 
         let public_matrix_seed = sample_public_matrix_seed();
         let shared_flat = derive_public_matrix_flat::<F, D>(max_total, &public_matrix_seed);
@@ -1298,7 +1313,8 @@ impl HachiCommitmentCore {
     {
         let envelope = Cfg::envelope(max_num_vars);
         let max_stride = a_cols.max(b_cols).max(d_cols);
-        let max_total = envelope.max_n_a * max_stride;
+        let max_rows = envelope.max_n_a.max(envelope.max_n_b).max(envelope.max_n_d);
+        let max_total = max_rows * max_stride;
         {
             let ring_bytes = std::mem::size_of::<CyclotomicRing<F, D>>();
             let shared_mb = (max_total * ring_bytes) as f64 / (1024.0_f64 * 1024.0_f64);

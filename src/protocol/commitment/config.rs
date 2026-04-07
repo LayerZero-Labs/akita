@@ -2,7 +2,7 @@
 use super::profile::{CommitmentFieldProfile, CommitmentFieldProfileSchedule};
 use super::schedule::{
     exact_planned_level_execution, hachi_root_commitment_layout, HachiLevelParams,
-    HachiScheduleInputs, HachiSchedulePlan,
+    HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use super::utils::math::checked_pow2;
 use super::utils::norm::detect_field_modulus;
@@ -514,9 +514,18 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         (basis, basis)
     }
 
-    /// Stable identity for the active log-basis schedule at `max_num_vars`.
-    fn schedule_key(_max_num_vars: usize) -> String {
-        format!("static_v1_b{}", Self::decomposition().log_basis)
+    /// Stable identity for the active log-basis schedule at `key`.
+    fn schedule_key(key: HachiScheduleLookupKey) -> String {
+        format!(
+            "static_v1_b{}_nv{}_poly{}_layout{}_claims{}_groups{}_points{}",
+            Self::decomposition().log_basis,
+            key.max_num_vars,
+            key.num_vars,
+            key.layout_num_claims,
+            key.batch.num_claims,
+            key.batch.num_commitment_groups,
+            key.batch.num_points
+        )
     }
 
     /// Optional full schedule plan for configs with an explicit planner.
@@ -527,7 +536,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// Returns an error when the config's planner cannot derive a valid
     /// schedule from the public inputs.
-    fn schedule_plan(_max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
+    fn schedule_plan(
+        _key: HachiScheduleLookupKey,
+    ) -> Result<Option<HachiSchedulePlan>, HachiError> {
         Ok(None)
     }
 
@@ -541,7 +552,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Returns an error when the config's planner cannot derive a valid
     /// suffix from the public inputs.
     fn recursive_suffix_bytes(
-        _max_num_vars: usize,
+        _key: HachiScheduleLookupKey,
         _level: usize,
         _current_w_len: usize,
     ) -> Result<Option<usize>, HachiError> {
@@ -568,7 +579,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// Returns an error if `max_num_vars` does not admit a valid layout.
     fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        if let Some(plan) = Self::schedule_plan(max_num_vars)? {
+        let key = HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
+        if let Some(plan) = Self::schedule_plan(key)? {
             if let Some(root_fold) = plan.fold_levels().next() {
                 return Ok(root_fold.layout);
             }
@@ -774,15 +786,18 @@ impl CommitmentConfig for SmallTestCommitmentConfig {
     }
 
     fn schedule_plan(
-        max_num_vars: usize,
+        key: HachiScheduleLookupKey,
     ) -> Result<Option<super::schedule::HachiSchedulePlan>, HachiError> {
-        if max_num_vars >= usize::BITS as usize {
+        if key != HachiScheduleLookupKey::singleton(key.max_num_vars, key.max_num_vars, 1) {
+            return Ok(None);
+        }
+        if key.max_num_vars >= usize::BITS as usize {
             return Ok(None);
         }
         let root_layout = HachiCommitmentLayout::new::<Self>(4, 2, &Self::decomposition())?;
         Ok(Some(super::schedule::build_schedule_plan_from_config::<
             Self,
-        >(max_num_vars, root_layout)?))
+        >(key.max_num_vars, root_layout)?))
     }
 }
 
@@ -841,20 +856,32 @@ impl<
         }
     }
 
-    fn schedule_key(_max_num_vars: usize) -> String {
-        format!("static_v1_root{LOG_BASIS}_rec{W_LOG_BASIS}")
+    fn schedule_key(key: HachiScheduleLookupKey) -> String {
+        format!(
+            "static_v1_root{LOG_BASIS}_rec{W_LOG_BASIS}_nv{}_poly{}_layout{}_claims{}_groups{}_points{}",
+            key.max_num_vars,
+            key.num_vars,
+            key.layout_num_claims,
+            key.batch.num_claims,
+            key.batch.num_commitment_groups,
+            key.batch.num_points
+        )
     }
 
     fn schedule_plan(
-        max_num_vars: usize,
+        key: HachiScheduleLookupKey,
     ) -> Result<Option<super::schedule::HachiSchedulePlan>, crate::error::HachiError> {
-        if max_num_vars >= usize::BITS as usize {
+        if key != HachiScheduleLookupKey::singleton(key.max_num_vars, key.max_num_vars, 1) {
             return Ok(None);
         }
-        let (_, root_layout) = super::schedule::hachi_root_commitment_layout::<Self>(max_num_vars)?;
+        if key.max_num_vars >= usize::BITS as usize {
+            return Ok(None);
+        }
+        let (_, root_layout) =
+            super::schedule::hachi_root_commitment_layout::<Self>(key.max_num_vars)?;
         Ok(Some(super::schedule::build_schedule_plan_from_config::<
             Self,
-        >(max_num_vars, root_layout)?))
+        >(key.max_num_vars, root_layout)?))
     }
 
     fn n_b_at_level(level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {
@@ -949,6 +976,10 @@ pub struct GeneratedAdaptivePolicy<Profile, const D: usize, const LOG_COMMIT_BOU
     PhantomData<Profile>,
 );
 
+fn missing_generated_schedule(err: &HachiError) -> bool {
+    matches!(err, HachiError::InvalidSetup(msg) if msg.starts_with("missing generated schedule "))
+}
+
 impl<
         F: CanonicalField + FieldCore + Send + Sync + 'static,
         Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
@@ -991,37 +1022,54 @@ impl<
     }
 
     fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
-        Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(inputs.max_num_vars)
-            .and_then(|source| source.log_basis_at_level::<Self>(inputs))
-            .expect("generated adaptive schedule must be derivable from public inputs")
+        Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(
+            HachiScheduleLookupKey::singleton(inputs.max_num_vars, inputs.max_num_vars, 1),
+        )
+        .and_then(|source| source.log_basis_at_level::<Self>(inputs))
+        .expect("generated adaptive schedule must be derivable from public inputs")
     }
 
     fn log_basis_search_range(_inputs: HachiScheduleInputs) -> (u32, u32) {
         Profile::adaptive_log_basis_search_range()
     }
 
-    fn schedule_key(max_num_vars: usize) -> String {
-        Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(max_num_vars)
-            .map(|source| source.schedule_key())
-            .expect("generated adaptive schedule key must be derivable from public inputs")
+    fn schedule_key(key: HachiScheduleLookupKey) -> String {
+        match Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(key) {
+            Ok(source) => source.schedule_key(),
+            Err(_) => format!(
+                "generated-miss/d{D}/lcb{LOG_COMMIT_BOUND}/max{}/num{}/claims{}/batch{}g{}p{}",
+                key.max_num_vars,
+                key.num_vars,
+                key.layout_num_claims,
+                key.batch.num_claims,
+                key.batch.num_commitment_groups,
+                key.batch.num_points,
+            ),
+        }
     }
 
-    fn schedule_plan(max_num_vars: usize) -> Result<Option<HachiSchedulePlan>, HachiError> {
-        Ok(Some(
-            Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(max_num_vars)?
-                .schedule_plan(),
-        ))
+    fn schedule_plan(key: HachiScheduleLookupKey) -> Result<Option<HachiSchedulePlan>, HachiError> {
+        match Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(key) {
+            Ok(source) => Ok(Some(source.schedule_plan())),
+            Err(err) if missing_generated_schedule(&err) => Ok(None),
+            Err(err) => Err(err),
+        }
     }
 
     fn recursive_suffix_bytes(
-        max_num_vars: usize,
+        key: HachiScheduleLookupKey,
         level: usize,
         current_w_len: usize,
     ) -> Result<Option<usize>, HachiError> {
-        Ok(Some(
-            Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(max_num_vars)?
-                .recursive_suffix_bytes::<Self>(max_num_vars, level, current_w_len)?,
-        ))
+        match Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(key) {
+            Ok(source) => Ok(Some(source.recursive_suffix_bytes::<Self>(
+                key.max_num_vars,
+                level,
+                current_w_len,
+            )?)),
+            Err(err) if missing_generated_schedule(&err) => Ok(None),
+            Err(err) => Err(err),
+        }
     }
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
@@ -1032,9 +1080,9 @@ impl<
         inputs: HachiScheduleInputs,
         log_basis: u32,
     ) -> HachiLevelParams {
-        if let Ok(source) =
-            Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(inputs.max_num_vars)
-        {
+        if let Ok(source) = Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(
+            HachiScheduleLookupKey::singleton(inputs.max_num_vars, inputs.max_num_vars, 1),
+        ) {
             if let Ok(Some(planned_level)) =
                 exact_planned_level_execution::<Self>(&source.schedule_plan(), inputs, log_basis)
             {
@@ -1072,8 +1120,8 @@ impl<
 #[cfg(test)]
 mod fp128_policy_tests {
     use super::*;
+    use crate::planner::sis_security::min_rank_for_secure_width;
     use crate::protocol::commitment::profile::Fp128PrimeProfile;
-    use hachi_planner::sis_security::min_rank_for_secure_width;
 
     #[test]
     fn small_d_stage1_challenge_families_match_study_parameters() {
@@ -1107,7 +1155,7 @@ mod fp128_policy_tests {
 
         let root_onehot = Cfg::decomposition().log_commit_bound == 1;
         for num_vars in min_num_vars..=max_num_vars {
-            let plan = Cfg::schedule_plan(num_vars)
+            let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(num_vars, num_vars, 1))
                 .unwrap()
                 .expect("audited D=128 config should have a schedule");
 
@@ -1307,13 +1355,9 @@ mod split_tests {
         assert_eq!(FullCfg::log_basis_search_range(inputs), (2, 6));
         assert_eq!(OneHotCfg::log_basis_search_range(inputs), (2, 6));
 
+        let key = HachiScheduleLookupKey::singleton(inputs.max_num_vars, inputs.max_num_vars, 1);
         assert_eq!(
-            FullCfg::recursive_suffix_bytes(
-                inputs.max_num_vars,
-                inputs.level,
-                inputs.current_w_len
-            )
-            .unwrap(),
+            FullCfg::recursive_suffix_bytes(key, inputs.level, inputs.current_w_len).unwrap(),
             Some(
                 planned_recursive_suffix_bytes::<FullCfg>(
                     inputs.max_num_vars,
@@ -1326,12 +1370,7 @@ mod split_tests {
             )
         );
         assert_eq!(
-            OneHotCfg::recursive_suffix_bytes(
-                inputs.max_num_vars,
-                inputs.level,
-                inputs.current_w_len
-            )
-            .unwrap(),
+            OneHotCfg::recursive_suffix_bytes(key, inputs.level, inputs.current_w_len).unwrap(),
             Some(
                 planned_recursive_suffix_bytes::<OneHotCfg>(
                     inputs.max_num_vars,

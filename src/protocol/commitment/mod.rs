@@ -34,12 +34,12 @@ pub(crate) use schedule::{
     recursive_level_decomposition_from_root, recursive_r_decomp_levels_for_bound,
 };
 pub use schedule::{
-    hachi_recursive_level_layout_from_params, hachi_root_level_layout,
-    hachi_root_runtime_plan_with_batch, recursive_suffix_estimate_with_log_basis,
-    HachiBatchPlanningEnvelope, HachiLevelParams, HachiPlannedDirectStep, HachiPlannedLevel,
-    HachiPlannedLevelExecution, HachiPlannedState, HachiPlannedStep, HachiRecursiveSuffixEstimate,
-    HachiRootBatchSummary, HachiRootRuntimePlan, HachiScheduleInputs, HachiScheduleLookupKey,
-    HachiSchedulePlan,
+    exact_schedule_plan_for_lookup_key, hachi_recursive_level_layout_from_params,
+    hachi_root_level_layout, hachi_root_runtime_plan_with_batch,
+    recursive_suffix_estimate_with_log_basis, HachiBatchPlanningEnvelope, HachiLevelParams,
+    HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedLevelExecution, HachiPlannedState,
+    HachiPlannedStep, HachiRecursiveSuffixEstimate, HachiRootBatchSummary, HachiRootRuntimePlan,
+    HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 pub use scheme::{CommitWitness, CommitmentScheme, RingCommitmentScheme};
 pub use transcript_append::AppendToTranscript;

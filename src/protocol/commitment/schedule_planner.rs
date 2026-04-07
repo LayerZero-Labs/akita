@@ -11,7 +11,7 @@ use super::config::CommitmentConfig;
 use super::schedule::{
     current_level_layout_with_log_basis, direct_witness_bytes, exact_recursive_level_proof_bytes,
     field_bits, planned_next_w_len, HachiBatchPlanningEnvelope, HachiPlannedDirectStep,
-    HachiPlannedLevel, HachiPlannedState, HachiPlannedStep, HachiScheduleInputs,
+    HachiPlannedLevel, HachiPlannedState, HachiPlannedStep, HachiScheduleInputs, HachiSchedulePlan,
 };
 use crate::error::HachiError;
 use crate::protocol::proof::DirectWitnessShape;
@@ -100,12 +100,22 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
         return Ok(existing.clone());
     }
 
+    let (direct_log_basis, witness_shape) = if state.level == 0 {
+        (
+            Cfg::decomposition().log_basis,
+            DirectWitnessShape::FieldElements(state.current_w_len),
+        )
+    } else {
+        (
+            state.log_basis,
+            DirectWitnessShape::PackedDigits((state.current_w_len, state.log_basis)),
+        )
+    };
     let direct_state = HachiPlannedState {
         level: state.level,
         current_w_len: state.current_w_len,
-        log_basis: state.log_basis,
+        log_basis: direct_log_basis,
     };
-    let witness_shape = DirectWitnessShape::PackedDigits((state.current_w_len, state.log_basis));
     let direct_bytes = direct_witness_bytes(cfg.field_bits, &witness_shape);
     let mut best = PlannedSuffix {
         steps: vec![HachiPlannedStep::Direct(HachiPlannedDirectStep {
@@ -283,6 +293,19 @@ pub(super) fn cached_dp_best_basis<Cfg: CommitmentConfig>(
     Some(best)
 }
 
+pub(super) fn dp_suffix_plan<Cfg: CommitmentConfig>(
+    cfg: PlannerConfig,
+    state: PlannerState,
+) -> Result<HachiSchedulePlan, HachiError> {
+    let mut memo = HashMap::new();
+    let suffix = best_recursive_suffix::<Cfg>(cfg, &mut memo, state)?;
+    Ok(HachiSchedulePlan {
+        steps: suffix.steps,
+        no_wrapper_bytes: suffix.no_wrapper_bytes,
+        exact_proof_bytes: suffix.no_wrapper_bytes,
+    })
+}
+
 #[cfg(test)]
 pub(crate) fn planned_recursive_suffix_bytes<Cfg: CommitmentConfig>(
     max_num_vars: usize,
@@ -298,7 +321,9 @@ pub(crate) fn planned_recursive_suffix_bytes<Cfg: CommitmentConfig>(
         level,
         current_w_len,
     };
-    if let Some(schedule) = Cfg::schedule_plan(max_num_vars)? {
+    let root_key =
+        super::schedule::HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
+    if let Some(schedule) = Cfg::schedule_plan(root_key)? {
         return planned_recursive_suffix_bytes_from_schedule::<Cfg>(
             &schedule,
             max_num_vars,

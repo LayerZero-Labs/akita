@@ -3,28 +3,29 @@
 use super::config::{CommitmentConfig, DecompositionParams};
 use super::generated::{
     fp128_d128_full_table, fp128_d128_onehot_table, fp128_d32_full_table, fp128_d32_onehot_table,
-    fp128_d64_full_table, fp128_d64_onehot_table, table_entry_envelope, GeneratedScheduleTable,
+    fp128_d64_full_table, fp128_d64_onehot_table, table_entry_envelope_for_max_num_vars,
+    GeneratedScheduleTable,
 };
 use super::schedule::{
     generated_schedule_plan_from_table, planned_log_basis_at_level_from_schedule,
     planned_recursive_suffix_bytes_from_schedule, planned_schedule_key_from_schedule,
-    HachiScheduleInputs, HachiSchedulePlan,
+    HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use crate::algebra::Prime128Offset275;
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
 use crate::{CanonicalField, FieldCore};
 
-fn generated_schedule<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
+fn generated_schedule<Cfg: CommitmentConfig, const D: usize>(
+    key: HachiScheduleLookupKey,
     table: GeneratedScheduleTable,
     min_log_basis: u32,
     max_log_basis: u32,
 ) -> Result<HachiSchedulePlan, HachiError> {
     let _ = (min_log_basis, max_log_basis);
-    generated_schedule_plan_from_table::<Cfg>(max_num_vars, table)?.ok_or_else(|| {
+    generated_schedule_plan_from_table::<Cfg, D>(key, table)?.ok_or_else(|| {
         HachiError::InvalidSetup(format!(
-            "missing generated schedule for {} at max_num_vars={max_num_vars}",
+            "missing generated schedule for {} at key={key:?}",
             std::any::type_name::<Cfg>()
         ))
     })
@@ -74,14 +75,21 @@ pub trait CommitmentFieldProfile: Clone + Copy + Default + Send + Sync + 'static
 
 #[derive(Debug, Clone)]
 pub(crate) struct ProfileScheduleSource {
+    key: HachiScheduleLookupKey,
     exact_plan: HachiSchedulePlan,
     min_log_basis: u32,
     max_log_basis: u32,
 }
 
 impl ProfileScheduleSource {
-    fn new(exact_plan: HachiSchedulePlan, min_log_basis: u32, max_log_basis: u32) -> Self {
+    fn new(
+        key: HachiScheduleLookupKey,
+        exact_plan: HachiSchedulePlan,
+        min_log_basis: u32,
+        max_log_basis: u32,
+    ) -> Self {
         Self {
+            key,
             exact_plan,
             min_log_basis,
             max_log_basis,
@@ -101,7 +109,7 @@ impl ProfileScheduleSource {
     }
 
     pub(crate) fn schedule_key(&self) -> String {
-        planned_schedule_key_from_schedule(&self.exact_plan)
+        planned_schedule_key_from_schedule(self.key, &self.exact_plan)
     }
 
     pub(crate) fn schedule_plan(&self) -> HachiSchedulePlan {
@@ -140,7 +148,7 @@ pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
         max_num_vars: usize,
     ) -> Option<(usize, usize, usize)> {
         Self::generated_schedule_table::<D, LOG_COMMIT_BOUND>()
-            .and_then(|table| table_entry_envelope(table, max_num_vars))
+            .and_then(|table| table_entry_envelope_for_max_num_vars(table, max_num_vars))
     }
 
     /// Exact generated schedule source for one shipped generated family.
@@ -155,7 +163,7 @@ pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
         const D: usize,
         const LOG_COMMIT_BOUND: u32,
     >(
-        max_num_vars: usize,
+        key: HachiScheduleLookupKey,
     ) -> Result<ProfileScheduleSource, HachiError> {
         let (min_log_basis, max_log_basis) = Self::adaptive_log_basis_search_range();
         let table = Self::generated_schedule_table::<D, LOG_COMMIT_BOUND>().ok_or_else(|| {
@@ -164,9 +172,9 @@ pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
                 std::any::type_name::<Cfg>()
             ))
         })?;
-        let exact_plan =
-            generated_schedule::<Cfg>(max_num_vars, table, min_log_basis, max_log_basis)?;
+        let exact_plan = generated_schedule::<Cfg, D>(key, table, min_log_basis, max_log_basis)?;
         Ok(ProfileScheduleSource::new(
+            key,
             exact_plan,
             min_log_basis,
             max_log_basis,
@@ -296,6 +304,7 @@ mod schedule_source_tests {
         type Cfg = fp128::D128Full;
 
         let max_num_vars = 30usize;
+        let key = HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
         let inputs = HachiScheduleInputs {
             max_num_vars,
             level: 4,
@@ -307,13 +316,13 @@ mod schedule_source_tests {
                 Cfg,
                 128,
                 128,
-            >(max_num_vars)
+            >(key)
             .unwrap();
 
-        assert_eq!(source.schedule_key(), Cfg::schedule_key(max_num_vars));
+        assert_eq!(source.schedule_key(), Cfg::schedule_key(key));
         assert_eq!(
             source.schedule_plan(),
-            Cfg::schedule_plan(max_num_vars).unwrap().unwrap()
+            Cfg::schedule_plan(key).unwrap().unwrap()
         );
         assert_eq!(
             source.log_basis_at_level::<Cfg>(inputs).unwrap(),
@@ -323,7 +332,7 @@ mod schedule_source_tests {
             source
                 .recursive_suffix_bytes::<Cfg>(max_num_vars, inputs.level, inputs.current_w_len)
                 .unwrap(),
-            Cfg::recursive_suffix_bytes(max_num_vars, inputs.level, inputs.current_w_len)
+            Cfg::recursive_suffix_bytes(key, inputs.level, inputs.current_w_len)
                 .unwrap()
                 .unwrap()
         );
@@ -334,6 +343,7 @@ mod schedule_source_tests {
         type Cfg = fp128::D64OneHot;
 
         let max_num_vars = 30usize;
+        let key = HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
         let inputs = HachiScheduleInputs {
             max_num_vars,
             level: 4,
@@ -345,13 +355,13 @@ mod schedule_source_tests {
                 Cfg,
                 64,
                 1,
-            >(max_num_vars)
+            >(key)
             .unwrap();
 
-        assert_eq!(source.schedule_key(), Cfg::schedule_key(max_num_vars));
+        assert_eq!(source.schedule_key(), Cfg::schedule_key(key));
         assert_eq!(
             source.schedule_plan(),
-            Cfg::schedule_plan(max_num_vars).unwrap().unwrap()
+            Cfg::schedule_plan(key).unwrap().unwrap()
         );
         assert_eq!(
             source.log_basis_at_level::<Cfg>(inputs).unwrap(),
@@ -361,7 +371,7 @@ mod schedule_source_tests {
             source
                 .recursive_suffix_bytes::<Cfg>(max_num_vars, inputs.level, inputs.current_w_len)
                 .unwrap(),
-            Cfg::recursive_suffix_bytes(max_num_vars, inputs.level, inputs.current_w_len)
+            Cfg::recursive_suffix_bytes(key, inputs.level, inputs.current_w_len)
                 .unwrap()
                 .unwrap()
         );

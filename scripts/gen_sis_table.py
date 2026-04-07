@@ -5,7 +5,7 @@ Regenerate the SIS max-width table used by the Hachi planner.
 This script binary-searches for the maximum SIS width (in ring elements) that
 provides >= 128-bit security for each (d, collision_inf, rank) triple. The
 output is the Rust match arm body for `sis_max_widths` in
-`planner/src/sis_security.rs`.
+`src/planner/sis_security.rs`.
 
 Requires SageMath and a checkout of the lattice-estimator repo
 (https://github.com/malb/lattice-estimator).

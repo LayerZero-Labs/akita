@@ -502,7 +502,6 @@ dependencies = [
  "criterion",
  "ctr",
  "hachi-derive",
- "hachi-planner",
  "num-bigint",
  "rand",
  "rand_core",
@@ -513,10 +512,6 @@ dependencies = [
  "tracing-chrome",
  "tracing-subscriber",
 ]
-
-[[package]]
-name = "hachi-planner"
-version = "0.1.0"
 
 [[package]]
 name = "half"

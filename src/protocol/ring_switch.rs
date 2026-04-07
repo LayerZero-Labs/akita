@@ -719,8 +719,8 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::log_basis_search_range(inputs)
     }
 
-    fn schedule_key(max_num_vars: usize) -> String {
-        Cfg::schedule_key(max_num_vars)
+    fn schedule_key(key: crate::protocol::commitment::HachiScheduleLookupKey) -> String {
+        Cfg::schedule_key(key)
     }
 
     fn decomposition() -> DecompositionParams {

@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
-use crate::digit_math::{compute_num_digits, compute_num_digits_fold, optimal_m_r_split};
-use crate::proof_size::{
+use super::digit_math::{compute_num_digits, compute_num_digits_fold, optimal_m_r_split};
+use super::proof_size::{
     elem_bytes, packed_digits_bytes, ring_vec_bytes, stage1_bytes_optimized, sumcheck_bytes,
     sumcheck_rounds, FIELD_BITS,
 };
-use crate::sis_security::{ceil_supported_collision, min_rank_for_secure_width};
+use super::sis_security::{ceil_supported_collision, min_rank_for_secure_width};
 
-// ── Ring configurations ────────────────────────────────────────────────────
+// Ring configurations.
 
 /// A candidate ring configuration for one folding level.
 #[derive(Clone, Debug)]
@@ -75,7 +75,7 @@ pub const ALL_RING_CONFIGS: &[RingConfig] = &[
 const MIN_LB: u32 = 2;
 const MAX_LB: u32 = 6;
 
-// ── Witness computation ────────────────────────────────────────────────────
+// Witness computation.
 
 struct LevelComputation {
     m_vars: u32,
@@ -146,7 +146,7 @@ fn compute_level_witness(cfg: &RingConfig, a: &WitnessArgs) -> LevelComputation 
     }
 }
 
-// ── Output types ───────────────────────────────────────────────────────────
+// Output types.
 
 /// Serialized direct-witness shape chosen at a terminal step.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -253,7 +253,7 @@ impl Schedule {
     }
 }
 
-// ── Planner options ────────────────────────────────────────────────────────
+// Planner options.
 
 /// Configuration knobs for the planner.
 #[derive(Clone)]
@@ -290,7 +290,7 @@ impl PlannerOptions {
     }
 }
 
-// ── Planner internals ──────────────────────────────────────────────────────
+// Planner internals.
 
 type MemoKey = (usize, u32, u32); // (w_len, cur_D, current_lb)
 
@@ -564,7 +564,7 @@ impl Planner {
     }
 }
 
-// ── Public API ─────────────────────────────────────────────────────────────
+// Public API.
 
 /// Run the universal planner.
 ///
@@ -652,7 +652,7 @@ fn run_universal_planner_internal(opts: &PlannerOptions) -> Schedule {
                     let total = root_entry_commit + root_prefix + suffix.cost;
                     let is_better = overall_best
                         .as_ref()
-                        .map_or(true, |(best_total, _)| total < *best_total);
+                        .is_none_or(|(best_total, _)| total < *best_total);
                     if is_better {
                         let mut steps = Vec::with_capacity(1 + suffix.steps.len());
                         steps.push(PlannedStep::Fold(PlannedFoldStep {
