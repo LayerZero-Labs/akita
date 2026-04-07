@@ -499,6 +499,46 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         }
     }
 
+    /// Derive root params for a concrete root layout.
+    ///
+    /// The default implementation trusts the config's pinned root ranks and only
+    /// uses the layout to recover the active basis. Adaptive configs can
+    /// override this to derive exact root ranks from the real layout widths.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the config cannot derive a sound root parameter set
+    /// for the supplied root layout.
+    fn root_level_params_for_layout_with_log_basis(
+        inputs: HachiScheduleInputs,
+        root_layout: HachiCommitmentLayout,
+    ) -> Result<HachiLevelParams, HachiError> {
+        Ok(Self::level_params_with_log_basis(
+            inputs,
+            root_layout.log_basis,
+        ))
+    }
+
+    /// Derive the root fold layout for an explicit basis.
+    ///
+    /// The default implementation uses the config's current root params and the
+    /// standard `(m, r)` split search. Adaptive configs can override this to
+    /// search over self-consistent root ranks before materializing the layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the root variable split underflows, overflows, or
+    /// does not admit a sound root parameterization.
+    fn root_level_layout_with_log_basis(
+        inputs: HachiScheduleInputs,
+        log_basis: u32,
+    ) -> Result<(HachiLevelParams, HachiCommitmentLayout), HachiError> {
+        let params = Self::level_params_with_log_basis(inputs, log_basis);
+        let root_layout =
+            derived_root_commitment_layout_from_params::<Self>(inputs, &params, false)?;
+        Ok((params, root_layout))
+    }
+
     /// Deterministically choose the active basis for one level from public inputs.
     fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
         let _ = inputs;
@@ -970,6 +1010,103 @@ fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
     })
 }
 
+fn derived_root_commitment_layout_from_params<Cfg: CommitmentConfig>(
+    inputs: HachiScheduleInputs,
+    params: &HachiLevelParams,
+    allow_zero_outer: bool,
+) -> Result<HachiCommitmentLayout, HachiError> {
+    let alpha = params.d.trailing_zeros() as usize;
+    let reduced_vars = if allow_zero_outer {
+        inputs.max_num_vars.saturating_sub(alpha)
+    } else {
+        inputs.max_num_vars.checked_sub(alpha).ok_or_else(|| {
+            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
+        })?
+    };
+    if reduced_vars == 0 && !allow_zero_outer {
+        return Err(HachiError::InvalidSetup(
+            "max_num_vars must leave at least one outer variable".to_string(),
+        ));
+    }
+
+    let mut decomp = Cfg::decomposition();
+    decomp.log_basis = params.log_basis;
+    let (m_vars, r_vars) = if reduced_vars == 0 {
+        (0, 0)
+    } else {
+        optimal_m_r_split_with_params(params, decomp, reduced_vars, 0)
+    };
+    let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
+    let num_digits_commit = compute_num_digits(decomp.log_commit_bound, decomp.log_basis);
+    let num_digits_open = compute_num_digits(open_bound, decomp.log_basis);
+    let num_digits_fold =
+        compute_num_digits_fold(r_vars, params.challenge_l1_mass, decomp.log_basis);
+    HachiCommitmentLayout::new_with_decomp(
+        m_vars,
+        r_vars,
+        params.n_a,
+        num_digits_commit,
+        num_digits_open,
+        num_digits_fold,
+        decomp.log_basis,
+        0,
+    )
+}
+
+fn sis_derived_root_params_for_layout<Cfg: CommitmentConfig>(
+    inputs: HachiScheduleInputs,
+    root_layout: HachiCommitmentLayout,
+) -> Result<HachiLevelParams, HachiError> {
+    use super::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
+
+    let d = Cfg::d_at_level(inputs.level, inputs.current_w_len);
+    let stage1_config = Cfg::stage1_challenge_config(d);
+    let bd_collision = (1u32 << root_layout.log_basis) - 1;
+    let a_raw = if inputs.level == 0 && Cfg::decomposition().log_commit_bound == 1 {
+        2
+    } else {
+        bd_collision
+    };
+    let a_collision = ceil_supported_collision(d as u32, a_raw * stage1_config.max_abs_coeff())
+        .ok_or_else(|| {
+            HachiError::InvalidSetup(format!(
+                "missing supported root A-role collision bucket for D={} and raw collision {}",
+                d,
+                a_raw * stage1_config.max_abs_coeff()
+            ))
+        })?;
+    let n_a = min_rank_for_secure_width(d as u32, a_collision, root_layout.inner_width as u64)
+        .ok_or_else(|| {
+            HachiError::InvalidSetup(format!(
+                "missing secure root A-row rank for D={} lb={} inner_width={}",
+                d, root_layout.log_basis, root_layout.inner_width
+            ))
+        })?;
+    let n_b = min_rank_for_secure_width(d as u32, bd_collision, root_layout.outer_width as u64)
+        .ok_or_else(|| {
+            HachiError::InvalidSetup(format!(
+                "missing secure root B-row rank for D={} lb={} outer_width={}",
+                d, root_layout.log_basis, root_layout.outer_width
+            ))
+        })?;
+    let n_d = min_rank_for_secure_width(d as u32, bd_collision, root_layout.d_matrix_width as u64)
+        .ok_or_else(|| {
+            HachiError::InvalidSetup(format!(
+                "missing secure root D-row rank for D={} lb={} d_matrix_width={}",
+                d, root_layout.log_basis, root_layout.d_matrix_width
+            ))
+        })?;
+    Ok(HachiLevelParams {
+        d,
+        log_basis: root_layout.log_basis,
+        n_a,
+        n_b,
+        n_d,
+        challenge_l1_mass: stage1_config.l1_mass(),
+        stage1_config,
+    })
+}
+
 /// Generated adaptive policy with table-selected per-level log bases.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GeneratedAdaptivePolicy<Profile, const D: usize, const LOG_COMMIT_BOUND: u32>(
@@ -1017,6 +1154,59 @@ impl<
             envelope.max_n_a = envelope.max_n_a.max(gen_n_a);
             envelope.max_n_b = envelope.max_n_b.max(gen_n_b);
             envelope.max_n_d = envelope.max_n_d.max(gen_n_d);
+        }
+        let root_inputs = HachiScheduleInputs {
+            max_num_vars,
+            level: 0,
+            current_w_len: 1usize.checked_shl(max_num_vars as u32).unwrap_or(0),
+        };
+        let alpha = D.trailing_zeros() as usize;
+        let (min_log_basis, max_log_basis) = Profile::adaptive_log_basis_search_range();
+        for log_basis in min_log_basis..=max_log_basis {
+            let root_params = if max_num_vars > alpha {
+                Self::root_level_layout_with_log_basis(root_inputs, log_basis)
+                    .ok()
+                    .map(|(params, _)| params)
+            } else {
+                let stage1_config = Self::stage1_challenge_config(D);
+                let mut params = HachiLevelParams {
+                    d: D,
+                    log_basis,
+                    n_a: 1,
+                    n_b: 1,
+                    n_d: 1,
+                    challenge_l1_mass: stage1_config.l1_mass(),
+                    stage1_config,
+                };
+                let mut converged = None;
+                for _ in 0..4 {
+                    let Ok(layout) = derived_root_commitment_layout_from_params::<Self>(
+                        root_inputs,
+                        &params,
+                        true,
+                    ) else {
+                        break;
+                    };
+                    let Ok(derived_params) =
+                        Self::root_level_params_for_layout_with_log_basis(root_inputs, layout)
+                    else {
+                        break;
+                    };
+                    if (derived_params.n_a, derived_params.n_b, derived_params.n_d)
+                        == (params.n_a, params.n_b, params.n_d)
+                    {
+                        converged = Some(derived_params);
+                        break;
+                    }
+                    params = derived_params;
+                }
+                converged
+            };
+            if let Some(root_params) = root_params {
+                envelope.max_n_a = envelope.max_n_a.max(root_params.n_a);
+                envelope.max_n_b = envelope.max_n_b.max(root_params.n_b);
+                envelope.max_n_d = envelope.max_n_d.max(root_params.n_d);
+            }
         }
         envelope
     }
@@ -1070,6 +1260,45 @@ impl<
             Err(err) if missing_generated_schedule(&err) => Ok(None),
             Err(err) => Err(err),
         }
+    }
+
+    fn root_level_params_for_layout_with_log_basis(
+        inputs: HachiScheduleInputs,
+        root_layout: HachiCommitmentLayout,
+    ) -> Result<HachiLevelParams, HachiError> {
+        sis_derived_root_params_for_layout::<Self>(inputs, root_layout)
+    }
+
+    fn root_level_layout_with_log_basis(
+        inputs: HachiScheduleInputs,
+        log_basis: u32,
+    ) -> Result<(HachiLevelParams, HachiCommitmentLayout), HachiError> {
+        let stage1_config = Self::stage1_challenge_config(D);
+        let mut candidate_n_a = 1usize;
+        for _ in 0..crate::planner::sis_security::MAX_RANK {
+            let candidate_params = HachiLevelParams {
+                d: D,
+                log_basis,
+                n_a: candidate_n_a,
+                n_b: 1,
+                n_d: 1,
+                challenge_l1_mass: stage1_config.l1_mass(),
+                stage1_config: stage1_config.clone(),
+            };
+            let root_layout = derived_root_commitment_layout_from_params::<Self>(
+                inputs,
+                &candidate_params,
+                false,
+            )?;
+            let derived_params = sis_derived_root_params_for_layout::<Self>(inputs, root_layout)?;
+            if derived_params.n_a == candidate_n_a {
+                return Ok((derived_params, root_layout));
+            }
+            candidate_n_a = derived_params.n_a;
+        }
+        Err(HachiError::InvalidSetup(format!(
+            "failed to converge on self-consistent root A-row rank for D={D} lb={log_basis}"
+        )))
     }
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
@@ -1273,6 +1502,47 @@ mod fp128_policy_tests {
         assert_eq!(onehot_envelope.max_n_a, 1);
         assert_eq!(onehot_envelope.max_n_b, 2);
         assert_eq!(onehot_envelope.max_n_d, 2);
+    }
+
+    #[test]
+    fn adaptive_d32_onehot_root_layout_converges_to_secure_rank() {
+        type Cfg = crate::protocol::commitment::presets::fp128::D32OneHot;
+
+        let inputs = HachiScheduleInputs {
+            max_num_vars: 32,
+            level: 0,
+            current_w_len: 1usize << 32,
+        };
+        let (params, layout) = Cfg::root_level_layout_with_log_basis(inputs, 2).unwrap();
+
+        assert_eq!(params.n_a, 3);
+        assert_eq!(params.n_b, 2);
+        assert_eq!(params.n_d, 2);
+        assert_eq!(layout.m_vars, 16);
+        assert_eq!(layout.r_vars, 11);
+
+        let a_rank = min_rank_for_secure_width(32, 31, layout.inner_width as u64).unwrap();
+        let b_rank = min_rank_for_secure_width(32, 3, layout.outer_width as u64).unwrap();
+        let d_rank = min_rank_for_secure_width(32, 3, layout.d_matrix_width as u64).unwrap();
+        assert_eq!(a_rank, params.n_a as u32);
+        assert_eq!(b_rank, params.n_b as u32);
+        assert_eq!(d_rank, params.n_d as u32);
+    }
+
+    #[test]
+    fn generated_d32_onehot_schedule_uses_secure_root_rank() {
+        type Cfg = crate::protocol::commitment::presets::fp128::D32OneHot;
+
+        let schedule = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(32, 32, 1))
+            .unwrap()
+            .expect("generated D32 onehot schedule");
+        let root = schedule.fold_levels().next().expect("root fold");
+
+        assert_eq!(root.params.n_a, 3);
+        assert_eq!(root.params.n_b, 2);
+        assert_eq!(root.params.n_d, 2);
+        assert_eq!(root.layout.m_vars, 16);
+        assert_eq!(root.layout.r_vars, 11);
     }
 
     #[test]

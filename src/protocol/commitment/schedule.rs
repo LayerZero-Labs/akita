@@ -454,7 +454,7 @@ where
         level: 0,
         current_w_len: root_current_w_len::<D>(root_layout),
     };
-    let params = Cfg::level_params_with_log_basis(inputs, root_layout.log_basis);
+    let params = Cfg::root_level_params_for_layout_with_log_basis(inputs, root_layout)?;
     let next_w_ring =
         w_ring_element_count_with_batch_summary::<Cfg::Field>(&params, level_layout, key.batch);
     let next_w_len = next_w_ring
@@ -494,7 +494,7 @@ where
         level: 0,
         current_w_len: root_current_w_len::<D>(root_layout),
     };
-    let params = Cfg::level_params_with_log_basis(inputs, root_layout.log_basis);
+    let params = Cfg::root_level_params_for_layout_with_log_basis(inputs, root_layout)?;
     let next_w_ring =
         w_ring_element_count_with_batch_summary::<Cfg::Field>(&params, level_layout, key.batch);
     let next_w_len = next_w_ring
@@ -532,12 +532,6 @@ pub(crate) fn main_level_decomposition_from_root(
     log_basis: u32,
 ) -> DecompositionParams {
     with_log_basis(root_decomp, log_basis)
-}
-
-fn main_level_decomposition<Cfg: CommitmentConfig>(
-    params: &HachiLevelParams,
-) -> DecompositionParams {
-    main_level_decomposition_from_root(Cfg::decomposition(), params.log_basis)
 }
 
 pub(crate) fn recursive_level_decomposition_from_root(
@@ -1231,7 +1225,7 @@ pub fn exact_schedule_plan_for_lookup_key<Cfg: CommitmentConfig, const D: usize>
         level: 0,
         current_w_len: root_current_w_len::<D>(root_layout),
     };
-    let params = Cfg::level_params_with_log_basis(inputs, root_layout.log_basis);
+    let params = Cfg::root_level_params_for_layout_with_log_basis(inputs, root_layout)?;
     let next_w_ring =
         w_ring_element_count_with_batch_summary::<Cfg::Field>(&params, level_layout, key.batch);
     let next_w_len = next_w_ring
@@ -1300,7 +1294,7 @@ pub(crate) fn build_schedule_plan_from_config<Cfg: CommitmentConfig>(
         };
         let log_basis = Cfg::log_basis_at_level(inputs);
         let (params, layout) = if level == 0 {
-            let params = Cfg::level_params_with_log_basis(inputs, log_basis);
+            let params = Cfg::root_level_params_for_layout_with_log_basis(inputs, root_layout)?;
             (params, root_layout)
         } else {
             current_level_layout_with_log_basis::<Cfg>(inputs, log_basis)?
@@ -1599,23 +1593,11 @@ pub(super) fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
     inputs: HachiScheduleInputs,
     log_basis: u32,
 ) -> Result<(HachiLevelParams, HachiCommitmentLayout), HachiError> {
+    if inputs.level == 0 {
+        return Cfg::root_level_layout_with_log_basis(inputs, log_basis);
+    }
     let params = Cfg::level_params_with_log_basis(inputs, log_basis);
-    let layout = if inputs.level == 0 {
-        let alpha = params.d.trailing_zeros() as usize;
-        let reduced_vars = inputs.max_num_vars.checked_sub(alpha).ok_or_else(|| {
-            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
-        })?;
-        if reduced_vars == 0 {
-            return Err(HachiError::InvalidSetup(
-                "max_num_vars must leave at least one outer variable".to_string(),
-            ));
-        }
-        let decomp = main_level_decomposition_from_root(Cfg::decomposition(), log_basis);
-        let (m_vars, r_vars) = optimal_m_r_split_with_params(&params, decomp, reduced_vars, 0);
-        layout_from_params(m_vars, r_vars, &params, decomp, 0)?
-    } else {
-        hachi_recursive_level_layout_from_params::<Cfg>(&params, inputs.current_w_len)?
-    };
+    let layout = hachi_recursive_level_layout_from_params::<Cfg>(&params, inputs.current_w_len)?;
     Ok((params, layout))
 }
 
@@ -2031,24 +2013,12 @@ fn planned_recursive_suffix_bytes_with_log_basis_from_schedule_and_envelope<
 pub fn hachi_root_level_layout<Cfg: CommitmentConfig>(
     max_num_vars: usize,
 ) -> Result<(HachiLevelParams, HachiCommitmentLayout), HachiError> {
-    let params = Cfg::level_params(HachiScheduleInputs {
+    let inputs = HachiScheduleInputs {
         max_num_vars,
         level: 0,
         current_w_len: 1usize.checked_shl(max_num_vars as u32).unwrap_or(0),
-    });
-    let alpha = params.d.trailing_zeros() as usize;
-    let reduced_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
-        HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
-    })?;
-    if reduced_vars == 0 {
-        return Err(HachiError::InvalidSetup(
-            "max_num_vars must leave at least one outer variable".to_string(),
-        ));
-    }
-    let decomp = main_level_decomposition::<Cfg>(&params);
-    let (m_vars, r_vars) = optimal_m_r_split_with_params(&params, decomp, reduced_vars, 0);
-    let layout = layout_from_params(m_vars, r_vars, &params, decomp, 0)?;
-    Ok((params, layout))
+    };
+    Cfg::root_level_layout_with_log_basis(inputs, Cfg::log_basis_at_level(inputs))
 }
 
 /// Derive the root commitment layout, allowing a zero-outer direct root.
@@ -2064,21 +2034,43 @@ pub fn hachi_root_level_layout<Cfg: CommitmentConfig>(
 pub(crate) fn hachi_root_commitment_layout<Cfg: CommitmentConfig>(
     max_num_vars: usize,
 ) -> Result<(HachiLevelParams, HachiCommitmentLayout), HachiError> {
-    let params = Cfg::level_params(HachiScheduleInputs {
+    let inputs = HachiScheduleInputs {
         max_num_vars,
         level: 0,
         current_w_len: 1usize.checked_shl(max_num_vars as u32).unwrap_or(0),
-    });
-    let alpha = params.d.trailing_zeros() as usize;
-    let reduced_vars = max_num_vars.saturating_sub(alpha);
-    let decomp = main_level_decomposition::<Cfg>(&params);
-    let (m_vars, r_vars) = if reduced_vars == 0 {
-        (0, 0)
-    } else {
-        optimal_m_r_split_with_params(&params, decomp, reduced_vars, 0)
     };
-    let layout = layout_from_params(m_vars, r_vars, &params, decomp, 0)?;
-    Ok((params, layout))
+    let log_basis = Cfg::log_basis_at_level(inputs);
+    let alpha = Cfg::d_at_level(0, inputs.current_w_len).trailing_zeros() as usize;
+    if max_num_vars > alpha {
+        return Cfg::root_level_layout_with_log_basis(inputs, log_basis);
+    }
+
+    let d = Cfg::d_at_level(0, inputs.current_w_len);
+    let stage1_config = Cfg::stage1_challenge_config(d);
+    let mut params = HachiLevelParams {
+        d,
+        log_basis,
+        n_a: 1,
+        n_b: 1,
+        n_d: 1,
+        challenge_l1_mass: stage1_config.l1_mass(),
+        stage1_config,
+    };
+    let decomp = main_level_decomposition_from_root(Cfg::decomposition(), log_basis);
+    for _ in 0..4 {
+        let layout = layout_from_params(0, 0, &params, decomp, 0)?;
+        let derived_params = Cfg::root_level_params_for_layout_with_log_basis(inputs, layout)?;
+        if (derived_params.n_a, derived_params.n_b, derived_params.n_d)
+            == (params.n_a, params.n_b, params.n_d)
+        {
+            return Ok((derived_params, layout));
+        }
+        params = derived_params;
+    }
+    Err(HachiError::InvalidSetup(format!(
+        "failed to converge on tiny-root params for {} at max_num_vars={max_num_vars}",
+        std::any::type_name::<Cfg>()
+    )))
 }
 
 /// Derive a recursive `w`-opening layout from the active level params.

@@ -444,7 +444,8 @@ where
         level: 0,
         current_w_len: root_current_w_len::<D>(root_layout),
     };
-    let root_params = Cfg::level_params_with_log_basis(root_inputs, root_layout.log_basis);
+    let root_stage1_config =
+        Cfg::stage1_challenge_config(Cfg::d_at_level(0, root_inputs.current_w_len));
     root_layout.outer_width = root_layout
         .outer_width
         .checked_mul(num_claims)
@@ -457,7 +458,7 @@ where
         .num_digits_fold
         .max(compute_num_digits_fold_batched(
             root_layout.r_vars,
-            root_params.challenge_l1_mass,
+            root_stage1_config.l1_mass(),
             root_layout.log_basis,
             num_claims,
         ));
@@ -552,7 +553,8 @@ where
             level: 0,
             current_w_len: root_current_w_len::<D>(root_layout),
         };
-        let root_params = Cfg::level_params_with_log_basis(root_inputs, root_layout.log_basis);
+        let root_params =
+            Cfg::root_level_params_for_layout_with_log_basis(root_inputs, root_layout)?;
         let (m_vars, r_vars, num_digits_fold) = optimal_root_batch_split::<Cfg, D>(
             max_num_vars,
             &root_params,
@@ -602,7 +604,7 @@ where
         level: 0,
         current_w_len: root_current_w_len::<D>(root_layout),
     };
-    let root_params = Cfg::level_params_with_log_basis(root_inputs, root_layout.log_basis);
+    let root_params = Cfg::root_level_params_for_layout_with_log_basis(root_inputs, root_layout)?;
     let (m_vars, r_vars, _num_digits_fold_batched) =
         optimal_root_batch_split::<Cfg, D>(max_num_vars, &root_params, root_layout, num_claims)?;
     let per_poly_num_digits_fold = root_layout.num_digits_fold.max(compute_num_digits_fold(
@@ -1008,11 +1010,12 @@ where
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let layout = <Self as RingCommitmentScheme<F, D, Cfg>>::layout(setup)?;
-        let root_params = Cfg::level_params(HachiScheduleInputs {
+        let root_inputs = HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,
             current_w_len: root_current_w_len::<D>(layout),
-        });
+        };
+        let root_params = Cfg::root_level_params_for_layout_with_log_basis(root_inputs, layout)?;
         ensure_layout_supported_num_vars::<D>(setup.expanded.seed.max_num_vars, layout)?;
         ensure_block_layout(f_blocks, layout)?;
 
@@ -1085,11 +1088,12 @@ where
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let layout = <Self as RingCommitmentScheme<F, D, Cfg>>::layout(setup)?;
-        let root_params = Cfg::level_params(HachiScheduleInputs {
+        let root_inputs = HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,
             current_w_len: root_current_w_len::<D>(layout),
-        });
+        };
+        let root_params = Cfg::root_level_params_for_layout_with_log_basis(root_inputs, layout)?;
         ensure_layout_supported_num_vars::<D>(setup.expanded.seed.max_num_vars, layout)?;
 
         let sparse_blocks =
