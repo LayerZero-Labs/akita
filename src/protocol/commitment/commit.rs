@@ -447,13 +447,20 @@ where
 
 pub(crate) fn root_batched_layout<Cfg, const D: usize>(
     max_num_vars: usize,
-    _root_layout: HachiCommitmentLayout,
+    root_layout: HachiCommitmentLayout,
     max_num_batched_polys: usize,
 ) -> Result<HachiCommitmentLayout, HachiError>
 where
     Cfg: CommitmentConfig,
 {
-    let optimized_root_layout = Cfg::commitment_layout(max_num_vars, max_num_batched_polys)?;
+    let optimized_root_layout = if max_num_batched_polys > 1
+        && Cfg::commitment_layout(max_num_vars, 1)
+            .is_ok_and(|planned_root| planned_root == root_layout)
+    {
+        Cfg::commitment_layout(max_num_vars, max_num_batched_polys)?
+    } else {
+        root_layout
+    };
     scale_batched_root_layout::<Cfg, D>(max_num_vars, optimized_root_layout, max_num_batched_polys)
 }
 
@@ -1238,6 +1245,42 @@ mod tests {
             expanded: Arc::new(decoded.clone()),
         };
         assert_eq!(derived_verifier, verifier_setup);
+    }
+
+    #[test]
+    fn root_batched_layout_preserves_custom_root_layouts() {
+        const TEST_D: usize = 64;
+        const BATCH: usize = 3;
+
+        let custom_layout =
+            HachiCommitmentLayout::new::<TinyConfig>(4, 2, &TinyConfig::decomposition()).unwrap();
+        let max_num_vars = custom_layout.required_num_vars::<TEST_D>().unwrap();
+
+        let batched =
+            root_batched_layout::<TinyConfig, TEST_D>(max_num_vars, custom_layout, BATCH).unwrap();
+
+        assert_eq!(batched.m_vars, custom_layout.m_vars);
+        assert_eq!(batched.r_vars, custom_layout.r_vars);
+        assert_eq!(batched.inner_width, custom_layout.inner_width);
+        assert_eq!(batched.outer_width, custom_layout.outer_width * BATCH);
+        assert_eq!(batched.d_matrix_width, custom_layout.d_matrix_width * BATCH);
+        assert!(batched.num_digits_fold >= custom_layout.num_digits_fold);
+    }
+
+    #[test]
+    fn setup_with_layouts_respects_custom_root_widths() {
+        const TEST_D: usize = 64;
+
+        let custom_layout =
+            HachiCommitmentLayout::new::<TinyConfig>(4, 2, &TinyConfig::decomposition()).unwrap();
+        let (setup, _) =
+            HachiCommitmentCore::setup_with_layouts::<TestF, TEST_D, TinyConfig>(&[custom_layout])
+                .unwrap();
+        let seed = &setup.expanded.seed;
+
+        assert!(seed.max_inner_width >= custom_layout.inner_width);
+        assert!(seed.max_outer_width >= custom_layout.outer_width);
+        assert!(seed.max_d_matrix_width >= custom_layout.d_matrix_width);
     }
 
     #[test]

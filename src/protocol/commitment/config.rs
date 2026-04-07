@@ -640,7 +640,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// Planner-backed families use the exact root fold layout when one is
     /// pinned; otherwise the planner computes the layout from first principles
-    /// using SIS security tables and digit math.
+    /// using SIS security tables, digit math, and the exact root-basis search
+    /// used by the schedule generator.
     ///
     /// When `num_claims > 1`, the `(m_vars, r_vars)` split is re-optimized
     /// for the batched fold-digit cost model.
