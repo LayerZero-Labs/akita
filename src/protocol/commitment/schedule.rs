@@ -1834,7 +1834,6 @@ pub(crate) fn planned_next_log_basis_with_current_basis_and_envelope<Cfg: Commit
     )
 }
 
-
 pub(crate) fn planned_log_basis_at_level_from_schedule<Cfg: CommitmentConfig>(
     schedule: &HachiSchedulePlan,
     inputs: HachiScheduleInputs,

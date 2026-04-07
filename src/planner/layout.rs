@@ -7,7 +7,7 @@
 
 use super::digit_math::{
     compute_num_digits, compute_num_digits_fold, compute_num_digits_fold_batched,
-    optimal_m_r_split,
+    num_digits_for_bound, optimal_m_r_split,
 };
 use super::sis_security::{ceil_supported_collision, min_rank_for_secure_width, MAX_RANK};
 
@@ -61,7 +61,11 @@ pub fn compute_root_layout_dimensions(
     let reduced_vars = max_num_vars.saturating_sub(alpha);
 
     let bd_collision = (1u32 << log_basis) - 1;
-    let a_raw = if log_commit_bound == 1 { 2 } else { bd_collision };
+    let a_raw = if log_commit_bound == 1 {
+        2
+    } else {
+        bd_collision
+    };
     let a_collision = ceil_supported_collision(d as u32, a_raw * max_abs_challenge_coeff)?;
 
     let num_digits_commit = compute_num_digits(log_commit_bound, log_basis);
@@ -74,7 +78,14 @@ pub fn compute_root_layout_dimensions(
         let (m_vars, _) = if reduced_vars == 0 {
             (0, 0)
         } else {
-            optimal_m_r_split(n_a, challenge_l1_mass, log_commit_bound, log_basis, reduced_vars, 0)
+            optimal_m_r_split(
+                n_a,
+                challenge_l1_mass,
+                log_commit_bound,
+                log_basis,
+                reduced_vars,
+                0,
+            )
         };
 
         let block_len = 1usize.checked_shl(m_vars as u32)?;
@@ -102,7 +113,14 @@ pub fn compute_root_layout_dimensions(
             num_claims,
         )
     } else {
-        optimal_m_r_split(n_a, challenge_l1_mass, log_commit_bound, log_basis, reduced_vars, 0)
+        optimal_m_r_split(
+            n_a,
+            challenge_l1_mass,
+            log_commit_bound,
+            log_basis,
+            reduced_vars,
+            0,
+        )
     };
 
     let num_digits_fold = compute_num_digits_fold(r_vars, challenge_l1_mass, log_basis);
@@ -135,8 +153,8 @@ fn batched_optimal_m_r_split(
     }
 
     let open_bound = log_commit_bound.max(128);
-    let delta_open = compute_num_digits(open_bound, log_basis) as u64;
-    let delta_commit = compute_num_digits(log_commit_bound, log_basis) as u64;
+    let delta_open = num_digits_for_bound(open_bound, log_basis) as u64;
+    let delta_commit = num_digits_for_bound(log_commit_bound, log_basis) as u64;
     let per_block_cost = delta_open + n_a as u64 * delta_open;
 
     let mut best = (u64::MAX, reduced_vars / 2);
@@ -149,7 +167,9 @@ fn batched_optimal_m_r_split(
             compute_num_digits_fold_batched(r, challenge_l1_mass, log_basis, num_claims) as u64;
 
         let opening_cost = per_block_cost.saturating_mul(num_blocks);
-        let folding_cost = delta_commit.saturating_mul(delta_fold).saturating_mul(m_eff);
+        let folding_cost = delta_commit
+            .saturating_mul(delta_fold)
+            .saturating_mul(m_eff);
         let total = opening_cost.saturating_add(folding_cost);
 
         if total < best.0 {
@@ -207,14 +227,17 @@ mod tests {
 
     #[test]
     fn batched_layout_differs_from_single() {
-        let single = compute_root_layout_dimensions(32, 128, 3, 1, 128, 31, 1, 1)
-            .expect("single layout");
-        let batched = compute_root_layout_dimensions(32, 128, 3, 1, 128, 31, 1, 4)
-            .expect("batched layout");
+        let single =
+            compute_root_layout_dimensions(32, 128, 3, 1, 128, 31, 1, 1).expect("single layout");
+        let batched =
+            compute_root_layout_dimensions(32, 128, 3, 1, 128, 31, 1, 4).expect("batched layout");
         assert_eq!(single.n_a, batched.n_a);
         assert_eq!(single.num_digits_commit, batched.num_digits_commit);
         assert_eq!(single.num_digits_open, batched.num_digits_open);
         assert_eq!(single.log_basis, batched.log_basis);
-        assert_eq!(single.m_vars + single.r_vars, batched.m_vars + batched.r_vars);
+        assert_eq!(
+            single.m_vars + single.r_vars,
+            batched.m_vars + batched.r_vars
+        );
     }
 }

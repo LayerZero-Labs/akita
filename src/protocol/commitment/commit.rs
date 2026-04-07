@@ -1,8 +1,8 @@
 //! Ring-native §4.1 commitment core implementation.
 
 use super::config::{
-    compute_num_digits, ensure_block_layout, ensure_layout_supported_num_vars,
-    validate_and_derive_layout, HachiCommitmentLayout,
+    ensure_block_layout, ensure_layout_supported_num_vars, validate_and_derive_layout,
+    HachiCommitmentLayout,
 };
 use super::onehot::{inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks};
 use super::schedule::HachiScheduleInputs;
@@ -26,6 +26,7 @@ use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
+use crate::planner::digit_math::compute_num_digits_fold_batched;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
@@ -404,26 +405,6 @@ impl LayoutChainStats {
     }
 }
 
-fn compute_num_digits_fold_batched(
-    r_vars: usize,
-    challenge_l1_mass: usize,
-    log_basis: u32,
-    num_claims: usize,
-) -> usize {
-    let shift = r_vars + (log_basis as usize) - 1;
-    if shift >= 127 || challenge_l1_mass == 0 {
-        return compute_num_digits(128, log_basis);
-    }
-    let beta = (challenge_l1_mass as u128)
-        .saturating_mul(num_claims as u128)
-        .saturating_mul(1u128 << shift);
-    if beta == 0 {
-        return 1;
-    }
-    let log_beta = 128 - beta.leading_zeros();
-    compute_num_digits(log_beta, log_basis)
-}
-
 pub(crate) fn scale_batched_root_layout<Cfg, const D: usize>(
     max_num_vars: usize,
     mut root_layout: HachiCommitmentLayout,
@@ -464,8 +445,6 @@ where
     Ok(root_layout)
 }
 
-
-
 pub(crate) fn root_batched_layout<Cfg, const D: usize>(
     max_num_vars: usize,
     _root_layout: HachiCommitmentLayout,
@@ -474,8 +453,7 @@ pub(crate) fn root_batched_layout<Cfg, const D: usize>(
 where
     Cfg: CommitmentConfig,
 {
-    let optimized_root_layout =
-        Cfg::commitment_layout(max_num_vars, max_num_batched_polys)?;
+    let optimized_root_layout = Cfg::commitment_layout(max_num_vars, max_num_batched_polys)?;
     scale_batched_root_layout::<Cfg, D>(max_num_vars, optimized_root_layout, max_num_batched_polys)
 }
 
@@ -512,8 +490,8 @@ where
         root_batched_layout::<Cfg, D>(max_num_vars, root_layout, max_num_batched_polys)?;
     stats.include(batched_root_layout);
 
-    let can_use_planned_root =
-        Cfg::commitment_layout(max_num_vars, 1).is_ok_and(|planned_root| planned_root == root_layout);
+    let can_use_planned_root = Cfg::commitment_layout(max_num_vars, 1)
+        .is_ok_and(|planned_root| planned_root == root_layout);
     if can_use_planned_root && max_num_batched_polys == 1 {
         let schedule_key = HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
         if let Some(plan) = Cfg::schedule_plan(schedule_key)? {
