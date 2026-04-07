@@ -24,20 +24,110 @@ pub struct CyclotomicRing<F: FieldCore, const D: usize> {
     pub(crate) coeffs: [F; D],
 }
 
+/// Compute the centering threshold for balanced decomposition.
+///
+/// When `levels * log_basis == field_bits`, uses asymmetric centering (T_k).
+/// Otherwise falls back to symmetric centering (q/2).
+pub(crate) fn decompose_centering_threshold(levels: usize, log_basis: u32, q: u128) -> u128 {
+    let half_q = q / 2;
+    let field_bits = 128u32 - q.saturating_sub(1).leading_zeros();
+    let total_decomp_bits = (levels as u32).saturating_mul(log_basis);
+    if total_decomp_bits == field_bits {
+        let b: u128 = 1u128 << log_basis;
+        let b_k_minus_1 = if total_decomp_bits >= 128 {
+            u128::MAX
+        } else {
+            (1u128 << total_decomp_bits) - 1
+        };
+        let t_k = (b / 2 - 1) * (b_k_minus_1 / (b - 1));
+        t_k.min(half_q)
+    } else {
+        half_q
+    }
+}
+
+/// Center a canonical field element for balanced decomposition.
+///
+/// Returns `(centered_value, Option<first_digit>)`. When the magnitude
+/// exceeds `i128::MAX`, the first balanced digit is pre-extracted in `u128`
+/// arithmetic and returned separately; `centered_value` is then the remaining
+/// quotient after removing that digit.
+#[inline]
+pub(crate) fn center_for_decomposition(
+    canonical: u128,
+    q: u128,
+    threshold: u128,
+    log_basis: u32,
+) -> (i128, Option<i128>) {
+    if canonical <= threshold {
+        return (canonical as i128, None);
+    }
+    let diff = q - canonical;
+    if diff <= i128::MAX as u128 {
+        return (-(diff as i128), None);
+    }
+    let b_u = 1u128 << log_basis;
+    let mask_u = b_u - 1;
+    let half_b_u = b_u >> 1;
+    let r = canonical.wrapping_sub(q) & mask_u;
+    let balanced = if r >= half_b_u {
+        r as i128 - b_u as i128
+    } else {
+        r as i128
+    };
+    let diff_adj = if balanced >= 0 {
+        diff + balanced as u128
+    } else {
+        diff - ((-balanced) as u128)
+    };
+    debug_assert!(diff_adj & mask_u == 0);
+    let c_prime = -((diff_adj >> log_basis) as i128);
+    (c_prime, Some(balanced))
+}
+
+#[inline(always)]
+pub(crate) fn peel_first_balanced_digit(
+    canonical: u128,
+    q: u128,
+    threshold: u128,
+    mask: i128,
+    half_b: i128,
+    b: i128,
+    log_basis: u32,
+) -> (i128, i128) {
+    let (c, first_digit) = center_for_decomposition(canonical, q, threshold, log_basis);
+    if let Some(d0) = first_digit {
+        (c, d0)
+    } else {
+        let d = c & mask;
+        let balanced = if d >= half_b { d - b } else { d };
+        ((c - balanced) >> log_basis, balanced)
+    }
+}
+
+#[inline(always)]
+fn balanced_digit_to_field<F: CanonicalField>(digit: i128, q: u128) -> F {
+    if digit >= 0 {
+        F::from_canonical_u128_reduced(digit as u128)
+    } else {
+        F::from_canonical_u128_reduced(q - ((-digit) as u128))
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct BalancedDecomposePow2I8Params {
     levels: usize,
     log_basis: u32,
     q: u128,
-    half_q: u128,
+    threshold: u128,
     half_b: i128,
     b: i128,
     mask: i128,
+    overflow_possible: bool,
 }
 
 impl BalancedDecomposePow2I8Params {
-    pub(crate) fn new(levels: usize, log_basis: u32, q: u128, half_q: u128) -> Self {
-        debug_assert_eq!(half_q, q / 2);
+    pub(crate) fn new(levels: usize, log_basis: u32, q: u128) -> Self {
         assert!(
             log_basis > 0 && log_basis <= 6,
             "log_basis must be in 1..=6 for i8 output"
@@ -49,14 +139,17 @@ impl BalancedDecomposePow2I8Params {
 
         let half_b = 1i128 << (log_basis - 1);
         let b = half_b << 1;
+        let threshold = decompose_centering_threshold(levels, log_basis, q);
+        let overflow_possible = q.saturating_sub(threshold) > i128::MAX as u128;
         Self {
             levels,
             log_basis,
             q,
-            half_q,
+            threshold,
             half_b,
             b,
             mask: b - 1,
+            overflow_possible,
         }
     }
 }
@@ -411,30 +504,45 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         let b = half_b << 1;
         let mask = b - 1;
         let q = (-F::one()).to_canonical_u128() + 1;
-        let half_q = q / 2;
+        let threshold = decompose_centering_threshold(levels, log_basis, q);
+        let overflow_possible = q.saturating_sub(threshold) > i128::MAX as u128;
 
         for plane in out.iter_mut() {
             *plane = Self::zero();
         }
 
-        for i in 0..D {
-            let canonical = self.coeffs[i].to_canonical_u128();
-            let mut c: i128 = if canonical > half_q {
-                -((q - canonical) as i128)
-            } else {
-                canonical as i128
-            };
+        if overflow_possible {
+            let (first_plane, remaining) = out
+                .split_first_mut()
+                .expect("balanced_decompose_pow2_into requires at least one plane");
+            for i in 0..D {
+                let canonical = self.coeffs[i].to_canonical_u128();
+                let (mut c, d0) =
+                    peel_first_balanced_digit(canonical, q, threshold, mask, half_b, b, log_basis);
+                first_plane.coeffs[i] = balanced_digit_to_field::<F>(d0, q);
 
-            for plane in out.iter_mut() {
-                let d = c & mask;
-                let balanced = if d >= half_b { d - b } else { d };
-                c = (c - balanced) >> log_basis;
-
-                plane.coeffs[i] = if balanced >= 0 {
-                    F::from_canonical_u128_reduced(balanced as u128)
+                for plane in remaining.iter_mut() {
+                    let d = c & mask;
+                    let balanced = if d >= half_b { d - b } else { d };
+                    c = (c - balanced) >> log_basis;
+                    plane.coeffs[i] = balanced_digit_to_field::<F>(balanced, q);
+                }
+            }
+        } else {
+            for i in 0..D {
+                let canonical = self.coeffs[i].to_canonical_u128();
+                let mut c: i128 = if canonical > threshold {
+                    -((q - canonical) as i128)
                 } else {
-                    F::from_canonical_u128_reduced(q - ((-balanced) as u128))
+                    canonical as i128
                 };
+
+                for plane in out.iter_mut() {
+                    let d = c & mask;
+                    let balanced = if d >= half_b { d - b } else { d };
+                    c = (c - balanced) >> log_basis;
+                    plane.coeffs[i] = balanced_digit_to_field::<F>(balanced, q);
+                }
             }
         }
     }
@@ -549,40 +657,9 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
             "levels * log_basis must be <= 128 + log_basis"
         );
-
-        let half_b = 1i128 << (log_basis - 1);
-        let b = half_b << 1;
-        let mask = b - 1;
-        let q = (-F::one()).to_canonical_u128() + 1;
-        let half_q = q / 2;
-
-        let mut digit_planes: Vec<[F; D]> = (0..levels).map(|_| [F::zero(); D]).collect();
-
-        for i in 0..D {
-            let canonical = self.coeffs[i].to_canonical_u128();
-            let mut c: i128 = if canonical > half_q {
-                -((q - canonical) as i128)
-            } else {
-                canonical as i128
-            };
-
-            for plane in digit_planes.iter_mut() {
-                let d = c & mask;
-                let balanced = if d >= half_b { d - b } else { d };
-                c = (c - balanced) >> log_basis;
-
-                plane[i] = if balanced >= 0 {
-                    F::from_canonical_u128_reduced(balanced as u128)
-                } else {
-                    F::from_canonical_u128_reduced(q - ((-balanced) as u128))
-                };
-            }
-        }
-
+        let mut digit_planes = vec![Self::zero(); levels];
+        self.balanced_decompose_pow2_into(&mut digit_planes, log_basis);
         digit_planes
-            .into_iter()
-            .map(Self::from_coefficients)
-            .collect()
     }
 
     /// Balanced gadget decomposition into native `i8` digits.
@@ -612,7 +689,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         );
 
         let q = (-F::one()).to_canonical_u128() + 1;
-        self.balanced_decompose_pow2_i8_into_with_modulus(out, log_basis, q, q / 2);
+        self.balanced_decompose_pow2_i8_into_with_modulus(out, log_basis, q);
     }
 
     /// Internal variant of [`balanced_decompose_pow2_i8_into`](Self::balanced_decompose_pow2_i8_into)
@@ -623,11 +700,10 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         out: &mut [[i8; D]],
         log_basis: u32,
         q: u128,
-        half_q: u128,
     ) where
         F: CanonicalField,
     {
-        let params = BalancedDecomposePow2I8Params::new(out.len(), log_basis, q, half_q);
+        let params = BalancedDecomposePow2I8Params::new(out.len(), log_basis, q);
         self.balanced_decompose_pow2_i8_into_with_params(out, &params);
     }
 
@@ -640,6 +716,22 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
         F: CanonicalField,
     {
         debug_assert_eq!(out.len(), params.levels);
+        if params.overflow_possible {
+            self.balanced_decompose_pow2_i8_overflow(out, params);
+        } else {
+            self.balanced_decompose_pow2_i8_fast(out, params);
+        }
+    }
+
+    /// Fast path: no i128 overflow possible (threshold >= q - i128::MAX).
+    #[inline]
+    fn balanced_decompose_pow2_i8_fast(
+        &self,
+        out: &mut [[i8; D]],
+        params: &BalancedDecomposePow2I8Params,
+    ) where
+        F: CanonicalField,
+    {
         let bulk_end = D - (D % 3);
 
         for base in (0..bulk_end).step_by(3) {
@@ -647,17 +739,17 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             let canonical1 = self.coeffs[base + 1].to_canonical_u128();
             let canonical2 = self.coeffs[base + 2].to_canonical_u128();
 
-            let mut c0: i128 = if canonical0 > params.half_q {
+            let mut c0: i128 = if canonical0 > params.threshold {
                 -((params.q - canonical0) as i128)
             } else {
                 canonical0 as i128
             };
-            let mut c1: i128 = if canonical1 > params.half_q {
+            let mut c1: i128 = if canonical1 > params.threshold {
                 -((params.q - canonical1) as i128)
             } else {
                 canonical1 as i128
             };
-            let mut c2: i128 = if canonical2 > params.half_q {
+            let mut c2: i128 = if canonical2 > params.threshold {
                 -((params.q - canonical2) as i128)
             } else {
                 canonical2 as i128
@@ -695,13 +787,115 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
 
         for i in bulk_end..D {
             let canonical = self.coeffs[i].to_canonical_u128();
-            let mut c: i128 = if canonical > params.half_q {
+            let mut c: i128 = if canonical > params.threshold {
                 -((params.q - canonical) as i128)
             } else {
                 canonical as i128
             };
 
             for plane in out.iter_mut() {
+                let d = c & params.mask;
+                let balanced = if d >= params.half_b { d - params.b } else { d };
+                c = (c - balanced) >> params.log_basis;
+                plane[i] = balanced as i8;
+            }
+        }
+    }
+
+    /// Overflow-aware path: peels the first digit per coefficient, then keeps
+    /// the remaining digits in the same 3-at-a-time register loop.
+    fn balanced_decompose_pow2_i8_overflow(
+        &self,
+        out: &mut [[i8; D]],
+        params: &BalancedDecomposePow2I8Params,
+    ) where
+        F: CanonicalField,
+    {
+        let (first_plane, remaining) = out
+            .split_first_mut()
+            .expect("balanced_decompose_pow2_i8_overflow requires at least one plane");
+        let bulk_end = D - (D % 3);
+
+        for base in (0..bulk_end).step_by(3) {
+            let canonical0 = self.coeffs[base].to_canonical_u128();
+            let canonical1 = self.coeffs[base + 1].to_canonical_u128();
+            let canonical2 = self.coeffs[base + 2].to_canonical_u128();
+
+            let (mut c0, d0) = peel_first_balanced_digit(
+                canonical0,
+                params.q,
+                params.threshold,
+                params.mask,
+                params.half_b,
+                params.b,
+                params.log_basis,
+            );
+            let (mut c1, d1) = peel_first_balanced_digit(
+                canonical1,
+                params.q,
+                params.threshold,
+                params.mask,
+                params.half_b,
+                params.b,
+                params.log_basis,
+            );
+            let (mut c2, d2) = peel_first_balanced_digit(
+                canonical2,
+                params.q,
+                params.threshold,
+                params.mask,
+                params.half_b,
+                params.b,
+                params.log_basis,
+            );
+
+            first_plane[base] = d0 as i8;
+            first_plane[base + 1] = d1 as i8;
+            first_plane[base + 2] = d2 as i8;
+
+            for plane in remaining.iter_mut() {
+                let d0 = c0 & params.mask;
+                let balanced0 = if d0 >= params.half_b {
+                    d0 - params.b
+                } else {
+                    d0
+                };
+                c0 = (c0 - balanced0) >> params.log_basis;
+                plane[base] = balanced0 as i8;
+
+                let d1 = c1 & params.mask;
+                let balanced1 = if d1 >= params.half_b {
+                    d1 - params.b
+                } else {
+                    d1
+                };
+                c1 = (c1 - balanced1) >> params.log_basis;
+                plane[base + 1] = balanced1 as i8;
+
+                let d2 = c2 & params.mask;
+                let balanced2 = if d2 >= params.half_b {
+                    d2 - params.b
+                } else {
+                    d2
+                };
+                c2 = (c2 - balanced2) >> params.log_basis;
+                plane[base + 2] = balanced2 as i8;
+            }
+        }
+
+        for i in bulk_end..D {
+            let canonical = self.coeffs[i].to_canonical_u128();
+            let (mut c, d0) = peel_first_balanced_digit(
+                canonical,
+                params.q,
+                params.threshold,
+                params.mask,
+                params.half_b,
+                params.b,
+                params.log_basis,
+            );
+            first_plane[i] = d0 as i8;
+            for plane in remaining.iter_mut() {
                 let d = c & params.mask;
                 let balanced = if d >= params.half_b { d - params.b } else { d };
                 c = (c - balanced) >> params.log_basis;
@@ -1184,5 +1378,71 @@ mod tests {
 
         let wide_reduced: CyclotomicRing<F128, D> = wide_dst.reduce();
         assert_eq!(narrow, wide_reduced);
+    }
+
+    #[test]
+    fn center_for_decomposition_hits_fp128_overflow_boundaries() {
+        let q = (-F128::one()).to_canonical_u128() + 1;
+        let i128_max = i128::MAX as u128;
+
+        for &(levels, log_basis) in &[(64usize, 2u32), (32usize, 4u32)] {
+            let threshold = decompose_centering_threshold(levels, log_basis, q);
+            let cases = [
+                (threshold, false),
+                (threshold + 1, true),
+                (q - i128_max - 1, true),
+                (q - i128_max, false),
+                (q - 1, false),
+            ];
+
+            for (canonical, expect_overflow) in cases {
+                let (_, first_digit) = center_for_decomposition(canonical, q, threshold, log_basis);
+                assert_eq!(
+                    first_digit.is_some(),
+                    expect_overflow,
+                    "unexpected overflow classification for levels={levels}, log_basis={log_basis}, canonical={canonical}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn asymmetric_centering_boundary_roundtrip_fp128() {
+        let q = (-F128::one()).to_canonical_u128() + 1;
+        let i128_max = i128::MAX as u128;
+
+        for &(log_basis, levels) in &[(2u32, 64usize), (4u32, 32usize)] {
+            let threshold = decompose_centering_threshold(levels, log_basis, q);
+            let boundary_values = [
+                0,
+                1,
+                threshold.saturating_sub(1),
+                threshold,
+                threshold + 1,
+                q - i128_max - 1,
+                q - i128_max,
+                q - 2,
+                q - 1,
+            ];
+            let ring = CyclotomicRing::<F128, D>::from_coefficients(from_fn(|i| {
+                F128::from_canonical_u128_reduced(boundary_values[i % boundary_values.len()])
+            }));
+
+            let mut digits = vec![CyclotomicRing::<F128, D>::zero(); levels];
+            ring.balanced_decompose_pow2_into(&mut digits, log_basis);
+            let recomposed = CyclotomicRing::gadget_recompose_pow2(&digits, log_basis);
+            assert_eq!(
+                ring, recomposed,
+                "field roundtrip failed for log_basis={log_basis}, levels={levels}"
+            );
+
+            let mut i8_digits = vec![[0i8; D]; levels];
+            ring.balanced_decompose_pow2_i8_into(&mut i8_digits, log_basis);
+            let recomposed_i8 = CyclotomicRing::gadget_recompose_pow2_i8(&i8_digits, log_basis);
+            assert_eq!(
+                ring, recomposed_i8,
+                "i8 roundtrip failed for log_basis={log_basis}, levels={levels}"
+            );
+        }
     }
 }

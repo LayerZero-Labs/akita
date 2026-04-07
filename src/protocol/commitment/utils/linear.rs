@@ -462,8 +462,7 @@ pub fn decompose_rows_i8_into<F: FieldCore + CanonicalField, const D: usize>(
         return;
     }
     let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q, half_q);
+    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
 
     #[cfg(feature = "parallel")]
     out.par_chunks_mut(num_digits)
@@ -499,6 +498,19 @@ const TARGET_L2_CACHE_BYTES: usize = 1024 * 1024;
 const CENTERED_LUT_MAX_ABS: u32 = (1 << 16) - 1;
 const SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS: usize = 4;
 const SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS: usize = 16;
+
+#[inline]
+fn aligned_i8_tile_width(raw_width: usize, inner_width: usize, num_digits: usize) -> usize {
+    debug_assert!(inner_width > 0);
+    debug_assert!(num_digits > 0);
+
+    if inner_width <= num_digits {
+        return inner_width;
+    }
+
+    let clamped = raw_width.min(inner_width).max(num_digits);
+    ((clamped / num_digits).max(1)) * num_digits
+}
 
 #[cfg(feature = "parallel")]
 #[inline]
@@ -1259,8 +1271,7 @@ fn mat_vec_mul_i8_block_parallel_with_params_impl<
     let n_a = ntt_mat.len();
     let lut = DigitMontLut::new(params);
     let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q, half_q);
+    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
 
     cfg_into_iter!(blocks)
         .map(|block| {
@@ -1361,8 +1372,7 @@ fn mat_vec_mul_i8_dense_single_row_with_params<
     let lut = DigitMontLut::new(params);
     let mat_row = &ntt_mat[0];
     let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q, half_q);
+    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
 
     cfg_into_iter!(blocks)
         .map(|block| {
@@ -1408,8 +1418,7 @@ fn mat_vec_mul_i8_dense_two_row_fused_with_params<
     let mat_row0 = &ntt_mat[0];
     let mat_row1 = &ntt_mat[1];
     let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q, half_q);
+    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
 
     cfg_into_iter!(blocks)
         .map(|block| {
@@ -1461,8 +1470,7 @@ fn mat_vec_mul_i8_dense_three_row_fused_with_params<
     let mat_row1 = &ntt_mat[1];
     let mat_row2 = &ntt_mat[2];
     let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q, half_q);
+    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
 
     cfg_into_iter!(blocks)
         .map(|block| {
@@ -1515,8 +1523,7 @@ fn mat_vec_mul_i8_strided_block_parallel_with_params<
     let n_a = ntt_mat.len();
     let lut = DigitMontLut::new(params);
     let q = (-F::one()).to_canonical_u128() + 1;
-    let half_q = q / 2;
-    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q, half_q);
+    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
 
     cfg_into_iter!(0..num_blocks)
         .map(|block_idx| {
@@ -1598,7 +1605,10 @@ fn mat_vec_mul_i8_with_params_impl<
     }
 
     let lut = DigitMontLut::new(params);
-    let tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
+    let raw_tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
+    // Keep full tiles on ring boundaries so on-the-fly decomposition does not
+    // re-expand the same ring when adjacent tiles meet mid digit-pack.
+    let tw = aligned_i8_tile_width(raw_tw, inner_width, num_digits);
     let num_tiles = inner_width.div_ceil(tw);
 
     let final_accs: Vec<Vec<CyclotomicCrtNtt<W, K, D>>> = cfg_fold_reduce!(
@@ -1729,7 +1739,10 @@ fn mat_vec_mul_i8_strided_with_params<
     }
 
     let lut = DigitMontLut::new(params);
-    let tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
+    let raw_tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
+    // Keep full tiles on ring boundaries so on-the-fly decomposition does not
+    // re-expand the same ring when adjacent tiles meet mid digit-pack.
+    let tw = aligned_i8_tile_width(raw_tw, inner_width, num_digits);
     let num_tiles = inner_width.div_ceil(tw);
 
     let final_accs: Vec<Vec<CyclotomicCrtNtt<W, K, D>>> = cfg_fold_reduce!(
@@ -2338,7 +2351,8 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::{
-        mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many, mat_vec_mul_digits_i8_with_params,
+        aligned_i8_tile_width, mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many,
+        mat_vec_mul_digits_i8_strided_with_params, mat_vec_mul_digits_i8_with_params,
         mat_vec_mul_i8_dense_with_params, mat_vec_mul_i8_strided_with_params,
         mat_vec_mul_i8_with_params, mat_vec_mul_unchecked, precompute_dense_mat_ntt_with_params,
     };
@@ -2348,6 +2362,14 @@ mod tests {
         select_crt_ntt_params, ProtocolCrtNttParams,
     };
     use crate::FromSmallInt;
+
+    #[test]
+    fn aligned_i8_tile_width_keeps_full_tiles_on_digit_boundaries() {
+        assert_eq!(aligned_i8_tile_width(130, 512, 64), 128);
+        assert_eq!(aligned_i8_tile_width(63, 512, 64), 64);
+        assert_eq!(aligned_i8_tile_width(1024, 65, 64), 64);
+        assert_eq!(aligned_i8_tile_width(1024, 48, 64), 48);
+    }
 
     #[test]
     fn dense_mat_vec_matches_schoolbook_q32_d64() {
@@ -2581,6 +2603,95 @@ mod tests {
                 let direct =
                     mat_vec_mul_digits_i8_with_params(&ntt_mat, &digit_block_slices, &params);
                 assert_eq!(via_roundtrip, direct);
+            }
+            _ => panic!("unexpected parameter family"),
+        }
+    }
+
+    #[test]
+    fn mat_vec_mul_i8_matches_direct_digits_on_multi_tile_path() {
+        type F = Fp64<4294967197>;
+        const D: usize = 64;
+        let log_basis = 3;
+        let num_digits = 3;
+        let num_blocks = 4;
+        let rings_per_block = 1_400;
+        let digits_per_block = rings_per_block * num_digits;
+
+        let mat: Vec<Vec<CyclotomicRing<F, D>>> = (0..5)
+            .map(|i| {
+                (0..digits_per_block)
+                    .map(|j| {
+                        let coeffs = std::array::from_fn(|k| {
+                            let raw = ((17 * i as i64 + 5 * j as i64 + k as i64) % 9) - 4;
+                            F::from_i64(raw)
+                        });
+                        CyclotomicRing::from_coefficients(coeffs)
+                    })
+                    .collect()
+            })
+            .collect();
+
+        let digit_blocks: Vec<Vec<[i8; D]>> = (0..num_blocks)
+            .map(|block_idx| {
+                (0..digits_per_block)
+                    .map(|digit_idx| {
+                        std::array::from_fn(|k| {
+                            (((block_idx as i16 * 3 + digit_idx as i16 * 5 + k as i16) % 7) - 3)
+                                as i8
+                        })
+                    })
+                    .collect()
+            })
+            .collect();
+
+        let ring_blocks: Vec<Vec<CyclotomicRing<F, D>>> = digit_blocks
+            .iter()
+            .map(|block| {
+                block
+                    .chunks(num_digits)
+                    .map(|digits_for_ring| {
+                        let coeffs = std::array::from_fn(|k| {
+                            let mut acc = 0i64;
+                            let mut place = 1i64;
+                            for digit in digits_for_ring {
+                                acc += i64::from(digit[k]) * place;
+                                place <<= log_basis;
+                            }
+                            F::from_i64(acc)
+                        });
+                        CyclotomicRing::from_coefficients(coeffs)
+                    })
+                    .collect()
+            })
+            .collect();
+
+        let ring_block_slices: Vec<&[CyclotomicRing<F, D>]> =
+            ring_blocks.iter().map(Vec::as_slice).collect();
+        let digit_block_slices: Vec<&[[i8; D]]> = digit_blocks.iter().map(Vec::as_slice).collect();
+
+        match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
+            ProtocolCrtNttParams::Q32(params) => {
+                let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
+                let via_roundtrip = mat_vec_mul_i8_with_params(
+                    &ntt_mat,
+                    &ring_block_slices,
+                    num_digits,
+                    log_basis,
+                    &params,
+                );
+                let dense = mat_vec_mul_i8_dense_with_params(
+                    &ntt_mat,
+                    &ring_block_slices,
+                    num_digits,
+                    log_basis,
+                    &params,
+                );
+                let direct =
+                    mat_vec_mul_digits_i8_with_params(&ntt_mat, &digit_block_slices, &params);
+                assert_eq!(via_roundtrip, direct);
+                assert_eq!(dense, direct);
             }
             _ => panic!("unexpected parameter family"),
         }
@@ -2961,6 +3072,104 @@ mod tests {
                     &params,
                 );
                 assert_eq!(block_path, strided_path);
+            }
+            _ => panic!("unexpected parameter family"),
+        }
+    }
+
+    #[test]
+    fn mat_vec_mul_i8_strided_matches_direct_digits_on_multi_tile_path() {
+        type F = Fp64<4294967197>;
+        const D: usize = 64;
+        let log_basis = 3;
+        let num_digits = 3;
+        let num_blocks = 4;
+        let rings_per_block = 1_400;
+        let digits_per_block = rings_per_block * num_digits;
+
+        let mat: Vec<Vec<CyclotomicRing<F, D>>> = (0..5)
+            .map(|i| {
+                (0..digits_per_block)
+                    .map(|j| {
+                        let coeffs = std::array::from_fn(|k| {
+                            let raw = ((19 * i as i64 + 11 * j as i64 + k as i64) % 9) - 4;
+                            F::from_i64(raw)
+                        });
+                        CyclotomicRing::from_coefficients(coeffs)
+                    })
+                    .collect()
+            })
+            .collect();
+
+        let digit_blocks: Vec<Vec<[i8; D]>> = (0..num_blocks)
+            .map(|block_idx| {
+                (0..digits_per_block)
+                    .map(|digit_idx| {
+                        std::array::from_fn(|k| {
+                            (((block_idx as i16 * 5 + digit_idx as i16 + 3 * k as i16) % 7) - 3)
+                                as i8
+                        })
+                    })
+                    .collect()
+            })
+            .collect();
+
+        let ring_blocks: Vec<Vec<CyclotomicRing<F, D>>> = digit_blocks
+            .iter()
+            .map(|block| {
+                block
+                    .chunks(num_digits)
+                    .map(|digits_for_ring| {
+                        let coeffs = std::array::from_fn(|k| {
+                            let mut acc = 0i64;
+                            let mut place = 1i64;
+                            for digit in digits_for_ring {
+                                acc += i64::from(digit[k]) * place;
+                                place <<= log_basis;
+                            }
+                            F::from_i64(acc)
+                        });
+                        CyclotomicRing::from_coefficients(coeffs)
+                    })
+                    .collect()
+            })
+            .collect();
+
+        let mut strided_coeffs = Vec::with_capacity(num_blocks * rings_per_block);
+        for col in 0..rings_per_block {
+            for block in &ring_blocks {
+                strided_coeffs.push(block[col]);
+            }
+        }
+
+        let mut strided_digits = Vec::with_capacity(num_blocks * digits_per_block);
+        for col in 0..digits_per_block {
+            for block in &digit_blocks {
+                strided_digits.push(block[col]);
+            }
+        }
+
+        match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
+            ProtocolCrtNttParams::Q32(params) => {
+                let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
+                let via_roundtrip = mat_vec_mul_i8_strided_with_params(
+                    &ntt_mat,
+                    &strided_coeffs,
+                    num_blocks,
+                    rings_per_block,
+                    num_digits,
+                    log_basis,
+                    &params,
+                );
+                let direct = mat_vec_mul_digits_i8_strided_with_params(
+                    &ntt_mat,
+                    &strided_digits,
+                    num_blocks,
+                    digits_per_block,
+                    &params,
+                );
+                assert_eq!(via_roundtrip, direct);
             }
             _ => panic!("unexpected parameter family"),
         }

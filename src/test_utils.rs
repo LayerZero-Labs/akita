@@ -10,7 +10,7 @@ use crate::algebra::{CyclotomicRing, Fp64, SparseChallengeConfig};
 use crate::error::HachiError;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::{
-    compute_num_digits, compute_num_digits_fold, CommitmentConfig, CommitmentEnvelope,
+    compute_num_digits_fold, num_digits_for_bound, CommitmentConfig, CommitmentEnvelope,
     DecompositionParams, HachiCommitmentLayout, HachiScheduleLookupKey,
 };
 use crate::{FieldCore, FromSmallInt};
@@ -89,14 +89,14 @@ pub const N_A: usize = 2;
 /// Decomposition depth for original coefficients under `TinyConfig`.
 pub fn num_digits_commit() -> usize {
     let d = TinyConfig::decomposition();
-    compute_num_digits(d.log_commit_bound, d.log_basis)
+    num_digits_for_bound(d.log_commit_bound, d.log_basis)
 }
 
 /// Decomposition depth for opening / full-field coefficients under `TinyConfig`.
 pub fn num_digits_open() -> usize {
     let d = TinyConfig::decomposition();
     let log_open = d.log_open_bound.unwrap_or(d.log_commit_bound);
-    compute_num_digits(log_open, d.log_basis)
+    num_digits_for_bound(log_open, d.log_basis)
 }
 
 /// Decomposition depth for the folded witness `z_pre` under `TinyConfig`.

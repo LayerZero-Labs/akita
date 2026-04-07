@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::digit_math::{compute_num_digits, compute_num_digits_fold, optimal_m_r_split};
+use super::digit_math::{compute_num_digits_fold, num_digits_for_bound, optimal_m_r_split};
 use super::proof_size::{
     elem_bytes, packed_digits_bytes, ring_vec_bytes, stage1_bytes_optimized, sumcheck_bytes,
     sumcheck_rounds, FIELD_BITS,
@@ -113,8 +113,8 @@ fn compute_level_witness(cfg: &RingConfig, a: &WitnessArgs) -> LevelComputation 
     let d = cfg.d;
 
     let open_bound = if log_cb < 128 { 128 } else { log_cb };
-    let delta_open = compute_num_digits(open_bound, log_basis);
-    let delta_commit = compute_num_digits(log_cb, log_basis);
+    let delta_open = num_digits_for_bound(open_bound, log_basis);
+    let delta_commit = num_digits_for_bound(log_cb, log_basis);
     let delta_fold = compute_num_digits_fold(r_vars, cfg.challenge_l1_mass, log_basis);
 
     let num_blocks = 1usize << r_vars;
@@ -129,7 +129,7 @@ fn compute_level_witness(cfg: &RingConfig, a: &WitnessArgs) -> LevelComputation 
     let t_hat = num_blocks * cfg.n_a as usize * delta_open;
     let z_pre = inner_width * delta_fold;
     let m_row = nd as usize + nb as usize + 2 + cfg.n_a as usize;
-    let r_ct = m_row * compute_num_digits(128, log_basis);
+    let r_ct = m_row * num_digits_for_bound(128, log_basis);
     let w_ring_elems = w_hat + t_hat + z_pre + r_ct;
     let next_w_len = w_ring_elems * d as usize;
     let rounds = sumcheck_rounds(d, next_w_len);
