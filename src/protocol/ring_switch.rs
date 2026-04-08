@@ -6,7 +6,7 @@
 
 use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
-use crate::algebra::shifted_eq::shifted_eq_dense_sum;
+use crate::algebra::shifted_eq::{shifted_eq_dp, ShiftedEqWeights};
 use crate::algebra::{CyclotomicRing, SparseChallenge};
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
@@ -1469,7 +1469,7 @@ fn accumulate_shifted_segment<F: FieldCore>(
     segment: &[F],
 ) {
     if !segment.is_empty() {
-        *acc += shifted_eq_dense_sum(x_point, *offset, segment);
+        *acc += shifted_eq_dp(x_point, *offset, ShiftedEqWeights::Dense(segment));
         *offset += segment.len();
     }
 }

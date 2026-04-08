@@ -3852,13 +3852,6 @@ mod tests {
         )
     }
 
-    #[allow(dead_code)]
-    fn serialize_uncompressed_proof<GF: FieldCore>(proof: &HachiProof<GF>) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        proof.serialize_uncompressed(&mut bytes).unwrap();
-        bytes
-    }
-
     fn dense_opening(evals: &[F], point: &[F]) -> F {
         let lw = lagrange_weights(point);
         evals

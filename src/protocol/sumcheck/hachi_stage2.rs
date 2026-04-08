@@ -49,7 +49,6 @@ use super::two_round_prefix::{
     build_stage2_bivariate_skip_proof_from_compact, can_use_stage2_two_round_prefix,
     Stage2BivariateSkipState,
 };
-#[cfg(test)]
 use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
 use super::{fold_evals_in_place, multilinear_eval, CompactPairFoldLut};
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
@@ -598,31 +597,15 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
         x0 + r1 * (x1 - x0)
     }
 
-    #[cfg(test)]
-    #[allow(dead_code)]
     #[inline(always)]
-    fn stage2_b4_quad_lookup_index_from_row(row: &[i8], base: usize) -> usize {
-        let d0 = row.get(base).copied().map(stage2_b4_w_digit).unwrap_or(2);
-        let d1 = row
-            .get(base + 1)
-            .copied()
-            .map(stage2_b4_w_digit)
-            .unwrap_or(2);
-        let d2 = row
-            .get(base + 2)
-            .copied()
-            .map(stage2_b4_w_digit)
-            .unwrap_or(2);
-        let d3 = row
-            .get(base + 3)
-            .copied()
-            .map(stage2_b4_w_digit)
-            .unwrap_or(2);
+    fn stage2_b4_quad_lookup_index_from_column(column: &[i8], base: usize) -> usize {
+        let d0 = stage2_b4_w_digit(column[base]);
+        let d1 = stage2_b4_w_digit(column[base + 1]);
+        let d2 = stage2_b4_w_digit(column[base + 2]);
+        let d3 = stage2_b4_w_digit(column[base + 3]);
         d0 | (d1 << 2) | (d2 << 4) | (d3 << 6)
     }
 
-    #[cfg(test)]
-    #[allow(dead_code)]
     fn build_round2_w_lookup_b4(r0: E, r1: E) -> Vec<E> {
         const W_VALUES: [i8; 4] = [-2, -1, 0, 1];
         (0..256usize)
@@ -643,31 +626,15 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
             .collect()
     }
 
-    #[cfg(test)]
-    #[allow(dead_code)]
     #[inline(always)]
-    fn stage2_b8_quad_lookup_index_from_row(row: &[i8], base: usize) -> usize {
-        let d0 = row.get(base).copied().map(stage2_b8_w_digit).unwrap_or(4);
-        let d1 = row
-            .get(base + 1)
-            .copied()
-            .map(stage2_b8_w_digit)
-            .unwrap_or(4);
-        let d2 = row
-            .get(base + 2)
-            .copied()
-            .map(stage2_b8_w_digit)
-            .unwrap_or(4);
-        let d3 = row
-            .get(base + 3)
-            .copied()
-            .map(stage2_b8_w_digit)
-            .unwrap_or(4);
+    fn stage2_b8_quad_lookup_index_from_column(column: &[i8], base: usize) -> usize {
+        let d0 = stage2_b8_w_digit(column[base]);
+        let d1 = stage2_b8_w_digit(column[base + 1]);
+        let d2 = stage2_b8_w_digit(column[base + 2]);
+        let d3 = stage2_b8_w_digit(column[base + 3]);
         d0 | (d1 << 3) | (d2 << 6) | (d3 << 9)
     }
 
-    #[cfg(test)]
-    #[allow(dead_code)]
     fn build_round2_w_lookup_b8(r0: E, r1: E) -> Vec<E> {
         const W_VALUES: [i8; 8] = [-4, -3, -2, -1, 0, 1, 2, 3];
         (0..4096usize)
@@ -742,108 +709,83 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
         out
     }
 
-    #[cfg(test)]
-    #[tracing::instrument(skip_all, name = "HachiStage2Prover::fold_m_to_round2")]
-    #[allow(dead_code)]
-    fn fold_m_to_round2(m_compact: &[E], r0: E, r1: E) -> Vec<E> {
-        debug_assert!(m_compact.len().is_power_of_two());
-        debug_assert!(m_compact.len() >= 4);
-        let next_x_len = m_compact.len() >> 2;
-        let mut out = vec![E::zero(); next_x_len];
-        for (quad_x, dst) in out.iter_mut().enumerate() {
-            let base = 4 * quad_x;
-            *dst = Self::direct_fold_e_quad_to_round2(
-                m_compact[base],
-                m_compact[base + 1],
-                m_compact[base + 2],
-                m_compact[base + 3],
-                r0,
-                r1,
-            );
-        }
-        out
-    }
-
     #[tracing::instrument(
         skip_all,
         name = "HachiStage2Prover::fuse_compact_to_round2_and_compute_round"
     )]
-    #[cfg(test)]
-    #[allow(dead_code)]
     fn fuse_compact_to_round2_and_compute_round(
         &self,
         w_compact: &[i8],
+        alpha_round2: &[E],
         r0: E,
         r1: E,
-    ) -> (Vec<E>, Vec<E>, NormRoundTerms<E>, [E; 3]) {
-        debug_assert!(self.num_u > 2);
-        let old_live_x_cols = self.live_x_cols;
-        let next_live_x_cols = old_live_x_cols.div_ceil(4);
+    ) -> (Vec<E>, NormRoundTerms<E>, [E; 3]) {
+        debug_assert!(self.num_l() > 2);
         let y_len = self.alpha_compact.len();
-        let live_pairs = next_live_x_cols.div_ceil(2);
-        let current_x_half = 1usize << (self.num_u - 3);
+        debug_assert_eq!(w_compact.len(), self.live_x_cols * y_len);
+        debug_assert_eq!(alpha_round2.len(), y_len >> 2);
+
+        let next_y_len = y_len >> 2;
+        let current_y_half = next_y_len >> 1;
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros() as usize;
-        let block_size = num_first.min(live_pairs);
-        let alpha_compact = &self.alpha_compact;
-        let m_round2 = Self::fold_m_to_round2(&self.m_compact, r0, r1);
+        let block_size = num_first.min(current_y_half);
+        let m_compact = &self.m_compact;
         let quad_fold_lut = match self.b {
             4 => Self::build_round2_w_lookup_b4(r0, r1),
-            _ => Self::build_round2_w_lookup_b8(r0, r1),
+            8 => Self::build_round2_w_lookup_b8(r0, r1),
+            _ => unreachable!("unsupported stage-2 two-round prefix basis"),
         };
         let quad_index_fn: fn(&[i8], usize) -> usize = match self.b {
-            4 => Self::stage2_b4_quad_lookup_index_from_row,
-            _ => Self::stage2_b8_quad_lookup_index_from_row,
+            4 => Self::stage2_b4_quad_lookup_index_from_column,
+            8 => Self::stage2_b8_quad_lookup_index_from_column,
+            _ => unreachable!("unsupported stage-2 two-round prefix basis"),
         };
-        let mut out = vec![E::zero(); y_len * next_live_x_cols];
+        let mut out = vec![E::zero(); self.live_x_cols * next_y_len];
 
         if self.can_skip_norm_linear_coeff() {
             #[cfg(feature = "parallel")]
             let (virt_coeffs, rel_coeffs) = out
-                .par_chunks_mut(next_live_x_cols)
+                .par_chunks_mut(next_y_len)
                 .enumerate()
-                .map(|(y, row_out)| {
-                    let row = &w_compact[y * old_live_x_cols..(y + 1) * old_live_x_cols];
-                    let alpha = alpha_compact[y];
-                    let j_base = y * current_x_half;
+                .map(|(x, column_out)| {
+                    let column_start = x * y_len;
+                    let column = &w_compact[column_start..column_start + y_len];
+                    let m = m_compact[x];
+                    let j_base = x * current_y_half;
                     let mut virt = [E::zero(); 2];
                     let mut rel = [E::zero(); 3];
-
                     let mut blk = 0usize;
-                    while blk < live_pairs {
+
+                    while blk < current_y_half {
                         let (j_high, blk_end) = stage2_eq_block(
-                            j_base, blk, num_first, first_bits, block_size, live_pairs,
+                            j_base,
+                            blk,
+                            num_first,
+                            first_bits,
+                            block_size,
+                            current_y_half,
                         );
                         let mut inner_virt = [E::zero(); 2];
 
-                        for pair_x in blk..blk_end {
-                            let j_low = (j_base + pair_x) & (num_first - 1);
+                        for pair_y in blk..blk_end {
+                            let j_low = (j_base + pair_y) & (num_first - 1);
                             let e_in = e_first[j_low];
-                            let left_quad = 2 * pair_x;
-                            let left_base = 8 * pair_x;
-                            let w0 = quad_fold_lut[quad_index_fn(row, left_base)];
-                            row_out[left_quad] = w0;
-                            let w1 = if left_quad + 1 < next_live_x_cols {
-                                let w1 = quad_fold_lut[quad_index_fn(row, left_base + 4)];
-                                row_out[left_quad + 1] = w1;
-                                w1
-                            } else {
-                                E::zero()
-                            };
+                            let left = 2 * pair_y;
+                            let base = 8 * pair_y;
+                            let w0 = quad_fold_lut[quad_index_fn(column, base)];
+                            let w1 = quad_fold_lut[quad_index_fn(column, base + 4)];
+                            column_out[left] = w0;
+                            column_out[left + 1] = w1;
                             let dw = w1 - w0;
 
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
-                            let m0 = m_round2[left_quad];
-                            let m1 = m_round2[left_quad + 1];
-                            let p0 = alpha * m0;
-                            let p1 = alpha * m1;
-                            let dp = p1 - p0;
-                            rel[0] += w0 * p0;
-                            rel[1] += w0 * dp + dw * p0;
-                            rel[2] += dw * dp;
+                            let p0 = alpha_round2[left] * m;
+                            let p1 = alpha_round2[left + 1] * m;
+                            accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
                         let e_out = e_second[j_high];
@@ -871,44 +813,41 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
             let (virt_coeffs, rel_coeffs) = {
                 let mut virt = [E::zero(); 2];
                 let mut rel = [E::zero(); 3];
-                for (y, row_out) in out.chunks_mut(next_live_x_cols).enumerate() {
-                    let row = &w_compact[y * old_live_x_cols..(y + 1) * old_live_x_cols];
-                    let alpha = alpha_compact[y];
-                    let j_base = y * current_x_half;
+                for (x, column_out) in out.chunks_mut(next_y_len).enumerate() {
+                    let column_start = x * y_len;
+                    let column = &w_compact[column_start..column_start + y_len];
+                    let m = m_compact[x];
+                    let j_base = x * current_y_half;
                     let mut blk = 0usize;
-                    while blk < live_pairs {
+
+                    while blk < current_y_half {
                         let (j_high, blk_end) = stage2_eq_block(
-                            j_base, blk, num_first, first_bits, block_size, live_pairs,
+                            j_base,
+                            blk,
+                            num_first,
+                            first_bits,
+                            block_size,
+                            current_y_half,
                         );
                         let mut inner_virt = [E::zero(); 2];
 
-                        for pair_x in blk..blk_end {
-                            let j_low = (j_base + pair_x) & (num_first - 1);
+                        for pair_y in blk..blk_end {
+                            let j_low = (j_base + pair_y) & (num_first - 1);
                             let e_in = e_first[j_low];
-                            let left_quad = 2 * pair_x;
-                            let left_base = 8 * pair_x;
-                            let w0 = quad_fold_lut[quad_index_fn(row, left_base)];
-                            row_out[left_quad] = w0;
-                            let w1 = if left_quad + 1 < next_live_x_cols {
-                                let w1 = quad_fold_lut[quad_index_fn(row, left_base + 4)];
-                                row_out[left_quad + 1] = w1;
-                                w1
-                            } else {
-                                E::zero()
-                            };
+                            let left = 2 * pair_y;
+                            let base = 8 * pair_y;
+                            let w0 = quad_fold_lut[quad_index_fn(column, base)];
+                            let w1 = quad_fold_lut[quad_index_fn(column, base + 4)];
+                            column_out[left] = w0;
+                            column_out[left + 1] = w1;
                             let dw = w1 - w0;
 
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
-                            let m0 = m_round2[left_quad];
-                            let m1 = m_round2[left_quad + 1];
-                            let p0 = alpha * m0;
-                            let p1 = alpha * m1;
-                            let dp = p1 - p0;
-                            rel[0] += w0 * p0;
-                            rel[1] += w0 * dp + dw * p0;
-                            rel[2] += dw * dp;
+                            let p0 = alpha_round2[left] * m;
+                            let p1 = alpha_round2[left + 1] * m;
+                            accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
                         let e_out = e_second[j_high];
@@ -920,45 +859,41 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                 (virt, rel)
             };
 
-            (
-                out,
-                m_round2,
-                NormRoundTerms::SkipLinear(virt_coeffs),
-                rel_coeffs,
-            )
+            (out, NormRoundTerms::SkipLinear(virt_coeffs), rel_coeffs)
         } else {
             #[cfg(feature = "parallel")]
             let (virt_coeffs, rel_coeffs) = out
-                .par_chunks_mut(next_live_x_cols)
+                .par_chunks_mut(next_y_len)
                 .enumerate()
-                .map(|(y, row_out)| {
-                    let row = &w_compact[y * old_live_x_cols..(y + 1) * old_live_x_cols];
-                    let alpha = alpha_compact[y];
-                    let j_base = y * current_x_half;
+                .map(|(x, column_out)| {
+                    let column_start = x * y_len;
+                    let column = &w_compact[column_start..column_start + y_len];
+                    let m = m_compact[x];
+                    let j_base = x * current_y_half;
                     let mut virt = [E::zero(); 3];
                     let mut rel = [E::zero(); 3];
-
                     let mut blk = 0usize;
-                    while blk < live_pairs {
+
+                    while blk < current_y_half {
                         let (j_high, blk_end) = stage2_eq_block(
-                            j_base, blk, num_first, first_bits, block_size, live_pairs,
+                            j_base,
+                            blk,
+                            num_first,
+                            first_bits,
+                            block_size,
+                            current_y_half,
                         );
                         let mut inner_virt = [E::zero(); 3];
 
-                        for pair_x in blk..blk_end {
-                            let j_low = (j_base + pair_x) & (num_first - 1);
+                        for pair_y in blk..blk_end {
+                            let j_low = (j_base + pair_y) & (num_first - 1);
                             let e_in = e_first[j_low];
-                            let left_quad = 2 * pair_x;
-                            let left_base = 8 * pair_x;
-                            let w0 = quad_fold_lut[quad_index_fn(row, left_base)];
-                            row_out[left_quad] = w0;
-                            let w1 = if left_quad + 1 < next_live_x_cols {
-                                let w1 = quad_fold_lut[quad_index_fn(row, left_base + 4)];
-                                row_out[left_quad + 1] = w1;
-                                w1
-                            } else {
-                                E::zero()
-                            };
+                            let left = 2 * pair_y;
+                            let base = 8 * pair_y;
+                            let w0 = quad_fold_lut[quad_index_fn(column, base)];
+                            let w1 = quad_fold_lut[quad_index_fn(column, base + 4)];
+                            column_out[left] = w0;
+                            column_out[left + 1] = w1;
                             let dw = w1 - w0;
                             let two_w0_plus_one = w0 + w0 + E::one();
 
@@ -966,14 +901,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
-                            let m0 = m_round2[left_quad];
-                            let m1 = m_round2[left_quad + 1];
-                            let p0 = alpha * m0;
-                            let p1 = alpha * m1;
-                            let dp = p1 - p0;
-                            rel[0] += w0 * p0;
-                            rel[1] += w0 * dp + dw * p0;
-                            rel[2] += dw * dp;
+                            let p0 = alpha_round2[left] * m;
+                            let p1 = alpha_round2[left + 1] * m;
+                            accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
                         let e_out = e_second[j_high];
@@ -1002,31 +932,33 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
             let (virt_coeffs, rel_coeffs) = {
                 let mut virt = [E::zero(); 3];
                 let mut rel = [E::zero(); 3];
-                for (y, row_out) in out.chunks_mut(next_live_x_cols).enumerate() {
-                    let row = &w_compact[y * old_live_x_cols..(y + 1) * old_live_x_cols];
-                    let alpha = alpha_compact[y];
-                    let j_base = y * current_x_half;
+                for (x, column_out) in out.chunks_mut(next_y_len).enumerate() {
+                    let column_start = x * y_len;
+                    let column = &w_compact[column_start..column_start + y_len];
+                    let m = m_compact[x];
+                    let j_base = x * current_y_half;
                     let mut blk = 0usize;
-                    while blk < live_pairs {
+
+                    while blk < current_y_half {
                         let (j_high, blk_end) = stage2_eq_block(
-                            j_base, blk, num_first, first_bits, block_size, live_pairs,
+                            j_base,
+                            blk,
+                            num_first,
+                            first_bits,
+                            block_size,
+                            current_y_half,
                         );
                         let mut inner_virt = [E::zero(); 3];
 
-                        for pair_x in blk..blk_end {
-                            let j_low = (j_base + pair_x) & (num_first - 1);
+                        for pair_y in blk..blk_end {
+                            let j_low = (j_base + pair_y) & (num_first - 1);
                             let e_in = e_first[j_low];
-                            let left_quad = 2 * pair_x;
-                            let left_base = 8 * pair_x;
-                            let w0 = quad_fold_lut[quad_index_fn(row, left_base)];
-                            row_out[left_quad] = w0;
-                            let w1 = if left_quad + 1 < next_live_x_cols {
-                                let w1 = quad_fold_lut[quad_index_fn(row, left_base + 4)];
-                                row_out[left_quad + 1] = w1;
-                                w1
-                            } else {
-                                E::zero()
-                            };
+                            let left = 2 * pair_y;
+                            let base = 8 * pair_y;
+                            let w0 = quad_fold_lut[quad_index_fn(column, base)];
+                            let w1 = quad_fold_lut[quad_index_fn(column, base + 4)];
+                            column_out[left] = w0;
+                            column_out[left + 1] = w1;
                             let dw = w1 - w0;
                             let two_w0_plus_one = w0 + w0 + E::one();
 
@@ -1034,14 +966,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
-                            let m0 = m_round2[left_quad];
-                            let m1 = m_round2[left_quad + 1];
-                            let p0 = alpha * m0;
-                            let p1 = alpha * m1;
-                            let dp = p1 - p0;
-                            rel[0] += w0 * p0;
-                            rel[1] += w0 * dp + dw * p0;
-                            rel[2] += dw * dp;
+                            let p0 = alpha_round2[left] * m;
+                            let p1 = alpha_round2[left + 1] * m;
+                            accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
                         let e_out = e_second[j_high];
@@ -1054,7 +981,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                 (virt, rel)
             };
 
-            (out, m_round2, NormRoundTerms::Full(virt_coeffs), rel_coeffs)
+            (out, NormRoundTerms::Full(virt_coeffs), rel_coeffs)
         }
     }
 
@@ -2539,17 +2466,38 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
                         .expect("round 1 ingest requires the round 0 challenge")
                 };
                 let y_len = self.alpha_compact.len();
-                self.alpha_compact = Self::fold_alpha_to_round2(&self.alpha_compact, r0, r);
+                let alpha_round2 = Self::fold_alpha_to_round2(&self.alpha_compact, r0, r);
+                let mut round2_terms = None;
                 self.w_table = match mem::replace(&mut self.w_table, WTable::Full(Vec::new())) {
-                    WTable::Compact(w_compact) => WTable::Full(Self::fold_compact_to_round2(
-                        &w_compact,
-                        self.live_x_cols,
-                        y_len,
-                        r0,
-                        r,
-                    )),
+                    WTable::Compact(w_compact) => {
+                        if self.num_l() > 2 {
+                            let (w_full, virt_terms, rel_coeffs) = self
+                                .fuse_compact_to_round2_and_compute_round(
+                                    &w_compact,
+                                    &alpha_round2,
+                                    r0,
+                                    r,
+                                );
+                            round2_terms = Some((virt_terms, rel_coeffs));
+                            WTable::Full(w_full)
+                        } else {
+                            WTable::Full(Self::fold_compact_to_round2(
+                                &w_compact,
+                                self.live_x_cols,
+                                y_len,
+                                r0,
+                                r,
+                            ))
+                        }
+                    }
                     WTable::Full(_) => unreachable!("two-round prefix should hold compact witness"),
                 };
+                self.alpha_compact = alpha_round2;
+                self.two_round_prefix = None;
+                self.prefix_r_stage1 = None;
+                if let Some((virt_terms, rel_coeffs)) = round2_terms {
+                    self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
+                }
             }
             self.rounds_completed += 1;
             if self.rounds_completed < self.num_vars {
@@ -3441,6 +3389,89 @@ mod tests {
             m_evals_x,
             params,
         );
+        let expected_round0 = expected.compute_round_univariate(0, expected.input_claim());
+        assert_eq!(expected_round0, round0);
+        expected.ingest_challenge(0, r0);
+        let expected_round1 = expected.compute_round_univariate(1, expected_round0.evaluate(&r0));
+        assert_eq!(expected_round1, round1);
+        expected.prev_norm_claim = expected
+            .prev_norm_poly
+            .as_ref()
+            .expect("round1 norm poly should be cached")
+            .evaluate(&r1);
+        expected.split_eq.bind(r1);
+        expected.w_table = WTable::Full(expected_w_full.clone());
+        expected.alpha_compact = expected_alpha_round2.clone();
+        expected.rounds_completed = 2;
+        expected.m_compact = expected_m_compact.clone();
+        let expected_round2 = expected.compute_current_round_poly_from_state();
+
+        prover.ingest_challenge(1, r1);
+
+        match &prover.w_table {
+            WTable::Full(w_full) => assert_eq!(w_full, &expected_w_full),
+            WTable::Compact(_) => {
+                panic!("expected fused stage2 transition to materialize full table")
+            }
+        }
+        assert_eq!(prover.alpha_compact, expected_alpha_round2);
+        assert_eq!(prover.m_compact, expected_m_compact);
+        assert!(!prover.can_use_two_round_prefix());
+        assert!(!prover.using_two_round_prefix());
+        assert!(prover.prefix_r_stage1.is_none());
+        assert!(prover.two_round_prefix.is_none());
+        assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
+    }
+
+    #[test]
+    fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
+        let num_u = 3usize;
+        let num_l = 4usize;
+        let live_x_cols = 6usize;
+        let b = 8usize;
+        let half = (b / 2) as i8;
+        let y_len = 1usize << num_l;
+        let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+            .map(|i| ((i * 13 + 9) % b) as i8 - half)
+            .collect();
+        let r_stage1: Vec<F> = (0..(num_u + num_l))
+            .map(|i| F::from_u64((i as u64) + 101))
+            .collect();
+        let alpha_evals_y: Vec<F> = (0..y_len)
+            .map(|i| F::from_u64((7 * i as u64) + 103))
+            .collect();
+        let m_evals_x: Vec<F> = (0..(1usize << num_u))
+            .map(|i| F::from_u64((17 * i as u64) + 107))
+            .collect();
+        let params = Stage2Params {
+            r_stage1: &r_stage1,
+            b,
+            live_x_cols,
+            num_u,
+            num_l,
+        };
+
+        let mut prover = new_stage2_test_prover(
+            F::from_u64(109),
+            w_prefix.clone(),
+            alpha_evals_y.clone(),
+            m_evals_x.clone(),
+            params,
+        );
+        let round0 = prover.compute_round_univariate(0, prover.input_claim());
+        let r0 = F::from_u64(113);
+        prover.ingest_challenge(0, r0);
+        let round1 = prover.compute_round_univariate(1, round0.evaluate(&r0));
+        let r1 = F::from_u64(127);
+
+        let expected_w_full =
+            HachiStage2Prover::<F>::fold_compact_to_round2(&w_prefix, live_x_cols, y_len, r0, r1);
+        let expected_alpha_round2 =
+            HachiStage2Prover::<F>::fold_alpha_to_round2(&alpha_evals_y, r0, r1);
+        let expected_m_compact = prover.m_compact.clone();
+
+        let mut expected =
+            new_stage2_test_prover(F::from_u64(109), w_prefix, alpha_evals_y, m_evals_x, params);
         let expected_round0 = expected.compute_round_univariate(0, expected.input_claim());
         assert_eq!(expected_round0, round0);
         expected.ingest_challenge(0, r0);

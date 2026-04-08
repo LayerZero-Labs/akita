@@ -10,17 +10,17 @@
 //! [`crate::algebra::eq_poly::EqPolynomial`]:
 //! bit `k` of an integer index corresponds to `r_addr[k]`.
 
-#![allow(dead_code)]
-
 use crate::FieldCore;
 
 /// Weight descriptions supported by [`shifted_eq_dp`].
 pub(crate) enum ShiftedEqWeights<'a, E: FieldCore> {
+    #[cfg(test)]
     /// Product weights in little-endian bit order.
     ///
     /// Entry `bit_weights[k] = (w_0, w_1)` means the local contribution is
     /// `w_0` when `y_k = 0` and `w_1` when `y_k = 1`.
     Tensor(&'a [(E, E)]),
+    #[cfg(test)]
     /// Equality weights `weights(y) = eq(point, y)` in little-endian order.
     EqPoint(&'a [E]),
     /// Dense weights `weights[y]` in little-endian index order.
@@ -34,9 +34,11 @@ pub(crate) fn shifted_eq_dp<E: FieldCore>(
     weights: ShiftedEqWeights<'_, E>,
 ) -> E {
     match weights {
+        #[cfg(test)]
         ShiftedEqWeights::Tensor(bit_weights) => {
             shifted_eq_tensor_sum(address_point, offset, bit_weights)
         }
+        #[cfg(test)]
         ShiftedEqWeights::EqPoint(point) => shifted_eq_eq_point(address_point, offset, point),
         ShiftedEqWeights::Dense(weights) => shifted_eq_dense_sum(address_point, offset, weights),
     }
@@ -45,6 +47,7 @@ pub(crate) fn shifted_eq_dp<E: FieldCore>(
 /// Evaluate
 /// `sum_{y in {0,1}^m} eq(address_point, offset + y) * tensor_weight(y)`
 /// in `O(address_bits)` time using the 2-state carry DP from the Jolt appendix.
+#[cfg(test)]
 pub(crate) fn shifted_eq_tensor_sum<E: FieldCore>(
     address_point: &[E],
     offset: usize,
@@ -58,6 +61,7 @@ pub(crate) fn shifted_eq_tensor_sum<E: FieldCore>(
 /// Evaluate
 /// `sum_{y in {0,1}^m} eq(address_point, offset + y) * eq(point, y)`
 /// in `O(address_bits)` time.
+#[cfg(test)]
 pub(crate) fn shifted_eq_eq_point<E: FieldCore>(
     address_point: &[E],
     offset: usize,
@@ -149,6 +153,7 @@ pub(crate) fn shifted_eq_dense_sum<E: FieldCore>(
     no_carry_acc
 }
 
+#[cfg(test)]
 fn shifted_eq_tensor_sum_with<E, W>(
     address_point: &[E],
     offset: usize,
@@ -206,6 +211,7 @@ fn bit_is_set(value: usize, bit_idx: usize) -> bool {
     }
 }
 
+#[cfg(test)]
 fn assert_tensor_segment_in_range(address_bits: usize, offset: usize, num_local_bits: usize) {
     assert!(
         num_local_bits <= address_bits,
