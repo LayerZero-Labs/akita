@@ -2327,7 +2327,9 @@ pub(crate) fn pad_compact_witness(
 }
 
 #[cfg(test)]
-pub(crate) fn advance_stage1_claim<F: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps>(
+pub(crate) fn advance_stage1_claim<
+    F: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps,
+>(
     prover: &HachiStage1Prover<F>,
     scaled_claim: F,
     claim_scale: F,
