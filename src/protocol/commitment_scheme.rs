@@ -89,8 +89,6 @@ struct RecursiveProverState<F: FieldCore> {
     root_key: HachiScheduleLookupKey,
     planning_envelope: HachiBatchPlanningEnvelope,
     sumcheck_challenges: Vec<F>,
-    num_u: usize,
-    num_l: usize,
 }
 
 /// Verifier state carried between recursive levels.
@@ -723,8 +721,6 @@ where
             root_key,
             planning_envelope,
             sumcheck_challenges,
-            num_u,
-            num_l,
         },
     })
 }
@@ -1102,8 +1098,6 @@ where
             root_key,
             planning_envelope,
             sumcheck_challenges,
-            num_u,
-            num_l,
         },
     })
 }
@@ -1295,26 +1289,6 @@ fn next_level_params_from_current_basis_and_envelope<Cfg: CommitmentConfig>(
     ))
 }
 
-/// Derive the opening point for the next fold level from the sumcheck
-/// challenges of the current level.
-///
-/// Stage-2 sumcheck challenges are ordered `[y_0..y_{num_l-1}, x_0..x_{num_u-1}]`
-/// where `y` selects coefficients and `x` selects ring elements.
-/// The PCS opening point is `[inner, outer] = [y, x]`, so after the y-first
-/// Stage-2 migration the next opening point preserves the challenge order.
-pub(crate) fn next_level_opening_point<F: FieldCore>(
-    sumcheck_challenges: &[F],
-    num_u: usize,
-    num_l: usize,
-) -> Vec<F> {
-    let (y, x) = sumcheck_challenges.split_at(num_l);
-    debug_assert_eq!(x.len(), num_u);
-    let mut point = Vec::with_capacity(num_u + num_l);
-    point.extend_from_slice(y);
-    point.extend_from_slice(x);
-    point
-}
-
 /// Dispatch a commit-w operation to the correct ring dimension.
 ///
 /// Each match arm builds NTT caches for the target D and calls `commit_w`.
@@ -1468,11 +1442,7 @@ where
     let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
 
     let current_w = &current_state.w;
-    let opening_point = next_level_opening_point(
-        &current_state.sumcheck_challenges,
-        current_state.num_u,
-        current_state.num_l,
-    );
+    let opening_point = current_state.sumcheck_challenges.clone();
 
     let w_layout = hachi_recursive_level_layout_from_params::<Cfg>(level_params, current_w.len())?;
     let w_view = current_w.view::<F, { D_LEVEL }>()?;
@@ -1688,9 +1658,6 @@ where
         };
 
         if !is_last {
-            let alpha_bits = level_d.trailing_zeros() as usize;
-            let num_l = alpha_bits;
-            let num_u = challenges.len() - num_l;
             let next_w_len = w_ring_element_count::<F>(&level_params, current_layout) * level_d;
             let next_level_params = next_level_params_from_current_basis_and_envelope::<Cfg>(
                 current_state.root_key,
@@ -1710,7 +1677,7 @@ where
                 }
             }
             current_state = RecursiveVerifierState {
-                opening_point: next_level_opening_point(&challenges, num_u, num_l),
+                opening_point: challenges,
                 opening: level_proof.next_w_eval(),
                 commitment: level_proof.next_w_commitment(),
                 basis: BasisMode::Lagrange,
@@ -1921,9 +1888,6 @@ where
     )?;
 
     if has_recursive_levels {
-        let alpha_bits = root_params.d.trailing_zeros() as usize;
-        let num_l = alpha_bits;
-        let num_u = root_challenges.len() - num_l;
         let root_w_len = root_plan.next_w_len();
         let first_level_d = root_plan.next_level_params.d;
         if !proof.root.next_w_commitment().can_decode_vec(first_level_d) {
@@ -1931,7 +1895,7 @@ where
         }
 
         let current_state = RecursiveVerifierState {
-            opening_point: next_level_opening_point(&root_challenges, num_u, num_l),
+            opening_point: root_challenges,
             opening: proof.root.next_w_eval(),
             commitment: proof.root.next_w_commitment(),
             basis: BasisMode::Lagrange,
@@ -2634,9 +2598,6 @@ where
             };
 
             if !is_last {
-                let alpha_bits = level_d.trailing_zeros() as usize;
-                let num_l = alpha_bits;
-                let num_u = challenges.len() - num_l;
                 let next_w_len = w_ring_element_count::<F>(&level_params, current_layout) * level_d;
                 if let Some(planned_next_w_len) = planned_next_w_len {
                     if next_w_len != planned_next_w_len {
@@ -2666,7 +2627,7 @@ where
                     }
                 }
                 current_state = RecursiveVerifierState {
-                    opening_point: next_level_opening_point(&challenges, num_u, num_l),
+                    opening_point: challenges,
                     opening: level_proof.next_w_eval(),
                     commitment: level_proof.next_w_commitment(),
                     basis: BasisMode::Lagrange,
@@ -2789,9 +2750,6 @@ where
         )?;
 
         if has_recursive_levels {
-            let alpha_bits = root_params.d.trailing_zeros() as usize;
-            let num_l = alpha_bits;
-            let num_u = root_challenges.len() - num_l;
             let root_w_len = root_plan.next_w_len();
             let first_level_d = root_plan.next_level_params.d;
             if !proof.root.next_w_commitment().can_decode_vec(first_level_d) {
@@ -2799,7 +2757,7 @@ where
             }
 
             let current_state = RecursiveVerifierState {
-                opening_point: next_level_opening_point(&root_challenges, num_u, num_l),
+                opening_point: root_challenges,
                 opening: proof.root.next_w_eval(),
                 commitment: proof.root.next_w_commitment(),
                 basis: BasisMode::Lagrange,
@@ -3356,17 +3314,6 @@ mod tests {
         let num_ring_elems = next_w_len / level_d;
         num_ring_elems.next_power_of_two().trailing_zeros() as usize
             + level_d.trailing_zeros() as usize
-    }
-
-    #[test]
-    fn next_level_opening_point_preserves_y_first_stage2_order() {
-        let challenges = [
-            F::from_u64(3),
-            F::from_u64(5),
-            F::from_u64(7),
-            F::from_u64(11),
-        ];
-        assert_eq!(next_level_opening_point(&challenges, 2, 2), challenges);
     }
 
     #[test]
