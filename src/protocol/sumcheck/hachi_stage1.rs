@@ -749,6 +749,11 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     }
 
     #[inline]
+    fn next_use_sparse_x_y_round_after_current(&self) -> bool {
+        !self.in_x_phase() && self.rounds_completed + 1 < self.num_l()
+    }
+
+    #[inline]
     pub(crate) fn can_use_two_round_prefix(&self) -> bool {
         self.prefix_tau.is_some()
     }
@@ -1381,6 +1386,233 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         })
     }
 
+    #[tracing::instrument(
+        skip_all,
+        name = "HachiStage1Prover::fuse_full_sparse_x_y_and_compute_round"
+    )]
+    fn fuse_full_sparse_x_y_and_compute_round(
+        &self,
+        s_full: &[E],
+        r: E,
+    ) -> (Vec<E>, EqFactoredUniPoly<E>) {
+        debug_assert!(self.use_sparse_x_y_round());
+        debug_assert!(self.next_use_sparse_x_y_round_after_current());
+        let live_x_cols = self.live_x_cols;
+        let y_len = s_full.len() / live_x_cols;
+        debug_assert_eq!(y_len % 4, 0);
+        let next_y_len = y_len / 2;
+        let live_pairs = next_y_len / 2;
+        let current_y_half = next_y_len / 2;
+        let (e_first, e_second) = self.split_eq.remaining_eq_tables();
+        let num_first = e_first.len();
+        let first_bits = num_first.trailing_zeros();
+        let block_size = num_first.min(live_pairs);
+        let range_pc = &self.range_precomp;
+        let full_num_coeffs_q = range_pc.degree_q + 1;
+        let num_coeffs_q = full_num_coeffs_q;
+        let mut out = vec![E::zero(); live_x_cols * next_y_len];
+
+        #[cfg(feature = "parallel")]
+        let q_coeffs = out
+            .par_chunks_mut(next_y_len)
+            .enumerate()
+            .map(|(x, col_out)| {
+                debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
+                let col = &s_full[x * y_len..(x + 1) * y_len];
+                let j_base = x * current_y_half;
+                let mut outer_accum = vec![E::ProductAccum::ZERO; num_coeffs_q];
+                let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
+                let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
+                let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
+
+                let mut blk = 0usize;
+                while blk < live_pairs {
+                    let blk_end = (blk + block_size).min(live_pairs);
+                    let j_high = (j_base + blk) >> first_bits;
+                    let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                    let blk_len = blk_end - blk;
+                    let full_chunks = blk_len / 4;
+
+                    for chunk in 0..full_chunks {
+                        let pair_base = blk + chunk * 4;
+                        let mut pairs = [(E::zero(), E::zero()); 4];
+                        for (slot, pair_y) in (pair_base..pair_base + 4).enumerate() {
+                            let top_y = 2 * pair_y;
+                            let top = 4 * pair_y;
+                            let s0 = col[top] + r * (col[top + 1] - col[top]);
+                            let s1 = col[top + 2] + r * (col[top + 3] - col[top + 2]);
+                            col_out[top_y] = s0;
+                            col_out[top_y + 1] = s1;
+                            pairs[slot] = (s0, s1);
+                        }
+
+                        compute_entry_coeffs_from_s_x4(
+                            &mut batch_out,
+                            range_pc,
+                            [pairs[0].0, pairs[1].0, pairs[2].0, pairs[3].0],
+                            [
+                                pairs[0].1 - pairs[0].0,
+                                pairs[1].1 - pairs[1].0,
+                                pairs[2].1 - pairs[2].0,
+                                pairs[3].1 - pairs[3].0,
+                            ],
+                        );
+
+                        for (slot, _) in pairs.iter().enumerate() {
+                            let pair_y = pair_base + slot;
+                            let j_low = (j_base + pair_y) & (num_first - 1);
+                            let e_in = e_first[j_low];
+                            accumulate_dense_entry_coeffs(
+                                &mut inner_accum[..num_coeffs_q],
+                                &batch_out[slot][..full_num_coeffs_q],
+                                e_in,
+                            );
+                        }
+                    }
+
+                    for pair_y in blk + full_chunks * 4..blk_end {
+                        let top_y = 2 * pair_y;
+                        let top = 4 * pair_y;
+                        let s0 = col[top] + r * (col[top + 1] - col[top]);
+                        let s1 = col[top + 2] + r * (col[top + 3] - col[top + 2]);
+                        col_out[top_y] = s0;
+                        col_out[top_y + 1] = s1;
+                        compute_entry_coeffs_from_s(
+                            &mut entry_buf,
+                            &mut s_pows_buf,
+                            range_pc,
+                            s0,
+                            s1 - s0,
+                        );
+                        let j_low = (j_base + pair_y) & (num_first - 1);
+                        let e_in = e_first[j_low];
+                        accumulate_dense_entry_coeffs(
+                            &mut inner_accum[..num_coeffs_q],
+                            &entry_buf[..full_num_coeffs_q],
+                            e_in,
+                        );
+                    }
+
+                    let e_out = e_second[j_high];
+                    for k in 0..num_coeffs_q {
+                        let inner_reduced = E::reduce_product_accum(inner_accum[k]);
+                        outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                    }
+                    blk = blk_end;
+                }
+
+                outer_accum
+            })
+            .reduce(
+                || vec![E::ProductAccum::ZERO; num_coeffs_q],
+                |mut a, b| {
+                    for (ai, bi) in a.iter_mut().zip(b.iter()) {
+                        *ai += *bi;
+                    }
+                    a
+                },
+            )
+            .into_iter()
+            .map(E::reduce_product_accum)
+            .collect::<Vec<_>>();
+
+        #[cfg(not(feature = "parallel"))]
+        let q_coeffs = {
+            let mut outer = vec![E::ProductAccum::ZERO; num_coeffs_q];
+            for (x, col_out) in out.chunks_mut(next_y_len).enumerate() {
+                debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
+                let col = &s_full[x * y_len..(x + 1) * y_len];
+                let j_base = x * current_y_half;
+                let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
+                let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
+                let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
+
+                let mut blk = 0usize;
+                while blk < live_pairs {
+                    let blk_end = (blk + block_size).min(live_pairs);
+                    let j_high = (j_base + blk) >> first_bits;
+                    let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                    let blk_len = blk_end - blk;
+                    let full_chunks = blk_len / 4;
+
+                    for chunk in 0..full_chunks {
+                        let pair_base = blk + chunk * 4;
+                        let mut pairs = [(E::zero(), E::zero()); 4];
+                        for (slot, pair_y) in (pair_base..pair_base + 4).enumerate() {
+                            let top_y = 2 * pair_y;
+                            let top = 4 * pair_y;
+                            let s0 = col[top] + r * (col[top + 1] - col[top]);
+                            let s1 = col[top + 2] + r * (col[top + 3] - col[top + 2]);
+                            col_out[top_y] = s0;
+                            col_out[top_y + 1] = s1;
+                            pairs[slot] = (s0, s1);
+                        }
+
+                        compute_entry_coeffs_from_s_x4(
+                            &mut batch_out,
+                            range_pc,
+                            [pairs[0].0, pairs[1].0, pairs[2].0, pairs[3].0],
+                            [
+                                pairs[0].1 - pairs[0].0,
+                                pairs[1].1 - pairs[1].0,
+                                pairs[2].1 - pairs[2].0,
+                                pairs[3].1 - pairs[3].0,
+                            ],
+                        );
+
+                        for (slot, _) in pairs.iter().enumerate() {
+                            let pair_y = pair_base + slot;
+                            let j_low = (j_base + pair_y) & (num_first - 1);
+                            let e_in = e_first[j_low];
+                            accumulate_dense_entry_coeffs(
+                                &mut inner_accum[..num_coeffs_q],
+                                &batch_out[slot][..full_num_coeffs_q],
+                                e_in,
+                            );
+                        }
+                    }
+
+                    for pair_y in blk + full_chunks * 4..blk_end {
+                        let top_y = 2 * pair_y;
+                        let top = 4 * pair_y;
+                        let s0 = col[top] + r * (col[top + 1] - col[top]);
+                        let s1 = col[top + 2] + r * (col[top + 3] - col[top + 2]);
+                        col_out[top_y] = s0;
+                        col_out[top_y + 1] = s1;
+                        compute_entry_coeffs_from_s(
+                            &mut entry_buf,
+                            &mut s_pows_buf,
+                            range_pc,
+                            s0,
+                            s1 - s0,
+                        );
+                        let j_low = (j_base + pair_y) & (num_first - 1);
+                        let e_in = e_first[j_low];
+                        accumulate_dense_entry_coeffs(
+                            &mut inner_accum[..num_coeffs_q],
+                            &entry_buf[..full_num_coeffs_q],
+                            e_in,
+                        );
+                    }
+
+                    let e_out = e_second[j_high];
+                    for k in 0..num_coeffs_q {
+                        let inner_reduced = E::reduce_product_accum(inner_accum[k]);
+                        outer[k] += e_out.mul_to_product_accum(inner_reduced);
+                    }
+                    blk = blk_end;
+                }
+            }
+            outer
+                .into_iter()
+                .map(E::reduce_product_accum)
+                .collect::<Vec<_>>()
+        };
+
+        let poly = EqFactoredUniPoly::from_q_coeffs(q_coeffs);
+        (out, poly)
+    }
+
     fn compute_current_round_eq_poly_from_state(&mut self) -> EqFactoredUniPoly<E> {
         let use_two_round_prefix = self.using_two_round_prefix();
         let use_prefix_x_round = !use_two_round_prefix && self.use_prefix_x_round();
@@ -1965,6 +2197,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps>
         let use_sparse_x_y_round = self.use_sparse_x_y_round();
         let fuse_next_full_prefix_x =
             use_prefix_x_round && self.next_use_prefix_x_round_after_current();
+        let fuse_next_sparse_x_y =
+            use_sparse_x_y_round && self.next_use_sparse_x_y_round_after_current();
         let y_len = match &self.s_table {
             STable::Compact(s_compact) => s_compact.len() / self.live_x_cols,
             STable::Full(s_full) => s_full.len() / self.live_x_cols,
@@ -1993,9 +2227,16 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps>
                         STable::Full(next_s_full)
                     }
                 } else if use_sparse_x_y_round {
-                    let next_s_full =
-                        Self::fold_s_full_sparse_x_y(&s_full, self.live_x_cols, y_len, r);
-                    STable::Full(next_s_full)
+                    if fuse_next_sparse_x_y {
+                        let (next_s_full, round_poly) =
+                            self.fuse_full_sparse_x_y_and_compute_round(&s_full, r);
+                        self.cached_round_poly = Some(round_poly);
+                        STable::Full(next_s_full)
+                    } else {
+                        let next_s_full =
+                            Self::fold_s_full_sparse_x_y(&s_full, self.live_x_cols, y_len, r);
+                        STable::Full(next_s_full)
+                    }
                 } else {
                     let mut s_full = s_full;
                     fold_evals_in_place(&mut s_full, r);
@@ -2415,6 +2656,73 @@ mod tests {
             match &prover.s_table {
                 STable::Full(s_full) => assert_eq!(s_full, &expected_next_s_full),
                 STable::Compact(_) => panic!("expected fused later prefix stage to stay full"),
+            }
+            assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
+        }
+    }
+
+    #[test]
+    fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
+        let num_u = 3usize;
+        let num_l = 4usize;
+        let live_x_cols = 6usize;
+        let y_len = 1usize << num_l;
+        for b in [4usize, 8] {
+            let half = (b / 2) as i8;
+            let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+                .map(|i| ((i * 7 + 9) % b) as i8 - half)
+                .collect();
+            let tau0: Vec<F> = (0..(num_u + num_l))
+                .map(|i| F::from_u64((i as u64) + 131))
+                .collect();
+            let tau0 = reorder_tau0_y_first(&tau0, num_u, num_l);
+
+            let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+            let round0 = prover.compute_round_eq_factored(0);
+            let r0 = F::from_u64(137);
+            let (claim1, scale1) = advance_stage1_claim(&prover, F::zero(), F::one(), &round0, r0);
+            prover.ingest_challenge(0, r0);
+
+            let round1 = prover.compute_round_eq_factored(1);
+            let r1 = F::from_u64(139);
+            let (claim2, scale2) = advance_stage1_claim(&prover, claim1, scale1, &round1, r1);
+            prover.ingest_challenge(1, r1);
+
+            let round2 = prover.compute_round_eq_factored(2);
+            let r2 = F::from_u64(149);
+            let (_claim3, _scale3) = advance_stage1_claim(&prover, claim2, scale2, &round2, r2);
+
+            let mut expected =
+                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+            let expected_round0 = expected.compute_round_eq_factored(0);
+            assert_eq!(expected_round0, round0);
+            expected.ingest_challenge(0, r0);
+            let expected_round1 = expected.compute_round_eq_factored(1);
+            assert_eq!(expected_round1, round1);
+            expected.ingest_challenge(1, r1);
+            let expected_round2 = expected.compute_round_eq_factored(2);
+            assert_eq!(expected_round2, round2);
+
+            let current_s_full = match &expected.s_table {
+                STable::Full(s_full) => s_full.clone(),
+                STable::Compact(_) => panic!("expected sparse-x/y state to be full"),
+            };
+            let current_y_len = current_s_full.len() / expected.live_x_cols;
+            let expected_next_s_full = HachiStage1Prover::<F>::fold_s_full_sparse_x_y(
+                &current_s_full,
+                expected.live_x_cols,
+                current_y_len,
+                r2,
+            );
+            expected.split_eq.bind(r2);
+            expected.rounds_completed += 1;
+            let expected_round3 = expected.compute_round_full_sparse_x_y(&expected_next_s_full);
+
+            prover.ingest_challenge(2, r2);
+
+            match &prover.s_table {
+                STable::Full(s_full) => assert_eq!(s_full, &expected_next_s_full),
+                STable::Compact(_) => panic!("expected sparse-x/y fusion to stay full"),
             }
             assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
         }
