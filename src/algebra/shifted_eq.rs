@@ -10,17 +10,17 @@
 //! [`crate::algebra::eq_poly::EqPolynomial`]:
 //! bit `k` of an integer index corresponds to `r_addr[k]`.
 
+#[cfg(test)]
 use crate::FieldCore;
 
 /// Weight descriptions supported by [`shifted_eq_dp`].
+#[cfg(test)]
 pub(crate) enum ShiftedEqWeights<'a, E: FieldCore> {
-    #[cfg(test)]
     /// Product weights in little-endian bit order.
     ///
     /// Entry `bit_weights[k] = (w_0, w_1)` means the local contribution is
     /// `w_0` when `y_k = 0` and `w_1` when `y_k = 1`.
     Tensor(&'a [(E, E)]),
-    #[cfg(test)]
     /// Equality weights `weights(y) = eq(point, y)` in little-endian order.
     EqPoint(&'a [E]),
     /// Dense weights `weights[y]` in little-endian index order.
@@ -28,17 +28,16 @@ pub(crate) enum ShiftedEqWeights<'a, E: FieldCore> {
 }
 
 /// Evaluate a shifted equality slice against one of the supported weight forms.
+#[cfg(test)]
 pub(crate) fn shifted_eq_dp<E: FieldCore>(
     address_point: &[E],
     offset: usize,
     weights: ShiftedEqWeights<'_, E>,
 ) -> E {
     match weights {
-        #[cfg(test)]
         ShiftedEqWeights::Tensor(bit_weights) => {
             shifted_eq_tensor_sum(address_point, offset, bit_weights)
         }
-        #[cfg(test)]
         ShiftedEqWeights::EqPoint(point) => shifted_eq_eq_point(address_point, offset, point),
         ShiftedEqWeights::Dense(weights) => shifted_eq_dense_sum(address_point, offset, weights),
     }
@@ -80,6 +79,7 @@ pub(crate) fn shifted_eq_eq_point<E: FieldCore>(
 /// zero-padded to the next power of two, then folded in place across the local
 /// `y` bits, after which the remaining high address bits are processed with the
 /// same 2-state carry machine.
+#[cfg(test)]
 pub(crate) fn shifted_eq_dense_sum<E: FieldCore>(
     address_point: &[E],
     offset: usize,
@@ -203,6 +203,7 @@ where
     no_carry
 }
 
+#[cfg(test)]
 fn bit_is_set(value: usize, bit_idx: usize) -> bool {
     if bit_idx >= usize::BITS as usize {
         false
@@ -238,6 +239,7 @@ fn assert_tensor_segment_in_range(address_bits: usize, offset: usize, num_local_
     );
 }
 
+#[cfg(test)]
 fn assert_dense_segment_in_range(address_bits: usize, offset: usize, segment_len: usize) {
     assert!(
         segment_len > 0,

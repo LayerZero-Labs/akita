@@ -118,15 +118,11 @@ struct BatchedProveLevelOutput<F: FieldCore> {
     next_state: RecursiveProverState<F>,
 }
 
-fn reorder_stage1_challenges_y_first<F: FieldCore>(
-    r_stage1: &[F],
-    num_u: usize,
-    num_l: usize,
-) -> Vec<F> {
-    assert_eq!(r_stage1.len(), num_u + num_l);
-    let mut reordered = Vec::with_capacity(r_stage1.len());
-    reordered.extend_from_slice(&r_stage1[num_u..]);
-    reordered.extend_from_slice(&r_stage1[..num_u]);
+fn reorder_stage1_coords_y_first<F: FieldCore>(coords: &[F], num_u: usize, num_l: usize) -> Vec<F> {
+    assert_eq!(coords.len(), num_u + num_l);
+    let mut reordered = Vec::with_capacity(coords.len());
+    reordered.extend_from_slice(&coords[num_u..]);
+    reordered.extend_from_slice(&coords[..num_u]);
     reordered
 }
 
@@ -655,15 +651,21 @@ where
         alpha: _,
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
+    let tau0_y_first = reorder_stage1_coords_y_first(&tau0, num_u, num_l);
     let (stage1_proof, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        let stage1_prover =
-            HachiStage1Prover::new(&w_evals_compact, &tau0, b, live_x_cols, num_u, num_l)?;
+        let stage1_prover = HachiStage1Prover::new(
+            &w_evals_compact,
+            &tau0_y_first,
+            b,
+            live_x_cols,
+            num_u,
+            num_l,
+        )?;
         let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
         let s_claim = stage1_proof.s_claim;
         (stage1_proof, r_stage1, s_claim)
     };
-    let r_stage2 = reorder_stage1_challenges_y_first(&r_stage1, num_u, num_l);
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
@@ -672,7 +674,7 @@ where
         let mut stage2_prover = HachiStage2Prover::new(
             batching_coeff,
             w_evals_compact,
-            &r_stage2,
+            &r_stage1,
             s_claim,
             b,
             alpha_evals_y,
@@ -1031,15 +1033,21 @@ where
         alpha: _,
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
+    let tau0_y_first = reorder_stage1_coords_y_first(&tau0, num_u, num_l);
     let (stage1_proof, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        let stage1_prover =
-            HachiStage1Prover::new(&w_evals_compact, &tau0, b, live_x_cols, num_u, num_l)?;
+        let stage1_prover = HachiStage1Prover::new(
+            &w_evals_compact,
+            &tau0_y_first,
+            b,
+            live_x_cols,
+            num_u,
+            num_l,
+        )?;
         let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
         let s_claim = stage1_proof.s_claim;
         (stage1_proof, r_stage1, s_claim)
     };
-    let r_stage2 = reorder_stage1_challenges_y_first(&r_stage1, num_u, num_l);
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
@@ -1048,7 +1056,7 @@ where
         let mut stage2_prover = HachiStage2Prover::new(
             batching_coeff,
             w_evals_compact,
-            &r_stage2,
+            &r_stage1,
             s_claim,
             b,
             alpha_evals_y,
@@ -2930,30 +2938,23 @@ where
         relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, &commitment_rows, y_rings);
     let stage1 = &root_proof.stage1;
     let stage2 = &root_proof.stage2;
-    let stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), rs.b);
+    let tau0_y_first = reorder_stage1_coords_y_first(&rs.tau0, rs.num_u, rs.num_l);
+    let stage1_verifier = HachiStage1Verifier::new(tau0_y_first, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         stage1_verifier.verify(stage1, transcript)?
     };
-    let r_stage2 = reorder_stage1_challenges_y_first(&r_stage1, rs.num_u, rs.num_l);
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
-    let m_eval_source = Stage2MEvalSource::ClaimGroups {
-        setup: &setup.expanded,
-        opening_point: &ring_opening_point,
-        challenges: &stage1_challenges,
-        level_params,
-        layout: batched_layout,
-        claim_group_sizes,
-    };
+    let m_eval_source = Stage2MEvalSource::new(rs.m_evals_x);
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
         HachiStage2Verifier::new_with_direct_witness_batched(
             batching_coeff,
             stage1.s_claim,
             fw,
-            r_stage2.clone(),
+            r_stage1.clone(),
             rs.alpha_evals_y,
             m_eval_source,
             &rs.tau1,
@@ -2968,7 +2969,7 @@ where
         HachiStage2Verifier::new_with_claimed_w_eval_batched(
             batching_coeff,
             stage1.s_claim,
-            r_stage2.clone(),
+            r_stage1.clone(),
             rs.alpha_evals_y,
             m_eval_source,
             &rs.tau1,
@@ -3102,31 +3103,23 @@ where
         relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, &commitment_rows, y_rings);
     let stage1 = &root_proof.stage1;
     let stage2 = &root_proof.stage2;
-    let stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), rs.b);
+    let tau0_y_first = reorder_stage1_coords_y_first(&rs.tau0, rs.num_u, rs.num_l);
+    let stage1_verifier = HachiStage1Verifier::new(tau0_y_first, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         stage1_verifier.verify(stage1, transcript)?
     };
-    let r_stage2 = reorder_stage1_challenges_y_first(&r_stage1, rs.num_u, rs.num_l);
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
-    let m_eval_source = Stage2MEvalSource::OpeningPointsAndClaimGroups {
-        setup: &setup.expanded,
-        opening_points: &ring_opening_points,
-        claim_to_point: &batch_shape.claim_to_point,
-        challenges: &stage1_challenges,
-        level_params,
-        layout: batched_layout,
-        claim_group_sizes: &batch_shape.claim_group_sizes,
-    };
+    let m_eval_source = Stage2MEvalSource::new(rs.m_evals_x);
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
         HachiStage2Verifier::new_with_direct_witness_batched(
             batching_coeff,
             stage1.s_claim,
             fw,
-            r_stage2.clone(),
+            r_stage1.clone(),
             rs.alpha_evals_y,
             m_eval_source,
             &rs.tau1,
@@ -3141,7 +3134,7 @@ where
         HachiStage2Verifier::new_with_claimed_w_eval_batched(
             batching_coeff,
             stage1.s_claim,
-            r_stage2.clone(),
+            r_stage1.clone(),
             rs.alpha_evals_y,
             m_eval_source,
             &rs.tau1,
@@ -3259,23 +3252,17 @@ where
     );
     let stage1 = &level_proof.stage1;
     let stage2 = &level_proof.stage2;
-    let stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), rs.b);
+    let tau0_y_first = reorder_stage1_coords_y_first(&rs.tau0, rs.num_u, rs.num_l);
+    let stage1_verifier = HachiStage1Verifier::new(tau0_y_first, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         stage1_verifier.verify(stage1, transcript)?
     };
-    let r_stage2 = reorder_stage1_challenges_y_first(&r_stage1, rs.num_u, rs.num_l);
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
-    let m_eval_source = Stage2MEvalSource::Single {
-        setup: &setup.expanded,
-        opening_point: &ring_opening_point,
-        challenges: &stage1_challenges,
-        level_params,
-        layout,
-    };
+    let m_eval_source = Stage2MEvalSource::new(rs.m_evals_x);
 
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
@@ -3283,7 +3270,7 @@ where
             batching_coeff,
             stage1.s_claim,
             fw,
-            r_stage2.clone(),
+            r_stage1.clone(),
             rs.alpha_evals_y,
             m_eval_source,
             &rs.tau1,
@@ -3299,7 +3286,7 @@ where
             batching_coeff,
             stage1.s_claim,
             stage2.next_w_eval,
-            r_stage2.clone(),
+            r_stage1.clone(),
             rs.alpha_evals_y,
             m_eval_source,
             &rs.tau1,

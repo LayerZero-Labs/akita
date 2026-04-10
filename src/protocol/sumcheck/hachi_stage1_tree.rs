@@ -64,7 +64,7 @@ fn padded_s_table<E: FieldCore + FromSmallInt>(
     for x in 0..live_x_cols {
         let src_start = x * y_len;
         for y in 0..y_len {
-            out[y * x_len + x] = E::from_i64(compact_s_from_w(w_evals_compact[src_start + y]));
+            out[x * y_len + y] = E::from_i64(compact_s_from_w(w_evals_compact[src_start + y]));
         }
     }
     Ok(out)
@@ -935,6 +935,13 @@ mod tests {
             .collect()
     }
 
+    fn reorder_tau0_y_first(tau0: &[F], num_u: usize, num_l: usize) -> Vec<F> {
+        let mut reordered = Vec::with_capacity(tau0.len());
+        reordered.extend_from_slice(&tau0[num_u..num_u + num_l]);
+        reordered.extend_from_slice(&tau0[..num_u]);
+        reordered
+    }
+
     fn assert_stage1_roundtrip(
         b: usize,
         live_x_cols: usize,
@@ -944,6 +951,7 @@ mod tests {
         let num_u = 3;
         let num_l = 1;
         let witness = sample_stage1_witness(b, live_x_cols, num_l);
+        let tau0 = reorder_tau0_y_first(&tau0, num_u, num_l);
 
         let prover = HachiStage1Prover::new(&witness, &tau0, b, live_x_cols, num_u, num_l)
             .expect("stage1 prover should build");

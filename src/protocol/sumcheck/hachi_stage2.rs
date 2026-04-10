@@ -56,17 +56,12 @@ use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::poly::trim_trailing_zeros;
 use crate::algebra::split_eq::GruenSplitEq;
-use crate::algebra::{CyclotomicRing, SparseChallenge};
+use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::protocol::commitment::{HachiCommitmentLayout, HachiExpandedSetup, HachiLevelParams};
-use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{DirectWitnessProof, PackedDigits};
-use crate::protocol::ring_switch::{
-    compute_m_eval_at_point, compute_m_eval_at_point_with_claim_groups,
-    compute_m_eval_at_point_with_opening_points_and_claim_groups, eval_ring_at,
-};
+use crate::protocol::ring_switch::eval_ring_at;
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
 use std::marker::PhantomData;
 use std::mem;
@@ -2608,31 +2603,14 @@ enum Stage2WitnessOracle<'a, F: FieldCore> {
     ClaimedEval(F),
 }
 
-pub(crate) enum Stage2MEvalSource<'a, F: FieldCore, const D: usize> {
-    Single {
-        setup: &'a HachiExpandedSetup<F>,
-        opening_point: &'a RingOpeningPoint<F>,
-        challenges: &'a [SparseChallenge],
-        level_params: &'a HachiLevelParams,
-        layout: HachiCommitmentLayout,
-    },
-    ClaimGroups {
-        setup: &'a HachiExpandedSetup<F>,
-        opening_point: &'a RingOpeningPoint<F>,
-        challenges: &'a [SparseChallenge],
-        level_params: &'a HachiLevelParams,
-        layout: HachiCommitmentLayout,
-        claim_group_sizes: &'a [usize],
-    },
-    OpeningPointsAndClaimGroups {
-        setup: &'a HachiExpandedSetup<F>,
-        opening_points: &'a [RingOpeningPoint<F>],
-        claim_to_point: &'a [usize],
-        challenges: &'a [SparseChallenge],
-        level_params: &'a HachiLevelParams,
-        layout: HachiCommitmentLayout,
-        claim_group_sizes: &'a [usize],
-    },
+pub(crate) struct Stage2MEvalSource<F: FieldCore> {
+    m_evals_x: Vec<F>,
+}
+
+impl<F: FieldCore> Stage2MEvalSource<F> {
+    pub(crate) fn new(m_evals_x: Vec<F>) -> Self {
+        Self { m_evals_x }
+    }
 }
 
 /// Verifier for the stage-2 fused virtual-claim + relation sumcheck.
@@ -2641,10 +2619,8 @@ pub struct HachiStage2Verifier<'a, F: FieldCore, const D: usize> {
     s_claim: F,
     witness_oracle: Stage2WitnessOracle<'a, F>,
     r_stage1: Vec<F>,
-    tau1: Vec<F>,
-    alpha: F,
     alpha_evals_y: Vec<F>,
-    m_eval_source: Stage2MEvalSource<'a, F, D>,
+    m_eval_source: Stage2MEvalSource<F>,
     num_u: usize,
     num_l: usize,
     relation_claim: F,
@@ -2661,7 +2637,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         witness_oracle: Stage2WitnessOracle<'a, F>,
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
-        m_eval_source: Stage2MEvalSource<'a, F, D>,
+        m_eval_source: Stage2MEvalSource<F>,
         tau1: &[F],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
@@ -2676,8 +2652,6 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
             s_claim,
             witness_oracle,
             r_stage1,
-            tau1: tau1.to_vec(),
-            alpha,
             alpha_evals_y,
             m_eval_source,
             num_u,
@@ -2697,7 +2671,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         direct_witness: &'a DirectWitnessProof<F>,
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
-        m_eval_source: Stage2MEvalSource<'a, F, D>,
+        m_eval_source: Stage2MEvalSource<F>,
         tau1: &[F],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
@@ -2736,7 +2710,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         direct_witness: &'a DirectWitnessProof<F>,
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
-        m_eval_source: Stage2MEvalSource<'a, F, D>,
+        m_eval_source: Stage2MEvalSource<F>,
         tau1: &[F],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
@@ -2772,7 +2746,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         w_eval: F,
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
-        m_eval_source: Stage2MEvalSource<'a, F, D>,
+        m_eval_source: Stage2MEvalSource<F>,
         tau1: &[F],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
@@ -2810,7 +2784,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         s_claim: F,
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
-        m_eval_source: Stage2MEvalSource<'a, F, D>,
+        m_eval_source: Stage2MEvalSource<F>,
         tau1: &[F],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
@@ -2847,65 +2821,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
     }
 
     fn m_eval(&self, x_challenges: &[F]) -> Result<F, HachiError> {
-        match &self.m_eval_source {
-            Stage2MEvalSource::Single {
-                setup,
-                opening_point,
-                challenges,
-                level_params,
-                layout,
-            } => compute_m_eval_at_point::<F, D>(
-                setup,
-                opening_point,
-                challenges,
-                self.alpha,
-                &self.alpha_evals_y,
-                level_params,
-                *layout,
-                &self.tau1,
-                x_challenges,
-            ),
-            Stage2MEvalSource::ClaimGroups {
-                setup,
-                opening_point,
-                challenges,
-                level_params,
-                layout,
-                claim_group_sizes,
-            } => compute_m_eval_at_point_with_claim_groups::<F, D>(
-                setup,
-                opening_point,
-                challenges,
-                self.alpha,
-                &self.alpha_evals_y,
-                level_params,
-                *layout,
-                &self.tau1,
-                claim_group_sizes,
-                x_challenges,
-            ),
-            Stage2MEvalSource::OpeningPointsAndClaimGroups {
-                setup,
-                opening_points,
-                claim_to_point,
-                challenges,
-                level_params,
-                layout,
-                claim_group_sizes,
-            } => compute_m_eval_at_point_with_opening_points_and_claim_groups::<F, D>(
-                setup,
-                opening_points,
-                claim_to_point,
-                challenges,
-                self.alpha,
-                &self.alpha_evals_y,
-                level_params,
-                *layout,
-                &self.tau1,
-                claim_group_sizes,
-                x_challenges,
-            ),
-        }
+        multilinear_eval(&self.m_eval_source.m_evals_x, x_challenges)
     }
 }
 
@@ -2963,13 +2879,6 @@ mod tests {
         num_l: usize,
     }
 
-    fn reorder_stage1_challenges_y_first(r_stage1: &[F], num_u: usize, _num_l: usize) -> Vec<F> {
-        let mut reordered = Vec::with_capacity(r_stage1.len());
-        reordered.extend_from_slice(&r_stage1[num_u..]);
-        reordered.extend_from_slice(&r_stage1[..num_u]);
-        reordered
-    }
-
     fn s_claim_from_compact_rows(w_compact: &[i8], params: &Stage2Params<'_>) -> F {
         let padded = if params.live_x_cols == (1usize << params.num_u) {
             w_compact.to_vec()
@@ -2983,9 +2892,7 @@ mod tests {
                 w * (w + F::one())
             })
             .collect();
-        let r_stage2 =
-            reorder_stage1_challenges_y_first(params.r_stage1, params.num_u, params.num_l);
-        multilinear_eval(&s_evals, &r_stage2).expect("valid stage-2 witness shape")
+        multilinear_eval(&s_evals, params.r_stage1).expect("valid stage-2 witness shape")
     }
 
     fn relation_claim_from_compact_rows(
@@ -3015,12 +2922,10 @@ mod tests {
         let s_claim = s_claim_from_compact_rows(&w_compact, &params);
         let relation_claim =
             relation_claim_from_compact_rows(&w_compact, &alpha_evals_y, &m_evals_x, &params);
-        let r_stage2 =
-            reorder_stage1_challenges_y_first(params.r_stage1, params.num_u, params.num_l);
         HachiStage2Prover::new(
             batching_coeff,
             w_compact,
-            &r_stage2,
+            params.r_stage1,
             s_claim,
             params.b,
             alpha_evals_y,

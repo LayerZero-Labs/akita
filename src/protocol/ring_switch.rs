@@ -6,6 +6,7 @@
 
 use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
+#[cfg(test)]
 use crate::algebra::shifted_eq::{shifted_eq_dp, ShiftedEqWeights};
 use crate::algebra::{CyclotomicRing, SparseChallenge};
 use crate::error::HachiError;
@@ -70,6 +71,8 @@ pub(crate) struct RingSwitchOutput<F: FieldCore> {
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.
 pub(crate) struct RingSwitchVerifyOutput<F: FieldCore> {
+    /// Evaluation table of M_alpha(x) (tau1-weighted).
+    pub m_evals_x: Vec<F>,
     /// Evaluation table of alpha powers (y dimension).
     pub alpha_evals_y: Vec<F>,
     /// Number of upper variable bits.
@@ -393,38 +396,6 @@ where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
 {
-    ring_switch_verifier_with_num_claims::<F, T, D>(
-        opening_point,
-        challenges,
-        setup,
-        w_len,
-        w_commitment,
-        transcript,
-        level_params,
-        layout,
-        1,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip_all, name = "ring_switch_verifier_with_num_claims")]
-#[inline(never)]
-pub(crate) fn ring_switch_verifier_with_num_claims<F, T, const D: usize>(
-    opening_point: &RingOpeningPoint<F>,
-    challenges: &[SparseChallenge],
-    setup: &HachiExpandedSetup<F>,
-    w_len: usize,
-    w_commitment: &FlatRingVec<F>,
-    transcript: &mut T,
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
-    num_claims: usize,
-) -> Result<RingSwitchVerifyOutput<F>, HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling,
-    T: Transcript<F>,
-{
-    let claim_group_sizes = vec![1usize; num_claims];
     ring_switch_verifier_with_claim_groups::<F, T, D>(
         opening_point,
         challenges,
@@ -434,7 +405,7 @@ where
         transcript,
         level_params,
         layout,
-        &claim_group_sizes,
+        &[1usize],
     )
 }
 
@@ -443,8 +414,8 @@ where
 #[inline(never)]
 pub(crate) fn ring_switch_verifier_with_claim_groups<F, T, const D: usize>(
     opening_point: &RingOpeningPoint<F>,
-    _challenges: &[SparseChallenge],
-    _setup: &HachiExpandedSetup<F>,
+    challenges: &[SparseChallenge],
+    setup: &HachiExpandedSetup<F>,
     w_len: usize,
     w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
@@ -483,8 +454,20 @@ where
     let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
     let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
+    let m_evals_x = compute_m_evals_x_with_claim_groups::<F, D>(
+        setup,
+        opening_point,
+        challenges,
+        alpha,
+        &alpha_evals_y,
+        level_params,
+        layout,
+        &tau1,
+        claim_group_sizes,
+    )?;
 
     Ok(RingSwitchVerifyOutput {
+        m_evals_x,
         alpha_evals_y,
         num_u,
         num_l,
@@ -504,8 +487,8 @@ where
 pub(crate) fn ring_switch_verifier_with_opening_points_and_claim_groups<F, T, const D: usize>(
     opening_points: &[RingOpeningPoint<F>],
     claim_to_point: &[usize],
-    _challenges: &[SparseChallenge],
-    _setup: &HachiExpandedSetup<F>,
+    challenges: &[SparseChallenge],
+    setup: &HachiExpandedSetup<F>,
     w_len: usize,
     w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
@@ -540,8 +523,35 @@ where
     let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
     let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
+    let m_evals_x = if opening_points.len() == 1 {
+        compute_m_evals_x_with_claim_groups::<F, D>(
+            setup,
+            &opening_points[0],
+            challenges,
+            alpha,
+            &alpha_evals_y,
+            level_params,
+            layout,
+            &tau1,
+            claim_group_sizes,
+        )?
+    } else {
+        compute_m_evals_x_with_opening_points_and_claim_groups::<F, D>(
+            setup,
+            opening_points,
+            claim_to_point,
+            challenges,
+            alpha,
+            &alpha_evals_y,
+            level_params,
+            layout,
+            &tau1,
+            claim_group_sizes,
+        )?
+    };
 
     Ok(RingSwitchVerifyOutput {
+        m_evals_x,
         alpha_evals_y,
         num_u,
         num_l,
@@ -1012,33 +1022,6 @@ pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     layout: HachiCommitmentLayout,
     tau1: &[F],
 ) -> Result<Vec<F>, HachiError> {
-    compute_m_evals_x_with_num_claims::<F, D>(
-        setup,
-        opening_point,
-        challenges,
-        alpha,
-        alpha_pows,
-        level_params,
-        layout,
-        tau1,
-        1,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip_all, name = "compute_m_evals_x_with_num_claims")]
-pub(crate) fn compute_m_evals_x_with_num_claims<F: FieldCore + CanonicalField, const D: usize>(
-    setup: &HachiExpandedSetup<F>,
-    opening_point: &RingOpeningPoint<F>,
-    challenges: &[SparseChallenge],
-    alpha: F,
-    alpha_pows: &[F],
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
-    tau1: &[F],
-    num_claims: usize,
-) -> Result<Vec<F>, HachiError> {
-    let claim_group_sizes = vec![1usize; num_claims];
     compute_m_evals_x_with_claim_groups::<F, D>(
         setup,
         opening_point,
@@ -1048,7 +1031,7 @@ pub(crate) fn compute_m_evals_x_with_num_claims<F: FieldCore + CanonicalField, c
         level_params,
         layout,
         tau1,
-        &claim_group_sizes,
+        &[1usize],
     )
 }
 
@@ -1461,6 +1444,7 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
     Ok(out)
 }
 
+#[cfg(test)]
 #[inline]
 fn accumulate_shifted_segment<F: FieldCore>(
     x_point: &[F],
@@ -1474,6 +1458,7 @@ fn accumulate_shifted_segment<F: FieldCore>(
     }
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_m_eval_at_point<F: FieldCore + CanonicalField, const D: usize>(
     setup: &HachiExpandedSetup<F>,
@@ -1500,6 +1485,7 @@ pub(crate) fn compute_m_eval_at_point<F: FieldCore + CanonicalField, const D: us
     )
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_m_eval_at_point_with_claim_groups<
     F: FieldCore + CanonicalField,
@@ -1695,6 +1681,7 @@ pub(crate) fn compute_m_eval_at_point_with_claim_groups<
     Ok(acc)
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_m_eval_at_point_with_opening_points_and_claim_groups<
     F: FieldCore + CanonicalField,
