@@ -2866,6 +2866,7 @@ mod tests {
     use super::*;
     use crate::algebra::Prime128Offset275;
     use crate::protocol::ring_switch::build_w_evals;
+    use crate::protocol::sumcheck::hachi_stage1::pad_compact_witness;
     use crate::protocol::sumcheck::multilinear_eval;
 
     type F = Prime128Offset275;
@@ -2883,7 +2884,7 @@ mod tests {
         let padded = if params.live_x_cols == (1usize << params.num_u) {
             w_compact.to_vec()
         } else {
-            pad_compact_rows(w_compact, params.live_x_cols, params.num_u, params.num_l)
+            pad_compact_witness(w_compact, params.live_x_cols, params.num_u, params.num_l)
         };
         let s_evals: Vec<F> = padded
             .iter()
@@ -2981,24 +2982,6 @@ mod tests {
             evals[2] += eq_rem * w_2 * (w_2 + F::one());
         }
         split_eq.gruen_mul(&UniPoly::from_evals(&evals))
-    }
-
-    fn pad_compact_rows(
-        w_prefix: &[i8],
-        live_x_cols: usize,
-        num_u: usize,
-        num_l: usize,
-    ) -> Vec<i8> {
-        let x_len = 1usize << num_u;
-        let y_len = 1usize << num_l;
-        let mut padded = vec![0i8; x_len * y_len];
-        for x in 0..live_x_cols {
-            let src_start = x * y_len;
-            let dst_start = x * y_len;
-            padded[dst_start..dst_start + y_len]
-                .copy_from_slice(&w_prefix[src_start..src_start + y_len]);
-        }
-        padded
     }
 
     #[test]
@@ -3140,7 +3123,7 @@ mod tests {
                 let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
                     .map(|i| ((i * 7 + 5) % b) as i8 - half)
                     .collect();
-                let w_padded = pad_compact_rows(&w_prefix, live_x_cols, num_u, num_l);
+                let w_padded = pad_compact_witness(&w_prefix, live_x_cols, num_u, num_l);
                 let r_stage1: Vec<F> = (0..(num_u + num_l))
                     .map(|i| F::from_u64((i as u64) + 31))
                     .collect();
@@ -3568,7 +3551,7 @@ mod tests {
         let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
             .map(|i| if (i * 73 + 19) % 17 == 0 { -1 } else { 0 })
             .collect();
-        let w_padded = pad_compact_rows(&w_prefix, live_x_cols, num_u, num_l);
+        let w_padded = pad_compact_witness(&w_prefix, live_x_cols, num_u, num_l);
         let r_stage1: Vec<F> = (0..(num_u + num_l))
             .map(|i| F::from_u64((3 * i as u64) + 223))
             .collect();
@@ -3710,7 +3693,7 @@ mod tests {
         let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
             .map(|i| ((i * 31 + 11) % b) as i8 - half)
             .collect();
-        let w_padded = pad_compact_rows(&w_prefix, live_x_cols, num_u, num_l);
+        let w_padded = pad_compact_witness(&w_prefix, live_x_cols, num_u, num_l);
         let r_stage1: Vec<F> = (0..(num_u + num_l))
             .map(|i| F::from_u64((31 * i as u64) + 271))
             .collect();

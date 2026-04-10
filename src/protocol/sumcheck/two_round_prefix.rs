@@ -1744,29 +1744,13 @@ mod tests {
     use super::*;
     use crate::algebra::Prime128Offset275;
     use crate::primitives::{HachiDeserialize, HachiSerialize};
+    use crate::protocol::commitment_scheme::reorder_stage1_coords;
+    use crate::protocol::sumcheck::hachi_stage1::advance_stage1_claim;
     use crate::protocol::sumcheck::hachi_stage1::HachiStage1Prover;
-    use crate::protocol::sumcheck::{advance_eq_factored_claim, EqFactoredSumcheckInstanceProver};
+    use crate::protocol::sumcheck::EqFactoredSumcheckInstanceProver;
     use std::collections::HashMap;
 
     type F = Prime128Offset275;
-
-    fn reorder_tau0_y_first(tau0: &[F], num_u: usize, num_l: usize) -> Vec<F> {
-        let mut reordered = Vec::with_capacity(tau0.len());
-        reordered.extend_from_slice(&tau0[num_u..num_u + num_l]);
-        reordered.extend_from_slice(&tau0[..num_u]);
-        reordered
-    }
-
-    fn advance_stage1_claim(
-        prover: &HachiStage1Prover<F>,
-        scaled_claim: F,
-        claim_scale: F,
-        poly: &EqFactoredUniPoly<F>,
-        challenge: F,
-    ) -> (F, F) {
-        let (l_at_0, l_at_1) = prover.current_linear_factor_evals();
-        advance_eq_factored_claim(scaled_claim, claim_scale, l_at_0, l_at_1, poly, challenge)
-    }
 
     fn gaussian_rank(mut rows: Vec<Vec<F>>) -> usize {
         rows.retain(|row| row.iter().any(|x| !x.is_zero()));
@@ -2167,7 +2151,7 @@ mod tests {
             F::from_u64(11),
             F::from_u64(13),
         ];
-        let tau0 = reorder_tau0_y_first(&tau0_raw, num_u, num_l);
+        let tau0 = reorder_stage1_coords(&tau0_raw, num_u, num_l);
         assert_eq!(
             build_stage1_bivariate_skip_proof_from_compact(&w_compact, &tau0, 8, 5, num_u, num_l),
             build_stage1_bivariate_skip_proof_from_compact_reference(
@@ -2469,7 +2453,7 @@ mod tests {
             F::from_u64(11),
             F::from_u64(13),
         ];
-        let tau0 = reorder_tau0_y_first(&tau0_raw, num_u, num_l);
+        let tau0 = reorder_stage1_coords(&tau0_raw, num_u, num_l);
 
         let proof = build_stage1_bivariate_skip_proof_from_compact(
             &w_compact,

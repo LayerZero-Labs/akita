@@ -628,11 +628,7 @@ fn compact_s_from_w(w: i8) -> i16 {
     s as i16
 }
 
-fn build_compact_s_table_from_y_first_w(
-    w_evals_compact: &[i8],
-    _live_x_cols: usize,
-    _num_l: usize,
-) -> Vec<i16> {
+fn build_compact_s_table(w_evals_compact: &[i8]) -> Vec<i16> {
     w_evals_compact
         .iter()
         .copied()
@@ -679,7 +675,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         let y_len = 1usize << num_l;
         assert_eq!(w_evals_compact.len(), live_x_cols * y_len);
         assert_eq!(tau0.len(), num_vars);
-        let s_table = build_compact_s_table_from_y_first_w(w_evals_compact, live_x_cols, num_l);
+        let s_table = build_compact_s_table(w_evals_compact);
 
         Self {
             s_table: STable::Compact(s_table),
@@ -2314,37 +2310,43 @@ impl<F: FieldCore + FromSmallInt> EqFactoredSumcheckInstanceVerifier<F> for Hach
 }
 
 #[cfg(test)]
+pub(crate) fn pad_compact_witness(
+    w_prefix: &[i8],
+    live_x_cols: usize,
+    num_u: usize,
+    num_l: usize,
+) -> Vec<i8> {
+    let x_len = 1usize << num_u;
+    let y_len = 1usize << num_l;
+    let mut padded = vec![0i8; x_len * y_len];
+    for x in 0..live_x_cols {
+        let offset = x * y_len;
+        padded[offset..offset + y_len].copy_from_slice(&w_prefix[offset..offset + y_len]);
+    }
+    padded
+}
+
+#[cfg(test)]
+pub(crate) fn advance_stage1_claim<F: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps>(
+    prover: &HachiStage1Prover<F>,
+    scaled_claim: F,
+    claim_scale: F,
+    poly: &EqFactoredUniPoly<F>,
+    challenge: F,
+) -> (F, F) {
+    use crate::protocol::sumcheck::advance_eq_factored_claim;
+    let (l_at_0, l_at_1) = prover.current_linear_factor_evals();
+    advance_eq_factored_claim(scaled_claim, claim_scale, l_at_0, l_at_1, poly, challenge)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::algebra::Prime128Offset275;
-    use crate::protocol::sumcheck::{advance_eq_factored_claim, multilinear_eval};
+    use crate::protocol::commitment_scheme::reorder_stage1_coords;
+    use crate::protocol::sumcheck::multilinear_eval;
 
     type F = Prime128Offset275;
-
-    fn pad_compact_rows(
-        w_prefix: &[i8],
-        live_x_cols: usize,
-        num_u: usize,
-        num_l: usize,
-    ) -> Vec<i8> {
-        let x_len = 1usize << num_u;
-        let y_len = 1usize << num_l;
-        let mut padded = vec![0i8; x_len * y_len];
-        for x in 0..live_x_cols {
-            let src_start = x * y_len;
-            let dst_start = x * y_len;
-            padded[dst_start..dst_start + y_len]
-                .copy_from_slice(&w_prefix[src_start..src_start + y_len]);
-        }
-        padded
-    }
-
-    fn reorder_tau0_y_first(tau0: &[F], num_u: usize, num_l: usize) -> Vec<F> {
-        let mut reordered = Vec::with_capacity(tau0.len());
-        reordered.extend_from_slice(&tau0[num_u..num_u + num_l]);
-        reordered.extend_from_slice(&tau0[..num_u]);
-        reordered
-    }
 
     fn fold_s_compact_prefix_x_reference(
         s_compact: &[i16],
@@ -2381,17 +2383,6 @@ mod tests {
             .collect()
     }
 
-    fn advance_stage1_claim(
-        prover: &HachiStage1Prover<F>,
-        scaled_claim: F,
-        claim_scale: F,
-        poly: &EqFactoredUniPoly<F>,
-        challenge: F,
-    ) -> (F, F) {
-        let (l_at_0, l_at_1) = prover.current_linear_factor_evals();
-        advance_eq_factored_claim(scaled_claim, claim_scale, l_at_0, l_at_1, poly, challenge)
-    }
-
     #[test]
     fn stage1_compact_fold_lookup_matches_direct_formula() {
         let b = 8usize;
@@ -2420,7 +2411,7 @@ mod tests {
         let tau0: Vec<F> = (0..(num_u + num_l))
             .map(|i| F::from_u64((i as u64) + 2))
             .collect();
-        let tau0 = reorder_tau0_y_first(&tau0, num_u, num_l);
+        let tau0 = reorder_stage1_coords(&tau0, num_u, num_l);
 
         for b in [4usize, 8, 16, 32] {
             let half = (b / 2) as i8;
@@ -2429,8 +2420,7 @@ mod tests {
             let mut prover =
                 HachiStage1Prover::new(&w_compact, &tau0, b, 1usize << num_u, num_u, num_l);
             let stage1_poly = prover.compute_round_eq_factored(0);
-            let s_compact =
-                build_compact_s_table_from_y_first_w(&w_compact, 1usize << num_u, num_l);
+            let s_compact = build_compact_s_table(&w_compact);
             let reference = compute_norm_round_eq_poly_from_s_compact(
                 &prover.split_eq,
                 &s_compact,
@@ -2480,11 +2470,11 @@ mod tests {
                 let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
                     .map(|i| ((i * 7 + 5) % b) as i8 - half)
                     .collect();
-                let w_padded = pad_compact_rows(&w_prefix, live_x_cols, num_u, num_l);
+                let w_padded = pad_compact_witness(&w_prefix, live_x_cols, num_u, num_l);
                 let tau0: Vec<F> = (0..(num_u + num_l))
                     .map(|i| F::from_u64((i as u64) + 19))
                     .collect();
-                let tau0 = reorder_tau0_y_first(&tau0, num_u, num_l);
+                let tau0 = reorder_stage1_coords(&tau0, num_u, num_l);
                 let mut prefix_prover =
                     HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
                 let mut padded_prover =
@@ -2526,11 +2516,10 @@ mod tests {
                 assert_eq!(prefix_prover.final_s_claim(), padded_prover.final_s_claim());
                 assert_eq!(prefix_claim, padded_claim);
                 assert_eq!(prefix_scale, padded_scale);
-                let s_padded: Vec<F> =
-                    build_compact_s_table_from_y_first_w(&w_padded, 1usize << num_u, num_l)
-                        .into_iter()
-                        .map(|s| F::from_i64(i64::from(s)))
-                        .collect();
+                let s_padded: Vec<F> = build_compact_s_table(&w_padded)
+                    .into_iter()
+                    .map(|s| F::from_i64(i64::from(s)))
+                    .collect();
                 assert_eq!(
                     prefix_prover.final_s_claim(),
                     multilinear_eval(&s_padded, &challenges).unwrap(),
@@ -2551,11 +2540,11 @@ mod tests {
             let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
                 .map(|i| ((i * 9 + 5) % b) as i8 - half)
                 .collect();
-            let s_compact = build_compact_s_table_from_y_first_w(&w_prefix, live_x_cols, num_l);
+            let s_compact = build_compact_s_table(&w_prefix);
             let tau0: Vec<F> = (0..(num_u + num_l))
                 .map(|i| F::from_u64((i as u64) + 53))
                 .collect();
-            let tau0 = reorder_tau0_y_first(&tau0, num_u, num_l);
+            let tau0 = reorder_stage1_coords(&tau0, num_u, num_l);
 
             let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
             let round0 = prover.compute_round_eq_factored(0);
@@ -2606,7 +2595,7 @@ mod tests {
             let tau0: Vec<F> = (0..(num_u + num_l))
                 .map(|i| F::from_u64((i as u64) + 101))
                 .collect();
-            let tau0 = reorder_tau0_y_first(&tau0, num_u, num_l);
+            let tau0 = reorder_stage1_coords(&tau0, num_u, num_l);
 
             let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
             let round0 = prover.compute_round_eq_factored(0);
@@ -2675,7 +2664,7 @@ mod tests {
             let tau0: Vec<F> = (0..(num_u + num_l))
                 .map(|i| F::from_u64((i as u64) + 131))
                 .collect();
-            let tau0 = reorder_tau0_y_first(&tau0, num_u, num_l);
+            let tau0 = reorder_stage1_coords(&tau0, num_u, num_l);
 
             let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
             let round0 = prover.compute_round_eq_factored(0);

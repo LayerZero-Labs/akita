@@ -919,6 +919,7 @@ impl<E: FieldCore + CanonicalField + FromSmallInt> HachiStage1Verifier<E> {
 mod tests {
     use super::*;
     use crate::algebra::Prime128Offset275;
+    use crate::protocol::commitment_scheme::reorder_stage1_coords;
     use crate::protocol::transcript::Blake2bTranscript;
 
     type F = Prime128Offset275;
@@ -935,13 +936,6 @@ mod tests {
             .collect()
     }
 
-    fn reorder_tau0_y_first(tau0: &[F], num_u: usize, num_l: usize) -> Vec<F> {
-        let mut reordered = Vec::with_capacity(tau0.len());
-        reordered.extend_from_slice(&tau0[num_u..num_u + num_l]);
-        reordered.extend_from_slice(&tau0[..num_u]);
-        reordered
-    }
-
     fn assert_stage1_roundtrip(
         b: usize,
         live_x_cols: usize,
@@ -951,7 +945,7 @@ mod tests {
         let num_u = 3;
         let num_l = 1;
         let witness = sample_stage1_witness(b, live_x_cols, num_l);
-        let tau0 = reorder_tau0_y_first(&tau0, num_u, num_l);
+        let tau0 = reorder_stage1_coords(&tau0, num_u, num_l);
 
         let prover = HachiStage1Prover::new(&witness, &tau0, b, live_x_cols, num_u, num_l)
             .expect("stage1 prover should build");

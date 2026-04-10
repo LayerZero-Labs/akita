@@ -116,7 +116,11 @@ struct BatchedProveLevelOutput<F: FieldCore> {
     next_state: RecursiveProverState<F>,
 }
 
-fn reorder_stage1_coords_y_first<F: FieldCore>(coords: &[F], num_u: usize, num_l: usize) -> Vec<F> {
+pub(crate) fn reorder_stage1_coords<F: FieldCore>(
+    coords: &[F],
+    num_u: usize,
+    num_l: usize,
+) -> Vec<F> {
     assert_eq!(coords.len(), num_u + num_l);
     let mut reordered = Vec::with_capacity(coords.len());
     reordered.extend_from_slice(&coords[num_u..]);
@@ -649,12 +653,12 @@ where
         alpha: _,
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
-    let tau0_y_first = reorder_stage1_coords_y_first(&tau0, num_u, num_l);
+    let tau0_reordered = reorder_stage1_coords(&tau0, num_u, num_l);
     let (stage1_proof, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         let stage1_prover = HachiStage1Prover::new(
             &w_evals_compact,
-            &tau0_y_first,
+            &tau0_reordered,
             b,
             live_x_cols,
             num_u,
@@ -1029,12 +1033,12 @@ where
         alpha: _,
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
-    let tau0_y_first = reorder_stage1_coords_y_first(&tau0, num_u, num_l);
+    let tau0_reordered = reorder_stage1_coords(&tau0, num_u, num_l);
     let (stage1_proof, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         let stage1_prover = HachiStage1Prover::new(
             &w_evals_compact,
-            &tau0_y_first,
+            &tau0_reordered,
             b,
             live_x_cols,
             num_u,
@@ -2896,8 +2900,8 @@ where
         relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, &commitment_rows, y_rings);
     let stage1 = &root_proof.stage1;
     let stage2 = &root_proof.stage2;
-    let tau0_y_first = reorder_stage1_coords_y_first(&rs.tau0, rs.num_u, rs.num_l);
-    let stage1_verifier = HachiStage1Verifier::new(tau0_y_first, rs.b);
+    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.num_u, rs.num_l);
+    let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         stage1_verifier.verify(stage1, transcript)?
@@ -3061,8 +3065,8 @@ where
         relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, &commitment_rows, y_rings);
     let stage1 = &root_proof.stage1;
     let stage2 = &root_proof.stage2;
-    let tau0_y_first = reorder_stage1_coords_y_first(&rs.tau0, rs.num_u, rs.num_l);
-    let stage1_verifier = HachiStage1Verifier::new(tau0_y_first, rs.b);
+    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.num_u, rs.num_l);
+    let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         stage1_verifier.verify(stage1, transcript)?
@@ -3210,8 +3214,8 @@ where
     );
     let stage1 = &level_proof.stage1;
     let stage2 = &level_proof.stage2;
-    let tau0_y_first = reorder_stage1_coords_y_first(&rs.tau0, rs.num_u, rs.num_l);
-    let stage1_verifier = HachiStage1Verifier::new(tau0_y_first, rs.b);
+    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.num_u, rs.num_l);
+    let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         stage1_verifier.verify(stage1, transcript)?

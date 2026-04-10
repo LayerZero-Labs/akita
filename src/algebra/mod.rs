@@ -12,7 +12,6 @@ pub mod module;
 pub mod ntt;
 pub mod poly;
 pub mod ring;
-pub(crate) mod shifted_eq;
 pub mod split_eq;
 pub mod uni_poly;
 
