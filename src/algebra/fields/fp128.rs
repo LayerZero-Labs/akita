@@ -70,7 +70,10 @@ impl<const P: u128> Fp128<P> {
         let c = 0u128.wrapping_sub(P);
         assert!(P != 0, "modulus must be nonzero");
         assert!(P & 1 == 1, "modulus must be odd");
-        assert!(c < (1u128 << 32), "C must be < 2^32 (asm fold-2 uses single mul)");
+        assert!(
+            c < (1u128 << 32),
+            "C must be < 2^32 (asm fold-2 uses single mul)"
+        );
         assert!(
             c * (c + 1) < P,
             "C(C+1) < P required for fused canonicalize"
