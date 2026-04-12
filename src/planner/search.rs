@@ -282,12 +282,6 @@ impl PlannerOptions {
         self.tight_zpre = v;
         self
     }
-
-    #[allow(dead_code)]
-    pub fn with_opt_sumcheck(mut self, v: bool) -> Self {
-        self.opt_sumcheck = v;
-        self
-    }
 }
 
 // Planner internals.

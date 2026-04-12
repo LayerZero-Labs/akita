@@ -61,11 +61,10 @@ fn padded_s_table<E: FieldCore + FromSmallInt>(
     }
 
     let mut out = vec![E::zero(); x_len * y_len];
-    for y in 0..y_len {
-        let src_start = y * live_x_cols;
-        let dst_start = y * x_len;
-        for x in 0..live_x_cols {
-            out[dst_start + x] = E::from_i64(compact_s_from_w(w_evals_compact[src_start + x]));
+    for x in 0..live_x_cols {
+        let src_start = x * y_len;
+        for y in 0..y_len {
+            out[x * y_len + y] = E::from_i64(compact_s_from_w(w_evals_compact[src_start + y]));
         }
     }
     Ok(out)
@@ -920,6 +919,7 @@ impl<E: FieldCore + CanonicalField + FromSmallInt> HachiStage1Verifier<E> {
 mod tests {
     use super::*;
     use crate::algebra::Prime128Offset275;
+    use crate::protocol::commitment_scheme::reorder_stage1_coords;
     use crate::protocol::transcript::Blake2bTranscript;
 
     type F = Prime128Offset275;
@@ -945,6 +945,7 @@ mod tests {
         let num_u = 3;
         let num_l = 1;
         let witness = sample_stage1_witness(b, live_x_cols, num_l);
+        let tau0 = reorder_stage1_coords(&tau0, num_u, num_l);
 
         let prover = HachiStage1Prover::new(&witness, &tau0, b, live_x_cols, num_u, num_l)
             .expect("stage1 prover should build");

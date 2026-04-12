@@ -44,7 +44,7 @@ use crate::protocol::ring_switch::{
 };
 use crate::protocol::sumcheck::hachi_stage1_tree::{HachiStage1Prover, HachiStage1Verifier};
 use crate::protocol::sumcheck::hachi_stage2::{
-    relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier,
+    relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier, Stage2MEvalSource,
 };
 use crate::protocol::sumcheck::{prove_sumcheck, verify_sumcheck, SumcheckInstanceVerifier};
 use crate::protocol::transcript::labels::{
@@ -89,8 +89,6 @@ struct RecursiveProverState<F: FieldCore> {
     root_key: HachiScheduleLookupKey,
     planning_envelope: HachiBatchPlanningEnvelope,
     sumcheck_challenges: Vec<F>,
-    num_u: usize,
-    num_l: usize,
 }
 
 /// Verifier state carried between recursive levels.
@@ -116,6 +114,18 @@ struct ProveLevelOutput<F: FieldCore> {
 struct BatchedProveLevelOutput<F: FieldCore> {
     root_proof: HachiBatchedRootProof<F>,
     next_state: RecursiveProverState<F>,
+}
+
+pub(crate) fn reorder_stage1_coords<F: FieldCore>(
+    coords: &[F],
+    num_u: usize,
+    num_l: usize,
+) -> Vec<F> {
+    assert_eq!(coords.len(), num_u + num_l);
+    let mut reordered = Vec::with_capacity(coords.len());
+    reordered.extend_from_slice(&coords[num_u..]);
+    reordered.extend_from_slice(&coords[..num_u]);
+    reordered
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -643,10 +653,17 @@ where
         alpha: _,
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
+    let tau0_reordered = reorder_stage1_coords(&tau0, num_u, num_l);
     let (stage1_proof, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        let stage1_prover =
-            HachiStage1Prover::new(&w_evals_compact, &tau0, b, live_x_cols, num_u, num_l)?;
+        let stage1_prover = HachiStage1Prover::new(
+            &w_evals_compact,
+            &tau0_reordered,
+            b,
+            live_x_cols,
+            num_u,
+            num_l,
+        )?;
         let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
         let s_claim = stage1_proof.s_claim;
         (stage1_proof, r_stage1, s_claim)
@@ -708,8 +725,6 @@ where
             root_key,
             planning_envelope,
             sumcheck_challenges,
-            num_u,
-            num_l,
         },
     })
 }
@@ -1018,10 +1033,17 @@ where
         alpha: _,
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
+    let tau0_reordered = reorder_stage1_coords(&tau0, num_u, num_l);
     let (stage1_proof, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        let stage1_prover =
-            HachiStage1Prover::new(&w_evals_compact, &tau0, b, live_x_cols, num_u, num_l)?;
+        let stage1_prover = HachiStage1Prover::new(
+            &w_evals_compact,
+            &tau0_reordered,
+            b,
+            live_x_cols,
+            num_u,
+            num_l,
+        )?;
         let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
         let s_claim = stage1_proof.s_claim;
         (stage1_proof, r_stage1, s_claim)
@@ -1080,8 +1102,6 @@ where
             root_key,
             planning_envelope,
             sumcheck_challenges,
-            num_u,
-            num_l,
         },
     })
 }
@@ -1273,25 +1293,6 @@ fn next_level_params_from_current_basis_and_envelope<Cfg: CommitmentConfig>(
     ))
 }
 
-/// Derive the opening point for the next fold level from the sumcheck
-/// challenges of the current level.
-///
-/// Sumcheck challenges are ordered `[x_0..x_{num_u-1}, y_0..y_{num_l-1}]`
-/// where x selects ring elements and y selects coefficients.
-/// The PCS opening point is `[inner, outer]` = `[y, x]`.
-pub(crate) fn next_level_opening_point<F: FieldCore>(
-    sumcheck_challenges: &[F],
-    num_u: usize,
-    num_l: usize,
-) -> Vec<F> {
-    let (x, y) = sumcheck_challenges.split_at(num_u);
-    debug_assert_eq!(y.len(), num_l);
-    let mut point = Vec::with_capacity(num_u + num_l);
-    point.extend_from_slice(y);
-    point.extend_from_slice(x);
-    point
-}
-
 /// Dispatch a commit-w operation to the correct ring dimension.
 ///
 /// Each match arm builds NTT caches for the target D and calls `commit_w`.
@@ -1445,11 +1446,7 @@ where
     let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
 
     let current_w = &current_state.w;
-    let opening_point = next_level_opening_point(
-        &current_state.sumcheck_challenges,
-        current_state.num_u,
-        current_state.num_l,
-    );
+    let opening_point = current_state.sumcheck_challenges.clone();
 
     let w_layout = hachi_recursive_level_layout_from_params::<Cfg>(level_params, current_w.len())?;
     let w_view = current_w.view::<F, { D_LEVEL }>()?;
@@ -1665,9 +1662,6 @@ where
         };
 
         if !is_last {
-            let alpha_bits = level_d.trailing_zeros() as usize;
-            let num_l = alpha_bits;
-            let num_u = challenges.len() - num_l;
             let next_w_len = w_ring_element_count::<F>(&level_params, current_layout) * level_d;
             let next_level_params = next_level_params_from_current_basis_and_envelope::<Cfg>(
                 current_state.root_key,
@@ -1687,7 +1681,7 @@ where
                 }
             }
             current_state = RecursiveVerifierState {
-                opening_point: next_level_opening_point(&challenges, num_u, num_l),
+                opening_point: challenges,
                 opening: level_proof.next_w_eval(),
                 commitment: level_proof.next_w_commitment(),
                 basis: BasisMode::Lagrange,
@@ -1898,9 +1892,6 @@ where
     )?;
 
     if has_recursive_levels {
-        let alpha_bits = root_params.d.trailing_zeros() as usize;
-        let num_l = alpha_bits;
-        let num_u = root_challenges.len() - num_l;
         let root_w_len = root_plan.next_w_len();
         let first_level_d = root_plan.next_level_params.d;
         if !proof.root.next_w_commitment().can_decode_vec(first_level_d) {
@@ -1908,7 +1899,7 @@ where
         }
 
         let current_state = RecursiveVerifierState {
-            opening_point: next_level_opening_point(&root_challenges, num_u, num_l),
+            opening_point: root_challenges,
             opening: proof.root.next_w_eval(),
             commitment: proof.root.next_w_commitment(),
             basis: BasisMode::Lagrange,
@@ -2611,9 +2602,6 @@ where
             };
 
             if !is_last {
-                let alpha_bits = level_d.trailing_zeros() as usize;
-                let num_l = alpha_bits;
-                let num_u = challenges.len() - num_l;
                 let next_w_len = w_ring_element_count::<F>(&level_params, current_layout) * level_d;
                 if let Some(planned_next_w_len) = planned_next_w_len {
                     if next_w_len != planned_next_w_len {
@@ -2643,7 +2631,7 @@ where
                     }
                 }
                 current_state = RecursiveVerifierState {
-                    opening_point: next_level_opening_point(&challenges, num_u, num_l),
+                    opening_point: challenges,
                     opening: level_proof.next_w_eval(),
                     commitment: level_proof.next_w_commitment(),
                     basis: BasisMode::Lagrange,
@@ -2766,9 +2754,6 @@ where
         )?;
 
         if has_recursive_levels {
-            let alpha_bits = root_params.d.trailing_zeros() as usize;
-            let num_l = alpha_bits;
-            let num_u = root_challenges.len() - num_l;
             let root_w_len = root_plan.next_w_len();
             let first_level_d = root_plan.next_level_params.d;
             if !proof.root.next_w_commitment().can_decode_vec(first_level_d) {
@@ -2776,7 +2761,7 @@ where
             }
 
             let current_state = RecursiveVerifierState {
-                opening_point: next_level_opening_point(&root_challenges, num_u, num_l),
+                opening_point: root_challenges,
                 opening: proof.root.next_w_eval(),
                 commitment: proof.root.next_w_commitment(),
                 basis: BasisMode::Lagrange,
@@ -2915,7 +2900,8 @@ where
         relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, &commitment_rows, y_rings);
     let stage1 = &root_proof.stage1;
     let stage2 = &root_proof.stage2;
-    let stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), rs.b);
+    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.num_u, rs.num_l);
+    let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         stage1_verifier.verify(stage1, transcript)?
@@ -2923,6 +2909,7 @@ where
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
+    let m_eval_source = Stage2MEvalSource::new(rs.m_evals_x);
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
         HachiStage2Verifier::new_with_direct_witness_batched(
@@ -2931,7 +2918,7 @@ where
             fw,
             r_stage1.clone(),
             rs.alpha_evals_y,
-            rs.m_evals_x,
+            m_eval_source,
             &rs.tau1,
             v_typed,
             &commitment_rows,
@@ -2946,7 +2933,7 @@ where
             stage1.s_claim,
             r_stage1.clone(),
             rs.alpha_evals_y,
-            rs.m_evals_x,
+            m_eval_source,
             &rs.tau1,
             v_typed,
             &commitment_rows,
@@ -3078,7 +3065,8 @@ where
         relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, &commitment_rows, y_rings);
     let stage1 = &root_proof.stage1;
     let stage2 = &root_proof.stage2;
-    let stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), rs.b);
+    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.num_u, rs.num_l);
+    let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         stage1_verifier.verify(stage1, transcript)?
@@ -3086,6 +3074,7 @@ where
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
+    let m_eval_source = Stage2MEvalSource::new(rs.m_evals_x);
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
         HachiStage2Verifier::new_with_direct_witness_batched(
@@ -3094,7 +3083,7 @@ where
             fw,
             r_stage1.clone(),
             rs.alpha_evals_y,
-            rs.m_evals_x,
+            m_eval_source,
             &rs.tau1,
             v_typed,
             &commitment_rows,
@@ -3109,7 +3098,7 @@ where
             stage1.s_claim,
             r_stage1.clone(),
             rs.alpha_evals_y,
-            rs.m_evals_x,
+            m_eval_source,
             &rs.tau1,
             v_typed,
             &commitment_rows,
@@ -3225,7 +3214,8 @@ where
     );
     let stage1 = &level_proof.stage1;
     let stage2 = &level_proof.stage2;
-    let stage1_verifier = HachiStage1Verifier::new(rs.tau0.clone(), rs.b);
+    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.num_u, rs.num_l);
+    let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         stage1_verifier.verify(stage1, transcript)?
@@ -3234,6 +3224,7 @@ where
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
+    let m_eval_source = Stage2MEvalSource::new(rs.m_evals_x);
 
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
@@ -3243,7 +3234,7 @@ where
             fw,
             r_stage1.clone(),
             rs.alpha_evals_y,
-            rs.m_evals_x,
+            m_eval_source,
             &rs.tau1,
             v_typed,
             commitment_u,
@@ -3259,7 +3250,7 @@ where
             stage2.next_w_eval,
             r_stage1.clone(),
             rs.alpha_evals_y,
-            rs.m_evals_x,
+            m_eval_source,
             &rs.tau1,
             v_typed,
             commitment_u,
@@ -3327,6 +3318,29 @@ mod tests {
         let num_ring_elems = next_w_len / level_d;
         num_ring_elems.next_power_of_two().trailing_zeros() as usize
             + level_d.trailing_zeros() as usize
+    }
+
+    #[test]
+    fn same_point_batched_root_preserves_opening_geometry() {
+        for num_claims in [4usize, 6] {
+            let root_plan = hachi_root_runtime_plan_with_batch::<OneHotCfg, ONEHOT_D>(
+                20,
+                20,
+                num_claims,
+                HachiRootBatchSummary::new(num_claims, 1, 1).expect("same-point batch summary"),
+            )
+            .expect("same-point root plan");
+            assert_eq!(
+                root_plan.root_layout.block_len,
+                root_plan.level_layout.block_len
+            );
+            assert_eq!(
+                root_plan.root_layout.num_blocks,
+                root_plan.level_layout.num_blocks
+            );
+            assert_eq!(root_plan.root_layout.m_vars, root_plan.level_layout.m_vars);
+            assert_eq!(root_plan.root_layout.r_vars, root_plan.level_layout.r_vars);
+        }
     }
 
     fn expected_same_point_batched_shape(
@@ -3776,13 +3790,6 @@ mod tests {
         )
     }
 
-    #[allow(dead_code)]
-    fn serialize_uncompressed_proof<GF: FieldCore>(proof: &HachiProof<GF>) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        proof.serialize_uncompressed(&mut bytes).unwrap();
-        bytes
-    }
-
     fn dense_opening(evals: &[F], point: &[F]) -> F {
         let lw = lagrange_weights(point);
         evals
@@ -3940,7 +3947,7 @@ mod tests {
 
     fn debug_relation_sum_from_tables(
         w_evals_compact: &[i8],
-        live_x_cols: usize,
+        _live_x_cols: usize,
         alpha_evals_y: &[OneHotF],
         m_evals_x: &[OneHotF],
         start_x: usize,
@@ -3950,8 +3957,8 @@ mod tests {
         for x in start_x..end_x {
             let mut y_eval = OneHotF::zero();
             for (y, alpha_eval) in alpha_evals_y.iter().enumerate() {
-                y_eval +=
-                    *alpha_eval * OneHotF::from_i64(w_evals_compact[y * live_x_cols + x] as i64);
+                y_eval += *alpha_eval
+                    * OneHotF::from_i64(w_evals_compact[x * alpha_evals_y.len() + y] as i64);
             }
             acc += y_eval * m_evals_x[x];
         }
@@ -4130,7 +4137,7 @@ mod tests {
                         |acc, (y, alpha_eval)| {
                             acc + *alpha_eval
                                 * OneHotF::from_i64(
-                                    rs.w_evals_compact[y * rs.live_x_cols + x] as i64,
+                                    rs.w_evals_compact[x * rs.alpha_evals_y.len() + y] as i64,
                                 )
                         },
                     )

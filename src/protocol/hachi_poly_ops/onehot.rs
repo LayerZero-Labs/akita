@@ -738,30 +738,6 @@ where
 
     t_wide.into_iter().map(|w| w.reduce()).collect()
 }
-
-#[allow(dead_code)]
-fn inner_ajtai_regular_onehot_reduced<F, const D: usize>(
-    a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
-    regular_entries: &[RegularOneHotEntry],
-    num_digits: usize,
-) -> Vec<CyclotomicRing<F, D>>
-where
-    F: FieldCore,
-{
-    let n_a = a_view.num_rows();
-    let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
-
-    for entry in regular_entries {
-        let col = entry.pos_in_block() * num_digits;
-        let coeff_idx = entry.coeff_idx();
-        for (a_idx, t_row) in t.iter_mut().enumerate() {
-            a_view.row(a_idx)[col].shift_accumulate_into(t_row, coeff_idx);
-        }
-    }
-
-    t
-}
-
 fn inner_ajtai_regular_onehot_chunked<F, const D: usize>(
     a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
     regular_entries: &[RegularOneHotEntry],
@@ -1111,7 +1087,7 @@ mod tests {
 
         let got =
             onehot_column_sweep_ajtai_regular::<_, F, D>(&a_view, &regular_blocks, 1, block_len, 1);
-        let expected = inner_ajtai_regular_onehot_reduced::<F, D>(&a_view, &regular_blocks[0], 1);
+        let expected = inner_ajtai_regular_onehot_chunked::<F, D>(&a_view, &regular_blocks[0], 1);
 
         assert_eq!(got.len(), 1);
         assert_eq!(got[0], expected);

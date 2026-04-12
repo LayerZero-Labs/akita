@@ -43,7 +43,7 @@ pub(crate) struct RingSwitchOutput<F: FieldCore> {
     pub w_commitment: Option<FlatRingVec<F>>,
     /// Runtime-only prover hint cache for the w-commitment.
     pub w_hint: Option<RecursiveCommitmentHintCache<F>>,
-    /// Compact evaluation table of w, stored as y-major slices of the live x prefix.
+    /// Compact evaluation table of w, stored as x-outer/y-inner slices.
     /// Populated by the prover; empty on the verifier side.
     pub w_evals_compact: Vec<i8>,
     /// Physical x width before zero-extension to the next power of two.
@@ -394,38 +394,6 @@ where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
 {
-    ring_switch_verifier_with_num_claims::<F, T, D>(
-        opening_point,
-        challenges,
-        setup,
-        w_len,
-        w_commitment,
-        transcript,
-        level_params,
-        layout,
-        1,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip_all, name = "ring_switch_verifier_with_num_claims")]
-#[inline(never)]
-pub(crate) fn ring_switch_verifier_with_num_claims<F, T, const D: usize>(
-    opening_point: &RingOpeningPoint<F>,
-    challenges: &[SparseChallenge],
-    setup: &HachiExpandedSetup<F>,
-    w_len: usize,
-    w_commitment: &FlatRingVec<F>,
-    transcript: &mut T,
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
-    num_claims: usize,
-) -> Result<RingSwitchVerifyOutput<F>, HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling,
-    T: Transcript<F>,
-{
-    let claim_group_sizes = vec![1usize; num_claims];
     ring_switch_verifier_with_claim_groups::<F, T, D>(
         opening_point,
         challenges,
@@ -435,7 +403,7 @@ where
         transcript,
         level_params,
         layout,
-        &claim_group_sizes,
+        &[1usize],
     )
 }
 
@@ -460,6 +428,11 @@ where
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
+    if opening_point.a.len() < layout.block_len || opening_point.b.len() != layout.num_blocks {
+        return Err(HachiError::InvalidInput(
+            "ring switch verifier opening-point layout mismatch".to_string(),
+        ));
+    }
 
     let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
     let num_commitment_groups = claim_group_sizes.len();
@@ -479,30 +452,17 @@ where
     let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
     let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
-    let m_evals_x = if num_claims == 1 && num_commitment_groups == 1 {
-        compute_m_evals_x::<F, D>(
-            setup,
-            opening_point,
-            challenges,
-            alpha,
-            &alpha_evals_y,
-            level_params,
-            layout,
-            &tau1,
-        )?
-    } else {
-        compute_m_evals_x_with_claim_groups::<F, D>(
-            setup,
-            opening_point,
-            challenges,
-            alpha,
-            &alpha_evals_y,
-            level_params,
-            layout,
-            &tau1,
-            claim_group_sizes,
-        )?
-    };
+    let m_evals_x = compute_m_evals_x_with_claim_groups::<F, D>(
+        setup,
+        opening_point,
+        challenges,
+        alpha,
+        &alpha_evals_y,
+        level_params,
+        layout,
+        &tau1,
+        claim_group_sizes,
+    )?;
 
     Ok(RingSwitchVerifyOutput {
         m_evals_x,
@@ -1011,8 +971,8 @@ pub(crate) fn build_w_evals<F: FieldCore>(
 
     let evals: Vec<F> = cfg_into_iter!(0..n)
         .map(|dst| {
-            let x = dst & (x_len - 1);
-            let y = dst >> num_u;
+            let y = dst & (d - 1);
+            let x = dst >> num_l;
             let src = y + (x << num_l);
             if src < w.len() {
                 w[src]
@@ -1024,8 +984,10 @@ pub(crate) fn build_w_evals<F: FieldCore>(
     Ok((evals, num_u, num_l))
 }
 
-/// Produce the compact `Vec<i8>` eval table of `w` for the fused prover,
-/// storing only the physical x prefix for each y slice.
+/// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
+///
+/// The compact witness stays in the raw `build_w_coeffs()` order:
+/// `w[x * y_len + y]`, with x outer and y inner.
 pub(crate) fn build_w_evals_compact(
     w: &[i8],
     d: usize,
@@ -1039,26 +1001,7 @@ pub(crate) fn build_w_evals_compact(
     let num_l = d.trailing_zeros() as usize;
     let live_x_cols = w.len() / d;
     let num_u = live_x_cols.next_power_of_two().trailing_zeros() as usize;
-
-    let mut compact = vec![0i8; w.len()];
-
-    #[cfg(feature = "parallel")]
-    compact
-        .par_chunks_mut(live_x_cols)
-        .enumerate()
-        .for_each(|(y, row)| {
-            for (x, dst) in row.iter_mut().enumerate() {
-                *dst = w[y + (x << num_l)];
-            }
-        });
-
-    #[cfg(not(feature = "parallel"))]
-    for (y, row) in compact.chunks_mut(live_x_cols).enumerate() {
-        for (x, dst) in row.iter_mut().enumerate() {
-            *dst = w[y + (x << num_l)];
-        }
-    }
-    Ok((compact, num_u, num_l))
+    Ok((w.to_vec(), num_u, num_l))
 }
 
 pub(crate) fn m_row_count(level_params: &HachiLevelParams) -> usize {
@@ -1077,33 +1020,6 @@ pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     layout: HachiCommitmentLayout,
     tau1: &[F],
 ) -> Result<Vec<F>, HachiError> {
-    compute_m_evals_x_with_num_claims::<F, D>(
-        setup,
-        opening_point,
-        challenges,
-        alpha,
-        alpha_pows,
-        level_params,
-        layout,
-        tau1,
-        1,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip_all, name = "compute_m_evals_x_with_num_claims")]
-pub(crate) fn compute_m_evals_x_with_num_claims<F: FieldCore + CanonicalField, const D: usize>(
-    setup: &HachiExpandedSetup<F>,
-    opening_point: &RingOpeningPoint<F>,
-    challenges: &[SparseChallenge],
-    alpha: F,
-    alpha_pows: &[F],
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
-    tau1: &[F],
-    num_claims: usize,
-) -> Result<Vec<F>, HachiError> {
-    let claim_group_sizes = vec![1usize; num_claims];
     compute_m_evals_x_with_claim_groups::<F, D>(
         setup,
         opening_point,
@@ -1113,7 +1029,7 @@ pub(crate) fn compute_m_evals_x_with_num_claims<F: FieldCore + CanonicalField, c
         level_params,
         layout,
         tau1,
-        &claim_group_sizes,
+        &[1usize],
     )
 }
 
@@ -1313,9 +1229,9 @@ fn validate_opening_points_for_claims<F: FieldCore>(
         });
     }
     for opening_point in opening_points {
-        if opening_point.a.len() != layout.block_len || opening_point.b.len() != layout.num_blocks {
+        if opening_point.a.len() < layout.block_len || opening_point.b.len() != layout.num_blocks {
             return Err(HachiError::InvalidInput(
-                "multipoint ring switch opening-point layout mismatch".to_string(),
+                "multipoint ring switch m-eval opening-point layout mismatch".to_string(),
             ));
         }
     }
@@ -1753,16 +1669,16 @@ mod tests {
         m_evals_x: &[F],
         live_x_cols: usize,
     ) -> F {
-        alpha_evals_y
-            .iter()
-            .enumerate()
-            .fold(F::zero(), |acc_y, (y, &alpha)| {
-                let row = &w_compact[y * live_x_cols..(y + 1) * live_x_cols];
-                acc_y
-                    + row.iter().enumerate().fold(F::zero(), |acc_x, (x, &w)| {
-                        acc_x + F::from_i64(w as i64) * alpha * m_evals_x[x]
-                    })
-            })
+        (0..live_x_cols).fold(F::zero(), |acc_x, x| {
+            let column_start = x * alpha_evals_y.len();
+            let y_eval = alpha_evals_y
+                .iter()
+                .enumerate()
+                .fold(F::zero(), |acc_y, (y, &alpha)| {
+                    acc_y + F::from_i64(w_compact[column_start + y] as i64) * alpha
+                });
+            acc_x + y_eval * m_evals_x[x]
+        })
     }
 
     #[test]
