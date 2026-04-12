@@ -1,4 +1,4 @@
-//! 128-bit prime field for primes of the form `p = 2^128 − c` with `c < 2^64`.
+//! 128-bit prime field for primes of the form `p = 2^128 − c` with `c < 2^32`.
 //!
 //! Uses Solinas-style two-fold reduction: no Montgomery form, ~23 cycles/mul
 //! on both AArch64 and x86-64.  The offset `c` is computed at compile time
@@ -46,7 +46,7 @@ const fn to_u128(x: [u64; 2]) -> u128 {
 
 use super::util::{is_pow2_u64, log2_pow2_u64, mul64_wide};
 
-/// 128-bit prime field element for primes `p = 2^128 − c` with `c < 2^64`.
+/// 128-bit prime field element for primes `p = 2^128 − c` with `c < 2^32`.
 ///
 /// Stored as `[u64; 2]` (lo, hi) for 8-byte alignment and direct limb access.
 ///
@@ -70,15 +70,14 @@ impl<const P: u128> Fp128<P> {
         let c = 0u128.wrapping_sub(P);
         assert!(P != 0, "modulus must be nonzero");
         assert!(P & 1 == 1, "modulus must be odd");
-        assert!(c < (1u128 << 64), "P must be 2^128 - c with c < 2^64");
-        // Fused overflow+canonicalize requires C(C+1) < P.
+        assert!(c < (1u128 << 32), "C must be < 2^32 (asm fold-2 uses single mul)");
         assert!(
             c * (c + 1) < P,
             "C(C+1) < P required for fused canonicalize"
         );
         c
     };
-    /// Low 64 bits of `C` (always equals `C` since `C < 2^64`).
+    /// Low 64 bits of `C` (always equals `C` since `C < 2^32`).
     pub const C_LO: u64 = Self::C as u64;
     /// +1 means `C = 2^a + 1`, -1 means `C = 2^a - 1`, 0 means generic.
     const C_SHIFT_KIND: i8 = {
@@ -671,7 +670,7 @@ impl<const P: u128> Fp128<P> {
                 "adds   {p00h}, {p00h}, {p10h}",
                 "adc    {p11h}, {p11l}, {p01h}",
 
-                // Fold-2 + canonicalize via ccmp
+                // Fold-2 + canonicalize via ccmp (C < 2^32 ⇒ C·t2 fits in 64 bits)
                 "mul    {p01l}, {p11h}, {c}",
                 "adds   {p00l}, {p00l}, {p01l}",
                 "adcs   {p00h}, {p00h}, xzr",
@@ -686,7 +685,7 @@ impl<const P: u128> Fp128<P> {
                 a1 = in(reg) a[1],
                 b0 = in(reg) b[0],
                 b1 = in(reg) b[1],
-                c = in(reg) Self::C_LO as u64,
+                c = in(reg) Self::C_LO,
                 p00l = out(reg) _,
                 p00h = out(reg) _,
                 p01l = out(reg) _,
@@ -790,7 +789,7 @@ impl<const P: u128> Fp128<P> {
                 "adds   {p00h}, {p00h}, {p01l}",
                 "adc    {p11h}, {p11l}, {t0}",
 
-                // Fold-2 + canonicalize via ccmp
+                // Fold-2 + canonicalize via ccmp (C < 2^32 ⇒ C·t2 fits in 64 bits)
                 "mul    {t0}, {p11h}, {c}",
                 "adds   {p00l}, {p00l}, {t0}",
                 "adcs   {p00h}, {p00h}, xzr",
@@ -803,7 +802,7 @@ impl<const P: u128> Fp128<P> {
 
                 a0 = in(reg) a[0],
                 a1 = in(reg) a[1],
-                c = in(reg) Self::C_LO as u64,
+                c = in(reg) Self::C_LO,
                 p00l = out(reg) _,
                 p00h = out(reg) _,
                 p01l = out(reg) _,
