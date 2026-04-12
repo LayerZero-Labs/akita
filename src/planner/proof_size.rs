@@ -61,12 +61,12 @@ pub fn stage1_bytes_optimized(n_rounds: usize, lb: u32) -> usize {
     stage_cost + inter_claims
 }
 
-/// Total sumcheck rounds (num_u + num_l).
+/// Total sumcheck rounds (col_bits + ring_bits).
 pub fn sumcheck_rounds(level_d: u32, next_w_len: usize) -> usize {
-    let num_l = level_d.trailing_zeros() as usize;
+    let ring_bits = level_d.trailing_zeros() as usize;
     let num_ring = next_w_len / level_d as usize;
-    let num_u = num_ring.next_power_of_two().trailing_zeros() as usize;
-    num_u + num_l
+    let col_bits = num_ring.next_power_of_two().trailing_zeros() as usize;
+    col_bits + ring_bits
 }
 
 /// Single field element size in bytes.

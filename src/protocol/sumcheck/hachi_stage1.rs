@@ -1,7 +1,7 @@
 //! Stage-1 norm sumcheck prover/verifier for the Hachi PCS.
 //!
 //! The committed witness is a Boolean table
-//! `w : {0,1}^{num_u} x {0,1}^{num_l} -> {-half, ..., half-1}` with
+//! `w : {0,1}^{col_bits} x {0,1}^{ring_bits} -> {-half, ..., half-1}` with
 //! `half = b/2`. Define the virtual table `S(z) = w(z) * (w(z) + 1)`. For an
 //! honest witness every entry of `w` is a valid digit, so `S(z)` lies in the
 //! set `{k(k+1) : k = 0, ..., half-1}`. The range-check polynomial
@@ -647,7 +647,7 @@ pub struct HachiStage1Prover<E: FieldCore> {
     split_eq: GruenSplitEq<E>,
     range_precomp: RangeAffineFromSPrecomp<E>,
     live_x_cols: usize,
-    num_u: usize,
+    col_bits: usize,
     num_vars: usize,
     b: usize,
     prefix_tau: Option<Vec<E>>,
@@ -667,12 +667,12 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         tau0: &[E],
         b: usize,
         live_x_cols: usize,
-        num_u: usize,
-        num_l: usize,
+        col_bits: usize,
+        ring_bits: usize,
     ) -> Self {
         assert!(b >= 2, "b must be at least 2");
-        let num_vars = num_u + num_l;
-        let y_len = 1usize << num_l;
+        let num_vars = col_bits + ring_bits;
+        let y_len = 1usize << ring_bits;
         assert_eq!(w_evals_compact.len(), live_x_cols * y_len);
         assert_eq!(tau0.len(), num_vars);
         let s_table = build_compact_s_table(w_evals_compact);
@@ -682,10 +682,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
             split_eq: GruenSplitEq::new(tau0),
             range_precomp: RangeAffineFromSPrecomp::new(b),
             live_x_cols,
-            num_u,
+            col_bits,
             num_vars,
             b,
-            prefix_tau: can_use_stage1_two_round_prefix(num_l, b).then(|| tau0.to_vec()),
+            prefix_tau: can_use_stage1_two_round_prefix(ring_bits, b).then(|| tau0.to_vec()),
             two_round_prefix: None,
             cached_round_poly: None,
             prefix_time_total: 0.0,
@@ -712,13 +712,13 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
     }
 
     #[inline]
-    fn num_l(&self) -> usize {
-        self.num_vars - self.num_u
+    fn ring_bits(&self) -> usize {
+        self.num_vars - self.col_bits
     }
 
     #[inline]
     fn in_x_phase(&self) -> bool {
-        self.rounds_completed >= self.num_l()
+        self.rounds_completed >= self.ring_bits()
     }
 
     #[inline]
@@ -746,7 +746,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
 
     #[inline]
     fn next_use_sparse_x_y_round_after_current(&self) -> bool {
-        !self.in_x_phase() && self.rounds_completed + 1 < self.num_l()
+        !self.in_x_phase() && self.rounds_completed + 1 < self.ring_bits()
     }
 
     #[inline]
@@ -777,7 +777,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                 .prefix_tau
                 .clone()
                 .expect("two-round prefix requested without cached tau");
-            let num_l = self.num_vars - self.num_u;
+            let ring_bits = self.num_vars - self.col_bits;
             let s_compact = match &self.s_table {
                 STable::Compact(s_compact) => s_compact,
                 STable::Full(_) => panic!("two-round prefix can only build from compact table"),
@@ -787,8 +787,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                 &tau0,
                 self.b,
                 self.live_x_cols,
-                self.num_u,
-                num_l,
+                self.col_bits,
+                ring_bits,
             )
             .expect("two-round prefix should be available");
             let skip_state = Stage1BivariateSkipState::new(&proof, &tau0, self.b)
@@ -942,7 +942,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         r0: E,
         r1: E,
     ) -> (Vec<E>, EqFactoredUniPoly<E>) {
-        debug_assert!(self.num_l() > 2);
+        debug_assert!(self.ring_bits() > 2);
         let live_x_cols = self.live_x_cols;
         let y_len = s_compact.len() / live_x_cols;
         debug_assert_eq!(y_len % 4, 0);
@@ -1336,7 +1336,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
 
     #[inline]
     fn use_sparse_x_y_round(&self) -> bool {
-        !self.in_x_phase() && self.live_x_cols < (1usize << self.num_u)
+        !self.in_x_phase() && self.live_x_cols < (1usize << self.col_bits)
     }
 
     #[tracing::instrument(skip_all, name = "HachiStage1Prover::compute_round_compact_sparse_x_y")]
@@ -1662,10 +1662,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
 
     #[tracing::instrument(skip_all, name = "HachiStage1Prover::compute_round_compact_prefix_x")]
     fn compute_round_compact_prefix_x(&self, s_compact: &[i16]) -> EqFactoredUniPoly<E> {
-        debug_assert!(self.rounds_completed < self.num_u);
+        debug_assert!(self.rounds_completed < self.col_bits);
         debug_assert_eq!(
             s_compact.len(),
-            self.live_x_cols * (1usize << (self.num_vars - self.num_u))
+            self.live_x_cols * (1usize << (self.num_vars - self.col_bits))
         );
 
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
@@ -1680,7 +1680,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         let num_coeffs_q = full_num_coeffs_q;
         let q_coeffs = if rp.compact_coeffs_lut(0, 0).is_some() {
             cfg_fold_reduce!(
-                0..(1usize << (self.num_vars - self.num_u)),
+                0..(1usize << (self.num_vars - self.col_bits)),
                 || vec![E::ProductAccum::ZERO; num_coeffs_q],
                 |mut outer_accum, y| {
                     let row_start = y * self.live_x_cols;
@@ -1737,7 +1737,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
             .collect()
         } else if rp.field_coeffs_lut(0, 0).is_some() {
             cfg_fold_reduce!(
-                0..(1usize << (self.num_vars - self.num_u)),
+                0..(1usize << (self.num_vars - self.col_bits)),
                 || vec![E::ProductAccum::ZERO; num_coeffs_q],
                 |mut outer_accum, y| {
                     let row_start = y * self.live_x_cols;
@@ -1791,7 +1791,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
             .collect()
         } else {
             cfg_fold_reduce!(
-                0..(1usize << (self.num_vars - self.num_u)),
+                0..(1usize << (self.num_vars - self.col_bits)),
                 || vec![E::ProductAccum::ZERO; num_coeffs_q],
                 |mut outer_accum, y| {
                     let row_start = y * self.live_x_cols;
@@ -1856,7 +1856,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
 
     #[tracing::instrument(skip_all, name = "HachiStage1Prover::compute_round_full_prefix_x")]
     fn compute_round_full_prefix_x(&self, s_full: &[E]) -> EqFactoredUniPoly<E> {
-        debug_assert!(self.rounds_completed < self.num_u);
+        debug_assert!(self.rounds_completed < self.col_bits);
         let y_len = s_full.len() / self.live_x_cols;
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
@@ -2149,7 +2149,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps>
                 self.s_table = match std::mem::replace(&mut self.s_table, STable::Full(Vec::new()))
                 {
                     STable::Compact(s_compact) => {
-                        if self.num_l() > 2 {
+                        if self.ring_bits() > 2 {
                             let (s_full, round_poly) =
                                 self.fuse_compact_to_round2_and_compute_round(&s_compact, r0, r);
                             self.cached_round_poly = Some(round_poly);
@@ -2306,11 +2306,11 @@ impl<F: FieldCore + FromSmallInt> EqFactoredSumcheckInstanceVerifier<F> for Hach
 pub(crate) fn pad_compact_witness(
     w_prefix: &[i8],
     live_x_cols: usize,
-    num_u: usize,
-    num_l: usize,
+    col_bits: usize,
+    ring_bits: usize,
 ) -> Vec<i8> {
-    let x_len = 1usize << num_u;
-    let y_len = 1usize << num_l;
+    let x_len = 1usize << col_bits;
+    let y_len = 1usize << ring_bits;
     let mut padded = vec![0i8; x_len * y_len];
     for x in 0..live_x_cols {
         let offset = x * y_len;
@@ -2400,20 +2400,26 @@ mod tests {
 
     #[test]
     fn stage1_round0_matches_dense_reference() {
-        let num_u = 3usize;
-        let num_l = 2usize;
-        let n = 1usize << (num_u + num_l);
-        let tau0: Vec<F> = (0..(num_u + num_l))
+        let col_bits = 3usize;
+        let ring_bits = 2usize;
+        let n = 1usize << (col_bits + ring_bits);
+        let tau0: Vec<F> = (0..(col_bits + ring_bits))
             .map(|i| F::from_u64((i as u64) + 2))
             .collect();
-        let tau0 = reorder_stage1_coords(&tau0, num_u, num_l);
+        let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
 
         for b in [4usize, 8, 16, 32] {
             let half = (b / 2) as i8;
             let w_compact: Vec<i8> = (0..n).map(|i| ((i * 5 + 3) % b) as i8 - half).collect();
 
-            let mut prover =
-                HachiStage1Prover::new(&w_compact, &tau0, b, 1usize << num_u, num_u, num_l);
+            let mut prover = HachiStage1Prover::new(
+                &w_compact,
+                &tau0,
+                b,
+                1usize << col_bits,
+                col_bits,
+                ring_bits,
+            );
             let stage1_poly = prover.compute_round_eq_factored(0);
             let s_compact = build_compact_s_table(&w_compact);
             let reference = compute_norm_round_eq_poly_from_s_compact(
@@ -2456,31 +2462,37 @@ mod tests {
 
     #[test]
     fn stage1_prefix_aware_rounds_match_explicit_zero_padding() {
-        let num_l = 2usize;
+        let ring_bits = 2usize;
         for b in [4usize, 8, 16, 32] {
             let half = (b / 2) as i8;
             for live_x_cols in [5usize, 6usize] {
-                let num_u = live_x_cols.next_power_of_two().trailing_zeros() as usize;
-                let y_len = 1usize << num_l;
+                let col_bits = live_x_cols.next_power_of_two().trailing_zeros() as usize;
+                let y_len = 1usize << ring_bits;
                 let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
                     .map(|i| ((i * 7 + 5) % b) as i8 - half)
                     .collect();
-                let w_padded = pad_compact_witness(&w_prefix, live_x_cols, num_u, num_l);
-                let tau0: Vec<F> = (0..(num_u + num_l))
+                let w_padded = pad_compact_witness(&w_prefix, live_x_cols, col_bits, ring_bits);
+                let tau0: Vec<F> = (0..(col_bits + ring_bits))
                     .map(|i| F::from_u64((i as u64) + 19))
                     .collect();
-                let tau0 = reorder_stage1_coords(&tau0, num_u, num_l);
+                let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
                 let mut prefix_prover =
-                    HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
-                let mut padded_prover =
-                    HachiStage1Prover::new(&w_padded, &tau0, b, 1usize << num_u, num_u, num_l);
+                    HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
+                let mut padded_prover = HachiStage1Prover::new(
+                    &w_padded,
+                    &tau0,
+                    b,
+                    1usize << col_bits,
+                    col_bits,
+                    ring_bits,
+                );
                 let mut challenges = Vec::new();
                 let mut prefix_claim = F::zero();
                 let mut prefix_scale = F::one();
                 let mut padded_claim = F::zero();
                 let mut padded_scale = F::one();
 
-                for round in 0..(num_u + num_l) {
+                for round in 0..(col_bits + ring_bits) {
                     let prefix_poly = prefix_prover.compute_round_eq_factored(round);
                     let padded_poly = padded_prover.compute_round_eq_factored(round);
                     assert_eq!(
@@ -2526,22 +2538,23 @@ mod tests {
 
     #[test]
     fn stage1_fused_round2_transition_matches_two_pass_reference() {
-        let num_u = 3usize;
-        let num_l = 2usize;
+        let col_bits = 3usize;
+        let ring_bits = 2usize;
         let live_x_cols = 6usize;
-        let y_len = 1usize << num_l;
+        let y_len = 1usize << ring_bits;
         for b in [4usize, 8] {
             let half = (b / 2) as i8;
             let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
                 .map(|i| ((i * 9 + 5) % b) as i8 - half)
                 .collect();
             let s_compact = build_compact_s_table(&w_prefix);
-            let tau0: Vec<F> = (0..(num_u + num_l))
+            let tau0: Vec<F> = (0..(col_bits + ring_bits))
                 .map(|i| F::from_u64((i as u64) + 53))
                 .collect();
-            let tau0 = reorder_stage1_coords(&tau0, num_u, num_l);
+            let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
 
-            let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+            let mut prover =
+                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
             let round0 = prover.compute_round_eq_factored(0);
             let r0 = F::from_u64(61);
             let (claim1, scale1) = advance_stage1_claim(&prover, F::zero(), F::one(), &round0, r0);
@@ -2558,7 +2571,7 @@ mod tests {
                 r1,
             );
             let mut expected =
-                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
             expected.split_eq.bind(r0);
             expected.split_eq.bind(r1);
             expected.rounds_completed = 2;
@@ -2578,21 +2591,22 @@ mod tests {
 
     #[test]
     fn stage1_later_full_prefix_fusion_matches_two_pass_reference() {
-        let num_u = 5usize;
-        let num_l = 2usize;
+        let col_bits = 5usize;
+        let ring_bits = 2usize;
         let live_x_cols = 12usize;
-        let y_len = 1usize << num_l;
+        let y_len = 1usize << ring_bits;
         for b in [4usize, 8] {
             let half = (b / 2) as i8;
             let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
                 .map(|i| ((i * 5 + 11) % b) as i8 - half)
                 .collect();
-            let tau0: Vec<F> = (0..(num_u + num_l))
+            let tau0: Vec<F> = (0..(col_bits + ring_bits))
                 .map(|i| F::from_u64((i as u64) + 101))
                 .collect();
-            let tau0 = reorder_stage1_coords(&tau0, num_u, num_l);
+            let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
 
-            let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+            let mut prover =
+                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
             let round0 = prover.compute_round_eq_factored(0);
             let r0 = F::from_u64(107);
             let (claim1, scale1) = advance_stage1_claim(&prover, F::zero(), F::one(), &round0, r0);
@@ -2608,7 +2622,7 @@ mod tests {
             let (claim3, _scale3) = advance_stage1_claim(&prover, claim2, scale2, &round2, r2);
 
             let mut expected =
-                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
             let expected_round0 = expected.compute_round_eq_factored(0);
             assert_eq!(expected_round0, round0);
             expected.ingest_challenge(0, r0);
@@ -2647,21 +2661,22 @@ mod tests {
 
     #[test]
     fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
-        let num_u = 3usize;
-        let num_l = 4usize;
+        let col_bits = 3usize;
+        let ring_bits = 4usize;
         let live_x_cols = 6usize;
-        let y_len = 1usize << num_l;
+        let y_len = 1usize << ring_bits;
         for b in [4usize, 8] {
             let half = (b / 2) as i8;
             let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
                 .map(|i| ((i * 7 + 9) % b) as i8 - half)
                 .collect();
-            let tau0: Vec<F> = (0..(num_u + num_l))
+            let tau0: Vec<F> = (0..(col_bits + ring_bits))
                 .map(|i| F::from_u64((i as u64) + 131))
                 .collect();
-            let tau0 = reorder_stage1_coords(&tau0, num_u, num_l);
+            let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
 
-            let mut prover = HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+            let mut prover =
+                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
             let round0 = prover.compute_round_eq_factored(0);
             let r0 = F::from_u64(137);
             let (claim1, scale1) = advance_stage1_claim(&prover, F::zero(), F::one(), &round0, r0);
@@ -2677,7 +2692,7 @@ mod tests {
             let (_claim3, _scale3) = advance_stage1_claim(&prover, claim2, scale2, &round2, r2);
 
             let mut expected =
-                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, num_u, num_l);
+                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
             let expected_round0 = expected.compute_round_eq_factored(0);
             assert_eq!(expected_round0, round0);
             expected.ingest_challenge(0, r0);

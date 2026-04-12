@@ -53,9 +53,9 @@ pub(crate) struct RingSwitchOutput<F: FieldCore> {
     /// Evaluation table of alpha powers (y dimension).
     pub alpha_evals_y: Vec<F>,
     /// Number of upper variable bits.
-    pub num_u: usize,
+    pub col_bits: usize,
     /// Number of lower variable bits.
-    pub num_l: usize,
+    pub ring_bits: usize,
     /// Challenge tau0 for F_0 sumcheck.
     pub tau0: Vec<F>,
     /// Challenge tau1 for F_alpha sumcheck.
@@ -74,9 +74,9 @@ pub(crate) struct RingSwitchVerifyOutput<F: FieldCore> {
     /// Evaluation table of alpha powers (y dimension).
     pub alpha_evals_y: Vec<F>,
     /// Number of upper variable bits.
-    pub num_u: usize,
+    pub col_bits: usize,
     /// Number of lower variable bits.
-    pub num_l: usize,
+    pub ring_bits: usize,
     /// Challenge tau0 for F_0 sumcheck.
     pub tau0: Vec<F>,
     /// Challenge tau1 for F_alpha sumcheck.
@@ -235,17 +235,17 @@ where
     let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
     let num_commitment_groups = claim_group_sizes.len();
 
-    let num_l = D.trailing_zeros() as usize;
+    let ring_bits = D.trailing_zeros() as usize;
     let num_ring_elems = w.len() / D;
     let live_x_cols = num_ring_elems;
-    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
     let m_rows = if num_claims == 1 && num_commitment_groups == 1 {
         m_row_count(level_params)
     } else {
         level_params
             .m_row_count_with_commitments_and_public_outputs(num_commitment_groups, num_claims)
     };
-    let num_sc_vars = num_u + num_l;
+    let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
     let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
@@ -354,8 +354,8 @@ where
         live_x_cols,
         m_evals_x,
         alpha_evals_y,
-        num_u,
-        num_l,
+        col_bits,
+        ring_bits,
         tau0,
         tau1,
         b: 1usize << layout.log_basis,
@@ -438,15 +438,15 @@ where
     let num_commitment_groups = claim_group_sizes.len();
 
     let num_ring_elems = w_len / D;
-    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    let num_l = D.trailing_zeros() as usize;
+    let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let ring_bits = D.trailing_zeros() as usize;
     let m_rows = if num_claims == 1 && num_commitment_groups == 1 {
         m_row_count(level_params)
     } else {
         level_params
             .m_row_count_with_commitments_and_public_outputs(num_commitment_groups, num_claims)
     };
-    let num_sc_vars = num_u + num_l;
+    let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
     let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
@@ -467,8 +467,8 @@ where
     Ok(RingSwitchVerifyOutput {
         m_evals_x,
         alpha_evals_y,
-        num_u,
-        num_l,
+        col_bits,
+        ring_bits,
         tau0,
         tau1,
         b: 1usize << layout.log_basis,
@@ -507,15 +507,15 @@ where
     let num_commitment_groups = claim_group_sizes.len();
 
     let num_ring_elems = w_len / D;
-    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    let num_l = D.trailing_zeros() as usize;
+    let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let ring_bits = D.trailing_zeros() as usize;
     let m_rows = if num_claims == 1 && num_commitment_groups == 1 && opening_points.len() == 1 {
         m_row_count(level_params)
     } else {
         level_params
             .m_row_count_with_commitments_and_public_outputs(num_commitment_groups, num_claims)
     };
-    let num_sc_vars = num_u + num_l;
+    let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
     let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
@@ -551,8 +551,8 @@ where
     Ok(RingSwitchVerifyOutput {
         m_evals_x,
         alpha_evals_y,
-        num_u,
-        num_l,
+        col_bits,
+        ring_bits,
         tau0,
         tau1,
         b: 1usize << layout.log_basis,
@@ -963,17 +963,17 @@ pub(crate) fn build_w_evals<F: FieldCore>(
             actual: w.len(),
         });
     }
-    let num_l = d.trailing_zeros() as usize;
+    let ring_bits = d.trailing_zeros() as usize;
     let num_ring_elems = w.len() / d;
-    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    let x_len = 1usize << num_u;
-    let n = x_len << num_l;
+    let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let x_len = 1usize << col_bits;
+    let n = x_len << ring_bits;
 
     let evals: Vec<F> = cfg_into_iter!(0..n)
         .map(|dst| {
             let y = dst & (d - 1);
-            let x = dst >> num_l;
-            let src = y + (x << num_l);
+            let x = dst >> ring_bits;
+            let src = y + (x << ring_bits);
             if src < w.len() {
                 w[src]
             } else {
@@ -981,7 +981,7 @@ pub(crate) fn build_w_evals<F: FieldCore>(
             }
         })
         .collect();
-    Ok((evals, num_u, num_l))
+    Ok((evals, col_bits, ring_bits))
 }
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
@@ -998,10 +998,10 @@ pub(crate) fn build_w_evals_compact(
             actual: w.len(),
         });
     }
-    let num_l = d.trailing_zeros() as usize;
+    let ring_bits = d.trailing_zeros() as usize;
     let live_x_cols = w.len() / d;
-    let num_u = live_x_cols.next_power_of_two().trailing_zeros() as usize;
-    Ok((w.to_vec(), num_u, num_l))
+    let col_bits = live_x_cols.next_power_of_two().trailing_zeros() as usize;
+    Ok((w.to_vec(), col_bits, ring_bits))
 }
 
 pub(crate) fn m_row_count(level_params: &HachiLevelParams) -> usize {
@@ -1758,9 +1758,9 @@ mod tests {
             layout,
         )
         .expect("ring-switch witness");
-        let (w_compact, _num_u, num_l) =
+        let (w_compact, _col_bits, ring_bits) =
             build_w_evals_compact(w.as_i8_digits(), D).expect("compact witness");
-        let live_x_cols = w_compact.len() >> num_l;
+        let live_x_cols = w_compact.len() >> ring_bits;
 
         let alpha = F::from_u64(17);
         let alpha_evals_y = build_alpha_evals_y(alpha, D);

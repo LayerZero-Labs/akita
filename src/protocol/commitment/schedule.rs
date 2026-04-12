@@ -1524,10 +1524,10 @@ pub(crate) fn planned_next_w_len(
 }
 
 fn sumcheck_rounds(level_d: usize, next_w_len: usize) -> usize {
-    let num_l = level_d.trailing_zeros() as usize;
+    let ring_bits = level_d.trailing_zeros() as usize;
     let num_ring_elems = next_w_len / level_d;
-    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    num_u + num_l
+    let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    col_bits + ring_bits
 }
 
 pub(crate) fn hachi_level_proof_bytes(

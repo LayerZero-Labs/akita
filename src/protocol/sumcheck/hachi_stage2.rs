@@ -1,9 +1,9 @@
 //! Stage-2 fused sumcheck prover/verifier for the Hachi PCS.
 //!
 //! This stage views the committed witness as a Boolean table
-//! `w : {0,1}^{num_u} x {0,1}^{num_l} -> F`, where `x` indexes the padded
+//! `w : {0,1}^{col_bits} x {0,1}^{ring_bits} -> F`, where `x` indexes the padded
 //! witness columns and `y` indexes the coefficient inside a
-//! `D = 2^{num_l}`-dimensional ring element. Let `a(y)` be the multilinear
+//! `D = 2^{ring_bits}`-dimensional ring element. Let `a(y)` be the multilinear
 //! extension of `alpha_evals_y = [1, alpha, ..., alpha^(D-1)]`, so on Boolean
 //! inputs `a(y) = alpha^{bin(y)}`. Let `M_alpha` be the ring-switch matrix
 //! after evaluating every ring entry at the transcript challenge `alpha`, and
@@ -227,29 +227,29 @@ pub(crate) fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: u
 fn packed_witness_eval<F: FieldCore + FromSmallInt>(
     packed_witness: &PackedDigits,
     challenges: &[F],
-    num_u: usize,
-    num_l: usize,
+    col_bits: usize,
+    ring_bits: usize,
 ) -> Result<F, HachiError> {
-    if challenges.len() != num_u + num_l {
+    if challenges.len() != col_bits + ring_bits {
         return Err(HachiError::InvalidSize {
-            expected: num_u + num_l,
+            expected: col_bits + ring_bits,
             actual: challenges.len(),
         });
     }
 
-    let d = 1usize << num_l;
+    let d = 1usize << ring_bits;
     if !packed_witness.num_elems.is_multiple_of(d) {
         return Err(HachiError::InvalidProof);
     }
 
-    let (y_challenges, x_challenges) = challenges.split_at(num_l);
+    let (y_challenges, x_challenges) = challenges.split_at(ring_bits);
     let eq_y = EqPolynomial::evals(y_challenges);
     let eq_x = EqPolynomial::evals(x_challenges);
     let live_x_cols = packed_witness.num_elems / d;
 
     let mut acc = F::zero();
     for (x, &x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
-        let base = x << num_l;
+        let base = x << ring_bits;
         let mut y_eval = F::zero();
         for (y, &y_weight) in eq_y.iter().enumerate() {
             let digit = packed_witness
@@ -266,29 +266,29 @@ fn packed_witness_eval<F: FieldCore + FromSmallInt>(
 fn field_witness_eval<F: FieldCore>(
     field_witness: &[F],
     challenges: &[F],
-    num_u: usize,
-    num_l: usize,
+    col_bits: usize,
+    ring_bits: usize,
 ) -> Result<F, HachiError> {
-    if challenges.len() != num_u + num_l {
+    if challenges.len() != col_bits + ring_bits {
         return Err(HachiError::InvalidSize {
-            expected: num_u + num_l,
+            expected: col_bits + ring_bits,
             actual: challenges.len(),
         });
     }
 
-    let d = 1usize << num_l;
+    let d = 1usize << ring_bits;
     if !field_witness.len().is_multiple_of(d) {
         return Err(HachiError::InvalidProof);
     }
 
-    let (y_challenges, x_challenges) = challenges.split_at(num_l);
+    let (y_challenges, x_challenges) = challenges.split_at(ring_bits);
     let eq_y = EqPolynomial::evals(y_challenges);
     let eq_x = EqPolynomial::evals(x_challenges);
     let live_x_cols = field_witness.len() / d;
 
     let mut acc = F::zero();
     for (x, &x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
-        let base = x << num_l;
+        let base = x << ring_bits;
         let mut y_eval = F::zero();
         for (y, &y_weight) in eq_y.iter().enumerate() {
             y_eval += field_witness[base + y] * y_weight;
@@ -302,15 +302,15 @@ fn field_witness_eval<F: FieldCore>(
 fn direct_witness_eval<F: FieldCore + FromSmallInt>(
     direct_witness: &DirectWitnessProof<F>,
     challenges: &[F],
-    num_u: usize,
-    num_l: usize,
+    col_bits: usize,
+    ring_bits: usize,
 ) -> Result<F, HachiError> {
     match direct_witness {
         DirectWitnessProof::PackedDigits(packed_witness) => {
-            packed_witness_eval(packed_witness, challenges, num_u, num_l)
+            packed_witness_eval(packed_witness, challenges, col_bits, ring_bits)
         }
         DirectWitnessProof::FieldElements(field_witness) => {
-            field_witness_eval(field_witness.coeffs(), challenges, num_u, num_l)
+            field_witness_eval(field_witness.coeffs(), challenges, col_bits, ring_bits)
         }
     }
 }
@@ -331,7 +331,7 @@ pub struct HachiStage2Prover<E: FieldCore> {
     alpha_compact: Vec<E>,
     m_compact: Vec<E>,
     live_x_cols: usize,
-    num_u: usize,
+    col_bits: usize,
     num_vars: usize,
     relation_claim: E,
     prev_norm_claim: E,
@@ -358,21 +358,21 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
         alpha_evals_y: Vec<E>,
         m_evals_x: Vec<E>,
         live_x_cols: usize,
-        num_u: usize,
-        num_l: usize,
+        col_bits: usize,
+        ring_bits: usize,
         relation_claim: E,
     ) -> Self {
-        let num_vars = num_u + num_l;
+        let num_vars = col_bits + ring_bits;
         assert!(live_x_cols >= 1, "live_x_cols must be at least 1");
         assert!(
-            live_x_cols <= (1usize << num_u),
+            live_x_cols <= (1usize << col_bits),
             "live_x_cols exceeds x width"
         );
-        let y_len = 1usize << num_l;
+        let y_len = 1usize << ring_bits;
         assert_eq!(w_evals_compact.len(), live_x_cols * y_len);
         assert_eq!(r_stage1.len(), num_vars);
         assert_eq!(alpha_evals_y.len(), y_len);
-        assert_eq!(m_evals_x.len(), 1 << num_u);
+        assert_eq!(m_evals_x.len(), 1 << col_bits);
 
         Self {
             w_table: WTable::Compact(w_evals_compact),
@@ -383,12 +383,13 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
             alpha_compact: alpha_evals_y,
             m_compact: m_evals_x,
             live_x_cols,
-            num_u,
+            col_bits,
             num_vars,
             relation_claim,
             prev_norm_claim: batching_coeff * s_claim,
             prev_norm_poly: None,
-            prefix_r_stage1: can_use_stage2_two_round_prefix(num_l, b).then(|| r_stage1.to_vec()),
+            prefix_r_stage1: can_use_stage2_two_round_prefix(ring_bits, b)
+                .then(|| r_stage1.to_vec()),
             two_round_prefix: None,
             cached_round_poly: None,
             scan_time_total: 0.0,
@@ -414,33 +415,33 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
     }
 
     #[inline]
-    fn num_l(&self) -> usize {
-        self.num_vars - self.num_u
+    fn ring_bits(&self) -> usize {
+        self.num_vars - self.col_bits
     }
 
     #[inline]
     fn y_rounds_completed(&self) -> usize {
-        self.rounds_completed.min(self.num_l())
+        self.rounds_completed.min(self.ring_bits())
     }
 
     #[inline]
     fn x_rounds_completed(&self) -> usize {
-        self.rounds_completed.saturating_sub(self.num_l())
+        self.rounds_completed.saturating_sub(self.ring_bits())
     }
 
     #[inline]
     fn in_y_round(&self) -> bool {
-        self.rounds_completed < self.num_l()
+        self.rounds_completed < self.ring_bits()
     }
 
     #[inline]
     fn current_y_width(&self) -> usize {
-        self.num_l().saturating_sub(self.y_rounds_completed())
+        self.ring_bits().saturating_sub(self.y_rounds_completed())
     }
 
     #[inline]
     fn current_x_width(&self) -> usize {
-        self.num_u.saturating_sub(self.x_rounds_completed())
+        self.col_bits.saturating_sub(self.x_rounds_completed())
     }
 
     #[inline]
@@ -455,15 +456,15 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
 
     #[inline]
     fn use_prefix_x_round(&self) -> bool {
-        self.rounds_completed >= self.num_l()
-            && self.x_rounds_completed() < self.num_u
+        self.rounds_completed >= self.ring_bits()
+            && self.x_rounds_completed() < self.col_bits
             && self.live_x_cols < self.current_x_len()
     }
 
     #[inline]
     fn next_use_prefix_x_round_after_current(&self) -> bool {
-        self.rounds_completed >= self.num_l()
-            && self.x_rounds_completed() + 1 < self.num_u
+        self.rounds_completed >= self.ring_bits()
+            && self.x_rounds_completed() + 1 < self.col_bits
             && self.live_x_cols.div_ceil(2) < (self.current_x_len() / 2)
     }
 
@@ -533,7 +534,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                 .prefix_r_stage1
                 .clone()
                 .expect("two-round prefix requested without cached stage-1 challenges");
-            let num_l = self.num_vars - self.num_u;
+            let ring_bits = self.num_vars - self.col_bits;
             let w_compact = match &self.w_table {
                 WTable::Compact(w_compact) => w_compact,
                 WTable::Full(_) => panic!("two-round prefix can only build from compact witness"),
@@ -545,8 +546,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                 &r_stage1,
                 self.b,
                 self.live_x_cols,
-                self.num_u,
-                num_l,
+                self.col_bits,
+                ring_bits,
             )
             .expect("two-round prefix should be available");
             let skip_state = Stage2BivariateSkipState::new(
@@ -708,7 +709,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
         r0: E,
         r1: E,
     ) -> (Vec<E>, NormRoundTerms<E>, [E; 3]) {
-        debug_assert!(self.num_l() > 2);
+        debug_assert!(self.ring_bits() > 2);
         let y_len = self.alpha_compact.len();
         debug_assert_eq!(w_compact.len(), self.live_x_cols * y_len);
         debug_assert_eq!(alpha_round2.len(), y_len >> 2);
@@ -1798,8 +1799,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
         &self,
         w_compact: &[i8],
     ) -> (NormRoundTerms<E>, [E; 3]) {
-        debug_assert!(self.rounds_completed >= self.num_l());
-        debug_assert!(self.x_rounds_completed() < self.num_u);
+        debug_assert!(self.rounds_completed >= self.ring_bits());
+        debug_assert!(self.x_rounds_completed() < self.col_bits);
         debug_assert_eq!(w_compact.len(), self.live_x_cols * self.alpha_compact.len());
 
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
@@ -1969,8 +1970,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
         name = "HachiStage2Prover::compute_round_full_prefix_x_terms"
     )]
     fn compute_round_full_prefix_x_terms(&self, w_full: &[E]) -> (NormRoundTerms<E>, [E; 3]) {
-        debug_assert!(self.rounds_completed >= self.num_l());
-        debug_assert!(self.x_rounds_completed() < self.num_u);
+        debug_assert!(self.rounds_completed >= self.ring_bits());
+        debug_assert!(self.x_rounds_completed() < self.col_bits);
         debug_assert_eq!(w_full.len(), self.live_x_cols * self.alpha_compact.len());
 
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
@@ -2451,7 +2452,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
                 let mut round2_terms = None;
                 self.w_table = match mem::replace(&mut self.w_table, WTable::Full(Vec::new())) {
                     WTable::Compact(w_compact) => {
-                        if self.num_l() > 2 {
+                        if self.ring_bits() > 2 {
                             let (w_full, virt_terms, rel_coeffs) = self
                                 .fuse_compact_to_round2_and_compute_round(
                                     &w_compact,
@@ -2607,8 +2608,8 @@ pub struct HachiStage2Verifier<'a, F: FieldCore, const D: usize> {
     r_stage1: Vec<F>,
     alpha_evals_y: Vec<F>,
     m_eval_source: Stage2MEvalSource<F>,
-    num_u: usize,
-    num_l: usize,
+    col_bits: usize,
+    ring_bits: usize,
     relation_claim: F,
     _marker: PhantomData<[F; D]>,
 }
@@ -2629,8 +2630,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         u: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
         alpha: F,
-        num_u: usize,
-        num_l: usize,
+        col_bits: usize,
+        ring_bits: usize,
     ) -> Self {
         let relation_claim = relation_claim_from_rows::<F, D>(tau1, alpha, v, u, y_rings);
         Self {
@@ -2640,8 +2641,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
             r_stage1,
             alpha_evals_y,
             m_eval_source,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
             relation_claim,
             _marker: PhantomData,
         }
@@ -2663,8 +2664,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         u: &[CyclotomicRing<F, D>],
         y_ring: &CyclotomicRing<F, D>,
         alpha: F,
-        num_u: usize,
-        num_l: usize,
+        col_bits: usize,
+        ring_bits: usize,
     ) -> Self {
         Self::new_with_direct_witness_batched(
             batching_coeff,
@@ -2678,8 +2679,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
             u,
             std::slice::from_ref(y_ring),
             alpha,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
         )
     }
 
@@ -2702,8 +2703,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         u: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
         alpha: F,
-        num_u: usize,
-        num_l: usize,
+        col_bits: usize,
+        ring_bits: usize,
     ) -> Self {
         Self::new(
             batching_coeff,
@@ -2717,8 +2718,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
             u,
             y_rings,
             alpha,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
         )
     }
 
@@ -2738,8 +2739,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         u: &[CyclotomicRing<F, D>],
         y_ring: &CyclotomicRing<F, D>,
         alpha: F,
-        num_u: usize,
-        num_l: usize,
+        col_bits: usize,
+        ring_bits: usize,
     ) -> Self {
         Self::new_with_claimed_w_eval_batched(
             batching_coeff,
@@ -2752,8 +2753,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
             u,
             std::slice::from_ref(y_ring),
             alpha,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
             w_eval,
         )
     }
@@ -2776,8 +2777,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         u: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
         alpha: F,
-        num_u: usize,
-        num_l: usize,
+        col_bits: usize,
+        ring_bits: usize,
         w_eval: F,
     ) -> Self {
         Self::new(
@@ -2792,15 +2793,15 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
             u,
             y_rings,
             alpha,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
         )
     }
 
     pub(crate) fn witness_eval(&self, challenges: &[F]) -> Result<F, HachiError> {
         match &self.witness_oracle {
             Stage2WitnessOracle::Direct(direct_witness) => {
-                direct_witness_eval(direct_witness, challenges, self.num_u, self.num_l)
+                direct_witness_eval(direct_witness, challenges, self.col_bits, self.ring_bits)
             }
             Stage2WitnessOracle::ClaimedEval(w_eval) => Ok(*w_eval),
         }
@@ -2815,7 +2816,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckI
     for HachiStage2Verifier<'a, F, D>
 {
     fn num_rounds(&self) -> usize {
-        self.num_u + self.num_l
+        self.col_bits + self.ring_bits
     }
 
     fn degree_bound(&self) -> usize {
@@ -2835,7 +2836,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckI
         };
         let virtual_oracle = eq_val * w_eval * (w_eval + F::one());
 
-        let (y_challenges, x_challenges) = challenges.split_at(self.num_l);
+        let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
         let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
         let m_val = {
             let _span = tracing::info_span!("stage2_m_eval").entered();
@@ -2862,15 +2863,20 @@ mod tests {
         r_stage1: &'a [F],
         b: usize,
         live_x_cols: usize,
-        num_u: usize,
-        num_l: usize,
+        col_bits: usize,
+        ring_bits: usize,
     }
 
     fn s_claim_from_compact_rows(w_compact: &[i8], params: &Stage2Params<'_>) -> F {
-        let padded = if params.live_x_cols == (1usize << params.num_u) {
+        let padded = if params.live_x_cols == (1usize << params.col_bits) {
             w_compact.to_vec()
         } else {
-            pad_compact_witness(w_compact, params.live_x_cols, params.num_u, params.num_l)
+            pad_compact_witness(
+                w_compact,
+                params.live_x_cols,
+                params.col_bits,
+                params.ring_bits,
+            )
         };
         let s_evals: Vec<F> = padded
             .iter()
@@ -2889,7 +2895,7 @@ mod tests {
         params: &Stage2Params<'_>,
     ) -> F {
         let mut claim = F::zero();
-        let y_len = 1usize << params.num_l;
+        let y_len = 1usize << params.ring_bits;
         for (x, &m_eval_x) in m_evals_x.iter().enumerate().take(params.live_x_cols) {
             let column = &w_compact[x * y_len..(x + 1) * y_len];
             for (y, &alpha) in alpha_evals_y.iter().enumerate() {
@@ -2918,8 +2924,8 @@ mod tests {
             alpha_evals_y,
             m_evals_x,
             params.live_x_cols,
-            params.num_u,
-            params.num_l,
+            params.col_bits,
+            params.ring_bits,
             relation_claim,
         )
     }
@@ -2928,18 +2934,18 @@ mod tests {
         w_compact: &[i8],
         alpha_compact: &[F],
         m_compact: &[F],
-        num_l: usize,
+        ring_bits: usize,
     ) -> UniPoly<F> {
         let half = w_compact.len() / 2;
-        let current_y_mask = (1usize << num_l).wrapping_sub(1);
+        let current_y_mask = (1usize << ring_bits).wrapping_sub(1);
         let mut evals = [F::zero(); 3];
         for j in 0..half {
             let w_0 = F::from_i64(w_compact[2 * j] as i64);
             let w_1 = F::from_i64(w_compact[2 * j + 1] as i64);
             let a_0 = alpha_compact[(2 * j) & current_y_mask];
             let a_1 = alpha_compact[(2 * j + 1) & current_y_mask];
-            let m_0 = m_compact[(2 * j) >> num_l];
-            let m_1 = m_compact[(2 * j + 1) >> num_l];
+            let m_0 = m_compact[(2 * j) >> ring_bits];
+            let m_1 = m_compact[(2 * j + 1) >> ring_bits];
             evals[0] += w_0 * a_0 * m_0;
             evals[1] += w_1 * a_1 * m_1;
             let w_2 = w_1 + w_1 - w_0;
@@ -2979,7 +2985,8 @@ mod tests {
             .iter()
             .map(|&digit| F::from_i64(digit as i64))
             .collect();
-        let (w_evals, num_u, num_l) = build_w_evals(&w_field, d).expect("valid witness shape");
+        let (w_evals, col_bits, ring_bits) =
+            build_w_evals(&w_field, d).expect("valid witness shape");
         let challenges = vec![
             F::from_u64(2),
             F::from_u64(5),
@@ -2987,11 +2994,11 @@ mod tests {
             F::from_u64(11),
         ];
 
-        assert_eq!(num_u + num_l, challenges.len());
+        assert_eq!(col_bits + ring_bits, challenges.len());
 
         let expected = multilinear_eval(&w_evals, &challenges).expect("matching table shape");
-        let actual =
-            packed_witness_eval(&packed, &challenges, num_u, num_l).expect("valid packed witness");
+        let actual = packed_witness_eval(&packed, &challenges, col_bits, ring_bits)
+            .expect("valid packed witness");
 
         assert_eq!(actual, expected);
     }
@@ -3052,16 +3059,16 @@ mod tests {
 
     #[test]
     fn stage2_compact_round0_matches_unfused_reference() {
-        let num_u = 3usize;
-        let num_l = 2usize;
-        let n = 1usize << (num_u + num_l);
-        let r_stage1: Vec<F> = (0..(num_u + num_l))
+        let col_bits = 3usize;
+        let ring_bits = 2usize;
+        let n = 1usize << (col_bits + ring_bits);
+        let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
             .map(|i| F::from_u64((i as u64) + 2))
             .collect();
-        let alpha_evals_y: Vec<F> = (0..(1usize << num_l))
+        let alpha_evals_y: Vec<F> = (0..(1usize << ring_bits))
             .map(|i| F::from_u64((3 * i as u64) + 5))
             .collect();
-        let m_evals_x: Vec<F> = (0..(1usize << num_u))
+        let m_evals_x: Vec<F> = (0..(1usize << col_bits))
             .map(|i| F::from_u64((7 * i as u64) + 11))
             .collect();
 
@@ -3076,15 +3083,15 @@ mod tests {
                 Stage2Params {
                     r_stage1: &r_stage1,
                     b,
-                    live_x_cols: 1usize << num_u,
-                    num_u,
-                    num_l,
+                    live_x_cols: 1usize << col_bits,
+                    col_bits,
+                    ring_bits,
                 },
             );
             let (virt_poly, relation_poly) = prover.compute_round_compact_dense_polys(&w_compact);
             let virt_ref = virtual_round_reference(&prover.split_eq, &w_compact);
             let relation_ref =
-                relation_round_reference(&w_compact, &alpha_evals_y, &m_evals_x, num_l);
+                relation_round_reference(&w_compact, &alpha_evals_y, &m_evals_x, ring_bits);
 
             assert_eq!(
                 virt_poly, virt_ref,
@@ -3099,18 +3106,18 @@ mod tests {
 
     #[test]
     fn stage2_prefix_aware_rounds_match_explicit_full_m_table() {
-        let num_l = 2usize;
+        let ring_bits = 2usize;
         for b in [4usize, 8, 16, 32] {
             let half = (b / 2) as i8;
             for live_x_cols in [5usize, 6usize] {
-                let num_u = live_x_cols.next_power_of_two().trailing_zeros() as usize;
-                let x_len = 1usize << num_u;
-                let y_len = 1usize << num_l;
+                let col_bits = live_x_cols.next_power_of_two().trailing_zeros() as usize;
+                let x_len = 1usize << col_bits;
+                let y_len = 1usize << ring_bits;
                 let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
                     .map(|i| ((i * 7 + 5) % b) as i8 - half)
                     .collect();
-                let w_padded = pad_compact_witness(&w_prefix, live_x_cols, num_u, num_l);
-                let r_stage1: Vec<F> = (0..(num_u + num_l))
+                let w_padded = pad_compact_witness(&w_prefix, live_x_cols, col_bits, ring_bits);
+                let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
                     .map(|i| F::from_u64((i as u64) + 31))
                     .collect();
                 let alpha_evals_y: Vec<F> = (0..y_len)
@@ -3129,8 +3136,8 @@ mod tests {
                         r_stage1: &r_stage1,
                         b,
                         live_x_cols,
-                        num_u,
-                        num_l,
+                        col_bits,
+                        ring_bits,
                     },
                 );
                 let mut padded_prover = new_stage2_test_prover(
@@ -3141,15 +3148,15 @@ mod tests {
                     Stage2Params {
                         r_stage1: &r_stage1,
                         b,
-                        live_x_cols: 1usize << num_u,
-                        num_u,
-                        num_l,
+                        live_x_cols: 1usize << col_bits,
+                        col_bits,
+                        ring_bits,
                     },
                 );
                 let mut prefix_claim = prefix_prover.input_claim();
                 let mut padded_claim = padded_prover.input_claim();
 
-                for round in 0..(num_u + num_l) {
+                for round in 0..(col_bits + ring_bits) {
                     let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
                     let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
                     assert_eq!(
@@ -3172,16 +3179,16 @@ mod tests {
 
     #[test]
     fn stage2_zero_gated_round0_matches_reference() {
-        let num_u = 3usize;
-        let num_l = 1usize;
+        let col_bits = 3usize;
+        let ring_bits = 1usize;
         let w_compact = vec![-1, 0, -1, 0, 0, -1, 0, -1, -1, 0, -1, 0, 0, -1, 0, -1];
-        let r_stage1: Vec<F> = (0..(num_u + num_l))
+        let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
             .map(|i| F::from_u64((i as u64) + 41))
             .collect();
-        let alpha_evals_y: Vec<F> = (0..(1usize << num_l))
+        let alpha_evals_y: Vec<F> = (0..(1usize << ring_bits))
             .map(|i| F::from_u64((3 * i as u64) + 43))
             .collect();
-        let m_evals_x: Vec<F> = (0..(1usize << num_u))
+        let m_evals_x: Vec<F> = (0..(1usize << col_bits))
             .map(|i| F::from_u64((5 * i as u64) + 47))
             .collect();
 
@@ -3193,9 +3200,9 @@ mod tests {
             Stage2Params {
                 r_stage1: &r_stage1,
                 b: 8,
-                live_x_cols: 1usize << num_u,
-                num_u,
-                num_l,
+                live_x_cols: 1usize << col_bits,
+                col_bits,
+                ring_bits,
             },
         );
         let (virt_poly, relation_poly) = prover.compute_round_compact_dense_polys(&w_compact);
@@ -3205,36 +3212,36 @@ mod tests {
         );
         assert_eq!(
             relation_poly,
-            relation_round_reference(&w_compact, &alpha_evals_y, &m_evals_x, num_l)
+            relation_round_reference(&w_compact, &alpha_evals_y, &m_evals_x, ring_bits)
         );
     }
 
     #[test]
     fn stage2_fused_round2_transition_matches_two_pass_reference() {
-        let num_u = 3usize;
-        let num_l = 2usize;
+        let col_bits = 3usize;
+        let ring_bits = 2usize;
         let live_x_cols = 6usize;
         let b = 8usize;
         let half = (b / 2) as i8;
-        let y_len = 1usize << num_l;
+        let y_len = 1usize << ring_bits;
         let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
             .map(|i| ((i * 11 + 7) % b) as i8 - half)
             .collect();
-        let r_stage1: Vec<F> = (0..(num_u + num_l))
+        let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
             .map(|i| F::from_u64((i as u64) + 71))
             .collect();
         let alpha_evals_y: Vec<F> = (0..y_len)
             .map(|i| F::from_u64((5 * i as u64) + 73))
             .collect();
-        let m_evals_x: Vec<F> = (0..(1usize << num_u))
+        let m_evals_x: Vec<F> = (0..(1usize << col_bits))
             .map(|i| F::from_u64((13 * i as u64) + 79))
             .collect();
         let params = Stage2Params {
             r_stage1: &r_stage1,
             b,
             live_x_cols,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
         };
 
         let mut prover = new_stage2_test_prover(
@@ -3299,30 +3306,30 @@ mod tests {
 
     #[test]
     fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
-        let num_u = 3usize;
-        let num_l = 4usize;
+        let col_bits = 3usize;
+        let ring_bits = 4usize;
         let live_x_cols = 6usize;
         let b = 8usize;
         let half = (b / 2) as i8;
-        let y_len = 1usize << num_l;
+        let y_len = 1usize << ring_bits;
         let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
             .map(|i| ((i * 13 + 9) % b) as i8 - half)
             .collect();
-        let r_stage1: Vec<F> = (0..(num_u + num_l))
+        let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
             .map(|i| F::from_u64((i as u64) + 101))
             .collect();
         let alpha_evals_y: Vec<F> = (0..y_len)
             .map(|i| F::from_u64((7 * i as u64) + 103))
             .collect();
-        let m_evals_x: Vec<F> = (0..(1usize << num_u))
+        let m_evals_x: Vec<F> = (0..(1usize << col_bits))
             .map(|i| F::from_u64((17 * i as u64) + 107))
             .collect();
         let params = Stage2Params {
             r_stage1: &r_stage1,
             b,
             live_x_cols,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
         };
 
         let mut prover = new_stage2_test_prover(
@@ -3378,30 +3385,30 @@ mod tests {
 
     #[test]
     fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
-        let num_u = 5usize;
-        let num_l = 2usize;
+        let col_bits = 5usize;
+        let ring_bits = 2usize;
         let live_x_cols = 12usize;
         let b = 8usize;
         let half = (b / 2) as i8;
-        let y_len = 1usize << num_l;
+        let y_len = 1usize << ring_bits;
         let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
             .map(|i| ((i * 9 + 7) % b) as i8 - half)
             .collect();
-        let r_stage1: Vec<F> = (0..(num_u + num_l))
+        let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
             .map(|i| F::from_u64((i as u64) + 131))
             .collect();
         let alpha_evals_y: Vec<F> = (0..y_len)
             .map(|i| F::from_u64((7 * i as u64) + 137))
             .collect();
-        let m_evals_x: Vec<F> = (0..(1usize << num_u))
+        let m_evals_x: Vec<F> = (0..(1usize << col_bits))
             .map(|i| F::from_u64((11 * i as u64) + 139))
             .collect();
         let params = Stage2Params {
             r_stage1: &r_stage1,
             b,
             live_x_cols,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
         };
 
         let mut prover = new_stage2_test_prover(
@@ -3469,29 +3476,29 @@ mod tests {
 
     #[test]
     fn stage2_large_odd_sparse_boolean_two_round_prefix_matches_direct_path() {
-        let num_u = 16usize;
-        let num_l = 6usize;
+        let col_bits = 16usize;
+        let ring_bits = 6usize;
         let live_x_cols = 34_519usize;
         let b = 8usize;
-        let y_len = 1usize << num_l;
+        let y_len = 1usize << ring_bits;
         let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
             .map(|i| if (i * 73 + 19) % 17 == 0 { -1 } else { 0 })
             .collect();
-        let r_stage1: Vec<F> = (0..(num_u + num_l))
+        let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
             .map(|i| F::from_u64((3 * i as u64) + 167))
             .collect();
         let alpha_evals_y: Vec<F> = (0..y_len)
             .map(|i| F::from_u64((5 * i as u64) + 173))
             .collect();
-        let m_evals_x: Vec<F> = (0..(1usize << num_u))
+        let m_evals_x: Vec<F> = (0..(1usize << col_bits))
             .map(|i| F::from_u64((7 * i as u64) + 179))
             .collect();
         let params = Stage2Params {
             r_stage1: &r_stage1,
             b,
             live_x_cols,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
         };
 
         let mut prover = new_stage2_test_prover(
@@ -3508,7 +3515,7 @@ mod tests {
         let mut prover_claim = prover.input_claim();
         let mut direct_claim = direct.input_claim();
 
-        for round in 0..(num_u + num_l) {
+        for round in 0..(col_bits + ring_bits) {
             let prover_poly = prover.compute_round_univariate(round, prover_claim);
             let direct_poly = direct.compute_round_univariate(round, direct_claim);
             assert_eq!(
@@ -3529,22 +3536,22 @@ mod tests {
 
     #[test]
     fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
-        let num_u = 16usize;
-        let num_l = 6usize;
+        let col_bits = 16usize;
+        let ring_bits = 6usize;
         let live_x_cols = 34_519usize;
         let b = 8usize;
-        let y_len = 1usize << num_l;
+        let y_len = 1usize << ring_bits;
         let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
             .map(|i| if (i * 73 + 19) % 17 == 0 { -1 } else { 0 })
             .collect();
-        let w_padded = pad_compact_witness(&w_prefix, live_x_cols, num_u, num_l);
-        let r_stage1: Vec<F> = (0..(num_u + num_l))
+        let w_padded = pad_compact_witness(&w_prefix, live_x_cols, col_bits, ring_bits);
+        let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
             .map(|i| F::from_u64((3 * i as u64) + 223))
             .collect();
         let alpha_evals_y: Vec<F> = (0..y_len)
             .map(|i| F::from_u64((5 * i as u64) + 227))
             .collect();
-        let m_evals_x: Vec<F> = (0..(1usize << num_u))
+        let m_evals_x: Vec<F> = (0..(1usize << col_bits))
             .map(|i| F::from_u64((7 * i as u64) + 229))
             .collect();
 
@@ -3557,8 +3564,8 @@ mod tests {
                 r_stage1: &r_stage1,
                 b,
                 live_x_cols,
-                num_u,
-                num_l,
+                col_bits,
+                ring_bits,
             },
         );
         let mut padded_prover = new_stage2_test_prover(
@@ -3569,16 +3576,16 @@ mod tests {
             Stage2Params {
                 r_stage1: &r_stage1,
                 b,
-                live_x_cols: 1usize << num_u,
-                num_u,
-                num_l,
+                live_x_cols: 1usize << col_bits,
+                col_bits,
+                ring_bits,
             },
         );
 
         let mut prefix_claim = prefix_prover.input_claim();
         let mut padded_claim = padded_prover.input_claim();
 
-        for round in 0..(num_u + num_l) {
+        for round in 0..(col_bits + ring_bits) {
             let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
             let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
             assert_eq!(
@@ -3599,30 +3606,30 @@ mod tests {
 
     #[test]
     fn stage2_large_odd_dense_two_round_prefix_matches_direct_path() {
-        let num_u = 16usize;
-        let num_l = 6usize;
+        let col_bits = 16usize;
+        let ring_bits = 6usize;
         let live_x_cols = 34_519usize;
         let b = 8usize;
         let half = (b / 2) as i8;
-        let y_len = 1usize << num_l;
+        let y_len = 1usize << ring_bits;
         let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
             .map(|i| ((i * 29 + 17) % b) as i8 - half)
             .collect();
-        let r_stage1: Vec<F> = (0..(num_u + num_l))
+        let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
             .map(|i| F::from_u64((17 * i as u64) + 241))
             .collect();
         let alpha_evals_y: Vec<F> = (0..y_len)
             .map(|i| F::from_u64((19 * i as u64) + 251))
             .collect();
-        let m_evals_x: Vec<F> = (0..(1usize << num_u))
+        let m_evals_x: Vec<F> = (0..(1usize << col_bits))
             .map(|i| F::from_u64((23 * i as u64) + 257))
             .collect();
         let params = Stage2Params {
             r_stage1: &r_stage1,
             b,
             live_x_cols,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
         };
 
         let mut prover = new_stage2_test_prover(
@@ -3639,7 +3646,7 @@ mod tests {
         let mut prover_claim = prover.input_claim();
         let mut direct_claim = direct.input_claim();
 
-        for round in 0..(num_u + num_l) {
+        for round in 0..(col_bits + ring_bits) {
             let prover_poly = prover.compute_round_univariate(round, prover_claim);
             let direct_poly = direct.compute_round_univariate(round, direct_claim);
             assert_eq!(
@@ -3670,23 +3677,23 @@ mod tests {
 
     #[test]
     fn stage2_large_odd_dense_prefix_matches_padded_reference() {
-        let num_u = 16usize;
-        let num_l = 6usize;
+        let col_bits = 16usize;
+        let ring_bits = 6usize;
         let live_x_cols = 34_519usize;
         let b = 8usize;
         let half = (b / 2) as i8;
-        let y_len = 1usize << num_l;
+        let y_len = 1usize << ring_bits;
         let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
             .map(|i| ((i * 31 + 11) % b) as i8 - half)
             .collect();
-        let w_padded = pad_compact_witness(&w_prefix, live_x_cols, num_u, num_l);
-        let r_stage1: Vec<F> = (0..(num_u + num_l))
+        let w_padded = pad_compact_witness(&w_prefix, live_x_cols, col_bits, ring_bits);
+        let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
             .map(|i| F::from_u64((31 * i as u64) + 271))
             .collect();
         let alpha_evals_y: Vec<F> = (0..y_len)
             .map(|i| F::from_u64((37 * i as u64) + 277))
             .collect();
-        let m_evals_x: Vec<F> = (0..(1usize << num_u))
+        let m_evals_x: Vec<F> = (0..(1usize << col_bits))
             .map(|i| F::from_u64((41 * i as u64) + 281))
             .collect();
 
@@ -3699,8 +3706,8 @@ mod tests {
                 r_stage1: &r_stage1,
                 b,
                 live_x_cols,
-                num_u,
-                num_l,
+                col_bits,
+                ring_bits,
             },
         );
         let mut padded_prover = new_stage2_test_prover(
@@ -3711,16 +3718,16 @@ mod tests {
             Stage2Params {
                 r_stage1: &r_stage1,
                 b,
-                live_x_cols: 1usize << num_u,
-                num_u,
-                num_l,
+                live_x_cols: 1usize << col_bits,
+                col_bits,
+                ring_bits,
             },
         );
 
         let mut prefix_claim = prefix_prover.input_claim();
         let mut padded_claim = padded_prover.input_claim();
 
-        for round in 0..(num_u + num_l) {
+        for round in 0..(col_bits + ring_bits) {
             let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
             let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
             assert_eq!(

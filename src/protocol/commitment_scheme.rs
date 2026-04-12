@@ -118,13 +118,13 @@ struct BatchedProveLevelOutput<F: FieldCore> {
 
 pub(crate) fn reorder_stage1_coords<F: FieldCore>(
     coords: &[F],
-    num_u: usize,
-    num_l: usize,
+    col_bits: usize,
+    ring_bits: usize,
 ) -> Vec<F> {
-    assert_eq!(coords.len(), num_u + num_l);
+    assert_eq!(coords.len(), col_bits + ring_bits);
     let mut reordered = Vec::with_capacity(coords.len());
-    reordered.extend_from_slice(&coords[num_u..]);
-    reordered.extend_from_slice(&coords[..num_u]);
+    reordered.extend_from_slice(&coords[col_bits..]);
+    reordered.extend_from_slice(&coords[..col_bits]);
     reordered
 }
 
@@ -645,15 +645,15 @@ where
         live_x_cols,
         m_evals_x,
         alpha_evals_y,
-        num_u,
-        num_l,
+        col_bits,
+        ring_bits,
         tau0,
         tau1: _,
         b,
         alpha: _,
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
-    let tau0_reordered = reorder_stage1_coords(&tau0, num_u, num_l);
+    let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
     let (stage1_proof, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         let stage1_prover = HachiStage1Prover::new(
@@ -661,8 +661,8 @@ where
             &tau0_reordered,
             b,
             live_x_cols,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
         )?;
         let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
         let s_claim = stage1_proof.s_claim;
@@ -682,8 +682,8 @@ where
             alpha_evals_y,
             m_evals_x,
             live_x_cols,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
             relation_claim,
         );
         let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
@@ -1025,15 +1025,15 @@ where
         live_x_cols,
         m_evals_x,
         alpha_evals_y,
-        num_u,
-        num_l,
+        col_bits,
+        ring_bits,
         tau0,
         tau1: _,
         b,
         alpha: _,
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
-    let tau0_reordered = reorder_stage1_coords(&tau0, num_u, num_l);
+    let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
     let (stage1_proof, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         let stage1_prover = HachiStage1Prover::new(
@@ -1041,8 +1041,8 @@ where
             &tau0_reordered,
             b,
             live_x_cols,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
         )?;
         let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
         let s_claim = stage1_proof.s_claim;
@@ -1062,8 +1062,8 @@ where
             alpha_evals_y,
             m_evals_x,
             live_x_cols,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
             relation_claim,
         );
         let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
@@ -2900,7 +2900,7 @@ where
         relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, &commitment_rows, y_rings);
     let stage1 = &root_proof.stage1;
     let stage2 = &root_proof.stage2;
-    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.num_u, rs.num_l);
+    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
     let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -2924,8 +2924,8 @@ where
             &commitment_rows,
             y_rings,
             rs.alpha,
-            rs.num_u,
-            rs.num_l,
+            rs.col_bits,
+            rs.ring_bits,
         )
     } else {
         HachiStage2Verifier::new_with_claimed_w_eval_batched(
@@ -2939,8 +2939,8 @@ where
             &commitment_rows,
             y_rings,
             rs.alpha,
-            rs.num_u,
-            rs.num_l,
+            rs.col_bits,
+            rs.ring_bits,
             stage2.next_w_eval,
         )
     };
@@ -3065,7 +3065,7 @@ where
         relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, &commitment_rows, y_rings);
     let stage1 = &root_proof.stage1;
     let stage2 = &root_proof.stage2;
-    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.num_u, rs.num_l);
+    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
     let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -3089,8 +3089,8 @@ where
             &commitment_rows,
             y_rings,
             rs.alpha,
-            rs.num_u,
-            rs.num_l,
+            rs.col_bits,
+            rs.ring_bits,
         )
     } else {
         HachiStage2Verifier::new_with_claimed_w_eval_batched(
@@ -3104,8 +3104,8 @@ where
             &commitment_rows,
             y_rings,
             rs.alpha,
-            rs.num_u,
-            rs.num_l,
+            rs.col_bits,
+            rs.ring_bits,
             stage2.next_w_eval,
         )
     };
@@ -3214,7 +3214,7 @@ where
     );
     let stage1 = &level_proof.stage1;
     let stage2 = &level_proof.stage2;
-    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.num_u, rs.num_l);
+    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
     let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -3240,8 +3240,8 @@ where
             commitment_u,
             y_ring,
             rs.alpha,
-            rs.num_u,
-            rs.num_l,
+            rs.col_bits,
+            rs.ring_bits,
         )
     } else {
         HachiStage2Verifier::new_with_claimed_w_eval(
@@ -3256,8 +3256,8 @@ where
             commitment_u,
             y_ring,
             rs.alpha,
-            rs.num_u,
-            rs.num_l,
+            rs.col_bits,
+            rs.ring_bits,
         )
     };
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
@@ -4633,8 +4633,8 @@ mod tests {
                 direct_raw_a_r_u128 = direct_raw_a_r.to_canonical_u128(),
                 direct_raw_a_total_u128 = direct_raw_a_total.to_canonical_u128(),
                 live_x_cols = rs.live_x_cols,
-                num_u = rs.num_u,
-                num_l = rs.num_l,
+                col_bits = rs.col_bits,
+                ring_bits = rs.ring_bits,
                 "batched relation claim consistency"
             );
             tracing::info!(
