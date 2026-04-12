@@ -38,8 +38,8 @@ use super::two_round_prefix::{
     stage1_b4_s_digit_from_compact_s, stage1_b8_s_digit_from_compact_s, Stage1BivariateSkipState,
 };
 use super::{
-    fold_evals_in_place, CompactPairFoldLut, EqFactoredSumcheckInstanceProver,
-    EqFactoredSumcheckInstanceVerifier, EqFactoredUniPoly,
+    fold_evals_in_place, fold_full_prefix_pair, CompactPairFoldLut,
+    EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier, EqFactoredUniPoly,
 };
 use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::split_eq::GruenSplitEq;
@@ -1085,13 +1085,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         (out, poly)
     }
 
-    #[inline]
-    fn fold_full_prefix_pair(row: &[E], left: usize, r: E) -> E {
-        let s_0 = row.get(left).copied().unwrap_or_else(E::zero);
-        let s_1 = row.get(left + 1).copied().unwrap_or_else(E::zero);
-        s_0 + r * (s_1 - s_0)
-    }
-
     #[tracing::instrument(
         skip_all,
         name = "HachiStage1Prover::fuse_full_prefix_x_and_compute_round"
@@ -1146,10 +1139,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                         for (slot, pair_x) in (pair_base..pair_base + 4).enumerate() {
                             let left_next = 2 * pair_x;
                             let left_old = 4 * pair_x;
-                            let s0 = Self::fold_full_prefix_pair(row, left_old, r);
+                            let s0 = fold_full_prefix_pair(row, left_old, r);
                             row_out[left_next] = s0;
                             let s1 = if left_next + 1 < next_live_x_cols {
-                                let s1 = Self::fold_full_prefix_pair(row, left_old + 2, r);
+                                let s1 = fold_full_prefix_pair(row, left_old + 2, r);
                                 row_out[left_next + 1] = s1;
                                 s1
                             } else {
@@ -1185,10 +1178,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                     for pair_x in blk + full_chunks * 4..blk_end {
                         let left_next = 2 * pair_x;
                         let left_old = 4 * pair_x;
-                        let s_0 = Self::fold_full_prefix_pair(row, left_old, r);
+                        let s_0 = fold_full_prefix_pair(row, left_old, r);
                         row_out[left_next] = s_0;
                         let s_1 = if left_next + 1 < next_live_x_cols {
-                            let s_1 = Self::fold_full_prefix_pair(row, left_old + 2, r);
+                            let s_1 = fold_full_prefix_pair(row, left_old + 2, r);
                             row_out[left_next + 1] = s_1;
                             s_1
                         } else {
@@ -1258,10 +1251,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                         for (slot, pair_x) in (pair_base..pair_base + 4).enumerate() {
                             let left_next = 2 * pair_x;
                             let left_old = 4 * pair_x;
-                            let s0 = Self::fold_full_prefix_pair(row, left_old, r);
+                            let s0 = fold_full_prefix_pair(row, left_old, r);
                             row_out[left_next] = s0;
                             let s1 = if left_next + 1 < next_live_x_cols {
-                                let s1 = Self::fold_full_prefix_pair(row, left_old + 2, r);
+                                let s1 = fold_full_prefix_pair(row, left_old + 2, r);
                                 row_out[left_next + 1] = s1;
                                 s1
                             } else {
@@ -1297,10 +1290,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
                     for pair_x in blk + full_chunks * 4..blk_end {
                         let left_next = 2 * pair_x;
                         let left_old = 4 * pair_x;
-                        let s_0 = Self::fold_full_prefix_pair(row, left_old, r);
+                        let s_0 = fold_full_prefix_pair(row, left_old, r);
                         row_out[left_next] = s_0;
                         let s_1 = if left_next + 1 < next_live_x_cols {
-                            let s_1 = Self::fold_full_prefix_pair(row, left_old + 2, r);
+                            let s_1 = fold_full_prefix_pair(row, left_old + 2, r);
                             row_out[left_next + 1] = s_1;
                             s_1
                         } else {

@@ -23,9 +23,9 @@
 //! and relation families each store a compressed grid with one Boolean corner
 //! omitted (8 stored values each), recovered via the known claim.
 
+use super::accum::reduce_signed_accum;
 #[cfg(test)]
 use super::hachi_stage1::range_check_eval_from_s;
-use super::hachi_stage2::reduce_signed_accum;
 use super::{EqFactoredUniPoly, UniPoly};
 use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::fields::HasUnreducedOps;

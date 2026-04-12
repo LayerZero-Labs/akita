@@ -45,12 +45,13 @@
 //! both halves around the same local `w0` / `dw` scan so the witness-side work
 //! is shared between the virtual and relation terms.
 
+use super::accum::reduce_signed_accum;
 use super::two_round_prefix::{
     build_stage2_bivariate_skip_proof_from_compact, can_use_stage2_two_round_prefix,
     Stage2BivariateSkipState,
 };
 use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
-use super::{fold_evals_in_place, multilinear_eval, CompactPairFoldLut};
+use super::{fold_evals_in_place, fold_full_prefix_pair, multilinear_eval, CompactPairFoldLut};
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
 use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::fields::HasUnreducedOps;
@@ -110,14 +111,6 @@ fn accum_small_signed<E: FieldCore + HasUnreducedOps>(
     } else {
         accum[pos_idx] += prod;
     }
-}
-
-#[inline]
-pub(super) fn reduce_signed_accum<E: FieldCore + HasUnreducedOps>(
-    pos: E::MulU64Accum,
-    neg: E::MulU64Accum,
-) -> E {
-    E::reduce_mul_u64_accum(pos) - E::reduce_mul_u64_accum(neg)
 }
 
 #[inline]
@@ -980,13 +973,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
         }
     }
 
-    #[inline]
-    fn fold_full_prefix_pair(row: &[E], left: usize, r: E) -> E {
-        let w0 = row.get(left).copied().unwrap_or_else(E::zero);
-        let w1 = row.get(left + 1).copied().unwrap_or_else(E::zero);
-        w0 + r * (w1 - w0)
-    }
-
     #[tracing::instrument(
         skip_all,
         name = "HachiStage2Prover::fuse_full_prefix_x_and_compute_round"
@@ -1034,10 +1020,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                         for pair_x in blk..blk_end {
                             let left_next = 2 * pair_x;
                             let left_old = 4 * pair_x;
-                            let w0 = Self::fold_full_prefix_pair(row, left_old, r);
+                            let w0 = fold_full_prefix_pair(row, left_old, r);
                             row_out[left_next] = w0;
                             let w1 = if left_next + 1 < next_live_x_cols {
-                                let w1 = Self::fold_full_prefix_pair(row, left_old + 2, r);
+                                let w1 = fold_full_prefix_pair(row, left_old + 2, r);
                                 row_out[left_next + 1] = w1;
                                 w1
                             } else {
@@ -1099,10 +1085,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                         for pair_x in blk..blk_end {
                             let left_next = 2 * pair_x;
                             let left_old = 4 * pair_x;
-                            let w0 = Self::fold_full_prefix_pair(row, left_old, r);
+                            let w0 = fold_full_prefix_pair(row, left_old, r);
                             row_out[left_next] = w0;
                             let w1 = if left_next + 1 < next_live_x_cols {
-                                let w1 = Self::fold_full_prefix_pair(row, left_old + 2, r);
+                                let w1 = fold_full_prefix_pair(row, left_old + 2, r);
                                 row_out[left_next + 1] = w1;
                                 w1
                             } else {
@@ -1162,10 +1148,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                         for pair_x in blk..blk_end {
                             let left_next = 2 * pair_x;
                             let left_old = 4 * pair_x;
-                            let w0 = Self::fold_full_prefix_pair(row, left_old, r);
+                            let w0 = fold_full_prefix_pair(row, left_old, r);
                             row_out[left_next] = w0;
                             let w1 = if left_next + 1 < next_live_x_cols {
-                                let w1 = Self::fold_full_prefix_pair(row, left_old + 2, r);
+                                let w1 = fold_full_prefix_pair(row, left_old + 2, r);
                                 row_out[left_next + 1] = w1;
                                 w1
                             } else {
@@ -1230,10 +1216,10 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
                         for pair_x in blk..blk_end {
                             let left_next = 2 * pair_x;
                             let left_old = 4 * pair_x;
-                            let w0 = Self::fold_full_prefix_pair(row, left_old, r);
+                            let w0 = fold_full_prefix_pair(row, left_old, r);
                             row_out[left_next] = w0;
                             let w1 = if left_next + 1 < next_live_x_cols {
-                                let w1 = Self::fold_full_prefix_pair(row, left_old + 2, r);
+                                let w1 = fold_full_prefix_pair(row, left_old + 2, r);
                                 row_out[left_next + 1] = w1;
                                 w1
                             } else {
