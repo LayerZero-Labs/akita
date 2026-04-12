@@ -601,6 +601,22 @@ impl<const P: u128> Fp128<P> {
         Self::fold2_canonicalize(t0, t1, t2)
     }
 
+    /// Add a canonical 128-bit value into a 256-bit little-endian limb array.
+    ///
+    /// Since both multiplicands and addends are canonical field elements,
+    /// `a * b + c < 2^256`, so the top carry is guaranteed to be zero.
+    #[inline(always)]
+    fn add_128_into_256(prod: [u64; 4], addend: [u64; 2]) -> [u64; 4] {
+        let (s0, carry0) = prod[0].overflowing_add(addend[0]);
+        let (s1a, carry1a) = prod[1].overflowing_add(addend[1]);
+        let (s1, carry1b) = s1a.overflowing_add(carry0 as u64);
+        let carry1 = carry1a | carry1b;
+        let (s2, carry2) = prod[2].overflowing_add(carry1 as u64);
+        let (s3, carry3) = prod[3].overflowing_add(carry2 as u64);
+        debug_assert!(!carry3);
+        [s0, s1, s2, s3]
+    }
+
     #[inline(always)]
     fn mul_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         #[cfg(target_arch = "aarch64")]
@@ -619,6 +635,107 @@ impl<const P: u128> Fp128<P> {
     fn mul_raw_portable(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let [r0, r1, r2, r3] = Self(a).mul_wide(Self(b));
         Self::reduce_4(r0, r1, r2, r3)
+    }
+
+    #[inline(always)]
+    fn mul_add_raw(a: [u64; 2], b: [u64; 2], addend: [u64; 2]) -> [u64; 2] {
+        #[cfg(target_arch = "aarch64")]
+        {
+            Self::mul_add_raw_aarch64(a, b, addend)
+        }
+
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            Self::mul_add_raw_portable(a, b, addend)
+        }
+    }
+
+    #[cfg_attr(target_arch = "aarch64", allow(dead_code))]
+    #[inline(always)]
+    fn mul_add_raw_portable(a: [u64; 2], b: [u64; 2], addend: [u64; 2]) -> [u64; 2] {
+        let prod = Self(a).mul_wide(Self(b));
+        let [s0, s1, s2, s3] = Self::add_128_into_256(prod, addend);
+        Self::reduce_4(s0, s1, s2, s3)
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[inline(always)]
+    fn mul_add_raw_aarch64(a: [u64; 2], b: [u64; 2], addend: [u64; 2]) -> [u64; 2] {
+        let out_lo: u64;
+        let out_hi: u64;
+        unsafe {
+            asm!(
+                // Schoolbook 2×2 → 256-bit product [r0,r1,r2,r3]
+                "mul     {p00l}, {a0}, {b0}",
+                "umulh   {p00h}, {a0}, {b0}",
+                "mul     {p01l}, {a0}, {b1}",
+                "umulh   {p01h}, {a0}, {b1}",
+                "mul     {p10l}, {a1}, {b0}",
+                "umulh   {p10h}, {a1}, {b0}",
+                "mul     {p11l}, {a1}, {b1}",
+                "umulh   {p11h}, {a1}, {b1}",
+
+                // Carry accumulation into [r0=p00l, r1=p00h, r2=p01h, r3=p11h]
+                "adds   {p00h}, {p00h}, {p01l}",
+                "cset   {p01l:w}, hs",
+                "adds   {p01h}, {p01h}, {p10h}",
+                "cset   {p10h:w}, hs",
+                "adds   {p01h}, {p01h}, {p11l}",
+                "cinc   {p10h}, {p10h}, hs",
+                "adds   {p00h}, {p00h}, {p10l}",
+                "adcs   {p01h}, {p01h}, {p01l}",
+                "adc    {p11h}, {p11h}, {p10h}",
+
+                // Fuse the addend into the low 128 bits before the Solinas fold.
+                "adds   {p00l}, {p00l}, {add_lo}",
+                "adcs   {p00h}, {p00h}, {add_hi}",
+                "adcs   {p01h}, {p01h}, xzr",
+                "adc    {p11h}, {p11h}, xzr",
+
+                // Fold-1: [t0,t1,t2] = [r0,r1] + C·[r2,r3]
+                "mul    {p01l}, {p01h}, {c}",
+                "umulh  {p10l}, {p01h}, {c}",
+                "mul    {p10h}, {p11h}, {c}",
+                "umulh  {p11l}, {p11h}, {c}",
+
+                "adds   {p00l}, {p00l}, {p01l}",
+                "adcs   {p00h}, {p00h}, {p10l}",
+                "cset   {p01h:w}, hs",
+                "adds   {p00h}, {p00h}, {p10h}",
+                "adc    {p11h}, {p11l}, {p01h}",
+
+                // Fold-2 + canonicalize via ccmp
+                "mul    {p01l}, {p11h}, {c}",
+                "adds   {p00l}, {p00l}, {p01l}",
+                "adcs   {p00h}, {p00h}, xzr",
+                "cset   {p01l:w}, hs",
+                "adds   {p10l}, {p00l}, {c}",
+                "adcs   {p10h}, {p00h}, xzr",
+                "ccmp   {p01l:w}, #0, #0, lo",
+                "csel   {out_lo}, {p10l}, {p00l}, ne",
+                "csel   {out_hi}, {p10h}, {p00h}, ne",
+
+                a0 = in(reg) a[0],
+                a1 = in(reg) a[1],
+                b0 = in(reg) b[0],
+                b1 = in(reg) b[1],
+                add_lo = in(reg) addend[0],
+                add_hi = in(reg) addend[1],
+                c = in(reg) Self::C_LO as u64,
+                p00l = out(reg) _,
+                p00h = out(reg) _,
+                p01l = out(reg) _,
+                p01h = out(reg) _,
+                p10l = out(reg) _,
+                p10h = out(reg) _,
+                p11l = out(reg) _,
+                p11h = out(reg) _,
+                out_lo = lateout(reg) out_lo,
+                out_hi = lateout(reg) out_hi,
+                options(pure, nomem, nostack),
+            );
+        }
+        pack(out_lo, out_hi)
     }
 
     /// 35-instruction AArch64 inline-asm multiply with Solinas reduction.
@@ -823,6 +940,15 @@ impl<const P: u128> Fp128<P> {
     #[inline(always)]
     pub fn square(self) -> Self {
         Self(Self::sqr_raw(self.0))
+    }
+
+    /// Fused multiply-add, equivalent to `self * rhs + addend`.
+    ///
+    /// This widens the product, adds the canonical addend before reduction,
+    /// and performs a single final Solinas reduction.
+    #[inline(always)]
+    pub fn mul_add(self, rhs: Self, addend: Self) -> Self {
+        Self(Self::mul_add_raw(self.0, rhs.0, addend.0))
     }
 
     fn pow_u128(self, mut exp: u128) -> Self {
@@ -1490,6 +1616,20 @@ mod tests {
             let reduced = F::solinas_reduce(&a.mul_wide(b));
             assert_eq!(reduced, expected);
         }
+    }
+
+    #[test]
+    fn mul_add_matches_mul_then_add() {
+        let mut rng = StdRng::seed_from_u64(0x3141_5926_5358_9793);
+        for _ in 0..1000 {
+            let a: F = FieldSampling::sample(&mut rng);
+            let b: F = FieldSampling::sample(&mut rng);
+            let c: F = FieldSampling::sample(&mut rng);
+            assert_eq!(a.mul_add(b, c), a * b + c);
+        }
+
+        let near = -F::one();
+        assert_eq!(near.mul_add(near, near), near * near + near);
     }
 
     #[test]
