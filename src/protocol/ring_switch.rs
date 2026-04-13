@@ -5,6 +5,9 @@
 //! vectors and setting up the evaluation tables.
 
 use crate::algebra::eq_poly::EqPolynomial;
+use crate::algebra::offset_eq::{
+    eval_offset_eq_peeled_carry_terms, eval_offset_eq_tensor, summarize_pow2_block_carries,
+};
 use crate::algebra::poly::multilinear_eval;
 use crate::algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use crate::algebra::{CyclotomicRing, SparseChallenge};
@@ -1619,6 +1622,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
 
         let total_blocks = self.total_blocks;
         let num_blocks = self.num_blocks;
+        let num_claims = self.num_claims;
         let depth_open = self.depth_open;
         let depth_commit = self.depth_commit;
         let depth_fold = self.depth_fold;
@@ -1645,30 +1649,85 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
 
         let is_multi_point = num_points > 1;
 
+        let offset_w = if self.z_first { z_len } else { 0 };
+        let offset_t = if self.z_first { z_len + w_len } else { w_len };
+        let block_bits = num_blocks.trailing_zeros() as usize;
+        let block_low_eq = EqPolynomial::evals(&x_challenges[..block_bits]);
+        let block_offset_low = offset_w & (num_blocks - 1);
+        debug_assert_eq!(block_offset_low, offset_t & (num_blocks - 1));
+
+        let opening_point_block_summaries: Vec<[F; 2]> = opening_points
+            .iter()
+            .map(|opening_point| {
+                summarize_pow2_block_carries(&block_low_eq, block_offset_low, &opening_point.b)
+            })
+            .collect();
+        let challenge_block_summaries: Vec<[F; 2]> = (0..num_claims)
+            .map(|claim_idx| {
+                let start = claim_idx * num_blocks;
+                summarize_pow2_block_carries(
+                    &block_low_eq,
+                    block_offset_low,
+                    &c_alphas[start..(start + num_blocks)],
+                )
+            })
+            .collect();
+
+        let mut w_carry_terms = vec![[F::zero(), F::zero()]; num_claims * depth_open];
+        for (dig, &g_open) in g1_open.iter().enumerate() {
+            let q_base = dig * num_claims;
+            for claim_idx in 0..num_claims {
+                let q = q_base + claim_idx;
+                let point_idx = if is_multi_point {
+                    claim_to_point[claim_idx]
+                } else {
+                    0
+                };
+                let [public_low0, public_low1] = opening_point_block_summaries[point_idx];
+                let public_scale = public_weights[claim_idx] * g_open;
+                w_carry_terms[q][0] += public_scale * public_low0;
+                w_carry_terms[q][1] += public_scale * public_low1;
+
+                let [challenge_low0, challenge_low1] = challenge_block_summaries[claim_idx];
+                let challenge_scale = consistency_weight * g_open;
+                w_carry_terms[q][0] += challenge_scale * challenge_low0;
+                w_carry_terms[q][1] += challenge_scale * challenge_low1;
+            }
+        }
+        let w_sep =
+            eval_offset_eq_peeled_carry_terms(x_challenges, offset_w, block_bits, &w_carry_terms);
+
         let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
             .map(|x| {
                 let dig = x / total_blocks;
                 let blk = x % total_blocks;
-                let claim_idx = blk / num_blocks;
-                let block_idx = blk % num_blocks;
                 let d_phys_col = blk * depth_open + dig;
-                let opening_point = if is_multi_point {
-                    &opening_points[claim_to_point[claim_idx]]
-                } else {
-                    &opening_points[0]
-                };
-                let mut val = (public_weights[claim_idx] * opening_point.b[block_idx]
-                    + consistency_weight * c_alphas[blk])
-                    * g1_open[dig];
+                let mut val = F::zero();
                 for (di, eq_i) in d_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
-                        val += *eq_i
-                            * eval_ring_at_pows(&d_view.row(di)[d_phys_col], &alpha_pows);
+                        val += *eq_i * eval_ring_at_pows(&d_view.row(di)[d_phys_col], &alpha_pows);
                     }
                 }
                 val
             })
             .collect();
+
+        let mut t_carry_terms = vec![[F::zero(), F::zero()]; num_claims * depth_open * n_a];
+        for (a_idx, &a_weight) in a_weights.iter().enumerate() {
+            for (digit_idx, &g_open) in g1_open.iter().enumerate() {
+                let q_base = num_claims * (digit_idx + depth_open * a_idx);
+                let scale = a_weight * g_open;
+                for (claim_idx, &[challenge_low0, challenge_low1]) in
+                    challenge_block_summaries.iter().enumerate()
+                {
+                    let q = q_base + claim_idx;
+                    t_carry_terms[q][0] += scale * challenge_low0;
+                    t_carry_terms[q][1] += scale * challenge_low1;
+                }
+            }
+        }
+        let t_sep =
+            eval_offset_eq_peeled_carry_terms(x_challenges, offset_t, block_bits, &t_carry_terms);
 
         let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
             .map(|x| {
@@ -1684,11 +1743,11 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 let local_col = claim_idx_within_group * t_cols_per_claim + phys_claim_offset;
                 let commitment_weights =
                     &eq_tau1[(b_start + group_idx * n_b)..(b_start + (group_idx + 1) * n_b)];
-                let mut val = a_weights[a_idx] * c_alphas[blk] * g1_open[digit_idx];
+                let mut val = F::zero();
                 for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
-                        val += *eq_i
-                            * eval_ring_at_pows(&b_view.row(row_idx)[local_col], &alpha_pows);
+                        val +=
+                            *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[local_col], &alpha_pows);
                     }
                 }
                 val
@@ -1698,16 +1757,8 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let z_base_len = num_points * inner_width;
         let z_base: Vec<F> = cfg_into_iter!(0..z_base_len)
             .map(|k| {
-                let point_idx = if is_multi_point {
-                    k / inner_width
-                } else {
-                    0
-                };
-                let local_k = if is_multi_point {
-                    k % inner_width
-                } else {
-                    k
-                };
+                let point_idx = if is_multi_point { k / inner_width } else { 0 };
+                let local_k = if is_multi_point { k % inner_width } else { k };
                 let block_idx = local_k / depth_commit;
                 let digit_idx = local_k % depth_commit;
                 let opening_point = &opening_points[point_idx];
@@ -1715,8 +1766,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                     consistency_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
                 for (a_idx, eq_i) in a_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
-                        acc +=
-                            *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[local_k], &alpha_pows);
+                        acc += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[local_k], &alpha_pows);
                     }
                 }
                 acc
@@ -1738,13 +1788,20 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
 
         let alpha_pow_d = alpha_pows[D - 1] * alpha;
         let denom = alpha_pow_d + F::one();
-        let r_tail: Vec<F> = cfg_into_iter!(0..r_tail_len)
-            .map(|idx| {
-                let row_idx = idx / levels;
-                let level_idx = idx % levels;
-                -(eq_tau1[row_idx] * denom * r_gadget[level_idx])
-            })
-            .collect();
+
+        let r_tail_dims_pow2 = levels.is_power_of_two();
+        let offset_r = w_len + t_len + z_len;
+
+        let r_sep = if r_tail_dims_pow2 {
+            eval_offset_eq_tensor(
+                x_challenges,
+                offset_r,
+                -denom,
+                &[&r_gadget, &eq_tau1[..rows]],
+            )
+        } else {
+            F::zero()
+        };
 
         let x_len = w_len + t_len + z_len + r_tail_len;
         let mut out = Vec::with_capacity(x_len.next_power_of_two());
@@ -1757,10 +1814,19 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
             out.extend(t_segment);
             out.extend(z_segment);
         }
-        out.extend(r_tail);
+        if !r_tail_dims_pow2 {
+            let r_tail: Vec<F> = cfg_into_iter!(0..r_tail_len)
+                .map(|idx| {
+                    let row_idx = idx / levels;
+                    let level_idx = idx % levels;
+                    -(eq_tau1[row_idx] * denom * r_gadget[level_idx])
+                })
+                .collect();
+            out.extend(r_tail);
+        }
         out.resize(1 << x_challenges.len(), F::zero());
 
-        multilinear_eval(&out, x_challenges)
+        Ok(multilinear_eval(&out, x_challenges)? + w_sep + t_sep + r_sep)
     }
 }
 

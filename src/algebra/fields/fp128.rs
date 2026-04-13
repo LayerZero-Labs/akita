@@ -724,7 +724,7 @@ impl<const P: u128> Fp128<P> {
                 b1 = in(reg) b[1],
                 add_lo = in(reg) addend[0],
                 add_hi = in(reg) addend[1],
-                c = in(reg) Self::C_LO as u64,
+                c = in(reg) Self::C_LO,
                 p00l = out(reg) _,
                 p00h = out(reg) _,
                 p01l = out(reg) _,
