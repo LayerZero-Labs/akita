@@ -2888,7 +2888,6 @@ where
     let rs = ring_switch_verifier_with_claim_groups::<F, T, { D }>(
         &ring_opening_point,
         &stage1_challenges,
-        &setup.expanded,
         w_len,
         root_proof.next_w_commitment(),
         transcript,
@@ -2909,7 +2908,8 @@ where
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
-    let m_eval_source = Stage2MEvalSource::new(rs.m_evals_x);
+    let m_eval_source = Stage2MEvalSource::new(rs.prepared_m_eval);
+    let ring_opening_points_slice = std::slice::from_ref(&ring_opening_point);
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
         HachiStage2Verifier::new_with_direct_witness_batched(
@@ -2919,6 +2919,8 @@ where
             r_stage1.clone(),
             rs.alpha_evals_y,
             m_eval_source,
+            &setup.expanded,
+            ring_opening_points_slice,
             &rs.tau1,
             v_typed,
             &commitment_rows,
@@ -2934,6 +2936,8 @@ where
             r_stage1.clone(),
             rs.alpha_evals_y,
             m_eval_source,
+            &setup.expanded,
+            ring_opening_points_slice,
             &rs.tau1,
             v_typed,
             &commitment_rows,
@@ -3053,7 +3057,6 @@ where
         &ring_opening_points,
         &batch_shape.claim_to_point,
         &stage1_challenges,
-        &setup.expanded,
         w_len,
         root_proof.next_w_commitment(),
         transcript,
@@ -3074,7 +3077,7 @@ where
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
-    let m_eval_source = Stage2MEvalSource::new(rs.m_evals_x);
+    let m_eval_source = Stage2MEvalSource::new(rs.prepared_m_eval);
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
         HachiStage2Verifier::new_with_direct_witness_batched(
@@ -3084,6 +3087,8 @@ where
             r_stage1.clone(),
             rs.alpha_evals_y,
             m_eval_source,
+            &setup.expanded,
+            &ring_opening_points,
             &rs.tau1,
             v_typed,
             &commitment_rows,
@@ -3099,6 +3104,8 @@ where
             r_stage1.clone(),
             rs.alpha_evals_y,
             m_eval_source,
+            &setup.expanded,
+            &ring_opening_points,
             &rs.tau1,
             v_typed,
             &commitment_rows,
@@ -3198,7 +3205,6 @@ where
     let rs = ring_switch_verifier::<F, T, { D }>(
         &ring_opening_point,
         &stage1_challenges,
-        &setup.expanded,
         w_len,
         level_proof.next_w_commitment(),
         transcript,
@@ -3224,7 +3230,8 @@ where
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
-    let m_eval_source = Stage2MEvalSource::new(rs.m_evals_x);
+    let m_eval_source = Stage2MEvalSource::new(rs.prepared_m_eval);
+    let ring_opening_points_slice = std::slice::from_ref(&ring_opening_point);
 
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
@@ -3235,6 +3242,8 @@ where
             r_stage1.clone(),
             rs.alpha_evals_y,
             m_eval_source,
+            &setup.expanded,
+            ring_opening_points_slice,
             &rs.tau1,
             v_typed,
             commitment_u,
@@ -3251,6 +3260,8 @@ where
             r_stage1.clone(),
             rs.alpha_evals_y,
             m_eval_source,
+            &setup.expanded,
+            ring_opening_points_slice,
             &rs.tau1,
             v_typed,
             commitment_u,

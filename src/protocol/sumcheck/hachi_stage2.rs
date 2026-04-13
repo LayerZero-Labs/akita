@@ -63,8 +63,10 @@ use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
+use crate::protocol::commitment::HachiExpandedSetup;
+use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{DirectWitnessProof, PackedDigits};
-use crate::protocol::ring_switch::eval_ring_at;
+use crate::protocol::ring_switch::{eval_ring_at, PreparedMEval};
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
 use std::marker::PhantomData;
 use std::mem;
@@ -2597,12 +2599,12 @@ enum Stage2WitnessOracle<'a, F: FieldCore> {
 }
 
 pub(crate) struct Stage2MEvalSource<F: FieldCore> {
-    m_evals_x: Vec<F>,
+    prepared: PreparedMEval<F>,
 }
 
 impl<F: FieldCore> Stage2MEvalSource<F> {
-    pub(crate) fn new(m_evals_x: Vec<F>) -> Self {
-        Self { m_evals_x }
+    pub(crate) fn new(prepared: PreparedMEval<F>) -> Self {
+        Self { prepared }
     }
 }
 
@@ -2614,6 +2616,9 @@ pub struct HachiStage2Verifier<'a, F: FieldCore, const D: usize> {
     r_stage1: Vec<F>,
     alpha_evals_y: Vec<F>,
     m_eval_source: Stage2MEvalSource<F>,
+    setup: &'a HachiExpandedSetup<F>,
+    opening_points: &'a [RingOpeningPoint<F>],
+    alpha: F,
     col_bits: usize,
     ring_bits: usize,
     relation_claim: F,
@@ -2631,6 +2636,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
         m_eval_source: Stage2MEvalSource<F>,
+        setup: &'a HachiExpandedSetup<F>,
+        opening_points: &'a [RingOpeningPoint<F>],
         tau1: &[F],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
@@ -2647,6 +2654,9 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
             r_stage1,
             alpha_evals_y,
             m_eval_source,
+            setup,
+            opening_points,
+            alpha,
             col_bits,
             ring_bits,
             relation_claim,
@@ -2654,8 +2664,6 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         }
     }
 
-    /// Create a fused verifier for the stage-2 sumcheck when the verifier holds
-    /// the terminal direct witness.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "HachiStage2Verifier::new_with_direct_witness")]
     pub(crate) fn new_with_direct_witness(
@@ -2665,6 +2673,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
         m_eval_source: Stage2MEvalSource<F>,
+        setup: &'a HachiExpandedSetup<F>,
+        opening_points: &'a [RingOpeningPoint<F>],
         tau1: &[F],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
@@ -2680,6 +2690,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
             r_stage1,
             alpha_evals_y,
             m_eval_source,
+            setup,
+            opening_points,
             tau1,
             v,
             u,
@@ -2690,8 +2702,6 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         )
     }
 
-    /// Create a fused verifier for the stage-2 sumcheck with multiple public
-    /// root outputs at the batched opening point.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(
         skip_all,
@@ -2704,6 +2714,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
         m_eval_source: Stage2MEvalSource<F>,
+        setup: &'a HachiExpandedSetup<F>,
+        opening_points: &'a [RingOpeningPoint<F>],
         tau1: &[F],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
@@ -2719,6 +2731,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
             r_stage1,
             alpha_evals_y,
             m_eval_source,
+            setup,
+            opening_points,
             tau1,
             v,
             u,
@@ -2729,8 +2743,6 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         )
     }
 
-    /// Create a fused verifier for the stage-2 sumcheck when only the final
-    /// witness evaluation is available.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "HachiStage2Verifier::new_with_claimed_w_eval")]
     pub(crate) fn new_with_claimed_w_eval(
@@ -2740,6 +2752,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
         m_eval_source: Stage2MEvalSource<F>,
+        setup: &'a HachiExpandedSetup<F>,
+        opening_points: &'a [RingOpeningPoint<F>],
         tau1: &[F],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
@@ -2754,6 +2768,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
             r_stage1,
             alpha_evals_y,
             m_eval_source,
+            setup,
+            opening_points,
             tau1,
             v,
             u,
@@ -2765,8 +2781,6 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         )
     }
 
-    /// Create a fused verifier for the stage-2 sumcheck with multiple public
-    /// root outputs and a claimed witness evaluation.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(
         skip_all,
@@ -2778,6 +2792,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
         m_eval_source: Stage2MEvalSource<F>,
+        setup: &'a HachiExpandedSetup<F>,
+        opening_points: &'a [RingOpeningPoint<F>],
         tau1: &[F],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
@@ -2794,6 +2810,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
             r_stage1,
             alpha_evals_y,
             m_eval_source,
+            setup,
+            opening_points,
             tau1,
             v,
             u,
@@ -2814,7 +2832,12 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
     }
 
     fn m_eval(&self, x_challenges: &[F]) -> Result<F, HachiError> {
-        multilinear_eval(&self.m_eval_source.m_evals_x, x_challenges)
+        self.m_eval_source.prepared.eval_at_point::<D>(
+            x_challenges,
+            self.setup,
+            self.opening_points,
+            self.alpha,
+        )
     }
 }
 
