@@ -1129,47 +1129,53 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
         })
         .collect();
 
-    let d_matrix_width = layout.d_matrix_width;
+    // --- Digit-major segments (block index innermost) ---
+    //
+    // Within each segment the power-of-2 block index is the fastest-varying
+    // dimension.  Adaptive ordering places the segment whose block dimension
+    // is larger first.
+
+    let n_a = level_params.n_a;
+    let t_compound_per_block = n_a * depth_open;
+
     let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
         .map(|x| {
-            let blocks_per_claim = num_blocks * depth_open;
-            let claim_idx = x / blocks_per_claim;
-            let claim_offset = x % blocks_per_claim;
-            let block_idx = claim_offset / depth_open;
-            let digit_idx = claim_offset % depth_open;
-            let global_block_idx = claim_idx * num_blocks + block_idx;
+            let dig = x / total_blocks;
+            let blk = x % total_blocks;
+            let claim_idx = blk / num_blocks;
+            let block_idx = blk % num_blocks;
+            let d_phys_col = blk * depth_open + dig;
             let mut acc = (public_weights[claim_idx] * opening_point.b[block_idx]
-                + consistency_weight * c_alphas[global_block_idx])
-                * g1_open[digit_idx];
+                + consistency_weight * c_alphas[blk])
+                * g1_open[dig];
             for (di, eq_i) in eq_tau1[d_start..(d_start + level_params.n_d)]
                 .iter()
                 .enumerate()
             {
                 if !eq_i.is_zero() {
-                    acc +=
-                        *eq_i * eval_ring_at_pows(&d_view.row(di)[x % d_matrix_width], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&d_view.row(di)[d_phys_col], alpha_pows);
                 }
             }
             acc
         })
         .collect();
-    out.extend(w_segment);
 
+    let t_cols_per_claim = t_compound_per_block * num_blocks;
     let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
         .map(|x| {
-            let t_cols_per_claim = level_params.n_a * depth_open * num_blocks;
-            let claim_idx = x / t_cols_per_claim;
-            let claim_offset = x % t_cols_per_claim;
-            let block_idx = claim_offset / (level_params.n_a * depth_open);
-            let rem = claim_offset % (level_params.n_a * depth_open);
-            let a_idx = rem / depth_open;
-            let digit_idx = rem % depth_open;
-            let global_block_idx = claim_idx * num_blocks + block_idx;
+            let compound_dig = x / total_blocks;
+            let blk = x % total_blocks;
+            let a_idx = compound_dig / depth_open;
+            let digit_idx = compound_dig % depth_open;
+            let claim_idx = blk / num_blocks;
+            let block_idx = blk % num_blocks;
             let (group_idx, claim_idx_within_group) = claim_to_group[claim_idx];
-            let local_col = claim_idx_within_group * t_cols_per_claim + claim_offset;
+            let phys_claim_offset =
+                block_idx * t_compound_per_block + a_idx * depth_open + digit_idx;
+            let local_col = claim_idx_within_group * t_cols_per_claim + phys_claim_offset;
             let commitment_weights = &eq_tau1[(b_start + group_idx * level_params.n_b)
                 ..(b_start + (group_idx + 1) * level_params.n_b)];
-            let mut acc = a_weights[a_idx] * c_alphas[global_block_idx] * g1_open[digit_idx];
+            let mut acc = a_weights[a_idx] * c_alphas[blk] * g1_open[digit_idx];
             for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[local_col], alpha_pows);
@@ -1178,7 +1184,6 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
             acc
         })
         .collect();
-    out.extend(t_segment);
 
     let z_base: Vec<F> = cfg_into_iter!(0..inner_width)
         .map(|k| {
@@ -1195,13 +1200,15 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
         .collect();
 
     let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
-        .map(|idx| {
-            let k = idx / depth_fold;
-            let fold_idx = idx % depth_fold;
-            -(z_base[k] * fold_gadget[fold_idx])
+        .map(|x| {
+            let compound_dig = x / block_len;
+            let blk = x % block_len;
+            let dc = compound_dig / depth_fold;
+            let df = compound_dig % depth_fold;
+            let phys_k = blk * depth_commit + dc;
+            -(z_base[phys_k] * fold_gadget[df])
         })
         .collect();
-    out.extend(z_segment);
 
     let alpha_pow_d = alpha_pows[D - 1] * alpha;
     let denom = alpha_pow_d + F::one();
@@ -1213,6 +1220,17 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
             -(eq_tau1[row_idx] * denom * r_gadget[level_idx])
         })
         .collect();
+
+    let z_first = layout.m_vars >= layout.r_vars;
+    if z_first {
+        out.extend(z_segment);
+        out.extend(w_segment);
+        out.extend(t_segment);
+    } else {
+        out.extend(w_segment);
+        out.extend(t_segment);
+        out.extend(z_segment);
+    }
     out.extend(r_tail);
     out.resize(x_len, F::zero());
     Ok(out)
@@ -1363,48 +1381,50 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
         })
         .collect();
 
-    let d_matrix_width = layout.d_matrix_width;
+    // --- Digit-major segments (block index innermost) ---
+
+    let n_a = level_params.n_a;
+    let t_compound_per_block = n_a * depth_open;
+
     let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
         .map(|x| {
-            let blocks_per_claim = num_blocks * depth_open;
-            let claim_idx = x / blocks_per_claim;
-            let claim_offset = x % blocks_per_claim;
-            let block_idx = claim_offset / depth_open;
-            let digit_idx = claim_offset % depth_open;
-            let global_block_idx = claim_idx * num_blocks + block_idx;
+            let dig = x / total_blocks;
+            let blk = x % total_blocks;
+            let claim_idx = blk / num_blocks;
+            let block_idx = blk % num_blocks;
+            let d_phys_col = blk * depth_open + dig;
             let opening_point = &opening_points[claim_to_point[claim_idx]];
             let mut acc = (public_weights[claim_idx] * opening_point.b[block_idx]
-                + consistency_weight * c_alphas[global_block_idx])
-                * g1_open[digit_idx];
+                + consistency_weight * c_alphas[blk])
+                * g1_open[dig];
             for (di, eq_i) in eq_tau1[d_start..(d_start + level_params.n_d)]
                 .iter()
                 .enumerate()
             {
                 if !eq_i.is_zero() {
-                    acc +=
-                        *eq_i * eval_ring_at_pows(&d_view.row(di)[x % d_matrix_width], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&d_view.row(di)[d_phys_col], alpha_pows);
                 }
             }
             acc
         })
         .collect();
-    out.extend(w_segment);
 
+    let t_cols_per_claim = t_compound_per_block * num_blocks;
     let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
         .map(|x| {
-            let t_cols_per_claim = level_params.n_a * depth_open * num_blocks;
-            let claim_idx = x / t_cols_per_claim;
-            let claim_offset = x % t_cols_per_claim;
-            let block_idx = claim_offset / (level_params.n_a * depth_open);
-            let rem = claim_offset % (level_params.n_a * depth_open);
-            let a_idx = rem / depth_open;
-            let digit_idx = rem % depth_open;
-            let global_block_idx = claim_idx * num_blocks + block_idx;
+            let compound_dig = x / total_blocks;
+            let blk = x % total_blocks;
+            let a_idx = compound_dig / depth_open;
+            let digit_idx = compound_dig % depth_open;
+            let claim_idx = blk / num_blocks;
+            let block_idx = blk % num_blocks;
             let (group_idx, claim_idx_within_group) = claim_to_group[claim_idx];
-            let local_col = claim_idx_within_group * t_cols_per_claim + claim_offset;
+            let phys_claim_offset =
+                block_idx * t_compound_per_block + a_idx * depth_open + digit_idx;
+            let local_col = claim_idx_within_group * t_cols_per_claim + phys_claim_offset;
             let commitment_weights = &eq_tau1[(b_start + group_idx * level_params.n_b)
                 ..(b_start + (group_idx + 1) * level_params.n_b)];
-            let mut acc = a_weights[a_idx] * c_alphas[global_block_idx] * g1_open[digit_idx];
+            let mut acc = a_weights[a_idx] * c_alphas[blk] * g1_open[digit_idx];
             for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[local_col], alpha_pows);
@@ -1413,7 +1433,6 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
             acc
         })
         .collect();
-    out.extend(t_segment);
 
     let z_base: Vec<F> = cfg_into_iter!(0..z_base_len)
         .map(|k| {
@@ -1432,14 +1451,20 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
         })
         .collect();
 
+    let num_points = opening_points.len();
+    let z_total_blocks = num_points * block_len;
     let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
-        .map(|idx| {
-            let k = idx / depth_fold;
-            let fold_idx = idx % depth_fold;
-            -(z_base[k] * fold_gadget[fold_idx])
+        .map(|x| {
+            let compound_dig = x / z_total_blocks;
+            let global_blk = x % z_total_blocks;
+            let dc = compound_dig / depth_fold;
+            let df = compound_dig % depth_fold;
+            let point_idx = global_blk / block_len;
+            let blk = global_blk % block_len;
+            let phys_k = point_idx * inner_width + blk * depth_commit + dc;
+            -(z_base[phys_k] * fold_gadget[df])
         })
         .collect();
-    out.extend(z_segment);
 
     let alpha_pow_d = alpha_pows[D - 1] * alpha;
     let denom = alpha_pow_d + F::one();
@@ -1451,6 +1476,17 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
             -(eq_tau1[row_idx] * denom * r_gadget[level_idx])
         })
         .collect();
+
+    let z_first = layout.m_vars >= layout.r_vars;
+    if z_first {
+        out.extend(z_segment);
+        out.extend(w_segment);
+        out.extend(t_segment);
+    } else {
+        out.extend(w_segment);
+        out.extend(t_segment);
+        out.extend(z_segment);
+    }
     out.extend(r_tail);
     out.resize(x_len, F::zero());
     Ok(out)
@@ -1504,6 +1540,94 @@ fn balanced_decompose_centered_i32_i8_into<const D: usize>(
     }
 }
 
+/// Transpose block-major digit planes to digit-major order (block index
+/// innermost): for each compound digit index, emit all blocks in order.
+fn emit_planes_block_inner<const D: usize>(
+    out: &mut Vec<i8>,
+    flat: &[[i8; D]],
+    total_blocks: usize,
+    planes_per_block: usize,
+) {
+    debug_assert_eq!(
+        flat.len(),
+        total_blocks * planes_per_block,
+        "emit_planes_block_inner: flat.len()={} != total_blocks({}) * planes_per_block({})",
+        flat.len(),
+        total_blocks,
+        planes_per_block
+    );
+    for compound_dig in 0..planes_per_block {
+        for blk in 0..total_blocks {
+            out.extend_from_slice(&flat[blk * planes_per_block + compound_dig]);
+        }
+    }
+}
+
+/// Decompose z_pre elements and emit in digit-major order.
+///
+/// z_pre has `num_points * block_len * depth_commit` elements indexed as
+/// `z[point * inner_width + blk * depth_commit + dc]`.  Each decomposes into
+/// `num_digits_fold` planes.
+///
+/// Output order: for each `(dc, df)`, emit all `(point, blk)` pairs with
+/// the global block index `point * block_len + blk` innermost.
+fn emit_z_pre_block_inner<const D: usize>(
+    out: &mut Vec<i8>,
+    z_pre_centered: &[[i32; D]],
+    block_len: usize,
+    depth_commit: usize,
+    num_digits_fold: usize,
+    log_basis: u32,
+) {
+    let total_elems = z_pre_centered.len();
+    let inner_width = block_len * depth_commit;
+    debug_assert_eq!(
+        total_elems % inner_width,
+        0,
+        "z_pre length {total_elems} not divisible by inner_width {inner_width}",
+    );
+    let num_points = total_elems / inner_width;
+
+    let mut all_planes = vec![[0i8; D]; total_elems * num_digits_fold];
+    for (k, z_j) in z_pre_centered.iter().enumerate() {
+        balanced_decompose_centered_i32_i8_into(
+            z_j,
+            &mut all_planes[k * num_digits_fold..(k + 1) * num_digits_fold],
+            log_basis,
+        );
+    }
+
+    for dc in 0..depth_commit {
+        for df in 0..num_digits_fold {
+            for pt in 0..num_points {
+                for blk in 0..block_len {
+                    let k = pt * inner_width + blk * depth_commit + dc;
+                    out.extend_from_slice(&all_planes[k * num_digits_fold + df]);
+                }
+            }
+        }
+    }
+}
+
+/// Build the committed witness polynomial from ring-domain digit planes.
+///
+/// Emits field-domain coefficients in digit-major order (block index innermost)
+/// with adaptive segment ordering: the segment whose block dimension is the
+/// larger power of two comes first.
+///
+/// Segment ordering:
+/// - If `m_vars >= r_vars`: z-hat (`2^m` blocks), e-hat + t-hat (`2^r` blocks), r-hat
+/// - If `m_vars < r_vars`: e-hat + t-hat (`2^r` blocks), z-hat (`2^m` blocks), r-hat
+///
+/// Within each segment, the power-of-2 block index is the fastest-varying
+/// (innermost) dimension.
+///
+/// `FlatDigitBlocks` stores ring-domain data in block-major order (all digit
+/// planes for one block contiguously), which is natural for ring-domain matvec
+/// and recomposition. This function transposes to digit-major at the
+/// ring-to-field boundary. An alternative would be propagating digit-major
+/// throughout `FlatDigitBlocks`, eliminating this transposition but requiring
+/// restructured producers and block-level operations.
 pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     w_hat: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
@@ -1513,12 +1637,16 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
 ) -> RecursiveWitnessFlat {
     let log_basis = layout.log_basis;
     let num_digits_fold = layout.num_digits_fold;
+    let depth_open = layout.num_digits_open;
+    let depth_commit = layout.num_digits_commit;
+    let block_len = layout.block_len;
     let levels = r_decomp_levels::<F>(log_basis);
 
     let w_hat_planes = w_hat.flat_digits().len();
     let t_hat_planes = t_hat.flat_digits().len();
     let z_count = w_hat_planes + t_hat_planes + z_pre_centered.len() * num_digits_fold;
     let r_hat_count = r.len() * levels;
+    let z_first = layout.m_vars >= layout.r_vars;
     tracing::debug!(
         w_hat_planes,
         t_hat_planes,
@@ -1528,26 +1656,55 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
         r_planes = r_hat_count,
         total_ring = z_count + r_hat_count,
         total_field = (z_count + r_hat_count) * D,
+        z_first,
         "build_w_coeffs"
     );
     let total_planes = z_count + r_hat_count;
     let total_elems = total_planes * D;
 
     let mut out = Vec::with_capacity(total_elems);
-    for digits in w_hat.flat_digits() {
-        out.extend_from_slice(digits);
+
+    let total_blocks_et = if depth_open > 0 { w_hat_planes / depth_open } else { 0 };
+    let t_planes_per_block = if total_blocks_et > 0 {
+        t_hat_planes / total_blocks_et
+    } else {
+        0
+    };
+
+    if z_first {
+        emit_z_pre_block_inner(
+            &mut out,
+            z_pre_centered,
+            block_len,
+            depth_commit,
+            num_digits_fold,
+            log_basis,
+        );
+        emit_planes_block_inner(&mut out, w_hat.flat_digits(), total_blocks_et, depth_open);
+        emit_planes_block_inner(
+            &mut out,
+            t_hat.flat_digits(),
+            total_blocks_et,
+            t_planes_per_block,
+        );
+    } else {
+        emit_planes_block_inner(&mut out, w_hat.flat_digits(), total_blocks_et, depth_open);
+        emit_planes_block_inner(
+            &mut out,
+            t_hat.flat_digits(),
+            total_blocks_et,
+            t_planes_per_block,
+        );
+        emit_z_pre_block_inner(
+            &mut out,
+            z_pre_centered,
+            block_len,
+            depth_commit,
+            num_digits_fold,
+            log_basis,
+        );
     }
-    for digits in t_hat.flat_digits() {
-        out.extend_from_slice(digits);
-    }
-    let mut z_planes = vec![[0i8; D]; num_digits_fold];
-    for z_j in z_pre_centered {
-        z_planes.fill([0i8; D]);
-        balanced_decompose_centered_i32_i8_into(z_j, &mut z_planes, log_basis);
-        for plane in &z_planes {
-            out.extend_from_slice(plane);
-        }
-    }
+
     let mut r_planes = vec![[0i8; D]; levels];
     let q = (-F::one()).to_canonical_u128() + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(levels, log_basis, q);
