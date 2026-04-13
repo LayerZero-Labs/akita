@@ -1628,70 +1628,74 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let t_compound_per_block = self.n_a * self.depth_open;
         let t_cols_per_claim = t_compound_per_block * self.num_blocks;
 
-        let mut off = 0usize;
-        let mut result = F::zero();
-
         let is_multi_point = self.num_points > 1;
 
         let compute_w_contribution = |off: usize| -> F {
-            let mut acc = F::zero();
-            for x in 0..w_len {
-                let dig = x / self.total_blocks;
-                let blk = x % self.total_blocks;
-                let claim_idx = blk / self.num_blocks;
-                let block_idx = blk % self.num_blocks;
-                let d_phys_col = blk * self.depth_open + dig;
-                let opening_point = if is_multi_point {
-                    &opening_points[self.claim_to_point[claim_idx]]
-                } else {
-                    &opening_points[0]
-                };
-                let mut val = (public_weights[claim_idx] * opening_point.b[block_idx]
-                    + consistency_weight * self.c_alphas[blk])
-                    * g1_open[dig];
-                for (di, eq_i) in self.eq_tau1[d_start..(d_start + self.n_d)]
-                    .iter()
-                    .enumerate()
-                {
-                    if !eq_i.is_zero() {
-                        val += *eq_i * eval_ring_at_pows(&d_view.row(di)[d_phys_col], &alpha_pows);
+            cfg_fold_reduce!(
+                0..w_len,
+                || F::zero(),
+                |acc, x| {
+                    let dig = x / self.total_blocks;
+                    let blk = x % self.total_blocks;
+                    let claim_idx = blk / self.num_blocks;
+                    let block_idx = blk % self.num_blocks;
+                    let d_phys_col = blk * self.depth_open + dig;
+                    let opening_point = if is_multi_point {
+                        &opening_points[self.claim_to_point[claim_idx]]
+                    } else {
+                        &opening_points[0]
+                    };
+                    let mut val = (public_weights[claim_idx] * opening_point.b[block_idx]
+                        + consistency_weight * self.c_alphas[blk])
+                        * g1_open[dig];
+                    for (di, eq_i) in self.eq_tau1[d_start..(d_start + self.n_d)]
+                        .iter()
+                        .enumerate()
+                    {
+                        if !eq_i.is_zero() {
+                            val += *eq_i
+                                * eval_ring_at_pows(&d_view.row(di)[d_phys_col], &alpha_pows);
+                        }
                     }
-                }
-                acc += val * eq_r[off + x];
-            }
-            acc
+                    acc + val * eq_r[off + x]
+                },
+                |a, b| a + b
+            )
         };
 
         let compute_t_contribution = |off: usize| -> F {
-            let mut acc = F::zero();
-            for x in 0..t_len {
-                let compound_dig = x / self.total_blocks;
-                let blk = x % self.total_blocks;
-                let a_idx = compound_dig / self.depth_open;
-                let digit_idx = compound_dig % self.depth_open;
-                let claim_idx = blk / self.num_blocks;
-                let block_idx = blk % self.num_blocks;
-                let (group_idx, claim_idx_within_group) = self.claim_to_group[claim_idx];
-                let phys_claim_offset =
-                    block_idx * t_compound_per_block + a_idx * self.depth_open + digit_idx;
-                let local_col = claim_idx_within_group * t_cols_per_claim + phys_claim_offset;
-                let commitment_weights = &self.eq_tau1
-                    [(b_start + group_idx * self.n_b)..(b_start + (group_idx + 1) * self.n_b)];
-                let mut val = a_weights[a_idx] * self.c_alphas[blk] * g1_open[digit_idx];
-                for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
-                    if !eq_i.is_zero() {
-                        val +=
-                            *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[local_col], &alpha_pows);
+            cfg_fold_reduce!(
+                0..t_len,
+                || F::zero(),
+                |acc, x| {
+                    let compound_dig = x / self.total_blocks;
+                    let blk = x % self.total_blocks;
+                    let a_idx = compound_dig / self.depth_open;
+                    let digit_idx = compound_dig % self.depth_open;
+                    let claim_idx = blk / self.num_blocks;
+                    let block_idx = blk % self.num_blocks;
+                    let (group_idx, claim_idx_within_group) = self.claim_to_group[claim_idx];
+                    let phys_claim_offset =
+                        block_idx * t_compound_per_block + a_idx * self.depth_open + digit_idx;
+                    let local_col = claim_idx_within_group * t_cols_per_claim + phys_claim_offset;
+                    let commitment_weights = &self.eq_tau1
+                        [(b_start + group_idx * self.n_b)..(b_start + (group_idx + 1) * self.n_b)];
+                    let mut val = a_weights[a_idx] * self.c_alphas[blk] * g1_open[digit_idx];
+                    for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
+                        if !eq_i.is_zero() {
+                            val += *eq_i
+                                * eval_ring_at_pows(&b_view.row(row_idx)[local_col], &alpha_pows);
+                        }
                     }
-                }
-                acc += val * eq_r[off + x];
-            }
-            acc
+                    acc + val * eq_r[off + x]
+                },
+                |a, b| a + b
+            )
         };
 
         let compute_z_contribution = |off: usize| -> F {
             let z_base_len = self.num_points * self.inner_width;
-            let z_base: Vec<F> = (0..z_base_len)
+            let z_base: Vec<F> = cfg_into_iter!(0..z_base_len)
                 .map(|k| {
                     let point_idx = if is_multi_point {
                         k / self.inner_width
@@ -1718,34 +1722,40 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 })
                 .collect();
 
-            let mut acc = F::zero();
-            for x in 0..z_len {
-                let compound_dig = x / z_total_blocks;
-                let global_blk = x % z_total_blocks;
-                let dc = compound_dig / self.depth_fold;
-                let df = compound_dig % self.depth_fold;
-                let point_idx = global_blk / self.block_len;
-                let blk = global_blk % self.block_len;
-                let phys_k = point_idx * self.inner_width + blk * self.depth_commit + dc;
-                let val = -(z_base[phys_k] * fold_gadget[df]);
-                acc += val * eq_r[off + x];
-            }
-            acc
+            cfg_fold_reduce!(
+                0..z_len,
+                || F::zero(),
+                |acc, x| {
+                    let compound_dig = x / z_total_blocks;
+                    let global_blk = x % z_total_blocks;
+                    let dc = compound_dig / self.depth_fold;
+                    let df = compound_dig % self.depth_fold;
+                    let point_idx = global_blk / self.block_len;
+                    let blk = global_blk % self.block_len;
+                    let phys_k = point_idx * self.inner_width + blk * self.depth_commit + dc;
+                    acc - z_base[phys_k] * fold_gadget[df] * eq_r[off + x]
+                },
+                |a, b| a + b
+            )
         };
 
         let compute_r_tail = |off: usize| -> F {
             let alpha_pow_d = alpha_pows[D - 1] * alpha;
             let denom = alpha_pow_d + F::one();
-            let mut acc = F::zero();
-            for idx in 0..r_tail_len {
-                let row_idx = idx / levels;
-                let level_idx = idx % levels;
-                let val = -(self.eq_tau1[row_idx] * denom * r_gadget[level_idx]);
-                acc += val * eq_r[off + idx];
-            }
-            acc
+            cfg_fold_reduce!(
+                0..r_tail_len,
+                || F::zero(),
+                |acc, idx| {
+                    let row_idx = idx / levels;
+                    let level_idx = idx % levels;
+                    acc - self.eq_tau1[row_idx] * denom * r_gadget[level_idx] * eq_r[off + idx]
+                },
+                |a, b| a + b
+            )
         };
 
+        let mut off = 0usize;
+        let mut result = F::zero();
         if self.z_first {
             result += compute_z_contribution(off);
             off += z_len;
