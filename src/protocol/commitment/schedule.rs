@@ -349,25 +349,34 @@ pub struct HachiLevelParams {
 
 impl HachiLevelParams {
     /// Total number of quotient / relation rows in `M`.
+    ///
+    /// Row layout (in order): consistency (1), public outputs,
+    /// D rows (`n_d`), B rows (`n_b`), A rows (`n_a`).
     pub fn m_row_count(&self) -> usize {
         self.m_row_count_with_public_outputs(1)
     }
 
     /// Total number of quotient / relation rows when the root carries
     /// `num_public_outputs` public `y` rows.
+    ///
+    /// Row layout: consistency (1) | public (`num_public_outputs`) |
+    /// D (`n_d`) | B (`n_b`) | A (`n_a`).
     pub fn m_row_count_with_public_outputs(&self, num_public_outputs: usize) -> usize {
-        self.n_d + self.n_b + num_public_outputs + 1 + self.n_a
+        1 + num_public_outputs + self.n_d + self.n_b + self.n_a
     }
 
     /// Total number of quotient / relation rows when the root carries
     /// `num_commitments` explicit commitment vectors and `num_public_outputs`
     /// public `y` rows.
+    ///
+    /// Row layout: consistency (1) | public (`num_public_outputs`) |
+    /// D (`n_d`) | B (`n_b * num_commitments`) | A (`n_a`).
     pub fn m_row_count_with_commitments_and_public_outputs(
         &self,
         num_commitments: usize,
         num_public_outputs: usize,
     ) -> usize {
-        self.n_d + self.n_b * num_commitments + num_public_outputs + 1 + self.n_a
+        1 + num_public_outputs + self.n_d + self.n_b * num_commitments + self.n_a
     }
 
     /// Total number of root-batched quotient / relation rows when each claim

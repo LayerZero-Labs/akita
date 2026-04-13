@@ -1112,11 +1112,15 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
     let b_view = setup.shared_matrix.ring_view::<D>(level_params.n_b, stride);
     let a_view = setup.shared_matrix.ring_view::<D>(level_params.n_a, stride);
 
+    // Row layout: consistency (1) | public (num_claims) | D (n_d) |
+    //             B (n_b * num_commitment_groups) | A (n_a)
     let commitment_row_count = level_params.n_b * num_commitment_groups;
-    let public_row_start = level_params.n_d + commitment_row_count;
-    let row3_weights = &eq_tau1[public_row_start..(public_row_start + num_claims)];
-    let row4_weight = eq_tau1[public_row_start + num_claims];
-    let a_weights = &eq_tau1[(public_row_start + num_claims + 1)..rows];
+    let consistency_weight = eq_tau1[0];
+    let public_weights = &eq_tau1[1..(1 + num_claims)];
+    let d_start = 1 + num_claims;
+    let b_start = d_start + level_params.n_d;
+    let a_start = b_start + commitment_row_count;
+    let a_weights = &eq_tau1[a_start..rows];
     let claim_to_group: Vec<(usize, usize)> = claim_group_sizes
         .iter()
         .enumerate()
@@ -1134,13 +1138,16 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
             let block_idx = claim_offset / depth_open;
             let digit_idx = claim_offset % depth_open;
             let global_block_idx = claim_idx * num_blocks + block_idx;
-            let mut acc = (row3_weights[claim_idx] * opening_point.b[block_idx]
-                + row4_weight * c_alphas[global_block_idx])
+            let mut acc = (public_weights[claim_idx] * opening_point.b[block_idx]
+                + consistency_weight * c_alphas[global_block_idx])
                 * g1_open[digit_idx];
-            for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(level_params.n_d) {
+            for (di, eq_i) in eq_tau1[d_start..(d_start + level_params.n_d)]
+                .iter()
+                .enumerate()
+            {
                 if !eq_i.is_zero() {
-                    acc += *eq_i
-                        * eval_ring_at_pows(&d_view.row(row_idx)[x % d_matrix_width], alpha_pows);
+                    acc +=
+                        *eq_i * eval_ring_at_pows(&d_view.row(di)[x % d_matrix_width], alpha_pows);
                 }
             }
             acc
@@ -1160,8 +1167,8 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
             let global_block_idx = claim_idx * num_blocks + block_idx;
             let (group_idx, claim_idx_within_group) = claim_to_group[claim_idx];
             let local_col = claim_idx_within_group * t_cols_per_claim + claim_offset;
-            let commitment_weights = &eq_tau1[(level_params.n_d + group_idx * level_params.n_b)
-                ..(level_params.n_d + (group_idx + 1) * level_params.n_b)];
+            let commitment_weights = &eq_tau1[(b_start + group_idx * level_params.n_b)
+                ..(b_start + (group_idx + 1) * level_params.n_b)];
             let mut acc = a_weights[a_idx] * c_alphas[global_block_idx] * g1_open[digit_idx];
             for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
@@ -1177,7 +1184,7 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
         .map(|k| {
             let block_idx = k / depth_commit;
             let digit_idx = k % depth_commit;
-            let mut acc = row4_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
+            let mut acc = consistency_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
             for (a_idx, eq_i) in a_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[k], alpha_pows);
@@ -1339,11 +1346,15 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
     let b_view = setup.shared_matrix.ring_view::<D>(level_params.n_b, stride);
     let a_view = setup.shared_matrix.ring_view::<D>(level_params.n_a, stride);
 
+    // Row layout: consistency (1) | public (num_claims) | D (n_d) |
+    //             B (n_b * num_commitment_groups) | A (n_a)
     let commitment_row_count = level_params.n_b * num_commitment_groups;
-    let public_row_start = level_params.n_d + commitment_row_count;
-    let row3_weights = &eq_tau1[public_row_start..(public_row_start + num_claims)];
-    let row4_weight = eq_tau1[public_row_start + num_claims];
-    let a_weights = &eq_tau1[(public_row_start + num_claims + 1)..rows];
+    let consistency_weight = eq_tau1[0];
+    let public_weights = &eq_tau1[1..(1 + num_claims)];
+    let d_start = 1 + num_claims;
+    let b_start = d_start + level_params.n_d;
+    let a_start = b_start + commitment_row_count;
+    let a_weights = &eq_tau1[a_start..rows];
     let claim_to_group: Vec<(usize, usize)> = claim_group_sizes
         .iter()
         .enumerate()
@@ -1362,13 +1373,16 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
             let digit_idx = claim_offset % depth_open;
             let global_block_idx = claim_idx * num_blocks + block_idx;
             let opening_point = &opening_points[claim_to_point[claim_idx]];
-            let mut acc = (row3_weights[claim_idx] * opening_point.b[block_idx]
-                + row4_weight * c_alphas[global_block_idx])
+            let mut acc = (public_weights[claim_idx] * opening_point.b[block_idx]
+                + consistency_weight * c_alphas[global_block_idx])
                 * g1_open[digit_idx];
-            for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(level_params.n_d) {
+            for (di, eq_i) in eq_tau1[d_start..(d_start + level_params.n_d)]
+                .iter()
+                .enumerate()
+            {
                 if !eq_i.is_zero() {
-                    acc += *eq_i
-                        * eval_ring_at_pows(&d_view.row(row_idx)[x % d_matrix_width], alpha_pows);
+                    acc +=
+                        *eq_i * eval_ring_at_pows(&d_view.row(di)[x % d_matrix_width], alpha_pows);
                 }
             }
             acc
@@ -1388,8 +1402,8 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
             let global_block_idx = claim_idx * num_blocks + block_idx;
             let (group_idx, claim_idx_within_group) = claim_to_group[claim_idx];
             let local_col = claim_idx_within_group * t_cols_per_claim + claim_offset;
-            let commitment_weights = &eq_tau1[(level_params.n_d + group_idx * level_params.n_b)
-                ..(level_params.n_d + (group_idx + 1) * level_params.n_b)];
+            let commitment_weights = &eq_tau1[(b_start + group_idx * level_params.n_b)
+                ..(b_start + (group_idx + 1) * level_params.n_b)];
             let mut acc = a_weights[a_idx] * c_alphas[global_block_idx] * g1_open[digit_idx];
             for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
@@ -1408,7 +1422,7 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
             let block_idx = local_k / depth_commit;
             let digit_idx = local_k % depth_commit;
             let opening_point = &opening_points[point_idx];
-            let mut acc = row4_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
+            let mut acc = consistency_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
             for (a_idx, eq_i) in a_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[local_k], alpha_pows);

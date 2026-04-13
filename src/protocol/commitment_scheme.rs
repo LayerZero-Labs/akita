@@ -4187,13 +4187,15 @@ mod tests {
                 w_hat_len + t_hat_len + z_pre_len + r_tail_len,
             );
             let eq_tau1 = crate::algebra::eq_poly::EqPolynomial::evals(&rs.tau1);
-            let row3_start = batch_root_params.n_d + batch_root_params.n_b * BATCH_SIZE;
-            let row4_idx = row3_start + BATCH_SIZE;
-            let a_row_start = row4_idx + 1;
-            let row3_weights = &eq_tau1[row3_start..row4_idx];
-            let row4_weight = eq_tau1[row4_idx];
+            // Row layout: consistency (1) | public (BATCH_SIZE) | D (n_d) |
+            //             B (n_b * BATCH_SIZE) | A (n_a)
+            let consistency_weight = eq_tau1[0];
+            let public_weights = &eq_tau1[1..(1 + BATCH_SIZE)];
+            let d_start = 1 + BATCH_SIZE;
+            let b_start = d_start + batch_root_params.n_d;
+            let a_start = b_start + batch_root_params.n_b * BATCH_SIZE;
             let a_weights =
-                &eq_tau1[a_row_start..batch_root_params.batched_root_m_row_count(BATCH_SIZE)];
+                &eq_tau1[a_start..batch_root_params.batched_root_m_row_count(BATCH_SIZE)];
             let alpha_pows = &rs.alpha_evals_y;
             let eval_sparse_alpha = |challenge: &crate::algebra::SparseChallenge| -> OneHotF {
                 challenge
@@ -4251,23 +4253,24 @@ mod tests {
                 .iter()
                 .enumerate()
                 .take(batch_root_params.n_d)
-                .fold(OneHotF::zero(), |acc, (row_idx, row)| {
-                    acc + eq_tau1[row_idx]
+                .fold(OneHotF::zero(), |acc, (di, row)| {
+                    acc + eq_tau1[d_start + di]
                         * crate::protocol::ring_switch::eval_ring_at(row, &rs.alpha)
                 });
-            let expected_b_sum = batch_commitment_rows.iter().enumerate().fold(
-                OneHotF::zero(),
-                |acc, (row_idx, row)| {
-                    acc + eq_tau1[batch_root_params.n_d + row_idx]
-                        * crate::protocol::ring_switch::eval_ring_at(row, &rs.alpha)
-                },
-            );
+            let expected_b_sum =
+                batch_commitment_rows
+                    .iter()
+                    .enumerate()
+                    .fold(OneHotF::zero(), |acc, (bi, row)| {
+                        acc + eq_tau1[b_start + bi]
+                            * crate::protocol::ring_switch::eval_ring_at(row, &rs.alpha)
+                    });
             let expected_public_sum =
                 y_rings
                     .iter()
                     .enumerate()
                     .fold(OneHotF::zero(), |acc, (claim_idx, y_ring)| {
-                        acc + row3_weights[claim_idx]
+                        acc + public_weights[claim_idx]
                             * crate::protocol::ring_switch::eval_ring_at(y_ring, &rs.alpha)
                     });
             let stored_t_by_poly = debug_batch_hint
@@ -4457,22 +4460,23 @@ mod tests {
                         acc - eval_ring_at_pows_local(&a_view.row(0)[k], alpha_pows)
                             * crate::protocol::ring_switch::eval_ring_at(z_ring, &rs.alpha)
                     });
-            let direct_raw_a_r = -(denom
-                * crate::protocol::ring_switch::eval_ring_at(&debug_r[a_row_start], &rs.alpha));
+            let direct_raw_a_r =
+                -(denom * crate::protocol::ring_switch::eval_ring_at(&debug_r[a_start], &rs.alpha));
             let direct_raw_a_total = direct_raw_a_t + direct_raw_a_z + direct_raw_a_r;
             let d_matrix_width = batched_root_layout.d_matrix_width;
             let d_group_w = (0..w_hat_len).fold(OneHotF::zero(), |acc, x| {
-                let coeff = (0..batch_root_params.n_d).fold(OneHotF::zero(), |inner, row_idx| {
+                let coeff = (0..batch_root_params.n_d).fold(OneHotF::zero(), |inner, di| {
                     inner
-                        + eq_tau1[row_idx]
+                        + eq_tau1[d_start + di]
                             * eval_ring_at_pows_local(
-                                &d_view.row(row_idx)[x % d_matrix_width],
+                                &d_view.row(di)[x % d_matrix_width],
                                 alpha_pows,
                             )
                 });
                 acc + w_alpha_evals[x] * coeff
             });
-            let d_group_r = (0..batch_root_params.n_d).fold(OneHotF::zero(), |acc, row_idx| {
+            let d_group_r = (0..batch_root_params.n_d).fold(OneHotF::zero(), |acc, di| {
+                let row_idx = d_start + di;
                 let row_start = w_hat_len + t_hat_len + z_pre_len + row_idx * r_gadget.len();
                 acc + (0..r_gadget.len()).fold(OneHotF::zero(), |inner, level_idx| {
                     inner
@@ -4482,18 +4486,15 @@ mod tests {
             });
             let outer_width = batched_root_layout.outer_width;
             let b_group_t = (0..t_hat_len).fold(OneHotF::zero(), |acc, x| {
-                let coeff = (0..batch_root_params.n_b).fold(OneHotF::zero(), |inner, row_idx| {
+                let coeff = (0..batch_root_params.n_b).fold(OneHotF::zero(), |inner, bi| {
                     inner
-                        + eq_tau1[batch_root_params.n_d + row_idx]
-                            * eval_ring_at_pows_local(
-                                &b_view.row(row_idx)[x % outer_width],
-                                alpha_pows,
-                            )
+                        + eq_tau1[b_start + bi]
+                            * eval_ring_at_pows_local(&b_view.row(bi)[x % outer_width], alpha_pows)
                 });
                 acc + w_alpha_evals[w_hat_len + x] * coeff
             });
-            let b_group_r = (0..batch_root_params.n_b).fold(OneHotF::zero(), |acc, row_offset| {
-                let row_idx = batch_root_params.n_d + row_offset;
+            let b_group_r = (0..batch_root_params.n_b).fold(OneHotF::zero(), |acc, bi| {
+                let row_idx = b_start + bi;
                 let row_start = w_hat_len + t_hat_len + z_pre_len + row_idx * r_gadget.len();
                 acc + (0..r_gadget.len()).fold(OneHotF::zero(), |inner, level_idx| {
                     inner
@@ -4509,12 +4510,12 @@ mod tests {
                 let block_idx = claim_offset / batched_root_layout.num_digits_open;
                 let digit_idx = claim_offset % batched_root_layout.num_digits_open;
                 acc + w_alpha_evals[x]
-                    * row3_weights[claim_idx]
+                    * public_weights[claim_idx]
                     * ring_opening_point.b[block_idx]
                     * g1_open[digit_idx]
             });
             let public_group_r = (0..BATCH_SIZE).fold(OneHotF::zero(), |acc, claim_idx| {
-                let row_idx = row3_start + claim_idx;
+                let row_idx = 1 + claim_idx;
                 let row_start = w_hat_len + t_hat_len + z_pre_len + row_idx * r_gadget.len();
                 acc + (0..r_gadget.len()).fold(OneHotF::zero(), |inner, level_idx| {
                     inner
@@ -4531,7 +4532,7 @@ mod tests {
                 let digit_idx = claim_offset % batched_root_layout.num_digits_open;
                 let global_block_idx = claim_idx * batched_root_layout.num_blocks + block_idx;
                 acc + w_alpha_evals[x]
-                    * row4_weight
+                    * consistency_weight
                     * c_alphas[global_block_idx]
                     * g1_open[digit_idx]
             });
@@ -4541,16 +4542,16 @@ mod tests {
                 let block_idx = k / batched_root_layout.num_digits_commit;
                 let digit_idx = k % batched_root_layout.num_digits_commit;
                 acc + w_alpha_evals[w_hat_len + t_hat_len + idx]
-                    * (-(row4_weight
+                    * (-(consistency_weight
                         * ring_opening_point.a[block_idx]
                         * g1_commit[digit_idx]
                         * fold_gadget[fold_idx]))
             });
             let row4_group_r = {
-                let row_start = w_hat_len + t_hat_len + z_pre_len + row4_idx * r_gadget.len();
+                let row_start = w_hat_len + t_hat_len + z_pre_len;
                 (0..r_gadget.len()).fold(OneHotF::zero(), |acc, level_idx| {
                     acc + w_alpha_evals[row_start + level_idx]
-                        * (-(row4_weight * denom * r_gadget[level_idx]))
+                        * (-(consistency_weight * denom * r_gadget[level_idx]))
                 })
             };
             let a_group_t = (0..t_hat_len).fold(OneHotF::zero(), |acc, x| {
@@ -4592,7 +4593,7 @@ mod tests {
                     .iter()
                     .enumerate()
                     .fold(OneHotF::zero(), |acc, (row_offset, eq_i)| {
-                        let row_idx = a_row_start + row_offset;
+                        let row_idx = a_start + row_offset;
                         let row_start =
                             w_hat_len + t_hat_len + z_pre_len + row_idx * r_gadget.len();
                         acc + (0..r_gadget.len()).fold(OneHotF::zero(), |inner, level_idx| {

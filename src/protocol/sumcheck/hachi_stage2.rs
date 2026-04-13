@@ -15,9 +15,11 @@
 //!
 //! If
 //!
-//! `y_alpha = [v_0(alpha), ..., v_{N_D-1}(alpha),`
+//! `y_alpha = [0,`
+//! `           y_ring(alpha),`
+//! `           v_0(alpha), ..., v_{N_D-1}(alpha),`
 //! `           u_0(alpha), ..., u_{N_B-1}(alpha),`
-//! `           y_ring(alpha), 0, ..., 0],`
+//! `           0, ..., 0],`
 //!
 //! then the linear relation claim is
 //!
@@ -189,6 +191,9 @@ pub(crate) fn accumulate_relation_coeffs_signed<E: FieldCore + HasUnreducedOps>(
 
 #[inline]
 #[tracing::instrument(skip_all, name = "relation_claim_from_rows")]
+/// Compute the relation claim `sum_i eq(tau1, i) * y_alpha[i]` where `y_alpha`
+/// follows the M row layout: consistency (zero) | public (`y_rings`) |
+/// D (`v`) | B (`u`) | A (zeros).
 pub(crate) fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
     tau1: &[F],
     alpha: F,
@@ -198,8 +203,16 @@ pub(crate) fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: u
 ) -> F {
     let eq_tau1 = EqPolynomial::evals(tau1);
     let mut acc = F::zero();
-    let mut row_idx = 0usize;
+    // Row 0: consistency (y = 0, skip)
+    let mut row_idx = 1usize;
 
+    for y_ring in y_rings {
+        if row_idx >= eq_tau1.len() {
+            return acc;
+        }
+        acc += eq_tau1[row_idx] * eval_ring_at(y_ring, &alpha);
+        row_idx += 1;
+    }
     for r in v {
         if row_idx >= eq_tau1.len() {
             return acc;
@@ -212,13 +225,6 @@ pub(crate) fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: u
             return acc;
         }
         acc += eq_tau1[row_idx] * eval_ring_at(r, &alpha);
-        row_idx += 1;
-    }
-    for y_ring in y_rings {
-        if row_idx >= eq_tau1.len() {
-            return acc;
-        }
-        acc += eq_tau1[row_idx] * eval_ring_at(y_ring, &alpha);
         row_idx += 1;
     }
     acc
