@@ -6,8 +6,8 @@ use crate::FieldCore;
 use core::arch::aarch64::{
     uint32x2_t, uint32x4_t, uint64x2_t, vaddq_u32, vaddq_u64, vandq_u64, vbslq_u32, vbslq_u64,
     vcgtq_u64, vcltq_u32, vcltq_u64, vcombine_u32, vdup_n_u32, vdupq_n_s64, vdupq_n_u32,
-    vdupq_n_u64, veorq_u64, vget_low_u32, vminq_u32, vmovn_u64, vmull_high_u32, vmull_u32,
-    vorrq_u64, vshlq_u64, vsubq_u32, vsubq_u64,
+    vdupq_n_u64, vget_low_u32, vminq_u32, vmovn_u64, vmull_high_u32, vmull_u32, vorrq_u64,
+    vshlq_u64, vsubq_u32, vsubq_u64,
 };
 use core::fmt;
 use core::mem::transmute;
@@ -38,7 +38,6 @@ fn from_vec(v: uint64x2_t) -> [u64; 2] {
 
 #[inline(always)]
 fn mask_to_bit(mask: uint64x2_t) -> uint64x2_t {
-    // SAFETY: NEON intrinsics are available under this cfg.
     unsafe { vandq_u64(mask, vdupq_n_u64(1)) }
 }
 
@@ -226,31 +225,30 @@ impl<const P: u128> Add for PackedFp128Neon<P> {
         let hi_b = to_vec(rhs.hi);
 
         let (out_lo, out_hi) = unsafe {
-            let p_lo = vdupq_n_u64(modulus_lo::<P>());
-            let p_hi = vdupq_n_u64(modulus_hi::<P>());
+            let c_vec = vdupq_n_u64(Self::C_LO);
 
+            // s = a + b (128-bit, two lanes).
+            // Carry propagation uses raw comparison masks with sub: subtracting
+            // a lane of all-1s is equivalent to adding 1 in wrapping arithmetic.
             let sum_lo = vaddq_u64(lo_a, lo_b);
-            let carry_lo = mask_to_bit(vcltq_u64(sum_lo, lo_a));
+            let carry_lo = vcltq_u64(sum_lo, lo_a);
 
             let hi_tmp = vaddq_u64(hi_a, hi_b);
             let carry_hi1 = vcltq_u64(hi_tmp, hi_a);
-            let sum_hi = vaddq_u64(hi_tmp, carry_lo);
+            let sum_hi = vsubq_u64(hi_tmp, carry_lo);
             let carry_hi2 = vcltq_u64(sum_hi, hi_tmp);
-            let carry_128 = vorrq_u64(carry_hi1, carry_hi2);
+            let overflow = vorrq_u64(carry_hi1, carry_hi2);
 
-            let red_lo = vsubq_u64(sum_lo, p_lo);
-            let borrow_lo = mask_to_bit(vcgtq_u64(p_lo, sum_lo));
+            // t = s + C.  Since p = 2^128 - C, this is s - p (mod 2^128).
+            // If s + C >= 2^128 then s >= p, so the reduced value t is correct.
+            let t_lo = vaddq_u64(sum_lo, c_vec);
+            let carry_c = vcltq_u64(t_lo, sum_lo);
+            let t_hi = vsubq_u64(sum_hi, carry_c);
+            let carry_t = vcltq_u64(t_hi, sum_hi);
 
-            let red_hi_tmp = vsubq_u64(sum_hi, p_hi);
-            let borrow_hi1 = vcgtq_u64(p_hi, sum_hi);
-            let red_hi = vsubq_u64(red_hi_tmp, borrow_lo);
-            let borrow_hi2 = vcltq_u64(red_hi_tmp, borrow_lo);
-            let borrow = vorrq_u64(borrow_hi1, borrow_hi2);
-
-            let not_borrow = veorq_u64(borrow, vdupq_n_u64(u64::MAX));
-            let use_reduced = vorrq_u64(carry_128, not_borrow);
-            let out_lo = vbslq_u64(use_reduced, red_lo, sum_lo);
-            let out_hi = vbslq_u64(use_reduced, red_hi, sum_hi);
+            let use_reduced = vorrq_u64(overflow, carry_t);
+            let out_lo = vbslq_u64(use_reduced, t_lo, sum_lo);
+            let out_hi = vbslq_u64(use_reduced, t_hi, sum_hi);
             (out_lo, out_hi)
         };
 
