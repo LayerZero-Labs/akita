@@ -279,26 +279,49 @@ impl<F: FieldCore> FftWorkspace<F> {
                             let w4 = omega_r_pow[4];
                             let w5 = omega_r_pow[5];
                             let w6 = omega_r_pow[6];
-                            self.buf_a[base] =
-                                x[0] + x[1] + x[2] + x[3] + x[4] + x[5] + x[6];
-                            self.buf_a[base + block] =
-                                x[0] + x[1] * w1 + x[2] * w2 + x[3] * w3
-                                     + x[4] * w4 + x[5] * w5 + x[6] * w6;
-                            self.buf_a[base + 2 * block] =
-                                x[0] + x[1] * w2 + x[2] * w4 + x[3] * w6
-                                     + x[4] * w1 + x[5] * w3 + x[6] * w5;
-                            self.buf_a[base + 3 * block] =
-                                x[0] + x[1] * w3 + x[2] * w6 + x[3] * w2
-                                     + x[4] * w5 + x[5] * w1 + x[6] * w4;
-                            self.buf_a[base + 4 * block] =
-                                x[0] + x[1] * w4 + x[2] * w1 + x[3] * w5
-                                     + x[4] * w2 + x[5] * w6 + x[6] * w3;
-                            self.buf_a[base + 5 * block] =
-                                x[0] + x[1] * w5 + x[2] * w3 + x[3] * w1
-                                     + x[4] * w6 + x[5] * w4 + x[6] * w2;
-                            self.buf_a[base + 6 * block] =
-                                x[0] + x[1] * w6 + x[2] * w5 + x[3] * w4
-                                     + x[4] * w3 + x[5] * w2 + x[6] * w1;
+                            self.buf_a[base] = x[0] + x[1] + x[2] + x[3] + x[4] + x[5] + x[6];
+                            self.buf_a[base + block] = x[0]
+                                + x[1] * w1
+                                + x[2] * w2
+                                + x[3] * w3
+                                + x[4] * w4
+                                + x[5] * w5
+                                + x[6] * w6;
+                            self.buf_a[base + 2 * block] = x[0]
+                                + x[1] * w2
+                                + x[2] * w4
+                                + x[3] * w6
+                                + x[4] * w1
+                                + x[5] * w3
+                                + x[6] * w5;
+                            self.buf_a[base + 3 * block] = x[0]
+                                + x[1] * w3
+                                + x[2] * w6
+                                + x[3] * w2
+                                + x[4] * w5
+                                + x[5] * w1
+                                + x[6] * w4;
+                            self.buf_a[base + 4 * block] = x[0]
+                                + x[1] * w4
+                                + x[2] * w1
+                                + x[3] * w5
+                                + x[4] * w2
+                                + x[5] * w6
+                                + x[6] * w3;
+                            self.buf_a[base + 5 * block] = x[0]
+                                + x[1] * w5
+                                + x[2] * w3
+                                + x[3] * w1
+                                + x[4] * w6
+                                + x[5] * w4
+                                + x[6] * w2;
+                            self.buf_a[base + 6 * block] = x[0]
+                                + x[1] * w6
+                                + x[2] * w5
+                                + x[3] * w4
+                                + x[4] * w3
+                                + x[5] * w2
+                                + x[6] * w1;
                         }
                         _ => {
                             for (q, &wq) in omega_r_pow[..r].iter().enumerate() {
@@ -525,9 +548,9 @@ mod tests {
     fn primitive_root_has_correct_order() {
         let g = generator();
         for &n in &[
-            2, 3, 4, 5, 6, 7, 10, 12, 14, 15, 20, 21, 25, 28, 30, 35, 42, 49, 50, 60, 70, 75,
-            84, 98, 100, 105, 140, 147, 150, 175, 196, 210, 245, 294, 300, 350, 420, 490, 525,
-            588, 700, 735, 980, 1050, 1225, 1470, 2100, 2450, 2940, 3675, 4900, 7350, 14700,
+            2, 3, 4, 5, 6, 7, 10, 12, 14, 15, 20, 21, 25, 28, 30, 35, 42, 49, 50, 60, 70, 75, 84,
+            98, 100, 105, 140, 147, 150, 175, 196, 210, 245, 294, 300, 350, 420, 490, 525, 588,
+            700, 735, 980, 1050, 1225, 1470, 2100, 2450, 2940, 3675, 4900, 7350, 14700,
         ] {
             if P_MINUS_1 % (n as u128) != 0 {
                 continue;

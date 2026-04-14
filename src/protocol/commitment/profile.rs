@@ -11,8 +11,8 @@ use super::schedule::{
     planned_recursive_suffix_bytes_from_schedule, planned_schedule_key_from_schedule,
     HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
-use crate::algebra::SparseChallengeConfig;
 use crate::algebra::Prime128Offset2355;
+use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
 use crate::{CanonicalField, FieldCore};
 

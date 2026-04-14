@@ -131,18 +131,15 @@ fn bench_rs_expand_256_to_1024_par(c: &mut Criterion) {
         })
         .collect();
 
-    c.bench_function(
-        "fft_rs_expand/256_to_1024_via_1470_x32768_par",
-        |b| {
-            b.iter(|| {
-                let results: Vec<Vec<F>> = coeffs_batch
-                    .par_iter()
-                    .map(|coeffs| domain.coset_forward(coeffs, F::one()))
-                    .collect();
-                black_box(&results);
-            })
-        },
-    );
+    c.bench_function("fft_rs_expand/256_to_1024_via_1470_x32768_par", |b| {
+        b.iter(|| {
+            let results: Vec<Vec<F>> = coeffs_batch
+                .par_iter()
+                .map(|coeffs| domain.coset_forward(coeffs, F::one()))
+                .collect();
+            black_box(&results);
+        })
+    });
 }
 
 #[cfg(not(feature = "parallel"))]

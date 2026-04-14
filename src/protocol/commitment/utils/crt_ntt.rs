@@ -50,9 +50,7 @@ pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
     let ntt_q128_modulus =
         u128::MAX - (<Prime128Offset2355 as PseudoMersenneField>::MODULUS_OFFSET - 1);
 
-    if modulus == Q128_MODULUS
-        || modulus == split_only_q128_modulus
-        || modulus == ntt_q128_modulus
+    if modulus == Q128_MODULUS || modulus == split_only_q128_modulus || modulus == ntt_q128_modulus
     {
         return Ok(ProtocolCrtNttParams::Q128(CrtNttParamSet::new(
             q128_primes(),

@@ -1,6 +1,7 @@
 //! Prime fields and extension field towers.
 
 pub mod ext;
+pub mod fft;
 pub mod fp128;
 pub mod fp32;
 pub mod fp64;
@@ -22,7 +23,6 @@ pub mod packed_ext;
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 pub mod packed_neon;
 pub mod pseudo_mersenne;
-pub mod fft;
 pub(crate) mod util;
 pub mod wide;
 
