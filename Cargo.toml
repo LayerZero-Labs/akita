@@ -66,10 +66,6 @@ path = "src/planner/bin/hachi-planner.rs"
 name = "gen_schedule_tables"
 path = "src/planner/bin/gen_schedule_tables.rs"
 
-[[bin]]
-name = "gen_refactored_tables"
-path = "src/planner/bin/gen_refactored_tables.rs"
-
 [[example]]
 name = "profile"
 

@@ -72,9 +72,6 @@ pub(crate) mod fp128_d32_full;
 pub(crate) mod fp128_d32_onehot;
 pub(crate) mod fp128_d64_full;
 pub(crate) mod fp128_d64_onehot;
-#[allow(dead_code)]
-pub(crate) mod refactored;
-pub(crate) mod refactored_batched;
 pub(crate) mod sis_floor;
 
 pub(crate) fn table_entry(

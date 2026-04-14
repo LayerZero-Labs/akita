@@ -653,7 +653,7 @@ where
         return Ok(split);
     }
 
-    use crate::planner::refactored_planner::{find_optimal_batched_schedule, BatchConfig, Step};
+    use crate::planner::schedule_params::{find_optimal_batched_schedule, BatchConfig, Step};
 
     let batch = BatchConfig {
         num_claims,

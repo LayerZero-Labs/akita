@@ -14,7 +14,7 @@
 pub mod baseline;
 pub mod digit_math;
 pub mod proof_size;
-pub mod refactored_planner;
+pub mod schedule_params;
 pub mod search;
 pub mod sis_security;
 
