@@ -15,7 +15,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;
 
-type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
+type F = Fp128<0xfffffffffffffffffffffffffffff6cd>;
 type Cfg = fp128::D64OneHot;
 const D: usize = Cfg::D;
 

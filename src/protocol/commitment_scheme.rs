@@ -3496,7 +3496,7 @@ mod tests {
     type Cfg = SmallTestCommitmentConfig;
     const D: usize = Cfg::D;
     type Scheme = HachiCommitmentScheme<D, Cfg>;
-    type OneHotF = Fp128<0xfffffffffffffffffffffffffffffeed>;
+    type OneHotF = Fp128<0xfffffffffffffffffffffffffffff6cd>;
     type OneHotCfg = fp128::D64OneHot;
     const ONEHOT_D: usize = OneHotCfg::D;
     const BENCH_ONEHOT_K: usize = ONEHOT_D;
