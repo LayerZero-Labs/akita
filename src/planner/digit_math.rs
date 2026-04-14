@@ -107,19 +107,32 @@ pub fn num_digits_for_bound(log_bound: u32, log_basis: u32) -> usize {
 /// L1-mass `challenge_l1_mass` and applies `r_vars` levels of block folding,
 /// producing entries bounded by:
 ///
-///   β = challenge_l1_mass · 2^r_vars · 2^(log_basis - 1)
+///   β = challenge_l1_mass · num_claims · 2^(r_vars + log_basis - 1)
 ///
-/// We compute `⌈log2(β)⌉` and then delegate to [`compute_num_digits`].
-pub fn compute_num_digits_fold(r_vars: usize, challenge_l1_mass: usize, log_basis: u32) -> usize {
-    assert!(challenge_l1_mass > 0, "challenge_l1_mass must be positive");
+/// Pass `num_claims = 1` for the single-polynomial case.  When batching
+/// multiple openings at the root, the bound grows proportionally to the
+/// number of claims.
+///
+/// Falls back to the field-width ceiling when the shift overflows or the
+/// mass is zero, matching the protocol's `compute_num_digits_fold_batched`
+/// in `commit.rs`.
+pub fn compute_num_digits_fold(
+    r_vars: usize,
+    challenge_l1_mass: usize,
+    log_basis: u32,
+    num_claims: usize,
+) -> usize {
     let shift = r_vars + (log_basis as usize) - 1;
-    assert!(
-        shift < 127,
-        "shift overflow: r_vars={r_vars} + log_basis={log_basis} - 1 >= 127"
-    );
-
-    let beta = (challenge_l1_mass as u128) * (1u128 << shift);
-    let log_beta = 128 - beta.leading_zeros(); // ⌈log2(β+1)⌉
+    if shift >= 127 || challenge_l1_mass == 0 {
+        return compute_num_digits(128, log_basis);
+    }
+    let beta = (challenge_l1_mass as u128)
+        .saturating_mul(num_claims as u128)
+        .saturating_mul(1u128 << shift);
+    if beta == 0 {
+        return 1;
+    }
+    let log_beta = 128 - beta.leading_zeros();
     compute_num_digits(log_beta, log_basis)
 }
 
@@ -210,7 +223,7 @@ pub fn optimal_m_r_split(
         };
 
         // δ_fold grows with r because β = 2^r · challenge_l1_mass · 2^(lb-1).
-        let delta_fold = compute_num_digits_fold(r, challenge_l1_mass, log_basis) as u64;
+        let delta_fold = compute_num_digits_fold(r, challenge_l1_mass, log_basis, 1) as u64;
 
         // |t̂| + |ŵ|                    +  |ẑ|
         let opening_cost = per_block_cost.saturating_mul(num_blocks);
@@ -291,10 +304,20 @@ mod tests {
 
     #[test]
     fn digits_fold_basic() {
-        let got_2 = compute_num_digits_fold(12, 54, 2);
-        let got_3 = compute_num_digits_fold(12, 54, 3);
+        let got_2 = compute_num_digits_fold(12, 54, 2, 1);
+        let got_3 = compute_num_digits_fold(12, 54, 3, 1);
         assert!(got_2 > 0);
         assert!(got_3 > 0);
         assert!(got_2 >= got_3);
+    }
+
+    #[test]
+    fn digits_fold_monotonic_in_claims() {
+        let (r, mass, lb) = (8, 54, 3);
+        let d1 = compute_num_digits_fold(r, mass, lb, 1);
+        let d4 = compute_num_digits_fold(r, mass, lb, 4);
+        let d16 = compute_num_digits_fold(r, mass, lb, 16);
+        assert!(d1 <= d4, "more claims should need >= digits");
+        assert!(d4 <= d16, "more claims should need >= digits");
     }
 }

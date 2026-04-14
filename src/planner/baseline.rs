@@ -51,7 +51,7 @@ fn compute_level(
     let op = if log_cb < 128 { 128 } else { log_cb };
     let d_open = num_digits_for_bound(op, lb);
     let d_commit = num_digits_for_bound(log_cb, lb);
-    let d_fold = compute_num_digits_fold(r, bp.challenge_l1_mass, lb);
+    let d_fold = compute_num_digits_fold(r, bp.challenge_l1_mass, lb, 1);
     let bl = 1usize << m;
     let iw = bl * d_commit;
     let w_hat = (1usize << r) * d_open;

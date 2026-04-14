@@ -1,14 +1,13 @@
 //! Ring-native §4.1 commitment core implementation.
 
 use super::config::{
-    compute_num_digits, compute_num_digits_fold, ensure_block_layout,
-    ensure_layout_supported_num_vars, validate_and_derive_layout, HachiCommitmentLayout,
+    compute_num_digits, ensure_block_layout, ensure_layout_supported_num_vars,
+    validate_and_derive_layout, HachiCommitmentLayout,
 };
 use super::onehot::{inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks};
 use super::schedule::HachiScheduleInputs;
 use super::schedule::{
-    estimated_recursive_suffix_bytes, hachi_root_runtime_plan_from_root_layout,
-    HachiRootBatchSummary, HachiScheduleLookupKey,
+    hachi_root_runtime_plan_from_root_layout, HachiRootBatchSummary, HachiScheduleLookupKey,
 };
 use super::scheme::{CommitWitness, RingCommitmentScheme};
 use super::types::RingCommitment;
@@ -465,78 +464,113 @@ where
     Ok(root_layout)
 }
 
+/// Planner-derived batched root split parameters.
+struct BatchedRootSplit {
+    m_vars: usize,
+    r_vars: usize,
+    n_a: usize,
+    num_digits_commit: usize,
+    num_digits_open: usize,
+    /// Per-polynomial fold digits (`num_claims=1`).
+    num_digits_fold: usize,
+    /// Batched fold digits (from the planner's candidate layout).
+    num_digits_fold_batched: usize,
+    log_basis: u32,
+}
+
+/// Extract `BatchedRootSplit` from a pre-computed `HachiSchedulePlan`'s
+/// first fold level, if one exists.
+fn split_from_schedule_plan(plan: &super::schedule::HachiSchedulePlan) -> Option<BatchedRootSplit> {
+    use super::config::compute_num_digits_fold;
+
+    let root_level = plan.fold_levels().next()?;
+    let per_poly_fold = compute_num_digits_fold(
+        root_level.layout.r_vars,
+        root_level.params.challenge_l1_mass,
+        root_level.layout.log_basis,
+    );
+    Some(BatchedRootSplit {
+        m_vars: root_level.layout.m_vars,
+        r_vars: root_level.layout.r_vars,
+        n_a: root_level.params.n_a,
+        num_digits_commit: root_level.layout.num_digits_commit,
+        num_digits_open: root_level.layout.num_digits_open,
+        num_digits_fold: per_poly_fold,
+        num_digits_fold_batched: root_level.layout.num_digits_fold,
+        log_basis: root_level.params.log_basis,
+    })
+}
+
+/// Find the optimal `(log_basis, m, r)` triple for a batched root opening.
+///
+/// First checks the pre-computed generated tables.  Falls back to the DP
+/// planner only when no table entry exists.
 fn optimal_root_batch_split<Cfg, const D: usize>(
     max_num_vars: usize,
-    root_params: &super::schedule::HachiLevelParams,
-    root_layout: HachiCommitmentLayout,
     num_claims: usize,
-) -> Result<(usize, usize, usize), HachiError>
+) -> Result<BatchedRootSplit, HachiError>
 where
     Cfg: CommitmentConfig,
 {
-    // Root commitment layout must be fixed at commit time, before any later
-    // batched opening decides how many distinct points it will use. Point
-    // count therefore affects recursive witness sizing, but not the root split.
-    let alpha = D.trailing_zeros() as usize;
-    let reduced_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
-        HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
-    })?;
-    if reduced_vars <= 1 {
-        return Err(HachiError::InvalidSetup(
-            "batched root requires at least two outer variables".to_string(),
-        ));
-    }
-
-    let batch = HachiRootBatchSummary::new(num_claims, num_claims, 1)?;
-
-    let mut best = None;
-    for r_vars in 1..reduced_vars {
-        let m_vars = reduced_vars - r_vars;
-        let num_digits_fold = root_layout
-            .num_digits_fold
-            .max(compute_num_digits_fold_batched(
-                r_vars,
-                root_params.challenge_l1_mass,
-                root_layout.log_basis,
+    let lookup_key = HachiScheduleLookupKey::with_batch(
+        max_num_vars,
+        max_num_vars,
+        num_claims,
+        HachiRootBatchSummary::new(num_claims, 1, 1)?,
+    );
+    if let Some(plan) = Cfg::schedule_plan(lookup_key)? {
+        if let Some(split) = split_from_schedule_plan(&plan) {
+            tracing::info!(
+                max_num_vars,
                 num_claims,
-            ));
-
-        let candidate_layout = HachiCommitmentLayout::new_with_decomp(
-            m_vars,
-            r_vars,
-            root_params.n_a,
-            root_layout.num_digits_commit,
-            root_layout.num_digits_open,
-            num_digits_fold,
-            root_layout.log_basis,
-            0,
-        )?;
-        let candidate_plan = hachi_root_runtime_plan_from_root_layout::<Cfg, D>(
-            HachiScheduleLookupKey::with_batch(max_num_vars, max_num_vars, num_claims, batch),
-            candidate_layout,
-        )?;
-        let next_w_len = candidate_plan.next_w_len();
-        let root_proof_cost = candidate_plan.level_proof_bytes::<Cfg>();
-        let suffix_cost =
-            estimated_recursive_suffix_bytes::<Cfg>(candidate_plan.lookup_key(), 1, next_w_len)?;
-        let candidate = (
-            root_proof_cost.checked_add(suffix_cost).ok_or_else(|| {
-                HachiError::InvalidSetup("batched proof cost overflow".to_string())
-            })?,
-            candidate_plan.next_w_len(),
-            r_vars,
-            m_vars,
-            num_digits_fold,
-        );
-        if best.is_none_or(|current| candidate < current) {
-            best = Some(candidate);
+                total_bytes = plan.exact_proof_bytes,
+                root_m = split.m_vars,
+                root_r = split.r_vars,
+                root_lb = split.log_basis,
+                "batched root split: read from pre-computed table"
+            );
+            return Ok(split);
         }
     }
 
-    let (_, _, r_vars, m_vars, num_digits_fold) = best.ok_or_else(|| {
-        HachiError::InvalidSetup("failed to derive batched root split".to_string())
-    })?;
-    Ok((m_vars, r_vars, num_digits_fold))
+    use crate::planner::refactored_planner::{find_optimal_batched_schedule, BatchConfig, Step};
+
+    let batch = BatchConfig {
+        num_claims,
+        num_commitment_groups: num_claims,
+        num_points: 1,
+    };
+    let schedule = find_optimal_batched_schedule::<Cfg, D>(max_num_vars, batch)?;
+
+    let root_step = match schedule.steps.first() {
+        Some(Step::Fold(step)) => step,
+        _ => {
+            return Err(HachiError::InvalidSetup(
+                "planner chose direct send for batched root".to_string(),
+            ))
+        }
+    };
+
+    tracing::info!(
+        max_num_vars,
+        num_claims,
+        total_bytes = schedule.total_bytes,
+        root_m = root_step.m_vars,
+        root_r = root_step.r_vars,
+        root_lb = root_step.log_basis,
+        "batched root split: computed from scratch by DP planner (no pre-computed table)"
+    );
+
+    Ok(BatchedRootSplit {
+        m_vars: root_step.m_vars,
+        r_vars: root_step.r_vars,
+        n_a: root_step.n_a,
+        num_digits_commit: root_step.delta_commit,
+        num_digits_open: root_step.delta_open,
+        num_digits_fold: root_step.delta_fold_per_poly,
+        num_digits_fold_batched: root_step.delta_fold,
+        log_basis: root_step.log_basis,
+    })
 }
 
 pub(crate) fn root_batched_layout<Cfg, const D: usize>(
@@ -548,27 +582,15 @@ where
     Cfg: CommitmentConfig,
 {
     let optimized_root_layout = if max_num_batched_polys > 1 {
-        let root_inputs = HachiScheduleInputs {
-            max_num_vars,
-            level: 0,
-            current_w_len: root_current_w_len::<D>(root_layout),
-        };
-        let root_params =
-            Cfg::root_level_params_for_layout_with_log_basis(root_inputs, root_layout)?;
-        let (m_vars, r_vars, num_digits_fold) = optimal_root_batch_split::<Cfg, D>(
-            max_num_vars,
-            &root_params,
-            root_layout,
-            max_num_batched_polys,
-        )?;
+        let split = optimal_root_batch_split::<Cfg, D>(max_num_vars, max_num_batched_polys)?;
         HachiCommitmentLayout::new_with_decomp(
-            m_vars,
-            r_vars,
-            root_params.n_a,
-            root_layout.num_digits_commit,
-            root_layout.num_digits_open,
-            num_digits_fold,
-            root_layout.log_basis,
+            split.m_vars,
+            split.r_vars,
+            split.n_a,
+            split.num_digits_commit,
+            split.num_digits_open,
+            split.num_digits_fold_batched,
+            split.log_basis,
             0,
         )?
     } else {
@@ -594,32 +616,19 @@ pub fn hachi_batched_root_layout<Cfg, const D: usize>(
 where
     Cfg: CommitmentConfig,
 {
-    let root_layout = Cfg::commitment_layout(max_num_vars)?;
     if num_claims <= 1 {
-        return Ok(root_layout);
+        return Cfg::commitment_layout(max_num_vars);
     }
 
-    let root_inputs = HachiScheduleInputs {
-        max_num_vars,
-        level: 0,
-        current_w_len: root_current_w_len::<D>(root_layout),
-    };
-    let root_params = Cfg::root_level_params_for_layout_with_log_basis(root_inputs, root_layout)?;
-    let (m_vars, r_vars, _num_digits_fold_batched) =
-        optimal_root_batch_split::<Cfg, D>(max_num_vars, &root_params, root_layout, num_claims)?;
-    let per_poly_num_digits_fold = root_layout.num_digits_fold.max(compute_num_digits_fold(
-        r_vars,
-        root_params.challenge_l1_mass,
-        root_layout.log_basis,
-    ));
+    let split = optimal_root_batch_split::<Cfg, D>(max_num_vars, num_claims)?;
     HachiCommitmentLayout::new_with_decomp(
-        m_vars,
-        r_vars,
-        root_params.n_a,
-        root_layout.num_digits_commit,
-        root_layout.num_digits_open,
-        per_poly_num_digits_fold,
-        root_layout.log_basis,
+        split.m_vars,
+        split.r_vars,
+        split.n_a,
+        split.num_digits_commit,
+        split.num_digits_open,
+        split.num_digits_fold,
+        split.log_basis,
         0,
     )
 }

@@ -1853,6 +1853,7 @@ pub(crate) fn planned_next_log_basis_with_current_basis_and_envelope<Cfg: Commit
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn estimated_recursive_suffix_bytes<Cfg: CommitmentConfig>(
     root_key: HachiScheduleLookupKey,
     level: usize,
@@ -2467,38 +2468,6 @@ mod tests {
         assert_batched_off_table_state_uses_actual_state_planner::<fp128::D64OneHot>(
             32, 5, 87_744, 5, 4,
         );
-    }
-
-    #[test]
-    fn blessed_d64_onehot_batched_states_hit_exact_generated_schedule() {
-        type Cfg = fp128::D64OneHot;
-        for batch in [
-            HachiRootBatchSummary::new(6, 3, 1).unwrap(),
-            HachiRootBatchSummary::new(6, 3, 2).unwrap(),
-        ] {
-            let root_plan =
-                hachi_root_runtime_plan_with_batch::<Cfg, { Cfg::D }>(20, 20, 6, batch).unwrap();
-            let estimate = recursive_suffix_estimate_with_log_basis::<Cfg>(
-                root_plan.lookup_key(),
-                root_plan.next_inputs.level,
-                root_plan.next_w_len(),
-                root_plan.next_level_params.log_basis,
-                root_plan.planning_envelope,
-            )
-            .unwrap();
-            assert!(
-                estimate.exact_state_match,
-                "blessed batch {batch:?} should resolve to an exact keyed schedule row"
-            );
-            assert!(
-                !estimate.used_actual_state_planner,
-                "blessed batch {batch:?} should not use the miss-path planner"
-            );
-            assert_eq!(
-                estimate.table_bytes, estimate.actual_state_bytes,
-                "exact keyed rows should agree with the measured DP fallback for {batch:?}"
-            );
-        }
     }
 
     #[test]

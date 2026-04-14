@@ -29,8 +29,8 @@ pub use config::{
 pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
 pub use profile::{CommitmentFieldProfile, Fp128PrimeProfile};
 pub(crate) use schedule::{
-    derive_commitment_layout, direct_witness_bytes, exact_planned_level_execution, field_bits,
-    hachi_level_proof_bytes, hachi_root_runtime_plan, packed_digits_bytes,
+    batched_root_level_proof_bytes, derive_commitment_layout, direct_witness_bytes,
+    exact_planned_level_execution, field_bits, hachi_root_runtime_plan, packed_digits_bytes,
     planned_next_log_basis_with_current_basis_and_envelope, planned_next_w_len,
     planned_recursive_suffix_bytes_with_log_basis_and_envelope, planned_w_ring_element_count,
     recursive_level_decomposition_from_root, recursive_r_decomp_levels_for_bound,

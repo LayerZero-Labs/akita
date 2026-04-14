@@ -1247,8 +1247,22 @@ impl<
 
     fn schedule_plan(key: HachiScheduleLookupKey) -> Result<Option<HachiSchedulePlan>, HachiError> {
         match Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(key) {
-            Ok(source) => Ok(Some(source.schedule_plan())),
-            Err(err) if missing_generated_schedule(&err) => Ok(None),
+            Ok(source) => {
+                tracing::debug!(
+                    max_num_vars = key.max_num_vars,
+                    num_vars = key.num_vars,
+                    "schedule plan: read from pre-computed generated table"
+                );
+                Ok(Some(source.schedule_plan()))
+            }
+            Err(err) if missing_generated_schedule(&err) => {
+                tracing::warn!(
+                    max_num_vars = key.max_num_vars,
+                    num_vars = key.num_vars,
+                    "schedule plan: no pre-computed table entry found, will recompute from scratch"
+                );
+                Ok(None)
+            }
             Err(err) => Err(err),
         }
     }
@@ -1259,12 +1273,28 @@ impl<
         current_w_len: usize,
     ) -> Result<Option<usize>, HachiError> {
         match Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(key) {
-            Ok(source) => Ok(Some(source.recursive_suffix_bytes::<Self>(
-                key.max_num_vars,
-                level,
-                current_w_len,
-            )?)),
-            Err(err) if missing_generated_schedule(&err) => Ok(None),
+            Ok(source) => {
+                tracing::debug!(
+                    max_num_vars = key.max_num_vars,
+                    level,
+                    current_w_len,
+                    "recursive suffix: read from pre-computed generated table"
+                );
+                Ok(Some(source.recursive_suffix_bytes::<Self>(
+                    key.max_num_vars,
+                    level,
+                    current_w_len,
+                )?))
+            }
+            Err(err) if missing_generated_schedule(&err) => {
+                tracing::warn!(
+                    max_num_vars = key.max_num_vars,
+                    level,
+                    current_w_len,
+                    "recursive suffix: no pre-computed table entry, will recompute"
+                );
+                Ok(None)
+            }
             Err(err) => Err(err),
         }
     }

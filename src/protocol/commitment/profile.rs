@@ -3,8 +3,8 @@
 use super::config::{CommitmentConfig, DecompositionParams};
 use super::generated::{
     fp128_d128_full_table, fp128_d128_onehot_table, fp128_d32_full_table, fp128_d32_onehot_table,
-    fp128_d64_full_table, fp128_d64_onehot_table, table_entry_envelope_for_max_num_vars,
-    GeneratedScheduleTable,
+    fp128_d64_full_table, fp128_d64_onehot_table, refactored_batched,
+    table_entry_envelope_for_max_num_vars, GeneratedScheduleTable,
 };
 use super::schedule::{
     generated_schedule_plan_from_table, planned_log_basis_at_level_from_schedule,
@@ -139,6 +139,13 @@ pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
         None
     }
 
+    /// Supplementary batched schedule table (from the refactored planner).
+    fn generated_batched_schedule_table<const D: usize, const LOG_COMMIT_BOUND: u32>(
+    ) -> Option<GeneratedScheduleTable> {
+        let _ = (D, LOG_COMMIT_BOUND);
+        None
+    }
+
     /// Maximum `(n_a, n_b, n_d)` required by the generated entry at
     /// `max_num_vars`, if this profile ships one.
     fn generated_schedule_envelope<const D: usize, const LOG_COMMIT_BOUND: u32>(
@@ -150,11 +157,13 @@ pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
 
     /// Exact generated schedule source for one shipped generated family.
     ///
+    /// Tries the primary table first, then falls back to the supplementary
+    /// batched table if the key is not found in the primary.
+    ///
     /// # Errors
     ///
-    /// Returns an error if the family does not ship a generated schedule table
-    /// or cannot derive a valid exact schedule source at
-    /// `max_num_vars`.
+    /// Returns an error if no table contains the key or cannot derive a
+    /// valid exact schedule source.
     fn generated_schedule_source<
         Cfg: CommitmentConfig,
         const D: usize,
@@ -169,13 +178,29 @@ pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
                 std::any::type_name::<Cfg>()
             ))
         })?;
-        let exact_plan = generated_schedule::<Cfg, D>(key, table)?;
-        Ok(ProfileScheduleSource::new(
-            key,
-            exact_plan,
-            min_log_basis,
-            max_log_basis,
-        ))
+        match generated_schedule::<Cfg, D>(key, table) {
+            Ok(exact_plan) => Ok(ProfileScheduleSource::new(
+                key,
+                exact_plan,
+                min_log_basis,
+                max_log_basis,
+            )),
+            Err(primary_err) => {
+                if let Some(batched_table) =
+                    Self::generated_batched_schedule_table::<D, LOG_COMMIT_BOUND>()
+                {
+                    if let Ok(exact_plan) = generated_schedule::<Cfg, D>(key, batched_table) {
+                        return Ok(ProfileScheduleSource::new(
+                            key,
+                            exact_plan,
+                            min_log_basis,
+                            max_log_basis,
+                        ));
+                    }
+                }
+                Err(primary_err)
+            }
+        }
     }
 }
 
@@ -286,6 +311,19 @@ impl CommitmentFieldProfileSchedule for Fp128PrimeProfile {
             (64, 1) => Some(fp128_d64_onehot_table()),
             (128, 128) => Some(fp128_d128_full_table()),
             (128, 1) => Some(fp128_d128_onehot_table()),
+            _ => None,
+        }
+    }
+
+    fn generated_batched_schedule_table<const D: usize, const LOG_COMMIT_BOUND: u32>(
+    ) -> Option<GeneratedScheduleTable> {
+        match (D, LOG_COMMIT_BOUND) {
+            (32, 128) => Some(refactored_batched::fp128_d32_full_table()),
+            (32, 1) => Some(refactored_batched::fp128_d32_onehot_table()),
+            (64, 128) => Some(refactored_batched::fp128_d64_full_table()),
+            (64, 1) => Some(refactored_batched::fp128_d64_onehot_table()),
+            (128, 128) => Some(refactored_batched::fp128_d128_full_table()),
+            (128, 1) => Some(refactored_batched::fp128_d128_onehot_table()),
             _ => None,
         }
     }
