@@ -562,9 +562,9 @@ mod tests {
             let input: Vec<F> = (0..n).map(|i| F::from_u64((i + 1) as u64)).collect();
 
             let mut naive = vec![F::zero(); n];
-            for k in 0..n {
-                for j in 0..n {
-                    naive[k] = naive[k] + input[j] * field_pow(omega, (j * k) as u64);
+            for (k, naive_k) in naive.iter_mut().enumerate().take(n) {
+                for (j, &input_j) in input.iter().enumerate().take(n) {
+                    *naive_k += input_j * field_pow(omega, (j * k) as u64);
                 }
             }
 
@@ -622,8 +622,8 @@ mod tests {
                 let mut expected = F::zero();
                 let mut x_pow = F::one();
                 for &c in &coeffs {
-                    expected = expected + c * x_pow;
-                    x_pow = x_pow * point;
+                    expected += c * x_pow;
+                    x_pow *= point;
                 }
                 assert_eq!(
                     extension[(j - 1) * k + i],
