@@ -5,9 +5,9 @@ use crate::algebra::fields::{Fp128, Fp32, Fp64};
 use crate::FieldCore;
 use core::arch::aarch64::{
     uint32x2_t, uint32x4_t, uint64x2_t, vaddq_u32, vaddq_u64, vandq_u64, vbslq_u32, vbslq_u64,
-    vcltq_u32, vcltq_u64, vcombine_u32, vdup_n_u32, vdupq_n_s64, vdupq_n_u32,
-    vdupq_n_u64, vget_low_u32, vminq_u32, vmovn_u64, vmull_high_u32, vmull_u32, vorrq_u64,
-    vshlq_u64, vsubq_u32, vsubq_u64,
+    vcltq_u32, vcltq_u64, vcombine_u32, vdup_n_u32, vdupq_n_s64, vdupq_n_u32, vdupq_n_u64,
+    vget_low_u32, vminq_u32, vmovn_u64, vmull_high_u32, vmull_u32, vorrq_u64, vshlq_u64, vsubq_u32,
+    vsubq_u64,
 };
 use core::fmt;
 use core::mem::transmute;
