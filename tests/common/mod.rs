@@ -12,7 +12,7 @@ pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::Once;
 
-pub(super) type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
+pub(super) type F = Fp128<0xfffffffffffffffffffffffffffff6cd>;
 pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
 
 pub(super) type OneHotCfg = fp128::D64OneHot;

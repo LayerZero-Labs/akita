@@ -195,6 +195,42 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         Self::from_ring(ring, &params.primes, &params.twiddles)
     }
 
+    /// Convert a field scalar (constant polynomial) into CRT+NTT domain.
+    ///
+    /// A constant polynomial evaluates to the same value at every NTT point,
+    /// so this broadcasts the reduced scalar to all `D` positions in each CRT
+    /// limb — skipping the full forward NTT entirely.
+    pub fn from_scalar_with_params<F: CrtNttConvertibleField>(
+        scalar: &F,
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Self {
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let half_q = q / 2;
+        let canonical = scalar.to_canonical_u128();
+        let centered: i128 = if canonical > half_q {
+            -((q - canonical) as i128)
+        } else {
+            canonical as i128
+        };
+
+        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for (limb, prime) in limbs.iter_mut().zip(params.primes.iter()) {
+            let p = prime.p.to_i64();
+            let p_u64 = p as u64;
+            let r64 = ((1u128 << 64) % p_u64 as u128) as i64;
+            let half_p = p / 2;
+            let lo = (centered as u64 % p_u64) as i64;
+            let hi = ((centered >> 64) as i64).rem_euclid(p);
+            let mut r = (lo + hi * r64) % p;
+            if r >= half_p {
+                r -= p;
+            }
+            let mont_val = prime.from_canonical(W::from_i64(r));
+            limb.fill(mont_val);
+        }
+        Self { limbs }
+    }
+
     /// Convert a coefficient-form ring element into CRT+NTT domain
     /// through an explicit backend implementation.
     pub fn from_ring_with_backend<

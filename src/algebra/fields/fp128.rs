@@ -222,6 +222,7 @@ impl<const P: u128> Fp128<P> {
         match Self::C_LO {
             275 => Self::add_raw_aarch64_imm::<275>(a, b),
             159 => Self::add_raw_aarch64_imm::<159>(a, b),
+            2355 => Self::add_raw_aarch64_imm::<2355>(a, b),
             _ => Self::add_raw_aarch64_reg(a, b, Self::C_LO),
         }
     }
@@ -307,6 +308,7 @@ impl<const P: u128> Fp128<P> {
         match Self::C_LO {
             275 => Self::add_raw_x86_64_imm::<275>(a, b),
             159 => Self::add_raw_x86_64_imm::<159>(a, b),
+            2355 => Self::add_raw_x86_64_imm::<2355>(a, b),
             _ => Self::add_raw_x86_64_reg(a, b, Self::C_LO),
         }
     }
@@ -422,6 +424,7 @@ impl<const P: u128> Fp128<P> {
         match Self::C_LO {
             275 => Self::sub_raw_aarch64_imm::<275>(a, b),
             159 => Self::sub_raw_aarch64_imm::<159>(a, b),
+            2355 => Self::sub_raw_aarch64_imm::<2355>(a, b),
             _ => Self::sub_raw_aarch64_reg(a, b, Self::C_LO),
         }
     }
@@ -493,6 +496,7 @@ impl<const P: u128> Fp128<P> {
         match Self::C_LO {
             275 => Self::sub_raw_x86_64_imm::<275>(a, b),
             159 => Self::sub_raw_x86_64_imm::<159>(a, b),
+            2355 => Self::sub_raw_x86_64_imm::<2355>(a, b),
             _ => Self::sub_raw_x86_64_reg(a, b, Self::C_LO),
         }
     }
@@ -1577,6 +1581,14 @@ impl<const P: u128> PseudoMersenneField for Fp128<P> {
 pub type Prime128Offset275 = Fp128<0xfffffffffffffffffffffffffffffeed>;
 /// `p = 2^128 − 159`  (C = 159). Split-NTT-only helper prime.
 pub type Prime128Offset159 = Fp128<0xffffffffffffffffffffffffffffff61>;
+/// `p = 2^128 − 2355`  (C = 2355, p ≡ 5 mod 8).
+///
+/// Smooth multiplicative subgroup of order 14700 = 2² × 3 × 5² × 7²,
+/// supporting mixed-radix FFT up to size 14700 (e.g. 1470 = 2·3·5·7²
+/// for RS encoding with 256+1024 ≥ 1280 evaluations).
+///
+/// Factorization: `p − 1 = 2² · 3 · 5² · 7² · 701 · 2955365183 · 11173595356596918495491`.
+pub type Prime128Offset2355 = Fp128<0xfffffffffffffffffffffffffffff6cd>;
 
 #[cfg(test)]
 mod tests {
