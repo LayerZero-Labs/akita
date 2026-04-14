@@ -146,6 +146,61 @@ impl<F: FieldCore> HachiExpandedSetup<F> {
         Ok(())
     }
 
+    /// Return an error if the batched root split exceeds the setup's
+    /// matrix-width envelope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HachiError::InvalidSetup`] if the widths implied by
+    /// `split` and `num_claims` exceed the setup envelope.
+    pub(crate) fn ensure_batched_root_split_fits(
+        &self,
+        split: &BatchedRootSplit,
+        num_claims: usize,
+    ) -> Result<(), HachiError> {
+        let num_blocks = 1usize
+            .checked_shl(split.r_vars as u32)
+            .ok_or_else(|| HachiError::InvalidSetup("num_blocks overflow".to_string()))?;
+        let block_len = 1usize
+            .checked_shl(split.m_vars as u32)
+            .ok_or_else(|| HachiError::InvalidSetup("block_len overflow".to_string()))?;
+        let inner_width = block_len
+            .checked_mul(split.num_digits_commit)
+            .ok_or_else(|| HachiError::InvalidSetup("inner width overflow".to_string()))?;
+        let outer_width = split
+            .n_a
+            .checked_mul(split.num_digits_open)
+            .and_then(|x| x.checked_mul(num_blocks))
+            .and_then(|x| x.checked_mul(num_claims))
+            .ok_or_else(|| HachiError::InvalidSetup("batched outer width overflow".to_string()))?;
+        let d_matrix_width = split
+            .num_digits_open
+            .checked_mul(num_blocks)
+            .and_then(|x| x.checked_mul(num_claims))
+            .ok_or_else(|| HachiError::InvalidSetup("batched D width overflow".to_string()))?;
+
+        let seed = &self.seed;
+        if inner_width > seed.max_inner_width {
+            return Err(HachiError::InvalidSetup(format!(
+                "A matrix too narrow: need {} but setup has {}",
+                inner_width, seed.max_inner_width
+            )));
+        }
+        if outer_width > seed.max_outer_width {
+            return Err(HachiError::InvalidSetup(format!(
+                "B matrix too narrow: need {} but setup has {}",
+                outer_width, seed.max_outer_width
+            )));
+        }
+        if d_matrix_width > seed.max_d_matrix_width {
+            return Err(HachiError::InvalidSetup(format!(
+                "D matrix too narrow: need {} but setup has {}",
+                d_matrix_width, seed.max_d_matrix_width
+            )));
+        }
+        Ok(())
+    }
+
     /// Panic if `layout` exceeds the matrix-width envelope carried by this setup.
     ///
     /// # Panics
@@ -171,6 +226,22 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
     /// exceeds the setup envelope.
     pub fn ensure_layout_fits(&self, layout: &HachiCommitmentLayout) -> Result<(), HachiError> {
         self.expanded.ensure_layout_fits(layout)
+    }
+
+    /// Return an error if the batched root split exceeds this setup's
+    /// matrix-width envelope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HachiError::InvalidSetup`] if the widths implied by
+    /// `split` and `num_claims` exceed the setup envelope.
+    pub(crate) fn ensure_batched_root_split_fits(
+        &self,
+        split: &BatchedRootSplit,
+        num_claims: usize,
+    ) -> Result<(), HachiError> {
+        self.expanded
+            .ensure_batched_root_split_fits(split, num_claims)
     }
 
     /// Panic if `layout`'s matrix dimensions exceed this setup's maximums.
@@ -386,6 +457,9 @@ struct LayoutChainStats {
     max_inner_width: usize,
     max_outer_width: usize,
     max_d_matrix_width: usize,
+    max_n_a: usize,
+    max_n_b: usize,
+    max_n_d: usize,
     max_r_vars: usize,
     max_num_digits_open: usize,
     max_num_digits_fold: usize,
@@ -401,6 +475,12 @@ impl LayoutChainStats {
         self.max_num_digits_open = self.max_num_digits_open.max(layout.num_digits_open);
         self.max_num_digits_fold = self.max_num_digits_fold.max(layout.num_digits_fold);
         self.max_log_basis = self.max_log_basis.max(layout.log_basis);
+    }
+
+    fn include_params(&mut self, params: &super::schedule::HachiLevelParams) {
+        self.max_n_a = self.max_n_a.max(params.n_a);
+        self.max_n_b = self.max_n_b.max(params.n_b);
+        self.max_n_d = self.max_n_d.max(params.n_d);
     }
 }
 
@@ -465,17 +545,19 @@ where
 }
 
 /// Planner-derived batched root split parameters.
-struct BatchedRootSplit {
-    m_vars: usize,
-    r_vars: usize,
-    n_a: usize,
-    num_digits_commit: usize,
-    num_digits_open: usize,
+pub(crate) struct BatchedRootSplit {
+    pub m_vars: usize,
+    pub r_vars: usize,
+    pub n_a: usize,
+    pub n_b: usize,
+    pub n_d: usize,
+    pub num_digits_commit: usize,
+    pub num_digits_open: usize,
     /// Per-polynomial fold digits (`num_claims=1`).
-    num_digits_fold: usize,
+    pub num_digits_fold: usize,
     /// Batched fold digits (from the planner's candidate layout).
-    num_digits_fold_batched: usize,
-    log_basis: u32,
+    pub num_digits_fold_batched: usize,
+    pub log_basis: u32,
 }
 
 /// Extract `BatchedRootSplit` from a pre-computed `HachiSchedulePlan`'s
@@ -493,6 +575,8 @@ fn split_from_schedule_plan(plan: &super::schedule::HachiSchedulePlan) -> Option
         m_vars: root_level.layout.m_vars,
         r_vars: root_level.layout.r_vars,
         n_a: root_level.params.n_a,
+        n_b: root_level.params.n_b,
+        n_d: root_level.params.n_d,
         num_digits_commit: root_level.layout.num_digits_commit,
         num_digits_open: root_level.layout.num_digits_open,
         num_digits_fold: per_poly_fold,
@@ -501,11 +585,40 @@ fn split_from_schedule_plan(plan: &super::schedule::HachiSchedulePlan) -> Option
     })
 }
 
+fn fallback_batched_root_split<Cfg, const D: usize>(
+    max_num_vars: usize,
+    num_claims: usize,
+) -> Result<BatchedRootSplit, HachiError>
+where
+    Cfg: CommitmentConfig,
+{
+    let root_layout = Cfg::commitment_layout(max_num_vars)?;
+    let scaled_layout = scale_batched_root_layout::<Cfg, D>(max_num_vars, root_layout, num_claims)?;
+    let inputs = HachiScheduleInputs {
+        max_num_vars,
+        level: 0,
+        current_w_len: root_current_w_len::<D>(root_layout),
+    };
+    let params = Cfg::root_level_params_for_layout_with_log_basis(inputs, scaled_layout)?;
+    Ok(BatchedRootSplit {
+        m_vars: root_layout.m_vars,
+        r_vars: root_layout.r_vars,
+        n_a: params.n_a,
+        n_b: params.n_b,
+        n_d: params.n_d,
+        num_digits_commit: root_layout.num_digits_commit,
+        num_digits_open: root_layout.num_digits_open,
+        num_digits_fold: root_layout.num_digits_fold,
+        num_digits_fold_batched: scaled_layout.num_digits_fold,
+        log_basis: root_layout.log_basis,
+    })
+}
+
 /// Find the optimal `(log_basis, m, r)` triple for a batched root opening.
 ///
 /// First checks the pre-computed generated tables.  Falls back to the DP
 /// planner only when no table entry exists.
-fn optimal_root_batch_split<Cfg, const D: usize>(
+pub(crate) fn optimal_root_batch_split<Cfg, const D: usize>(
     max_num_vars: usize,
     num_claims: usize,
 ) -> Result<BatchedRootSplit, HachiError>
@@ -531,24 +644,27 @@ where
             );
             return Ok(split);
         }
+        let split = fallback_batched_root_split::<Cfg, D>(max_num_vars, num_claims)?;
+        tracing::info!(
+            max_num_vars,
+            num_claims,
+            "batched root split: schedule is direct-only, falling back to config root layout"
+        );
+        return Ok(split);
     }
 
     use crate::planner::refactored_planner::{find_optimal_batched_schedule, BatchConfig, Step};
 
     let batch = BatchConfig {
         num_claims,
-        num_commitment_groups: num_claims,
+        num_commitment_groups: 1,
         num_points: 1,
     };
     let schedule = find_optimal_batched_schedule::<Cfg, D>(max_num_vars, batch)?;
 
     let root_step = match schedule.steps.first() {
         Some(Step::Fold(step)) => step,
-        _ => {
-            return Err(HachiError::InvalidSetup(
-                "planner chose direct send for batched root".to_string(),
-            ))
-        }
+        _ => return fallback_batched_root_split::<Cfg, D>(max_num_vars, num_claims),
     };
 
     tracing::info!(
@@ -565,6 +681,8 @@ where
         m_vars: root_step.m_vars,
         r_vars: root_step.r_vars,
         n_a: root_step.n_a,
+        n_b: root_step.n_b,
+        n_d: root_step.n_d,
         num_digits_commit: root_step.delta_commit,
         num_digits_open: root_step.delta_open,
         num_digits_fold: root_step.delta_fold_per_poly,
@@ -646,6 +764,21 @@ where
     let batched_root_layout =
         root_batched_layout::<Cfg, D>(max_num_vars, root_layout, max_num_batched_polys)?;
     stats.include(batched_root_layout);
+    if max_num_batched_polys > 1 {
+        let split = optimal_root_batch_split::<Cfg, D>(max_num_vars, max_num_batched_polys)?;
+        stats.max_n_a = stats.max_n_a.max(split.n_a);
+        stats.max_n_b = stats.max_n_b.max(split.n_b);
+        stats.max_n_d = stats.max_n_d.max(split.n_d);
+    } else {
+        let root_inputs = HachiScheduleInputs {
+            max_num_vars,
+            level: 0,
+            current_w_len: root_current_w_len::<D>(root_layout),
+        };
+        let root_params =
+            Cfg::root_level_params_for_layout_with_log_basis(root_inputs, root_layout)?;
+        stats.include_params(&root_params);
+    }
 
     let can_use_planned_root =
         Cfg::commitment_layout(max_num_vars).is_ok_and(|planned_root| planned_root == root_layout);
@@ -654,6 +787,7 @@ where
         if let Some(plan) = Cfg::schedule_plan(schedule_key)? {
             for level in plan.fold_levels().skip(1) {
                 stats.include(level.layout);
+                stats.include_params(&level.params);
             }
             return Ok(stats);
         }
@@ -682,6 +816,7 @@ where
     let mut current_layout =
         super::hachi_recursive_level_layout_from_params::<Cfg>(&current_params, current_w_len)?;
     stats.include(current_layout);
+    stats.include_params(&current_params);
 
     loop {
         if should_stop_folding(current_w_len, prev_w_len) {
@@ -699,6 +834,7 @@ where
         let next_layout =
             super::hachi_recursive_level_layout_from_params::<Cfg>(&next_params, next_w_len)?;
         stats.include(next_layout);
+        stats.include_params(&next_params);
 
         prev_w_len = current_w_len;
         current_w_len = next_w_len;
@@ -842,7 +978,13 @@ where
     let d_cols = chain_stats.max_d_matrix_width;
 
     let max_stride = a_cols.max(b_cols).max(d_cols);
-    let max_rows = envelope.max_n_a.max(envelope.max_n_b).max(envelope.max_n_d);
+    let max_rows = chain_stats
+        .max_n_a
+        .max(chain_stats.max_n_b)
+        .max(chain_stats.max_n_d)
+        .max(envelope.max_n_a)
+        .max(envelope.max_n_b)
+        .max(envelope.max_n_d);
     let required_total = max_rows * max_stride;
 
     let actual_total = expanded.shared_matrix.total_ring_elements_at::<D>();
@@ -975,7 +1117,13 @@ where
         let d_cols = chain_stats.max_d_matrix_width;
 
         let max_stride = a_cols.max(b_cols).max(d_cols);
-        let max_rows = envelope.max_n_a.max(envelope.max_n_b).max(envelope.max_n_d);
+        let max_rows = chain_stats
+            .max_n_a
+            .max(chain_stats.max_n_b)
+            .max(chain_stats.max_n_d)
+            .max(envelope.max_n_a)
+            .max(envelope.max_n_b)
+            .max(envelope.max_n_d);
         let max_total = max_rows * max_stride;
 
         let public_matrix_seed = sample_public_matrix_seed();
@@ -1250,6 +1398,9 @@ impl HachiCommitmentCore {
         let mut max_num_digits_open = 0usize;
         let mut max_num_digits_fold = 0usize;
         let mut max_log_basis = first_layout.log_basis;
+        let mut max_n_a = 0usize;
+        let mut max_n_b = 0usize;
+        let mut max_n_d = 0usize;
 
         for &layout in layouts {
             let layout_num_vars = layout.required_num_vars::<D>()?;
@@ -1263,6 +1414,9 @@ impl HachiCommitmentCore {
             max_num_digits_open = max_num_digits_open.max(chain_stats.max_num_digits_open);
             max_num_digits_fold = max_num_digits_fold.max(chain_stats.max_num_digits_fold);
             max_log_basis = max_log_basis.max(chain_stats.max_log_basis);
+            max_n_a = max_n_a.max(chain_stats.max_n_a);
+            max_n_b = max_n_b.max(chain_stats.max_n_b);
+            max_n_d = max_n_d.max(chain_stats.max_n_d);
         }
 
         let envelope_layout = Self::layout_envelope::<D>(
@@ -1284,6 +1438,9 @@ impl HachiCommitmentCore {
             max_inner_width,
             max_outer_width,
             max_d_matrix_width,
+            max_n_a,
+            max_n_b,
+            max_n_d,
         )
     }
 
@@ -1309,9 +1466,13 @@ impl HachiCommitmentCore {
             a_cols,
             b_cols,
             d_cols,
+            chain_stats.max_n_a,
+            chain_stats.max_n_b,
+            chain_stats.max_n_d,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn setup_with_matrix_widths_and_seed<F, const D: usize, Cfg>(
         max_num_vars: usize,
         max_num_batched_polys: usize,
@@ -1319,6 +1480,9 @@ impl HachiCommitmentCore {
         a_cols: usize,
         b_cols: usize,
         d_cols: usize,
+        max_n_a: usize,
+        max_n_b: usize,
+        max_n_d: usize,
     ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError>
     where
         F: FieldCore + CanonicalField + FieldSampling,
@@ -1326,7 +1490,12 @@ impl HachiCommitmentCore {
     {
         let envelope = Cfg::envelope(max_num_vars);
         let max_stride = a_cols.max(b_cols).max(d_cols);
-        let max_rows = envelope.max_n_a.max(envelope.max_n_b).max(envelope.max_n_d);
+        let max_rows = max_n_a
+            .max(max_n_b)
+            .max(max_n_d)
+            .max(envelope.max_n_a)
+            .max(envelope.max_n_b)
+            .max(envelope.max_n_d);
         let max_total = max_rows * max_stride;
         {
             let ring_bytes = std::mem::size_of::<CyclotomicRing<F, D>>();

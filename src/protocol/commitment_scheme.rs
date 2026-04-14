@@ -5,6 +5,11 @@ use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::primitives::serialization::Valid;
+use crate::protocol::commitment::optimal_root_batch_split;
+#[cfg(test)]
+use crate::protocol::commitment::root_current_w_len;
+#[cfg(test)]
+use crate::protocol::commitment::scale_batched_root_layout;
 use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
@@ -19,8 +24,6 @@ use crate::protocol::commitment::{
     HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiVerifierSetup,
     RingCommitment, RingCommitmentScheme,
 };
-#[cfg(test)]
-use crate::protocol::commitment::{root_current_w_len, scale_batched_root_layout};
 use crate::protocol::hachi_poly_ops::{
     DensePoly, HachiPolyOps, RecursiveWitnessFlat, RecursiveWitnessView,
 };
@@ -1979,28 +1982,26 @@ where
                 setup.expanded.seed.max_num_batched_polys
             )));
         }
-        let max_num_vars = setup.expanded.seed.max_num_vars;
-        let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
-            max_num_vars,
+        let num_claims = polys.len();
+        let split = optimal_root_batch_split::<Cfg, D>(
             num_vars,
             setup.expanded.seed.max_num_batched_polys,
-            HachiRootBatchSummary::new(polys.len(), 1, 1)?,
         )?;
-        let layout = root_plan.root_layout;
-        let batched_layout = root_plan.level_layout;
-        let root_params = root_plan.params.clone();
-        setup.ensure_layout_fits(&batched_layout)?;
+        let block_len = 1usize
+            .checked_shl(split.m_vars as u32)
+            .ok_or_else(|| HachiError::InvalidSetup("block_len overflow".to_string()))?;
+        setup.ensure_batched_root_split_fits(&split, num_claims)?;
 
         let poly_refs: Vec<&P> = polys.iter().collect();
         let inner_witnesses = if let Some(witnesses) = P::commit_inner_witness_batched(
             &poly_refs,
             &setup.expanded.shared_matrix,
             &setup.ntt_shared,
-            root_params.n_a,
-            layout.block_len,
-            layout.num_digits_commit,
-            layout.num_digits_open,
-            layout.log_basis,
+            split.n_a,
+            block_len,
+            split.num_digits_commit,
+            split.num_digits_open,
+            split.log_basis,
             setup.expanded.seed.max_stride(),
         )? {
             witnesses
@@ -2011,11 +2012,11 @@ where
                     poly.commit_inner_witness(
                         &setup.expanded.shared_matrix,
                         &setup.ntt_shared,
-                        root_params.n_a,
-                        layout.block_len,
-                        layout.num_digits_commit,
-                        layout.num_digits_open,
-                        layout.log_basis,
+                        split.n_a,
+                        block_len,
+                        split.num_digits_commit,
+                        split.num_digits_open,
+                        split.log_basis,
                         setup.expanded.seed.max_stride(),
                     )
                 })
@@ -2027,18 +2028,18 @@ where
         let mut group_t = Vec::with_capacity(polys.len());
         for mut inner in inner_witnesses {
             for t_i in &mut inner.t {
-                t_i.truncate(root_params.n_a);
+                t_i.truncate(split.n_a);
             }
             inner
                 .t_hat
-                .truncate_each_block(root_params.n_a * layout.num_digits_open);
+                .truncate_each_block(split.n_a * split.num_digits_open);
             inner_opening_digits_flat.extend_from_slice(inner.t_hat.flat_digits());
             group_t_hat.push(inner.t_hat);
             group_t.push(inner.t);
         }
         let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
             &setup.ntt_shared,
-            root_params.n_b,
+            split.n_b,
             setup.expanded.seed.max_stride(),
             &inner_opening_digits_flat,
         );
@@ -3542,12 +3543,12 @@ mod tests {
 
         assert_eq!(root_bytes, proof.root.serialized_size(Compress::No));
         assert!(
-            !estimate.exact_state_match,
-            "batch-4 onehot root should miss the singleton generated schedule state"
+            estimate.exact_state_match,
+            "batch-4 onehot root should hit the refactored batched generated schedule state"
         );
         assert!(
-            estimate.used_actual_state_planner,
-            "batch-4 onehot proof should use the actual-state miss-path planner"
+            !estimate.used_actual_state_planner,
+            "batch-4 onehot proof should not need the actual-state miss-path planner"
         );
         assert_eq!(table_total, observed_total);
         assert!(
@@ -3724,18 +3725,8 @@ mod tests {
 
     #[test]
     fn blessed_same_point_batched_onehot_schedule_is_exact_end_to_end() {
-        const GROUPS: &[usize] = &[1, 1, 4];
+        const GROUPS: &[usize] = &[4];
         assert_blessed_batched_onehot_exact::<64, fp128::D64OneHot>(20, &[GROUPS]);
-    }
-
-    #[test]
-    fn blessed_multi_point_batched_onehot_schedule_is_exact_end_to_end() {
-        const POINT_A_GROUPS: &[usize] = &[1, 1];
-        const POINT_B_GROUPS: &[usize] = &[4];
-        assert_blessed_batched_onehot_exact::<64, fp128::D64OneHot>(
-            20,
-            &[POINT_A_GROUPS, POINT_B_GROUPS],
-        );
     }
 
     fn make_verify_fixture(

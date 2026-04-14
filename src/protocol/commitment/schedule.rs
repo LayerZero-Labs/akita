@@ -454,7 +454,11 @@ where
         level: 0,
         current_w_len: root_current_w_len::<D>(root_layout),
     };
-    let params = Cfg::root_level_params_for_layout_with_log_basis(inputs, root_layout)?;
+    let params = if key.batch.num_claims > 1 {
+        Cfg::root_level_params_for_layout_with_log_basis(inputs, level_layout)?
+    } else {
+        Cfg::root_level_params_for_layout_with_log_basis(inputs, root_layout)?
+    };
     let next_w_ring =
         w_ring_element_count_with_batch_summary::<Cfg::Field>(&params, level_layout, key.batch);
     let next_w_len = next_w_ring
@@ -494,7 +498,11 @@ where
         level: 0,
         current_w_len: root_current_w_len::<D>(root_layout),
     };
-    let params = Cfg::root_level_params_for_layout_with_log_basis(inputs, root_layout)?;
+    let params = if key.batch.num_claims > 1 {
+        Cfg::root_level_params_for_layout_with_log_basis(inputs, level_layout)?
+    } else {
+        Cfg::root_level_params_for_layout_with_log_basis(inputs, root_layout)?
+    };
     let next_w_ring =
         w_ring_element_count_with_batch_summary::<Cfg::Field>(&params, level_layout, key.batch);
     let next_w_len = next_w_ring
@@ -1314,7 +1322,11 @@ pub fn exact_schedule_plan_for_lookup_key<Cfg: CommitmentConfig, const D: usize>
         level: 0,
         current_w_len: root_current_w_len::<D>(root_layout),
     };
-    let params = Cfg::root_level_params_for_layout_with_log_basis(inputs, root_layout)?;
+    let params = if key.batch.num_claims > 1 {
+        Cfg::root_level_params_for_layout_with_log_basis(inputs, level_layout)?
+    } else {
+        Cfg::root_level_params_for_layout_with_log_basis(inputs, root_layout)?
+    };
     let next_w_ring =
         w_ring_element_count_with_batch_summary::<Cfg::Field>(&params, level_layout, key.batch);
     let next_w_len = next_w_ring

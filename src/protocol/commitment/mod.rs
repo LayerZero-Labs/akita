@@ -14,8 +14,11 @@ mod types;
 pub mod utils;
 
 pub use commit::hachi_batched_root_layout;
+pub(crate) use commit::optimal_root_batch_split;
 #[cfg(test)]
-pub(crate) use commit::{root_current_w_len, scale_batched_root_layout};
+pub(crate) use commit::root_current_w_len;
+#[cfg(test)]
+pub(crate) use commit::scale_batched_root_layout;
 pub use commit::{
     HachiCommitmentCore, HachiExpandedSetup, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup,
 };

@@ -358,6 +358,26 @@ fn batched_root_w_ring_element_count<Cfg: CommitmentConfig>(
     w_hat + t_hat + z_pre + r
 }
 
+fn batched_root_level_params<Cfg: CommitmentConfig>(
+    inputs: HachiScheduleInputs,
+    layout: HachiCommitmentLayout,
+    batch: &BatchConfig,
+) -> Option<HachiLevelParams> {
+    if batch.num_claims <= 1 {
+        return Cfg::root_level_params_for_layout_with_log_basis(inputs, layout).ok();
+    }
+    let mut scaled_layout = layout;
+    scaled_layout.outer_width = scaled_layout.outer_width.checked_mul(batch.num_claims)?;
+    scaled_layout.d_matrix_width = scaled_layout.d_matrix_width.checked_mul(batch.num_claims)?;
+    scaled_layout.num_digits_fold = scaled_layout.num_digits_fold.max(compute_num_digits_fold(
+        scaled_layout.r_vars,
+        Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
+        scaled_layout.log_basis,
+        batch.num_claims,
+    ));
+    Cfg::root_level_params_for_layout_with_log_basis(inputs, scaled_layout).ok()
+}
+
 /// Derive the batched root candidate for a given `log_basis`.
 ///
 /// Gets the per-poly `(params, layout)` from `Cfg`, then computes the
@@ -378,11 +398,12 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig>(
         current_w_len: root_w_len,
     };
 
-    let (params, layout) = Cfg::root_level_layout_with_log_basis(inputs, log_basis).ok()?;
+    let (base_params, layout) = Cfg::root_level_layout_with_log_basis(inputs, log_basis).ok()?;
 
     let fb = field_bits(Cfg::decomposition());
 
     if batch.num_claims <= 1 && batch.num_commitment_groups <= 1 && batch.num_points <= 1 {
+        let params = base_params;
         let hfb = Cfg::planner_half_field_bound();
         let w_ring = planned_w_ring_element_count(fb, hfb, &params, layout);
         let next_w_len = planned_next_w_len(fb, hfb, &params, layout);
@@ -412,7 +433,7 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig>(
         let m_vars = reduced_vars - r_vars;
         let batched_fold = layout.num_digits_fold.max(compute_num_digits_fold(
             r_vars,
-            params.challenge_l1_mass,
+            base_params.challenge_l1_mass,
             layout.log_basis,
             batch.num_claims,
         ));
@@ -420,7 +441,7 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig>(
         let Ok(candidate_layout) = HachiCommitmentLayout::new_with_decomp(
             m_vars,
             r_vars,
-            params.n_a,
+            base_params.n_a,
             layout.num_digits_commit,
             layout.num_digits_open,
             batched_fold,
@@ -430,6 +451,9 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig>(
             continue;
         };
 
+        let Some(params) = batched_root_level_params::<Cfg>(inputs, candidate_layout, batch) else {
+            continue;
+        };
         let w_ring = batched_root_w_ring_element_count::<Cfg>(&params, candidate_layout, batch);
         let next_w_len = w_ring * params.d;
 
@@ -439,7 +463,7 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig>(
 
         if best.as_ref().is_none_or(|b| next_w_len < b.next_w_len) {
             best = Some(CandidateLevelParams {
-                params: params.clone(),
+                params,
                 layout: candidate_layout,
                 next_w_len,
                 w_ring,

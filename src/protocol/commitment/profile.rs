@@ -151,8 +151,29 @@ pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
     fn generated_schedule_envelope<const D: usize, const LOG_COMMIT_BOUND: u32>(
         max_num_vars: usize,
     ) -> Option<(usize, usize, usize)> {
-        Self::generated_schedule_table::<D, LOG_COMMIT_BOUND>()
-            .and_then(|table| table_entry_envelope_for_max_num_vars(table, max_num_vars))
+        let mut max_n_a = 0usize;
+        let mut max_n_b = 0usize;
+        let mut max_n_d = 0usize;
+        let mut saw_entry = false;
+
+        for table in [
+            Self::generated_schedule_table::<D, LOG_COMMIT_BOUND>(),
+            Self::generated_batched_schedule_table::<D, LOG_COMMIT_BOUND>(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Some((n_a, n_b, n_d)) =
+                table_entry_envelope_for_max_num_vars(table, max_num_vars)
+            {
+                saw_entry = true;
+                max_n_a = max_n_a.max(n_a);
+                max_n_b = max_n_b.max(n_b);
+                max_n_d = max_n_d.max(n_d);
+            }
+        }
+
+        saw_entry.then_some((max_n_a, max_n_b, max_n_d))
     }
 
     /// Exact generated schedule source for one shipped generated family.
