@@ -108,6 +108,7 @@ fn precompute_stages<F: FieldCore>(omega: F, n: usize, factors: &[usize]) -> Vec
     let mut block = 1usize;
 
     for &r in factors.iter().rev() {
+        debug_assert!(r <= 8, "radix {r} exceeds omega_r_pow capacity (max 8)");
         let new_block = block * r;
         let omega_new_block = field_pow(omega, (n / new_block) as u64);
         let omega_r = field_pow(omega_new_block, block as u64);

@@ -97,8 +97,10 @@ fn bench_rs_expand_256_to_1024(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(0xff03);
     let base_evals: Vec<F> = (0..k).map(|_| FieldSampling::sample(&mut rng)).collect();
 
-    // Interpolate: inverse FFT on the 1470-domain (zero-padded) recovers
-    // the degree-255 polynomial from its evaluations at ω^0 .. ω^255.
+    // Zero-pad the 256 evaluations to the 1470-point domain and IFFT to
+    // get a coefficient vector. This is a synthetic benchmark payload, not
+    // a true RS interpolation (the zero-padding does not correspond to
+    // evaluations at the remaining domain points).
     let mut padded_evals = vec![F::zero(); domain_size];
     padded_evals[..k].copy_from_slice(&base_evals);
     let coeffs = domain.inverse(&padded_evals);

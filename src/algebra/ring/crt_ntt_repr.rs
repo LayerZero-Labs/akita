@@ -219,6 +219,11 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let p_u64 = p as u64;
             let r64 = ((1u128 << 64) % p_u64 as u128) as i64;
             let half_p = p / 2;
+            // `centered as u64` reinterprets via 2's complement. For negative
+            // `centered`, the result is a large u64 whose `% p_u64` still
+            // yields the correct unsigned residue because
+            // `(-x) as u64 == 2^64 - x` and `(2^64 - x) mod p == (-x) mod p`
+            // when `p` divides into 2^64 evenly in residue terms.
             let lo = (centered as u64 % p_u64) as i64;
             let hi = ((centered >> 64) as i64).rem_euclid(p);
             let mut r = (lo + hi * r64) % p;

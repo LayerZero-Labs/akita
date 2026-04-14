@@ -6,7 +6,9 @@
 //!
 //! ## Built-in primes
 //!
-//! The built-in protocol prime is `Prime128Offset275` (`p = 2^128 − 275`).
+//! The built-in protocol prime is `Prime128Offset2355` (`p = 2^128 − 2355`),
+//! whose multiplicative group has a smooth subgroup of order 14700 = 2² × 3 × 5² × 7²,
+//! enabling mixed-radix FFT-based Reed-Solomon encoding.
 //! A secondary split-NTT-only prime `Prime128Offset159`
 //! (`p = 2^128 − 159`, `p ≡ 33 mod 64`) is kept for the algebra benchmark/test
 //! path that only needs 32-way roots of unity.
