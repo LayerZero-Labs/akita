@@ -139,40 +139,21 @@ fn derive_candidate_level_params<Cfg: CommitmentConfig>(
     })
 }
 
-/// Compute the minimum proof bytes for this fold level, trying all feasible
-/// next-level bases to find the smallest `next_commit`.
-///
-/// `num_claims` controls the batched `y_ring` size in the proof; pass `1`
-/// for single-polynomial and recursive levels.
+/// Compute the proof bytes for this fold level against a concrete successor.
 fn compute_level_proof_size<Cfg: CommitmentConfig>(
     candidate: &CandidateLevelParams,
-    max_num_vars: usize,
-    level: usize,
+    next_level_params: &HachiLevelParams,
     num_claims: usize,
 ) -> usize {
-    let next_inputs = HachiScheduleInputs {
-        max_num_vars,
-        level: level + 1,
-        current_w_len: candidate.next_w_len,
-    };
-
     let fb = field_bits(Cfg::decomposition());
-    let proof_bytes_with = |next_params: &HachiLevelParams| {
-        batched_root_level_proof_bytes(
-            fb,
-            &candidate.params,
-            candidate.layout,
-            next_params,
-            candidate.next_w_len,
-            num_claims,
-        )
-    };
-
-    let (lo, hi) = Cfg::log_basis_search_range(next_inputs);
-    (lo..=hi)
-        .map(|next_lb| proof_bytes_with(&Cfg::level_params_with_log_basis(next_inputs, next_lb)))
-        .min()
-        .unwrap_or_else(|| proof_bytes_with(&Cfg::level_params(next_inputs)))
+    batched_root_level_proof_bytes(
+        fb,
+        &candidate.params,
+        candidate.layout,
+        next_level_params,
+        candidate.next_w_len,
+        num_claims,
+    )
 }
 
 // -----------------------------------------------------------------------
@@ -228,6 +209,43 @@ fn basis_range<Cfg: CommitmentConfig>(
     lo..=hi
 }
 
+fn level_params_from_fold_step<Cfg: CommitmentConfig>(step: &FoldStep) -> HachiLevelParams {
+    let d = step.d as usize;
+    let stage1_config = Cfg::stage1_challenge_config(d);
+    debug_assert_eq!(stage1_config.l1_mass(), step.challenge_l1_mass);
+    HachiLevelParams {
+        d,
+        log_basis: step.log_basis,
+        n_a: step.n_a,
+        n_b: step.n_b,
+        n_d: step.n_d,
+        challenge_l1_mass: step.challenge_l1_mass,
+        stage1_config,
+    }
+}
+
+fn successor_level_params_from_schedule<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    level: usize,
+    current_w_len: usize,
+    suffix_steps: &[Step],
+) -> HachiLevelParams {
+    match suffix_steps
+        .first()
+        .expect("optimal suffix schedule must contain at least one step")
+    {
+        Step::Fold(step) => level_params_from_fold_step::<Cfg>(step),
+        Step::Direct(step) => Cfg::level_params_with_log_basis(
+            HachiScheduleInputs {
+                max_num_vars,
+                level,
+                current_w_len,
+            },
+            step.bits_per_elem,
+        ),
+    }
+}
+
 // -----------------------------------------------------------------------
 // DP — suffix search
 // -----------------------------------------------------------------------
@@ -273,8 +291,6 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
                 continue;
             };
 
-            let level_proof_size =
-                compute_level_proof_size::<Cfg>(&candidate, max_num_vars, level, 1);
             let (suffix_cost, suffix_steps) = derive_optimal_suffix_schedule::<Cfg>(
                 memo,
                 max_num_vars,
@@ -283,6 +299,14 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
                 lb,
                 depth + 1,
             );
+            let next_level_params = successor_level_params_from_schedule::<Cfg>(
+                max_num_vars,
+                level + 1,
+                candidate.next_w_len,
+                &suffix_steps,
+            );
+            let level_proof_size =
+                compute_level_proof_size::<Cfg>(&candidate, &next_level_params, 1);
 
             let total = level_proof_size + suffix_cost;
             if total < best_cost {
@@ -504,9 +528,6 @@ pub fn find_optimal_batched_schedule<Cfg: CommitmentConfig, const D: usize>(
         else {
             continue;
         };
-
-        let root_proof_size =
-            compute_level_proof_size::<Cfg>(&candidate, num_vars, 0, batch.num_claims);
         let (suffix_cost, suffix_steps) = derive_optimal_suffix_schedule::<Cfg>(
             &mut memo,
             num_vars,
@@ -515,6 +536,14 @@ pub fn find_optimal_batched_schedule<Cfg: CommitmentConfig, const D: usize>(
             root_lb,
             0,
         );
+        let next_level_params = successor_level_params_from_schedule::<Cfg>(
+            num_vars,
+            1,
+            candidate.next_w_len,
+            &suffix_steps,
+        );
+        let root_proof_size =
+            compute_level_proof_size::<Cfg>(&candidate, &next_level_params, batch.num_claims);
 
         let total = root_proof_size + suffix_cost;
         if total < best_cost {

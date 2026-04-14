@@ -127,7 +127,11 @@ fn emit_fold(step: &FoldStep, label: &str) -> String {
     )
 }
 
-fn emit_direct(direct: &DirectStep, prev_fold: Option<&FoldStep>) -> String {
+fn emit_direct<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    level: usize,
+    direct: &DirectStep,
+) -> String {
     let shape = format!(
         "GeneratedDirectWitnessShape::PackedDigits {{ num_elems: {}, bits_per_elem: {} }}",
         direct.current_w_len, direct.bits_per_elem,
@@ -135,13 +139,17 @@ fn emit_direct(direct: &DirectStep, prev_fold: Option<&FoldStep>) -> String {
 
     let (entry_d, entry_nb, total_bytes) = if direct.bits_per_elem >= 128 {
         (None, None, direct.direct_bytes)
-    } else if let Some(prev) = prev_fold {
-        let d = prev.d as usize;
-        let nb = prev.n_b;
-        let total = direct.direct_bytes + ring_vec_bytes(nb, prev.d);
-        (Some(d), Some(nb), total)
     } else {
-        (None, None, direct.direct_bytes)
+        let params = Cfg::level_params_with_log_basis(
+            hachi_pcs::protocol::commitment::HachiScheduleInputs {
+                max_num_vars,
+                level,
+                current_w_len: direct.current_w_len,
+            },
+            direct.bits_per_elem,
+        );
+        let total = direct.direct_bytes + ring_vec_bytes(params.n_b, params.d as u32);
+        (Some(params.d), Some(params.n_b), total)
     };
 
     format!(
@@ -164,7 +172,12 @@ fn emit_direct_field_elements(current_w_len: usize, direct_bytes: usize) -> Stri
     )
 }
 
-fn emit_schedule_entry(out: &mut String, key_str: &str, schedule: &Schedule) -> Result<(), String> {
+fn emit_schedule_entry<Cfg: CommitmentConfig>(
+    out: &mut String,
+    max_num_vars: usize,
+    key_str: &str,
+    schedule: &Schedule,
+) -> Result<(), String> {
     writeln!(
         out,
         "    GeneratedScheduleTableEntry {{ key: {key_str}, total_bytes: {}, steps: &[",
@@ -172,12 +185,12 @@ fn emit_schedule_entry(out: &mut String, key_str: &str, schedule: &Schedule) -> 
     )
     .map_err(|e| e.to_string())?;
 
-    let mut prev_fold: Option<&FoldStep> = None;
+    let mut level = 0usize;
     for step in &schedule.steps {
         match step {
             Step::Fold(fold) => {
                 writeln!(out, "{}", emit_fold(fold, "refactored")).map_err(|e| e.to_string())?;
-                prev_fold = Some(fold);
+                level += 1;
             }
             Step::Direct(direct) => {
                 if direct.bits_per_elem >= 128 {
@@ -188,7 +201,7 @@ fn emit_schedule_entry(out: &mut String, key_str: &str, schedule: &Schedule) -> 
                     )
                     .map_err(|e| e.to_string())?;
                 } else {
-                    writeln!(out, "{}", emit_direct(direct, prev_fold))
+                    writeln!(out, "{}", emit_direct::<Cfg>(max_num_vars, level, direct))
                         .map_err(|e| e.to_string())?;
                 }
             }
@@ -216,7 +229,7 @@ fn emit_family_rows<Cfg: CommitmentConfig, const D: usize>(
             }
         };
         let key_str = emit_key(nv, nc, ng, np);
-        emit_schedule_entry(out, &key_str, &schedule)?;
+        emit_schedule_entry::<Cfg>(out, nv, &key_str, &schedule)?;
     }
     Ok(())
 }
