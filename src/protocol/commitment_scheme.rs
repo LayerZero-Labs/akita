@@ -5,18 +5,12 @@ use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::primitives::serialization::Valid;
-use crate::protocol::commitment::optimal_root_batch_split;
-#[cfg(test)]
-use crate::protocol::commitment::root_current_w_len;
-#[cfg(test)]
-use crate::protocol::commitment::scale_batched_root_layout;
 use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
 use crate::protocol::commitment::{
     exact_planned_level_execution, hachi_batched_root_layout,
-    hachi_recursive_level_layout_from_params, hachi_root_runtime_plan,
-    hachi_root_runtime_plan_with_batch, packed_digits_bytes,
+    hachi_recursive_level_layout_from_params, packed_digits_bytes,
     planned_next_log_basis_with_current_basis_and_envelope,
     planned_recursive_suffix_bytes_with_log_basis_and_envelope, AppendToTranscript,
     CommitmentConfig, CommitmentScheme, HachiBatchPlanningEnvelope, HachiCommitmentCore,
@@ -24,6 +18,7 @@ use crate::protocol::commitment::{
     HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiVerifierSetup,
     RingCommitment, RingCommitmentScheme,
 };
+use crate::protocol::commitment::{optimal_root_batch_split, scale_batched_root_layout};
 use crate::protocol::hachi_poly_ops::{
     DensePoly, HachiPolyOps, RecursiveWitnessFlat, RecursiveWitnessView,
 };
@@ -117,6 +112,25 @@ struct ProveLevelOutput<F: FieldCore> {
 struct BatchedProveLevelOutput<F: FieldCore> {
     root_proof: HachiBatchedRootProof<F>,
     next_state: RecursiveProverState<F>,
+}
+
+#[derive(Debug, Clone)]
+struct SingletonRootContext {
+    root_key: HachiScheduleLookupKey,
+    planning_envelope: HachiBatchPlanningEnvelope,
+    layout: HachiCommitmentLayout,
+    root_params: HachiLevelParams,
+    root_w_len: usize,
+}
+
+#[derive(Debug, Clone)]
+struct BatchedRootContext {
+    root_key: HachiScheduleLookupKey,
+    planning_envelope: HachiBatchPlanningEnvelope,
+    layout: HachiCommitmentLayout,
+    batched_layout: HachiCommitmentLayout,
+    root_params: HachiLevelParams,
+    root_w_len: usize,
 }
 
 pub(crate) fn reorder_stage1_coords<F: FieldCore>(
@@ -1296,6 +1310,113 @@ fn next_level_params_from_current_basis_and_envelope<Cfg: CommitmentConfig>(
     ))
 }
 
+#[inline(never)]
+fn root_witness_len<const D: usize>(layout: HachiCommitmentLayout) -> Result<usize, HachiError> {
+    layout
+        .num_blocks
+        .checked_mul(layout.block_len)
+        .and_then(|len| len.checked_mul(D))
+        .ok_or_else(|| HachiError::InvalidSetup("root witness length overflow".to_string()))
+}
+
+#[inline(never)]
+fn derive_singleton_root_context<Cfg, const D: usize>(
+    max_num_vars: usize,
+    num_vars: usize,
+    layout_num_claims: usize,
+) -> Result<SingletonRootContext, HachiError>
+where
+    Cfg: CommitmentConfig,
+{
+    let root_key = HachiScheduleLookupKey::singleton(max_num_vars, num_vars, layout_num_claims);
+    let planning_envelope = HachiBatchPlanningEnvelope::singleton::<Cfg>();
+    let split = optimal_root_batch_split::<Cfg, D>(num_vars, layout_num_claims)?;
+    let layout = HachiCommitmentLayout::new_with_decomp(
+        split.m_vars,
+        split.r_vars,
+        split.n_a,
+        split.num_digits_commit,
+        split.num_digits_open,
+        split.num_digits_fold,
+        split.log_basis,
+        0,
+    )?;
+    let root_w_len = root_witness_len::<D>(layout)?;
+    let root_params = Cfg::root_level_params_for_layout_with_log_basis(
+        HachiScheduleInputs {
+            max_num_vars,
+            level: 0,
+            current_w_len: root_w_len,
+        },
+        layout,
+    )?;
+
+    Ok(SingletonRootContext {
+        root_key,
+        planning_envelope,
+        layout,
+        root_params,
+        root_w_len,
+    })
+}
+
+#[inline(never)]
+fn derive_batched_root_context<Cfg, const D: usize>(
+    max_num_vars: usize,
+    num_vars: usize,
+    layout_num_claims: usize,
+    batch: HachiRootBatchSummary,
+) -> Result<BatchedRootContext, HachiError>
+where
+    Cfg: CommitmentConfig,
+{
+    let root_key =
+        HachiScheduleLookupKey::with_batch(max_num_vars, num_vars, layout_num_claims, batch);
+    let planning_envelope = HachiBatchPlanningEnvelope::homogeneous::<Cfg>(batch);
+    let split = optimal_root_batch_split::<Cfg, D>(num_vars, layout_num_claims)?;
+    let layout = HachiCommitmentLayout::new_with_decomp(
+        split.m_vars,
+        split.r_vars,
+        split.n_a,
+        split.num_digits_commit,
+        split.num_digits_open,
+        split.num_digits_fold,
+        split.log_basis,
+        0,
+    )?;
+    let batched_layout =
+        scale_batched_root_layout::<Cfg, D>(max_num_vars, layout, batch.num_claims)?;
+    let root_w_len = root_witness_len::<D>(layout)?;
+    let root_params = if batch.num_claims > 1 {
+        Cfg::root_level_params_for_layout_with_log_basis(
+            HachiScheduleInputs {
+                max_num_vars,
+                level: 0,
+                current_w_len: root_w_len,
+            },
+            batched_layout,
+        )?
+    } else {
+        Cfg::root_level_params_for_layout_with_log_basis(
+            HachiScheduleInputs {
+                max_num_vars,
+                level: 0,
+                current_w_len: root_w_len,
+            },
+            layout,
+        )?
+    };
+
+    Ok(BatchedRootContext {
+        root_key,
+        planning_envelope,
+        layout,
+        batched_layout,
+        root_params,
+        root_w_len,
+    })
+}
+
 /// Dispatch a commit-w operation to the correct ring dimension.
 ///
 /// Each match arm builds NTT caches for the target D and calls `commit_w`.
@@ -1565,28 +1686,33 @@ where
     Ok((levels, level, current_state))
 }
 
-fn finalize_batched_recursive_proof<F, const D: usize, Cfg>(
-    max_num_vars: usize,
+fn pack_terminal_witness_or_panic(
+    witness: &RecursiveWitnessFlat,
+    log_basis: u32,
+    context: &str,
+) -> PackedDigits {
+    let digits = witness.as_i8_digits();
+    let required_bits = PackedDigits::required_bits_per_elem(digits);
+    if required_bits > log_basis {
+        panic!(
+            "{context}: final witness requires {required_bits} bits but runtime state carries log_basis={log_basis}"
+        );
+    }
+    PackedDigits::from_i8_digits(digits, log_basis)
+}
+
+fn finalize_batched_recursive_proof<F, const D: usize>(
     root_proof: HachiBatchedRootProof<F>,
     levels: Vec<HachiLevelProof<F>>,
-    level: usize,
     current_state: RecursiveProverState<F>,
 ) -> HachiBatchedProof<F>
 where
     F: FieldCore,
-    Cfg: CommitmentConfig<Field = F>,
 {
-    let final_params = Cfg::level_params_with_log_basis(
-        HachiScheduleInputs {
-            max_num_vars,
-            level,
-            current_w_len: current_state.w.len(),
-        },
+    let final_w = pack_terminal_witness_or_panic(
+        &current_state.w,
         current_state.log_basis,
-    );
-    let final_w = PackedDigits::from_i8_digits_with_min_bits(
-        current_state.w.as_i8_digits(),
-        final_params.log_basis,
+        "batched recursive final witness",
     );
     let mut steps = levels
         .into_iter()
@@ -1742,15 +1868,20 @@ where
     let mut commit_ntt_cache = MultiDNttCaches::new();
     let max_num_vars = setup.expanded.seed.max_num_vars;
     let num_vars = opening_point.len();
-    let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
+    let batch = HachiRootBatchSummary::from_claim_group_sizes(&claim_group_sizes, 1)?;
+    let BatchedRootContext {
+        root_key,
+        planning_envelope,
+        layout,
+        batched_layout,
+        root_params,
+        root_w_len,
+    } = derive_batched_root_context::<Cfg, D>(
         max_num_vars,
         num_vars,
         setup.expanded.seed.max_num_batched_polys,
-        HachiRootBatchSummary::from_claim_group_sizes(&claim_group_sizes, 1)?,
+        batch,
     )?;
-    let layout = root_plan.root_layout;
-    let batched_layout = root_plan.level_layout;
-    let root_params = root_plan.params.clone();
     setup.ensure_layout_fits(&batched_layout)?;
     if commitments
         .iter()
@@ -1789,7 +1920,7 @@ where
         &flat_polys,
         &claim_group_sizes,
         max_num_vars,
-        root_plan.lookup_key(),
+        root_key,
         opening_point,
         hints,
         transcript,
@@ -1798,7 +1929,7 @@ where
         &root_params,
         batched_layout,
         layout,
-        root_plan.planning_envelope,
+        planning_envelope,
     )?;
     let (levels, level, current_state) = prove_batched_recursive_suffix::<F, T, D, Cfg>(
         setup,
@@ -1807,7 +1938,7 @@ where
         max_num_vars,
         transcript,
         next_state,
-        root_plan.inputs.current_w_len,
+        root_w_len,
     )?;
 
     tracing::info!(
@@ -1816,11 +1947,9 @@ where
         "hachi batched prove complete"
     );
 
-    Ok(finalize_batched_recursive_proof::<F, D, Cfg>(
-        max_num_vars,
+    Ok(finalize_batched_recursive_proof::<F, D>(
         root_proof,
         levels,
-        level,
         current_state,
     ))
 }
@@ -1863,17 +1992,22 @@ where
     let t_verify_hachi = Instant::now();
     let max_num_vars = setup.expanded.seed.max_num_vars;
     let num_vars = opening_point.len();
-    let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
+    let batch = HachiRootBatchSummary::from_claim_group_sizes(&claim_group_sizes, 1)
+        .map_err(|_| HachiError::InvalidProof)?;
+    let BatchedRootContext {
+        root_key,
+        planning_envelope,
+        layout,
+        batched_layout,
+        root_params,
+        root_w_len: _root_w_len,
+    } = derive_batched_root_context::<Cfg, D>(
         max_num_vars,
         num_vars,
         setup.expanded.seed.max_num_batched_polys,
-        HachiRootBatchSummary::from_claim_group_sizes(&claim_group_sizes, 1)
-            .map_err(|_| HachiError::InvalidProof)?,
+        batch,
     )
     .map_err(|_| HachiError::InvalidProof)?;
-    let layout = root_plan.root_layout;
-    let batched_layout = root_plan.level_layout;
-    let root_params = root_plan.params.clone();
     setup.expanded.ensure_layout_fits(&batched_layout)?;
 
     let final_w = Some(proof.final_witness());
@@ -1895,8 +2029,25 @@ where
     )?;
 
     if has_recursive_levels {
-        let root_w_len = root_plan.next_w_len();
-        let first_level_d = root_plan.next_level_params.d;
+        let next_w_len = w_ring_element_count_with_claim_groups::<F>(
+            &root_params,
+            batched_layout,
+            &claim_group_sizes,
+        )
+        .checked_mul(D)
+        .ok_or(HachiError::InvalidProof)?;
+        let next_level_params = next_level_params_from_current_basis_and_envelope::<Cfg>(
+            root_key,
+            HachiScheduleInputs {
+                max_num_vars,
+                level: 1,
+                current_w_len: next_w_len,
+            },
+            root_params.log_basis,
+            planning_envelope,
+        )
+        .map_err(|_| HachiError::InvalidProof)?;
+        let first_level_d = next_level_params.d;
         if !proof.root.next_w_commitment().can_decode_vec(first_level_d) {
             return Err(HachiError::InvalidProof);
         }
@@ -1906,10 +2057,10 @@ where
             opening: proof.root.next_w_eval(),
             commitment: proof.root.next_w_commitment(),
             basis: BasisMode::Lagrange,
-            w_len: root_w_len,
-            log_basis: root_plan.next_level_params.log_basis,
-            root_key: root_plan.lookup_key(),
-            planning_envelope: root_plan.planning_envelope,
+            w_len: next_w_len,
+            log_basis: next_level_params.log_basis,
+            root_key,
+            planning_envelope,
         };
         verify_batched_recursive_suffix::<F, T, D, Cfg>(
             proof,
@@ -2070,13 +2221,19 @@ where
         let mut ntt_cache = MultiDNttCaches::new();
         let mut commit_ntt_cache = MultiDNttCaches::new();
         let max_num_vars = setup.expanded.seed.max_num_vars;
-        let root_plan = hachi_root_runtime_plan::<Cfg, D>(
+        let SingletonRootContext {
+            root_key,
+            planning_envelope,
+            layout,
+            root_params,
+            root_w_len,
+        } = derive_singleton_root_context::<Cfg, D>(
             max_num_vars,
             num_vars,
             setup.expanded.seed.max_num_batched_polys,
         )?;
         let exact_plan = if num_vars == max_num_vars {
-            Cfg::schedule_plan(root_plan.lookup_key())?
+            Cfg::schedule_plan(root_key)?
         } else {
             None
         };
@@ -2084,25 +2241,25 @@ where
         if let Some(plan) = exact_plan.as_ref() {
             let planned_root = exact_planned_level_execution::<Cfg>(
                 plan,
-                root_plan.inputs,
-                root_plan.params.log_basis,
+                HachiScheduleInputs {
+                    max_num_vars,
+                    level: 0,
+                    current_w_len: root_w_len,
+                },
+                root_params.log_basis,
             )?
             .ok_or_else(|| {
                 HachiError::InvalidSetup(
                     "exact planned root fold did not match runtime root state".to_string(),
                 )
             })?;
-            if planned_root.level.layout != root_plan.root_layout
-                || planned_root.level.params != root_plan.params
-            {
+            if planned_root.level.layout != layout || planned_root.level.params != root_params {
                 return Err(HachiError::InvalidSetup(
                     "exact planned root fold drifted from runtime root plan".to_string(),
                 ));
             }
             root_next_params_override = Some(planned_root.next_level_params);
         }
-        let layout = root_plan.root_layout;
-        let root_params = root_plan.params.clone();
         let max_stride = setup.expanded.seed.max_stride();
 
         let commit_fn_0: CommitFn<'_, F> = Box::new(
@@ -2132,7 +2289,7 @@ where
             commit_fn_0,
             poly,
             max_num_vars,
-            root_plan.lookup_key(),
+            root_key,
             opening_point,
             hint,
             transcript,
@@ -2141,12 +2298,12 @@ where
             0,
             &root_params,
             layout,
-            root_plan.planning_envelope,
+            planning_envelope,
             root_next_params_override,
         )?;
         levels.push(out.level_proof);
 
-        let mut prev_poly_len = root_plan.inputs.current_w_len;
+        let mut prev_poly_len = root_w_len;
         let mut current_state = out.next_state;
         let mut level = 1usize;
         let planned_num_levels = exact_plan.as_ref().map(|plan| plan.num_fold_levels());
@@ -2243,19 +2400,12 @@ where
                 }
             }
         } else {
-            Cfg::level_params_with_log_basis(
-                HachiScheduleInputs {
-                    max_num_vars,
-                    level,
-                    current_w_len: current_state.w.len(),
-                },
-                current_state.log_basis,
-            )
-            .log_basis
+            current_state.log_basis
         };
-        let final_w = PackedDigits::from_i8_digits_with_min_bits(
-            current_state.w.as_i8_digits(),
+        let final_w = pack_terminal_witness_or_panic(
+            &current_state.w,
             final_log_basis,
+            "singleton recursive final witness",
         );
         let mut steps = levels
             .into_iter()
@@ -2340,18 +2490,23 @@ where
         let mut ntt_cache = MultiDNttCaches::new();
         let mut commit_ntt_cache = MultiDNttCaches::new();
         let max_num_vars = setup.expanded.seed.max_num_vars;
-        let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
+        let batch = HachiRootBatchSummary::from_claim_group_sizes(
+            &batch_shape.claim_group_sizes,
+            opening_points.len(),
+        )?;
+        let BatchedRootContext {
+            root_key,
+            planning_envelope,
+            layout,
+            batched_layout,
+            root_params,
+            root_w_len,
+        } = derive_batched_root_context::<Cfg, D>(
             max_num_vars,
             num_vars,
             setup.expanded.seed.max_num_batched_polys,
-            HachiRootBatchSummary::from_claim_group_sizes(
-                &batch_shape.claim_group_sizes,
-                opening_points.len(),
-            )?,
+            batch,
         )?;
-        let layout = root_plan.root_layout;
-        let batched_layout = root_plan.level_layout;
-        let root_params = root_plan.params.clone();
         setup.ensure_layout_fits(&batched_layout)?;
 
         let alpha_bits = root_params.d.trailing_zeros() as usize;
@@ -2406,14 +2561,14 @@ where
             &batch_shape,
             &prepared_points,
             max_num_vars,
-            root_plan.lookup_key(),
+            root_key,
             flat_hints,
             transcript,
             &flat_commitments,
             &root_params,
             batched_layout,
             layout,
-            root_plan.planning_envelope,
+            planning_envelope,
         )?;
 
         let (levels, level, current_state) = prove_batched_recursive_suffix::<F, T, D, Cfg>(
@@ -2423,7 +2578,7 @@ where
             max_num_vars,
             transcript,
             next_state,
-            root_plan.inputs.current_w_len,
+            root_w_len,
         )?;
 
         tracing::info!(
@@ -2432,11 +2587,9 @@ where
             "hachi batched prove complete"
         );
 
-        Ok(finalize_batched_recursive_proof::<F, D, Cfg>(
-            max_num_vars,
+        Ok(finalize_batched_recursive_proof::<F, D>(
             root_proof,
             levels,
-            level,
             current_state,
         ))
     }
@@ -2467,19 +2620,23 @@ where
             );
         }
         let max_num_vars = setup.expanded.seed.max_num_vars;
-        let root_plan = hachi_root_runtime_plan::<Cfg, D>(
+        let SingletonRootContext {
+            root_key,
+            planning_envelope,
+            layout,
+            root_params,
+            root_w_len,
+        } = derive_singleton_root_context::<Cfg, D>(
             max_num_vars,
             num_vars,
             setup.expanded.seed.max_num_batched_polys,
         )
         .map_err(|_| HachiError::InvalidProof)?;
         let exact_plan = if num_vars == max_num_vars {
-            Cfg::schedule_plan(root_plan.lookup_key()).map_err(|_| HachiError::InvalidProof)?
+            Cfg::schedule_plan(root_key).map_err(|_| HachiError::InvalidProof)?
         } else {
             None
         };
-        let layout = root_plan.root_layout;
-        let root_params = root_plan.params.clone();
         let t_verify_hachi = Instant::now();
 
         let num_levels = proof.num_fold_levels();
@@ -2494,16 +2651,23 @@ where
             opening: *opening,
             commitment: &root_commitment,
             basis,
-            w_len: root_plan.inputs.current_w_len,
+            w_len: root_w_len,
             log_basis: root_params.log_basis,
-            root_key: root_plan.lookup_key(),
-            planning_envelope: root_plan.planning_envelope,
+            root_key,
+            planning_envelope,
         };
         if let Some(plan) = exact_plan.as_ref() {
-            let planned_root =
-                exact_planned_level_execution::<Cfg>(plan, root_plan.inputs, root_params.log_basis)
-                    .map_err(|_| HachiError::InvalidProof)?
-                    .ok_or(HachiError::InvalidProof)?;
+            let planned_root = exact_planned_level_execution::<Cfg>(
+                plan,
+                HachiScheduleInputs {
+                    max_num_vars,
+                    level: 0,
+                    current_w_len: root_w_len,
+                },
+                root_params.log_basis,
+            )
+            .map_err(|_| HachiError::InvalidProof)?
+            .ok_or(HachiError::InvalidProof)?;
             if planned_root.level.layout != layout || planned_root.level.params != root_params {
                 return Err(HachiError::InvalidProof);
             }
@@ -2711,20 +2875,25 @@ where
 
         let t_verify_hachi = Instant::now();
         let max_num_vars = setup.expanded.seed.max_num_vars;
-        let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
+        let batch = HachiRootBatchSummary::from_claim_group_sizes(
+            &batch_shape.claim_group_sizes,
+            opening_points.len(),
+        )
+        .map_err(|_| HachiError::InvalidProof)?;
+        let BatchedRootContext {
+            root_key,
+            planning_envelope,
+            layout,
+            batched_layout,
+            root_params,
+            root_w_len: _root_w_len,
+        } = derive_batched_root_context::<Cfg, D>(
             max_num_vars,
             num_vars,
             setup.expanded.seed.max_num_batched_polys,
-            HachiRootBatchSummary::from_claim_group_sizes(
-                &batch_shape.claim_group_sizes,
-                opening_points.len(),
-            )
-            .map_err(|_| HachiError::InvalidProof)?,
+            batch,
         )
         .map_err(|_| HachiError::InvalidProof)?;
-        let layout = root_plan.root_layout;
-        let batched_layout = root_plan.level_layout;
-        let root_params = root_plan.params.clone();
         setup.expanded.ensure_layout_fits(&batched_layout)?;
 
         let final_w = Some(proof.final_witness());
@@ -2755,8 +2924,26 @@ where
         )?;
 
         if has_recursive_levels {
-            let root_w_len = root_plan.next_w_len();
-            let first_level_d = root_plan.next_level_params.d;
+            let next_w_len = w_ring_element_count_with_point_claim_groups::<F>(
+                &root_params,
+                batched_layout,
+                &batch_shape.claim_group_sizes,
+                opening_points.len(),
+            )
+            .checked_mul(D)
+            .ok_or(HachiError::InvalidProof)?;
+            let next_level_params = next_level_params_from_current_basis_and_envelope::<Cfg>(
+                root_key,
+                HachiScheduleInputs {
+                    max_num_vars,
+                    level: 1,
+                    current_w_len: next_w_len,
+                },
+                root_params.log_basis,
+                planning_envelope,
+            )
+            .map_err(|_| HachiError::InvalidProof)?;
+            let first_level_d = next_level_params.d;
             if !proof.root.next_w_commitment().can_decode_vec(first_level_d) {
                 return Err(HachiError::InvalidProof);
             }
@@ -2766,10 +2953,10 @@ where
                 opening: proof.root.next_w_eval(),
                 commitment: proof.root.next_w_commitment(),
                 basis: BasisMode::Lagrange,
-                w_len: root_w_len,
-                log_basis: root_plan.next_level_params.log_basis,
-                root_key: root_plan.lookup_key(),
-                planning_envelope: root_plan.planning_envelope,
+                w_len: next_w_len,
+                log_basis: next_level_params.log_basis,
+                root_key,
+                planning_envelope,
             };
             verify_batched_recursive_suffix::<F, T, D, Cfg>(
                 proof,
@@ -3993,7 +4180,11 @@ mod tests {
             let batch_root_params = OneHotCfg::level_params(HachiScheduleInputs {
                 max_num_vars: BATCH_NUM_VARS,
                 level: 0,
-                current_w_len: root_current_w_len::<ONEHOT_D>(batch_layout),
+                current_w_len: batch_layout
+                    .num_blocks
+                    .checked_mul(batch_layout.block_len)
+                    .and_then(|len| len.checked_mul(ONEHOT_D))
+                    .unwrap_or(0),
             });
 
             let batch_polys: Vec<OneHotPoly<OneHotF, ONEHOT_D, u8>> = (0..BATCH_SIZE)
@@ -4660,12 +4851,20 @@ mod tests {
             let single_root_params = OneHotCfg::level_params(HachiScheduleInputs {
                 max_num_vars: SINGLE_NUM_VARS,
                 level: 0,
-                current_w_len: root_current_w_len::<ONEHOT_D>(single_layout),
+                current_w_len: single_layout
+                    .num_blocks
+                    .checked_mul(single_layout.block_len)
+                    .and_then(|len| len.checked_mul(ONEHOT_D))
+                    .unwrap_or(0),
             });
             let batch_root_params = OneHotCfg::level_params(HachiScheduleInputs {
                 max_num_vars: BATCH_NUM_VARS,
                 level: 0,
-                current_w_len: root_current_w_len::<ONEHOT_D>(batch_layout),
+                current_w_len: batch_layout
+                    .num_blocks
+                    .checked_mul(batch_layout.block_len)
+                    .and_then(|len| len.checked_mul(ONEHOT_D))
+                    .unwrap_or(0),
             });
 
             let single_root_w_ring =
