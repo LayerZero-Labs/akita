@@ -8,6 +8,9 @@ use hachi_pcs::algebra::Prime128Offset2355;
 use hachi_pcs::{FieldCore, FieldSampling};
 use rand::{rngs::StdRng, SeedableRng};
 
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 type F = Prime128Offset2355;
 
 const P: u128 = 0xfffffffffffffffffffffffffffff6cd;
@@ -109,11 +112,48 @@ fn bench_rs_expand_256_to_1024(c: &mut Criterion) {
     });
 }
 
+#[cfg(feature = "parallel")]
+fn bench_rs_expand_256_to_1024_par(c: &mut Criterion) {
+    let g = generator();
+    let domain_size = 1470usize;
+    let k = 256usize;
+    let count = 32_768usize;
+    let omega = primitive_root_of_unity(g, P_MINUS_1, domain_size);
+    let domain = SmoothDomain::new(omega, domain_size);
+
+    let coeffs_batch: Vec<Vec<F>> = (0..count)
+        .map(|i| {
+            let mut rng = StdRng::seed_from_u64(0xff04 + i as u64);
+            let base: Vec<F> = (0..k).map(|_| FieldSampling::sample(&mut rng)).collect();
+            let mut padded = vec![F::zero(); domain_size];
+            padded[..k].copy_from_slice(&base);
+            domain.inverse(&padded)
+        })
+        .collect();
+
+    c.bench_function(
+        "fft_rs_expand/256_to_1024_via_1470_x32768_par",
+        |b| {
+            b.iter(|| {
+                let results: Vec<Vec<F>> = coeffs_batch
+                    .par_iter()
+                    .map(|coeffs| domain.coset_forward(coeffs, F::one()))
+                    .collect();
+                black_box(&results);
+            })
+        },
+    );
+}
+
+#[cfg(not(feature = "parallel"))]
+fn bench_rs_expand_256_to_1024_par(_c: &mut Criterion) {}
+
 criterion_group!(
     fft_smooth,
     bench_forward,
     bench_inverse,
     bench_rs_extend,
     bench_rs_expand_256_to_1024,
+    bench_rs_expand_256_to_1024_par,
 );
 criterion_main!(fft_smooth);
