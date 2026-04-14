@@ -1,8 +1,8 @@
 //! Configuration presets for ring-native commitment construction.
 use super::profile::{CommitmentFieldProfile, CommitmentFieldProfileSchedule};
 use super::schedule::{
-    exact_planned_level_execution, hachi_root_commitment_layout, HachiLevelParams,
-    HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
+    derive_commitment_layout, exact_planned_level_execution, hachi_root_commitment_layout,
+    HachiLevelParams, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use super::utils::math::checked_pow2;
 use super::utils::norm::detect_field_modulus;
@@ -1057,26 +1057,7 @@ fn derived_root_commitment_layout_from_params<Cfg: CommitmentConfig>(
 
     let mut decomp = Cfg::decomposition();
     decomp.log_basis = params.log_basis;
-    let (m_vars, r_vars) = if reduced_vars == 0 {
-        (0, 0)
-    } else {
-        optimal_m_r_split_with_params(params, decomp, reduced_vars, 0)
-    };
-    let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
-    let num_digits_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
-    let num_digits_open = num_digits_for_bound(open_bound, decomp.log_basis);
-    let num_digits_fold =
-        compute_num_digits_fold(r_vars, params.challenge_l1_mass, decomp.log_basis);
-    HachiCommitmentLayout::new_with_decomp(
-        m_vars,
-        r_vars,
-        params.n_a,
-        num_digits_commit,
-        num_digits_open,
-        num_digits_fold,
-        decomp.log_basis,
-        0,
-    )
+    derive_commitment_layout(params, decomp, reduced_vars, 0)
 }
 
 fn sis_derived_root_params_for_layout<Cfg: CommitmentConfig>(

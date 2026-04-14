@@ -577,6 +577,25 @@ fn layout_from_params(
     )
 }
 
+/// Compute the optimal `(m, r)` split and build the commitment layout.
+///
+/// Shared core for both root and recursive levels.  Callers provide the
+/// level-specific `decomp`, `reduced_vars`, and `num_ring`; this function
+/// handles the split and layout construction.
+pub(crate) fn derive_commitment_layout(
+    params: &HachiLevelParams,
+    decomp: DecompositionParams,
+    reduced_vars: usize,
+    num_ring: usize,
+) -> Result<HachiCommitmentLayout, HachiError> {
+    let (m_vars, r_vars) = if reduced_vars == 0 {
+        (0, 0)
+    } else {
+        optimal_m_r_split_with_params(params, decomp, reduced_vars, num_ring)
+    };
+    layout_from_params(m_vars, r_vars, params, decomp, num_ring)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Fully planned public data for one Hachi fold level.
 pub struct HachiPlannedLevel {
@@ -1442,7 +1461,7 @@ pub(crate) fn build_schedule_plan_from_config<Cfg: CommitmentConfig>(
     })
 }
 
-pub(super) fn field_bits(root_decomp: DecompositionParams) -> u32 {
+pub(crate) fn field_bits(root_decomp: DecompositionParams) -> u32 {
     root_decomp
         .log_open_bound
         .unwrap_or(root_decomp.log_commit_bound)
@@ -1460,7 +1479,7 @@ pub(crate) fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize
     num_elems.saturating_mul(bits_per_elem as usize).div_ceil(8)
 }
 
-pub(super) fn direct_witness_bytes(field_bits: u32, shape: &DirectWitnessShape) -> usize {
+pub(crate) fn direct_witness_bytes(field_bits: u32, shape: &DirectWitnessShape) -> usize {
     match shape {
         DirectWitnessShape::PackedDigits((num_elems, bits_per_elem)) => {
             packed_digits_bytes(*num_elems, *bits_per_elem)
@@ -1594,7 +1613,7 @@ fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> HachiStage1Proof
     }
 }
 
-pub(super) fn exact_recursive_level_proof_bytes<F: FieldCore>(
+pub(crate) fn exact_recursive_level_proof_bytes<F: FieldCore>(
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
     next_level_params: &HachiLevelParams,
@@ -1650,7 +1669,7 @@ pub(crate) fn batched_root_level_proof_bytes(
         + next_eval_bytes
 }
 
-pub(super) fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
+pub(crate) fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
     inputs: HachiScheduleInputs,
     log_basis: u32,
 ) -> Result<(HachiLevelParams, HachiCommitmentLayout), HachiError> {
@@ -2183,15 +2202,11 @@ pub fn hachi_recursive_level_layout_from_params<Cfg: CommitmentConfig>(
         )));
     }
     let num_ring_elems = current_w_len / params.d;
-    let total = num_ring_elems.next_power_of_two().max(1);
-    let alpha = params.d.trailing_zeros() as usize;
-    let reduced_vars = total.trailing_zeros() as usize;
-    let max_num_vars = reduced_vars + alpha;
+    let reduced_vars = num_ring_elems.next_power_of_two().max(1).trailing_zeros() as usize;
     let decomp = recursive_level_decomposition::<Cfg>(params);
-    let (m_vars, r_vars) =
-        optimal_m_r_split_with_params(params, decomp, reduced_vars, num_ring_elems);
-    let layout = layout_from_params(m_vars, r_vars, params, decomp, num_ring_elems)?;
-    debug_assert_eq!(layout.m_vars + layout.r_vars + alpha, max_num_vars);
+    let layout = derive_commitment_layout(params, decomp, reduced_vars, num_ring_elems)?;
+    let alpha = params.d.trailing_zeros() as usize;
+    debug_assert_eq!(layout.m_vars + layout.r_vars + alpha, reduced_vars + alpha);
     Ok(layout)
 }
 
