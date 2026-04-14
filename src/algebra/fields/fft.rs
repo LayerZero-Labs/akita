@@ -90,10 +90,56 @@ fn digit_reversal_permutation(n: usize, factors: &[usize]) -> Vec<usize> {
     perm
 }
 
+/// Per-stage precomputed data for the FFT butterfly.
+struct StageData<F> {
+    /// Radix for this stage.
+    r: usize,
+    /// Block size before this stage.
+    block: usize,
+    /// `omega_r_pow[q] = omega_r^q` for `q = 0..r`.
+    omega_r_pow: [F; 8],
+    /// `twiddle_table[j] = omega_new_block^j` for `j = 0..block`.
+    twiddle_table: Vec<F>,
+}
+
+/// Build per-stage twiddle and root-of-unity tables.
+fn precompute_stages<F: FieldCore>(omega: F, n: usize, factors: &[usize]) -> Vec<StageData<F>> {
+    let mut stages = Vec::with_capacity(factors.len());
+    let mut block = 1usize;
+
+    for &r in factors.iter().rev() {
+        let new_block = block * r;
+        let omega_new_block = field_pow(omega, (n / new_block) as u64);
+        let omega_r = field_pow(omega_new_block, block as u64);
+
+        let mut omega_r_pow = [F::one(); 8];
+        for q in 1..r {
+            omega_r_pow[q] = omega_r_pow[q - 1] * omega_r;
+        }
+
+        let mut twiddle_table = Vec::with_capacity(block);
+        let mut tw = F::one();
+        for _ in 0..block {
+            twiddle_table.push(tw);
+            tw = tw * omega_new_block;
+        }
+
+        stages.push(StageData {
+            r,
+            block,
+            omega_r_pow,
+            twiddle_table,
+        });
+
+        block = new_block;
+    }
+    stages
+}
+
 /// Pre-allocated workspace for iterative mixed-radix FFT.
 ///
-/// Stores the factorization, digit-reversal permutation, and two ping-pong
-/// buffers so the FFT hot path does zero heap allocations.
+/// Stores two ping-pong buffers so the FFT hot path does zero heap
+/// allocations.
 struct FftWorkspace<F> {
     n: usize,
     buf_a: Vec<F>,
@@ -116,7 +162,7 @@ impl<F: FieldCore> FftWorkspace<F> {
     /// 3. At each stage: in-place radix-r butterflies.
     ///
     /// Returns a reference to `buf_a` which holds the result.
-    fn execute(&mut self, input: &[F], omega: F, factors: &[usize], digit_rev: &[usize]) -> &[F] {
+    fn execute(&mut self, input: &[F], stages: &[StageData<F>], digit_rev: &[usize]) -> &[F] {
         let n = self.n;
         debug_assert_eq!(input.len(), n);
 
@@ -124,38 +170,33 @@ impl<F: FieldCore> FftWorkspace<F> {
             self.buf_a[rev_i] = input[i];
         }
 
-        self.butterfly_stages(omega, factors);
+        self.butterfly_stages(stages);
         &self.buf_a[..n]
     }
 
     /// Like `execute` but reads input from `buf_b` (already filled by caller).
-    fn execute_from_b(&mut self, omega: F, factors: &[usize], digit_rev: &[usize]) -> &[F] {
+    fn execute_from_b(&mut self, stages: &[StageData<F>], digit_rev: &[usize]) -> &[F] {
         let n = self.n;
 
         for (i, &rev_i) in digit_rev.iter().enumerate() {
             self.buf_a[rev_i] = self.buf_b[i];
         }
 
-        self.butterfly_stages(omega, factors);
+        self.butterfly_stages(stages);
         &self.buf_a[..n]
     }
 
-    fn butterfly_stages(&mut self, omega: F, factors: &[usize]) {
+    fn butterfly_stages(&mut self, stages: &[StageData<F>]) {
         let n = self.n;
-        let mut block = 1usize;
-        for &r in factors.iter().rev() {
+        for stage in stages {
+            let r = stage.r;
+            let block = stage.block;
             let new_block = block * r;
-            let omega_new_block = field_pow(omega, (n / new_block) as u64);
-            let omega_r = field_pow(omega_new_block, block as u64);
-
-            let mut omega_r_pow = [F::one(); 8];
-            for q in 1..r {
-                omega_r_pow[q] = omega_r_pow[q - 1] * omega_r;
-            }
+            let omega_r_pow = &stage.omega_r_pow;
+            let twiddle_table = &stage.twiddle_table;
 
             for group_start in (0..n).step_by(new_block) {
-                let mut tw = F::one();
-                for j in 0..block {
+                for (j, tw_entry) in twiddle_table.iter().enumerate() {
                     let base = group_start + j;
 
                     let mut x = [F::zero(); 8];
@@ -163,10 +204,45 @@ impl<F: FieldCore> FftWorkspace<F> {
                         *xi = self.buf_a[base + ki * block];
                     }
 
-                    let mut tw_k = tw;
-                    for xi in x[1..r].iter_mut() {
-                        *xi = *xi * tw_k;
-                        tw_k = tw_k * tw;
+                    if j > 0 {
+                        let tw = *tw_entry;
+                        let tw2 = tw * tw;
+                        match r {
+                            2 => {
+                                x[1] = x[1] * tw;
+                            }
+                            3 => {
+                                x[1] = x[1] * tw;
+                                x[2] = x[2] * tw2;
+                            }
+                            5 => {
+                                let tw3 = tw2 * tw;
+                                let tw4 = tw2 * tw2;
+                                x[1] = x[1] * tw;
+                                x[2] = x[2] * tw2;
+                                x[3] = x[3] * tw3;
+                                x[4] = x[4] * tw4;
+                            }
+                            7 => {
+                                let tw3 = tw2 * tw;
+                                let tw4 = tw2 * tw2;
+                                let tw5 = tw4 * tw;
+                                let tw6 = tw3 * tw3;
+                                x[1] = x[1] * tw;
+                                x[2] = x[2] * tw2;
+                                x[3] = x[3] * tw3;
+                                x[4] = x[4] * tw4;
+                                x[5] = x[5] * tw5;
+                                x[6] = x[6] * tw6;
+                            }
+                            _ => {
+                                let mut tw_k = tw;
+                                for xi in x[1..r].iter_mut() {
+                                    *xi = *xi * tw_k;
+                                    tw_k = tw_k * tw;
+                                }
+                            }
+                        }
                     }
 
                     match r {
@@ -196,6 +272,34 @@ impl<F: FieldCore> FftWorkspace<F> {
                             self.buf_a[base + 4 * block] =
                                 x[0] + x[1] * w4 + x[2] * w3 + x[3] * w2 + x[4] * w1;
                         }
+                        7 => {
+                            let w1 = omega_r_pow[1];
+                            let w2 = omega_r_pow[2];
+                            let w3 = omega_r_pow[3];
+                            let w4 = omega_r_pow[4];
+                            let w5 = omega_r_pow[5];
+                            let w6 = omega_r_pow[6];
+                            self.buf_a[base] =
+                                x[0] + x[1] + x[2] + x[3] + x[4] + x[5] + x[6];
+                            self.buf_a[base + block] =
+                                x[0] + x[1] * w1 + x[2] * w2 + x[3] * w3
+                                     + x[4] * w4 + x[5] * w5 + x[6] * w6;
+                            self.buf_a[base + 2 * block] =
+                                x[0] + x[1] * w2 + x[2] * w4 + x[3] * w6
+                                     + x[4] * w1 + x[5] * w3 + x[6] * w5;
+                            self.buf_a[base + 3 * block] =
+                                x[0] + x[1] * w3 + x[2] * w6 + x[3] * w2
+                                     + x[4] * w5 + x[5] * w1 + x[6] * w4;
+                            self.buf_a[base + 4 * block] =
+                                x[0] + x[1] * w4 + x[2] * w1 + x[3] * w5
+                                     + x[4] * w2 + x[5] * w6 + x[6] * w3;
+                            self.buf_a[base + 5 * block] =
+                                x[0] + x[1] * w5 + x[2] * w3 + x[3] * w1
+                                     + x[4] * w6 + x[5] * w4 + x[6] * w2;
+                            self.buf_a[base + 6 * block] =
+                                x[0] + x[1] * w6 + x[2] * w5 + x[3] * w4
+                                     + x[4] * w3 + x[5] * w2 + x[6] * w1;
+                        }
                         _ => {
                             for (q, &wq) in omega_r_pow[..r].iter().enumerate() {
                                 let mut val = x[0];
@@ -208,12 +312,8 @@ impl<F: FieldCore> FftWorkspace<F> {
                             }
                         }
                     }
-
-                    tw = tw * omega_new_block;
                 }
             }
-
-            block = new_block;
         }
     }
 }
@@ -221,29 +321,30 @@ impl<F: FieldCore> FftWorkspace<F> {
 /// Mixed-radix FFT domain backed by a smooth-order multiplicative subgroup.
 ///
 /// Stores immutable domain parameters (roots of unity, digit-reversal
-/// permutation). The actual FFT computation uses thread-local workspaces,
-/// so the domain is `Sync` and can be shared across rayon tasks.
+/// permutation, precomputed twiddle tables). The actual FFT computation
+/// uses thread-local workspaces, so the domain is `Sync` and can be shared
+/// across rayon tasks.
 pub struct SmoothDomain<F> {
     /// Domain size.
     pub n: usize,
     /// Primitive `n`-th root of unity.
     pub omega: F,
-    /// `omega^{-1}`.
-    omega_inv: F,
     /// `n^{-1}` in the field.
     n_inv: F,
-    /// Factorization of `n` into small primes.
-    factors: Vec<usize>,
     /// Digit-reversal permutation table.
     digit_rev: Vec<usize>,
+    /// Precomputed per-stage data for the forward transform.
+    fwd_stages: Vec<StageData<F>>,
+    /// Precomputed per-stage data for the inverse transform.
+    inv_stages: Vec<StageData<F>>,
 }
 
 impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F> {
     /// Create from a primitive `n`-th root of unity.
     ///
-    /// Precomputes digit-reversal permutation table. The FFT hot path
-    /// allocates only two working buffers per call (via `FftWorkspace`),
-    /// which are reused across transforms within the same thread.
+    /// Precomputes digit-reversal permutation and per-stage twiddle tables
+    /// for both forward and inverse transforms. The FFT hot path allocates
+    /// only two working buffers per call (via `FftWorkspace`).
     ///
     /// # Panics
     ///
@@ -265,13 +366,15 @@ impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F>
             .expect("n must be invertible in field");
         let factors = factorize(n);
         let digit_rev = digit_reversal_permutation(n, &factors);
+        let fwd_stages = precompute_stages(omega, n, &factors);
+        let inv_stages = precompute_stages(omega_inv, n, &factors);
         Self {
             n,
             omega,
-            omega_inv,
             n_inv,
-            factors,
             digit_rev,
+            fwd_stages,
+            inv_stages,
         }
     }
 
@@ -283,7 +386,7 @@ impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F>
     pub fn forward(&self, input: &[F]) -> Vec<F> {
         assert_eq!(input.len(), self.n);
         let mut ws = FftWorkspace::new(self.n);
-        ws.execute(input, self.omega, &self.factors, &self.digit_rev)
+        ws.execute(input, &self.fwd_stages, &self.digit_rev)
             .to_vec()
     }
 
@@ -296,7 +399,7 @@ impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F>
         assert_eq!(input.len(), self.n);
         let mut ws: FftWorkspace<F> = FftWorkspace::new(self.n);
         let mut result = ws
-            .execute(input, self.omega_inv, &self.factors, &self.digit_rev)
+            .execute(input, &self.inv_stages, &self.digit_rev)
             .to_vec();
         for v in &mut result {
             *v = *v * self.n_inv;
@@ -316,15 +419,15 @@ impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F>
         assert!(coeffs.len() <= self.n);
         let mut ws: FftWorkspace<F> = FftWorkspace::new(self.n);
         let buf = &mut ws.buf_b[..self.n];
-        for v in buf.iter_mut() {
-            *v = F::zero();
-        }
         let mut tw = F::one();
         for (i, &c) in coeffs.iter().enumerate() {
             buf[i] = c * tw;
             tw = tw * shift;
         }
-        ws.execute_from_b(self.omega, &self.factors, &self.digit_rev)
+        for v in buf[coeffs.len()..].iter_mut() {
+            *v = F::zero();
+        }
+        ws.execute_from_b(&self.fwd_stages, &self.digit_rev)
             .to_vec()
     }
 
@@ -344,7 +447,7 @@ impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F>
         let mut ws: FftWorkspace<F> = FftWorkspace::new(self.n);
 
         let mut coeffs = ws
-            .execute(evals, self.omega_inv, &self.factors, &self.digit_rev)
+            .execute(evals, &self.inv_stages, &self.digit_rev)
             .to_vec();
         for v in &mut coeffs {
             *v = *v * self.n_inv;
@@ -359,7 +462,7 @@ impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F>
                 buf[i] = c * tw;
                 tw = tw * shift;
             }
-            let result = ws.execute_from_b(self.omega, &self.factors, &self.digit_rev);
+            let result = ws.execute_from_b(&self.fwd_stages, &self.digit_rev);
             extension.extend_from_slice(result);
         }
         extension
@@ -467,8 +570,9 @@ mod tests {
 
             let factors = factorize(n);
             let digit_rev = digit_reversal_permutation(n, &factors);
+            let stages = precompute_stages(omega, n, &factors);
             let mut ws: FftWorkspace<F> = FftWorkspace::new(n);
-            let fft_result = ws.execute(&input, omega, &factors, &digit_rev).to_vec();
+            let fft_result = ws.execute(&input, &stages, &digit_rev).to_vec();
             assert_eq!(fft_result, naive, "FFT mismatch for n={n}");
         }
     }
