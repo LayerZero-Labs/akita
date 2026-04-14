@@ -1398,7 +1398,7 @@ mod fp128_policy_tests {
     }
 
     type D128OneHotCandidate = CommitmentPreset<
-        crate::algebra::Prime128Offset275,
+        crate::algebra::Prime128Offset2355,
         GeneratedAdaptivePolicy<Fp128PrimeProfile, 128, 1>,
     >;
 

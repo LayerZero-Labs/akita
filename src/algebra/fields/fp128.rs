@@ -6,7 +6,9 @@
 //!
 //! ## Built-in primes
 //!
-//! The built-in protocol prime is `Prime128Offset275` (`p = 2^128 − 275`).
+//! The built-in protocol prime is `Prime128Offset2355` (`p = 2^128 − 2355`),
+//! whose multiplicative group has a smooth subgroup of order 14700 = 2² × 3 × 5² × 7²,
+//! enabling mixed-radix FFT-based Reed-Solomon encoding.
 //! A secondary split-NTT-only prime `Prime128Offset159`
 //! (`p = 2^128 − 159`, `p ≡ 33 mod 64`) is kept for the algebra benchmark/test
 //! path that only needs 32-way roots of unity.
@@ -222,6 +224,7 @@ impl<const P: u128> Fp128<P> {
         match Self::C_LO {
             275 => Self::add_raw_aarch64_imm::<275>(a, b),
             159 => Self::add_raw_aarch64_imm::<159>(a, b),
+            2355 => Self::add_raw_aarch64_imm::<2355>(a, b),
             _ => Self::add_raw_aarch64_reg(a, b, Self::C_LO),
         }
     }
@@ -307,6 +310,7 @@ impl<const P: u128> Fp128<P> {
         match Self::C_LO {
             275 => Self::add_raw_x86_64_imm::<275>(a, b),
             159 => Self::add_raw_x86_64_imm::<159>(a, b),
+            2355 => Self::add_raw_x86_64_imm::<2355>(a, b),
             _ => Self::add_raw_x86_64_reg(a, b, Self::C_LO),
         }
     }
@@ -422,6 +426,7 @@ impl<const P: u128> Fp128<P> {
         match Self::C_LO {
             275 => Self::sub_raw_aarch64_imm::<275>(a, b),
             159 => Self::sub_raw_aarch64_imm::<159>(a, b),
+            2355 => Self::sub_raw_aarch64_imm::<2355>(a, b),
             _ => Self::sub_raw_aarch64_reg(a, b, Self::C_LO),
         }
     }
@@ -493,6 +498,7 @@ impl<const P: u128> Fp128<P> {
         match Self::C_LO {
             275 => Self::sub_raw_x86_64_imm::<275>(a, b),
             159 => Self::sub_raw_x86_64_imm::<159>(a, b),
+            2355 => Self::sub_raw_x86_64_imm::<2355>(a, b),
             _ => Self::sub_raw_x86_64_reg(a, b, Self::C_LO),
         }
     }
@@ -724,7 +730,7 @@ impl<const P: u128> Fp128<P> {
                 b1 = in(reg) b[1],
                 add_lo = in(reg) addend[0],
                 add_hi = in(reg) addend[1],
-                c = in(reg) Self::C_LO as u64,
+                c = in(reg) Self::C_LO,
                 p00l = out(reg) _,
                 p00h = out(reg) _,
                 p01l = out(reg) _,
@@ -1577,6 +1583,14 @@ impl<const P: u128> PseudoMersenneField for Fp128<P> {
 pub type Prime128Offset275 = Fp128<0xfffffffffffffffffffffffffffffeed>;
 /// `p = 2^128 − 159`  (C = 159). Split-NTT-only helper prime.
 pub type Prime128Offset159 = Fp128<0xffffffffffffffffffffffffffffff61>;
+/// `p = 2^128 − 2355`  (C = 2355, p ≡ 5 mod 8).
+///
+/// Smooth multiplicative subgroup of order 14700 = 2² × 3 × 5² × 7²,
+/// supporting mixed-radix FFT up to size 14700 (e.g. 1470 = 2·3·5·7²
+/// for RS encoding with 256+1024 ≥ 1280 evaluations).
+///
+/// Factorization: `p − 1 = 2² · 3 · 5² · 7² · 701 · 2955365183 · 11173595356596918495491`.
+pub type Prime128Offset2355 = Fp128<0xfffffffffffffffffffffffffffff6cd>;
 
 #[cfg(test)]
 mod tests {

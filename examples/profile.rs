@@ -777,10 +777,10 @@ fn assert_singleton_mode(mode: &str, num_polys: usize) {
 fn fixed_onehot_title(d: usize, nv: usize, num_polys: usize) -> String {
     let onehot_k = onehot_k_for_num_vars(nv);
     if num_polys == 1 {
-        format!("=== onehot_d{d} (q=2^128-275, D={d}, 1-of-{onehot_k}, log_commit_bound=1) ===")
+        format!("=== onehot_d{d} (q=2^128-2355, D={d}, 1-of-{onehot_k}, log_commit_bound=1) ===")
     } else {
         format!(
-            "=== onehot_d{d} batched (q=2^128-275, D={d}, 1-of-{onehot_k}, log_commit_bound=1, same-point batch={num_polys}) ==="
+            "=== onehot_d{d} batched (q=2^128-2355, D={d}, 1-of-{onehot_k}, log_commit_bound=1, same-point batch={num_polys}) ==="
         )
     }
 }
@@ -788,7 +788,7 @@ fn fixed_onehot_title(d: usize, nv: usize, num_polys: usize) -> String {
 fn run_profile_full(nv: usize, num_polys: usize) {
     assert_singleton_mode("full", num_polys);
     let d = best_full_d(nv);
-    let title = format!("=== full (q=2^128-275, D={d}, dense) ===");
+    let title = format!("=== full (q=2^128-2355, D={d}, dense) ===");
     match d {
         32 => run_dense_mode::<32, fp128::D32Full>(&title, nv),
         128 => run_dense_mode::<128, fp128::D128Full>(&title, nv),
@@ -800,10 +800,10 @@ fn run_profile_onehot(nv: usize, num_polys: usize) {
     let onehot_k = onehot_k_for_num_vars(nv);
     let d = best_onehot_d(nv);
     let title = if num_polys == 1 {
-        format!("=== onehot (q=2^128-275, D={d}, 1-of-{onehot_k}) ===")
+        format!("=== onehot (q=2^128-2355, D={d}, 1-of-{onehot_k}) ===")
     } else {
         format!(
-            "=== onehot batched (q=2^128-275, D={d}, 1-of-{onehot_k}, same-point batch={num_polys}) ==="
+            "=== onehot batched (q=2^128-2355, D={d}, 1-of-{onehot_k}, same-point batch={num_polys}) ==="
         )
     };
     match d {
@@ -817,7 +817,7 @@ fn run_profile_full_d128(nv: usize, num_polys: usize) {
     type Cfg = fp128::D128Full;
     assert_singleton_mode("full_d128", num_polys);
     run_dense_mode::<{ Cfg::D }, Cfg>(
-        "=== full_d128 (q=2^128-275, D=128 dense, log_commit_bound=128) ===",
+        "=== full_d128 (q=2^128-2355, D=128 dense, log_commit_bound=128) ===",
         nv,
     );
 }
@@ -832,7 +832,7 @@ fn run_profile_full_d32(nv: usize, num_polys: usize) {
     type Cfg = fp128::D32Full;
     assert_singleton_mode("full_d32", num_polys);
     run_dense_mode::<{ Cfg::D }, Cfg>(
-        "=== full_d32 (q=2^128-275, D=32 dense, log_commit_bound=128) ===",
+        "=== full_d32 (q=2^128-2355, D=32 dense, log_commit_bound=128) ===",
         nv,
     );
 }
