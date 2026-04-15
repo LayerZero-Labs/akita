@@ -732,17 +732,16 @@ fn w_ring_element_count_with_counts<F: CanonicalField>(
     layout: HachiCommitmentLayout,
     num_claims: usize,
     num_commitment_groups: usize,
-    num_point_sets: usize,
-    num_eval_rows: usize,
+    num_points: usize,
 ) -> usize {
     let w_hat_count = num_claims * layout.num_blocks * layout.num_digits_open;
     let t_hat_count = num_claims * layout.num_blocks * level_params.n_a * layout.num_digits_open;
-    let z_pre_count = num_point_sets * layout.inner_width * layout.num_digits_fold;
-    let r_rows = if num_eval_rows == 1 && num_commitment_groups == 1 {
+    let z_pre_count = num_points * layout.inner_width * layout.num_digits_fold;
+    let r_rows = if num_points == 1 && num_commitment_groups == 1 {
         level_params.m_row_count()
     } else {
         level_params
-            .m_row_count_with_commitments_and_public_outputs(num_commitment_groups, num_eval_rows)
+            .m_row_count_with_commitments_and_public_outputs(num_commitment_groups, num_points)
     };
     let r_count = r_rows * r_decomp_levels::<F>(layout.log_basis);
     w_hat_count + t_hat_count + z_pre_count + r_count
@@ -753,14 +752,7 @@ pub(crate) fn w_ring_element_count_with_num_claims<F: CanonicalField>(
     layout: HachiCommitmentLayout,
     num_claims: usize,
 ) -> usize {
-    w_ring_element_count_with_counts::<F>(
-        level_params,
-        layout,
-        num_claims,
-        num_claims,
-        1,
-        num_claims,
-    )
+    w_ring_element_count_with_counts::<F>(level_params, layout, num_claims, num_claims, 1)
 }
 
 #[cfg(test)]
@@ -770,14 +762,7 @@ pub(crate) fn w_ring_element_count_with_num_claims_and_points<F: CanonicalField>
     num_claims: usize,
     num_points: usize,
 ) -> usize {
-    w_ring_element_count_with_counts::<F>(
-        level_params,
-        layout,
-        num_claims,
-        num_claims,
-        num_points,
-        num_claims,
-    )
+    w_ring_element_count_with_counts::<F>(level_params, layout, num_claims, num_claims, num_points)
 }
 
 pub(crate) fn w_ring_element_count_with_batch_summary<F: CanonicalField>(
@@ -791,7 +776,6 @@ pub(crate) fn w_ring_element_count_with_batch_summary<F: CanonicalField>(
         batch.num_claims,
         batch.num_commitment_groups,
         batch.num_points,
-        batch.num_points,
     )
 }
 
@@ -799,7 +783,7 @@ pub(crate) fn w_ring_element_count_with_claim_groups<F: CanonicalField>(
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
     claim_group_sizes: &[usize],
-    num_eval_rows: usize,
+    num_points: usize,
 ) -> usize {
     let num_claims = claim_group_sizes.iter().sum();
     w_ring_element_count_with_counts::<F>(
@@ -807,8 +791,7 @@ pub(crate) fn w_ring_element_count_with_claim_groups<F: CanonicalField>(
         layout,
         num_claims,
         claim_group_sizes.len(),
-        1,
-        num_eval_rows,
+        num_points,
     )
 }
 
@@ -824,7 +807,6 @@ pub(crate) fn w_ring_element_count_with_point_claim_groups<F: CanonicalField>(
         layout,
         num_claims,
         claim_group_sizes.len(),
-        num_points,
         num_points,
     )
 }
