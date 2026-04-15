@@ -908,6 +908,18 @@ fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig, const D: usize>(
                     level.current_w_len / level.d as usize,
                 )?;
                 let lp = params.with_layout(&layout);
+                debug_assert_eq!(
+                    lp.num_digits_open, level.delta_open,
+                    "generated delta_open mismatch at level {fold_level}"
+                );
+                debug_assert_eq!(
+                    lp.num_digits_fold, level.delta_fold,
+                    "generated delta_fold mismatch at level {fold_level}"
+                );
+                debug_assert_eq!(
+                    lp.num_digits_commit, level.delta_commit,
+                    "generated delta_commit mismatch at level {fold_level}"
+                );
                 let runtime_next_w_len = if fold_level == 0 {
                     let next_w_ring =
                         w_ring_element_count_with_batch_summary::<Cfg::Field>(&lp, key.batch);
@@ -2139,7 +2151,7 @@ mod tests {
     use crate::protocol::commitment::presets::fp128;
     use crate::protocol::proof::{FlatRingVec, HachiBatchedRootProof};
     use crate::protocol::ring_switch::{
-        w_ring_element_count, w_ring_element_count_with_point_claim_groups,
+        w_ring_element_count, w_ring_element_count_with_claim_groups,
     };
     use crate::FieldCore;
 
@@ -2623,10 +2635,10 @@ mod tests {
         )
         .unwrap();
 
-        let next_w_ring_a = w_ring_element_count_with_point_claim_groups::<
+        let next_w_ring_a = w_ring_element_count_with_claim_groups::<
             <Cfg as CommitmentConfig>::Field,
         >(&plan_a.level_lp, &claim_groups_a, batch_a.num_points);
-        let next_w_ring_b = w_ring_element_count_with_point_claim_groups::<
+        let next_w_ring_b = w_ring_element_count_with_claim_groups::<
             <Cfg as CommitmentConfig>::Field,
         >(&plan_b.level_lp, &claim_groups_b, batch_b.num_points);
 

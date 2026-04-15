@@ -39,8 +39,7 @@ use crate::protocol::ring_switch::{
     commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
     ring_switch_verifier, ring_switch_verifier_with_claim_groups,
     ring_switch_verifier_with_opening_points_and_claim_groups, w_ring_element_count,
-    w_ring_element_count_with_claim_groups, w_ring_element_count_with_point_claim_groups,
-    RingSwitchOutput, WCommitmentConfig,
+    w_ring_element_count_with_claim_groups, RingSwitchOutput, WCommitmentConfig,
 };
 use crate::protocol::sumcheck::hachi_stage1_tree::{HachiStage1Prover, HachiStage1Verifier};
 use crate::protocol::sumcheck::hachi_stage2::{
@@ -3030,7 +3029,7 @@ where
     let w_len = if is_last {
         final_w.map_or(0, DirectWitnessProof::num_elems)
     } else {
-        w_ring_element_count_with_point_claim_groups::<F>(
+        w_ring_element_count_with_claim_groups::<F>(
             batched_lp,
             &batch_shape.claim_group_sizes,
             num_points,

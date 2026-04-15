@@ -752,15 +752,6 @@ pub(crate) fn w_ring_element_count_with_claim_groups<F: CanonicalField>(
     w_ring_element_count_with_counts::<F>(lp, num_claims, claim_group_sizes.len(), num_points)
 }
 
-pub(crate) fn w_ring_element_count_with_point_claim_groups<F: CanonicalField>(
-    lp: &LevelParams,
-    claim_group_sizes: &[usize],
-    num_points: usize,
-) -> usize {
-    let num_claims = claim_group_sizes.iter().sum();
-    w_ring_element_count_with_counts::<F>(lp, num_claims, claim_group_sizes.len(), num_points)
-}
-
 /// Commit the witness vector `w` (D-agnostic `Vec<i8>`) into `D`-sized ring
 /// elements and compute the ring commitment.
 ///
@@ -954,11 +945,6 @@ pub(crate) fn build_w_evals_compact(
     let live_x_cols = w.len() / d;
     let num_u = live_x_cols.next_power_of_two().trailing_zeros() as usize;
     Ok((w.to_vec(), num_u, num_l))
-}
-
-#[allow(dead_code)]
-pub(crate) fn m_row_count(lp: &LevelParams) -> usize {
-    lp.m_row_count()
 }
 
 #[allow(clippy::too_many_arguments, dead_code)]
