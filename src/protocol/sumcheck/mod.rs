@@ -23,6 +23,7 @@ pub mod drivers;
 pub mod hachi_stage1;
 pub mod hachi_stage1_tree;
 pub mod hachi_stage2;
+pub mod setup_claim;
 pub mod traits;
 pub mod two_round_prefix;
 pub mod types;

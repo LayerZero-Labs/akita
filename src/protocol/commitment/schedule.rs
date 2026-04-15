@@ -777,7 +777,10 @@ impl HachiSchedulePlan {
 
         let terminal = self.direct_step();
         step_shapes.push(HachiProofStepShape::Direct(terminal.witness_shape.clone()));
-        HachiProofShape { step_shapes }
+        HachiProofShape {
+            step_shapes,
+            setup_delegation_shapes: Vec::new(),
+        }
     }
 }
 

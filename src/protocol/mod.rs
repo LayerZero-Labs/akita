@@ -15,6 +15,10 @@ pub mod proof;
 pub mod quadratic_equation;
 mod recursive_runtime;
 pub mod ring_switch;
+#[allow(dead_code)]
+pub(crate) mod shared_matrix_setup;
+#[allow(dead_code)]
+pub(crate) mod setup_delegation;
 pub mod sumcheck;
 pub mod transcript;
 

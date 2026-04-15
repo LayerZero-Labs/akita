@@ -1,5 +1,6 @@
 //! Commitment scheme trait implementation.
 
+use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::fields::wide::HasWide;
 use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::CyclotomicRing;
@@ -30,18 +31,22 @@ use crate::protocol::opening_point::{
 };
 use crate::protocol::proof::{
     DirectWitnessProof, FlatRingVec, HachiBatchedCommitmentHint, HachiBatchedProof,
-    HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProof, HachiProofStep,
-    PackedDigits,
+    HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProof,
+    HachiProofStep, PackedDigits, SetupDelegationProof,
 };
 use crate::protocol::quadratic_equation::{derive_stage1_challenges, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
 use crate::protocol::ring_switch::{
-    commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
-    ring_switch_verifier, ring_switch_verifier_with_claim_groups,
+    commit_w, compute_alg_m_evals_x_with_claim_groups, ring_switch_build_w, ring_switch_finalize,
+    ring_switch_finalize_with_claim_groups, ring_switch_verifier, ring_switch_verifier_with_claim_groups,
     ring_switch_verifier_with_opening_points_and_claim_groups, w_ring_element_count,
     w_ring_element_count_with_claim_groups, w_ring_element_count_with_point_claim_groups,
     RingSwitchOutput, WCommitmentConfig,
 };
+use crate::protocol::setup_delegation::{
+    generate_setup_delegation_proof, verify_setup_delegation_proof, DelegationIntermediates,
+};
+use crate::protocol::shared_matrix_setup::SharedMatrixSetup;
 use crate::protocol::sumcheck::hachi_stage1_tree::{HachiStage1Prover, HachiStage1Verifier};
 use crate::protocol::sumcheck::hachi_stage2::{
     relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier, Stage2MEvalSource,
@@ -55,14 +60,13 @@ use crate::protocol::transcript::Transcript;
 use crate::{dispatch_ring_dim, dispatch_with_ntt};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 use std::marker::PhantomData;
+use std::sync::Arc;
 use std::time::Instant;
 
 #[cfg(test)]
 use crate::protocol::ring_switch::w_ring_element_count_with_num_claims;
 #[cfg(test)]
 use crate::protocol::SmallTestCommitmentConfig;
-#[cfg(test)]
-use crate::HachiSerialize;
 
 /// Minimum w vector length (in field elements) below which further folding
 /// is not beneficial.  When `w.len() <= MIN_W_LEN_FOR_FOLDING`, the prover
@@ -73,6 +77,23 @@ const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 /// stops being worthwhile.  If the w vector doesn't shrink by at least
 /// this factor, the overhead of another fold level outweighs the saving.
 const MIN_SHRINK_RATIO: f64 = 0.5;
+const MAX_SETUP_DELEGATION_LEVELS: usize = 2;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SetupDelegationMode {
+    Enabled,
+    Disabled,
+}
+
+#[inline]
+fn should_delegate_setup_at_level(mode: SetupDelegationMode, level: usize) -> bool {
+    matches!(mode, SetupDelegationMode::Enabled) && level < MAX_SETUP_DELEGATION_LEVELS
+}
+
+#[inline]
+fn supports_setup_delegation(level_params: &HachiLevelParams) -> bool {
+    level_params.n_a == 1
+}
 
 /// End-to-end PCS wrapper, generic over ring degree `D` and config `Cfg`.
 #[derive(Clone, Copy, Debug, Default)]
@@ -107,6 +128,7 @@ struct RecursiveVerifierState<'a, F: FieldCore> {
 /// the recursive prover state.
 struct ProveLevelOutput<F: FieldCore> {
     level_proof: HachiLevelProof<F>,
+    setup_delegation: Option<SetupDelegationProof<F>>,
     next_state: RecursiveProverState<F>,
 }
 
@@ -412,6 +434,7 @@ where
 {
     Ok(HachiProof {
         steps: vec![HachiProofStep::Direct(poly.direct_root_witness()?)],
+        setup_delegations: Vec::new(),
     })
 }
 
@@ -425,7 +448,13 @@ fn verify_root_direct<F, T, const D: usize, Cfg>(
     basis: BasisMode,
 ) -> Result<(), HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
 {
@@ -461,7 +490,7 @@ type CommitFn<'a, F> = Box<
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn prove_one_level<F, T, const D: usize, Cfg, P>(
-    expanded: &HachiExpandedSetup<F>,
+    expanded: &Arc<HachiExpandedSetup<F>>,
     ntt_shared: &NttSlotCache<D>,
     commit_w_fn: CommitFn<'_, F>,
     poly: &P,
@@ -477,9 +506,16 @@ fn prove_one_level<F, T, const D: usize, Cfg, P>(
     layout: HachiCommitmentLayout,
     planning_envelope: HachiBatchPlanningEnvelope,
     next_level_params_override: Option<HachiLevelParams>,
+    delegation_mode: SetupDelegationMode,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
     P: HachiPolyOps<F, D>,
@@ -560,6 +596,7 @@ where
         layout,
         planning_envelope,
         next_level_params_override,
+        delegation_mode,
         quad_eq,
         y_ring,
     )
@@ -568,7 +605,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn finish_prove_level<F, T, const D: usize, LevelCfg, ScheduleCfg>(
-    expanded: &HachiExpandedSetup<F>,
+    expanded: &Arc<HachiExpandedSetup<F>>,
     ntt_shared: &NttSlotCache<D>,
     commit_w_fn: CommitFn<'_, F>,
     max_num_vars: usize,
@@ -580,11 +617,18 @@ fn finish_prove_level<F, T, const D: usize, LevelCfg, ScheduleCfg>(
     layout: HachiCommitmentLayout,
     planning_envelope: HachiBatchPlanningEnvelope,
     next_level_params_override: Option<HachiLevelParams>,
+    delegation_mode: SetupDelegationMode,
     mut quad_eq: Box<QuadraticEquation<F, { D }, LevelCfg>>,
     y_ring: CyclotomicRing<F, D>,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
     LevelCfg: CommitmentConfig<Field = F>,
     ScheduleCfg: CommitmentConfig<Field = F>,
@@ -648,11 +692,37 @@ where
         col_bits,
         ring_bits,
         tau0,
-        tau1: _,
+        tau1,
         b,
-        alpha: _,
+        alpha,
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
+    let use_setup_delegation = should_delegate_setup_at_level(delegation_mode, level)
+        && supports_setup_delegation(level_params);
+    let setup_delegation_intermediates = if use_setup_delegation {
+        let claim_group_sizes = [1usize];
+        Some(DelegationIntermediates {
+            m_evals_x: m_evals_x.clone(),
+            alg_m_evals_x: compute_alg_m_evals_x_with_claim_groups::<F, D>(
+                quad_eq.opening_point(),
+                &quad_eq.challenges,
+                alpha,
+                &alpha_evals_y,
+                level_params,
+                layout,
+                &tau1,
+                &claim_group_sizes,
+            )?,
+            eq_tau1: EqPolynomial::evals(&tau1),
+            alpha_evals_y: alpha_evals_y.clone(),
+            level_params: level_params.clone(),
+            layout,
+            col_bits,
+            ring_bits,
+        })
+    } else {
+        None
+    };
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
     let (stage1_proof, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -714,9 +784,25 @@ where
         ),
         sumcheck_challenges,
     );
+    let setup_delegation = if let Some(intermediates) = setup_delegation_intermediates {
+        let level_setup = HachiProverSetup {
+            expanded: Arc::clone(expanded),
+            ntt_shared: ntt_shared.clone(),
+        };
+        let sm_setup = SharedMatrixSetup::<F, D>::from_main_prover_setup::<ScheduleCfg>(&level_setup)?;
+        Some(generate_setup_delegation_proof::<F, _, D, ScheduleCfg>(
+            &intermediates,
+            &sumcheck_challenges,
+            &sm_setup,
+            transcript,
+        )?)
+    } else {
+        None
+    };
 
     Ok(ProveLevelOutput {
         level_proof,
+        setup_delegation,
         next_state: RecursiveProverState {
             w,
             commitment: w_commitment,
@@ -751,7 +837,13 @@ fn prove_batched_root_level_with_points<F, T, const D: usize, Cfg, P>(
     planning_envelope: HachiBatchPlanningEnvelope,
 ) -> Result<BatchedProveLevelOutput<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
     P: HachiPolyOps<F, D>,
@@ -875,7 +967,13 @@ fn prove_batched_root_level<F, T, const D: usize, Cfg, P>(
     planning_envelope: HachiBatchPlanningEnvelope,
 ) -> Result<BatchedProveLevelOutput<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
     P: HachiPolyOps<F, D>,
@@ -925,7 +1023,13 @@ fn prove_multipoint_batched_root_level<F, T, const D: usize, Cfg, P>(
     planning_envelope: HachiBatchPlanningEnvelope,
 ) -> Result<BatchedProveLevelOutput<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
     P: HachiPolyOps<F, D>,
@@ -968,7 +1072,13 @@ fn finish_batched_root_level<F, T, const D: usize, Cfg>(
     y_rings: Vec<CyclotomicRing<F, D>>,
 ) -> Result<BatchedProveLevelOutput<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
 {
@@ -1109,7 +1219,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn prove_one_recursive_level<F, T, const D: usize, Cfg>(
-    expanded: &HachiExpandedSetup<F>,
+    expanded: &Arc<HachiExpandedSetup<F>>,
     ntt_shared: &NttSlotCache<D>,
     commit_w_fn: CommitFn<'_, F>,
     witness: &RecursiveWitnessView<'_, F, D>,
@@ -1124,9 +1234,16 @@ fn prove_one_recursive_level<F, T, const D: usize, Cfg>(
     layout: HachiCommitmentLayout,
     planning_envelope: HachiBatchPlanningEnvelope,
     next_level_params_override: Option<HachiLevelParams>,
+    delegation_mode: SetupDelegationMode,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
 {
@@ -1214,6 +1331,7 @@ where
         layout,
         planning_envelope,
         next_level_params_override,
+        delegation_mode,
         quad_eq,
         y_ring,
     )
@@ -1341,7 +1459,7 @@ where
 fn dispatch_prove_level<F, T, const D: usize, Cfg>(
     level_d: usize,
     ntt_cache: &mut MultiDNttCaches,
-    expanded: &HachiExpandedSetup<F>,
+    expanded: &Arc<HachiExpandedSetup<F>>,
     setup_ntt_shared: &NttSlotCache<D>,
     commit_ntt_cache: &mut MultiDNttCaches,
     max_num_vars: usize,
@@ -1350,9 +1468,16 @@ fn dispatch_prove_level<F, T, const D: usize, Cfg>(
     level: usize,
     level_params: &HachiLevelParams,
     next_level_params_override: Option<HachiLevelParams>,
+    delegation_mode: SetupDelegationMode,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
 {
@@ -1367,6 +1492,7 @@ where
             level,
             level_params,
             next_level_params_override,
+            delegation_mode,
         )
     } else {
         dispatch_with_ntt!(level_d, ntt_cache, expanded, |D_LEVEL, ntt_shared| {
@@ -1380,6 +1506,7 @@ where
                 level,
                 level_params,
                 next_level_params_override,
+                delegation_mode,
             )
         })
     }
@@ -1392,9 +1519,10 @@ where
 /// `#[inline(never)]` isolates the monomorphized match arms.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn dispatch_verify_level<F, T>(
+fn dispatch_verify_level<F, T, Cfg>(
     level_d: usize,
     level_proof: &HachiLevelProof<F>,
+    setup_delegation: Option<&SetupDelegationProof<F>>,
     setup: &HachiVerifierSetup<F>,
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F>,
@@ -1405,12 +1533,14 @@ fn dispatch_verify_level<F, T>(
     block_order: BlockOrder,
 ) -> Result<Vec<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid + FromSmallInt,
     T: Transcript<F>,
+    Cfg: CommitmentConfig<Field = F>,
 {
     dispatch_ring_dim!(level_d, |D_LEVEL| {
-        verify_one_level::<F, T, { D_LEVEL }>(
+        verify_one_level::<F, T, { D_LEVEL }, Cfg>(
             level_proof,
+            setup_delegation,
             setup,
             transcript,
             current_state,
@@ -1428,7 +1558,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn prove_subsequent_level<F, T, const D_LEVEL: usize, Cfg>(
-    expanded: &HachiExpandedSetup<F>,
+    expanded: &Arc<HachiExpandedSetup<F>>,
     ntt_shared: &NttSlotCache<D_LEVEL>,
     commit_ntt_cache: &mut MultiDNttCaches,
     max_num_vars: usize,
@@ -1437,9 +1567,16 @@ fn prove_subsequent_level<F, T, const D_LEVEL: usize, Cfg>(
     level: usize,
     level_params: &HachiLevelParams,
     next_level_params_override: Option<HachiLevelParams>,
+    delegation_mode: SetupDelegationMode,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
 {
@@ -1492,6 +1629,7 @@ where
         w_layout,
         current_state.planning_envelope,
         next_level_params_override,
+        delegation_mode,
     )
 }
 
@@ -1551,6 +1689,7 @@ where
             level,
             &level_params,
             None,
+            SetupDelegationMode::Disabled,
         )?;
 
         levels.push(out.level_proof);
@@ -1608,7 +1747,13 @@ fn verify_batched_recursive_suffix<'a, F, T, const D: usize, Cfg>(
     final_w: Option<&DirectWitnessProof<F>>,
 ) -> Result<(), HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
 {
@@ -1635,8 +1780,9 @@ where
         }
 
         let challenges = if level_d == D {
-            verify_one_level::<F, T, D>(
+            verify_one_level::<F, T, D, Cfg>(
                 level_proof,
+                None,
                 setup,
                 transcript,
                 &current_state,
@@ -1647,9 +1793,10 @@ where
                 BlockOrder::ColumnMajor,
             )?
         } else {
-            dispatch_verify_level::<F, T>(
+            dispatch_verify_level::<F, T, Cfg>(
                 level_d,
                 level_proof,
+                None,
                 setup,
                 transcript,
                 &current_state,
@@ -1927,6 +2074,554 @@ where
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn prove_single_with_setup_delegation_mode<F, T, const D: usize, Cfg, P>(
+    setup: &HachiProverSetup<F, D>,
+    poly: &P,
+    opening_point: &[F],
+    hint: HachiBatchedCommitmentHint<F, D>,
+    transcript: &mut T,
+    commitment: &RingCommitment<F, D>,
+    basis: BasisMode,
+    delegation_mode: SetupDelegationMode,
+    use_exact_plan: bool,
+) -> Result<HachiProof<F>, HachiError>
+where
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasWide
+        + HasUnreducedOps
+        + Valid
+        + FromSmallInt,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig<Field = F>,
+    P: HachiPolyOps<F, D>,
+{
+    let num_vars = opening_point.len();
+    if schedule_uses_root_direct::<Cfg>(num_vars)? {
+        return prove_root_direct::<F, D, P>(poly);
+    }
+    let t_prove_total = Instant::now();
+    let mut levels = Vec::new();
+    let mut setup_delegations = Vec::new();
+    let hint = single_prove_hint_from_group_hint(hint)?;
+
+    let mut ntt_cache = MultiDNttCaches::new();
+    let mut commit_ntt_cache = MultiDNttCaches::new();
+    let max_num_vars = setup.expanded.seed.max_num_vars;
+    let root_plan = hachi_root_runtime_plan::<Cfg, D>(
+        max_num_vars,
+        num_vars,
+        setup.expanded.seed.max_num_batched_polys,
+    )?;
+    let exact_plan = if use_exact_plan && num_vars == max_num_vars {
+        Cfg::schedule_plan(root_plan.lookup_key())?
+    } else {
+        None
+    };
+    let mut root_next_params_override = None;
+    if let Some(plan) = exact_plan.as_ref() {
+        let planned_root =
+            exact_planned_level_execution::<Cfg>(plan, root_plan.inputs, root_plan.params.log_basis)?
+                .ok_or_else(|| {
+                    HachiError::InvalidSetup(
+                        "exact planned root fold did not match runtime root state".to_string(),
+                    )
+                })?;
+        if planned_root.level.layout != root_plan.root_layout
+            || planned_root.level.params != root_plan.params
+        {
+            return Err(HachiError::InvalidSetup(
+                "exact planned root fold drifted from runtime root plan".to_string(),
+            ));
+        }
+        root_next_params_override = Some(planned_root.next_level_params);
+    }
+    let layout = root_plan.root_layout;
+    let root_params = root_plan.params.clone();
+    let max_stride = setup.expanded.seed.max_stride();
+
+    let commit_fn_0: CommitFn<'_, F> = Box::new(
+        |w: &RecursiveWitnessFlat,
+         next_params: HachiLevelParams|
+         -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError> {
+            if next_params.d == D {
+                let (wc, wh) =
+                    commit_w::<F, D, Cfg>(w, &setup.ntt_shared, &next_params, max_stride)?;
+                Ok((
+                    FlatRingVec::from_commitment(&wc),
+                    RecursiveCommitmentHintCache::from_typed(wh)?,
+                ))
+            } else {
+                dispatch_commit::<F, Cfg>(next_params, &mut commit_ntt_cache, &setup.expanded, w)
+            }
+        },
+    );
+    let out = prove_one_level::<F, T, D, Cfg, P>(
+        &setup.expanded,
+        &setup.ntt_shared,
+        commit_fn_0,
+        poly,
+        max_num_vars,
+        root_plan.lookup_key(),
+        opening_point,
+        hint,
+        transcript,
+        commitment,
+        basis,
+        0,
+        &root_params,
+        layout,
+        root_plan.planning_envelope,
+        root_next_params_override,
+        delegation_mode,
+    )?;
+    levels.push(out.level_proof);
+    if let Some(setup_delegation) = out.setup_delegation {
+        setup_delegations.push((0, setup_delegation));
+    }
+
+    let mut prev_poly_len = root_plan.inputs.current_w_len;
+    let mut current_state = out.next_state;
+    let mut level = 1usize;
+    let planned_num_levels = exact_plan.as_ref().map(|plan| plan.num_fold_levels());
+
+    loop {
+        let should_continue = if let Some(num_levels) = planned_num_levels {
+            level < num_levels
+        } else {
+            !should_stop_folding(current_state.w.len(), prev_poly_len)
+        };
+        if !should_continue {
+            break;
+        }
+        let inputs = HachiScheduleInputs {
+            max_num_vars,
+            level,
+            current_w_len: current_state.w.len(),
+        };
+        let planned_level = if let Some(plan) = exact_plan.as_ref() {
+            Some(
+                exact_planned_level_execution::<Cfg>(plan, inputs, current_state.log_basis)?
+                    .ok_or_else(|| {
+                        HachiError::InvalidSetup(
+                            "exact planned recursive level did not match runtime state".to_string(),
+                        )
+                    })?,
+            )
+        } else {
+            None
+        };
+        let (level_params, next_level_params_override) = if let Some(planned_level) = planned_level {
+            (
+                planned_level.level.params,
+                Some(planned_level.next_level_params),
+            )
+        } else {
+            (
+                Cfg::level_params_with_log_basis(inputs, current_state.log_basis),
+                None,
+            )
+        };
+        let level_d = level_params.d;
+
+        let out = dispatch_prove_level::<F, T, D, Cfg>(
+            level_d,
+            &mut ntt_cache,
+            &setup.expanded,
+            &setup.ntt_shared,
+            &mut commit_ntt_cache,
+            max_num_vars,
+            &current_state,
+            transcript,
+            level,
+            &level_params,
+            next_level_params_override,
+            delegation_mode,
+        )?;
+
+        levels.push(out.level_proof);
+        if let Some(setup_delegation) = out.setup_delegation {
+            setup_delegations.push((level, setup_delegation));
+        }
+
+        prev_poly_len = current_state.w.len();
+        current_state = out.next_state;
+        level += 1;
+    }
+
+    tracing::info!(
+        levels = level,
+        elapsed_s = t_prove_total.elapsed().as_secs_f64(),
+        "hachi prove complete"
+    );
+
+    let final_log_basis = if let Some(plan) = exact_plan.as_ref() {
+        let direct_step = plan.direct_step();
+        if direct_step.state.current_w_len != current_state.w.len()
+            || direct_step.state.log_basis != current_state.log_basis
+        {
+            return Err(HachiError::InvalidSetup(
+                "exact planned direct step did not match final runtime state".to_string(),
+            ));
+        }
+        match direct_step.witness_shape {
+            crate::protocol::proof::DirectWitnessShape::PackedDigits((_, bits_per_elem)) => {
+                bits_per_elem
+            }
+            crate::protocol::proof::DirectWitnessShape::FieldElements(_) => {
+                return Err(HachiError::InvalidSetup(
+                    "folding proof cannot terminate in field-element direct witness".to_string(),
+                ))
+            }
+        }
+    } else {
+        Cfg::level_params_with_log_basis(
+            HachiScheduleInputs {
+                max_num_vars,
+                level,
+                current_w_len: current_state.w.len(),
+            },
+            current_state.log_basis,
+        )
+        .log_basis
+    };
+    let final_w = PackedDigits::from_i8_digits_with_min_bits(
+        current_state.w.as_i8_digits(),
+        final_log_basis,
+    );
+    let mut steps = levels
+        .into_iter()
+        .map(HachiProofStep::Fold)
+        .collect::<Vec<_>>();
+    steps.push(HachiProofStep::Direct(DirectWitnessProof::PackedDigits(
+        final_w,
+    )));
+
+    Ok(HachiProof {
+        steps,
+        setup_delegations,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_single_with_setup_delegation_mode<F, T, const D: usize, Cfg>(
+    proof: &HachiProof<F>,
+    setup: &HachiVerifierSetup<F>,
+    transcript: &mut T,
+    opening_point: &[F],
+    opening: &F,
+    commitment: &RingCommitment<F, D>,
+    basis: BasisMode,
+    delegation_mode: SetupDelegationMode,
+    use_exact_plan: bool,
+) -> Result<(), HachiError>
+where
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasWide
+        + HasUnreducedOps
+        + Valid
+        + FromSmallInt,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig<Field = F>,
+{
+    let num_vars = opening_point.len();
+    if proof.num_fold_levels() == 0 {
+        if !proof.setup_delegations.is_empty() {
+            return Err(HachiError::InvalidProof);
+        }
+        if !schedule_uses_root_direct::<Cfg>(num_vars)? {
+            return Err(HachiError::InvalidProof);
+        }
+        return verify_root_direct::<F, T, D, Cfg>(
+            proof,
+            setup,
+            transcript,
+            opening_point,
+            opening,
+            commitment,
+            basis,
+        );
+    }
+    let max_num_vars = setup.expanded.seed.max_num_vars;
+    let root_plan = hachi_root_runtime_plan::<Cfg, D>(
+        max_num_vars,
+        num_vars,
+        setup.expanded.seed.max_num_batched_polys,
+    )
+    .map_err(|_| HachiError::InvalidProof)?;
+    let exact_plan = if use_exact_plan && num_vars == max_num_vars {
+        Cfg::schedule_plan(root_plan.lookup_key()).map_err(|_| HachiError::InvalidProof)?
+    } else {
+        None
+    };
+    let layout = root_plan.root_layout;
+    let root_params = root_plan.params.clone();
+    let t_verify_hachi = Instant::now();
+
+    let num_levels = proof.num_fold_levels();
+    let mut prev_delegation_level = None;
+    for (level, _) in &proof.setup_delegations {
+        if *level >= num_levels || prev_delegation_level.is_some_and(|prev| *level <= prev) {
+            return Err(HachiError::InvalidProof);
+        }
+        prev_delegation_level = Some(*level);
+    }
+    let mut next_setup_delegation = proof.setup_delegations.iter().peekable();
+
+    let final_w = Some(proof.final_witness());
+    let root_commitment = FlatRingVec::from_ring_elems(&commitment.u);
+    let mut current_state = RecursiveVerifierState {
+        opening_point: opening_point.to_vec(),
+        opening: *opening,
+        commitment: &root_commitment,
+        basis,
+        w_len: root_plan.inputs.current_w_len,
+        log_basis: root_params.log_basis,
+        root_key: root_plan.lookup_key(),
+        planning_envelope: root_plan.planning_envelope,
+    };
+    if let Some(plan) = exact_plan.as_ref() {
+        let planned_root =
+            exact_planned_level_execution::<Cfg>(plan, root_plan.inputs, root_params.log_basis)
+                .map_err(|_| HachiError::InvalidProof)?
+                .ok_or(HachiError::InvalidProof)?;
+        if planned_root.level.layout != layout || planned_root.level.params != root_params {
+            return Err(HachiError::InvalidProof);
+        }
+        if num_levels != plan.num_fold_levels() {
+            return Err(HachiError::InvalidProof);
+        }
+    }
+
+    for (i, level_proof) in proof.fold_levels().enumerate() {
+        let is_last = i == num_levels - 1;
+        let inputs = HachiScheduleInputs {
+            max_num_vars,
+            level: i,
+            current_w_len: current_state.w_len,
+        };
+        let planned_level = if let Some(plan) = exact_plan.as_ref() {
+            Some(
+                exact_planned_level_execution::<Cfg>(plan, inputs, current_state.log_basis)
+                    .map_err(|_| HachiError::InvalidProof)?
+                    .ok_or(HachiError::InvalidProof)?,
+            )
+        } else {
+            None
+        };
+        let (level_params, current_layout, planned_next_level_params, planned_next_w_len) =
+            if let Some(planned_level) = planned_level {
+                if i == 0
+                    && (planned_level.level.layout != layout
+                        || planned_level.level.params != root_params)
+                {
+                    return Err(HachiError::InvalidProof);
+                }
+                (
+                    planned_level.level.params,
+                    planned_level.level.layout,
+                    Some(planned_level.next_level_params),
+                    Some(planned_level.level.next_inputs.current_w_len),
+                )
+            } else {
+                let level_params = Cfg::level_params_with_log_basis(inputs, current_state.log_basis);
+                let current_layout = if i == 0 {
+                    layout
+                } else {
+                    hachi_recursive_level_layout_from_params::<Cfg>(
+                        &level_params,
+                        current_state.w_len,
+                    )?
+                };
+                (level_params, current_layout, None, None)
+            };
+        let level_d = level_params.d;
+        if !current_state.commitment.can_decode_vec(level_d)
+            || !level_proof.y_ring.can_decode_single(level_d)
+            || !level_proof.v.can_decode_vec(level_d)
+        {
+            return Err(HachiError::InvalidProof);
+        }
+        tracing::debug!(
+            level = i,
+            is_last,
+            point_len = current_state.opening_point.len(),
+            D = level_d,
+            "verify level"
+        );
+
+        let block_order = if i == 0 {
+            BlockOrder::RowMajor
+        } else {
+            BlockOrder::ColumnMajor
+        };
+        let should_use_setup_delegation = should_delegate_setup_at_level(delegation_mode, i)
+            && supports_setup_delegation(&level_params);
+        let setup_delegation = if should_use_setup_delegation {
+            let Some((delegated_level, setup_delegation)) = next_setup_delegation.next() else {
+                return Err(HachiError::InvalidProof);
+            };
+            if *delegated_level != i {
+                return Err(HachiError::InvalidProof);
+            }
+            Some(setup_delegation)
+        } else {
+            None
+        };
+        let challenges = if level_d == D {
+            verify_one_level::<F, T, D, Cfg>(
+                level_proof,
+                setup_delegation,
+                setup,
+                transcript,
+                &current_state,
+                is_last,
+                if is_last { final_w } else { None },
+                &level_params,
+                current_layout,
+                block_order,
+            )?
+        } else {
+            dispatch_verify_level::<F, T, Cfg>(
+                level_d,
+                level_proof,
+                setup_delegation,
+                setup,
+                transcript,
+                &current_state,
+                is_last,
+                if is_last { final_w } else { None },
+                &level_params,
+                current_layout,
+                block_order,
+            )?
+        };
+
+        if !is_last {
+            let next_w_len = w_ring_element_count::<F>(&level_params, current_layout) * level_d;
+            if let Some(planned_next_w_len) = planned_next_w_len {
+                if next_w_len != planned_next_w_len {
+                    return Err(HachiError::InvalidProof);
+                }
+            }
+            let next_level_params = if let Some(next_level_params) = planned_next_level_params {
+                next_level_params
+            } else {
+                next_level_params_from_current_basis_and_envelope::<Cfg>(
+                    current_state.root_key,
+                    HachiScheduleInputs {
+                        max_num_vars,
+                        level: i + 1,
+                        current_w_len: next_w_len,
+                    },
+                    current_state.log_basis,
+                    current_state.planning_envelope,
+                )
+                .map_err(|_| HachiError::InvalidProof)?
+            };
+
+            if i + 1 < num_levels {
+                let next_level_d = next_level_params.d;
+                if !level_proof.next_w_commitment().can_decode_vec(next_level_d) {
+                    return Err(HachiError::InvalidProof);
+                }
+            }
+            current_state = RecursiveVerifierState {
+                opening_point: challenges,
+                opening: level_proof.next_w_eval(),
+                commitment: level_proof.next_w_commitment(),
+                basis: BasisMode::Lagrange,
+                w_len: next_w_len,
+                log_basis: next_level_params.log_basis,
+                root_key: current_state.root_key,
+                planning_envelope: current_state.planning_envelope,
+            };
+        }
+    }
+    if next_setup_delegation.next().is_some() {
+        return Err(HachiError::InvalidProof);
+    }
+
+    tracing::info!(
+        levels = num_levels,
+        elapsed_s = t_verify_hachi.elapsed().as_secs_f64(),
+        "hachi verify complete"
+    );
+
+    Ok(())
+}
+
+pub(crate) fn prove_without_setup_delegation<F, T, const D: usize, Cfg, P>(
+    setup: &HachiProverSetup<F, D>,
+    poly: &P,
+    opening_point: &[F],
+    hint: HachiBatchedCommitmentHint<F, D>,
+    transcript: &mut T,
+    commitment: &RingCommitment<F, D>,
+    basis: BasisMode,
+) -> Result<HachiProof<F>, HachiError>
+where
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasWide
+        + HasUnreducedOps
+        + Valid
+        + FromSmallInt,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig<Field = F>,
+    P: HachiPolyOps<F, D>,
+{
+    prove_single_with_setup_delegation_mode::<F, T, D, Cfg, P>(
+        setup,
+        poly,
+        opening_point,
+        hint,
+        transcript,
+        commitment,
+        basis,
+        SetupDelegationMode::Disabled,
+        false,
+    )
+}
+
+pub(crate) fn verify_without_setup_delegation<F, T, const D: usize, Cfg>(
+    proof: &HachiProof<F>,
+    setup: &HachiVerifierSetup<F>,
+    transcript: &mut T,
+    opening_point: &[F],
+    opening: &F,
+    commitment: &RingCommitment<F, D>,
+    basis: BasisMode,
+) -> Result<(), HachiError>
+where
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasWide
+        + HasUnreducedOps
+        + Valid
+        + FromSmallInt,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig<Field = F>,
+{
+    verify_single_with_setup_delegation_mode::<F, T, D, Cfg>(
+        proof,
+        setup,
+        transcript,
+        opening_point,
+        opening,
+        commitment,
+        basis,
+        SetupDelegationMode::Disabled,
+        false,
+    )
+}
+
 impl<F, const D: usize, Cfg> CommitmentScheme<F, D> for HachiCommitmentScheme<D, Cfg>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
@@ -2058,213 +2753,17 @@ where
         commitment: &Self::Commitment,
         basis: BasisMode,
     ) -> Result<Self::Proof, HachiError> {
-        let num_vars = opening_point.len();
-        if schedule_uses_root_direct::<Cfg>(num_vars)? {
-            return prove_root_direct::<F, D, P>(poly);
-        }
-        let t_prove_total = Instant::now();
-        let mut levels = Vec::new();
-        let hint = single_prove_hint_from_group_hint(hint)?;
-
-        let mut ntt_cache = MultiDNttCaches::new();
-        let mut commit_ntt_cache = MultiDNttCaches::new();
-        let max_num_vars = setup.expanded.seed.max_num_vars;
-        let root_plan = hachi_root_runtime_plan::<Cfg, D>(
-            max_num_vars,
-            num_vars,
-            setup.expanded.seed.max_num_batched_polys,
-        )?;
-        let exact_plan = if num_vars == max_num_vars {
-            Cfg::schedule_plan(root_plan.lookup_key())?
-        } else {
-            None
-        };
-        let mut root_next_params_override = None;
-        if let Some(plan) = exact_plan.as_ref() {
-            let planned_root = exact_planned_level_execution::<Cfg>(
-                plan,
-                root_plan.inputs,
-                root_plan.params.log_basis,
-            )?
-            .ok_or_else(|| {
-                HachiError::InvalidSetup(
-                    "exact planned root fold did not match runtime root state".to_string(),
-                )
-            })?;
-            if planned_root.level.layout != root_plan.root_layout
-                || planned_root.level.params != root_plan.params
-            {
-                return Err(HachiError::InvalidSetup(
-                    "exact planned root fold drifted from runtime root plan".to_string(),
-                ));
-            }
-            root_next_params_override = Some(planned_root.next_level_params);
-        }
-        let layout = root_plan.root_layout;
-        let root_params = root_plan.params.clone();
-        let max_stride = setup.expanded.seed.max_stride();
-
-        let commit_fn_0: CommitFn<'_, F> = Box::new(
-            |w: &RecursiveWitnessFlat,
-             next_params: HachiLevelParams|
-             -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError> {
-                if next_params.d == D {
-                    let (wc, wh) =
-                        commit_w::<F, D, Cfg>(w, &setup.ntt_shared, &next_params, max_stride)?;
-                    Ok((
-                        FlatRingVec::from_commitment(&wc),
-                        RecursiveCommitmentHintCache::from_typed(wh)?,
-                    ))
-                } else {
-                    dispatch_commit::<F, Cfg>(
-                        next_params,
-                        &mut commit_ntt_cache,
-                        &setup.expanded,
-                        w,
-                    )
-                }
-            },
-        );
-        let out = prove_one_level::<F, T, D, Cfg, P>(
-            &setup.expanded,
-            &setup.ntt_shared,
-            commit_fn_0,
+        prove_single_with_setup_delegation_mode::<F, T, D, Cfg, P>(
+            setup,
             poly,
-            max_num_vars,
-            root_plan.lookup_key(),
             opening_point,
             hint,
             transcript,
             commitment,
             basis,
-            0,
-            &root_params,
-            layout,
-            root_plan.planning_envelope,
-            root_next_params_override,
-        )?;
-        levels.push(out.level_proof);
-
-        let mut prev_poly_len = root_plan.inputs.current_w_len;
-        let mut current_state = out.next_state;
-        let mut level = 1usize;
-        let planned_num_levels = exact_plan.as_ref().map(|plan| plan.num_fold_levels());
-
-        // Subsequent levels: recursive w-opening with WCommitmentConfig.
-        // Each level dispatches to the ring dimension from Cfg::d_at_level.
-        // The w-commitment is produced at the NEXT level's D.
-        loop {
-            let should_continue = if let Some(num_levels) = planned_num_levels {
-                level < num_levels
-            } else {
-                !should_stop_folding(current_state.w.len(), prev_poly_len)
-            };
-            if !should_continue {
-                break;
-            }
-            let inputs = HachiScheduleInputs {
-                max_num_vars,
-                level,
-                current_w_len: current_state.w.len(),
-            };
-            let planned_level = if let Some(plan) = exact_plan.as_ref() {
-                Some(
-                    exact_planned_level_execution::<Cfg>(plan, inputs, current_state.log_basis)?
-                        .ok_or_else(|| {
-                            HachiError::InvalidSetup(
-                                "exact planned recursive level did not match runtime state"
-                                    .to_string(),
-                            )
-                        })?,
-                )
-            } else {
-                None
-            };
-            let (level_params, next_level_params_override) =
-                if let Some(planned_level) = planned_level {
-                    (
-                        planned_level.level.params,
-                        Some(planned_level.next_level_params),
-                    )
-                } else {
-                    (
-                        Cfg::level_params_with_log_basis(inputs, current_state.log_basis),
-                        None,
-                    )
-                };
-            let level_d = level_params.d;
-
-            let out = dispatch_prove_level::<F, T, D, Cfg>(
-                level_d,
-                &mut ntt_cache,
-                &setup.expanded,
-                &setup.ntt_shared,
-                &mut commit_ntt_cache,
-                max_num_vars,
-                &current_state,
-                transcript,
-                level,
-                &level_params,
-                next_level_params_override,
-            )?;
-
-            levels.push(out.level_proof);
-
-            prev_poly_len = current_state.w.len();
-            current_state = out.next_state;
-            level += 1;
-        }
-
-        tracing::info!(
-            levels = level,
-            elapsed_s = t_prove_total.elapsed().as_secs_f64(),
-            "hachi prove complete"
-        );
-
-        let final_log_basis = if let Some(plan) = exact_plan.as_ref() {
-            let direct_step = plan.direct_step();
-            if direct_step.state.current_w_len != current_state.w.len()
-                || direct_step.state.log_basis != current_state.log_basis
-            {
-                return Err(HachiError::InvalidSetup(
-                    "exact planned direct step did not match final runtime state".to_string(),
-                ));
-            }
-            match direct_step.witness_shape {
-                crate::protocol::proof::DirectWitnessShape::PackedDigits((_, bits_per_elem)) => {
-                    bits_per_elem
-                }
-                crate::protocol::proof::DirectWitnessShape::FieldElements(_) => {
-                    return Err(HachiError::InvalidSetup(
-                        "folding proof cannot terminate in field-element direct witness"
-                            .to_string(),
-                    ))
-                }
-            }
-        } else {
-            Cfg::level_params_with_log_basis(
-                HachiScheduleInputs {
-                    max_num_vars,
-                    level,
-                    current_w_len: current_state.w.len(),
-                },
-                current_state.log_basis,
-            )
-            .log_basis
-        };
-        let final_w = PackedDigits::from_i8_digits_with_min_bits(
-            current_state.w.as_i8_digits(),
-            final_log_basis,
-        );
-        let mut steps = levels
-            .into_iter()
-            .map(HachiProofStep::Fold)
-            .collect::<Vec<_>>();
-        steps.push(HachiProofStep::Direct(DirectWitnessProof::PackedDigits(
-            final_w,
-        )));
-
-        Ok(HachiProof { steps })
+            SetupDelegationMode::Enabled,
+            true,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_prove")]
@@ -2450,206 +2949,17 @@ where
         commitment: &Self::Commitment,
         basis: BasisMode,
     ) -> Result<(), HachiError> {
-        let num_vars = opening_point.len();
-        if proof.num_fold_levels() == 0 {
-            if !schedule_uses_root_direct::<Cfg>(num_vars)? {
-                return Err(HachiError::InvalidProof);
-            }
-            return verify_root_direct::<F, T, D, Cfg>(
-                proof,
-                setup,
-                transcript,
-                opening_point,
-                opening,
-                commitment,
-                basis,
-            );
-        }
-        let max_num_vars = setup.expanded.seed.max_num_vars;
-        let root_plan = hachi_root_runtime_plan::<Cfg, D>(
-            max_num_vars,
-            num_vars,
-            setup.expanded.seed.max_num_batched_polys,
-        )
-        .map_err(|_| HachiError::InvalidProof)?;
-        let exact_plan = if num_vars == max_num_vars {
-            Cfg::schedule_plan(root_plan.lookup_key()).map_err(|_| HachiError::InvalidProof)?
-        } else {
-            None
-        };
-        let layout = root_plan.root_layout;
-        let root_params = root_plan.params.clone();
-        let t_verify_hachi = Instant::now();
-
-        let num_levels = proof.num_fold_levels();
-
-        let final_w = Some(proof.final_witness());
-
-        // State carried between levels.
-        // Commitment is D-erased so the loop can handle varying D per level.
-        let root_commitment = FlatRingVec::from_ring_elems(&commitment.u);
-        let mut current_state = RecursiveVerifierState {
-            opening_point: opening_point.to_vec(),
-            opening: *opening,
-            commitment: &root_commitment,
+        verify_single_with_setup_delegation_mode::<F, T, D, Cfg>(
+            proof,
+            setup,
+            transcript,
+            opening_point,
+            opening,
+            commitment,
             basis,
-            w_len: root_plan.inputs.current_w_len,
-            log_basis: root_params.log_basis,
-            root_key: root_plan.lookup_key(),
-            planning_envelope: root_plan.planning_envelope,
-        };
-        if let Some(plan) = exact_plan.as_ref() {
-            let planned_root =
-                exact_planned_level_execution::<Cfg>(plan, root_plan.inputs, root_params.log_basis)
-                    .map_err(|_| HachiError::InvalidProof)?
-                    .ok_or(HachiError::InvalidProof)?;
-            if planned_root.level.layout != layout || planned_root.level.params != root_params {
-                return Err(HachiError::InvalidProof);
-            }
-            if num_levels != plan.num_fold_levels() {
-                return Err(HachiError::InvalidProof);
-            }
-        }
-
-        for (i, level_proof) in proof.fold_levels().enumerate() {
-            let is_last = i == num_levels - 1;
-            let inputs = HachiScheduleInputs {
-                max_num_vars,
-                level: i,
-                current_w_len: current_state.w_len,
-            };
-            let planned_level = if let Some(plan) = exact_plan.as_ref() {
-                Some(
-                    exact_planned_level_execution::<Cfg>(plan, inputs, current_state.log_basis)
-                        .map_err(|_| HachiError::InvalidProof)?
-                        .ok_or(HachiError::InvalidProof)?,
-                )
-            } else {
-                None
-            };
-            let (level_params, current_layout, planned_next_level_params, planned_next_w_len) =
-                if let Some(planned_level) = planned_level {
-                    if i == 0
-                        && (planned_level.level.layout != layout
-                            || planned_level.level.params != root_params)
-                    {
-                        return Err(HachiError::InvalidProof);
-                    }
-                    (
-                        planned_level.level.params,
-                        planned_level.level.layout,
-                        Some(planned_level.next_level_params),
-                        Some(planned_level.level.next_inputs.current_w_len),
-                    )
-                } else {
-                    let level_params =
-                        Cfg::level_params_with_log_basis(inputs, current_state.log_basis);
-                    let current_layout = if i == 0 {
-                        layout
-                    } else {
-                        hachi_recursive_level_layout_from_params::<Cfg>(
-                            &level_params,
-                            current_state.w_len,
-                        )?
-                    };
-                    (level_params, current_layout, None, None)
-                };
-            let level_d = level_params.d;
-            if !current_state.commitment.can_decode_vec(level_d)
-                || !level_proof.y_ring.can_decode_single(level_d)
-                || !level_proof.v.can_decode_vec(level_d)
-            {
-                return Err(HachiError::InvalidProof);
-            }
-            tracing::debug!(
-                level = i,
-                is_last,
-                point_len = current_state.opening_point.len(),
-                D = level_d,
-                "verify level"
-            );
-
-            let block_order = if i == 0 {
-                BlockOrder::RowMajor
-            } else {
-                BlockOrder::ColumnMajor
-            };
-            let challenges = if level_d == D {
-                verify_one_level::<F, T, D>(
-                    level_proof,
-                    setup,
-                    transcript,
-                    &current_state,
-                    is_last,
-                    if is_last { final_w } else { None },
-                    &level_params,
-                    current_layout,
-                    block_order,
-                )?
-            } else {
-                dispatch_verify_level::<F, T>(
-                    level_d,
-                    level_proof,
-                    setup,
-                    transcript,
-                    &current_state,
-                    is_last,
-                    if is_last { final_w } else { None },
-                    &level_params,
-                    current_layout,
-                    block_order,
-                )?
-            };
-
-            if !is_last {
-                let next_w_len = w_ring_element_count::<F>(&level_params, current_layout) * level_d;
-                if let Some(planned_next_w_len) = planned_next_w_len {
-                    if next_w_len != planned_next_w_len {
-                        return Err(HachiError::InvalidProof);
-                    }
-                }
-                let next_level_params = if let Some(next_level_params) = planned_next_level_params {
-                    next_level_params
-                } else {
-                    next_level_params_from_current_basis_and_envelope::<Cfg>(
-                        current_state.root_key,
-                        HachiScheduleInputs {
-                            max_num_vars,
-                            level: i + 1,
-                            current_w_len: next_w_len,
-                        },
-                        current_state.log_basis,
-                        current_state.planning_envelope,
-                    )
-                    .map_err(|_| HachiError::InvalidProof)?
-                };
-
-                if i + 1 < num_levels {
-                    let next_level_d = next_level_params.d;
-                    if !level_proof.next_w_commitment().can_decode_vec(next_level_d) {
-                        return Err(HachiError::InvalidProof);
-                    }
-                }
-                current_state = RecursiveVerifierState {
-                    opening_point: challenges,
-                    opening: level_proof.next_w_eval(),
-                    commitment: level_proof.next_w_commitment(),
-                    basis: BasisMode::Lagrange,
-                    w_len: next_w_len,
-                    log_basis: next_level_params.log_basis,
-                    root_key: current_state.root_key,
-                    planning_envelope: current_state.planning_envelope,
-                };
-            }
-        }
-
-        tracing::info!(
-            levels = num_levels,
-            elapsed_s = t_verify_hachi.elapsed().as_secs_f64(),
-            "hachi verify complete"
-        );
-
-        Ok(())
+            SetupDelegationMode::Enabled,
+            true,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_verify")]
@@ -3138,8 +3448,9 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 #[tracing::instrument(skip_all, name = "verify_one_level")]
-fn verify_one_level<F, T, const D: usize>(
+fn verify_one_level<F, T, const D: usize, Cfg>(
     level_proof: &HachiLevelProof<F>,
+    setup_delegation: Option<&SetupDelegationProof<F>>,
     setup: &HachiVerifierSetup<F>,
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F>,
@@ -3150,8 +3461,9 @@ fn verify_one_level<F, T, const D: usize>(
     block_order: BlockOrder,
 ) -> Result<Vec<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid + FromSmallInt,
     T: Transcript<F>,
+    Cfg: CommitmentConfig<Field = F>,
 {
     let y_ring = level_proof.y_ring.as_single_ring::<D>()?;
     let v_typed = level_proof.v.as_ring_slice::<D>()?;
@@ -3233,6 +3545,7 @@ where
     let m_eval_source = Stage2MEvalSource::new(rs.prepared_m_eval);
     let ring_opening_points_slice = std::slice::from_ref(&ring_opening_point);
 
+    let delegation_alpha_evals_y = setup_delegation.map(|_| rs.alpha_evals_y.clone());
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
         HachiStage2Verifier::new_with_direct_witness(
@@ -3282,6 +3595,22 @@ where
         })?
     };
 
+    if let Some(setup_delegation) = setup_delegation {
+        let eq_tau1 = EqPolynomial::evals(&rs.tau1);
+        let alpha_evals_y = delegation_alpha_evals_y.ok_or(HachiError::InvalidProof)?;
+        let level_setup = SharedMatrixSetup::<F, D>::from_main_verifier_setup::<Cfg>(setup)?;
+        verify_setup_delegation_proof::<F, _, D, Cfg>(
+            setup_delegation,
+            &eq_tau1,
+            &alpha_evals_y,
+            level_params,
+            layout,
+            &challenges[rs.ring_bits..],
+            &level_setup,
+            transcript,
+        )?;
+    }
+
     Ok(challenges)
 }
 
@@ -3294,7 +3623,7 @@ fn trace<F: FieldCore + FromSmallInt, const D: usize>(u: &CyclotomicRing<F, D>) 
 mod tests {
     use super::*;
     use crate::algebra::Fp128;
-    use crate::primitives::serialization::Compress;
+    use crate::primitives::serialization::{Compress, Validate};
     use crate::protocol::commitment::presets::fp128;
     use crate::protocol::commitment::schedule::{
         hachi_root_runtime_plan_with_batch, recursive_suffix_estimate_with_log_basis,
@@ -3309,7 +3638,7 @@ mod tests {
     use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::test_utils::F;
-    use crate::{CommitmentScheme, FromSmallInt, HachiDeserialize};
+    use crate::{CommitmentScheme, FromSmallInt, HachiDeserialize, HachiSerialize};
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::sync::Once;
@@ -3319,6 +3648,10 @@ mod tests {
     type Cfg = SmallTestCommitmentConfig;
     const D: usize = Cfg::D;
     type Scheme = HachiCommitmentScheme<D, Cfg>;
+    type DelegationF = fp128::Field;
+    type DelegationCfg = fp128::D128Full;
+    const DELEGATION_D: usize = DelegationCfg::D;
+    type DelegationScheme = HachiCommitmentScheme<DELEGATION_D, DelegationCfg>;
     type OneHotF = Fp128<0xfffffffffffffffffffffffffffffeed>;
     type OneHotCfg = fp128::D64OneHot;
     const ONEHOT_D: usize = OneHotCfg::D;
@@ -3807,6 +4140,81 @@ mod tests {
             .iter()
             .zip(lw.iter())
             .fold(F::zero(), |a, (&c, &w)| a + c * w)
+    }
+
+    fn make_dense_poly_generic<FLocal: FieldCore + CanonicalField + FromSmallInt, const D_LOCAL: usize>(
+        num_vars: usize,
+    ) -> (DensePoly<FLocal, D_LOCAL>, Vec<FLocal>) {
+        let len = 1usize << num_vars;
+        let evals: Vec<FLocal> = (0..len).map(|i| FLocal::from_u64(i as u64)).collect();
+        let poly = DensePoly::<FLocal, D_LOCAL>::from_field_evals(num_vars, &evals).unwrap();
+        (poly, evals)
+    }
+
+    fn dense_opening_generic<FLocal: FieldCore>(evals: &[FLocal], point: &[FLocal]) -> FLocal {
+        let lw = lagrange_weights(point);
+        evals
+            .iter()
+            .zip(lw.iter())
+            .fold(FLocal::zero(), |acc, (&coeff, &weight)| acc + coeff * weight)
+    }
+
+    fn make_single_proof_fixture<FLocal, const D_LOCAL: usize, CfgLocal>(
+        num_vars: usize,
+        transcript_label: &'static [u8],
+    ) -> (
+        HachiProverSetup<FLocal, D_LOCAL>,
+        HachiVerifierSetup<FLocal>,
+        RingCommitment<FLocal, D_LOCAL>,
+        HachiProof<FLocal>,
+        Vec<FLocal>,
+        FLocal,
+    )
+    where
+        FLocal: FieldCore
+            + CanonicalField
+            + FieldSampling
+            + HasWide
+            + HasUnreducedOps
+            + Valid
+            + FromSmallInt
+            + 'static,
+        CfgLocal: CommitmentConfig<Field = FLocal>,
+    {
+        let (poly, evals) = make_dense_poly_generic::<FLocal, D_LOCAL>(num_vars);
+        let setup =
+            <HachiCommitmentScheme<D_LOCAL, CfgLocal> as CommitmentScheme<FLocal, D_LOCAL>>::setup_prover(
+                num_vars,
+                1,
+            );
+        let verifier_setup =
+            <HachiCommitmentScheme<D_LOCAL, CfgLocal> as CommitmentScheme<FLocal, D_LOCAL>>::setup_verifier(
+                &setup,
+            );
+        let (commitment, hint) = <HachiCommitmentScheme<D_LOCAL, CfgLocal> as CommitmentScheme<
+            FLocal,
+            D_LOCAL,
+        >>::commit(std::slice::from_ref(&poly), &setup)
+        .unwrap();
+        let opening_point: Vec<FLocal> =
+            (0..num_vars).map(|i| FLocal::from_u64((i + 3) as u64)).collect();
+        let opening = dense_opening_generic(&evals, &opening_point);
+
+        let mut prover_transcript = Blake2bTranscript::<FLocal>::new(transcript_label);
+        let proof = <HachiCommitmentScheme<D_LOCAL, CfgLocal> as CommitmentScheme<
+            FLocal,
+            D_LOCAL,
+        >>::prove(
+            &setup,
+            &poly,
+            &opening_point,
+            hint,
+            &mut prover_transcript,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .unwrap();
+        (setup, verifier_setup, commitment, proof, opening_point, opening)
     }
 
     fn init_debug_tracing() {
@@ -5142,6 +5550,10 @@ mod tests {
             BasisMode::Lagrange,
         )
         .unwrap();
+        assert!(
+            proof.setup_delegations.is_empty(),
+            "multi-row test config should skip single-claim setup delegation"
+        );
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
         let result = <Scheme as CommitmentScheme<F, D>>::verify(
@@ -5155,6 +5567,175 @@ mod tests {
         );
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn non_delegated_proof_roundtrips_through_serialization() {
+        const NV: usize = 7;
+        let (_setup, verifier_setup, commitment, proof, opening_point, opening) =
+            make_single_proof_fixture::<DelegationF, DELEGATION_D, DelegationCfg>(
+                NV,
+                b"test/non-delegated/serde",
+            );
+        assert_eq!(
+            proof.num_fold_levels(),
+            0,
+            "non-delegated fixture should not recurse"
+        );
+        assert!(
+            proof.setup_delegations.is_empty(),
+            "non-delegated fixture should not include setup delegations"
+        );
+
+        let shape = proof.shape();
+        let mut bytes = Vec::new();
+        proof.serialize_with_mode(&mut bytes, Compress::No)
+            .expect("serialize non-delegated proof");
+        let decoded = HachiProof::<DelegationF>::deserialize_with_mode(
+            bytes.as_slice(),
+            Compress::No,
+            Validate::Yes,
+            &shape,
+        )
+        .expect("deserialize non-delegated proof");
+        assert_eq!(
+            decoded, proof,
+            "non-delegated proof should roundtrip exactly"
+        );
+
+        let mut verifier_transcript =
+            Blake2bTranscript::<DelegationF>::new(b"test/non-delegated/serde");
+        <DelegationScheme as CommitmentScheme<DelegationF, DELEGATION_D>>::verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .expect("decoded non-delegated proof should verify");
+    }
+
+    #[test]
+    fn delegated_proof_uses_first_two_levels_when_available() {
+        const NV: usize = 14;
+        let (_setup, verifier_setup, commitment, proof, opening_point, opening) =
+            make_single_proof_fixture::<DelegationF, DELEGATION_D, DelegationCfg>(
+                NV,
+                b"test/delegated/prove",
+            );
+        assert!(
+            proof.num_fold_levels() >= 2,
+            "delegated fixture should exercise multiple fold levels"
+        );
+        let delegated_levels: Vec<usize> = proof
+            .setup_delegations
+            .iter()
+            .map(|(level, _)| *level)
+            .collect();
+        assert_eq!(delegated_levels, vec![0, 1]);
+
+        let mut verifier_transcript = Blake2bTranscript::<DelegationF>::new(b"test/delegated/prove");
+        <DelegationScheme as CommitmentScheme<DelegationF, DELEGATION_D>>::verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .expect("delegated proof should verify");
+    }
+
+    #[test]
+    fn delegated_proof_roundtrips_through_serialization() {
+        const NV: usize = 14;
+        let (_setup, verifier_setup, commitment, proof, opening_point, opening) =
+            make_single_proof_fixture::<DelegationF, DELEGATION_D, DelegationCfg>(
+                NV,
+                b"test/delegated/serde",
+            );
+        assert!(!proof.setup_delegations.is_empty(), "fixture must include delegations");
+
+        let shape = proof.shape();
+        let mut bytes = Vec::new();
+        proof.serialize_with_mode(&mut bytes, Compress::No)
+            .expect("serialize proof");
+        let decoded = HachiProof::<DelegationF>::deserialize_with_mode(
+            bytes.as_slice(),
+            Compress::No,
+            Validate::Yes,
+            &shape,
+        )
+        .expect("deserialize proof");
+        assert_eq!(decoded, proof, "delegated proof should roundtrip exactly");
+
+        let mut verifier_transcript = Blake2bTranscript::<DelegationF>::new(b"test/delegated/serde");
+        <DelegationScheme as CommitmentScheme<DelegationF, DELEGATION_D>>::verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .expect("decoded delegated proof should verify");
+    }
+
+    #[test]
+    fn verify_rejects_missing_setup_delegation_on_delegated_level() {
+        const NV: usize = 14;
+        let (_setup, verifier_setup, commitment, mut proof, opening_point, opening) =
+            make_single_proof_fixture::<DelegationF, DELEGATION_D, DelegationCfg>(
+                NV,
+                b"test/delegated/missing",
+            );
+        assert_eq!(proof.setup_delegations.len(), 2, "fixture should delegate two levels");
+        proof.setup_delegations.pop();
+
+        let mut verifier_transcript =
+            Blake2bTranscript::<DelegationF>::new(b"test/delegated/missing");
+        let result = <DelegationScheme as CommitmentScheme<DelegationF, DELEGATION_D>>::verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+        );
+        assert!(matches!(result, Err(HachiError::InvalidProof)));
+    }
+
+    #[test]
+    fn verify_rejects_tampered_setup_delegation() {
+        const NV: usize = 14;
+        let (_setup, verifier_setup, commitment, mut proof, opening_point, opening) =
+            make_single_proof_fixture::<DelegationF, DELEGATION_D, DelegationCfg>(
+                NV,
+                b"test/delegated/tampered",
+            );
+        let (_, delegation) = proof
+            .setup_delegations
+            .first_mut()
+            .expect("fixture should include delegated levels");
+        delegation.claimed_setup_val += DelegationF::one();
+
+        let mut verifier_transcript =
+            Blake2bTranscript::<DelegationF>::new(b"test/delegated/tampered");
+        let result = <DelegationScheme as CommitmentScheme<DelegationF, DELEGATION_D>>::verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+        );
+        assert!(matches!(result, Err(HachiError::InvalidProof)));
     }
 
     #[test]
