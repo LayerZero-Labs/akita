@@ -12,7 +12,8 @@ use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
 };
 use hachi_pcs::protocol::proof::{
-    DirectWitnessProof, HachiBatchedProof, HachiBatchedRootProof, HachiLevelProof, HachiProof,
+    DirectWitnessProof, HachiBatchedCommitmentHint, HachiBatchedProof, HachiBatchedRootProof,
+    HachiLevelProof, HachiProof, SetupDelegationProof,
 };
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::{
@@ -101,7 +102,9 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
     pt: &[F],
     opening: F,
     plan: Option<&HachiSchedulePlan>,
-) {
+) where
+    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<F, D, Proof = HachiProof<F>>,
+{
     type Scheme<const D: usize, Cfg> = HachiCommitmentScheme<D, Cfg>;
 
     let t0 = Instant::now();
@@ -125,8 +128,10 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
     tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "prove");
     print_proof_summary(label, &proof, plan);
 
-    let t0 = Instant::now();
+    let t_vsetup = Instant::now();
     let verifier_setup = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(setup);
+    tracing::info!(label, elapsed_s = t_vsetup.elapsed().as_secs_f64(), "verifier setup");
+    let t0 = Instant::now();
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
     match <Scheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
         &proof,
@@ -189,12 +194,17 @@ fn emit_planned_schedule_summary(label: &str, plan: &HachiSchedulePlan) {
 }
 
 fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSchedulePlan>) {
+    let setup_delegations_total: usize = proof
+        .setup_delegations
+        .iter()
+        .map(|(_, delegation)| delegation.serialized_size(Compress::No))
+        .sum();
     let hachi_levels_total: usize = proof
         .fold_levels()
         .map(|level| level.serialized_size(Compress::No))
         .sum();
     let tail_total = proof.final_witness().serialized_size(Compress::No);
-    let accounted_total = hachi_levels_total + tail_total;
+    let accounted_total = hachi_levels_total + tail_total + setup_delegations_total;
     let framing_total = proof.size() - accounted_total;
 
     tracing::info!(
@@ -203,6 +213,7 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSc
         proof_size_bytes = proof.size(),
         accounted_bytes = accounted_total,
         hachi_fold_bytes = hachi_levels_total,
+        setup_delegation_bytes = setup_delegations_total,
         tail_bytes = tail_total,
         proof_framing_bytes = framing_total,
         "proof summary"
@@ -211,9 +222,9 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSc
 
     if let Some(plan) = plan {
         debug_assert_eq!(
-            proof.size(),
+            hachi_levels_total + tail_total,
             plan.exact_proof_bytes,
-            "runtime proof bytes should match the planned proof size"
+            "planner bytes should match the non-delegated proof skeleton"
         );
         emit_planned_schedule_summary(label, plan);
     }
@@ -221,7 +232,48 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSc
     for (i, lp) in proof.fold_levels().enumerate() {
         print_hachi_level_breakdown(label, i, lp);
     }
+    for (level_idx, delegation) in &proof.setup_delegations {
+        print_setup_delegation_breakdown(label, *level_idx, delegation);
+    }
     emit_observed_tail_summary(label, proof.final_witness());
+}
+
+fn print_setup_delegation_breakdown(
+    label: &str,
+    level_idx: usize,
+    proof: &SetupDelegationProof<F>,
+) -> usize {
+    let claimed_setup_val_size = proof.claimed_setup_val.serialized_size(Compress::No);
+    let setup_claim_sumcheck_size = proof.setup_claim_sumcheck.serialized_size(Compress::No);
+    let shared_matrix_eval_size = proof.shared_matrix_eval.serialized_size(Compress::No);
+    let shared_matrix_opening_proof_size = proof.shared_matrix_opening_proof.size();
+    let total = proof.serialized_size(Compress::No);
+
+    tracing::info!(
+        label,
+        level = level_idx,
+        total_bytes = total,
+        claimed_setup_val_bytes = claimed_setup_val_size,
+        setup_claim_sumcheck_bytes = setup_claim_sumcheck_size,
+        shared_matrix_eval_bytes = shared_matrix_eval_size,
+        shared_matrix_opening_proof_bytes = shared_matrix_opening_proof_size,
+        "setup delegation proof"
+    );
+    eprintln!("[{label}]   setup_delegation L{level_idx}: total={total} bytes");
+    eprintln!("[{label}]     claimed_setup_val={claimed_setup_val_size} bytes");
+    eprintln!("[{label}]     setup_claim_sumcheck={setup_claim_sumcheck_size} bytes");
+    eprintln!("[{label}]     shared_matrix_eval={shared_matrix_eval_size} bytes");
+    eprintln!(
+        "[{label}]     shared_matrix_opening_proof={shared_matrix_opening_proof_size} bytes"
+    );
+    debug_assert_eq!(
+        total,
+        claimed_setup_val_size
+            + setup_claim_sumcheck_size
+            + shared_matrix_eval_size
+            + shared_matrix_opening_proof_size
+    );
+    total
 }
 
 fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
@@ -438,7 +490,9 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     nv: usize,
     layout: &HachiCommitmentLayout,
     plan: Option<&HachiSchedulePlan>,
-) {
+) where
+    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<F, D, Proof = HachiProof<F>>,
+{
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let pt: Vec<F> = (0..nv)
         .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
@@ -476,7 +530,9 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     nv: usize,
     layout: &HachiCommitmentLayout,
     plan: Option<&HachiSchedulePlan>,
-) {
+) where
+    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<F, D, Proof = HachiProof<F>>,
+{
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let total_field = (layout.num_blocks * layout.block_len)
         .checked_mul(D)
@@ -514,7 +570,15 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     nv: usize,
     num_polys: usize,
     layout: &HachiCommitmentLayout,
-) {
+) where
+    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<
+        F,
+        D,
+        CommitHint = HachiBatchedCommitmentHint<F, D>,
+        BatchedCommitHint = Vec<HachiBatchedCommitmentHint<F, D>>,
+        BatchedProof = HachiBatchedProof<F>,
+    >,
+{
     type Scheme<const D: usize, Cfg> = HachiCommitmentScheme<D, Cfg>;
 
     let total_field = (layout.num_blocks * layout.block_len)
@@ -672,7 +736,10 @@ fn best_onehot_d(nv: usize) -> usize {
     }
 }
 
-fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(title: &str, nv: usize) {
+fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(title: &str, nv: usize)
+where
+    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<F, D, Proof = HachiProof<F>>,
+{
     let layout = resolve_layout::<Cfg>(nv);
     let plan =
         Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1)).expect("schedule plan");
@@ -685,7 +752,16 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     title: &str,
     nv: usize,
     num_polys: usize,
-) {
+) where
+    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<
+        F,
+        D,
+        Proof = HachiProof<F>,
+        CommitHint = HachiBatchedCommitmentHint<F, D>,
+        BatchedCommitHint = Vec<HachiBatchedCommitmentHint<F, D>>,
+        BatchedProof = HachiBatchedProof<F>,
+    >,
+{
     tracing::info!("{}", title);
     if num_polys == 1 {
         let layout = resolve_layout::<Cfg>(nv);

@@ -46,7 +46,9 @@ use crate::protocol::ring_switch::{
 use crate::protocol::setup_delegation::{
     generate_setup_delegation_proof, verify_setup_delegation_proof, DelegationIntermediates,
 };
-use crate::protocol::shared_matrix_setup::SharedMatrixSetup;
+use crate::protocol::shared_matrix_setup::{
+    SharedMatrixOpeningConfig, SharedMatrixSetup, SharedMatrixVerifierCache,
+};
 use crate::protocol::sumcheck::hachi_stage1_tree::{HachiStage1Prover, HachiStage1Verifier};
 use crate::protocol::sumcheck::hachi_stage2::{
     relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier, Stage2MEvalSource,
@@ -88,11 +90,6 @@ enum SetupDelegationMode {
 #[inline]
 fn should_delegate_setup_at_level(mode: SetupDelegationMode, level: usize) -> bool {
     matches!(mode, SetupDelegationMode::Enabled) && level < MAX_SETUP_DELEGATION_LEVELS
-}
-
-#[inline]
-fn supports_setup_delegation(level_params: &HachiLevelParams) -> bool {
-    level_params.n_a == 1
 }
 
 /// End-to-end PCS wrapper, generic over ring degree `D` and config `Cfg`.
@@ -381,7 +378,7 @@ fn root_direct_opening_matches<F, const D: usize, Cfg>(
 ) -> Result<bool, HachiError>
 where
     F: FieldCore + CanonicalField,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     let field_witness = root_direct_field_witness(direct_witness)?;
     let poly = DensePoly::<F, D>::from_field_evals(opening_point.len(), field_witness.coeffs())?;
@@ -403,7 +400,7 @@ fn verify_root_direct_commitment<F, const D: usize, Cfg>(
 ) -> Result<bool, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     let field_witness = root_direct_field_witness(direct_witness)?;
     let poly = DensePoly::<F, D>::from_field_evals(
@@ -456,7 +453,7 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     if proof.steps.len() != 1 {
         return Err(HachiError::InvalidProof);
@@ -517,7 +514,7 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
     P: HachiPolyOps<F, D>,
 {
     {
@@ -631,7 +628,7 @@ where
         + FromSmallInt,
     T: Transcript<F>,
     LevelCfg: CommitmentConfig<Field = F>,
-    ScheduleCfg: CommitmentConfig<Field = F>,
+    ScheduleCfg: SharedMatrixOpeningConfig<Field = F>,
 {
     let w = ring_switch_build_w::<F, { D }, LevelCfg>(
         &mut quad_eq,
@@ -697,8 +694,7 @@ where
         alpha,
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
-    let use_setup_delegation = should_delegate_setup_at_level(delegation_mode, level)
-        && supports_setup_delegation(level_params);
+    let use_setup_delegation = should_delegate_setup_at_level(delegation_mode, level);
     let setup_delegation_intermediates = if use_setup_delegation {
         let claim_group_sizes = [1usize];
         Some(DelegationIntermediates {
@@ -845,7 +841,7 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
     P: HachiPolyOps<F, D>,
 {
     if prepared_points.is_empty() || claim_to_point.len() != polys.len() {
@@ -975,7 +971,7 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
     P: HachiPolyOps<F, D>,
 {
     let alpha_bits = level_params.d.trailing_zeros() as usize;
@@ -1031,7 +1027,7 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
     P: HachiPolyOps<F, D>,
 {
     prove_batched_root_level_with_points::<F, T, D, Cfg, P>(
@@ -1080,7 +1076,7 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     let commitment_rows = flatten_batched_commitment_rows(commitments);
     let w = ring_switch_build_w::<F, { D }, Cfg>(
@@ -1245,7 +1241,7 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     {
         let x: u8 = 0;
@@ -1426,7 +1422,7 @@ fn dispatch_commit<F, Cfg>(
 ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     let commit_d = commit_params.d;
     let stride = expanded.seed.max_stride();
@@ -1479,7 +1475,7 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     if level_d == D {
         prove_subsequent_level::<F, T, D, Cfg>(
@@ -1535,13 +1531,14 @@ fn dispatch_verify_level<F, T, Cfg>(
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     dispatch_ring_dim!(level_d, |D_LEVEL| {
         verify_one_level::<F, T, { D_LEVEL }, Cfg>(
             level_proof,
             setup_delegation,
             setup,
+            None,
             transcript,
             current_state,
             is_last,
@@ -1578,7 +1575,7 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
 
@@ -1645,7 +1642,7 @@ fn prove_batched_recursive_suffix<F, T, const D: usize, Cfg>(
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     let mut levels = Vec::new();
     let mut current_state = next_state;
@@ -1710,7 +1707,7 @@ fn finalize_batched_recursive_proof<F, const D: usize, Cfg>(
 ) -> HachiBatchedProof<F>
 where
     F: FieldCore,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     let final_params = Cfg::level_params_with_log_basis(
         HachiScheduleInputs {
@@ -1755,7 +1752,7 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     let num_levels = proof.num_fold_levels();
     for (offset, level_proof) in proof.fold_levels().enumerate() {
@@ -1784,6 +1781,7 @@ where
                 level_proof,
                 None,
                 setup,
+                None,
                 transcript,
                 &current_state,
                 is_last,
@@ -1856,7 +1854,7 @@ fn prove_same_point_batched<F, T, const D: usize, Cfg, P>(
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
     P: HachiPolyOps<F, D>,
 {
     let claim_group_sizes = validate_nonempty_group_sizes(poly_groups, "batched_prove")?;
@@ -1982,7 +1980,7 @@ fn verify_same_point_batched<F, T, const D: usize, Cfg>(
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     let y_coeff_len = proof.root.y_rings().coeff_len();
     if !y_coeff_len.is_multiple_of(D) {
@@ -2095,7 +2093,7 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
     P: HachiPolyOps<F, D>,
 {
     let num_vars = opening_point.len();
@@ -2326,7 +2324,7 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     let num_vars = opening_point.len();
     if proof.num_fold_levels() == 0 {
@@ -2371,6 +2369,8 @@ where
         prev_delegation_level = Some(*level);
     }
     let mut next_setup_delegation = proof.setup_delegations.iter().peekable();
+
+    let sm_setup_cache = setup.shared_matrix_cache.as_ref();
 
     let final_w = Some(proof.final_witness());
     let root_commitment = FlatRingVec::from_ring_elems(&commitment.u);
@@ -2459,8 +2459,7 @@ where
         } else {
             BlockOrder::ColumnMajor
         };
-        let should_use_setup_delegation = should_delegate_setup_at_level(delegation_mode, i)
-            && supports_setup_delegation(&level_params);
+        let should_use_setup_delegation = should_delegate_setup_at_level(delegation_mode, i);
         let setup_delegation = if should_use_setup_delegation {
             let Some((delegated_level, setup_delegation)) = next_setup_delegation.next() else {
                 return Err(HachiError::InvalidProof);
@@ -2477,6 +2476,7 @@ where
                 level_proof,
                 setup_delegation,
                 setup,
+                sm_setup_cache,
                 transcript,
                 &current_state,
                 is_last,
@@ -2573,7 +2573,7 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
     P: HachiPolyOps<F, D>,
 {
     prove_single_with_setup_delegation_mode::<F, T, D, Cfg, P>(
@@ -2585,7 +2585,7 @@ where
         commitment,
         basis,
         SetupDelegationMode::Disabled,
-        false,
+        true,
     )
 }
 
@@ -2607,7 +2607,7 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     verify_single_with_setup_delegation_mode::<F, T, D, Cfg>(
         proof,
@@ -2618,14 +2618,14 @@ where
         commitment,
         basis,
         SetupDelegationMode::Disabled,
-        false,
+        true,
     )
 }
 
 impl<F, const D: usize, Cfg> CommitmentScheme<F, D> for HachiCommitmentScheme<D, Cfg>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     type ProverSetup = HachiProverSetup<F, D>;
     type VerifierSetup = HachiVerifierSetup<F>;
@@ -2645,9 +2645,17 @@ where
         setup
     }
 
+    #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::setup_verifier")]
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
+        let cache = crate::protocol::shared_matrix_setup::build_shared_matrix_verifier_cache::<
+            F,
+            D,
+            Cfg,
+        >(setup)
+        .ok();
         HachiVerifierSetup {
             expanded: setup.expanded.clone(),
+            shared_matrix_cache: cache,
         }
     }
 
@@ -3452,6 +3460,7 @@ fn verify_one_level<F, T, const D: usize, Cfg>(
     level_proof: &HachiLevelProof<F>,
     setup_delegation: Option<&SetupDelegationProof<F>>,
     setup: &HachiVerifierSetup<F>,
+    sm_cache: Option<&SharedMatrixVerifierCache<F>>,
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F>,
     is_last: bool,
@@ -3463,7 +3472,7 @@ fn verify_one_level<F, T, const D: usize, Cfg>(
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     let y_ring = level_proof.y_ring.as_single_ring::<D>()?;
     let v_typed = level_proof.v.as_ring_slice::<D>()?;
@@ -3598,7 +3607,12 @@ where
     if let Some(setup_delegation) = setup_delegation {
         let eq_tau1 = EqPolynomial::evals(&rs.tau1);
         let alpha_evals_y = delegation_alpha_evals_y.ok_or(HachiError::InvalidProof)?;
-        let level_setup = SharedMatrixSetup::<F, D>::from_main_verifier_setup::<Cfg>(setup)?;
+        let cache = sm_cache.ok_or_else(|| {
+            HachiError::InvalidSetup(
+                "shared matrix verifier cache must be precomputed at setup time".to_string(),
+            )
+        })?;
+        let commitment: RingCommitment<F, D> = cache.typed_commitment()?;
         verify_setup_delegation_proof::<F, _, D, Cfg>(
             setup_delegation,
             &eq_tau1,
@@ -3606,7 +3620,9 @@ where
             level_params,
             layout,
             &challenges[rs.ring_bits..],
-            &level_setup,
+            &cache.tensor_layout,
+            &cache.inner_verifier_setup,
+            &commitment,
             transcript,
         )?;
     }
@@ -3796,7 +3812,7 @@ mod tests {
         batch_size: usize,
         slack_bytes: usize,
     ) where
-        CfgLocal: CommitmentConfig<Field = OneHotF>,
+        CfgLocal: SharedMatrixOpeningConfig<Field = OneHotF>,
     {
         type SchemeLocal<const D_INNER: usize, CfgInner> = HachiCommitmentScheme<D_INNER, CfgInner>;
 
@@ -3904,7 +3920,7 @@ mod tests {
         nv: usize,
         group_sizes_by_point: &[&[usize]],
     ) where
-        CfgLocal: CommitmentConfig<Field = OneHotF>,
+        CfgLocal: SharedMatrixOpeningConfig<Field = OneHotF>,
     {
         type SchemeLocal<const D_INNER: usize, CfgInner> = HachiCommitmentScheme<D_INNER, CfgInner>;
 
@@ -4179,7 +4195,7 @@ mod tests {
             + Valid
             + FromSmallInt
             + 'static,
-        CfgLocal: CommitmentConfig<Field = FLocal>,
+        CfgLocal: SharedMatrixOpeningConfig<Field = FLocal>,
     {
         let (poly, evals) = make_dense_poly_generic::<FLocal, D_LOCAL>(num_vars);
         let setup =
@@ -4215,6 +4231,131 @@ mod tests {
         )
         .unwrap();
         (setup, verifier_setup, commitment, proof, opening_point, opening)
+    }
+
+    fn make_single_onehot_proof_fixture<const D_LOCAL: usize, CfgLocal>(
+        num_vars: usize,
+        transcript_label: &'static [u8],
+        seed: u64,
+    ) -> (
+        HachiProverSetup<OneHotF, D_LOCAL>,
+        HachiVerifierSetup<OneHotF>,
+        RingCommitment<OneHotF, D_LOCAL>,
+        HachiProof<OneHotF>,
+        Vec<OneHotF>,
+        OneHotF,
+    )
+    where
+        CfgLocal: SharedMatrixOpeningConfig<Field = OneHotF>,
+    {
+        let layout = CfgLocal::commitment_layout(num_vars).expect("onehot layout");
+        let poly = debug_make_onehot_poly_generic::<D_LOCAL>(&layout, seed);
+        let opening_point = debug_random_point(num_vars);
+        let opening = debug_opening_from_poly_generic::<D_LOCAL, _>(&poly, &opening_point, &layout);
+
+        let setup = <HachiCommitmentScheme<D_LOCAL, CfgLocal> as CommitmentScheme<
+            OneHotF,
+            D_LOCAL,
+        >>::setup_prover(num_vars, 1);
+        let verifier_setup =
+            <HachiCommitmentScheme<D_LOCAL, CfgLocal> as CommitmentScheme<OneHotF, D_LOCAL>>::setup_verifier(
+                &setup,
+            );
+        let (commitment, hint) = <HachiCommitmentScheme<D_LOCAL, CfgLocal> as CommitmentScheme<
+            OneHotF,
+            D_LOCAL,
+        >>::commit(std::slice::from_ref(&poly), &setup)
+        .expect("onehot commit");
+        let mut prover_transcript = Blake2bTranscript::<OneHotF>::new(transcript_label);
+        let proof = <HachiCommitmentScheme<D_LOCAL, CfgLocal> as CommitmentScheme<
+            OneHotF,
+            D_LOCAL,
+        >>::prove(
+            &setup,
+            &poly,
+            &opening_point,
+            hint,
+            &mut prover_transcript,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .expect("onehot prove");
+        (setup, verifier_setup, commitment, proof, opening_point, opening)
+    }
+
+    fn assert_delegated_first_two_levels<FLocal: FieldCore>(
+        proof: &HachiProof<FLocal>,
+        context: &str,
+    ) {
+        assert!(
+            proof.num_fold_levels() >= 2,
+            "{context} should recurse for at least two fold levels"
+        );
+        let delegated_levels: Vec<usize> = proof
+            .setup_delegations
+            .iter()
+            .map(|(level, _)| *level)
+            .collect();
+        assert_eq!(
+            delegated_levels,
+            vec![0, 1],
+            "{context} should delegate the first two levels"
+        );
+    }
+
+    fn assert_full_single_proof_delegation<FLocal, const D_LOCAL: usize, CfgLocal>(
+        num_vars: usize,
+        transcript_label: &'static [u8],
+    ) where
+        FLocal: FieldCore
+            + CanonicalField
+            + FieldSampling
+            + HasWide
+            + HasUnreducedOps
+            + Valid
+            + FromSmallInt
+            + 'static,
+        CfgLocal: SharedMatrixOpeningConfig<Field = FLocal>,
+    {
+        let (_setup, verifier_setup, commitment, proof, opening_point, opening) =
+            make_single_proof_fixture::<FLocal, D_LOCAL, CfgLocal>(num_vars, transcript_label);
+        assert_delegated_first_two_levels(&proof, "full single-proof fixture");
+
+        let mut verifier_transcript = Blake2bTranscript::<FLocal>::new(transcript_label);
+        <HachiCommitmentScheme<D_LOCAL, CfgLocal> as CommitmentScheme<FLocal, D_LOCAL>>::verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .expect("full delegated proof should verify");
+    }
+
+    fn assert_onehot_single_proof_delegation<const D_LOCAL: usize, CfgLocal>(
+        num_vars: usize,
+        transcript_label: &'static [u8],
+        seed: u64,
+    ) where
+        CfgLocal: SharedMatrixOpeningConfig<Field = OneHotF>,
+    {
+        let (_setup, verifier_setup, commitment, proof, opening_point, opening) =
+            make_single_onehot_proof_fixture::<D_LOCAL, CfgLocal>(num_vars, transcript_label, seed);
+        assert_delegated_first_two_levels(&proof, "onehot single-proof fixture");
+
+        let mut verifier_transcript = Blake2bTranscript::<OneHotF>::new(transcript_label);
+        <HachiCommitmentScheme<D_LOCAL, CfgLocal> as CommitmentScheme<OneHotF, D_LOCAL>>::verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .expect("onehot delegated proof should verify");
     }
 
     fn init_debug_tracing() {
@@ -5551,10 +5692,17 @@ mod tests {
         )
         .unwrap();
         assert!(
-            proof.setup_delegations.is_empty(),
-            "multi-row test config should skip single-claim setup delegation"
+            !proof.setup_delegations.is_empty(),
+            "multi-row full test config should delegate setup on at least one level"
         );
-
+        let delegated_levels: Vec<usize> = proof
+            .setup_delegations
+            .iter()
+            .map(|(level, _)| *level)
+            .collect();
+        for (i, &lvl) in delegated_levels.iter().enumerate() {
+            assert_eq!(lvl, i, "delegation levels should be consecutive from 0");
+        }
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
         let result = <Scheme as CommitmentScheme<F, D>>::verify(
             &proof,
@@ -5567,6 +5715,40 @@ mod tests {
         );
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn delegated_single_proof_verifies_across_full_presets() {
+        assert_full_single_proof_delegation::<fp128::Field, 32, fp128::D32Full>(
+            12,
+            b"test/delegated/full/d32",
+        );
+        assert_full_single_proof_delegation::<fp128::Field, 64, fp128::D64Full>(
+            13,
+            b"test/delegated/full/d64",
+        );
+        assert_full_single_proof_delegation::<fp128::Field, 128, fp128::D128Full>(
+            14,
+            b"test/delegated/full/d128",
+        );
+    }
+
+    #[test]
+    fn delegated_single_proof_verifies_for_d32_onehot() {
+        assert_onehot_single_proof_delegation::<32, fp128::D32OneHot>(
+            20,
+            b"test/delegated/onehot/d32",
+            0x0bee_fcaf_e000_3200,
+        );
+    }
+
+    #[test]
+    fn delegated_single_proof_verifies_for_d64_onehot() {
+        assert_onehot_single_proof_delegation::<64, fp128::D64OneHot>(
+            20,
+            b"test/delegated/onehot/d64",
+            0x0bee_fcaf_e000_6400,
+        );
     }
 
     #[test]

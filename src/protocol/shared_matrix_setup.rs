@@ -12,12 +12,14 @@ use crate::primitives::serialization::Valid;
 use crate::protocol::commitment::utils::crt_ntt::build_ntt_slot;
 use crate::protocol::commitment::utils::matrix::derive_public_matrix_flat;
 use crate::protocol::commitment::{
-    CommitmentConfig, CommitmentScheme, HachiExpandedSetup, HachiProverSetup, HachiSetupSeed,
-    HachiVerifierSetup, RingCommitment,
+    profile::CommitmentFieldProfileSchedule, CommitmentConfig, CommitmentFieldProfile,
+    CommitmentPreset, CommitmentScheme, GeneratedAdaptivePolicy, HachiExpandedSetup,
+    HachiProverSetup, HachiSetupSeed, HachiVerifierSetup, RingCommitment,
+    SmallTestCommitmentConfig, StaticBoundedPolicy,
 };
 use crate::protocol::commitment_scheme::HachiCommitmentScheme;
 use crate::protocol::hachi_poly_ops::DensePoly;
-use crate::protocol::proof::HachiBatchedCommitmentHint;
+use crate::protocol::proof::{FlatRingVec, HachiBatchedCommitmentHint};
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use std::sync::Arc;
 
@@ -94,6 +96,26 @@ impl SharedMatrixTensorLayout {
     }
 }
 
+/// Precomputed verifier-side data for setup delegation.
+///
+/// Built once during `setup_verifier` so that the verifier never re-derives
+/// the inner PCS setup or re-commits the shared matrix at verification time.
+#[derive(Debug, Clone)]
+pub(crate) struct SharedMatrixVerifierCache<F: FieldCore> {
+    pub tensor_layout: SharedMatrixTensorLayout,
+    pub inner_verifier_setup: Box<HachiVerifierSetup<F>>,
+    pub commitment: FlatRingVec<F>,
+}
+
+impl<F: FieldCore> SharedMatrixVerifierCache<F> {
+    pub(crate) fn typed_commitment<const D: usize>(
+        &self,
+    ) -> Result<RingCommitment<F, D>, HachiError> {
+        let rings = self.commitment.as_ring_slice::<D>()?;
+        Ok(RingCommitment { u: rings.to_vec() })
+    }
+}
+
 /// All data needed to open the shared matrix polynomial at a point.
 pub(crate) struct SharedMatrixSetup<F: FieldCore, const D: usize> {
     /// Canonical tensor layout used by the committed shared matrix polynomial.
@@ -112,6 +134,117 @@ pub(crate) struct SharedMatrixSetup<F: FieldCore, const D: usize> {
     pub shared_matrix_num_vars: usize,
 }
 
+/// Choose the inner PCS config used to open the shared matrix polynomial.
+///
+/// The delegated shared matrix always has dense, arbitrary field coefficients,
+/// so onehot outer configs must switch to a full-field inner PCS.
+pub(crate) trait SharedMatrixOpeningConfig: CommitmentConfig {
+    type InnerCfg: SharedMatrixOpeningConfig<Field = Self::Field>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct SmallTestSharedMatrixCommitmentConfig;
+
+impl CommitmentConfig for SmallTestSharedMatrixCommitmentConfig {
+    type Field = crate::test_utils::F;
+    const D: usize = SmallTestCommitmentConfig::D;
+
+    fn decomposition() -> crate::protocol::commitment::DecompositionParams {
+        SmallTestCommitmentConfig::decomposition()
+    }
+
+    fn envelope(max_num_vars: usize) -> crate::protocol::commitment::CommitmentEnvelope {
+        SmallTestCommitmentConfig::envelope(max_num_vars)
+    }
+
+    fn stage1_challenge_config(
+        d: usize,
+    ) -> crate::algebra::SparseChallengeConfig {
+        SmallTestCommitmentConfig::stage1_challenge_config(d)
+    }
+}
+
+impl SharedMatrixOpeningConfig for SmallTestSharedMatrixCommitmentConfig {
+    type InnerCfg = Self;
+}
+
+impl SharedMatrixOpeningConfig for SmallTestCommitmentConfig {
+    type InnerCfg = SmallTestSharedMatrixCommitmentConfig;
+}
+
+impl<
+        F: CanonicalField + FieldCore + Send + Sync + 'static,
+        Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
+        const D: usize,
+    > SharedMatrixOpeningConfig for CommitmentPreset<F, GeneratedAdaptivePolicy<Profile, D, 1>>
+{
+    type InnerCfg = CommitmentPreset<F, GeneratedAdaptivePolicy<Profile, D, 128>>;
+}
+
+impl<
+        F: CanonicalField + FieldCore + Send + Sync + 'static,
+        Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
+        const D: usize,
+    > SharedMatrixOpeningConfig for CommitmentPreset<F, GeneratedAdaptivePolicy<Profile, D, 128>>
+{
+    type InnerCfg = Self;
+}
+
+impl<
+        F: CanonicalField + FieldCore + Send + Sync + 'static,
+        Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
+        const D: usize,
+        const LOG_BASIS: u32,
+        const W_LOG_BASIS: u32,
+        const N_A: usize,
+        const N_B: usize,
+        const N_D: usize,
+    > SharedMatrixOpeningConfig
+    for CommitmentPreset<
+        F,
+        StaticBoundedPolicy<Profile, D, 1, LOG_BASIS, W_LOG_BASIS, N_A, N_B, N_D>,
+    >
+{
+    type InnerCfg = CommitmentPreset<
+        F,
+        StaticBoundedPolicy<Profile, D, 128, LOG_BASIS, W_LOG_BASIS, N_A, N_B, N_D>,
+    >;
+}
+
+impl<
+        F: CanonicalField + FieldCore + Send + Sync + 'static,
+        Profile: CommitmentFieldProfile + CommitmentFieldProfileSchedule,
+        const D: usize,
+        const LOG_BASIS: u32,
+        const W_LOG_BASIS: u32,
+        const N_A: usize,
+        const N_B: usize,
+        const N_D: usize,
+    > SharedMatrixOpeningConfig
+    for CommitmentPreset<
+        F,
+        StaticBoundedPolicy<Profile, D, 128, LOG_BASIS, W_LOG_BASIS, N_A, N_B, N_D>,
+    >
+{
+    type InnerCfg = Self;
+}
+
+/// Build the verifier cache from the main prover setup at setup time.
+pub(crate) fn build_shared_matrix_verifier_cache<
+    F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
+    const D: usize,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
+>(
+    main_setup: &HachiProverSetup<F, D>,
+) -> Result<SharedMatrixVerifierCache<F>, HachiError> {
+    let sm = SharedMatrixSetup::<F, D>::from_main_prover_setup::<Cfg>(main_setup)?;
+    Ok(SharedMatrixVerifierCache {
+        tensor_layout: sm.tensor_layout,
+        inner_verifier_setup: Box::new(sm.verifier_setup),
+        commitment: FlatRingVec::from_commitment(&sm.commitment),
+    })
+}
+
 impl<F, const D: usize> SharedMatrixSetup<F, D>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
@@ -119,20 +252,22 @@ where
     /// Build the shared matrix setup from the main prover setup.
     ///
     /// This reuses the main public setup rather than sampling a fresh PCS setup.
-    pub(crate) fn from_main_prover_setup<Cfg: CommitmentConfig<Field = F>>(
+    pub(crate) fn from_main_prover_setup<Cfg: SharedMatrixOpeningConfig<Field = F>>(
         main_setup: &HachiProverSetup<F, D>,
     ) -> Result<Self, HachiError> {
         let tensor_layout =
             SharedMatrixTensorLayout::from_expanded::<F, Cfg, D>(&main_setup.expanded);
-        let prover_setup = derive_inner_prover_setup::<F, D, Cfg>(
+        if <Cfg::InnerCfg as CommitmentConfig>::D != D {
+            return Err(HachiError::InvalidSetup(
+                "shared matrix inner config must preserve ring dimension".to_string(),
+            ));
+        }
+        let prover_setup = derive_inner_prover_setup::<F, D, Cfg::InnerCfg>(
             &main_setup.expanded.seed,
             tensor_layout.num_vars,
         )?;
-        let verifier_setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(
-                &prover_setup,
-            );
-        Self::from_shared_setup::<Cfg>(
+        let verifier_setup = inner_verifier_setup(&prover_setup);
+        Self::from_shared_setup::<Cfg::InnerCfg>(
             &main_setup.expanded.shared_matrix,
             tensor_layout,
             prover_setup,
@@ -140,32 +275,7 @@ where
         )
     }
 
-    /// Build the shared matrix setup from the main verifier setup.
-    ///
-    /// The prover-only cache is rebuilt deterministically from the public
-    /// expanded setup so that the verifier can reconstruct the same commitment.
-    pub(crate) fn from_main_verifier_setup<Cfg: CommitmentConfig<Field = F>>(
-        main_setup: &HachiVerifierSetup<F>,
-    ) -> Result<Self, HachiError> {
-        let tensor_layout =
-            SharedMatrixTensorLayout::from_expanded::<F, Cfg, D>(&main_setup.expanded);
-        let prover_setup = derive_inner_prover_setup::<F, D, Cfg>(
-            &main_setup.expanded.seed,
-            tensor_layout.num_vars,
-        )?;
-        let verifier_setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(
-                &prover_setup,
-            );
-        Self::from_shared_setup::<Cfg>(
-            &main_setup.expanded.shared_matrix,
-            tensor_layout,
-            prover_setup,
-            verifier_setup,
-        )
-    }
-
-    fn from_shared_setup<Cfg: CommitmentConfig<Field = F>>(
+    fn from_shared_setup<Cfg: SharedMatrixOpeningConfig<Field = F>>(
         source_matrix: &crate::protocol::commitment::utils::flat_matrix::FlatMatrix<F>,
         tensor_layout: SharedMatrixTensorLayout,
         prover_setup: HachiProverSetup<F, D>,
@@ -192,7 +302,7 @@ where
     }
 }
 
-fn derive_inner_prover_setup<F, const D: usize, Cfg: CommitmentConfig<Field = F>>(
+fn derive_inner_prover_setup<F, const D: usize, Cfg: SharedMatrixOpeningConfig<Field = F>>(
     main_seed: &HachiSetupSeed,
     shared_matrix_num_vars: usize,
 ) -> Result<HachiProverSetup<F, D>, HachiError>
@@ -219,6 +329,15 @@ where
         expanded,
         ntt_shared,
     })
+}
+
+fn inner_verifier_setup<F: FieldCore, const D: usize>(
+    prover_setup: &HachiProverSetup<F, D>,
+) -> HachiVerifierSetup<F> {
+    HachiVerifierSetup {
+        expanded: prover_setup.expanded.clone(),
+        shared_matrix_cache: None,
+    }
 }
 
 #[cfg(test)]

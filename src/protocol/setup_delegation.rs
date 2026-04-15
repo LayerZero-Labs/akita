@@ -4,7 +4,6 @@ use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::poly::multilinear_eval;
 use crate::error::HachiError;
 use crate::primitives::serialization::Valid;
-use crate::protocol::commitment::CommitmentConfig;
 use crate::protocol::commitment::HachiCommitmentLayout;
 use crate::protocol::commitment::HachiLevelParams;
 use crate::protocol::commitment_scheme::{
@@ -12,8 +11,14 @@ use crate::protocol::commitment_scheme::{
 };
 use crate::protocol::opening_point::BasisMode;
 use crate::protocol::proof::SetupDelegationProof;
-use crate::protocol::ring_switch::{eval_matrix_weight_at_point, gadget_row_scalars};
-use crate::protocol::shared_matrix_setup::{SharedMatrixSetup, SharedMatrixTensorLayout};
+use crate::protocol::ring_switch::{
+    eval_matrix_weight_at_point, gadget_row_scalars, single_proof_matrix_weight_entry,
+    single_proof_matrix_weight_geometry,
+};
+use crate::protocol::commitment::{HachiVerifierSetup, RingCommitment};
+use crate::protocol::shared_matrix_setup::{
+    SharedMatrixOpeningConfig, SharedMatrixSetup, SharedMatrixTensorLayout,
+};
 use crate::protocol::sumcheck::setup_claim::SetupClaimProver;
 use crate::protocol::sumcheck::{prove_sumcheck, SumcheckProof};
 use crate::protocol::transcript::Transcript;
@@ -45,77 +50,22 @@ pub(crate) fn materialize_matrix_weight<F: FieldCore + CanonicalField, const D: 
     tensor_layout: SharedMatrixTensorLayout,
     r_x: &[F],
 ) -> Vec<F> {
-    let stride = tensor_layout.stride;
-    let depth_open = layout.num_digits_open;
-    let depth_commit = layout.num_digits_commit;
-    let depth_fold = layout.num_digits_fold;
-    let log_basis = layout.log_basis;
-    let num_blocks = layout.num_blocks;
-    let block_len = layout.block_len;
-    let n_d = level_params.n_d;
-    let n_b = level_params.n_b;
-    let n_a = level_params.n_a;
-    let d_matrix_width = layout.d_matrix_width;
-    let inner_width = block_len * depth_commit;
-    let t_compound_per_block = n_a * depth_open;
-    let outer_width = t_compound_per_block * num_blocks;
-    let max_row = n_d.max(n_b).max(n_a);
-
-    let w_len = depth_open * num_blocks;
-    let t_len = depth_open * n_a * num_blocks;
-    let z_len = depth_fold * inner_width;
-
-    let z_first = layout.m_vars >= layout.r_vars;
-    let (offset_z, offset_w, offset_t) = if z_first {
-        (0, z_len, z_len + w_len)
-    } else {
-        (w_len + t_len, 0, w_len)
-    };
-
-    let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
-    let d_start: usize = 2;
-    let b_start = d_start + n_d;
-    let a_start = b_start + n_b;
-
+    let geometry = single_proof_matrix_weight_geometry(level_params, layout);
+    let fold_gadget = gadget_row_scalars::<F>(geometry.depth_fold, geometry.log_basis);
     let eq_r_x = EqPolynomial::evals(r_x);
 
     let mut weight = vec![F::zero(); tensor_layout.field_len()];
 
-    for row in 0..max_row {
-        for col in 0..stride {
-            let mut w2 = F::zero();
-
-            if row < n_d && col < d_matrix_width {
-                let blk = col / depth_open;
-                let dig = col % depth_open;
-                if blk < num_blocks {
-                    let global_x = offset_w + dig * num_blocks + blk;
-                    w2 += eq_tau1[d_start + row] * eq_r_x[global_x];
-                }
-            }
-            if row < n_b && col < outer_width {
-                let blk = col / t_compound_per_block;
-                let remainder = col % t_compound_per_block;
-                let a_idx = remainder / depth_open;
-                let digit_idx = remainder % depth_open;
-                if blk < num_blocks {
-                    let compound_dig = a_idx * depth_open + digit_idx;
-                    let global_x = offset_t + compound_dig * num_blocks + blk;
-                    w2 += eq_tau1[b_start + row] * eq_r_x[global_x];
-                }
-            }
-            if row < n_a && col < inner_width {
-                let blk_a = col / depth_commit;
-                let dc = col % depth_commit;
-                if blk_a < block_len {
-                    for (df, gadget_val) in fold_gadget.iter().enumerate() {
-                        let compound_dig = dc * depth_fold + df;
-                        let global_x = offset_z + compound_dig * block_len + blk_a;
-                        w2 += eq_tau1[a_start + row] * (-*gadget_val) * eq_r_x[global_x];
-                    }
-                }
-            }
-
+    for row in 0..geometry.max_row {
+        for col in 0..tensor_layout.stride {
+            let w2 = single_proof_matrix_weight_entry(
+                row,
+                col,
+                eq_tau1,
+                &eq_r_x,
+                geometry,
+                &fold_gadget,
+            );
             let flat_base = (row * tensor_layout.padded_stride + col) * D;
             for k in 0..D {
                 weight[flat_base + k] = alpha_evals_y[k] * w2;
@@ -161,7 +111,7 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     let ring_bits = intermediates.ring_bits;
     let x_challenges = &sumcheck_challenges[ring_bits..];
@@ -200,7 +150,13 @@ where
 
     transcript.append_field(ABSORB_SHARED_MATRIX_EVAL, &shared_matrix_eval);
 
-    let shared_matrix_opening_proof = prove_without_setup_delegation::<F, _, D, Cfg, _>(
+    let shared_matrix_opening_proof = prove_without_setup_delegation::<
+        F,
+        _,
+        D,
+        <Cfg as SharedMatrixOpeningConfig>::InnerCfg,
+        _,
+    >(
         &sm_setup.prover_setup,
         &sm_setup.shared_matrix_poly,
         &setup_challenges,
@@ -281,7 +237,9 @@ pub(crate) fn verify_setup_delegation_proof<F, T, const D: usize, Cfg>(
     level_params: &HachiLevelParams,
     layout: HachiCommitmentLayout,
     x_challenges: &[F],
-    sm_setup: &SharedMatrixSetup<F, D>,
+    tensor_layout: &SharedMatrixTensorLayout,
+    inner_verifier_setup: &HachiVerifierSetup<F>,
+    commitment: &RingCommitment<F, D>,
     transcript: &mut T,
 ) -> Result<(), HachiError>
 where
@@ -293,11 +251,11 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: SharedMatrixOpeningConfig<Field = F>,
 {
     transcript.append_field(ABSORB_DELEGATION_CLAIM, &delegation_proof.claimed_setup_val);
 
-    let num_vars = sm_setup.tensor_layout.num_vars;
+    let num_vars = tensor_layout.num_vars;
 
     let (setup_challenges, final_claim) = replay_sumcheck_rounds::<F, _, F, _>(
         &delegation_proof.setup_claim_sumcheck,
@@ -308,7 +266,7 @@ where
         |tr| tr.challenge_scalar(CHALLENGE_DELEGATION_ROUND),
     )?;
 
-    let (r_row, r_col, r_k) = sm_setup.tensor_layout.split_point(&setup_challenges)?;
+    let (r_row, r_col, r_k) = tensor_layout.split_point(&setup_challenges)?;
 
     let matrix_weight_eval = eval_matrix_weight_at_point::<F, D>(
         r_row,
@@ -319,7 +277,7 @@ where
         eq_tau1,
         level_params,
         layout,
-        sm_setup.tensor_layout,
+        *tensor_layout,
     )?;
 
     let expected = delegation_proof.shared_matrix_eval * matrix_weight_eval;
@@ -333,13 +291,13 @@ where
         &delegation_proof.shared_matrix_eval,
     );
 
-    verify_without_setup_delegation::<F, _, D, Cfg>(
+    verify_without_setup_delegation::<F, _, D, <Cfg as SharedMatrixOpeningConfig>::InnerCfg>(
         &delegation_proof.shared_matrix_opening_proof,
-        &sm_setup.verifier_setup,
+        inner_verifier_setup,
         transcript,
         &setup_challenges,
         &delegation_proof.shared_matrix_eval,
-        &sm_setup.commitment,
+        commitment,
         BasisMode::Lagrange,
     )?;
 
@@ -350,6 +308,7 @@ where
 mod tests {
     use super::*;
     use crate::algebra::eq_poly::EqPolynomial;
+    use crate::protocol::commitment::CommitmentConfig;
     use crate::protocol::commitment_scheme::HachiCommitmentScheme;
     use crate::protocol::commitment::presets::fp128;
     use crate::protocol::commitment::HachiScheduleInputs;
@@ -371,27 +330,27 @@ mod tests {
     type Cfg = fp128::D128Full;
     const D: usize = Cfg::D;
 
-    #[test]
-    fn setup_delegation_proof_roundtrip() {
-        const NV: usize = 12;
-
-        let layout = Cfg::commitment_layout(NV).expect("layout");
+    fn setup_delegation_proof_roundtrip_for_cfg<const D: usize, Cfg>(nv: usize)
+    where
+        Cfg: SharedMatrixOpeningConfig<Field = F>,
+    {
+        let layout = Cfg::commitment_layout(nv).expect("layout");
         let level_params = Cfg::level_params(HachiScheduleInputs {
-            max_num_vars: NV,
+            max_num_vars: nv,
             level: 0,
-            current_w_len: 1usize << NV,
+            current_w_len: 1usize << nv,
         });
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
-        let evals: Vec<F> = (0..(1usize << NV))
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+        let evals: Vec<F> = (0..(1usize << nv))
+            .map(|i| F::from_u64((i % 2) as u64))
             .collect();
-        let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
-        let point: Vec<F> = (0..NV)
+        let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).expect("dense poly");
+        let point: Vec<F> = (0..nv)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1);
+        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
         let (commitment, _batched_hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<
             F,
             D,
@@ -522,9 +481,35 @@ mod tests {
             &level_params,
             layout,
             &x_challenges,
-            &sm_setup,
+            &sm_setup.tensor_layout,
+            &sm_setup.verifier_setup,
+            &sm_setup.commitment,
             &mut verify_transcript,
         )
         .expect("delegation proof verification should succeed");
+    }
+
+    #[test]
+    fn setup_delegation_proof_roundtrip() {
+        setup_delegation_proof_roundtrip_for_cfg::<D, Cfg>(12);
+    }
+
+    #[test]
+    fn setup_delegation_proof_roundtrip_for_multirow_onehot_root() {
+        type MultiRowCfg = fp128::D32OneHot;
+        const D: usize = MultiRowCfg::D;
+        const NV: usize = 12;
+
+        let level_params = MultiRowCfg::level_params(HachiScheduleInputs {
+            max_num_vars: NV,
+            level: 0,
+            current_w_len: 1usize << NV,
+        });
+        assert!(
+            level_params.n_a > 1,
+            "fixture must exercise the multi-row delegated path"
+        );
+
+        setup_delegation_proof_roundtrip_for_cfg::<D, MultiRowCfg>(NV);
     }
 }
