@@ -523,23 +523,26 @@ where
     let root_stage1_config =
         Cfg::stage1_challenge_config(Cfg::d_at_level(0, root_inputs.current_w_len));
     let mut scaled = root_lp.clone();
-    scaled.b_key = AjtaiKeyParams::new(
+    let d = scaled.ring_dimension;
+    scaled.b_key = AjtaiKeyParams::new_unchecked(
         scaled.b_key.row_len(),
         root_lp
             .b_key
             .col_len()
             .checked_mul(num_claims)
             .ok_or_else(|| HachiError::InvalidSetup("batched outer width overflow".to_string()))?,
-        scaled.b_key.log_basis(),
+        scaled.b_key.collision_inf(),
+        d,
     );
-    scaled.d_key = AjtaiKeyParams::new(
+    scaled.d_key = AjtaiKeyParams::new_unchecked(
         scaled.d_key.row_len(),
         root_lp
             .d_key
             .col_len()
             .checked_mul(num_claims)
             .ok_or_else(|| HachiError::InvalidSetup("batched D width overflow".to_string()))?,
-        scaled.d_key.log_basis(),
+        scaled.d_key.collision_inf(),
+        d,
     );
     scaled.num_digits_fold = root_lp.num_digits_fold.max(compute_num_digits_fold_batched(
         root_lp.r_vars,

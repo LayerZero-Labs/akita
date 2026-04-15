@@ -9,7 +9,7 @@ use super::utils::norm::detect_field_modulus;
 use crate::algebra::ring::CyclotomicRing;
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
-use crate::protocol::params::LevelParams;
+use crate::protocol::params::{AjtaiKeyParams, LevelParams};
 use crate::{CanonicalField, FieldCore};
 use std::marker::PhantomData;
 
@@ -786,14 +786,11 @@ fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
     let n_d = min_rank_for_secure_width(d as u32, bd_collision, layout.d_matrix_width() as u64)
         .unwrap_or(envelope.max_n_d);
 
-    Some(LevelParams::params_only(
-        d,
-        log_basis,
-        n_a,
-        n_b,
-        n_d,
-        stage1_config.clone(),
-    ))
+    let mut result = LevelParams::params_only(d, log_basis, n_a, n_b, n_d, stage1_config.clone());
+    result.a_key = AjtaiKeyParams::new_unchecked(n_a, 0, a_collision, d);
+    result.b_key = AjtaiKeyParams::new_unchecked(n_b, 0, bd_collision, d);
+    result.d_key = AjtaiKeyParams::new_unchecked(n_d, 0, bd_collision, d);
+    Some(result)
 }
 
 fn derived_root_commitment_layout_from_params<Cfg: CommitmentConfig>(
@@ -869,14 +866,18 @@ fn sis_derived_root_params_for_layout<Cfg: CommitmentConfig>(
                 lp.d_matrix_width()
             ))
         })?;
-    Ok(LevelParams::params_only(
+    let mut result = LevelParams::params_only(
         d,
         lp.log_basis,
         n_a as usize,
         n_b as usize,
         n_d as usize,
         stage1_config,
-    ))
+    );
+    result.a_key = AjtaiKeyParams::new_unchecked(n_a, 0, a_collision, d);
+    result.b_key = AjtaiKeyParams::new_unchecked(n_b, 0, bd_collision, d);
+    result.d_key = AjtaiKeyParams::new_unchecked(n_d, 0, bd_collision, d);
+    Ok(result)
 }
 
 /// Generated adaptive policy with table-selected per-level log bases.

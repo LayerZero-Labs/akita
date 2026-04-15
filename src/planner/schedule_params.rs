@@ -352,15 +352,18 @@ fn batched_root_level_params<Cfg: CommitmentConfig>(
         return Cfg::root_level_params_for_layout_with_log_basis(inputs, candidate_lp).ok();
     }
     let mut scaled = candidate_lp.clone();
-    scaled.b_key = AjtaiKeyParams::new(
+    let d = scaled.ring_dimension;
+    scaled.b_key = AjtaiKeyParams::new_unchecked(
         scaled.b_key.row_len(),
         scaled.b_key.col_len().checked_mul(batch.num_claims)?,
-        scaled.b_key.log_basis(),
+        0,
+        d,
     );
-    scaled.d_key = AjtaiKeyParams::new(
+    scaled.d_key = AjtaiKeyParams::new_unchecked(
         scaled.d_key.row_len(),
         scaled.d_key.col_len().checked_mul(batch.num_claims)?,
-        scaled.d_key.log_basis(),
+        0,
+        d,
     );
     scaled.num_digits_fold = scaled.num_digits_fold.max(compute_num_digits_fold(
         scaled.r_vars,
@@ -450,12 +453,29 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig>(
             continue;
         };
 
+        let d = root_lp.ring_dimension;
+        let bd_collision = (1u32 << root_lp.log_basis) - 1;
         let candidate_lp = LevelParams {
-            ring_dimension: root_lp.ring_dimension,
+            ring_dimension: d,
             log_basis: root_lp.log_basis,
-            a_key: AjtaiKeyParams::new(root_lp.a_key.row_len(), inner_width, root_lp.log_basis),
-            b_key: AjtaiKeyParams::new(root_lp.b_key.row_len(), outer_width, root_lp.log_basis),
-            d_key: AjtaiKeyParams::new(root_lp.d_key.row_len(), d_matrix_width, root_lp.log_basis),
+            a_key: AjtaiKeyParams::new_unchecked(
+                root_lp.a_key.row_len(),
+                inner_width,
+                root_lp.a_key.collision_inf(),
+                d,
+            ),
+            b_key: AjtaiKeyParams::new_unchecked(
+                root_lp.b_key.row_len(),
+                outer_width,
+                bd_collision,
+                d,
+            ),
+            d_key: AjtaiKeyParams::new_unchecked(
+                root_lp.d_key.row_len(),
+                d_matrix_width,
+                bd_collision,
+                d,
+            ),
             num_blocks,
             block_len,
             m_vars,

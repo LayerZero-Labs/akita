@@ -10,41 +10,94 @@ use crate::error::HachiError;
 /// Parameters for a single Ajtai commitment matrix.
 ///
 /// Each matrix in the protocol (A, B, D) is characterised by its row count
-/// (security rank), column count (message width), and the gadget base used
-/// for digit decomposition.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// (security rank), column count (message width), and the worst-case L∞
+/// collision bound used for SIS security sizing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AjtaiKeyParams {
     row_len: usize,
     col_len: usize,
-    log_basis: u32,
+    collision_inf: u32,
 }
 
 impl AjtaiKeyParams {
-    /// Create a new `AjtaiKeyParams`.
-    pub fn new(row_len: usize, col_len: usize, log_basis: u32) -> Self {
+    /// Create a new `AjtaiKeyParams` with SIS security enforcement.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `row_len` is below the 128-bit SIS security floor for the
+    /// given `(ring_dimension, collision_inf, col_len)` triple.
+    pub fn new(row_len: usize, col_len: usize, collision_inf: u32, ring_dimension: usize) -> Self {
+        if col_len > 0 && collision_inf > 0 && row_len > 0 {
+            use crate::protocol::commitment::generated::sis_floor::min_rank_for_secure_width;
+            if let Some(floor) =
+                min_rank_for_secure_width(ring_dimension as u32, collision_inf, col_len as u64)
+            {
+                assert!(
+                    row_len >= floor,
+                    "AjtaiKeyParams: row_len {row_len} < SIS floor {floor} \
+                     (d={ring_dimension}, collision_inf={collision_inf}, col_len={col_len})"
+                );
+            }
+        }
         Self {
             row_len,
             col_len,
-            log_basis,
+            collision_inf,
         }
     }
 
-    /// Number of rows (security rank).
+    /// Create a new `AjtaiKeyParams` without enforcing SIS security.
+    ///
+    /// Logs a warning if `row_len` is below the SIS floor but does not
+    /// panic. Use this for intermediate construction steps where ranks
+    /// have not yet converged (e.g., batched scaling, iterative SIS
+    /// fixed-point loops).
+    pub fn new_unchecked(
+        row_len: usize,
+        col_len: usize,
+        collision_inf: u32,
+        ring_dimension: usize,
+    ) -> Self {
+        if col_len > 0 && collision_inf > 0 && row_len > 0 {
+            use crate::protocol::commitment::generated::sis_floor::min_rank_for_secure_width;
+            if let Some(floor) =
+                min_rank_for_secure_width(ring_dimension as u32, collision_inf, col_len as u64)
+            {
+                if row_len < floor {
+                    tracing::warn!(
+                        row_len,
+                        floor,
+                        ring_dimension,
+                        collision_inf,
+                        col_len,
+                        "AjtaiKeyParams::new_unchecked: row_len below SIS floor"
+                    );
+                }
+            }
+        }
+        Self {
+            row_len,
+            col_len,
+            collision_inf,
+        }
+    }
+
+    /// Number of rows.
     #[inline]
     pub fn row_len(&self) -> usize {
         self.row_len
     }
 
-    /// Number of columns (message width).
+    /// Number of columns.
     #[inline]
     pub fn col_len(&self) -> usize {
         self.col_len
     }
 
-    /// Base-2 logarithm of the gadget decomposition base.
+    /// Worst-case L∞ collision bound for SIS security sizing.
     #[inline]
-    pub fn log_basis(&self) -> u32 {
-        self.log_basis
+    pub fn collision_inf(&self) -> u32 {
+        self.collision_inf
     }
 }
 
@@ -104,9 +157,18 @@ impl LevelParams {
         Self {
             ring_dimension,
             log_basis,
-            a_key: AjtaiKeyParams::new(n_a, 0, log_basis),
-            b_key: AjtaiKeyParams::new(n_b, 0, log_basis),
-            d_key: AjtaiKeyParams::new(n_d, 0, log_basis),
+            a_key: AjtaiKeyParams {
+                row_len: n_a,
+                ..Default::default()
+            },
+            b_key: AjtaiKeyParams {
+                row_len: n_b,
+                ..Default::default()
+            },
+            d_key: AjtaiKeyParams {
+                row_len: n_d,
+                ..Default::default()
+            },
             num_blocks: 0,
             block_len: 0,
             m_vars: 0,
@@ -236,12 +298,28 @@ impl LevelParams {
         let d_matrix_width = num_digits_open
             .checked_mul(num_blocks)
             .ok_or_else(|| HachiError::InvalidSetup("D-matrix width overflow".to_string()))?;
+        let d = self.ring_dimension;
         Ok(Self {
-            ring_dimension: self.ring_dimension,
+            ring_dimension: d,
             log_basis: self.log_basis,
-            a_key: AjtaiKeyParams::new(self.a_key.row_len, inner_width, self.log_basis),
-            b_key: AjtaiKeyParams::new(self.b_key.row_len, outer_width, self.log_basis),
-            d_key: AjtaiKeyParams::new(self.d_key.row_len, d_matrix_width, self.log_basis),
+            a_key: AjtaiKeyParams::new_unchecked(
+                self.a_key.row_len,
+                inner_width,
+                self.a_key.collision_inf,
+                d,
+            ),
+            b_key: AjtaiKeyParams::new_unchecked(
+                self.b_key.row_len,
+                outer_width,
+                self.b_key.collision_inf,
+                d,
+            ),
+            d_key: AjtaiKeyParams::new_unchecked(
+                self.d_key.row_len,
+                d_matrix_width,
+                self.d_key.collision_inf,
+                d,
+            ),
             num_blocks,
             block_len,
             m_vars,
@@ -256,12 +334,28 @@ impl LevelParams {
     /// Build a new `LevelParams` that keeps rank/ring info from `self` but
     /// replaces all layout-derived fields with those from `other`.
     pub fn with_layout(&self, other: &LevelParams) -> Self {
+        let d = self.ring_dimension;
         Self {
-            ring_dimension: self.ring_dimension,
+            ring_dimension: d,
             log_basis: other.log_basis,
-            a_key: AjtaiKeyParams::new(self.a_key.row_len, other.a_key.col_len, other.log_basis),
-            b_key: AjtaiKeyParams::new(self.b_key.row_len, other.b_key.col_len, other.log_basis),
-            d_key: AjtaiKeyParams::new(self.d_key.row_len, other.d_key.col_len, other.log_basis),
+            a_key: AjtaiKeyParams::new_unchecked(
+                self.a_key.row_len,
+                other.a_key.col_len,
+                other.a_key.collision_inf,
+                d,
+            ),
+            b_key: AjtaiKeyParams::new_unchecked(
+                self.b_key.row_len,
+                other.b_key.col_len,
+                other.b_key.collision_inf,
+                d,
+            ),
+            d_key: AjtaiKeyParams::new_unchecked(
+                self.d_key.row_len,
+                other.d_key.col_len,
+                other.d_key.collision_inf,
+                d,
+            ),
             num_blocks: other.num_blocks,
             block_len: other.block_len,
             m_vars: other.m_vars,

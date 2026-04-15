@@ -1826,10 +1826,11 @@ mod tests {
             level: 1,
             current_w_len: w.len(),
         });
-        level_params.a_key = crate::protocol::params::AjtaiKeyParams::new(
+        level_params.a_key = crate::protocol::params::AjtaiKeyParams::new_unchecked(
             3,
             level_params.a_key.col_len(),
-            level_params.a_key.log_basis(),
+            level_params.a_key.collision_inf(),
+            level_params.ring_dimension,
         );
 
         let test_lp = hachi_recursive_level_layout_from_params::<WCfg>(&level_params, w.len())
