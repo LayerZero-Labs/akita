@@ -2850,7 +2850,10 @@ where
     let v_typed = root_proof.v().as_ring_slice::<D>()?;
     let num_claims = checked_total_claims(claim_group_sizes, "batched_verify")
         .map_err(|_| HachiError::InvalidProof)?;
-    if y_rings.len() != 1 || openings.is_empty() || commitments.len() != claim_group_sizes.len() {
+    if y_rings.len() != 1
+        || openings.len() != num_claims
+        || commitments.len() != claim_group_sizes.len()
+    {
         return Err(HachiError::InvalidProof);
     }
     if commitments
@@ -3028,6 +3031,7 @@ where
             .map_err(|_| HachiError::InvalidProof)?;
     if prepared_points.is_empty()
         || y_rings.len() != prepared_points.len()
+        || openings.len() != num_claims
         || commitments.len() != batch_shape.claim_group_sizes.len()
         || batch_shape.claim_to_point.len() != num_claims
     {
