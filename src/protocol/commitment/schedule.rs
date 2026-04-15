@@ -1,7 +1,7 @@
-use super::commit::{hachi_batched_root_layout, root_current_w_len, scale_batched_root_layout};
+use super::commit::{hachi_batched_root_layout, scale_batched_root_layout};
 use super::config::{
     compute_num_digits_fold, compute_num_digits_full_field, num_digits_for_bound,
-    optimal_m_r_split_with_params, CommitmentConfig, DecompositionParams, HachiCommitmentLayout,
+    optimal_m_r_split_with_params, CommitmentConfig, DecompositionParams,
 };
 use super::generated::{
     table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleKey,
@@ -10,9 +10,9 @@ use super::generated::{
 use super::schedule_planner::{
     cached_dp_best_basis, cached_dp_suffix_bytes, dp_suffix_plan, PlannerConfig, PlannerState,
 };
-use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
 use crate::primitives::serialization::{Compress, HachiSerialize};
+use crate::protocol::params::LevelParams;
 use crate::protocol::proof::{
     DirectWitnessShape, FlatRingVec, HachiLevelProof, HachiProofShape, HachiProofStepShape,
     HachiStage1Proof, HachiStage1StageProof, HachiStage2Proof, LevelProofShape,
@@ -272,17 +272,15 @@ pub struct HachiRootRuntimePlan {
     pub planning_envelope: HachiBatchPlanningEnvelope,
     /// Public inputs for the root level.
     pub inputs: HachiScheduleInputs,
-    /// Per-polynomial root commitment layout chosen before root batching.
-    pub root_layout: HachiCommitmentLayout,
-    /// Actual runtime root-level layout after scaling for `batch`.
-    pub level_layout: HachiCommitmentLayout,
-    /// Active root params under `root_layout.log_basis`.
-    pub params: HachiLevelParams,
+    /// Per-polynomial root-level params chosen before root batching.
+    pub root_lp: LevelParams,
+    /// Actual runtime root-level params after scaling for `batch`.
+    pub level_lp: LevelParams,
     /// Public inputs for the first recursive level after the root fold.
     pub next_inputs: HachiScheduleInputs,
     /// Active params for the first recursive level, respecting the current
     /// root basis when selecting the next basis.
-    pub next_level_params: HachiLevelParams,
+    pub next_level_params: LevelParams,
 }
 
 impl HachiRootRuntimePlan {
@@ -304,14 +302,15 @@ impl HachiRootRuntimePlan {
     /// Shape of the serialized root proof body for this runtime context.
     #[cfg(test)]
     pub(crate) fn level_proof_shape(&self) -> LevelProofShape {
-        let rounds = sumcheck_rounds(self.params.d, self.next_w_len());
-        let b = 1usize << self.level_layout.log_basis;
+        let rounds = sumcheck_rounds(self.level_lp.ring_dimension, self.next_w_len());
+        let b = 1usize << self.level_lp.log_basis;
         LevelProofShape {
-            y_ring_coeffs: self.batch.num_claims * self.params.d,
-            v_coeffs: self.params.n_d * self.params.d,
+            y_ring_coeffs: self.batch.num_claims * self.level_lp.ring_dimension,
+            v_coeffs: self.level_lp.d_key.row_len * self.level_lp.ring_dimension,
             stage1_stages: stage1_tree_stage_shapes(rounds, b),
             stage2_sumcheck: (rounds, 3),
-            next_commit_coeffs: self.next_level_params.n_b * self.next_level_params.d,
+            next_commit_coeffs: self.next_level_params.b_key.row_len
+                * self.next_level_params.ring_dimension,
         }
     }
 
@@ -319,61 +318,11 @@ impl HachiRootRuntimePlan {
     pub fn level_proof_bytes<Cfg: CommitmentConfig>(&self) -> usize {
         batched_root_level_proof_bytes(
             field_bits(Cfg::decomposition()),
-            &self.params,
-            self.level_layout,
+            &self.level_lp,
             &self.next_level_params,
             self.next_w_len(),
             self.batch.num_claims,
         )
-    }
-}
-
-/// Runtime source of truth for one Hachi level.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiLevelParams {
-    /// Ring dimension at this level.
-    pub d: usize,
-    /// Gadget base exponent.
-    pub log_basis: u32,
-    /// Active inner Ajtai rank.
-    pub n_a: usize,
-    /// Active outer commitment rank.
-    pub n_b: usize,
-    /// Active D-matrix rank.
-    pub n_d: usize,
-    /// Conservative sparse-challenge L1 mass used by folded-norm bounds.
-    pub challenge_l1_mass: usize,
-    /// Stage-1 challenge family sampled at this level.
-    pub stage1_config: SparseChallengeConfig,
-}
-
-impl HachiLevelParams {
-    /// Total number of quotient / relation rows in `M`.
-    pub fn m_row_count(&self) -> usize {
-        self.m_row_count_with_public_outputs(1)
-    }
-
-    /// Total number of quotient / relation rows when the root carries
-    /// `num_public_outputs` public `y` rows.
-    pub fn m_row_count_with_public_outputs(&self, num_public_outputs: usize) -> usize {
-        self.n_d + self.n_b + num_public_outputs + 1 + self.n_a
-    }
-
-    /// Total number of quotient / relation rows when the root carries
-    /// `num_commitments` explicit commitment vectors and `num_public_outputs`
-    /// public `y` rows.
-    pub fn m_row_count_with_commitments_and_public_outputs(
-        &self,
-        num_commitments: usize,
-        num_public_outputs: usize,
-    ) -> usize {
-        self.n_d + self.n_b * num_commitments + num_public_outputs + 1 + self.n_a
-    }
-
-    /// Total number of root-batched quotient / relation rows when each claim
-    /// keeps its own commitment vector.
-    pub fn batched_root_m_row_count(&self, num_claims: usize) -> usize {
-        self.m_row_count_with_commitments_and_public_outputs(num_claims, num_claims)
     }
 }
 
@@ -396,10 +345,10 @@ pub fn hachi_root_runtime_plan_with_batch<Cfg, const D: usize>(
 where
     Cfg: CommitmentConfig,
 {
-    let root_layout = hachi_batched_root_layout::<Cfg, D>(num_vars, layout_num_claims)?;
+    let root_lp = hachi_batched_root_layout::<Cfg, D>(num_vars, layout_num_claims)?;
     hachi_root_runtime_plan_from_root_layout::<Cfg, D>(
         HachiScheduleLookupKey::with_batch(max_num_vars, num_vars, layout_num_claims, batch),
-        root_layout,
+        &root_lp,
     )
 }
 
@@ -416,28 +365,33 @@ where
 /// next-level basis selection fails.
 pub(crate) fn hachi_root_runtime_plan_from_root_layout<Cfg, const D: usize>(
     key: HachiScheduleLookupKey,
-    root_layout: HachiCommitmentLayout,
+    root_layout: &LevelParams,
 ) -> Result<HachiRootRuntimePlan, HachiError>
 where
     Cfg: CommitmentConfig,
 {
     let planning_envelope = HachiBatchPlanningEnvelope::homogeneous::<Cfg>(key.batch);
-    let level_layout =
-        scale_batched_root_layout::<Cfg, D>(key.max_num_vars, root_layout, key.batch.num_claims)?;
+    let root_w_len = root_layout
+        .num_blocks
+        .checked_mul(root_layout.block_len)
+        .and_then(|len| len.checked_mul(D))
+        .unwrap_or(0);
     let inputs = HachiScheduleInputs {
         max_num_vars: key.max_num_vars,
         level: 0,
-        current_w_len: root_current_w_len::<D>(root_layout),
+        current_w_len: root_w_len,
     };
-    let params = if key.batch.num_claims > 1 {
-        Cfg::root_level_params_for_layout_with_log_basis(inputs, level_layout)?
+    let root_lp = Cfg::root_level_params_for_layout_with_log_basis(inputs, root_layout)?;
+    let level_lp =
+        scale_batched_root_layout::<Cfg, D>(key.max_num_vars, &root_lp, key.batch.num_claims)?;
+    let sched_lp = if key.batch.num_claims > 1 {
+        Cfg::root_level_params_for_layout_with_log_basis(inputs, &level_lp)?
     } else {
-        Cfg::root_level_params_for_layout_with_log_basis(inputs, root_layout)?
+        root_lp
     };
-    let next_w_ring =
-        w_ring_element_count_with_batch_summary::<Cfg::Field>(&params, level_layout, key.batch);
+    let next_w_ring = w_ring_element_count_with_batch_summary::<Cfg::Field>(&sched_lp, key.batch);
     let next_w_len = next_w_ring
-        .checked_mul(params.d)
+        .checked_mul(sched_lp.ring_dimension)
         .ok_or_else(|| HachiError::InvalidSetup("root next witness length overflow".to_string()))?;
     let next_inputs = HachiScheduleInputs {
         max_num_vars: key.max_num_vars,
@@ -447,7 +401,7 @@ where
     let next_log_basis = planned_next_log_basis_with_current_basis_and_envelope::<Cfg>(
         key,
         next_inputs,
-        params.log_basis,
+        sched_lp.log_basis,
         planning_envelope,
     )?;
     hachi_root_runtime_plan_from_root_layout_with_next_log_basis::<Cfg, D>(
@@ -459,36 +413,42 @@ where
 
 pub(crate) fn hachi_root_runtime_plan_from_root_layout_with_next_log_basis<Cfg, const D: usize>(
     key: HachiScheduleLookupKey,
-    root_layout: HachiCommitmentLayout,
+    root_layout: &LevelParams,
     next_log_basis: u32,
 ) -> Result<HachiRootRuntimePlan, HachiError>
 where
     Cfg: CommitmentConfig,
 {
     let planning_envelope = HachiBatchPlanningEnvelope::homogeneous::<Cfg>(key.batch);
-    let level_layout =
-        scale_batched_root_layout::<Cfg, D>(key.max_num_vars, root_layout, key.batch.num_claims)?;
+    let root_w_len = root_layout
+        .num_blocks
+        .checked_mul(root_layout.block_len)
+        .and_then(|len| len.checked_mul(D))
+        .unwrap_or(0);
     let inputs = HachiScheduleInputs {
         max_num_vars: key.max_num_vars,
         level: 0,
-        current_w_len: root_current_w_len::<D>(root_layout),
+        current_w_len: root_w_len,
     };
-    let params = if key.batch.num_claims > 1 {
-        Cfg::root_level_params_for_layout_with_log_basis(inputs, level_layout)?
+    let root_lp = Cfg::root_level_params_for_layout_with_log_basis(inputs, root_layout)?;
+    let scaled_lp =
+        scale_batched_root_layout::<Cfg, D>(key.max_num_vars, &root_lp, key.batch.num_claims)?;
+    let level_lp = if key.batch.num_claims > 1 {
+        Cfg::root_level_params_for_layout_with_log_basis(inputs, &scaled_lp)?
     } else {
-        Cfg::root_level_params_for_layout_with_log_basis(inputs, root_layout)?
+        root_lp.clone()
     };
-    let next_w_ring =
-        w_ring_element_count_with_batch_summary::<Cfg::Field>(&params, level_layout, key.batch);
+    let next_w_ring = w_ring_element_count_with_batch_summary::<Cfg::Field>(&level_lp, key.batch);
     let next_w_len = next_w_ring
-        .checked_mul(params.d)
+        .checked_mul(level_lp.ring_dimension)
         .ok_or_else(|| HachiError::InvalidSetup("root next witness length overflow".to_string()))?;
     let next_inputs = HachiScheduleInputs {
         max_num_vars: key.max_num_vars,
         level: 1,
         current_w_len: next_w_len,
     };
-    let next_level_params = Cfg::level_params_with_log_basis(next_inputs, next_log_basis);
+    let next_level_params =
+        current_level_layout_with_log_basis::<Cfg>(next_inputs, next_log_basis)?;
 
     Ok(HachiRootRuntimePlan {
         max_num_vars: key.max_num_vars,
@@ -497,9 +457,8 @@ where
         batch: key.batch,
         planning_envelope,
         inputs,
-        root_layout,
-        level_layout,
-        params,
+        root_lp: root_layout.clone(),
+        level_lp,
         next_inputs,
         next_level_params,
     })
@@ -532,7 +491,7 @@ pub(crate) fn recursive_level_decomposition_from_root(
 }
 
 pub(crate) fn recursive_level_decomposition<Cfg: CommitmentConfig>(
-    params: &HachiLevelParams,
+    params: &LevelParams,
 ) -> DecompositionParams {
     recursive_level_decomposition_from_root(Cfg::decomposition(), params.log_basis)
 }
@@ -540,22 +499,20 @@ pub(crate) fn recursive_level_decomposition<Cfg: CommitmentConfig>(
 fn layout_from_params(
     m_vars: usize,
     r_vars: usize,
-    params: &HachiLevelParams,
+    params: &LevelParams,
     decomp: DecompositionParams,
     num_ring: usize,
-) -> Result<HachiCommitmentLayout, HachiError> {
+) -> Result<LevelParams, HachiError> {
     let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
     let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
     let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
-    let depth_fold = compute_num_digits_fold(r_vars, params.challenge_l1_mass, decomp.log_basis);
-    HachiCommitmentLayout::new_with_decomp(
+    let depth_fold = compute_num_digits_fold(r_vars, params.challenge_l1_mass(), decomp.log_basis);
+    params.with_decomp(
         m_vars,
         r_vars,
-        params.n_a,
         depth_commit,
         depth_open,
         depth_fold,
-        decomp.log_basis,
         num_ring,
     )
 }
@@ -566,11 +523,11 @@ fn layout_from_params(
 /// level-specific `decomp`, `reduced_vars`, and `num_ring`; this function
 /// handles the split and layout construction.
 pub(crate) fn derive_commitment_layout(
-    params: &HachiLevelParams,
+    params: &LevelParams,
     decomp: DecompositionParams,
     reduced_vars: usize,
     num_ring: usize,
-) -> Result<HachiCommitmentLayout, HachiError> {
+) -> Result<LevelParams, HachiError> {
     let (m_vars, r_vars) = if reduced_vars == 0 {
         (0, 0)
     } else {
@@ -584,10 +541,8 @@ pub(crate) fn derive_commitment_layout(
 pub struct HachiPlannedLevel {
     /// Public inputs that selected this level.
     pub inputs: HachiScheduleInputs,
-    /// Active Hachi parameters chosen for this level.
-    pub params: HachiLevelParams,
-    /// Runtime commitment layout used at this level.
-    pub layout: HachiCommitmentLayout,
+    /// Unified level parameters (ring dimension, Ajtai keys, block geometry, etc.).
+    pub lp: LevelParams,
     /// Public inputs for the next level after folding.
     pub next_inputs: HachiScheduleInputs,
     /// Planned log-basis of the next level.
@@ -604,7 +559,7 @@ impl HachiPlannedLevel {
         HachiPlannedState {
             level: self.inputs.level,
             current_w_len: self.inputs.current_w_len,
-            log_basis: self.params.log_basis,
+            log_basis: self.lp.log_basis,
         }
     }
 
@@ -646,7 +601,7 @@ pub struct HachiPlannedLevelExecution {
     /// Planned fold level that matches the current public state.
     pub level: HachiPlannedLevel,
     /// Planned next-level params implied by the following schedule step.
-    pub next_level_params: HachiLevelParams,
+    pub next_level_params: LevelParams,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -753,14 +708,14 @@ impl HachiSchedulePlan {
         let mut step_shapes: Vec<HachiProofStepShape> = self
             .fold_levels()
             .map(|level| {
-                let p = &level.params;
+                let lp = &level.lp;
                 let next_w_len = level.next_inputs.current_w_len;
-                let rounds = sumcheck_rounds(p.d, next_w_len);
-                let b = 1usize << level.layout.log_basis;
+                let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
+                let b = 1usize << lp.log_basis;
 
                 HachiProofStepShape::Fold(LevelProofShape {
-                    y_ring_coeffs: p.d,
-                    v_coeffs: p.n_d * p.d,
+                    y_ring_coeffs: lp.ring_dimension,
+                    v_coeffs: lp.d_key.row_len * lp.ring_dimension,
                     stage1_stages: stage1_tree_stage_shapes(rounds, b),
                     stage2_sumcheck: (rounds, 3),
                     next_commit_coeffs: level.next_commit_coeffs,
@@ -806,25 +761,24 @@ pub(crate) fn exact_planned_level_execution<Cfg: CommitmentConfig>(
         ));
     };
     let next_level_params = match next_step {
-        HachiPlannedStep::Fold(next_level) => next_level.params.clone(),
+        HachiPlannedStep::Fold(next_level) => next_level.lp.clone(),
         HachiPlannedStep::Direct(direct) => {
             let (d, n_b) = match direct.witness_shape {
                 DirectWitnessShape::PackedDigits(_) => {
-                    let entry_d = current_level.params.d;
+                    let entry_d = current_level.lp.ring_dimension;
                     let entry_nb = current_level.next_commit_coeffs / entry_d;
                     (entry_d, entry_nb)
                 }
-                DirectWitnessShape::FieldElements(_) => (current_level.params.d, 0),
+                DirectWitnessShape::FieldElements(_) => (current_level.lp.ring_dimension, 0),
             };
-            HachiLevelParams {
+            LevelParams::params_only(
                 d,
-                log_basis: direct.state.log_basis,
-                n_a: 0,
+                direct.state.log_basis,
+                0,
                 n_b,
-                n_d: 0,
-                challenge_l1_mass: current_level.params.challenge_l1_mass,
-                stage1_config: Cfg::stage1_challenge_config(d),
-            }
+                0,
+                Cfg::stage1_challenge_config(d),
+            )
         }
     };
     Ok(Some(HachiPlannedLevelExecution {
@@ -872,21 +826,20 @@ fn generated_step_current_w_len(step: &GeneratedStep) -> usize {
 fn generated_level_params<Cfg: CommitmentConfig>(
     step: GeneratedFoldStep,
     context: &str,
-) -> Result<HachiLevelParams, HachiError> {
-    let params = HachiLevelParams {
-        d: step.d as usize,
-        log_basis: step.log_basis,
-        n_a: step.n_a as usize,
-        n_b: step.n_b as usize,
-        n_d: step.n_d as usize,
-        challenge_l1_mass: step.challenge_l1_mass,
-        stage1_config: Cfg::stage1_challenge_config(step.d as usize),
-    };
-    if params.challenge_l1_mass != params.stage1_config.l1_mass() {
+) -> Result<LevelParams, HachiError> {
+    let params = LevelParams::params_only(
+        step.d as usize,
+        step.log_basis,
+        step.n_a as usize,
+        step.n_b as usize,
+        step.n_d as usize,
+        Cfg::stage1_challenge_config(step.d as usize),
+    );
+    if step.challenge_l1_mass != params.challenge_l1_mass() {
         return Err(HachiError::InvalidSetup(format!(
             "generated schedule {context} challenge L1 mass mismatch: pinned={}, runtime={}",
-            params.challenge_l1_mass,
-            params.stage1_config.l1_mass()
+            step.challenge_l1_mass,
+            params.challenge_l1_mass()
         )));
     }
     Ok(params)
@@ -960,7 +913,7 @@ fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig, const D: usize>(
                 } else {
                     recursive_level_decomposition_from_root(Cfg::decomposition(), level.log_basis)
                 };
-                let layout = layout_from_params(
+                let level_lp = layout_from_params(
                     level.m_vars as usize,
                     level.r_vars as usize,
                     &params,
@@ -968,16 +921,17 @@ fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig, const D: usize>(
                     level.current_w_len / level.d as usize,
                 )?;
                 let runtime_next_w_len = if fold_level == 0 {
-                    let next_w_ring = w_ring_element_count_with_batch_summary::<Cfg::Field>(
-                        &params, layout, key.batch,
-                    );
-                    next_w_ring.checked_mul(params.d).ok_or_else(|| {
-                        HachiError::InvalidSetup(
-                            "generated root next witness length overflow".to_string(),
-                        )
-                    })?
+                    let next_w_ring =
+                        w_ring_element_count_with_batch_summary::<Cfg::Field>(&level_lp, key.batch);
+                    next_w_ring
+                        .checked_mul(params.ring_dimension)
+                        .ok_or_else(|| {
+                            HachiError::InvalidSetup(
+                                "generated root next witness length overflow".to_string(),
+                            )
+                        })?
                 } else {
-                    planned_next_w_len(field_bits, Cfg::planner_half_field_bound(), &params, layout)
+                    planned_next_w_len(field_bits, Cfg::planner_half_field_bound(), &level_lp)
                 };
                 let root_is_batched =
                     fold_level == 0 && key.batch != HachiRootBatchSummary::singleton();
@@ -996,13 +950,13 @@ fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig, const D: usize>(
                         )?;
                         (
                             next_level_params.clone(),
-                            next_level_params.n_b * next_level_params.d,
+                            next_level_params.b_key.row_len * next_level_params.ring_dimension,
                         )
                     }
                     GeneratedStep::Direct(direct) => {
                         let (entry_d, entry_nb) = match (direct.entry_d, direct.entry_nb) {
                             (Some(entry_d), Some(entry_nb)) => (entry_d as usize, entry_nb as usize),
-                            (None, None) => (params.d, 0),
+                            (None, None) => (params.ring_dimension, 0),
                             _ => {
                                 return Err(HachiError::InvalidSetup(
                                     "generated direct entry commitment must specify both D and n_b or neither"
@@ -1011,31 +965,29 @@ fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig, const D: usize>(
                             }
                         };
                         (
-                            HachiLevelParams {
-                                d: entry_d,
-                                log_basis: next_log_basis,
-                                n_a: 0,
-                                n_b: entry_nb,
-                                n_d: 0,
-                                challenge_l1_mass: params.challenge_l1_mass,
-                                stage1_config: params.stage1_config.clone(),
-                            },
+                            LevelParams::params_only(
+                                entry_d,
+                                next_log_basis,
+                                0,
+                                entry_nb,
+                                0,
+                                params.stage1_config.clone(),
+                            ),
                             entry_nb * entry_d,
                         )
                     }
                 };
+                let next_lp = next_level_params.clone();
                 let runtime_level_bytes = hachi_level_proof_bytes(
                     field_bits,
-                    &params,
-                    layout,
-                    &next_level_params,
+                    &level_lp,
+                    &next_lp,
                     next_inputs.current_w_len,
                 );
 
                 steps.push(HachiPlannedStep::Fold(Box::new(HachiPlannedLevel {
                     inputs,
-                    params,
-                    layout,
+                    lp: level_lp,
                     next_inputs,
                     next_level_log_basis: next_log_basis,
                     next_commit_coeffs,
@@ -1113,11 +1065,11 @@ fn exact_plan_from_root_and_suffix<Cfg: CommitmentConfig>(
     let mut steps = Vec::with_capacity(1 + suffix.steps.len());
     steps.push(HachiPlannedStep::Fold(Box::new(HachiPlannedLevel {
         inputs: root_plan.inputs,
-        params: root_plan.params,
-        layout: root_plan.level_layout,
+        lp: root_plan.level_lp.clone(),
         next_inputs,
         next_level_log_basis: root_plan.next_level_params.log_basis,
-        next_commit_coeffs: root_plan.next_level_params.n_b * root_plan.next_level_params.d,
+        next_commit_coeffs: root_plan.next_level_params.b_key.row_len
+            * root_plan.next_level_params.ring_dimension,
         level_bytes: root_level_bytes,
     })));
     steps.extend(suffix.steps);
@@ -1148,11 +1100,11 @@ fn exact_plan_from_root_and_direct<Cfg: CommitmentConfig>(
     let steps = vec![
         HachiPlannedStep::Fold(Box::new(HachiPlannedLevel {
             inputs: root_plan.inputs,
-            params: root_plan.params,
-            layout: root_plan.level_layout,
+            lp: root_plan.level_lp.clone(),
             next_inputs: root_plan.next_inputs,
             next_level_log_basis: root_plan.next_level_params.log_basis,
-            next_commit_coeffs: root_plan.next_level_params.n_b * root_plan.next_level_params.d,
+            next_commit_coeffs: root_plan.next_level_params.b_key.row_len
+                * root_plan.next_level_params.ring_dimension,
             level_bytes: root_level_bytes,
         })),
         HachiPlannedStep::Direct(HachiPlannedDirectStep {
@@ -1236,17 +1188,13 @@ pub fn exact_schedule_plan_for_lookup_key<Cfg: CommitmentConfig, const D: usize>
         };
 
         for root_log_basis in min_log_basis..=max_log_basis {
-            let Ok((params, root_layout)) =
-                current_level_layout_with_log_basis::<Cfg>(inputs, root_log_basis)
+            let Ok(search_lp) = current_level_layout_with_log_basis::<Cfg>(inputs, root_log_basis)
             else {
                 continue;
             };
-            let next_w_ring = w_ring_element_count_with_batch_summary::<Cfg::Field>(
-                &params,
-                root_layout,
-                key.batch,
-            );
-            let Some(next_w_len) = next_w_ring.checked_mul(params.d) else {
+            let next_w_ring =
+                w_ring_element_count_with_batch_summary::<Cfg::Field>(&search_lp, key.batch);
+            let Some(next_w_len) = next_w_ring.checked_mul(search_lp.ring_dimension) else {
                 return Err(HachiError::InvalidSetup(
                     "root next witness length overflow".to_string(),
                 ));
@@ -1258,12 +1206,12 @@ pub fn exact_schedule_plan_for_lookup_key<Cfg: CommitmentConfig, const D: usize>
             };
             let next_log_basis = dp_best_basis_with_current_basis_and_envelope::<Cfg>(
                 next_inputs,
-                params.log_basis,
+                search_lp.log_basis,
                 planning_envelope,
             )?;
             let root_plan = hachi_root_runtime_plan_from_root_layout_with_next_log_basis::<Cfg, D>(
                 key,
-                root_layout,
+                &search_lp,
                 next_log_basis,
             )?;
             let (suffix_min_log_basis, suffix_max_log_basis) =
@@ -1289,23 +1237,28 @@ pub fn exact_schedule_plan_for_lookup_key<Cfg: CommitmentConfig, const D: usize>
         return Ok(best_plan);
     }
     let planning_envelope = HachiBatchPlanningEnvelope::homogeneous::<Cfg>(key.batch);
-    let root_layout = hachi_batched_root_layout::<Cfg, D>(key.num_vars, key.layout_num_claims)?;
-    let level_layout =
-        scale_batched_root_layout::<Cfg, D>(key.max_num_vars, root_layout, key.batch.num_claims)?;
+    let root_lp = hachi_batched_root_layout::<Cfg, D>(key.num_vars, key.layout_num_claims)?;
+    let root_w_len = root_lp
+        .num_blocks
+        .checked_mul(root_lp.block_len)
+        .and_then(|len| len.checked_mul(D))
+        .unwrap_or(0);
     let inputs = HachiScheduleInputs {
         max_num_vars: key.max_num_vars,
         level: 0,
-        current_w_len: root_current_w_len::<D>(root_layout),
+        current_w_len: root_w_len,
     };
-    let params = if key.batch.num_claims > 1 {
-        Cfg::root_level_params_for_layout_with_log_basis(inputs, level_layout)?
+    let root_lp_full = Cfg::root_level_params_for_layout_with_log_basis(inputs, &root_lp)?;
+    let level_lp =
+        scale_batched_root_layout::<Cfg, D>(key.max_num_vars, &root_lp_full, key.batch.num_claims)?;
+    let sched_lp = if key.batch.num_claims > 1 {
+        Cfg::root_level_params_for_layout_with_log_basis(inputs, &level_lp)?
     } else {
-        Cfg::root_level_params_for_layout_with_log_basis(inputs, root_layout)?
+        root_lp_full
     };
-    let next_w_ring =
-        w_ring_element_count_with_batch_summary::<Cfg::Field>(&params, level_layout, key.batch);
+    let next_w_ring = w_ring_element_count_with_batch_summary::<Cfg::Field>(&sched_lp, key.batch);
     let next_w_len = next_w_ring
-        .checked_mul(params.d)
+        .checked_mul(sched_lp.ring_dimension)
         .ok_or_else(|| HachiError::InvalidSetup("root next witness length overflow".to_string()))?;
     let next_inputs = HachiScheduleInputs {
         max_num_vars: key.max_num_vars,
@@ -1314,12 +1267,12 @@ pub fn exact_schedule_plan_for_lookup_key<Cfg: CommitmentConfig, const D: usize>
     };
     let next_log_basis = dp_best_basis_with_current_basis_and_envelope::<Cfg>(
         next_inputs,
-        params.log_basis,
+        sched_lp.log_basis,
         planning_envelope,
     )?;
     let root_plan = hachi_root_runtime_plan_from_root_layout_with_next_log_basis::<Cfg, D>(
         key,
-        root_layout,
+        &root_lp,
         next_log_basis,
     )?;
     let direct_plan = exact_plan_from_root_and_direct::<Cfg>(root_plan.clone())?;
@@ -1360,7 +1313,7 @@ pub fn exact_schedule_plan_for_lookup_key<Cfg: CommitmentConfig, const D: usize>
 /// use the default `commitment_layout` implementation).
 pub(crate) fn build_schedule_plan_from_config<Cfg: CommitmentConfig>(
     max_num_vars: usize,
-    root_layout: HachiCommitmentLayout,
+    root_lp: &LevelParams,
 ) -> Result<HachiSchedulePlan, HachiError> {
     let fb = field_bits(Cfg::decomposition());
     let half_field_bound = Cfg::planner_half_field_bound();
@@ -1380,13 +1333,12 @@ pub(crate) fn build_schedule_plan_from_config<Cfg: CommitmentConfig>(
             current_w_len,
         };
         let log_basis = Cfg::log_basis_at_level(inputs);
-        let (params, layout) = if level == 0 {
-            let params = Cfg::root_level_params_for_layout_with_log_basis(inputs, root_layout)?;
-            (params, root_layout)
+        let level_lp = if level == 0 {
+            Cfg::root_level_params_for_layout_with_log_basis(inputs, root_lp)?
         } else {
             current_level_layout_with_log_basis::<Cfg>(inputs, log_basis)?
         };
-        let next_w_len = planned_next_w_len(fb, half_field_bound, &params, layout);
+        let next_w_len = planned_next_w_len(fb, half_field_bound, &level_lp);
 
         let next_inputs = HachiScheduleInputs {
             max_num_vars,
@@ -1394,10 +1346,9 @@ pub(crate) fn build_schedule_plan_from_config<Cfg: CommitmentConfig>(
             current_w_len: next_w_len,
         };
         let next_log_basis = Cfg::log_basis_at_level(next_inputs);
-        let next_level_params = Cfg::level_params_with_log_basis(next_inputs, next_log_basis);
+        let next_lp = current_level_layout_with_log_basis::<Cfg>(next_inputs, next_log_basis)?;
 
-        let continue_bytes =
-            hachi_level_proof_bytes(fb, &params, layout, &next_level_params, next_w_len);
+        let continue_bytes = hachi_level_proof_bytes(fb, &level_lp, &next_lp, next_w_len);
 
         let should_stop = level > 0
             && (next_w_len >= current_w_len
@@ -1418,11 +1369,10 @@ pub(crate) fn build_schedule_plan_from_config<Cfg: CommitmentConfig>(
             break;
         }
 
-        let next_commit_coeffs = next_level_params.n_b * next_level_params.d;
+        let next_commit_coeffs = next_lp.b_key.row_len * next_lp.ring_dimension;
         steps.push(HachiPlannedStep::Fold(Box::new(HachiPlannedLevel {
             inputs,
-            params,
-            layout,
+            lp: level_lp,
             next_inputs,
             next_level_log_basis: next_log_basis,
             next_commit_coeffs,
@@ -1508,25 +1458,22 @@ pub(crate) fn recursive_r_decomp_levels_for_bound(
 pub(crate) fn planned_w_ring_element_count(
     field_bits: u32,
     half_field_bound: u128,
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
+    lp: &LevelParams,
 ) -> usize {
-    let w_hat_count = layout.num_blocks * layout.num_digits_open;
-    let t_hat_count = layout.num_blocks * level_params.n_a * layout.num_digits_open;
-    let z_pre_count = layout.inner_width * layout.num_digits_fold;
-    let r_count = level_params.m_row_count()
-        * recursive_r_decomp_levels_for_bound(field_bits, half_field_bound, layout.log_basis);
+    let w_hat_count = lp.num_blocks * lp.num_digits_open;
+    let t_hat_count = lp.num_blocks * lp.a_key.row_len * lp.num_digits_open;
+    let z_pre_count = lp.inner_width() * lp.num_digits_fold;
+    let r_count = lp.m_row_count()
+        * recursive_r_decomp_levels_for_bound(field_bits, half_field_bound, lp.log_basis);
     w_hat_count + t_hat_count + z_pre_count + r_count
 }
 
 pub(crate) fn planned_next_w_len(
     field_bits: u32,
     half_field_bound: u128,
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
+    lp: &LevelParams,
 ) -> usize {
-    planned_w_ring_element_count(field_bits, half_field_bound, level_params, layout)
-        * level_params.d
+    planned_w_ring_element_count(field_bits, half_field_bound, lp) * lp.ring_dimension
 }
 
 fn sumcheck_rounds(level_d: usize, next_w_len: usize) -> usize {
@@ -1538,19 +1485,18 @@ fn sumcheck_rounds(level_d: usize, next_w_len: usize) -> usize {
 
 pub(crate) fn hachi_level_proof_bytes(
     field_bits: u32,
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
-    next_level_params: &HachiLevelParams,
+    lp: &LevelParams,
+    next_lp: &LevelParams,
     next_w_len: usize,
 ) -> usize {
     let elem_bytes = field_bytes(field_bits);
-    let y_bytes = proof_ring_vec_bytes(1, level_params.d, elem_bytes);
-    let v_bytes = proof_ring_vec_bytes(level_params.n_d, level_params.d, elem_bytes);
+    let y_bytes = proof_ring_vec_bytes(1, lp.ring_dimension, elem_bytes);
+    let v_bytes = proof_ring_vec_bytes(lp.d_key.row_len, lp.ring_dimension, elem_bytes);
     let next_commit_bytes =
-        proof_ring_vec_bytes(next_level_params.n_b, next_level_params.d, elem_bytes);
+        proof_ring_vec_bytes(next_lp.b_key.row_len, next_lp.ring_dimension, elem_bytes);
     let next_eval_bytes = elem_bytes;
-    let rounds = sumcheck_rounds(level_params.d, next_w_len);
-    let b = 1usize << layout.log_basis;
+    let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
+    let b = 1usize << lp.log_basis;
     let stage1_bytes = stage1_proof_bytes(rounds, b, elem_bytes);
 
     y_bytes
@@ -1601,24 +1547,25 @@ fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> HachiStage1Proof
 }
 
 pub(crate) fn exact_recursive_level_proof_bytes<F: FieldCore>(
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
-    next_level_params: &HachiLevelParams,
+    lp: &LevelParams,
+    next_lp: &LevelParams,
     next_w_len: usize,
 ) -> Result<usize, HachiError> {
-    let current_coeffs = level_params
-        .n_d
-        .checked_mul(level_params.d)
+    let current_coeffs = lp
+        .d_key
+        .row_len
+        .checked_mul(lp.ring_dimension)
         .ok_or_else(|| HachiError::InvalidSetup("recursive proof sizing overflow".to_string()))?;
-    let next_commit_coeffs = next_level_params
-        .n_b
-        .checked_mul(next_level_params.d)
+    let next_commit_coeffs = next_lp
+        .b_key
+        .row_len
+        .checked_mul(next_lp.ring_dimension)
         .ok_or_else(|| HachiError::InvalidSetup("recursive proof sizing overflow".to_string()))?;
-    let rounds = sumcheck_rounds(level_params.d, next_w_len);
-    let b = 1usize << layout.log_basis;
+    let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
+    let b = 1usize << lp.log_basis;
 
     let proof = HachiLevelProof {
-        y_ring: FlatRingVec::from_coeffs(vec![F::zero(); level_params.d]),
+        y_ring: FlatRingVec::from_coeffs(vec![F::zero(); lp.ring_dimension]),
         v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
         stage1: dummy_stage1_proof(rounds, b),
         stage2: HachiStage2Proof {
@@ -1632,20 +1579,19 @@ pub(crate) fn exact_recursive_level_proof_bytes<F: FieldCore>(
 
 pub(crate) fn batched_root_level_proof_bytes(
     field_bits: u32,
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
-    next_level_params: &HachiLevelParams,
+    lp: &LevelParams,
+    next_lp: &LevelParams,
     next_w_len: usize,
     num_claims: usize,
 ) -> usize {
     let elem_bytes = field_bytes(field_bits);
-    let y_bytes = proof_ring_vec_bytes(num_claims, level_params.d, elem_bytes);
-    let v_bytes = proof_ring_vec_bytes(level_params.n_d, level_params.d, elem_bytes);
+    let y_bytes = proof_ring_vec_bytes(num_claims, lp.ring_dimension, elem_bytes);
+    let v_bytes = proof_ring_vec_bytes(lp.d_key.row_len, lp.ring_dimension, elem_bytes);
     let next_commit_bytes =
-        proof_ring_vec_bytes(next_level_params.n_b, next_level_params.d, elem_bytes);
+        proof_ring_vec_bytes(next_lp.b_key.row_len, next_lp.ring_dimension, elem_bytes);
     let next_eval_bytes = elem_bytes;
-    let rounds = sumcheck_rounds(level_params.d, next_w_len);
-    let b = 1usize << layout.log_basis;
+    let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
+    let b = 1usize << lp.log_basis;
     let stage1_bytes = stage1_proof_bytes(rounds, b, elem_bytes);
 
     y_bytes
@@ -1656,16 +1602,24 @@ pub(crate) fn batched_root_level_proof_bytes(
         + next_eval_bytes
 }
 
-pub(crate) fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
+/// Derive the [`LevelParams`] for the given level and explicit log-basis.
+///
+/// At level 0 this delegates to [`CommitmentConfig::root_level_layout_with_log_basis`];
+/// at recursive levels it computes params **and** layout in one step.
+///
+/// # Errors
+///
+/// Returns [`HachiError`] when the layout derivation fails (e.g. the
+/// witness length is not divisible by the ring dimension).
+pub fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
     inputs: HachiScheduleInputs,
     log_basis: u32,
-) -> Result<(HachiLevelParams, HachiCommitmentLayout), HachiError> {
+) -> Result<LevelParams, HachiError> {
     if inputs.level == 0 {
         return Cfg::root_level_layout_with_log_basis(inputs, log_basis);
     }
     let params = Cfg::level_params_with_log_basis(inputs, log_basis);
-    let layout = hachi_recursive_level_layout_from_params::<Cfg>(&params, inputs.current_w_len)?;
-    Ok((params, layout))
+    hachi_recursive_level_layout_from_params::<Cfg>(&params, inputs.current_w_len)
 }
 
 fn dp_recursive_suffix_bytes_with_log_basis_and_envelope<Cfg: CommitmentConfig>(
@@ -1858,10 +1812,9 @@ pub(crate) fn estimated_recursive_suffix_bytes<Cfg: CommitmentConfig>(
         return Ok(planned_bytes.min(direct_bytes));
     }
 
-    let (params, layout) = current_level_layout_with_log_basis::<Cfg>(inputs, current_log_basis)?;
+    let level_lp = current_level_layout_with_log_basis::<Cfg>(inputs, current_log_basis)?;
     let field_bits = field_bits(Cfg::decomposition());
-    let next_w_len =
-        planned_next_w_len(field_bits, Cfg::planner_half_field_bound(), &params, layout);
+    let next_w_len = planned_next_w_len(field_bits, Cfg::planner_half_field_bound(), &level_lp);
     if next_w_len >= current_w_len {
         return Ok(direct_bytes);
     }
@@ -1871,10 +1824,9 @@ pub(crate) fn estimated_recursive_suffix_bytes<Cfg: CommitmentConfig>(
         level: level + 1,
         current_w_len: next_w_len,
     };
-    let next_level_params = Cfg::level_params(next_inputs);
-    let continue_bytes =
-        hachi_level_proof_bytes(field_bits, &params, layout, &next_level_params, next_w_len)
-            + packed_digits_bytes(next_w_len, next_level_params.log_basis);
+    let next_lp = Cfg::level_params(next_inputs);
+    let continue_bytes = hachi_level_proof_bytes(field_bits, &level_lp, &next_lp, next_w_len)
+        + packed_digits_bytes(next_w_len, next_lp.log_basis);
     Ok(direct_bytes.min(continue_bytes))
 }
 
@@ -2112,7 +2064,7 @@ fn planned_recursive_suffix_bytes_with_log_basis_from_schedule_and_envelope<
 /// Returns an error if the root variable split is invalid or overflows.
 pub fn hachi_root_level_layout<Cfg: CommitmentConfig>(
     max_num_vars: usize,
-) -> Result<(HachiLevelParams, HachiCommitmentLayout), HachiError> {
+) -> Result<LevelParams, HachiError> {
     let inputs = HachiScheduleInputs {
         max_num_vars,
         level: 0,
@@ -2133,7 +2085,7 @@ pub fn hachi_root_level_layout<Cfg: CommitmentConfig>(
 /// layout overflows.
 pub(crate) fn hachi_root_commitment_layout<Cfg: CommitmentConfig>(
     max_num_vars: usize,
-) -> Result<(HachiLevelParams, HachiCommitmentLayout), HachiError> {
+) -> Result<LevelParams, HachiError> {
     let inputs = HachiScheduleInputs {
         max_num_vars,
         level: 0,
@@ -2147,25 +2099,30 @@ pub(crate) fn hachi_root_commitment_layout<Cfg: CommitmentConfig>(
 
     let d = Cfg::d_at_level(0, inputs.current_w_len);
     let stage1_config = Cfg::stage1_challenge_config(d);
-    let mut params = HachiLevelParams {
-        d,
-        log_basis,
-        n_a: 1,
-        n_b: 1,
-        n_d: 1,
-        challenge_l1_mass: stage1_config.l1_mass(),
-        stage1_config,
-    };
+    let mut params = LevelParams::params_only(d, log_basis, 1, 1, 1, stage1_config);
     let decomp = main_level_decomposition_from_root(Cfg::decomposition(), log_basis);
     for _ in 0..4 {
         let layout = layout_from_params(0, 0, &params, decomp, 0)?;
-        let derived_params = Cfg::root_level_params_for_layout_with_log_basis(inputs, layout)?;
-        if (derived_params.n_a, derived_params.n_b, derived_params.n_d)
-            == (params.n_a, params.n_b, params.n_d)
-        {
-            return Ok((derived_params, layout));
+        let derived_lp = Cfg::root_level_params_for_layout_with_log_basis(inputs, &layout)?;
+        if (
+            derived_lp.a_key.row_len,
+            derived_lp.b_key.row_len,
+            derived_lp.d_key.row_len,
+        ) == (
+            params.a_key.row_len,
+            params.b_key.row_len,
+            params.d_key.row_len,
+        ) {
+            return Ok(derived_lp);
         }
-        params = derived_params;
+        params = LevelParams::params_only(
+            derived_lp.ring_dimension,
+            derived_lp.log_basis,
+            derived_lp.a_key.row_len,
+            derived_lp.b_key.row_len,
+            derived_lp.d_key.row_len,
+            derived_lp.stage1_config.clone(),
+        );
     }
     Err(HachiError::InvalidSetup(format!(
         "failed to converge on tiny-root params for {} at max_num_vars={max_num_vars}",
@@ -2180,20 +2137,20 @@ pub(crate) fn hachi_root_commitment_layout<Cfg: CommitmentConfig>(
 /// Returns an error if the witness length is incompatible with `params.d` or if
 /// the recursive layout derivation overflows.
 pub fn hachi_recursive_level_layout_from_params<Cfg: CommitmentConfig>(
-    params: &HachiLevelParams,
+    params: &LevelParams,
     current_w_len: usize,
-) -> Result<HachiCommitmentLayout, HachiError> {
-    if !current_w_len.is_multiple_of(params.d) {
+) -> Result<LevelParams, HachiError> {
+    if !current_w_len.is_multiple_of(params.ring_dimension) {
         return Err(HachiError::InvalidInput(format!(
             "witness length {current_w_len} is not divisible by D={}",
-            params.d
+            params.ring_dimension
         )));
     }
-    let num_ring_elems = current_w_len / params.d;
+    let num_ring_elems = current_w_len / params.ring_dimension;
     let reduced_vars = num_ring_elems.next_power_of_two().max(1).trailing_zeros() as usize;
     let decomp = recursive_level_decomposition::<Cfg>(params);
     let layout = derive_commitment_layout(params, decomp, reduced_vars, num_ring_elems)?;
-    let alpha = params.d.trailing_zeros() as usize;
+    let alpha = params.ring_dimension.trailing_zeros() as usize;
     debug_assert_eq!(layout.m_vars + layout.r_vars + alpha, reduced_vars + alpha);
     Ok(layout)
 }
@@ -2223,7 +2180,7 @@ mod tests {
             .expect("config should provide a planner");
         for level in plan.fold_levels() {
             let runtime_next_w_len =
-                w_ring_element_count::<Cfg::Field>(&level.params, level.layout) * level.params.d;
+                w_ring_element_count::<Cfg::Field>(&level.lp) * level.lp.ring_dimension;
             assert_eq!(
                 runtime_next_w_len, level.next_inputs.current_w_len,
                 "planner/runtime next_w_len mismatch at level {} for max_num_vars={max_num_vars}",
@@ -2277,7 +2234,7 @@ mod tests {
             plan.fold_levels()
                 .next()
                 .expect("exact schedule should begin with a fold")
-                .params
+                .lp
                 .log_basis,
         )
         .expect("exact plan should resolve the root fold")
@@ -2296,15 +2253,21 @@ mod tests {
             std::any::type_name::<Cfg>()
         );
         assert_eq!(
-            planned_root.level.params,
-            runtime_root.params,
+            planned_root.level.lp,
+            runtime_root.level_lp,
             "planned/runtime root params mismatch for {} at max_num_vars={max_num_vars}",
             std::any::type_name::<Cfg>()
         );
         assert_eq!(
-            planned_root.level.layout,
-            runtime_root.root_layout,
-            "planned/runtime root layout mismatch for {} at max_num_vars={max_num_vars}",
+            planned_root.level.lp.m_vars,
+            runtime_root.root_lp.m_vars,
+            "planned/runtime root m_vars mismatch for {} at max_num_vars={max_num_vars}",
+            std::any::type_name::<Cfg>()
+        );
+        assert_eq!(
+            planned_root.level.lp.r_vars,
+            runtime_root.root_lp.r_vars,
+            "planned/runtime root r_vars mismatch for {} at max_num_vars={max_num_vars}",
             std::any::type_name::<Cfg>()
         );
         assert_eq!(
@@ -2385,12 +2348,13 @@ mod tests {
             HachiRootBatchSummary::singleton(),
         )
         .expect("singleton runtime plan");
-        let (root_params, root_layout) = hachi_root_level_layout::<Cfg>(30).unwrap();
+        let root_lp = hachi_root_level_layout::<Cfg>(30).unwrap();
 
         assert_eq!(runtime.batch, HachiRootBatchSummary::singleton());
-        assert_eq!(runtime.root_layout, root_layout);
-        assert_eq!(runtime.level_layout, root_layout);
-        assert_eq!(runtime.params, root_params);
+        assert_eq!(runtime.root_lp.m_vars, root_lp.m_vars);
+        assert_eq!(runtime.root_lp.r_vars, root_lp.r_vars);
+        assert_eq!(runtime.level_lp.m_vars, root_lp.m_vars);
+        assert_eq!(runtime.level_lp.r_vars, root_lp.r_vars);
         assert_eq!(runtime.inputs.level, 0);
         assert_eq!(runtime.next_inputs.level, 1);
         assert_eq!(runtime.level_proof_shape().y_ring_coeffs, Cfg::D);
@@ -2479,22 +2443,20 @@ mod tests {
         let params = Cfg::level_params(inputs);
         let decomp =
             recursive_level_decomposition_from_root(Cfg::decomposition(), params.log_basis);
-        let num_ring = inputs.current_w_len / params.d;
-        let layout_12_7 = layout_from_params(12, 7, &params, decomp, num_ring).unwrap();
-        let layout_11_8 = layout_from_params(11, 8, &params, decomp, num_ring).unwrap();
+        let num_ring = inputs.current_w_len / params.ring_dimension;
+        let lp_12_7 = layout_from_params(12, 7, &params, decomp, num_ring).unwrap();
+        let lp_11_8 = layout_from_params(11, 8, &params, decomp, num_ring).unwrap();
         let w_12_7 = planned_w_ring_element_count(
             field_bits(Cfg::decomposition()),
             Cfg::planner_half_field_bound(),
-            &params,
-            layout_12_7,
+            &lp_12_7,
         );
         let w_11_8 = planned_w_ring_element_count(
             field_bits(Cfg::decomposition()),
             Cfg::planner_half_field_bound(),
-            &params,
-            layout_11_8,
+            &lp_11_8,
         );
-        let reduced_vars = (inputs.current_w_len / params.d)
+        let reduced_vars = (inputs.current_w_len / params.ring_dimension)
             .next_power_of_two()
             .trailing_zeros() as usize;
 
@@ -2512,49 +2474,18 @@ mod tests {
             weight: 3,
             nonzero_coeffs: vec![-1, 1],
         };
-        let next_level_params = HachiLevelParams {
-            d: D,
-            log_basis: 2,
-            n_a: 2,
-            n_b: 3,
-            n_d: 2,
-            challenge_l1_mass: stage1_config.l1_mass(),
-            stage1_config: stage1_config.clone(),
-        };
+        let next_level_params = LevelParams::params_only(D, 2, 2, 3, 2, stage1_config.clone());
         let next_w_len = D * 8;
 
         for log_basis in 2..=6 {
-            let level_params = HachiLevelParams {
-                d: D,
-                log_basis,
-                n_a: 2,
-                n_b: 2,
-                n_d: 2,
-                challenge_l1_mass: stage1_config.l1_mass(),
-                stage1_config: stage1_config.clone(),
-            };
-            let layout = HachiCommitmentLayout {
-                m_vars: 0,
-                r_vars: 0,
-                num_blocks: 1,
-                block_len: 1,
-                inner_width: 1,
-                outer_width: 1,
-                d_matrix_width: 1,
-                num_digits_commit: 1,
-                num_digits_open: 1,
-                num_digits_fold: 1,
-                log_basis,
-            };
+            let level_params =
+                LevelParams::params_only(D, log_basis, 2, 2, 2, stage1_config.clone());
+            let stub_lp = level_params.with_decomp(0, 0, 1, 1, 1, 1).unwrap();
+            let lp = level_params.with_layout(&stub_lp);
+            let next_lp = next_level_params.with_layout(&stub_lp);
             assert_eq!(
-                hachi_level_proof_bytes(128, &level_params, layout, &next_level_params, next_w_len),
-                exact_recursive_level_proof_bytes::<F>(
-                    &level_params,
-                    layout,
-                    &next_level_params,
-                    next_w_len,
-                )
-                .unwrap(),
+                hachi_level_proof_bytes(128, &lp, &next_lp, next_w_len),
+                exact_recursive_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
         }
@@ -2567,66 +2498,35 @@ mod tests {
             weight: 3,
             nonzero_coeffs: vec![-1, 1],
         };
-        let next_level_params = HachiLevelParams {
-            d: D,
-            log_basis: 2,
-            n_a: 2,
-            n_b: 3,
-            n_d: 2,
-            challenge_l1_mass: stage1_config.l1_mass(),
-            stage1_config: stage1_config.clone(),
-        };
+        let next_level_params = LevelParams::params_only(D, 2, 2, 3, 2, stage1_config.clone());
         let next_w_len = D * 8;
         let num_claims = 5;
 
         for log_basis in 2..=6 {
-            let level_params = HachiLevelParams {
-                d: D,
-                log_basis,
-                n_a: 2,
-                n_b: 2,
-                n_d: 2,
-                challenge_l1_mass: stage1_config.l1_mass(),
-                stage1_config: stage1_config.clone(),
-            };
-            let layout = HachiCommitmentLayout {
-                m_vars: 0,
-                r_vars: 0,
-                num_blocks: 1,
-                block_len: 1,
-                inner_width: 1,
-                outer_width: 1,
-                d_matrix_width: 1,
-                num_digits_commit: 1,
-                num_digits_open: 1,
-                num_digits_fold: 1,
-                log_basis,
-            };
+            let level_params =
+                LevelParams::params_only(D, log_basis, 2, 2, 2, stage1_config.clone());
+            let stub_lp = level_params.with_decomp(0, 0, 1, 1, 1, 1).unwrap();
             let rounds = sumcheck_rounds(D, next_w_len);
             let b = 1usize << log_basis;
-            let next_commitment = FlatRingVec::from_ring_elems(&vec![
-                CyclotomicRing::<F, D>::zero();
-                next_level_params.n_b
-            ])
-            .into_compact();
+            let next_commitment =
+                FlatRingVec::from_ring_elems(&vec![
+                    CyclotomicRing::<F, D>::zero();
+                    next_level_params.b_key.row_len
+                ])
+                .into_compact();
             let root_proof = HachiBatchedRootProof::new_two_stage::<D>(
                 vec![CyclotomicRing::<F, D>::zero(); num_claims],
-                vec![CyclotomicRing::<F, D>::zero(); level_params.n_d],
+                vec![CyclotomicRing::<F, D>::zero(); level_params.d_key.row_len],
                 dummy_stage1_proof(rounds, b),
                 dummy_sumcheck(rounds, 3),
                 next_commitment,
                 F::zero(),
             );
 
+            let lp = level_params.with_layout(&stub_lp);
+            let next_lp = next_level_params.with_layout(&stub_lp);
             assert_eq!(
-                batched_root_level_proof_bytes(
-                    128,
-                    &level_params,
-                    layout,
-                    &next_level_params,
-                    next_w_len,
-                    num_claims,
-                ),
+                batched_root_level_proof_bytes(128, &lp, &next_lp, next_w_len, num_claims),
                 root_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
@@ -2644,22 +2544,22 @@ mod tests {
             .expect("planner should succeed")
             .expect("config should provide a planner");
             for level in plan.fold_levels() {
-                let pow2_block = 1usize << level.layout.m_vars;
+                let pow2_block = 1usize << level.lp.m_vars;
                 assert!(
-                    level.layout.block_len <= pow2_block,
+                    level.lp.block_len <= pow2_block,
                     "block_len {} should be <= 2^m_vars {} at level {} (num_vars={})",
-                    level.layout.block_len,
+                    level.lp.block_len,
                     pow2_block,
                     level.inputs.level,
                     max_num_vars
                 );
                 if level.inputs.level > 0 {
-                    let num_ring = level.inputs.current_w_len / level.params.d;
-                    let expected_tight = num_ring.div_ceil(level.layout.num_blocks);
+                    let num_ring = level.inputs.current_w_len / level.lp.ring_dimension;
+                    let expected_tight = num_ring.div_ceil(level.lp.num_blocks);
                     assert_eq!(
-                        level.layout.block_len, expected_tight,
+                        level.lp.block_len, expected_tight,
                         "recursive level {} should use tight block_len = ceil({num_ring} / {})",
-                        level.inputs.level, level.layout.num_blocks
+                        level.inputs.level, level.lp.num_blocks
                     );
                 }
             }
@@ -2699,9 +2599,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(plan_a.root_layout, plan_b.root_layout);
-        assert_eq!(plan_a.level_layout, plan_b.level_layout);
-        assert_eq!(plan_a.params, plan_b.params);
+        assert_eq!(plan_a.root_lp, plan_b.root_lp);
+        assert_eq!(plan_a.level_lp, plan_b.level_lp);
     }
 
     #[test]
@@ -2729,13 +2628,14 @@ mod tests {
         )
         .unwrap();
 
-        let layout = plan_a.level_layout;
+        let lp_a = plan_a.level_lp.clone();
+        let lp_b = plan_b.level_lp.clone();
         let next_w_ring_a = w_ring_element_count_with_point_claim_groups::<
             <Cfg as CommitmentConfig>::Field,
-        >(&plan_a.params, layout, &claim_groups_a, batch_a.num_points);
+        >(&lp_a, &claim_groups_a, batch_a.num_points);
         let next_w_ring_b = w_ring_element_count_with_point_claim_groups::<
             <Cfg as CommitmentConfig>::Field,
-        >(&plan_b.params, layout, &claim_groups_b, batch_b.num_points);
+        >(&lp_b, &claim_groups_b, batch_b.num_points);
 
         assert_eq!(next_w_ring_a, next_w_ring_b);
         assert_eq!(plan_a.next_w_len(), plan_b.next_w_len());
@@ -2773,8 +2673,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(singleton_plan.level_layout, grouped_plan.level_layout);
-        assert_eq!(grouped_plan.level_layout, multipoint_plan.level_layout);
+        assert_eq!(singleton_plan.level_lp, grouped_plan.level_lp);
+        assert_eq!(grouped_plan.level_lp, multipoint_plan.level_lp);
         assert_ne!(singleton_plan.next_w_len(), grouped_plan.next_w_len());
         assert_ne!(grouped_plan.next_w_len(), multipoint_plan.next_w_len());
     }

@@ -17,7 +17,8 @@ use hachi_pcs::planner::schedule_params::{
 };
 use hachi_pcs::protocol::commitment::presets::fp128;
 use hachi_pcs::protocol::commitment::{
-    CommitmentConfig, CommitmentPreset, GeneratedAdaptivePolicy,
+    current_level_layout_with_log_basis, CommitmentConfig, CommitmentPreset,
+    GeneratedAdaptivePolicy, HachiScheduleInputs,
 };
 
 type Fp128D128OneHot =
@@ -102,6 +103,7 @@ fn emit_key(
 }
 
 fn emit_fold(step: &FoldStep, label: &str) -> String {
+    let p = &step.params;
     format!(
         "        GeneratedStep::Fold(GeneratedFoldStep {{ \
          current_w_len: {}, d: {}, log_basis: {}, challenge_l1_mass: {}, \
@@ -109,17 +111,17 @@ fn emit_fold(step: &FoldStep, label: &str) -> String {
          delta_open: {}, delta_fold: {}, delta_commit: {}, \
          w_ring: {}, next_w_len: {}, level_bytes: {}, label: {:?} }}),",
         step.current_w_len,
-        step.d,
-        step.log_basis,
-        step.challenge_l1_mass,
-        step.m_vars,
-        step.r_vars,
-        step.n_a,
-        step.n_b,
-        step.n_d,
-        step.delta_open,
-        step.delta_fold,
-        step.delta_commit,
+        p.ring_dimension,
+        p.log_basis,
+        p.challenge_l1_mass(),
+        p.log_block_len(),
+        p.log_num_blocks(),
+        p.a_key.row_len,
+        p.b_key.row_len,
+        p.d_key.row_len,
+        p.num_digits_open,
+        p.num_digits_fold,
+        p.num_digits_commit,
         step.w_ring,
         step.next_w_len,
         step.level_bytes,
@@ -140,16 +142,18 @@ fn emit_direct<Cfg: CommitmentConfig>(
     let (entry_d, entry_nb, total_bytes) = if direct.bits_per_elem >= 128 {
         (None, None, direct.direct_bytes)
     } else {
-        let params = Cfg::level_params_with_log_basis(
-            hachi_pcs::protocol::commitment::HachiScheduleInputs {
+        let lp = current_level_layout_with_log_basis::<Cfg>(
+            HachiScheduleInputs {
                 max_num_vars,
                 level,
                 current_w_len: direct.current_w_len,
             },
             direct.bits_per_elem,
-        );
-        let total = direct.direct_bytes + ring_vec_bytes(params.n_b, params.d as u32);
-        (Some(params.d), Some(params.n_b), total)
+        )
+        .expect("level params for direct step");
+        let total =
+            direct.direct_bytes + ring_vec_bytes(lp.b_key.row_len, lp.ring_dimension as u32);
+        (Some(lp.ring_dimension), Some(lp.b_key.row_len), total)
     };
 
     format!(

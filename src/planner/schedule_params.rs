@@ -14,11 +14,11 @@ use std::collections::HashMap;
 use crate::error::HachiError;
 use crate::planner::digit_math::compute_num_digits_fold;
 use crate::protocol::commitment::{
-    batched_root_level_proof_bytes, derive_commitment_layout, direct_witness_bytes, field_bits,
-    planned_next_w_len, planned_w_ring_element_count, recursive_level_decomposition_from_root,
-    recursive_r_decomp_levels_for_bound, CommitmentConfig, HachiCommitmentLayout, HachiLevelParams,
-    HachiScheduleInputs,
+    batched_root_level_proof_bytes, current_level_layout_with_log_basis, direct_witness_bytes,
+    field_bits, planned_next_w_len, planned_w_ring_element_count,
+    recursive_r_decomp_levels_for_bound, CommitmentConfig, HachiScheduleInputs,
 };
+use crate::protocol::params::{AjtaiKeyParams, LevelParams};
 use crate::protocol::proof::DirectWitnessShape;
 
 const MAX_RECURSION_DEPTH: usize = 12;
@@ -30,24 +30,20 @@ const MAX_RECURSION_DEPTH: usize = 12;
 /// Parameters for one fold level in the computed schedule.
 #[derive(Clone, Debug)]
 pub struct FoldStep {
+    /// Unified level parameters (ring dimension, Ajtai keys, block geometry,
+    /// digit depths, challenge config).
+    pub params: LevelParams,
+    /// Witness length entering this level.
     pub current_w_len: usize,
-    pub d: u32,
-    pub log_basis: u32,
-    pub challenge_l1_mass: usize,
-    pub m_vars: usize,
-    pub r_vars: usize,
-    pub n_a: usize,
-    pub n_b: usize,
-    pub n_d: usize,
-    pub delta_open: usize,
-    pub delta_commit: usize,
-    pub delta_fold: usize,
-    /// Per-polynomial fold digits (`num_claims=1`).  Equal to `delta_fold`
-    /// for singleton schedules; smaller for batched roots where the layout
-    /// uses the batched bound.
+    /// Per-polynomial fold digits (`num_claims=1`). Equal to
+    /// `params.num_digits_fold` for singleton schedules; smaller for batched
+    /// roots where the layout uses the batched bound.
     pub delta_fold_per_poly: usize,
+    /// Ring-element count in the witness after ring-switching.
     pub w_ring: usize,
+    /// Witness length leaving this level.
     pub next_w_len: usize,
+    /// Proof bytes for this level.
     pub level_bytes: usize,
 }
 
@@ -79,8 +75,7 @@ pub struct Schedule {
 
 /// All layout data for one candidate fold level.
 struct CandidateLevelParams {
-    params: HachiLevelParams,
-    layout: HachiCommitmentLayout,
+    lp: LevelParams,
     next_w_len: usize,
     w_ring: usize,
 }
@@ -99,28 +94,16 @@ fn derive_candidate_level_params<Cfg: CommitmentConfig>(
         current_w_len,
     };
 
-    // Root: `root_level_layout_with_log_basis` runs a fixed-point n_a
-    // convergence loop that may produce different params than
-    // `level_params_with_log_basis` — we must use its returned params.
-    // Recursive: params + derive_commitment_layout.
-    let (params, layout) = if level == 0 {
+    let level_lp = if level == 0 {
         Cfg::root_level_layout_with_log_basis(inputs, log_basis).ok()?
     } else {
-        let params = Cfg::level_params_with_log_basis(inputs, log_basis);
-        if current_w_len % params.d != 0 {
-            return None;
-        }
-        let num_ring = current_w_len / params.d;
-        let reduced_vars = num_ring.next_power_of_two().max(1).trailing_zeros() as usize;
-        let decomp = recursive_level_decomposition_from_root(Cfg::decomposition(), log_basis);
-        let layout = derive_commitment_layout(&params, decomp, reduced_vars, num_ring).ok()?;
-        (params, layout)
+        current_level_layout_with_log_basis::<Cfg>(inputs, log_basis).ok()?
     };
 
     let fb = field_bits(Cfg::decomposition());
     let hfb = Cfg::planner_half_field_bound();
-    let w_ring = planned_w_ring_element_count(fb, hfb, &params, layout);
-    let next_w_len = planned_next_w_len(fb, hfb, &params, layout);
+    let w_ring = planned_w_ring_element_count(fb, hfb, &level_lp);
+    let next_w_len = planned_next_w_len(fb, hfb, &level_lp);
 
     let input_elem_bits = if level == 0 {
         fb as usize
@@ -132,8 +115,7 @@ fn derive_candidate_level_params<Cfg: CommitmentConfig>(
     }
 
     Some(CandidateLevelParams {
-        params,
-        layout,
+        lp: level_lp,
         next_w_len,
         w_ring,
     })
@@ -142,14 +124,13 @@ fn derive_candidate_level_params<Cfg: CommitmentConfig>(
 /// Compute the proof bytes for this fold level against a concrete successor.
 fn compute_level_proof_size<Cfg: CommitmentConfig>(
     candidate: &CandidateLevelParams,
-    next_level_params: &HachiLevelParams,
+    next_level_params: &LevelParams,
     num_claims: usize,
 ) -> usize {
     let fb = field_bits(Cfg::decomposition());
     batched_root_level_proof_bytes(
         fb,
-        &candidate.params,
-        candidate.layout,
+        &candidate.lp,
         next_level_params,
         candidate.next_w_len,
         num_claims,
@@ -161,25 +142,11 @@ fn compute_level_proof_size<Cfg: CommitmentConfig>(
 // -----------------------------------------------------------------------
 
 fn to_fold_step(c: &CandidateLevelParams, current_w_len: usize, level_bytes: usize) -> Step {
-    let per_poly_fold = compute_num_digits_fold(
-        c.layout.r_vars,
-        c.params.challenge_l1_mass,
-        c.layout.log_basis,
-        1,
-    );
+    let per_poly_fold =
+        compute_num_digits_fold(c.lp.r_vars, c.lp.challenge_l1_mass(), c.lp.log_basis, 1);
     Step::Fold(FoldStep {
+        params: c.lp.clone(),
         current_w_len,
-        d: c.params.d as u32,
-        log_basis: c.layout.log_basis,
-        challenge_l1_mass: c.params.challenge_l1_mass,
-        m_vars: c.layout.m_vars,
-        r_vars: c.layout.r_vars,
-        n_a: c.params.n_a,
-        n_b: c.params.n_b,
-        n_d: c.params.n_d,
-        delta_open: c.layout.num_digits_open,
-        delta_commit: c.layout.num_digits_commit,
-        delta_fold: c.layout.num_digits_fold,
         delta_fold_per_poly: per_poly_fold,
         w_ring: c.w_ring,
         next_w_len: c.next_w_len,
@@ -209,19 +176,12 @@ fn basis_range<Cfg: CommitmentConfig>(
     lo..=hi
 }
 
-fn level_params_from_fold_step<Cfg: CommitmentConfig>(step: &FoldStep) -> HachiLevelParams {
-    let d = step.d as usize;
-    let stage1_config = Cfg::stage1_challenge_config(d);
-    debug_assert_eq!(stage1_config.l1_mass(), step.challenge_l1_mass);
-    HachiLevelParams {
-        d,
-        log_basis: step.log_basis,
-        n_a: step.n_a,
-        n_b: step.n_b,
-        n_d: step.n_d,
-        challenge_l1_mass: step.challenge_l1_mass,
-        stage1_config,
-    }
+fn level_params_from_fold_step<Cfg: CommitmentConfig>(step: &FoldStep) -> LevelParams {
+    debug_assert_eq!(
+        Cfg::stage1_challenge_config(step.params.ring_dimension).l1_mass(),
+        step.params.challenge_l1_mass()
+    );
+    step.params.clone()
 }
 
 fn successor_level_params_from_schedule<Cfg: CommitmentConfig>(
@@ -229,13 +189,13 @@ fn successor_level_params_from_schedule<Cfg: CommitmentConfig>(
     level: usize,
     current_w_len: usize,
     suffix_steps: &[Step],
-) -> HachiLevelParams {
+) -> Result<LevelParams, HachiError> {
     match suffix_steps
         .first()
         .expect("optimal suffix schedule must contain at least one step")
     {
-        Step::Fold(step) => level_params_from_fold_step::<Cfg>(step),
-        Step::Direct(step) => Cfg::level_params_with_log_basis(
+        Step::Fold(step) => Ok(level_params_from_fold_step::<Cfg>(step)),
+        Step::Direct(step) => current_level_layout_with_log_basis::<Cfg>(
             HachiScheduleInputs {
                 max_num_vars,
                 level,
@@ -299,12 +259,14 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
                 lb,
                 depth + 1,
             );
-            let next_level_params = successor_level_params_from_schedule::<Cfg>(
+            let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
                 max_num_vars,
                 level + 1,
                 candidate.next_w_len,
                 &suffix_steps,
-            );
+            ) else {
+                continue;
+            };
             let level_proof_size =
                 compute_level_proof_size::<Cfg>(&candidate, &next_level_params, 1);
 
@@ -355,25 +317,24 @@ impl BatchConfig {
 /// Mirrors `w_ring_element_count_with_counts` in `ring_switch.rs` but uses
 /// field-erased helpers already available to the planner.
 fn batched_root_w_ring_element_count<Cfg: CommitmentConfig>(
-    params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
+    lp: &LevelParams,
     batch: &BatchConfig,
 ) -> usize {
     let fb = field_bits(Cfg::decomposition());
     let hfb = Cfg::planner_half_field_bound();
-    let r_decomp = recursive_r_decomp_levels_for_bound(fb, hfb, layout.log_basis);
+    let r_decomp = recursive_r_decomp_levels_for_bound(fb, hfb, lp.log_basis);
 
-    let batched_num_digits_fold = layout.num_digits_fold.max(compute_num_digits_fold(
-        layout.r_vars,
-        params.challenge_l1_mass,
-        layout.log_basis,
+    let batched_num_digits_fold = lp.num_digits_fold.max(compute_num_digits_fold(
+        lp.r_vars,
+        lp.challenge_l1_mass(),
+        lp.log_basis,
         batch.num_claims,
     ));
 
-    let w_hat = batch.num_claims * layout.num_blocks * layout.num_digits_open;
-    let t_hat = batch.num_claims * layout.num_blocks * params.n_a * layout.num_digits_open;
-    let z_pre = batch.num_points * layout.inner_width * batched_num_digits_fold;
-    let r_rows = params.m_row_count_with_commitments_and_public_outputs(
+    let w_hat = batch.num_claims * lp.num_blocks * lp.num_digits_open;
+    let t_hat = batch.num_claims * lp.num_blocks * lp.a_key.row_len * lp.num_digits_open;
+    let z_pre = batch.num_points * lp.inner_width() * batched_num_digits_fold;
+    let r_rows = lp.m_row_count_with_commitments_and_public_outputs(
         batch.num_commitment_groups,
         batch.num_claims,
     );
@@ -384,22 +345,22 @@ fn batched_root_w_ring_element_count<Cfg: CommitmentConfig>(
 
 fn batched_root_level_params<Cfg: CommitmentConfig>(
     inputs: HachiScheduleInputs,
-    layout: HachiCommitmentLayout,
+    candidate_lp: &LevelParams,
     batch: &BatchConfig,
-) -> Option<HachiLevelParams> {
+) -> Option<LevelParams> {
     if batch.num_claims <= 1 {
-        return Cfg::root_level_params_for_layout_with_log_basis(inputs, layout).ok();
+        return Cfg::root_level_params_for_layout_with_log_basis(inputs, candidate_lp).ok();
     }
-    let mut scaled_layout = layout;
-    scaled_layout.outer_width = scaled_layout.outer_width.checked_mul(batch.num_claims)?;
-    scaled_layout.d_matrix_width = scaled_layout.d_matrix_width.checked_mul(batch.num_claims)?;
-    scaled_layout.num_digits_fold = scaled_layout.num_digits_fold.max(compute_num_digits_fold(
-        scaled_layout.r_vars,
+    let mut scaled = candidate_lp.clone();
+    scaled.b_key.col_len = scaled.b_key.col_len.checked_mul(batch.num_claims)?;
+    scaled.d_key.col_len = scaled.d_key.col_len.checked_mul(batch.num_claims)?;
+    scaled.num_digits_fold = scaled.num_digits_fold.max(compute_num_digits_fold(
+        scaled.r_vars,
         Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
-        scaled_layout.log_basis,
+        scaled.log_basis,
         batch.num_claims,
     ));
-    Cfg::root_level_params_for_layout_with_log_basis(inputs, scaled_layout).ok()
+    Cfg::root_level_params_for_layout_with_log_basis(inputs, &scaled).ok()
 }
 
 /// Derive the batched root candidate for a given `log_basis`.
@@ -422,22 +383,20 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig>(
         current_w_len: root_w_len,
     };
 
-    let (base_params, layout) = Cfg::root_level_layout_with_log_basis(inputs, log_basis).ok()?;
+    let root_lp = Cfg::root_level_layout_with_log_basis(inputs, log_basis).ok()?;
 
     let fb = field_bits(Cfg::decomposition());
 
     if batch.num_claims <= 1 && batch.num_commitment_groups <= 1 && batch.num_points <= 1 {
-        let params = base_params;
         let hfb = Cfg::planner_half_field_bound();
-        let w_ring = planned_w_ring_element_count(fb, hfb, &params, layout);
-        let next_w_len = planned_next_w_len(fb, hfb, &params, layout);
+        let w_ring = planned_w_ring_element_count(fb, hfb, &root_lp);
+        let next_w_len = planned_next_w_len(fb, hfb, &root_lp);
 
         if next_w_len * (log_basis as usize) >= root_w_len * (fb as usize) {
             return None;
         }
         return Some(CandidateLevelParams {
-            params,
-            layout,
+            lp: root_lp,
             next_w_len,
             w_ring,
         });
@@ -455,31 +414,71 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig>(
 
     for r_vars in 1..reduced_vars {
         let m_vars = reduced_vars - r_vars;
-        let batched_fold = layout.num_digits_fold.max(compute_num_digits_fold(
+        let batched_fold = root_lp.num_digits_fold.max(compute_num_digits_fold(
             r_vars,
-            base_params.challenge_l1_mass,
-            layout.log_basis,
+            root_lp.challenge_l1_mass(),
+            root_lp.log_basis,
             batch.num_claims,
         ));
 
-        let Ok(candidate_layout) = HachiCommitmentLayout::new_with_decomp(
-            m_vars,
-            r_vars,
-            base_params.n_a,
-            layout.num_digits_commit,
-            layout.num_digits_open,
-            batched_fold,
-            layout.log_basis,
-            0,
-        ) else {
+        let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
+            continue;
+        };
+        let Some(block_len) = 1usize.checked_shl(m_vars as u32) else {
+            continue;
+        };
+        let Some(inner_width) = block_len.checked_mul(root_lp.num_digits_commit) else {
+            continue;
+        };
+        let Some(outer_width) = root_lp
+            .a_key
+            .row_len
+            .checked_mul(root_lp.num_digits_open)
+            .and_then(|x| x.checked_mul(num_blocks))
+        else {
+            continue;
+        };
+        let Some(d_matrix_width) = root_lp.num_digits_open.checked_mul(num_blocks) else {
             continue;
         };
 
-        let Some(params) = batched_root_level_params::<Cfg>(inputs, candidate_layout, batch) else {
+        let candidate_lp = LevelParams {
+            ring_dimension: root_lp.ring_dimension,
+            log_basis: root_lp.log_basis,
+            a_key: AjtaiKeyParams {
+                row_len: root_lp.a_key.row_len,
+                col_len: inner_width,
+                log_basis: root_lp.log_basis,
+            },
+            b_key: AjtaiKeyParams {
+                row_len: root_lp.b_key.row_len,
+                col_len: outer_width,
+                log_basis: root_lp.log_basis,
+            },
+            d_key: AjtaiKeyParams {
+                row_len: root_lp.d_key.row_len,
+                col_len: d_matrix_width,
+                log_basis: root_lp.log_basis,
+            },
+            num_blocks,
+            block_len,
+            m_vars,
+            r_vars,
+            stage1_config: root_lp.stage1_config.clone(),
+            num_digits_commit: root_lp.num_digits_commit,
+            num_digits_open: root_lp.num_digits_open,
+            num_digits_fold: batched_fold,
+        };
+
+        let Some(real_lp) = batched_root_level_params::<Cfg>(inputs, &candidate_lp, batch) else {
             continue;
         };
-        let w_ring = batched_root_w_ring_element_count::<Cfg>(&params, candidate_layout, batch);
-        let next_w_len = w_ring * params.d;
+        // Merge: rank from real_lp (may differ for adaptive configs),
+        // geometry from candidate_lp (the unscaled per-poly layout).
+        let lp = real_lp.with_layout(&candidate_lp);
+
+        let w_ring = batched_root_w_ring_element_count::<Cfg>(&lp, batch);
+        let next_w_len = w_ring * lp.ring_dimension;
 
         if next_w_len * (log_basis as usize) >= root_w_len * (fb as usize) {
             continue;
@@ -487,8 +486,7 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig>(
 
         if best.as_ref().is_none_or(|b| next_w_len < b.next_w_len) {
             best = Some(CandidateLevelParams {
-                params,
-                layout: candidate_layout,
+                lp,
                 next_w_len,
                 w_ring,
             });
@@ -536,12 +534,14 @@ pub fn find_optimal_batched_schedule<Cfg: CommitmentConfig, const D: usize>(
             root_lb,
             0,
         );
-        let next_level_params = successor_level_params_from_schedule::<Cfg>(
+        let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
             num_vars,
             1,
             candidate.next_w_len,
             &suffix_steps,
-        );
+        ) else {
+            continue;
+        };
         let root_proof_size =
             compute_level_proof_size::<Cfg>(&candidate, &next_level_params, batch.num_claims);
 

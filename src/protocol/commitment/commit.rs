@@ -2,7 +2,7 @@
 
 use super::config::{
     compute_num_digits, ensure_block_layout, ensure_layout_supported_num_vars,
-    validate_and_derive_layout, HachiCommitmentLayout,
+    validate_and_derive_layout,
 };
 use super::onehot::{inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks};
 use super::schedule::HachiScheduleInputs;
@@ -31,6 +31,7 @@ use crate::primitives::serialization::{
 };
 use crate::protocol::commitment_scheme::should_stop_folding;
 use crate::protocol::hachi_poly_ops::OneHotIndex;
+use crate::protocol::params::LevelParams;
 use crate::protocol::proof::FlatDigitBlocks;
 use crate::protocol::ring_switch::w_ring_element_count;
 use crate::{CanonicalField, FieldCore, FieldSampling};
@@ -117,30 +118,33 @@ impl<F: FieldCore> HachiExpandedSetup<F> {
         self.seed.max_num_batched_polys
     }
 
-    /// Return an error if `layout` exceeds the setup's matrix-width envelope.
+    /// Return an error if `lp` exceeds the setup's matrix-width envelope.
     ///
     /// # Errors
     ///
-    /// Returns [`HachiError::InvalidSetup`] if any matrix width in `layout`
+    /// Returns [`HachiError::InvalidSetup`] if any matrix width in `lp`
     /// exceeds the setup envelope.
-    pub fn ensure_layout_fits(&self, layout: &HachiCommitmentLayout) -> Result<(), HachiError> {
+    pub fn ensure_layout_fits(&self, lp: &LevelParams) -> Result<(), HachiError> {
         let seed = &self.seed;
-        if layout.inner_width > seed.max_inner_width {
+        if lp.inner_width() > seed.max_inner_width {
             return Err(HachiError::InvalidSetup(format!(
                 "A matrix too narrow: need {} but setup has {}",
-                layout.inner_width, seed.max_inner_width
+                lp.inner_width(),
+                seed.max_inner_width
             )));
         }
-        if layout.outer_width > seed.max_outer_width {
+        if lp.outer_width() > seed.max_outer_width {
             return Err(HachiError::InvalidSetup(format!(
                 "B matrix too narrow: need {} but setup has {}",
-                layout.outer_width, seed.max_outer_width
+                lp.outer_width(),
+                seed.max_outer_width
             )));
         }
-        if layout.d_matrix_width > seed.max_d_matrix_width {
+        if lp.d_matrix_width() > seed.max_d_matrix_width {
             return Err(HachiError::InvalidSetup(format!(
                 "D matrix too narrow: need {} but setup has {}",
-                layout.d_matrix_width, seed.max_d_matrix_width
+                lp.d_matrix_width(),
+                seed.max_d_matrix_width
             )));
         }
         Ok(())
@@ -158,24 +162,21 @@ impl<F: FieldCore> HachiExpandedSetup<F> {
         split: &BatchedRootSplit,
         num_claims: usize,
     ) -> Result<(), HachiError> {
-        let num_blocks = 1usize
-            .checked_shl(split.r_vars as u32)
-            .ok_or_else(|| HachiError::InvalidSetup("num_blocks overflow".to_string()))?;
-        let block_len = 1usize
-            .checked_shl(split.m_vars as u32)
-            .ok_or_else(|| HachiError::InvalidSetup("block_len overflow".to_string()))?;
-        let inner_width = block_len
-            .checked_mul(split.num_digits_commit)
+        let p = &split.params;
+        let inner_width = p
+            .block_len
+            .checked_mul(p.num_digits_commit)
             .ok_or_else(|| HachiError::InvalidSetup("inner width overflow".to_string()))?;
-        let outer_width = split
-            .n_a
-            .checked_mul(split.num_digits_open)
-            .and_then(|x| x.checked_mul(num_blocks))
+        let outer_width = p
+            .a_key
+            .row_len
+            .checked_mul(p.num_digits_open)
+            .and_then(|x| x.checked_mul(p.num_blocks))
             .and_then(|x| x.checked_mul(num_claims))
             .ok_or_else(|| HachiError::InvalidSetup("batched outer width overflow".to_string()))?;
-        let d_matrix_width = split
+        let d_matrix_width = p
             .num_digits_open
-            .checked_mul(num_blocks)
+            .checked_mul(p.num_blocks)
             .and_then(|x| x.checked_mul(num_claims))
             .ok_or_else(|| HachiError::InvalidSetup("batched D width overflow".to_string()))?;
 
@@ -201,13 +202,13 @@ impl<F: FieldCore> HachiExpandedSetup<F> {
         Ok(())
     }
 
-    /// Panic if `layout` exceeds the matrix-width envelope carried by this setup.
+    /// Panic if `lp` exceeds the matrix-width envelope carried by this setup.
     ///
     /// # Panics
     ///
-    /// Panics if any of `layout`'s matrix widths exceed the setup envelope.
-    pub fn assert_layout_fits(&self, layout: &HachiCommitmentLayout) {
-        self.ensure_layout_fits(layout)
+    /// Panics if any of `lp`'s matrix widths exceed the setup envelope.
+    pub fn assert_layout_fits(&self, lp: &LevelParams) {
+        self.ensure_layout_fits(lp)
             .unwrap_or_else(|err| panic!("{err}"));
     }
 }
@@ -218,14 +219,14 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
         self.expanded.max_num_batched_polys()
     }
 
-    /// Return an error if `layout` exceeds this setup's matrix-width envelope.
+    /// Return an error if `lp` exceeds this setup's matrix-width envelope.
     ///
     /// # Errors
     ///
-    /// Returns [`HachiError::InvalidSetup`] if any matrix width in `layout`
+    /// Returns [`HachiError::InvalidSetup`] if any matrix width in `lp`
     /// exceeds the setup envelope.
-    pub fn ensure_layout_fits(&self, layout: &HachiCommitmentLayout) -> Result<(), HachiError> {
-        self.expanded.ensure_layout_fits(layout)
+    pub fn ensure_layout_fits(&self, lp: &LevelParams) -> Result<(), HachiError> {
+        self.expanded.ensure_layout_fits(lp)
     }
 
     /// Return an error if the batched root split exceeds this setup's
@@ -244,14 +245,14 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
             .ensure_batched_root_split_fits(split, num_claims)
     }
 
-    /// Panic if `layout`'s matrix dimensions exceed this setup's maximums.
+    /// Panic if `lp`'s matrix dimensions exceed this setup's maximums.
     ///
     /// # Panics
     ///
-    /// Panics if any of `layout`'s matrix widths (inner, outer, D) exceed
+    /// Panics if any of `lp`'s matrix widths (inner, outer, D) exceed
     /// those of this setup.
-    pub fn assert_layout_fits(&self, layout: &HachiCommitmentLayout) {
-        self.expanded.assert_layout_fits(layout);
+    pub fn assert_layout_fits(&self, lp: &LevelParams) {
+        self.expanded.assert_layout_fits(lp);
     }
 }
 
@@ -444,10 +445,9 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiVerifierSetup<F> {
     }
 }
 
-pub(crate) fn root_current_w_len<const D: usize>(layout: HachiCommitmentLayout) -> usize {
-    layout
-        .num_blocks
-        .checked_mul(layout.block_len)
+pub(crate) fn root_current_w_len<const D: usize>(lp: &LevelParams) -> usize {
+    lp.num_blocks
+        .checked_mul(lp.block_len)
         .and_then(|len| len.checked_mul(D))
         .unwrap_or(0)
 }
@@ -467,20 +467,17 @@ struct LayoutChainStats {
 }
 
 impl LayoutChainStats {
-    fn include(&mut self, layout: HachiCommitmentLayout) {
-        self.max_inner_width = self.max_inner_width.max(layout.inner_width);
-        self.max_outer_width = self.max_outer_width.max(layout.outer_width);
-        self.max_d_matrix_width = self.max_d_matrix_width.max(layout.d_matrix_width);
-        self.max_r_vars = self.max_r_vars.max(layout.r_vars);
-        self.max_num_digits_open = self.max_num_digits_open.max(layout.num_digits_open);
-        self.max_num_digits_fold = self.max_num_digits_fold.max(layout.num_digits_fold);
-        self.max_log_basis = self.max_log_basis.max(layout.log_basis);
-    }
-
-    fn include_params(&mut self, params: &super::schedule::HachiLevelParams) {
-        self.max_n_a = self.max_n_a.max(params.n_a);
-        self.max_n_b = self.max_n_b.max(params.n_b);
-        self.max_n_d = self.max_n_d.max(params.n_d);
+    fn include(&mut self, lp: &LevelParams) {
+        self.max_inner_width = self.max_inner_width.max(lp.inner_width());
+        self.max_outer_width = self.max_outer_width.max(lp.outer_width());
+        self.max_d_matrix_width = self.max_d_matrix_width.max(lp.d_matrix_width());
+        self.max_r_vars = self.max_r_vars.max(lp.r_vars);
+        self.max_num_digits_open = self.max_num_digits_open.max(lp.num_digits_open);
+        self.max_num_digits_fold = self.max_num_digits_fold.max(lp.num_digits_fold);
+        self.max_log_basis = self.max_log_basis.max(lp.log_basis);
+        self.max_n_a = self.max_n_a.max(lp.a_key.row_len);
+        self.max_n_b = self.max_n_b.max(lp.b_key.row_len);
+        self.max_n_d = self.max_n_d.max(lp.d_key.row_len);
     }
 }
 
@@ -506,9 +503,9 @@ fn compute_num_digits_fold_batched(
 
 pub(crate) fn scale_batched_root_layout<Cfg, const D: usize>(
     max_num_vars: usize,
-    mut root_layout: HachiCommitmentLayout,
+    root_lp: &LevelParams,
     num_claims: usize,
-) -> Result<HachiCommitmentLayout, HachiError>
+) -> Result<LevelParams, HachiError>
 where
     Cfg: CommitmentConfig,
 {
@@ -521,43 +518,38 @@ where
     let root_inputs = HachiScheduleInputs {
         max_num_vars,
         level: 0,
-        current_w_len: root_current_w_len::<D>(root_layout),
+        current_w_len: root_current_w_len::<D>(root_lp),
     };
     let root_stage1_config =
         Cfg::stage1_challenge_config(Cfg::d_at_level(0, root_inputs.current_w_len));
-    root_layout.outer_width = root_layout
-        .outer_width
+    let mut scaled = root_lp.clone();
+    scaled.b_key.col_len = root_lp
+        .b_key
+        .col_len
         .checked_mul(num_claims)
         .ok_or_else(|| HachiError::InvalidSetup("batched outer width overflow".to_string()))?;
-    root_layout.d_matrix_width = root_layout
-        .d_matrix_width
+    scaled.d_key.col_len = root_lp
+        .d_key
+        .col_len
         .checked_mul(num_claims)
         .ok_or_else(|| HachiError::InvalidSetup("batched D width overflow".to_string()))?;
-    root_layout.num_digits_fold = root_layout
-        .num_digits_fold
-        .max(compute_num_digits_fold_batched(
-            root_layout.r_vars,
-            root_stage1_config.l1_mass(),
-            root_layout.log_basis,
-            num_claims,
-        ));
-    Ok(root_layout)
+    scaled.num_digits_fold = root_lp.num_digits_fold.max(compute_num_digits_fold_batched(
+        root_lp.r_vars,
+        root_stage1_config.l1_mass(),
+        root_lp.log_basis,
+        num_claims,
+    ));
+    Ok(scaled)
 }
 
 /// Planner-derived batched root split parameters.
 pub(crate) struct BatchedRootSplit {
-    pub m_vars: usize,
-    pub r_vars: usize,
-    pub n_a: usize,
-    pub n_b: usize,
-    pub n_d: usize,
-    pub num_digits_commit: usize,
-    pub num_digits_open: usize,
-    /// Per-polynomial fold digits (`num_claims=1`).
-    pub num_digits_fold: usize,
+    /// Unified per-level parameters for the root split.
+    pub params: LevelParams,
     /// Batched fold digits (from the planner's candidate layout).
+    /// May differ from `params.num_digits_fold` when batching amplifies
+    /// the fold bound.
     pub num_digits_fold_batched: usize,
-    pub log_basis: u32,
 }
 
 /// Extract `BatchedRootSplit` from a pre-computed `HachiSchedulePlan`'s
@@ -567,21 +559,16 @@ fn split_from_schedule_plan(plan: &super::schedule::HachiSchedulePlan) -> Option
 
     let root_level = plan.fold_levels().next()?;
     let per_poly_fold = compute_num_digits_fold(
-        root_level.layout.r_vars,
-        root_level.params.challenge_l1_mass,
-        root_level.layout.log_basis,
+        root_level.lp.r_vars,
+        root_level.lp.challenge_l1_mass(),
+        root_level.lp.log_basis,
     );
+    let mut lp = root_level.lp.clone();
+    let batched_fold = lp.num_digits_fold;
+    lp.num_digits_fold = per_poly_fold;
     Some(BatchedRootSplit {
-        m_vars: root_level.layout.m_vars,
-        r_vars: root_level.layout.r_vars,
-        n_a: root_level.params.n_a,
-        n_b: root_level.params.n_b,
-        n_d: root_level.params.n_d,
-        num_digits_commit: root_level.layout.num_digits_commit,
-        num_digits_open: root_level.layout.num_digits_open,
-        num_digits_fold: per_poly_fold,
-        num_digits_fold_batched: root_level.layout.num_digits_fold,
-        log_basis: root_level.params.log_basis,
+        params: lp,
+        num_digits_fold_batched: batched_fold,
     })
 }
 
@@ -592,25 +579,17 @@ fn fallback_batched_root_split<Cfg, const D: usize>(
 where
     Cfg: CommitmentConfig,
 {
-    let root_layout = Cfg::commitment_layout(max_num_vars)?;
-    let scaled_layout = scale_batched_root_layout::<Cfg, D>(max_num_vars, root_layout, num_claims)?;
+    let root_lp = Cfg::commitment_layout(max_num_vars)?;
+    let scaled_lp = scale_batched_root_layout::<Cfg, D>(max_num_vars, &root_lp, num_claims)?;
     let inputs = HachiScheduleInputs {
         max_num_vars,
         level: 0,
-        current_w_len: root_current_w_len::<D>(root_layout),
+        current_w_len: root_current_w_len::<D>(&root_lp),
     };
-    let params = Cfg::root_level_params_for_layout_with_log_basis(inputs, scaled_layout)?;
+    let lp = Cfg::root_level_params_for_layout_with_log_basis(inputs, &scaled_lp)?;
     Ok(BatchedRootSplit {
-        m_vars: root_layout.m_vars,
-        r_vars: root_layout.r_vars,
-        n_a: params.n_a,
-        n_b: params.n_b,
-        n_d: params.n_d,
-        num_digits_commit: root_layout.num_digits_commit,
-        num_digits_open: root_layout.num_digits_open,
-        num_digits_fold: root_layout.num_digits_fold,
-        num_digits_fold_batched: scaled_layout.num_digits_fold,
-        log_basis: root_layout.log_basis,
+        num_digits_fold_batched: scaled_lp.num_digits_fold,
+        params: lp,
     })
 }
 
@@ -637,9 +616,9 @@ where
                 max_num_vars,
                 num_claims,
                 total_bytes = plan.exact_proof_bytes,
-                root_m = split.m_vars,
-                root_r = split.r_vars,
-                root_lb = split.log_basis,
+                root_m = split.params.log_block_len(),
+                root_r = split.params.log_num_blocks(),
+                root_lb = split.params.log_basis,
                 "batched root split: read from pre-computed table"
             );
             return Ok(split);
@@ -667,54 +646,43 @@ where
         _ => return fallback_batched_root_split::<Cfg, D>(max_num_vars, num_claims),
     };
 
+    let mut lp = root_step.params.clone();
+    let batched_fold = lp.num_digits_fold;
+    lp.num_digits_fold = root_step.delta_fold_per_poly;
+
     tracing::info!(
         max_num_vars,
         num_claims,
         total_bytes = schedule.total_bytes,
-        root_m = root_step.m_vars,
-        root_r = root_step.r_vars,
-        root_lb = root_step.log_basis,
+        root_m = lp.log_block_len(),
+        root_r = lp.log_num_blocks(),
+        root_lb = lp.log_basis,
         "batched root split: computed from scratch by DP planner (no pre-computed table)"
     );
 
     Ok(BatchedRootSplit {
-        m_vars: root_step.m_vars,
-        r_vars: root_step.r_vars,
-        n_a: root_step.n_a,
-        n_b: root_step.n_b,
-        n_d: root_step.n_d,
-        num_digits_commit: root_step.delta_commit,
-        num_digits_open: root_step.delta_open,
-        num_digits_fold: root_step.delta_fold_per_poly,
-        num_digits_fold_batched: root_step.delta_fold,
-        log_basis: root_step.log_basis,
+        params: lp,
+        num_digits_fold_batched: batched_fold,
     })
 }
 
 pub(crate) fn root_batched_layout<Cfg, const D: usize>(
     max_num_vars: usize,
-    root_layout: HachiCommitmentLayout,
+    root_lp: &LevelParams,
     max_num_batched_polys: usize,
-) -> Result<HachiCommitmentLayout, HachiError>
+) -> Result<LevelParams, HachiError>
 where
     Cfg: CommitmentConfig,
 {
-    let optimized_root_layout = if max_num_batched_polys > 1 {
+    let optimized_root_lp = if max_num_batched_polys > 1 {
         let split = optimal_root_batch_split::<Cfg, D>(max_num_vars, max_num_batched_polys)?;
-        HachiCommitmentLayout::new_with_decomp(
-            split.m_vars,
-            split.r_vars,
-            split.n_a,
-            split.num_digits_commit,
-            split.num_digits_open,
-            split.num_digits_fold_batched,
-            split.log_basis,
-            0,
-        )?
+        let mut lp = split.params.clone();
+        lp.num_digits_fold = split.num_digits_fold_batched;
+        lp
     } else {
-        root_layout
+        root_lp.clone()
     };
-    scale_batched_root_layout::<Cfg, D>(max_num_vars, optimized_root_layout, max_num_batched_polys)
+    scale_batched_root_layout::<Cfg, D>(max_num_vars, &optimized_root_lp, max_num_batched_polys)
 }
 
 /// Derive the per-polynomial commitment layout optimized for a batch of
@@ -730,7 +698,7 @@ where
 pub fn hachi_batched_root_layout<Cfg, const D: usize>(
     max_num_vars: usize,
     num_claims: usize,
-) -> Result<HachiCommitmentLayout, HachiError>
+) -> Result<LevelParams, HachiError>
 where
     Cfg: CommitmentConfig,
 {
@@ -739,21 +707,12 @@ where
     }
 
     let split = optimal_root_batch_split::<Cfg, D>(max_num_vars, num_claims)?;
-    HachiCommitmentLayout::new_with_decomp(
-        split.m_vars,
-        split.r_vars,
-        split.n_a,
-        split.num_digits_commit,
-        split.num_digits_open,
-        split.num_digits_fold,
-        split.log_basis,
-        0,
-    )
+    Ok(split.params)
 }
 
 fn scan_layout_chain<F, const D: usize, Cfg>(
     max_num_vars: usize,
-    root_layout: HachiCommitmentLayout,
+    root_lp: &LevelParams,
     max_num_batched_polys: usize,
 ) -> Result<LayoutChainStats, HachiError>
 where
@@ -761,33 +720,27 @@ where
     Cfg: CommitmentConfig<Field = F>,
 {
     let mut stats = LayoutChainStats::default();
-    let batched_root_layout =
-        root_batched_layout::<Cfg, D>(max_num_vars, root_layout, max_num_batched_polys)?;
-    stats.include(batched_root_layout);
-    if max_num_batched_polys > 1 {
-        let split = optimal_root_batch_split::<Cfg, D>(max_num_vars, max_num_batched_polys)?;
-        stats.max_n_a = stats.max_n_a.max(split.n_a);
-        stats.max_n_b = stats.max_n_b.max(split.n_b);
-        stats.max_n_d = stats.max_n_d.max(split.n_d);
-    } else {
+    let batched_root_lp =
+        root_batched_layout::<Cfg, D>(max_num_vars, root_lp, max_num_batched_polys)?;
+    stats.include(&batched_root_lp);
+    if max_num_batched_polys <= 1 {
         let root_inputs = HachiScheduleInputs {
             max_num_vars,
             level: 0,
-            current_w_len: root_current_w_len::<D>(root_layout),
+            current_w_len: root_current_w_len::<D>(root_lp),
         };
-        let root_params =
-            Cfg::root_level_params_for_layout_with_log_basis(root_inputs, root_layout)?;
-        stats.include_params(&root_params);
+        let singleton_lp = Cfg::root_level_params_for_layout_with_log_basis(root_inputs, root_lp)?;
+        stats.include(&singleton_lp);
     }
 
     let can_use_planned_root =
-        Cfg::commitment_layout(max_num_vars).is_ok_and(|planned_root| planned_root == root_layout);
+        Cfg::commitment_layout(max_num_vars).is_ok_and(|planned_root| planned_root == *root_lp);
     if can_use_planned_root && max_num_batched_polys == 1 {
         let schedule_key = HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
         if let Some(plan) = Cfg::schedule_plan(schedule_key)? {
             for level in plan.fold_levels().skip(1) {
-                stats.include(level.layout);
-                stats.include_params(&level.params);
+                let level_lp = level.lp.clone();
+                stats.include(&level_lp);
             }
             return Ok(stats);
         }
@@ -804,7 +757,7 @@ where
                 max_num_batched_polys,
             )?,
         ),
-        root_layout,
+        root_lp,
     )?;
     let mut prev_w_len = root_plan
         .inputs
@@ -812,34 +765,28 @@ where
         .saturating_mul(root_plan.batch.num_claims);
     let mut level = 1usize;
     let mut current_w_len = root_plan.next_w_len();
-    let mut current_params = root_plan.next_level_params.clone();
-    let mut current_layout =
-        super::hachi_recursive_level_layout_from_params::<Cfg>(&current_params, current_w_len)?;
-    stats.include(current_layout);
-    stats.include_params(&current_params);
+    let mut current_lp = root_plan.next_level_params.clone();
+    stats.include(&current_lp);
 
     loop {
         if should_stop_folding(current_w_len, prev_w_len) {
             break;
         }
 
-        let next_w_len =
-            w_ring_element_count::<F>(&current_params, current_layout) * current_params.d;
+        let next_w_len = w_ring_element_count::<F>(&current_lp) * current_lp.ring_dimension;
         let next_level = level + 1;
-        let next_params = Cfg::level_params(HachiScheduleInputs {
+        let next_lp_partial = Cfg::level_params(HachiScheduleInputs {
             max_num_vars,
             level: next_level,
             current_w_len: next_w_len,
         });
-        let next_layout =
-            super::hachi_recursive_level_layout_from_params::<Cfg>(&next_params, next_w_len)?;
-        stats.include(next_layout);
-        stats.include_params(&next_params);
+        let next_lp =
+            super::hachi_recursive_level_layout_from_params::<Cfg>(&next_lp_partial, next_w_len)?;
+        stats.include(&next_lp);
 
         prev_w_len = current_w_len;
         current_w_len = next_w_len;
-        current_params = next_params;
-        current_layout = next_layout;
+        current_lp = next_lp;
         level = next_level;
     }
 
@@ -966,13 +913,13 @@ fn validate_cached_setup_dimensions<F, const D: usize, Cfg: CommitmentConfig<Fie
     expanded: &HachiExpandedSetup<F>,
     max_num_vars: usize,
     max_num_batched_polys: usize,
-    layout: HachiCommitmentLayout,
+    root_lp: &LevelParams,
 ) -> Result<(), HachiError>
 where
     F: FieldCore + CanonicalField,
 {
     let envelope = Cfg::envelope(max_num_vars);
-    let chain_stats = scan_layout_chain::<F, D, Cfg>(max_num_vars, layout, max_num_batched_polys)?;
+    let chain_stats = scan_layout_chain::<F, D, Cfg>(max_num_vars, root_lp, max_num_batched_polys)?;
     let a_cols = chain_stats.max_inner_width;
     let b_cols = chain_stats.max_outer_width;
     let d_cols = chain_stats.max_d_matrix_width;
@@ -1064,9 +1011,9 @@ where
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError> {
-        let layout = validate_and_derive_layout::<F, Cfg, D>(max_num_vars)?;
+        let root_lp = validate_and_derive_layout::<F, Cfg, D>(max_num_vars)?;
         let envelope = Cfg::envelope(max_num_vars);
-        ensure_layout_supported_num_vars::<D>(max_num_vars, layout)?;
+        ensure_layout_supported_num_vars::<D>(max_num_vars, &root_lp)?;
 
         #[cfg(feature = "disk-persistence")]
         {
@@ -1076,7 +1023,7 @@ where
                         &expanded,
                         max_num_vars,
                         max_num_batched_polys,
-                        layout,
+                        &root_lp,
                     ) {
                         if let Some(storage_path) =
                             get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys)
@@ -1111,7 +1058,7 @@ where
         }
 
         let chain_stats =
-            scan_layout_chain::<F, D, Cfg>(max_num_vars, layout, max_num_batched_polys)?;
+            scan_layout_chain::<F, D, Cfg>(max_num_vars, &root_lp, max_num_batched_polys)?;
         let a_cols = chain_stats.max_inner_width;
         let b_cols = chain_stats.max_outer_width;
         let d_cols = chain_stats.max_d_matrix_width;
@@ -1154,7 +1101,7 @@ where
         Ok((prover_setup, verifier_setup))
     }
 
-    fn layout(setup: &Self::ProverSetup) -> Result<HachiCommitmentLayout, HachiError> {
+    fn layout(setup: &Self::ProverSetup) -> Result<LevelParams, HachiError> {
         hachi_batched_root_layout::<Cfg, D>(
             setup.expanded.seed.max_num_vars,
             setup.expanded.seed.max_num_batched_polys,
@@ -1166,22 +1113,16 @@ where
         f_blocks: &[Vec<CyclotomicRing<F, D>>],
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
-        let layout = <Self as RingCommitmentScheme<F, D, Cfg>>::layout(setup)?;
-        let root_inputs = HachiScheduleInputs {
-            max_num_vars: setup.expanded.seed.max_num_vars,
-            level: 0,
-            current_w_len: root_current_w_len::<D>(layout),
-        };
-        let root_params = Cfg::root_level_params_for_layout_with_log_basis(root_inputs, layout)?;
-        ensure_layout_supported_num_vars::<D>(setup.expanded.seed.max_num_vars, layout)?;
-        ensure_block_layout(f_blocks, layout)?;
+        let root_lp = <Self as RingCommitmentScheme<F, D, Cfg>>::layout(setup)?;
+        ensure_layout_supported_num_vars::<D>(setup.expanded.seed.max_num_vars, &root_lp)?;
+        ensure_block_layout(f_blocks, &root_lp)?;
 
-        let depth_commit = layout.num_digits_commit;
-        let depth_open = layout.num_digits_open;
-        let log_basis = layout.log_basis;
+        let depth_commit = root_lp.num_digits_commit;
+        let depth_open = root_lp.num_digits_open;
+        let log_basis = root_lp.log_basis;
         let block_slices: Vec<&[CyclotomicRing<F, D>]> =
             f_blocks.iter().map(|b| b.as_slice()).collect();
-        let t_hat = if root_params.n_a == 1 {
+        let t_hat = if root_lp.a_key.row_len == 1 {
             let t_single = mat_vec_mul_ntt_i8_dense_single_row(
                 &setup.ntt_shared,
                 setup.expanded.seed.max_stride(),
@@ -1208,7 +1149,7 @@ where
         } else {
             let t_all = mat_vec_mul_ntt_i8_dense(
                 &setup.ntt_shared,
-                root_params.n_a,
+                root_lp.a_key.row_len,
                 setup.expanded.seed.max_stride(),
                 &block_slices,
                 depth_commit,
@@ -1231,7 +1172,7 @@ where
 
         let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
             &setup.ntt_shared,
-            root_params.n_b,
+            root_lp.b_key.row_len,
             setup.expanded.seed.max_stride(),
             t_hat.flat_digits(),
         );
@@ -1244,27 +1185,21 @@ where
         indices: &[Option<I>],
         setup: &Self::ProverSetup,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
-        let layout = <Self as RingCommitmentScheme<F, D, Cfg>>::layout(setup)?;
-        let root_inputs = HachiScheduleInputs {
-            max_num_vars: setup.expanded.seed.max_num_vars,
-            level: 0,
-            current_w_len: root_current_w_len::<D>(layout),
-        };
-        let root_params = Cfg::root_level_params_for_layout_with_log_basis(root_inputs, layout)?;
-        ensure_layout_supported_num_vars::<D>(setup.expanded.seed.max_num_vars, layout)?;
+        let root_lp = <Self as RingCommitmentScheme<F, D, Cfg>>::layout(setup)?;
+        ensure_layout_supported_num_vars::<D>(setup.expanded.seed.max_num_vars, &root_lp)?;
 
         let sparse_blocks =
-            map_onehot_to_sparse_blocks(onehot_k, indices, layout.r_vars, layout.m_vars, D)?;
+            map_onehot_to_sparse_blocks(onehot_k, indices, root_lp.r_vars, root_lp.m_vars, D)?;
 
-        let depth_commit = layout.num_digits_commit;
-        let depth_open = layout.num_digits_open;
-        let log_basis = layout.log_basis;
-        let zero_block_len = root_params.n_a.checked_mul(depth_open).unwrap();
+        let depth_commit = root_lp.num_digits_commit;
+        let depth_open = root_lp.num_digits_open;
+        let log_basis = root_lp.log_basis;
+        let zero_block_len = root_lp.a_key.row_len.checked_mul(depth_open).unwrap();
         let a_view = setup
             .expanded
             .shared_matrix
-            .ring_view::<D>(root_params.n_a, setup.expanded.seed.max_stride());
-        let block_len = layout.block_len;
+            .ring_view::<D>(root_lp.a_key.row_len, setup.expanded.seed.max_stride());
+        let block_len = root_lp.block_len;
 
         let block_sizes = vec![zero_block_len; sparse_blocks.len()];
         let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
@@ -1276,7 +1211,7 @@ where
                 if !block_entries.is_empty() {
                     let mut t_i =
                         inner_ajtai_onehot_wide(&a_view, block_entries, block_len, depth_commit);
-                    t_i.truncate(root_params.n_a);
+                    t_i.truncate(root_lp.a_key.row_len);
                     decompose_rows_i8_into(&t_i, dst, depth_open, log_basis);
                 }
             });
@@ -1288,14 +1223,14 @@ where
                 if !block_entries.is_empty() {
                     let mut t_i =
                         inner_ajtai_onehot_wide(&a_view, block_entries, block_len, depth_commit);
-                    t_i.truncate(root_params.n_a);
+                    t_i.truncate(root_lp.a_key.row_len);
                     decompose_rows_i8_into(&t_i, dst, depth_open, log_basis);
                 }
             });
 
         let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
             &setup.ntt_shared,
-            root_params.n_b,
+            root_lp.b_key.row_len,
             setup.expanded.seed.max_stride(),
             t_hat.flat_digits(),
         );
@@ -1304,47 +1239,6 @@ where
 }
 
 impl HachiCommitmentCore {
-    #[allow(clippy::too_many_arguments)]
-    fn layout_envelope<const D: usize>(
-        max_num_vars: usize,
-        inner_width: usize,
-        outer_width: usize,
-        d_matrix_width: usize,
-        preferred_r_vars: usize,
-        num_digits_open: usize,
-        num_digits_fold: usize,
-        log_basis: u32,
-    ) -> Result<HachiCommitmentLayout, HachiError> {
-        let alpha = D.trailing_zeros() as usize;
-        let outer_vars = max_num_vars.checked_sub(alpha).ok_or_else(|| {
-            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
-        })?;
-        let r_vars = preferred_r_vars.min(outer_vars);
-        let m_vars = outer_vars - r_vars;
-        let num_blocks = 1usize
-            .checked_shl(r_vars as u32)
-            .ok_or_else(|| HachiError::InvalidSetup("num_blocks overflow".to_string()))?;
-        let block_len = 1usize
-            .checked_shl(m_vars as u32)
-            .ok_or_else(|| HachiError::InvalidSetup("block_len overflow".to_string()))?;
-
-        Ok(HachiCommitmentLayout {
-            m_vars,
-            r_vars,
-            num_blocks,
-            block_len,
-            inner_width,
-            outer_width,
-            d_matrix_width,
-            // Setup metadata only tracks width envelopes; runtime commits/proofs
-            // carry their own exact decomposition parameters.
-            num_digits_commit: 1,
-            num_digits_open,
-            num_digits_fold,
-            log_basis,
-        })
-    }
-
     /// Create a setup with a caller-specified layout, bypassing
     /// `CommitmentConfig::commitment_layout`.
     ///
@@ -1356,15 +1250,16 @@ impl HachiCommitmentCore {
     ///
     /// Returns `HachiError` on invalid layout or matrix generation failures.
     pub fn setup_with_layout<F, const D: usize, Cfg>(
-        layout: HachiCommitmentLayout,
+        lp: &LevelParams,
     ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError>
     where
         F: FieldCore + CanonicalField + FieldSampling,
         Cfg: CommitmentConfig<Field = F>,
     {
-        let max_num_vars = layout.required_num_vars::<D>()?;
+        let alpha = D.trailing_zeros() as usize;
+        let max_num_vars = lp.m_vars + lp.r_vars + alpha;
         let public_matrix_seed = sample_public_matrix_seed();
-        Self::setup_with_layout_and_seed::<F, D, Cfg>(layout, max_num_vars, public_matrix_seed)
+        Self::setup_with_lp_and_seed::<F, D, Cfg>(lp, max_num_vars, public_matrix_seed)
     }
 
     /// Create a setup that supports any of the provided runtime layouts.
@@ -1378,18 +1273,19 @@ impl HachiCommitmentCore {
     /// Returns `HachiError` if `layouts` is empty, uses inconsistent
     /// decomposition parameters, or matrix generation fails.
     pub fn setup_with_layouts<F, const D: usize, Cfg>(
-        layouts: &[HachiCommitmentLayout],
+        layouts: &[LevelParams],
     ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError>
     where
         F: FieldCore + CanonicalField + FieldSampling,
         Cfg: CommitmentConfig<Field = F>,
     {
-        let Some((&first_layout, _)) = layouts.split_first() else {
+        let Some((first_lp, _)) = layouts.split_first() else {
             return Err(HachiError::InvalidSetup(
                 "setup_with_layouts requires at least one layout".to_string(),
             ));
         };
 
+        let alpha = D.trailing_zeros() as usize;
         let mut max_num_vars = 0usize;
         let mut max_inner_width = 0usize;
         let mut max_outer_width = 0usize;
@@ -1397,15 +1293,15 @@ impl HachiCommitmentCore {
         let mut max_r_vars = 0usize;
         let mut max_num_digits_open = 0usize;
         let mut max_num_digits_fold = 0usize;
-        let mut max_log_basis = first_layout.log_basis;
+        let mut max_log_basis = first_lp.log_basis;
         let mut max_n_a = 0usize;
         let mut max_n_b = 0usize;
         let mut max_n_d = 0usize;
 
-        for &layout in layouts {
-            let layout_num_vars = layout.required_num_vars::<D>()?;
-            let chain_stats = scan_layout_chain::<F, D, Cfg>(layout_num_vars, layout, 1)?;
-            tracing::debug!(?layout, ?chain_stats, "setup layout chain");
+        for lp in layouts {
+            let layout_num_vars = lp.m_vars + lp.r_vars + alpha;
+            let chain_stats = scan_layout_chain::<F, D, Cfg>(layout_num_vars, lp, 1)?;
+            tracing::debug!(?lp, ?chain_stats, "setup layout chain");
             max_num_vars = max_num_vars.max(layout_num_vars);
             max_inner_width = max_inner_width.max(chain_stats.max_inner_width);
             max_outer_width = max_outer_width.max(chain_stats.max_outer_width);
@@ -1419,17 +1315,14 @@ impl HachiCommitmentCore {
             max_n_d = max_n_d.max(chain_stats.max_n_d);
         }
 
-        let envelope_layout = Self::layout_envelope::<D>(
-            max_num_vars,
+        tracing::debug!(
             max_inner_width,
             max_outer_width,
             max_d_matrix_width,
             max_r_vars,
-            max_num_digits_open,
-            max_num_digits_fold,
-            max_log_basis,
-        )?;
-        tracing::debug!(?envelope_layout, max_num_vars, "setup envelope");
+            max_num_vars,
+            "setup envelope"
+        );
         let public_matrix_seed = sample_public_matrix_seed();
         Self::setup_with_matrix_widths_and_seed::<F, D, Cfg>(
             max_num_vars,
@@ -1444,8 +1337,8 @@ impl HachiCommitmentCore {
         )
     }
 
-    fn setup_with_layout_and_seed<F, const D: usize, Cfg>(
-        layout: HachiCommitmentLayout,
+    fn setup_with_lp_and_seed<F, const D: usize, Cfg>(
+        lp: &LevelParams,
         max_num_vars: usize,
         public_matrix_seed: PublicMatrixSeed,
     ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError>
@@ -1453,8 +1346,9 @@ impl HachiCommitmentCore {
         F: FieldCore + CanonicalField + FieldSampling,
         Cfg: CommitmentConfig<Field = F>,
     {
-        let layout_num_vars = layout.required_num_vars::<D>()?;
-        let chain_stats = scan_layout_chain::<F, D, Cfg>(layout_num_vars, layout, 1)?;
+        let alpha = D.trailing_zeros() as usize;
+        let layout_num_vars = lp.m_vars + lp.r_vars + alpha;
+        let chain_stats = scan_layout_chain::<F, D, Cfg>(layout_num_vars, lp, 1)?;
         let a_cols = chain_stats.max_inner_width;
         let b_cols = chain_stats.max_outer_width;
         let d_cols = chain_stats.max_d_matrix_width;
@@ -1572,26 +1466,17 @@ mod tests {
         const MAX_NUM_VARS: usize = 16;
         const MAX_BATCH: usize = 3;
 
-        let root_layout =
+        let root_lp =
             validate_and_derive_layout::<TestF, TinyConfig, TEST_D>(MAX_NUM_VARS).unwrap();
-        let root_inputs = HachiScheduleInputs {
-            max_num_vars: MAX_NUM_VARS,
-            level: 0,
-            current_w_len: root_current_w_len::<TEST_D>(root_layout),
-        };
-        let root_params =
-            TinyConfig::level_params_with_log_basis(root_inputs, root_layout.log_basis);
         let single_stats =
-            scan_layout_chain::<TestF, TEST_D, TinyConfig>(MAX_NUM_VARS, root_layout, 1).unwrap();
+            scan_layout_chain::<TestF, TEST_D, TinyConfig>(MAX_NUM_VARS, &root_lp, 1).unwrap();
         let batched_stats =
-            scan_layout_chain::<TestF, TEST_D, TinyConfig>(MAX_NUM_VARS, root_layout, MAX_BATCH)
+            scan_layout_chain::<TestF, TEST_D, TinyConfig>(MAX_NUM_VARS, &root_lp, MAX_BATCH)
                 .unwrap();
         let scaled_root =
-            root_batched_layout::<TinyConfig, TEST_D>(MAX_NUM_VARS, root_layout, MAX_BATCH)
-                .unwrap();
+            root_batched_layout::<TinyConfig, TEST_D>(MAX_NUM_VARS, &root_lp, MAX_BATCH).unwrap();
         let worst_case_multipoint_w_len = w_ring_element_count_with_num_claims_and_points::<TestF>(
-            &root_params,
-            scaled_root,
+            &scaled_root,
             MAX_BATCH,
             MAX_BATCH,
         ) * TEST_D;
@@ -1600,7 +1485,7 @@ mod tests {
             level: 1,
             current_w_len: worst_case_multipoint_w_len,
         });
-        let multipoint_level1_layout = hachi_recursive_level_layout_from_params::<TinyConfig>(
+        let multipoint_level1_lp = hachi_recursive_level_layout_from_params::<TinyConfig>(
             &multipoint_level1_params,
             worst_case_multipoint_w_len,
         )
@@ -1617,17 +1502,17 @@ mod tests {
         assert_eq!(setup.max_num_batched_polys(), MAX_BATCH);
         assert!(batched_stats.max_outer_width >= single_stats.max_outer_width);
         assert!(batched_stats.max_d_matrix_width >= single_stats.max_d_matrix_width);
-        assert!(batched_stats.max_outer_width >= scaled_root.outer_width);
-        assert!(batched_stats.max_d_matrix_width >= scaled_root.d_matrix_width);
-        assert!(seed.max_inner_width >= scaled_root.inner_width);
-        assert!(seed.max_outer_width >= scaled_root.outer_width);
-        assert!(seed.max_d_matrix_width >= scaled_root.d_matrix_width);
-        assert!(batched_stats.max_inner_width >= multipoint_level1_layout.inner_width);
-        assert!(batched_stats.max_outer_width >= multipoint_level1_layout.outer_width);
-        assert!(batched_stats.max_d_matrix_width >= multipoint_level1_layout.d_matrix_width);
-        assert!(seed.max_inner_width >= multipoint_level1_layout.inner_width);
-        assert!(seed.max_outer_width >= multipoint_level1_layout.outer_width);
-        assert!(seed.max_d_matrix_width >= multipoint_level1_layout.d_matrix_width);
+        assert!(batched_stats.max_outer_width >= scaled_root.outer_width());
+        assert!(batched_stats.max_d_matrix_width >= scaled_root.d_matrix_width());
+        assert!(seed.max_inner_width >= scaled_root.inner_width());
+        assert!(seed.max_outer_width >= scaled_root.outer_width());
+        assert!(seed.max_d_matrix_width >= scaled_root.d_matrix_width());
+        assert!(batched_stats.max_inner_width >= multipoint_level1_lp.inner_width());
+        assert!(batched_stats.max_outer_width >= multipoint_level1_lp.outer_width());
+        assert!(batched_stats.max_d_matrix_width >= multipoint_level1_lp.d_matrix_width());
+        assert!(seed.max_inner_width >= multipoint_level1_lp.inner_width());
+        assert!(seed.max_outer_width >= multipoint_level1_lp.outer_width());
+        assert!(seed.max_d_matrix_width >= multipoint_level1_lp.d_matrix_width());
         let envelope = TinyConfig::envelope(MAX_NUM_VARS);
         let total_elements = setup
             .expanded
@@ -1645,16 +1530,15 @@ mod tests {
         const NV: usize = 15;
         const BATCH: usize = 2;
 
-        let setup_root =
-            root_batched_layout::<Cfg, TEST_D>(NV, Cfg::commitment_layout(NV).unwrap(), BATCH)
-                .unwrap();
+        let root_lp = Cfg::commitment_layout(NV).unwrap();
+        let setup_root = root_batched_layout::<Cfg, TEST_D>(NV, &root_lp, BATCH).unwrap();
         let helper_root = hachi_batched_root_layout::<Cfg, TEST_D>(NV, BATCH).unwrap();
         let (setup, _) =
             <HachiCommitmentCore as RingCommitmentScheme<fp128::Field, TEST_D, Cfg>>::setup(
                 NV, BATCH,
             )
             .unwrap();
-        let runtime_layout =
+        let runtime_lp =
             <HachiCommitmentCore as RingCommitmentScheme<fp128::Field, TEST_D, Cfg>>::layout(
                 &setup,
             )
@@ -1662,11 +1546,11 @@ mod tests {
 
         assert_eq!(helper_root.m_vars, setup_root.m_vars);
         assert_eq!(helper_root.r_vars, setup_root.r_vars);
-        assert_eq!(runtime_layout, helper_root);
-        assert_eq!(helper_root.outer_width * BATCH, setup_root.outer_width);
+        assert_eq!(runtime_lp, helper_root);
+        assert_eq!(helper_root.outer_width() * BATCH, setup_root.outer_width());
         assert_eq!(
-            helper_root.d_matrix_width * BATCH,
-            setup_root.d_matrix_width
+            helper_root.d_matrix_width() * BATCH,
+            setup_root.d_matrix_width()
         );
         assert!(
             helper_root.num_digits_fold <= setup_root.num_digits_fold,
@@ -1674,74 +1558,82 @@ mod tests {
             helper_root.num_digits_fold,
             setup_root.num_digits_fold,
         );
-        assert!(setup.expanded.seed.max_outer_width >= setup_root.outer_width);
-        assert!(setup.expanded.seed.max_d_matrix_width >= setup_root.d_matrix_width);
+        assert!(setup.expanded.seed.max_outer_width >= setup_root.outer_width());
+        assert!(setup.expanded.seed.max_d_matrix_width >= setup_root.d_matrix_width());
     }
 
     #[test]
     fn setup_with_layouts_uses_exact_width_envelope() {
+        use crate::protocol::commitment::{compute_num_digits_fold, num_digits_for_bound};
         const TEST_D: usize = 64;
+        const ALPHA: usize = 6; // TEST_D.trailing_zeros()
 
-        let layout_a =
-            HachiCommitmentLayout::new::<TinyConfig>(4, 2, &TinyConfig::decomposition()).unwrap();
-        let layout_b =
-            HachiCommitmentLayout::new::<TinyConfig>(1, 6, &TinyConfig::decomposition()).unwrap();
+        let decomp = TinyConfig::decomposition();
+        let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
+        let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
+        let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
+
+        let nv_a = 4 + 2 + ALPHA;
+        let nv_b = 1 + 6 + ALPHA;
         let params_a = TinyConfig::level_params(HachiScheduleInputs {
-            max_num_vars: layout_a.required_num_vars::<TEST_D>().unwrap(),
+            max_num_vars: nv_a,
             level: 0,
-            current_w_len: 1usize << layout_a.required_num_vars::<TEST_D>().unwrap(),
+            current_w_len: 1usize << nv_a,
         });
         let params_b = TinyConfig::level_params(HachiScheduleInputs {
-            max_num_vars: layout_b.required_num_vars::<TEST_D>().unwrap(),
+            max_num_vars: nv_b,
             level: 0,
-            current_w_len: 1usize << layout_b.required_num_vars::<TEST_D>().unwrap(),
+            current_w_len: 1usize << nv_b,
         });
-        let w_len_a = w_ring_element_count::<TestF>(&params_a, layout_a) * TEST_D;
-        let w_len_b = w_ring_element_count::<TestF>(&params_b, layout_b) * TEST_D;
-        let w_layout_a =
+        let depth_fold_a =
+            compute_num_digits_fold(2, params_a.challenge_l1_mass(), decomp.log_basis);
+        let depth_fold_b =
+            compute_num_digits_fold(6, params_b.challenge_l1_mass(), decomp.log_basis);
+        let lp_a = params_a
+            .with_decomp(4, 2, depth_commit, depth_open, depth_fold_a, 0)
+            .unwrap();
+        let lp_b = params_b
+            .with_decomp(1, 6, depth_commit, depth_open, depth_fold_b, 0)
+            .unwrap();
+        let w_len_a = w_ring_element_count::<TestF>(&lp_a) * TEST_D;
+        let w_len_b = w_ring_element_count::<TestF>(&lp_b) * TEST_D;
+        let w_lp_a =
             hachi_recursive_level_layout_from_params::<TinyConfig>(&params_a, w_len_a).unwrap();
-        let w_layout_b =
+        let w_lp_b =
             hachi_recursive_level_layout_from_params::<TinyConfig>(&params_b, w_len_b).unwrap();
 
         let expected_inner = [
-            layout_a.inner_width,
-            layout_b.inner_width,
-            w_layout_a.inner_width,
-            w_layout_b.inner_width,
+            lp_a.inner_width(),
+            lp_b.inner_width(),
+            w_lp_a.inner_width(),
+            w_lp_b.inner_width(),
         ]
         .into_iter()
         .max()
         .unwrap();
         let expected_outer = [
-            layout_a.outer_width,
-            layout_b.outer_width,
-            w_layout_a.outer_width,
-            w_layout_b.outer_width,
+            lp_a.outer_width(),
+            lp_b.outer_width(),
+            w_lp_a.outer_width(),
+            w_lp_b.outer_width(),
         ]
         .into_iter()
         .max()
         .unwrap();
         let expected_d = [
-            layout_a.d_matrix_width,
-            layout_b.d_matrix_width,
-            w_layout_a.d_matrix_width,
-            w_layout_b.d_matrix_width,
+            lp_a.d_matrix_width(),
+            lp_b.d_matrix_width(),
+            w_lp_a.d_matrix_width(),
+            w_lp_b.d_matrix_width(),
         ]
         .into_iter()
         .max()
         .unwrap();
-        let expected_max_num_vars = [
-            layout_a.required_num_vars::<TEST_D>().unwrap(),
-            layout_b.required_num_vars::<TEST_D>().unwrap(),
-        ]
-        .into_iter()
-        .max()
-        .unwrap();
+        let expected_max_num_vars = nv_a.max(nv_b);
 
-        let (setup, _) = HachiCommitmentCore::setup_with_layouts::<TestF, TEST_D, TinyConfig>(&[
-            layout_a, layout_b,
-        ])
-        .unwrap();
+        let (setup, _) =
+            HachiCommitmentCore::setup_with_layouts::<TestF, TEST_D, TinyConfig>(&[lp_a, lp_b])
+                .unwrap();
         let seed = &setup.expanded.seed;
 
         assert_eq!(seed.max_num_vars, expected_max_num_vars);
@@ -1877,8 +1769,8 @@ mod tests {
                 let (disk_setup, _) =
                     setup_from_expanded::<TestF, TEST_D>(loaded_expanded).unwrap();
 
-                let layout = TinyConfig::commitment_layout(MAX_VARS).unwrap();
-                let num_coeffs = layout.num_blocks * layout.block_len;
+                let lp = TinyConfig::commitment_layout(MAX_VARS).unwrap();
+                let num_coeffs = lp.num_blocks * lp.block_len;
                 let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
 
                 let fresh_commit = <HachiCommitmentCore as RingCommitmentScheme<

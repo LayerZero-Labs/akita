@@ -3,14 +3,15 @@
 use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
     hachi_batched_root_layout, hachi_root_runtime_plan_with_batch, presets::fp128,
-    recursive_suffix_estimate_with_log_basis, CommitmentConfig, HachiCommitmentLayout,
-    HachiRootBatchSummary, HachiScheduleLookupKey, HachiSchedulePlan,
+    recursive_suffix_estimate_with_log_basis, CommitmentConfig, HachiRootBatchSummary,
+    HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
 };
+use hachi_pcs::protocol::params::LevelParams;
 use hachi_pcs::protocol::proof::{
     DirectWitnessProof, HachiBatchedProof, HachiBatchedRootProof, HachiLevelProof, HachiProof,
 };
@@ -59,7 +60,7 @@ fn env_usize(name: &str, default: usize) -> usize {
 fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
     poly: &P,
     point: &[F],
-    layout: &HachiCommitmentLayout,
+    layout: &LevelParams,
     basis: BasisMode,
 ) -> F {
     let alpha_bits = D.trailing_zeros() as usize;
@@ -158,21 +159,21 @@ fn emit_planned_schedule_summary(label: &str, plan: &HachiSchedulePlan) {
         tracing::info!(
             label,
             level = level.inputs.level,
-            d = level.params.d,
-            n_a = level.params.n_a,
-            n_b = level.params.n_b,
-            n_d = level.params.n_d,
-            challenge_l1_mass = level.params.challenge_l1_mass,
-            log_basis = level.params.log_basis,
-            m_vars = level.layout.m_vars,
-            r_vars = level.layout.r_vars,
-            num_blocks = level.layout.num_blocks,
-            block_len = level.layout.block_len,
-            delta_commit = level.layout.num_digits_commit,
-            delta_open = level.layout.num_digits_open,
-            delta_fold = level.layout.num_digits_fold,
+            d = level.lp.ring_dimension,
+            n_a = level.lp.a_key.row_len,
+            n_b = level.lp.b_key.row_len,
+            n_d = level.lp.d_key.row_len,
+            challenge_l1_mass = level.lp.challenge_l1_mass(),
+            log_basis = level.lp.log_basis,
+            m_vars = level.lp.m_vars,
+            r_vars = level.lp.r_vars,
+            num_blocks = level.lp.num_blocks,
+            block_len = level.lp.block_len,
+            delta_commit = level.lp.num_digits_commit,
+            delta_open = level.lp.num_digits_open,
+            delta_fold = level.lp.num_digits_fold,
             current_w_len = level.inputs.current_w_len,
-            next_w_ring = next_w_len / level.params.d,
+            next_w_ring = next_w_len / level.lp.ring_dimension,
             next_w_len,
             level_bytes = level.level_bytes,
             "planned fold level"
@@ -420,7 +421,7 @@ fn emit_observed_tail_summary(label: &str, final_w: &DirectWitnessProof<F>) {
     }
 }
 
-fn print_layout(layout: &HachiCommitmentLayout) {
+fn print_layout(layout: &LevelParams) {
     tracing::debug!(
         m_vars = layout.m_vars,
         r_vars = layout.r_vars,
@@ -436,7 +437,7 @@ fn print_layout(layout: &HachiCommitmentLayout) {
 
 fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     nv: usize,
-    layout: &HachiCommitmentLayout,
+    layout: &LevelParams,
     plan: Option<&HachiSchedulePlan>,
 ) {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
@@ -474,7 +475,7 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F>>(
 
 fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     nv: usize,
-    layout: &HachiCommitmentLayout,
+    layout: &LevelParams,
     plan: Option<&HachiSchedulePlan>,
 ) {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
@@ -513,7 +514,7 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
 fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     nv: usize,
     num_polys: usize,
-    layout: &HachiCommitmentLayout,
+    layout: &LevelParams,
 ) {
     type Scheme<const D: usize, Cfg> = HachiCommitmentScheme<D, Cfg>;
 
@@ -689,7 +690,7 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     tracing::info!("{}", title);
     if num_polys == 1 {
         let layout = resolve_layout::<Cfg>(nv);
-        let required_vars = layout.required_num_vars::<D>().expect("layout arity");
+        let required_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
         if required_vars > nv {
             tracing::info!(
                 required_vars,
@@ -703,7 +704,7 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(
         run_onehot::<D, Cfg>(nv, &layout, plan.as_ref());
     } else {
         let layout = hachi_batched_root_layout::<Cfg, D>(nv, num_polys).expect("layout");
-        let required_vars = layout.required_num_vars::<D>().expect("layout arity");
+        let required_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
         if required_vars > nv {
             tracing::info!(
                 required_vars,
@@ -1005,6 +1006,6 @@ fn main() {
     }
 }
 
-fn resolve_layout<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> HachiCommitmentLayout {
+fn resolve_layout<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> LevelParams {
     Cfg::commitment_layout(nv).expect("layout")
 }

@@ -1,19 +1,16 @@
 //! Configuration presets for ring-native commitment construction.
 use super::profile::{CommitmentFieldProfile, CommitmentFieldProfileSchedule};
 use super::schedule::{
-    derive_commitment_layout, exact_planned_level_execution, hachi_root_commitment_layout,
-    HachiLevelParams, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
+    derive_commitment_layout, exact_planned_level_execution,
+    hachi_recursive_level_layout_from_params, hachi_root_commitment_layout, HachiScheduleInputs,
+    HachiScheduleLookupKey, HachiSchedulePlan,
 };
-use super::utils::math::checked_pow2;
 use super::utils::norm::detect_field_modulus;
 use crate::algebra::ring::CyclotomicRing;
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
-use crate::primitives::serialization::{
-    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
-};
+use crate::protocol::params::LevelParams;
 use crate::{CanonicalField, FieldCore};
-use std::io::{Read, Write};
 use std::marker::PhantomData;
 
 /// Parameters controlling the gadget decomposition depth (called δ in the paper).
@@ -178,13 +175,11 @@ fn recursive_tight_z_pre_rows(num_ring: usize, r_vars: usize) -> u64 {
 /// block length `ceil(num_ring / 2^r)` instead of `2^m`.  Pass `0` for
 /// root-level splits where the polynomial fills the full `2^(m+r)` domain.
 pub(super) fn optimal_m_r_split_with_params(
-    params: &HachiLevelParams,
+    params: &LevelParams,
     decomp: DecompositionParams,
     reduced_vars: usize,
     num_ring: usize,
 ) -> (usize, usize) {
-    // Guard: for S >= 53, shifts could overflow u64. Fall back to balanced
-    // split (this threshold is far beyond any practical polynomial size).
     if reduced_vars <= 2 || reduced_vars >= 53 {
         let r = reduced_vars / 2;
         return (reduced_vars - r, r);
@@ -193,7 +188,7 @@ pub(super) fn optimal_m_r_split_with_params(
     let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
     let delta_open = num_digits_for_bound(open_bound, decomp.log_basis) as u64;
     let delta_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis) as u64;
-    let c1 = delta_open + params.n_a as u64 * delta_open;
+    let c1 = delta_open + params.a_key.row_len as u64 * delta_open;
 
     let mut best_r = reduced_vars / 2;
     let mut best_cost = u64::MAX;
@@ -201,7 +196,7 @@ pub(super) fn optimal_m_r_split_with_params(
     for r in 1..reduced_vars {
         let m = reduced_vars - r;
         let delta_fold =
-            compute_num_digits_fold(r, params.challenge_l1_mass, decomp.log_basis) as u64;
+            compute_num_digits_fold(r, params.challenge_l1_mass(), decomp.log_basis) as u64;
         let m_eff = if num_ring > 0 {
             recursive_tight_z_pre_rows(num_ring, r)
         } else {
@@ -229,163 +224,6 @@ pub fn optimal_m_r_split<Cfg: CommitmentConfig>(reduced_vars: usize) -> (usize, 
     optimal_m_r_split_with_params(&params, Cfg::decomposition(), reduced_vars, 0)
 }
 
-/// Runtime commitment layout authority for ring-native commitments.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HachiCommitmentLayout {
-    /// Number of variables inside each committed block (`2^m_vars` entries).
-    pub m_vars: usize,
-    /// Number of block-select variables (`2^r_vars` blocks).
-    pub r_vars: usize,
-    /// Number of committed blocks (`2^r_vars`).
-    pub num_blocks: usize,
-    /// Number of ring elements per block (`2^m_vars`).
-    pub block_len: usize,
-    /// Width of inner matrix `A` (`block_len * num_digits_commit`).
-    pub inner_width: usize,
-    /// Width of outer matrix `B` (`n_a * num_digits_open * num_blocks`).
-    pub outer_width: usize,
-    /// Width of prover matrix `D` (`num_digits_open * num_blocks`).
-    pub d_matrix_width: usize,
-    /// Number of gadget decomposition levels for commitment-time coefficients
-    /// (δ_commit in the paper). Controls how the original polynomial
-    /// coefficients are decomposed into balanced base-b digits for the Ajtai
-    /// commitment.
-    pub num_digits_commit: usize,
-    /// Number of gadget decomposition levels for opening-time folded
-    /// evaluations (δ_open in the paper). Folding inner-products with
-    /// arbitrary field-element weights produces full-field-size coefficients,
-    /// so this equals `num_digits_commit` when `log_commit_bound` covers
-    /// the full field, and is larger otherwise (e.g. recursive w witnesses).
-    pub num_digits_open: usize,
-    /// Number of gadget decomposition levels for the folded witness `z_pre`
-    /// (τ in the paper). Derived from the L∞ bound on `z_pre`.
-    pub num_digits_fold: usize,
-    /// Base-2 logarithm of gadget decomposition base.
-    pub log_basis: u32,
-}
-
-impl HachiCommitmentLayout {
-    /// Build a layout from `(m_vars, r_vars)` and a config's runtime-derived
-    /// level parameters.
-    ///
-    /// `num_digits_fold` (τ) is auto-derived from the folded-witness beta bound
-    /// (`r_vars`, `challenge_l1_mass`, `log_basis`).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when powers or derived widths overflow.
-    pub fn new<Cfg: CommitmentConfig>(
-        m_vars: usize,
-        r_vars: usize,
-        decomp: &DecompositionParams,
-    ) -> Result<Self, HachiError> {
-        let alpha = Cfg::D.trailing_zeros() as usize;
-        let max_num_vars = m_vars
-            .checked_add(r_vars)
-            .and_then(|vars| vars.checked_add(alpha))
-            .ok_or_else(|| HachiError::InvalidSetup("variable count overflow".to_string()))?;
-        let current_w_len = 1usize.checked_shl(max_num_vars as u32).unwrap_or(0);
-        let params = Cfg::level_params(HachiScheduleInputs {
-            max_num_vars,
-            level: 0,
-            current_w_len,
-        });
-        let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
-        let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
-        let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
-        let depth_fold =
-            compute_num_digits_fold(r_vars, params.challenge_l1_mass, decomp.log_basis);
-        Self::new_with_decomp(
-            m_vars,
-            r_vars,
-            params.n_a,
-            depth_commit,
-            depth_open,
-            depth_fold,
-            decomp.log_basis,
-            0,
-        )
-    }
-
-    /// Build a layout from explicit decomposition parameters (no config trait needed).
-    ///
-    /// When `num_ring > 0` (recursive levels), `block_len` is set to
-    /// `ceil(num_ring / num_blocks)` instead of `2^m_vars`, giving tight
-    /// z_pre sizing.  Pass `0` for root-level layouts where the polynomial
-    /// fills the full `2^(m+r)` domain.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when parameters are invalid or derived widths overflow.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_with_decomp(
-        m_vars: usize,
-        r_vars: usize,
-        n_a: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        num_digits_fold: usize,
-        log_basis: u32,
-        num_ring: usize,
-    ) -> Result<Self, HachiError> {
-        if log_basis == 0 || log_basis >= 128 {
-            return Err(HachiError::InvalidSetup("invalid log_basis".to_string()));
-        }
-        let num_blocks = checked_pow2(r_vars)?;
-        let block_len = if num_ring > 0 {
-            num_ring.div_ceil(num_blocks)
-        } else {
-            checked_pow2(m_vars)?
-        };
-        let inner_width = block_len
-            .checked_mul(num_digits_commit)
-            .ok_or_else(|| HachiError::InvalidSetup("inner width overflow".to_string()))?;
-        let outer_width = n_a
-            .checked_mul(num_digits_open)
-            .and_then(|x| x.checked_mul(num_blocks))
-            .ok_or_else(|| HachiError::InvalidSetup("outer width overflow".to_string()))?;
-        let d_matrix_width = num_digits_open
-            .checked_mul(num_blocks)
-            .ok_or_else(|| HachiError::InvalidSetup("D-matrix width overflow".to_string()))?;
-        Ok(Self {
-            m_vars,
-            r_vars,
-            num_blocks,
-            block_len,
-            inner_width,
-            outer_width,
-            d_matrix_width,
-            num_digits_commit,
-            num_digits_open,
-            num_digits_fold,
-            log_basis,
-        })
-    }
-
-    /// Total number of outer variables consumed by ring coefficients.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the variable count overflows.
-    pub fn outer_vars(&self) -> Result<usize, HachiError> {
-        self.m_vars
-            .checked_add(self.r_vars)
-            .ok_or_else(|| HachiError::InvalidSetup("variable count overflow".to_string()))
-    }
-
-    /// Required polynomial variable count for this layout (`outer + alpha`).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the variable count overflows.
-    pub fn required_num_vars<const D: usize>(&self) -> Result<usize, HachiError> {
-        let alpha = D.trailing_zeros() as usize;
-        self.outer_vars()?
-            .checked_add(alpha)
-            .ok_or_else(|| HachiError::InvalidSetup("variable count overflow".to_string()))
-    }
-}
-
 /// Maximum matrix row envelope needed across all runtime levels for a config.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommitmentEnvelope {
@@ -397,93 +235,13 @@ pub struct CommitmentEnvelope {
     pub max_n_d: usize,
 }
 
-impl Valid for HachiCommitmentLayout {
-    fn check(&self) -> Result<(), SerializationError> {
-        if self.num_blocks == 0 || self.block_len == 0 {
-            return Err(SerializationError::InvalidData(
-                "invalid zero block layout".to_string(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-impl HachiSerialize for HachiCommitmentLayout {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.m_vars.serialize_with_mode(&mut writer, compress)?;
-        self.r_vars.serialize_with_mode(&mut writer, compress)?;
-        self.num_blocks.serialize_with_mode(&mut writer, compress)?;
-        self.block_len.serialize_with_mode(&mut writer, compress)?;
-        self.inner_width
-            .serialize_with_mode(&mut writer, compress)?;
-        self.outer_width
-            .serialize_with_mode(&mut writer, compress)?;
-        self.d_matrix_width
-            .serialize_with_mode(&mut writer, compress)?;
-        self.num_digits_commit
-            .serialize_with_mode(&mut writer, compress)?;
-        self.num_digits_open
-            .serialize_with_mode(&mut writer, compress)?;
-        self.num_digits_fold
-            .serialize_with_mode(&mut writer, compress)?;
-        (self.log_basis as usize).serialize_with_mode(&mut writer, compress)?;
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.m_vars.serialized_size(compress)
-            + self.r_vars.serialized_size(compress)
-            + self.num_blocks.serialized_size(compress)
-            + self.block_len.serialized_size(compress)
-            + self.inner_width.serialized_size(compress)
-            + self.outer_width.serialized_size(compress)
-            + self.d_matrix_width.serialized_size(compress)
-            + self.num_digits_commit.serialized_size(compress)
-            + self.num_digits_open.serialized_size(compress)
-            + self.num_digits_fold.serialized_size(compress)
-            + (self.log_basis as usize).serialized_size(compress)
-    }
-}
-
-impl HachiDeserialize for HachiCommitmentLayout {
-    type Context = ();
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        let out = Self {
-            m_vars: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            r_vars: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            num_blocks: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            block_len: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            inner_width: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            outer_width: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            d_matrix_width: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            num_digits_commit: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            num_digits_open: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            num_digits_fold: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            log_basis: usize::deserialize_with_mode(&mut reader, compress, validate, &())? as u32,
-        };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
-    }
-}
-
 /// Parameter bundle for the ring-native commitment core (§4.1–§4.2).
 ///
 /// Ring degree `D` remains compile time because `CyclotomicRing<F, D>` is
 /// array-backed, but the active Ajtai ranks and sparse-challenge family are
 /// runtime values derived from public schedule inputs. Setup allocates against a
 /// per-config row envelope, while each level uses the exact rows selected by
-/// [`HachiLevelParams`].
+/// [`LevelParams`].
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Base field used by this config.
     type Field: CanonicalField + FieldCore;
@@ -508,21 +266,21 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     }
 
     /// Build one level's active params from public inputs and an explicit basis.
-    fn level_params_with_log_basis(
-        inputs: HachiScheduleInputs,
-        log_basis: u32,
-    ) -> HachiLevelParams {
+    ///
+    /// Returns a `LevelParams` with zeroed layout fields (block geometry,
+    /// digit depths, column counts). Use `with_layout` or
+    /// `current_level_layout_with_log_basis` to populate layout fields.
+    fn level_params_with_log_basis(inputs: HachiScheduleInputs, log_basis: u32) -> LevelParams {
         let d = Self::d_at_level(inputs.level, inputs.current_w_len);
         let stage1_config = Self::stage1_challenge_config(d);
-        HachiLevelParams {
+        LevelParams::params_only(
             d,
             log_basis,
-            n_a: Self::n_a_at_level(inputs.level),
-            n_b: Self::n_b_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
-            n_d: Self::n_d_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
-            challenge_l1_mass: stage1_config.l1_mass(),
+            Self::n_a_at_level(inputs.level),
+            Self::n_b_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
+            Self::n_d_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
             stage1_config,
-        }
+        )
     }
 
     /// Derive root params for a concrete root layout.
@@ -537,12 +295,10 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// for the supplied root layout.
     fn root_level_params_for_layout_with_log_basis(
         inputs: HachiScheduleInputs,
-        root_layout: HachiCommitmentLayout,
-    ) -> Result<HachiLevelParams, HachiError> {
-        Ok(Self::level_params_with_log_basis(
-            inputs,
-            root_layout.log_basis,
-        ))
+        lp: &LevelParams,
+    ) -> Result<LevelParams, HachiError> {
+        let params = Self::level_params_with_log_basis(inputs, lp.log_basis);
+        Ok(params.with_layout(lp))
     }
 
     /// Derive the root fold layout for an explicit basis.
@@ -558,11 +314,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn root_level_layout_with_log_basis(
         inputs: HachiScheduleInputs,
         log_basis: u32,
-    ) -> Result<(HachiLevelParams, HachiCommitmentLayout), HachiError> {
+    ) -> Result<LevelParams, HachiError> {
         let params = Self::level_params_with_log_basis(inputs, log_basis);
-        let root_layout =
-            derived_root_commitment_layout_from_params::<Self>(inputs, &params, false)?;
-        Ok((params, root_layout))
+        derived_root_commitment_layout_from_params::<Self>(inputs, &params, false)
     }
 
     /// Deterministically choose the active basis for one level from public inputs.
@@ -631,7 +385,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     }
 
     /// Deterministically derive the active params for one level from public inputs.
-    fn level_params(inputs: HachiScheduleInputs) -> HachiLevelParams {
+    fn level_params(inputs: HachiScheduleInputs) -> LevelParams {
         let log_basis = Self::log_basis_at_level(inputs);
         Self::level_params_with_log_basis(inputs, log_basis)
     }
@@ -644,15 +398,14 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// # Errors
     ///
     /// Returns an error if `max_num_vars` does not admit a valid layout.
-    fn commitment_layout(max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
+    fn commitment_layout(max_num_vars: usize) -> Result<LevelParams, HachiError> {
         let key = HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
         if let Some(plan) = Self::schedule_plan(key)? {
             if let Some(root_fold) = plan.fold_levels().next() {
-                return Ok(root_fold.layout);
+                return Ok(root_fold.lp.clone());
             }
         }
-        let (_, layout) = hachi_root_commitment_layout::<Self>(max_num_vars)?;
-        Ok(layout)
+        hachi_root_commitment_layout::<Self>(max_num_vars)
     }
 
     /// Runtime L∞ bound for `z` (`β`) used by stage-1 folding checks.
@@ -660,11 +413,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// # Errors
     ///
     /// Returns an error on invalid parameters or arithmetic overflow.
-    fn beta_bound(layout: HachiCommitmentLayout) -> Result<u128, HachiError> {
+    fn beta_bound(lp: &LevelParams) -> Result<u128, HachiError> {
         beta_linf_fold_bound(
-            layout.r_vars,
+            lp.r_vars,
             Self::stage1_challenge_config(Self::D).l1_mass(),
-            layout.log_basis,
+            lp.log_basis,
         )
     }
 
@@ -751,7 +504,7 @@ pub(super) fn validate_and_derive_layout<
     const D: usize,
 >(
     max_num_vars: usize,
-) -> Result<HachiCommitmentLayout, HachiError> {
+) -> Result<LevelParams, HachiError> {
     if D != Cfg::D {
         return Err(HachiError::InvalidSetup(format!(
             "const D={D} mismatches config D={}",
@@ -771,11 +524,11 @@ pub(super) fn validate_and_derive_layout<
 /// layout uses zero outer variables.
 pub(super) fn ensure_layout_supported_num_vars<const D: usize>(
     max_num_vars: usize,
-    layout: HachiCommitmentLayout,
+    lp: &LevelParams,
 ) -> Result<(), HachiError> {
     let alpha = D.trailing_zeros() as usize;
     let available_outer = max_num_vars.saturating_sub(alpha);
-    let required_outer = layout.outer_vars()?;
+    let required_outer = lp.outer_vars();
     if available_outer < required_outer {
         return Err(HachiError::InvalidSetup(format!(
             "max_num_vars {max_num_vars} leaves only {available_outer} outer vars but layout requires {required_outer}"
@@ -791,18 +544,18 @@ pub(super) fn ensure_layout_supported_num_vars<const D: usize>(
 /// Returns an error when block count or per-block size mismatch.
 pub(super) fn ensure_block_layout<F: FieldCore, const D: usize>(
     f_blocks: &[Vec<CyclotomicRing<F, D>>],
-    layout: HachiCommitmentLayout,
+    lp: &LevelParams,
 ) -> Result<(), HachiError> {
-    if f_blocks.len() != layout.num_blocks {
+    if f_blocks.len() != lp.num_blocks {
         return Err(HachiError::InvalidSize {
-            expected: layout.num_blocks,
+            expected: lp.num_blocks,
             actual: f_blocks.len(),
         });
     }
     for block in f_blocks {
-        if block.len() != layout.block_len {
+        if block.len() != lp.block_len {
             return Err(HachiError::InvalidSize {
-                expected: layout.block_len,
+                expected: lp.block_len,
                 actual: block.len(),
             });
         }
@@ -847,8 +600,18 @@ impl CommitmentConfig for SmallTestCommitmentConfig {
         }
     }
 
-    fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        HachiCommitmentLayout::new::<Self>(4, 2, &Self::decomposition())
+    fn commitment_layout(_max_num_vars: usize) -> Result<LevelParams, HachiError> {
+        let decomp = Self::decomposition();
+        let params = Self::level_params(HachiScheduleInputs {
+            max_num_vars: 12,
+            level: 0,
+            current_w_len: 1 << 12,
+        });
+        let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
+        let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
+        let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
+        let depth_fold = compute_num_digits_fold(2, params.challenge_l1_mass(), decomp.log_basis);
+        params.with_decomp(4, 2, depth_commit, depth_open, depth_fold, 0)
     }
 
     fn schedule_plan(
@@ -860,10 +623,20 @@ impl CommitmentConfig for SmallTestCommitmentConfig {
         if key.max_num_vars >= usize::BITS as usize {
             return Ok(None);
         }
-        let root_layout = HachiCommitmentLayout::new::<Self>(4, 2, &Self::decomposition())?;
+        let decomp = Self::decomposition();
+        let params = Self::level_params(HachiScheduleInputs {
+            max_num_vars: 12,
+            level: 0,
+            current_w_len: 1 << 12,
+        });
+        let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
+        let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
+        let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
+        let depth_fold = compute_num_digits_fold(2, params.challenge_l1_mass(), decomp.log_basis);
+        let root_lp = params.with_decomp(4, 2, depth_commit, depth_open, depth_fold, 0)?;
         Ok(Some(super::schedule::build_schedule_plan_from_config::<
             Self,
-        >(key.max_num_vars, root_layout)?))
+        >(key.max_num_vars, &root_lp)?))
     }
 }
 
@@ -943,11 +716,10 @@ impl<
         if key.max_num_vars >= usize::BITS as usize {
             return Ok(None);
         }
-        let (_, root_layout) =
-            super::schedule::hachi_root_commitment_layout::<Self>(key.max_num_vars)?;
+        let root_lp = super::schedule::hachi_root_commitment_layout::<Self>(key.max_num_vars)?;
         Ok(Some(super::schedule::build_schedule_plan_from_config::<
             Self,
-        >(key.max_num_vars, root_layout)?))
+        >(key.max_num_vars, &root_lp)?))
     }
 
     fn n_b_at_level(level: usize, max_num_vars: usize, _current_w_len: usize) -> usize {
@@ -959,25 +731,21 @@ impl<
         N_D.max(Profile::audited_root_outer_rank(D, level, max_num_vars))
     }
 
-    fn level_params_with_log_basis(
-        inputs: HachiScheduleInputs,
-        log_basis: u32,
-    ) -> HachiLevelParams {
+    fn level_params_with_log_basis(inputs: HachiScheduleInputs, log_basis: u32) -> LevelParams {
         let d = Self::d_at_level(inputs.level, inputs.current_w_len);
         let stage1_config = Self::stage1_challenge_config(d);
-        HachiLevelParams {
+        LevelParams::params_only(
             d,
             log_basis,
-            n_a: N_A.max(Profile::audited_root_a_rank::<LOG_COMMIT_BOUND>(
+            N_A.max(Profile::audited_root_a_rank::<LOG_COMMIT_BOUND>(
                 D,
                 inputs.level,
                 inputs.max_num_vars,
             )),
-            n_b: Self::n_b_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
-            n_d: Self::n_d_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
-            challenge_l1_mass: stage1_config.l1_mass(),
+            Self::n_b_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
+            Self::n_d_at_level(inputs.level, inputs.max_num_vars, inputs.current_w_len),
             stage1_config,
-        }
+        )
     }
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
@@ -998,50 +766,42 @@ fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
     current_w_len: usize,
     stage1_config: &SparseChallengeConfig,
     envelope: &CommitmentEnvelope,
-) -> Option<HachiLevelParams> {
+) -> Option<LevelParams> {
     use super::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
     use super::schedule::hachi_recursive_level_layout_from_params;
 
-    let tentative = HachiLevelParams {
-        d,
-        log_basis,
-        n_a: envelope.max_n_a,
-        n_b: 1,
-        n_d: 1,
-        challenge_l1_mass: stage1_config.l1_mass(),
-        stage1_config: stage1_config.clone(),
-    };
+    let tentative =
+        LevelParams::params_only(d, log_basis, envelope.max_n_a, 1, 1, stage1_config.clone());
     let layout = hachi_recursive_level_layout_from_params::<Cfg>(&tentative, current_w_len).ok()?;
 
     let bd_collision = (1u32 << log_basis) - 1;
     let a_raw = bd_collision;
     let a_collision = ceil_supported_collision(d as u32, a_raw * stage1_config.max_abs_coeff())?;
 
-    let n_a = min_rank_for_secure_width(d as u32, a_collision, layout.inner_width as u64)
+    let n_a = min_rank_for_secure_width(d as u32, a_collision, layout.inner_width() as u64)
         .unwrap_or(envelope.max_n_a);
     let exact_outer_width = n_a * layout.num_digits_open * layout.num_blocks;
     let n_b = min_rank_for_secure_width(d as u32, bd_collision, exact_outer_width as u64)
         .unwrap_or(envelope.max_n_b);
-    let n_d = min_rank_for_secure_width(d as u32, bd_collision, layout.d_matrix_width as u64)
+    let n_d = min_rank_for_secure_width(d as u32, bd_collision, layout.d_matrix_width() as u64)
         .unwrap_or(envelope.max_n_d);
 
-    Some(HachiLevelParams {
+    Some(LevelParams::params_only(
         d,
         log_basis,
         n_a,
         n_b,
         n_d,
-        challenge_l1_mass: stage1_config.l1_mass(),
-        stage1_config: stage1_config.clone(),
-    })
+        stage1_config.clone(),
+    ))
 }
 
 fn derived_root_commitment_layout_from_params<Cfg: CommitmentConfig>(
     inputs: HachiScheduleInputs,
-    params: &HachiLevelParams,
+    params: &LevelParams,
     allow_zero_outer: bool,
-) -> Result<HachiCommitmentLayout, HachiError> {
-    let alpha = params.d.trailing_zeros() as usize;
+) -> Result<LevelParams, HachiError> {
+    let alpha = params.ring_dimension.trailing_zeros() as usize;
     let reduced_vars = if allow_zero_outer {
         inputs.max_num_vars.saturating_sub(alpha)
     } else {
@@ -1062,13 +822,13 @@ fn derived_root_commitment_layout_from_params<Cfg: CommitmentConfig>(
 
 fn sis_derived_root_params_for_layout<Cfg: CommitmentConfig>(
     inputs: HachiScheduleInputs,
-    root_layout: HachiCommitmentLayout,
-) -> Result<HachiLevelParams, HachiError> {
+    lp: &LevelParams,
+) -> Result<LevelParams, HachiError> {
     use super::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
 
     let d = Cfg::d_at_level(inputs.level, inputs.current_w_len);
     let stage1_config = Cfg::stage1_challenge_config(d);
-    let bd_collision = (1u32 << root_layout.log_basis) - 1;
+    let bd_collision = (1u32 << lp.log_basis) - 1;
     let a_raw = if inputs.level == 0 && Cfg::decomposition().log_commit_bound == 1 {
         2
     } else {
@@ -1082,36 +842,41 @@ fn sis_derived_root_params_for_layout<Cfg: CommitmentConfig>(
                 a_raw * stage1_config.max_abs_coeff()
             ))
         })?;
-    let n_a = min_rank_for_secure_width(d as u32, a_collision, root_layout.inner_width as u64)
+    let n_a = min_rank_for_secure_width(d as u32, a_collision, lp.inner_width() as u64)
         .ok_or_else(|| {
             HachiError::InvalidSetup(format!(
                 "missing secure root A-row rank for D={} lb={} inner_width={}",
-                d, root_layout.log_basis, root_layout.inner_width
+                d,
+                lp.log_basis,
+                lp.inner_width()
             ))
         })?;
-    let n_b = min_rank_for_secure_width(d as u32, bd_collision, root_layout.outer_width as u64)
+    let n_b = min_rank_for_secure_width(d as u32, bd_collision, lp.outer_width() as u64)
         .ok_or_else(|| {
             HachiError::InvalidSetup(format!(
                 "missing secure root B-row rank for D={} lb={} outer_width={}",
-                d, root_layout.log_basis, root_layout.outer_width
+                d,
+                lp.log_basis,
+                lp.outer_width()
             ))
         })?;
-    let n_d = min_rank_for_secure_width(d as u32, bd_collision, root_layout.d_matrix_width as u64)
+    let n_d = min_rank_for_secure_width(d as u32, bd_collision, lp.d_matrix_width() as u64)
         .ok_or_else(|| {
             HachiError::InvalidSetup(format!(
                 "missing secure root D-row rank for D={} lb={} d_matrix_width={}",
-                d, root_layout.log_basis, root_layout.d_matrix_width
+                d,
+                lp.log_basis,
+                lp.d_matrix_width()
             ))
         })?;
-    Ok(HachiLevelParams {
+    Ok(LevelParams::params_only(
         d,
-        log_basis: root_layout.log_basis,
-        n_a,
-        n_b,
-        n_d,
-        challenge_l1_mass: stage1_config.l1_mass(),
+        lp.log_basis,
+        n_a as usize,
+        n_b as usize,
+        n_d as usize,
         stage1_config,
-    })
+    ))
 }
 
 /// Generated adaptive policy with table-selected per-level log bases.
@@ -1171,48 +936,44 @@ impl<
         let (min_log_basis, max_log_basis) = Profile::adaptive_log_basis_search_range();
         for log_basis in min_log_basis..=max_log_basis {
             let root_params = if max_num_vars > alpha {
-                Self::root_level_layout_with_log_basis(root_inputs, log_basis)
-                    .ok()
-                    .map(|(params, _)| params)
+                Self::root_level_layout_with_log_basis(root_inputs, log_basis).ok()
             } else {
                 let stage1_config = Self::stage1_challenge_config(D);
-                let mut params = HachiLevelParams {
-                    d: D,
-                    log_basis,
-                    n_a: 1,
-                    n_b: 1,
-                    n_d: 1,
-                    challenge_l1_mass: stage1_config.l1_mass(),
-                    stage1_config,
-                };
+                let mut params = LevelParams::params_only(D, log_basis, 1, 1, 1, stage1_config);
                 let mut converged = None;
                 for _ in 0..4 {
-                    let Ok(layout) = derived_root_commitment_layout_from_params::<Self>(
+                    let Ok(root_lp) = derived_root_commitment_layout_from_params::<Self>(
                         root_inputs,
                         &params,
                         true,
                     ) else {
                         break;
                     };
-                    let Ok(derived_params) =
-                        Self::root_level_params_for_layout_with_log_basis(root_inputs, layout)
+                    let Ok(derived_lp) =
+                        Self::root_level_params_for_layout_with_log_basis(root_inputs, &root_lp)
                     else {
                         break;
                     };
-                    if (derived_params.n_a, derived_params.n_b, derived_params.n_d)
-                        == (params.n_a, params.n_b, params.n_d)
-                    {
-                        converged = Some(derived_params);
+                    if (
+                        derived_lp.a_key.row_len,
+                        derived_lp.b_key.row_len,
+                        derived_lp.d_key.row_len,
+                    ) == (
+                        params.a_key.row_len,
+                        params.b_key.row_len,
+                        params.d_key.row_len,
+                    ) {
+                        converged = Some(derived_lp);
                         break;
                     }
-                    params = derived_params;
+                    params = derived_lp;
                 }
                 converged
             };
             if let Some(root_params) = root_params {
-                envelope.max_n_a = envelope.max_n_a.max(root_params.n_a);
-                envelope.max_n_b = envelope.max_n_b.max(root_params.n_b);
-                envelope.max_n_d = envelope.max_n_d.max(root_params.n_d);
+                envelope.max_n_a = envelope.max_n_a.max(root_params.a_key.row_len);
+                envelope.max_n_b = envelope.max_n_b.max(root_params.b_key.row_len);
+                envelope.max_n_d = envelope.max_n_d.max(root_params.d_key.row_len);
             }
         }
         envelope
@@ -1301,37 +1062,31 @@ impl<
 
     fn root_level_params_for_layout_with_log_basis(
         inputs: HachiScheduleInputs,
-        root_layout: HachiCommitmentLayout,
-    ) -> Result<HachiLevelParams, HachiError> {
-        sis_derived_root_params_for_layout::<Self>(inputs, root_layout)
+        lp: &LevelParams,
+    ) -> Result<LevelParams, HachiError> {
+        let params = sis_derived_root_params_for_layout::<Self>(inputs, lp)?;
+        Ok(params.with_layout(lp))
     }
 
     fn root_level_layout_with_log_basis(
         inputs: HachiScheduleInputs,
         log_basis: u32,
-    ) -> Result<(HachiLevelParams, HachiCommitmentLayout), HachiError> {
+    ) -> Result<LevelParams, HachiError> {
         let stage1_config = Self::stage1_challenge_config(D);
         let mut candidate_n_a = 1usize;
         for _ in 0..crate::planner::sis_security::MAX_RANK {
-            let candidate_params = HachiLevelParams {
-                d: D,
-                log_basis,
-                n_a: candidate_n_a,
-                n_b: 1,
-                n_d: 1,
-                challenge_l1_mass: stage1_config.l1_mass(),
-                stage1_config: stage1_config.clone(),
-            };
-            let root_layout = derived_root_commitment_layout_from_params::<Self>(
+            let candidate_params =
+                LevelParams::params_only(D, log_basis, candidate_n_a, 1, 1, stage1_config.clone());
+            let root_lp = derived_root_commitment_layout_from_params::<Self>(
                 inputs,
                 &candidate_params,
                 false,
             )?;
-            let derived_params = sis_derived_root_params_for_layout::<Self>(inputs, root_layout)?;
-            if derived_params.n_a == candidate_n_a {
-                return Ok((derived_params, root_layout));
+            let derived_params = sis_derived_root_params_for_layout::<Self>(inputs, &root_lp)?;
+            if derived_params.a_key.row_len == candidate_n_a {
+                return Ok(derived_params.with_layout(&root_lp));
             }
-            candidate_n_a = derived_params.n_a;
+            candidate_n_a = derived_params.a_key.row_len;
         }
         Err(HachiError::InvalidSetup(format!(
             "failed to converge on self-consistent root A-row rank for D={D} lb={log_basis}"
@@ -1342,17 +1097,14 @@ impl<
         Profile::stage1_challenge_config(d)
     }
 
-    fn level_params_with_log_basis(
-        inputs: HachiScheduleInputs,
-        log_basis: u32,
-    ) -> HachiLevelParams {
+    fn level_params_with_log_basis(inputs: HachiScheduleInputs, log_basis: u32) -> LevelParams {
         if let Ok(source) = Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(
             HachiScheduleLookupKey::singleton(inputs.max_num_vars, inputs.max_num_vars, 1),
         ) {
             if let Ok(Some(planned_level)) =
                 exact_planned_level_execution::<Self>(&source.schedule_plan(), inputs, log_basis)
             {
-                return planned_level.level.params;
+                return planned_level.level.lp.clone();
             }
         }
         let envelope = Self::envelope(inputs.max_num_vars);
@@ -1367,19 +1119,23 @@ impl<
                 &stage1_config,
                 &envelope,
             ) {
+                if let Ok(lp) =
+                    hachi_recursive_level_layout_from_params::<Self>(&params, inputs.current_w_len)
+                {
+                    return lp;
+                }
                 return params;
             }
         }
 
-        HachiLevelParams {
+        LevelParams::params_only(
             d,
             log_basis,
-            n_a: envelope.max_n_a,
-            n_b: envelope.max_n_b,
-            n_d: envelope.max_n_d,
-            challenge_l1_mass: stage1_config.l1_mass(),
+            envelope.max_n_a,
+            envelope.max_n_b,
+            envelope.max_n_d,
             stage1_config,
-        }
+        )
     }
 }
 
@@ -1429,13 +1185,13 @@ mod fp128_policy_tests {
                 let raw_collision = if root_onehot && level.inputs.level == 0 {
                     2
                 } else {
-                    (1u32 << level.params.log_basis) - 1
+                    (1u32 << level.lp.log_basis) - 1
                 };
 
                 let a_rank = min_rank_for_secure_width(
                     128,
                     raw_collision,
-                    u64::try_from(level.layout.inner_width)
+                    u64::try_from(level.lp.inner_width())
                         .expect("inner width should fit in u64"),
                 )
                 .unwrap_or_else(|| {
@@ -1443,26 +1199,26 @@ mod fp128_policy_tests {
                         "missing audited A-row SIS width for num_vars={}, level={}, lb={}, width={}",
                         num_vars,
                         level.inputs.level,
-                        level.params.log_basis,
-                        level.layout.inner_width
+                        level.lp.log_basis,
+                        level.lp.inner_width()
                     )
                 });
                 assert!(
-                    a_rank <= level.params.n_a as u32,
+                    a_rank <= level.lp.a_key.row_len as u32,
                     "A-row SIS audit failed for num_vars={}, level={}, lb={}, width={}, required_rank={}, actual_rank={}",
                     num_vars,
                     level.inputs.level,
-                    level.params.log_basis,
-                    level.layout.inner_width,
+                    level.lp.log_basis,
+                    level.lp.inner_width(),
                     a_rank,
-                    level.params.n_a,
+                    level.lp.a_key.row_len,
                 );
 
-                let bd_collision = (1u32 << level.params.log_basis) - 1;
+                let bd_collision = (1u32 << level.lp.log_basis) - 1;
                 let b_rank = min_rank_for_secure_width(
                     128,
                     bd_collision,
-                    u64::try_from(level.layout.outer_width)
+                    u64::try_from(level.lp.outer_width())
                         .expect("outer width should fit in u64"),
                 )
                 .unwrap_or_else(|| {
@@ -1470,25 +1226,25 @@ mod fp128_policy_tests {
                         "missing audited B-row SIS width for num_vars={}, level={}, lb={}, width={}",
                         num_vars,
                         level.inputs.level,
-                        level.params.log_basis,
-                        level.layout.outer_width
+                        level.lp.log_basis,
+                        level.lp.outer_width()
                     )
                 });
                 assert!(
-                    b_rank <= level.params.n_b as u32,
+                    b_rank <= level.lp.b_key.row_len as u32,
                     "B-row SIS audit failed for num_vars={}, level={}, lb={}, width={}, required_rank={}, actual_rank={}",
                     num_vars,
                     level.inputs.level,
-                    level.params.log_basis,
-                    level.layout.outer_width,
+                    level.lp.log_basis,
+                    level.lp.outer_width(),
                     b_rank,
-                    level.params.n_b,
+                    level.lp.b_key.row_len,
                 );
 
                 let d_rank = min_rank_for_secure_width(
                     128,
                     bd_collision,
-                    u64::try_from(level.layout.d_matrix_width)
+                    u64::try_from(level.lp.d_matrix_width())
                         .expect("d-matrix width should fit in u64"),
                 )
                 .unwrap_or_else(|| {
@@ -1496,19 +1252,19 @@ mod fp128_policy_tests {
                         "missing audited D-row SIS width for num_vars={}, level={}, lb={}, width={}",
                         num_vars,
                         level.inputs.level,
-                        level.params.log_basis,
-                        level.layout.d_matrix_width
+                        level.lp.log_basis,
+                        level.lp.d_matrix_width()
                     )
                 });
                 assert!(
-                    d_rank <= level.params.n_d as u32,
+                    d_rank <= level.lp.d_key.row_len as u32,
                     "D-row SIS audit failed for num_vars={}, level={}, lb={}, width={}, required_rank={}, actual_rank={}",
                     num_vars,
                     level.inputs.level,
-                    level.params.log_basis,
-                    level.layout.d_matrix_width,
+                    level.lp.log_basis,
+                    level.lp.d_matrix_width(),
                     d_rank,
-                    level.params.n_d,
+                    level.lp.d_key.row_len,
                 );
             }
         }
@@ -1550,20 +1306,20 @@ mod fp128_policy_tests {
             level: 0,
             current_w_len: 1usize << 32,
         };
-        let (params, layout) = Cfg::root_level_layout_with_log_basis(inputs, 2).unwrap();
+        let root_lp = Cfg::root_level_layout_with_log_basis(inputs, 2).unwrap();
 
-        assert_eq!(params.n_a, 3);
-        assert_eq!(params.n_b, 2);
-        assert_eq!(params.n_d, 2);
-        assert_eq!(layout.m_vars, 16);
-        assert_eq!(layout.r_vars, 11);
+        assert_eq!(root_lp.a_key.row_len, 3);
+        assert_eq!(root_lp.b_key.row_len, 2);
+        assert_eq!(root_lp.d_key.row_len, 2);
+        assert_eq!(root_lp.m_vars, 16);
+        assert_eq!(root_lp.r_vars, 11);
 
-        let a_rank = min_rank_for_secure_width(32, 31, layout.inner_width as u64).unwrap();
-        let b_rank = min_rank_for_secure_width(32, 3, layout.outer_width as u64).unwrap();
-        let d_rank = min_rank_for_secure_width(32, 3, layout.d_matrix_width as u64).unwrap();
-        assert_eq!(a_rank, params.n_a as u32);
-        assert_eq!(b_rank, params.n_b as u32);
-        assert_eq!(d_rank, params.n_d as u32);
+        let a_rank = min_rank_for_secure_width(32, 31, root_lp.inner_width() as u64).unwrap();
+        let b_rank = min_rank_for_secure_width(32, 3, root_lp.outer_width() as u64).unwrap();
+        let d_rank = min_rank_for_secure_width(32, 3, root_lp.d_matrix_width() as u64).unwrap();
+        assert_eq!(a_rank, root_lp.a_key.row_len as u32);
+        assert_eq!(b_rank, root_lp.b_key.row_len as u32);
+        assert_eq!(d_rank, root_lp.d_key.row_len as u32);
     }
 
     #[test]
@@ -1575,11 +1331,11 @@ mod fp128_policy_tests {
             .expect("generated D32 onehot schedule");
         let root = schedule.fold_levels().next().expect("root fold");
 
-        assert_eq!(root.params.n_a, 3);
-        assert_eq!(root.params.n_b, 2);
-        assert_eq!(root.params.n_d, 2);
-        assert_eq!(root.layout.m_vars, 16);
-        assert_eq!(root.layout.r_vars, 11);
+        assert_eq!(root.lp.a_key.row_len, 3);
+        assert_eq!(root.lp.b_key.row_len, 2);
+        assert_eq!(root.lp.d_key.row_len, 2);
+        assert_eq!(root.lp.m_vars, 16);
+        assert_eq!(root.lp.r_vars, 11);
     }
 
     #[test]
@@ -1591,18 +1347,18 @@ mod fp128_policy_tests {
             level: 0,
             current_w_len: 1,
         });
-        assert_eq!(root_params.n_a, 2);
-        assert_eq!(root_params.n_b, 2);
-        assert_eq!(root_params.n_d, 2);
+        assert_eq!(root_params.a_key.row_len, 2);
+        assert_eq!(root_params.b_key.row_len, 2);
+        assert_eq!(root_params.d_key.row_len, 2);
 
         let recursive_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: 59,
             level: 1,
             current_w_len: 1,
         });
-        assert_eq!(recursive_params.n_a, 1);
-        assert_eq!(recursive_params.n_b, 1);
-        assert_eq!(recursive_params.n_d, 1);
+        assert_eq!(recursive_params.a_key.row_len, 1);
+        assert_eq!(recursive_params.b_key.row_len, 1);
+        assert_eq!(recursive_params.d_key.row_len, 1);
     }
 }
 
@@ -1611,22 +1367,14 @@ mod split_tests {
     use super::*;
     use crate::algebra::SparseChallengeConfig;
     use crate::protocol::commitment::schedule_planner::planned_recursive_suffix_bytes;
-    use crate::protocol::commitment::HachiLevelParams;
+    use crate::protocol::params::LevelParams;
 
-    fn test_level_params() -> HachiLevelParams {
+    fn test_level_params() -> LevelParams {
         let stage1_config = SparseChallengeConfig::Uniform {
             weight: 3,
             nonzero_coeffs: vec![-1, 1],
         };
-        HachiLevelParams {
-            d: 64,
-            log_basis: 2,
-            n_a: 2,
-            n_b: 2,
-            n_d: 2,
-            challenge_l1_mass: stage1_config.l1_mass(),
-            stage1_config,
-        }
+        LevelParams::params_only(64, 2, 2, 2, 2, stage1_config)
     }
 
     #[test]

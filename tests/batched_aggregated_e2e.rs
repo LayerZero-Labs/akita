@@ -33,10 +33,7 @@ use hachi_pcs::{CommitmentScheme, HachiDeserialize, HachiSerialize, Transcript};
 
 const DENSE_ONEHOT_K: usize = DENSE_D;
 
-fn make_dense_cfg_onehot_poly(
-    layout: &HachiCommitmentLayout,
-    seed: u64,
-) -> OneHotPoly<F, DENSE_D, u8> {
+fn make_dense_cfg_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, DENSE_D, u8> {
     let total_ring = layout.num_blocks * layout.block_len;
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_ring)

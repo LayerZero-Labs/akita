@@ -10,6 +10,7 @@ pub mod commitment_scheme;
 pub mod dispatch;
 pub mod hachi_poly_ops;
 pub mod opening_point;
+pub mod params;
 pub mod prg;
 pub mod proof;
 pub mod quadratic_equation;
@@ -21,8 +22,8 @@ pub mod transcript;
 pub use commitment::{
     optimal_m_r_split, presets, AppendToTranscript, CommitmentConfig, CommitmentPreset,
     CommitmentScheme, DummyProof, GeneratedAdaptivePolicy, HachiCommitment, HachiCommitmentCore,
-    HachiCommitmentLayout, HachiExpandedSetup, HachiOpeningClaim, HachiOpeningPoint,
-    HachiProverSetup, HachiRootBatchSummary, HachiSetupSeed, HachiVerifierSetup, RingCommitment,
+    HachiExpandedSetup, HachiOpeningClaim, HachiOpeningPoint, HachiProverSetup,
+    HachiRootBatchSummary, HachiSetupSeed, HachiVerifierSetup, RingCommitment,
     RingCommitmentScheme, SmallTestCommitmentConfig, StaticBoundedPolicy,
 };
 pub use commitment_scheme::HachiCommitmentScheme;

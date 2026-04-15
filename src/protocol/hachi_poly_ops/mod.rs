@@ -523,7 +523,7 @@ mod tests {
             .commit_inner(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
-                level_params.n_a,
+                level_params.a_key.row_len,
                 layout.block_len,
                 layout.num_digits_commit,
                 layout.num_digits_open,
@@ -564,7 +564,7 @@ mod tests {
             .commit_inner(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
-                level_params.n_a,
+                level_params.a_key.row_len,
                 layout.block_len,
                 layout.num_digits_commit,
                 layout.num_digits_open,
@@ -699,20 +699,15 @@ mod tests {
         let (setup, _) =
             <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16, 1)
                 .unwrap();
-        let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
-        let level_params = TinyConfig::level_params(HachiScheduleInputs {
-            max_num_vars: setup.expanded.seed.max_num_vars,
-            level: 0,
-            current_w_len: layout.num_blocks * layout.block_len * TestD,
-        });
-        let w_len = w_ring_element_count::<TestF>(&level_params, layout) * TestD;
+        let test_lp = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
+        let w_len = w_ring_element_count::<TestF>(&test_lp) * TestD;
         let w_layout =
-            hachi_recursive_level_layout_from_params::<TinyConfig>(&level_params, w_len).unwrap();
+            hachi_recursive_level_layout_from_params::<TinyConfig>(&test_lp, w_len).unwrap();
         let max_stride = setup.expanded.seed.max_stride();
         let digit_commit = digit_view
             .commit_inner(
                 &setup.ntt_shared,
-                level_params.n_a,
+                test_lp.a_key.row_len,
                 block_len,
                 num_blocks,
                 w_layout.num_digits_commit,
@@ -725,7 +720,7 @@ mod tests {
             .commit_inner(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
-                level_params.n_a,
+                test_lp.a_key.row_len,
                 block_len,
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
@@ -739,7 +734,7 @@ mod tests {
         let digit_witness = digit_view
             .commit_inner_witness(
                 &setup.ntt_shared,
-                level_params.n_a,
+                test_lp.a_key.row_len,
                 block_len,
                 num_blocks,
                 w_layout.num_digits_commit,
@@ -752,7 +747,7 @@ mod tests {
             .commit_inner_witness(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
-                level_params.n_a,
+                test_lp.a_key.row_len,
                 block_len,
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,

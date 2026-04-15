@@ -11,7 +11,7 @@ use crate::error::HachiError;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::{
     compute_num_digits_fold, num_digits_for_bound, CommitmentConfig, CommitmentEnvelope,
-    DecompositionParams, HachiCommitmentLayout, HachiScheduleLookupKey,
+    DecompositionParams, HachiScheduleLookupKey,
 };
 use crate::{FieldCore, FromSmallInt};
 
@@ -52,8 +52,20 @@ impl CommitmentConfig for TinyConfig {
         }
     }
 
-    fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        HachiCommitmentLayout::new::<Self>(1, 1, &Self::decomposition())
+    fn commitment_layout(
+        _max_num_vars: usize,
+    ) -> Result<crate::protocol::params::LevelParams, HachiError> {
+        let decomp = Self::decomposition();
+        let params = Self::level_params(crate::protocol::commitment::HachiScheduleInputs {
+            max_num_vars: 8,
+            level: 0,
+            current_w_len: 1 << 8,
+        });
+        let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
+        let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
+        let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
+        let depth_fold = compute_num_digits_fold(1, params.challenge_l1_mass(), decomp.log_basis);
+        params.with_decomp(1, 1, depth_commit, depth_open, depth_fold, 0)
     }
 
     fn schedule_plan(
@@ -65,11 +77,21 @@ impl CommitmentConfig for TinyConfig {
         if key.max_num_vars >= usize::BITS as usize {
             return Ok(None);
         }
-        let root_layout = HachiCommitmentLayout::new::<Self>(1, 1, &Self::decomposition())?;
+        let decomp = Self::decomposition();
+        let params = Self::level_params(crate::protocol::commitment::HachiScheduleInputs {
+            max_num_vars: 8,
+            level: 0,
+            current_w_len: 1 << 8,
+        });
+        let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
+        let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
+        let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
+        let depth_fold = compute_num_digits_fold(1, params.challenge_l1_mass(), decomp.log_basis);
+        let root_lp = params.with_decomp(1, 1, depth_commit, depth_open, depth_fold, 0)?;
         Ok(Some(
             crate::protocol::commitment::schedule::build_schedule_plan_from_config::<Self>(
                 key.max_num_vars,
-                root_layout,
+                &root_lp,
             )?,
         ))
     }

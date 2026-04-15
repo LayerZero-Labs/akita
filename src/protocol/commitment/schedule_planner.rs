@@ -14,6 +14,7 @@ use super::schedule::{
     HachiPlannedLevel, HachiPlannedState, HachiPlannedStep, HachiScheduleInputs, HachiSchedulePlan,
 };
 use crate::error::HachiError;
+
 use crate::protocol::proof::DirectWitnessShape;
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -131,10 +132,8 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
         level: state.level,
         current_w_len: state.current_w_len,
     };
-    if let Ok((params, layout)) =
-        current_level_layout_with_log_basis::<Cfg>(inputs, state.log_basis)
-    {
-        let next_w_len = planned_next_w_len(cfg.field_bits, cfg.half_field_bound, &params, layout);
+    if let Ok(level_lp) = current_level_layout_with_log_basis::<Cfg>(inputs, state.log_basis) {
+        let next_w_len = planned_next_w_len(cfg.field_bits, cfg.half_field_bound, &level_lp);
         if next_w_len < state.current_w_len {
             let next_level = state.level + 1;
             let next_inputs = HachiScheduleInputs {
@@ -143,13 +142,10 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
                 current_w_len: next_w_len,
             };
             for next_log_basis in state.log_basis.max(cfg.min_log_basis)..=cfg.max_log_basis {
-                let next_level_params =
-                    Cfg::level_params_with_log_basis(next_inputs, next_log_basis);
+                let next_lp =
+                    current_level_layout_with_log_basis::<Cfg>(next_inputs, next_log_basis)?;
                 let level_bytes = exact_recursive_level_proof_bytes::<Cfg::Field>(
-                    &params,
-                    layout,
-                    &next_level_params,
-                    next_w_len,
+                    &level_lp, &next_lp, next_w_len,
                 )?;
                 let suffix = best_recursive_suffix::<Cfg>(
                     cfg,
@@ -165,11 +161,10 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
                     let mut steps = Vec::with_capacity(suffix.steps.len() + 1);
                     steps.push(HachiPlannedStep::Fold(Box::new(HachiPlannedLevel {
                         inputs,
-                        params: params.clone(),
-                        layout,
+                        lp: level_lp.clone(),
                         next_inputs,
                         next_level_log_basis: next_log_basis,
-                        next_commit_coeffs: next_level_params.n_b * next_level_params.d,
+                        next_commit_coeffs: next_lp.b_key.row_len * next_lp.ring_dimension,
                         level_bytes,
                     })));
                     steps.extend(suffix.steps);
