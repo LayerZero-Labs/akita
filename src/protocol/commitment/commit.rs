@@ -733,17 +733,25 @@ where
         stats.include(&singleton_lp);
     }
 
+    let singleton_schedule_key = HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
+    let singleton_plan = Cfg::schedule_plan(singleton_schedule_key)?;
+
     let can_use_planned_root =
         Cfg::commitment_layout(max_num_vars).is_ok_and(|planned_root| planned_root == *root_lp);
     if can_use_planned_root && max_num_batched_polys == 1 {
-        let schedule_key = HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
-        if let Some(plan) = Cfg::schedule_plan(schedule_key)? {
+        if let Some(plan) = singleton_plan.as_ref() {
             for level in plan.fold_levels().skip(1) {
-                let level_lp = level.lp.clone();
-                stats.include(&level_lp);
+                stats.include(&level.lp);
             }
             return Ok(stats);
         }
+    }
+
+    if let Some(plan) = singleton_plan.as_ref() {
+        for level in plan.fold_levels().skip(1) {
+            stats.include(&level.lp);
+        }
+        return Ok(stats);
     }
 
     let root_plan = hachi_root_runtime_plan_from_root_layout::<Cfg, D>(
