@@ -131,6 +131,7 @@ fn compute_level_proof_size<Cfg: CommitmentConfig>(
     batched_root_level_proof_bytes(
         fb,
         &candidate.lp,
+        &candidate.lp,
         next_level_params,
         candidate.next_w_len,
         num_claims,

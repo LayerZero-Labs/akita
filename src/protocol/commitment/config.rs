@@ -1,9 +1,8 @@
 //! Configuration presets for ring-native commitment construction.
 use super::profile::{CommitmentFieldProfile, CommitmentFieldProfileSchedule};
 use super::schedule::{
-    derive_commitment_layout, exact_planned_level_execution,
-    hachi_recursive_level_layout_from_params, hachi_root_commitment_layout, HachiScheduleInputs,
-    HachiScheduleLookupKey, HachiSchedulePlan,
+    exact_planned_level_execution, hachi_recursive_level_layout_from_params,
+    hachi_root_commitment_layout, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use super::utils::norm::detect_field_modulus;
 use crate::algebra::ring::CyclotomicRing;
@@ -814,7 +813,12 @@ fn derived_root_commitment_layout_from_params<Cfg: CommitmentConfig>(
 
     let mut decomp = Cfg::decomposition();
     decomp.log_basis = params.log_basis;
-    derive_commitment_layout(params, decomp, reduced_vars, 0)
+    let (m_vars, r_vars) = optimal_m_r_split_with_params(params, decomp, reduced_vars, 0);
+    let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
+    let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
+    let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
+    let depth_fold = compute_num_digits_fold(r_vars, params.challenge_l1_mass(), decomp.log_basis);
+    params.with_decomp(m_vars, r_vars, depth_commit, depth_open, depth_fold, 0)
 }
 
 fn sis_derived_root_params_for_layout<Cfg: CommitmentConfig>(

@@ -157,6 +157,7 @@ impl<F: FieldCore> HachiExpandedSetup<F> {
     ///
     /// Returns [`HachiError::InvalidSetup`] if the widths implied by
     /// `split` and `num_claims` exceed the setup envelope.
+    #[allow(dead_code)]
     pub(crate) fn ensure_batched_root_split_fits(
         &self,
         split: &BatchedRootSplit,
@@ -236,6 +237,7 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
     ///
     /// Returns [`HachiError::InvalidSetup`] if the widths implied by
     /// `split` and `num_claims` exceed the setup envelope.
+    #[allow(dead_code)]
     pub(crate) fn ensure_batched_root_split_fits(
         &self,
         split: &BatchedRootSplit,
