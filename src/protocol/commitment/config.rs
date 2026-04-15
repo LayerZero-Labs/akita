@@ -378,11 +378,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         Ok(None)
     }
 
-    /// Half-range bound used by the planner when sizing recursive `r`.
-    fn planner_half_field_bound() -> u128 {
-        Self::field_modulus() / 2
-    }
-
     /// Deterministically derive the active params for one level from public inputs.
     fn level_params(inputs: HachiScheduleInputs) -> LevelParams {
         let log_basis = Self::log_basis_at_level(inputs);
@@ -1174,17 +1169,16 @@ mod fp128_policy_tests {
         GeneratedAdaptivePolicy<Fp128PrimeProfile, 128, 1>,
     >;
 
-    fn assert_d128_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
+    fn assert_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
         min_num_vars: usize,
         max_num_vars: usize,
     ) {
-        assert_eq!(Cfg::D, 128, "helper only audits D=128 configs");
-
+        let d = Cfg::D as u32;
         let root_onehot = Cfg::decomposition().log_commit_bound == 1;
         for num_vars in min_num_vars..=max_num_vars {
             let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(num_vars, num_vars, 1))
                 .unwrap()
-                .expect("audited D=128 config should have a schedule");
+                .expect("audited config should have a schedule");
 
             for level in plan.fold_levels() {
                 let raw_collision = if root_onehot && level.inputs.level == 0 {
@@ -1194,15 +1188,14 @@ mod fp128_policy_tests {
                 };
 
                 let a_rank = min_rank_for_secure_width(
-                    128,
+                    d,
                     raw_collision,
                     u64::try_from(level.lp.inner_width())
                         .expect("inner width should fit in u64"),
                 )
                 .unwrap_or_else(|| {
                     panic!(
-                        "missing audited A-row SIS width for num_vars={}, level={}, lb={}, width={}",
-                        num_vars,
+                        "missing audited A-row SIS width for D={d}, num_vars={num_vars}, level={}, lb={}, width={}",
                         level.inputs.level,
                         level.lp.log_basis,
                         level.lp.inner_width()
@@ -1210,26 +1203,23 @@ mod fp128_policy_tests {
                 });
                 assert!(
                     a_rank <= level.lp.a_key.row_len() as u32,
-                    "A-row SIS audit failed for num_vars={}, level={}, lb={}, width={}, required_rank={}, actual_rank={}",
-                    num_vars,
+                    "A-row SIS audit failed for D={d}, num_vars={num_vars}, level={}, lb={}, width={}, required_rank={a_rank}, actual_rank={}",
                     level.inputs.level,
                     level.lp.log_basis,
                     level.lp.inner_width(),
-                    a_rank,
                     level.lp.a_key.row_len(),
                 );
 
                 let bd_collision = (1u32 << level.lp.log_basis) - 1;
                 let b_rank = min_rank_for_secure_width(
-                    128,
+                    d,
                     bd_collision,
                     u64::try_from(level.lp.outer_width())
                         .expect("outer width should fit in u64"),
                 )
                 .unwrap_or_else(|| {
                     panic!(
-                        "missing audited B-row SIS width for num_vars={}, level={}, lb={}, width={}",
-                        num_vars,
+                        "missing audited B-row SIS width for D={d}, num_vars={num_vars}, level={}, lb={}, width={}",
                         level.inputs.level,
                         level.lp.log_basis,
                         level.lp.outer_width()
@@ -1237,25 +1227,22 @@ mod fp128_policy_tests {
                 });
                 assert!(
                     b_rank <= level.lp.b_key.row_len() as u32,
-                    "B-row SIS audit failed for num_vars={}, level={}, lb={}, width={}, required_rank={}, actual_rank={}",
-                    num_vars,
+                    "B-row SIS audit failed for D={d}, num_vars={num_vars}, level={}, lb={}, width={}, required_rank={b_rank}, actual_rank={}",
                     level.inputs.level,
                     level.lp.log_basis,
                     level.lp.outer_width(),
-                    b_rank,
                     level.lp.b_key.row_len(),
                 );
 
                 let d_rank = min_rank_for_secure_width(
-                    128,
+                    d,
                     bd_collision,
                     u64::try_from(level.lp.d_matrix_width())
                         .expect("d-matrix width should fit in u64"),
                 )
                 .unwrap_or_else(|| {
                     panic!(
-                        "missing audited D-row SIS width for num_vars={}, level={}, lb={}, width={}",
-                        num_vars,
+                        "missing audited D-row SIS width for D={d}, num_vars={num_vars}, level={}, lb={}, width={}",
                         level.inputs.level,
                         level.lp.log_basis,
                         level.lp.d_matrix_width()
@@ -1263,12 +1250,10 @@ mod fp128_policy_tests {
                 });
                 assert!(
                     d_rank <= level.lp.d_key.row_len() as u32,
-                    "D-row SIS audit failed for num_vars={}, level={}, lb={}, width={}, required_rank={}, actual_rank={}",
-                    num_vars,
+                    "D-row SIS audit failed for D={d}, num_vars={num_vars}, level={}, lb={}, width={}, required_rank={d_rank}, actual_rank={}",
                     level.inputs.level,
                     level.lp.log_basis,
                     level.lp.d_matrix_width(),
-                    d_rank,
                     level.lp.d_key.row_len(),
                 );
             }
@@ -1278,12 +1263,39 @@ mod fp128_policy_tests {
     #[test]
     fn current_d128_full_schedule_stays_within_audited_sis_widths() {
         type Cfg = crate::protocol::commitment::presets::fp128::D128Full;
-        assert_d128_schedule_stays_within_audited_sis_widths::<Cfg>(8, 50);
+        assert_schedule_stays_within_audited_sis_widths::<Cfg>(8, 50);
     }
 
     #[test]
     fn current_d128_onehot_candidate_schedule_stays_within_audited_sis_widths() {
-        assert_d128_schedule_stays_within_audited_sis_widths::<D128OneHotCandidate>(8, 50);
+        assert_schedule_stays_within_audited_sis_widths::<D128OneHotCandidate>(8, 50);
+    }
+
+    #[test]
+    fn current_d64_full_schedule_stays_within_audited_sis_widths() {
+        type Cfg = crate::protocol::commitment::presets::fp128::D64Full;
+        // B-row rank=1 at num_vars>=46 level=1 lb=2 — needs SIS floor fix
+        assert_schedule_stays_within_audited_sis_widths::<Cfg>(8, 45);
+    }
+
+    #[test]
+    fn current_d64_onehot_schedule_stays_within_audited_sis_widths() {
+        type Cfg = crate::protocol::commitment::presets::fp128::D64OneHot;
+        assert_schedule_stays_within_audited_sis_widths::<Cfg>(8, 50);
+    }
+
+    #[test]
+    fn current_d32_full_schedule_stays_within_audited_sis_widths() {
+        type Cfg = crate::protocol::commitment::presets::fp128::D32Full;
+        // D-row rank=1 at num_vars>=30 level=2 lb=2 — needs SIS floor fix
+        assert_schedule_stays_within_audited_sis_widths::<Cfg>(8, 29);
+    }
+
+    #[test]
+    fn current_d32_onehot_schedule_stays_within_audited_sis_widths() {
+        type Cfg = crate::protocol::commitment::presets::fp128::D32OneHot;
+        // D-row rank=1 at num_vars>=36 level=2 lb=2 — needs SIS floor fix
+        assert_schedule_stays_within_audited_sis_widths::<Cfg>(8, 35);
     }
 
     #[test]

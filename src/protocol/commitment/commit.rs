@@ -150,59 +150,6 @@ impl<F: FieldCore> HachiExpandedSetup<F> {
         Ok(())
     }
 
-    /// Return an error if the batched root split exceeds the setup's
-    /// matrix-width envelope.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HachiError::InvalidSetup`] if the widths implied by
-    /// `split` and `num_claims` exceed the setup envelope.
-    #[allow(dead_code)]
-    pub(crate) fn ensure_batched_root_split_fits(
-        &self,
-        split: &BatchedRootSplit,
-        num_claims: usize,
-    ) -> Result<(), HachiError> {
-        let p = &split.params;
-        let inner_width = p
-            .block_len
-            .checked_mul(p.num_digits_commit)
-            .ok_or_else(|| HachiError::InvalidSetup("inner width overflow".to_string()))?;
-        let outer_width = p
-            .a_key
-            .row_len()
-            .checked_mul(p.num_digits_open)
-            .and_then(|x| x.checked_mul(p.num_blocks))
-            .and_then(|x| x.checked_mul(num_claims))
-            .ok_or_else(|| HachiError::InvalidSetup("batched outer width overflow".to_string()))?;
-        let d_matrix_width = p
-            .num_digits_open
-            .checked_mul(p.num_blocks)
-            .and_then(|x| x.checked_mul(num_claims))
-            .ok_or_else(|| HachiError::InvalidSetup("batched D width overflow".to_string()))?;
-
-        let seed = &self.seed;
-        if inner_width > seed.max_inner_width {
-            return Err(HachiError::InvalidSetup(format!(
-                "A matrix too narrow: need {} but setup has {}",
-                inner_width, seed.max_inner_width
-            )));
-        }
-        if outer_width > seed.max_outer_width {
-            return Err(HachiError::InvalidSetup(format!(
-                "B matrix too narrow: need {} but setup has {}",
-                outer_width, seed.max_outer_width
-            )));
-        }
-        if d_matrix_width > seed.max_d_matrix_width {
-            return Err(HachiError::InvalidSetup(format!(
-                "D matrix too narrow: need {} but setup has {}",
-                d_matrix_width, seed.max_d_matrix_width
-            )));
-        }
-        Ok(())
-    }
-
     /// Panic if `lp` exceeds the matrix-width envelope carried by this setup.
     ///
     /// # Panics
@@ -228,23 +175,6 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
     /// exceeds the setup envelope.
     pub fn ensure_layout_fits(&self, lp: &LevelParams) -> Result<(), HachiError> {
         self.expanded.ensure_layout_fits(lp)
-    }
-
-    /// Return an error if the batched root split exceeds this setup's
-    /// matrix-width envelope.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HachiError::InvalidSetup`] if the widths implied by
-    /// `split` and `num_claims` exceed the setup envelope.
-    #[allow(dead_code)]
-    pub(crate) fn ensure_batched_root_split_fits(
-        &self,
-        split: &BatchedRootSplit,
-        num_claims: usize,
-    ) -> Result<(), HachiError> {
-        self.expanded
-            .ensure_batched_root_split_fits(split, num_claims)
     }
 
     /// Panic if `lp`'s matrix dimensions exceed this setup's maximums.

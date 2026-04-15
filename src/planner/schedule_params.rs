@@ -14,9 +14,9 @@ use std::collections::HashMap;
 use crate::error::HachiError;
 use crate::planner::digit_math::compute_num_digits_fold;
 use crate::protocol::commitment::{
-    batched_root_level_proof_bytes, current_level_layout_with_log_basis, direct_witness_bytes,
-    field_bits, planned_next_w_len, planned_w_ring_element_count,
-    recursive_r_decomp_levels_for_bound, CommitmentConfig, HachiScheduleInputs,
+    current_level_layout_with_log_basis, direct_witness_bytes, field_bits, level_proof_bytes,
+    planned_next_w_len, planned_w_ring_element_count, recursive_r_decomp_levels, CommitmentConfig,
+    HachiScheduleInputs,
 };
 use crate::protocol::params::{AjtaiKeyParams, LevelParams};
 use crate::protocol::proof::DirectWitnessShape;
@@ -101,9 +101,8 @@ fn derive_candidate_level_params<Cfg: CommitmentConfig>(
     };
 
     let fb = field_bits(Cfg::decomposition());
-    let hfb = Cfg::planner_half_field_bound();
-    let w_ring = planned_w_ring_element_count(fb, hfb, &level_lp);
-    let next_w_len = planned_next_w_len(fb, hfb, &level_lp);
+    let w_ring = planned_w_ring_element_count(fb, &level_lp);
+    let next_w_len = planned_next_w_len(fb, &level_lp);
 
     let input_elem_bits = if level == 0 {
         fb as usize
@@ -128,7 +127,7 @@ fn compute_level_proof_size<Cfg: CommitmentConfig>(
     num_claims: usize,
 ) -> usize {
     let fb = field_bits(Cfg::decomposition());
-    batched_root_level_proof_bytes(
+    level_proof_bytes(
         fb,
         &candidate.lp,
         &candidate.lp,
@@ -322,8 +321,7 @@ fn batched_root_w_ring_element_count<Cfg: CommitmentConfig>(
     batch: &BatchConfig,
 ) -> usize {
     let fb = field_bits(Cfg::decomposition());
-    let hfb = Cfg::planner_half_field_bound();
-    let r_decomp = recursive_r_decomp_levels_for_bound(fb, hfb, lp.log_basis);
+    let r_decomp = recursive_r_decomp_levels(fb, lp.log_basis);
 
     let batched_num_digits_fold = lp.num_digits_fold.max(compute_num_digits_fold(
         lp.r_vars,
@@ -400,9 +398,8 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig>(
     let fb = field_bits(Cfg::decomposition());
 
     if batch.num_claims <= 1 && batch.num_commitment_groups <= 1 && batch.num_points <= 1 {
-        let hfb = Cfg::planner_half_field_bound();
-        let w_ring = planned_w_ring_element_count(fb, hfb, &root_lp);
-        let next_w_len = planned_next_w_len(fb, hfb, &root_lp);
+        let w_ring = planned_w_ring_element_count(fb, &root_lp);
+        let next_w_len = planned_next_w_len(fb, &root_lp);
 
         if next_w_len * (log_basis as usize) >= root_w_len * (fb as usize) {
             return None;

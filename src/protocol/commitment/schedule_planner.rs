@@ -39,7 +39,6 @@ pub(super) struct PlannerConfig {
     pub min_log_basis: u32,
     pub max_log_basis: u32,
     pub field_bits: u32,
-    pub half_field_bound: u128,
 }
 
 impl PlannerConfig {
@@ -53,7 +52,6 @@ impl PlannerConfig {
             min_log_basis,
             max_log_basis,
             field_bits: field_bits(Cfg::decomposition()),
-            half_field_bound: Cfg::planner_half_field_bound(),
         }
     }
 }
@@ -133,7 +131,7 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
         current_w_len: state.current_w_len,
     };
     if let Ok(level_lp) = current_level_layout_with_log_basis::<Cfg>(inputs, state.log_basis) {
-        let next_w_len = planned_next_w_len(cfg.field_bits, cfg.half_field_bound, &level_lp);
+        let next_w_len = planned_next_w_len(cfg.field_bits, &level_lp);
         if next_w_len < state.current_w_len {
             let next_level = state.level + 1;
             let next_inputs = HachiScheduleInputs {

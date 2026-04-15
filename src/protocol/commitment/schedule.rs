@@ -316,7 +316,7 @@ impl HachiRootRuntimePlan {
 
     /// Exact bytes of the serialized root proof body for this runtime context.
     pub fn level_proof_bytes<Cfg: CommitmentConfig>(&self) -> usize {
-        batched_root_level_proof_bytes(
+        level_proof_bytes(
             field_bits(Cfg::decomposition()),
             &self.root_lp,
             &self.level_lp,
@@ -929,7 +929,7 @@ fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig, const D: usize>(
                         )
                     })?
                 } else {
-                    planned_next_w_len(field_bits, Cfg::planner_half_field_bound(), &lp)
+                    planned_next_w_len(field_bits, &lp)
                 };
                 let root_is_batched =
                     fold_level == 0 && key.batch != HachiRootBatchSummary::singleton();
@@ -1304,7 +1304,6 @@ pub(crate) fn build_schedule_plan_from_config<Cfg: CommitmentConfig>(
     root_lp: &LevelParams,
 ) -> Result<HachiSchedulePlan, HachiError> {
     let fb = field_bits(Cfg::decomposition());
-    let half_field_bound = Cfg::planner_half_field_bound();
 
     let root_w_len = 1usize
         .checked_shl(max_num_vars as u32)
@@ -1327,7 +1326,7 @@ pub(crate) fn build_schedule_plan_from_config<Cfg: CommitmentConfig>(
         } else {
             current_level_layout_with_log_basis::<Cfg>(inputs, log_basis)?
         };
-        let next_w_len = planned_next_w_len(fb, half_field_bound, &lp);
+        let next_w_len = planned_next_w_len(fb, &lp);
 
         let next_inputs = HachiScheduleInputs {
             max_num_vars,
@@ -1437,33 +1436,20 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
 
 /// Compute the number of digits needed when decomposing the `r` polynomial
 /// at a recursive level (always full-field, so use asymmetric centering).
-pub(crate) fn recursive_r_decomp_levels_for_bound(
-    field_bits: u32,
-    _half_field_bound: u128,
-    log_basis: u32,
-) -> usize {
+pub(crate) fn recursive_r_decomp_levels(field_bits: u32, log_basis: u32) -> usize {
     compute_num_digits_full_field(field_bits, log_basis).max(1)
 }
 
-pub(crate) fn planned_w_ring_element_count(
-    field_bits: u32,
-    half_field_bound: u128,
-    lp: &LevelParams,
-) -> usize {
+pub(crate) fn planned_w_ring_element_count(field_bits: u32, lp: &LevelParams) -> usize {
     let w_hat_count = lp.num_blocks * lp.num_digits_open;
     let t_hat_count = lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre_count = lp.inner_width() * lp.num_digits_fold;
-    let r_count = lp.m_row_count()
-        * recursive_r_decomp_levels_for_bound(field_bits, half_field_bound, lp.log_basis);
+    let r_count = lp.m_row_count() * recursive_r_decomp_levels(field_bits, lp.log_basis);
     w_hat_count + t_hat_count + z_pre_count + r_count
 }
 
-pub(crate) fn planned_next_w_len(
-    field_bits: u32,
-    half_field_bound: u128,
-    lp: &LevelParams,
-) -> usize {
-    planned_w_ring_element_count(field_bits, half_field_bound, lp) * lp.ring_dimension
+pub(crate) fn planned_next_w_len(field_bits: u32, lp: &LevelParams) -> usize {
+    planned_w_ring_element_count(field_bits, lp) * lp.ring_dimension
 }
 
 fn sumcheck_rounds(level_d: usize, next_w_len: usize) -> usize {
@@ -1567,7 +1553,7 @@ pub(super) fn exact_recursive_level_proof_bytes<F: FieldCore>(
     Ok(proof.serialized_size(Compress::No))
 }
 
-pub(crate) fn batched_root_level_proof_bytes(
+pub(crate) fn level_proof_bytes(
     field_bits: u32,
     lp: &LevelParams,
     level_lp: &LevelParams,
@@ -1780,42 +1766,6 @@ pub(crate) fn planned_next_log_basis_with_current_basis_and_envelope<Cfg: Commit
         current_log_basis,
         planning_envelope,
     )
-}
-
-#[allow(dead_code)]
-pub(crate) fn estimated_recursive_suffix_bytes<Cfg: CommitmentConfig>(
-    root_key: HachiScheduleLookupKey,
-    level: usize,
-    current_w_len: usize,
-) -> Result<usize, HachiError> {
-    let inputs = HachiScheduleInputs {
-        max_num_vars: root_key.max_num_vars,
-        level,
-        current_w_len,
-    };
-    let current_log_basis = Cfg::log_basis_at_level(inputs);
-    let direct_bytes = packed_digits_bytes(current_w_len, current_log_basis);
-
-    if let Some(planned_bytes) = Cfg::recursive_suffix_bytes(root_key, level, current_w_len)? {
-        return Ok(planned_bytes.min(direct_bytes));
-    }
-
-    let lp = current_level_layout_with_log_basis::<Cfg>(inputs, current_log_basis)?;
-    let field_bits = field_bits(Cfg::decomposition());
-    let next_w_len = planned_next_w_len(field_bits, Cfg::planner_half_field_bound(), &lp);
-    if next_w_len >= current_w_len {
-        return Ok(direct_bytes);
-    }
-
-    let next_inputs = HachiScheduleInputs {
-        max_num_vars: root_key.max_num_vars,
-        level: level + 1,
-        current_w_len: next_w_len,
-    };
-    let next_level_params = Cfg::level_params(next_inputs);
-    let continue_bytes = hachi_level_proof_bytes(field_bits, &lp, &next_level_params, next_w_len)
-        + packed_digits_bytes(next_w_len, next_level_params.log_basis);
-    Ok(direct_bytes.min(continue_bytes))
 }
 
 pub(crate) fn planned_log_basis_at_level_from_schedule<Cfg: CommitmentConfig>(
@@ -2438,16 +2388,8 @@ mod tests {
         let num_ring = inputs.current_w_len / params.ring_dimension;
         let lp_12_7 = layout_from_params(12, 7, &params, decomp, num_ring).unwrap();
         let lp_11_8 = layout_from_params(11, 8, &params, decomp, num_ring).unwrap();
-        let w_12_7 = planned_w_ring_element_count(
-            field_bits(Cfg::decomposition()),
-            Cfg::planner_half_field_bound(),
-            &lp_12_7,
-        );
-        let w_11_8 = planned_w_ring_element_count(
-            field_bits(Cfg::decomposition()),
-            Cfg::planner_half_field_bound(),
-            &lp_11_8,
-        );
+        let w_12_7 = planned_w_ring_element_count(field_bits(Cfg::decomposition()), &lp_12_7);
+        let w_11_8 = planned_w_ring_element_count(field_bits(Cfg::decomposition()), &lp_11_8);
         let reduced_vars = (inputs.current_w_len / params.ring_dimension)
             .next_power_of_two()
             .trailing_zeros() as usize;
@@ -2526,7 +2468,7 @@ mod tests {
             );
 
             assert_eq!(
-                batched_root_level_proof_bytes(
+                level_proof_bytes(
                     128,
                     &lp,
                     &lp,

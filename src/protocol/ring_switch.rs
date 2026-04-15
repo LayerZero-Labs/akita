@@ -16,7 +16,7 @@ use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::HachiRootBatchSummary;
 use crate::protocol::commitment::{
     hachi_recursive_level_layout_from_params, recursive_level_decomposition_from_root,
-    recursive_r_decomp_levels_for_bound, CommitmentConfig, CommitmentEnvelope, DecompositionParams,
+    recursive_r_decomp_levels, CommitmentConfig, CommitmentEnvelope, DecompositionParams,
     HachiExpandedSetup, HachiScheduleInputs, RingCommitment,
 };
 use crate::protocol::hachi_poly_ops::RecursiveWitnessFlat;
@@ -889,7 +889,7 @@ fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basis: u
 pub(crate) fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
     let modulus = detect_field_modulus::<F>();
     let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
-    recursive_r_decomp_levels_for_bound(field_bits, modulus / 2, log_basis)
+    recursive_r_decomp_levels(field_bits, log_basis)
 }
 
 /// # Errors
