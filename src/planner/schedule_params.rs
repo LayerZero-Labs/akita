@@ -332,7 +332,7 @@ fn batched_root_w_ring_element_count<Cfg: CommitmentConfig>(
     ));
 
     let w_hat = batch.num_claims * lp.num_blocks * lp.num_digits_open;
-    let t_hat = batch.num_claims * lp.num_blocks * lp.a_key.row_len * lp.num_digits_open;
+    let t_hat = batch.num_claims * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre = batch.num_points * lp.inner_width() * batched_num_digits_fold;
     let r_rows = lp.m_row_count_with_commitments_and_public_outputs(
         batch.num_commitment_groups,
@@ -352,8 +352,16 @@ fn batched_root_level_params<Cfg: CommitmentConfig>(
         return Cfg::root_level_params_for_layout_with_log_basis(inputs, candidate_lp).ok();
     }
     let mut scaled = candidate_lp.clone();
-    scaled.b_key.col_len = scaled.b_key.col_len.checked_mul(batch.num_claims)?;
-    scaled.d_key.col_len = scaled.d_key.col_len.checked_mul(batch.num_claims)?;
+    scaled.b_key = AjtaiKeyParams::new(
+        scaled.b_key.row_len(),
+        scaled.b_key.col_len().checked_mul(batch.num_claims)?,
+        scaled.b_key.log_basis(),
+    );
+    scaled.d_key = AjtaiKeyParams::new(
+        scaled.d_key.row_len(),
+        scaled.d_key.col_len().checked_mul(batch.num_claims)?,
+        scaled.d_key.log_basis(),
+    );
     scaled.num_digits_fold = scaled.num_digits_fold.max(compute_num_digits_fold(
         scaled.r_vars,
         Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
@@ -432,7 +440,7 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig>(
         };
         let Some(outer_width) = root_lp
             .a_key
-            .row_len
+            .row_len()
             .checked_mul(root_lp.num_digits_open)
             .and_then(|x| x.checked_mul(num_blocks))
         else {
@@ -445,21 +453,9 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig>(
         let candidate_lp = LevelParams {
             ring_dimension: root_lp.ring_dimension,
             log_basis: root_lp.log_basis,
-            a_key: AjtaiKeyParams {
-                row_len: root_lp.a_key.row_len,
-                col_len: inner_width,
-                log_basis: root_lp.log_basis,
-            },
-            b_key: AjtaiKeyParams {
-                row_len: root_lp.b_key.row_len,
-                col_len: outer_width,
-                log_basis: root_lp.log_basis,
-            },
-            d_key: AjtaiKeyParams {
-                row_len: root_lp.d_key.row_len,
-                col_len: d_matrix_width,
-                log_basis: root_lp.log_basis,
-            },
+            a_key: AjtaiKeyParams::new(root_lp.a_key.row_len(), inner_width, root_lp.log_basis),
+            b_key: AjtaiKeyParams::new(root_lp.b_key.row_len(), outer_width, root_lp.log_basis),
+            d_key: AjtaiKeyParams::new(root_lp.d_key.row_len(), d_matrix_width, root_lp.log_basis),
             num_blocks,
             block_len,
             m_vars,

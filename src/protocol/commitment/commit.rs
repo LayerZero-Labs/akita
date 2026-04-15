@@ -31,7 +31,7 @@ use crate::primitives::serialization::{
 };
 use crate::protocol::commitment_scheme::should_stop_folding;
 use crate::protocol::hachi_poly_ops::OneHotIndex;
-use crate::protocol::params::LevelParams;
+use crate::protocol::params::{AjtaiKeyParams, LevelParams};
 use crate::protocol::proof::FlatDigitBlocks;
 use crate::protocol::ring_switch::w_ring_element_count;
 use crate::{CanonicalField, FieldCore, FieldSampling};
@@ -169,7 +169,7 @@ impl<F: FieldCore> HachiExpandedSetup<F> {
             .ok_or_else(|| HachiError::InvalidSetup("inner width overflow".to_string()))?;
         let outer_width = p
             .a_key
-            .row_len
+            .row_len()
             .checked_mul(p.num_digits_open)
             .and_then(|x| x.checked_mul(p.num_blocks))
             .and_then(|x| x.checked_mul(num_claims))
@@ -475,9 +475,9 @@ impl LayoutChainStats {
         self.max_num_digits_open = self.max_num_digits_open.max(lp.num_digits_open);
         self.max_num_digits_fold = self.max_num_digits_fold.max(lp.num_digits_fold);
         self.max_log_basis = self.max_log_basis.max(lp.log_basis);
-        self.max_n_a = self.max_n_a.max(lp.a_key.row_len);
-        self.max_n_b = self.max_n_b.max(lp.b_key.row_len);
-        self.max_n_d = self.max_n_d.max(lp.d_key.row_len);
+        self.max_n_a = self.max_n_a.max(lp.a_key.row_len());
+        self.max_n_b = self.max_n_b.max(lp.b_key.row_len());
+        self.max_n_d = self.max_n_d.max(lp.d_key.row_len());
     }
 }
 
@@ -523,16 +523,24 @@ where
     let root_stage1_config =
         Cfg::stage1_challenge_config(Cfg::d_at_level(0, root_inputs.current_w_len));
     let mut scaled = root_lp.clone();
-    scaled.b_key.col_len = root_lp
-        .b_key
-        .col_len
-        .checked_mul(num_claims)
-        .ok_or_else(|| HachiError::InvalidSetup("batched outer width overflow".to_string()))?;
-    scaled.d_key.col_len = root_lp
-        .d_key
-        .col_len
-        .checked_mul(num_claims)
-        .ok_or_else(|| HachiError::InvalidSetup("batched D width overflow".to_string()))?;
+    scaled.b_key = AjtaiKeyParams::new(
+        scaled.b_key.row_len(),
+        root_lp
+            .b_key
+            .col_len()
+            .checked_mul(num_claims)
+            .ok_or_else(|| HachiError::InvalidSetup("batched outer width overflow".to_string()))?,
+        scaled.b_key.log_basis(),
+    );
+    scaled.d_key = AjtaiKeyParams::new(
+        scaled.d_key.row_len(),
+        root_lp
+            .d_key
+            .col_len()
+            .checked_mul(num_claims)
+            .ok_or_else(|| HachiError::InvalidSetup("batched D width overflow".to_string()))?,
+        scaled.d_key.log_basis(),
+    );
     scaled.num_digits_fold = root_lp.num_digits_fold.max(compute_num_digits_fold_batched(
         root_lp.r_vars,
         root_stage1_config.l1_mass(),
@@ -1130,7 +1138,7 @@ where
         let log_basis = root_lp.log_basis;
         let block_slices: Vec<&[CyclotomicRing<F, D>]> =
             f_blocks.iter().map(|b| b.as_slice()).collect();
-        let t_hat = if root_lp.a_key.row_len == 1 {
+        let t_hat = if root_lp.a_key.row_len() == 1 {
             let t_single = mat_vec_mul_ntt_i8_dense_single_row(
                 &setup.ntt_shared,
                 setup.expanded.seed.max_stride(),
@@ -1157,7 +1165,7 @@ where
         } else {
             let t_all = mat_vec_mul_ntt_i8_dense(
                 &setup.ntt_shared,
-                root_lp.a_key.row_len,
+                root_lp.a_key.row_len(),
                 setup.expanded.seed.max_stride(),
                 &block_slices,
                 depth_commit,
@@ -1180,7 +1188,7 @@ where
 
         let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
             &setup.ntt_shared,
-            root_lp.b_key.row_len,
+            root_lp.b_key.row_len(),
             setup.expanded.seed.max_stride(),
             t_hat.flat_digits(),
         );
@@ -1202,11 +1210,11 @@ where
         let depth_commit = root_lp.num_digits_commit;
         let depth_open = root_lp.num_digits_open;
         let log_basis = root_lp.log_basis;
-        let zero_block_len = root_lp.a_key.row_len.checked_mul(depth_open).unwrap();
+        let zero_block_len = root_lp.a_key.row_len().checked_mul(depth_open).unwrap();
         let a_view = setup
             .expanded
             .shared_matrix
-            .ring_view::<D>(root_lp.a_key.row_len, setup.expanded.seed.max_stride());
+            .ring_view::<D>(root_lp.a_key.row_len(), setup.expanded.seed.max_stride());
         let block_len = root_lp.block_len;
 
         let block_sizes = vec![zero_block_len; sparse_blocks.len()];
@@ -1219,7 +1227,7 @@ where
                 if !block_entries.is_empty() {
                     let mut t_i =
                         inner_ajtai_onehot_wide(&a_view, block_entries, block_len, depth_commit);
-                    t_i.truncate(root_lp.a_key.row_len);
+                    t_i.truncate(root_lp.a_key.row_len());
                     decompose_rows_i8_into(&t_i, dst, depth_open, log_basis);
                 }
             });
@@ -1231,14 +1239,14 @@ where
                 if !block_entries.is_empty() {
                     let mut t_i =
                         inner_ajtai_onehot_wide(&a_view, block_entries, block_len, depth_commit);
-                    t_i.truncate(root_lp.a_key.row_len);
+                    t_i.truncate(root_lp.a_key.row_len());
                     decompose_rows_i8_into(&t_i, dst, depth_open, log_basis);
                 }
             });
 
         let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
             &setup.ntt_shared,
-            root_lp.b_key.row_len,
+            root_lp.b_key.row_len(),
             setup.expanded.seed.max_stride(),
             t_hat.flat_digits(),
         );

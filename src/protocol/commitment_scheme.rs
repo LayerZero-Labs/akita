@@ -1815,7 +1815,7 @@ where
     setup.ensure_layout_fits(&batched_lp)?;
     if commitments
         .iter()
-        .any(|commitment| commitment.u.len() != root_lp.b_key.row_len)
+        .any(|commitment| commitment.u.len() != root_lp.b_key.row_len())
     {
         return Err(HachiError::InvalidInput(
             "batched_prove received a commitment with the wrong length".to_string(),
@@ -2069,7 +2069,7 @@ where
             &poly_refs,
             &setup.expanded.shared_matrix,
             &setup.ntt_shared,
-            sp.a_key.row_len,
+            sp.a_key.row_len(),
             sp.block_len,
             sp.num_digits_commit,
             sp.num_digits_open,
@@ -2084,7 +2084,7 @@ where
                     poly.commit_inner_witness(
                         &setup.expanded.shared_matrix,
                         &setup.ntt_shared,
-                        sp.a_key.row_len,
+                        sp.a_key.row_len(),
                         sp.block_len,
                         sp.num_digits_commit,
                         sp.num_digits_open,
@@ -2100,18 +2100,18 @@ where
         let mut group_t = Vec::with_capacity(polys.len());
         for mut inner in inner_witnesses {
             for t_i in &mut inner.t {
-                t_i.truncate(sp.a_key.row_len);
+                t_i.truncate(sp.a_key.row_len());
             }
             inner
                 .t_hat
-                .truncate_each_block(sp.a_key.row_len * sp.num_digits_open);
+                .truncate_each_block(sp.a_key.row_len() * sp.num_digits_open);
             inner_opening_digits_flat.extend_from_slice(inner.t_hat.flat_digits());
             group_t_hat.push(inner.t_hat);
             group_t.push(inner.t);
         }
         let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
             &setup.ntt_shared,
-            sp.b_key.row_len,
+            sp.b_key.row_len(),
             setup.expanded.seed.max_stride(),
             &inner_opening_digits_flat,
         );
@@ -2437,7 +2437,7 @@ where
         let flat_commitments = flatten_commitments_by_point(commitments_by_point);
         if flat_commitments
             .iter()
-            .any(|commitment| commitment.u.len() != root_lp.b_key.row_len)
+            .any(|commitment| commitment.u.len() != root_lp.b_key.row_len())
         {
             return Err(HachiError::InvalidInput(
                 "batched_prove received a commitment with the wrong length".to_string(),
@@ -2918,7 +2918,7 @@ where
     }
     if commitments
         .iter()
-        .any(|commitment| commitment.u.len() != root_lp.b_key.row_len)
+        .any(|commitment| commitment.u.len() != root_lp.b_key.row_len())
     {
         return Err(HachiError::InvalidProof);
     }
@@ -3079,7 +3079,7 @@ where
     }
     if commitments
         .iter()
-        .any(|commitment| commitment.u.len() != root_lp.b_key.row_len)
+        .any(|commitment| commitment.u.len() != root_lp.b_key.row_len())
     {
         return Err(HachiError::InvalidProof);
     }
@@ -3464,10 +3464,10 @@ mod tests {
             let rounds = batched_shape_rounds(onehot_lp.ring_dimension, next_w_len);
             step_shapes.push(HachiProofStepShape::Fold(LevelProofShape {
                 y_ring_coeffs: onehot_lp.ring_dimension,
-                v_coeffs: onehot_lp.d_key.row_len * onehot_lp.ring_dimension,
+                v_coeffs: onehot_lp.d_key.row_len() * onehot_lp.ring_dimension,
                 stage1_stages: stage1_tree_stage_shapes(rounds, 1usize << onehot_lp.log_basis),
                 stage2_sumcheck: (rounds, 3),
-                next_commit_coeffs: next_level_params.b_key.row_len
+                next_commit_coeffs: next_level_params.b_key.row_len()
                     * next_level_params.ring_dimension,
             }));
             current_w_len = next_w_len;
@@ -4194,7 +4194,7 @@ mod tests {
             let w_hat_len =
                 batched_root_lp.num_digits_open * batched_root_lp.num_blocks * BATCH_SIZE;
             let t_hat_len = batched_root_lp.num_digits_open
-                * batched_root_lp.a_key.row_len
+                * batched_root_lp.a_key.row_len()
                 * batched_root_lp.num_blocks
                 * BATCH_SIZE;
             let z_pre_len = batched_root_lp.inner_width() * batched_root_lp.num_digits_fold;
@@ -4236,7 +4236,7 @@ mod tests {
             );
             let eq_tau1 = crate::algebra::eq_poly::EqPolynomial::evals(&rs.tau1);
             let row3_start =
-                batched_root_lp.d_key.row_len + batched_root_lp.b_key.row_len * BATCH_SIZE;
+                batched_root_lp.d_key.row_len() + batched_root_lp.b_key.row_len() * BATCH_SIZE;
             let row4_idx = row3_start + BATCH_SIZE;
             let a_row_start = row4_idx + 1;
             let row3_weights = &eq_tau1[row3_start..row4_idx];
@@ -4283,21 +4283,21 @@ mod tests {
             let d_view = batch_setup
                 .expanded
                 .shared_matrix
-                .ring_view::<ONEHOT_D>(batched_root_lp.d_key.row_len, debug_stride);
+                .ring_view::<ONEHOT_D>(batched_root_lp.d_key.row_len(), debug_stride);
             let b_view = batch_setup
                 .expanded
                 .shared_matrix
-                .ring_view::<ONEHOT_D>(batched_root_lp.b_key.row_len, debug_stride);
+                .ring_view::<ONEHOT_D>(batched_root_lp.b_key.row_len(), debug_stride);
             let a_view = batch_setup
                 .expanded
                 .shared_matrix
-                .ring_view::<ONEHOT_D>(batched_root_lp.a_key.row_len, debug_stride);
+                .ring_view::<ONEHOT_D>(batched_root_lp.a_key.row_len(), debug_stride);
             let denom = alpha_pows[ONEHOT_D - 1] * rs.alpha + OneHotF::one();
             let expected_d_sum = quad_eq
                 .v
                 .iter()
                 .enumerate()
-                .take(batched_root_lp.d_key.row_len)
+                .take(batched_root_lp.d_key.row_len())
                 .fold(OneHotF::zero(), |acc, (row_idx, row)| {
                     acc + eq_tau1[row_idx]
                         * crate::protocol::ring_switch::eval_ring_at(row, &rs.alpha)
@@ -4305,7 +4305,7 @@ mod tests {
             let expected_b_sum = batch_commitment_rows.iter().enumerate().fold(
                 OneHotF::zero(),
                 |acc, (row_idx, row)| {
-                    acc + eq_tau1[batched_root_lp.d_key.row_len + row_idx]
+                    acc + eq_tau1[batched_root_lp.d_key.row_len() + row_idx]
                         * crate::protocol::ring_switch::eval_ring_at(row, &rs.alpha)
                 },
             );
@@ -4437,9 +4437,9 @@ mod tests {
                 &quad_eq.v,
                 &batch_commitment_rows,
                 &y_rings,
-                batched_root_lp.d_key.row_len,
-                batched_root_lp.b_key.row_len,
-                batched_root_lp.a_key.row_len,
+                batched_root_lp.d_key.row_len(),
+                batched_root_lp.b_key.row_len(),
+                batched_root_lp.a_key.row_len(),
             )
             .expect("debug batched y");
             let debug_r =
@@ -4506,7 +4506,7 @@ mod tests {
             let d_matrix_width = batched_root_lp.d_matrix_width();
             let d_group_w = (0..w_hat_len).fold(OneHotF::zero(), |acc, x| {
                 let coeff =
-                    (0..batched_root_lp.d_key.row_len).fold(OneHotF::zero(), |inner, row_idx| {
+                    (0..batched_root_lp.d_key.row_len()).fold(OneHotF::zero(), |inner, row_idx| {
                         inner
                             + eq_tau1[row_idx]
                                 * eval_ring_at_pows_local(
@@ -4517,7 +4517,7 @@ mod tests {
                 acc + w_alpha_evals[x] * coeff
             });
             let d_group_r =
-                (0..batched_root_lp.d_key.row_len).fold(OneHotF::zero(), |acc, row_idx| {
+                (0..batched_root_lp.d_key.row_len()).fold(OneHotF::zero(), |acc, row_idx| {
                     let row_start = w_hat_len + t_hat_len + z_pre_len + row_idx * r_gadget.len();
                     acc + (0..r_gadget.len()).fold(OneHotF::zero(), |inner, level_idx| {
                         inner
@@ -4528,9 +4528,9 @@ mod tests {
             let outer_width = batched_root_lp.outer_width();
             let b_group_t = (0..t_hat_len).fold(OneHotF::zero(), |acc, x| {
                 let coeff =
-                    (0..batched_root_lp.b_key.row_len).fold(OneHotF::zero(), |inner, row_idx| {
+                    (0..batched_root_lp.b_key.row_len()).fold(OneHotF::zero(), |inner, row_idx| {
                         inner
-                            + eq_tau1[batched_root_lp.d_key.row_len + row_idx]
+                            + eq_tau1[batched_root_lp.d_key.row_len() + row_idx]
                                 * eval_ring_at_pows_local(
                                     &b_view.row(row_idx)[x % outer_width],
                                     alpha_pows,
@@ -4539,8 +4539,8 @@ mod tests {
                 acc + w_alpha_evals[w_hat_len + x] * coeff
             });
             let b_group_r =
-                (0..batched_root_lp.b_key.row_len).fold(OneHotF::zero(), |acc, row_offset| {
-                    let row_idx = batched_root_lp.d_key.row_len + row_offset;
+                (0..batched_root_lp.b_key.row_len()).fold(OneHotF::zero(), |acc, row_offset| {
+                    let row_idx = batched_root_lp.d_key.row_len() + row_offset;
                     let row_start = w_hat_len + t_hat_len + z_pre_len + row_idx * r_gadget.len();
                     acc + (0..r_gadget.len()).fold(OneHotF::zero(), |inner, level_idx| {
                         inner
@@ -4599,15 +4599,15 @@ mod tests {
                 })
             };
             let a_group_t = (0..t_hat_len).fold(OneHotF::zero(), |acc, x| {
-                let blocks_per_claim = batched_root_lp.a_key.row_len
+                let blocks_per_claim = batched_root_lp.a_key.row_len()
                     * batched_root_lp.num_digits_open
                     * batched_root_lp.num_blocks;
                 let claim_idx = x / blocks_per_claim;
                 let claim_offset = x % blocks_per_claim;
                 let block_idx = claim_offset
-                    / (batched_root_lp.a_key.row_len * batched_root_lp.num_digits_open);
+                    / (batched_root_lp.a_key.row_len() * batched_root_lp.num_digits_open);
                 let rem = claim_offset
-                    % (batched_root_lp.a_key.row_len * batched_root_lp.num_digits_open);
+                    % (batched_root_lp.a_key.row_len() * batched_root_lp.num_digits_open);
                 let a_idx = rem / batched_root_lp.num_digits_open;
                 let digit_idx = rem % batched_root_lp.num_digits_open;
                 let global_block_idx = claim_idx * batched_root_lp.num_blocks + block_idx;

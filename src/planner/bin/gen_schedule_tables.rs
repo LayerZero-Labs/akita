@@ -116,9 +116,9 @@ fn emit_fold(step: &FoldStep, label: &str) -> String {
         p.challenge_l1_mass(),
         p.log_block_len(),
         p.log_num_blocks(),
-        p.a_key.row_len,
-        p.b_key.row_len,
-        p.d_key.row_len,
+        p.a_key.row_len(),
+        p.b_key.row_len(),
+        p.d_key.row_len(),
         p.num_digits_open,
         p.num_digits_fold,
         p.num_digits_commit,
@@ -152,8 +152,8 @@ fn emit_direct<Cfg: CommitmentConfig>(
         )
         .expect("level params for direct step");
         let total =
-            direct.direct_bytes + ring_vec_bytes(lp.b_key.row_len, lp.ring_dimension as u32);
-        (Some(lp.ring_dimension), Some(lp.b_key.row_len), total)
+            direct.direct_bytes + ring_vec_bytes(lp.b_key.row_len(), lp.ring_dimension as u32);
+        (Some(lp.ring_dimension), Some(lp.b_key.row_len()), total)
     };
 
     format!(

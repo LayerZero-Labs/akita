@@ -164,7 +164,7 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
                         lp: level_lp.clone(),
                         next_inputs,
                         next_level_log_basis: next_log_basis,
-                        next_commit_coeffs: next_lp.b_key.row_len * next_lp.ring_dimension,
+                        next_commit_coeffs: next_lp.b_key.row_len() * next_lp.ring_dimension,
                         level_bytes,
                     })));
                     steps.extend(suffix.steps);

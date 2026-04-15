@@ -701,7 +701,7 @@ fn w_ring_element_count_with_counts<F: CanonicalField>(
     num_point_sets: usize,
 ) -> usize {
     let w_hat_count = num_claims * lp.num_blocks * lp.num_digits_open;
-    let t_hat_count = num_claims * lp.num_blocks * lp.a_key.row_len * lp.num_digits_open;
+    let t_hat_count = num_claims * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre_count = num_point_sets * lp.inner_width() * lp.num_digits_fold;
     let r_rows = if num_claims == 1 && num_commitment_groups == 1 {
         lp.m_row_count()
@@ -812,7 +812,7 @@ where
     let w_view = w.view::<F, D>()?;
     let inner = w_view.commit_inner_witness(
         ntt_shared,
-        lp.a_key.row_len,
+        lp.a_key.row_len(),
         block_len,
         num_blocks,
         depth_commit,
@@ -823,7 +823,7 @@ where
 
     let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
         ntt_shared,
-        lp.b_key.row_len,
+        lp.b_key.row_len(),
         stride,
         inner.t_hat.flat_digits(),
     );
@@ -1016,7 +1016,7 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
     }
     let block_len = lp.block_len;
     let w_len = depth_open * total_blocks;
-    let t_len = depth_open * lp.a_key.row_len * total_blocks;
+    let t_len = depth_open * lp.a_key.row_len() * total_blocks;
     let inner_width = block_len * depth_commit;
     let z_len = depth_fold * inner_width;
     let rows = if num_claims == 1 && num_commitment_groups == 1 {
@@ -1052,12 +1052,18 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
         .collect::<Result<_, _>>()?;
 
     let stride = setup.seed.max_stride();
-    let d_view = setup.shared_matrix.ring_view::<D>(lp.d_key.row_len, stride);
-    let b_view = setup.shared_matrix.ring_view::<D>(lp.b_key.row_len, stride);
-    let a_view = setup.shared_matrix.ring_view::<D>(lp.a_key.row_len, stride);
+    let d_view = setup
+        .shared_matrix
+        .ring_view::<D>(lp.d_key.row_len(), stride);
+    let b_view = setup
+        .shared_matrix
+        .ring_view::<D>(lp.b_key.row_len(), stride);
+    let a_view = setup
+        .shared_matrix
+        .ring_view::<D>(lp.a_key.row_len(), stride);
 
-    let commitment_row_count = lp.b_key.row_len * num_commitment_groups;
-    let public_row_start = lp.d_key.row_len + commitment_row_count;
+    let commitment_row_count = lp.b_key.row_len() * num_commitment_groups;
+    let public_row_start = lp.d_key.row_len() + commitment_row_count;
     let row3_weights = &eq_tau1[public_row_start..(public_row_start + num_claims)];
     let row4_weight = eq_tau1[public_row_start + num_claims];
     let a_weights = &eq_tau1[(public_row_start + num_claims + 1)..rows];
@@ -1081,7 +1087,7 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
             let mut acc = (row3_weights[claim_idx] * opening_point.b[block_idx]
                 + row4_weight * c_alphas[global_block_idx])
                 * g1_open[digit_idx];
-            for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(lp.d_key.row_len) {
+            for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(lp.d_key.row_len()) {
                 if !eq_i.is_zero() {
                     acc += *eq_i
                         * eval_ring_at_pows(&d_view.row(row_idx)[x % d_matrix_width], alpha_pows);
@@ -1094,18 +1100,18 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
 
     let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
         .map(|x| {
-            let t_cols_per_claim = lp.a_key.row_len * depth_open * num_blocks;
+            let t_cols_per_claim = lp.a_key.row_len() * depth_open * num_blocks;
             let claim_idx = x / t_cols_per_claim;
             let claim_offset = x % t_cols_per_claim;
-            let block_idx = claim_offset / (lp.a_key.row_len * depth_open);
-            let rem = claim_offset % (lp.a_key.row_len * depth_open);
+            let block_idx = claim_offset / (lp.a_key.row_len() * depth_open);
+            let rem = claim_offset % (lp.a_key.row_len() * depth_open);
             let a_idx = rem / depth_open;
             let digit_idx = rem % depth_open;
             let global_block_idx = claim_idx * num_blocks + block_idx;
             let (group_idx, claim_idx_within_group) = claim_to_group[claim_idx];
             let local_col = claim_idx_within_group * t_cols_per_claim + claim_offset;
-            let commitment_weights = &eq_tau1[(lp.d_key.row_len + group_idx * lp.b_key.row_len)
-                ..(lp.d_key.row_len + (group_idx + 1) * lp.b_key.row_len)];
+            let commitment_weights = &eq_tau1[(lp.d_key.row_len() + group_idx * lp.b_key.row_len())
+                ..(lp.d_key.row_len() + (group_idx + 1) * lp.b_key.row_len())];
             let mut acc = a_weights[a_idx] * c_alphas[global_block_idx] * g1_open[digit_idx];
             for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
@@ -1235,7 +1241,7 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
     }
     let block_len = lp.block_len;
     let w_len = depth_open * total_blocks;
-    let t_len = depth_open * lp.a_key.row_len * total_blocks;
+    let t_len = depth_open * lp.a_key.row_len() * total_blocks;
     let inner_width = block_len * depth_commit;
     let z_base_len = opening_points
         .len()
@@ -1277,12 +1283,18 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
         .collect::<Result<_, _>>()?;
 
     let stride = setup.seed.max_stride();
-    let d_view = setup.shared_matrix.ring_view::<D>(lp.d_key.row_len, stride);
-    let b_view = setup.shared_matrix.ring_view::<D>(lp.b_key.row_len, stride);
-    let a_view = setup.shared_matrix.ring_view::<D>(lp.a_key.row_len, stride);
+    let d_view = setup
+        .shared_matrix
+        .ring_view::<D>(lp.d_key.row_len(), stride);
+    let b_view = setup
+        .shared_matrix
+        .ring_view::<D>(lp.b_key.row_len(), stride);
+    let a_view = setup
+        .shared_matrix
+        .ring_view::<D>(lp.a_key.row_len(), stride);
 
-    let commitment_row_count = lp.b_key.row_len * num_commitment_groups;
-    let public_row_start = lp.d_key.row_len + commitment_row_count;
+    let commitment_row_count = lp.b_key.row_len() * num_commitment_groups;
+    let public_row_start = lp.d_key.row_len() + commitment_row_count;
     let row3_weights = &eq_tau1[public_row_start..(public_row_start + num_claims)];
     let row4_weight = eq_tau1[public_row_start + num_claims];
     let a_weights = &eq_tau1[(public_row_start + num_claims + 1)..rows];
@@ -1307,7 +1319,7 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
             let mut acc = (row3_weights[claim_idx] * opening_point.b[block_idx]
                 + row4_weight * c_alphas[global_block_idx])
                 * g1_open[digit_idx];
-            for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(lp.d_key.row_len) {
+            for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(lp.d_key.row_len()) {
                 if !eq_i.is_zero() {
                     acc += *eq_i
                         * eval_ring_at_pows(&d_view.row(row_idx)[x % d_matrix_width], alpha_pows);
@@ -1320,18 +1332,18 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
 
     let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
         .map(|x| {
-            let t_cols_per_claim = lp.a_key.row_len * depth_open * num_blocks;
+            let t_cols_per_claim = lp.a_key.row_len() * depth_open * num_blocks;
             let claim_idx = x / t_cols_per_claim;
             let claim_offset = x % t_cols_per_claim;
-            let block_idx = claim_offset / (lp.a_key.row_len * depth_open);
-            let rem = claim_offset % (lp.a_key.row_len * depth_open);
+            let block_idx = claim_offset / (lp.a_key.row_len() * depth_open);
+            let rem = claim_offset % (lp.a_key.row_len() * depth_open);
             let a_idx = rem / depth_open;
             let digit_idx = rem % depth_open;
             let global_block_idx = claim_idx * num_blocks + block_idx;
             let (group_idx, claim_idx_within_group) = claim_to_group[claim_idx];
             let local_col = claim_idx_within_group * t_cols_per_claim + claim_offset;
-            let commitment_weights = &eq_tau1[(lp.d_key.row_len + group_idx * lp.b_key.row_len)
-                ..(lp.d_key.row_len + (group_idx + 1) * lp.b_key.row_len)];
+            let commitment_weights = &eq_tau1[(lp.d_key.row_len() + group_idx * lp.b_key.row_len())
+                ..(lp.d_key.row_len() + (group_idx + 1) * lp.b_key.row_len())];
             let mut acc = a_weights[a_idx] * c_alphas[global_block_idx] * g1_open[digit_idx];
             for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
@@ -1814,7 +1826,11 @@ mod tests {
             level: 1,
             current_w_len: w.len(),
         });
-        level_params.a_key.row_len = 3;
+        level_params.a_key = crate::protocol::params::AjtaiKeyParams::new(
+            3,
+            level_params.a_key.col_len(),
+            level_params.a_key.log_basis(),
+        );
 
         let test_lp = hachi_recursive_level_layout_from_params::<WCfg>(&level_params, w.len())
             .expect("layout");
@@ -1831,13 +1847,13 @@ mod tests {
 
         assert_eq!(t.len(), test_lp.num_blocks);
         assert!(
-            t.iter().all(|block| block.len() == test_lp.a_key.row_len),
+            t.iter().all(|block| block.len() == test_lp.a_key.row_len()),
             "every block should use the active n_a rows"
         );
         assert!(
             hint.inner_opening_digits
                 .iter()
-                .all(|block| block.len() == test_lp.a_key.row_len * test_lp.num_digits_open),
+                .all(|block| block.len() == test_lp.a_key.row_len() * test_lp.num_digits_open),
             "t_hat should also use the active n_a rows"
         );
     }

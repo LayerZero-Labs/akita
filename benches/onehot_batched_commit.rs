@@ -71,7 +71,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         .commit_inner_witness(
             &single_setup.expanded.shared_matrix,
             &single_setup.ntt_shared,
-            single_params.a_key.row_len,
+            single_params.a_key.row_len(),
             single_layout.block_len,
             single_layout.num_digits_commit,
             single_layout.num_digits_open,
@@ -85,7 +85,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
             poly.commit_inner_witness(
                 &batched_setup.expanded.shared_matrix,
                 &batched_setup.ntt_shared,
-                batch_params.a_key.row_len,
+                batch_params.a_key.row_len(),
                 batch_layout.block_len,
                 batch_layout.num_digits_commit,
                 batch_layout.num_digits_open,
@@ -96,8 +96,8 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         })
         .collect();
 
-    let single_n_b = single_params.b_key.row_len;
-    let batch_n_b = batch_params.b_key.row_len;
+    let single_n_b = single_params.b_key.row_len();
+    let batch_n_b = batch_params.b_key.row_len();
 
     let mut group = c.benchmark_group("hachi/onehot_commit_breakdown");
     group.sample_size(10);
@@ -125,7 +125,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
                     .commit_inner_witness(
                         &single_setup.expanded.shared_matrix,
                         &single_setup.ntt_shared,
-                        single_params.a_key.row_len,
+                        single_params.a_key.row_len(),
                         single_layout.block_len,
                         single_layout.num_digits_commit,
                         single_layout.num_digits_open,
@@ -188,7 +188,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
                         poly.commit_inner_witness(
                             &batched_setup.expanded.shared_matrix,
                             &batched_setup.ntt_shared,
-                            batch_params.a_key.row_len,
+                            batch_params.a_key.row_len(),
                             batch_layout.block_len,
                             batch_layout.num_digits_commit,
                             batch_layout.num_digits_open,

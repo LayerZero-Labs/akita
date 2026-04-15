@@ -219,7 +219,7 @@ where
             ));
         }
         for commitment in commitments {
-            if commitment.u.len() != lp.b_key.row_len {
+            if commitment.u.len() != lp.b_key.row_len() {
                 return Err(HachiError::InvalidInput(
                     "batched prover received a commitment with the wrong length".to_string(),
                 ));
@@ -290,7 +290,7 @@ where
                 w_hat_planes = w_hat.flat_digits().len()
             )
             .entered();
-            mat_vec_mul_ntt_single_i8(ntt_d, lp.d_key.row_len, stride, w_hat.flat_digits())
+            mat_vec_mul_ntt_single_i8(ntt_d, lp.d_key.row_len(), stride, w_hat.flat_digits())
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
@@ -400,9 +400,9 @@ where
             &v,
             &commitment_rows,
             y_rings,
-            lp.d_key.row_len,
-            lp.b_key.row_len,
-            lp.a_key.row_len,
+            lp.d_key.row_len(),
+            lp.b_key.row_len(),
+            lp.a_key.row_len(),
         )?;
         let w_folded = pre_folded_by_poly.into_iter().flatten().collect();
 
@@ -474,7 +474,7 @@ where
         let v = {
             let _span = tracing::info_span!("compute_v", w_hat_planes = w_hat.flat_digits().len())
                 .entered();
-            mat_vec_mul_ntt_single_i8(ntt_d, lp.d_key.row_len, stride, w_hat.flat_digits())
+            mat_vec_mul_ntt_single_i8(ntt_d, lp.d_key.row_len(), stride, w_hat.flat_digits())
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
@@ -501,9 +501,9 @@ where
             &v,
             &commitment.u,
             std::slice::from_ref(y_ring),
-            lp.d_key.row_len,
-            lp.b_key.row_len,
-            lp.a_key.row_len,
+            lp.d_key.row_len(),
+            lp.b_key.row_len(),
+            lp.a_key.row_len(),
         )?;
 
         Ok(Self {
@@ -660,7 +660,7 @@ where
         let v = {
             let _span = tracing::info_span!("compute_v", w_hat_planes = w_hat.flat_digits().len())
                 .entered();
-            mat_vec_mul_ntt_single_i8(ntt_d, lp.d_key.row_len, stride, w_hat.flat_digits())
+            mat_vec_mul_ntt_single_i8(ntt_d, lp.d_key.row_len(), stride, w_hat.flat_digits())
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
@@ -688,9 +688,9 @@ where
             &v,
             commitment,
             std::slice::from_ref(y_ring),
-            lp.d_key.row_len,
-            lp.b_key.row_len,
-            lp.a_key.row_len,
+            lp.d_key.row_len(),
+            lp.b_key.row_len(),
+            lp.a_key.row_len(),
         )?;
 
         Ok(Self {
@@ -976,7 +976,7 @@ where
     let num_commitment_groups = claim_group_sizes.len();
     let commitment_row_count = lp
         .b_key
-        .row_len
+        .row_len()
         .checked_mul(num_commitment_groups)
         .ok_or(HachiError::InvalidProof)?;
     let num_rows = lp
@@ -984,7 +984,7 @@ where
     if y.len() != num_rows {
         return Err(HachiError::InvalidProof);
     }
-    let row3_start = lp.d_key.row_len + commitment_row_count;
+    let row3_start = lp.d_key.row_len() + commitment_row_count;
     let row4_idx = row3_start + num_public_outputs;
     let a_row_start = row4_idx + 1;
 
@@ -997,9 +997,9 @@ where
 
     let (d_cyclic, b_cyclic, mut a_quotients) = fused_split_eq_quotients::<F, D>(
         ntt_shared,
-        lp.d_key.row_len,
-        lp.b_key.row_len,
-        lp.a_key.row_len,
+        lp.d_key.row_len(),
+        lp.b_key.row_len(),
+        lp.a_key.row_len(),
         stride,
         w_hat_flat,
         t_hat.flat_digits(),
@@ -1011,7 +1011,7 @@ where
             ntt_shared,
             0,
             0,
-            lp.a_key.row_len,
+            lp.a_key.row_len(),
             stride,
             &[],
             &[],
@@ -1023,12 +1023,12 @@ where
         }
     }
     let commitment_cyclic_rows =
-        if commitment_row_count == lp.b_key.row_len && num_commitment_groups == 1 {
+        if commitment_row_count == lp.b_key.row_len() && num_commitment_groups == 1 {
             b_cyclic
         } else {
             repeated_b_commitment_rows(
                 ntt_shared,
-                lp.b_key.row_len,
+                lp.b_key.row_len(),
                 stride,
                 t_hat,
                 claim_group_sizes,
@@ -1043,14 +1043,14 @@ where
     let mut other_time = 0.0f64;
 
     for row_idx in 0..num_rows {
-        if row_idx < lp.d_key.row_len {
+        if row_idx < lp.d_key.row_len() {
             result.push(quotient_from_cyclic_and_reduced(
                 &d_cyclic[row_idx],
                 &y[row_idx],
             ));
-        } else if row_idx < lp.d_key.row_len + commitment_row_count {
+        } else if row_idx < lp.d_key.row_len() + commitment_row_count {
             result.push(quotient_from_cyclic_and_reduced(
-                &commitment_cyclic_rows[row_idx - lp.d_key.row_len],
+                &commitment_cyclic_rows[row_idx - lp.d_key.row_len()],
                 &y[row_idx],
             ));
         } else if row_idx >= a_row_start {

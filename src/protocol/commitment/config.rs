@@ -188,7 +188,7 @@ pub(super) fn optimal_m_r_split_with_params(
     let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
     let delta_open = num_digits_for_bound(open_bound, decomp.log_basis) as u64;
     let delta_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis) as u64;
-    let c1 = delta_open + params.a_key.row_len as u64 * delta_open;
+    let c1 = delta_open + params.a_key.row_len() as u64 * delta_open;
 
     let mut best_r = reduced_vars / 2;
     let mut best_cost = u64::MAX;
@@ -955,13 +955,13 @@ impl<
                         break;
                     };
                     if (
-                        derived_lp.a_key.row_len,
-                        derived_lp.b_key.row_len,
-                        derived_lp.d_key.row_len,
+                        derived_lp.a_key.row_len(),
+                        derived_lp.b_key.row_len(),
+                        derived_lp.d_key.row_len(),
                     ) == (
-                        params.a_key.row_len,
-                        params.b_key.row_len,
-                        params.d_key.row_len,
+                        params.a_key.row_len(),
+                        params.b_key.row_len(),
+                        params.d_key.row_len(),
                     ) {
                         converged = Some(derived_lp);
                         break;
@@ -971,9 +971,9 @@ impl<
                 converged
             };
             if let Some(root_params) = root_params {
-                envelope.max_n_a = envelope.max_n_a.max(root_params.a_key.row_len);
-                envelope.max_n_b = envelope.max_n_b.max(root_params.b_key.row_len);
-                envelope.max_n_d = envelope.max_n_d.max(root_params.d_key.row_len);
+                envelope.max_n_a = envelope.max_n_a.max(root_params.a_key.row_len());
+                envelope.max_n_b = envelope.max_n_b.max(root_params.b_key.row_len());
+                envelope.max_n_d = envelope.max_n_d.max(root_params.d_key.row_len());
             }
         }
         envelope
@@ -1083,10 +1083,10 @@ impl<
                 false,
             )?;
             let derived_params = sis_derived_root_params_for_layout::<Self>(inputs, &root_lp)?;
-            if derived_params.a_key.row_len == candidate_n_a {
+            if derived_params.a_key.row_len() == candidate_n_a {
                 return Ok(derived_params.with_layout(&root_lp));
             }
-            candidate_n_a = derived_params.a_key.row_len;
+            candidate_n_a = derived_params.a_key.row_len();
         }
         Err(HachiError::InvalidSetup(format!(
             "failed to converge on self-consistent root A-row rank for D={D} lb={log_basis}"
@@ -1204,14 +1204,14 @@ mod fp128_policy_tests {
                     )
                 });
                 assert!(
-                    a_rank <= level.lp.a_key.row_len as u32,
+                    a_rank <= level.lp.a_key.row_len() as u32,
                     "A-row SIS audit failed for num_vars={}, level={}, lb={}, width={}, required_rank={}, actual_rank={}",
                     num_vars,
                     level.inputs.level,
                     level.lp.log_basis,
                     level.lp.inner_width(),
                     a_rank,
-                    level.lp.a_key.row_len,
+                    level.lp.a_key.row_len(),
                 );
 
                 let bd_collision = (1u32 << level.lp.log_basis) - 1;
@@ -1231,14 +1231,14 @@ mod fp128_policy_tests {
                     )
                 });
                 assert!(
-                    b_rank <= level.lp.b_key.row_len as u32,
+                    b_rank <= level.lp.b_key.row_len() as u32,
                     "B-row SIS audit failed for num_vars={}, level={}, lb={}, width={}, required_rank={}, actual_rank={}",
                     num_vars,
                     level.inputs.level,
                     level.lp.log_basis,
                     level.lp.outer_width(),
                     b_rank,
-                    level.lp.b_key.row_len,
+                    level.lp.b_key.row_len(),
                 );
 
                 let d_rank = min_rank_for_secure_width(
@@ -1257,14 +1257,14 @@ mod fp128_policy_tests {
                     )
                 });
                 assert!(
-                    d_rank <= level.lp.d_key.row_len as u32,
+                    d_rank <= level.lp.d_key.row_len() as u32,
                     "D-row SIS audit failed for num_vars={}, level={}, lb={}, width={}, required_rank={}, actual_rank={}",
                     num_vars,
                     level.inputs.level,
                     level.lp.log_basis,
                     level.lp.d_matrix_width(),
                     d_rank,
-                    level.lp.d_key.row_len,
+                    level.lp.d_key.row_len(),
                 );
             }
         }
@@ -1308,18 +1308,18 @@ mod fp128_policy_tests {
         };
         let root_lp = Cfg::root_level_layout_with_log_basis(inputs, 2).unwrap();
 
-        assert_eq!(root_lp.a_key.row_len, 3);
-        assert_eq!(root_lp.b_key.row_len, 2);
-        assert_eq!(root_lp.d_key.row_len, 2);
+        assert_eq!(root_lp.a_key.row_len(), 3);
+        assert_eq!(root_lp.b_key.row_len(), 2);
+        assert_eq!(root_lp.d_key.row_len(), 2);
         assert_eq!(root_lp.m_vars, 16);
         assert_eq!(root_lp.r_vars, 11);
 
         let a_rank = min_rank_for_secure_width(32, 31, root_lp.inner_width() as u64).unwrap();
         let b_rank = min_rank_for_secure_width(32, 3, root_lp.outer_width() as u64).unwrap();
         let d_rank = min_rank_for_secure_width(32, 3, root_lp.d_matrix_width() as u64).unwrap();
-        assert_eq!(a_rank, root_lp.a_key.row_len as u32);
-        assert_eq!(b_rank, root_lp.b_key.row_len as u32);
-        assert_eq!(d_rank, root_lp.d_key.row_len as u32);
+        assert_eq!(a_rank, root_lp.a_key.row_len() as u32);
+        assert_eq!(b_rank, root_lp.b_key.row_len() as u32);
+        assert_eq!(d_rank, root_lp.d_key.row_len() as u32);
     }
 
     #[test]
@@ -1331,9 +1331,9 @@ mod fp128_policy_tests {
             .expect("generated D32 onehot schedule");
         let root = schedule.fold_levels().next().expect("root fold");
 
-        assert_eq!(root.lp.a_key.row_len, 3);
-        assert_eq!(root.lp.b_key.row_len, 2);
-        assert_eq!(root.lp.d_key.row_len, 2);
+        assert_eq!(root.lp.a_key.row_len(), 3);
+        assert_eq!(root.lp.b_key.row_len(), 2);
+        assert_eq!(root.lp.d_key.row_len(), 2);
         assert_eq!(root.lp.m_vars, 16);
         assert_eq!(root.lp.r_vars, 11);
     }
@@ -1347,18 +1347,18 @@ mod fp128_policy_tests {
             level: 0,
             current_w_len: 1,
         });
-        assert_eq!(root_params.a_key.row_len, 2);
-        assert_eq!(root_params.b_key.row_len, 2);
-        assert_eq!(root_params.d_key.row_len, 2);
+        assert_eq!(root_params.a_key.row_len(), 2);
+        assert_eq!(root_params.b_key.row_len(), 2);
+        assert_eq!(root_params.d_key.row_len(), 2);
 
         let recursive_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: 59,
             level: 1,
             current_w_len: 1,
         });
-        assert_eq!(recursive_params.a_key.row_len, 1);
-        assert_eq!(recursive_params.b_key.row_len, 1);
-        assert_eq!(recursive_params.d_key.row_len, 1);
+        assert_eq!(recursive_params.a_key.row_len(), 1);
+        assert_eq!(recursive_params.b_key.row_len(), 1);
+        assert_eq!(recursive_params.d_key.row_len(), 1);
     }
 }
 

@@ -14,12 +14,38 @@ use crate::error::HachiError;
 /// for digit decomposition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AjtaiKeyParams {
+    row_len: usize,
+    col_len: usize,
+    log_basis: u32,
+}
+
+impl AjtaiKeyParams {
+    /// Create a new `AjtaiKeyParams`.
+    pub fn new(row_len: usize, col_len: usize, log_basis: u32) -> Self {
+        Self {
+            row_len,
+            col_len,
+            log_basis,
+        }
+    }
+
     /// Number of rows (security rank).
-    pub row_len: usize,
+    #[inline]
+    pub fn row_len(&self) -> usize {
+        self.row_len
+    }
+
     /// Number of columns (message width).
-    pub col_len: usize,
+    #[inline]
+    pub fn col_len(&self) -> usize {
+        self.col_len
+    }
+
     /// Base-2 logarithm of the gadget decomposition base.
-    pub log_basis: u32,
+    #[inline]
+    pub fn log_basis(&self) -> u32 {
+        self.log_basis
+    }
 }
 
 /// Unified per-level parameters for one Hachi recursion level.
@@ -78,21 +104,9 @@ impl LevelParams {
         Self {
             ring_dimension,
             log_basis,
-            a_key: AjtaiKeyParams {
-                row_len: n_a,
-                col_len: 0,
-                log_basis,
-            },
-            b_key: AjtaiKeyParams {
-                row_len: n_b,
-                col_len: 0,
-                log_basis,
-            },
-            d_key: AjtaiKeyParams {
-                row_len: n_d,
-                col_len: 0,
-                log_basis,
-            },
+            a_key: AjtaiKeyParams::new(n_a, 0, log_basis),
+            b_key: AjtaiKeyParams::new(n_b, 0, log_basis),
+            d_key: AjtaiKeyParams::new(n_d, 0, log_basis),
             num_blocks: 0,
             block_len: 0,
             m_vars: 0,
@@ -125,19 +139,19 @@ impl LevelParams {
     /// Width of inner matrix A (column count of the A-key).
     #[inline]
     pub fn inner_width(&self) -> usize {
-        self.a_key.col_len
+        self.a_key.col_len()
     }
 
     /// Width of outer matrix B (column count of the B-key).
     #[inline]
     pub fn outer_width(&self) -> usize {
-        self.b_key.col_len
+        self.b_key.col_len()
     }
 
     /// Width of prover matrix D (column count of the D-key).
     #[inline]
     pub fn d_matrix_width(&self) -> usize {
-        self.d_key.col_len
+        self.d_key.col_len()
     }
 
     /// Total outer variable count (`log_num_blocks + log_block_len`).
@@ -155,7 +169,7 @@ impl LevelParams {
     /// Row count when the root carries `num_public_outputs` public y-rows.
     #[inline]
     pub fn m_row_count_with_public_outputs(&self, num_public_outputs: usize) -> usize {
-        self.d_key.row_len + self.b_key.row_len + num_public_outputs + 1 + self.a_key.row_len
+        self.d_key.row_len() + self.b_key.row_len() + num_public_outputs + 1 + self.a_key.row_len()
     }
 
     /// Row count with `num_commitments` explicit commitment vectors and
@@ -166,11 +180,11 @@ impl LevelParams {
         num_commitments: usize,
         num_public_outputs: usize,
     ) -> usize {
-        self.d_key.row_len
-            + self.b_key.row_len * num_commitments
+        self.d_key.row_len()
+            + self.b_key.row_len() * num_commitments
             + num_public_outputs
             + 1
-            + self.a_key.row_len
+            + self.a_key.row_len()
     }
 
     /// Root-batched row count where each claim keeps its own commitment vector.
@@ -215,7 +229,7 @@ impl LevelParams {
             .ok_or_else(|| HachiError::InvalidSetup("inner width overflow".to_string()))?;
         let outer_width = self
             .a_key
-            .row_len
+            .row_len()
             .checked_mul(num_digits_open)
             .and_then(|x| x.checked_mul(num_blocks))
             .ok_or_else(|| HachiError::InvalidSetup("outer width overflow".to_string()))?;
@@ -225,21 +239,9 @@ impl LevelParams {
         Ok(Self {
             ring_dimension: self.ring_dimension,
             log_basis: self.log_basis,
-            a_key: AjtaiKeyParams {
-                row_len: self.a_key.row_len,
-                col_len: inner_width,
-                log_basis: self.log_basis,
-            },
-            b_key: AjtaiKeyParams {
-                row_len: self.b_key.row_len,
-                col_len: outer_width,
-                log_basis: self.log_basis,
-            },
-            d_key: AjtaiKeyParams {
-                row_len: self.d_key.row_len,
-                col_len: d_matrix_width,
-                log_basis: self.log_basis,
-            },
+            a_key: AjtaiKeyParams::new(self.a_key.row_len, inner_width, self.log_basis),
+            b_key: AjtaiKeyParams::new(self.b_key.row_len, outer_width, self.log_basis),
+            d_key: AjtaiKeyParams::new(self.d_key.row_len, d_matrix_width, self.log_basis),
             num_blocks,
             block_len,
             m_vars,
@@ -257,21 +259,9 @@ impl LevelParams {
         Self {
             ring_dimension: self.ring_dimension,
             log_basis: other.log_basis,
-            a_key: AjtaiKeyParams {
-                row_len: self.a_key.row_len,
-                col_len: other.a_key.col_len,
-                log_basis: other.log_basis,
-            },
-            b_key: AjtaiKeyParams {
-                row_len: self.b_key.row_len,
-                col_len: other.b_key.col_len,
-                log_basis: other.log_basis,
-            },
-            d_key: AjtaiKeyParams {
-                row_len: self.d_key.row_len,
-                col_len: other.d_key.col_len,
-                log_basis: other.log_basis,
-            },
+            a_key: AjtaiKeyParams::new(self.a_key.row_len, other.a_key.col_len, other.log_basis),
+            b_key: AjtaiKeyParams::new(self.b_key.row_len, other.b_key.col_len, other.log_basis),
+            d_key: AjtaiKeyParams::new(self.d_key.row_len, other.d_key.col_len, other.log_basis),
             num_blocks: other.num_blocks,
             block_len: other.block_len,
             m_vars: other.m_vars,
@@ -315,9 +305,9 @@ mod tests {
 
         assert_eq!(lp.ring_dimension, 64);
         assert_eq!(lp.log_basis, layout_lp.log_basis);
-        assert_eq!(lp.a_key.row_len, 2);
-        assert_eq!(lp.b_key.row_len, 4);
-        assert_eq!(lp.d_key.row_len, 3);
+        assert_eq!(lp.a_key.row_len(), 2);
+        assert_eq!(lp.b_key.row_len(), 4);
+        assert_eq!(lp.d_key.row_len(), 3);
         assert_eq!(lp.num_blocks, layout_lp.num_blocks);
         assert_eq!(lp.block_len, layout_lp.block_len);
         assert_eq!(lp.challenge_l1_mass(), 3);
@@ -330,9 +320,9 @@ mod tests {
     fn derived_widths_match_ajtai_col_len() {
         let lp = sample_params_only().with_layout(&sample_layout_lp());
 
-        assert_eq!(lp.inner_width(), lp.a_key.col_len);
-        assert_eq!(lp.outer_width(), lp.b_key.col_len);
-        assert_eq!(lp.d_matrix_width(), lp.d_key.col_len);
+        assert_eq!(lp.inner_width(), lp.a_key.col_len());
+        assert_eq!(lp.outer_width(), lp.b_key.col_len());
+        assert_eq!(lp.d_matrix_width(), lp.d_key.col_len());
     }
 
     #[test]

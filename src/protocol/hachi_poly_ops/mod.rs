@@ -523,7 +523,7 @@ mod tests {
             .commit_inner(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
-                level_params.a_key.row_len,
+                level_params.a_key.row_len(),
                 layout.block_len,
                 layout.num_digits_commit,
                 layout.num_digits_open,
@@ -564,7 +564,7 @@ mod tests {
             .commit_inner(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
-                level_params.a_key.row_len,
+                level_params.a_key.row_len(),
                 layout.block_len,
                 layout.num_digits_commit,
                 layout.num_digits_open,
@@ -707,7 +707,7 @@ mod tests {
         let digit_commit = digit_view
             .commit_inner(
                 &setup.ntt_shared,
-                test_lp.a_key.row_len,
+                test_lp.a_key.row_len(),
                 block_len,
                 num_blocks,
                 w_layout.num_digits_commit,
@@ -720,7 +720,7 @@ mod tests {
             .commit_inner(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
-                test_lp.a_key.row_len,
+                test_lp.a_key.row_len(),
                 block_len,
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
@@ -734,7 +734,7 @@ mod tests {
         let digit_witness = digit_view
             .commit_inner_witness(
                 &setup.ntt_shared,
-                test_lp.a_key.row_len,
+                test_lp.a_key.row_len(),
                 block_len,
                 num_blocks,
                 w_layout.num_digits_commit,
@@ -747,7 +747,7 @@ mod tests {
             .commit_inner_witness(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
-                test_lp.a_key.row_len,
+                test_lp.a_key.row_len(),
                 block_len,
                 w_layout.num_digits_commit,
                 w_layout.num_digits_open,
