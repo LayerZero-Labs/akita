@@ -149,6 +149,11 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize, Cfg: CommitmentConfig
     hint: Option<HachiCommitmentHint<F, D>>,
     /// Number of flattened public claims per commitment group.
     claim_group_sizes: Vec<usize>,
+    /// Per-claim γ coefficients for batched linear-relation evaluation (batched CWSS §3).
+    gamma: Vec<F>,
+    /// Number of batched evaluation rows in the matrix equation. Equals the
+    /// number of distinct opening points when γ-batching is active.
+    num_eval_rows: usize,
 
     _marker: PhantomData<Cfg>,
 }
@@ -171,6 +176,8 @@ where
         transcript: &mut T,
         commitments: &[RingCommitment<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
+        gamma: Vec<F>,
+        num_eval_rows: usize,
         layout: HachiCommitmentLayout,
         stride: usize,
     ) -> Result<Self, HachiError> {
@@ -207,7 +214,7 @@ where
             })?;
         if polys.len() != pre_folded_by_poly.len()
             || polys.len() != num_claims
-            || y_rings.len() != num_claims
+            || y_rings.len() != num_eval_rows
             || claim_to_point.len() != num_claims
             || hints.len() != claim_group_sizes.len()
             || commitments.len() != claim_group_sizes.len()
@@ -230,6 +237,16 @@ where
                     "batched prover received a commitment with the wrong length".to_string(),
                 ));
             }
+        }
+        if gamma.len() != num_claims {
+            return Err(HachiError::InvalidInput(
+                "batched prover gamma length does not match claim count".to_string(),
+            ));
+        }
+        if num_eval_rows == 0 || num_eval_rows > num_claims {
+            return Err(HachiError::InvalidInput(
+                "batched prover num_eval_rows out of range".to_string(),
+            ));
         }
 
         let w_hat = {
@@ -433,6 +450,8 @@ where
             w_folded: Some(w_folded),
             hint: Some(flattened_hint),
             claim_group_sizes: claim_group_sizes.to_vec(),
+            gamma,
+            num_eval_rows,
             _marker: PhantomData,
         })
     }
@@ -534,6 +553,8 @@ where
             w_folded: Some(pre_folded),
             hint: Some(hint),
             claim_group_sizes: vec![1],
+            gamma: vec![F::one()],
+            num_eval_rows: 1,
             _marker: PhantomData,
         })
     }
@@ -561,6 +582,8 @@ where
         transcript: &mut T,
         commitments: &[RingCommitment<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
+        gamma: Vec<F>,
+        num_eval_rows: usize,
         layout: HachiCommitmentLayout,
         stride: usize,
     ) -> Result<Self, HachiError> {
@@ -583,6 +606,8 @@ where
             transcript,
             commitments,
             y_rings,
+            gamma,
+            num_eval_rows,
             layout,
             stride,
         )
@@ -610,6 +635,8 @@ where
         transcript: &mut T,
         commitments: &[RingCommitment<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
+        gamma: Vec<F>,
+        num_eval_rows: usize,
         layout: HachiCommitmentLayout,
         stride: usize,
     ) -> Result<Self, HachiError> {
@@ -625,6 +652,8 @@ where
             transcript,
             commitments,
             y_rings,
+            gamma,
+            num_eval_rows,
             layout,
             stride,
         )
@@ -726,6 +755,8 @@ where
             w_folded: Some(pre_folded),
             hint: Some(hint),
             claim_group_sizes: vec![1],
+            gamma: vec![F::one()],
+            num_eval_rows: 1,
             _marker: PhantomData,
         })
     }
@@ -765,6 +796,14 @@ where
     /// Number of flattened public claims carried by each commitment group.
     pub fn claim_group_sizes(&self) -> &[usize] {
         &self.claim_group_sizes
+    }
+
+    pub(crate) fn gamma(&self) -> &[F] {
+        &self.gamma
+    }
+
+    pub(crate) fn num_eval_rows(&self) -> usize {
+        self.num_eval_rows
     }
 
     /// Get the pre-decomposition folded witness `z_pre` (prover only).
@@ -976,6 +1015,7 @@ pub(crate) fn compute_r_split_eq<F, const D: usize>(
     z_pre_centered_inf_norm: u32,
     y: &[CyclotomicRing<F, D>],
     claim_group_sizes: &[usize],
+    num_eval_rows: usize,
     blocks_per_claim: usize,
     inner_width: usize,
     stride: usize,
@@ -987,11 +1027,12 @@ where
     if claim_group_sizes.is_empty() || claim_group_sizes.contains(&0) {
         return Err(HachiError::InvalidProof);
     }
-    let num_public_outputs = claim_group_sizes
+    let _num_claims = claim_group_sizes
         .iter()
         .try_fold(0usize, |acc, &group_size| {
             acc.checked_add(group_size).ok_or(HachiError::InvalidProof)
         })?;
+    let num_public_outputs = num_eval_rows;
     if num_public_outputs == 0 {
         return Err(HachiError::InvalidProof);
     }
