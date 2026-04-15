@@ -1,4 +1,4 @@
-//! Generate schedule tables using the refactored DP planner.
+//! Generate schedule tables using the DP planner.
 //!
 //! Produces one module per family in `GeneratedScheduleTableEntry` format.
 //! Each emitted file contains both:
@@ -193,7 +193,7 @@ fn emit_schedule_entry<Cfg: CommitmentConfig>(
     for step in &schedule.steps {
         match step {
             Step::Fold(fold) => {
-                writeln!(out, "{}", emit_fold(fold, "refactored")).map_err(|e| e.to_string())?;
+                writeln!(out, "{}", emit_fold(fold, "runtime_exact")).map_err(|e| e.to_string())?;
                 level += 1;
             }
             Step::Direct(direct) => {
