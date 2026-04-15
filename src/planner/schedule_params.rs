@@ -14,9 +14,9 @@ use std::collections::HashMap;
 use crate::error::HachiError;
 use crate::planner::digit_math::compute_num_digits_fold;
 use crate::protocol::commitment::{
-    current_level_layout_with_log_basis, direct_witness_bytes, field_bits, level_proof_bytes,
-    planned_next_w_len, planned_w_ring_element_count, recursive_r_decomp_levels, CommitmentConfig,
-    HachiScheduleInputs,
+    current_level_layout_with_log_basis, derive_batched_root_level_derivation,
+    direct_witness_bytes, field_bits, level_proof_bytes, planned_next_w_len,
+    planned_w_ring_element_count, recursive_r_decomp_levels, CommitmentConfig, HachiScheduleInputs,
 };
 use crate::protocol::params::{AjtaiKeyParams, LevelParams};
 use crate::protocol::proof::DirectWitnessShape;
@@ -124,7 +124,7 @@ fn derive_candidate_level_params<Cfg: CommitmentConfig>(
 fn compute_level_proof_size<Cfg: CommitmentConfig>(
     candidate: &CandidateLevelParams,
     next_level_params: &LevelParams,
-    num_claims: usize,
+    num_public_outputs: usize,
 ) -> usize {
     let fb = field_bits(Cfg::decomposition());
     level_proof_bytes(
@@ -133,7 +133,7 @@ fn compute_level_proof_size<Cfg: CommitmentConfig>(
         &candidate.lp,
         next_level_params,
         candidate.next_w_len,
-        num_claims,
+        num_public_outputs,
     )
 }
 
@@ -316,6 +316,8 @@ impl BatchConfig {
 ///
 /// Mirrors `w_ring_element_count_with_counts` in `ring_switch.rs` but uses
 /// field-erased helpers already available to the planner.
+/// `num_claims` scales the concatenated witness pieces (`w_hat`, `t_hat`),
+/// while `num_points` scales only the public y rows and folded preimage rows.
 fn batched_root_w_ring_element_count<Cfg: CommitmentConfig>(
     lp: &LevelParams,
     batch: &BatchConfig,
@@ -323,54 +325,20 @@ fn batched_root_w_ring_element_count<Cfg: CommitmentConfig>(
     let fb = field_bits(Cfg::decomposition());
     let r_decomp = recursive_r_decomp_levels(fb, lp.log_basis);
 
-    let batched_num_digits_fold = lp.num_digits_fold.max(compute_num_digits_fold(
-        lp.r_vars,
-        lp.challenge_l1_mass(),
-        lp.log_basis,
-        batch.num_claims,
-    ));
-
     let w_hat = batch.num_claims * lp.num_blocks * lp.num_digits_open;
     let t_hat = batch.num_claims * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
-    let z_pre = batch.num_points * lp.inner_width() * batched_num_digits_fold;
-    let r_rows = lp.m_row_count_with_commitments_and_public_outputs(
-        batch.num_commitment_groups,
-        batch.num_claims,
-    );
+    let z_pre = batch.num_points * lp.inner_width() * lp.num_digits_fold;
+    let r_rows = if batch.num_points == 1 && batch.num_commitment_groups == 1 {
+        lp.m_row_count()
+    } else {
+        lp.m_row_count_with_commitments_and_public_outputs(
+            batch.num_commitment_groups,
+            batch.num_points,
+        )
+    };
     let r = r_rows * r_decomp;
 
     w_hat + t_hat + z_pre + r
-}
-
-fn batched_root_level_params<Cfg: CommitmentConfig>(
-    inputs: HachiScheduleInputs,
-    candidate_lp: &LevelParams,
-    batch: &BatchConfig,
-) -> Option<LevelParams> {
-    if batch.num_claims <= 1 {
-        return Cfg::root_level_params_for_layout_with_log_basis(inputs, candidate_lp).ok();
-    }
-    let mut scaled = candidate_lp.clone();
-    let d = scaled.ring_dimension;
-    scaled.b_key = AjtaiKeyParams::new_unchecked(
-        scaled.b_key.row_len(),
-        scaled.b_key.col_len().checked_mul(batch.num_claims)?,
-        0,
-        d,
-    );
-    scaled.d_key = AjtaiKeyParams::new_unchecked(
-        scaled.d_key.row_len(),
-        scaled.d_key.col_len().checked_mul(batch.num_claims)?,
-        0,
-        d,
-    );
-    scaled.num_digits_fold = scaled.num_digits_fold.max(compute_num_digits_fold(
-        scaled.r_vars,
-        Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
-        scaled.log_basis,
-        batch.num_claims,
-    ));
-    Cfg::root_level_params_for_layout_with_log_basis(inputs, &scaled).ok()
 }
 
 /// Derive the batched root candidate for a given `log_basis`.
@@ -381,7 +349,7 @@ fn batched_root_level_params<Cfg: CommitmentConfig>(
 /// searches over `(m, r)` splits to find the split that minimises the
 /// batched witness, since the optimal balance shifts toward fewer blocks
 /// when each block is replicated across `num_claims` openings.
-fn derive_batched_root_candidate<Cfg: CommitmentConfig>(
+fn derive_batched_root_candidate<Cfg: CommitmentConfig, const D: usize>(
     max_num_vars: usize,
     root_w_len: usize,
     log_basis: u32,
@@ -423,12 +391,8 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig>(
 
     for r_vars in 1..reduced_vars {
         let m_vars = reduced_vars - r_vars;
-        let batched_fold = root_lp.num_digits_fold.max(compute_num_digits_fold(
-            r_vars,
-            root_lp.challenge_l1_mass(),
-            root_lp.log_basis,
-            batch.num_claims,
-        ));
+        let per_poly_fold =
+            compute_num_digits_fold(r_vars, root_lp.challenge_l1_mass(), root_lp.log_basis, 1);
 
         let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
             continue;
@@ -481,15 +445,21 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig>(
             stage1_config: root_lp.stage1_config.clone(),
             num_digits_commit: root_lp.num_digits_commit,
             num_digits_open: root_lp.num_digits_open,
-            num_digits_fold: batched_fold,
+            num_digits_fold: per_poly_fold,
         };
 
-        let Some(real_lp) = batched_root_level_params::<Cfg>(inputs, &candidate_lp, batch) else {
+        let Ok(derivation) = derive_batched_root_level_derivation::<Cfg, D>(
+            max_num_vars,
+            &candidate_lp,
+            batch.num_claims,
+        ) else {
             continue;
         };
-        // Merge: rank from real_lp (may differ for adaptive configs),
-        // geometry from candidate_lp (the unscaled per-poly layout).
-        let lp = real_lp.with_layout(&candidate_lp);
+        let mut planner_layout = candidate_lp.clone();
+        planner_layout.num_digits_fold = derivation.level_lp.num_digits_fold;
+        // Merge: rank from the batch-effective derivation (may differ for
+        // adaptive configs), geometry from the per-claim candidate layout.
+        let lp = derivation.root_lp.with_layout(&planner_layout);
 
         let w_ring = batched_root_w_ring_element_count::<Cfg>(&lp, batch);
         let next_w_len = w_ring * lp.ring_dimension;
@@ -536,7 +506,7 @@ pub fn find_optimal_batched_schedule<Cfg: CommitmentConfig, const D: usize>(
 
     for root_lb in basis_range::<Cfg>(num_vars, 0, root_w_len) {
         let Some(candidate) =
-            derive_batched_root_candidate::<Cfg>(num_vars, root_w_len, root_lb, &batch)
+            derive_batched_root_candidate::<Cfg, D>(num_vars, root_w_len, root_lb, &batch)
         else {
             continue;
         };
@@ -557,7 +527,7 @@ pub fn find_optimal_batched_schedule<Cfg: CommitmentConfig, const D: usize>(
             continue;
         };
         let root_proof_size =
-            compute_level_proof_size::<Cfg>(&candidate, &next_level_params, batch.num_claims);
+            compute_level_proof_size::<Cfg>(&candidate, &next_level_params, batch.num_points);
 
         let total = root_proof_size + suffix_cost;
         if total < best_cost {
@@ -597,9 +567,99 @@ pub fn find_optimal_batched_schedule<Cfg: CommitmentConfig, const D: usize>(
 mod tests {
     use super::*;
     use crate::protocol::commitment::presets::fp128;
-    use crate::protocol::commitment::{CommitmentPreset, GeneratedAdaptivePolicy};
+    use crate::protocol::commitment::{
+        exact_planned_level_execution, exact_schedule_plan_for_lookup_key,
+        hachi_root_runtime_plan_with_batch, CommitmentPreset, GeneratedAdaptivePolicy,
+        HachiRootBatchSummary, HachiScheduleLookupKey,
+    };
+    use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
 
     type D64OH = CommitmentPreset<fp128::Field, GeneratedAdaptivePolicy<fp128::Profile, 64, 1>>;
+    type D128Full = fp128::D128Full;
+
+    fn assert_batched_root_parity<Cfg: CommitmentConfig, const D: usize>(
+        num_vars: usize,
+        batch: BatchConfig,
+    ) {
+        let batch_summary = HachiRootBatchSummary::new(
+            batch.num_claims,
+            batch.num_commitment_groups,
+            batch.num_points,
+        )
+        .expect("valid batch summary");
+        let key =
+            HachiScheduleLookupKey::with_batch(num_vars, num_vars, batch.num_claims, batch_summary);
+        let plan =
+            exact_schedule_plan_for_lookup_key::<Cfg, D>(key).expect("batched exact schedule");
+        let root_log_basis = plan
+            .fold_levels()
+            .next()
+            .expect("batched exact schedule should begin with a fold")
+            .lp
+            .log_basis;
+        let planned_root = exact_planned_level_execution::<Cfg>(
+            &plan,
+            HachiScheduleInputs {
+                max_num_vars: num_vars,
+                level: 0,
+                current_w_len: 1usize.checked_shl(num_vars as u32).unwrap_or(0),
+            },
+            root_log_basis,
+        )
+        .expect("batched exact root execution should resolve")
+        .expect("batched exact root execution should match");
+        let runtime_root = hachi_root_runtime_plan_with_batch::<Cfg, D>(
+            num_vars,
+            num_vars,
+            batch.num_claims,
+            batch_summary,
+        )
+        .expect("runtime root plan should succeed");
+        let runtime_w_ring = w_ring_element_count_with_batch_summary::<Cfg::Field>(
+            &planned_root.level.lp,
+            batch_summary,
+        );
+
+        assert_eq!(
+            planned_root.level.lp, runtime_root.level_lp,
+            "planned/runtime root layout mismatch for batch={batch_summary:?}"
+        );
+        assert_eq!(
+            planned_root.level.next_inputs.current_w_len,
+            runtime_root.next_w_len(),
+            "planned/runtime next_w_len mismatch for batch={batch_summary:?}"
+        );
+        assert_eq!(
+            runtime_w_ring * planned_root.level.lp.ring_dimension,
+            runtime_root.next_w_len(),
+            "planner/runtime root witness sizing mismatch for batch={batch_summary:?}"
+        );
+        assert_eq!(
+            planned_root.level.level_bytes,
+            runtime_root.level_proof_bytes::<Cfg>(),
+            "planned/runtime root proof bytes mismatch for batch={batch_summary:?}"
+        );
+        assert_eq!(
+            planned_root.level.next_level_log_basis, runtime_root.next_level_params.log_basis,
+            "planned/runtime next-level basis mismatch for batch={batch_summary:?}"
+        );
+        assert_eq!(
+            planned_root.level.next_commit_coeffs,
+            runtime_root.next_level_params.b_key.row_len()
+                * runtime_root.next_level_params.ring_dimension,
+            "planned/runtime next commitment shape mismatch for batch={batch_summary:?}"
+        );
+        assert_eq!(
+            planned_root.level.lp.b_key.row_len(),
+            runtime_root.root_lp.b_key.row_len(),
+            "planned/runtime B-row rank mismatch for batch={batch_summary:?}"
+        );
+        assert_eq!(
+            planned_root.level.lp.d_key.row_len(),
+            runtime_root.root_lp.d_key.row_len(),
+            "planned/runtime D-row rank mismatch for batch={batch_summary:?}"
+        );
+    }
 
     #[test]
     fn batched_monotonic_in_claims() {
@@ -668,5 +728,51 @@ mod tests {
             num_points: 0,
         };
         assert!(find_optimal_batched_schedule::<D64OH, 64>(20, zero_points).is_err());
+    }
+
+    #[test]
+    fn onehot_batched_root_matches_runtime_for_group_and_point_counts() {
+        for batch in [
+            BatchConfig {
+                num_claims: 6,
+                num_commitment_groups: 6,
+                num_points: 1,
+            },
+            BatchConfig {
+                num_claims: 6,
+                num_commitment_groups: 3,
+                num_points: 1,
+            },
+            BatchConfig {
+                num_claims: 6,
+                num_commitment_groups: 3,
+                num_points: 2,
+            },
+        ] {
+            assert_batched_root_parity::<D64OH, 64>(20, batch);
+        }
+    }
+
+    #[test]
+    fn dense_batched_root_matches_runtime_for_group_and_point_counts() {
+        for batch in [
+            BatchConfig {
+                num_claims: 6,
+                num_commitment_groups: 6,
+                num_points: 1,
+            },
+            BatchConfig {
+                num_claims: 6,
+                num_commitment_groups: 3,
+                num_points: 1,
+            },
+            BatchConfig {
+                num_claims: 6,
+                num_commitment_groups: 3,
+                num_points: 2,
+            },
+        ] {
+            assert_batched_root_parity::<D128Full, 128>(20, batch);
+        }
     }
 }

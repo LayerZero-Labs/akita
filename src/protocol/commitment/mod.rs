@@ -13,6 +13,7 @@ pub(crate) mod transcript_append;
 mod types;
 pub mod utils;
 
+pub(crate) use commit::derive_batched_root_level_derivation;
 pub use commit::hachi_batched_root_layout;
 #[cfg(test)]
 pub(crate) use commit::root_current_w_len;

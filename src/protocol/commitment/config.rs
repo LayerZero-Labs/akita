@@ -838,6 +838,8 @@ fn sis_derived_root_params_for_layout<Cfg: CommitmentConfig>(
                 a_raw * stage1_config.max_abs_coeff()
             ))
         })?;
+    // A secures weak-opening consistency of the inner witness, so its width is
+    // the unbatched inner matrix width.
     let n_a = min_rank_for_secure_width(d as u32, a_collision, lp.inner_width() as u64)
         .ok_or_else(|| {
             HachiError::InvalidSetup(format!(
@@ -847,6 +849,8 @@ fn sis_derived_root_params_for_layout<Cfg: CommitmentConfig>(
                 lp.inner_width()
             ))
         })?;
+    // B secures the digitized inner commitments, so its width must use the
+    // batch-effective outer matrix width.
     let n_b = min_rank_for_secure_width(d as u32, bd_collision, lp.outer_width() as u64)
         .ok_or_else(|| {
             HachiError::InvalidSetup(format!(
@@ -856,6 +860,8 @@ fn sis_derived_root_params_for_layout<Cfg: CommitmentConfig>(
                 lp.outer_width()
             ))
         })?;
+    // D secures the flattened opening witness, so its width must use the
+    // batch-effective D-matrix width.
     let n_d = min_rank_for_secure_width(d as u32, bd_collision, lp.d_matrix_width() as u64)
         .ok_or_else(|| {
             HachiError::InvalidSetup(format!(

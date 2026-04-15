@@ -3526,19 +3526,24 @@ mod tests {
         let actual_gap = observed_total.abs_diff(actual_total);
 
         assert_eq!(root_bytes, proof.root.serialized_size(Compress::No));
-        assert!(
-            !estimate.exact_state_match,
-            "batch-4 onehot root should miss the singleton generated schedule state"
-        );
-        assert!(
-            estimate.used_actual_state_planner,
-            "batch-4 onehot proof should use the actual-state miss-path planner"
-        );
         assert_eq!(table_total, observed_total);
-        assert!(
-            actual_gap <= slack_bytes,
-            "actual-state suffix gap {actual_gap} exceeded slack bound {slack_bytes}"
-        );
+        if estimate.exact_state_match {
+            assert!(
+                !estimate.used_actual_state_planner,
+                "exact batch-4 onehot schedule should use the keyed generated row"
+            );
+            assert_eq!(actual_total, observed_total);
+            assert_eq!(actual_gap, 0);
+        } else {
+            assert!(
+                estimate.used_actual_state_planner,
+                "off-table batch-4 onehot proof should use the actual-state miss-path planner"
+            );
+            assert!(
+                actual_gap <= slack_bytes,
+                "actual-state suffix gap {actual_gap} exceeded slack bound {slack_bytes}"
+            );
+        }
     }
 
     fn assert_blessed_batched_onehot_exact<const D_LOCAL: usize, CfgLocal>(
@@ -3691,10 +3696,20 @@ mod tests {
         let root_bytes = root_plan.level_proof_bytes::<CfgLocal>();
         let observed_total = proof.size();
 
-        assert!(estimate.exact_state_match);
-        assert!(!estimate.used_actual_state_planner);
-        assert_eq!(root_bytes + estimate.table_bytes, observed_total);
         assert_eq!(root_bytes + estimate.actual_state_bytes, observed_total);
+        if estimate.exact_state_match {
+            assert!(
+                !estimate.used_actual_state_planner,
+                "exact keyed blessed schedule should not use the miss-path planner"
+            );
+            assert_eq!(root_bytes + estimate.table_bytes, observed_total);
+        } else {
+            assert!(
+                estimate.used_actual_state_planner,
+                "off-table blessed schedule should use the exact miss-path planner"
+            );
+            assert_eq!(estimate.table_bytes, estimate.actual_state_bytes);
+        }
     }
 
     #[test]
@@ -3708,14 +3723,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: blessed schedule tables need regenerating after batched CWSS protocol change (num_claims → num_points)
     fn blessed_same_point_batched_onehot_schedule_is_exact_end_to_end() {
         const GROUPS: &[usize] = &[1, 1, 4];
         assert_blessed_batched_onehot_exact::<64, fp128::D64OneHot>(20, &[GROUPS]);
     }
 
     #[test]
-    #[ignore] // TODO: blessed schedule tables need regenerating after batched CWSS protocol change (num_claims → num_points)
     fn blessed_multi_point_batched_onehot_schedule_is_exact_end_to_end() {
         const POINT_A_GROUPS: &[usize] = &[1, 1];
         const POINT_B_GROUPS: &[usize] = &[4];

@@ -456,6 +456,8 @@ where
         Cfg::stage1_challenge_config(Cfg::d_at_level(0, root_inputs.current_w_len));
     let mut scaled = root_lp.clone();
     let d = scaled.ring_dimension;
+    // Root batching concatenates the outer binding roles across claims.
+    // The inner A role stays per-claim, so only B and D widen here.
     scaled.b_key = AjtaiKeyParams::new_unchecked(
         scaled.b_key.row_len(),
         root_lp
@@ -476,6 +478,8 @@ where
         scaled.d_key.collision_inf(),
         d,
     );
+    // `num_claims` amplifies the folded root witness bound. Public point count
+    // is handled later when sizing the explicit y rows and serialized y_rings.
     scaled.num_digits_fold = root_lp.num_digits_fold.max(compute_num_digits_fold_batched(
         root_lp.r_vars,
         root_stage1_config.l1_mass(),
@@ -483,6 +487,35 @@ where
         num_claims,
     ));
     Ok(scaled)
+}
+
+/// Shared batched-root derivation used by planner and runtime.
+///
+/// `level_lp` is the batch-effective root layout that widens the `B/D` widths
+/// and fold-digit budget for the concrete root batch. `root_lp` is the active
+/// root parameter set derived against that widened layout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BatchedRootLevelDerivation {
+    pub level_lp: LevelParams,
+    pub root_lp: LevelParams,
+}
+
+pub(crate) fn derive_batched_root_level_derivation<Cfg, const D: usize>(
+    max_num_vars: usize,
+    root_lp: &LevelParams,
+    num_claims: usize,
+) -> Result<BatchedRootLevelDerivation, HachiError>
+where
+    Cfg: CommitmentConfig,
+{
+    let inputs = HachiScheduleInputs {
+        max_num_vars,
+        level: 0,
+        current_w_len: root_current_w_len::<D>(root_lp),
+    };
+    let level_lp = scale_batched_root_layout::<Cfg, D>(max_num_vars, root_lp, num_claims)?;
+    let root_lp = Cfg::root_level_params_for_layout_with_log_basis(inputs, &level_lp)?;
+    Ok(BatchedRootLevelDerivation { level_lp, root_lp })
 }
 
 /// Planner-derived batched root split parameters.
