@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::digit_math::{
-    baseline_optimal_m_r_split, compute_num_digits_fold, num_digits_for_bound,
+    baseline_optimal_m_r_split, compute_num_digits_fold_with_claims, num_digits_for_bound,
 };
 use super::proof_size::{
     baseline_packed_digits_bytes, baseline_ring_vec_bytes, baseline_sumcheck_bytes, elem_bytes,
@@ -51,7 +51,7 @@ fn compute_level(
     let op = if log_cb < 128 { 128 } else { log_cb };
     let d_open = num_digits_for_bound(op, lb);
     let d_commit = num_digits_for_bound(log_cb, lb);
-    let d_fold = compute_num_digits_fold(r, bp.challenge_l1_mass, lb);
+    let d_fold = compute_num_digits_fold_with_claims(r, bp.challenge_l1_mass, lb, 1);
     let bl = 1usize << m;
     let iw = bl * d_commit;
     let w_hat = (1usize << r) * d_open;

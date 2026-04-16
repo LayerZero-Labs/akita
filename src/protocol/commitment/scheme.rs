@@ -1,11 +1,12 @@
 //! Commitment-scheme trait surface for Hachi protocol code.
 
-use super::config::{CommitmentConfig, HachiCommitmentLayout};
+use super::config::CommitmentConfig;
 use super::transcript_append::AppendToTranscript;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 use crate::protocol::hachi_poly_ops::{HachiPolyOps, OneHotIndex};
 use crate::protocol::opening_point::BasisMode;
+use crate::protocol::params::LevelParams;
 use crate::protocol::proof::FlatDigitBlocks;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
@@ -206,7 +207,7 @@ where
     /// # Errors
     ///
     /// Returns an error when setup metadata is inconsistent.
-    fn layout(setup: &Self::ProverSetup) -> Result<HachiCommitmentLayout, HachiError>;
+    fn layout(setup: &Self::ProverSetup) -> Result<LevelParams, HachiError>;
 
     /// Commit to ring blocks arranged as `2^R` vectors of length `2^M`.
     ///

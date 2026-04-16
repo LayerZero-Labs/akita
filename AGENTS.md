@@ -42,7 +42,7 @@ Two workspace members: `hachi-pcs` (root) and `derive` (proc macros).
 ## Key Abstractions
 
 - `HachiCommitmentScheme` — top-level PCS `commit` / `prove` / `verify`
-- `CommitmentConfig` + `HachiCommitmentLayout` — recursion schedule and layout knobs
+- `CommitmentConfig` + `LevelParams` — recursion schedule, layout, and per-level configuration
 - `DensePoly`, `OneHotPoly`, `HachiPolyOps` — polynomial backends consumed by the scheme
 - `BlockOrder` — explicit root-vs-recursive opening split convention
 - `HachiProof`, `HachiLevelProof`, `HachiProofTail` — serialized proof structure

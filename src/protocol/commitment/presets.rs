@@ -3,7 +3,7 @@
 use super::config::{CommitmentPreset, GeneratedAdaptivePolicy, StaticBoundedPolicy};
 use crate::protocol::commitment::profile::{CommitmentFieldProfile, Fp128PrimeProfile};
 
-/// Default fp128 protocol presets on `p = 2^128 - 275`.
+/// Default fp128 protocol presets on `p = 2^128 - 2355`.
 pub mod fp128 {
     use super::*;
 

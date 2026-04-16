@@ -6,13 +6,14 @@ pub(super) use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, On
 pub(super) use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BlockOrder,
 };
-pub(super) use hachi_pcs::protocol::{CommitmentConfig, HachiCommitmentLayout};
+pub(super) use hachi_pcs::protocol::params::LevelParams;
+pub(super) use hachi_pcs::protocol::CommitmentConfig;
 pub(super) use hachi_pcs::{BasisMode, CanonicalField};
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::Once;
 
-pub(super) type F = Fp128<0xfffffffffffffffffffffffffffffeed>;
+pub(super) type F = Fp128<0xfffffffffffffffffffffffffffff6cd>;
 pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
 
 pub(super) type OneHotCfg = fp128::D64OneHot;
@@ -53,7 +54,7 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
 pub(super) fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
     poly: &P,
     point: &[F],
-    layout: &HachiCommitmentLayout,
+    layout: &LevelParams,
 ) -> F {
     let alpha_bits = D.trailing_zeros() as usize;
     assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
@@ -79,10 +80,7 @@ pub(super) fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
     (y_ring * v.sigma_m1()).coefficients()[0]
 }
 
-pub(super) fn make_onehot_poly(
-    layout: &HachiCommitmentLayout,
-    seed: u64,
-) -> OneHotPoly<F, ONEHOT_D, u8> {
+pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, ONEHOT_D, u8> {
     let total_ring = layout.num_blocks * layout.block_len;
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_ring)
