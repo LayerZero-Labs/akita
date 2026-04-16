@@ -10,6 +10,7 @@ pub mod eq_poly;
 pub mod fields;
 pub mod module;
 pub mod ntt;
+pub mod offset_eq;
 pub mod poly;
 pub mod ring;
 pub mod split_eq;

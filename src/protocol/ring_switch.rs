@@ -5,12 +5,16 @@
 //! vectors and setting up the evaluation tables.
 
 use crate::algebra::eq_poly::EqPolynomial;
+use crate::algebra::offset_eq::{
+    eval_offset_eq_peeled_carry_terms, eval_offset_eq_tensor, summarize_pow2_block_carries,
+};
 use crate::algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use crate::algebra::{CyclotomicRing, SparseChallenge};
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
+use crate::protocol::commitment::utils::flat_matrix::RingMatrixView;
 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::HachiRootBatchSummary;
@@ -54,9 +58,9 @@ pub(crate) struct RingSwitchOutput<F: FieldCore> {
     /// Evaluation table of alpha powers (y dimension).
     pub alpha_evals_y: Vec<F>,
     /// Number of upper variable bits.
-    pub num_u: usize,
+    pub col_bits: usize,
     /// Number of lower variable bits.
-    pub num_l: usize,
+    pub ring_bits: usize,
     /// Challenge tau0 for F_0 sumcheck.
     pub tau0: Vec<F>,
     /// Challenge tau1 for F_alpha sumcheck.
@@ -70,14 +74,14 @@ pub(crate) struct RingSwitchOutput<F: FieldCore> {
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.
 pub(crate) struct RingSwitchVerifyOutput<F: FieldCore> {
-    /// Evaluation table of M_alpha(x) (tau1-weighted).
-    pub m_evals_x: Vec<F>,
+    /// Prepared data for deferred M-table MLE evaluation.
+    pub prepared_m_eval: PreparedMEval<F>,
     /// Evaluation table of alpha powers (y dimension).
     pub alpha_evals_y: Vec<F>,
     /// Number of upper variable bits.
-    pub num_u: usize,
+    pub col_bits: usize,
     /// Number of lower variable bits.
-    pub num_l: usize,
+    pub ring_bits: usize,
     /// Challenge tau0 for F_0 sumcheck.
     pub tau0: Vec<F>,
     /// Challenge tau1 for F_alpha sumcheck.
@@ -86,6 +90,37 @@ pub(crate) struct RingSwitchVerifyOutput<F: FieldCore> {
     pub b: usize,
     /// Ring-switch challenge alpha.
     pub alpha: F,
+}
+
+/// Pre-computed challenge-derived data for deferred M-table MLE evaluation.
+///
+/// Stores only data that cannot be derived from context at eval time:
+/// alpha-evaluated folding challenges and the tau1 eq-polynomial expansion.
+/// Everything else (setup matrix views, opening point, gadget vectors) is
+/// passed by reference at eval time to avoid duplication.
+pub(crate) struct PreparedMEval<F: FieldCore> {
+    c_alphas: Vec<F>,
+    eq_tau1: Vec<F>,
+    total_blocks: usize,
+    num_blocks: usize,
+    num_claims: usize,
+    depth_open: usize,
+    depth_commit: usize,
+    depth_fold: usize,
+    block_len: usize,
+    inner_width: usize,
+    log_basis: u32,
+    n_a: usize,
+    n_d: usize,
+    n_b: usize,
+    num_commitment_groups: usize,
+    rows: usize,
+    z_first: bool,
+    claim_to_group: Vec<(usize, usize)>,
+    num_points: usize,
+    num_eval_rows: usize,
+    gamma: Vec<F>,
+    claim_to_point: Vec<usize>,
 }
 
 /// Build the witness vector `w` from the quadratic equation state.
@@ -228,16 +263,16 @@ where
     let num_commitment_groups = claim_group_sizes.len();
     let num_eval_rows = quad_eq.num_eval_rows();
 
-    let num_l = D.trailing_zeros() as usize;
+    let ring_bits = D.trailing_zeros() as usize;
     let num_ring_elems = w.len() / D;
     let live_x_cols = num_ring_elems;
-    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
     let m_rows = if num_eval_rows == 1 && num_commitment_groups == 1 {
         lp.m_row_count()
     } else {
         lp.m_row_count_with_commitments_and_public_outputs(num_commitment_groups, num_eval_rows)
     };
-    let num_sc_vars = num_u + num_l;
+    let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
     let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
@@ -329,8 +364,8 @@ where
         live_x_cols,
         m_evals_x,
         alpha_evals_y,
-        num_u,
-        num_l,
+        col_bits,
+        ring_bits,
         tau0,
         tau1,
         b: 1usize << lp.log_basis,
@@ -358,7 +393,6 @@ where
 pub(crate) fn ring_switch_verifier<F, T, const D: usize>(
     opening_point: &RingOpeningPoint<F>,
     challenges: &[SparseChallenge],
-    setup: &HachiExpandedSetup<F>,
     w_len: usize,
     w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
@@ -371,7 +405,6 @@ where
     ring_switch_verifier_with_claim_groups::<F, T, D>(
         opening_point,
         challenges,
-        setup,
         w_len,
         w_commitment,
         transcript,
@@ -388,7 +421,6 @@ where
 pub(crate) fn ring_switch_verifier_with_claim_groups<F, T, const D: usize>(
     opening_point: &RingOpeningPoint<F>,
     challenges: &[SparseChallenge],
-    setup: &HachiExpandedSetup<F>,
     w_len: usize,
     w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
@@ -414,37 +446,36 @@ where
     let num_commitment_groups = claim_group_sizes.len();
 
     let num_ring_elems = w_len / D;
-    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    let num_l = D.trailing_zeros() as usize;
+    let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let ring_bits = D.trailing_zeros() as usize;
     let m_rows = if num_eval_rows == 1 && num_commitment_groups == 1 {
         lp.m_row_count()
     } else {
         lp.m_row_count_with_commitments_and_public_outputs(num_commitment_groups, num_eval_rows)
     };
-    let num_sc_vars = num_u + num_l;
+    let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
     let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
     let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
-    let m_evals_x = compute_m_evals_x_with_claim_groups::<F, D>(
-        setup,
-        opening_point,
+    let prepared_m_eval = prepare_m_eval::<F, D>(
         challenges,
         alpha,
-        &alpha_evals_y,
         lp,
         &tau1,
         claim_group_sizes,
         gamma,
         num_eval_rows,
+        1,
+        &[],
     )?;
 
     Ok(RingSwitchVerifyOutput {
-        m_evals_x,
+        prepared_m_eval,
         alpha_evals_y,
-        num_u,
-        num_l,
+        col_bits,
+        ring_bits,
         tau0,
         tau1,
         b: 1usize << lp.log_basis,
@@ -462,7 +493,6 @@ pub(crate) fn ring_switch_verifier_with_opening_points_and_claim_groups<F, T, co
     opening_points: &[RingOpeningPoint<F>],
     claim_to_point: &[usize],
     challenges: &[SparseChallenge],
-    setup: &HachiExpandedSetup<F>,
     w_len: usize,
     w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
@@ -484,53 +514,36 @@ where
     let num_commitment_groups = claim_group_sizes.len();
 
     let num_ring_elems = w_len / D;
-    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    let num_l = D.trailing_zeros() as usize;
+    let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let ring_bits = D.trailing_zeros() as usize;
     let m_rows = if num_eval_rows == 1 && num_commitment_groups == 1 && opening_points.len() == 1 {
         lp.m_row_count()
     } else {
         lp.m_row_count_with_commitments_and_public_outputs(num_commitment_groups, num_eval_rows)
     };
-    let num_sc_vars = num_u + num_l;
+    let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
     let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
     let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
     let alpha_evals_y = build_alpha_evals_y(alpha, D);
-    let m_evals_x = if opening_points.len() == 1 {
-        compute_m_evals_x_with_claim_groups::<F, D>(
-            setup,
-            &opening_points[0],
-            challenges,
-            alpha,
-            &alpha_evals_y,
-            lp,
-            &tau1,
-            claim_group_sizes,
-            gamma,
-            num_eval_rows,
-        )?
-    } else {
-        compute_m_evals_x_with_opening_points_and_claim_groups::<F, D>(
-            setup,
-            opening_points,
-            claim_to_point,
-            challenges,
-            alpha,
-            &alpha_evals_y,
-            lp,
-            &tau1,
-            claim_group_sizes,
-            gamma,
-            num_eval_rows,
-        )?
-    };
+    let prepared_m_eval = prepare_m_eval::<F, D>(
+        challenges,
+        alpha,
+        lp,
+        &tau1,
+        claim_group_sizes,
+        gamma,
+        num_eval_rows,
+        opening_points.len(),
+        claim_to_point,
+    )?;
 
     Ok(RingSwitchVerifyOutput {
-        m_evals_x,
+        prepared_m_eval,
         alpha_evals_y,
-        num_u,
-        num_l,
+        col_bits,
+        ring_bits,
         tau0,
         tau1,
         b: 1usize << lp.log_basis,
@@ -898,17 +911,17 @@ pub(crate) fn build_w_evals<F: FieldCore>(
             actual: w.len(),
         });
     }
-    let num_l = d.trailing_zeros() as usize;
+    let ring_bits = d.trailing_zeros() as usize;
     let num_ring_elems = w.len() / d;
-    let num_u = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    let x_len = 1usize << num_u;
-    let n = x_len << num_l;
+    let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let x_len = 1usize << col_bits;
+    let n = x_len << ring_bits;
 
     let evals: Vec<F> = cfg_into_iter!(0..n)
         .map(|dst| {
             let y = dst & (d - 1);
-            let x = dst >> num_l;
-            let src = y + (x << num_l);
+            let x = dst >> ring_bits;
+            let src = y + (x << ring_bits);
             if src < w.len() {
                 w[src]
             } else {
@@ -916,7 +929,7 @@ pub(crate) fn build_w_evals<F: FieldCore>(
             }
         })
         .collect();
-    Ok((evals, num_u, num_l))
+    Ok((evals, col_bits, ring_bits))
 }
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
@@ -933,10 +946,10 @@ pub(crate) fn build_w_evals_compact(
             actual: w.len(),
         });
     }
-    let num_l = d.trailing_zeros() as usize;
+    let ring_bits = d.trailing_zeros() as usize;
     let live_x_cols = w.len() / d;
-    let num_u = live_x_cols.next_power_of_two().trailing_zeros() as usize;
-    Ok((w.to_vec(), num_u, num_l))
+    let col_bits = live_x_cols.next_power_of_two().trailing_zeros() as usize;
+    Ok((w.to_vec(), col_bits, ring_bits))
 }
 
 #[allow(clippy::too_many_arguments, dead_code)]
@@ -1046,11 +1059,15 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
     let b_view = setup.shared_matrix.ring_view::<D>(n_b, stride);
     let a_view = setup.shared_matrix.ring_view::<D>(n_a, stride);
 
+    // Row layout: consistency (1) | public (num_eval_rows) | D (n_d) |
+    //             B (n_b * num_commitment_groups) | A (n_a)
     let commitment_row_count = n_b * num_commitment_groups;
-    let public_row_start = n_d + commitment_row_count;
-    let row3_weights = &eq_tau1[public_row_start..(public_row_start + num_eval_rows)];
-    let row4_weight = eq_tau1[public_row_start + num_eval_rows];
-    let a_weights = &eq_tau1[(public_row_start + num_eval_rows + 1)..rows];
+    let consistency_weight = eq_tau1[0];
+    let public_weights = &eq_tau1[1..(1 + num_eval_rows)];
+    let d_start = 1 + num_eval_rows;
+    let b_start = d_start + n_d;
+    let a_start = b_start + commitment_row_count;
+    let a_weights = &eq_tau1[a_start..rows];
     let claim_to_group: Vec<(usize, usize)> = claim_group_sizes
         .iter()
         .enumerate()
@@ -1059,44 +1076,49 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
         })
         .collect();
 
-    let d_matrix_width = lp.d_matrix_width();
+    // --- Digit-major segments (block index innermost) ---
+    //
+    // Within each segment the power-of-2 block index is the fastest-varying
+    // dimension.  Adaptive ordering places the segment whose block dimension
+    // is larger first.
+
+    let t_compound_per_block = n_a * depth_open;
+
     let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
         .map(|x| {
-            let blocks_per_claim = num_blocks * depth_open;
-            let claim_idx = x / blocks_per_claim;
-            let claim_offset = x % blocks_per_claim;
-            let block_idx = claim_offset / depth_open;
-            let digit_idx = claim_offset % depth_open;
-            let global_block_idx = claim_idx * num_blocks + block_idx;
-            let mut acc = (row3_weights[0] * gamma[claim_idx] * opening_point.b[block_idx]
-                + row4_weight * c_alphas[global_block_idx])
-                * g1_open[digit_idx];
-            for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(n_d) {
+            let dig = x / total_blocks;
+            let blk = x % total_blocks;
+            let claim_idx = blk / num_blocks;
+            let block_idx = blk % num_blocks;
+            let d_phys_col = blk * depth_open + dig;
+            let mut acc = (public_weights[0] * gamma[claim_idx] * opening_point.b[block_idx]
+                + consistency_weight * c_alphas[blk])
+                * g1_open[dig];
+            for (di, eq_i) in eq_tau1[d_start..(d_start + n_d)].iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc += *eq_i
-                        * eval_ring_at_pows(&d_view.row(row_idx)[x % d_matrix_width], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&d_view.row(di)[d_phys_col], alpha_pows);
                 }
             }
             acc
         })
         .collect();
-    out.extend(w_segment);
 
+    let t_cols_per_claim = t_compound_per_block * num_blocks;
     let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
         .map(|x| {
-            let t_cols_per_claim = n_a * depth_open * num_blocks;
-            let claim_idx = x / t_cols_per_claim;
-            let claim_offset = x % t_cols_per_claim;
-            let block_idx = claim_offset / (n_a * depth_open);
-            let rem = claim_offset % (n_a * depth_open);
-            let a_idx = rem / depth_open;
-            let digit_idx = rem % depth_open;
-            let global_block_idx = claim_idx * num_blocks + block_idx;
+            let compound_dig = x / total_blocks;
+            let blk = x % total_blocks;
+            let a_idx = compound_dig / depth_open;
+            let digit_idx = compound_dig % depth_open;
+            let claim_idx = blk / num_blocks;
+            let block_idx = blk % num_blocks;
             let (group_idx, claim_idx_within_group) = claim_to_group[claim_idx];
-            let local_col = claim_idx_within_group * t_cols_per_claim + claim_offset;
+            let phys_claim_offset =
+                block_idx * t_compound_per_block + a_idx * depth_open + digit_idx;
+            let local_col = claim_idx_within_group * t_cols_per_claim + phys_claim_offset;
             let commitment_weights =
-                &eq_tau1[(n_d + group_idx * n_b)..(n_d + (group_idx + 1) * n_b)];
-            let mut acc = a_weights[a_idx] * c_alphas[global_block_idx] * g1_open[digit_idx];
+                &eq_tau1[(b_start + group_idx * n_b)..(b_start + (group_idx + 1) * n_b)];
+            let mut acc = a_weights[a_idx] * c_alphas[blk] * g1_open[digit_idx];
             for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[local_col], alpha_pows);
@@ -1105,13 +1127,12 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
             acc
         })
         .collect();
-    out.extend(t_segment);
 
     let z_base: Vec<F> = cfg_into_iter!(0..inner_width)
         .map(|k| {
             let block_idx = k / depth_commit;
             let digit_idx = k % depth_commit;
-            let mut acc = row4_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
+            let mut acc = consistency_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
             for (a_idx, eq_i) in a_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[k], alpha_pows);
@@ -1122,13 +1143,15 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
         .collect();
 
     let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
-        .map(|idx| {
-            let k = idx / depth_fold;
-            let fold_idx = idx % depth_fold;
-            -(z_base[k] * fold_gadget[fold_idx])
+        .map(|x| {
+            let compound_dig = x / block_len;
+            let blk = x % block_len;
+            let dc = compound_dig / depth_fold;
+            let df = compound_dig % depth_fold;
+            let phys_k = blk * depth_commit + dc;
+            -(z_base[phys_k] * fold_gadget[df])
         })
         .collect();
-    out.extend(z_segment);
 
     let alpha_pow_d = alpha_pows[D - 1] * alpha;
     let denom = alpha_pow_d + F::one();
@@ -1140,6 +1163,17 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
             -(eq_tau1[row_idx] * denom * r_gadget[level_idx])
         })
         .collect();
+
+    let z_first = lp.m_vars >= lp.r_vars;
+    if z_first {
+        out.extend(z_segment);
+        out.extend(w_segment);
+        out.extend(t_segment);
+    } else {
+        out.extend(w_segment);
+        out.extend(t_segment);
+        out.extend(z_segment);
+    }
     out.extend(r_tail);
     out.resize(x_len, F::zero());
     Ok(out)
@@ -1276,11 +1310,15 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
     let b_view = setup.shared_matrix.ring_view::<D>(n_b, stride);
     let a_view = setup.shared_matrix.ring_view::<D>(n_a, stride);
 
+    // Row layout: consistency (1) | public (num_eval_rows) | D (n_d) |
+    //             B (n_b * num_commitment_groups) | A (n_a)
     let commitment_row_count = n_b * num_commitment_groups;
-    let public_row_start = n_d + commitment_row_count;
-    let row3_weights = &eq_tau1[public_row_start..(public_row_start + num_eval_rows)];
-    let row4_weight = eq_tau1[public_row_start + num_eval_rows];
-    let a_weights = &eq_tau1[(public_row_start + num_eval_rows + 1)..rows];
+    let consistency_weight = eq_tau1[0];
+    let public_weights = &eq_tau1[1..(1 + num_eval_rows)];
+    let d_start = 1 + num_eval_rows;
+    let b_start = d_start + n_d;
+    let a_start = b_start + commitment_row_count;
+    let a_weights = &eq_tau1[a_start..rows];
     let claim_to_group: Vec<(usize, usize)> = claim_group_sizes
         .iter()
         .enumerate()
@@ -1289,46 +1327,48 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
         })
         .collect();
 
-    let d_matrix_width = lp.d_matrix_width();
+    // --- Digit-major segments (block index innermost) ---
+
+    let t_compound_per_block = n_a * depth_open;
+
     let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
         .map(|x| {
-            let blocks_per_claim = num_blocks * depth_open;
-            let claim_idx = x / blocks_per_claim;
-            let claim_offset = x % blocks_per_claim;
-            let block_idx = claim_offset / depth_open;
-            let digit_idx = claim_offset % depth_open;
-            let global_block_idx = claim_idx * num_blocks + block_idx;
+            let dig = x / total_blocks;
+            let blk = x % total_blocks;
+            let claim_idx = blk / num_blocks;
+            let block_idx = blk % num_blocks;
+            let d_phys_col = blk * depth_open + dig;
             let point_idx = claim_to_point[claim_idx];
             let opening_point = &opening_points[point_idx];
-            let mut acc = (row3_weights[point_idx] * gamma[claim_idx] * opening_point.b[block_idx]
-                + row4_weight * c_alphas[global_block_idx])
-                * g1_open[digit_idx];
-            for (row_idx, eq_i) in eq_tau1.iter().enumerate().take(n_d) {
+            let mut acc =
+                (public_weights[point_idx] * gamma[claim_idx] * opening_point.b[block_idx]
+                    + consistency_weight * c_alphas[blk])
+                    * g1_open[dig];
+            for (di, eq_i) in eq_tau1[d_start..(d_start + n_d)].iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc += *eq_i
-                        * eval_ring_at_pows(&d_view.row(row_idx)[x % d_matrix_width], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&d_view.row(di)[d_phys_col], alpha_pows);
                 }
             }
             acc
         })
         .collect();
-    out.extend(w_segment);
 
+    let t_cols_per_claim = t_compound_per_block * num_blocks;
     let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
         .map(|x| {
-            let t_cols_per_claim = n_a * depth_open * num_blocks;
-            let claim_idx = x / t_cols_per_claim;
-            let claim_offset = x % t_cols_per_claim;
-            let block_idx = claim_offset / (n_a * depth_open);
-            let rem = claim_offset % (n_a * depth_open);
-            let a_idx = rem / depth_open;
-            let digit_idx = rem % depth_open;
-            let global_block_idx = claim_idx * num_blocks + block_idx;
+            let compound_dig = x / total_blocks;
+            let blk = x % total_blocks;
+            let a_idx = compound_dig / depth_open;
+            let digit_idx = compound_dig % depth_open;
+            let claim_idx = blk / num_blocks;
+            let block_idx = blk % num_blocks;
             let (group_idx, claim_idx_within_group) = claim_to_group[claim_idx];
-            let local_col = claim_idx_within_group * t_cols_per_claim + claim_offset;
+            let phys_claim_offset =
+                block_idx * t_compound_per_block + a_idx * depth_open + digit_idx;
+            let local_col = claim_idx_within_group * t_cols_per_claim + phys_claim_offset;
             let commitment_weights =
-                &eq_tau1[(n_d + group_idx * n_b)..(n_d + (group_idx + 1) * n_b)];
-            let mut acc = a_weights[a_idx] * c_alphas[global_block_idx] * g1_open[digit_idx];
+                &eq_tau1[(b_start + group_idx * n_b)..(b_start + (group_idx + 1) * n_b)];
+            let mut acc = a_weights[a_idx] * c_alphas[blk] * g1_open[digit_idx];
             for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[local_col], alpha_pows);
@@ -1337,7 +1377,6 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
             acc
         })
         .collect();
-    out.extend(t_segment);
 
     let z_base: Vec<F> = cfg_into_iter!(0..z_base_len)
         .map(|k| {
@@ -1346,7 +1385,7 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
             let block_idx = local_k / depth_commit;
             let digit_idx = local_k % depth_commit;
             let opening_point = &opening_points[point_idx];
-            let mut acc = row4_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
+            let mut acc = consistency_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
             for (a_idx, eq_i) in a_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[local_k], alpha_pows);
@@ -1356,14 +1395,20 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
         })
         .collect();
 
+    let num_points = opening_points.len();
+    let z_total_blocks = num_points * block_len;
     let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
-        .map(|idx| {
-            let k = idx / depth_fold;
-            let fold_idx = idx % depth_fold;
-            -(z_base[k] * fold_gadget[fold_idx])
+        .map(|x| {
+            let compound_dig = x / z_total_blocks;
+            let global_blk = x % z_total_blocks;
+            let dc = compound_dig / depth_fold;
+            let df = compound_dig % depth_fold;
+            let point_idx = global_blk / block_len;
+            let blk = global_blk % block_len;
+            let phys_k = point_idx * inner_width + blk * depth_commit + dc;
+            -(z_base[phys_k] * fold_gadget[df])
         })
         .collect();
-    out.extend(z_segment);
 
     let alpha_pow_d = alpha_pows[D - 1] * alpha;
     let denom = alpha_pow_d + F::one();
@@ -1375,9 +1420,479 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
             -(eq_tau1[row_idx] * denom * r_gadget[level_idx])
         })
         .collect();
+
+    let z_first = lp.m_vars >= lp.r_vars;
+    if z_first {
+        out.extend(z_segment);
+        out.extend(w_segment);
+        out.extend(t_segment);
+    } else {
+        out.extend(w_segment);
+        out.extend(t_segment);
+        out.extend(z_segment);
+    }
     out.extend(r_tail);
     out.resize(x_len, F::zero());
     Ok(out)
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "prepare_m_eval")]
+pub(crate) fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
+    challenges: &[SparseChallenge],
+    alpha: F,
+    lp: &LevelParams,
+    tau1: &[F],
+    claim_group_sizes: &[usize],
+    gamma: &[F],
+    num_eval_rows: usize,
+    opening_points_len: usize,
+    claim_to_point: &[usize],
+) -> Result<PreparedMEval<F>, HachiError> {
+    let alpha_pows = build_alpha_evals_y(alpha, D);
+    let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
+    let num_commitment_groups = claim_group_sizes.len();
+
+    if gamma.len() != num_claims {
+        return Err(HachiError::InvalidSize {
+            expected: num_claims,
+            actual: gamma.len(),
+        });
+    }
+
+    let depth_commit = lp.num_digits_commit;
+    let depth_open = lp.num_digits_open;
+    let depth_fold = lp.num_digits_fold;
+    let log_basis = lp.log_basis;
+    let num_blocks = lp.num_blocks;
+    let total_blocks = num_blocks
+        .checked_mul(num_claims)
+        .ok_or_else(|| HachiError::InvalidSetup("batched block count overflow".to_string()))?;
+    if challenges.len() != total_blocks {
+        return Err(HachiError::InvalidSize {
+            expected: total_blocks,
+            actual: challenges.len(),
+        });
+    }
+    let block_len = lp.block_len;
+    let inner_width = block_len * depth_commit;
+    let num_points = opening_points_len.max(1);
+    let rows = if num_eval_rows == 1 && num_commitment_groups == 1 && num_points <= 1 {
+        lp.m_row_count()
+    } else {
+        lp.m_row_count_with_commitments_and_public_outputs(num_commitment_groups, num_eval_rows)
+    };
+
+    let eq_tau1 = EqPolynomial::evals(tau1);
+    if eq_tau1.len() < rows {
+        return Err(HachiError::InvalidSize {
+            expected: rows,
+            actual: eq_tau1.len(),
+        });
+    }
+
+    let c_alphas: Vec<F> = challenges
+        .iter()
+        .map(|challenge| eval_sparse_challenge_at_pows::<F, D>(challenge, &alpha_pows))
+        .collect::<Result<_, _>>()?;
+
+    let z_first = lp.m_vars >= lp.r_vars;
+
+    let claim_to_group: Vec<(usize, usize)> = claim_group_sizes
+        .iter()
+        .enumerate()
+        .flat_map(|(group_idx, &group_size)| {
+            (0..group_size).map(move |within_group| (group_idx, within_group))
+        })
+        .collect();
+
+    Ok(PreparedMEval {
+        c_alphas,
+        eq_tau1,
+        total_blocks,
+        num_blocks,
+        num_claims,
+        depth_open,
+        depth_commit,
+        depth_fold,
+        block_len,
+        inner_width,
+        log_basis,
+        n_a: lp.a_key.row_len(),
+        n_d: lp.d_key.row_len(),
+        n_b: lp.b_key.row_len(),
+        num_commitment_groups,
+        rows,
+        z_first,
+        claim_to_group,
+        num_points,
+        num_eval_rows,
+        gamma: gamma.to_vec(),
+        claim_to_point: claim_to_point.to_vec(),
+    })
+}
+
+impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
+    #[inline]
+    pub(crate) fn eval_at_point<const D: usize>(
+        &self,
+        x_challenges: &[F],
+        setup: &HachiExpandedSetup<F>,
+        opening_points: &[RingOpeningPoint<F>],
+        alpha: F,
+    ) -> Result<F, HachiError> {
+        let alpha_pows = build_alpha_evals_y(alpha, D);
+        let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
+        let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
+        let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
+        let levels = r_decomp_levels::<F>(self.log_basis);
+        let r_gadget = gadget_row_scalars::<F>(levels, self.log_basis);
+
+        let stride = setup.seed.max_stride;
+        let d_view = setup.shared_matrix.ring_view::<D>(self.n_d, stride);
+        let b_view = setup.shared_matrix.ring_view::<D>(self.n_b, stride);
+        let a_view = setup.shared_matrix.ring_view::<D>(self.n_a, stride);
+
+        let consistency_weight = self.eq_tau1[0];
+        let public_weights = &self.eq_tau1[1..(1 + self.num_eval_rows)];
+        let d_start = 1 + self.num_eval_rows;
+        let commitment_row_count = self.n_b * self.num_commitment_groups;
+        let b_start = d_start + self.n_d;
+        let a_start = b_start + commitment_row_count;
+        let a_weights = &self.eq_tau1[a_start..self.rows];
+
+        let total_blocks = self.total_blocks;
+        let num_blocks = self.num_blocks;
+        let num_claims = self.num_claims;
+        let depth_open = self.depth_open;
+        let depth_commit = self.depth_commit;
+        let depth_fold = self.depth_fold;
+        let block_len = self.block_len;
+        let inner_width = self.inner_width;
+        let n_d = self.n_d;
+        let n_b = self.n_b;
+        let n_a = self.n_a;
+        let rows = self.rows;
+        let num_points = self.num_points;
+        let c_alphas = &self.c_alphas;
+        let eq_tau1 = &self.eq_tau1;
+        let d_weights = &eq_tau1[d_start..(d_start + n_d)];
+        let claim_to_group = &self.claim_to_group;
+        let claim_to_point = &self.claim_to_point;
+        let gamma = &self.gamma;
+
+        let w_len = depth_open * total_blocks;
+        let t_len = depth_open * n_a * total_blocks;
+        let z_total_blocks = num_points * block_len;
+        let z_len = depth_fold * depth_commit * z_total_blocks;
+        let r_tail_len = rows * levels;
+
+        let is_multi_point = num_points > 1;
+
+        let offset_z = if self.z_first { 0 } else { w_len + t_len };
+        let offset_w = if self.z_first { z_len } else { 0 };
+        let offset_t = if self.z_first { z_len + w_len } else { w_len };
+        let block_bits = num_blocks.trailing_zeros() as usize;
+        let block_low_eq = EqPolynomial::evals(&x_challenges[..block_bits]);
+        let block_offset_low = offset_w & (num_blocks - 1);
+        debug_assert_eq!(block_offset_low, offset_t & (num_blocks - 1));
+
+        let opening_point_block_summaries: Vec<[F; 2]> = opening_points
+            .iter()
+            .map(|opening_point| {
+                summarize_pow2_block_carries(&block_low_eq, block_offset_low, &opening_point.b)
+            })
+            .collect();
+        let challenge_block_summaries: Vec<[F; 2]> = (0..num_claims)
+            .map(|claim_idx| {
+                let start = claim_idx * num_blocks;
+                summarize_pow2_block_carries(
+                    &block_low_eq,
+                    block_offset_low,
+                    &c_alphas[start..(start + num_blocks)],
+                )
+            })
+            .collect();
+
+        let mut w_carry_terms = vec![[F::zero(), F::zero()]; num_claims * depth_open];
+        for (dig, &g_open) in g1_open.iter().enumerate() {
+            let q_base = dig * num_claims;
+            for claim_idx in 0..num_claims {
+                let q = q_base + claim_idx;
+                let point_idx = if is_multi_point {
+                    claim_to_point[claim_idx]
+                } else {
+                    0
+                };
+                let [public_low0, public_low1] = opening_point_block_summaries[point_idx];
+                let public_scale = public_weights[point_idx] * gamma[claim_idx] * g_open;
+                w_carry_terms[q][0] += public_scale * public_low0;
+                w_carry_terms[q][1] += public_scale * public_low1;
+
+                let [challenge_low0, challenge_low1] = challenge_block_summaries[claim_idx];
+                let challenge_scale = consistency_weight * g_open;
+                w_carry_terms[q][0] += challenge_scale * challenge_low0;
+                w_carry_terms[q][1] += challenge_scale * challenge_low1;
+            }
+        }
+        let w_sep = {
+            let _span = tracing::info_span!("m_eval_w_sep").entered();
+            eval_offset_eq_peeled_carry_terms(x_challenges, offset_w, block_bits, &w_carry_terms)
+        };
+        let w_d = {
+            let _span = tracing::info_span!("m_eval_w_d").entered();
+            eval_d_matrix_w_residual_direct(
+                x_challenges,
+                offset_w,
+                num_blocks,
+                num_claims,
+                depth_open,
+                d_weights,
+                d_view,
+                &alpha_pows,
+            )
+        };
+
+        let mut t_carry_terms = vec![[F::zero(), F::zero()]; num_claims * depth_open * n_a];
+        for (a_idx, &a_weight) in a_weights.iter().enumerate() {
+            for (digit_idx, &g_open) in g1_open.iter().enumerate() {
+                let q_base = num_claims * (digit_idx + depth_open * a_idx);
+                let scale = a_weight * g_open;
+                for (claim_idx, &[challenge_low0, challenge_low1]) in
+                    challenge_block_summaries.iter().enumerate()
+                {
+                    let q = q_base + claim_idx;
+                    t_carry_terms[q][0] += scale * challenge_low0;
+                    t_carry_terms[q][1] += scale * challenge_low1;
+                }
+            }
+        }
+        let t_sep = {
+            let _span = tracing::info_span!("m_eval_t_sep").entered();
+            eval_offset_eq_peeled_carry_terms(x_challenges, offset_t, block_bits, &t_carry_terms)
+        };
+
+        let t_b = {
+            let _span = tracing::info_span!("m_eval_t_b").entered();
+            eval_b_matrix_t_residual_direct(
+                x_challenges,
+                offset_t,
+                num_blocks,
+                num_claims,
+                depth_open,
+                n_a,
+                n_b,
+                eq_tau1,
+                b_start,
+                claim_to_group,
+                b_view,
+                &alpha_pows,
+            )
+        };
+
+        let z_base_len = num_points * inner_width;
+        let z_base: Vec<F> = {
+            let _span = tracing::info_span!("m_eval_z_base").entered();
+            cfg_into_iter!(0..z_base_len)
+                .map(|k| {
+                    let point_idx = if is_multi_point { k / inner_width } else { 0 };
+                    let local_k = if is_multi_point { k % inner_width } else { k };
+                    let block_idx = local_k / depth_commit;
+                    let digit_idx = local_k % depth_commit;
+                    let opening_point = &opening_points[point_idx];
+                    let mut acc =
+                        consistency_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
+                    for (a_idx, eq_i) in a_weights.iter().enumerate() {
+                        if !eq_i.is_zero() {
+                            acc +=
+                                *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[local_k], &alpha_pows);
+                        }
+                    }
+                    acc
+                })
+                .collect()
+        };
+
+        let z_dense = {
+            let _span = tracing::info_span!("m_eval_z_dense").entered();
+            let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
+                .map(|x| {
+                    let compound_dig = x / z_total_blocks;
+                    let global_blk = x % z_total_blocks;
+                    let dc = compound_dig / depth_fold;
+                    let df = compound_dig % depth_fold;
+                    let point_idx = global_blk / block_len;
+                    let blk = global_blk % block_len;
+                    let phys_k = point_idx * inner_width + blk * depth_commit + dc;
+                    -(z_base[phys_k] * fold_gadget[df])
+                })
+                .collect();
+            eval_offset_eq_tensor(x_challenges, offset_z, F::one(), &[z_segment.as_slice()])
+        };
+
+        let alpha_pow_d = alpha_pows[D - 1] * alpha;
+        let denom = alpha_pow_d + F::one();
+
+        let r_tail_dims_pow2 = levels.is_power_of_two();
+        let offset_r = w_len + t_len + z_len;
+
+        let r_sep = if r_tail_dims_pow2 {
+            eval_offset_eq_tensor(
+                x_challenges,
+                offset_r,
+                -denom,
+                &[&r_gadget, &eq_tau1[..rows]],
+            )
+        } else {
+            F::zero()
+        };
+        let r_dense = if r_tail_dims_pow2 {
+            F::zero()
+        } else {
+            let _span = tracing::info_span!("m_eval_r_dense").entered();
+            let r_tail: Vec<F> = cfg_into_iter!(0..r_tail_len)
+                .map(|idx| {
+                    let row_idx = idx / levels;
+                    let level_idx = idx % levels;
+                    -(eq_tau1[row_idx] * denom * r_gadget[level_idx])
+                })
+                .collect();
+            eval_offset_eq_tensor(x_challenges, offset_r, F::one(), &[r_tail.as_slice()])
+        };
+
+        Ok(z_dense + w_sep + w_d + t_sep + t_b + r_sep + r_dense)
+    }
+}
+
+#[inline]
+fn summarize_strided_pow2_block_carries<F: FieldCore, const D: usize>(
+    eq_low: &[F],
+    offset_low: usize,
+    row: &[CyclotomicRing<F, D>],
+    alpha_pows: &[F],
+    block_count: usize,
+    block_stride: usize,
+    lane_offset: usize,
+) -> [F; 2] {
+    debug_assert!(block_count.is_power_of_two());
+    debug_assert_eq!(eq_low.len(), block_count);
+    debug_assert!(offset_low < block_count);
+
+    let inner_bits = block_count.trailing_zeros() as usize;
+    let inner_mask = block_count - 1;
+    let mut out = [F::zero(), F::zero()];
+    for block_idx in 0..block_count {
+        let sum = offset_low + block_idx;
+        let carry = sum >> inner_bits;
+        let low_idx = sum & inner_mask;
+        let col = block_idx * block_stride + lane_offset;
+        let value = eval_ring_at_pows(&row[col], alpha_pows);
+        out[carry] += value * eq_low[low_idx];
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn eval_d_matrix_w_residual_direct<F: FieldCore, const D: usize>(
+    x_challenges: &[F],
+    offset_w: usize,
+    num_blocks: usize,
+    num_claims: usize,
+    depth_open: usize,
+    d_weights: &[F],
+    d_view: RingMatrixView<'_, F, D>,
+    alpha_pows: &[F],
+) -> F {
+    debug_assert!(num_blocks.is_power_of_two());
+    let block_bits = num_blocks.trailing_zeros() as usize;
+    let block_low_eq = EqPolynomial::evals(&x_challenges[..block_bits]);
+    let block_offset_low = offset_w & (num_blocks - 1);
+    let per_claim_d_width = num_blocks * depth_open;
+    let carry_terms: Vec<[F; 2]> = cfg_into_iter!(0..(num_claims * depth_open))
+        .map(|q| {
+            let claim_idx = q % num_claims;
+            let dig = q / num_claims;
+            let lane_offset = claim_idx * per_claim_d_width + dig;
+            let mut out = [F::zero(), F::zero()];
+            for (di, &d_weight) in d_weights.iter().enumerate() {
+                if d_weight.is_zero() {
+                    continue;
+                }
+                let row = d_view.row(di);
+                let [block_low0, block_low1] = summarize_strided_pow2_block_carries(
+                    &block_low_eq,
+                    block_offset_low,
+                    row,
+                    alpha_pows,
+                    num_blocks,
+                    depth_open,
+                    lane_offset,
+                );
+                out[0] += d_weight * block_low0;
+                out[1] += d_weight * block_low1;
+            }
+            out
+        })
+        .collect();
+    eval_offset_eq_peeled_carry_terms(x_challenges, offset_w, block_bits, &carry_terms)
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn eval_b_matrix_t_residual_direct<F: FieldCore, const D: usize>(
+    x_challenges: &[F],
+    offset_t: usize,
+    num_blocks: usize,
+    num_claims: usize,
+    depth_open: usize,
+    n_a: usize,
+    n_b: usize,
+    eq_tau1: &[F],
+    b_start: usize,
+    claim_to_group: &[(usize, usize)],
+    b_view: RingMatrixView<'_, F, D>,
+    alpha_pows: &[F],
+) -> F {
+    debug_assert!(num_blocks.is_power_of_two());
+    let block_bits = num_blocks.trailing_zeros() as usize;
+    let block_low_eq = EqPolynomial::evals(&x_challenges[..block_bits]);
+    let block_offset_low = offset_t & (num_blocks - 1);
+    let t_compound_per_block = n_a * depth_open;
+    let t_cols_per_claim = t_compound_per_block * num_blocks;
+    let carry_terms: Vec<[F; 2]> = cfg_into_iter!(0..(num_claims * n_a * depth_open))
+        .map(|q| {
+            let claim_idx = q % num_claims;
+            let compound_dig = q / num_claims;
+            let a_idx = compound_dig / depth_open;
+            let digit_idx = compound_dig % depth_open;
+            let (group_idx, claim_idx_within_group) = claim_to_group[claim_idx];
+            let commitment_weights =
+                &eq_tau1[(b_start + group_idx * n_b)..(b_start + (group_idx + 1) * n_b)];
+            let lane_offset =
+                claim_idx_within_group * t_cols_per_claim + a_idx * depth_open + digit_idx;
+            let mut out = [F::zero(), F::zero()];
+            for (row_idx, &eq_i) in commitment_weights.iter().enumerate() {
+                if eq_i.is_zero() {
+                    continue;
+                }
+                let row = b_view.row(row_idx);
+                let [block_low0, block_low1] = summarize_strided_pow2_block_carries(
+                    &block_low_eq,
+                    block_offset_low,
+                    row,
+                    alpha_pows,
+                    num_blocks,
+                    t_compound_per_block,
+                    lane_offset,
+                );
+                out[0] += eq_i * block_low0;
+                out[1] += eq_i * block_low1;
+            }
+            out
+        })
+        .collect();
+    eval_offset_eq_peeled_carry_terms(x_challenges, offset_t, block_bits, &carry_terms)
 }
 
 pub(crate) fn build_alpha_evals_y<F: FieldCore>(alpha: F, d: usize) -> Vec<F> {
@@ -1428,6 +1943,94 @@ fn balanced_decompose_centered_i32_i8_into<const D: usize>(
     }
 }
 
+/// Transpose block-major digit planes to digit-major order (block index
+/// innermost): for each compound digit index, emit all blocks in order.
+fn emit_planes_block_inner<const D: usize>(
+    out: &mut Vec<i8>,
+    flat: &[[i8; D]],
+    total_blocks: usize,
+    planes_per_block: usize,
+) {
+    debug_assert_eq!(
+        flat.len(),
+        total_blocks * planes_per_block,
+        "emit_planes_block_inner: flat.len()={} != total_blocks({}) * planes_per_block({})",
+        flat.len(),
+        total_blocks,
+        planes_per_block
+    );
+    for compound_dig in 0..planes_per_block {
+        for blk in 0..total_blocks {
+            out.extend_from_slice(&flat[blk * planes_per_block + compound_dig]);
+        }
+    }
+}
+
+/// Decompose z_pre elements and emit in digit-major order.
+///
+/// z_pre has `num_points * block_len * depth_commit` elements indexed as
+/// `z[point * inner_width + blk * depth_commit + dc]`.  Each decomposes into
+/// `num_digits_fold` planes.
+///
+/// Output order: for each `(dc, df)`, emit all `(point, blk)` pairs with
+/// the global block index `point * block_len + blk` innermost.
+fn emit_z_pre_block_inner<const D: usize>(
+    out: &mut Vec<i8>,
+    z_pre_centered: &[[i32; D]],
+    block_len: usize,
+    depth_commit: usize,
+    num_digits_fold: usize,
+    log_basis: u32,
+) {
+    let total_elems = z_pre_centered.len();
+    let inner_width = block_len * depth_commit;
+    debug_assert_eq!(
+        total_elems % inner_width,
+        0,
+        "z_pre length {total_elems} not divisible by inner_width {inner_width}",
+    );
+    let num_points = total_elems / inner_width;
+
+    let mut all_planes = vec![[0i8; D]; total_elems * num_digits_fold];
+    for (k, z_j) in z_pre_centered.iter().enumerate() {
+        balanced_decompose_centered_i32_i8_into(
+            z_j,
+            &mut all_planes[k * num_digits_fold..(k + 1) * num_digits_fold],
+            log_basis,
+        );
+    }
+
+    for dc in 0..depth_commit {
+        for df in 0..num_digits_fold {
+            for pt in 0..num_points {
+                for blk in 0..block_len {
+                    let k = pt * inner_width + blk * depth_commit + dc;
+                    out.extend_from_slice(&all_planes[k * num_digits_fold + df]);
+                }
+            }
+        }
+    }
+}
+
+/// Build the committed witness polynomial from ring-domain digit planes.
+///
+/// Emits field-domain coefficients in digit-major order (block index innermost)
+/// with adaptive segment ordering: the segment whose block dimension is the
+/// larger power of two comes first.
+///
+/// Segment ordering:
+/// - If `m_vars >= r_vars`: z-hat (`2^m` blocks), e-hat + t-hat (`2^r` blocks), r-hat
+/// - If `m_vars < r_vars`: e-hat + t-hat (`2^r` blocks), z-hat (`2^m` blocks), r-hat
+///
+/// Within each segment, the power-of-2 block index is the fastest-varying
+/// (innermost) dimension.
+///
+/// `FlatDigitBlocks` stores ring-domain data in block-major order (all digit
+/// planes for one block contiguously), which is natural for ring-domain matvec
+/// and recomposition. This function transposes to digit-major at the
+/// ring-to-field boundary. An alternative would be propagating digit-major
+/// throughout `FlatDigitBlocks`, eliminating this transposition but requiring
+/// restructured producers and block-level operations.
 pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     w_hat: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
@@ -1437,12 +2040,16 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
 ) -> RecursiveWitnessFlat {
     let log_basis = lp.log_basis;
     let num_digits_fold = lp.num_digits_fold;
+    let depth_open = lp.num_digits_open;
+    let depth_commit = lp.num_digits_commit;
+    let block_len = lp.block_len;
     let levels = r_decomp_levels::<F>(log_basis);
 
     let w_hat_planes = w_hat.flat_digits().len();
     let t_hat_planes = t_hat.flat_digits().len();
     let z_count = w_hat_planes + t_hat_planes + z_pre_centered.len() * num_digits_fold;
     let r_hat_count = r.len() * levels;
+    let z_first = lp.m_vars >= lp.r_vars;
     tracing::debug!(
         w_hat_planes,
         t_hat_planes,
@@ -1452,26 +2059,59 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
         r_planes = r_hat_count,
         total_ring = z_count + r_hat_count,
         total_field = (z_count + r_hat_count) * D,
+        z_first,
         "build_w_coeffs"
     );
     let total_planes = z_count + r_hat_count;
     let total_elems = total_planes * D;
 
     let mut out = Vec::with_capacity(total_elems);
-    for digits in w_hat.flat_digits() {
-        out.extend_from_slice(digits);
+
+    let total_blocks_et = if depth_open > 0 {
+        w_hat_planes / depth_open
+    } else {
+        0
+    };
+    let t_planes_per_block = if total_blocks_et > 0 {
+        t_hat_planes / total_blocks_et
+    } else {
+        0
+    };
+
+    if z_first {
+        emit_z_pre_block_inner(
+            &mut out,
+            z_pre_centered,
+            block_len,
+            depth_commit,
+            num_digits_fold,
+            log_basis,
+        );
+        emit_planes_block_inner(&mut out, w_hat.flat_digits(), total_blocks_et, depth_open);
+        emit_planes_block_inner(
+            &mut out,
+            t_hat.flat_digits(),
+            total_blocks_et,
+            t_planes_per_block,
+        );
+    } else {
+        emit_planes_block_inner(&mut out, w_hat.flat_digits(), total_blocks_et, depth_open);
+        emit_planes_block_inner(
+            &mut out,
+            t_hat.flat_digits(),
+            total_blocks_et,
+            t_planes_per_block,
+        );
+        emit_z_pre_block_inner(
+            &mut out,
+            z_pre_centered,
+            block_len,
+            depth_commit,
+            num_digits_fold,
+            log_basis,
+        );
     }
-    for digits in t_hat.flat_digits() {
-        out.extend_from_slice(digits);
-    }
-    let mut z_planes = vec![[0i8; D]; num_digits_fold];
-    for z_j in z_pre_centered {
-        z_planes.fill([0i8; D]);
-        balanced_decompose_centered_i32_i8_into(z_j, &mut z_planes, log_basis);
-        for plane in &z_planes {
-            out.extend_from_slice(plane);
-        }
-    }
+
     let mut r_planes = vec![[0i8; D]; levels];
     let q = (-F::one()).to_canonical_u128() + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(levels, log_basis, q);
@@ -1489,7 +2129,7 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
 mod tests {
     use super::{
         build_alpha_evals_y, build_w_evals_compact, commit_w, compute_m_evals_x,
-        compute_r_via_poly_division, ring_switch_build_w, WCommitmentConfig,
+        compute_r_via_poly_division, prepare_m_eval, ring_switch_build_w, WCommitmentConfig,
     };
     use crate::algebra::CyclotomicRing;
     use crate::protocol::commitment::presets::fp128::Field as TestF;
@@ -1682,9 +2322,9 @@ mod tests {
         let w =
             ring_switch_build_w::<F, D, Cfg>(&mut quad_eq, &setup.expanded, &setup.ntt_shared, &lp)
                 .expect("ring-switch witness");
-        let (w_compact, _num_u, num_l) =
+        let (w_compact, _col_bits, ring_bits) =
             build_w_evals_compact(w.as_i8_digits(), D).expect("compact witness");
-        let live_x_cols = w_compact.len() >> num_l;
+        let live_x_cols = w_compact.len() >> ring_bits;
 
         let alpha = F::from_u64(17);
         let alpha_evals_y = build_alpha_evals_y(alpha, D);
@@ -1866,6 +2506,132 @@ mod tests {
                 .iter()
                 .all(|block| block.len() == lp.a_key.row_len() * expected_layout.num_digits_open),
             "t_hat should also use the active n_a rows"
+        );
+    }
+
+    #[test]
+    fn prepared_m_eval_matches_materialized() {
+        use crate::protocol::sumcheck::multilinear_eval;
+
+        type F = fp128::Field;
+        type Cfg = fp128::D128Full;
+        const D: usize = Cfg::D;
+        const NV: usize = 12;
+
+        let level_params = Cfg::commitment_layout(NV).expect("commitment layout");
+
+        let mut rng = StdRng::seed_from_u64(0xdead_beef);
+        let evals: Vec<F> = (0..(1usize << NV))
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+        let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
+        let point: Vec<F> = (0..NV)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+
+        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1);
+        let (commitment, batched_hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<
+            F,
+            D,
+        >>::commit(&[poly.clone()], &setup)
+        .expect("commitment");
+        let hint = batched_hint.into_flattened();
+
+        let alpha_bits = D.trailing_zeros() as usize;
+        let outer_point = &point[alpha_bits..];
+        let ring_opening_point = ring_opening_point_from_field(
+            outer_point,
+            level_params.r_vars,
+            level_params.m_vars,
+            BasisMode::Lagrange,
+            BlockOrder::RowMajor,
+        )
+        .expect("ring opening point");
+        let (y_ring, w_folded) = poly.evaluate_and_fold(
+            &ring_opening_point.b,
+            &ring_opening_point.a,
+            level_params.block_len,
+        );
+
+        let mut transcript = Blake2bTranscript::<F>::new(b"prepared-m-eval-test");
+        commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+        for pt in &point {
+            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+        }
+        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+
+        let mut quad_eq = QuadraticEquation::<F, D, Cfg>::new_prover(
+            &setup.ntt_shared,
+            ring_opening_point.clone(),
+            &poly,
+            w_folded,
+            level_params.clone(),
+            hint,
+            &mut transcript,
+            &commitment,
+            &y_ring,
+            setup.expanded.seed.max_stride,
+        )
+        .expect("quadratic equation");
+
+        ring_switch_build_w::<F, D, Cfg>(
+            &mut quad_eq,
+            &setup.expanded,
+            &setup.ntt_shared,
+            &level_params,
+        )
+        .expect("ring-switch witness");
+
+        let alpha = F::from_u64(42);
+        let alpha_evals_y = build_alpha_evals_y(alpha, D);
+        let rows = level_params.m_row_count();
+        let num_i = rows.next_power_of_two().trailing_zeros() as usize;
+        let tau1: Vec<F> = (0..num_i)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+
+        let m_evals_x = compute_m_evals_x::<F, D>(
+            &setup.expanded,
+            &ring_opening_point,
+            &quad_eq.challenges,
+            alpha,
+            &alpha_evals_y,
+            &level_params,
+            &tau1,
+        )
+        .expect("m evals (materialized)");
+
+        let x_challenges: Vec<F> = (0..m_evals_x.len().trailing_zeros() as usize)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+
+        let expected = multilinear_eval(&m_evals_x, &x_challenges).expect("multilinear_eval");
+
+        let prepared = prepare_m_eval::<F, D>(
+            &quad_eq.challenges,
+            alpha,
+            &level_params,
+            &tau1,
+            &[1usize],
+            &[F::one()],
+            1,
+            1,
+            &[],
+        )
+        .expect("prepare_m_eval");
+
+        let got = prepared
+            .eval_at_point::<D>(
+                &x_challenges,
+                &setup.expanded,
+                std::slice::from_ref(&ring_opening_point),
+                alpha,
+            )
+            .expect("eval_at_point");
+
+        assert_eq!(
+            got, expected,
+            "PreparedMEval::eval_at_point must match materialized multilinear_eval"
         );
     }
 }
