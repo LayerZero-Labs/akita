@@ -2,13 +2,14 @@
 
 use hachi_pcs::protocol::commitment::{
     hachi_batched_root_layout, hachi_recursive_level_layout_from_params, presets::fp128,
-    HachiCommitmentLayout, HachiScheduleInputs, HachiScheduleLookupKey,
+    HachiScheduleInputs, HachiScheduleLookupKey,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
 };
+use hachi_pcs::protocol::params::LevelParams;
 use hachi_pcs::protocol::proof::{HachiBatchedProof, HachiProof};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
@@ -69,7 +70,7 @@ type DenseBasis2Fixture = (
     <HachiCommitmentScheme<128, Basis2Cfg> as CommitmentScheme<F, 128>>::Proof,
     Vec<F>,
     F,
-    HachiCommitmentLayout,
+    LevelParams,
 );
 
 type DenseFixture<FField, const D: usize, Cfg> = (
@@ -78,7 +79,7 @@ type DenseFixture<FField, const D: usize, Cfg> = (
     <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::Proof,
     Vec<FField>,
     FField,
-    HachiCommitmentLayout,
+    LevelParams,
 );
 
 fn make_dense_basis2_fixture(nv: usize, transcript_label: &'static [u8]) -> DenseBasis2Fixture {
@@ -228,7 +229,7 @@ fn purge_setup_cache(max_num_vars: usize) {
 fn opening_from_poly<FField: CanonicalField, const D: usize, P: HachiPolyOps<FField, D>>(
     poly: &P,
     point: &[FField],
-    layout: &HachiCommitmentLayout,
+    layout: &LevelParams,
 ) -> FField {
     let alpha_bits = D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits + layout.m_vars + layout.r_vars;
@@ -1093,9 +1094,9 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
             .expect("schedule plan")
             .expect("adaptive full config should expose a schedule plan");
 
-        let mut max_inner = layout.inner_width;
-        let mut max_outer = layout.outer_width;
-        let mut max_d_width = layout.d_matrix_width;
+        let mut max_inner = layout.inner_width();
+        let mut max_outer = layout.outer_width();
+        let mut max_d_width = layout.d_matrix_width();
 
         for state in plan.states().skip(1) {
             let params = Cfg::level_params(HachiScheduleInputs {
@@ -1106,9 +1107,9 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
             let recursive_layout =
                 hachi_recursive_level_layout_from_params::<Cfg>(&params, state.current_w_len)
                     .expect("recursive layout");
-            max_inner = max_inner.max(recursive_layout.inner_width);
-            max_outer = max_outer.max(recursive_layout.outer_width);
-            max_d_width = max_d_width.max(recursive_layout.d_matrix_width);
+            max_inner = max_inner.max(recursive_layout.inner_width());
+            max_outer = max_outer.max(recursive_layout.outer_width());
+            max_d_width = max_d_width.max(recursive_layout.d_matrix_width());
         }
 
         let envelope = Cfg::envelope(nv);

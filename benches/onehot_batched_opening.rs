@@ -9,8 +9,9 @@ use hachi_pcs::protocol::hachi_poly_ops::{HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BlockOrder,
 };
+use hachi_pcs::protocol::params::LevelParams;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
-use hachi_pcs::protocol::{CommitmentConfig, HachiCommitmentLayout};
+use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{BasisMode, CanonicalField, CommitmentScheme, Transcript};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -34,7 +35,7 @@ fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>) {
     group.throughput(Throughput::Elements(TOTAL_FIELD_ELEMS));
 }
 
-fn make_onehot_poly(layout: &HachiCommitmentLayout, seed: u64) -> OneHotPoly<F, D, u8> {
+fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, D, u8> {
     let total_ring = layout.num_blocks * layout.block_len;
     let num_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
     assert_eq!(total_ring * ONEHOT_K, 1usize << num_vars);
@@ -58,7 +59,7 @@ fn random_point(nv: usize) -> Vec<F> {
 fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
     poly: &P,
     point: &[F],
-    layout: &HachiCommitmentLayout,
+    layout: &LevelParams,
 ) -> F {
     let alpha_bits = D.trailing_zeros() as usize;
     assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);

@@ -144,17 +144,16 @@ pub(crate) trait CommitmentFieldProfileSchedule: CommitmentFieldProfile {
     fn generated_schedule_envelope<const D: usize, const LOG_COMMIT_BOUND: u32>(
         max_num_vars: usize,
     ) -> Option<(usize, usize, usize)> {
-        Self::generated_schedule_table::<D, LOG_COMMIT_BOUND>()
-            .and_then(|table| table_entry_envelope_for_max_num_vars(table, max_num_vars))
+        let table = Self::generated_schedule_table::<D, LOG_COMMIT_BOUND>()?;
+        table_entry_envelope_for_max_num_vars(table, max_num_vars)
     }
 
     /// Exact generated schedule source for one shipped generated family.
     ///
     /// # Errors
     ///
-    /// Returns an error if the family does not ship a generated schedule table
-    /// or cannot derive a valid exact schedule source at
-    /// `max_num_vars`.
+    /// Returns an error if the table does not contain the key or cannot derive
+    /// a valid exact schedule source.
     fn generated_schedule_source<
         Cfg: CommitmentConfig,
         const D: usize,

@@ -10,7 +10,8 @@ use hachi_pcs::protocol::commitment::{
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{HachiPolyOps, OneHotPoly};
-use hachi_pcs::protocol::{CommitmentConfig, CommitmentScheme, HachiCommitmentLayout};
+use hachi_pcs::protocol::params::LevelParams;
+use hachi_pcs::protocol::{CommitmentConfig, CommitmentScheme};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;
@@ -25,7 +26,7 @@ const BATCH_SIZE: usize = 1 << 5;
 const ONEHOT_K: usize = D;
 const TOTAL_FIELD_ELEMS: u64 = 1u64 << SINGLE_NUM_VARS;
 
-fn make_onehot_poly(layout: &HachiCommitmentLayout, seed: u64) -> OneHotPoly<F, D, u8> {
+fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, D, u8> {
     let total_ring = layout.num_blocks * layout.block_len;
     let num_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
     assert_eq!(total_ring * ONEHOT_K, 1usize << num_vars);
@@ -70,7 +71,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         .commit_inner_witness(
             &single_setup.expanded.shared_matrix,
             &single_setup.ntt_shared,
-            single_params.n_a,
+            single_params.a_key.row_len(),
             single_layout.block_len,
             single_layout.num_digits_commit,
             single_layout.num_digits_open,
@@ -84,7 +85,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
             poly.commit_inner_witness(
                 &batched_setup.expanded.shared_matrix,
                 &batched_setup.ntt_shared,
-                batch_params.n_a,
+                batch_params.a_key.row_len(),
                 batch_layout.block_len,
                 batch_layout.num_digits_commit,
                 batch_layout.num_digits_open,
@@ -95,8 +96,8 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         })
         .collect();
 
-    let single_n_b = single_params.n_b;
-    let batch_n_b = batch_params.n_b;
+    let single_n_b = single_params.b_key.row_len();
+    let batch_n_b = batch_params.b_key.row_len();
 
     let mut group = c.benchmark_group("hachi/onehot_commit_breakdown");
     group.sample_size(10);
@@ -124,7 +125,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
                     .commit_inner_witness(
                         &single_setup.expanded.shared_matrix,
                         &single_setup.ntt_shared,
-                        single_params.n_a,
+                        single_params.a_key.row_len(),
                         single_layout.block_len,
                         single_layout.num_digits_commit,
                         single_layout.num_digits_open,
@@ -160,7 +161,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
             black_box(mat_vec_mul_ntt_single_i8::<F, D>(
                 &single_setup.ntt_shared,
                 single_n_b,
-                single_layout.outer_width,
+                single_layout.outer_width(),
                 &flat,
             ))
         })
@@ -187,7 +188,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
                         poly.commit_inner_witness(
                             &batched_setup.expanded.shared_matrix,
                             &batched_setup.ntt_shared,
-                            batch_params.n_a,
+                            batch_params.a_key.row_len(),
                             batch_layout.block_len,
                             batch_layout.num_digits_commit,
                             batch_layout.num_digits_open,
@@ -226,14 +227,14 @@ fn bench_commit_breakdown(c: &mut Criterion) {
 
     group.bench_function("batched_outer_only_32xnv29", |b| {
         b.iter(|| {
-            let mut flat = Vec::with_capacity(BATCH_SIZE * batch_layout.outer_width);
+            let mut flat = Vec::with_capacity(BATCH_SIZE * batch_layout.outer_width());
             for inner in &batched_inner {
                 flat.extend_from_slice(inner.t_hat.flat_digits());
             }
             black_box(mat_vec_mul_ntt_single_i8::<F, D>(
                 &batched_setup.ntt_shared,
                 batch_n_b,
-                batch_layout.outer_width,
+                batch_layout.outer_width(),
                 &flat,
             ))
         })
