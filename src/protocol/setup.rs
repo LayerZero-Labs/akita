@@ -101,14 +101,7 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
                 Ok(expanded) => {
                     if expanded.shared_matrix.total_ring_elements_at::<D>() >= max_total {
                         tracing::info!("Loaded setup from disk, rebuilding NTT caches");
-                        let expanded = Arc::new(expanded);
-                        let total = expanded.shared_matrix.total_ring_elements_at::<D>();
-                        let ntt_shared =
-                            build_ntt_slot(expanded.shared_matrix.ring_view::<D>(1, total))?;
-                        return Ok(Self {
-                            expanded,
-                            ntt_shared,
-                        });
+                        return Self::from_expanded(expanded);
                     }
                     if let Some(storage_path) =
                         get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys)
@@ -166,6 +159,27 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
         HachiVerifierSetup {
             expanded: self.expanded.clone(),
         }
+    }
+
+    /// Wrap a pre-built [`HachiExpandedSetup`] in a prover setup by
+    /// reconstructing the shared NTT cache at ring dimension `D`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the NTT cache cannot be built for the current
+    /// field/ring-dimension pair.
+    #[cfg(feature = "disk-persistence")]
+    pub(crate) fn from_expanded(expanded: HachiExpandedSetup<F>) -> Result<Self, HachiError>
+    where
+        F: CanonicalField,
+    {
+        let expanded = Arc::new(expanded);
+        let total = expanded.shared_matrix.total_ring_elements_at::<D>();
+        let ntt_shared = build_ntt_slot(expanded.shared_matrix.ring_view::<D>(1, total))?;
+        Ok(Self {
+            expanded,
+            ntt_shared,
+        })
     }
 }
 
@@ -475,13 +489,7 @@ fn load_expanded_setup<F: FieldCore + Valid + CanonicalField, Cfg: CommitmentCon
 pub(crate) fn setup_from_expanded<F: FieldCore + CanonicalField, const D: usize>(
     expanded: HachiExpandedSetup<F>,
 ) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError> {
-    let expanded = Arc::new(expanded);
-    let total = expanded.shared_matrix.total_ring_elements_at::<D>();
-    let ntt_shared = build_ntt_slot(expanded.shared_matrix.ring_view::<D>(1, total))?;
-    let prover_setup = HachiProverSetup {
-        expanded: Arc::clone(&expanded),
-        ntt_shared,
-    };
-    let verifier_setup = HachiVerifierSetup { expanded };
+    let prover_setup = HachiProverSetup::<F, D>::from_expanded(expanded)?;
+    let verifier_setup = prover_setup.verifier_setup();
     Ok((prover_setup, verifier_setup))
 }
