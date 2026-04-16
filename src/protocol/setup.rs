@@ -189,6 +189,16 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
 
 impl Valid for HachiSetupSeed {
     fn check(&self) -> Result<(), SerializationError> {
+        if self.max_stride == 0 {
+            return Err(SerializationError::InvalidData(
+                "setup seed max_stride must be non-zero".to_string(),
+            ));
+        }
+        if self.max_num_batched_polys == 0 {
+            return Err(SerializationError::InvalidData(
+                "setup seed max_num_batched_polys must be at least 1".to_string(),
+            ));
+        }
         Ok(())
     }
 }
