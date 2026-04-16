@@ -10,7 +10,7 @@ use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::matrix::{
     derive_public_matrix_flat, sample_public_matrix_seed, PublicMatrixSeed,
 };
-use crate::protocol::commitment::{compute_num_digits, CommitmentConfig, HachiScheduleInputs};
+use crate::protocol::commitment::CommitmentConfig;
 #[cfg(feature = "disk-persistence")]
 use crate::protocol::commitment::{HachiRootBatchSummary, HachiScheduleLookupKey};
 use crate::{CanonicalField, FieldCore, FieldSampling};
@@ -89,48 +89,8 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
                 Cfg::D
             )));
         }
-        let envelope = Cfg::envelope(max_num_vars);
-        let base_rank = crate::planner::sis_security::MAX_RANK as usize;
-        let max_rows = base_rank
-            .max(envelope.max_n_a)
-            .max(envelope.max_n_b)
-            .max(envelope.max_n_d);
-
-        let alpha = Cfg::D.trailing_zeros() as usize;
-        let outer_vars = max_num_vars.saturating_sub(alpha);
-        let decomp = Cfg::decomposition();
-        let field_bits = 128u32;
-        let root_inputs = HachiScheduleInputs {
-            max_num_vars,
-            level: 0,
-            current_w_len: 1usize.checked_shl(max_num_vars as u32).unwrap_or(0),
-        };
-        let (min_log_basis, _) = Cfg::log_basis_search_range(root_inputs);
-        let worst_log_basis = min_log_basis.max(1);
-        let num_digits_commit = compute_num_digits(decomp.log_commit_bound, worst_log_basis);
-        let log_open_bound = decomp.log_open_bound.unwrap_or(field_bits);
-        let num_digits_open = compute_num_digits(log_open_bound, worst_log_basis);
-        let m_exp = (2 * outer_vars).div_ceil(3);
-        let r_exp = outer_vars.div_ceil(2);
-        let block_len_bound = 1usize
-            .checked_shl(m_exp as u32)
-            .ok_or_else(|| HachiError::InvalidSetup(format!("2^{m_exp} does not fit usize")))?;
-        let num_blocks_bound = 1usize
-            .checked_shl(r_exp as u32)
-            .ok_or_else(|| HachiError::InvalidSetup(format!("2^{r_exp} does not fit usize")))?;
-        let inner_width = block_len_bound
-            .checked_mul(num_digits_commit)
-            .ok_or_else(|| HachiError::InvalidSetup("inner width bound overflow".to_string()))?;
-        let outer_width = max_rows
-            .checked_mul(num_digits_open)
-            .and_then(|x| x.checked_mul(num_blocks_bound))
-            .and_then(|x| x.checked_mul(max_num_batched_polys))
-            .ok_or_else(|| HachiError::InvalidSetup("outer width bound overflow".to_string()))?;
-        let d_width = num_digits_open
-            .checked_mul(num_blocks_bound)
-            .and_then(|x| x.checked_mul(max_num_batched_polys))
-            .ok_or_else(|| HachiError::InvalidSetup("D width bound overflow".to_string()))?;
-        let max_stride = inner_width.max(outer_width).max(d_width);
+        let (max_rows, max_stride) =
+            Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?;
         let max_total = max_rows
             .checked_mul(max_stride)
             .ok_or_else(|| HachiError::InvalidSetup("conservative total overflow".to_string()))?;

@@ -28,7 +28,7 @@ impl CommitmentConfig for BadDegreeConfig {
 
     fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
         CommitmentEnvelope {
-            max_n_a: 8,
+            max_n_a: 4,
             max_n_b: 4,
             max_n_d: 4,
         }

@@ -246,6 +246,65 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Maximum matrix row counts needed by this config for the given setup size.
     fn envelope(max_num_vars: usize) -> CommitmentEnvelope;
 
+    /// Conservative `(max_rows, max_stride)` bounds for the shared setup
+    /// matrix.
+    ///
+    /// The default implementation pins the row count to
+    /// [`sis_security::MAX_RANK`](crate::planner::sis_security::MAX_RANK)
+    /// and derives the column stride as the max of the inner (A),
+    /// outer (B), and D column widths under the worst-case (smallest)
+    /// root `log_basis` produced by [`Self::log_basis_search_range`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HachiError::InvalidSetup`] if any intermediate width bound
+    /// (block length, block count, inner / outer / D stride) overflows
+    /// `usize`.
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> Result<(usize, usize), HachiError> {
+        let max_rows = crate::planner::sis_security::MAX_RANK as usize;
+
+        let alpha = Self::D.trailing_zeros() as usize;
+        let outer_vars = max_num_vars.saturating_sub(alpha);
+        let decomp = Self::decomposition();
+        let field_bits = 128u32;
+        let root_inputs = HachiScheduleInputs {
+            max_num_vars,
+            level: 0,
+            current_w_len: 1usize.checked_shl(max_num_vars as u32).unwrap_or(0),
+        };
+        let (min_log_basis, _) = Self::log_basis_search_range(root_inputs);
+        let worst_log_basis = min_log_basis.max(1);
+        let num_digits_commit = compute_num_digits(decomp.log_commit_bound, worst_log_basis);
+        let log_open_bound = decomp.log_open_bound.unwrap_or(field_bits);
+        let num_digits_open = compute_num_digits(log_open_bound, worst_log_basis);
+        let m_exp = (2 * outer_vars).div_ceil(3);
+        let r_exp = outer_vars.div_ceil(2);
+        let block_len_bound = 1usize
+            .checked_shl(m_exp as u32)
+            .ok_or_else(|| HachiError::InvalidSetup(format!("2^{m_exp} does not fit usize")))?;
+        let num_blocks_bound = 1usize
+            .checked_shl(r_exp as u32)
+            .ok_or_else(|| HachiError::InvalidSetup(format!("2^{r_exp} does not fit usize")))?;
+        let inner_width = block_len_bound
+            .checked_mul(num_digits_commit)
+            .ok_or_else(|| HachiError::InvalidSetup("inner width bound overflow".to_string()))?;
+        let outer_width = max_rows
+            .checked_mul(num_digits_open)
+            .and_then(|x| x.checked_mul(num_blocks_bound))
+            .and_then(|x| x.checked_mul(max_num_batched_polys))
+            .ok_or_else(|| HachiError::InvalidSetup("outer width bound overflow".to_string()))?;
+        let d_width = num_digits_open
+            .checked_mul(num_blocks_bound)
+            .and_then(|x| x.checked_mul(max_num_batched_polys))
+            .ok_or_else(|| HachiError::InvalidSetup("D width bound overflow".to_string()))?;
+        let max_stride = inner_width.max(outer_width).max(d_width);
+
+        Ok((max_rows, max_stride))
+    }
+
     /// Stable identifier for setup-cache versioning and fixture selection.
     fn family_key() -> &'static str {
         std::any::type_name::<Self>()
@@ -551,7 +610,7 @@ impl CommitmentConfig for SmallTestCommitmentConfig {
 
     fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
         CommitmentEnvelope {
-            max_n_a: 8,
+            max_n_a: 4,
             max_n_b: 4,
             max_n_d: 4,
         }
