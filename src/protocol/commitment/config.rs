@@ -479,28 +479,6 @@ pub fn beta_linf_fold_bound(
         .ok_or_else(|| HachiError::InvalidSetup("beta bound overflow".to_string()))
 }
 
-/// Validate static config invariants and derive runtime dimensions.
-///
-/// # Errors
-///
-/// Returns an error when config constants are inconsistent or overflow.
-#[cfg(test)]
-pub(super) fn validate_and_derive_layout<
-    F: CanonicalField,
-    Cfg: CommitmentConfig<Field = F>,
-    const D: usize,
->(
-    max_num_vars: usize,
-) -> Result<LevelParams, HachiError> {
-    if D != Cfg::D {
-        return Err(HachiError::InvalidSetup(format!(
-            "const D={D} mismatches config D={}",
-            Cfg::D
-        )));
-    }
-    Cfg::commitment_layout(max_num_vars)
-}
-
 /// Ensure `max_num_vars` is sufficient for a commitment layout.
 ///
 /// # Errors

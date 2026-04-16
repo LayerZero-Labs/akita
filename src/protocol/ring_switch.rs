@@ -723,15 +723,6 @@ pub(crate) fn w_ring_element_count_with_num_claims<F: CanonicalField>(
     w_ring_element_count_with_counts::<F>(lp, num_claims, num_claims, 1)
 }
 
-#[cfg(test)]
-pub(crate) fn w_ring_element_count_with_num_claims_and_points<F: CanonicalField>(
-    lp: &LevelParams,
-    num_claims: usize,
-    num_points: usize,
-) -> usize {
-    w_ring_element_count_with_counts::<F>(lp, num_claims, num_claims, num_points)
-}
-
 pub(crate) fn w_ring_element_count_with_batch_summary<F: CanonicalField>(
     lp: &LevelParams,
     batch: HachiRootBatchSummary,
