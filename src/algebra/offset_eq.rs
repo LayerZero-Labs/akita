@@ -415,16 +415,16 @@ mod tests {
                 let local = idx % dims[j];
                 idx /= dims[j];
                 prod *= if f.is_empty() {
-                        if local == 0 {
-                            F::one()
-                        } else {
-                            F::zero()
-                        }
-                    } else if local < f.len() {
-                        f[local]
+                    if local == 0 {
+                        F::one()
                     } else {
                         F::zero()
-                    };
+                    }
+                } else if local < f.len() {
+                    f[local]
+                } else {
+                    F::zero()
+                };
             }
             let global = offset + z;
             if global < eq_table.len() {
