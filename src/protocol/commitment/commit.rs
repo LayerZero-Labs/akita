@@ -1,8 +1,7 @@
 //! Ring-native §4.1 commitment core implementation.
 
 use super::config::{
-    compute_num_digits, ensure_block_layout, ensure_layout_supported_num_vars,
-    validate_and_derive_layout,
+    ensure_block_layout, ensure_layout_supported_num_vars, validate_and_derive_layout,
 };
 use super::onehot::{inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks};
 use super::schedule::HachiScheduleInputs;
@@ -26,6 +25,7 @@ use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
+use crate::planner::digit_math::compute_num_digits_fold;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
@@ -413,26 +413,6 @@ impl LayoutChainStats {
     }
 }
 
-fn compute_num_digits_fold_batched(
-    r_vars: usize,
-    challenge_l1_mass: usize,
-    log_basis: u32,
-    num_claims: usize,
-) -> usize {
-    let shift = r_vars + (log_basis as usize) - 1;
-    if shift >= 127 || challenge_l1_mass == 0 {
-        return compute_num_digits(128, log_basis);
-    }
-    let beta = (challenge_l1_mass as u128)
-        .saturating_mul(num_claims as u128)
-        .saturating_mul(1u128 << shift);
-    if beta == 0 {
-        return 1;
-    }
-    let log_beta = 128 - beta.leading_zeros();
-    compute_num_digits(log_beta, log_basis)
-}
-
 pub(crate) fn scale_batched_root_layout<Cfg, const D: usize>(
     max_num_vars: usize,
     root_lp: &LevelParams,
@@ -480,7 +460,7 @@ where
     );
     // `num_claims` amplifies the folded root witness bound. Public point count
     // is handled later when sizing the explicit y rows and serialized y_rings.
-    scaled.num_digits_fold = root_lp.num_digits_fold.max(compute_num_digits_fold_batched(
+    scaled.num_digits_fold = root_lp.num_digits_fold.max(compute_num_digits_fold(
         root_lp.r_vars,
         root_stage1_config.l1_mass(),
         root_lp.log_basis,
@@ -723,13 +703,8 @@ where
         }
     }
 
-    if let Some(plan) = singleton_plan.as_ref() {
-        for level in plan.fold_levels().skip(1) {
-            stats.include(&level.lp);
-        }
-        return Ok(stats);
-    }
-
+    // Batched roots can hand off a larger recursive witness than the
+    // singleton schedule, so the suffix must follow the concrete runtime path.
     let root_plan = hachi_root_runtime_plan_from_root_layout::<Cfg, D>(
         HachiScheduleLookupKey::with_batch(
             max_num_vars,
@@ -1494,6 +1469,51 @@ mod tests {
         assert!(batched_stats.max_inner_width >= multipoint_level1_lp.inner_width());
         assert!(batched_stats.max_outer_width >= multipoint_level1_lp.outer_width());
         assert!(batched_stats.max_d_matrix_width >= multipoint_level1_lp.d_matrix_width());
+        let batch_summary = HachiRootBatchSummary::new(MAX_BATCH, MAX_BATCH, MAX_BATCH).unwrap();
+        let batched_root_plan = hachi_root_runtime_plan_from_root_layout::<TinyConfig, TEST_D>(
+            HachiScheduleLookupKey::with_batch(
+                MAX_NUM_VARS,
+                MAX_NUM_VARS,
+                MAX_BATCH,
+                batch_summary,
+            ),
+            &root_lp,
+        )
+        .unwrap();
+        let mut prev_w_len = batched_root_plan
+            .inputs
+            .current_w_len
+            .saturating_mul(batched_root_plan.batch.num_claims);
+        let mut current_w_len = batched_root_plan.next_w_len();
+        let mut current_lp = batched_root_plan.next_level_params.clone();
+        let mut level = 1usize;
+        loop {
+            assert!(batched_stats.max_inner_width >= current_lp.inner_width());
+            assert!(batched_stats.max_outer_width >= current_lp.outer_width());
+            assert!(batched_stats.max_d_matrix_width >= current_lp.d_matrix_width());
+            assert!(batched_stats.max_n_a >= current_lp.a_key.row_len());
+            assert!(batched_stats.max_n_b >= current_lp.b_key.row_len());
+            assert!(batched_stats.max_n_d >= current_lp.d_key.row_len());
+            if should_stop_folding(current_w_len, prev_w_len) {
+                break;
+            }
+            let next_w_len = w_ring_element_count::<TestF>(&current_lp) * current_lp.ring_dimension;
+            let next_level = level + 1;
+            let next_lp_partial = TinyConfig::level_params(HachiScheduleInputs {
+                max_num_vars: MAX_NUM_VARS,
+                level: next_level,
+                current_w_len: next_w_len,
+            });
+            let next_lp = hachi_recursive_level_layout_from_params::<TinyConfig>(
+                &next_lp_partial,
+                next_w_len,
+            )
+            .unwrap();
+            prev_w_len = current_w_len;
+            current_w_len = next_w_len;
+            current_lp = next_lp;
+            level = next_level;
+        }
         assert!(seed.max_inner_width >= multipoint_level1_lp.inner_width());
         assert!(seed.max_outer_width >= multipoint_level1_lp.outer_width());
         assert!(seed.max_d_matrix_width >= multipoint_level1_lp.d_matrix_width());

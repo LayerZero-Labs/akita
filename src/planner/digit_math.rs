@@ -114,8 +114,7 @@ pub fn num_digits_for_bound(log_bound: u32, log_basis: u32) -> usize {
 /// number of claims.
 ///
 /// Falls back to the field-width ceiling when the shift overflows or the
-/// mass is zero, matching the protocol's `compute_num_digits_fold_batched`
-/// in `commit.rs`.
+/// mass is zero.
 pub fn compute_num_digits_fold(
     r_vars: usize,
     challenge_l1_mass: usize,

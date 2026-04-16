@@ -75,6 +75,7 @@ pub struct Schedule {
 
 /// All layout data for one candidate fold level.
 struct CandidateLevelParams {
+    proof_lp: LevelParams,
     lp: LevelParams,
     next_w_len: usize,
     w_ring: usize,
@@ -114,6 +115,7 @@ fn derive_candidate_level_params<Cfg: CommitmentConfig>(
     }
 
     Some(CandidateLevelParams {
+        proof_lp: level_lp.clone(),
         lp: level_lp,
         next_w_len,
         w_ring,
@@ -129,7 +131,7 @@ fn compute_level_proof_size<Cfg: CommitmentConfig>(
     let fb = field_bits(Cfg::decomposition());
     level_proof_bytes(
         fb,
-        &candidate.lp,
+        &candidate.proof_lp,
         &candidate.lp,
         next_level_params,
         candidate.next_w_len,
@@ -373,6 +375,7 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig, const D: usize>(
             return None;
         }
         return Some(CandidateLevelParams {
+            proof_lp: root_lp.clone(),
             lp: root_lp,
             next_w_len,
             w_ring,
@@ -416,7 +419,6 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig, const D: usize>(
         };
 
         let d = root_lp.ring_dimension;
-        let bd_collision = (1u32 << root_lp.log_basis) - 1;
         let candidate_lp = LevelParams {
             ring_dimension: d,
             log_basis: root_lp.log_basis,
@@ -429,13 +431,13 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig, const D: usize>(
             b_key: AjtaiKeyParams::new_unchecked(
                 root_lp.b_key.row_len(),
                 outer_width,
-                bd_collision,
+                root_lp.b_key.collision_inf(),
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
                 root_lp.d_key.row_len(),
                 d_matrix_width,
-                bd_collision,
+                root_lp.d_key.collision_inf(),
                 d,
             ),
             num_blocks,
@@ -455,14 +457,10 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig, const D: usize>(
         ) else {
             continue;
         };
-        let mut planner_layout = candidate_lp.clone();
-        planner_layout.num_digits_fold = derivation.level_lp.num_digits_fold;
-        // Merge: rank from the batch-effective derivation (may differ for
-        // adaptive configs), geometry from the per-claim candidate layout.
-        let lp = derivation.root_lp.with_layout(&planner_layout);
-
-        let w_ring = batched_root_w_ring_element_count::<Cfg>(&lp, batch);
-        let next_w_len = w_ring * lp.ring_dimension;
+        let level_lp = derivation.level_lp;
+        let proof_lp = derivation.root_lp;
+        let w_ring = batched_root_w_ring_element_count::<Cfg>(&level_lp, batch);
+        let next_w_len = w_ring * level_lp.ring_dimension;
 
         if next_w_len * (log_basis as usize) >= root_w_len * (fb as usize) {
             continue;
@@ -470,7 +468,8 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig, const D: usize>(
 
         if best.as_ref().is_none_or(|b| next_w_len < b.next_w_len) {
             best = Some(CandidateLevelParams {
-                lp,
+                proof_lp,
+                lp: level_lp,
                 next_w_len,
                 w_ring,
             });
@@ -704,6 +703,56 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn assert_standalone_batched_root_matches_runtime<Cfg: CommitmentConfig, const D: usize>(
+        num_vars: usize,
+        batch: BatchConfig,
+    ) {
+        let schedule = find_optimal_batched_schedule::<Cfg, D>(num_vars, batch)
+            .expect("standalone batched planner should succeed");
+        let Some(Step::Fold(root_step)) = schedule.steps.first() else {
+            panic!("standalone batched planner should start with a fold");
+        };
+        let batch_summary = HachiRootBatchSummary::new(
+            batch.num_claims,
+            batch.num_commitment_groups,
+            batch.num_points,
+        )
+        .expect("valid batch summary");
+        let runtime_root = hachi_root_runtime_plan_with_batch::<Cfg, D>(
+            num_vars,
+            num_vars,
+            batch.num_claims,
+            batch_summary,
+        )
+        .expect("runtime root plan should succeed");
+
+        assert_eq!(root_step.next_w_len, runtime_root.next_w_len());
+        assert_eq!(
+            root_step.level_bytes,
+            runtime_root.level_proof_bytes::<Cfg>()
+        );
+    }
+
+    #[test]
+    fn standalone_batched_root_matches_runtime_bytes() {
+        assert_standalone_batched_root_matches_runtime::<D64OH, 64>(
+            20,
+            BatchConfig {
+                num_claims: 4,
+                num_commitment_groups: 1,
+                num_points: 1,
+            },
+        );
+        assert_standalone_batched_root_matches_runtime::<D128Full, 128>(
+            20,
+            BatchConfig {
+                num_claims: 4,
+                num_commitment_groups: 1,
+                num_points: 1,
+            },
+        );
     }
 
     #[test]
