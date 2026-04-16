@@ -502,7 +502,7 @@ where
 
 /// Planner-derived batched root split parameters.
 pub(crate) struct BatchedRootSplit {
-    /// Unified per-level parameters for the root split.
+    /// Per-polynomial root params/layout for the chosen `(log_basis, m, r)`.
     pub params: LevelParams,
     /// Batched fold digits (from the planner's candidate layout).
     /// May differ from `params.num_digits_fold` when batching amplifies
@@ -539,15 +539,55 @@ where
 {
     let root_lp = Cfg::commitment_layout(max_num_vars)?;
     let scaled_lp = scale_batched_root_layout::<Cfg, D>(max_num_vars, &root_lp, num_claims)?;
-    let inputs = HachiScheduleInputs {
-        max_num_vars,
-        level: 0,
-        current_w_len: root_current_w_len::<D>(&root_lp),
-    };
-    let lp = Cfg::root_level_params_for_layout_with_log_basis(inputs, &scaled_lp)?;
     Ok(BatchedRootSplit {
         num_digits_fold_batched: scaled_lp.num_digits_fold,
+        params: root_lp,
+    })
+}
+
+fn per_poly_root_split_from_batched_level(
+    root_lp: &LevelParams,
+    per_poly_fold: usize,
+    num_claims: usize,
+) -> Result<BatchedRootSplit, HachiError> {
+    if num_claims == 0 {
+        return Err(HachiError::InvalidSetup(
+            "max_num_batched_polys must be at least 1".to_string(),
+        ));
+    }
+    let b_cols = root_lp
+        .b_key
+        .col_len()
+        .checked_div(num_claims)
+        .filter(|cols| cols.saturating_mul(num_claims) == root_lp.b_key.col_len())
+        .ok_or_else(|| {
+            HachiError::InvalidSetup(format!(
+                "batched root B width {} is not divisible by num_claims={num_claims}",
+                root_lp.b_key.col_len()
+            ))
+        })?;
+    let d_cols = root_lp
+        .d_key
+        .col_len()
+        .checked_div(num_claims)
+        .filter(|cols| cols.saturating_mul(num_claims) == root_lp.d_key.col_len())
+        .ok_or_else(|| {
+            HachiError::InvalidSetup(format!(
+                "batched root D width {} is not divisible by num_claims={num_claims}",
+                root_lp.d_key.col_len()
+            ))
+        })?;
+    let d = root_lp.ring_dimension;
+    let mut lp = root_lp.clone();
+    let batched_fold = lp.num_digits_fold;
+    lp.b_key =
+        AjtaiKeyParams::new_unchecked(lp.b_key.row_len(), b_cols, lp.b_key.collision_inf(), d);
+    lp.d_key =
+        AjtaiKeyParams::new_unchecked(lp.d_key.row_len(), d_cols, lp.d_key.collision_inf(), d);
+    lp.num_digits_fold = per_poly_fold;
+    Ok(BatchedRootSplit {
         params: lp,
+        num_digits_fold_batched: batched_fold,
     })
 }
 
@@ -604,24 +644,23 @@ where
         _ => return fallback_batched_root_split::<Cfg, D>(max_num_vars, num_claims),
     };
 
-    let mut lp = root_step.params.clone();
-    let batched_fold = lp.num_digits_fold;
-    lp.num_digits_fold = root_step.delta_fold_per_poly;
+    let split = per_poly_root_split_from_batched_level(
+        &root_step.params,
+        root_step.delta_fold_per_poly,
+        num_claims,
+    )?;
 
     tracing::info!(
         max_num_vars,
         num_claims,
         total_bytes = schedule.total_bytes,
-        root_m = lp.log_block_len(),
-        root_r = lp.log_num_blocks(),
-        root_lb = lp.log_basis,
+        root_m = split.params.log_block_len(),
+        root_r = split.params.log_num_blocks(),
+        root_lb = split.params.log_basis,
         "batched root split: computed from scratch by DP planner (no pre-computed table)"
     );
 
-    Ok(BatchedRootSplit {
-        params: lp,
-        num_digits_fold_batched: batched_fold,
-    })
+    Ok(split)
 }
 
 pub(crate) fn root_batched_layout<Cfg, const D: usize>(
@@ -1531,6 +1570,8 @@ mod tests {
 
     #[test]
     fn onehot_batched_helper_matches_setup_root_layout() {
+        use crate::planner::schedule_params::{BatchConfig, Step};
+
         type Cfg = fp128::D64OneHot;
         const TEST_D: usize = Cfg::D;
         const NV: usize = 15;
@@ -1549,10 +1590,34 @@ mod tests {
                 &setup,
             )
             .unwrap();
+        let schedule =
+            crate::planner::schedule_params::find_optimal_batched_schedule::<Cfg, TEST_D>(
+                NV,
+                BatchConfig {
+                    num_claims: BATCH,
+                    num_commitment_groups: 1,
+                    num_points: 1,
+                },
+            )
+            .unwrap();
+        let root_step = match schedule.steps.first() {
+            Some(Step::Fold(step)) => step,
+            _ => panic!("batch-2 onehot schedule should start with a fold"),
+        };
 
         assert_eq!(helper_root.m_vars, setup_root.m_vars);
         assert_eq!(helper_root.r_vars, setup_root.r_vars);
         assert_eq!(runtime_lp, helper_root);
+        assert_eq!(
+            helper_root.outer_width() * BATCH,
+            root_step.params.outer_width()
+        );
+        assert_eq!(
+            helper_root.d_matrix_width() * BATCH,
+            root_step.params.d_matrix_width()
+        );
+        assert_eq!(helper_root.num_digits_fold, root_step.delta_fold_per_poly);
+        assert_eq!(setup_root.outer_width(), root_step.params.outer_width());
         assert_eq!(helper_root.outer_width() * BATCH, setup_root.outer_width());
         assert_eq!(
             helper_root.d_matrix_width() * BATCH,
@@ -1566,6 +1631,43 @@ mod tests {
         );
         assert!(setup.expanded.seed.max_outer_width >= setup_root.outer_width());
         assert!(setup.expanded.seed.max_d_matrix_width >= setup_root.d_matrix_width());
+    }
+
+    #[test]
+    fn direct_only_batched_helper_stays_per_poly() {
+        use crate::planner::schedule_params::{BatchConfig, Step};
+
+        type Cfg = fp128::D64OneHot;
+        const TEST_D: usize = Cfg::D;
+        const BATCH: usize = 2;
+        let batch = BatchConfig {
+            num_claims: BATCH,
+            num_commitment_groups: 1,
+            num_points: 1,
+        };
+        let nv = (1usize..=12)
+            .find(|&nv| {
+                matches!(
+                    crate::planner::schedule_params::find_optimal_batched_schedule::<Cfg, TEST_D>(
+                        nv, batch
+                    )
+                    .unwrap()
+                    .steps
+                    .first(),
+                    Some(Step::Direct(_))
+                )
+            })
+            .expect("should find a direct-only batch-2 onehot root");
+        let root_lp = Cfg::commitment_layout(nv).unwrap();
+        let helper_root = hachi_batched_root_layout::<Cfg, TEST_D>(nv, BATCH).unwrap();
+        let setup_root = root_batched_layout::<Cfg, TEST_D>(nv, &root_lp, BATCH).unwrap();
+
+        assert_eq!(helper_root, root_lp);
+        assert_eq!(helper_root.outer_width() * BATCH, setup_root.outer_width());
+        assert_eq!(
+            helper_root.d_matrix_width() * BATCH,
+            setup_root.d_matrix_width()
+        );
     }
 
     #[test]
