@@ -1977,20 +1977,18 @@ where
             setup.expanded.seed.max_num_batched_polys,
             HachiRootBatchSummary::new(polys.len(), 1, 1)?,
         )?;
-        let root_lp = root_plan.root_lp.clone();
-        let batched_lp = root_plan.level_lp.clone();
-        setup.ensure_layout_fits(&batched_lp)?;
+        setup.ensure_layout_fits(&root_plan.level_lp)?;
 
         let poly_refs: Vec<&P> = polys.iter().collect();
         let inner_witnesses = if let Some(witnesses) = P::commit_inner_witness_batched(
             &poly_refs,
             &setup.expanded.shared_matrix,
             &setup.ntt_shared,
-            root_lp.a_key.row_len(),
-            root_lp.block_len,
-            root_lp.num_digits_commit,
-            root_lp.num_digits_open,
-            root_lp.log_basis,
+            root_plan.root_lp.a_key.row_len(),
+            root_plan.root_lp.block_len,
+            root_plan.root_lp.num_digits_commit,
+            root_plan.root_lp.num_digits_open,
+            root_plan.root_lp.log_basis,
             setup.expanded.seed.max_stride(),
         )? {
             witnesses
@@ -2001,11 +1999,11 @@ where
                     poly.commit_inner_witness(
                         &setup.expanded.shared_matrix,
                         &setup.ntt_shared,
-                        root_lp.a_key.row_len(),
-                        root_lp.block_len,
-                        root_lp.num_digits_commit,
-                        root_lp.num_digits_open,
-                        root_lp.log_basis,
+                        root_plan.root_lp.a_key.row_len(),
+                        root_plan.root_lp.block_len,
+                        root_plan.root_lp.num_digits_commit,
+                        root_plan.root_lp.num_digits_open,
+                        root_plan.root_lp.log_basis,
                         setup.expanded.seed.max_stride(),
                     )
                 })
@@ -2017,18 +2015,18 @@ where
         let mut group_t = Vec::with_capacity(polys.len());
         for mut inner in inner_witnesses {
             for t_i in &mut inner.t {
-                t_i.truncate(root_lp.a_key.row_len());
+                t_i.truncate(root_plan.root_lp.a_key.row_len());
             }
-            inner
-                .t_hat
-                .truncate_each_block(root_lp.a_key.row_len() * root_lp.num_digits_open);
+            inner.t_hat.truncate_each_block(
+                root_plan.root_lp.a_key.row_len() * root_plan.root_lp.num_digits_open,
+            );
             inner_opening_digits_flat.extend_from_slice(inner.t_hat.flat_digits());
             group_t_hat.push(inner.t_hat);
             group_t.push(inner.t);
         }
         let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
             &setup.ntt_shared,
-            root_lp.b_key.row_len(),
+            root_plan.root_lp.b_key.row_len(),
             setup.expanded.seed.max_stride(),
             &inner_opening_digits_flat,
         );
