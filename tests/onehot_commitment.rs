@@ -2,15 +2,14 @@
 
 use hachi_pcs::algebra::CyclotomicRing;
 use hachi_pcs::protocol::commitment::{HachiCommitmentCore, RingCommitmentScheme};
+use hachi_pcs::protocol::preprocessing::HachiProverSetup;
 use hachi_pcs::test_utils::*;
 use hachi_pcs::{FieldCore, FromSmallInt};
 
 type Core = HachiCommitmentCore;
 
-fn psetup() -> <Core as RingCommitmentScheme<F, D, TinyConfig>>::ProverSetup {
-    <Core as RingCommitmentScheme<F, D, TinyConfig>>::setup(16, 1)
-        .unwrap()
-        .0
+fn psetup() -> HachiProverSetup<F, D> {
+    HachiProverSetup::new::<TinyConfig>(16, 1).unwrap()
 }
 
 /// Compare the optimized one-hot path against the default dense path.

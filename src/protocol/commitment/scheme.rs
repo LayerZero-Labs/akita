@@ -7,6 +7,7 @@ use crate::error::HachiError;
 use crate::protocol::hachi_poly_ops::{HachiPolyOps, OneHotIndex};
 use crate::protocol::opening_point::BasisMode;
 use crate::protocol::params::LevelParams;
+use crate::protocol::preprocessing::HachiProverSetup;
 use crate::protocol::proof::FlatDigitBlocks;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
@@ -181,33 +182,15 @@ where
     F: FieldCore + CanonicalField,
     Cfg: CommitmentConfig<Field = F>,
 {
-    /// Prover setup parameters.
-    type ProverSetup: Clone + Send + Sync;
-    /// Verifier setup parameters.
-    type VerifierSetup: Clone + Send + Sync;
     /// Ring-native commitment type.
     type Commitment: Clone + PartialEq + Send + Sync;
-
-    /// Construct commitment setup for at most `max_num_vars` variables.
-    ///
-    /// `max_num_batched_polys` sizes the widened root `B` and `D` matrices and
-    /// the recursive-chain envelope for batched openings, including the
-    /// worst-case multipoint split where each claim opens at a distinct point.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if dimensions are inconsistent with `Cfg`.
-    fn setup(
-        max_num_vars: usize,
-        max_num_batched_polys: usize,
-    ) -> Result<(Self::ProverSetup, Self::VerifierSetup), HachiError>;
 
     /// Read the runtime layout carried by `setup`.
     ///
     /// # Errors
     ///
     /// Returns an error when setup metadata is inconsistent.
-    fn layout(setup: &Self::ProverSetup) -> Result<LevelParams, HachiError>;
+    fn layout(setup: &HachiProverSetup<F, D>) -> Result<LevelParams, HachiError>;
 
     /// Commit to ring blocks arranged as `2^R` vectors of length `2^M`.
     ///
@@ -216,7 +199,7 @@ where
     /// Returns an error if block layout mismatches config or commitment fails.
     fn commit_ring_blocks(
         f_blocks: &[Vec<CyclotomicRing<F, D>>],
-        setup: &Self::ProverSetup,
+        setup: &HachiProverSetup<F, D>,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError>;
 
     /// Commit to a flat coefficient table `(f_i)_{i∈{0,1}^ℓ}` in ring form.
@@ -227,7 +210,7 @@ where
     /// layout or if the underlying commitment routine fails.
     fn commit_coeffs(
         f_coeffs: &[CyclotomicRing<F, D>],
-        setup: &Self::ProverSetup,
+        setup: &HachiProverSetup<F, D>,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let layout = Self::layout(setup)?;
         let num_blocks = layout.num_blocks;
@@ -259,7 +242,7 @@ where
     fn commit_onehot<I: OneHotIndex>(
         onehot_k: usize,
         indices: &[Option<I>],
-        setup: &Self::ProverSetup,
+        setup: &HachiProverSetup<F, D>,
     ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
         let num_chunks = indices.len();
         let total_field_elems = num_chunks

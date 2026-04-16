@@ -13,10 +13,11 @@ use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
     fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
 };
-use crate::protocol::commitment::{CommitmentConfig, HachiExpandedSetup, RingCommitment};
+use crate::protocol::commitment::{CommitmentConfig, RingCommitment};
 use crate::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps, RecursiveWitnessView};
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::params::LevelParams;
+use crate::protocol::preprocessing::HachiExpandedSetup;
 use crate::protocol::proof::{
     FlatDigitBlocks, HachiBatchedCommitmentHint, HachiCommitmentHint, RingSliceSerializer,
 };
@@ -1191,9 +1192,9 @@ mod tests {
 
     use crate::algebra::CyclotomicRing;
     use crate::protocol::challenges::sparse::sample_sparse_challenges;
-    use crate::protocol::commitment::HachiProverSetup;
     use crate::protocol::commitment::{HachiCommitmentCore, RingCommitmentScheme};
     use crate::protocol::hachi_poly_ops::DensePoly;
+    use crate::protocol::preprocessing::HachiProverSetup;
     use crate::protocol::proof::HachiCommitmentHint;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::test_utils::*;
@@ -1231,8 +1232,7 @@ mod tests {
     }
 
     fn build_fixture() -> Fixture {
-        let (setup, _) =
-            <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::setup(16, 1).unwrap();
+        let setup = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1).unwrap();
 
         let blocks = sample_blocks();
         let w =
@@ -1264,7 +1264,7 @@ mod tests {
             &mut transcript,
             &w.commitment,
             &y_ring,
-            setup.expanded.seed.max_stride(),
+            setup.expanded.seed.max_stride,
         )
         .unwrap();
 
@@ -1300,7 +1300,7 @@ mod tests {
         let lhs = mat_vec_mul(
             &f.setup.expanded.shared_matrix,
             N_A,
-            f.setup.expanded.seed.max_stride(),
+            f.setup.expanded.seed.max_stride,
             &w_hat_flat,
         );
 
@@ -1325,7 +1325,7 @@ mod tests {
         let lhs = mat_vec_mul(
             &f.setup.expanded.shared_matrix,
             N_A,
-            f.setup.expanded.seed.max_stride(),
+            f.setup.expanded.seed.max_stride,
             &inner_opening_digits_flat_ring,
         );
 
@@ -1428,7 +1428,7 @@ mod tests {
         let rhs = mat_vec_mul(
             &f.setup.expanded.shared_matrix,
             N_A,
-            f.setup.expanded.seed.max_stride(),
+            f.setup.expanded.seed.max_stride,
             &z_recovered,
         );
 

@@ -17,11 +17,12 @@ use crate::protocol::commitment::HachiRootBatchSummary;
 use crate::protocol::commitment::{
     hachi_recursive_level_layout_from_params, recursive_level_decomposition_from_root,
     recursive_r_decomp_levels, CommitmentConfig, CommitmentEnvelope, DecompositionParams,
-    HachiExpandedSetup, HachiScheduleInputs, RingCommitment,
+    HachiScheduleInputs, RingCommitment,
 };
 use crate::protocol::hachi_poly_ops::RecursiveWitnessFlat;
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::params::LevelParams;
+use crate::protocol::preprocessing::HachiExpandedSetup;
 use crate::protocol::proof::{FlatDigitBlocks, FlatRingVec, HachiCommitmentHint};
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
@@ -148,7 +149,7 @@ where
         quad_eq.num_eval_rows(),
         lp.num_blocks,
         lp.inner_width(),
-        setup.seed.max_stride(),
+        setup.seed.max_stride,
         ntt_shared,
     )?;
     let w = {
@@ -1049,7 +1050,7 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
     let n_d = lp.d_key.row_len();
     let n_b = lp.b_key.row_len();
     let n_a = lp.a_key.row_len();
-    let stride = setup.seed.max_stride();
+    let stride = setup.seed.max_stride;
     let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride);
     let b_view = setup.shared_matrix.ring_view::<D>(n_b, stride);
     let a_view = setup.shared_matrix.ring_view::<D>(n_a, stride);
@@ -1279,7 +1280,7 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
         .map(|challenge| eval_sparse_challenge_at_pows::<F, D>(challenge, alpha_pows))
         .collect::<Result<_, _>>()?;
 
-    let stride = setup.seed.max_stride();
+    let stride = setup.seed.max_stride;
     let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride);
     let b_view = setup.shared_matrix.ring_view::<D>(n_b, stride);
     let a_view = setup.shared_matrix.ring_view::<D>(n_a, stride);
@@ -1502,12 +1503,13 @@ mod tests {
     use crate::algebra::CyclotomicRing;
     use crate::protocol::commitment::AppendToTranscript;
     use crate::protocol::commitment::{
-        hachi_recursive_level_layout_from_params, presets::fp128, HachiCommitmentCore,
-        HachiScheduleInputs, RingCommitmentScheme, SmallTestCommitmentConfig,
+        hachi_recursive_level_layout_from_params, presets::fp128, HachiScheduleInputs,
+        SmallTestCommitmentConfig,
     };
     use crate::protocol::commitment_scheme::HachiCommitmentScheme;
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, RecursiveWitnessFlat};
     use crate::protocol::opening_point::{ring_opening_point_from_field, BasisMode, BlockOrder};
+    use crate::protocol::preprocessing::HachiProverSetup;
     use crate::protocol::quadratic_equation::QuadraticEquation;
     use crate::protocol::sumcheck::hachi_stage2::relation_claim_from_rows;
     use crate::protocol::transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
@@ -1683,7 +1685,7 @@ mod tests {
             &mut transcript,
             &commitment,
             &y_ring,
-            setup.expanded.seed.max_stride(),
+            setup.expanded.seed.max_stride,
         )
         .expect("quadratic equation");
 
@@ -1799,8 +1801,7 @@ mod tests {
         type WCfg = WCommitmentConfig<32, Cfg>;
         const D: usize = 32;
 
-        let (setup, _) = <HachiCommitmentCore as RingCommitmentScheme<TestF, D, Cfg>>::setup(12, 1)
-            .expect("setup");
+        let setup = HachiProverSetup::<TestF, D>::new::<Cfg>(12, 1).expect("setup");
         assert!(
             setup.ntt_shared.total_elements() > 3,
             "test needs a shared cache envelope"
@@ -1823,13 +1824,9 @@ mod tests {
 
         let expected_layout =
             hachi_recursive_level_layout_from_params::<WCfg>(&lp, w.len()).expect("layout");
-        let (_commitment, hint) = commit_w::<TestF, D, WCfg>(
-            &w,
-            &setup.ntt_shared,
-            &lp,
-            setup.expanded.seed.max_stride(),
-        )
-        .expect("commit w");
+        let (_commitment, hint) =
+            commit_w::<TestF, D, WCfg>(&w, &setup.ntt_shared, &lp, setup.expanded.seed.max_stride)
+                .expect("commit w");
         let t = hint
             .t()
             .expect("commit_w should preserve recomposed t rows");

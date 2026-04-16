@@ -11,6 +11,7 @@ pub mod dispatch;
 pub mod hachi_poly_ops;
 pub mod opening_point;
 pub mod params;
+pub mod preprocessing;
 pub mod prg;
 pub mod proof;
 pub mod quadratic_equation;
@@ -22,13 +23,13 @@ pub mod transcript;
 pub use commitment::{
     optimal_m_r_split, presets, AppendToTranscript, CommitmentConfig, CommitmentPreset,
     CommitmentScheme, DummyProof, GeneratedAdaptivePolicy, HachiCommitment, HachiCommitmentCore,
-    HachiExpandedSetup, HachiOpeningClaim, HachiOpeningPoint, HachiProverSetup,
-    HachiRootBatchSummary, HachiSetupSeed, HachiVerifierSetup, RingCommitment,
+    HachiOpeningClaim, HachiOpeningPoint, HachiRootBatchSummary, RingCommitment,
     RingCommitmentScheme, SmallTestCommitmentConfig, StaticBoundedPolicy,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, MultilinearPolynomail, OneHotIndex, OneHotPoly};
 pub use opening_point::{BasisMode, BlockOrder, RingOpeningPoint};
+pub use preprocessing::{HachiExpandedSetup, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup};
 pub use proof::{
     DirectWitnessProof, DirectWitnessShape, FlatRingVec, HachiBatchedProof, HachiBatchedProofShape,
     HachiBatchedRootProof, HachiLevelProof, HachiProof, HachiProofShape, HachiProofStep,

@@ -463,6 +463,7 @@ mod tests {
         hachi_recursive_level_layout_from_params, CommitmentConfig, HachiCommitmentCore,
         HachiScheduleInputs, RingCommitmentScheme,
     };
+    use crate::protocol::preprocessing::HachiProverSetup;
     use crate::protocol::ring_switch::w_ring_element_count;
     use crate::test_utils::{TinyConfig, D as TestD, F as TestF};
     use crate::FromSmallInt;
@@ -501,9 +502,7 @@ mod tests {
 
     #[test]
     fn dense_commit_inner_matches_ring_commit() {
-        let (setup, _) =
-            <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16, 1)
-                .unwrap();
+        let setup = HachiProverSetup::<TestF, TestD>::new::<TinyConfig>(16, 1).unwrap();
         let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
         let num_ring = layout.num_blocks * layout.block_len;
         let evals: Vec<TestF> = (0..num_ring * TestD)
@@ -528,7 +527,7 @@ mod tests {
                 layout.num_digits_commit,
                 layout.num_digits_open,
                 layout.log_basis,
-                setup.expanded.seed.max_stride(),
+                setup.expanded.seed.max_stride,
             )
             .unwrap();
 
@@ -544,9 +543,7 @@ mod tests {
 
     #[test]
     fn onehot_commit_inner_matches_ring_commit_onehot() {
-        let (setup, _) =
-            <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16, 1)
-                .unwrap();
+        let setup = HachiProverSetup::<TestF, TestD>::new::<TinyConfig>(16, 1).unwrap();
         let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
         let total_ring = layout.num_blocks * layout.block_len;
         let onehot_k = TestD;
@@ -569,7 +566,7 @@ mod tests {
                 layout.num_digits_commit,
                 layout.num_digits_open,
                 layout.log_basis,
-                setup.expanded.seed.max_stride(),
+                setup.expanded.seed.max_stride,
             )
             .unwrap();
 
@@ -584,9 +581,7 @@ mod tests {
 
     #[test]
     fn onehot_decompose_fold_matches_dense_regular_onehot() {
-        let (setup, _) =
-            <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16, 1)
-                .unwrap();
+        let setup = HachiProverSetup::<TestF, TestD>::new::<TinyConfig>(16, 1).unwrap();
         let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
         let total_ring = layout.num_blocks * layout.block_len;
         let onehot_k = TestD;
@@ -696,14 +691,12 @@ mod tests {
         assert_eq!(got.centered_coeffs, expected.centered_coeffs);
         assert_eq!(got.centered_inf_norm, expected.centered_inf_norm);
 
-        let (setup, _) =
-            <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::setup(16, 1)
-                .unwrap();
+        let setup = HachiProverSetup::<TestF, TestD>::new::<TinyConfig>(16, 1).unwrap();
         let test_lp = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
         let w_len = w_ring_element_count::<TestF>(&test_lp) * TestD;
         let w_layout =
             hachi_recursive_level_layout_from_params::<TinyConfig>(&test_lp, w_len).unwrap();
-        let max_stride = setup.expanded.seed.max_stride();
+        let max_stride = setup.expanded.seed.max_stride;
         let digit_commit = digit_view
             .commit_inner(
                 &setup.ntt_shared,

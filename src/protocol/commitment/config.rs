@@ -484,6 +484,7 @@ pub fn beta_linf_fold_bound(
 /// # Errors
 ///
 /// Returns an error when config constants are inconsistent or overflow.
+#[cfg(test)]
 pub(super) fn validate_and_derive_layout<
     F: CanonicalField,
     Cfg: CommitmentConfig<Field = F>,
