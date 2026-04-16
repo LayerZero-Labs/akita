@@ -279,22 +279,6 @@ impl<F: FieldCore + Valid, const D: usize> Valid for HachiProverSetup<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> HachiSerialize for HachiProverSetup<F, D> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        _writer: W,
-        _compress: Compress,
-    ) -> Result<(), SerializationError> {
-        Err(SerializationError::InvalidData(
-            "HachiProverSetup contains runtime NTT caches and is not serializable".into(),
-        ))
-    }
-
-    fn serialized_size(&self, _compress: Compress) -> usize {
-        0
-    }
-}
-
 impl<F: FieldCore + Valid> Valid for HachiVerifierSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()

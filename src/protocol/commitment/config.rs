@@ -900,10 +900,6 @@ impl<
             batch_summary,
         );
 
-        // Always seed with commit's scaled root layout. `commit` materialises
-        // the root commitment against this layout regardless of whether the
-        // schedule folds or sends direct, and the planner/cache may pick a
-        // different `(m, r, log_basis)` triple than commit uses at runtime.
         let fallback = super::commit::fallback_batched_root_split::<Self, D>(
             max_num_vars,
             max_num_batched_polys,
