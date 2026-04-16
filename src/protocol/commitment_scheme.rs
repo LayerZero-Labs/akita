@@ -1960,6 +1960,12 @@ where
                 setup.expanded.seed.max_num_batched_polys
             )));
         }
+        if num_vars > setup.expanded.seed.max_num_vars {
+            return Err(HachiError::InvalidInput(format!(
+                "commit received a polynomial with {} variables but setup supports at most {}",
+                num_vars, setup.expanded.seed.max_num_vars
+            )));
+        }
         let max_num_vars = setup.expanded.seed.max_num_vars;
         let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
             max_num_vars,
@@ -2037,6 +2043,12 @@ where
         basis: BasisMode,
     ) -> Result<Self::Proof, HachiError> {
         let num_vars = opening_point.len();
+        if num_vars > setup.expanded.seed.max_num_vars {
+            return Err(HachiError::InvalidInput(format!(
+                "prove received an opening point with {} variables but setup supports at most {}",
+                num_vars, setup.expanded.seed.max_num_vars
+            )));
+        }
         if schedule_uses_root_direct::<Cfg>(num_vars)? {
             return prove_root_direct::<F, D, P>(poly);
         }
@@ -2262,6 +2274,12 @@ where
                 "batched_prove requires all opening points to have the same length".to_string(),
             ));
         }
+        if num_vars > setup.expanded.seed.max_num_vars {
+            return Err(HachiError::InvalidInput(format!(
+                "batched_prove received opening points with {} variables but setup supports at most {}",
+                num_vars, setup.expanded.seed.max_num_vars
+            )));
+        }
         let batch_shape =
             validate_nonempty_group_sizes_by_point(poly_groups_by_point, "batched_prove")?;
         if opening_points.len() != batch_shape.point_group_sizes.len()
@@ -2422,6 +2440,12 @@ where
         basis: BasisMode,
     ) -> Result<(), HachiError> {
         let num_vars = opening_point.len();
+        if num_vars > setup.expanded.seed.max_num_vars {
+            return Err(HachiError::InvalidInput(format!(
+                "verify received an opening point with {} variables but setup supports at most {}",
+                num_vars, setup.expanded.seed.max_num_vars
+            )));
+        }
         if proof.num_fold_levels() == 0 {
             if !schedule_uses_root_direct::<Cfg>(num_vars)? {
                 return Err(HachiError::InvalidProof);
@@ -2630,6 +2654,12 @@ where
         let num_vars = opening_points[0].len();
         if opening_points.iter().any(|pt| pt.len() != num_vars) {
             return Err(HachiError::InvalidProof);
+        }
+        if num_vars > setup.expanded.seed.max_num_vars {
+            return Err(HachiError::InvalidInput(format!(
+                "batched_verify received opening points with {} variables but setup supports at most {}",
+                num_vars, setup.expanded.seed.max_num_vars
+            )));
         }
         let y_coeff_len = proof.root.y_rings().coeff_len();
         if !y_coeff_len.is_multiple_of(D) {
