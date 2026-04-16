@@ -1406,6 +1406,38 @@ pub(crate) fn compute_alg_m_evals_x_with_claim_groups<
     Ok(out)
 }
 
+/// Evaluate the algebraic (non-matrix-backed) MLE of the M-table at a single
+/// point `r_x`.
+///
+/// Materializes the algebraic table via [`compute_alg_m_evals_x_with_claim_groups`]
+/// and evaluates its MLE. Cost: O(sqrt(N)) field operations with no setup matrix
+/// reads, replacing the O(sqrt(N)*D) cost of `compute_m_evals_x` +
+/// `multilinear_eval` on the full table.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn eval_algebraic_mle_at_point<F: FieldCore + CanonicalField, const D: usize>(
+    opening_point: &RingOpeningPoint<F>,
+    challenges: &[SparseChallenge],
+    alpha: F,
+    alpha_pows: &[F],
+    level_params: &HachiLevelParams,
+    layout: HachiCommitmentLayout,
+    tau1: &[F],
+    claim_group_sizes: &[usize],
+    r_x: &[F],
+) -> Result<F, HachiError> {
+    let alg_table = compute_alg_m_evals_x_with_claim_groups::<F, D>(
+        opening_point,
+        challenges,
+        alpha,
+        alpha_pows,
+        level_params,
+        layout,
+        tau1,
+        claim_group_sizes,
+    )?;
+    crate::algebra::poly::multilinear_eval(&alg_table, r_x)
+}
+
 /// Shared indexing for the delegated matrix-weight tensor on single proofs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SingleProofMatrixWeightGeometry {
@@ -2573,10 +2605,9 @@ mod tests {
     use super::{
         build_alpha_evals_y, build_w_evals_compact, commit_w,
         compute_alg_m_evals_x_with_claim_groups, compute_m_evals_x,
-        compute_m_evals_x_with_claim_groups, compute_r_via_poly_division, eval_ring_at_pows,
-        eval_matrix_weight_at_point, gadget_row_scalars, m_row_count, prepare_m_eval,
-        ring_switch_build_w,
-        WCommitmentConfig,
+        compute_m_evals_x_with_claim_groups, compute_r_via_poly_division,
+        eval_matrix_weight_at_point, eval_ring_at_pows, gadget_row_scalars, m_row_count,
+        prepare_m_eval, ring_switch_build_w, WCommitmentConfig,
     };
     use crate::algebra::eq_poly::EqPolynomial;
     use crate::algebra::poly::multilinear_eval;
@@ -3538,5 +3569,116 @@ mod tests {
         );
 
         matrix_weight_inner_product_equals_setup_residue_for_cfg::<D, MultiRowCfg>(NV);
+    }
+
+    #[test]
+    fn eval_algebraic_mle_at_point_matches_full_table_eval() {
+        use rand::{Rng, SeedableRng};
+        type F = fp128::Field;
+        type Cfg = fp128::D128Full;
+        const D: usize = Cfg::D;
+        const NV: usize = 12;
+
+        let layout = Cfg::commitment_layout(NV).expect("layout");
+        let level_params = Cfg::level_params(HachiScheduleInputs {
+            max_num_vars: NV,
+            level: 0,
+            current_w_len: 1usize << NV,
+        });
+
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0xface_cafe);
+        let evals: Vec<F> = (0..(1usize << NV))
+            .map(|i| F::from_u64((i % 2) as u64))
+            .collect();
+        let poly =
+            crate::protocol::DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
+        let point: Vec<F> = (0..NV)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+
+        let setup =
+            <crate::protocol::commitment_scheme::HachiCommitmentScheme<D, Cfg> as crate::CommitmentScheme<F, D>>::setup_prover(NV, 1);
+
+        let alpha_bits = D.trailing_zeros() as usize;
+        let outer_point = &point[alpha_bits..];
+        let ring_opening_point = crate::protocol::opening_point::ring_opening_point_from_field(
+            outer_point,
+            layout.r_vars,
+            layout.m_vars,
+            crate::protocol::opening_point::BasisMode::Lagrange,
+            crate::protocol::opening_point::BlockOrder::RowMajor,
+        )
+        .expect("ring opening point");
+
+        let (_, w_folded) = poly.evaluate_and_fold(
+            &ring_opening_point.b,
+            &ring_opening_point.a,
+            layout.block_len,
+        );
+
+        let mut transcript =
+            crate::protocol::transcript::Blake2bTranscript::<F>::new(b"alg-mle-test");
+        let (commitment, batched_hint) =
+            <crate::protocol::commitment_scheme::HachiCommitmentScheme<D, Cfg> as crate::CommitmentScheme<F, D>>::commit(&[poly.clone()], &setup)
+            .expect("commit");
+        let y_ring = crate::algebra::CyclotomicRing::<F, D>::zero();
+
+        let quad_eq =
+            crate::protocol::quadratic_equation::QuadraticEquation::<F, D, Cfg>::new_prover(
+                &setup.ntt_shared,
+                ring_opening_point,
+                &poly,
+                w_folded,
+                level_params.clone(),
+                batched_hint.into_flattened(),
+                &mut transcript,
+                &commitment,
+                &y_ring,
+                layout,
+                setup.expanded.seed.max_stride(),
+            )
+            .expect("quadratic equation");
+
+        let alpha = F::from_u64(77);
+        let alpha_evals_y = build_alpha_evals_y(alpha, D);
+        let rows = m_row_count(&level_params);
+        let num_i = rows.next_power_of_two().trailing_zeros() as usize;
+        let tau1: Vec<F> = (0..num_i)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+
+        let alg_table = super::compute_alg_m_evals_x_with_claim_groups::<F, D>(
+            quad_eq.opening_point(),
+            &quad_eq.challenges,
+            alpha,
+            &alpha_evals_y,
+            &level_params,
+            layout,
+            &tau1,
+            &[1usize],
+        )
+        .expect("alg table");
+
+        let col_bits = alg_table.len().trailing_zeros() as usize;
+        let r_x: Vec<F> = (0..col_bits)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+
+        let expected =
+            crate::algebra::poly::multilinear_eval(&alg_table, &r_x).expect("full table eval");
+        let got = super::eval_algebraic_mle_at_point::<F, D>(
+            quad_eq.opening_point(),
+            &quad_eq.challenges,
+            alpha,
+            &alpha_evals_y,
+            &level_params,
+            layout,
+            &tau1,
+            &[1usize],
+            &r_x,
+        )
+        .expect("point eval");
+
+        assert_eq!(got, expected, "eval_algebraic_mle_at_point must match");
     }
 }

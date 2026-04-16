@@ -307,7 +307,7 @@ fn field_witness_eval<F: FieldCore>(
     Ok(acc)
 }
 
-fn direct_witness_eval<F: FieldCore + FromSmallInt>(
+pub(crate) fn direct_witness_eval<F: FieldCore + FromSmallInt>(
     direct_witness: &DirectWitnessProof<F>,
     challenges: &[F],
     col_bits: usize,

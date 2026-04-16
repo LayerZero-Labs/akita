@@ -33,6 +33,12 @@ pub const CHALLENGE_SUMCHECK_ROUND: &[u8] = b"hachi/challenge/sumcheck-round";
 pub const ABSORB_SUMCHECK_S_CLAIM: &[u8] = b"hachi/absorb/sumcheck-s-claim";
 /// Absorb stage-1 inter-stage claims before batching them into the next stage.
 pub const ABSORB_SUMCHECK_INTERSTAGE_CLAIM: &[u8] = b"hachi/absorb/sumcheck-interstage-claim";
+/// Challenge for batching relation into fused Stage 1 (T2 protocol).
+pub const CHALLENGE_FUSED_RELATION_BATCH: &[u8] = b"hachi/challenge/fused-relation-batch";
+/// Absorb `w_eval = w(r_stage1)` after fused Stage 1.
+pub const ABSORB_FUSED_W_EVAL: &[u8] = b"hachi/absorb/fused-w-eval";
+/// Absorb `claimed_setup_val` after fused Stage 1.
+pub const ABSORB_FUSED_SETUP_VAL: &[u8] = b"hachi/absorb/fused-setup-val";
 /// Challenge for batched sumcheck coefficient sampling.
 pub const CHALLENGE_SUMCHECK_BATCH: &[u8] = b"hachi/challenge/sumcheck-batch";
 /// Challenge for batching stage-1 inter-stage claims into the next tree stage.

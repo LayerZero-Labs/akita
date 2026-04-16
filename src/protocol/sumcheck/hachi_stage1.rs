@@ -40,6 +40,7 @@ use super::two_round_prefix::{
 use super::{
     fold_evals_in_place, fold_full_prefix_pair, CompactPairFoldLut,
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier, EqFactoredUniPoly,
+    UniPoly,
 };
 use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::split_eq::GruenSplitEq;
@@ -697,6 +698,40 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
 
     /// Return the fully folded virtual-polynomial claim `S(r_stage1)`.
     ///
+    /// The inner polynomial degree bound (`b/2`), without the eq factor.
+    pub fn degree_bound_inner(&self) -> usize {
+        self.b / 2
+    }
+
+    /// Compute the full non-eq-factored range-check polynomial `s(X) = l(X) * q(X)`
+    /// for the current round. Uses the `range_claim_hint` (= `s(0) + s(1)`) to
+    /// recover the linear term of the inner polynomial `q(X)`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the inner polynomial reconstruction fails and the linear
+    /// factor `l(0)` is zero (degenerate eq split).
+    pub fn compute_full_range_check_round(
+        &mut self,
+        round: usize,
+        range_claim_hint: E,
+    ) -> UniPoly<E> {
+        let eq_factored = EqFactoredSumcheckInstanceProver::compute_round_eq_factored(self, round);
+        self.split_eq
+            .try_gruen_poly_from_coeffs_except_linear(
+                &eq_factored.coeffs_except_linear_term,
+                range_claim_hint,
+            )
+            .unwrap_or_else(|| {
+                let (l0, _l1) = self.split_eq.linear_factor_evals();
+                if l0.is_zero() {
+                    UniPoly::from_coeffs(vec![E::zero()])
+                } else {
+                    panic!("l(1) = 0 but l(0) != 0: edge case not yet handled in fused Stage 1")
+                }
+            })
+    }
+
     /// # Panics
     ///
     /// Panics if called before the virtual table has been fully folded to a

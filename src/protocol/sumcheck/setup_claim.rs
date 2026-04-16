@@ -176,8 +176,12 @@ mod tests {
             .map(|(s, w)| *s * *w)
             .fold(F::zero(), |a, b| a + b);
 
-        let mut prover =
-            SetupClaimProver::new(shared_matrix.clone(), matrix_weight.clone(), num_vars, claim);
+        let mut prover = SetupClaimProver::new(
+            shared_matrix.clone(),
+            matrix_weight.clone(),
+            num_vars,
+            claim,
+        );
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
         let (proof, prover_challenges, final_claim) =

@@ -6,6 +6,7 @@ use crate::error::HachiError;
 use crate::primitives::serialization::Valid;
 use crate::protocol::commitment::HachiCommitmentLayout;
 use crate::protocol::commitment::HachiLevelParams;
+use crate::protocol::commitment::{HachiVerifierSetup, RingCommitment};
 use crate::protocol::commitment_scheme::{
     prove_without_setup_delegation, verify_without_setup_delegation,
 };
@@ -15,7 +16,6 @@ use crate::protocol::ring_switch::{
     eval_matrix_weight_at_point, gadget_row_scalars, single_proof_matrix_weight_entry,
     single_proof_matrix_weight_geometry,
 };
-use crate::protocol::commitment::{HachiVerifierSetup, RingCommitment};
 use crate::protocol::shared_matrix_setup::{
     SharedMatrixOpeningConfig, SharedMatrixSetup, SharedMatrixTensorLayout,
 };
@@ -150,21 +150,16 @@ where
 
     transcript.append_field(ABSORB_SHARED_MATRIX_EVAL, &shared_matrix_eval);
 
-    let shared_matrix_opening_proof = prove_without_setup_delegation::<
-        F,
-        _,
-        D,
-        <Cfg as SharedMatrixOpeningConfig>::InnerCfg,
-        _,
-    >(
-        &sm_setup.prover_setup,
-        &sm_setup.shared_matrix_poly,
-        &setup_challenges,
-        sm_setup.commit_hint.clone(),
-        transcript,
-        &sm_setup.commitment,
-        BasisMode::Lagrange,
-    )?;
+    let shared_matrix_opening_proof =
+        prove_without_setup_delegation::<F, _, D, <Cfg as SharedMatrixOpeningConfig>::InnerCfg, _>(
+            &sm_setup.prover_setup,
+            &sm_setup.shared_matrix_poly,
+            &setup_challenges,
+            sm_setup.commit_hint.clone(),
+            transcript,
+            &sm_setup.commitment,
+            BasisMode::Lagrange,
+        )?;
 
     Ok(SetupDelegationProof {
         claimed_setup_val,
@@ -308,10 +303,10 @@ where
 mod tests {
     use super::*;
     use crate::algebra::eq_poly::EqPolynomial;
-    use crate::protocol::commitment::CommitmentConfig;
-    use crate::protocol::commitment_scheme::HachiCommitmentScheme;
     use crate::protocol::commitment::presets::fp128;
+    use crate::protocol::commitment::CommitmentConfig;
     use crate::protocol::commitment::HachiScheduleInputs;
+    use crate::protocol::commitment_scheme::HachiCommitmentScheme;
     use crate::protocol::hachi_poly_ops::HachiPolyOps;
     use crate::protocol::opening_point::{ring_opening_point_from_field, BlockOrder};
     use crate::protocol::quadratic_equation::QuadraticEquation;

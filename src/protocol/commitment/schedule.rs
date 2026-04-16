@@ -15,12 +15,11 @@ use crate::error::HachiError;
 use crate::primitives::serialization::{Compress, HachiSerialize};
 use crate::protocol::proof::{
     DirectWitnessShape, FlatRingVec, HachiLevelProof, HachiProofShape, HachiProofStepShape,
-    HachiStage1Proof, HachiStage1StageProof, HachiStage2Proof, LevelProofShape,
+    HachiStage1Proof, HachiStage2Proof, LevelProofShape,
 };
 use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
-use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
 use crate::protocol::sumcheck::{
-    CompressedUniPoly, EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof,
+    CompressedUniPoly, SumcheckProof,
 };
 use crate::FieldCore;
 use std::fmt::Write;
@@ -309,7 +308,8 @@ impl HachiRootRuntimePlan {
         LevelProofShape {
             y_ring_coeffs: self.batch.num_claims * self.params.d,
             v_coeffs: self.params.n_d * self.params.d,
-            stage1_stages: stage1_tree_stage_shapes(rounds, b),
+            stage1_stages: Vec::new(),
+            fused_leaf: Some((rounds, b / 2 + 1)),
             stage2_sumcheck: (rounds, 3),
             next_commit_coeffs: self.next_level_params.n_b * self.next_level_params.d,
         }
@@ -768,7 +768,8 @@ impl HachiSchedulePlan {
                 HachiProofStepShape::Fold(LevelProofShape {
                     y_ring_coeffs: p.d,
                     v_coeffs: p.n_d * p.d,
-                    stage1_stages: stage1_tree_stage_shapes(rounds, b),
+                    stage1_stages: Vec::new(),
+                    fused_leaf: Some((rounds, b / 2 + 1)),
                     stage2_sumcheck: (rounds, 3),
                     next_commit_coeffs: level.next_commit_coeffs,
                 })
@@ -1492,13 +1493,11 @@ fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
 }
 
 fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
-    stage1_tree_stage_shapes(rounds, b)
-        .into_iter()
-        .map(|stage| {
-            sumcheck_bytes(rounds, stage.sumcheck.1, elem_bytes) + stage.child_claims * elem_bytes
-        })
-        .sum::<usize>()
-        + elem_bytes
+    let s_claim = elem_bytes;
+    let fused_flags = 1usize;
+    let fused_leaf = sumcheck_bytes(rounds, b / 2 + 1, elem_bytes);
+    let w_eval = elem_bytes;
+    s_claim + fused_flags + fused_leaf + w_eval
 }
 
 /// Compute the number of digits needed when decomposing the `r` polynomial
@@ -1577,32 +1576,13 @@ fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F
     }
 }
 
-fn dummy_eq_factored_sumcheck<F: FieldCore>(
-    rounds: usize,
-    degree: usize,
-) -> EqFactoredSumcheckProof<F> {
-    EqFactoredSumcheckProof {
-        round_polys: (0..rounds)
-            .map(|_| EqFactoredUniPoly {
-                coeffs_except_linear_term: vec![
-                    F::zero();
-                    EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(degree)
-                ],
-            })
-            .collect(),
-    }
-}
-
 fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> HachiStage1Proof<F> {
     HachiStage1Proof {
-        stages: stage1_tree_stage_shapes(rounds, b)
-            .into_iter()
-            .map(|shape| HachiStage1StageProof {
-                sumcheck: dummy_eq_factored_sumcheck(rounds, shape.sumcheck.1),
-                child_claims: vec![F::zero(); shape.child_claims],
-            })
-            .collect(),
+        stages: Vec::new(),
+        fused_leaf: Some(dummy_sumcheck(rounds, b / 2 + 1)),
         s_claim: F::zero(),
+        w_eval: Some(F::zero()),
+        claimed_setup_val: None,
     }
 }
 

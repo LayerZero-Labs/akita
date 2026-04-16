@@ -266,6 +266,7 @@ fn stage1_tree_stage_shape_from_b(rounds: usize, b: usize) -> Vec<HachiStage1Sta
     out
 }
 
+#[cfg(test)]
 pub(crate) fn stage1_tree_stage_shapes(rounds: usize, b: usize) -> Vec<HachiStage1StageShape> {
     stage1_tree_stage_shape_from_b(rounds, b)
 }
@@ -743,7 +744,10 @@ impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1
                         sumcheck,
                         child_claims: Vec::new(),
                     }],
+                    fused_leaf: None,
                     s_claim: leaf_stage.final_s_claim(),
+                    w_eval: None,
+                    claimed_setup_val: None,
                 };
                 return Ok((proof, r_stage1));
             }
@@ -800,7 +804,10 @@ impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1
         Ok((
             HachiStage1Proof {
                 stages: stage_proofs,
+                fused_leaf: None,
                 s_claim: leaf_stage.final_s_claim(),
+                w_eval: None,
+                claimed_setup_val: None,
             },
             r_stage1,
         ))

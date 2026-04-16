@@ -111,7 +111,8 @@ pub struct HachiVerifierSetup<F: FieldCore> {
     /// Expanded matrix stage used for verification.
     pub expanded: Arc<HachiExpandedSetup<F>>,
     /// Precomputed shared-matrix delegation data (built once at setup time).
-    pub(crate) shared_matrix_cache: Option<crate::protocol::shared_matrix_setup::SharedMatrixVerifierCache<F>>,
+    pub(crate) shared_matrix_cache:
+        Option<crate::protocol::shared_matrix_setup::SharedMatrixVerifierCache<F>>,
 }
 
 impl<F: FieldCore> HachiExpandedSetup<F> {
@@ -894,7 +895,10 @@ pub(crate) fn setup_from_expanded<F: FieldCore + CanonicalField, const D: usize>
         expanded: Arc::clone(&expanded),
         ntt_shared,
     };
-    let verifier_setup = HachiVerifierSetup { expanded, shared_matrix_cache: None };
+    let verifier_setup = HachiVerifierSetup {
+        expanded,
+        shared_matrix_cache: None,
+    };
     Ok((prover_setup, verifier_setup))
 }
 
@@ -996,7 +1000,10 @@ where
             expanded: Arc::clone(&expanded),
             ntt_shared,
         };
-        let verifier_setup = HachiVerifierSetup { expanded, shared_matrix_cache: None };
+        let verifier_setup = HachiVerifierSetup {
+            expanded,
+            shared_matrix_cache: None,
+        };
         Ok((prover_setup, verifier_setup))
     }
 
@@ -1355,7 +1362,10 @@ impl HachiCommitmentCore {
             expanded: Arc::clone(&expanded),
             ntt_shared,
         };
-        let verifier_setup = HachiVerifierSetup { expanded, shared_matrix_cache: None };
+        let verifier_setup = HachiVerifierSetup {
+            expanded,
+            shared_matrix_cache: None,
+        };
         Ok((prover_setup, verifier_setup))
     }
 }
@@ -1389,9 +1399,7 @@ mod tests {
             expanded: Arc::new(decoded.clone()),
             shared_matrix_cache: None,
         };
-        assert_eq!(
-            derived_verifier.expanded, verifier_setup.expanded,
-        );
+        assert_eq!(derived_verifier.expanded, verifier_setup.expanded,);
     }
 
     #[test]

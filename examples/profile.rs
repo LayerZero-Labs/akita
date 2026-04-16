@@ -130,7 +130,11 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
 
     let t_vsetup = Instant::now();
     let verifier_setup = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(setup);
-    tracing::info!(label, elapsed_s = t_vsetup.elapsed().as_secs_f64(), "verifier setup");
+    tracing::info!(
+        label,
+        elapsed_s = t_vsetup.elapsed().as_secs_f64(),
+        "verifier setup"
+    );
     let t0 = Instant::now();
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
     match <Scheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
@@ -263,9 +267,7 @@ fn print_setup_delegation_breakdown(
     eprintln!("[{label}]     claimed_setup_val={claimed_setup_val_size} bytes");
     eprintln!("[{label}]     setup_claim_sumcheck={setup_claim_sumcheck_size} bytes");
     eprintln!("[{label}]     shared_matrix_eval={shared_matrix_eval_size} bytes");
-    eprintln!(
-        "[{label}]     shared_matrix_opening_proof={shared_matrix_opening_proof_size} bytes"
-    );
+    eprintln!("[{label}]     shared_matrix_opening_proof={shared_matrix_opening_proof_size} bytes");
     debug_assert_eq!(
         total,
         claimed_setup_val_size

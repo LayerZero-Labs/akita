@@ -18,8 +18,10 @@
 
 pub mod accum;
 pub mod batched_sumcheck;
+pub mod claim_reduction;
 pub mod compact_fold;
 pub mod drivers;
+pub mod fused_stage1;
 pub mod hachi_stage1;
 pub mod hachi_stage1_tree;
 pub mod hachi_stage2;

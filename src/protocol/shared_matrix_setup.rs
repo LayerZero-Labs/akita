@@ -80,6 +80,7 @@ impl SharedMatrixTensorLayout {
     }
 
     /// Split a setup-sumcheck challenge point into `(row, col, k)` slices.
+    #[allow(clippy::type_complexity)]
     pub(crate) fn split_point<'a, F: FieldCore>(
         &self,
         point: &'a [F],
@@ -157,9 +158,7 @@ impl CommitmentConfig for SmallTestSharedMatrixCommitmentConfig {
         SmallTestCommitmentConfig::envelope(max_num_vars)
     }
 
-    fn stage1_challenge_config(
-        d: usize,
-    ) -> crate::algebra::SparseChallengeConfig {
+    fn stage1_challenge_config(d: usize) -> crate::algebra::SparseChallengeConfig {
         SmallTestCommitmentConfig::stage1_challenge_config(d)
     }
 }
@@ -309,18 +308,18 @@ fn derive_inner_prover_setup<F, const D: usize, Cfg: SharedMatrixOpeningConfig<F
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
 {
-    let sampled_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
-            shared_matrix_num_vars,
-            1,
-        );
+    let sampled_setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+        shared_matrix_num_vars,
+        1,
+    );
     let mut inner_seed = sampled_setup.expanded.seed.clone();
     inner_seed.public_matrix_seed = main_seed.public_matrix_seed;
-    let shared_matrix =
-        derive_public_matrix_flat::<F, D>(inner_seed.max_total_ring_elements, &inner_seed.public_matrix_seed);
-    let ntt_shared = build_ntt_slot(
-        shared_matrix.ring_view::<D>(1, inner_seed.max_total_ring_elements),
-    )?;
+    let shared_matrix = derive_public_matrix_flat::<F, D>(
+        inner_seed.max_total_ring_elements,
+        &inner_seed.public_matrix_seed,
+    );
+    let ntt_shared =
+        build_ntt_slot(shared_matrix.ring_view::<D>(1, inner_seed.max_total_ring_elements))?;
     let expanded = Arc::new(HachiExpandedSetup {
         seed: inner_seed,
         shared_matrix,
