@@ -25,7 +25,7 @@ use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::planner::digit_math::compute_num_digits_fold;
+use crate::planner::digit_math::compute_num_digits_fold_with_claims;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
@@ -460,12 +460,14 @@ where
     );
     // `num_claims` amplifies the folded root witness bound. Public point count
     // is handled later when sizing the explicit y rows and serialized y_rings.
-    scaled.num_digits_fold = root_lp.num_digits_fold.max(compute_num_digits_fold(
-        root_lp.r_vars,
-        root_stage1_config.l1_mass(),
-        root_lp.log_basis,
-        num_claims,
-    ));
+    scaled.num_digits_fold = root_lp
+        .num_digits_fold
+        .max(compute_num_digits_fold_with_claims(
+            root_lp.r_vars,
+            root_stage1_config.l1_mass(),
+            root_lp.log_basis,
+            num_claims,
+        ));
     Ok(scaled)
 }
 

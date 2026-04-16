@@ -109,13 +109,13 @@ pub fn num_digits_for_bound(log_bound: u32, log_basis: u32) -> usize {
 ///
 ///   β = challenge_l1_mass · num_claims · 2^(r_vars + log_basis - 1)
 ///
-/// Pass `num_claims = 1` for the single-polynomial case.  When batching
-/// multiple openings at the root, the bound grows proportionally to the
-/// number of claims.
+/// Internal batched variant used when the root path needs the fold bound to
+/// scale with `num_claims`. Singleton callers should use the public
+/// `protocol::commitment::compute_num_digits_fold` wrapper.
 ///
 /// Falls back to the field-width ceiling when the shift overflows or the
 /// mass is zero.
-pub fn compute_num_digits_fold(
+pub(crate) fn compute_num_digits_fold_with_claims(
     r_vars: usize,
     challenge_l1_mass: usize,
     log_basis: u32,
@@ -222,7 +222,8 @@ pub fn optimal_m_r_split(
         };
 
         // δ_fold grows with r because β = 2^r · challenge_l1_mass · 2^(lb-1).
-        let delta_fold = compute_num_digits_fold(r, challenge_l1_mass, log_basis, 1) as u64;
+        let delta_fold =
+            compute_num_digits_fold_with_claims(r, challenge_l1_mass, log_basis, 1) as u64;
 
         // |t̂| + |ŵ|                    +  |ẑ|
         let opening_cost = per_block_cost.saturating_mul(num_blocks);
@@ -303,8 +304,8 @@ mod tests {
 
     #[test]
     fn digits_fold_basic() {
-        let got_2 = compute_num_digits_fold(12, 54, 2, 1);
-        let got_3 = compute_num_digits_fold(12, 54, 3, 1);
+        let got_2 = compute_num_digits_fold_with_claims(12, 54, 2, 1);
+        let got_3 = compute_num_digits_fold_with_claims(12, 54, 3, 1);
         assert!(got_2 > 0);
         assert!(got_3 > 0);
         assert!(got_2 >= got_3);
@@ -313,9 +314,9 @@ mod tests {
     #[test]
     fn digits_fold_monotonic_in_claims() {
         let (r, mass, lb) = (8, 54, 3);
-        let d1 = compute_num_digits_fold(r, mass, lb, 1);
-        let d4 = compute_num_digits_fold(r, mass, lb, 4);
-        let d16 = compute_num_digits_fold(r, mass, lb, 16);
+        let d1 = compute_num_digits_fold_with_claims(r, mass, lb, 1);
+        let d4 = compute_num_digits_fold_with_claims(r, mass, lb, 4);
+        let d16 = compute_num_digits_fold_with_claims(r, mass, lb, 16);
         assert!(d1 <= d4, "more claims should need >= digits");
         assert!(d4 <= d16, "more claims should need >= digits");
     }

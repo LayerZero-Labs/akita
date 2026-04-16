@@ -8,6 +8,7 @@ use super::utils::norm::detect_field_modulus;
 use crate::algebra::ring::CyclotomicRing;
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
+use crate::planner::digit_math::compute_num_digits_fold_with_claims;
 use crate::protocol::params::{AjtaiKeyParams, LevelParams};
 use crate::{CanonicalField, FieldCore};
 use std::marker::PhantomData;
@@ -129,16 +130,7 @@ pub fn num_digits_for_bound(log_bound: u32, log_basis: u32) -> usize {
 /// `β = 2^r_vars * challenge_l1_mass * 2^(log_basis - 1)`.
 /// Returns enough gadget levels to represent values up to `β`.
 pub fn compute_num_digits_fold(r_vars: usize, challenge_l1_mass: usize, log_basis: u32) -> usize {
-    let shift = r_vars + (log_basis as usize) - 1;
-    if shift >= 127 || challenge_l1_mass == 0 {
-        return compute_num_digits(128, log_basis);
-    }
-    let beta = (challenge_l1_mass as u128).saturating_mul(1u128 << shift);
-    if beta == 0 {
-        return 1;
-    }
-    let log_beta = 128 - beta.leading_zeros();
-    compute_num_digits(log_beta, log_basis)
+    compute_num_digits_fold_with_claims(r_vars, challenge_l1_mass, log_basis, 1)
 }
 
 fn recursive_tight_z_pre_rows(num_ring: usize, r_vars: usize) -> u64 {

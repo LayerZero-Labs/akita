@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 
 use crate::error::HachiError;
-use crate::planner::digit_math::compute_num_digits_fold;
+use crate::planner::digit_math::compute_num_digits_fold_with_claims;
 use crate::protocol::commitment::{
     current_level_layout_with_log_basis, derive_batched_root_level_derivation,
     direct_witness_bytes, field_bits, level_proof_bytes, planned_next_w_len,
@@ -144,8 +144,12 @@ fn compute_level_proof_size<Cfg: CommitmentConfig>(
 // -----------------------------------------------------------------------
 
 fn to_fold_step(c: &CandidateLevelParams, current_w_len: usize, level_bytes: usize) -> Step {
-    let per_poly_fold =
-        compute_num_digits_fold(c.lp.r_vars, c.lp.challenge_l1_mass(), c.lp.log_basis, 1);
+    let per_poly_fold = compute_num_digits_fold_with_claims(
+        c.lp.r_vars,
+        c.lp.challenge_l1_mass(),
+        c.lp.log_basis,
+        1,
+    );
     Step::Fold(FoldStep {
         params: c.lp.clone(),
         current_w_len,
@@ -394,8 +398,12 @@ fn derive_batched_root_candidate<Cfg: CommitmentConfig, const D: usize>(
 
     for r_vars in 1..reduced_vars {
         let m_vars = reduced_vars - r_vars;
-        let per_poly_fold =
-            compute_num_digits_fold(r_vars, root_lp.challenge_l1_mass(), root_lp.log_basis, 1);
+        let per_poly_fold = compute_num_digits_fold_with_claims(
+            r_vars,
+            root_lp.challenge_l1_mass(),
+            root_lp.log_basis,
+            1,
+        );
 
         let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
             continue;
