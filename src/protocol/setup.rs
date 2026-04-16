@@ -372,7 +372,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
 }
 
 #[cfg(feature = "disk-persistence")]
-fn get_storage_path<Cfg: CommitmentConfig>(
+pub(crate) fn get_storage_path<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Option<PathBuf> {
@@ -452,7 +452,10 @@ fn save_expanded_setup<F: FieldCore + CanonicalField, Cfg: CommitmentConfig<Fiel
 }
 
 #[cfg(feature = "disk-persistence")]
-fn load_expanded_setup<F: FieldCore + Valid + CanonicalField, Cfg: CommitmentConfig<Field = F>>(
+pub(crate) fn load_expanded_setup<
+    F: FieldCore + Valid + CanonicalField,
+    Cfg: CommitmentConfig<Field = F>,
+>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<HachiExpandedSetup<F>, HachiError> {

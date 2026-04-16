@@ -493,6 +493,7 @@ mod tests {
     #[cfg(feature = "disk-persistence")]
     mod disk_persistence {
         use super::*;
+        use crate::protocol::setup::{get_storage_path, load_expanded_setup};
         use std::fs;
         use std::sync::{LazyLock, Mutex};
 

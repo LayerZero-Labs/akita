@@ -44,6 +44,39 @@ impl CommitmentConfig for TinyConfig {
         }
     }
 
+    /// `TinyConfig::commitment_layout` ignores `max_num_vars` and returns a
+    /// fixed tiny layout, so derive the setup stride from that layout
+    /// directly. The default trait body would unconditionally raise
+    /// `2^(max_num_vars - log2(D))` and overflow `usize` at large
+    /// `max_num_vars` even though the test-only config never uses widths
+    /// that big.
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> Result<(usize, usize), HachiError> {
+        let lp = Self::commitment_layout(max_num_vars)?;
+        let max_rows = lp
+            .a_key
+            .row_len()
+            .max(lp.b_key.row_len())
+            .max(lp.d_key.row_len());
+        let inner_width = lp.inner_width();
+        let outer_width = lp
+            .outer_width()
+            .checked_mul(max_num_batched_polys)
+            .ok_or_else(|| {
+                HachiError::InvalidSetup("max_setup_matrix_size overflow".to_string())
+            })?;
+        let d_width = lp
+            .d_matrix_width()
+            .checked_mul(max_num_batched_polys)
+            .ok_or_else(|| {
+                HachiError::InvalidSetup("max_setup_matrix_size overflow".to_string())
+            })?;
+        let max_stride = inner_width.max(outer_width).max(d_width);
+        Ok((max_rows, max_stride))
+    }
+
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
         assert_eq!(d, Self::D, "unsupported ring dim {d}");
         SparseChallengeConfig::Uniform {
