@@ -11,12 +11,12 @@ pub mod dispatch;
 pub mod hachi_poly_ops;
 pub mod opening_point;
 pub mod params;
-pub mod preprocessing;
 pub mod prg;
 pub mod proof;
 pub mod quadratic_equation;
 mod recursive_runtime;
 pub mod ring_switch;
+pub mod setup;
 pub mod sumcheck;
 pub mod transcript;
 
@@ -24,18 +24,18 @@ pub use commitment::{
     optimal_m_r_split, presets, AppendToTranscript, CommitmentConfig, CommitmentPreset,
     CommitmentScheme, DummyProof, GeneratedAdaptivePolicy, HachiCommitment, HachiCommitmentCore,
     HachiOpeningClaim, HachiOpeningPoint, HachiRootBatchSummary, RingCommitment,
-    RingCommitmentScheme, SmallTestCommitmentConfig, StaticBoundedPolicy,
+    RingCommitmentScheme, StaticBoundedPolicy,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, MultilinearPolynomail, OneHotIndex, OneHotPoly};
 pub use opening_point::{BasisMode, BlockOrder, RingOpeningPoint};
-pub use preprocessing::{HachiExpandedSetup, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup};
 pub use proof::{
     DirectWitnessProof, DirectWitnessShape, FlatRingVec, HachiBatchedProof, HachiBatchedProofShape,
     HachiBatchedRootProof, HachiLevelProof, HachiProof, HachiProofShape, HachiProofStep,
     HachiProofStepShape, LevelProofShape, PackedDigits,
 };
 pub use quadratic_equation::QuadraticEquation;
+pub use setup::{HachiExpandedSetup, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup};
 pub use sumcheck::batched_sumcheck::{prove_batched_sumcheck, verify_batched_sumcheck};
 pub use sumcheck::{
     prove_sumcheck, verify_sumcheck, CompressedUniPoly, SumcheckInstanceProver,

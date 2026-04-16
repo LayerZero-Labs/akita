@@ -463,8 +463,8 @@ mod tests {
         hachi_recursive_level_layout_from_params, CommitmentConfig, HachiCommitmentCore,
         HachiScheduleInputs, RingCommitmentScheme,
     };
-    use crate::protocol::preprocessing::HachiProverSetup;
     use crate::protocol::ring_switch::w_ring_element_count;
+    use crate::protocol::setup::HachiProverSetup;
     use crate::test_utils::{TinyConfig, D as TestD, F as TestF};
     use crate::FromSmallInt;
     use onehot::OneHotBlocks;

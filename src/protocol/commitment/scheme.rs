@@ -7,8 +7,8 @@ use crate::error::HachiError;
 use crate::protocol::hachi_poly_ops::{HachiPolyOps, OneHotIndex};
 use crate::protocol::opening_point::BasisMode;
 use crate::protocol::params::LevelParams;
-use crate::protocol::preprocessing::HachiProverSetup;
 use crate::protocol::proof::FlatDigitBlocks;
+use crate::protocol::setup::HachiProverSetup;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
 

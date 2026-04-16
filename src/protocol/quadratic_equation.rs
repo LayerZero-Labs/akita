@@ -17,10 +17,10 @@ use crate::protocol::commitment::{CommitmentConfig, RingCommitment};
 use crate::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps, RecursiveWitnessView};
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::params::LevelParams;
-use crate::protocol::preprocessing::HachiExpandedSetup;
 use crate::protocol::proof::{
     FlatDigitBlocks, HachiBatchedCommitmentHint, HachiCommitmentHint, RingSliceSerializer,
 };
+use crate::protocol::setup::HachiExpandedSetup;
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
@@ -1194,8 +1194,8 @@ mod tests {
     use crate::protocol::challenges::sparse::sample_sparse_challenges;
     use crate::protocol::commitment::{HachiCommitmentCore, RingCommitmentScheme};
     use crate::protocol::hachi_poly_ops::DensePoly;
-    use crate::protocol::preprocessing::HachiProverSetup;
     use crate::protocol::proof::HachiCommitmentHint;
+    use crate::protocol::setup::HachiProverSetup;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::test_utils::*;
     use crate::FromSmallInt;

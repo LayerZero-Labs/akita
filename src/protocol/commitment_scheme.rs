@@ -27,7 +27,6 @@ use crate::protocol::opening_point::{
     RingOpeningPoint,
 };
 use crate::protocol::params::LevelParams;
-use crate::protocol::preprocessing::{HachiExpandedSetup, HachiProverSetup, HachiVerifierSetup};
 use crate::protocol::proof::{
     DirectWitnessProof, FlatRingVec, HachiBatchedCommitmentHint, HachiBatchedProof,
     HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProof, HachiProofStep,
@@ -41,6 +40,7 @@ use crate::protocol::ring_switch::{
     ring_switch_verifier_with_opening_points_and_claim_groups, w_ring_element_count,
     w_ring_element_count_with_claim_groups, RingSwitchOutput, WCommitmentConfig,
 };
+use crate::protocol::setup::{HachiExpandedSetup, HachiProverSetup, HachiVerifierSetup};
 use crate::protocol::sumcheck::hachi_stage1_tree::{HachiStage1Prover, HachiStage1Verifier};
 use crate::protocol::sumcheck::hachi_stage2::{
     relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier, Stage2MEvalSource,
@@ -59,8 +59,6 @@ use std::time::Instant;
 
 #[cfg(test)]
 use crate::protocol::ring_switch::w_ring_element_count_with_num_claims;
-#[cfg(test)]
-use crate::protocol::SmallTestCommitmentConfig;
 #[cfg(test)]
 use crate::HachiSerialize;
 
@@ -3275,7 +3273,6 @@ mod tests {
     use crate::protocol::proof::{HachiBatchedProofShape, HachiProofStepShape, LevelProofShape};
     use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
     use crate::protocol::transcript::Blake2bTranscript;
-    use crate::test_utils::F;
     use crate::{CommitmentScheme, FromSmallInt, HachiDeserialize};
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
@@ -3283,7 +3280,8 @@ mod tests {
     use tracing_subscriber::fmt::format::FmtSpan;
     use tracing_subscriber::prelude::*;
     use tracing_subscriber::EnvFilter;
-    type Cfg = SmallTestCommitmentConfig;
+    type Cfg = fp128::D64Full;
+    type F = fp128::Field;
     const D: usize = Cfg::D;
     type Scheme = HachiCommitmentScheme<D, Cfg>;
     type OneHotF = Fp128<0xfffffffffffffffffffffffffffff6cd>;

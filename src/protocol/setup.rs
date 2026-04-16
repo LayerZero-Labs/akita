@@ -1,4 +1,4 @@
-//! Commitment scheme setup (preprocessing) types and construction.
+//! Commitment scheme setup types and construction.
 
 use crate::algebra::fields::wide::HasWide;
 use crate::error::HachiError;

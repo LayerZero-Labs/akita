@@ -244,16 +244,30 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn decomposition() -> DecompositionParams;
 
     /// Maximum matrix row counts needed by this config for the given setup size.
-    fn envelope(max_num_vars: usize) -> CommitmentEnvelope;
+    ///
+    /// The default implementation pins every rank to
+    /// [`sis_security::MAX_RANK`](crate::planner::sis_security::MAX_RANK),
+    /// which is the conservative upper bound across all SIS-secure ranks.
+    /// Concrete configs override this to report the actual ranks they use,
+    /// which lets the setup matrix sizing shrink accordingly.
+    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
+        let max_rank = crate::planner::sis_security::MAX_RANK as usize;
+        CommitmentEnvelope {
+            max_n_a: max_rank,
+            max_n_b: max_rank,
+            max_n_d: max_rank,
+        }
+    }
 
     /// Conservative `(max_rows, max_stride)` bounds for the shared setup
     /// matrix.
     ///
-    /// The default implementation pins the row count to
-    /// [`sis_security::MAX_RANK`](crate::planner::sis_security::MAX_RANK)
-    /// and derives the column stride as the max of the inner (A),
-    /// outer (B), and D column widths under the worst-case (smallest)
-    /// root `log_basis` produced by [`Self::log_basis_search_range`].
+    /// The default implementation takes the row count as the max of the
+    /// three ranks reported by [`Self::envelope`] (inner A, outer B,
+    /// prover D) and derives the column stride as the max of the inner
+    /// (A), outer (B), and D column widths under the worst-case
+    /// (smallest) root `log_basis` produced by
+    /// [`Self::log_basis_search_range`].
     ///
     /// # Errors
     ///
@@ -264,7 +278,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<(usize, usize), HachiError> {
-        let max_rows = crate::planner::sis_security::MAX_RANK as usize;
+        let envelope = Self::envelope(max_num_vars);
+        let max_rows = envelope.max_n_a.max(envelope.max_n_b).max(envelope.max_n_d);
 
         let alpha = Self::D.trailing_zeros() as usize;
         let outer_vars = max_num_vars.saturating_sub(alpha);
@@ -585,83 +600,6 @@ pub(super) fn ensure_block_layout<F: FieldCore, const D: usize>(
         }
     }
     Ok(())
-}
-
-/// Ensure matrix has at least the expected dimensions.
-///
-/// Matrix envelopes may have more rows and columns than the active level uses.
-/// Small correctness-first config for tests and local benchmarks.
-///
-/// Fixed layout (m_vars=4, r_vars=2) for fast test iteration.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct SmallTestCommitmentConfig;
-
-impl CommitmentConfig for SmallTestCommitmentConfig {
-    type Field = crate::test_utils::F;
-    const D: usize = 32;
-
-    fn decomposition() -> DecompositionParams {
-        DecompositionParams {
-            log_basis: 3,
-            log_commit_bound: 32,
-            log_open_bound: None,
-        }
-    }
-
-    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
-        CommitmentEnvelope {
-            max_n_a: 4,
-            max_n_b: 4,
-            max_n_d: 4,
-        }
-    }
-
-    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
-        assert_eq!(d, Self::D, "unsupported ring dim {d}");
-        SparseChallengeConfig::Uniform {
-            weight: 3,
-            nonzero_coeffs: vec![-1, 1],
-        }
-    }
-
-    fn commitment_layout(_max_num_vars: usize) -> Result<LevelParams, HachiError> {
-        let decomp = Self::decomposition();
-        let params = Self::level_params(HachiScheduleInputs {
-            max_num_vars: 12,
-            level: 0,
-            current_w_len: 1 << 12,
-        });
-        let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
-        let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
-        let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
-        let depth_fold = compute_num_digits_fold(2, params.challenge_l1_mass(), decomp.log_basis);
-        params.with_decomp(4, 2, depth_commit, depth_open, depth_fold, 0)
-    }
-
-    fn schedule_plan(
-        key: HachiScheduleLookupKey,
-    ) -> Result<Option<super::schedule::HachiSchedulePlan>, HachiError> {
-        if key != HachiScheduleLookupKey::singleton(key.max_num_vars, key.max_num_vars, 1) {
-            return Ok(None);
-        }
-        if key.max_num_vars >= usize::BITS as usize {
-            return Ok(None);
-        }
-        let decomp = Self::decomposition();
-        let params = Self::level_params(HachiScheduleInputs {
-            max_num_vars: 12,
-            level: 0,
-            current_w_len: 1 << 12,
-        });
-        let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
-        let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
-        let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
-        let depth_fold = compute_num_digits_fold(2, params.challenge_l1_mass(), decomp.log_basis);
-        let root_lp = params.with_decomp(4, 2, depth_commit, depth_open, depth_fold, 0)?;
-        Ok(Some(super::schedule::build_schedule_plan_from_config::<
-            Self,
-        >(key.max_num_vars, &root_lp)?))
-    }
 }
 
 /// Static bounded policy with explicit root and recursive log bases.

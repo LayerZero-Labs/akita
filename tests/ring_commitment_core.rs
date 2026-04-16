@@ -3,10 +3,10 @@
 use hachi_pcs::algebra::CyclotomicRing;
 use hachi_pcs::protocol::commitment::{
     utils::linear::decompose_block, CommitmentConfig, CommitmentEnvelope, DecompositionParams,
-    HachiCommitmentCore, RingCommitmentScheme, SmallTestCommitmentConfig,
+    HachiCommitmentCore, RingCommitmentScheme,
 };
 use hachi_pcs::protocol::params::LevelParams;
-use hachi_pcs::protocol::preprocessing::HachiProverSetup;
+use hachi_pcs::protocol::setup::HachiProverSetup;
 use hachi_pcs::test_utils::*;
 use hachi_pcs::{FromSmallInt, HachiError};
 use std::array::from_fn;
@@ -198,16 +198,6 @@ fn opening_satisfies_inner_and_outer_equations() {
         &t_hat_flat_ring,
     );
     assert_eq!(outer, w.commitment.u);
-}
-
-#[test]
-fn small_test_config_has_expected_shape() {
-    assert_eq!(SmallTestCommitmentConfig::D, 32);
-    let lp = SmallTestCommitmentConfig::commitment_layout(8).unwrap();
-    assert_eq!(lp.block_len, 16);
-    assert_eq!(lp.num_blocks, 4);
-    let depth = lp.num_digits_commit;
-    assert!(depth > 0);
 }
 
 #[test]

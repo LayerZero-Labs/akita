@@ -20,8 +20,8 @@ use crate::planner::digit_math::compute_num_digits_fold_with_claims;
 use crate::primitives::serialization::Valid;
 use crate::protocol::hachi_poly_ops::OneHotIndex;
 use crate::protocol::params::{AjtaiKeyParams, LevelParams};
-use crate::protocol::preprocessing::HachiProverSetup;
 use crate::protocol::proof::FlatDigitBlocks;
+use crate::protocol::setup::HachiProverSetup;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 
 pub(crate) fn root_current_w_len<const D: usize>(lp: &LevelParams) -> usize {
@@ -442,7 +442,7 @@ mod tests {
     use super::*;
     use crate::primitives::{HachiDeserialize, HachiSerialize};
     use crate::protocol::commitment::presets::fp128;
-    use crate::protocol::preprocessing::{HachiExpandedSetup, HachiVerifierSetup};
+    use crate::protocol::setup::{HachiExpandedSetup, HachiVerifierSetup};
     use crate::test_utils::{TinyConfig, F as TestF};
     use std::sync::Arc;
 
