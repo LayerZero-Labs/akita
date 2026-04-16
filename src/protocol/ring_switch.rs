@@ -636,13 +636,6 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::envelope(max_num_vars)
     }
 
-    fn max_setup_matrix_size(
-        max_num_vars: usize,
-        max_num_batched_polys: usize,
-    ) -> Result<(usize, usize), HachiError> {
-        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)
-    }
-
     fn stage1_challenge_config(d: usize) -> crate::algebra::SparseChallengeConfig {
         Cfg::stage1_challenge_config(d)
     }
