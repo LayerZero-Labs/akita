@@ -140,12 +140,20 @@ fn split_from_schedule_plan(plan: &super::schedule::HachiSchedulePlan) -> Option
     Some(BatchedRootSplit { params: lp })
 }
 
-fn fallback_batched_root_split<Cfg>(max_num_vars: usize) -> Result<BatchedRootSplit, HachiError>
+pub(crate) fn fallback_batched_root_split<Cfg, const D: usize>(
+    max_num_vars: usize,
+    num_claims: usize,
+) -> Result<BatchedRootSplit, HachiError>
 where
     Cfg: CommitmentConfig,
 {
     let root_lp = Cfg::commitment_layout(max_num_vars)?;
-    Ok(BatchedRootSplit { params: root_lp })
+    let params = if num_claims <= 1 {
+        root_lp
+    } else {
+        scale_batched_root_layout::<Cfg, D>(max_num_vars, &root_lp, num_claims)?
+    };
+    Ok(BatchedRootSplit { params })
 }
 
 fn per_poly_root_split_from_batched_level(
@@ -220,7 +228,7 @@ where
             );
             return Ok(split);
         }
-        let split = fallback_batched_root_split::<Cfg>(max_num_vars)?;
+        let split = fallback_batched_root_split::<Cfg, D>(max_num_vars, 1)?;
         tracing::info!(
             max_num_vars,
             num_claims,
@@ -240,7 +248,7 @@ where
 
     let root_step = match schedule.steps.first() {
         Some(Step::Fold(step)) => step,
-        _ => return fallback_batched_root_split::<Cfg>(max_num_vars),
+        _ => return fallback_batched_root_split::<Cfg, D>(max_num_vars, 1),
     };
 
     let split = per_poly_root_split_from_batched_level(

@@ -876,16 +876,9 @@ impl<
         Profile::decomposition(LOG_COMMIT_BOUND, 3)
     }
 
-    /// Size the shared setup matrix from the planned schedule rather than the
-    /// conservative envelope/stride heuristics of the trait default.
-    ///
-    /// Walks the cached schedule plan at the worst-case key
-    /// `(max_num_vars, max_num_vars, P, (P, P, P))` when one exists, otherwise
-    /// runs [`find_optimal_batched_schedule`] on the fly with the same batch.
-    /// In both cases the root commitment layout (used by `commit` irrespective
-    /// of whether `prove` folds or sends direct) is folded in as a seed.
-    ///
-    /// [`find_optimal_batched_schedule`]: crate::planner::schedule_params::find_optimal_batched_schedule
+    /// Size the shared setup matrix from the planned schedule: seed with
+    /// commit's scaled root layout, then walk the cached plan (or the DP
+    /// planner on cache miss) and take the max row count and stride.
     fn max_setup_matrix_size(
         max_num_vars: usize,
         max_num_batched_polys: usize,
@@ -896,14 +889,14 @@ impl<
             ));
         }
 
-        // Worst-case batch: `num_claims = P` widens B/D via root batching, and
-        // `num_commitment_groups = num_points = P` maximises the recursive
-        // witness size (r_rows in `batched_root_w_ring_element_count`).
-        let batch_summary = HachiRootBatchSummary::new(
-            max_num_batched_polys,
-            max_num_batched_polys,
-            max_num_batched_polys,
-        )?;
+        // `num_claims = num_commitment_groups = P`, `num_points = 1`:
+        // `num_claims` drives B/D width scaling, `num_commitment_groups`
+        // drives the recursive `r_rows` contribution. Single opening point
+        // matches the dominant runtime usage; multi-point batches still
+        // verify because commit's scaled root layout (seeded below)
+        // independently bounds the root widths.
+        let batch_summary =
+            HachiRootBatchSummary::new(max_num_batched_polys, max_num_batched_polys, 1)?;
         let cached_key = HachiScheduleLookupKey::with_batch(
             max_num_vars,
             max_num_vars,
@@ -911,51 +904,49 @@ impl<
             batch_summary,
         );
 
-        // Seed with the batch-effective root commitment layout: this is what
-        // `commit` actually writes against regardless of whether the schedule
-        // folds or sends the root directly. The per-polynomial split from
-        // `hachi_batched_root_layout` is scaled by `num_claims` via
-        // `scale_batched_root_layout` to recover the runtime `B`/`D` widths.
-        let per_poly_root = super::commit::hachi_batched_root_layout::<Self, D>(
+        // Always seed with commit's scaled root layout. `commit` materialises
+        // the root commitment against this layout regardless of whether the
+        // schedule folds or sends direct, and the planner/cache may pick a
+        // different `(m, r, log_basis)` triple than commit uses at runtime.
+        let fallback = super::commit::fallback_batched_root_split::<Self, D>(
             max_num_vars,
-            max_num_batched_polys,
-        )?;
-        let root_layout = super::commit::scale_batched_root_layout::<Self, D>(
-            max_num_vars,
-            &per_poly_root,
             max_num_batched_polys,
         )?;
 
-        if let Some(plan) = Self::schedule_plan(cached_key)? {
+        let fold_levels: Vec<LevelParams> = if let Some(plan) = Self::schedule_plan(cached_key)? {
             tracing::debug!(
                 max_num_vars,
                 max_num_batched_polys,
                 "adaptive setup sizing: using cached schedule plan"
             );
-            return Ok(reduce_level_params_to_matrix_size(
-                std::iter::once(&root_layout).chain(plan.fold_levels().map(|level| &level.lp)),
-            ));
-        }
-
-        tracing::info!(
-            max_num_vars,
-            max_num_batched_polys,
-            "adaptive setup sizing: cache miss, running find_optimal_batched_schedule"
-        );
-        use crate::planner::schedule_params::{find_optimal_batched_schedule, BatchConfig, Step};
-        let batch = BatchConfig {
-            num_claims: max_num_batched_polys,
-            num_commitment_groups: max_num_batched_polys,
-            num_points: max_num_batched_polys,
-        };
-        let schedule = find_optimal_batched_schedule::<Self, D>(max_num_vars, batch)?;
-        Ok(reduce_level_params_to_matrix_size(
-            std::iter::once(&root_layout).chain(schedule.steps.iter().filter_map(
-                |step| match step {
-                    Step::Fold(fold) => Some(&fold.params),
+            plan.fold_levels().map(|level| level.lp.clone()).collect()
+        } else {
+            tracing::info!(
+                max_num_vars,
+                max_num_batched_polys,
+                "adaptive setup sizing: cache miss, running find_optimal_batched_schedule"
+            );
+            use crate::planner::schedule_params::{
+                find_optimal_batched_schedule, BatchConfig, Step,
+            };
+            let batch = BatchConfig {
+                num_claims: max_num_batched_polys,
+                num_commitment_groups: max_num_batched_polys,
+                num_points: 1,
+            };
+            let schedule = find_optimal_batched_schedule::<Self, D>(max_num_vars, batch)?;
+            schedule
+                .steps
+                .iter()
+                .filter_map(|step| match step {
+                    Step::Fold(fold) => Some(fold.params.clone()),
                     Step::Direct(_) => None,
-                },
-            )),
+                })
+                .collect()
+        };
+
+        Ok(reduce_level_params_to_matrix_size(
+            std::iter::once(&fallback.params).chain(fold_levels.iter()),
         ))
     }
 
