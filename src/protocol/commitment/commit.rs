@@ -572,8 +572,8 @@ mod tests {
 
                 let loaded_expanded =
                     load_expanded_setup::<TestF, TinyConfig>(MAX_VARS, 1).unwrap();
-                let (disk_setup, _) =
-                    setup_from_expanded::<TestF, TEST_D>(loaded_expanded).unwrap();
+                let disk_setup =
+                    HachiProverSetup::<TestF, TEST_D>::from_expanded(loaded_expanded).unwrap();
 
                 let lp = TinyConfig::commitment_layout(MAX_VARS).unwrap();
                 let num_coeffs = lp.num_blocks * lp.block_len;

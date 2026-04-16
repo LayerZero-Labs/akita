@@ -482,14 +482,3 @@ fn load_expanded_setup<F: FieldCore + Valid + CanonicalField, Cfg: CommitmentCon
     );
     Ok(setup)
 }
-
-/// Build prover and verifier setup from a pre-existing expanded setup by
-/// reconstructing the NTT cache.
-#[cfg(feature = "disk-persistence")]
-pub(crate) fn setup_from_expanded<F: FieldCore + CanonicalField, const D: usize>(
-    expanded: HachiExpandedSetup<F>,
-) -> Result<(HachiProverSetup<F, D>, HachiVerifierSetup<F>), HachiError> {
-    let prover_setup = HachiProverSetup::<F, D>::from_expanded(expanded)?;
-    let verifier_setup = prover_setup.verifier_setup();
-    Ok((prover_setup, verifier_setup))
-}
