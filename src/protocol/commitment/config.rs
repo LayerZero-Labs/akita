@@ -262,16 +262,30 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// `(max_rows, max_stride)` bounds for the shared setup matrix.
     ///
-    /// Implementers choose how tight this bound is.
+    /// The default is a loose but trivially correct upper bound: `MAX_RANK`
+    /// rows and `2^(max_num_vars - log2(D)) * 128 * MAX_RANK *
+    /// max_num_batched_polys` stride.
     ///
     /// # Errors
     ///
-    /// Returns [`HachiError::InvalidSetup`] on arithmetic overflow or if the
-    /// implementation cannot derive a bound for the requested setup size.
+    /// Returns [`HachiError::InvalidSetup`] on arithmetic overflow.
     fn max_setup_matrix_size(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-    ) -> Result<(usize, usize), HachiError>;
+    ) -> Result<(usize, usize), HachiError> {
+        let max_rows = crate::planner::sis_security::MAX_RANK as usize;
+        let alpha = Self::D.trailing_zeros() as usize;
+        let outer_vars = max_num_vars.saturating_sub(alpha);
+        let max_stride = 1usize
+            .checked_shl(outer_vars as u32)
+            .and_then(|x| x.checked_mul(128))
+            .and_then(|x| x.checked_mul(max_rows))
+            .and_then(|x| x.checked_mul(max_num_batched_polys))
+            .ok_or_else(|| {
+                HachiError::InvalidSetup("max_setup_matrix_size overflow".to_string())
+            })?;
+        Ok((max_rows, max_stride))
+    }
 
     /// Stable identifier for setup-cache versioning and fixture selection.
     fn family_key() -> &'static str {
@@ -627,24 +641,6 @@ impl<
             max_n_b: N_B.max(audited_root_rank),
             max_n_d: N_D.max(audited_root_rank),
         }
-    }
-
-    fn max_setup_matrix_size(
-        max_num_vars: usize,
-        max_num_batched_polys: usize,
-    ) -> Result<(usize, usize), HachiError> {
-        let max_rows = crate::planner::sis_security::MAX_RANK as usize;
-        let alpha = Self::D.trailing_zeros() as usize;
-        let outer_vars = max_num_vars.saturating_sub(alpha);
-        let max_stride = 1usize
-            .checked_shl(outer_vars as u32)
-            .and_then(|x| x.checked_mul(128))
-            .and_then(|x| x.checked_mul(max_rows))
-            .and_then(|x| x.checked_mul(max_num_batched_polys))
-            .ok_or_else(|| {
-                HachiError::InvalidSetup("max_setup_matrix_size overflow".to_string())
-            })?;
-        Ok((max_rows, max_stride))
     }
 
     fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {

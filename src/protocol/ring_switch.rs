@@ -1818,26 +1818,6 @@ mod tests {
                 }
             }
 
-            fn max_setup_matrix_size(
-                max_num_vars: usize,
-                max_num_batched_polys: usize,
-            ) -> Result<(usize, usize), crate::HachiError> {
-                let max_rows = crate::planner::sis_security::MAX_RANK as usize;
-                let alpha = Self::D.trailing_zeros() as usize;
-                let outer_vars = max_num_vars.saturating_sub(alpha);
-                let max_stride = 1usize
-                    .checked_shl(outer_vars as u32)
-                    .and_then(|x| x.checked_mul(128))
-                    .and_then(|x| x.checked_mul(max_rows))
-                    .and_then(|x| x.checked_mul(max_num_batched_polys))
-                    .ok_or_else(|| {
-                        crate::HachiError::InvalidSetup(
-                            "max_setup_matrix_size overflow".to_string(),
-                        )
-                    })?;
-                Ok((max_rows, max_stride))
-            }
-
             fn stage1_challenge_config(d: usize) -> crate::algebra::SparseChallengeConfig {
                 fp128::D64Full::stage1_challenge_config(d)
             }
