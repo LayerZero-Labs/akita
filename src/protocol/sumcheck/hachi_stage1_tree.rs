@@ -47,11 +47,11 @@ const MAX_TREE_STAGE_Q_DEGREE: usize = 4;
 fn padded_s_table<E: FieldCore + FromSmallInt>(
     w_evals_compact: &[i8],
     live_x_cols: usize,
-    num_u: usize,
-    num_l: usize,
+    col_bits: usize,
+    ring_bits: usize,
 ) -> Result<Vec<E>, HachiError> {
-    let x_len = 1usize << num_u;
-    let y_len = 1usize << num_l;
+    let x_len = 1usize << col_bits;
+    let y_len = 1usize << ring_bits;
     let expected = live_x_cols * y_len;
     if w_evals_compact.len() != expected {
         return Err(HachiError::InvalidSize {
@@ -661,8 +661,8 @@ pub struct HachiStage1Prover<E: FieldCore> {
     tau0: Vec<E>,
     b: usize,
     live_x_cols: usize,
-    num_u: usize,
-    num_l: usize,
+    col_bits: usize,
+    ring_bits: usize,
 }
 
 impl<E: FieldCore + FromSmallInt> HachiStage1Prover<E> {
@@ -671,27 +671,32 @@ impl<E: FieldCore + FromSmallInt> HachiStage1Prover<E> {
     /// # Errors
     ///
     /// Returns [`HachiError::InvalidSize`] if the compact witness rows do not
-    /// match `live_x_cols * 2^num_l`.
+    /// match `live_x_cols * 2^ring_bits`.
     pub fn new(
         w_evals_compact: &[i8],
         tau0: &[E],
         b: usize,
         live_x_cols: usize,
-        num_u: usize,
-        num_l: usize,
+        col_bits: usize,
+        ring_bits: usize,
     ) -> Result<Self, HachiError> {
         validate_stage1_tree_basis(b)?;
         Ok(Self {
             witness: if b <= 8 {
                 Stage1Witness::Compact(w_evals_compact.to_vec())
             } else {
-                Stage1Witness::PaddedS(padded_s_table(w_evals_compact, live_x_cols, num_u, num_l)?)
+                Stage1Witness::PaddedS(padded_s_table(
+                    w_evals_compact,
+                    live_x_cols,
+                    col_bits,
+                    ring_bits,
+                )?)
             },
             tau0: tau0.to_vec(),
             b,
             live_x_cols,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
         })
     }
 }
@@ -712,8 +717,8 @@ impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1
             tau0,
             b,
             live_x_cols,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
         } = self;
         validate_stage1_tree_basis(b)?;
         let s_table = match witness {
@@ -725,8 +730,8 @@ impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1
                     &tau0,
                     b,
                     live_x_cols,
-                    num_u,
-                    num_l,
+                    col_bits,
+                    ring_bits,
                 );
                 let (sumcheck, r_stage1, _final_claim) = prove_eq_factored_sumcheck::<E, _, E, _, _>(
                     &mut leaf_stage,
@@ -924,9 +929,9 @@ mod tests {
 
     type F = Prime128Offset275;
 
-    fn sample_stage1_witness(b: usize, live_x_cols: usize, num_l: usize) -> Vec<i8> {
+    fn sample_stage1_witness(b: usize, live_x_cols: usize, ring_bits: usize) -> Vec<i8> {
         let half = (b / 2) as i16;
-        let y_len = 1usize << num_l;
+        let y_len = 1usize << ring_bits;
         (0..live_x_cols * y_len)
             .map(|idx| {
                 (idx as i16 % half)
@@ -942,12 +947,12 @@ mod tests {
         tau0: Vec<F>,
         expected_child_claim_counts: &[usize],
     ) {
-        let num_u = 3;
-        let num_l = 1;
-        let witness = sample_stage1_witness(b, live_x_cols, num_l);
-        let tau0 = reorder_stage1_coords(&tau0, num_u, num_l);
+        let col_bits = 3;
+        let ring_bits = 1;
+        let witness = sample_stage1_witness(b, live_x_cols, ring_bits);
+        let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
 
-        let prover = HachiStage1Prover::new(&witness, &tau0, b, live_x_cols, num_u, num_l)
+        let prover = HachiStage1Prover::new(&witness, &tau0, b, live_x_cols, col_bits, ring_bits)
             .expect("stage1 prover should build");
         let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
         let (proof, r_stage1) = prover

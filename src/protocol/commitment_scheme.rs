@@ -118,13 +118,13 @@ struct BatchedProveLevelOutput<F: FieldCore> {
 
 pub(crate) fn reorder_stage1_coords<F: FieldCore>(
     coords: &[F],
-    num_u: usize,
-    num_l: usize,
+    col_bits: usize,
+    ring_bits: usize,
 ) -> Vec<F> {
-    assert_eq!(coords.len(), num_u + num_l);
+    assert_eq!(coords.len(), col_bits + ring_bits);
     let mut reordered = Vec::with_capacity(coords.len());
-    reordered.extend_from_slice(&coords[num_u..]);
-    reordered.extend_from_slice(&coords[..num_u]);
+    reordered.extend_from_slice(&coords[col_bits..]);
+    reordered.extend_from_slice(&coords[..col_bits]);
     reordered
 }
 
@@ -634,15 +634,15 @@ where
         live_x_cols,
         m_evals_x,
         alpha_evals_y,
-        num_u,
-        num_l,
+        col_bits,
+        ring_bits,
         tau0,
         tau1: _,
         b,
         alpha: _,
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
-    let tau0_reordered = reorder_stage1_coords(&tau0, num_u, num_l);
+    let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
     let (stage1_proof, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         let stage1_prover = HachiStage1Prover::new(
@@ -650,8 +650,8 @@ where
             &tau0_reordered,
             b,
             live_x_cols,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
         )?;
         let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
         let s_claim = stage1_proof.s_claim;
@@ -671,8 +671,8 @@ where
             alpha_evals_y,
             m_evals_x,
             live_x_cols,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
             relation_claim,
         );
         let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
@@ -1028,15 +1028,15 @@ where
         live_x_cols,
         m_evals_x,
         alpha_evals_y,
-        num_u,
-        num_l,
+        col_bits,
+        ring_bits,
         tau0,
         tau1: _,
         b,
         alpha: _,
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
-    let tau0_reordered = reorder_stage1_coords(&tau0, num_u, num_l);
+    let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
     let (stage1_proof, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         let stage1_prover = HachiStage1Prover::new(
@@ -1044,8 +1044,8 @@ where
             &tau0_reordered,
             b,
             live_x_cols,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
         )?;
         let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
         let s_claim = stage1_proof.s_claim;
@@ -1065,8 +1065,8 @@ where
             alpha_evals_y,
             m_evals_x,
             live_x_cols,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
             relation_claim,
         );
         let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
@@ -2868,7 +2868,6 @@ where
     let rs = ring_switch_verifier_with_claim_groups::<F, T, { D }>(
         &ring_opening_point,
         &stage1_challenges,
-        &setup.expanded,
         w_len,
         root_proof.next_w_commitment(),
         transcript,
@@ -2881,7 +2880,7 @@ where
         relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, &commitment_rows, y_rings);
     let stage1 = &root_proof.stage1;
     let stage2 = &root_proof.stage2;
-    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.num_u, rs.num_l);
+    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
     let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -2890,7 +2889,8 @@ where
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
-    let m_eval_source = Stage2MEvalSource::new(rs.m_evals_x);
+    let m_eval_source = Stage2MEvalSource::new(rs.prepared_m_eval);
+    let ring_opening_points_slice = std::slice::from_ref(&ring_opening_point);
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
         HachiStage2Verifier::new_with_direct_witness_batched(
@@ -2900,13 +2900,15 @@ where
             r_stage1.clone(),
             rs.alpha_evals_y,
             m_eval_source,
+            &setup.expanded,
+            ring_opening_points_slice,
             &rs.tau1,
             v_typed,
             &commitment_rows,
             y_rings,
             rs.alpha,
-            rs.num_u,
-            rs.num_l,
+            rs.col_bits,
+            rs.ring_bits,
         )
     } else {
         HachiStage2Verifier::new_with_claimed_w_eval_batched(
@@ -2915,13 +2917,15 @@ where
             r_stage1.clone(),
             rs.alpha_evals_y,
             m_eval_source,
+            &setup.expanded,
+            ring_opening_points_slice,
             &rs.tau1,
             v_typed,
             &commitment_rows,
             y_rings,
             rs.alpha,
-            rs.num_u,
-            rs.num_l,
+            rs.col_bits,
+            rs.ring_bits,
             stage2.next_w_eval,
         )
     };
@@ -3042,7 +3046,6 @@ where
         &ring_opening_points,
         &batch_shape.claim_to_point,
         &stage1_challenges,
-        &setup.expanded,
         w_len,
         root_proof.next_w_commitment(),
         transcript,
@@ -3055,7 +3058,7 @@ where
         relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, &commitment_rows, y_rings);
     let stage1 = &root_proof.stage1;
     let stage2 = &root_proof.stage2;
-    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.num_u, rs.num_l);
+    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
     let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -3064,7 +3067,7 @@ where
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
-    let m_eval_source = Stage2MEvalSource::new(rs.m_evals_x);
+    let m_eval_source = Stage2MEvalSource::new(rs.prepared_m_eval);
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
         HachiStage2Verifier::new_with_direct_witness_batched(
@@ -3074,13 +3077,15 @@ where
             r_stage1.clone(),
             rs.alpha_evals_y,
             m_eval_source,
+            &setup.expanded,
+            &ring_opening_points,
             &rs.tau1,
             v_typed,
             &commitment_rows,
             y_rings,
             rs.alpha,
-            rs.num_u,
-            rs.num_l,
+            rs.col_bits,
+            rs.ring_bits,
         )
     } else {
         HachiStage2Verifier::new_with_claimed_w_eval_batched(
@@ -3089,13 +3094,15 @@ where
             r_stage1.clone(),
             rs.alpha_evals_y,
             m_eval_source,
+            &setup.expanded,
+            &ring_opening_points,
             &rs.tau1,
             v_typed,
             &commitment_rows,
             y_rings,
             rs.alpha,
-            rs.num_u,
-            rs.num_l,
+            rs.col_bits,
+            rs.ring_bits,
             stage2.next_w_eval,
         )
     };
@@ -3187,7 +3194,6 @@ where
     let rs = ring_switch_verifier::<F, T, { D }>(
         &ring_opening_point,
         &stage1_challenges,
-        &setup.expanded,
         w_len,
         level_proof.next_w_commitment(),
         transcript,
@@ -3202,7 +3208,7 @@ where
     );
     let stage1 = &level_proof.stage1;
     let stage2 = &level_proof.stage2;
-    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.num_u, rs.num_l);
+    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
     let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -3212,7 +3218,8 @@ where
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
-    let m_eval_source = Stage2MEvalSource::new(rs.m_evals_x);
+    let m_eval_source = Stage2MEvalSource::new(rs.prepared_m_eval);
+    let ring_opening_points_slice = std::slice::from_ref(&ring_opening_point);
 
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(HachiError::InvalidProof)?;
@@ -3223,13 +3230,15 @@ where
             r_stage1.clone(),
             rs.alpha_evals_y,
             m_eval_source,
+            &setup.expanded,
+            ring_opening_points_slice,
             &rs.tau1,
             v_typed,
             commitment_u,
             y_ring,
             rs.alpha,
-            rs.num_u,
-            rs.num_l,
+            rs.col_bits,
+            rs.ring_bits,
         )
     } else {
         HachiStage2Verifier::new_with_claimed_w_eval(
@@ -3239,13 +3248,15 @@ where
             r_stage1.clone(),
             rs.alpha_evals_y,
             m_eval_source,
+            &setup.expanded,
+            ring_opening_points_slice,
             &rs.tau1,
             v_typed,
             commitment_u,
             y_ring,
             rs.alpha,
-            rs.num_u,
-            rs.num_l,
+            rs.col_bits,
+            rs.ring_bits,
         )
     };
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
@@ -4212,13 +4223,14 @@ mod tests {
                 w_hat_len + t_hat_len + z_pre_len + r_tail_len,
             );
             let eq_tau1 = crate::algebra::eq_poly::EqPolynomial::evals(&rs.tau1);
-            let row3_start = batch_root_params.d_key.row_len()
-                + batch_root_params.b_key.row_len() * num_commitment_groups;
-            let row4_idx = row3_start + num_eval_rows;
-            let a_row_start = row4_idx + 1;
-            let row3_weights = &eq_tau1[row3_start..row4_idx];
-            let row4_weight = eq_tau1[row4_idx];
-            let a_weights = &eq_tau1[a_row_start..m_rows];
+            // Row layout: consistency (1) | public (num_eval_rows) | D (n_d) |
+            //             B (n_b * num_commitment_groups) | A (n_a)
+            let consistency_weight = eq_tau1[0];
+            let public_weights = &eq_tau1[1..(1 + num_eval_rows)];
+            let d_start = 1 + num_eval_rows;
+            let b_start = d_start + batch_root_params.d_key.row_len();
+            let a_start = b_start + batch_root_params.b_key.row_len() * num_commitment_groups;
+            let a_weights = &eq_tau1[a_start..m_rows];
             let alpha_pows = &rs.alpha_evals_y;
             let eval_sparse_alpha = |challenge: &crate::algebra::SparseChallenge| -> OneHotF {
                 challenge
@@ -4274,21 +4286,22 @@ mod tests {
                 .iter()
                 .enumerate()
                 .take(batch_root_params.d_key.row_len())
-                .fold(OneHotF::zero(), |acc, (row_idx, row)| {
-                    acc + eq_tau1[row_idx]
+                .fold(OneHotF::zero(), |acc, (di, row)| {
+                    acc + eq_tau1[d_start + di]
                         * crate::protocol::ring_switch::eval_ring_at(row, &rs.alpha)
                 });
-            let expected_b_sum = batch_commitment_rows.iter().enumerate().fold(
-                OneHotF::zero(),
-                |acc, (row_idx, row)| {
-                    acc + eq_tau1[batch_root_params.d_key.row_len() + row_idx]
-                        * crate::protocol::ring_switch::eval_ring_at(row, &rs.alpha)
-                },
-            );
+            let expected_b_sum =
+                batch_commitment_rows
+                    .iter()
+                    .enumerate()
+                    .fold(OneHotF::zero(), |acc, (bi, row)| {
+                        acc + eq_tau1[b_start + bi]
+                            * crate::protocol::ring_switch::eval_ring_at(row, &rs.alpha)
+                    });
             let expected_public_sum = batched_y_rings.iter().enumerate().fold(
                 OneHotF::zero(),
                 |acc, (point_idx, y_ring)| {
-                    acc + row3_weights[point_idx]
+                    acc + public_weights[point_idx]
                         * crate::protocol::ring_switch::eval_ring_at(y_ring, &rs.alpha)
                 },
             );
@@ -4476,26 +4489,25 @@ mod tests {
                         acc - eval_ring_at_pows_local(&a_view.row(0)[k], alpha_pows)
                             * crate::protocol::ring_switch::eval_ring_at(z_ring, &rs.alpha)
                     });
-            let direct_raw_a_r = -(denom
-                * crate::protocol::ring_switch::eval_ring_at(&debug_r[a_row_start], &rs.alpha));
+            let direct_raw_a_r =
+                -(denom * crate::protocol::ring_switch::eval_ring_at(&debug_r[a_start], &rs.alpha));
             let direct_raw_a_total = direct_raw_a_t + direct_raw_a_z + direct_raw_a_r;
             let d_matrix_width = batched_root_lp.d_matrix_width();
             let d_group_w = (0..w_hat_len).fold(OneHotF::zero(), |acc, x| {
-                let coeff = (0..batch_root_params.d_key.row_len()).fold(
-                    OneHotF::zero(),
-                    |inner, row_idx| {
+                let coeff =
+                    (0..batch_root_params.d_key.row_len()).fold(OneHotF::zero(), |inner, di| {
                         inner
-                            + eq_tau1[row_idx]
+                            + eq_tau1[d_start + di]
                                 * eval_ring_at_pows_local(
-                                    &d_view.row(row_idx)[x % d_matrix_width],
+                                    &d_view.row(di)[x % d_matrix_width],
                                     alpha_pows,
                                 )
-                    },
-                );
+                    });
                 acc + w_alpha_evals[x] * coeff
             });
             let d_group_r =
-                (0..batch_root_params.d_key.row_len()).fold(OneHotF::zero(), |acc, row_idx| {
+                (0..batch_root_params.d_key.row_len()).fold(OneHotF::zero(), |acc, di| {
+                    let row_idx = d_start + di;
                     let row_start = w_hat_len + t_hat_len + z_pre_len + row_idx * r_gadget.len();
                     acc + (0..r_gadget.len()).fold(OneHotF::zero(), |inner, level_idx| {
                         inner
@@ -4505,22 +4517,20 @@ mod tests {
                 });
             let outer_width = batched_root_lp.outer_width();
             let b_group_t = (0..t_hat_len).fold(OneHotF::zero(), |acc, x| {
-                let coeff = (0..batch_root_params.b_key.row_len()).fold(
-                    OneHotF::zero(),
-                    |inner, row_idx| {
+                let coeff =
+                    (0..batch_root_params.b_key.row_len()).fold(OneHotF::zero(), |inner, bi| {
                         inner
-                            + eq_tau1[batch_root_params.d_key.row_len() + row_idx]
+                            + eq_tau1[b_start + bi]
                                 * eval_ring_at_pows_local(
-                                    &b_view.row(row_idx)[x % outer_width],
+                                    &b_view.row(bi)[x % outer_width],
                                     alpha_pows,
                                 )
-                    },
-                );
+                    });
                 acc + w_alpha_evals[w_hat_len + x] * coeff
             });
             let b_group_r =
-                (0..batch_root_params.b_key.row_len()).fold(OneHotF::zero(), |acc, row_offset| {
-                    let row_idx = batch_root_params.d_key.row_len() + row_offset;
+                (0..batch_root_params.b_key.row_len()).fold(OneHotF::zero(), |acc, bi| {
+                    let row_idx = b_start + bi;
                     let row_start = w_hat_len + t_hat_len + z_pre_len + row_idx * r_gadget.len();
                     acc + (0..r_gadget.len()).fold(OneHotF::zero(), |inner, level_idx| {
                         inner
@@ -4535,13 +4545,13 @@ mod tests {
                 let block_idx = claim_offset / batched_root_lp.num_digits_open;
                 let digit_idx = claim_offset % batched_root_lp.num_digits_open;
                 acc + w_alpha_evals[x]
-                    * row3_weights[0]
+                    * public_weights[0]
                     * quad_eq.gamma()[claim_idx]
                     * ring_opening_point.b[block_idx]
                     * g1_open[digit_idx]
             });
             let public_group_r = (0..num_eval_rows).fold(OneHotF::zero(), |acc, point_idx| {
-                let row_idx = row3_start + point_idx;
+                let row_idx = 1 + point_idx;
                 let row_start = w_hat_len + t_hat_len + z_pre_len + row_idx * r_gadget.len();
                 acc + (0..r_gadget.len()).fold(OneHotF::zero(), |inner, level_idx| {
                     inner
@@ -4557,7 +4567,7 @@ mod tests {
                 let digit_idx = claim_offset % batched_root_lp.num_digits_open;
                 let global_block_idx = claim_idx * batched_root_lp.num_blocks + block_idx;
                 acc + w_alpha_evals[x]
-                    * row4_weight
+                    * consistency_weight
                     * c_alphas[global_block_idx]
                     * g1_open[digit_idx]
             });
@@ -4567,16 +4577,16 @@ mod tests {
                 let block_idx = k / batched_root_lp.num_digits_commit;
                 let digit_idx = k % batched_root_lp.num_digits_commit;
                 acc + w_alpha_evals[w_hat_len + t_hat_len + idx]
-                    * (-(row4_weight
+                    * (-(consistency_weight
                         * ring_opening_point.a[block_idx]
                         * g1_commit[digit_idx]
                         * fold_gadget[fold_idx]))
             });
             let row4_group_r = {
-                let row_start = w_hat_len + t_hat_len + z_pre_len + row4_idx * r_gadget.len();
+                let row_start = w_hat_len + t_hat_len + z_pre_len;
                 (0..r_gadget.len()).fold(OneHotF::zero(), |acc, level_idx| {
                     acc + w_alpha_evals[row_start + level_idx]
-                        * (-(row4_weight * denom * r_gadget[level_idx]))
+                        * (-(consistency_weight * denom * r_gadget[level_idx]))
                 })
             };
             let a_group_t = (0..t_hat_len).fold(OneHotF::zero(), |acc, x| {
@@ -4618,7 +4628,7 @@ mod tests {
                     .iter()
                     .enumerate()
                     .fold(OneHotF::zero(), |acc, (row_offset, eq_i)| {
-                        let row_idx = a_row_start + row_offset;
+                        let row_idx = a_start + row_offset;
                         let row_start =
                             w_hat_len + t_hat_len + z_pre_len + row_idx * r_gadget.len();
                         acc + (0..r_gadget.len()).fold(OneHotF::zero(), |inner, level_idx| {
@@ -4659,8 +4669,8 @@ mod tests {
                 direct_raw_a_r_u128 = direct_raw_a_r.to_canonical_u128(),
                 direct_raw_a_total_u128 = direct_raw_a_total.to_canonical_u128(),
                 live_x_cols = rs.live_x_cols,
-                num_u = rs.num_u,
-                num_l = rs.num_l,
+                col_bits = rs.col_bits,
+                ring_bits = rs.ring_bits,
                 "batched relation claim consistency"
             );
             tracing::info!(

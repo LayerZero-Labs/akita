@@ -1026,9 +1026,11 @@ where
     if y.len() != num_rows {
         return Err(HachiError::InvalidProof);
     }
-    let row3_start = n_d + commitment_row_count;
-    let row4_idx = row3_start + num_public_outputs;
-    let a_row_start = row4_idx + 1;
+    // Row layout: consistency (1) | public (num_public_outputs) | D (n_d) |
+    //             B (commitment_row_count) | A (n_a)
+    let d_start = 1 + num_public_outputs;
+    let b_start = d_start + n_d;
+    let a_start = b_start + commitment_row_count;
 
     if inner_width == 0 || !z_pre_centered.len().is_multiple_of(inner_width) {
         return Err(HachiError::InvalidProof);
@@ -1084,20 +1086,29 @@ where
     let mut other_time = 0.0f64;
 
     for row_idx in 0..num_rows {
-        if row_idx < n_d {
+        if row_idx == 0 {
+            let t_row = Instant::now();
+            let _span = tracing::info_span!("challenge_fold_row").entered();
+            let quotient = parallel_high_half_accumulate::<F, D>(challenges, w_folded);
+            result.push(CyclotomicRing::from_slice(&quotient));
+            other_time += t_row.elapsed().as_secs_f64();
+        } else if row_idx < d_start {
+            let _span = tracing::info_span!("bTw_row").entered();
+            result.push(CyclotomicRing::<F, D>::zero());
+        } else if row_idx < b_start {
             result.push(quotient_from_cyclic_and_reduced(
-                &d_cyclic[row_idx],
+                &d_cyclic[row_idx - d_start],
                 &y[row_idx],
             ));
-        } else if row_idx < n_d + commitment_row_count {
+        } else if row_idx < a_start {
             result.push(quotient_from_cyclic_and_reduced(
-                &commitment_cyclic_rows[row_idx - n_d],
+                &commitment_cyclic_rows[row_idx - b_start],
                 &y[row_idx],
             ));
-        } else if row_idx >= a_row_start {
+        } else {
             let t_row = Instant::now();
             let _span = tracing::info_span!("A_row").entered();
-            let a_idx = row_idx - a_row_start;
+            let a_idx = row_idx - a_start;
 
             let mut quotient = cfg_fold_reduce!(
                 0..t.len(),
@@ -1126,19 +1137,6 @@ where
             }
             result.push(CyclotomicRing::from_slice(&quotient));
             other_time += t_row.elapsed().as_secs_f64();
-        } else {
-            let t_row = Instant::now();
-
-            if row_idx < row4_idx {
-                let _span = tracing::info_span!("bTw_row").entered();
-                // Each public `y` row is degree < D, so its quotient is zero.
-                result.push(CyclotomicRing::<F, D>::zero());
-            } else {
-                let _span = tracing::info_span!("challenge_fold_row").entered();
-                let quotient = parallel_high_half_accumulate::<F, D>(challenges, w_folded);
-                result.push(CyclotomicRing::from_slice(&quotient));
-            }
-            other_time += t_row.elapsed().as_secs_f64();
         }
     }
 
@@ -1147,6 +1145,8 @@ where
     Ok(result)
 }
 
+/// Build the RHS vector `y` matching the M row layout:
+/// consistency (zero) | public outputs | D (`v`) | B (`commitment_rows`) | A (zeros).
 pub(crate) fn generate_y<F, const D: usize>(
     v: &[CyclotomicRing<F, D>],
     commitment_rows: &[CyclotomicRing<F, D>],
@@ -1175,11 +1175,11 @@ where
             "generate_y requires at least one public output".to_string(),
         ));
     }
-    let mut out = Vec::with_capacity(n_d + commitment_rows.len() + public_outputs.len() + 1 + n_a);
+    let mut out = Vec::with_capacity(1 + public_outputs.len() + n_d + commitment_rows.len() + n_a);
+    out.push(CyclotomicRing::<F, D>::zero());
+    out.extend_from_slice(public_outputs);
     out.extend_from_slice(v);
     out.extend_from_slice(commitment_rows);
-    out.extend_from_slice(public_outputs);
-    out.push(CyclotomicRing::<F, D>::zero());
     out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
     Ok(out)
 }

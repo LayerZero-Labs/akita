@@ -23,9 +23,9 @@
 //! and relation families each store a compressed grid with one Boolean corner
 //! omitted (8 stored values each), recovered via the known claim.
 
+use super::accum::reduce_signed_accum;
 #[cfg(test)]
 use super::hachi_stage1::range_check_eval_from_s;
-use super::hachi_stage2::reduce_signed_accum;
 use super::{EqFactoredUniPoly, UniPoly};
 use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::fields::HasUnreducedOps;
@@ -687,8 +687,8 @@ fn eval_stage1_biquartic_from_full_grid<E: FieldCore + FromSmallInt>(
 
 /// Whether stage 1 has enough leading y-rounds to use the 2-round prefix path.
 #[inline]
-pub(crate) fn can_use_stage1_two_round_prefix(num_l: usize, b: usize) -> bool {
-    num_l >= 2 && matches!(b, 4 | 8)
+pub(crate) fn can_use_stage1_two_round_prefix(ring_bits: usize, b: usize) -> bool {
+    ring_bits >= 2 && matches!(b, 4 | 8)
 }
 
 /// Build the stage-1 first-two-round bivariate-skip proof from the compact witness
@@ -707,10 +707,10 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact<
     tau0: &[E],
     b: usize,
     live_x_cols: usize,
-    num_u: usize,
-    num_l: usize,
+    col_bits: usize,
+    ring_bits: usize,
 ) -> Option<Stage1BivariateSkipProof<E>> {
-    let y_len = 1usize << num_l;
+    let y_len = 1usize << ring_bits;
     assert_eq!(w_compact.len(), live_x_cols * y_len);
     let s_compact = w_compact
         .iter()
@@ -719,7 +719,14 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact<
             (w * (w + 1)) as i16
         })
         .collect::<Vec<_>>();
-    build_stage1_bivariate_skip_proof_from_s_compact(&s_compact, tau0, b, live_x_cols, num_u, num_l)
+    build_stage1_bivariate_skip_proof_from_s_compact(
+        &s_compact,
+        tau0,
+        b,
+        live_x_cols,
+        col_bits,
+        ring_bits,
+    )
 }
 
 /// Build the stage-1 first-two-round bivariate-skip proof from the compact
@@ -735,19 +742,19 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
     tau0: &[E],
     b: usize,
     live_x_cols: usize,
-    num_u: usize,
-    num_l: usize,
+    col_bits: usize,
+    ring_bits: usize,
 ) -> Option<Stage1BivariateSkipProof<E>> {
-    if !can_use_stage1_two_round_prefix(num_l, b) {
+    if !can_use_stage1_two_round_prefix(ring_bits, b) {
         return None;
     }
 
-    let y_len = 1usize << num_l;
+    let y_len = 1usize << ring_bits;
     assert_eq!(s_compact.len(), live_x_cols * y_len);
-    assert_eq!(tau0.len(), num_u + num_l);
+    assert_eq!(tau0.len(), col_bits + ring_bits);
 
-    let eq_y_suffix = EqPolynomial::evals(&tau0[2..num_l]);
-    let eq_x = EqPolynomial::evals(&tau0[num_l..]);
+    let eq_y_suffix = EqPolynomial::evals(&tau0[2..ring_bits]);
+    let eq_x = EqPolynomial::evals(&tau0[ring_bits..]);
     let y_quads = y_len / 4;
     debug_assert!(eq_y_suffix.len() >= y_quads);
     debug_assert!(eq_x.len() >= live_x_cols);
@@ -1491,8 +1498,8 @@ pub(crate) fn recover_stage2_norm_grid_from_claim<E: FieldCore>(
 
 /// Whether stage 2 has enough y-rounds to use the 2-round prefix path.
 #[inline]
-pub(crate) fn can_use_stage2_two_round_prefix(num_l: usize, b: usize) -> bool {
-    num_l >= 2 && matches!(b, 4 | 8)
+pub(crate) fn can_use_stage2_two_round_prefix(ring_bits: usize, b: usize) -> bool {
+    ring_bits >= 2 && matches!(b, 4 | 8)
 }
 
 /// Build the stage-2 first-two-round bivariate-skip proof from the compact witness
@@ -1513,21 +1520,21 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
     r_stage1: &[E],
     b: usize,
     live_x_cols: usize,
-    num_u: usize,
-    num_l: usize,
+    col_bits: usize,
+    ring_bits: usize,
 ) -> Option<Stage2BivariateSkipProof<E>> {
-    if !can_use_stage2_two_round_prefix(num_l, b) {
+    if !can_use_stage2_two_round_prefix(ring_bits, b) {
         return None;
     }
 
-    let y_len = 1usize << num_l;
+    let y_len = 1usize << ring_bits;
     assert_eq!(alpha_evals_y.len(), y_len);
     assert_eq!(w_compact.len(), live_x_cols * y_len);
-    assert_eq!(m_evals_x.len(), 1usize << num_u);
-    assert_eq!(r_stage1.len(), num_u + num_l);
+    assert_eq!(m_evals_x.len(), 1usize << col_bits);
+    assert_eq!(r_stage1.len(), col_bits + ring_bits);
 
-    let eq_y_suffix = EqPolynomial::evals(&r_stage1[2..num_l]);
-    let eq_x = EqPolynomial::evals(&r_stage1[num_l..]);
+    let eq_y_suffix = EqPolynomial::evals(&r_stage1[2..ring_bits]);
+    let eq_x = EqPolynomial::evals(&r_stage1[ring_bits..]);
     let y_quads = y_len >> 2;
     debug_assert_eq!(eq_y_suffix.len(), y_quads);
     let norm_omitted_corner = default_stage2_norm_omitted_corner(
@@ -1930,16 +1937,16 @@ mod tests {
         tau0: &[F],
         b: usize,
         live_x_cols: usize,
-        _num_u: usize,
-        num_l: usize,
+        _col_bits: usize,
+        ring_bits: usize,
     ) -> Option<Stage1BivariateSkipProof<F>> {
-        if !can_use_stage1_two_round_prefix(num_l, b) {
+        if !can_use_stage1_two_round_prefix(ring_bits, b) {
             return None;
         }
 
-        let y_len = 1usize << num_l;
-        let eq_y_suffix = EqPolynomial::evals(&tau0[2..num_l]);
-        let eq_x = EqPolynomial::evals(&tau0[num_l..]);
+        let y_len = 1usize << ring_bits;
+        let eq_y_suffix = EqPolynomial::evals(&tau0[2..ring_bits]);
+        let eq_x = EqPolynomial::evals(&tau0[ring_bits..]);
         let points = stage1_full_prefix_points::<F>();
         let y_quads = y_len / 4;
         let mut evals_except_boolean_core = Vec::with_capacity(STAGE1_PREFIX_EVAL_COUNT);
@@ -1982,17 +1989,17 @@ mod tests {
         r_stage1: &[F],
         b: usize,
         live_x_cols: usize,
-        num_u: usize,
-        num_l: usize,
+        col_bits: usize,
+        ring_bits: usize,
     ) -> Option<Stage2BivariateSkipProof<F>> {
-        if !can_use_stage2_two_round_prefix(num_l, b) {
+        if !can_use_stage2_two_round_prefix(ring_bits, b) {
             return None;
         }
 
-        let y_len = 1usize << num_l;
-        assert_eq!(m_evals_x.len(), 1usize << num_u);
-        let eq_y_suffix = EqPolynomial::evals(&r_stage1[2..num_l]);
-        let eq_x = EqPolynomial::evals(&r_stage1[num_l..]);
+        let y_len = 1usize << ring_bits;
+        assert_eq!(m_evals_x.len(), 1usize << col_bits);
+        let eq_y_suffix = EqPolynomial::evals(&r_stage1[2..ring_bits]);
+        let eq_x = EqPolynomial::evals(&r_stage1[ring_bits..]);
         let points = stage2_full_prefix_points::<F>();
         let y_quads = y_len >> 2;
         let mut norm_full = [F::zero(); 9];
@@ -2139,9 +2146,9 @@ mod tests {
 
     #[test]
     fn stage1_bivariate_skip_proof_builder_matches_reference() {
-        let num_u = 3;
-        let num_l = 2;
-        let w_compact: Vec<i8> = (0..(5usize << num_l))
+        let col_bits = 3;
+        let ring_bits = 2;
+        let w_compact: Vec<i8> = (0..(5usize << ring_bits))
             .map(|i| ((3 * i + 1) % 8) as i8 - 4)
             .collect();
         let tau0_raw = vec![
@@ -2151,11 +2158,13 @@ mod tests {
             F::from_u64(11),
             F::from_u64(13),
         ];
-        let tau0 = reorder_stage1_coords(&tau0_raw, num_u, num_l);
+        let tau0 = reorder_stage1_coords(&tau0_raw, col_bits, ring_bits);
         assert_eq!(
-            build_stage1_bivariate_skip_proof_from_compact(&w_compact, &tau0, 8, 5, num_u, num_l),
+            build_stage1_bivariate_skip_proof_from_compact(
+                &w_compact, &tau0, 8, 5, col_bits, ring_bits
+            ),
             build_stage1_bivariate_skip_proof_from_compact_reference(
-                &w_compact, &tau0, 8, 5, num_u, num_l,
+                &w_compact, &tau0, 8, 5, col_bits, ring_bits,
             ),
         );
     }
@@ -2207,9 +2216,9 @@ mod tests {
     #[test]
     fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() {
         let live_x_cols = 34_519usize;
-        let num_u = 16usize;
-        let num_l = 6usize;
-        let y_len = 1usize << num_l;
+        let col_bits = 16usize;
+        let ring_bits = 6usize;
+        let y_len = 1usize << ring_bits;
         let w_compact: Vec<i8> = (0..(live_x_cols * y_len))
             .map(|i| ((i * 37 + 11) % 8) as i8 - 4)
             .collect();
@@ -2222,7 +2231,7 @@ mod tests {
                 )
             })
             .collect();
-        let m_evals_x: Vec<F> = (0..(1usize << num_u))
+        let m_evals_x: Vec<F> = (0..(1usize << col_bits))
             .map(|i| {
                 F::from_u64(
                     (i as u64)
@@ -2231,7 +2240,7 @@ mod tests {
                 )
             })
             .collect();
-        let r_stage1: Vec<F> = (0..(num_u + num_l))
+        let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
             .map(|i| {
                 F::from_u64(
                     (i as u64)
@@ -2248,8 +2257,8 @@ mod tests {
                 &r_stage1,
                 8,
                 live_x_cols,
-                num_u,
-                num_l,
+                col_bits,
+                ring_bits,
             ),
             build_stage2_bivariate_skip_proof_from_compact_reference(
                 &w_compact,
@@ -2258,8 +2267,8 @@ mod tests {
                 &r_stage1,
                 8,
                 live_x_cols,
-                num_u,
-                num_l,
+                col_bits,
+                ring_bits,
             ),
         );
     }
@@ -2441,9 +2450,9 @@ mod tests {
     fn stage1_bivariate_skip_proof_reconstructs_first_two_rounds() {
         let b = 8;
         let live_x_cols = 5;
-        let num_u = 3;
-        let num_l = 2;
-        let w_compact: Vec<i8> = (0..(live_x_cols << num_l))
+        let col_bits = 3;
+        let ring_bits = 2;
+        let w_compact: Vec<i8> = (0..(live_x_cols << ring_bits))
             .map(|i| ((5 * i + 3) % b) as i8 - (b / 2) as i8)
             .collect();
         let tau0_raw = vec![
@@ -2453,22 +2462,22 @@ mod tests {
             F::from_u64(11),
             F::from_u64(13),
         ];
-        let tau0 = reorder_stage1_coords(&tau0_raw, num_u, num_l);
+        let tau0 = reorder_stage1_coords(&tau0_raw, col_bits, ring_bits);
 
         let proof = build_stage1_bivariate_skip_proof_from_compact(
             &w_compact,
             &tau0,
             b,
             live_x_cols,
-            num_u,
-            num_l,
+            col_bits,
+            ring_bits,
         )
         .expect("stage1 bivariate-skip proof should be available");
         let skip_state = Stage1BivariateSkipState::new(&proof, &tau0, b)
             .expect("stage1 bivariate-skip state should build");
 
         let mut prover =
-            HachiStage1Prover::<F>::new(&w_compact, &tau0, b, live_x_cols, num_u, num_l);
+            HachiStage1Prover::<F>::new(&w_compact, &tau0, b, live_x_cols, col_bits, ring_bits);
         let round0 = prover.compute_round_eq_factored(0);
         assert_eq!(skip_state.reconstruct_round0_eq_poly(), round0);
 
