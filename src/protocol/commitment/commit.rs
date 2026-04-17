@@ -98,9 +98,11 @@ pub struct HachiExpandedSetup<F: FieldCore> {
 /// full shared backing matrix. Role-specific mat-vec operations use row
 /// slicing and input-vector-length column clamping.
 ///
-/// Carries the [`HachiProtocolMode`] to use when proving. Defaults to
-/// [`HachiProtocolMode::Split`] (the existing two-sumcheck layout); flip with
-/// [`Self::with_mode`] to opt into [`HachiProtocolMode::Fused`].
+/// Carries the [`crate::protocol::protocol_mode::HachiProtocolMode`] to use
+/// when proving. Defaults to
+/// [`crate::protocol::protocol_mode::HachiProtocolMode::Split`] (the existing
+/// two-sumcheck layout); flip with [`Self::with_mode`] to opt into
+/// [`crate::protocol::protocol_mode::HachiProtocolMode::Fused`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiProverSetup<F: FieldCore, const D: usize> {
     /// Expanded matrix stage used by both prover and verifier.
@@ -111,7 +113,8 @@ pub struct HachiProverSetup<F: FieldCore, const D: usize> {
     pub mode: crate::protocol::protocol_mode::HachiProtocolMode,
     /// Whether to run the setup-claim delegation path at the outermost
     /// recursion levels. Only meaningful with
-    /// [`HachiProtocolMode::Fused`]; ignored under `Split`.
+    /// [`crate::protocol::protocol_mode::HachiProtocolMode::Fused`]; ignored
+    /// under `Split`.
     pub delegation: crate::protocol::commitment_scheme::SetupDelegationMode,
 }
 
@@ -139,7 +142,7 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
 /// Optionally caches the shared-matrix opening context used by the
 /// setup-delegation path so that verification never re-derives the inner PCS
 /// setup or re-commits the shared matrix.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct HachiVerifierSetup<F: FieldCore> {
     /// Expanded matrix stage used for verification.
     pub expanded: Arc<HachiExpandedSetup<F>>,
@@ -149,6 +152,14 @@ pub struct HachiVerifierSetup<F: FieldCore> {
     pub shared_matrix_cache:
         Option<crate::protocol::shared_matrix_setup::SharedMatrixVerifierCache<F>>,
 }
+
+impl<F: FieldCore> PartialEq for HachiVerifierSetup<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.expanded == other.expanded
+    }
+}
+
+impl<F: FieldCore> Eq for HachiVerifierSetup<F> {}
 
 impl<F: FieldCore> HachiExpandedSetup<F> {
     /// Maximum batched root-polynomial capacity carried by this setup.

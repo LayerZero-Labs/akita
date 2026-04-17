@@ -18,7 +18,7 @@
 //! Fused mode is opt-in via [`HachiProverSetup::with_mode`] until its
 //! schedule tables are regenerated.
 //!
-//! [`HachiProverSetup::with_mode`]: crate::protocol::commitment::commit::HachiProverSetup::with_mode
+//! [`HachiProverSetup::with_mode`]: crate::protocol::commitment::HachiProverSetup::with_mode
 
 /// Which Stage 1 / Stage 2 sumcheck shape Hachi runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

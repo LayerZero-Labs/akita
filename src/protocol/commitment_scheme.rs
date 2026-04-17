@@ -85,7 +85,10 @@ const MIN_SHRINK_RATIO: f64 = 0.5;
 /// Maximum number of outermost recursion levels at which setup delegation is
 /// applied. Beyond this depth the setup claim is paid directly (cheaper than
 /// the delegation overhead).
-pub(crate) const MAX_SETUP_DELEGATION_LEVELS: usize = 2;
+///
+/// The public [`SetupDelegationMode::Enabled`] variant activates delegation at
+/// the first `MAX_SETUP_DELEGATION_LEVELS` outer-D levels only.
+pub const MAX_SETUP_DELEGATION_LEVELS: usize = 2;
 
 /// Whether the setup-claim delegation path should run on a given proof.
 ///
@@ -93,8 +96,8 @@ pub(crate) const MAX_SETUP_DELEGATION_LEVELS: usize = 2;
 ///   used by every Split-mode proof and by recursive calls that open the
 ///   shared matrix.
 /// - [`SetupDelegationMode::Enabled`] activates the fused claim-reduction
-///   sumcheck and produces a [`SetupDelegationProof`] for each of the first
-///   [`MAX_SETUP_DELEGATION_LEVELS`] levels.
+///   sumcheck and produces a [`crate::protocol::proof::SetupDelegationProof`]
+///   for each of the first [`MAX_SETUP_DELEGATION_LEVELS`] levels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SetupDelegationMode {
     /// Delegate the setup-claim opening to a recursive sumcheck at the
