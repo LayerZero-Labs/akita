@@ -18,7 +18,7 @@ pub mod quadratic_equation;
 mod recursive_runtime;
 pub mod ring_switch;
 pub(crate) mod setup_delegation;
-pub(crate) mod shared_matrix_setup;
+pub mod shared_matrix_setup;
 pub mod sumcheck;
 pub mod transcript;
 

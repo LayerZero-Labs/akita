@@ -6,6 +6,7 @@ use hachi_pcs::algebra::poly::multilinear_eval;
 use hachi_pcs::protocol::commitment::presets::fp128;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
+use hachi_pcs::protocol::shared_matrix_setup::SharedMatrixOpeningConfig;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, Transcript};
@@ -15,7 +16,7 @@ use std::time::Duration;
 
 type F = fp128::Field;
 
-fn make_dense_evals<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> Vec<F> {
+fn make_dense_evals<Cfg: SharedMatrixOpeningConfig<Field = F>>(nv: usize) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(0xdead_beef);
     let len = 1usize << nv;
     let decomp = Cfg::decomposition();
@@ -45,7 +46,7 @@ fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>, nv: usize) {
     }
 }
 
-fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
+fn bench_dense_phases<const D: usize, Cfg: SharedMatrixOpeningConfig<Field = F>>(
     c: &mut Criterion,
     label: &str,
     nv: usize,
@@ -177,7 +178,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     group.finish();
 }
 
-fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
+fn bench_onehot_phases<const D: usize, Cfg: SharedMatrixOpeningConfig<Field = F>>(
     c: &mut Criterion,
     label: &str,
     nv: usize,

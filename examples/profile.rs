@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 
 use hachi_pcs::primitives::serialization::Compress;
+use hachi_pcs::protocol::commitment::HachiProverSetup;
 use hachi_pcs::protocol::commitment::{
     hachi_batched_root_layout, hachi_root_runtime_plan_with_batch, presets::fp128,
     recursive_suffix_estimate_with_log_basis, CommitmentConfig, HachiRootBatchSummary,
@@ -14,8 +15,10 @@ use hachi_pcs::protocol::opening_point::{
 use hachi_pcs::protocol::params::LevelParams;
 use hachi_pcs::protocol::proof::{
     DirectWitnessProof, HachiBatchedCommitmentHint, HachiBatchedProof, HachiBatchedRootProof,
-    HachiLevelProof, HachiProof,
+    HachiLevelProof, HachiProof, HACHI_PROOF_DELEGATION_FRAMING_BYTES, HACHI_PROOF_FRAMING_BYTES,
 };
+use hachi_pcs::protocol::protocol_mode::HachiProtocolMode;
+use hachi_pcs::protocol::shared_matrix_setup::SharedMatrixOpeningConfig;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::{
     BasisMode, BlockOrder, CanonicalField, CommitmentScheme, FieldCore, FromSmallInt, HachiPolyOps,
@@ -58,6 +61,23 @@ fn env_usize(name: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
+/// Reads the `HACHI_PROTOCOL_MODE` env var and resolves it to a
+/// [`HachiProtocolMode`]. Accepted values (case-insensitive):
+/// `split` (default), `fused`. Unrecognized values abort with an error.
+fn protocol_mode_from_env() -> HachiProtocolMode {
+    match env::var("HACHI_PROTOCOL_MODE") {
+        Ok(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+            "" | "split" => HachiProtocolMode::Split,
+            "fused" => HachiProtocolMode::Fused,
+            other => {
+                eprintln!("Unknown HACHI_PROTOCOL_MODE={other:?}; expected 'split' or 'fused'.");
+                std::process::exit(1);
+            }
+        },
+        Err(_) => HachiProtocolMode::default(),
+    }
+}
+
 fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
     poly: &P,
     point: &[F],
@@ -96,15 +116,16 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
     (y_ring * v.sigma_m1()).coefficients()[0]
 }
 
-fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F, D>>(
+fn run_prove<const D: usize, Cfg: SharedMatrixOpeningConfig<Field = F>, P: HachiPolyOps<F, D>>(
     label: &str,
-    setup: &<HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::ProverSetup,
+    setup: &HachiProverSetup<F, D>,
     poly: &P,
     pt: &[F],
     opening: F,
     plan: Option<&HachiSchedulePlan>,
 ) where
-    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<F, D, Proof = HachiProof<F>>,
+    HachiCommitmentScheme<D, Cfg>:
+        CommitmentScheme<F, D, Proof = HachiProof<F>, ProverSetup = HachiProverSetup<F, D>>,
 {
     type Scheme<const D: usize, Cfg> = HachiCommitmentScheme<D, Cfg>;
 
@@ -204,8 +225,13 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSc
         .map(|level| level.serialized_size(Compress::No))
         .sum();
     let tail_total = proof.final_witness().serialized_size(Compress::No);
-    let accounted_total = hachi_levels_total + tail_total;
-    let framing_total = proof.size() - accounted_total;
+    let setup_delegation_total: usize = proof
+        .setup_delegations
+        .iter()
+        .map(|(_, d)| HACHI_PROOF_DELEGATION_FRAMING_BYTES + d.serialized_size(Compress::No))
+        .sum();
+    let framing_total = HACHI_PROOF_FRAMING_BYTES;
+    let accounted_total = hachi_levels_total + tail_total + setup_delegation_total + framing_total;
 
     tracing::info!(
         label,
@@ -214,17 +240,20 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSc
         accounted_bytes = accounted_total,
         hachi_fold_bytes = hachi_levels_total,
         tail_bytes = tail_total,
+        setup_delegation_bytes = setup_delegation_total,
         proof_framing_bytes = framing_total,
         "proof summary"
     );
     debug_assert_eq!(accounted_total, proof.size());
 
     if let Some(plan) = plan {
-        debug_assert_eq!(
-            hachi_levels_total + tail_total,
-            plan.exact_proof_bytes,
-            "planner bytes should match the non-delegated proof skeleton"
-        );
+        if matches!(protocol_mode_from_env(), HachiProtocolMode::Split) {
+            debug_assert_eq!(
+                hachi_levels_total + tail_total + framing_total,
+                plan.exact_proof_bytes,
+                "planner bytes should match the non-delegated Split proof skeleton"
+            );
+        }
         emit_planned_schedule_summary(label, plan);
     }
 
@@ -269,6 +298,22 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
         .map(|claim| claim.serialized_size(Compress::No))
         .sum::<usize>();
     let stage1_s_claim_size = stage1.s_claim.serialized_size(Compress::No);
+    let stage1_fused_flag_size = 1usize;
+    let stage1_fused_leaf_size = stage1
+        .fused_leaf
+        .as_ref()
+        .map(|f| f.serialized_size(Compress::No))
+        .unwrap_or(0);
+    let stage1_w_eval_size = stage1
+        .w_eval
+        .as_ref()
+        .map(|w| w.serialized_size(Compress::No))
+        .unwrap_or(0);
+    let stage1_claimed_setup_val_size = stage1
+        .claimed_setup_val
+        .as_ref()
+        .map(|c| c.serialized_size(Compress::No))
+        .unwrap_or(0);
     let stage2_sumcheck_size = stage2.sumcheck.serialized_size(Compress::No);
     let next_w_commitment_size = stage2.next_w_commitment.serialized_size(Compress::No);
     let next_w_eval_size = stage2.next_w_eval.serialized_size(Compress::No);
@@ -282,6 +327,10 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_s_claim_bytes = stage1_s_claim_size,
+        stage1_fused_flag_bytes = stage1_fused_flag_size,
+        stage1_fused_leaf_bytes = stage1_fused_leaf_size,
+        stage1_w_eval_bytes = stage1_w_eval_size,
+        stage1_claimed_setup_val_bytes = stage1_claimed_setup_val_size,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
         next_w_commitment_bytes = next_w_commitment_size,
         next_w_eval_bytes = next_w_eval_size,
@@ -290,6 +339,11 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
     eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
+    if stage1_fused_leaf_size + stage1_w_eval_size + stage1_claimed_setup_val_size > 0 {
+        eprintln!("[{label}]     stage1_fused_leaf={stage1_fused_leaf_size} bytes");
+        eprintln!("[{label}]     stage1_w_eval={stage1_w_eval_size} bytes");
+        eprintln!("[{label}]     stage1_claimed_setup_val={stage1_claimed_setup_val_size} bytes");
+    }
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!(
         "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} coeffs)",
@@ -303,6 +357,10 @@ fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
             + stage1_sumcheck_size
             + stage1_interstage_claims_size
             + stage1_s_claim_size
+            + stage1_fused_flag_size
+            + stage1_fused_leaf_size
+            + stage1_w_eval_size
+            + stage1_claimed_setup_val_size
             + stage2_sumcheck_size
             + next_w_commitment_size
             + next_w_eval_size
@@ -444,12 +502,13 @@ fn print_layout(layout: &LevelParams) {
     );
 }
 
-fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F>>(
+fn run_dense<const D: usize, Cfg: SharedMatrixOpeningConfig<Field = F>>(
     nv: usize,
     layout: &LevelParams,
     plan: Option<&HachiSchedulePlan>,
 ) where
-    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<F, D, Proof = HachiProof<F>>,
+    HachiCommitmentScheme<D, Cfg>:
+        CommitmentScheme<F, D, Proof = HachiProof<F>, ProverSetup = HachiProverSetup<F, D>>,
 {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let pt: Vec<F> = (0..nv)
@@ -474,9 +533,12 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     };
 
     let t0 = Instant::now();
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
+    let setup: HachiProverSetup<F, D> =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
+    let setup = setup.with_mode(protocol_mode_from_env());
     tracing::info!(
         label = "dense",
+        protocol_mode = ?setup.mode,
         elapsed_s = t0.elapsed().as_secs_f64(),
         "setup"
     );
@@ -484,12 +546,13 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     run_prove::<D, Cfg, _>("dense", &setup, &poly, &pt, opening, plan);
 }
 
-fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
+fn run_onehot<const D: usize, Cfg: SharedMatrixOpeningConfig<Field = F>>(
     nv: usize,
     layout: &LevelParams,
     plan: Option<&HachiSchedulePlan>,
 ) where
-    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<F, D, Proof = HachiProof<F>>,
+    HachiCommitmentScheme<D, Cfg>:
+        CommitmentScheme<F, D, Proof = HachiProof<F>, ProverSetup = HachiProverSetup<F, D>>,
 {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let total_field = (layout.num_blocks * layout.block_len)
@@ -514,9 +577,12 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let opening = opening_from_poly(&onehot_poly, &pt, layout, BasisMode::Lagrange);
 
     let t0 = Instant::now();
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
+    let setup: HachiProverSetup<F, D> =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
+    let setup = setup.with_mode(protocol_mode_from_env());
     tracing::info!(
         label = "onehot",
+        protocol_mode = ?setup.mode,
         elapsed_s = t0.elapsed().as_secs_f64(),
         "setup"
     );
@@ -524,7 +590,7 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     run_prove::<D, Cfg, _>("onehot", &setup, &onehot_poly, &pt, opening, plan);
 }
 
-fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
+fn run_batched_onehot<const D: usize, Cfg: SharedMatrixOpeningConfig<Field = F>>(
     nv: usize,
     num_polys: usize,
     layout: &LevelParams,
@@ -564,9 +630,12 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let opening_groups = [&openings[..]];
 
     let t0 = Instant::now();
-    let setup = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, num_polys);
+    let setup: HachiProverSetup<F, D> =
+        <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, num_polys);
+    let setup = setup.with_mode(protocol_mode_from_env());
     tracing::info!(
         label = "onehot",
+        protocol_mode = ?setup.mode,
         elapsed_s = t0.elapsed().as_secs_f64(),
         "setup"
     );
@@ -686,9 +755,10 @@ fn best_onehot_d(nv: usize) -> usize {
     }
 }
 
-fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(title: &str, nv: usize)
+fn run_dense_mode<const D: usize, Cfg: SharedMatrixOpeningConfig<Field = F>>(title: &str, nv: usize)
 where
-    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<F, D, Proof = HachiProof<F>>,
+    HachiCommitmentScheme<D, Cfg>:
+        CommitmentScheme<F, D, Proof = HachiProof<F>, ProverSetup = HachiProverSetup<F, D>>,
 {
     let layout = resolve_layout::<Cfg>(nv);
     let plan =
@@ -698,7 +768,7 @@ where
     run_dense::<D, Cfg>(nv, &layout, plan.as_ref());
 }
 
-fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(
+fn run_onehot_mode<const D: usize, Cfg: SharedMatrixOpeningConfig<Field = F>>(
     title: &str,
     nv: usize,
     num_polys: usize,
@@ -707,6 +777,7 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(
         F,
         D,
         Proof = HachiProof<F>,
+        ProverSetup = HachiProverSetup<F, D>,
         CommitHint = HachiBatchedCommitmentHint<F, D>,
         BatchedCommitHint = Vec<HachiBatchedCommitmentHint<F, D>>,
         BatchedProof = HachiBatchedProof<F>,
@@ -1031,6 +1102,6 @@ fn main() {
     }
 }
 
-fn resolve_layout<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> LevelParams {
+fn resolve_layout<Cfg: SharedMatrixOpeningConfig<Field = F>>(nv: usize) -> LevelParams {
     Cfg::commitment_layout(nv).expect("layout")
 }

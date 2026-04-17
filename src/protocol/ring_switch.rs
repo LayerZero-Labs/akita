@@ -1198,6 +1198,7 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
 /// commitment-opening, and gadget-decomposition tails used by the delegated
 /// setup-claim sumcheck.
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub(crate) fn compute_alg_m_evals_x_with_claim_groups<
     F: FieldCore + CanonicalField,
     const D: usize,
@@ -1345,6 +1346,7 @@ pub(crate) fn compute_alg_m_evals_x_with_claim_groups<
 
 /// Evaluate the algebraic MLE of the M-table at a single point `r_x`.
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub(crate) fn eval_algebraic_mle_at_point<F: FieldCore + CanonicalField, const D: usize>(
     opening_point: &RingOpeningPoint<F>,
     challenges: &[SparseChallenge],
@@ -2796,6 +2798,7 @@ mod tests {
 
 /// Shared indexing for the delegated matrix-weight tensor on single proofs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(crate) struct SingleProofMatrixWeightGeometry {
     pub d_start: usize,
     pub b_start: usize,
@@ -2819,6 +2822,7 @@ pub(crate) struct SingleProofMatrixWeightGeometry {
     pub offset_t: usize,
 }
 
+#[allow(dead_code)]
 pub(crate) fn single_proof_matrix_weight_geometry(
     lp: &LevelParams,
 ) -> SingleProofMatrixWeightGeometry {
@@ -2874,6 +2878,7 @@ pub(crate) fn single_proof_matrix_weight_geometry(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn single_proof_matrix_weight_entry<F: FieldCore + CanonicalField>(
     row: usize,
     col: usize,
@@ -2924,6 +2929,7 @@ pub(crate) fn single_proof_matrix_weight_entry<F: FieldCore + CanonicalField>(
 /// column-side weights from the D, B, and A matrix views, weighted by the
 /// row weights from `eq_tau1`.
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub(crate) fn eval_matrix_weight_at_point<F: FieldCore + CanonicalField, const D: usize>(
     r_row: &[F],
     r_col: &[F],

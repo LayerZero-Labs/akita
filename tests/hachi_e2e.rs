@@ -11,6 +11,7 @@ use hachi_pcs::protocol::opening_point::{
 };
 use hachi_pcs::protocol::params::LevelParams;
 use hachi_pcs::protocol::proof::{HachiBatchedProof, HachiProof};
+use hachi_pcs::protocol::shared_matrix_setup::SharedMatrixOpeningConfig;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
@@ -133,7 +134,7 @@ fn make_dense_basis2_fixture(nv: usize, transcript_label: &'static [u8]) -> Dens
 fn make_dense_fixture<
     FField: CanonicalField + 'static,
     const D: usize,
-    Cfg: CommitmentConfig<Field = FField>,
+    Cfg: SharedMatrixOpeningConfig<Field = FField>,
 >(
     nv: usize,
     transcript_label: &'static [u8],

@@ -6,6 +6,7 @@ use common::*;
 use hachi_pcs::protocol::commitment::hachi_batched_root_layout;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::proof::HachiBatchedProof;
+use hachi_pcs::protocol::shared_matrix_setup::SharedMatrixOpeningConfig;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::{CommitmentScheme, HachiDeserialize, HachiError, HachiSerialize, Transcript};
 use std::sync::Mutex;
@@ -28,7 +29,7 @@ fn build_group_slices<'a, T>(values: &'a [T], group_sizes: &[usize]) -> Vec<&'a 
     groups
 }
 
-fn commit_groups_by_point<const D: usize, Cfg: CommitmentConfig, P: HachiPolyOps<F, D>>(
+fn commit_groups_by_point<const D: usize, Cfg: SharedMatrixOpeningConfig, P: HachiPolyOps<F, D>>(
     poly_groups_by_point: &[&[&[P]]],
     setup: &<HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::ProverSetup,
 ) -> Result<(PointCommitments<D, Cfg>, PointHints<D, Cfg>), HachiError>

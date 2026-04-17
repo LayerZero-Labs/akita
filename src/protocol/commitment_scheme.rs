@@ -85,7 +85,8 @@ const MIN_SHRINK_RATIO: f64 = 0.5;
 /// Maximum number of outermost recursion levels at which setup delegation is
 /// applied. Beyond this depth the setup claim is paid directly (cheaper than
 /// the delegation overhead).
-const MAX_SETUP_DELEGATION_LEVELS: usize = 2;
+#[allow(dead_code)]
+pub(crate) const MAX_SETUP_DELEGATION_LEVELS: usize = 2;
 
 /// Whether the setup-claim delegation path should run on a given proof.
 ///
@@ -97,7 +98,10 @@ const MAX_SETUP_DELEGATION_LEVELS: usize = 2;
 ///   [`MAX_SETUP_DELEGATION_LEVELS`] levels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SetupDelegationMode {
+    /// Delegate the setup-claim opening to a recursive sumcheck at the
+    /// outermost [`MAX_SETUP_DELEGATION_LEVELS`] levels.
     Enabled,
+    /// Pay the setup claim directly at every level (no delegation).
     Disabled,
 }
 
@@ -107,8 +111,9 @@ impl Default for SetupDelegationMode {
     }
 }
 
+#[allow(dead_code)]
 #[inline]
-fn should_delegate_setup_at_level(mode: SetupDelegationMode, level: usize) -> bool {
+pub(crate) fn should_delegate_setup_at_level(mode: SetupDelegationMode, level: usize) -> bool {
     matches!(mode, SetupDelegationMode::Enabled) && level < MAX_SETUP_DELEGATION_LEVELS
 }
 
@@ -150,6 +155,7 @@ struct ProveLevelOutput<F: FieldCore> {
     /// [`HachiProverSetup::delegation`] is [`SetupDelegationMode::Enabled`],
     /// the prover is running in [`HachiProtocolMode::Fused`], and the level
     /// index is below [`MAX_SETUP_DELEGATION_LEVELS`].
+    #[allow(dead_code)]
     setup_delegation: Option<crate::protocol::proof::SetupDelegationProof<F>>,
 }
 
@@ -424,7 +430,7 @@ fn verify_root_direct_commitment<F, const D: usize, Cfg>(
 ) -> Result<bool, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = F>,
 {
     let field_witness = root_direct_field_witness(direct_witness)?;
     let poly = DensePoly::<F, D>::from_field_evals(
@@ -473,7 +479,7 @@ fn verify_root_direct<F, T, const D: usize, Cfg>(
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = F>,
 {
     if proof.steps.len() != 1 {
         return Err(HachiError::InvalidProof);
@@ -2042,6 +2048,7 @@ where
 /// the shared-matrix polynomial. Delegation is disabled on the inner proof to
 /// avoid infinite recursion.
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub(crate) fn prove_without_setup_delegation<F, T, const D: usize, Cfg, P>(
     setup: &HachiProverSetup<F, D>,
     poly: &P,
@@ -2060,10 +2067,10 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = F>,
     P: HachiPolyOps<F, D>,
 {
-    let setup_no_delegation = setup.clone().with_mode(setup.mode);
+    let setup_no_delegation = setup.clone().with_delegation(SetupDelegationMode::Disabled);
     <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
         &setup_no_delegation,
         poly,
@@ -2078,6 +2085,7 @@ where
 /// Verify a proof that was produced without setup delegation (see
 /// [`prove_without_setup_delegation`]).
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub(crate) fn verify_without_setup_delegation<F, T, const D: usize, Cfg>(
     proof: &HachiProof<F>,
     setup: &HachiVerifierSetup<F>,
@@ -2096,7 +2104,7 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = F>,
 {
     <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
         proof,
@@ -2112,7 +2120,7 @@ where
 impl<F, const D: usize, Cfg> CommitmentScheme<F, D> for HachiCommitmentScheme<D, Cfg>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = F>,
 {
     type ProverSetup = HachiProverSetup<F, D>;
     type VerifierSetup = HachiVerifierSetup<F>;
@@ -3953,7 +3961,7 @@ mod tests {
         batch_size: usize,
         slack_bytes: usize,
     ) where
-        CfgLocal: CommitmentConfig<Field = OneHotF>,
+        CfgLocal: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = OneHotF>,
     {
         type SchemeLocal<const D_INNER: usize, CfgInner> = HachiCommitmentScheme<D_INNER, CfgInner>;
 
@@ -4066,7 +4074,7 @@ mod tests {
         nv: usize,
         group_sizes_by_point: &[&[usize]],
     ) where
-        CfgLocal: CommitmentConfig<Field = OneHotF>,
+        CfgLocal: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = OneHotF>,
     {
         type SchemeLocal<const D_INNER: usize, CfgInner> = HachiCommitmentScheme<D_INNER, CfgInner>;
 

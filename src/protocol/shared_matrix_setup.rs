@@ -5,6 +5,8 @@
 //! layout and packages the deterministic commitment/opening data needed for the
 //! delegated setup-claim proof.
 
+#![allow(dead_code)]
+
 use crate::algebra::fields::wide::HasWide;
 use crate::algebra::fields::HasUnreducedOps;
 use crate::error::HachiError;
@@ -139,12 +141,21 @@ pub(crate) struct SharedMatrixSetup<F: FieldCore, const D: usize> {
 ///
 /// The delegated shared matrix always has dense, arbitrary field coefficients,
 /// so onehot outer configs must switch to a full-field inner PCS.
-pub(crate) trait SharedMatrixOpeningConfig: CommitmentConfig {
+/// Config-level choice of inner PCS used to open the shared matrix at a
+/// setup-delegation level.
+///
+/// The delegated shared matrix always has dense, arbitrary field coefficients,
+/// so onehot outer configs must switch to a full-field inner PCS. Preset
+/// implementations in this module pick the right inner config automatically.
+pub trait SharedMatrixOpeningConfig: CommitmentConfig {
+    /// Inner PCS config used for the recursive shared-matrix opening.
     type InnerCfg: SharedMatrixOpeningConfig<Field = Self::Field>;
 }
 
+/// Test-only config that enables the setup-delegation path on top of
+/// [`SmallTestCommitmentConfig`]. Used by the setup-delegation unit tests.
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct SmallTestSharedMatrixCommitmentConfig;
+pub struct SmallTestSharedMatrixCommitmentConfig;
 
 impl CommitmentConfig for SmallTestSharedMatrixCommitmentConfig {
     type Field = crate::test_utils::F;
