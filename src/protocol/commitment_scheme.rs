@@ -4,6 +4,7 @@ use crate::algebra::fields::wide::HasWide;
 use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::primitives::serialization::Valid;
 use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
