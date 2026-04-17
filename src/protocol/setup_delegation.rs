@@ -81,7 +81,6 @@ pub(crate) struct DelegationIntermediates<F: FieldCore> {
     pub eq_tau1: Vec<F>,
     pub alpha_evals_y: Vec<F>,
     pub level_params: LevelParams,
-    pub col_bits: usize,
     pub ring_bits: usize,
 }
 
@@ -434,7 +433,6 @@ mod tests {
             eq_tau1: eq_tau1.clone(),
             alpha_evals_y: alpha_evals_y.clone(),
             level_params: level_params.clone(),
-            col_bits,
             ring_bits,
         };
 

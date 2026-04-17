@@ -7,7 +7,7 @@ use hachi_pcs::protocol::commitment::{
     recursive_suffix_estimate_with_log_basis, CommitmentConfig, HachiRootBatchSummary,
     HachiScheduleLookupKey, HachiSchedulePlan,
 };
-use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
+use hachi_pcs::protocol::commitment_scheme::{HachiCommitmentScheme, SetupDelegationMode};
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
@@ -75,6 +75,27 @@ fn protocol_mode_from_env() -> HachiProtocolMode {
             }
         },
         Err(_) => HachiProtocolMode::default(),
+    }
+}
+
+/// Reads the `HACHI_SETUP_DELEGATION` env var and resolves it to a
+/// [`SetupDelegationMode`]. Accepted values (case-insensitive):
+/// `disabled`/`off`/`0` (default), `enabled`/`on`/`1`. Unrecognized
+/// values abort with an error. Delegation only takes effect under
+/// [`HachiProtocolMode::Fused`] and is ignored for batched-proof paths.
+fn setup_delegation_mode_from_env() -> SetupDelegationMode {
+    match env::var("HACHI_SETUP_DELEGATION") {
+        Ok(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+            "" | "0" | "off" | "disabled" => SetupDelegationMode::Disabled,
+            "1" | "on" | "enabled" => SetupDelegationMode::Enabled,
+            other => {
+                eprintln!(
+                    "Unknown HACHI_SETUP_DELEGATION={other:?}; expected 'enabled' or 'disabled'.",
+                );
+                std::process::exit(1);
+            }
+        },
+        Err(_) => SetupDelegationMode::default(),
     }
 }
 
@@ -535,10 +556,13 @@ fn run_dense<const D: usize, Cfg: SharedMatrixOpeningConfig<Field = F>>(
     let t0 = Instant::now();
     let setup: HachiProverSetup<F, D> =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
-    let setup = setup.with_mode(protocol_mode_from_env());
+    let setup = setup
+        .with_mode(protocol_mode_from_env())
+        .with_delegation(setup_delegation_mode_from_env());
     tracing::info!(
         label = "dense",
         protocol_mode = ?setup.mode,
+        setup_delegation = ?setup.delegation,
         elapsed_s = t0.elapsed().as_secs_f64(),
         "setup"
     );
@@ -579,10 +603,13 @@ fn run_onehot<const D: usize, Cfg: SharedMatrixOpeningConfig<Field = F>>(
     let t0 = Instant::now();
     let setup: HachiProverSetup<F, D> =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
-    let setup = setup.with_mode(protocol_mode_from_env());
+    let setup = setup
+        .with_mode(protocol_mode_from_env())
+        .with_delegation(setup_delegation_mode_from_env());
     tracing::info!(
         label = "onehot",
         protocol_mode = ?setup.mode,
+        setup_delegation = ?setup.delegation,
         elapsed_s = t0.elapsed().as_secs_f64(),
         "setup"
     );

@@ -1343,30 +1343,6 @@ pub(crate) fn compute_alg_m_evals_x_with_claim_groups<
     Ok(out)
 }
 
-/// Evaluate the algebraic MLE of the M-table at a single point `r_x`.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn eval_algebraic_mle_at_point<F: FieldCore + CanonicalField, const D: usize>(
-    opening_point: &RingOpeningPoint<F>,
-    challenges: &[SparseChallenge],
-    alpha: F,
-    alpha_pows: &[F],
-    lp: &LevelParams,
-    tau1: &[F],
-    claim_group_sizes: &[usize],
-    r_x: &[F],
-) -> Result<F, HachiError> {
-    let alg_table = compute_alg_m_evals_x_with_claim_groups::<F, D>(
-        opening_point,
-        challenges,
-        alpha,
-        alpha_pows,
-        lp,
-        tau1,
-        claim_group_sizes,
-    )?;
-    crate::algebra::poly::multilinear_eval(&alg_table, r_x)
-}
-
 fn validate_opening_points_for_claims<F: FieldCore>(
     opening_points: &[RingOpeningPoint<F>],
     claim_to_point: &[usize],

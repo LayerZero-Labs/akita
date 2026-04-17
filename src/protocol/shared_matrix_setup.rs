@@ -131,8 +131,6 @@ pub(crate) struct SharedMatrixSetup<F: FieldCore, const D: usize> {
     pub commit_hint: HachiBatchedCommitmentHint<F, D>,
     /// Shared matrix as a DensePoly for the delegated opening proof.
     pub shared_matrix_poly: DensePoly<F, D>,
-    /// Number of MLE variables in the shared matrix tensor.
-    pub shared_matrix_num_vars: usize,
 }
 
 /// Choose the inner PCS config used to open the shared matrix polynomial.
@@ -305,7 +303,6 @@ where
             commitment,
             commit_hint,
             shared_matrix_poly,
-            shared_matrix_num_vars: tensor_layout.num_vars,
         })
     }
 }
@@ -350,14 +347,6 @@ fn inner_verifier_setup<F: FieldCore, const D: usize>(
     }
 }
 
-#[cfg(test)]
-pub(crate) fn flat_matrix_to_field_evals_pub<F: FieldCore, const D: usize>(
-    matrix: &crate::protocol::commitment::utils::flat_matrix::FlatMatrix<F>,
-    tensor_layout: SharedMatrixTensorLayout,
-) -> Vec<F> {
-    flat_matrix_to_field_evals::<F, D>(matrix, tensor_layout)
-}
-
 /// Extract the shared matrix as a padded field-element tensor evaluation vector.
 fn flat_matrix_to_field_evals<F: FieldCore, const D: usize>(
     matrix: &crate::protocol::commitment::utils::flat_matrix::FlatMatrix<F>,
@@ -400,13 +389,13 @@ mod tests {
             "shared matrix commitment must be non-empty"
         );
         assert!(
-            sm_setup.shared_matrix_num_vars > 0,
+            sm_setup.tensor_layout.num_vars > 0,
             "shared matrix num_vars must be positive"
         );
         assert_eq!(
             sm_setup.shared_matrix_poly.num_vars(),
-            sm_setup.shared_matrix_num_vars,
-            "poly num_vars must match stored num_vars"
+            sm_setup.tensor_layout.num_vars,
+            "poly num_vars must match tensor layout num_vars"
         );
     }
 

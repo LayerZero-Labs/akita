@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Sumcheck for the setup-backed claim `Y_setup = <shared_matrix, matrix_weight>`.
 //!
 //! After stage 1 determines the algebraic contribution `alg(r_x)`, the

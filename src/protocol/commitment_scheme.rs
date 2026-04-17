@@ -738,7 +738,6 @@ where
                 eq_tau1: EqPolynomial::evals(&tau1),
                 alpha_evals_y: alpha_evals_y.clone(),
                 level_params: lp.clone(),
-                col_bits,
                 ring_bits,
             })
         } else {
@@ -2173,7 +2172,6 @@ where
 /// the shared-matrix polynomial. Delegation is disabled on the inner proof to
 /// avoid infinite recursion.
 #[allow(clippy::too_many_arguments)]
-#[allow(dead_code)]
 pub(crate) fn prove_without_setup_delegation<F, T, const D: usize, Cfg, P>(
     setup: &HachiProverSetup<F, D>,
     poly: &P,
@@ -2210,7 +2208,6 @@ where
 /// Verify a proof that was produced without setup delegation (see
 /// [`prove_without_setup_delegation`]).
 #[allow(clippy::too_many_arguments)]
-#[allow(dead_code)]
 pub(crate) fn verify_without_setup_delegation<F, T, const D: usize, Cfg>(
     proof: &HachiProof<F>,
     setup: &HachiVerifierSetup<F>,
@@ -5934,6 +5931,66 @@ mod tests {
         );
 
         assert!(result.is_ok(), "fused-mode roundtrip failed: {result:?}");
+    }
+
+    #[test]
+    fn verify_passes_for_consistent_opening_fused_setup_delegated() {
+        let alpha = D.trailing_zeros() as usize;
+        let layout = Cfg::commitment_layout(16).unwrap();
+        let num_vars = layout.m_vars + layout.r_vars + alpha;
+
+        let (poly, evals) = make_dense_poly(num_vars);
+
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1)
+            .with_mode(HachiProtocolMode::Fused)
+            .with_delegation(SetupDelegationMode::Enabled);
+        let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
+
+        let (commitment, hint) =
+            <Scheme as CommitmentScheme<F, D>>::commit(std::slice::from_ref(&poly), &setup)
+                .unwrap();
+
+        let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
+        let lw = lagrange_weights(&opening_point);
+        let opening: F = evals
+            .iter()
+            .zip(lw.iter())
+            .fold(F::zero(), |a, (&c, &w)| a + c * w);
+
+        let mut prover_transcript =
+            Blake2bTranscript::<F>::new(b"test/prove/fused-setup-delegated");
+        let proof = <Scheme as CommitmentScheme<F, D>>::prove(
+            &setup,
+            &poly,
+            &opening_point,
+            hint,
+            &mut prover_transcript,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .unwrap();
+
+        assert!(
+            !proof.setup_delegations.is_empty(),
+            "fused + delegated run should attach at least one setup-delegation proof"
+        );
+
+        let mut verifier_transcript =
+            Blake2bTranscript::<F>::new(b"test/prove/fused-setup-delegated");
+        let result = <Scheme as CommitmentScheme<F, D>>::verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+        );
+
+        assert!(
+            result.is_ok(),
+            "fused + setup-delegated roundtrip failed: {result:?}"
+        );
     }
 
     #[test]
