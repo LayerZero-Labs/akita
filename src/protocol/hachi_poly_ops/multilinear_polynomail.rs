@@ -242,67 +242,6 @@ where
         }
     }
 
-    fn commit_inner_witness_batched(
-        polys: &[&Self],
-        a_matrix: &FlatMatrix<F>,
-        ntt_a: &NttSlotCache<D>,
-        n_a: usize,
-        block_len: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        log_basis: u32,
-        matrix_stride: usize,
-    ) -> Result<Option<Vec<CommitInnerWitness<F, D>>>, HachiError>
-    where
-        F: CanonicalField,
-    {
-        let Some(first) = polys.first() else {
-            return Ok(Some(Vec::new()));
-        };
-        match **first {
-            Self::Dense(_) => {
-                let mut dense_polys = Vec::with_capacity(polys.len());
-                for poly in polys {
-                    match **poly {
-                        Self::Dense(inner) => dense_polys.push(inner),
-                        Self::OneHot(_) => return Ok(None),
-                    }
-                }
-                <DensePoly<F, D> as HachiPolyOps<F, D>>::commit_inner_witness_batched(
-                    &dense_polys,
-                    a_matrix,
-                    ntt_a,
-                    n_a,
-                    block_len,
-                    num_digits_commit,
-                    num_digits_open,
-                    log_basis,
-                    matrix_stride,
-                )
-            }
-            Self::OneHot(_) => {
-                let mut onehot_polys = Vec::with_capacity(polys.len());
-                for poly in polys {
-                    match **poly {
-                        Self::OneHot(inner) => onehot_polys.push(inner),
-                        Self::Dense(_) => return Ok(None),
-                    }
-                }
-                <OneHotPoly<F, D, I> as HachiPolyOps<F, D>>::commit_inner_witness_batched(
-                    &onehot_polys,
-                    a_matrix,
-                    ntt_a,
-                    n_a,
-                    block_len,
-                    num_digits_commit,
-                    num_digits_open,
-                    log_basis,
-                    matrix_stride,
-                )
-            }
-        }
-    }
-
     fn direct_root_witness(
         &self,
     ) -> Result<crate::protocol::proof::DirectWitnessProof<F>, HachiError> {
