@@ -3614,7 +3614,7 @@ mod tests {
             <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<OneHotF, D_LOCAL>>::setup_prover(
                 nv,
                 total_claims,
-                1,
+                group_sizes_by_point.len(),
             );
         let verifier_setup = <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<
             OneHotF,
