@@ -4,6 +4,8 @@ use crate::algebra::fields::wide::HasWide;
 use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
+#[cfg(feature = "parallel")]
+use crate::parallel::*;
 use crate::primitives::serialization::Valid;
 use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
@@ -1979,36 +1981,20 @@ where
         )?;
         let root_lp = root_plan.root_lp.clone();
 
-        let poly_refs: Vec<&P> = polys.iter().collect();
-        let inner_witnesses = if let Some(witnesses) = P::commit_inner_witness_batched(
-            &poly_refs,
-            &setup.expanded.shared_matrix,
-            &setup.ntt_shared,
-            root_lp.a_key.row_len(),
-            root_lp.block_len,
-            root_lp.num_digits_commit,
-            root_lp.num_digits_open,
-            root_lp.log_basis,
-            setup.expanded.seed.max_stride,
-        )? {
-            witnesses
-        } else {
-            polys
-                .iter()
-                .map(|poly| {
-                    poly.commit_inner_witness(
-                        &setup.expanded.shared_matrix,
-                        &setup.ntt_shared,
-                        root_lp.a_key.row_len(),
-                        root_lp.block_len,
-                        root_lp.num_digits_commit,
-                        root_lp.num_digits_open,
-                        root_lp.log_basis,
-                        setup.expanded.seed.max_stride,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?
-        };
+        let inner_witnesses = crate::cfg_iter!(polys)
+            .map(|poly| {
+                poly.commit_inner_witness(
+                    &setup.expanded.shared_matrix,
+                    &setup.ntt_shared,
+                    root_lp.a_key.row_len(),
+                    root_lp.block_len,
+                    root_lp.num_digits_commit,
+                    root_lp.num_digits_open,
+                    root_lp.log_basis,
+                    setup.expanded.seed.max_stride,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         let mut inner_opening_digits_flat = Vec::new();
         let mut group_t_hat = Vec::with_capacity(polys.len());
