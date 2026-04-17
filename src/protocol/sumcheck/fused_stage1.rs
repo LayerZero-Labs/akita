@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Fused Stage 1 prover: range-check + relation in a single non-eq-factored
 //! sumcheck.
 //!

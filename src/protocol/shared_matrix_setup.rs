@@ -101,11 +101,11 @@ impl SharedMatrixTensorLayout {
 ///
 /// Built once during `setup_verifier` so that the verifier never re-derives
 /// the inner PCS setup or re-commits the shared matrix at verification time.
-#[derive(Debug, Clone)]
-pub(crate) struct SharedMatrixVerifierCache<F: FieldCore> {
-    pub tensor_layout: SharedMatrixTensorLayout,
-    pub inner_verifier_setup: Box<HachiVerifierSetup<F>>,
-    pub commitment: FlatRingVec<F>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedMatrixVerifierCache<F: FieldCore> {
+    pub(crate) tensor_layout: SharedMatrixTensorLayout,
+    pub(crate) inner_verifier_setup: Box<HachiVerifierSetup<F>>,
+    pub(crate) commitment: FlatRingVec<F>,
 }
 
 impl<F: FieldCore> SharedMatrixVerifierCache<F> {
@@ -327,6 +327,8 @@ where
     Ok(HachiProverSetup {
         expanded,
         ntt_shared,
+        mode: crate::protocol::protocol_mode::HachiProtocolMode::default(),
+        delegation: crate::protocol::commitment_scheme::SetupDelegationMode::default(),
     })
 }
 

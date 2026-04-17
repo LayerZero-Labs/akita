@@ -1,5 +1,6 @@
 //! Commitment scheme trait implementation.
 
+use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::fields::wide::HasWide;
 use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::CyclotomicRing;
@@ -31,8 +32,9 @@ use crate::protocol::params::LevelParams;
 use crate::protocol::proof::{
     DirectWitnessProof, FlatRingVec, HachiBatchedCommitmentHint, HachiBatchedProof,
     HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProof, HachiProofStep,
-    PackedDigits,
+    HachiStage1Proof, PackedDigits,
 };
+use crate::protocol::protocol_mode::HachiProtocolMode;
 use crate::protocol::quadratic_equation::{derive_stage1_challenges, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
 use crate::protocol::ring_switch::{
@@ -41,15 +43,21 @@ use crate::protocol::ring_switch::{
     ring_switch_verifier_with_opening_points_and_claim_groups, w_ring_element_count,
     w_ring_element_count_with_claim_groups, RingSwitchOutput, WCommitmentConfig,
 };
+use crate::protocol::sumcheck::claim_reduction::ClaimReductionProver;
+use crate::protocol::sumcheck::fused_stage1::{pad_compact_witness_field, FusedStage1Prover};
+use crate::protocol::sumcheck::hachi_stage1::range_check_eval_from_s;
 use crate::protocol::sumcheck::hachi_stage1_tree::{HachiStage1Prover, HachiStage1Verifier};
 use crate::protocol::sumcheck::hachi_stage2::{
-    relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier, Stage2MEvalSource,
+    direct_witness_eval, relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier,
+    Stage2MEvalSource,
 };
-use crate::protocol::sumcheck::{prove_sumcheck, verify_sumcheck, SumcheckInstanceVerifier};
+use crate::protocol::sumcheck::{
+    multilinear_eval, prove_sumcheck, verify_sumcheck, SumcheckInstanceVerifier, SumcheckProof,
+};
 use crate::protocol::transcript::labels::{
     ABSORB_BATCH_SHAPE, ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
-    ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_FUSED_W_EVAL, ABSORB_SUMCHECK_CLAIM, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH,
+    CHALLENGE_FUSED_RELATION_BATCH, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use crate::protocol::transcript::Transcript;
 use crate::{dispatch_ring_dim, dispatch_with_ntt};
@@ -73,6 +81,36 @@ const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 /// stops being worthwhile.  If the w vector doesn't shrink by at least
 /// this factor, the overhead of another fold level outweighs the saving.
 const MIN_SHRINK_RATIO: f64 = 0.5;
+
+/// Maximum number of outermost recursion levels at which setup delegation is
+/// applied. Beyond this depth the setup claim is paid directly (cheaper than
+/// the delegation overhead).
+const MAX_SETUP_DELEGATION_LEVELS: usize = 2;
+
+/// Whether the setup-claim delegation path should run on a given proof.
+///
+/// - [`SetupDelegationMode::Disabled`] keeps the legacy single-sumcheck shape
+///   used by every Split-mode proof and by recursive calls that open the
+///   shared matrix.
+/// - [`SetupDelegationMode::Enabled`] activates the fused claim-reduction
+///   sumcheck and produces a [`SetupDelegationProof`] for each of the first
+///   [`MAX_SETUP_DELEGATION_LEVELS`] levels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetupDelegationMode {
+    Enabled,
+    Disabled,
+}
+
+impl Default for SetupDelegationMode {
+    fn default() -> Self {
+        Self::Disabled
+    }
+}
+
+#[inline]
+fn should_delegate_setup_at_level(mode: SetupDelegationMode, level: usize) -> bool {
+    matches!(mode, SetupDelegationMode::Enabled) && level < MAX_SETUP_DELEGATION_LEVELS
+}
 
 /// End-to-end PCS wrapper, generic over ring degree `D` and config `Cfg`.
 #[derive(Clone, Copy, Debug, Default)]
@@ -108,6 +146,11 @@ struct RecursiveVerifierState<'a, F: FieldCore> {
 struct ProveLevelOutput<F: FieldCore> {
     level_proof: HachiLevelProof<F>,
     next_state: RecursiveProverState<F>,
+    /// Optional setup-delegation proof produced at this level. Populated when
+    /// [`HachiProverSetup::delegation`] is [`SetupDelegationMode::Enabled`],
+    /// the prover is running in [`HachiProtocolMode::Fused`], and the level
+    /// index is below [`MAX_SETUP_DELEGATION_LEVELS`].
+    setup_delegation: Option<crate::protocol::proof::SetupDelegationProof<F>>,
 }
 
 /// Output from the specialized batched root prove level.
@@ -395,6 +438,8 @@ where
     let temp_setup = HachiProverSetup {
         expanded: setup.expanded.clone(),
         ntt_shared: verifier_ntt,
+        mode: Default::default(),
+        delegation: Default::default(),
     };
     let (expected_commitment, _) =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
@@ -412,6 +457,7 @@ where
 {
     Ok(HachiProof {
         steps: vec![HachiProofStep::Direct(poly.direct_root_witness()?)],
+        setup_delegations: Vec::new(),
     })
 }
 
@@ -476,6 +522,7 @@ fn prove_one_level<F, T, const D: usize, Cfg, P>(
     lp: &LevelParams,
     planning_envelope: HachiBatchPlanningEnvelope,
     next_level_params_override: Option<LevelParams>,
+    mode: HachiProtocolMode,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
@@ -559,6 +606,7 @@ where
         next_level_params_override,
         quad_eq,
         y_ring,
+        mode,
     )
 }
 
@@ -578,6 +626,7 @@ fn finish_prove_level<F, T, const D: usize, LevelCfg, ScheduleCfg>(
     next_level_params_override: Option<LevelParams>,
     mut quad_eq: Box<QuadraticEquation<F, { D }, LevelCfg>>,
     y_ring: CyclotomicRing<F, D>,
+    mode: HachiProtocolMode,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
@@ -643,53 +692,79 @@ where
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
-    let (stage1_proof, r_stage1, s_claim) = {
-        let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        let stage1_prover = HachiStage1Prover::new(
-            &w_evals_compact,
-            &tau0_reordered,
-            b,
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        )?;
-        let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
-        let s_claim = stage1_proof.s_claim;
-        (stage1_proof, r_stage1, s_claim)
-    };
+    let (stage1_proof, stage2_sumcheck, sumcheck_challenges, w_eval) = match mode {
+        HachiProtocolMode::Split => {
+            let (stage1_proof, r_stage1, s_claim) = {
+                let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+                let stage1_prover = HachiStage1Prover::new(
+                    &w_evals_compact,
+                    &tau0_reordered,
+                    b,
+                    live_x_cols,
+                    col_bits,
+                    ring_bits,
+                )?;
+                let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
+                let s_claim = stage1_proof.s_claim;
+                (stage1_proof, r_stage1, s_claim)
+            };
 
-    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
-    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
-    let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
-        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        let mut stage2_prover = HachiStage2Prover::new(
-            batching_coeff,
-            w_evals_compact,
-            &r_stage1,
-            s_claim,
-            b,
-            alpha_evals_y,
-            m_evals_x,
-            live_x_cols,
-            col_bits,
-            ring_bits,
-            relation_claim,
-        );
-        let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
-            prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
-                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
-            })?;
+            transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
+            let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+            let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
+                let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+                let mut stage2_prover = HachiStage2Prover::new(
+                    batching_coeff,
+                    w_evals_compact,
+                    &r_stage1,
+                    s_claim,
+                    b,
+                    alpha_evals_y,
+                    m_evals_x,
+                    live_x_cols,
+                    col_bits,
+                    ring_bits,
+                    relation_claim,
+                );
+                let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
+                    prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
+                        tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+                    })?;
 
-        let w_eval = {
-            let _span = tracing::info_span!("multilinear_eval", level).entered();
-            stage2_prover.final_w_eval()
-        };
-        (
-            stage2_sumcheck,
-            sumcheck_challenges,
-            stage2_final_claim,
-            w_eval,
-        )
+                let w_eval = {
+                    let _span = tracing::info_span!("multilinear_eval", level).entered();
+                    stage2_prover.final_w_eval()
+                };
+                (
+                    stage2_sumcheck,
+                    sumcheck_challenges,
+                    stage2_final_claim,
+                    w_eval,
+                )
+            };
+            (stage1_proof, stage2_sumcheck, sumcheck_challenges, w_eval)
+        }
+        HachiProtocolMode::Fused => {
+            let out = prove_fused_stage1_stage2::<F, T>(
+                transcript,
+                w_evals_compact,
+                tau0_reordered,
+                b,
+                live_x_cols,
+                col_bits,
+                ring_bits,
+                alpha_evals_y,
+                m_evals_x,
+                relation_claim,
+                level,
+            )?;
+            (
+                out.stage1_proof,
+                out.stage2_sumcheck,
+                out.sumcheck_challenges,
+                out.final_w_eval,
+            )
+        }
     };
 
     let (level_proof, sumcheck_challenges) = (
@@ -706,6 +781,7 @@ where
 
     Ok(ProveLevelOutput {
         level_proof,
+        setup_delegation: None,
         next_state: RecursiveProverState {
             w,
             commitment: w_commitment,
@@ -737,6 +813,7 @@ fn prove_batched_root_level_with_points<F, T, const D: usize, Cfg, P>(
     root_lp: &LevelParams,
     batched_lp: &LevelParams,
     planning_envelope: HachiBatchPlanningEnvelope,
+    mode: HachiProtocolMode,
 ) -> Result<BatchedProveLevelOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
@@ -866,6 +943,7 @@ where
         planning_envelope,
         quad_eq,
         batched_y_rings,
+        mode,
     )
 }
 
@@ -887,6 +965,7 @@ fn prove_batched_root_level<F, T, const D: usize, Cfg, P>(
     root_lp: &LevelParams,
     batched_lp: &LevelParams,
     planning_envelope: HachiBatchPlanningEnvelope,
+    mode: HachiProtocolMode,
 ) -> Result<BatchedProveLevelOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
@@ -915,6 +994,7 @@ where
         root_lp,
         batched_lp,
         planning_envelope,
+        mode,
     )
 }
 
@@ -935,6 +1015,7 @@ fn prove_multipoint_batched_root_level<F, T, const D: usize, Cfg, P>(
     root_lp: &LevelParams,
     batched_lp: &LevelParams,
     planning_envelope: HachiBatchPlanningEnvelope,
+    mode: HachiProtocolMode,
 ) -> Result<BatchedProveLevelOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
@@ -959,6 +1040,7 @@ where
         root_lp,
         batched_lp,
         planning_envelope,
+        mode,
     )
 }
 
@@ -976,6 +1058,7 @@ fn finish_batched_root_level<F, T, const D: usize, Cfg>(
     planning_envelope: HachiBatchPlanningEnvelope,
     mut quad_eq: Box<QuadraticEquation<F, { D }, Cfg>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
+    mode: HachiProtocolMode,
 ) -> Result<BatchedProveLevelOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
@@ -1037,53 +1120,79 @@ where
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
-    let (stage1_proof, r_stage1, s_claim) = {
-        let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        let stage1_prover = HachiStage1Prover::new(
-            &w_evals_compact,
-            &tau0_reordered,
-            b,
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        )?;
-        let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
-        let s_claim = stage1_proof.s_claim;
-        (stage1_proof, r_stage1, s_claim)
-    };
+    let (stage1_proof, stage2_sumcheck, sumcheck_challenges, w_eval) = match mode {
+        HachiProtocolMode::Split => {
+            let (stage1_proof, r_stage1, s_claim) = {
+                let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+                let stage1_prover = HachiStage1Prover::new(
+                    &w_evals_compact,
+                    &tau0_reordered,
+                    b,
+                    live_x_cols,
+                    col_bits,
+                    ring_bits,
+                )?;
+                let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
+                let s_claim = stage1_proof.s_claim;
+                (stage1_proof, r_stage1, s_claim)
+            };
 
-    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
-    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
-    let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
-        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        let mut stage2_prover = HachiStage2Prover::new(
-            batching_coeff,
-            w_evals_compact,
-            &r_stage1,
-            s_claim,
-            b,
-            alpha_evals_y,
-            m_evals_x,
-            live_x_cols,
-            col_bits,
-            ring_bits,
-            relation_claim,
-        );
-        let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
-            prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
-                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
-            })?;
+            transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
+            let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+            let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
+                let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+                let mut stage2_prover = HachiStage2Prover::new(
+                    batching_coeff,
+                    w_evals_compact,
+                    &r_stage1,
+                    s_claim,
+                    b,
+                    alpha_evals_y,
+                    m_evals_x,
+                    live_x_cols,
+                    col_bits,
+                    ring_bits,
+                    relation_claim,
+                );
+                let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
+                    prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
+                        tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+                    })?;
 
-        let w_eval = {
-            let _span = tracing::info_span!("multilinear_eval", level = 0usize).entered();
-            stage2_prover.final_w_eval()
-        };
-        (
-            stage2_sumcheck,
-            sumcheck_challenges,
-            stage2_final_claim,
-            w_eval,
-        )
+                let w_eval = {
+                    let _span = tracing::info_span!("multilinear_eval", level = 0usize).entered();
+                    stage2_prover.final_w_eval()
+                };
+                (
+                    stage2_sumcheck,
+                    sumcheck_challenges,
+                    stage2_final_claim,
+                    w_eval,
+                )
+            };
+            (stage1_proof, stage2_sumcheck, sumcheck_challenges, w_eval)
+        }
+        HachiProtocolMode::Fused => {
+            let out = prove_fused_stage1_stage2::<F, T>(
+                transcript,
+                w_evals_compact,
+                tau0_reordered,
+                b,
+                live_x_cols,
+                col_bits,
+                ring_bits,
+                alpha_evals_y,
+                m_evals_x,
+                relation_claim,
+                0,
+            )?;
+            (
+                out.stage1_proof,
+                out.stage2_sumcheck,
+                out.sumcheck_challenges,
+                out.final_w_eval,
+            )
+        }
     };
 
     let root_proof = HachiBatchedRootProof::new_two_stage::<D>(
@@ -1126,6 +1235,7 @@ fn prove_one_recursive_level<F, T, const D: usize, Cfg>(
     lp: &LevelParams,
     planning_envelope: HachiBatchPlanningEnvelope,
     next_level_params_override: Option<LevelParams>,
+    mode: HachiProtocolMode,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
@@ -1216,6 +1326,7 @@ where
         next_level_params_override,
         quad_eq,
         y_ring,
+        mode,
     )
 }
 
@@ -1350,6 +1461,7 @@ fn dispatch_prove_level<F, T, const D: usize, Cfg>(
     level: usize,
     level_params: &LevelParams,
     next_level_params_override: Option<LevelParams>,
+    mode: HachiProtocolMode,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
@@ -1367,6 +1479,7 @@ where
             level,
             level_params,
             next_level_params_override,
+            mode,
         )
     } else {
         dispatch_with_ntt!(level_d, ntt_cache, expanded, |D_LEVEL, ntt_shared| {
@@ -1380,6 +1493,7 @@ where
                 level,
                 level_params,
                 next_level_params_override,
+                mode,
             )
         })
     }
@@ -1435,6 +1549,7 @@ fn prove_subsequent_level<F, T, const D_LEVEL: usize, Cfg>(
     level: usize,
     level_params: &LevelParams,
     next_level_params_override: Option<LevelParams>,
+    mode: HachiProtocolMode,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
@@ -1489,6 +1604,7 @@ where
         &w_lp,
         current_state.planning_envelope,
         next_level_params_override,
+        mode,
     )
 }
 
@@ -1548,6 +1664,7 @@ where
             level,
             &level_params,
             None,
+            setup.mode,
         )?;
 
         levels.push(out.level_proof);
@@ -1789,6 +1906,7 @@ where
         &root_lp,
         &batched_lp,
         root_plan.planning_envelope,
+        setup.mode,
     )?;
     let (levels, level, current_state) = prove_batched_recursive_suffix::<F, T, D, Cfg>(
         setup,
@@ -1918,6 +2036,79 @@ where
     Ok(())
 }
 
+/// Prove without activating setup delegation on any level.
+///
+/// Used by the setup-delegation path to produce the recursive PCS opening of
+/// the shared-matrix polynomial. Delegation is disabled on the inner proof to
+/// avoid infinite recursion.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prove_without_setup_delegation<F, T, const D: usize, Cfg, P>(
+    setup: &HachiProverSetup<F, D>,
+    poly: &P,
+    opening_point: &[F],
+    hint: HachiBatchedCommitmentHint<F, D>,
+    transcript: &mut T,
+    commitment: &RingCommitment<F, D>,
+    basis: BasisMode,
+) -> Result<HachiProof<F>, HachiError>
+where
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasWide
+        + HasUnreducedOps
+        + Valid
+        + FromSmallInt,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig<Field = F>,
+    P: HachiPolyOps<F, D>,
+{
+    let setup_no_delegation = setup.clone().with_mode(setup.mode);
+    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
+        &setup_no_delegation,
+        poly,
+        opening_point,
+        hint,
+        transcript,
+        commitment,
+        basis,
+    )
+}
+
+/// Verify a proof that was produced without setup delegation (see
+/// [`prove_without_setup_delegation`]).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn verify_without_setup_delegation<F, T, const D: usize, Cfg>(
+    proof: &HachiProof<F>,
+    setup: &HachiVerifierSetup<F>,
+    transcript: &mut T,
+    opening_point: &[F],
+    opening: &F,
+    commitment: &RingCommitment<F, D>,
+    basis: BasisMode,
+) -> Result<(), HachiError>
+where
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasWide
+        + HasUnreducedOps
+        + Valid
+        + FromSmallInt,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig<Field = F>,
+{
+    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
+        proof,
+        setup,
+        transcript,
+        opening_point,
+        opening,
+        commitment,
+        basis,
+    )
+}
+
 impl<F, const D: usize, Cfg> CommitmentScheme<F, D> for HachiCommitmentScheme<D, Cfg>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
@@ -1944,6 +2135,7 @@ where
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
         HachiVerifierSetup {
             expanded: setup.expanded.clone(),
+            shared_matrix_cache: None,
         }
     }
 
@@ -2126,6 +2318,7 @@ where
             &root_lp,
             root_plan.planning_envelope,
             root_next_params_override,
+            setup.mode,
         )?;
         levels.push(out.level_proof);
 
@@ -2190,6 +2383,7 @@ where
                 level,
                 &level_params,
                 next_level_params_override,
+                setup.mode,
             )?;
 
             levels.push(out.level_proof);
@@ -2248,7 +2442,10 @@ where
             final_w,
         )));
 
-        Ok(HachiProof { steps })
+        Ok(HachiProof {
+            steps,
+            setup_delegations: Vec::new(),
+        })
     }
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_prove")]
@@ -2395,6 +2592,7 @@ where
             &root_lp,
             &batched_lp,
             root_plan.planning_envelope,
+            setup.mode,
         )?;
 
         let (levels, level, current_state) = prove_batched_recursive_suffix::<F, T, D, Cfg>(
@@ -2881,6 +3079,38 @@ where
     let stage1 = &root_proof.stage1;
     let stage2 = &root_proof.stage2;
     let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
+
+    if stage1.fused_leaf.is_some() {
+        let witness = match (is_last, final_w) {
+            (true, Some(fw)) => FusedWitnessOracle::Direct(fw),
+            (false, _) => FusedWitnessOracle::ClaimedEval(stage2.next_w_eval),
+            _ => return Err(HachiError::InvalidProof),
+        };
+        let prepared_m_eval = rs.prepared_m_eval;
+        let ring_opening_points_slice = std::slice::from_ref(&ring_opening_point);
+        let m_eval_at_x_challenges = |r_x: &[F]| -> Result<F, HachiError> {
+            prepared_m_eval.eval_at_point::<D>(
+                r_x,
+                &setup.expanded,
+                ring_opening_points_slice,
+                rs.alpha,
+            )
+        };
+        return verify_fused_stage1_stage2::<F, T, _>(
+            transcript,
+            stage1,
+            &stage2.sumcheck,
+            relation_claim,
+            &tau0_reordered,
+            rs.b,
+            rs.col_bits,
+            rs.ring_bits,
+            &rs.alpha_evals_y,
+            m_eval_at_x_challenges,
+            witness,
+        );
+    }
+
     let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -3059,6 +3289,32 @@ where
     let stage1 = &root_proof.stage1;
     let stage2 = &root_proof.stage2;
     let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
+
+    if stage1.fused_leaf.is_some() {
+        let witness = match (is_last, final_w) {
+            (true, Some(fw)) => FusedWitnessOracle::Direct(fw),
+            (false, _) => FusedWitnessOracle::ClaimedEval(stage2.next_w_eval),
+            _ => return Err(HachiError::InvalidProof),
+        };
+        let prepared_m_eval = rs.prepared_m_eval;
+        let m_eval_at_x_challenges = |r_x: &[F]| -> Result<F, HachiError> {
+            prepared_m_eval.eval_at_point::<D>(r_x, &setup.expanded, &ring_opening_points, rs.alpha)
+        };
+        return verify_fused_stage1_stage2::<F, T, _>(
+            transcript,
+            stage1,
+            &stage2.sumcheck,
+            relation_claim,
+            &tau0_reordered,
+            rs.b,
+            rs.col_bits,
+            rs.ring_bits,
+            &rs.alpha_evals_y,
+            m_eval_at_x_challenges,
+            witness,
+        );
+    }
+
     let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -3209,6 +3465,38 @@ where
     let stage1 = &level_proof.stage1;
     let stage2 = &level_proof.stage2;
     let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
+
+    if stage1.fused_leaf.is_some() {
+        let witness = match (is_last, final_w) {
+            (true, Some(fw)) => FusedWitnessOracle::Direct(fw),
+            (false, _) => FusedWitnessOracle::ClaimedEval(stage2.next_w_eval),
+            _ => return Err(HachiError::InvalidProof),
+        };
+        let prepared_m_eval = rs.prepared_m_eval;
+        let ring_opening_points_slice = std::slice::from_ref(&ring_opening_point);
+        let m_eval_at_x_challenges = |r_x: &[F]| -> Result<F, HachiError> {
+            prepared_m_eval.eval_at_point::<D>(
+                r_x,
+                &setup.expanded,
+                ring_opening_points_slice,
+                rs.alpha,
+            )
+        };
+        return verify_fused_stage1_stage2::<F, T, _>(
+            transcript,
+            stage1,
+            &stage2.sumcheck,
+            relation_claim,
+            &tau0_reordered,
+            rs.b,
+            rs.col_bits,
+            rs.ring_bits,
+            &rs.alpha_evals_y,
+            m_eval_at_x_challenges,
+            witness,
+        );
+    }
+
     let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -3276,6 +3564,224 @@ where
 fn trace<F: FieldCore + FromSmallInt, const D: usize>(u: &CyclotomicRing<F, D>) -> F {
     let d = F::from_u64(D as u64);
     u.coefficients()[0] * d
+}
+
+// ---------------------------------------------------------------------------
+// Fused Stage 1 + Stage 2 helpers (HachiProtocolMode::Fused)
+// ---------------------------------------------------------------------------
+
+/// Output of [`prove_fused_stage1_stage2`].
+struct FusedProveOutput<F: FieldCore> {
+    stage1_proof: HachiStage1Proof<F>,
+    stage2_sumcheck: SumcheckProof<F>,
+    /// Stage 2 (claim-reduction) sumcheck output point `r2`. Used as the
+    /// chained opening point for the next recursion level.
+    sumcheck_challenges: Vec<F>,
+    /// `w(r2)` after Stage 2, used for next-level chaining.
+    final_w_eval: F,
+}
+
+/// Run the fused (T2) Stage 1 + Stage 2 prover: a non-eq-factored fused leaf
+/// (range check + relation), then a degree-3 claim-reduction Stage 2 that
+/// fuses s-virtualization and w-adaptation.
+///
+/// The resulting [`HachiStage1Proof`] has `stages` empty and `fused_leaf`
+/// populated; `s_claim` is `w(r1)*(w(r1)+1)` and `w_eval` is `w(r1)`. The
+/// caller is responsible for assembling these into a `HachiLevelProof` /
+/// `HachiBatchedRootProof`.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn prove_fused_stage1_stage2<F, T>(
+    transcript: &mut T,
+    w_evals_compact: Vec<i8>,
+    tau0_reordered: Vec<F>,
+    b: usize,
+    live_x_cols: usize,
+    col_bits: usize,
+    ring_bits: usize,
+    alpha_evals_y: Vec<F>,
+    m_evals_x: Vec<F>,
+    relation_claim: F,
+    span_level: usize,
+) -> Result<FusedProveOutput<F>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + FromSmallInt,
+    T: Transcript<F>,
+{
+    let gamma_rel: F = transcript.challenge_scalar(CHALLENGE_FUSED_RELATION_BATCH);
+
+    let (stage1_sumcheck, _r_stage1, s_claim, w_eval_stage1) = {
+        let _sumcheck_span = tracing::info_span!("stage1_sumcheck_fused").entered();
+        let mut fused_prover = FusedStage1Prover::new(
+            &w_evals_compact,
+            &tau0_reordered,
+            b,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+            gamma_rel,
+            alpha_evals_y,
+            m_evals_x,
+            relation_claim,
+        );
+        let (stage1_sumcheck, r_stage1, _final_claim) =
+            prove_sumcheck::<F, _, F, _, _>(&mut fused_prover, transcript, |tr| {
+                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+            })?;
+        let s_claim = fused_prover.final_s_claim();
+        let w_eval_stage1 = fused_prover.final_w_eval();
+        (stage1_sumcheck, r_stage1, s_claim, w_eval_stage1)
+    };
+
+    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
+    transcript.append_field(ABSORB_FUSED_W_EVAL, &w_eval_stage1);
+
+    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+
+    let w_table_padded =
+        pad_compact_witness_field::<F>(&w_evals_compact, live_x_cols, col_bits, ring_bits);
+    let claim_reduction_claim = batching_coeff * s_claim + w_eval_stage1;
+
+    let r_stage1 = _r_stage1;
+    let (stage2_sumcheck, sumcheck_challenges, final_w_eval) = {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck_claim_reduction").entered();
+        let mut claim_red = ClaimReductionProver::new(
+            w_table_padded,
+            &r_stage1,
+            claim_reduction_claim,
+            batching_coeff,
+            F::one(),
+        );
+        let (stage2_sumcheck, sumcheck_challenges, _final_claim) =
+            prove_sumcheck::<F, _, F, _, _>(&mut claim_red, transcript, |tr| {
+                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+            })?;
+        let final_w_eval = {
+            let _span = tracing::info_span!("multilinear_eval", level = span_level).entered();
+            claim_red.final_w_eval()
+        };
+        (stage2_sumcheck, sumcheck_challenges, final_w_eval)
+    };
+
+    let stage1_proof = HachiStage1Proof {
+        stages: Vec::new(),
+        s_claim,
+        fused_leaf: Some(stage1_sumcheck),
+        w_eval: Some(w_eval_stage1),
+        claimed_setup_val: None,
+    };
+
+    Ok(FusedProveOutput {
+        stage1_proof,
+        stage2_sumcheck,
+        sumcheck_challenges,
+        final_w_eval,
+    })
+}
+
+/// Source of the witness evaluation `w(r_cr)` consumed by the fused
+/// claim-reduction stage 2 verifier.
+enum FusedWitnessOracle<'a, F: FieldCore> {
+    /// `w(r_cr)` is supplied by a trusted claim absorbed into the transcript.
+    ClaimedEval(F),
+    /// The final-level witness payload; `w(r_cr)` is computed by directly
+    /// evaluating the witness MLE at the stage-2 challenges.
+    Direct(&'a DirectWitnessProof<F>),
+}
+
+/// Verify a fused Stage 1 + Stage 2 proof.
+///
+/// Returns the Stage 2 (claim-reduction) sumcheck output point `r2`, which
+/// the caller chains as the opening point for the next recursion level.
+///
+/// `m_eval_at_x_challenges`: closure that evaluates the M oracle at the
+/// Stage 2 x-challenges, using the appropriate ring opening point context
+/// (single vs batched). `witness`: source for `w(r_cr)`, either a trusted
+/// claim (intermediate level) or a direct witness (last level).
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn verify_fused_stage1_stage2<F, T, MEval>(
+    transcript: &mut T,
+    stage1: &HachiStage1Proof<F>,
+    stage2_sumcheck: &SumcheckProof<F>,
+    relation_claim: F,
+    tau0_reordered: &[F],
+    b: usize,
+    col_bits: usize,
+    ring_bits: usize,
+    alpha_evals_y: &[F],
+    m_eval_at_x_challenges: MEval,
+    witness: FusedWitnessOracle<'_, F>,
+) -> Result<Vec<F>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
+    T: Transcript<F>,
+    MEval: FnOnce(&[F]) -> Result<F, HachiError>,
+{
+    let fused_proof = stage1.fused_leaf.as_ref().ok_or(HachiError::InvalidProof)?;
+    let w_eval_stage1 = stage1.w_eval.ok_or(HachiError::InvalidProof)?;
+
+    let gamma_rel: F = transcript.challenge_scalar(CHALLENGE_FUSED_RELATION_BATCH);
+
+    let fused_input_claim = gamma_rel * relation_claim;
+    let num_vars = col_bits + ring_bits;
+    let degree_bound = b / 2 + 1;
+
+    let (final_claim_stage1, r_stage1) = {
+        let _sumcheck_span = tracing::info_span!("stage1_sumcheck_fused").entered();
+        // Match `prove_sumcheck`'s transcript shape: absorb input claim, then rounds.
+        transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &fused_input_claim);
+        fused_proof.verify::<F, _, _>(
+            fused_input_claim,
+            num_vars,
+            degree_bound,
+            transcript,
+            |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+        )?
+    };
+
+    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
+    transcript.append_field(ABSORB_FUSED_W_EVAL, &w_eval_stage1);
+
+    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let claim_reduction_claim = batching_coeff * stage1.s_claim + w_eval_stage1;
+
+    let (final_claim_stage2, sumcheck_challenges) = {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck_claim_reduction").entered();
+        transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &claim_reduction_claim);
+        stage2_sumcheck.verify::<F, _, _>(claim_reduction_claim, num_vars, 3, transcript, |tr| {
+            tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+        })?
+    };
+
+    let final_w_eval = match witness {
+        FusedWitnessOracle::ClaimedEval(v) => v,
+        FusedWitnessOracle::Direct(fw) => {
+            direct_witness_eval(fw, &sumcheck_challenges, col_bits, ring_bits)?
+        }
+    };
+    let eq_val_cr = EqPolynomial::mle(&r_stage1, &sumcheck_challenges);
+    let cr_expected =
+        eq_val_cr * (batching_coeff * final_w_eval * (final_w_eval + F::one()) + final_w_eval);
+    if final_claim_stage2 != cr_expected {
+        return Err(HachiError::InvalidProof);
+    }
+
+    let _deferred_span = tracing::info_span!("deferred_stage1_oracle_check").entered();
+    let range_oracle = {
+        let eq_tau0 = EqPolynomial::mle(tau0_reordered, &r_stage1);
+        eq_tau0 * range_check_eval_from_s(stage1.s_claim, b)
+    };
+    let (r_y1, r_x1) = r_stage1.split_at(ring_bits);
+    let alpha_val = multilinear_eval(alpha_evals_y, r_y1)?;
+    let m_val = m_eval_at_x_challenges(r_x1)?;
+    let relation_oracle = w_eval_stage1 * alpha_val * m_val;
+    let expected_stage1 = range_oracle + gamma_rel * relation_oracle;
+    if final_claim_stage1 != expected_stage1 {
+        return Err(HachiError::InvalidProof);
+    }
+
+    Ok(sumcheck_challenges)
 }
 
 #[cfg(test)]
@@ -3384,6 +3890,7 @@ mod tests {
                 y_ring_coeffs: current_lp.ring_dimension,
                 v_coeffs: current_lp.d_key.row_len() * current_lp.ring_dimension,
                 stage1_stages: stage1_tree_stage_shapes(rounds, 1usize << current_lp.log_basis),
+                fused_leaf: None,
                 stage2_sumcheck: (rounds, 3),
                 next_commit_coeffs: next_level_params.b_key.row_len()
                     * next_level_params.ring_dimension,
@@ -5175,6 +5682,55 @@ mod tests {
         );
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn verify_passes_for_consistent_opening_fused_mode() {
+        let alpha = D.trailing_zeros() as usize;
+        let layout = Cfg::commitment_layout(16).unwrap();
+        let num_vars = layout.m_vars + layout.r_vars + alpha;
+
+        let (poly, evals) = make_dense_poly(num_vars);
+
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1)
+            .with_mode(HachiProtocolMode::Fused);
+        let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
+
+        let (commitment, hint) =
+            <Scheme as CommitmentScheme<F, D>>::commit(std::slice::from_ref(&poly), &setup)
+                .unwrap();
+
+        let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
+        let lw = lagrange_weights(&opening_point);
+        let opening: F = evals
+            .iter()
+            .zip(lw.iter())
+            .fold(F::zero(), |a, (&c, &w)| a + c * w);
+
+        let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+        let proof = <Scheme as CommitmentScheme<F, D>>::prove(
+            &setup,
+            &poly,
+            &opening_point,
+            hint,
+            &mut prover_transcript,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .unwrap();
+
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+        let result = <Scheme as CommitmentScheme<F, D>>::verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+        );
+
+        assert!(result.is_ok(), "fused-mode roundtrip failed: {result:?}");
     }
 
     #[test]

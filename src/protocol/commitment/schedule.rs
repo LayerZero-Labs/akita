@@ -18,6 +18,7 @@ use crate::protocol::params::LevelParams;
 use crate::protocol::proof::{
     DirectWitnessShape, FlatRingVec, HachiLevelProof, HachiProofShape, HachiProofStepShape,
     HachiStage1Proof, HachiStage1StageProof, HachiStage2Proof, LevelProofShape,
+    HACHI_PROOF_FRAMING_BYTES,
 };
 use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
 use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
@@ -314,6 +315,7 @@ impl HachiRootRuntimePlan {
             y_ring_coeffs: self.batch.num_points * self.root_lp.ring_dimension,
             v_coeffs: self.root_lp.d_key.row_len() * self.root_lp.ring_dimension,
             stage1_stages: stage1_tree_stage_shapes(rounds, b),
+            fused_leaf: None,
             stage2_sumcheck: (rounds, 3),
             next_commit_coeffs: self.next_level_params.b_key.row_len()
                 * self.next_level_params.ring_dimension,
@@ -613,12 +615,13 @@ pub struct HachiSchedulePlan {
     ///
     /// The final step is always [`HachiPlannedStep::Direct`].
     pub steps: Vec<HachiPlannedStep>,
-    /// Total proof bytes excluding the outer proof wrapper.
+    /// Total proof-step bytes (sum of fold + direct step sizes), excluding the
+    /// `HachiProof` framing overhead.
     pub no_wrapper_bytes: usize,
     /// Total proof bytes in the serialized `HachiProof` wire format.
     ///
-    /// `HachiProof` is currently headerless, so this equals
-    /// [`Self::no_wrapper_bytes`].
+    /// Equals [`Self::no_wrapper_bytes`] plus
+    /// [`HACHI_PROOF_FRAMING_BYTES`](crate::protocol::proof::HACHI_PROOF_FRAMING_BYTES).
     pub exact_proof_bytes: usize,
 }
 
@@ -710,6 +713,7 @@ impl HachiSchedulePlan {
                     y_ring_coeffs: p.ring_dimension,
                     v_coeffs: p.d_key.row_len() * p.ring_dimension,
                     stage1_stages: stage1_tree_stage_shapes(rounds, b),
+                    fused_leaf: None,
                     stage2_sumcheck: (rounds, 3),
                     next_commit_coeffs: level.next_commit_coeffs,
                 })
@@ -718,7 +722,10 @@ impl HachiSchedulePlan {
 
         let terminal = self.direct_step();
         step_shapes.push(HachiProofStepShape::Direct(terminal.witness_shape.clone()));
-        HachiProofShape { step_shapes }
+        HachiProofShape {
+            step_shapes,
+            setup_delegation_shapes: Vec::new(),
+        }
     }
 }
 
@@ -1060,7 +1067,7 @@ fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig, const D: usize>(
     Ok(HachiSchedulePlan {
         steps,
         no_wrapper_bytes,
-        exact_proof_bytes: no_wrapper_bytes,
+        exact_proof_bytes: no_wrapper_bytes + HACHI_PROOF_FRAMING_BYTES,
     })
 }
 
@@ -1098,7 +1105,7 @@ fn exact_plan_from_root_and_suffix<Cfg: CommitmentConfig>(
     Ok(HachiSchedulePlan {
         steps,
         no_wrapper_bytes,
-        exact_proof_bytes: no_wrapper_bytes,
+        exact_proof_bytes: no_wrapper_bytes + HACHI_PROOF_FRAMING_BYTES,
     })
 }
 
@@ -1138,7 +1145,7 @@ fn exact_plan_from_root_and_direct<Cfg: CommitmentConfig>(
     Ok(HachiSchedulePlan {
         steps,
         no_wrapper_bytes,
-        exact_proof_bytes: no_wrapper_bytes,
+        exact_proof_bytes: no_wrapper_bytes + HACHI_PROOF_FRAMING_BYTES,
     })
 }
 
@@ -1203,7 +1210,7 @@ pub fn exact_schedule_plan_for_lookup_key<Cfg: CommitmentConfig, const D: usize>
                 direct_bytes,
             })],
             no_wrapper_bytes: direct_bytes,
-            exact_proof_bytes: direct_bytes,
+            exact_proof_bytes: direct_bytes + HACHI_PROOF_FRAMING_BYTES,
         };
 
         for root_log_basis in min_log_basis..=max_log_basis {
@@ -1407,7 +1414,7 @@ pub(crate) fn build_schedule_plan_from_config<Cfg: CommitmentConfig>(
     Ok(HachiSchedulePlan {
         steps,
         no_wrapper_bytes,
-        exact_proof_bytes: no_wrapper_bytes,
+        exact_proof_bytes: no_wrapper_bytes + HACHI_PROOF_FRAMING_BYTES,
     })
 }
 
@@ -1456,6 +1463,7 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
         })
         .sum::<usize>()
         + elem_bytes
+        + 1 // fused-fields flag byte (legacy mode: no fused_leaf/w_eval/claimed_setup_val)
 }
 
 /// Compute the number of digits needed when decomposing the `r` polynomial
@@ -1542,7 +1550,10 @@ fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> HachiStage1Proof
                 child_claims: vec![F::zero(); shape.child_claims],
             })
             .collect(),
+        fused_leaf: None,
         s_claim: F::zero(),
+        w_eval: None,
+        claimed_setup_val: None,
     }
 }
 

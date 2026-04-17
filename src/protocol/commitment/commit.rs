@@ -97,19 +97,57 @@ pub struct HachiExpandedSetup<F: FieldCore> {
 /// The NTT cache is tied to a specific ring dimension D and covers the
 /// full shared backing matrix. Role-specific mat-vec operations use row
 /// slicing and input-vector-length column clamping.
+///
+/// Carries the [`HachiProtocolMode`] to use when proving. Defaults to
+/// [`HachiProtocolMode::Split`] (the existing two-sumcheck layout); flip with
+/// [`Self::with_mode`] to opt into [`HachiProtocolMode::Fused`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiProverSetup<F: FieldCore, const D: usize> {
     /// Expanded matrix stage used by both prover and verifier.
     pub expanded: Arc<HachiExpandedSetup<F>>,
     /// Shared NTT cache for the backing matrix at ring dimension D.
     pub ntt_shared: NttSlotCache<D>,
+    /// Which Stage 1 / Stage 2 sumcheck shape to run.
+    pub mode: crate::protocol::protocol_mode::HachiProtocolMode,
+    /// Whether to run the setup-claim delegation path at the outermost
+    /// recursion levels. Only meaningful with
+    /// [`HachiProtocolMode::Fused`]; ignored under `Split`.
+    pub delegation: crate::protocol::commitment_scheme::SetupDelegationMode,
+}
+
+impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
+    /// Set the Hachi protocol mode (chained-builder style).
+    #[must_use]
+    pub fn with_mode(mut self, mode: crate::protocol::protocol_mode::HachiProtocolMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Set the setup-delegation mode (chained-builder style).
+    #[must_use]
+    pub fn with_delegation(
+        mut self,
+        delegation: crate::protocol::commitment_scheme::SetupDelegationMode,
+    ) -> Self {
+        self.delegation = delegation;
+        self
+    }
 }
 
 /// Verifier setup artifact derived from prover setup.
+///
+/// Optionally caches the shared-matrix opening context used by the
+/// setup-delegation path so that verification never re-derives the inner PCS
+/// setup or re-commits the shared matrix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiVerifierSetup<F: FieldCore> {
     /// Expanded matrix stage used for verification.
     pub expanded: Arc<HachiExpandedSetup<F>>,
+    /// Pre-built shared-matrix opening context for setup delegation. Populated
+    /// lazily by the commitment scheme when delegation is enabled; `None`
+    /// otherwise. Not part of the serialised setup.
+    pub shared_matrix_cache:
+        Option<crate::protocol::shared_matrix_setup::SharedMatrixVerifierCache<F>>,
 }
 
 impl<F: FieldCore> HachiExpandedSetup<F> {
@@ -367,6 +405,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiVerifierSetup<F> {
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
         Ok(Self {
+            shared_matrix_cache: None,
             expanded: Arc::new(HachiExpandedSetup::deserialize_with_mode(
                 reader,
                 compress,
@@ -988,8 +1027,13 @@ pub(crate) fn setup_from_expanded<F: FieldCore + CanonicalField, const D: usize>
     let prover_setup = HachiProverSetup {
         expanded: Arc::clone(&expanded),
         ntt_shared,
+        mode: Default::default(),
+        delegation: Default::default(),
     };
-    let verifier_setup = HachiVerifierSetup { expanded };
+    let verifier_setup = HachiVerifierSetup {
+        expanded,
+        shared_matrix_cache: None,
+    };
     Ok((prover_setup, verifier_setup))
 }
 
@@ -1096,8 +1140,13 @@ where
         let prover_setup = HachiProverSetup {
             expanded: Arc::clone(&expanded),
             ntt_shared,
+            mode: Default::default(),
+            delegation: Default::default(),
         };
-        let verifier_setup = HachiVerifierSetup { expanded };
+        let verifier_setup = HachiVerifierSetup {
+            expanded,
+            shared_matrix_cache: None,
+        };
         Ok((prover_setup, verifier_setup))
     }
 
@@ -1423,8 +1472,13 @@ impl HachiCommitmentCore {
         let prover_setup = HachiProverSetup {
             expanded: Arc::clone(&expanded),
             ntt_shared,
+            mode: Default::default(),
+            delegation: Default::default(),
         };
-        let verifier_setup = HachiVerifierSetup { expanded };
+        let verifier_setup = HachiVerifierSetup {
+            expanded,
+            shared_matrix_cache: None,
+        };
         Ok((prover_setup, verifier_setup))
     }
 }
@@ -1455,6 +1509,7 @@ mod tests {
         assert_eq!(decoded.seed.max_num_batched_polys, 3);
 
         let derived_verifier = HachiVerifierSetup {
+            shared_matrix_cache: None,
             expanded: Arc::new(decoded.clone()),
         };
         assert_eq!(derived_verifier, verifier_setup);

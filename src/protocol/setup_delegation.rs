@@ -5,11 +5,11 @@ use crate::algebra::poly::multilinear_eval;
 use crate::error::HachiError;
 use crate::primitives::serialization::Valid;
 use crate::protocol::commitment::{HachiVerifierSetup, RingCommitment};
-use crate::protocol::params::LevelParams;
 use crate::protocol::commitment_scheme::{
     prove_without_setup_delegation, verify_without_setup_delegation,
 };
 use crate::protocol::opening_point::BasisMode;
+use crate::protocol::params::LevelParams;
 use crate::protocol::proof::SetupDelegationProof;
 use crate::protocol::ring_switch::{
     eval_matrix_weight_at_point, gadget_row_scalars, single_proof_matrix_weight_entry,
@@ -323,11 +323,7 @@ mod tests {
     where
         Cfg: SharedMatrixOpeningConfig<Field = F>,
     {
-        let level_params = Cfg::level_params(HachiScheduleInputs {
-            max_num_vars: nv,
-            level: 0,
-            current_w_len: 1usize << nv,
-        });
+        let level_params = Cfg::commitment_layout(nv).expect("layout");
         let layout = &level_params;
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef);

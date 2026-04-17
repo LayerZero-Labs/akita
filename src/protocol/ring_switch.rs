@@ -888,7 +888,10 @@ fn eval_sparse_challenge_at_pows<F: FieldCore + CanonicalField, const D: usize>(
 }
 
 #[inline]
-fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basis: u32) -> Vec<F> {
+pub(crate) fn gadget_row_scalars<F: FieldCore + CanonicalField>(
+    levels: usize,
+    log_basis: u32,
+) -> Vec<F> {
     let base = F::from_canonical_u128_reduced(1u128 << log_basis);
     let mut out = Vec::with_capacity(levels);
     let mut power = F::one();
@@ -1185,6 +1188,183 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
     out.extend(r_tail);
     out.resize(x_len, F::zero());
     Ok(out)
+}
+
+/// Algebraic (non-matrix-backed) contribution to `m_evals_x` for a single-group,
+/// single-claim proof.
+///
+/// This is the subset of [`compute_m_evals_x_with_claim_groups`] that does NOT
+/// read from the shared setup matrix. It covers the consistency, public,
+/// commitment-opening, and gadget-decomposition tails used by the delegated
+/// setup-claim sumcheck.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compute_alg_m_evals_x_with_claim_groups<
+    F: FieldCore + CanonicalField,
+    const D: usize,
+>(
+    opening_point: &RingOpeningPoint<F>,
+    challenges: &[SparseChallenge],
+    _alpha: F,
+    alpha_pows: &[F],
+    lp: &LevelParams,
+    tau1: &[F],
+    claim_group_sizes: &[usize],
+) -> Result<Vec<F>, HachiError> {
+    if alpha_pows.len() != D {
+        return Err(HachiError::InvalidSize {
+            expected: D,
+            actual: alpha_pows.len(),
+        });
+    }
+    let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
+    let num_commitment_groups = claim_group_sizes.len();
+
+    let depth_commit = lp.num_digits_commit;
+    let depth_open = lp.num_digits_open;
+    let depth_fold = lp.num_digits_fold;
+    let log_basis = lp.log_basis;
+    let num_blocks = opening_point.b.len();
+    let total_blocks = num_blocks
+        .checked_mul(num_claims)
+        .ok_or_else(|| HachiError::InvalidSetup("batched block count overflow".to_string()))?;
+    if challenges.len() != total_blocks {
+        return Err(HachiError::InvalidSize {
+            expected: total_blocks,
+            actual: challenges.len(),
+        });
+    }
+    let block_len = lp.block_len;
+    let n_a = lp.a_key.row_len();
+    let w_len = depth_open * total_blocks;
+    let t_len = depth_open * n_a * total_blocks;
+    let inner_width = block_len * depth_commit;
+    let z_len = depth_fold * inner_width;
+    let rows = if num_claims == 1 && num_commitment_groups == 1 {
+        lp.m_row_count()
+    } else {
+        lp.m_row_count_with_commitments_and_public_outputs(num_commitment_groups, num_claims)
+    };
+    let levels = r_decomp_levels::<F>(log_basis);
+    let total_cols = w_len
+        .checked_add(t_len)
+        .and_then(|cols| cols.checked_add(z_len))
+        .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
+        .ok_or_else(|| HachiError::InvalidSetup("expanded M width overflow".to_string()))?;
+
+    let eq_tau1 = EqPolynomial::evals(tau1);
+    if eq_tau1.len() < rows {
+        return Err(HachiError::InvalidSize {
+            expected: rows,
+            actual: eq_tau1.len(),
+        });
+    }
+
+    let g1_open = gadget_row_scalars::<F>(depth_open, log_basis);
+    let g1_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
+    let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
+    let r_gadget = gadget_row_scalars::<F>(levels, log_basis);
+    let x_len = total_cols.next_power_of_two();
+    let mut out = Vec::with_capacity(x_len);
+
+    let c_alphas: Vec<F> = challenges
+        .iter()
+        .map(|challenge| eval_sparse_challenge_at_pows::<F, D>(challenge, alpha_pows))
+        .collect::<Result<_, _>>()?;
+
+    let consistency_weight = eq_tau1[0];
+    let public_weights = &eq_tau1[1..(1 + num_claims)];
+    let a_start = 1 + num_claims + lp.d_key.row_len() + lp.b_key.row_len() * num_commitment_groups;
+    let a_weights = &eq_tau1[a_start..rows];
+
+    let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
+        .map(|x| {
+            let dig = x / total_blocks;
+            let blk = x % total_blocks;
+            let claim_idx = blk / num_blocks;
+            let block_idx = blk % num_blocks;
+            (public_weights[claim_idx] * opening_point.b[block_idx]
+                + consistency_weight * c_alphas[blk])
+                * g1_open[dig]
+        })
+        .collect();
+
+    let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
+        .map(|x| {
+            let compound_dig = x / total_blocks;
+            let blk = x % total_blocks;
+            let a_idx = compound_dig / depth_open;
+            let digit_idx = compound_dig % depth_open;
+            a_weights[a_idx] * c_alphas[blk] * g1_open[digit_idx]
+        })
+        .collect();
+
+    let z_base: Vec<F> = cfg_into_iter!(0..inner_width)
+        .map(|k| {
+            let block_idx = k / depth_commit;
+            let digit_idx = k % depth_commit;
+            consistency_weight * opening_point.a[block_idx] * g1_commit[digit_idx]
+        })
+        .collect();
+
+    let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
+        .map(|x| {
+            let compound_dig = x / block_len;
+            let blk = x % block_len;
+            let dc = compound_dig / depth_fold;
+            let df = compound_dig % depth_fold;
+            let phys_k = blk * depth_commit + dc;
+            -(z_base[phys_k] * fold_gadget[df])
+        })
+        .collect();
+
+    let alpha_pow_d = alpha_pows[D - 1] * _alpha;
+    let denom = alpha_pow_d + F::one();
+    let r_tail_len = rows * levels;
+    let r_tail: Vec<F> = cfg_into_iter!(0..r_tail_len)
+        .map(|idx| {
+            let row_idx = idx / levels;
+            let level_idx = idx % levels;
+            -(eq_tau1[row_idx] * denom * r_gadget[level_idx])
+        })
+        .collect();
+
+    let z_first = lp.m_vars >= lp.r_vars;
+    if z_first {
+        out.extend(z_segment);
+        out.extend(w_segment);
+        out.extend(t_segment);
+    } else {
+        out.extend(w_segment);
+        out.extend(t_segment);
+        out.extend(z_segment);
+    }
+    out.extend(r_tail);
+    out.resize(x_len, F::zero());
+    Ok(out)
+}
+
+/// Evaluate the algebraic MLE of the M-table at a single point `r_x`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn eval_algebraic_mle_at_point<F: FieldCore + CanonicalField, const D: usize>(
+    opening_point: &RingOpeningPoint<F>,
+    challenges: &[SparseChallenge],
+    alpha: F,
+    alpha_pows: &[F],
+    lp: &LevelParams,
+    tau1: &[F],
+    claim_group_sizes: &[usize],
+    r_x: &[F],
+) -> Result<F, HachiError> {
+    let alg_table = compute_alg_m_evals_x_with_claim_groups::<F, D>(
+        opening_point,
+        challenges,
+        alpha,
+        alpha_pows,
+        lp,
+        tau1,
+        claim_group_sizes,
+    )?;
+    crate::algebra::poly::multilinear_eval(&alg_table, r_x)
 }
 
 fn validate_opening_points_for_claims<F: FieldCore>(
@@ -2612,4 +2792,216 @@ mod tests {
             "PreparedMEval::eval_at_point must match materialized multilinear_eval"
         );
     }
+}
+
+/// Shared indexing for the delegated matrix-weight tensor on single proofs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SingleProofMatrixWeightGeometry {
+    pub d_start: usize,
+    pub b_start: usize,
+    pub a_start: usize,
+    pub depth_open: usize,
+    pub depth_commit: usize,
+    pub depth_fold: usize,
+    pub log_basis: u32,
+    pub num_blocks: usize,
+    pub block_len: usize,
+    pub n_d: usize,
+    pub n_b: usize,
+    pub n_a: usize,
+    pub d_matrix_width: usize,
+    pub inner_width: usize,
+    pub t_compound_per_block: usize,
+    pub outer_width: usize,
+    pub max_row: usize,
+    pub offset_z: usize,
+    pub offset_w: usize,
+    pub offset_t: usize,
+}
+
+pub(crate) fn single_proof_matrix_weight_geometry(
+    lp: &LevelParams,
+) -> SingleProofMatrixWeightGeometry {
+    let depth_open = lp.num_digits_open;
+    let depth_commit = lp.num_digits_commit;
+    let depth_fold = lp.num_digits_fold;
+    let log_basis = lp.log_basis;
+    let num_blocks = lp.num_blocks;
+    let block_len = lp.block_len;
+    let n_d = lp.d_key.row_len();
+    let n_b = lp.b_key.row_len();
+    let n_a = lp.a_key.row_len();
+    let d_matrix_width = lp.d_matrix_width();
+    let inner_width = block_len * depth_commit;
+    let t_compound_per_block = n_a * depth_open;
+    let outer_width = t_compound_per_block * num_blocks;
+    let max_row = n_d.max(n_b).max(n_a);
+    let d_start = 2;
+    let b_start = d_start + n_d;
+    let a_start = b_start + n_b;
+
+    let w_len = depth_open * num_blocks;
+    let t_len = depth_open * n_a * num_blocks;
+    let z_len = depth_fold * inner_width;
+    let z_first = lp.m_vars >= lp.r_vars;
+    let (offset_z, offset_w, offset_t) = if z_first {
+        (0, z_len, z_len + w_len)
+    } else {
+        (w_len + t_len, 0, w_len)
+    };
+
+    SingleProofMatrixWeightGeometry {
+        d_start,
+        b_start,
+        a_start,
+        depth_open,
+        depth_commit,
+        depth_fold,
+        log_basis,
+        num_blocks,
+        block_len,
+        n_d,
+        n_b,
+        n_a,
+        d_matrix_width,
+        inner_width,
+        t_compound_per_block,
+        outer_width,
+        max_row,
+        offset_z,
+        offset_w,
+        offset_t,
+    }
+}
+
+pub(crate) fn single_proof_matrix_weight_entry<F: FieldCore + CanonicalField>(
+    row: usize,
+    col: usize,
+    eq_tau1: &[F],
+    eq_r_x: &[F],
+    geometry: SingleProofMatrixWeightGeometry,
+    fold_gadget: &[F],
+) -> F {
+    let mut w2 = F::zero();
+
+    if row < geometry.n_d && col < geometry.d_matrix_width {
+        let blk = col / geometry.depth_open;
+        let dig = col % geometry.depth_open;
+        if blk < geometry.num_blocks {
+            let global_x = geometry.offset_w + dig * geometry.num_blocks + blk;
+            w2 += eq_tau1[geometry.d_start + row] * eq_r_x[global_x];
+        }
+    }
+    if row < geometry.n_b && col < geometry.outer_width {
+        let blk = col / geometry.t_compound_per_block;
+        let remainder = col % geometry.t_compound_per_block;
+        let a_idx = remainder / geometry.depth_open;
+        let digit_idx = remainder % geometry.depth_open;
+        if blk < geometry.num_blocks {
+            let compound_dig = a_idx * geometry.depth_open + digit_idx;
+            let global_x = geometry.offset_t + compound_dig * geometry.num_blocks + blk;
+            w2 += eq_tau1[geometry.b_start + row] * eq_r_x[global_x];
+        }
+    }
+    if row < geometry.n_a && col < geometry.inner_width {
+        let blk_a = col / geometry.depth_commit;
+        let dc = col % geometry.depth_commit;
+        if blk_a < geometry.block_len {
+            for (df, gadget_val) in fold_gadget.iter().enumerate() {
+                let compound_dig = dc * geometry.depth_fold + df;
+                let global_x = geometry.offset_z + compound_dig * geometry.block_len + blk_a;
+                w2 += eq_tau1[geometry.a_start + row] * (-*gadget_val) * eq_r_x[global_x];
+            }
+        }
+    }
+
+    w2
+}
+
+/// Evaluate the MLE of the matrix weight tensor at `(r_row, r_col, r_k)`.
+///
+/// `matrix_weight[row, col, k] = alpha^k * W2[row, col]` where W2 encodes the
+/// column-side weights from the D, B, and A matrix views, weighted by the
+/// row weights from `eq_tau1`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn eval_matrix_weight_at_point<F: FieldCore + CanonicalField, const D: usize>(
+    r_row: &[F],
+    r_col: &[F],
+    r_k: &[F],
+    r_x: &[F],
+    alpha_pows: &[F],
+    eq_tau1: &[F],
+    lp: &LevelParams,
+    tensor_layout: crate::protocol::shared_matrix_setup::SharedMatrixTensorLayout,
+) -> Result<F, HachiError> {
+    use crate::algebra::poly::multilinear_eval;
+
+    if r_row.len() != tensor_layout.row_vars
+        || r_col.len() != tensor_layout.col_vars
+        || r_k.len() != tensor_layout.ring_vars
+    {
+        return Err(HachiError::InvalidInput(
+            "matrix weight point does not match shared matrix tensor layout".to_string(),
+        ));
+    }
+
+    let geometry = single_proof_matrix_weight_geometry(lp);
+
+    let alpha_factor = multilinear_eval(alpha_pows, r_k)?;
+
+    let eq_r_col = EqPolynomial::evals(r_col);
+    let eq_r_x = EqPolynomial::evals(r_x);
+    let eq_r_row = EqPolynomial::evals(r_row);
+
+    let d_row_eval: F = (0..geometry.n_d)
+        .map(|row| eq_r_row[row] * eq_tau1[geometry.d_start + row])
+        .fold(F::zero(), |a, b| a + b);
+
+    let d_col_eval: F = (0..geometry.d_matrix_width)
+        .map(|col| {
+            let blk = col / geometry.depth_open;
+            let dig = col % geometry.depth_open;
+            let global_x = geometry.offset_w + dig * geometry.num_blocks + blk;
+            eq_r_col[col] * eq_r_x[global_x]
+        })
+        .fold(F::zero(), |a, b| a + b);
+
+    let b_row_eval: F = (0..geometry.n_b)
+        .map(|row| eq_r_row[row] * eq_tau1[geometry.b_start + row])
+        .fold(F::zero(), |a, b| a + b);
+
+    let b_col_eval: F = (0..geometry.outer_width)
+        .map(|col| {
+            let blk = col / geometry.t_compound_per_block;
+            let remainder = col % geometry.t_compound_per_block;
+            let a_idx = remainder / geometry.depth_open;
+            let digit_idx = remainder % geometry.depth_open;
+            let compound_dig = a_idx * geometry.depth_open + digit_idx;
+            let global_x = geometry.offset_t + compound_dig * geometry.num_blocks + blk;
+            eq_r_col[col] * eq_r_x[global_x]
+        })
+        .fold(F::zero(), |a, b| a + b);
+
+    let a_row_eval: F = (0..geometry.n_a)
+        .map(|row| eq_r_row[row] * eq_tau1[geometry.a_start + row])
+        .fold(F::zero(), |a, b| a + b);
+
+    let fold_gadget = gadget_row_scalars::<F>(geometry.depth_fold, geometry.log_basis);
+    let a_col_eval: F = (0..geometry.inner_width)
+        .map(|col| {
+            let blk_a = col / geometry.depth_commit;
+            let dc = col % geometry.depth_commit;
+            let fold_sum: F = (0..geometry.depth_fold)
+                .map(|df| {
+                    let compound_dig = dc * geometry.depth_fold + df;
+                    let global_x = geometry.offset_z + compound_dig * geometry.block_len + blk_a;
+                    -fold_gadget[df] * eq_r_x[global_x]
+                })
+                .fold(F::zero(), |a, b| a + b);
+            eq_r_col[col] * fold_sum
+        })
+        .fold(F::zero(), |a, b| a + b);
+
+    let w2_eval = d_row_eval * d_col_eval + b_row_eval * b_col_eval + a_row_eval * a_col_eval;
+    Ok(alpha_factor * w2_eval)
 }

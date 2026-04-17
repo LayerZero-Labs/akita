@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Claim-reduction sumcheck instance for the batched Stage 2.
 //!
 //! Fused s-virtualization + w-adaptation:
@@ -113,6 +112,7 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for ClaimReductionPr
 ///
 /// The expected output claim at `r2` is:
 /// `eq(r1, r2) * [gamma_s * w(r2)*(w(r2)+1) + gamma_w * w(r2)]`
+#[allow(dead_code)]
 pub(crate) struct ClaimReductionVerifier<E: FieldCore> {
     r_stage1: Vec<E>,
     num_vars: usize,
@@ -124,6 +124,7 @@ pub(crate) struct ClaimReductionVerifier<E: FieldCore> {
 
 impl<E: FieldCore + FromSmallInt> ClaimReductionVerifier<E> {
     /// `w_eval_stage2` is `w(r2)`, the witness MLE at the Stage 2 output point.
+    #[allow(dead_code)]
     pub(crate) fn new(
         r_stage1: Vec<E>,
         claim: E,
