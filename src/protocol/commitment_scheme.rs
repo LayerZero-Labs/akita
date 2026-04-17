@@ -1593,9 +1593,10 @@ where
 /// `#[inline(never)]` isolates the monomorphized match arms.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn dispatch_verify_level<F, T>(
+fn dispatch_verify_level<F, T, Cfg>(
     level_d: usize,
     level_proof: &HachiLevelProof<F>,
+    setup_delegation: Option<&crate::protocol::proof::SetupDelegationProof<F>>,
     setup: &HachiVerifierSetup<F>,
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F>,
@@ -1605,12 +1606,20 @@ fn dispatch_verify_level<F, T>(
     block_order: BlockOrder,
 ) -> Result<Vec<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasWide
+        + HasUnreducedOps
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
+    Cfg: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = F>,
 {
     dispatch_ring_dim!(level_d, |D_LEVEL| {
-        verify_one_level::<F, T, { D_LEVEL }>(
+        verify_one_level::<F, T, { D_LEVEL }, Cfg>(
             level_proof,
+            setup_delegation,
             setup,
             transcript,
             current_state,
@@ -1824,9 +1833,15 @@ fn verify_batched_recursive_suffix<'a, F, T, const D: usize, Cfg>(
     final_w: Option<&DirectWitnessProof<F>>,
 ) -> Result<(), HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = F>,
 {
     let num_levels = proof.num_fold_levels();
     for (offset, level_proof) in proof.fold_levels().enumerate() {
@@ -1851,8 +1866,9 @@ where
         }
 
         let challenges = if level_d == D {
-            verify_one_level::<F, T, D>(
+            verify_one_level::<F, T, D, Cfg>(
                 level_proof,
+                None,
                 setup,
                 transcript,
                 &current_state,
@@ -1862,9 +1878,10 @@ where
                 BlockOrder::ColumnMajor,
             )?
         } else {
-            dispatch_verify_level::<F, T>(
+            dispatch_verify_level::<F, T, Cfg>(
                 level_d,
                 level_proof,
+                None,
                 setup,
                 transcript,
                 &current_state,
@@ -2052,9 +2069,15 @@ fn verify_same_point_batched<F, T, const D: usize, Cfg>(
     basis: BasisMode,
 ) -> Result<(), HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = F>,
 {
     let y_coeff_len = proof.root.y_rings().coeff_len();
     if !y_coeff_len.is_multiple_of(D) {
@@ -2886,9 +2909,14 @@ where
             } else {
                 BlockOrder::ColumnMajor
             };
+            let setup_delegation_proof = proof
+                .setup_delegations
+                .iter()
+                .find_map(|(lvl, p)| (*lvl == i).then_some(p));
             let challenges = if level_d == D {
-                verify_one_level::<F, T, D>(
+                verify_one_level::<F, T, D, Cfg>(
                     level_proof,
+                    setup_delegation_proof,
                     setup,
                     transcript,
                     &current_state,
@@ -2898,9 +2926,12 @@ where
                     block_order,
                 )?
             } else {
-                dispatch_verify_level::<F, T>(
+                // Delegation only runs at outer-D levels; at smaller D the
+                // verifier-side cache (built at outer D) doesn't apply.
+                dispatch_verify_level::<F, T, Cfg>(
                     level_d,
                     level_proof,
+                    None,
                     setup,
                     transcript,
                     &current_state,
@@ -3523,8 +3554,9 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 #[tracing::instrument(skip_all, name = "verify_one_level")]
-fn verify_one_level<F, T, const D: usize>(
+fn verify_one_level<F, T, const D: usize, Cfg>(
     level_proof: &HachiLevelProof<F>,
+    setup_delegation: Option<&crate::protocol::proof::SetupDelegationProof<F>>,
     setup: &HachiVerifierSetup<F>,
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F>,
@@ -3534,8 +3566,15 @@ fn verify_one_level<F, T, const D: usize>(
     block_order: BlockOrder,
 ) -> Result<Vec<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasWide
+        + HasUnreducedOps
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
+    Cfg: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = F>,
 {
     let y_ring = level_proof.y_ring.as_single_ring::<D>()?;
     let v_typed = level_proof.v.as_ring_slice::<D>()?;
@@ -3605,7 +3644,12 @@ where
     let stage2 = &level_proof.stage2;
     let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
 
-    if stage1.fused_leaf.is_some() {
+    // Capture the data the setup-delegation verifier needs before stage 2
+    // potentially consumes `rs.alpha_evals_y` (split path moves the vec into
+    // the stage-2 verifier).
+    let delegation_alpha_evals_y = setup_delegation.map(|_| rs.alpha_evals_y.clone());
+
+    let challenges = if stage1.fused_leaf.is_some() {
         let witness = match (is_last, final_w) {
             (true, Some(fw)) => FusedWitnessOracle::Direct(fw),
             (false, _) => FusedWitnessOracle::ClaimedEval(stage2.next_w_eval),
@@ -3621,7 +3665,7 @@ where
                 rs.alpha,
             )
         };
-        return verify_fused_stage1_stage2::<F, T, _>(
+        verify_fused_stage1_stage2::<F, T, _>(
             transcript,
             stage1,
             &stage2.sumcheck,
@@ -3633,69 +3677,89 @@ where
             &rs.alpha_evals_y,
             m_eval_at_x_challenges,
             witness,
-        );
-    }
-
-    let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
-    let r_stage1 = {
-        let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        stage1_verifier.verify(stage1, transcript)?
-    };
-
-    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
-    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
-    let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
-    let m_eval_source = Stage2MEvalSource::new(rs.prepared_m_eval);
-    let ring_opening_points_slice = std::slice::from_ref(&ring_opening_point);
-
-    let stage2_verifier = if is_last {
-        let fw = final_w.ok_or(HachiError::InvalidProof)?;
-        HachiStage2Verifier::new_with_direct_witness(
-            batching_coeff,
-            stage1.s_claim,
-            fw,
-            r_stage1.clone(),
-            rs.alpha_evals_y,
-            m_eval_source,
-            &setup.expanded,
-            ring_opening_points_slice,
-            &rs.tau1,
-            v_typed,
-            commitment_u,
-            y_ring,
-            rs.alpha,
-            rs.col_bits,
-            rs.ring_bits,
-        )
+        )?
     } else {
-        HachiStage2Verifier::new_with_claimed_w_eval(
-            batching_coeff,
-            stage1.s_claim,
-            stage2.next_w_eval,
-            r_stage1.clone(),
-            rs.alpha_evals_y,
-            m_eval_source,
-            &setup.expanded,
-            ring_opening_points_slice,
-            &rs.tau1,
-            v_typed,
-            commitment_u,
-            y_ring,
-            rs.alpha,
-            rs.col_bits,
-            rs.ring_bits,
-        )
-    };
-    if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
-        return Err(HachiError::InvalidProof);
-    }
+        let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
+        let r_stage1 = {
+            let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+            stage1_verifier.verify(stage1, transcript)?
+        };
 
-    let challenges = {
+        transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
+        let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+        let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
+        let m_eval_source = Stage2MEvalSource::new(rs.prepared_m_eval);
+        let ring_opening_points_slice = std::slice::from_ref(&ring_opening_point);
+
+        let stage2_verifier = if is_last {
+            let fw = final_w.ok_or(HachiError::InvalidProof)?;
+            HachiStage2Verifier::new_with_direct_witness(
+                batching_coeff,
+                stage1.s_claim,
+                fw,
+                r_stage1.clone(),
+                rs.alpha_evals_y,
+                m_eval_source,
+                &setup.expanded,
+                ring_opening_points_slice,
+                &rs.tau1,
+                v_typed,
+                commitment_u,
+                y_ring,
+                rs.alpha,
+                rs.col_bits,
+                rs.ring_bits,
+            )
+        } else {
+            HachiStage2Verifier::new_with_claimed_w_eval(
+                batching_coeff,
+                stage1.s_claim,
+                stage2.next_w_eval,
+                r_stage1.clone(),
+                rs.alpha_evals_y,
+                m_eval_source,
+                &setup.expanded,
+                ring_opening_points_slice,
+                &rs.tau1,
+                v_typed,
+                commitment_u,
+                y_ring,
+                rs.alpha,
+                rs.col_bits,
+                rs.ring_bits,
+            )
+        };
+        if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
+            return Err(HachiError::InvalidProof);
+        }
+
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         verify_sumcheck::<F, _, F, _, _>(&stage2.sumcheck, &stage2_verifier, transcript, |tr| {
             tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
         })?
     };
+
+    if let Some(setup_delegation) = setup_delegation {
+        let eq_tau1 = EqPolynomial::evals(&rs.tau1);
+        let alpha_evals_y = delegation_alpha_evals_y.ok_or(HachiError::InvalidProof)?;
+        let cache = setup.shared_matrix_cache.as_ref().ok_or_else(|| {
+            HachiError::InvalidSetup(
+                "shared matrix verifier cache must be precomputed at setup time".to_string(),
+            )
+        })?;
+        let commitment: RingCommitment<F, D> = cache.typed_commitment()?;
+        crate::protocol::setup_delegation::verify_setup_delegation_proof::<F, _, D, Cfg>(
+            setup_delegation,
+            &eq_tau1,
+            &alpha_evals_y,
+            lp,
+            &challenges[rs.ring_bits..],
+            &cache.tensor_layout,
+            &cache.inner_verifier_setup,
+            &commitment,
+            transcript,
+        )?;
+    }
 
     Ok(challenges)
 }
