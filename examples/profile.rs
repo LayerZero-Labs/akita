@@ -6,7 +6,6 @@ use hachi_pcs::protocol::commitment::{
     recursive_suffix_estimate_with_log_basis, CommitmentConfig, HachiRootBatchSummary,
     HachiScheduleLookupKey, HachiSchedulePlan,
 };
-use hachi_pcs::protocol::setup::HachiProverSetup;
 use hachi_pcs::protocol::commitment_scheme::{HachiCommitmentScheme, SetupDelegationMode};
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
@@ -18,6 +17,7 @@ use hachi_pcs::protocol::proof::{
     HachiLevelProof, HachiProof, HACHI_PROOF_DELEGATION_FRAMING_BYTES, HACHI_PROOF_FRAMING_BYTES,
 };
 use hachi_pcs::protocol::protocol_mode::HachiProtocolMode;
+use hachi_pcs::protocol::setup::HachiProverSetup;
 use hachi_pcs::protocol::shared_matrix_setup::SharedMatrixOpeningConfig;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::{

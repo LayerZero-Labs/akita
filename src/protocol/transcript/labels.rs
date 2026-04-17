@@ -42,6 +42,12 @@ pub const ABSORB_FUSED_SETUP_VAL: &[u8] = b"hachi/absorb/fused-setup-val";
 /// Absorb `shared_matrix_eval` after the batched fused Stage 2 (setup-claim
 /// instance at `r_setup`).
 pub const ABSORB_FUSED_SHARED_MATRIX_EVAL: &[u8] = b"hachi/absorb/fused-shared-matrix-eval";
+/// Absorb each component of `r_setup_0` at the L=0 → L=1 boundary, so the L=1
+/// consumer's Stage 2 challenges depend explicitly on the carry point.
+pub const ABSORB_CARRIED_SETUP_POINT: &[u8] = b"hachi/absorb/carried-setup-point";
+/// Absorb `shared_matrix_eval_0` at the L=0 → L=1 boundary as an explicit
+/// binding of the carry evaluation.
+pub const ABSORB_CARRIED_SETUP_EVAL: &[u8] = b"hachi/absorb/carried-setup-eval";
 /// Challenge for batched sumcheck coefficient sampling.
 pub const CHALLENGE_SUMCHECK_BATCH: &[u8] = b"hachi/challenge/sumcheck-batch";
 /// Challenge for batching stage-1 inter-stage claims into the next tree stage.
@@ -89,6 +95,8 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         ABSORB_FUSED_W_EVAL,
         ABSORB_FUSED_SETUP_VAL,
         ABSORB_FUSED_SHARED_MATRIX_EVAL,
+        ABSORB_CARRIED_SETUP_POINT,
+        ABSORB_CARRIED_SETUP_EVAL,
         CHALLENGE_SUMCHECK_BATCH,
         CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
         ABSORB_STOP_CONDITION,

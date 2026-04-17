@@ -15,12 +15,12 @@ use crate::protocol::ring_switch::{
     eval_matrix_weight_at_point, gadget_row_scalars, single_proof_matrix_weight_entry,
     single_proof_matrix_weight_geometry,
 };
-use crate::protocol::setup::HachiVerifierSetup;
 use crate::protocol::shared_matrix_setup::{
     SharedMatrixOpeningConfig, SharedMatrixSetup, SharedMatrixTensorLayout,
 };
 use crate::protocol::sumcheck::setup_claim::SetupClaimProver;
 use crate::protocol::sumcheck::{prove_sumcheck, SumcheckProof};
+use crate::protocol::transcript::labels::{ABSORB_CARRIED_SETUP_EVAL, ABSORB_CARRIED_SETUP_POINT};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 
@@ -170,9 +170,15 @@ where
         shared_matrix_eval,
         shared_matrix_opening_proof: Box::new(shared_matrix_opening_proof),
     };
+    for point in &setup_challenges {
+        transcript.append_field(ABSORB_CARRIED_SETUP_POINT, point);
+    }
+    transcript.append_field(ABSORB_CARRIED_SETUP_EVAL, &shared_matrix_eval);
     let carry = SetupCarry {
         r_setup_0: setup_challenges,
         shared_matrix_eval_0: shared_matrix_eval,
+        sm_evals_flat: sm_setup.sm_evals_flat.clone(),
+        tensor_layout: sm_setup.tensor_layout,
     };
     Ok(DelegationProverOutput { proof, carry })
 }
@@ -239,8 +245,7 @@ pub(crate) fn verify_setup_delegation_proof<F, T, const D: usize, Cfg>(
     alpha_evals_y: &[F],
     lp: &LevelParams,
     x_challenges: &[F],
-    tensor_layout: &SharedMatrixTensorLayout,
-    inner_verifier_setup: &HachiVerifierSetup<F>,
+    cache: &crate::protocol::shared_matrix_setup::SharedMatrixVerifierCache<F>,
     commitment: &RingCommitment<F, D>,
     transcript: &mut T,
 ) -> Result<SetupCarry<F>, HachiError>
@@ -257,6 +262,8 @@ where
 {
     transcript.append_field(ABSORB_DELEGATION_CLAIM, &delegation_proof.claimed_setup_val);
 
+    let tensor_layout = &cache.tensor_layout;
+    let inner_verifier_setup = cache.inner_verifier_setup.as_ref();
     let num_vars = tensor_layout.num_vars;
 
     let (setup_challenges, final_claim) = replay_sumcheck_rounds::<F, _, F, _>(
@@ -302,9 +309,18 @@ where
         BasisMode::Lagrange,
     )?;
 
+    for point in &setup_challenges {
+        transcript.append_field(ABSORB_CARRIED_SETUP_POINT, point);
+    }
+    transcript.append_field(
+        ABSORB_CARRIED_SETUP_EVAL,
+        &delegation_proof.shared_matrix_eval,
+    );
     Ok(SetupCarry {
         r_setup_0: setup_challenges,
         shared_matrix_eval_0: delegation_proof.shared_matrix_eval,
+        sm_evals_flat: cache.sm_evals_flat.clone(),
+        tensor_layout: cache.tensor_layout,
     })
 }
 
@@ -477,14 +493,19 @@ mod tests {
         );
 
         let mut verify_transcript = Blake2bTranscript::<F>::new(b"delegation-sumcheck");
+        let cache = crate::protocol::shared_matrix_setup::SharedMatrixVerifierCache {
+            tensor_layout: sm_setup.tensor_layout,
+            inner_verifier_setup: Box::new(sm_setup.verifier_setup.clone()),
+            commitment: crate::protocol::proof::FlatRingVec::from_commitment(&sm_setup.commitment),
+            sm_evals_flat: sm_setup.sm_evals_flat.clone(),
+        };
         let verifier_carry = verify_setup_delegation_proof::<F, _, D, Cfg>(
             &delegation_proof,
             &eq_tau1,
             &alpha_evals_y,
             &level_params,
             &x_challenges,
-            &sm_setup.tensor_layout,
-            &sm_setup.verifier_setup,
+            &cache,
             &sm_setup.commitment,
             &mut verify_transcript,
         )

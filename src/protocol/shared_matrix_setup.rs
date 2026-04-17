@@ -103,11 +103,19 @@ impl SharedMatrixTensorLayout {
 ///
 /// Built once during `setup_verifier` so that the verifier never re-derives
 /// the inner PCS setup or re-commits the shared matrix at verification time.
+/// Holds a pre-materialized flat field-evals view of the shared matrix so
+/// later recursion levels can close the delegated setup claim directly
+/// without re-walking the `FlatMatrix` or running a nested PCS opening.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SharedMatrixVerifierCache<F: FieldCore> {
     pub(crate) tensor_layout: SharedMatrixTensorLayout,
     pub(crate) inner_verifier_setup: Box<HachiVerifierSetup<F>>,
     pub(crate) commitment: FlatRingVec<F>,
+    /// Flat field-evals vector of the outer-D shared-matrix tensor, shaped as
+    /// `padded_rows × padded_stride × D` (little-endian-in-k ordering per
+    /// [`SharedMatrixTensorLayout::flat_index`]). Shared with the setup-claim
+    /// carry consumer at downstream recursion levels.
+    pub(crate) sm_evals_flat: Arc<Vec<F>>,
 }
 
 impl<F: FieldCore> SharedMatrixVerifierCache<F> {
@@ -133,6 +141,10 @@ pub(crate) struct SharedMatrixSetup<F: FieldCore, const D: usize> {
     pub commit_hint: HachiBatchedCommitmentHint<F, D>,
     /// Shared matrix as a DensePoly for the delegated opening proof.
     pub shared_matrix_poly: DensePoly<F, D>,
+    /// Flat field-evals vector of the outer-D shared-matrix tensor (see
+    /// [`SharedMatrixVerifierCache::sm_evals_flat`]). Shared with the
+    /// setup-claim carry consumer at downstream recursion levels.
+    pub sm_evals_flat: Arc<Vec<F>>,
 }
 
 /// Choose the inner PCS config used to open the shared matrix polynomial.
@@ -220,6 +232,7 @@ pub(crate) fn build_shared_matrix_verifier_cache<
         tensor_layout: sm.tensor_layout,
         inner_verifier_setup: Box::new(sm.verifier_setup),
         commitment: FlatRingVec::from_commitment(&sm.commitment),
+        sm_evals_flat: sm.sm_evals_flat,
     })
 }
 
@@ -275,6 +288,7 @@ where
             commitment,
             commit_hint,
             shared_matrix_poly,
+            sm_evals_flat: Arc::new(field_evals),
         })
     }
 }
