@@ -102,7 +102,11 @@ impl CommitmentScheme<F, 1> for DummyScheme {
     type CommitHint = HachiCommitment;
     type BatchedCommitHint = Vec<HachiCommitment>;
 
-    fn setup_prover(max_num_vars: usize, _max_num_batched_polys: usize) -> Self::ProverSetup {
+    fn setup_prover(
+        max_num_vars: usize,
+        _max_num_batched_polys: usize,
+        _max_num_points: usize,
+    ) -> Self::ProverSetup {
         DummySetup {
             _max_num_vars: max_num_vars,
         }
@@ -204,7 +208,7 @@ fn commitment_scheme_round_trip() {
     };
     let opening_point = [F::from_u64(11), F::from_u64(13)];
 
-    let psetup = DummyScheme::setup_prover(poly.num_vars(), 1);
+    let psetup = DummyScheme::setup_prover(poly.num_vars(), 1, 1);
     let vsetup = DummyScheme::setup_verifier(&psetup);
 
     let (commitment, hint) = DummyScheme::commit(std::slice::from_ref(&poly), &psetup).unwrap();

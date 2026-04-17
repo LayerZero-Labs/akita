@@ -22,8 +22,7 @@ use std::io::{Read, Write};
 /// Each role matrix (A, B, D) views a prefix of this vector reshaped into
 /// its own `(num_rows, num_cols)` dimensions via [`RingMatrixView`].
 ///
-/// See `SHARED_PREFIX_BINDING.md` for the security argument: any prefix
-/// of a uniformly random vector is uniformly random, so role matrices
+/// Any prefix of a uniformly random vector is uniformly random, so role matrices
 /// derived from prefixes of the same flat vector are binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlatMatrix<F: FieldCore> {

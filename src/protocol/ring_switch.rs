@@ -21,7 +21,7 @@ use crate::protocol::commitment::HachiRootBatchSummary;
 use crate::protocol::commitment::{
     hachi_recursive_level_layout_from_params, recursive_level_decomposition_from_root,
     recursive_r_decomp_levels, CommitmentConfig, CommitmentEnvelope, DecompositionParams,
-    HachiExpandedSetup, HachiScheduleInputs, RingCommitment,
+    HachiScheduleInputs, RingCommitment,
 };
 use crate::protocol::hachi_poly_ops::RecursiveWitnessFlat;
 use crate::protocol::opening_point::RingOpeningPoint;
@@ -29,6 +29,7 @@ use crate::protocol::params::LevelParams;
 use crate::protocol::proof::{FlatDigitBlocks, FlatRingVec, HachiCommitmentHint};
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
+use crate::protocol::setup::HachiExpandedSetup;
 use crate::protocol::transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
@@ -183,7 +184,7 @@ where
         quad_eq.num_eval_rows(),
         lp.num_blocks,
         lp.inner_width(),
-        setup.seed.max_stride(),
+        setup.seed.max_stride,
         ntt_shared,
     )?;
     let w = {
@@ -735,15 +736,6 @@ pub(crate) fn w_ring_element_count_with_num_claims<F: CanonicalField>(
     w_ring_element_count_with_counts::<F>(lp, num_claims, num_claims, 1)
 }
 
-#[cfg(test)]
-pub(crate) fn w_ring_element_count_with_num_claims_and_points<F: CanonicalField>(
-    lp: &LevelParams,
-    num_claims: usize,
-    num_points: usize,
-) -> usize {
-    w_ring_element_count_with_counts::<F>(lp, num_claims, num_claims, num_points)
-}
-
 pub(crate) fn w_ring_element_count_with_batch_summary<F: CanonicalField>(
     lp: &LevelParams,
     batch: HachiRootBatchSummary,
@@ -1062,7 +1054,7 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
     let n_d = lp.d_key.row_len();
     let n_b = lp.b_key.row_len();
     let n_a = lp.a_key.row_len();
-    let stride = setup.seed.max_stride();
+    let stride = setup.seed.max_stride;
     let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride);
     let b_view = setup.shared_matrix.ring_view::<D>(n_b, stride);
     let a_view = setup.shared_matrix.ring_view::<D>(n_a, stride);
@@ -1313,7 +1305,7 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
         .map(|challenge| eval_sparse_challenge_at_pows::<F, D>(challenge, alpha_pows))
         .collect::<Result<_, _>>()?;
 
-    let stride = setup.seed.max_stride();
+    let stride = setup.seed.max_stride;
     let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride);
     let b_view = setup.shared_matrix.ring_view::<D>(n_b, stride);
     let a_view = setup.shared_matrix.ring_view::<D>(n_a, stride);
@@ -1556,7 +1548,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let levels = r_decomp_levels::<F>(self.log_basis);
         let r_gadget = gadget_row_scalars::<F>(levels, self.log_basis);
 
-        let stride = setup.seed.max_stride();
+        let stride = setup.seed.max_stride;
         let d_view = setup.shared_matrix.ring_view::<D>(self.n_d, stride);
         let b_view = setup.shared_matrix.ring_view::<D>(self.n_b, stride);
         let a_view = setup.shared_matrix.ring_view::<D>(self.n_a, stride);
@@ -2140,20 +2132,20 @@ mod tests {
         compute_r_via_poly_division, prepare_m_eval, ring_switch_build_w, WCommitmentConfig,
     };
     use crate::algebra::CyclotomicRing;
+    use crate::protocol::commitment::presets::fp128::Field as TestF;
     use crate::protocol::commitment::AppendToTranscript;
     use crate::protocol::commitment::{
-        hachi_recursive_level_layout_from_params, presets::fp128, HachiCommitmentCore,
-        HachiScheduleInputs, RingCommitmentScheme, SmallTestCommitmentConfig,
+        hachi_recursive_level_layout_from_params, presets::fp128, HachiScheduleInputs,
     };
     use crate::protocol::commitment_scheme::HachiCommitmentScheme;
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, RecursiveWitnessFlat};
     use crate::protocol::opening_point::{ring_opening_point_from_field, BasisMode, BlockOrder};
     use crate::protocol::quadratic_equation::QuadraticEquation;
+    use crate::protocol::setup::HachiProverSetup;
     use crate::protocol::sumcheck::hachi_stage2::relation_claim_from_rows;
     use crate::protocol::transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::protocol::CommitmentConfig;
-    use crate::test_utils::F as TestF;
     use crate::{CanonicalField, CommitmentScheme, Transcript};
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
@@ -2285,7 +2277,8 @@ mod tests {
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1);
+        let setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1, 1);
         let (commitment, batched_hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<
             F,
             D,
@@ -2323,7 +2316,7 @@ mod tests {
             &mut transcript,
             &commitment,
             &y_ring,
-            setup.expanded.seed.max_stride(),
+            setup.expanded.seed.max_stride,
         )
         .expect("quadratic equation");
 
@@ -2433,14 +2426,48 @@ mod tests {
 
     #[test]
     fn commit_w_uses_active_level_row_count() {
+        use crate::protocol::commitment::CommitmentEnvelope;
         use crate::protocol::params::AjtaiKeyParams;
 
-        type Cfg = SmallTestCommitmentConfig;
-        type WCfg = WCommitmentConfig<32, Cfg>;
-        const D: usize = 32;
+        /// Test-local config that widens [`fp128::D64Full`]'s envelope to the
+        /// conservative `MAX_RANK` cap so the shared setup matrix has room
+        /// for the explicitly-forced `n_a = 3` active rank below.
+        #[derive(Clone, Copy, Debug, Default)]
+        struct WideEnvelopeD64Full;
 
-        let (setup, _) = <HachiCommitmentCore as RingCommitmentScheme<TestF, D, Cfg>>::setup(12, 1)
-            .expect("setup");
+        impl CommitmentConfig for WideEnvelopeD64Full {
+            type Field = <fp128::D64Full as CommitmentConfig>::Field;
+            const D: usize = <fp128::D64Full as CommitmentConfig>::D;
+
+            fn decomposition() -> crate::protocol::commitment::DecompositionParams {
+                fp128::D64Full::decomposition()
+            }
+
+            fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
+                let max_rank = crate::planner::sis_security::MAX_RANK as usize;
+                CommitmentEnvelope {
+                    max_n_a: max_rank,
+                    max_n_b: max_rank,
+                    max_n_d: max_rank,
+                }
+            }
+
+            fn stage1_challenge_config(d: usize) -> crate::algebra::SparseChallengeConfig {
+                fp128::D64Full::stage1_challenge_config(d)
+            }
+
+            fn commitment_layout(
+                max_num_vars: usize,
+            ) -> Result<crate::protocol::params::LevelParams, crate::HachiError> {
+                fp128::D64Full::commitment_layout(max_num_vars)
+            }
+        }
+
+        type Cfg = WideEnvelopeD64Full;
+        type WCfg = WCommitmentConfig<64, Cfg>;
+        const D: usize = 64;
+
+        let setup = HachiProverSetup::<TestF, D>::new::<Cfg>(12, 1, 1).expect("setup");
         assert!(
             setup.ntt_shared.total_elements() > 3,
             "test needs a shared cache envelope"
@@ -2463,13 +2490,9 @@ mod tests {
 
         let expected_layout =
             hachi_recursive_level_layout_from_params::<WCfg>(&lp, w.len()).expect("layout");
-        let (_commitment, hint) = commit_w::<TestF, D, WCfg>(
-            &w,
-            &setup.ntt_shared,
-            &lp,
-            setup.expanded.seed.max_stride(),
-        )
-        .expect("commit w");
+        let (_commitment, hint) =
+            commit_w::<TestF, D, WCfg>(&w, &setup.ntt_shared, &lp, setup.expanded.seed.max_stride)
+                .expect("commit w");
         let t = hint
             .t()
             .expect("commit_w should preserve recomposed t rows");
@@ -2507,7 +2530,8 @@ mod tests {
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1);
+        let setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1, 1);
         let (commitment, batched_hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<
             F,
             D,
@@ -2548,7 +2572,7 @@ mod tests {
             &mut transcript,
             &commitment,
             &y_ring,
-            setup.expanded.seed.max_stride(),
+            setup.expanded.seed.max_stride,
         )
         .expect("quadratic equation");
 

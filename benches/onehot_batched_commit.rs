@@ -50,11 +50,15 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         .map(|idx| make_onehot_poly(&batch_layout, 0x0bee_fcaf_e000_2500 + idx as u64))
         .collect();
 
-    let single_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(SINGLE_NUM_VARS, 1);
+    let single_setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+        SINGLE_NUM_VARS,
+        1,
+        1,
+    );
     let batched_setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
         BATCH_NUM_VARS,
         BATCH_SIZE,
+        1,
     );
     let single_params = Cfg::level_params(HachiScheduleInputs {
         max_num_vars: SINGLE_NUM_VARS,
@@ -76,7 +80,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
             single_layout.num_digits_commit,
             single_layout.num_digits_open,
             single_layout.log_basis,
-            single_setup.expanded.seed.max_stride(),
+            single_setup.expanded.seed.max_stride,
         )
         .expect("single inner witness");
     let batched_inner: Vec<_> = batched_polys
@@ -90,7 +94,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
                 batch_layout.num_digits_commit,
                 batch_layout.num_digits_open,
                 batch_layout.log_basis,
-                batched_setup.expanded.seed.max_stride(),
+                batched_setup.expanded.seed.max_stride,
             )
             .expect("batched inner witness")
         })
@@ -130,7 +134,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
                         single_layout.num_digits_commit,
                         single_layout.num_digits_open,
                         single_layout.log_basis,
-                        single_setup.expanded.seed.max_stride(),
+                        single_setup.expanded.seed.max_stride,
                     )
                     .expect("single inner witness"),
             )
@@ -193,7 +197,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
                             batch_layout.num_digits_commit,
                             batch_layout.num_digits_open,
                             batch_layout.log_basis,
-                            batched_setup.expanded.seed.max_stride(),
+                            batched_setup.expanded.seed.max_stride,
                         )
                         .expect("batched inner witness")
                     })

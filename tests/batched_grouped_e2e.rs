@@ -65,7 +65,7 @@ fn run_grouped_onehot(nv: usize, batch_size: usize) {
         let setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
             F,
             ONEHOT_D,
-        >>::setup_prover(nv, batch_size);
+        >>::setup_prover(nv, batch_size, 1);
         let verifier_setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
             F,
             ONEHOT_D,
@@ -182,7 +182,7 @@ fn run_grouped_dense(nv: usize, batch_size: usize) {
         let setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
             F,
             DENSE_D,
-        >>::setup_prover(nv, batch_size);
+        >>::setup_prover(nv, batch_size, 1);
         let verifier_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
             F,
             DENSE_D,

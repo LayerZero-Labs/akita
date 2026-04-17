@@ -16,15 +16,15 @@ pub mod proof;
 pub mod quadratic_equation;
 mod recursive_runtime;
 pub mod ring_switch;
+pub mod setup;
 pub mod sumcheck;
 pub mod transcript;
 
 pub use commitment::{
     optimal_m_r_split, presets, AppendToTranscript, CommitmentConfig, CommitmentPreset,
     CommitmentScheme, DummyProof, GeneratedAdaptivePolicy, HachiCommitment, HachiCommitmentCore,
-    HachiExpandedSetup, HachiOpeningClaim, HachiOpeningPoint, HachiProverSetup,
-    HachiRootBatchSummary, HachiSetupSeed, HachiVerifierSetup, RingCommitment,
-    RingCommitmentScheme, SmallTestCommitmentConfig, StaticBoundedPolicy,
+    HachiOpeningClaim, HachiOpeningPoint, HachiRootBatchSummary, RingCommitment,
+    RingCommitmentScheme, StaticBoundedPolicy,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, MultilinearPolynomail, OneHotIndex, OneHotPoly};
@@ -35,6 +35,7 @@ pub use proof::{
     HachiProofStepShape, LevelProofShape, PackedDigits,
 };
 pub use quadratic_equation::QuadraticEquation;
+pub use setup::{HachiExpandedSetup, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup};
 pub use sumcheck::batched_sumcheck::{prove_batched_sumcheck, verify_batched_sumcheck};
 pub use sumcheck::{
     prove_sumcheck, verify_sumcheck, CompressedUniPoly, SumcheckInstanceProver,

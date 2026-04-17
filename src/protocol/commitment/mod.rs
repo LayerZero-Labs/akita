@@ -19,15 +19,12 @@ pub use commit::hachi_batched_root_layout;
 pub(crate) use commit::root_current_w_len;
 #[cfg(test)]
 pub(crate) use commit::scale_batched_root_layout;
-pub use commit::{
-    HachiCommitmentCore, HachiExpandedSetup, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup,
-};
+pub use commit::HachiCommitmentCore;
 pub use config::optimal_m_r_split;
 pub use config::{
     beta_linf_fold_bound, compute_num_digits, compute_num_digits_fold,
     compute_num_digits_full_field, num_digits_for_bound, CommitmentConfig, CommitmentEnvelope,
-    CommitmentPreset, DecompositionParams, GeneratedAdaptivePolicy, SmallTestCommitmentConfig,
-    StaticBoundedPolicy,
+    CommitmentPreset, DecompositionParams, GeneratedAdaptivePolicy, StaticBoundedPolicy,
 };
 pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
 pub use profile::{CommitmentFieldProfile, Fp128PrimeProfile};

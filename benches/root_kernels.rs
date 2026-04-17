@@ -38,7 +38,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
     let evals = make_dense_evals::<Cfg>(NV);
     let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
     let layout = Cfg::commitment_layout(NV).expect("layout");
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1, 1);
     let num_blocks = poly.coeffs.len().div_ceil(layout.block_len);
     let block_slices: Vec<&[hachi_pcs::algebra::CyclotomicRing<F, D>]> = (0..num_blocks)
         .map(|i| {

@@ -14,9 +14,8 @@ use crate::protocol::commitment::{
     hachi_root_runtime_plan_with_batch, packed_digits_bytes,
     planned_next_log_basis_with_current_basis_and_envelope,
     planned_recursive_suffix_bytes_with_log_basis_and_envelope, AppendToTranscript,
-    CommitmentConfig, CommitmentScheme, HachiBatchPlanningEnvelope, HachiCommitmentCore,
-    HachiExpandedSetup, HachiProverSetup, HachiRootBatchSummary, HachiScheduleInputs,
-    HachiScheduleLookupKey, HachiVerifierSetup, RingCommitment, RingCommitmentScheme,
+    CommitmentConfig, CommitmentScheme, HachiBatchPlanningEnvelope, HachiRootBatchSummary,
+    HachiScheduleInputs, HachiScheduleLookupKey, RingCommitment,
 };
 #[cfg(test)]
 use crate::protocol::commitment::{root_current_w_len, scale_batched_root_layout};
@@ -41,6 +40,7 @@ use crate::protocol::ring_switch::{
     ring_switch_verifier_with_opening_points_and_claim_groups, w_ring_element_count,
     w_ring_element_count_with_claim_groups, RingSwitchOutput, WCommitmentConfig,
 };
+use crate::protocol::setup::{HachiExpandedSetup, HachiProverSetup, HachiVerifierSetup};
 use crate::protocol::sumcheck::hachi_stage1_tree::{HachiStage1Prover, HachiStage1Verifier};
 use crate::protocol::sumcheck::hachi_stage2::{
     relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier, Stage2MEvalSource,
@@ -59,8 +59,6 @@ use std::time::Instant;
 
 #[cfg(test)]
 use crate::protocol::ring_switch::w_ring_element_count_with_num_claims;
-#[cfg(test)]
-use crate::protocol::SmallTestCommitmentConfig;
 #[cfg(test)]
 use crate::HachiSerialize;
 
@@ -542,7 +540,7 @@ where
         transcript,
         commitment,
         &y_ring,
-        expanded.seed.max_stride(),
+        expanded.seed.max_stride,
     )?);
 
     finish_prove_level::<F, T, D, Cfg, Cfg>(
@@ -851,7 +849,7 @@ where
             &batched_y_rings,
             gamma,
             num_points,
-            expanded.seed.max_stride(),
+            expanded.seed.max_stride,
         )?,
     );
     finish_batched_root_level::<F, T, D, Cfg>(
@@ -1198,7 +1196,7 @@ where
             transcript,
             commitment_u,
             &y_ring,
-            expanded.seed.max_stride(),
+            expanded.seed.max_stride,
         )?,
     );
 
@@ -1311,7 +1309,7 @@ where
     Cfg: CommitmentConfig<Field = F>,
 {
     let commit_d = commit_params.ring_dimension;
-    let stride = expanded.seed.max_stride();
+    let stride = expanded.seed.max_stride;
     dispatch_with_ntt!(
         commit_d,
         commit_ntt_cache,
@@ -1452,7 +1450,7 @@ where
         current_state.hint.to_typed::<{ D_LEVEL }>()?;
     drop(_setup_span);
 
-    let max_stride = expanded.seed.max_stride();
+    let max_stride = expanded.seed.max_stride;
     let commit_fn: CommitFn<'_, F> = Box::new(
         |w: &RecursiveWitnessFlat,
          next_params: LevelParams|
@@ -1742,7 +1740,7 @@ where
     )?;
     let root_lp = root_plan.root_lp.clone();
     let batched_lp = root_plan.level_lp.clone();
-    setup.ensure_layout_fits(&batched_lp)?;
+
     if commitments
         .iter()
         .any(|commitment| commitment.u.len() != root_lp.b_key.row_len())
@@ -1752,7 +1750,7 @@ where
         ));
     }
     let flat_polys = flatten_poly_groups(poly_groups);
-    let max_stride = setup.expanded.seed.max_stride();
+    let max_stride = setup.expanded.seed.max_stride;
 
     let commit_fn_0: CommitFn<'_, F> = Box::new(
         |w: &RecursiveWitnessFlat,
@@ -1846,7 +1844,7 @@ where
     if y_coeff_len / D != 1 {
         return Err(HachiError::InvalidProof);
     }
-    if num_claims > setup.expanded.max_num_batched_polys() {
+    if num_claims > setup.expanded.seed.max_num_batched_polys {
         return Err(HachiError::InvalidProof);
     }
 
@@ -1863,7 +1861,6 @@ where
     .map_err(|_| HachiError::InvalidProof)?;
     let root_lp = root_plan.root_lp.clone();
     let batched_lp = root_plan.level_lp.clone();
-    setup.expanded.ensure_layout_fits(&batched_lp)?;
 
     let final_w = Some(proof.final_witness());
     let has_recursive_levels = proof.num_fold_levels() > 0;
@@ -1931,20 +1928,17 @@ where
     type CommitHint = HachiBatchedCommitmentHint<F, D>;
     type BatchedCommitHint = Vec<HachiBatchedCommitmentHint<F, D>>;
 
-    #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::setup_prover")]
-    fn setup_prover(max_num_vars: usize, max_num_batched_polys: usize) -> Self::ProverSetup {
-        let (setup, _) = <HachiCommitmentCore as RingCommitmentScheme<F, { D }, Cfg>>::setup(
-            max_num_vars,
-            max_num_batched_polys,
-        )
-        .expect("commitment setup failed");
-        setup
+    fn setup_prover(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Self::ProverSetup {
+        HachiProverSetup::new::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
+            .expect("commitment setup failed")
     }
 
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
-        HachiVerifierSetup {
-            expanded: setup.expanded.clone(),
-        }
+        setup.verifier_setup()
     }
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::commit")]
@@ -1970,6 +1964,12 @@ where
                 setup.expanded.seed.max_num_batched_polys
             )));
         }
+        if num_vars > setup.expanded.seed.max_num_vars {
+            return Err(HachiError::InvalidInput(format!(
+                "commit received a polynomial with {} variables but setup supports at most {}",
+                num_vars, setup.expanded.seed.max_num_vars
+            )));
+        }
         let max_num_vars = setup.expanded.seed.max_num_vars;
         let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
             max_num_vars,
@@ -1977,19 +1977,19 @@ where
             setup.expanded.seed.max_num_batched_polys,
             HachiRootBatchSummary::new(polys.len(), 1, 1)?,
         )?;
-        setup.ensure_layout_fits(&root_plan.level_lp)?;
+        let root_lp = root_plan.root_lp.clone();
 
         let poly_refs: Vec<&P> = polys.iter().collect();
         let inner_witnesses = if let Some(witnesses) = P::commit_inner_witness_batched(
             &poly_refs,
             &setup.expanded.shared_matrix,
             &setup.ntt_shared,
-            root_plan.root_lp.a_key.row_len(),
-            root_plan.root_lp.block_len,
-            root_plan.root_lp.num_digits_commit,
-            root_plan.root_lp.num_digits_open,
-            root_plan.root_lp.log_basis,
-            setup.expanded.seed.max_stride(),
+            root_lp.a_key.row_len(),
+            root_lp.block_len,
+            root_lp.num_digits_commit,
+            root_lp.num_digits_open,
+            root_lp.log_basis,
+            setup.expanded.seed.max_stride,
         )? {
             witnesses
         } else {
@@ -1999,12 +1999,12 @@ where
                     poly.commit_inner_witness(
                         &setup.expanded.shared_matrix,
                         &setup.ntt_shared,
-                        root_plan.root_lp.a_key.row_len(),
-                        root_plan.root_lp.block_len,
-                        root_plan.root_lp.num_digits_commit,
-                        root_plan.root_lp.num_digits_open,
-                        root_plan.root_lp.log_basis,
-                        setup.expanded.seed.max_stride(),
+                        root_lp.a_key.row_len(),
+                        root_lp.block_len,
+                        root_lp.num_digits_commit,
+                        root_lp.num_digits_open,
+                        root_lp.log_basis,
+                        setup.expanded.seed.max_stride,
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?
@@ -2026,8 +2026,8 @@ where
         }
         let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
             &setup.ntt_shared,
-            root_plan.root_lp.b_key.row_len(),
-            setup.expanded.seed.max_stride(),
+            root_lp.b_key.row_len(),
+            setup.expanded.seed.max_stride,
             &inner_opening_digits_flat,
         );
         Ok((
@@ -2047,6 +2047,12 @@ where
         basis: BasisMode,
     ) -> Result<Self::Proof, HachiError> {
         let num_vars = opening_point.len();
+        if num_vars > setup.expanded.seed.max_num_vars {
+            return Err(HachiError::InvalidInput(format!(
+                "prove received an opening point with {} variables but setup supports at most {}",
+                num_vars, setup.expanded.seed.max_num_vars
+            )));
+        }
         if schedule_uses_root_direct::<Cfg>(num_vars)? {
             return prove_root_direct::<F, D, P>(poly);
         }
@@ -2087,7 +2093,7 @@ where
             root_next_params_override = Some(planned_root.next_level_params);
         }
         let root_lp = root_plan.root_lp.clone();
-        let max_stride = setup.expanded.seed.max_stride();
+        let max_stride = setup.expanded.seed.max_stride;
 
         let commit_fn_0: CommitFn<'_, F> = Box::new(
             |w: &RecursiveWitnessFlat,
@@ -2272,6 +2278,19 @@ where
                 "batched_prove requires all opening points to have the same length".to_string(),
             ));
         }
+        if num_vars > setup.expanded.seed.max_num_vars {
+            return Err(HachiError::InvalidInput(format!(
+                "batched_prove received opening points with {} variables but setup supports at most {}",
+                num_vars, setup.expanded.seed.max_num_vars
+            )));
+        }
+        if opening_points.len() > setup.expanded.seed.max_num_points {
+            return Err(HachiError::InvalidInput(format!(
+                "batched_prove received {} opening points but setup supports at most {}",
+                opening_points.len(),
+                setup.expanded.seed.max_num_points
+            )));
+        }
         let batch_shape =
             validate_nonempty_group_sizes_by_point(poly_groups_by_point, "batched_prove")?;
         if opening_points.len() != batch_shape.point_group_sizes.len()
@@ -2334,7 +2353,6 @@ where
         )?;
         let root_lp = root_plan.root_lp.clone();
         let batched_lp = root_plan.level_lp.clone();
-        setup.ensure_layout_fits(&batched_lp)?;
 
         let alpha_bits = root_lp.ring_dimension.trailing_zeros() as usize;
         let prepared_points = opening_points
@@ -2354,7 +2372,7 @@ where
         }
         let flat_polys = flatten_poly_groups_by_point(poly_groups_by_point);
         let flat_hints = flatten_batched_hints_by_point(hints_by_point);
-        let max_stride = setup.expanded.seed.max_stride();
+        let max_stride = setup.expanded.seed.max_stride;
 
         let commit_fn_0: CommitFn<'_, F> = Box::new(
             |w: &RecursiveWitnessFlat,
@@ -2433,6 +2451,12 @@ where
         basis: BasisMode,
     ) -> Result<(), HachiError> {
         let num_vars = opening_point.len();
+        if num_vars > setup.expanded.seed.max_num_vars {
+            return Err(HachiError::InvalidInput(format!(
+                "verify received an opening point with {} variables but setup supports at most {}",
+                num_vars, setup.expanded.seed.max_num_vars
+            )));
+        }
         if proof.num_fold_levels() == 0 {
             if !schedule_uses_root_direct::<Cfg>(num_vars)? {
                 return Err(HachiError::InvalidProof);
@@ -2642,6 +2666,15 @@ where
         if opening_points.iter().any(|pt| pt.len() != num_vars) {
             return Err(HachiError::InvalidProof);
         }
+        if num_vars > setup.expanded.seed.max_num_vars {
+            return Err(HachiError::InvalidInput(format!(
+                "batched_verify received opening points with {} variables but setup supports at most {}",
+                num_vars, setup.expanded.seed.max_num_vars
+            )));
+        }
+        if opening_points.len() > setup.expanded.seed.max_num_points {
+            return Err(HachiError::InvalidProof);
+        }
         let y_coeff_len = proof.root.y_rings().coeff_len();
         if !y_coeff_len.is_multiple_of(D) {
             return Err(HachiError::InvalidProof);
@@ -2666,7 +2699,7 @@ where
         if y_coeff_len / D != opening_points.len() {
             return Err(HachiError::InvalidProof);
         }
-        if num_claims > setup.expanded.max_num_batched_polys() {
+        if num_claims > setup.expanded.seed.max_num_batched_polys {
             return Err(HachiError::InvalidProof);
         }
         if opening_points.len() == 1 {
@@ -2696,7 +2729,6 @@ where
         .map_err(|_| HachiError::InvalidProof)?;
         let root_lp = root_plan.root_lp.clone();
         let batched_lp = root_plan.level_lp.clone();
-        setup.expanded.ensure_layout_fits(&batched_lp)?;
 
         let final_w = Some(proof.final_witness());
         let alpha_bits = root_lp.ring_dimension.trailing_zeros() as usize;
@@ -3296,7 +3328,6 @@ mod tests {
     use crate::protocol::proof::{HachiBatchedProofShape, HachiProofStepShape, LevelProofShape};
     use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
     use crate::protocol::transcript::Blake2bTranscript;
-    use crate::test_utils::F;
     use crate::{CommitmentScheme, FromSmallInt, HachiDeserialize};
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
@@ -3304,7 +3335,8 @@ mod tests {
     use tracing_subscriber::fmt::format::FmtSpan;
     use tracing_subscriber::prelude::*;
     use tracing_subscriber::EnvFilter;
-    type Cfg = SmallTestCommitmentConfig;
+    type Cfg = fp128::D64Full;
+    type F = fp128::Field;
     const D: usize = Cfg::D;
     type Scheme = HachiCommitmentScheme<D, Cfg>;
     type OneHotF = Fp128<0xfffffffffffffffffffffffffffff6cd>;
@@ -3471,7 +3503,7 @@ mod tests {
 
         let setup =
             <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<OneHotF, D_LOCAL>>::setup_prover(
-                nv, batch_size,
+                nv, batch_size, 1,
             );
         let verifier_setup = <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<
             OneHotF,
@@ -3592,6 +3624,7 @@ mod tests {
             <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<OneHotF, D_LOCAL>>::setup_prover(
                 nv,
                 total_claims,
+                group_sizes_by_point.len(),
             );
         let verifier_setup = <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<
             OneHotF,
@@ -3762,7 +3795,7 @@ mod tests {
         let full_num_vars = layout.m_vars + layout.r_vars + alpha;
 
         let (poly, evals) = make_dense_poly(full_num_vars);
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(full_num_vars, 1);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(full_num_vars, 1, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let (commitment, hint) =
             <Scheme as CommitmentScheme<F, D>>::commit(std::slice::from_ref(&poly), &setup)
@@ -3980,7 +4013,7 @@ mod tests {
         let layout = Cfg::commitment_layout(16).unwrap();
         let num_vars = layout.m_vars + layout.r_vars + alpha;
         let (poly, _) = make_dense_poly(num_vars);
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1, 1);
 
         let (_, hint) =
             <Scheme as CommitmentScheme<F, D>>::commit(std::slice::from_ref(&poly), &setup)
@@ -4022,6 +4055,7 @@ mod tests {
             let batch_setup = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(
                 BATCH_NUM_VARS,
                 BATCH_SIZE,
+                1,
             );
             let batch_poly_refs: Vec<&OneHotPoly<OneHotF, ONEHOT_D, u8>> =
                 batch_polys.iter().collect();
@@ -4108,7 +4142,7 @@ mod tests {
                     &batched_y_rings,
                     batch_gammas,
                     1,
-                    batch_setup.expanded.seed.max_stride(),
+                    batch_setup.expanded.seed.max_stride,
                 )
                 .expect("debug batched quadratic equation"),
             );
@@ -4267,7 +4301,7 @@ mod tests {
             let r_gadget = gadget_scalars(
                 crate::protocol::ring_switch::r_decomp_levels::<OneHotF>(batched_root_lp.log_basis),
             );
-            let debug_stride = batch_setup.expanded.seed.max_stride();
+            let debug_stride = batch_setup.expanded.seed.max_stride;
             let d_view = batch_setup
                 .expanded
                 .shared_matrix
@@ -4446,7 +4480,7 @@ mod tests {
                     1,
                     batched_root_lp.num_blocks,
                     batched_root_lp.inner_width(),
-                    batch_setup.expanded.seed.max_stride(),
+                    batch_setup.expanded.seed.max_stride,
                     &batch_setup.ntt_shared,
                 )
                 .expect("debug batched r");
@@ -4749,6 +4783,7 @@ mod tests {
             let single_setup = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(
                 SINGLE_NUM_VARS,
                 1,
+                1,
             );
             let single_verifier_setup =
                 <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(
@@ -4792,6 +4827,7 @@ mod tests {
             let batch_setup = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(
                 BATCH_NUM_VARS,
                 BATCH_SIZE,
+                1,
             );
             let batch_verifier_setup =
                 <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(&batch_setup);
@@ -4845,7 +4881,7 @@ mod tests {
         let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 3 + 7) as u64)).collect();
         let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
         let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2, 1);
         let poly_groups = [std::slice::from_ref(&poly_a), std::slice::from_ref(&poly_b)];
 
         let (batched_commitments, batched_hints): (Vec<_>, Vec<_>) = poly_groups
@@ -4876,7 +4912,7 @@ mod tests {
         let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 7 + 3) as u64)).collect();
         let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
         let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
         let poly_groups = [&poly_group[..]];
@@ -4949,7 +4985,7 @@ mod tests {
             .collect();
 
         let setup =
-            <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(NV, BATCH_SIZE);
+            <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(NV, BATCH_SIZE, 1);
         let verifier_setup =
             <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(&setup);
         let poly_groups = [&poly_refs[..]];
@@ -5026,7 +5062,7 @@ mod tests {
         let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 5 + 13) as u64)).collect();
         let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
         let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
         let poly_groups = [&poly_group[..]];
@@ -5079,7 +5115,7 @@ mod tests {
         let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 3 + 19) as u64)).collect();
         let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
         let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
         let poly_groups = [&poly_group[..]];
@@ -5137,7 +5173,7 @@ mod tests {
 
         let (poly, evals) = make_dense_poly(num_vars);
 
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
         let (commitment, hint) =
@@ -5185,7 +5221,7 @@ mod tests {
 
         let (poly, evals) = make_dense_poly(num_vars);
 
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
         let (commitment, hint) =
@@ -5267,7 +5303,7 @@ mod tests {
         let coeffs: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
         let poly = DensePoly::<F, D>::from_field_evals(num_vars, &coeffs).unwrap();
 
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
         let (commitment, hint) =
@@ -5327,7 +5363,7 @@ mod tests {
         let opening = evals[0];
 
         let setup =
-            <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::setup_prover(num_vars, 1);
+            <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::setup_prover(num_vars, 1, 1);
         let verifier_setup =
             <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::setup_verifier(&setup);
         let (commitment, hint) = <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::commit(
