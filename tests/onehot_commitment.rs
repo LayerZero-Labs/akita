@@ -9,7 +9,7 @@ use hachi_pcs::{FieldCore, FromSmallInt};
 type Core = HachiCommitmentCore;
 
 fn psetup() -> HachiProverSetup<F, D> {
-    HachiProverSetup::new::<TinyConfig>(16, 1).unwrap()
+    HachiProverSetup::new::<TinyConfig>(16, 1, 1).unwrap()
 }
 
 /// Compare the optimized one-hot path against the default dense path.

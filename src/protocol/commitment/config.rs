@@ -262,9 +262,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// `(max_rows, max_stride)` bounds for the shared setup matrix.
     ///
+    /// `max_num_points` is the largest number of distinct opening points the
+    /// setup must support in a single batched opening.
+    ///
     /// The default is a loose but trivially correct upper bound: `MAX_RANK`
     /// rows and `2^(max_num_vars - log2(D)) * 128 * MAX_RANK *
-    /// max_num_batched_polys` stride.
+    /// max_num_batched_polys * max_num_points` stride.
     ///
     /// # Errors
     ///
@@ -272,6 +275,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn max_setup_matrix_size(
         max_num_vars: usize,
         max_num_batched_polys: usize,
+        max_num_points: usize,
     ) -> Result<(usize, usize), HachiError> {
         let max_rows = crate::planner::sis_security::MAX_RANK as usize;
         let alpha = Self::D.trailing_zeros() as usize;
@@ -281,6 +285,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             .and_then(|x| x.checked_mul(128))
             .and_then(|x| x.checked_mul(max_rows))
             .and_then(|x| x.checked_mul(max_num_batched_polys))
+            .and_then(|x| x.checked_mul(max_num_points))
             .ok_or_else(|| {
                 HachiError::InvalidSetup("max_setup_matrix_size overflow".to_string())
             })?;
@@ -878,21 +883,29 @@ impl<
     fn max_setup_matrix_size(
         max_num_vars: usize,
         max_num_batched_polys: usize,
+        max_num_points: usize,
     ) -> Result<(usize, usize), HachiError> {
         if max_num_batched_polys == 0 {
             return Err(HachiError::InvalidSetup(
                 "max_num_batched_polys must be at least 1".to_string(),
             ));
         }
+        if max_num_points == 0 {
+            return Err(HachiError::InvalidSetup(
+                "max_num_points must be at least 1".to_string(),
+            ));
+        }
+        if max_num_points > max_num_batched_polys {
+            return Err(HachiError::InvalidSetup(format!(
+                "max_num_points ({max_num_points}) cannot exceed max_num_batched_polys ({max_num_batched_polys})"
+            )));
+        }
 
-        // `num_claims = num_commitment_groups = P`, `num_points = 1`:
-        // `num_claims` drives B/D width scaling, `num_commitment_groups`
-        // drives the recursive `r_rows` contribution. Single opening point
-        // matches the dominant runtime usage; multi-point batches still
-        // verify because commit's scaled root layout (seeded below)
-        // independently bounds the root widths.
-        let batch_summary =
-            HachiRootBatchSummary::new(max_num_batched_polys, max_num_batched_polys, 1)?;
+        let batch_summary = HachiRootBatchSummary::new(
+            max_num_batched_polys,
+            max_num_batched_polys,
+            max_num_points,
+        )?;
         let cached_key = HachiScheduleLookupKey::with_batch(
             max_num_vars,
             max_num_vars,
@@ -909,6 +922,7 @@ impl<
             tracing::debug!(
                 max_num_vars,
                 max_num_batched_polys,
+                max_num_points,
                 "adaptive setup sizing: using cached schedule plan"
             );
             plan.fold_levels().map(|level| level.lp.clone()).collect()
@@ -916,6 +930,7 @@ impl<
             tracing::info!(
                 max_num_vars,
                 max_num_batched_polys,
+                max_num_points,
                 "adaptive setup sizing: cache miss, running find_optimal_batched_schedule"
             );
             use crate::planner::schedule_params::{
@@ -924,7 +939,7 @@ impl<
             let batch = BatchConfig {
                 num_claims: max_num_batched_polys,
                 num_commitment_groups: max_num_batched_polys,
-                num_points: 1,
+                num_points: max_num_points,
             };
             let schedule = find_optimal_batched_schedule::<Self, D>(max_num_vars, batch)?;
             schedule

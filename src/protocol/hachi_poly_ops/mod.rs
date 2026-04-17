@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn dense_commit_inner_matches_ring_commit() {
-        let setup = HachiProverSetup::<TestF, TestD>::new::<TinyConfig>(16, 1).unwrap();
+        let setup = HachiProverSetup::<TestF, TestD>::new::<TinyConfig>(16, 1, 1).unwrap();
         let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
         let num_ring = layout.num_blocks * layout.block_len;
         let evals: Vec<TestF> = (0..num_ring * TestD)
@@ -543,7 +543,7 @@ mod tests {
 
     #[test]
     fn onehot_commit_inner_matches_ring_commit_onehot() {
-        let setup = HachiProverSetup::<TestF, TestD>::new::<TinyConfig>(16, 1).unwrap();
+        let setup = HachiProverSetup::<TestF, TestD>::new::<TinyConfig>(16, 1, 1).unwrap();
         let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
         let total_ring = layout.num_blocks * layout.block_len;
         let onehot_k = TestD;
@@ -581,7 +581,7 @@ mod tests {
 
     #[test]
     fn onehot_decompose_fold_matches_dense_regular_onehot() {
-        let setup = HachiProverSetup::<TestF, TestD>::new::<TinyConfig>(16, 1).unwrap();
+        let setup = HachiProverSetup::<TestF, TestD>::new::<TinyConfig>(16, 1, 1).unwrap();
         let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
         let total_ring = layout.num_blocks * layout.block_len;
         let onehot_k = TestD;
@@ -691,7 +691,7 @@ mod tests {
         assert_eq!(got.centered_coeffs, expected.centered_coeffs);
         assert_eq!(got.centered_inf_norm, expected.centered_inf_norm);
 
-        let setup = HachiProverSetup::<TestF, TestD>::new::<TinyConfig>(16, 1).unwrap();
+        let setup = HachiProverSetup::<TestF, TestD>::new::<TinyConfig>(16, 1, 1).unwrap();
         let test_lp = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
         let w_len = w_ring_element_count::<TestF>(&test_lp) * TestD;
         let w_layout =

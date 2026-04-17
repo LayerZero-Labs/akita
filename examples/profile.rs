@@ -463,7 +463,7 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     };
 
     let t0 = Instant::now();
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
     tracing::info!(
         label = "dense",
         elapsed_s = t0.elapsed().as_secs_f64(),
@@ -501,7 +501,7 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let opening = opening_from_poly(&onehot_poly, &pt, layout, BasisMode::Lagrange);
 
     let t0 = Instant::now();
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
     tracing::info!(
         label = "onehot",
         elapsed_s = t0.elapsed().as_secs_f64(),
@@ -551,7 +551,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let opening_groups = [&openings[..]];
 
     let t0 = Instant::now();
-    let setup = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, num_polys);
+    let setup = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, num_polys, 1);
     tracing::info!(
         label = "onehot",
         elapsed_s = t0.elapsed().as_secs_f64(),

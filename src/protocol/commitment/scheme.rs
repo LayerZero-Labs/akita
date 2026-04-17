@@ -63,12 +63,17 @@ where
     /// Prover-side hint collection for same-point grouped openings.
     type BatchedCommitHint: Clone + Send + Sync;
 
-    /// Build prover setup for maximum polynomial dimension and batch capacity.
+    /// Build prover setup for maximum polynomial dimension, batch capacity,
+    /// and distinct opening-point count.
     ///
     /// # Panics
     ///
     /// Panics if internal setup fails (programming error, not adversarial input).
-    fn setup_prover(max_num_vars: usize, max_num_batched_polys: usize) -> Self::ProverSetup;
+    fn setup_prover(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Self::ProverSetup;
 
     /// Derive verifier setup from prover setup.
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;

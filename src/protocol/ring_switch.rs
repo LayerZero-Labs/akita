@@ -2277,7 +2277,8 @@ mod tests {
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1);
+        let setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1, 1);
         let (commitment, batched_hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<
             F,
             D,
@@ -2466,7 +2467,7 @@ mod tests {
         type WCfg = WCommitmentConfig<64, Cfg>;
         const D: usize = 64;
 
-        let setup = HachiProverSetup::<TestF, D>::new::<Cfg>(12, 1).expect("setup");
+        let setup = HachiProverSetup::<TestF, D>::new::<Cfg>(12, 1, 1).expect("setup");
         assert!(
             setup.ntt_shared.total_elements() > 3,
             "test needs a shared cache envelope"
@@ -2529,7 +2530,8 @@ mod tests {
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1);
+        let setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1, 1);
         let (commitment, batched_hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<
             F,
             D,

@@ -57,9 +57,9 @@ impl CommitmentConfig for BadDegreeConfig {
 #[test]
 fn setup_shape_is_consistent() {
     let envelope = TinyConfig::envelope(16);
-    let p1 = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1).unwrap();
+    let p1 = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1, 1).unwrap();
     let v1 = p1.verifier_setup();
-    let p2 = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1).unwrap();
+    let p2 = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1, 1).unwrap();
     let v2 = p2.verifier_setup();
 
     assert_eq!(p1.expanded.seed.max_num_vars, 16);
@@ -75,7 +75,7 @@ fn setup_shape_is_consistent() {
 
 #[test]
 fn commit_is_deterministic_and_shape_consistent() {
-    let psetup = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1).unwrap();
+    let psetup = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1, 1).unwrap();
     let blocks = sample_blocks();
 
     let w1 = <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::commit_ring_blocks(
@@ -102,7 +102,7 @@ fn commit_is_deterministic_and_shape_consistent() {
 
 #[test]
 fn commit_ring_coeffs_matches_block_commitment() {
-    let psetup = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1).unwrap();
+    let psetup = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1, 1).unwrap();
     let blocks = sample_blocks();
 
     let wb = <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::commit_ring_blocks(
@@ -127,7 +127,7 @@ fn commit_ring_coeffs_matches_block_commitment() {
 
 #[test]
 fn commit_ring_coeffs_rejects_short_input() {
-    let psetup = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1).unwrap();
+    let psetup = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1, 1).unwrap();
     let blocks = sample_blocks();
 
     let mut f_coeffs: Vec<_> = blocks
@@ -150,7 +150,7 @@ fn commit_ring_coeffs_rejects_short_input() {
 
 #[test]
 fn opening_satisfies_inner_and_outer_equations() {
-    let psetup = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1).unwrap();
+    let psetup = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1, 1).unwrap();
     let blocks = sample_blocks();
     let w = <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::commit_ring_blocks(
         &blocks, &psetup,
@@ -202,7 +202,7 @@ fn opening_satisfies_inner_and_outer_equations() {
 
 #[test]
 fn setup_rejects_mismatched_degree() {
-    let err = HachiProverSetup::<F, D>::new::<BadDegreeConfig>(16, 1).unwrap_err();
+    let err = HachiProverSetup::<F, D>::new::<BadDegreeConfig>(16, 1, 1).unwrap_err();
     match err {
         HachiError::InvalidSetup(msg) => assert!(msg.contains("mismatches")),
         other => panic!("unexpected error: {other:?}"),

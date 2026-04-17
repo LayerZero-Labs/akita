@@ -89,6 +89,7 @@ where
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
         setup_nv,
         setup_polys,
+        1,
     );
     let verifier_setup =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
@@ -153,6 +154,7 @@ where
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
         setup_nv,
         setup_polys,
+        1,
     );
     let verifier_setup =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
@@ -223,6 +225,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
         setup_nv,
         setup_polys,
+        1,
     );
     let verifier_setup =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
@@ -307,6 +310,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
         setup_nv,
         setup_polys,
+        1,
     );
     let verifier_setup =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);

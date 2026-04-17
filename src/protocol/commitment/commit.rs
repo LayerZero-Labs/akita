@@ -457,7 +457,7 @@ mod tests {
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
         const TEST_D: usize = 64;
-        let prover_setup = HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(16, 3).unwrap();
+        let prover_setup = HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(16, 3, 1).unwrap();
         let verifier_setup = HachiVerifierSetup {
             expanded: Arc::clone(&prover_setup.expanded),
         };
@@ -480,13 +480,13 @@ mod tests {
 
     #[test]
     fn setup_accepts_field_coupled_presets() {
-        HachiProverSetup::<fp128::Field, 128>::new::<fp128::D128Full>(12, 1)
+        HachiProverSetup::<fp128::Field, 128>::new::<fp128::D128Full>(12, 1, 1)
             .expect("legacy fp128 preset should accept the legacy field");
 
-        HachiProverSetup::<fp128::Field, 128>::new::<fp128::D128Full>(12, 1)
+        HachiProverSetup::<fp128::Field, 128>::new::<fp128::D128Full>(12, 1, 1)
             .expect("default fp128 fixed-D preset should accept the default field");
 
-        HachiProverSetup::<fp128::Field, 32>::new::<fp128::D32Full>(12, 1)
+        HachiProverSetup::<fp128::Field, 32>::new::<fp128::D32Full>(12, 1, 1)
             .expect("small-D fp128 preset should accept the default field");
     }
 
@@ -529,7 +529,7 @@ mod tests {
                 cleanup_setup_file(MAX_VARS);
 
                 let prover_setup =
-                    HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1).unwrap();
+                    HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1, 1).unwrap();
 
                 let loaded = load_expanded_setup::<TestF, TinyConfig>(MAX_VARS, 1).unwrap();
                 assert_eq!(loaded, prover_setup.expanded.as_ref().clone());
@@ -547,10 +547,10 @@ mod tests {
                 cleanup_setup_file(MAX_VARS);
 
                 let first =
-                    HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1).unwrap();
+                    HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1, 1).unwrap();
 
                 let second =
-                    HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1).unwrap();
+                    HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1, 1).unwrap();
 
                 assert_eq!(first.expanded, second.expanded);
 
@@ -569,7 +569,7 @@ mod tests {
                 cleanup_setup_file(MAX_VARS);
 
                 let fresh_setup =
-                    HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1).unwrap();
+                    HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1, 1).unwrap();
 
                 let loaded_expanded =
                     load_expanded_setup::<TestF, TinyConfig>(MAX_VARS, 1).unwrap();

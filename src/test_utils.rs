@@ -53,6 +53,7 @@ impl CommitmentConfig for TinyConfig {
     fn max_setup_matrix_size(
         max_num_vars: usize,
         max_num_batched_polys: usize,
+        max_num_points: usize,
     ) -> Result<(usize, usize), HachiError> {
         let lp = Self::commitment_layout(max_num_vars)?;
         let max_rows = lp
@@ -61,15 +62,17 @@ impl CommitmentConfig for TinyConfig {
             .max(lp.b_key.row_len())
             .max(lp.d_key.row_len());
         let inner_width = lp.inner_width();
-        let outer_width = lp
-            .outer_width()
-            .checked_mul(max_num_batched_polys)
+        let batch_scale = max_num_batched_polys
+            .checked_mul(max_num_points)
             .ok_or_else(|| {
                 HachiError::InvalidSetup("max_setup_matrix_size overflow".to_string())
             })?;
+        let outer_width = lp.outer_width().checked_mul(batch_scale).ok_or_else(|| {
+            HachiError::InvalidSetup("max_setup_matrix_size overflow".to_string())
+        })?;
         let d_width = lp
             .d_matrix_width()
-            .checked_mul(max_num_batched_polys)
+            .checked_mul(batch_scale)
             .ok_or_else(|| {
                 HachiError::InvalidSetup("max_setup_matrix_size overflow".to_string())
             })?;

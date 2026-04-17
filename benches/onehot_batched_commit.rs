@@ -50,11 +50,15 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         .map(|idx| make_onehot_poly(&batch_layout, 0x0bee_fcaf_e000_2500 + idx as u64))
         .collect();
 
-    let single_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(SINGLE_NUM_VARS, 1);
+    let single_setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+        SINGLE_NUM_VARS,
+        1,
+        1,
+    );
     let batched_setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
         BATCH_NUM_VARS,
         BATCH_SIZE,
+        1,
     );
     let single_params = Cfg::level_params(HachiScheduleInputs {
         max_num_vars: SINGLE_NUM_VARS,

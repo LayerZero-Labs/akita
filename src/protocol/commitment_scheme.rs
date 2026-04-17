@@ -1928,8 +1928,12 @@ where
     type CommitHint = HachiBatchedCommitmentHint<F, D>;
     type BatchedCommitHint = Vec<HachiBatchedCommitmentHint<F, D>>;
 
-    fn setup_prover(max_num_vars: usize, max_num_batched_polys: usize) -> Self::ProverSetup {
-        HachiProverSetup::new::<Cfg>(max_num_vars, max_num_batched_polys)
+    fn setup_prover(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Self::ProverSetup {
+        HachiProverSetup::new::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
             .expect("commitment setup failed")
     }
 
@@ -3489,7 +3493,7 @@ mod tests {
 
         let setup =
             <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<OneHotF, D_LOCAL>>::setup_prover(
-                nv, batch_size,
+                nv, batch_size, 1,
             );
         let verifier_setup = <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<
             OneHotF,
@@ -3610,6 +3614,7 @@ mod tests {
             <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<OneHotF, D_LOCAL>>::setup_prover(
                 nv,
                 total_claims,
+                1,
             );
         let verifier_setup = <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<
             OneHotF,
@@ -3780,7 +3785,7 @@ mod tests {
         let full_num_vars = layout.m_vars + layout.r_vars + alpha;
 
         let (poly, evals) = make_dense_poly(full_num_vars);
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(full_num_vars, 1);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(full_num_vars, 1, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let (commitment, hint) =
             <Scheme as CommitmentScheme<F, D>>::commit(std::slice::from_ref(&poly), &setup)
@@ -3998,7 +4003,7 @@ mod tests {
         let layout = Cfg::commitment_layout(16).unwrap();
         let num_vars = layout.m_vars + layout.r_vars + alpha;
         let (poly, _) = make_dense_poly(num_vars);
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1, 1);
 
         let (_, hint) =
             <Scheme as CommitmentScheme<F, D>>::commit(std::slice::from_ref(&poly), &setup)
@@ -4040,6 +4045,7 @@ mod tests {
             let batch_setup = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(
                 BATCH_NUM_VARS,
                 BATCH_SIZE,
+                1,
             );
             let batch_poly_refs: Vec<&OneHotPoly<OneHotF, ONEHOT_D, u8>> =
                 batch_polys.iter().collect();
@@ -4767,6 +4773,7 @@ mod tests {
             let single_setup = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(
                 SINGLE_NUM_VARS,
                 1,
+                1,
             );
             let single_verifier_setup =
                 <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(
@@ -4810,6 +4817,7 @@ mod tests {
             let batch_setup = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(
                 BATCH_NUM_VARS,
                 BATCH_SIZE,
+                1,
             );
             let batch_verifier_setup =
                 <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(&batch_setup);
@@ -4863,7 +4871,7 @@ mod tests {
         let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 3 + 7) as u64)).collect();
         let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
         let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2, 1);
         let poly_groups = [std::slice::from_ref(&poly_a), std::slice::from_ref(&poly_b)];
 
         let (batched_commitments, batched_hints): (Vec<_>, Vec<_>) = poly_groups
@@ -4894,7 +4902,7 @@ mod tests {
         let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 7 + 3) as u64)).collect();
         let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
         let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
         let poly_groups = [&poly_group[..]];
@@ -4967,7 +4975,7 @@ mod tests {
             .collect();
 
         let setup =
-            <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(NV, BATCH_SIZE);
+            <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(NV, BATCH_SIZE, 1);
         let verifier_setup =
             <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(&setup);
         let poly_groups = [&poly_refs[..]];
@@ -5044,7 +5052,7 @@ mod tests {
         let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 5 + 13) as u64)).collect();
         let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
         let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
         let poly_groups = [&poly_group[..]];
@@ -5097,7 +5105,7 @@ mod tests {
         let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 3 + 19) as u64)).collect();
         let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
         let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
         let poly_groups = [&poly_group[..]];
@@ -5155,7 +5163,7 @@ mod tests {
 
         let (poly, evals) = make_dense_poly(num_vars);
 
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
         let (commitment, hint) =
@@ -5203,7 +5211,7 @@ mod tests {
 
         let (poly, evals) = make_dense_poly(num_vars);
 
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
         let (commitment, hint) =
@@ -5285,7 +5293,7 @@ mod tests {
         let coeffs: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
         let poly = DensePoly::<F, D>::from_field_evals(num_vars, &coeffs).unwrap();
 
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1);
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
 
         let (commitment, hint) =
@@ -5345,7 +5353,7 @@ mod tests {
         let opening = evals[0];
 
         let setup =
-            <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::setup_prover(num_vars, 1);
+            <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::setup_prover(num_vars, 1, 1);
         let verifier_setup =
             <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::setup_verifier(&setup);
         let (commitment, hint) = <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::commit(

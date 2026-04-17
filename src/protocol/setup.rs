@@ -71,14 +71,19 @@ pub struct HachiVerifierSetup<F: FieldCore> {
 }
 
 impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
-    /// Construct prover setup for at most `max_num_vars` variables and
-    /// `max_num_batched_polys` batched polynomials.
+    /// Construct prover setup for at most `max_num_vars` variables,
+    /// `max_num_batched_polys` batched polynomials, and `max_num_points`
+    /// distinct opening points per batched opening.
     ///
     /// # Errors
     ///
     /// Returns an error if `Cfg::D != D` or on arithmetic overflow.
     #[tracing::instrument(skip_all, name = "HachiProverSetup::new")]
-    pub fn new<Cfg>(max_num_vars: usize, max_num_batched_polys: usize) -> Result<Self, HachiError>
+    pub fn new<Cfg>(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Result<Self, HachiError>
     where
         F: CanonicalField + FieldSampling + HasWide + Valid,
         Cfg: CommitmentConfig<Field = F>,
@@ -90,7 +95,7 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
             )));
         }
         let (max_rows, max_stride) =
-            Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?;
+            Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)?;
         let max_total = max_rows
             .checked_mul(max_stride)
             .ok_or_else(|| HachiError::InvalidSetup("conservative total overflow".to_string()))?;

@@ -1232,7 +1232,7 @@ mod tests {
     }
 
     fn build_fixture() -> Fixture {
-        let setup = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1).unwrap();
+        let setup = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1, 1).unwrap();
 
         let blocks = sample_blocks();
         let w =
