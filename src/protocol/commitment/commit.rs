@@ -500,7 +500,7 @@ mod tests {
         static DISK_TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
         fn cleanup_setup_file(max_num_vars: usize) {
-            if let Some(path) = get_storage_path::<TinyConfig>(max_num_vars, 1) {
+            if let Some(path) = get_storage_path::<TinyConfig>(max_num_vars, 1, 1) {
                 let _ = fs::remove_file(path);
             }
         }
@@ -531,7 +531,7 @@ mod tests {
                 let prover_setup =
                     HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1, 1).unwrap();
 
-                let loaded = load_expanded_setup::<TestF, TinyConfig>(MAX_VARS, 1).unwrap();
+                let loaded = load_expanded_setup::<TestF, TinyConfig>(MAX_VARS, 1, 1).unwrap();
                 assert_eq!(loaded, prover_setup.expanded.as_ref().clone());
 
                 cleanup_setup_file(MAX_VARS);
@@ -572,7 +572,7 @@ mod tests {
                     HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1, 1).unwrap();
 
                 let loaded_expanded =
-                    load_expanded_setup::<TestF, TinyConfig>(MAX_VARS, 1).unwrap();
+                    load_expanded_setup::<TestF, TinyConfig>(MAX_VARS, 1, 1).unwrap();
                 let disk_setup =
                     HachiProverSetup::<TestF, TEST_D>::from_expanded(loaded_expanded).unwrap();
 

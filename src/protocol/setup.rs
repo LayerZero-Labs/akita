@@ -118,27 +118,44 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
 
         #[cfg(feature = "disk-persistence")]
         {
-            match load_expanded_setup::<F, Cfg>(max_num_vars, max_num_batched_polys) {
+            match load_expanded_setup::<F, Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
+            {
                 Ok(expanded) => {
-                    if expanded.shared_matrix.total_ring_elements_at::<D>() >= max_total {
+                    // A cached setup is acceptable only if its physical
+                    // backing is large enough *and* its recorded
+                    // `max_stride` matches (or exceeds) what the current
+                    // request needs. For configs where `max_rows` can vary
+                    // inversely with `max_stride`, a smaller cached stride
+                    // would cause `ring_view` to interpret rows/columns with
+                    // the wrong stride — the total-elements check alone is
+                    // insufficient.
+                    let cached_total = expanded.shared_matrix.total_ring_elements_at::<D>();
+                    let cached_stride = expanded.seed.max_stride;
+                    let cached_points = expanded.seed.max_num_points;
+                    if cached_total >= max_total
+                        && cached_stride >= max_stride
+                        && cached_points >= max_num_points
+                    {
                         tracing::info!("Loaded setup from disk, rebuilding NTT caches");
                         return Self::from_expanded(expanded);
                     }
                     if let Some(storage_path) =
-                        get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys)
+                        get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
                     {
                         let _ = fs::remove_file(&storage_path);
                         tracing::warn!(
-                            "Rejected cached setup from {}: matrix too small; regenerating",
+                            "Rejected cached setup from {}: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total>={max_total}, stride>={max_stride}, points>={max_num_points}); regenerating",
                             storage_path.display()
                         );
                     } else {
-                        tracing::warn!("Rejected cached setup: matrix too small; regenerating");
+                        tracing::warn!(
+                            "Rejected cached setup: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total>={max_total}, stride>={max_stride}, points>={max_num_points}); regenerating"
+                        );
                     }
                 }
                 Err(e) => {
                     if let Some(storage_path) =
-                        get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys)
+                        get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
                     {
                         let _ = fs::remove_file(&storage_path);
                         tracing::warn!(
@@ -168,7 +185,12 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
         });
 
         #[cfg(feature = "disk-persistence")]
-        save_expanded_setup::<F, Cfg>(&expanded, max_num_vars, max_num_batched_polys);
+        save_expanded_setup::<F, Cfg>(
+            &expanded,
+            max_num_vars,
+            max_num_batched_polys,
+            max_num_points,
+        );
 
         Ok(Self {
             expanded,
@@ -382,6 +404,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiVerifierSetup<F> {
 fn cache_file_name<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
+    max_num_points: usize,
 ) -> String {
     let envelope = Cfg::envelope(max_num_vars);
     let family = Cfg::family_key()
@@ -392,12 +415,8 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         max_num_vars,
         max_num_vars,
         max_num_batched_polys,
-        HachiRootBatchSummary::new(
-            max_num_batched_polys,
-            max_num_batched_polys,
-            max_num_batched_polys,
-        )
-        .expect("setup cache key requires positive batch counts"),
+        HachiRootBatchSummary::new(max_num_batched_polys, max_num_batched_polys, max_num_points)
+            .expect("setup cache key requires positive batch counts"),
     );
     let schedule = Cfg::schedule_key(schedule_lookup_key)
         .chars()
@@ -405,7 +424,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .collect::<String>();
     let modulus = Cfg::field_modulus();
     format!(
-        "hachi_q{modulus:032x}_{family}_sched_{schedule}_d{}_na{}_nb{}_nd{}_nv{max_num_vars}_batch{max_num_batched_polys}.setup",
+        "hachi_q{modulus:032x}_{family}_sched_{schedule}_d{}_na{}_nb{}_nd{}_nv{max_num_vars}_batch{max_num_batched_polys}_pts{max_num_points}.setup",
         Cfg::D,
         envelope.max_n_a,
         envelope.max_n_b,
@@ -417,6 +436,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
 pub(crate) fn get_storage_path<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
+    max_num_points: usize,
 ) -> Option<PathBuf> {
     let cache_directory = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
         Some(PathBuf::from(local_app_data))
@@ -441,7 +461,11 @@ pub(crate) fn get_storage_path<Cfg: CommitmentConfig>(
 
     cache_directory.map(|mut path| {
         path.push("hachi");
-        path.push(cache_file_name::<Cfg>(max_num_vars, max_num_batched_polys));
+        path.push(cache_file_name::<Cfg>(
+            max_num_vars,
+            max_num_batched_polys,
+            max_num_points,
+        ));
         path
     })
 }
@@ -451,8 +475,11 @@ fn save_expanded_setup<F: FieldCore + CanonicalField, Cfg: CommitmentConfig<Fiel
     setup: &HachiExpandedSetup<F>,
     max_num_vars: usize,
     max_num_batched_polys: usize,
+    max_num_points: usize,
 ) {
-    let Some(storage_path) = get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys) else {
+    let Some(storage_path) =
+        get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
+    else {
         tracing::warn!("Could not determine storage directory; skipping setup save");
         return;
     };
@@ -500,9 +527,10 @@ pub(crate) fn load_expanded_setup<
 >(
     max_num_vars: usize,
     max_num_batched_polys: usize,
+    max_num_points: usize,
 ) -> Result<HachiExpandedSetup<F>, HachiError> {
-    let storage_path =
-        get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys).ok_or_else(|| {
+    let storage_path = get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
+        .ok_or_else(|| {
             HachiError::InvalidSetup("Failed to determine storage directory".to_string())
         })?;
 
@@ -523,7 +551,7 @@ pub(crate) fn load_expanded_setup<
         .map_err(|e| HachiError::InvalidSetup(format!("Failed to deserialize setup: {e}")))?;
 
     tracing::info!(
-        "Loaded setup for max_num_vars={max_num_vars}, max_num_batched_polys={max_num_batched_polys}"
+        "Loaded setup for max_num_vars={max_num_vars}, max_num_batched_polys={max_num_batched_polys}, max_num_points={max_num_points}"
     );
     Ok(setup)
 }
