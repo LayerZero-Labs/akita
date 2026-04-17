@@ -2284,6 +2284,13 @@ where
                 num_vars, setup.expanded.seed.max_num_vars
             )));
         }
+        if opening_points.len() > setup.expanded.seed.max_num_points {
+            return Err(HachiError::InvalidInput(format!(
+                "batched_prove received {} opening points but setup supports at most {}",
+                opening_points.len(),
+                setup.expanded.seed.max_num_points
+            )));
+        }
         let batch_shape =
             validate_nonempty_group_sizes_by_point(poly_groups_by_point, "batched_prove")?;
         if opening_points.len() != batch_shape.point_group_sizes.len()
@@ -2664,6 +2671,9 @@ where
                 "batched_verify received opening points with {} variables but setup supports at most {}",
                 num_vars, setup.expanded.seed.max_num_vars
             )));
+        }
+        if opening_points.len() > setup.expanded.seed.max_num_points {
+            return Err(HachiError::InvalidProof);
         }
         let y_coeff_len = proof.root.y_rings().coeff_len();
         if !y_coeff_len.is_multiple_of(D) {

@@ -28,6 +28,12 @@ pub struct HachiSetupSeed {
     pub max_num_vars: usize,
     /// Maximum number of batched polynomials supported by setup.
     pub max_num_batched_polys: usize,
+    /// Maximum number of distinct opening points supported per batched
+    /// opening. Together with `max_num_batched_polys` this bounds the
+    /// outer/D matrix widths the setup can serve; a multi-point batched
+    /// opening that exceeds this bound would otherwise silently read past
+    /// the shared matrix prefix and corrupt commitments.
+    pub max_num_points: usize,
     /// Global row stride for the flat NTT cache (max column width).
     pub max_stride: usize,
     /// Public seed used to derive commitment matrices.
@@ -94,6 +100,16 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
                 Cfg::D
             )));
         }
+        if max_num_batched_polys == 0 {
+            return Err(HachiError::InvalidSetup(
+                "max_num_batched_polys must be at least 1".to_string(),
+            ));
+        }
+        if max_num_points == 0 {
+            return Err(HachiError::InvalidSetup(
+                "max_num_points must be at least 1".to_string(),
+            ));
+        }
         let (max_rows, max_stride) =
             Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)?;
         let max_total = max_rows
@@ -144,6 +160,7 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
             seed: HachiSetupSeed {
                 max_num_vars,
                 max_num_batched_polys,
+                max_num_points,
                 max_stride,
                 public_matrix_seed,
             },
@@ -204,6 +221,11 @@ impl Valid for HachiSetupSeed {
                 "setup seed max_num_batched_polys must be at least 1".to_string(),
             ));
         }
+        if self.max_num_points == 0 {
+            return Err(SerializationError::InvalidData(
+                "setup seed max_num_points must be at least 1".to_string(),
+            ));
+        }
         Ok(())
     }
 }
@@ -218,6 +240,8 @@ impl HachiSerialize for HachiSetupSeed {
             .serialize_with_mode(&mut writer, compress)?;
         self.max_num_batched_polys
             .serialize_with_mode(&mut writer, compress)?;
+        self.max_num_points
+            .serialize_with_mode(&mut writer, compress)?;
         self.max_stride.serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.public_matrix_seed)?;
         Ok(())
@@ -226,6 +250,7 @@ impl HachiSerialize for HachiSetupSeed {
     fn serialized_size(&self, compress: Compress) -> usize {
         self.max_num_vars.serialized_size(compress)
             + self.max_num_batched_polys.serialized_size(compress)
+            + self.max_num_points.serialized_size(compress)
             + self.max_stride.serialized_size(compress)
             + 32
     }
@@ -242,12 +267,14 @@ impl HachiDeserialize for HachiSetupSeed {
         let max_num_vars = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let max_num_batched_polys =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let max_num_points = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let max_stride = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let mut public_matrix_seed = [0u8; 32];
         reader.read_exact(&mut public_matrix_seed)?;
         let out = Self {
             max_num_vars,
             max_num_batched_polys,
+            max_num_points,
             max_stride,
             public_matrix_seed,
         };
