@@ -100,7 +100,7 @@ fn make_dense_basis2_fixture(nv: usize, transcript_label: &'static [u8]) -> Dens
     #[cfg(feature = "disk-persistence")]
     purge_setup_cache(nv);
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
     let verifier_setup =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
     let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
@@ -156,7 +156,8 @@ where
     #[cfg(feature = "disk-persistence")]
     purge_setup_cache(nv);
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::setup_prover(nv, 1);
+    let setup =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::setup_prover(nv, 1, 1);
     let verifier_setup =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::setup_verifier(&setup);
     let (commitment, hint) =
@@ -288,6 +289,7 @@ fn full_d128_prove_verify() {
 
         let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
             FULL_TEST_NV,
+            1,
             1,
         );
         let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
@@ -454,7 +456,8 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let opening_point = random_point::<F>(nv);
         let opening = opening_from_poly(&poly, &opening_point, &layout);
 
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
+        let setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
@@ -739,7 +742,8 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(nv);
 
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
+        let setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
@@ -853,7 +857,8 @@ fn batched_onehot_same_point_round_trip() {
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(nv);
 
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 2);
+        let setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 2, 1);
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
@@ -941,7 +946,8 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(nv);
 
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 2);
+        let setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 2, 1);
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
@@ -1023,8 +1029,9 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(NV);
 
-        let setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, BATCH_SIZE);
+        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+            NV, BATCH_SIZE, 1,
+        );
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_groups = [&poly_refs[..]];
@@ -1090,7 +1097,8 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
 
         let nv = FULL_TEST_NV;
         let layout = Cfg::commitment_layout(nv).expect("layout");
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
+        let setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
         let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1))
             .expect("schedule plan")
             .expect("adaptive full config should expose a schedule plan");

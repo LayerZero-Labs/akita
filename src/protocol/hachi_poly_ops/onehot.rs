@@ -359,6 +359,15 @@ where
     }
 
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
+        assert_eq!(
+            block_len,
+            1usize << self.m_vars,
+            "OneHotPoly::fold_blocks requires block_len to match the poly's internal block \
+             size (2^m_vars); onehot polys bake the block split in at construction time. \
+             Rebuild the poly with the caller-expected (r_vars, m_vars) split, or use \
+             hachi_batched_root_layout(nv, max_num_batched_polys) if you plan to commit in \
+             a batched context."
+        );
         match &self.blocks {
             OneHotBlocks::Regular(blocks) => cfg_iter!(blocks)
                 .map(|entries| fold_regular_onehot_block(entries, scalars, block_len))
@@ -375,6 +384,15 @@ where
         fold_scalars: &[F],
         block_len: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        assert_eq!(
+            block_len,
+            1usize << self.m_vars,
+            "OneHotPoly::evaluate_and_fold requires block_len to match the poly's internal \
+             block size (2^m_vars); onehot polys bake the block split in at construction \
+             time. Rebuild the poly with the caller-expected (r_vars, m_vars) split, or use \
+             hachi_batched_root_layout(nv, max_num_batched_polys) if you plan to commit in \
+             a batched context."
+        );
         let folded: Vec<CyclotomicRing<F, D>> = match &self.blocks {
             OneHotBlocks::Regular(blocks) => cfg_iter!(blocks)
                 .map(|entries| fold_regular_onehot_block(entries, fold_scalars, block_len))
@@ -400,6 +418,13 @@ where
         num_digits: usize,
         _log_basis: u32,
     ) -> DecomposeFoldWitness<F, D> {
+        assert_eq!(
+            block_len,
+            1usize << self.m_vars,
+            "OneHotPoly::decompose_fold requires block_len to match the poly's internal \
+             block size (2^m_vars); rebuild the poly with the caller-expected (r_vars, \
+             m_vars) split if you are committing in a batched context."
+        );
         match &self.blocks {
             OneHotBlocks::Regular(blocks) => {
                 self.decompose_fold_regular_onehot(blocks, challenges, block_len, num_digits)
@@ -418,6 +443,23 @@ where
         num_digits: usize,
         _log_basis: u32,
     ) -> Option<DecomposeFoldWitness<F, D>> {
+        if let Some(first) = polys.first() {
+            assert_eq!(
+                block_len,
+                1usize << first.m_vars,
+                "OneHotPoly::decompose_fold_batched requires block_len to match every \
+                 poly's internal block size (2^m_vars); rebuild the polys with the \
+                 caller-expected (r_vars, m_vars) split if you are committing in a \
+                 batched context."
+            );
+            for poly in polys {
+                assert_eq!(
+                    poly.m_vars, first.m_vars,
+                    "OneHotPoly::decompose_fold_batched requires every poly in the batch \
+                     to share the same (r_vars, m_vars) split."
+                );
+            }
+        }
         match &polys.first()?.blocks {
             OneHotBlocks::Regular(_) => Self::decompose_fold_batched_regular_onehot(
                 polys, challenges, block_len, num_digits,
@@ -440,6 +482,16 @@ where
         log_basis: u32,
         matrix_stride: usize,
     ) -> Result<FlatDigitBlocks<D>, HachiError> {
+        if block_len != (1usize << self.m_vars) {
+            return Err(HachiError::InvalidInput(format!(
+                "OneHotPoly::commit_inner: block_len={block_len} does not match the poly's \
+                 internal block size 2^m_vars={}. Onehot polys bake the (r_vars, m_vars) \
+                 split in at construction time; if you commit in a batched context, build \
+                 the poly with the layout returned by hachi_batched_root_layout(nv, \
+                 max_num_batched_polys).",
+                1usize << self.m_vars
+            )));
+        }
         let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride);
         let num_blocks = self.num_blocks();
         let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
@@ -566,6 +618,24 @@ where
     {
         if polys.is_empty() {
             return Ok(Some(Vec::new()));
+        }
+
+        let expected_block_len = 1usize << polys[0].m_vars;
+        if block_len != expected_block_len {
+            return Err(HachiError::InvalidInput(format!(
+                "OneHotPoly::commit_inner_witness_batched: block_len={block_len} does not \
+                 match the poly's internal block size 2^m_vars={expected_block_len}. Onehot \
+                 polys bake the (r_vars, m_vars) split in at construction time; for batched \
+                 commits, build every poly with the layout returned by \
+                 hachi_batched_root_layout(nv, max_num_batched_polys)."
+            )));
+        }
+        if polys.iter().any(|poly| poly.m_vars != polys[0].m_vars) {
+            return Err(HachiError::InvalidInput(
+                "OneHotPoly::commit_inner_witness_batched: every poly in the batch must \
+                 share the same (r_vars, m_vars) split."
+                    .to_string(),
+            ));
         }
 
         let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride);

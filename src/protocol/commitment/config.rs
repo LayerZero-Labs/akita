@@ -2,7 +2,8 @@
 use super::profile::{CommitmentFieldProfile, CommitmentFieldProfileSchedule};
 use super::schedule::{
     exact_planned_level_execution, hachi_recursive_level_layout_from_params,
-    hachi_root_commitment_layout, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
+    hachi_root_commitment_layout, HachiRootBatchSummary, HachiScheduleInputs,
+    HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use super::utils::norm::detect_field_modulus;
 use crate::algebra::ring::CyclotomicRing;
@@ -244,7 +245,52 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn decomposition() -> DecompositionParams;
 
     /// Maximum matrix row counts needed by this config for the given setup size.
-    fn envelope(max_num_vars: usize) -> CommitmentEnvelope;
+    ///
+    /// The default implementation pins every rank to
+    /// [`sis_security::MAX_RANK`](crate::planner::sis_security::MAX_RANK),
+    /// which is the conservative upper bound across all SIS-secure ranks.
+    /// Concrete configs override this to report the actual ranks they use,
+    /// which lets the setup matrix sizing shrink accordingly.
+    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
+        let max_rank = crate::planner::sis_security::MAX_RANK as usize;
+        CommitmentEnvelope {
+            max_n_a: max_rank,
+            max_n_b: max_rank,
+            max_n_d: max_rank,
+        }
+    }
+
+    /// `(max_rows, max_stride)` bounds for the shared setup matrix.
+    ///
+    /// `max_num_points` is the largest number of distinct opening points the
+    /// setup must support in a single batched opening.
+    ///
+    /// The default is a loose but trivially correct upper bound: `MAX_RANK`
+    /// rows and `2^(max_num_vars - log2(D)) * 128 * MAX_RANK *
+    /// max_num_batched_polys * max_num_points` stride.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HachiError::InvalidSetup`] on arithmetic overflow.
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Result<(usize, usize), HachiError> {
+        let max_rows = crate::planner::sis_security::MAX_RANK as usize;
+        let alpha = Self::D.trailing_zeros() as usize;
+        let outer_vars = max_num_vars.saturating_sub(alpha);
+        let max_stride = 1usize
+            .checked_shl(outer_vars as u32)
+            .and_then(|x| x.checked_mul(128))
+            .and_then(|x| x.checked_mul(max_rows))
+            .and_then(|x| x.checked_mul(max_num_batched_polys))
+            .and_then(|x| x.checked_mul(max_num_points))
+            .ok_or_else(|| {
+                HachiError::InvalidSetup("max_setup_matrix_size overflow".to_string())
+            })?;
+        Ok((max_rows, max_stride))
+    }
 
     /// Stable identifier for setup-cache versioning and fixture selection.
     fn family_key() -> &'static str {
@@ -441,6 +487,33 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig;
 }
 
+/// Fold an iterator of fold-level [`LevelParams`] into `(max_rows, max_stride)`
+/// for the shared setup matrix.
+///
+/// `max_rows` is `max(a_key.row_len, b_key.row_len, d_key.row_len)` across
+/// every level. `max_stride` is `max(inner_width, outer_width, d_matrix_width)`
+/// across every level. Both are clamped to `1` to keep direct-only schedules
+/// (which yield an empty fold-level iterator) from allocating a zero-sized
+/// backing matrix.
+fn reduce_level_params_to_matrix_size<'a, I>(level_params: I) -> (usize, usize)
+where
+    I: IntoIterator<Item = &'a LevelParams>,
+{
+    let mut max_rows: usize = 1;
+    let mut max_stride: usize = 1;
+    for lp in level_params {
+        max_rows = max_rows
+            .max(lp.a_key.row_len())
+            .max(lp.b_key.row_len())
+            .max(lp.d_key.row_len());
+        max_stride = max_stride
+            .max(lp.inner_width())
+            .max(lp.outer_width())
+            .max(lp.d_matrix_width());
+    }
+    (max_rows, max_stride)
+}
+
 /// Concrete commitment preset obtained by pairing a field with a scheduling policy.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CommitmentPreset<F, Policy> {
@@ -477,27 +550,6 @@ pub fn beta_linf_fold_bound(
         .ok_or_else(|| HachiError::InvalidSetup("beta bound overflow".to_string()))?;
     term.checked_mul(half_b)
         .ok_or_else(|| HachiError::InvalidSetup("beta bound overflow".to_string()))
-}
-
-/// Validate static config invariants and derive runtime dimensions.
-///
-/// # Errors
-///
-/// Returns an error when config constants are inconsistent or overflow.
-pub(super) fn validate_and_derive_layout<
-    F: CanonicalField,
-    Cfg: CommitmentConfig<Field = F>,
-    const D: usize,
->(
-    max_num_vars: usize,
-) -> Result<LevelParams, HachiError> {
-    if D != Cfg::D {
-        return Err(HachiError::InvalidSetup(format!(
-            "const D={D} mismatches config D={}",
-            Cfg::D
-        )));
-    }
-    Cfg::commitment_layout(max_num_vars)
 }
 
 /// Ensure `max_num_vars` is sufficient for a commitment layout.
@@ -547,83 +599,6 @@ pub(super) fn ensure_block_layout<F: FieldCore, const D: usize>(
         }
     }
     Ok(())
-}
-
-/// Ensure matrix has at least the expected dimensions.
-///
-/// Matrix envelopes may have more rows and columns than the active level uses.
-/// Small correctness-first config for tests and local benchmarks.
-///
-/// Fixed layout (m_vars=4, r_vars=2) for fast test iteration.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct SmallTestCommitmentConfig;
-
-impl CommitmentConfig for SmallTestCommitmentConfig {
-    type Field = crate::test_utils::F;
-    const D: usize = 32;
-
-    fn decomposition() -> DecompositionParams {
-        DecompositionParams {
-            log_basis: 3,
-            log_commit_bound: 32,
-            log_open_bound: None,
-        }
-    }
-
-    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
-        CommitmentEnvelope {
-            max_n_a: 8,
-            max_n_b: 4,
-            max_n_d: 4,
-        }
-    }
-
-    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
-        assert_eq!(d, Self::D, "unsupported ring dim {d}");
-        SparseChallengeConfig::Uniform {
-            weight: 3,
-            nonzero_coeffs: vec![-1, 1],
-        }
-    }
-
-    fn commitment_layout(_max_num_vars: usize) -> Result<LevelParams, HachiError> {
-        let decomp = Self::decomposition();
-        let params = Self::level_params(HachiScheduleInputs {
-            max_num_vars: 12,
-            level: 0,
-            current_w_len: 1 << 12,
-        });
-        let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
-        let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
-        let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
-        let depth_fold = compute_num_digits_fold(2, params.challenge_l1_mass(), decomp.log_basis);
-        params.with_decomp(4, 2, depth_commit, depth_open, depth_fold, 0)
-    }
-
-    fn schedule_plan(
-        key: HachiScheduleLookupKey,
-    ) -> Result<Option<super::schedule::HachiSchedulePlan>, HachiError> {
-        if key != HachiScheduleLookupKey::singleton(key.max_num_vars, key.max_num_vars, 1) {
-            return Ok(None);
-        }
-        if key.max_num_vars >= usize::BITS as usize {
-            return Ok(None);
-        }
-        let decomp = Self::decomposition();
-        let params = Self::level_params(HachiScheduleInputs {
-            max_num_vars: 12,
-            level: 0,
-            current_w_len: 1 << 12,
-        });
-        let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
-        let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
-        let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
-        let depth_fold = compute_num_digits_fold(2, params.challenge_l1_mass(), decomp.log_basis);
-        let root_lp = params.with_decomp(4, 2, depth_commit, depth_open, depth_fold, 0)?;
-        Ok(Some(super::schedule::build_schedule_plan_from_config::<
-            Self,
-        >(key.max_num_vars, &root_lp)?))
-    }
 }
 
 /// Static bounded policy with explicit root and recursive log bases.
@@ -900,6 +875,86 @@ impl<
 
     fn decomposition() -> DecompositionParams {
         Profile::decomposition(LOG_COMMIT_BOUND, 3)
+    }
+
+    /// Size the shared setup matrix from the planned schedule: seed with
+    /// commit's scaled root layout, then walk the cached plan (or the DP
+    /// planner on cache miss) and take the max row count and stride.
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Result<(usize, usize), HachiError> {
+        if max_num_batched_polys == 0 {
+            return Err(HachiError::InvalidSetup(
+                "max_num_batched_polys must be at least 1".to_string(),
+            ));
+        }
+        if max_num_points == 0 {
+            return Err(HachiError::InvalidSetup(
+                "max_num_points must be at least 1".to_string(),
+            ));
+        }
+        if max_num_points > max_num_batched_polys {
+            return Err(HachiError::InvalidSetup(format!(
+                "max_num_points ({max_num_points}) cannot exceed max_num_batched_polys ({max_num_batched_polys})"
+            )));
+        }
+
+        let batch_summary = HachiRootBatchSummary::new(
+            max_num_batched_polys,
+            max_num_batched_polys,
+            max_num_points,
+        )?;
+        let cached_key = HachiScheduleLookupKey::with_batch(
+            max_num_vars,
+            max_num_vars,
+            max_num_batched_polys,
+            batch_summary,
+        );
+
+        let fallback = super::commit::fallback_batched_root_split::<Self, D>(
+            max_num_vars,
+            max_num_batched_polys,
+        )?;
+
+        let fold_levels: Vec<LevelParams> = if let Some(plan) = Self::schedule_plan(cached_key)? {
+            tracing::debug!(
+                max_num_vars,
+                max_num_batched_polys,
+                max_num_points,
+                "adaptive setup sizing: using cached schedule plan"
+            );
+            plan.fold_levels().map(|level| level.lp.clone()).collect()
+        } else {
+            tracing::info!(
+                max_num_vars,
+                max_num_batched_polys,
+                max_num_points,
+                "adaptive setup sizing: cache miss, running find_optimal_batched_schedule"
+            );
+            use crate::planner::schedule_params::{
+                find_optimal_batched_schedule, BatchConfig, Step,
+            };
+            let batch = BatchConfig {
+                num_claims: max_num_batched_polys,
+                num_commitment_groups: max_num_batched_polys,
+                num_points: max_num_points,
+            };
+            let schedule = find_optimal_batched_schedule::<Self, D>(max_num_vars, batch)?;
+            schedule
+                .steps
+                .iter()
+                .filter_map(|step| match step {
+                    Step::Fold(fold) => Some(fold.params.clone()),
+                    Step::Direct(_) => None,
+                })
+                .collect()
+        };
+
+        Ok(reduce_level_params_to_matrix_size(
+            std::iter::once(&fallback.params).chain(fold_levels.iter()),
+        ))
     }
 
     fn envelope(max_num_vars: usize) -> CommitmentEnvelope {

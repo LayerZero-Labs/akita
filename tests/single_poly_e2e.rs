@@ -39,7 +39,7 @@ fn run_single_onehot(nv: usize) {
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
         let setup =
-            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::setup_prover(nv, 1);
+            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::setup_prover(nv, 1, 1);
         let verifier_setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
             F,
             ONEHOT_D,
@@ -116,7 +116,7 @@ fn run_single_dense(nv: usize) {
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
         let setup =
-            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::setup_prover(nv, 1);
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::setup_prover(nv, 1, 1);
         let verifier_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
             F,
             DENSE_D,
@@ -218,3 +218,94 @@ fn single_dense_nv20() {
 // fn single_dense_nv25() {
 //     run_single_dense(25);
 // }
+
+// ---------------------------------------------------------------------------
+// Oversized setup: setup with max_num_vars > actual polynomial num_vars
+// ---------------------------------------------------------------------------
+
+fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
+    assert!(setup_nv >= poly_nv);
+    init_rayon_pool();
+    run_on_large_stack(move || {
+        let layout = OneHotCfg::commitment_layout(poly_nv).expect("layout");
+        let total_ring = layout.num_blocks * layout.block_len;
+        assert_eq!(total_ring * ONEHOT_K, 1usize << poly_nv);
+
+        let mut rng = StdRng::seed_from_u64(0xdead_beef_0000 + poly_nv as u64);
+        let indices: Vec<Option<u8>> = (0..total_ring)
+            .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
+            .collect();
+        let poly =
+            OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices, layout.r_vars, layout.m_vars)
+                .expect("onehot poly");
+
+        let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
+        let expected_opening = opening_from_poly(&poly, &pt, &layout);
+
+        let setup =
+            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::setup_prover(setup_nv, 1, 1);
+        let verifier_setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+            F,
+            ONEHOT_D,
+        >>::setup_verifier(&setup);
+        let commit_input = std::slice::from_ref(&poly);
+        let (commitment, hint) = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+            F,
+            ONEHOT_D,
+        >>::commit(commit_input, &setup)
+        .expect("commit with oversized setup");
+
+        let mut prover_transcript =
+            Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot_oversized");
+        let proof =
+            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::prove(
+                &setup,
+                &poly,
+                &pt,
+                hint,
+                &mut prover_transcript,
+                &commitment,
+                BasisMode::Lagrange,
+            )
+            .expect("prove with oversized setup");
+
+        let mut serialized = Vec::new();
+        let proof_shape = proof.shape();
+        proof
+            .serialize_compressed(&mut serialized)
+            .expect("serialize");
+        let decoded = HachiProof::<F>::deserialize_compressed(
+            &mut std::io::Cursor::new(serialized),
+            &proof_shape,
+        )
+        .expect("deserialize");
+
+        let mut verifier_transcript =
+            Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot_oversized");
+        let result =
+            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::verify(
+                &decoded,
+                &verifier_setup,
+                &mut verifier_transcript,
+                &pt,
+                &expected_opening,
+                &commitment,
+                BasisMode::Lagrange,
+            );
+        assert!(
+            result.is_ok(),
+            "onehot oversized setup (setup_nv={setup_nv}, poly_nv={poly_nv}) verification failed: {:?}",
+            result.err()
+        );
+    });
+}
+
+#[test]
+fn single_onehot_oversized_setup_15_10() {
+    run_single_onehot_oversized_setup(15, 10);
+}
+
+#[test]
+fn single_onehot_oversized_setup_20_15() {
+    run_single_onehot_oversized_setup(20, 15);
+}

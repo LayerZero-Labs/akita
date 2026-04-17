@@ -1,12 +1,12 @@
 #![allow(missing_docs)]
 
 use hachi_pcs::primitives::serialization::Compress;
-use hachi_pcs::protocol::commitment::HachiProverSetup;
 use hachi_pcs::protocol::commitment::{
     hachi_batched_root_layout, hachi_root_runtime_plan_with_batch, presets::fp128,
     recursive_suffix_estimate_with_log_basis, CommitmentConfig, HachiRootBatchSummary,
     HachiScheduleLookupKey, HachiSchedulePlan,
 };
+use hachi_pcs::protocol::setup::HachiProverSetup;
 use hachi_pcs::protocol::commitment_scheme::{HachiCommitmentScheme, SetupDelegationMode};
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
@@ -555,7 +555,7 @@ fn run_dense<const D: usize, Cfg: SharedMatrixOpeningConfig<Field = F>>(
 
     let t0 = Instant::now();
     let setup: HachiProverSetup<F, D> =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
     let setup = setup
         .with_mode(protocol_mode_from_env())
         .with_delegation(setup_delegation_mode_from_env());
@@ -602,7 +602,7 @@ fn run_onehot<const D: usize, Cfg: SharedMatrixOpeningConfig<Field = F>>(
 
     let t0 = Instant::now();
     let setup: HachiProverSetup<F, D> =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
     let setup = setup
         .with_mode(protocol_mode_from_env())
         .with_delegation(setup_delegation_mode_from_env());
@@ -658,7 +658,7 @@ fn run_batched_onehot<const D: usize, Cfg: SharedMatrixOpeningConfig<Field = F>>
 
     let t0 = Instant::now();
     let setup: HachiProverSetup<F, D> =
-        <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, num_polys);
+        <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, num_polys, 1);
     let setup = setup.with_mode(protocol_mode_from_env());
     tracing::info!(
         label = "onehot",

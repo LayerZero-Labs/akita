@@ -65,12 +65,13 @@ fn bench_dense_phases<const D: usize, Cfg: SharedMatrixOpeningConfig<Field = F>>
                 <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
                     black_box(nv),
                     black_box(1),
+                    black_box(1),
                 ),
             )
         })
     });
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
 
     group.bench_function("commit", |b| {
         b.iter(|| {
@@ -207,7 +208,7 @@ fn bench_onehot_phases<const D: usize, Cfg: SharedMatrixOpeningConfig<Field = F>
     let pt = random_point(nv);
     let opening = multilinear_eval(&dense_evals, &pt).unwrap();
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
 
     let mut group = c.benchmark_group(format!("hachi/{label}/nv{nv}"));
     configure_group(&mut group, nv);

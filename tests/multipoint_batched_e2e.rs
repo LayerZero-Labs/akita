@@ -111,6 +111,7 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
             <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::setup_prover(
                 NV,
                 total_claims,
+                point_group_sizes.len(),
             );
         let verifier_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
             F,
@@ -236,6 +237,7 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
             <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::setup_prover(
                 NV,
                 total_claims,
+                point_group_sizes.len(),
             );
         let verifier_setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
             F,
@@ -363,6 +365,7 @@ fn multipoint_dense_verify_rejects_swapped_points() {
             <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::setup_prover(
                 NV,
                 total_claims,
+                point_group_sizes.len(),
             );
         let verifier_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
             F,
@@ -461,6 +464,7 @@ fn multipoint_onehot_verify_rejects_wrong_group_nesting() {
             <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::setup_prover(
                 NV,
                 total_claims,
+                point_group_sizes.len(),
             );
         let verifier_setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
             F,
@@ -556,11 +560,11 @@ fn multipoint_batched_prove_rejects_capacity_overflow() {
         let commit_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
             F,
             DENSE_D,
-        >>::setup_prover(NV, total_claims);
+        >>::setup_prover(NV, total_claims, point_group_sizes.len());
         let prove_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
             F,
             DENSE_D,
-        >>::setup_prover(NV, total_claims - 1);
+        >>::setup_prover(NV, total_claims - 1, point_group_sizes.len());
         let (commitments_by_point, hints_by_point) =
             commit_groups_by_point::<DENSE_D, DenseCfg, _>(&poly_groups_by_point, &commit_setup)
                 .expect("per-group commit should fit with matching setup");

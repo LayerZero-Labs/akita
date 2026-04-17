@@ -13,13 +13,15 @@ use crate::protocol::commitment::utils::crt_ntt::build_ntt_slot;
 use crate::protocol::commitment::utils::matrix::derive_public_matrix_flat;
 use crate::protocol::commitment::{
     profile::CommitmentFieldProfileSchedule, CommitmentConfig, CommitmentFieldProfile,
-    CommitmentPreset, CommitmentScheme, GeneratedAdaptivePolicy, HachiExpandedSetup,
-    HachiProverSetup, HachiSetupSeed, HachiVerifierSetup, RingCommitment,
-    SmallTestCommitmentConfig, StaticBoundedPolicy,
+    CommitmentPreset, CommitmentScheme, GeneratedAdaptivePolicy, RingCommitment,
+    StaticBoundedPolicy,
 };
 use crate::protocol::commitment_scheme::HachiCommitmentScheme;
 use crate::protocol::hachi_poly_ops::DensePoly;
 use crate::protocol::proof::{FlatRingVec, HachiBatchedCommitmentHint};
+use crate::protocol::setup::{
+    HachiExpandedSetup, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup,
+};
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use std::sync::Arc;
 
@@ -51,7 +53,7 @@ impl SharedMatrixTensorLayout {
     ) -> Self {
         let envelope = Cfg::envelope(expanded.seed.max_num_vars);
         let max_rows = envelope.max_n_a.max(envelope.max_n_b).max(envelope.max_n_d);
-        let stride = expanded.seed.max_stride();
+        let stride = expanded.seed.max_stride;
         let padded_rows = max_rows.next_power_of_two();
         let padded_stride = stride.next_power_of_two();
         let row_vars = padded_rows.trailing_zeros() as usize;
@@ -146,36 +148,6 @@ pub(crate) struct SharedMatrixSetup<F: FieldCore, const D: usize> {
 pub trait SharedMatrixOpeningConfig: CommitmentConfig {
     /// Inner PCS config used for the recursive shared-matrix opening.
     type InnerCfg: SharedMatrixOpeningConfig<Field = Self::Field>;
-}
-
-/// Test-only config that enables the setup-delegation path on top of
-/// [`SmallTestCommitmentConfig`]. Used by the setup-delegation unit tests.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct SmallTestSharedMatrixCommitmentConfig;
-
-impl CommitmentConfig for SmallTestSharedMatrixCommitmentConfig {
-    type Field = crate::test_utils::F;
-    const D: usize = SmallTestCommitmentConfig::D;
-
-    fn decomposition() -> crate::protocol::commitment::DecompositionParams {
-        SmallTestCommitmentConfig::decomposition()
-    }
-
-    fn envelope(max_num_vars: usize) -> crate::protocol::commitment::CommitmentEnvelope {
-        SmallTestCommitmentConfig::envelope(max_num_vars)
-    }
-
-    fn stage1_challenge_config(d: usize) -> crate::algebra::SparseChallengeConfig {
-        SmallTestCommitmentConfig::stage1_challenge_config(d)
-    }
-}
-
-impl SharedMatrixOpeningConfig for SmallTestSharedMatrixCommitmentConfig {
-    type InnerCfg = Self;
-}
-
-impl SharedMatrixOpeningConfig for SmallTestCommitmentConfig {
-    type InnerCfg = SmallTestSharedMatrixCommitmentConfig;
 }
 
 impl<
@@ -317,15 +289,17 @@ where
     let sampled_setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
         shared_matrix_num_vars,
         1,
+        1,
     );
     let mut inner_seed = sampled_setup.expanded.seed.clone();
     inner_seed.public_matrix_seed = main_seed.public_matrix_seed;
-    let shared_matrix = derive_public_matrix_flat::<F, D>(
-        inner_seed.max_total_ring_elements,
-        &inner_seed.public_matrix_seed,
-    );
-    let ntt_shared =
-        build_ntt_slot(shared_matrix.ring_view::<D>(1, inner_seed.max_total_ring_elements))?;
+    let total_ring_elements = sampled_setup
+        .expanded
+        .shared_matrix
+        .total_ring_elements_at::<D>();
+    let shared_matrix =
+        derive_public_matrix_flat::<F, D>(total_ring_elements, &inner_seed.public_matrix_seed);
+    let ntt_shared = build_ntt_slot(shared_matrix.ring_view::<D>(1, total_ring_elements))?;
     let expanded = Arc::new(HachiExpandedSetup {
         seed: inner_seed,
         shared_matrix,
@@ -379,7 +353,7 @@ mod tests {
     fn shared_matrix_setup_creates_valid_commitment() {
         const NV: usize = 12;
         let main_setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1);
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1, 1);
 
         let sm_setup = SharedMatrixSetup::<F, D>::from_main_prover_setup::<Cfg>(&main_setup)
             .expect("SharedMatrixSetup creation");
@@ -403,7 +377,7 @@ mod tests {
     fn shared_matrix_tensor_layout_is_power_of_two_tensor() {
         const NV: usize = 12;
         let main_setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1);
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1, 1);
         let tensor_layout =
             SharedMatrixTensorLayout::from_expanded::<F, Cfg, D>(&main_setup.expanded);
         assert_eq!(tensor_layout.field_len(), 1usize << tensor_layout.num_vars);

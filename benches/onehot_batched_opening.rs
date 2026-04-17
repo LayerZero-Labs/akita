@@ -91,8 +91,11 @@ fn bench_single_case(c: &mut Criterion) {
     let point = random_point(SINGLE_NUM_VARS);
     let opening = opening_from_poly(&poly, &point, &layout);
 
-    let setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(SINGLE_NUM_VARS, 1);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+        SINGLE_NUM_VARS,
+        1,
+        1,
+    );
     let verifier_setup =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
     let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
@@ -180,6 +183,7 @@ fn bench_batched_case(c: &mut Criterion) {
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
         BATCH_NUM_VARS,
         BATCH_SIZE,
+        1,
     );
     let verifier_setup =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);

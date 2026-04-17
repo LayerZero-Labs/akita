@@ -63,10 +63,10 @@ use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::protocol::commitment::HachiExpandedSetup;
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{DirectWitnessProof, PackedDigits};
 use crate::protocol::ring_switch::{eval_ring_at, PreparedMEval};
+use crate::protocol::setup::HachiExpandedSetup;
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
 use std::marker::PhantomData;
 use std::mem;

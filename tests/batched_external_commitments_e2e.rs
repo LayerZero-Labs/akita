@@ -55,7 +55,7 @@ fn batched_onehot_round_trip_with_individual_commitments() {
             .collect();
 
         let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
-            TEST_NV, BATCH_SIZE,
+            TEST_NV, BATCH_SIZE, 1,
         );
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
@@ -151,7 +151,7 @@ fn batched_onehot_round_trip_with_mixed_commitment_groups() {
             .collect();
 
         let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
-            TEST_NV, BATCH_SIZE,
+            TEST_NV, BATCH_SIZE, 1,
         );
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);

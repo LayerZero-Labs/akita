@@ -4,7 +4,7 @@ use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::poly::multilinear_eval;
 use crate::error::HachiError;
 use crate::primitives::serialization::Valid;
-use crate::protocol::commitment::{HachiVerifierSetup, RingCommitment};
+use crate::protocol::commitment::RingCommitment;
 use crate::protocol::commitment_scheme::{
     prove_without_setup_delegation, verify_without_setup_delegation, SetupCarry,
 };
@@ -15,6 +15,7 @@ use crate::protocol::ring_switch::{
     eval_matrix_weight_at_point, gadget_row_scalars, single_proof_matrix_weight_entry,
     single_proof_matrix_weight_geometry,
 };
+use crate::protocol::setup::HachiVerifierSetup;
 use crate::protocol::shared_matrix_setup::{
     SharedMatrixOpeningConfig, SharedMatrixSetup, SharedMatrixTensorLayout,
 };
@@ -349,7 +350,8 @@ mod tests {
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1);
+        let setup =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
         let (commitment, _batched_hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<
             F,
             D,
@@ -389,7 +391,7 @@ mod tests {
             &mut transcript,
             &commitment,
             &y_ring,
-            setup.expanded.seed.max_stride(),
+            setup.expanded.seed.max_stride,
         )
         .expect("quadratic equation");
 
