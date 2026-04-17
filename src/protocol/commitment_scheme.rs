@@ -85,7 +85,6 @@ const MIN_SHRINK_RATIO: f64 = 0.5;
 /// Maximum number of outermost recursion levels at which setup delegation is
 /// applied. Beyond this depth the setup claim is paid directly (cheaper than
 /// the delegation overhead).
-#[allow(dead_code)]
 pub(crate) const MAX_SETUP_DELEGATION_LEVELS: usize = 2;
 
 /// Whether the setup-claim delegation path should run on a given proof.
@@ -111,7 +110,13 @@ impl Default for SetupDelegationMode {
     }
 }
 
-#[allow(dead_code)]
+/// Whether the prover/verifier should run the delegation path at level `level`.
+///
+/// The delegation runtime additionally requires `level_d == D` (the recursive
+/// level's ring dimension matches the outer one) so that the per-level
+/// shared-matrix setup matches the verifier-side cache built at outer-D. The
+/// per-level guard is enforced separately by the dispatchers; this helper only
+/// covers the depth/mode check.
 #[inline]
 pub(crate) fn should_delegate_setup_at_level(mode: SetupDelegationMode, level: usize) -> bool {
     matches!(mode, SetupDelegationMode::Enabled) && level < MAX_SETUP_DELEGATION_LEVELS
@@ -153,9 +158,9 @@ struct ProveLevelOutput<F: FieldCore> {
     next_state: RecursiveProverState<F>,
     /// Optional setup-delegation proof produced at this level. Populated when
     /// [`HachiProverSetup::delegation`] is [`SetupDelegationMode::Enabled`],
-    /// the prover is running in [`HachiProtocolMode::Fused`], and the level
-    /// index is below [`MAX_SETUP_DELEGATION_LEVELS`].
-    #[allow(dead_code)]
+    /// the level index is below [`MAX_SETUP_DELEGATION_LEVELS`], and the
+    /// recursive level's ring dimension matches the outer one (so the
+    /// per-level shared-matrix setup lines up with the verifier-side cache).
     setup_delegation: Option<crate::protocol::proof::SetupDelegationProof<F>>,
 }
 
@@ -529,11 +534,18 @@ fn prove_one_level<F, T, const D: usize, Cfg, P>(
     planning_envelope: HachiBatchPlanningEnvelope,
     next_level_params_override: Option<LevelParams>,
     mode: HachiProtocolMode,
+    delegation_ctx: Option<&crate::protocol::shared_matrix_setup::SharedMatrixSetup<F, D>>,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = F>,
     P: HachiPolyOps<F, D>,
 {
     {
@@ -613,6 +625,7 @@ where
         quad_eq,
         y_ring,
         mode,
+        delegation_ctx,
     )
 }
 
@@ -633,12 +646,19 @@ fn finish_prove_level<F, T, const D: usize, LevelCfg, ScheduleCfg>(
     mut quad_eq: Box<QuadraticEquation<F, { D }, LevelCfg>>,
     y_ring: CyclotomicRing<F, D>,
     mode: HachiProtocolMode,
+    delegation_ctx: Option<&crate::protocol::shared_matrix_setup::SharedMatrixSetup<F, D>>,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
     LevelCfg: CommitmentConfig<Field = F>,
-    ScheduleCfg: CommitmentConfig<Field = F>,
+    ScheduleCfg: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = F>,
 {
     let w = ring_switch_build_w::<F, { D }, LevelCfg>(&mut quad_eq, expanded, ntt_shared, lp)?;
     let next_inputs = HachiScheduleInputs {
@@ -692,11 +712,39 @@ where
         col_bits,
         ring_bits,
         tau0,
-        tau1: _,
+        tau1,
         b,
-        alpha: _,
+        alpha,
     } = rs;
     let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
+
+    let use_setup_delegation = delegation_ctx.is_some()
+        && should_delegate_setup_at_level(SetupDelegationMode::Enabled, level);
+    let setup_delegation_intermediates =
+        if use_setup_delegation {
+            let claim_group_sizes = [1usize];
+            Some(crate::protocol::setup_delegation::DelegationIntermediates {
+                m_evals_x: m_evals_x.clone(),
+                alg_m_evals_x:
+                    crate::protocol::ring_switch::compute_alg_m_evals_x_with_claim_groups::<F, D>(
+                        quad_eq.opening_point(),
+                        &quad_eq.challenges,
+                        alpha,
+                        &alpha_evals_y,
+                        lp,
+                        &tau1,
+                        &claim_group_sizes,
+                    )?,
+                eq_tau1: EqPolynomial::evals(&tau1),
+                alpha_evals_y: alpha_evals_y.clone(),
+                level_params: lp.clone(),
+                col_bits,
+                ring_bits,
+            })
+        } else {
+            None
+        };
+
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
     let (stage1_proof, stage2_sumcheck, sumcheck_challenges, w_eval) = match mode {
         HachiProtocolMode::Split => {
@@ -784,10 +832,24 @@ where
         ),
         sumcheck_challenges,
     );
+    let setup_delegation = if let (Some(intermediates), Some(sm_setup)) =
+        (setup_delegation_intermediates, delegation_ctx)
+    {
+        Some(
+            crate::protocol::setup_delegation::generate_setup_delegation_proof::<
+                F,
+                T,
+                D,
+                ScheduleCfg,
+            >(&intermediates, &sumcheck_challenges, sm_setup, transcript)?,
+        )
+    } else {
+        None
+    };
 
     Ok(ProveLevelOutput {
         level_proof,
-        setup_delegation: None,
+        setup_delegation,
         next_state: RecursiveProverState {
             w,
             commitment: w_commitment,
@@ -1242,11 +1304,18 @@ fn prove_one_recursive_level<F, T, const D: usize, Cfg>(
     planning_envelope: HachiBatchPlanningEnvelope,
     next_level_params_override: Option<LevelParams>,
     mode: HachiProtocolMode,
+    delegation_ctx: Option<&crate::protocol::shared_matrix_setup::SharedMatrixSetup<F, D>>,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = F>,
 {
     {
         let x: u8 = 0;
@@ -1333,6 +1402,7 @@ where
         quad_eq,
         y_ring,
         mode,
+        delegation_ctx,
     )
 }
 
@@ -1468,11 +1538,18 @@ fn dispatch_prove_level<F, T, const D: usize, Cfg>(
     level_params: &LevelParams,
     next_level_params_override: Option<LevelParams>,
     mode: HachiProtocolMode,
+    delegation_ctx: Option<&crate::protocol::shared_matrix_setup::SharedMatrixSetup<F, D>>,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = F>,
 {
     if level_d == D {
         prove_subsequent_level::<F, T, D, Cfg>(
@@ -1486,8 +1563,11 @@ where
             level_params,
             next_level_params_override,
             mode,
+            delegation_ctx,
         )
     } else {
+        // Recursive levels with `D_LEVEL != D` cannot reuse the outer-D
+        // shared-matrix setup; the verifier-side cache is built at outer D.
         dispatch_with_ntt!(level_d, ntt_cache, expanded, |D_LEVEL, ntt_shared| {
             prove_subsequent_level::<F, T, { D_LEVEL }, Cfg>(
                 expanded,
@@ -1500,6 +1580,7 @@ where
                 level_params,
                 next_level_params_override,
                 mode,
+                None,
             )
         })
     }
@@ -1556,11 +1637,18 @@ fn prove_subsequent_level<F, T, const D_LEVEL: usize, Cfg>(
     level_params: &LevelParams,
     next_level_params_override: Option<LevelParams>,
     mode: HachiProtocolMode,
+    delegation_ctx: Option<&crate::protocol::shared_matrix_setup::SharedMatrixSetup<F, D_LEVEL>>,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = F>,
 {
     let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
 
@@ -1611,6 +1699,7 @@ where
         current_state.planning_envelope,
         next_level_params_override,
         mode,
+        delegation_ctx,
     )
 }
 
@@ -1624,9 +1713,15 @@ fn prove_batched_recursive_suffix<F, T, const D: usize, Cfg>(
     initial_prev_w_len: usize,
 ) -> Result<RecursiveSuffixResult<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = F>,
 {
     let mut levels = Vec::new();
     let mut current_state = next_state;
@@ -1671,6 +1766,7 @@ where
             &level_params,
             None,
             setup.mode,
+            None,
         )?;
 
         levels.push(out.level_proof);
@@ -1825,9 +1921,15 @@ fn prove_same_point_batched<F, T, const D: usize, Cfg, P>(
     basis: BasisMode,
 ) -> Result<HachiBatchedProof<F>, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = F>,
     P: HachiPolyOps<F, D>,
 {
     let claim_group_sizes = validate_nonempty_group_sizes(poly_groups, "batched_prove")?;
@@ -2140,10 +2242,16 @@ where
         setup
     }
 
+    #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::setup_verifier")]
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
+        let cache =
+            crate::protocol::shared_matrix_setup::build_shared_matrix_verifier_cache::<F, D, Cfg>(
+                setup,
+            )
+            .ok();
         HachiVerifierSetup {
             expanded: setup.expanded.clone(),
-            shared_matrix_cache: None,
+            shared_matrix_cache: cache,
         }
     }
 
@@ -2310,6 +2418,21 @@ where
                 }
             },
         );
+        // Build the shared-matrix delegation context once at outer D, when
+        // delegation is enabled. Recursive levels with `level_d != D` are
+        // forwarded `None` so the outer-D cache stays consistent with the
+        // verifier-side `SharedMatrixVerifierCache`.
+        let delegation_setup = if matches!(setup.delegation, SetupDelegationMode::Enabled) {
+            Some(crate::protocol::shared_matrix_setup::SharedMatrixSetup::<
+                F,
+                D,
+            >::from_main_prover_setup::<Cfg>(setup)?)
+        } else {
+            None
+        };
+        let mut setup_delegations: Vec<(usize, crate::protocol::proof::SetupDelegationProof<F>)> =
+            Vec::new();
+
         let out = prove_one_level::<F, T, D, Cfg, P>(
             &setup.expanded,
             &setup.ntt_shared,
@@ -2327,7 +2450,11 @@ where
             root_plan.planning_envelope,
             root_next_params_override,
             setup.mode,
+            delegation_setup.as_ref(),
         )?;
+        if let Some(proof) = out.setup_delegation {
+            setup_delegations.push((0, proof));
+        }
         levels.push(out.level_proof);
 
         let mut prev_poly_len = root_plan.inputs.current_w_len;
@@ -2392,8 +2519,12 @@ where
                 &level_params,
                 next_level_params_override,
                 setup.mode,
+                delegation_setup.as_ref(),
             )?;
 
+            if let Some(proof) = out.setup_delegation {
+                setup_delegations.push((level, proof));
+            }
             levels.push(out.level_proof);
 
             prev_poly_len = current_state.w.len();
@@ -2452,7 +2583,7 @@ where
 
         Ok(HachiProof {
             steps,
-            setup_delegations: Vec::new(),
+            setup_delegations,
         })
     }
 

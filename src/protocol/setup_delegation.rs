@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::algebra::eq_poly::EqPolynomial;
 use crate::algebra::fields::wide::HasWide;
 use crate::algebra::fields::HasUnreducedOps;

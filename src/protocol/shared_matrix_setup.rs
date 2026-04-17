@@ -5,8 +5,6 @@
 //! layout and packages the deterministic commitment/opening data needed for the
 //! delegated setup-claim proof.
 
-#![allow(dead_code)]
-
 use crate::algebra::fields::wide::HasWide;
 use crate::algebra::fields::HasUnreducedOps;
 use crate::error::HachiError;
