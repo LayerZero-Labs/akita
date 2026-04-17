@@ -39,6 +39,9 @@ pub const CHALLENGE_FUSED_RELATION_BATCH: &[u8] = b"hachi/challenge/fused-relati
 pub const ABSORB_FUSED_W_EVAL: &[u8] = b"hachi/absorb/fused-w-eval";
 /// Absorb `claimed_setup_val` after fused Stage 1.
 pub const ABSORB_FUSED_SETUP_VAL: &[u8] = b"hachi/absorb/fused-setup-val";
+/// Absorb `shared_matrix_eval` after the batched fused Stage 2 (setup-claim
+/// instance at `r_setup`).
+pub const ABSORB_FUSED_SHARED_MATRIX_EVAL: &[u8] = b"hachi/absorb/fused-shared-matrix-eval";
 /// Challenge for batched sumcheck coefficient sampling.
 pub const CHALLENGE_SUMCHECK_BATCH: &[u8] = b"hachi/challenge/sumcheck-batch";
 /// Challenge for batching stage-1 inter-stage claims into the next tree stage.
@@ -85,6 +88,7 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         CHALLENGE_FUSED_RELATION_BATCH,
         ABSORB_FUSED_W_EVAL,
         ABSORB_FUSED_SETUP_VAL,
+        ABSORB_FUSED_SHARED_MATRIX_EVAL,
         CHALLENGE_SUMCHECK_BATCH,
         CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
         ABSORB_STOP_CONDITION,

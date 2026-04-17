@@ -98,7 +98,6 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for SetupClaimProver
 /// `matrix_weight(r)` is computed via the weight oracle;
 /// `shared_matrix(r)` is the prover-claimed evaluation, verified later via PCS
 /// opening.
-#[allow(dead_code)]
 pub(crate) struct SetupClaimVerifier<E> {
     num_vars: usize,
     claim: E,
@@ -106,7 +105,6 @@ pub(crate) struct SetupClaimVerifier<E> {
     matrix_weight_eval: E,
 }
 
-#[allow(dead_code)]
 impl<E: FieldCore> SetupClaimVerifier<E> {
     /// Construct the verifier.
     ///

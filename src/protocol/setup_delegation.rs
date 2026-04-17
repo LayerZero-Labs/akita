@@ -6,7 +6,7 @@ use crate::error::HachiError;
 use crate::primitives::serialization::Valid;
 use crate::protocol::commitment::{HachiVerifierSetup, RingCommitment};
 use crate::protocol::commitment_scheme::{
-    prove_without_setup_delegation, verify_without_setup_delegation,
+    prove_without_setup_delegation, verify_without_setup_delegation, SetupCarry,
 };
 use crate::protocol::opening_point::BasisMode;
 use crate::protocol::params::LevelParams;
@@ -84,6 +84,13 @@ pub(crate) struct DelegationIntermediates<F: FieldCore> {
     pub ring_bits: usize,
 }
 
+/// Output of [`generate_setup_delegation_proof`]: the on-the-wire proof plus
+/// the field-level carry that downstream recursive levels will close.
+pub(crate) struct DelegationProverOutput<F: FieldCore> {
+    pub proof: SetupDelegationProof<F>,
+    pub carry: SetupCarry<F>,
+}
+
 /// Generate a setup-delegation proof for a single level.
 ///
 /// The caller has already run stage 1 + stage 2 and holds:
@@ -97,7 +104,7 @@ pub(crate) fn generate_setup_delegation_proof<F, T, const D: usize, Cfg>(
     sumcheck_challenges: &[F],
     sm_setup: &SharedMatrixSetup<F, D>,
     transcript: &mut T,
-) -> Result<SetupDelegationProof<F>, HachiError>
+) -> Result<DelegationProverOutput<F>, HachiError>
 where
     F: FieldCore
         + CanonicalField
@@ -156,12 +163,17 @@ where
             BasisMode::Lagrange,
         )?;
 
-    Ok(SetupDelegationProof {
+    let proof = SetupDelegationProof {
         claimed_setup_val,
         setup_claim_sumcheck,
         shared_matrix_eval,
         shared_matrix_opening_proof: Box::new(shared_matrix_opening_proof),
-    })
+    };
+    let carry = SetupCarry {
+        r_setup_0: setup_challenges,
+        shared_matrix_eval_0: shared_matrix_eval,
+    };
+    Ok(DelegationProverOutput { proof, carry })
 }
 
 /// Replay sumcheck rounds without the final oracle check.
@@ -230,7 +242,7 @@ pub(crate) fn verify_setup_delegation_proof<F, T, const D: usize, Cfg>(
     inner_verifier_setup: &HachiVerifierSetup<F>,
     commitment: &RingCommitment<F, D>,
     transcript: &mut T,
-) -> Result<(), HachiError>
+) -> Result<SetupCarry<F>, HachiError>
 where
     F: FieldCore
         + CanonicalField
@@ -289,7 +301,10 @@ where
         BasisMode::Lagrange,
     )?;
 
-    Ok(())
+    Ok(SetupCarry {
+        r_setup_0: setup_challenges,
+        shared_matrix_eval_0: delegation_proof.shared_matrix_eval,
+    })
 }
 
 #[cfg(test)]
@@ -440,13 +455,18 @@ mod tests {
             .expect("SharedMatrixSetup creation");
 
         let mut prove_transcript = Blake2bTranscript::<F>::new(b"delegation-sumcheck");
-        let delegation_proof = generate_setup_delegation_proof::<F, _, D, Cfg>(
+        let prover_output = generate_setup_delegation_proof::<F, _, D, Cfg>(
             &intermediates,
             &sumcheck_challenges,
             &sm_setup,
             &mut prove_transcript,
         )
         .expect("delegation proof generation");
+
+        let DelegationProverOutput {
+            proof: delegation_proof,
+            carry: prover_carry,
+        } = prover_output;
 
         assert_ne!(
             delegation_proof.claimed_setup_val,
@@ -455,7 +475,7 @@ mod tests {
         );
 
         let mut verify_transcript = Blake2bTranscript::<F>::new(b"delegation-sumcheck");
-        verify_setup_delegation_proof::<F, _, D, Cfg>(
+        let verifier_carry = verify_setup_delegation_proof::<F, _, D, Cfg>(
             &delegation_proof,
             &eq_tau1,
             &alpha_evals_y,
@@ -467,6 +487,20 @@ mod tests {
             &mut verify_transcript,
         )
         .expect("delegation proof verification should succeed");
+
+        assert_eq!(
+            prover_carry.r_setup_0, verifier_carry.r_setup_0,
+            "prover and verifier must derive the same setup-claim challenges"
+        );
+        assert_eq!(
+            prover_carry.shared_matrix_eval_0, verifier_carry.shared_matrix_eval_0,
+            "prover and verifier must agree on the shared-matrix evaluation"
+        );
+        assert_eq!(
+            prover_carry.r_setup_0.len(),
+            sm_setup.tensor_layout.num_vars,
+            "carry challenges must match the shared-matrix tensor layout"
+        );
         let _ = layout;
     }
 
