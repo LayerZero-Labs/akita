@@ -4,9 +4,8 @@ use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::poly::multilinear_eval;
 use crate::error::HachiError;
 use crate::primitives::serialization::Valid;
-use crate::protocol::commitment::HachiCommitmentLayout;
-use crate::protocol::commitment::HachiLevelParams;
 use crate::protocol::commitment::{HachiVerifierSetup, RingCommitment};
+use crate::protocol::params::LevelParams;
 use crate::protocol::commitment_scheme::{
     prove_without_setup_delegation, verify_without_setup_delegation,
 };
@@ -45,12 +44,11 @@ fn dense_poly_field_evals<F: FieldCore, const D: usize>(
 pub(crate) fn materialize_matrix_weight<F: FieldCore + CanonicalField, const D: usize>(
     eq_tau1: &[F],
     alpha_evals_y: &[F],
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
+    lp: &LevelParams,
     tensor_layout: SharedMatrixTensorLayout,
     r_x: &[F],
 ) -> Vec<F> {
-    let geometry = single_proof_matrix_weight_geometry(level_params, layout);
+    let geometry = single_proof_matrix_weight_geometry(lp);
     let fold_gadget = gadget_row_scalars::<F>(geometry.depth_fold, geometry.log_basis);
     let eq_r_x = EqPolynomial::evals(r_x);
 
@@ -82,8 +80,7 @@ pub(crate) struct DelegationIntermediates<F: FieldCore> {
     pub alg_m_evals_x: Vec<F>,
     pub eq_tau1: Vec<F>,
     pub alpha_evals_y: Vec<F>,
-    pub level_params: HachiLevelParams,
-    pub layout: HachiCommitmentLayout,
+    pub level_params: LevelParams,
     pub col_bits: usize,
     pub ring_bits: usize,
 }
@@ -133,7 +130,6 @@ where
         &intermediates.eq_tau1,
         &intermediates.alpha_evals_y,
         &intermediates.level_params,
-        intermediates.layout,
         sm_setup.tensor_layout,
         x_challenges,
     );
@@ -229,8 +225,7 @@ pub(crate) fn verify_setup_delegation_proof<F, T, const D: usize, Cfg>(
     delegation_proof: &SetupDelegationProof<F>,
     eq_tau1: &[F],
     alpha_evals_y: &[F],
-    level_params: &HachiLevelParams,
-    layout: HachiCommitmentLayout,
+    lp: &LevelParams,
     x_challenges: &[F],
     tensor_layout: &SharedMatrixTensorLayout,
     inner_verifier_setup: &HachiVerifierSetup<F>,
@@ -270,8 +265,7 @@ where
         x_challenges,
         alpha_evals_y,
         eq_tau1,
-        level_params,
-        layout,
+        lp,
         *tensor_layout,
     )?;
 
@@ -312,7 +306,7 @@ mod tests {
     use crate::protocol::quadratic_equation::QuadraticEquation;
     use crate::protocol::ring_switch::{
         build_alpha_evals_y, compute_alg_m_evals_x_with_claim_groups,
-        compute_m_evals_x_with_claim_groups, m_row_count,
+        compute_m_evals_x_with_claim_groups,
     };
     use crate::protocol::transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use crate::protocol::transcript::Blake2bTranscript;
@@ -329,12 +323,12 @@ mod tests {
     where
         Cfg: SharedMatrixOpeningConfig<Field = F>,
     {
-        let layout = Cfg::commitment_layout(nv).expect("layout");
         let level_params = Cfg::level_params(HachiScheduleInputs {
             max_num_vars: nv,
             level: 0,
             current_w_len: 1usize << nv,
         });
+        let layout = &level_params;
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
         let evals: Vec<F> = (0..(1usize << nv))
@@ -385,14 +379,13 @@ mod tests {
             &mut transcript,
             &commitment,
             &y_ring,
-            layout,
             setup.expanded.seed.max_stride(),
         )
         .expect("quadratic equation");
 
         let alpha = F::from_u64(42);
         let alpha_evals_y = build_alpha_evals_y(alpha, D);
-        let rows = m_row_count(&level_params);
+        let rows = level_params.m_row_count();
         let num_i = rows.next_power_of_two().trailing_zeros() as usize;
         let tau1: Vec<F> = (0..num_i)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
@@ -406,9 +399,10 @@ mod tests {
             alpha,
             &alpha_evals_y,
             &level_params,
-            layout,
             &tau1,
             &[1usize],
+            &[F::one()],
+            1,
         )
         .expect("m_evals_x");
 
@@ -418,7 +412,6 @@ mod tests {
             alpha,
             &alpha_evals_y,
             &level_params,
-            layout,
             &tau1,
             &[1usize],
         )
@@ -445,7 +438,6 @@ mod tests {
             eq_tau1: eq_tau1.clone(),
             alpha_evals_y: alpha_evals_y.clone(),
             level_params: level_params.clone(),
-            layout,
             col_bits,
             ring_bits,
         };
@@ -474,7 +466,6 @@ mod tests {
             &eq_tau1,
             &alpha_evals_y,
             &level_params,
-            layout,
             &x_challenges,
             &sm_setup.tensor_layout,
             &sm_setup.verifier_setup,
@@ -482,6 +473,7 @@ mod tests {
             &mut verify_transcript,
         )
         .expect("delegation proof verification should succeed");
+        let _ = layout;
     }
 
     #[test]
@@ -501,7 +493,7 @@ mod tests {
             current_w_len: 1usize << NV,
         });
         assert!(
-            level_params.n_a > 1,
+            level_params.a_key.row_len() > 1,
             "fixture must exercise the multi-row delegated path"
         );
 

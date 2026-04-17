@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Claim-reduction sumcheck instance for the batched Stage 2.
 //!
 //! Fused s-virtualization + w-adaptation:

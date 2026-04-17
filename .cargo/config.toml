@@ -1,0 +1,6 @@
+# Bump the default std::thread stack size (including rayon worker threads)
+# so that debug-mode `cargo test` does not flake with sporadic stack overflows
+# in parallel heavy sumcheck/ring-switch tests. See commitment_scheme.rs
+# `init_debug_rayon_pool` for the precedent.
+[env]
+RUST_MIN_STACK = "16777216"

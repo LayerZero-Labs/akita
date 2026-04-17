@@ -6,7 +6,7 @@ use crate::algebra::ntt::tables::{
     Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES, RING_DEGREE,
 };
 use crate::algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
-use crate::algebra::Prime128Offset159;
+use crate::algebra::{Prime128Offset159, Prime128Offset2355};
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
@@ -47,8 +47,11 @@ pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
     let modulus = detect_field_modulus::<F>();
     let split_only_q128_modulus =
         u128::MAX - (<Prime128Offset159 as PseudoMersenneField>::MODULUS_OFFSET - 1);
+    let ntt_q128_modulus =
+        u128::MAX - (<Prime128Offset2355 as PseudoMersenneField>::MODULUS_OFFSET - 1);
 
-    if modulus == Q128_MODULUS || modulus == split_only_q128_modulus {
+    if modulus == Q128_MODULUS || modulus == split_only_q128_modulus || modulus == ntt_q128_modulus
+    {
         return Ok(ProtocolCrtNttParams::Q128(CrtNttParamSet::new(
             q128_primes(),
         )));
@@ -66,7 +69,7 @@ pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
     }
 
     Err(HachiError::InvalidSetup(format!(
-        "no CRT+NTT parameter set for modulus {modulus} and D={D}; supported ranges: <= {Q64_MODULUS} (with Q32/Q64 dispatch) or q in {{{Q128_MODULUS}, {split_only_q128_modulus}}}"
+        "no CRT+NTT parameter set for modulus {modulus} and D={D}; supported ranges: <= {Q64_MODULUS} (with Q32/Q64 dispatch) or q in {{{Q128_MODULUS}, {split_only_q128_modulus}, {ntt_q128_modulus}}}"
     )))
 }
 

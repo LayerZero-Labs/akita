@@ -1013,27 +1013,12 @@ pub struct HachiStage1StageShape {
     pub child_claims: usize,
 }
 /// Proof payload for stage 1 of a single Hachi level.
-///
-/// In fused mode (T2): the leaf stage is a non-eq-factored `SumcheckProof`
-/// stored in `fused_leaf`, with product stages in `stages`. The prover sends
-/// intermediate claims `s_eval`, `w_eval`, and `claimed_setup_val`.
-/// In legacy mode: `fused_leaf` is `None` and the leaf is the last entry in
-/// `stages`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiStage1Proof<F: FieldCore> {
-    /// Root-to-leaf product stages (eq-factored). For b <= 8, this is empty in
-    /// fused mode and a single-element vec in legacy mode.
+    /// Root-to-leaf range-check stages.
     pub stages: Vec<HachiStage1StageProof<F>>,
-    /// Fused leaf sumcheck (non-eq-factored). `None` in legacy mode.
-    pub fused_leaf: Option<SumcheckProof<F>>,
     /// Claimed evaluation of `S` at the final stage-1 output point.
     pub s_claim: F,
-    /// `w(r_stage1)`: witness MLE at the Stage 1 output point.
-    /// Only present in fused mode.
-    pub w_eval: Option<F>,
-    /// `setup_mle(r_x_stage1)`: setup part of M_alpha at Stage 1 column
-    /// challenges. Only present in fused mode.
-    pub claimed_setup_val: Option<F>,
 }
 
 /// Proof payload for stage 2 of a single Hachi level.
@@ -1378,8 +1363,6 @@ pub struct LevelProofShape {
     pub v_coeffs: usize,
     /// Stage-1 tree stage shapes in root-to-leaf order.
     pub stage1_stages: Vec<HachiStage1StageShape>,
-    /// Fused leaf sumcheck shape (non-eq-factored). `None` in legacy mode.
-    pub fused_leaf: Option<SumcheckProofShape>,
     /// Stage-2 sumcheck shape: `(num_rounds, degree)`.
     pub stage2_sumcheck: SumcheckProofShape,
     /// Number of field coefficients in `next_w_commitment`.
@@ -1392,8 +1375,6 @@ pub struct LevelProofShape {
 pub struct HachiProofShape {
     /// Proof step shapes in execution order.
     pub step_shapes: Vec<HachiProofStepShape>,
-    /// Setup delegation proof shapes in serialized order.
-    pub setup_delegation_shapes: Vec<SetupDelegationProofShape>,
 }
 
 /// Shape descriptor for deserializing an [`HachiBatchedProof`] without
@@ -1415,15 +1396,6 @@ pub enum HachiProofStepShape {
     Direct(DirectWitnessShape),
 }
 
-/// Shape descriptor for a setup-delegation proof.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetupDelegationProofShape {
-    /// Setup-claim sumcheck shape.
-    pub setup_claim_sumcheck: SumcheckProofShape,
-    /// Nested shared-matrix opening proof shape.
-    pub shared_matrix_opening_proof: Box<HachiProofShape>,
-}
-
 fn sumcheck_shape<F: FieldCore>(sc: &SumcheckProof<F>) -> SumcheckProofShape {
     let degree = sc
         .round_polys
@@ -1440,93 +1412,6 @@ fn eq_factored_sumcheck_shape<F: FieldCore>(
         .first()
         .map_or(0, |p| p.coeffs_except_linear_term.len());
     (sc.round_polys.len(), degree)
-}
-
-fn serialize_stage1_fused_fields<F: FieldCore, W: Write>(
-    stage1: &HachiStage1Proof<F>,
-    writer: &mut W,
-    compress: Compress,
-) -> Result<(), SerializationError> {
-    let flags: u8 = (stage1.fused_leaf.is_some() as u8)
-        | ((stage1.w_eval.is_some() as u8) << 1)
-        | ((stage1.claimed_setup_val.is_some() as u8) << 2);
-    flags.serialize_with_mode(&mut *writer, compress)?;
-    if let Some(ref fused) = stage1.fused_leaf {
-        fused.serialize_with_mode(&mut *writer, compress)?;
-    }
-    if let Some(ref w) = stage1.w_eval {
-        w.serialize_with_mode(&mut *writer, compress)?;
-    }
-    if let Some(ref csv) = stage1.claimed_setup_val {
-        csv.serialize_with_mode(&mut *writer, compress)?;
-    }
-    Ok(())
-}
-
-fn stage1_fused_fields_size<F: FieldCore>(
-    stage1: &HachiStage1Proof<F>,
-    compress: Compress,
-) -> usize {
-    let mut size = 1usize; // flags byte
-    if let Some(ref fused) = stage1.fused_leaf {
-        size += fused.serialized_size(compress);
-    }
-    if let Some(ref w) = stage1.w_eval {
-        size += w.serialized_size(compress);
-    }
-    if let Some(ref csv) = stage1.claimed_setup_val {
-        size += csv.serialized_size(compress);
-    }
-    size
-}
-
-type Stage1FusedFields<F> = (Option<SumcheckProof<F>>, Option<F>, Option<F>);
-
-fn deserialize_stage1_fused_fields<F: FieldCore + Valid, R: Read>(
-    reader: &mut R,
-    compress: Compress,
-    validate: Validate,
-    ctx: &LevelProofShape,
-) -> Result<Stage1FusedFields<F>, SerializationError> {
-    let flags = u8::deserialize_with_mode(&mut *reader, compress, validate, &())?;
-    let has_fused = (flags & 1) != 0;
-    let has_w = (flags & 2) != 0;
-    let has_csv = (flags & 4) != 0;
-
-    let fused_leaf = if has_fused {
-        let shape = ctx.fused_leaf.as_ref().ok_or_else(|| {
-            SerializationError::InvalidData("proof has fused_leaf but shape does not".to_string())
-        })?;
-        Some(SumcheckProof::deserialize_with_mode(
-            &mut *reader,
-            compress,
-            validate,
-            shape,
-        )?)
-    } else {
-        None
-    };
-    let w_eval = if has_w {
-        Some(F::deserialize_with_mode(
-            &mut *reader,
-            compress,
-            validate,
-            &(),
-        )?)
-    } else {
-        None
-    };
-    let claimed_setup_val = if has_csv {
-        Some(F::deserialize_with_mode(
-            &mut *reader,
-            compress,
-            validate,
-            &(),
-        )?)
-    } else {
-        None
-    };
-    Ok((fused_leaf, w_eval, claimed_setup_val))
 }
 
 fn level_proof_shape<F: FieldCore>(
@@ -1546,27 +1431,9 @@ fn level_proof_shape<F: FieldCore>(
                 child_claims: stage.child_claims.len(),
             })
             .collect(),
-        fused_leaf: stage1.fused_leaf.as_ref().map(sumcheck_shape),
         stage2_sumcheck: sumcheck_shape(&stage2.sumcheck),
         next_commit_coeffs: stage2.next_w_commitment.coeff_len(),
     }
-}
-
-/// Proof for the setup-claim delegation at a single level.
-///
-/// Carries the setup-claim sumcheck proof, the claimed shared matrix evaluation
-/// at the resulting challenge point, and a nested Hachi PCS opening proof for
-/// the shared matrix.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetupDelegationProof<F: FieldCore> {
-    /// The claimed setup contribution at the stage-2 challenge point.
-    pub claimed_setup_val: F,
-    /// Sumcheck proof for `Y_setup = <shared_matrix, matrix_weight>`.
-    pub setup_claim_sumcheck: SumcheckProof<F>,
-    /// Shared matrix evaluation at the setup-claim sumcheck challenge point.
-    pub shared_matrix_eval: F,
-    /// Nested Hachi PCS opening proof for the shared matrix at the challenge point.
-    pub shared_matrix_opening_proof: Box<HachiProof<F>>,
 }
 
 /// Hachi PCS proof with multi-level folding.
@@ -1582,8 +1449,6 @@ pub struct HachiProof<F: FieldCore> {
     /// Proof steps from the original polynomial through the terminal direct
     /// witness handoff.
     pub steps: Vec<HachiProofStep<F>>,
-    /// Optional setup-delegation proofs for levels that use the delegated path.
-    pub setup_delegations: Vec<(usize, SetupDelegationProof<F>)>,
 }
 
 impl<F: FieldCore> HachiProof<F> {
@@ -1620,16 +1485,6 @@ impl<F: FieldCore> HachiProof<F> {
     pub fn shape(&self) -> HachiProofShape {
         HachiProofShape {
             step_shapes: self.steps.iter().map(HachiProofStep::shape).collect(),
-            setup_delegation_shapes: self
-                .setup_delegations
-                .iter()
-                .map(|(_, proof)| SetupDelegationProofShape {
-                    setup_claim_sumcheck: sumcheck_shape(&proof.setup_claim_sumcheck),
-                    shared_matrix_opening_proof: Box::new(
-                        proof.shared_matrix_opening_proof.shape(),
-                    ),
-                })
-                .collect(),
         }
     }
 }
@@ -1638,157 +1493,6 @@ impl<F: FieldCore + HachiSerialize> HachiProof<F> {
     /// Returns the proof size in bytes (uncompressed).
     pub fn size(&self) -> usize {
         self.serialized_size(Compress::No)
-    }
-}
-
-fn serialize_setup_delegation_ref<F: FieldCore, W: Write + ?Sized>(
-    proof: &SetupDelegationProof<F>,
-    writer: &mut W,
-    compress: Compress,
-) -> Result<(), SerializationError> {
-    proof
-        .claimed_setup_val
-        .serialize_with_mode(&mut *writer, compress)?;
-    proof
-        .setup_claim_sumcheck
-        .serialize_with_mode(&mut *writer, compress)?;
-    proof
-        .shared_matrix_eval
-        .serialize_with_mode(&mut *writer, compress)?;
-    serialize_hachi_proof_ref(&proof.shared_matrix_opening_proof, writer, compress)?;
-    Ok(())
-}
-
-fn deserialize_setup_delegation_ref<F: FieldCore + Valid, R: Read + ?Sized>(
-    reader: &mut R,
-    compress: Compress,
-    validate: Validate,
-    ctx: &SetupDelegationProofShape,
-) -> Result<SetupDelegationProof<F>, SerializationError> {
-    let out = SetupDelegationProof {
-        claimed_setup_val: F::deserialize_with_mode(&mut *reader, compress, validate, &())?,
-        setup_claim_sumcheck: SumcheckProof::deserialize_with_mode(
-            &mut *reader,
-            compress,
-            validate,
-            &ctx.setup_claim_sumcheck,
-        )?,
-        shared_matrix_eval: F::deserialize_with_mode(&mut *reader, compress, validate, &())?,
-        shared_matrix_opening_proof: Box::new(deserialize_hachi_proof_ref(
-            reader,
-            compress,
-            validate,
-            &ctx.shared_matrix_opening_proof,
-        )?),
-    };
-    if matches!(validate, Validate::Yes) {
-        out.check()?;
-    }
-    Ok(out)
-}
-
-fn serialize_hachi_proof_ref<F: FieldCore, W: Write + ?Sized>(
-    proof: &HachiProof<F>,
-    writer: &mut W,
-    compress: Compress,
-) -> Result<(), SerializationError> {
-    for step in &proof.steps {
-        step.serialize_with_mode(&mut *writer, compress)?;
-    }
-    (proof.setup_delegations.len() as u64).serialize_with_mode(&mut *writer, compress)?;
-    for (level, setup_delegation) in &proof.setup_delegations {
-        (*level as u64).serialize_with_mode(&mut *writer, compress)?;
-        serialize_setup_delegation_ref(setup_delegation, writer, compress)?;
-    }
-    Ok(())
-}
-
-fn deserialize_hachi_proof_ref<F: FieldCore + Valid, R: Read + ?Sized>(
-    reader: &mut R,
-    compress: Compress,
-    validate: Validate,
-    ctx: &HachiProofShape,
-) -> Result<HachiProof<F>, SerializationError> {
-    let mut steps = Vec::with_capacity(ctx.step_shapes.len());
-    for shape in &ctx.step_shapes {
-        steps.push(HachiProofStep::deserialize_with_mode(
-            &mut *reader,
-            compress,
-            validate,
-            shape,
-        )?);
-    }
-    let delegation_count =
-        u64::deserialize_with_mode(&mut *reader, compress, validate, &())? as usize;
-    if delegation_count != ctx.setup_delegation_shapes.len() {
-        return Err(SerializationError::InvalidData(format!(
-            "expected {} setup delegations, found {}",
-            ctx.setup_delegation_shapes.len(),
-            delegation_count
-        )));
-    }
-    let mut setup_delegations = Vec::with_capacity(delegation_count);
-    for shape in &ctx.setup_delegation_shapes {
-        let level = u64::deserialize_with_mode(&mut *reader, compress, validate, &())? as usize;
-        let proof = deserialize_setup_delegation_ref(&mut *reader, compress, validate, shape)?;
-        setup_delegations.push((level, proof));
-    }
-    let out = HachiProof {
-        steps,
-        setup_delegations,
-    };
-    if matches!(validate, Validate::Yes) {
-        out.check()?;
-    }
-    Ok(out)
-}
-
-impl<F: FieldCore> HachiSerialize for SetupDelegationProof<F> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        serialize_setup_delegation_ref(self, &mut writer, compress)
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.claimed_setup_val.serialized_size(compress)
-            + self.setup_claim_sumcheck.serialized_size(compress)
-            + self.shared_matrix_eval.serialized_size(compress)
-            + self.shared_matrix_opening_proof.serialized_size(compress)
-    }
-}
-
-impl<F: FieldCore + Valid> Valid for SetupDelegationProof<F> {
-    fn check(&self) -> Result<(), SerializationError> {
-        self.claimed_setup_val.check()?;
-        self.setup_claim_sumcheck.check()?;
-        self.shared_matrix_eval.check()?;
-        self.shared_matrix_opening_proof.check()?;
-        if !self
-            .shared_matrix_opening_proof
-            .setup_delegations
-            .is_empty()
-        {
-            return Err(SerializationError::InvalidData(
-                "nested shared-matrix opening proof must not contain setup delegations".to_string(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-impl<F: FieldCore + Valid> HachiDeserialize for SetupDelegationProof<F> {
-    type Context = SetupDelegationProofShape;
-
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        ctx: &SetupDelegationProofShape,
-    ) -> Result<Self, SerializationError> {
-        deserialize_setup_delegation_ref(&mut reader, compress, validate, ctx)
     }
 }
 
@@ -1874,7 +1578,6 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
         self.stage1
             .s_claim
             .serialize_with_mode(&mut writer, compress)?;
-        serialize_stage1_fused_fields(&self.stage1, &mut writer, compress)?;
         self.stage2
             .sumcheck
             .serialize_with_mode(&mut writer, compress)?;
@@ -1901,7 +1604,6 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
             })
             .sum::<usize>()
             + self.stage1.s_claim.serialized_size(compress)
-            + stage1_fused_fields_size(&self.stage1, compress)
             + self.stage2.sumcheck.serialized_size(compress)
             + self.stage2.next_w_commitment.serialized_size(compress)
             + self.stage2.next_w_eval.serialized_size(compress)
@@ -1922,15 +1624,6 @@ impl<F: FieldCore + Valid> Valid for HachiLevelProof<F> {
             stage.child_claims.check()?;
         }
         self.stage1.s_claim.check()?;
-        if let Some(ref fused) = self.stage1.fused_leaf {
-            fused.check()?;
-        }
-        if let Some(ref w) = self.stage1.w_eval {
-            w.check()?;
-        }
-        if let Some(ref csv) = self.stage1.claimed_setup_val {
-            csv.check()?;
-        }
         self.stage2.sumcheck.check()?;
         self.stage2.next_w_commitment.check()?;
         self.stage2.next_w_eval.check()
@@ -1974,15 +1667,9 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
                 child_claims,
             });
         }
-        let s_claim = F::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let (fused_leaf, w_eval, claimed_setup_val) =
-            deserialize_stage1_fused_fields(&mut reader, compress, validate, ctx)?;
         let stage1 = HachiStage1Proof {
             stages: stage1_stages,
-            fused_leaf,
-            s_claim,
-            w_eval,
-            claimed_setup_val,
+            s_claim: F::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         let stage2 = HachiStage2Proof {
             sumcheck: SumcheckProof::deserialize_with_mode(
@@ -2140,7 +1827,6 @@ impl<F: FieldCore> HachiSerialize for HachiBatchedRootProof<F> {
         self.stage1
             .s_claim
             .serialize_with_mode(&mut writer, compress)?;
-        serialize_stage1_fused_fields(&self.stage1, &mut writer, compress)?;
         self.stage2
             .sumcheck
             .serialize_with_mode(&mut writer, compress)?;
@@ -2169,7 +1855,6 @@ impl<F: FieldCore> HachiSerialize for HachiBatchedRootProof<F> {
                 })
                 .sum::<usize>()
             + self.stage1.s_claim.serialized_size(compress)
-            + stage1_fused_fields_size(&self.stage1, compress)
             + self.stage2.sumcheck.serialized_size(compress)
             + self.stage2.next_w_commitment.serialized_size(compress)
             + self.stage2.next_w_eval.serialized_size(compress)
@@ -2185,15 +1870,6 @@ impl<F: FieldCore + Valid> Valid for HachiBatchedRootProof<F> {
             stage.child_claims.check()?;
         }
         self.stage1.s_claim.check()?;
-        if let Some(ref fused) = self.stage1.fused_leaf {
-            fused.check()?;
-        }
-        if let Some(ref w) = self.stage1.w_eval {
-            w.check()?;
-        }
-        if let Some(ref csv) = self.stage1.claimed_setup_val {
-            csv.check()?;
-        }
         self.stage2.sumcheck.check()?;
         self.stage2.next_w_commitment.check()?;
         self.stage2.next_w_eval.check()
@@ -2237,15 +1913,9 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedRootProof<F> {
                 child_claims,
             });
         }
-        let s_claim = F::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let (fused_leaf, w_eval, claimed_setup_val) =
-            deserialize_stage1_fused_fields(&mut reader, compress, validate, ctx)?;
         let stage1 = HachiStage1Proof {
             stages: stage1_stages,
-            fused_leaf,
-            s_claim,
-            w_eval,
-            claimed_setup_val,
+            s_claim: F::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         let stage2 = HachiStage2Proof {
             sumcheck: SumcheckProof::deserialize_with_mode(
@@ -2382,21 +2052,16 @@ impl<F: FieldCore> HachiSerialize for HachiProof<F> {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        serialize_hachi_proof_ref(self, &mut writer, compress)
+        for step in &self.steps {
+            step.serialize_with_mode(&mut writer, compress)?;
+        }
+        Ok(())
     }
     fn serialized_size(&self, compress: Compress) -> usize {
         self.steps
             .iter()
             .map(|step| step.serialized_size(compress))
             .sum::<usize>()
-            + 8
-            + self
-                .setup_delegations
-                .iter()
-                .map(|(level, proof)| {
-                    (*level as u64).serialized_size(compress) + proof.serialized_size(compress)
-                })
-                .sum::<usize>()
     }
 }
 
@@ -2430,17 +2095,6 @@ impl<F: FieldCore + Valid> Valid for HachiProof<F> {
                 ));
             }
         }
-        let num_fold_levels = fold_levels.len();
-        let mut prev_level = None;
-        for (level, proof) in &self.setup_delegations {
-            if *level >= num_fold_levels || prev_level.is_some_and(|prev| *level <= prev) {
-                return Err(SerializationError::InvalidData(
-                    "setup delegation entries must be sorted, unique, and in range".to_string(),
-                ));
-            }
-            proof.check()?;
-            prev_level = Some(*level);
-        }
         Ok(())
     }
 }
@@ -2453,7 +2107,20 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiProof<F> {
         validate: Validate,
         ctx: &HachiProofShape,
     ) -> Result<Self, SerializationError> {
-        deserialize_hachi_proof_ref(&mut reader, compress, validate, ctx)
+        let mut steps = Vec::with_capacity(ctx.step_shapes.len());
+        for shape in &ctx.step_shapes {
+            steps.push(HachiProofStep::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                shape,
+            )?);
+        }
+        let out = Self { steps };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
     }
 }
 

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Sumcheck for the setup-backed claim `Y_setup = <shared_matrix, matrix_weight>`.
 //!
 //! After stage 1 determines the algebraic contribution `alg(r_x)`, the
@@ -231,7 +232,7 @@ mod tests {
             shared_matrix.clone(),
             matrix_weight.clone(),
             num_vars,
-            wrong_claim,
+            correct_claim,
         );
         let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
         let (proof, prover_challenges, _) =

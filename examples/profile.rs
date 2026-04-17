@@ -3,17 +3,18 @@
 use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
     hachi_batched_root_layout, hachi_root_runtime_plan_with_batch, presets::fp128,
-    recursive_suffix_estimate_with_log_basis, CommitmentConfig, HachiCommitmentLayout,
-    HachiRootBatchSummary, HachiScheduleLookupKey, HachiSchedulePlan,
+    recursive_suffix_estimate_with_log_basis, CommitmentConfig, HachiRootBatchSummary,
+    HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
 };
+use hachi_pcs::protocol::params::LevelParams;
 use hachi_pcs::protocol::proof::{
     DirectWitnessProof, HachiBatchedCommitmentHint, HachiBatchedProof, HachiBatchedRootProof,
-    HachiLevelProof, HachiProof, SetupDelegationProof,
+    HachiLevelProof, HachiProof,
 };
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::{
@@ -60,7 +61,7 @@ fn env_usize(name: &str, default: usize) -> usize {
 fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
     poly: &P,
     point: &[F],
-    layout: &HachiCommitmentLayout,
+    layout: &LevelParams,
     basis: BasisMode,
 ) -> F {
     let alpha_bits = D.trailing_zeros() as usize;
@@ -167,21 +168,21 @@ fn emit_planned_schedule_summary(label: &str, plan: &HachiSchedulePlan) {
         tracing::info!(
             label,
             level = level.inputs.level,
-            d = level.params.d,
-            n_a = level.params.n_a,
-            n_b = level.params.n_b,
-            n_d = level.params.n_d,
-            challenge_l1_mass = level.params.challenge_l1_mass,
-            log_basis = level.params.log_basis,
-            m_vars = level.layout.m_vars,
-            r_vars = level.layout.r_vars,
-            num_blocks = level.layout.num_blocks,
-            block_len = level.layout.block_len,
-            delta_commit = level.layout.num_digits_commit,
-            delta_open = level.layout.num_digits_open,
-            delta_fold = level.layout.num_digits_fold,
+            d = level.lp.ring_dimension,
+            n_a = level.lp.a_key.row_len(),
+            n_b = level.lp.b_key.row_len(),
+            n_d = level.lp.d_key.row_len(),
+            challenge_l1_mass = level.lp.challenge_l1_mass(),
+            log_basis = level.lp.log_basis,
+            m_vars = level.lp.m_vars,
+            r_vars = level.lp.r_vars,
+            num_blocks = level.lp.num_blocks,
+            block_len = level.lp.block_len,
+            delta_commit = level.lp.num_digits_commit,
+            delta_open = level.lp.num_digits_open,
+            delta_fold = level.lp.num_digits_fold,
             current_w_len = level.inputs.current_w_len,
-            next_w_ring = next_w_len / level.params.d,
+            next_w_ring = next_w_len / level.lp.ring_dimension,
             next_w_len,
             level_bytes = level.level_bytes,
             "planned fold level"
@@ -198,17 +199,12 @@ fn emit_planned_schedule_summary(label: &str, plan: &HachiSchedulePlan) {
 }
 
 fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSchedulePlan>) {
-    let setup_delegations_total: usize = proof
-        .setup_delegations
-        .iter()
-        .map(|(_, delegation)| delegation.serialized_size(Compress::No))
-        .sum();
     let hachi_levels_total: usize = proof
         .fold_levels()
         .map(|level| level.serialized_size(Compress::No))
         .sum();
     let tail_total = proof.final_witness().serialized_size(Compress::No);
-    let accounted_total = hachi_levels_total + tail_total + setup_delegations_total;
+    let accounted_total = hachi_levels_total + tail_total;
     let framing_total = proof.size() - accounted_total;
 
     tracing::info!(
@@ -217,7 +213,6 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSc
         proof_size_bytes = proof.size(),
         accounted_bytes = accounted_total,
         hachi_fold_bytes = hachi_levels_total,
-        setup_delegation_bytes = setup_delegations_total,
         tail_bytes = tail_total,
         proof_framing_bytes = framing_total,
         "proof summary"
@@ -236,46 +231,7 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSc
     for (i, lp) in proof.fold_levels().enumerate() {
         print_hachi_level_breakdown(label, i, lp);
     }
-    for (level_idx, delegation) in &proof.setup_delegations {
-        print_setup_delegation_breakdown(label, *level_idx, delegation);
-    }
     emit_observed_tail_summary(label, proof.final_witness());
-}
-
-fn print_setup_delegation_breakdown(
-    label: &str,
-    level_idx: usize,
-    proof: &SetupDelegationProof<F>,
-) -> usize {
-    let claimed_setup_val_size = proof.claimed_setup_val.serialized_size(Compress::No);
-    let setup_claim_sumcheck_size = proof.setup_claim_sumcheck.serialized_size(Compress::No);
-    let shared_matrix_eval_size = proof.shared_matrix_eval.serialized_size(Compress::No);
-    let shared_matrix_opening_proof_size = proof.shared_matrix_opening_proof.size();
-    let total = proof.serialized_size(Compress::No);
-
-    tracing::info!(
-        label,
-        level = level_idx,
-        total_bytes = total,
-        claimed_setup_val_bytes = claimed_setup_val_size,
-        setup_claim_sumcheck_bytes = setup_claim_sumcheck_size,
-        shared_matrix_eval_bytes = shared_matrix_eval_size,
-        shared_matrix_opening_proof_bytes = shared_matrix_opening_proof_size,
-        "setup delegation proof"
-    );
-    eprintln!("[{label}]   setup_delegation L{level_idx}: total={total} bytes");
-    eprintln!("[{label}]     claimed_setup_val={claimed_setup_val_size} bytes");
-    eprintln!("[{label}]     setup_claim_sumcheck={setup_claim_sumcheck_size} bytes");
-    eprintln!("[{label}]     shared_matrix_eval={shared_matrix_eval_size} bytes");
-    eprintln!("[{label}]     shared_matrix_opening_proof={shared_matrix_opening_proof_size} bytes");
-    debug_assert_eq!(
-        total,
-        claimed_setup_val_size
-            + setup_claim_sumcheck_size
-            + shared_matrix_eval_size
-            + shared_matrix_opening_proof_size
-    );
-    total
 }
 
 fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
@@ -474,7 +430,7 @@ fn emit_observed_tail_summary(label: &str, final_w: &DirectWitnessProof<F>) {
     }
 }
 
-fn print_layout(layout: &HachiCommitmentLayout) {
+fn print_layout(layout: &LevelParams) {
     tracing::debug!(
         m_vars = layout.m_vars,
         r_vars = layout.r_vars,
@@ -490,7 +446,7 @@ fn print_layout(layout: &HachiCommitmentLayout) {
 
 fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     nv: usize,
-    layout: &HachiCommitmentLayout,
+    layout: &LevelParams,
     plan: Option<&HachiSchedulePlan>,
 ) where
     HachiCommitmentScheme<D, Cfg>: CommitmentScheme<F, D, Proof = HachiProof<F>>,
@@ -530,7 +486,7 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F>>(
 
 fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     nv: usize,
-    layout: &HachiCommitmentLayout,
+    layout: &LevelParams,
     plan: Option<&HachiSchedulePlan>,
 ) where
     HachiCommitmentScheme<D, Cfg>: CommitmentScheme<F, D, Proof = HachiProof<F>>,
@@ -571,16 +527,8 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
 fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     nv: usize,
     num_polys: usize,
-    layout: &HachiCommitmentLayout,
-) where
-    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<
-        F,
-        D,
-        CommitHint = HachiBatchedCommitmentHint<F, D>,
-        BatchedCommitHint = Vec<HachiBatchedCommitmentHint<F, D>>,
-        BatchedProof = HachiBatchedProof<F>,
-    >,
-{
+    layout: &LevelParams,
+) {
     type Scheme<const D: usize, Cfg> = HachiCommitmentScheme<D, Cfg>;
 
     let total_field = (layout.num_blocks * layout.block_len)
@@ -767,7 +715,7 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     tracing::info!("{}", title);
     if num_polys == 1 {
         let layout = resolve_layout::<Cfg>(nv);
-        let required_vars = layout.required_num_vars::<D>().expect("layout arity");
+        let required_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
         if required_vars > nv {
             tracing::info!(
                 required_vars,
@@ -781,7 +729,7 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(
         run_onehot::<D, Cfg>(nv, &layout, plan.as_ref());
     } else {
         let layout = hachi_batched_root_layout::<Cfg, D>(nv, num_polys).expect("layout");
-        let required_vars = layout.required_num_vars::<D>().expect("layout arity");
+        let required_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
         if required_vars > nv {
             tracing::info!(
                 required_vars,
@@ -855,10 +803,10 @@ fn assert_singleton_mode(mode: &str, num_polys: usize) {
 fn fixed_onehot_title(d: usize, nv: usize, num_polys: usize) -> String {
     let onehot_k = onehot_k_for_num_vars(nv);
     if num_polys == 1 {
-        format!("=== onehot_d{d} (q=2^128-275, D={d}, 1-of-{onehot_k}, log_commit_bound=1) ===")
+        format!("=== onehot_d{d} (q=2^128-2355, D={d}, 1-of-{onehot_k}, log_commit_bound=1) ===")
     } else {
         format!(
-            "=== onehot_d{d} batched (q=2^128-275, D={d}, 1-of-{onehot_k}, log_commit_bound=1, same-point batch={num_polys}) ==="
+            "=== onehot_d{d} batched (q=2^128-2355, D={d}, 1-of-{onehot_k}, log_commit_bound=1, same-point batch={num_polys}) ==="
         )
     }
 }
@@ -866,7 +814,7 @@ fn fixed_onehot_title(d: usize, nv: usize, num_polys: usize) -> String {
 fn run_profile_full(nv: usize, num_polys: usize) {
     assert_singleton_mode("full", num_polys);
     let d = best_full_d(nv);
-    let title = format!("=== full (q=2^128-275, D={d}, dense) ===");
+    let title = format!("=== full (q=2^128-2355, D={d}, dense) ===");
     match d {
         32 => run_dense_mode::<32, fp128::D32Full>(&title, nv),
         128 => run_dense_mode::<128, fp128::D128Full>(&title, nv),
@@ -878,10 +826,10 @@ fn run_profile_onehot(nv: usize, num_polys: usize) {
     let onehot_k = onehot_k_for_num_vars(nv);
     let d = best_onehot_d(nv);
     let title = if num_polys == 1 {
-        format!("=== onehot (q=2^128-275, D={d}, 1-of-{onehot_k}) ===")
+        format!("=== onehot (q=2^128-2355, D={d}, 1-of-{onehot_k}) ===")
     } else {
         format!(
-            "=== onehot batched (q=2^128-275, D={d}, 1-of-{onehot_k}, same-point batch={num_polys}) ==="
+            "=== onehot batched (q=2^128-2355, D={d}, 1-of-{onehot_k}, same-point batch={num_polys}) ==="
         )
     };
     match d {
@@ -895,7 +843,7 @@ fn run_profile_full_d128(nv: usize, num_polys: usize) {
     type Cfg = fp128::D128Full;
     assert_singleton_mode("full_d128", num_polys);
     run_dense_mode::<{ Cfg::D }, Cfg>(
-        "=== full_d128 (q=2^128-275, D=128 dense, log_commit_bound=128) ===",
+        "=== full_d128 (q=2^128-2355, D=128 dense, log_commit_bound=128) ===",
         nv,
     );
 }
@@ -910,7 +858,7 @@ fn run_profile_full_d32(nv: usize, num_polys: usize) {
     type Cfg = fp128::D32Full;
     assert_singleton_mode("full_d32", num_polys);
     run_dense_mode::<{ Cfg::D }, Cfg>(
-        "=== full_d32 (q=2^128-275, D=32 dense, log_commit_bound=128) ===",
+        "=== full_d32 (q=2^128-2355, D=32 dense, log_commit_bound=128) ===",
         nv,
     );
 }
@@ -1083,6 +1031,6 @@ fn main() {
     }
 }
 
-fn resolve_layout<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> HachiCommitmentLayout {
+fn resolve_layout<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> LevelParams {
     Cfg::commitment_layout(nv).expect("layout")
 }

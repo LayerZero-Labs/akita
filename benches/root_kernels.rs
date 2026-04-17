@@ -53,7 +53,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
 
     let envelope = Cfg::envelope(NV);
     let n_a = envelope.max_n_a;
-    let inner_width = layout.inner_width;
+    let inner_width = layout.inner_width();
 
     let mut group = c.benchmark_group("root_kernels");
     group.bench_function("dense_root_matvec_full_nv25_d32", |b| {

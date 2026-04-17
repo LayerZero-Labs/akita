@@ -1,48 +1,28 @@
-//! Generate exact keyed schedule tables and SIS floors.
+//! Generate schedule tables using the DP planner.
+//!
+//! Produces one module per family in `GeneratedScheduleTableEntry` format.
+//! Each emitted file contains both:
+//!
+//! - singleton schedules (`num_claims=1`)
+//! - batched schedules for 4 polynomials, 1 group, 1 point
 
-use std::collections::BTreeSet;
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
 
 use hachi_pcs::planner::proof_size::ring_vec_bytes;
-use hachi_pcs::planner::sis_security;
+use hachi_pcs::planner::schedule_params::{
+    find_optimal_batched_schedule, BatchConfig, DirectStep, FoldStep, Schedule, Step,
+};
 use hachi_pcs::protocol::commitment::presets::fp128;
 use hachi_pcs::protocol::commitment::{
-    exact_schedule_plan_for_lookup_key, CommitmentConfig, CommitmentPreset,
-    GeneratedAdaptivePolicy, HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedStep,
-    HachiRootBatchSummary, HachiScheduleLookupKey, HachiSchedulePlan,
+    current_level_layout_with_log_basis, CommitmentConfig, CommitmentPreset,
+    GeneratedAdaptivePolicy, HachiScheduleInputs,
 };
-use hachi_pcs::protocol::proof::DirectWitnessShape;
 
 type Fp128D128OneHot =
     CommitmentPreset<fp128::Field, GeneratedAdaptivePolicy<fp128::Profile, 128, 1>>;
-
-#[derive(Clone, Copy)]
-struct BlessedBatchSpec {
-    max_num_vars: usize,
-    num_vars: usize,
-    layout_num_claims: usize,
-    batch_num_claims: usize,
-    batch_num_commitment_groups: usize,
-    batch_num_points: usize,
-}
-
-impl BlessedBatchSpec {
-    const fn lookup_key(self) -> HachiScheduleLookupKey {
-        HachiScheduleLookupKey::with_batch(
-            self.max_num_vars,
-            self.num_vars,
-            self.layout_num_claims,
-            HachiRootBatchSummary {
-                num_claims: self.batch_num_claims,
-                num_commitment_groups: self.batch_num_commitment_groups,
-                num_points: self.batch_num_points,
-            },
-        )
-    }
-}
 
 #[derive(Clone, Copy)]
 enum FamilyKind {
@@ -56,415 +36,285 @@ enum FamilyKind {
 
 #[derive(Clone, Copy)]
 struct FamilySpec {
-    family_name: &'static str,
     module_name: &'static str,
     const_name: &'static str,
     min_num_vars: usize,
     max_num_vars: usize,
     kind: FamilyKind,
-    blessed_batches: &'static [BlessedBatchSpec],
 }
-
-const D64_ONEHOT_BLESSED_BATCHES: &[BlessedBatchSpec] = &[
-    BlessedBatchSpec {
-        max_num_vars: 20,
-        num_vars: 20,
-        layout_num_claims: 6,
-        batch_num_claims: 6,
-        batch_num_commitment_groups: 3,
-        batch_num_points: 1,
-    },
-    BlessedBatchSpec {
-        max_num_vars: 20,
-        num_vars: 20,
-        layout_num_claims: 6,
-        batch_num_claims: 6,
-        batch_num_commitment_groups: 3,
-        batch_num_points: 2,
-    },
-];
 
 const ALL_FAMILIES: &[FamilySpec] = &[
     FamilySpec {
-        family_name: "fp128_d128_full",
         module_name: "fp128_d128_full",
         const_name: "FP128_D128_FULL_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 50,
         kind: FamilyKind::Fp128D128Full,
-        blessed_batches: &[],
     },
     FamilySpec {
-        family_name: "fp128_d128_onehot",
         module_name: "fp128_d128_onehot",
         const_name: "FP128_D128_ONEHOT_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 50,
         kind: FamilyKind::Fp128D128OneHot,
-        blessed_batches: &[],
     },
     FamilySpec {
-        family_name: "fp128_d32_full",
         module_name: "fp128_d32_full",
         const_name: "FP128_D32_FULL_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 50,
         kind: FamilyKind::Fp128D32Full,
-        blessed_batches: &[],
     },
     FamilySpec {
-        family_name: "fp128_d32_onehot",
         module_name: "fp128_d32_onehot",
         const_name: "FP128_D32_ONEHOT_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 50,
         kind: FamilyKind::Fp128D32OneHot,
-        blessed_batches: &[],
     },
     FamilySpec {
-        family_name: "fp128_d64_full",
         module_name: "fp128_d64_full",
         const_name: "FP128_D64_FULL_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 50,
         kind: FamilyKind::Fp128D64Full,
-        blessed_batches: &[],
     },
     FamilySpec {
-        family_name: "fp128_d64_onehot",
         module_name: "fp128_d64_onehot",
         const_name: "FP128_D64_ONEHOT_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 50,
         kind: FamilyKind::Fp128D64OneHot,
-        blessed_batches: D64_ONEHOT_BLESSED_BATCHES,
     },
 ];
 
-fn usage() -> &'static str {
-    "usage: cargo run --bin gen_schedule_tables -- <output-dir> [--family <name>]..."
-}
-
-fn family_by_name(name: &str) -> Option<FamilySpec> {
-    ALL_FAMILIES
-        .iter()
-        .copied()
-        .find(|family| family.family_name == name)
-}
-
-fn emit_generated_key(key: HachiScheduleLookupKey) -> String {
-    let batch = key.batch;
+fn emit_key(
+    nv: usize,
+    num_claims: usize,
+    num_commitment_groups: usize,
+    num_points: usize,
+) -> String {
     format!(
-        "GeneratedScheduleKey {{ max_num_vars: {}, num_vars: {}, layout_num_claims: {}, batch_num_claims: {}, batch_num_commitment_groups: {}, batch_num_points: {} }}",
-        key.max_num_vars,
-        key.num_vars,
-        key.layout_num_claims,
-        batch.num_claims,
-        batch.num_commitment_groups,
-        batch.num_points,
+        "GeneratedScheduleKey {{ max_num_vars: {nv}, num_vars: {nv}, \
+         layout_num_claims: {num_claims}, batch_num_claims: {num_claims}, \
+         batch_num_commitment_groups: {num_commitment_groups}, \
+         batch_num_points: {num_points} }}"
     )
 }
 
-fn emit_shape(direct: &HachiPlannedDirectStep) -> String {
-    match direct.witness_shape {
-        DirectWitnessShape::PackedDigits((num_elems, bits_per_elem)) => format!(
-            "GeneratedDirectWitnessShape::PackedDigits {{ num_elems: {num_elems}, bits_per_elem: {bits_per_elem} }}"
-        ),
-        DirectWitnessShape::FieldElements(num_elems) => format!(
-            "GeneratedDirectWitnessShape::FieldElements {{ num_elems: {num_elems} }}"
-        ),
-    }
+fn emit_fold(step: &FoldStep, label: &str) -> String {
+    let p = &step.params;
+    format!(
+        "        GeneratedStep::Fold(GeneratedFoldStep {{ \
+         current_w_len: {}, d: {}, log_basis: {}, challenge_l1_mass: {}, \
+         m_vars: {}, r_vars: {}, n_a: {}, n_b: {}, n_d: {}, \
+         delta_open: {}, delta_fold: {}, delta_commit: {}, \
+         w_ring: {}, next_w_len: {}, level_bytes: {}, label: {:?} }}),",
+        step.current_w_len,
+        p.ring_dimension,
+        p.log_basis,
+        p.challenge_l1_mass(),
+        p.log_block_len(),
+        p.log_num_blocks(),
+        p.a_key.row_len(),
+        p.b_key.row_len(),
+        p.d_key.row_len(),
+        p.num_digits_open,
+        p.num_digits_fold,
+        p.num_digits_commit,
+        step.w_ring,
+        step.next_w_len,
+        step.level_bytes,
+        label,
+    )
 }
 
-fn emit_direct_entry<Cfg: CommitmentConfig>(
-    previous_fold: Option<&HachiPlannedLevel>,
-    direct: &HachiPlannedDirectStep,
-) -> Result<(Option<usize>, Option<usize>, usize), String> {
-    let Some(previous_fold) = previous_fold else {
-        return Ok((None, None, direct.direct_bytes));
+fn emit_direct<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    level: usize,
+    direct: &DirectStep,
+) -> String {
+    let shape = format!(
+        "GeneratedDirectWitnessShape::PackedDigits {{ num_elems: {}, bits_per_elem: {} }}",
+        direct.current_w_len, direct.bits_per_elem,
+    );
+
+    let (entry_d, entry_nb, total_bytes) = if direct.bits_per_elem >= 128 {
+        (None, None, direct.direct_bytes)
+    } else {
+        let lp = current_level_layout_with_log_basis::<Cfg>(
+            HachiScheduleInputs {
+                max_num_vars,
+                level,
+                current_w_len: direct.current_w_len,
+            },
+            direct.bits_per_elem,
+        )
+        .expect("level params for direct step");
+        let total =
+            direct.direct_bytes + ring_vec_bytes(lp.b_key.row_len(), lp.ring_dimension as u32);
+        (Some(lp.ring_dimension), Some(lp.b_key.row_len()), total)
     };
 
-    let entry_d = Cfg::d_at_level(direct.state.level, direct.state.current_w_len);
-    let next_commit_coeffs = previous_fold.next_commit_coeffs;
-    if next_commit_coeffs == 0 {
-        return Ok((None, None, direct.direct_bytes));
-    }
-    if next_commit_coeffs % entry_d != 0 {
-        return Err(format!(
-            "non-integral terminal entry commitment for level {}: coeffs={} d={entry_d}",
-            direct.state.level, next_commit_coeffs
-        ));
-    }
-
-    let entry_nb = next_commit_coeffs / entry_d;
-    let total_bytes = direct.direct_bytes + ring_vec_bytes(entry_nb, entry_d as u32);
-    Ok((Some(entry_d), Some(entry_nb), total_bytes))
+    format!(
+        "        GeneratedStep::Direct(GeneratedDirectStep {{ \
+         current_w_len: {}, witness_shape: {shape}, \
+         entry_d: {entry_d:?}, entry_nb: {entry_nb:?}, \
+         direct_bytes: {}, total_bytes: {total_bytes} }}),",
+        direct.current_w_len, direct.direct_bytes,
+    )
 }
 
-fn emit_exact_entry<Cfg: CommitmentConfig>(
+fn emit_direct_field_elements(current_w_len: usize, direct_bytes: usize) -> String {
+    let shape =
+        format!("GeneratedDirectWitnessShape::FieldElements {{ num_elems: {current_w_len} }}");
+    format!(
+        "        GeneratedStep::Direct(GeneratedDirectStep {{ \
+         current_w_len: {current_w_len}, witness_shape: {shape}, \
+         entry_d: None, entry_nb: None, \
+         direct_bytes: {direct_bytes}, total_bytes: {direct_bytes} }}),",
+    )
+}
+
+fn emit_schedule_entry<Cfg: CommitmentConfig>(
     out: &mut String,
-    key: HachiScheduleLookupKey,
-    plan: &HachiSchedulePlan,
+    max_num_vars: usize,
+    key_str: &str,
+    schedule: &Schedule,
 ) -> Result<(), String> {
     writeln!(
         out,
-        "    GeneratedScheduleTableEntry {{ key: {}, total_bytes: {}, steps: &[",
-        emit_generated_key(key),
-        plan.exact_proof_bytes
+        "    GeneratedScheduleTableEntry {{ key: {key_str}, total_bytes: {}, steps: &[",
+        schedule.total_bytes,
     )
-    .map_err(|err| err.to_string())?;
+    .map_err(|e| e.to_string())?;
 
-    let mut previous_fold: Option<&HachiPlannedLevel> = None;
-    for step in &plan.steps {
+    let mut level = 0usize;
+    for step in &schedule.steps {
         match step {
-            HachiPlannedStep::Fold(level) => {
-                writeln!(
-                    out,
-                    "        GeneratedStep::Fold(GeneratedFoldStep {{ current_w_len: {}, d: {}, log_basis: {}, challenge_l1_mass: {}, m_vars: {}, r_vars: {}, n_a: {}, n_b: {}, n_d: {}, delta_open: {}, delta_fold: {}, delta_commit: {}, w_ring: {}, next_w_len: {}, level_bytes: {}, label: {:?} }}),",
-                    level.inputs.current_w_len,
-                    level.params.d,
-                    level.params.log_basis,
-                    level.params.challenge_l1_mass,
-                    level.layout.m_vars,
-                    level.layout.r_vars,
-                    level.params.n_a,
-                    level.params.n_b,
-                    level.params.n_d,
-                    level.layout.num_digits_open,
-                    level.layout.num_digits_fold,
-                    level.layout.num_digits_commit,
-                    level.next_inputs.current_w_len / level.params.d,
-                    level.next_inputs.current_w_len,
-                    level.level_bytes,
-                    "runtime_exact",
-                )
-                .map_err(|err| err.to_string())?;
-                previous_fold = Some(level.as_ref());
+            Step::Fold(fold) => {
+                writeln!(out, "{}", emit_fold(fold, "runtime_exact")).map_err(|e| e.to_string())?;
+                level += 1;
             }
-            HachiPlannedStep::Direct(direct) => {
-                let (entry_d, entry_nb, total_bytes) =
-                    emit_direct_entry::<Cfg>(previous_fold, direct)?;
-                writeln!(
-                    out,
-                    "        GeneratedStep::Direct(GeneratedDirectStep {{ current_w_len: {}, witness_shape: {}, entry_d: {:?}, entry_nb: {:?}, direct_bytes: {}, total_bytes: {} }}),",
-                    direct.state.current_w_len,
-                    emit_shape(direct),
-                    entry_d,
-                    entry_nb,
-                    direct.direct_bytes,
-                    total_bytes,
-                )
-                .map_err(|err| err.to_string())?;
+            Step::Direct(direct) => {
+                if direct.bits_per_elem >= 128 {
+                    writeln!(
+                        out,
+                        "{}",
+                        emit_direct_field_elements(direct.current_w_len, direct.direct_bytes)
+                    )
+                    .map_err(|e| e.to_string())?;
+                } else {
+                    writeln!(out, "{}", emit_direct::<Cfg>(max_num_vars, level, direct))
+                        .map_err(|e| e.to_string())?;
+                }
             }
         }
     }
 
-    writeln!(out, "    ] }},").map_err(|err| err.to_string())
+    writeln!(out, "    ] }},").map_err(|e| e.to_string())
 }
 
 fn emit_family_rows<Cfg: CommitmentConfig, const D: usize>(
     spec: FamilySpec,
+    batch: BatchConfig,
     out: &mut String,
 ) -> Result<(), String> {
-    for num_vars in spec.min_num_vars..=spec.max_num_vars {
-        let key = HachiScheduleLookupKey::singleton(num_vars, num_vars, 1);
-        let plan = exact_schedule_plan_for_lookup_key::<Cfg, D>(key)
-            .map_err(|err| format!("failed to plan singleton {key:?}: {err}"))?;
-        emit_exact_entry::<Cfg>(out, key, &plan)?;
-    }
+    let nc = batch.num_claims;
+    let ng = batch.num_commitment_groups;
+    let np = batch.num_points;
 
-    for blessed in spec.blessed_batches {
-        let key = blessed.lookup_key();
-        let plan = exact_schedule_plan_for_lookup_key::<Cfg, D>(key)
-            .map_err(|err| format!("failed to plan blessed batch {key:?}: {err}"))?;
-        emit_exact_entry::<Cfg>(out, key, &plan)?;
+    for nv in spec.min_num_vars..=spec.max_num_vars {
+        let schedule = match find_optimal_batched_schedule::<Cfg, D>(nv, batch) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("  SKIP {}: nv={nv} claims={nc}: {e}", spec.module_name);
+                continue;
+            }
+        };
+        let key_str = emit_key(nv, nc, ng, np);
+        emit_schedule_entry::<Cfg>(out, nv, &key_str, &schedule)?;
     }
-
     Ok(())
 }
 
-fn emit_family_module(spec: FamilySpec) -> Result<String, String> {
+fn emit_module(spec: FamilySpec) -> Result<String, String> {
     let mut out = String::new();
     writeln!(
         out,
         "// Generated by `cargo run --bin gen_schedule_tables -- <output-dir>`"
     )
-    .map_err(|err| err.to_string())?;
+    .map_err(|e| e.to_string())?;
     writeln!(
         out,
-        "use super::{{\n    GeneratedDirectStep, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleKey,\n    GeneratedScheduleTableEntry, GeneratedStep,\n}};"
+        "use super::{{\n    GeneratedDirectStep, GeneratedDirectWitnessShape, \
+         GeneratedFoldStep, GeneratedScheduleKey,\n    \
+         GeneratedScheduleTableEntry, GeneratedStep,\n}};"
     )
-    .map_err(|err| err.to_string())?;
-    writeln!(out).map_err(|err| err.to_string())?;
-    writeln!(out, "#[rustfmt::skip]").map_err(|err| err.to_string())?;
+    .map_err(|e| e.to_string())?;
+    writeln!(out).map_err(|e| e.to_string())?;
+    writeln!(out, "#[rustfmt::skip]").map_err(|e| e.to_string())?;
     writeln!(
         out,
         "pub(crate) static {}: &[GeneratedScheduleTableEntry] = &[",
         spec.const_name
     )
-    .map_err(|err| err.to_string())?;
+    .map_err(|e| e.to_string())?;
+
+    let singleton = BatchConfig::singleton();
+    let batched_4 = BatchConfig {
+        num_claims: 4,
+        num_commitment_groups: 1,
+        num_points: 1,
+    };
 
     match spec.kind {
-        FamilyKind::Fp128D128Full => emit_family_rows::<fp128::D128Full, 128>(spec, &mut out)?,
-        FamilyKind::Fp128D128OneHot => emit_family_rows::<Fp128D128OneHot, 128>(spec, &mut out)?,
-        FamilyKind::Fp128D32Full => emit_family_rows::<fp128::D32Full, 32>(spec, &mut out)?,
-        FamilyKind::Fp128D32OneHot => emit_family_rows::<fp128::D32OneHot, 32>(spec, &mut out)?,
-        FamilyKind::Fp128D64Full => emit_family_rows::<fp128::D64Full, 64>(spec, &mut out)?,
-        FamilyKind::Fp128D64OneHot => emit_family_rows::<fp128::D64OneHot, 64>(spec, &mut out)?,
+        FamilyKind::Fp128D128Full => {
+            emit_family_rows::<fp128::D128Full, 128>(spec, singleton, &mut out)?;
+            emit_family_rows::<fp128::D128Full, 128>(spec, batched_4, &mut out)?;
+        }
+        FamilyKind::Fp128D128OneHot => {
+            emit_family_rows::<Fp128D128OneHot, 128>(spec, singleton, &mut out)?;
+            emit_family_rows::<Fp128D128OneHot, 128>(spec, batched_4, &mut out)?;
+        }
+        FamilyKind::Fp128D32Full => {
+            emit_family_rows::<fp128::D32Full, 32>(spec, singleton, &mut out)?;
+            emit_family_rows::<fp128::D32Full, 32>(spec, batched_4, &mut out)?;
+        }
+        FamilyKind::Fp128D32OneHot => {
+            emit_family_rows::<fp128::D32OneHot, 32>(spec, singleton, &mut out)?;
+            emit_family_rows::<fp128::D32OneHot, 32>(spec, batched_4, &mut out)?;
+        }
+        FamilyKind::Fp128D64Full => {
+            emit_family_rows::<fp128::D64Full, 64>(spec, singleton, &mut out)?;
+            emit_family_rows::<fp128::D64Full, 64>(spec, batched_4, &mut out)?;
+        }
+        FamilyKind::Fp128D64OneHot => {
+            emit_family_rows::<fp128::D64OneHot, 64>(spec, singleton, &mut out)?;
+            emit_family_rows::<fp128::D64OneHot, 64>(spec, batched_4, &mut out)?;
+        }
     }
 
-    writeln!(out, "];").map_err(|err| err.to_string())?;
+    writeln!(out, "];").map_err(|e| e.to_string())?;
     Ok(out)
 }
 
 fn main() -> Result<(), String> {
-    let mut args = env::args().skip(1);
-    let Some(output_dir) = args.next() else {
-        return Err(usage().to_string());
-    };
-    let mut requested_families = BTreeSet::new();
-    while let Some(arg) = args.next() {
-        if arg == "--family" {
-            let Some(name) = args.next() else {
-                return Err(usage().to_string());
-            };
-            if family_by_name(&name).is_none() {
-                return Err(format!(
-                    "unknown family {name:?}; expected one of: {}",
-                    ALL_FAMILIES
-                        .iter()
-                        .map(|family| family.family_name)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-            }
-            requested_families.insert(name);
-            continue;
-        }
-        return Err(usage().to_string());
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.len() != 1 {
+        return Err(
+            "usage: cargo run --release --bin gen_schedule_tables -- <output-dir>".to_string(),
+        );
     }
+    let base_dir = PathBuf::from(&args[0]);
+    fs::create_dir_all(&base_dir).map_err(|e| format!("create {}: {e}", base_dir.display()))?;
 
-    let output_dir = PathBuf::from(output_dir);
-    fs::create_dir_all(&output_dir)
-        .map_err(|err| format!("failed to create {}: {err}", output_dir.display()))?;
-
-    let families: Vec<FamilySpec> = if requested_families.is_empty() {
-        ALL_FAMILIES.to_vec()
-    } else {
-        requested_families
-            .into_iter()
-            .map(|name| family_by_name(&name).expect("requested family was prevalidated"))
-            .collect()
-    };
-
-    for family in families {
-        let dest = output_dir.join(format!("{}.rs", family.module_name));
-        let body = emit_family_module(family)?;
-        fs::write(&dest, body)
-            .map_err(|err| format!("failed to write {}: {err}", dest.display()))?;
+    for family in ALL_FAMILIES {
+        let body = emit_module(*family)?;
+        let dest = base_dir.join(format!("{}.rs", family.module_name));
+        fs::write(&dest, &body).map_err(|e| format!("write {}: {e}", dest.display()))?;
         println!("wrote {}", dest.display());
     }
 
-    let sis_dest = output_dir.join("sis_floor.rs");
-    let sis_body = emit_sis_floor_module();
-    fs::write(&sis_dest, &sis_body)
-        .map_err(|err| format!("failed to write {}: {err}", sis_dest.display()))?;
-    println!("wrote {}", sis_dest.display());
-
     Ok(())
-}
-
-fn emit_sis_floor_module() -> String {
-    use std::fmt::Write;
-
-    let mut out = String::new();
-    let _ = writeln!(out, "// Generated by `cargo run --bin gen_schedule_tables`");
-    let _ = writeln!(out, "//");
-    let _ = writeln!(
-        out,
-        "// SIS width thresholds for 128-bit security (BDGL16 + lgsa, q = 2^128 - 275)."
-    );
-    let _ = writeln!(
-        out,
-        "// Source: `src/planner/sis_security.rs`, verified with lattice-estimator."
-    );
-    let _ = writeln!(out);
-
-    let max_rank = sis_security::MAX_RANK;
-    let _ = writeln!(out, "const MAX_RANK: usize = {max_rank};");
-    let _ = writeln!(out);
-
-    let _ = writeln!(
-        out,
-        "fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[u64; MAX_RANK]> {{"
-    );
-    let _ = writeln!(out, "    match (d, collision_inf) {{");
-
-    let d_collision_pairs: &[(u32, &[u32])] = &[
-        (32, &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047]),
-        (64, &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047]),
-        (128, &[2, 3, 7, 15, 31, 63]),
-    ];
-
-    for &(d, collisions) in d_collision_pairs {
-        let _ = writeln!(out, "        // D={d}");
-        for &c in collisions {
-            if let Some(widths) = sis_security::sis_max_widths_public(d, c) {
-                let _ = write!(out, "        ({d}, {c}) => Some([");
-                for (i, w) in widths.iter().enumerate() {
-                    if i > 0 {
-                        let _ = write!(out, ", ");
-                    }
-                    let _ = write!(out, "{w}");
-                }
-                let _ = writeln!(out, "]),");
-            }
-        }
-    }
-
-    let _ = writeln!(out, "        _ => None,");
-    let _ = writeln!(out, "    }}");
-    let _ = writeln!(out, "}}");
-    let _ = writeln!(out);
-
-    let _ = writeln!(
-        out,
-        "pub(crate) fn min_rank_for_secure_width(d: u32, collision_inf: u32, width: u64) -> Option<usize> {{"
-    );
-    let _ = writeln!(out, "    let widths = sis_max_widths(d, collision_inf)?;");
-    let _ = writeln!(out, "    for (i, &max_w) in widths.iter().enumerate() {{");
-    let _ = writeln!(out, "        if width <= max_w {{");
-    let _ = writeln!(out, "            return Some(i + 1);");
-    let _ = writeln!(out, "        }}");
-    let _ = writeln!(out, "    }}");
-    let _ = writeln!(out, "    None");
-    let _ = writeln!(out, "}}");
-    let _ = writeln!(out);
-
-    let _ = writeln!(
-        out,
-        "pub(crate) fn ceil_supported_collision(d: u32, collision_inf: u32) -> Option<u32> {{"
-    );
-    let _ = writeln!(
-        out,
-        "    const D32: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047];"
-    );
-    let _ = writeln!(
-        out,
-        "    const D64: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047];"
-    );
-    let _ = writeln!(out, "    const D128: &[u32] = &[2, 3, 7, 15, 31, 63];");
-    let _ = writeln!(out, "    let buckets = match d {{");
-    let _ = writeln!(out, "        32 => D32,");
-    let _ = writeln!(out, "        64 => D64,");
-    let _ = writeln!(out, "        128 => D128,");
-    let _ = writeln!(out, "        _ => return None,");
-    let _ = writeln!(out, "    }};");
-    let _ = writeln!(out, "    buckets");
-    let _ = writeln!(out, "        .iter()");
-    let _ = writeln!(out, "        .copied()");
-    let _ = writeln!(out, "        .find(|&bucket| collision_inf <= bucket)");
-    let _ = writeln!(out, "}}");
-
-    out
 }

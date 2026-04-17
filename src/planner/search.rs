@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use super::digit_math::{compute_num_digits_fold, num_digits_for_bound, optimal_m_r_split};
+use super::digit_math::{
+    compute_num_digits_fold_with_claims, num_digits_for_bound, optimal_m_r_split,
+};
 use super::proof_size::{
     elem_bytes, packed_digits_bytes, ring_vec_bytes, stage1_bytes_optimized, sumcheck_bytes,
     sumcheck_rounds, FIELD_BITS,
@@ -115,7 +117,8 @@ fn compute_level_witness(cfg: &RingConfig, a: &WitnessArgs) -> LevelComputation 
     let open_bound = if log_cb < 128 { 128 } else { log_cb };
     let delta_open = num_digits_for_bound(open_bound, log_basis);
     let delta_commit = num_digits_for_bound(log_cb, log_basis);
-    let delta_fold = compute_num_digits_fold(r_vars, cfg.challenge_l1_mass, log_basis);
+    let delta_fold =
+        compute_num_digits_fold_with_claims(r_vars, cfg.challenge_l1_mass, log_basis, 1);
 
     let num_blocks = 1usize << r_vars;
     let m_actual = if tight_zpre {

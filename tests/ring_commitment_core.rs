@@ -3,8 +3,9 @@
 use hachi_pcs::algebra::CyclotomicRing;
 use hachi_pcs::protocol::commitment::{
     utils::linear::decompose_block, CommitmentConfig, CommitmentEnvelope, DecompositionParams,
-    HachiCommitmentCore, HachiCommitmentLayout, RingCommitmentScheme, SmallTestCommitmentConfig,
+    HachiCommitmentCore, RingCommitmentScheme, SmallTestCommitmentConfig,
 };
+use hachi_pcs::protocol::params::LevelParams;
 use hachi_pcs::test_utils::*;
 use hachi_pcs::{FromSmallInt, HachiError};
 use std::array::from_fn;
@@ -40,8 +41,15 @@ impl CommitmentConfig for BadDegreeConfig {
         }
     }
 
-    fn commitment_layout(_max_num_vars: usize) -> Result<HachiCommitmentLayout, HachiError> {
-        HachiCommitmentLayout::new::<Self>(4, 2, &Self::decomposition())
+    fn commitment_layout(max_num_vars: usize) -> Result<LevelParams, HachiError> {
+        Self::root_level_layout_with_log_basis(
+            hachi_pcs::protocol::commitment::HachiScheduleInputs {
+                max_num_vars,
+                level: 0,
+                current_w_len: 1usize.checked_shl(max_num_vars as u32).unwrap_or(0),
+            },
+            Self::decomposition().log_basis,
+        )
     }
 }
 
@@ -198,10 +206,10 @@ fn opening_satisfies_inner_and_outer_equations() {
 #[test]
 fn small_test_config_has_expected_shape() {
     assert_eq!(SmallTestCommitmentConfig::D, 32);
-    let layout = SmallTestCommitmentConfig::commitment_layout(8).unwrap();
-    assert_eq!(layout.block_len, 16);
-    assert_eq!(layout.num_blocks, 4);
-    let depth = layout.num_digits_commit;
+    let lp = SmallTestCommitmentConfig::commitment_layout(8).unwrap();
+    assert_eq!(lp.block_len, 16);
+    assert_eq!(lp.num_blocks, 4);
+    let depth = lp.num_digits_commit;
     assert!(depth > 0);
 }
 

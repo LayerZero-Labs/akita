@@ -414,22 +414,21 @@ mod tests {
             for (j, &f) in factors.iter().enumerate() {
                 let local = idx % dims[j];
                 idx /= dims[j];
-                prod = prod
-                    * if f.is_empty() {
-                        if local == 0 {
-                            F::one()
-                        } else {
-                            F::zero()
-                        }
-                    } else if local < f.len() {
-                        f[local]
+                prod *= if f.is_empty() {
+                    if local == 0 {
+                        F::one()
                     } else {
                         F::zero()
-                    };
+                    }
+                } else if local < f.len() {
+                    f[local]
+                } else {
+                    F::zero()
+                };
             }
             let global = offset + z;
             if global < eq_table.len() {
-                acc = acc + eq_table[global] * prod;
+                acc += eq_table[global] * prod;
             }
         }
         acc
