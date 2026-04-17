@@ -88,7 +88,17 @@ const MIN_SHRINK_RATIO: f64 = 0.5;
 ///
 /// The public [`SetupDelegationMode::Enabled`] variant activates delegation at
 /// the first `MAX_SETUP_DELEGATION_LEVELS` outer-D levels only.
-pub const MAX_SETUP_DELEGATION_LEVELS: usize = 2;
+///
+/// Currently pinned to `1`. Each delegated level contributes a roughly
+/// `num_vars`-independent ~65-75 KB nested-PCS payload (dominated by
+/// `SetupDelegationProof::shared_matrix_opening_proof`), and measurements on
+/// the `onehot` + `Fused` path show that every additional delegated level adds
+/// that same cost without letting any other part of the proof shrink. Raising
+/// the cap is therefore a strict proof-size regression with today's
+/// `SharedMatrixOpeningConfig::InnerCfg` choices; revisit once that nested
+/// opening gets substantially cheaper (e.g. a smaller `InnerCfg`, shared
+/// Fiat-Shamir state across levels, or a non-PCS setup-claim proof shape).
+pub const MAX_SETUP_DELEGATION_LEVELS: usize = 1;
 
 /// Whether the setup-claim delegation path should run on a given proof.
 ///
