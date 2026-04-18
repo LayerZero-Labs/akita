@@ -1688,7 +1688,22 @@ pub(crate) fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
     })
 }
 
+/// Decomposition of `M(r_x1)` into the shared-matrix-free local part and
+/// the shared-matrix-linear part.
+///
+/// - `local` = `w_sep + t_sep + r_sep + r_dense + z_dense_local`. Depends
+///   only on challenges/opening points/gadget rows; no shared-matrix entry
+///   appears in any factor.
+/// - `sm_linear` = `w_d + t_b + z_dense_sm`. Linear in the shared-matrix
+///   entries (can be written as `< shared_matrix_flat, V_L0_sm >` for an
+///   index-structured weight vector `V_L0_sm`).
+pub(crate) struct MEvalSplit<F: FieldCore> {
+    pub local: F,
+    pub sm_linear: F,
+}
+
 impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
+    /// Evaluate `M(r_x1)` as a single scalar (sum of `local + sm_linear`).
     #[inline]
     pub(crate) fn eval_at_point<const D: usize>(
         &self,
@@ -1697,6 +1712,204 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         opening_points: &[RingOpeningPoint<F>],
         alpha: F,
     ) -> Result<F, HachiError> {
+        let split = self.eval_split_at_point::<D>(x_challenges, setup, opening_points, alpha)?;
+        Ok(split.local + split.sm_linear)
+    }
+
+    /// Evaluate just the shared-matrix-free (`local`) part of `M(r_x1)`.
+    ///
+    /// This is the fast path used by the L=0 fused+carry verifier: the
+    /// shared-matrix-linear part is already absorbed as the sumcheck-verified
+    /// `claimed_setup_val`, so the deferred Stage-1 oracle check only needs
+    /// the local contribution here and can skip the `m_eval_w_d` /
+    /// `m_eval_t_b` / `m_eval_z_base` / `m_eval_z_dense` hot spots.
+    ///
+    /// Sums `w_sep + t_sep + z_dense_local + r_sep + r_dense`; touches no
+    /// shared-matrix data (the ring-view-based accumulators are skipped).
+    #[inline]
+    pub(crate) fn eval_local_at_point<const D: usize>(
+        &self,
+        x_challenges: &[F],
+        opening_points: &[RingOpeningPoint<F>],
+        alpha: F,
+    ) -> Result<F, HachiError> {
+        let alpha_pows = build_alpha_evals_y(alpha, D);
+        let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
+        let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
+        let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
+        let levels = r_decomp_levels::<F>(self.log_basis);
+        let r_gadget = gadget_row_scalars::<F>(levels, self.log_basis);
+
+        let consistency_weight = self.eq_tau1[0];
+        let public_weights = &self.eq_tau1[1..(1 + self.num_eval_rows)];
+        let d_start = 1 + self.num_eval_rows;
+        let commitment_row_count = self.n_b * self.num_commitment_groups;
+        let b_start = d_start + self.n_d;
+        let a_start = b_start + commitment_row_count;
+        let a_weights = &self.eq_tau1[a_start..self.rows];
+
+        let total_blocks = self.total_blocks;
+        let num_blocks = self.num_blocks;
+        let num_claims = self.num_claims;
+        let depth_open = self.depth_open;
+        let depth_commit = self.depth_commit;
+        let depth_fold = self.depth_fold;
+        let block_len = self.block_len;
+        let inner_width = self.inner_width;
+        let n_a = self.n_a;
+        let rows = self.rows;
+        let num_points = self.num_points;
+        let c_alphas = &self.c_alphas;
+        let eq_tau1 = &self.eq_tau1;
+        let claim_to_point = &self.claim_to_point;
+        let gamma = &self.gamma;
+
+        let w_len = depth_open * total_blocks;
+        let t_len = depth_open * n_a * total_blocks;
+        let z_total_blocks = num_points * block_len;
+        let z_len = depth_fold * depth_commit * z_total_blocks;
+        let r_tail_len = rows * levels;
+
+        let is_multi_point = num_points > 1;
+
+        let offset_z = if self.z_first { 0 } else { w_len + t_len };
+        let offset_w = if self.z_first { z_len } else { 0 };
+        let offset_t = if self.z_first { z_len + w_len } else { w_len };
+        let block_bits = num_blocks.trailing_zeros() as usize;
+        let block_low_eq = EqPolynomial::evals(&x_challenges[..block_bits]);
+        let block_offset_low = offset_w & (num_blocks - 1);
+
+        let opening_point_block_summaries: Vec<[F; 2]> = opening_points
+            .iter()
+            .map(|opening_point| {
+                summarize_pow2_block_carries(&block_low_eq, block_offset_low, &opening_point.b)
+            })
+            .collect();
+        let challenge_block_summaries: Vec<[F; 2]> = (0..num_claims)
+            .map(|claim_idx| {
+                let start = claim_idx * num_blocks;
+                summarize_pow2_block_carries(
+                    &block_low_eq,
+                    block_offset_low,
+                    &c_alphas[start..(start + num_blocks)],
+                )
+            })
+            .collect();
+
+        let mut w_carry_terms = vec![[F::zero(), F::zero()]; num_claims * depth_open];
+        for (dig, &g_open) in g1_open.iter().enumerate() {
+            let q_base = dig * num_claims;
+            for claim_idx in 0..num_claims {
+                let q = q_base + claim_idx;
+                let point_idx = if is_multi_point {
+                    claim_to_point[claim_idx]
+                } else {
+                    0
+                };
+                let [public_low0, public_low1] = opening_point_block_summaries[point_idx];
+                let public_scale = public_weights[point_idx] * gamma[claim_idx] * g_open;
+                w_carry_terms[q][0] += public_scale * public_low0;
+                w_carry_terms[q][1] += public_scale * public_low1;
+
+                let [challenge_low0, challenge_low1] = challenge_block_summaries[claim_idx];
+                let challenge_scale = consistency_weight * g_open;
+                w_carry_terms[q][0] += challenge_scale * challenge_low0;
+                w_carry_terms[q][1] += challenge_scale * challenge_low1;
+            }
+        }
+        let w_sep =
+            eval_offset_eq_peeled_carry_terms(x_challenges, offset_w, block_bits, &w_carry_terms);
+
+        let mut t_carry_terms = vec![[F::zero(), F::zero()]; num_claims * depth_open * n_a];
+        for (a_idx, &a_weight) in a_weights.iter().enumerate() {
+            for (digit_idx, &g_open) in g1_open.iter().enumerate() {
+                let q_base = num_claims * (digit_idx + depth_open * a_idx);
+                let scale = a_weight * g_open;
+                for (claim_idx, &[challenge_low0, challenge_low1]) in
+                    challenge_block_summaries.iter().enumerate()
+                {
+                    let q = q_base + claim_idx;
+                    t_carry_terms[q][0] += scale * challenge_low0;
+                    t_carry_terms[q][1] += scale * challenge_low1;
+                }
+            }
+        }
+        let t_sep =
+            eval_offset_eq_peeled_carry_terms(x_challenges, offset_t, block_bits, &t_carry_terms);
+
+        // Local z_base: consistency × opening_point.a × g1_commit (no shared_matrix).
+        let z_base_len = num_points * inner_width;
+        let z_base_local: Vec<F> = cfg_into_iter!(0..z_base_len)
+            .map(|k| {
+                let point_idx = if is_multi_point { k / inner_width } else { 0 };
+                let local_k = if is_multi_point { k % inner_width } else { k };
+                let block_idx = local_k / depth_commit;
+                let digit_idx = local_k % depth_commit;
+                let opening_point = &opening_points[point_idx];
+                consistency_weight * opening_point.a[block_idx] * g1_commit[digit_idx]
+            })
+            .collect();
+        let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
+            .map(|x| {
+                let compound_dig = x / z_total_blocks;
+                let global_blk = x % z_total_blocks;
+                let dc = compound_dig / depth_fold;
+                let df = compound_dig % depth_fold;
+                let point_idx = global_blk / block_len;
+                let blk = global_blk % block_len;
+                let phys_k = point_idx * inner_width + blk * depth_commit + dc;
+                -(z_base_local[phys_k] * fold_gadget[df])
+            })
+            .collect();
+        let z_dense_local =
+            eval_offset_eq_tensor(x_challenges, offset_z, F::one(), &[z_segment.as_slice()]);
+
+        let alpha_pow_d = alpha_pows[D - 1] * alpha;
+        let denom = alpha_pow_d + F::one();
+
+        let r_tail_dims_pow2 = levels.is_power_of_two();
+        let offset_r = w_len + t_len + z_len;
+
+        let r_sep = if r_tail_dims_pow2 {
+            eval_offset_eq_tensor(
+                x_challenges,
+                offset_r,
+                -denom,
+                &[&r_gadget, &eq_tau1[..rows]],
+            )
+        } else {
+            F::zero()
+        };
+        let r_dense = if r_tail_dims_pow2 {
+            F::zero()
+        } else {
+            let r_tail: Vec<F> = cfg_into_iter!(0..r_tail_len)
+                .map(|idx| {
+                    let row_idx = idx / levels;
+                    let level_idx = idx % levels;
+                    -(eq_tau1[row_idx] * denom * r_gadget[level_idx])
+                })
+                .collect();
+            eval_offset_eq_tensor(x_challenges, offset_r, F::one(), &[r_tail.as_slice()])
+        };
+
+        Ok(z_dense_local + w_sep + t_sep + r_sep + r_dense)
+    }
+
+    /// Evaluate `M(r_x1)` split into its shared-matrix-free (`local`) and
+    /// shared-matrix-linear (`sm_linear`) parts.
+    ///
+    /// See [`MEvalSplit`] for the exact decomposition. Both parts share the
+    /// precomputation (block-low eq, block summaries, gadget rows, etc.) so
+    /// requesting the split costs essentially the same as [`Self::eval_at_point`].
+    #[inline]
+    pub(crate) fn eval_split_at_point<const D: usize>(
+        &self,
+        x_challenges: &[F],
+        setup: &HachiExpandedSetup<F>,
+        opening_points: &[RingOpeningPoint<F>],
+        alpha: F,
+    ) -> Result<MEvalSplit<F>, HachiError> {
         let alpha_pows = build_alpha_evals_y(alpha, D);
         let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
         let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
@@ -1847,7 +2060,11 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         };
 
         let z_base_len = num_points * inner_width;
-        let z_base: Vec<F> = {
+        // Split z_base into the local part (consistency × opening.a × g1_commit,
+        // no shared_matrix) and the sm-linear part (Σ a_weight × a_view
+        // entries × alpha_pows). Folding through `eval_offset_eq_tensor` is
+        // linear so both parts can be folded independently and summed.
+        let (z_base_local_vec, z_base_sm_vec): (Vec<F>, Vec<F>) = {
             let _span = tracing::info_span!("m_eval_z_base").entered();
             cfg_into_iter!(0..z_base_len)
                 .map(|k| {
@@ -1856,21 +2073,21 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                     let block_idx = local_k / depth_commit;
                     let digit_idx = local_k % depth_commit;
                     let opening_point = &opening_points[point_idx];
-                    let mut acc =
+                    let local =
                         consistency_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
+                    let mut sm_acc = F::zero();
                     for (a_idx, eq_i) in a_weights.iter().enumerate() {
                         if !eq_i.is_zero() {
-                            acc +=
+                            sm_acc +=
                                 *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[local_k], &alpha_pows);
                         }
                     }
-                    acc
+                    (local, sm_acc)
                 })
-                .collect()
+                .unzip()
         };
 
-        let z_dense = {
-            let _span = tracing::info_span!("m_eval_z_dense").entered();
+        let fold_and_eval = |z_base: &[F]| -> F {
             let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
                 .map(|x| {
                     let compound_dig = x / z_total_blocks;
@@ -1884,6 +2101,11 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 })
                 .collect();
             eval_offset_eq_tensor(x_challenges, offset_z, F::one(), &[z_segment.as_slice()])
+        };
+        let z_dense_local = fold_and_eval(&z_base_local_vec);
+        let z_dense_sm = {
+            let _span = tracing::info_span!("m_eval_z_dense").entered();
+            fold_and_eval(&z_base_sm_vec)
         };
 
         let alpha_pow_d = alpha_pows[D - 1] * alpha;
@@ -1916,7 +2138,10 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
             eval_offset_eq_tensor(x_challenges, offset_r, F::one(), &[r_tail.as_slice()])
         };
 
-        Ok(z_dense + w_sep + w_d + t_sep + t_b + r_sep + r_dense)
+        Ok(MEvalSplit {
+            local: z_dense_local + w_sep + t_sep + r_sep + r_dense,
+            sm_linear: z_dense_sm + w_d + t_b,
+        })
     }
 }
 
@@ -2790,6 +3015,41 @@ mod tests {
         assert_eq!(
             got, expected,
             "PreparedMEval::eval_at_point must match materialized multilinear_eval"
+        );
+
+        let split = prepared
+            .eval_split_at_point::<D>(
+                &x_challenges,
+                &setup.expanded,
+                std::slice::from_ref(&ring_opening_point),
+                alpha,
+            )
+            .expect("eval_split_at_point");
+        assert_eq!(
+            split.local + split.sm_linear,
+            got,
+            "PreparedMEval::eval_split_at_point components must sum to eval_at_point"
+        );
+        assert_ne!(
+            split.sm_linear,
+            F::zero(),
+            "sm_linear part must be nontrivial for a realistic setup matrix"
+        );
+
+        // Fast path: `eval_local_at_point` must equal `split.local`. This is
+        // the load-bearing invariant for the L=0 M(r_x1) CPU optimization: it
+        // lets the deferred Stage-1 oracle check compute `M(r_x1)` as
+        // `local + claimed_setup_val` without touching the shared matrix.
+        let local_fast = prepared
+            .eval_local_at_point::<D>(
+                &x_challenges,
+                std::slice::from_ref(&ring_opening_point),
+                alpha,
+            )
+            .expect("eval_local_at_point");
+        assert_eq!(
+            local_fast, split.local,
+            "PreparedMEval::eval_local_at_point must agree with eval_split_at_point.local"
         );
     }
 }

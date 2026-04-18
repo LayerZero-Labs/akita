@@ -3649,6 +3649,16 @@ where
             })?;
             let eq_tau1 = EqPolynomial::evals(&rs.tau1);
             let alpha_evals_y_vec = rs.alpha_evals_y.clone();
+            // Fast-path M(r_x1) split: `claimed_setup_val` (already
+            // sumcheck-verified in Stage 2) equals the shared-matrix-linear
+            // part `m_val_sm_linear`, so the deferred Stage-1 oracle check
+            // only needs the shared-matrix-free (`local`) part. This skips
+            // the `m_eval_w_d` / `m_eval_t_b` / `m_eval_z_base` /
+            // `m_eval_z_dense` hot spots entirely at L=0. See
+            // `L0_MEVAL_CARRY_PLAN.md` for the derivation.
+            let m_eval_local_at_x_challenges = |r_x: &[F]| -> Result<F, HachiError> {
+                prepared_m_eval.eval_local_at_point::<D>(r_x, ring_opening_points_slice, rs.alpha)
+            };
             let (r_cr, carry) = verify_fused_stage1_stage2_emitting_carry::<F, T, D, _>(
                 transcript,
                 stage1,
@@ -3659,7 +3669,7 @@ where
                 rs.col_bits,
                 rs.ring_bits,
                 &alpha_evals_y_vec,
-                m_eval_at_x_challenges,
+                m_eval_local_at_x_challenges,
                 witness,
                 &eq_tau1,
                 lp,
@@ -4491,7 +4501,7 @@ where
 /// level and stash the carry for the downstream consumer (see Phase 3).
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn verify_fused_stage1_stage2_emitting_carry<F, T, const D: usize, MEval>(
+fn verify_fused_stage1_stage2_emitting_carry<F, T, const D: usize, MEvalLocal>(
     transcript: &mut T,
     stage1: &HachiStage1Proof<F>,
     stage2_sumcheck: &SumcheckProof<F>,
@@ -4501,7 +4511,12 @@ fn verify_fused_stage1_stage2_emitting_carry<F, T, const D: usize, MEval>(
     col_bits: usize,
     ring_bits: usize,
     alpha_evals_y: &[F],
-    m_eval_at_x_challenges: MEval,
+    // Returns ONLY the shared-matrix-free (local) part of `M(r_x1)`. The
+    // shared-matrix-linear part is supplied by the sumcheck-verified
+    // `claimed_setup_val` carried in `stage1`, so the caller avoids the
+    // `m_eval_w_d` / `m_eval_t_b` / `m_eval_z_base` / `m_eval_z_dense` hot
+    // spots that dominate L=0 verify with the full eval path.
+    m_eval_local_at_x_challenges: MEvalLocal,
     witness: FusedWitnessOracle<'_, F>,
     eq_tau1: &[F],
     lp: &LevelParams,
@@ -4516,7 +4531,7 @@ where
         + Valid
         + FromSmallInt,
     T: Transcript<F>,
-    MEval: FnOnce(&[F]) -> Result<F, HachiError>,
+    MEvalLocal: FnOnce(&[F]) -> Result<F, HachiError>,
 {
     let fused_proof = stage1.fused_leaf.as_ref().ok_or(HachiError::InvalidProof)?;
     let w_eval_stage1 = stage1.w_eval.ok_or(HachiError::InvalidProof)?;
@@ -4626,7 +4641,14 @@ where
     };
     let (r_y1, r_x1) = r_stage1.split_at(ring_bits);
     let alpha_val = multilinear_eval(alpha_evals_y, r_y1)?;
-    let m_val = m_eval_at_x_challenges(r_x1)?;
+    // `M(r_x1) = m_val_local + m_val_sm_linear` where `m_val_sm_linear` is
+    // the sumcheck-verified `claimed_setup_val`. We only pay for the cheap
+    // `local` part here.
+    let m_val_local = {
+        let _span = tracing::info_span!("m_eval_local_at_x_challenges").entered();
+        m_eval_local_at_x_challenges(r_x1)?
+    };
+    let m_val = m_val_local + claimed_setup_val;
     let relation_oracle = w_eval_stage1 * alpha_val * m_val;
     let expected_stage1 = range_oracle + gamma_rel * relation_oracle;
     if final_claim_stage1 != expected_stage1 {
