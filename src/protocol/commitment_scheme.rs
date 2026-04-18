@@ -4463,6 +4463,9 @@ where
         claimed_setup_val: None,
     };
 
+    #[cfg(test)]
+    tests::CARRY_CLOSURE_PROVE_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
     Ok(FusedCarryProveOutput {
         stage1_proof,
         stage2_sumcheck,
@@ -4718,6 +4721,9 @@ where
         return Err(HachiError::InvalidProof);
     }
 
+    #[cfg(test)]
+    tests::CARRY_CLOSURE_VERIFY_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
     Ok(r_cr)
 }
 
@@ -4962,6 +4968,18 @@ mod tests {
     const ONEHOT_D: usize = OneHotCfg::D;
     const BENCH_ONEHOT_K: usize = ONEHOT_D;
     type OneHotScheme = HachiCommitmentScheme<ONEHOT_D, OneHotCfg>;
+
+    /// Counts how many times [`prove_fused_stage1_stage2_with_carry`] was
+    /// invoked during the current test process. Used by carry-closure
+    /// assertions to confirm the Phase-3 path fired rather than the
+    /// regular fused / nested-delegation fallbacks.
+    pub(crate) static CARRY_CLOSURE_PROVE_CALLS: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+
+    /// Verifier-side counterpart of [`CARRY_CLOSURE_PROVE_CALLS`]; counts
+    /// calls to [`verify_fused_stage1_stage2_with_carry`].
+    pub(crate) static CARRY_CLOSURE_VERIFY_CALLS: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
 
     fn batched_shape_rounds(level_d: usize, next_w_len: usize) -> usize {
         let num_ring_elems = next_w_len / level_d;
@@ -6938,6 +6956,82 @@ mod tests {
         assert!(
             result.is_ok(),
             "fused + setup-delegated roundtrip failed: {result:?}"
+        );
+    }
+
+    /// Verifies that the L=1 setup-claim carry closure (Phase 3) actually
+    /// fires on the fused + delegation path for a `level_d == D` config, on
+    /// both the prover and the verifier side. Uses the test-only
+    /// [`CARRY_CLOSURE_PROVE_CALLS`] / [`CARRY_CLOSURE_VERIFY_CALLS`]
+    /// counters to distinguish the carry-closure path from the legacy
+    /// fused / nested-PCS fallbacks.
+    #[test]
+    fn fused_setup_delegated_consumes_carry_at_level_one() {
+        use std::sync::atomic::Ordering;
+
+        let alpha = D.trailing_zeros() as usize;
+        let layout = Cfg::commitment_layout(16).unwrap();
+        let num_vars = layout.m_vars + layout.r_vars + alpha;
+
+        let (poly, evals) = make_dense_poly(num_vars);
+
+        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1, 1)
+            .with_mode(HachiProtocolMode::Fused)
+            .with_delegation(SetupDelegationMode::Enabled);
+        let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
+
+        let (commitment, hint) =
+            <Scheme as CommitmentScheme<F, D>>::commit(std::slice::from_ref(&poly), &setup)
+                .unwrap();
+
+        let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
+        let lw = lagrange_weights(&opening_point);
+        let opening: F = evals
+            .iter()
+            .zip(lw.iter())
+            .fold(F::zero(), |a, (&c, &w)| a + c * w);
+
+        let prove_before = CARRY_CLOSURE_PROVE_CALLS.load(Ordering::Relaxed);
+        let verify_before = CARRY_CLOSURE_VERIFY_CALLS.load(Ordering::Relaxed);
+
+        let mut prover_transcript =
+            Blake2bTranscript::<F>::new(b"test/prove/carry-closure-level-one");
+        let proof = <Scheme as CommitmentScheme<F, D>>::prove(
+            &setup,
+            &poly,
+            &opening_point,
+            hint,
+            &mut prover_transcript,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .unwrap();
+
+        let prove_after_proving = CARRY_CLOSURE_PROVE_CALLS.load(Ordering::Relaxed);
+        assert_eq!(
+            prove_after_proving.saturating_sub(prove_before),
+            1,
+            "L=1 prover must consume the carry via prove_fused_stage1_stage2_with_carry exactly once",
+        );
+
+        let mut verifier_transcript =
+            Blake2bTranscript::<F>::new(b"test/prove/carry-closure-level-one");
+        let result = <Scheme as CommitmentScheme<F, D>>::verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &opening_point,
+            &opening,
+            &commitment,
+            BasisMode::Lagrange,
+        );
+        assert!(result.is_ok(), "carry-closure roundtrip failed: {result:?}");
+
+        let verify_after = CARRY_CLOSURE_VERIFY_CALLS.load(Ordering::Relaxed);
+        assert_eq!(
+            verify_after.saturating_sub(verify_before),
+            1,
+            "L=1 verifier must consume the carry via verify_fused_stage1_stage2_with_carry exactly once",
         );
     }
 
