@@ -48,12 +48,27 @@ pub(crate) struct SharedMatrixTensorLayout {
 
 impl SharedMatrixTensorLayout {
     /// Build the canonical tensor layout from the public expanded setup.
-    pub(crate) fn from_expanded<F: FieldCore, Cfg: CommitmentConfig<Field = F>, const D: usize>(
+    ///
+    /// `max_rows` is derived from the backing `FlatMatrix` rather than from
+    /// `Cfg::envelope`. `CommitmentConfig::envelope` may overshoot the actual
+    /// row count allocated by `Cfg::max_setup_matrix_size` (which is what
+    /// `HachiProverSetup::new` uses to size the backing), so consulting the
+    /// envelope here would cause `FlatMatrix::ring_view` to request more rows
+    /// than the shared matrix actually holds.
+    pub(crate) fn from_expanded<F: FieldCore, const D: usize>(
         expanded: &HachiExpandedSetup<F>,
     ) -> Self {
-        let envelope = Cfg::envelope(expanded.seed.max_num_vars);
-        let max_rows = envelope.max_n_a.max(envelope.max_n_b).max(envelope.max_n_d);
         let stride = expanded.seed.max_stride;
+        let total_ring_elements_at_d = expanded.shared_matrix.total_ring_elements_at::<D>();
+        assert!(
+            stride > 0,
+            "HachiSetupSeed::max_stride must be positive for tensor layout",
+        );
+        assert!(
+            total_ring_elements_at_d.is_multiple_of(stride),
+            "backing shared matrix size ({total_ring_elements_at_d}) must be a multiple of stride ({stride})",
+        );
+        let max_rows = total_ring_elements_at_d / stride;
         let padded_rows = max_rows.next_power_of_two();
         let padded_stride = stride.next_power_of_two();
         let row_vars = padded_rows.trailing_zeros() as usize;
@@ -246,8 +261,7 @@ where
     pub(crate) fn from_main_prover_setup<Cfg: SharedMatrixOpeningConfig<Field = F>>(
         main_setup: &HachiProverSetup<F, D>,
     ) -> Result<Self, HachiError> {
-        let tensor_layout =
-            SharedMatrixTensorLayout::from_expanded::<F, Cfg, D>(&main_setup.expanded);
+        let tensor_layout = SharedMatrixTensorLayout::from_expanded::<F, D>(&main_setup.expanded);
         if <Cfg::InnerCfg as CommitmentConfig>::D != D {
             return Err(HachiError::InvalidSetup(
                 "shared matrix inner config must preserve ring dimension".to_string(),
@@ -392,8 +406,7 @@ mod tests {
         const NV: usize = 12;
         let main_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1, 1);
-        let tensor_layout =
-            SharedMatrixTensorLayout::from_expanded::<F, Cfg, D>(&main_setup.expanded);
+        let tensor_layout = SharedMatrixTensorLayout::from_expanded::<F, D>(&main_setup.expanded);
         assert_eq!(tensor_layout.field_len(), 1usize << tensor_layout.num_vars);
         assert_eq!(tensor_layout.ring_vars, D.trailing_zeros() as usize);
         assert!(tensor_layout.padded_rows >= tensor_layout.max_rows);
